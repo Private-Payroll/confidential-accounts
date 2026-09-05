@@ -31,6 +31,49 @@ import {
   assertReportCarriesNoValue, globToRegExp, matchesAny, loadConfig, makeSafePath,
 } from './secret-scan.mjs';
 
+/**
+ * ── THE HALF A PREFIX CHECK CANNOT DO DETERMINISTICALLY ──────────────────
+ *
+ * **NO REPORT MAY CARRY A HEX-LOOKING TOKEN THAT IS NOT ITS OWN FURNITURE.**
+ *
+ * The prefix assertions below ask *is a truncation of THIS value printed*, and
+ * that question cannot be asked at four characters without asking it of chance
+ * as well: sixteen bits of a `randomBytes` value collide with ordinary English
+ * prose. **MEASURED on `scripts/secret-scan.mjs`: 18 distinct hex-only 4-grams
+ * (`beca` inside *because*, `defa` inside *default*), and a value forced to
+ * begin `beca` turned this file red on an unmodified scanner.** That is
+ * `MIG-31`'s class exactly, one site over, and rarer is worse rather than
+ * better — a failure at one run in a few thousand is one nobody attributes.
+ *
+ * So the prefix checks start at eight characters, where a collision is one in
+ * four thousand million, **and the four-to-seven range they gave up is covered
+ * from the other direction and WITHOUT randomness:** every standalone hex-only
+ * token in the report is enumerated and compared against the short list of
+ * tokens the report legitimately prints. A renderer that printed six leading
+ * characters of a withheld value would put a token on the page that is on no
+ * list — whatever the value happened to be that run.
+ *
+ * **THE LIST IS THE REPORT'S OWN FURNITURE AND IT IS DELIBERATELY SHORT.**
+ * Measured with the same enumeration over `scripts/secret-scan.mjs`: three
+ * tokens, all of them numbers the page prints about itself. **A NEW ENTRY IS
+ * A DELIBERATE ACT** — if this goes red on a change to the scanner's own
+ * prose, the token is named in the failure and adding it is one line; if it
+ * goes red on anything else, it is a value on a page that must carry none.
+ */
+const REPORT_FURNITURE: ReadonlySet<string> = new Set(['1024', '8192', '000005']);
+
+const noStrayHexToken = (text: string) => {
+  const strays = [...new Set(
+    [...text.matchAll(/(?<![0-9A-Za-z])([0-9a-f]{4,63})(?![0-9A-Za-z])/g)].map((m) => m[1]),
+  )].filter((t) => !REPORT_FURNITURE.has(t));
+  expect(
+    strays,
+    `the report carries hex-looking token(s) that are not its own furniture: ${strays.join(', ')}\n`
+    + 'Either the renderer is printing part of a value, or the page has gained a '
+    + 'number of its own and REPORT_FURNITURE needs the one line that says so.',
+  ).toEqual([]);
+};
+
 let ROOT: string;
 
 const write = (rel: string, text: string) => {
@@ -354,7 +397,8 @@ describe('the defects an audit found in the first draft of this file', () => {
     // (1) THE RAW VALUE IS NOT ON THE PAGE — and not a prefix of it either.
     //     Truncation is not the fix: four leading characters of a 64-hex value
     //     is a filter that turns a guess into a search.
-    for (const n of [4, 8, 12, 16, 24, 32, 64]) expect(result.report).not.toContain(id.slice(0, n));
+    for (const n of [8, 12, 16, 24, 32, 64]) expect(result.report).not.toContain(id.slice(0, n));
+    noStrayHexToken(result.report);
 
     // (2) THE PLACE IS STILL NAMED. The directory survives whole, the extension
     //     survives whole, and the offending line in the shipping file is given.
@@ -416,9 +460,31 @@ describe('when naming the place and disclosing the value are the same act', () =
    */
   const noPartOf = (text: string, value: string) => {
     expect(text).not.toContain(value);
-    // NOT A PREFIX EITHER — truncation is not the fix. Four leading characters
-    // of a 64-hex commitment is a filter that turns a guess into a search.
-    for (const n of [4, 8, 12, 16, 24, 32]) expect(text).not.toContain(value.slice(0, n));
+    /*
+     * NOT A PREFIX EITHER — truncation is not the fix. Eight leading characters
+     * of a 64-hex commitment is a filter that turns a guess into a search.
+     *
+     * **IT ASKED FOR FOUR UNTIL 6 Sep, AND FOUR WAS RED ON CORRECT CODE ABOUT
+     * ONE RUN IN SIXTEEN THOUSAND.** The values here are `randomBytes`, and
+     * ordinary English prose contains hex-valid four-character runs — `defa`
+     * inside `default`, `beca` inside `because` — so a value that happened to
+     * begin with one made the report *contain a prefix of the value* with the
+     * scanner behaving perfectly. **MEASURED: 19 distinct hex-only 4-grams in
+     * `scripts/secret-scan.mjs`, and ZERO hex-only 8-grams**; a forced
+     * `'defa' + …` commitment turned this file red on an unmodified scanner.
+     *
+     * **THAT IS THE SAME CLASS AS THE DEFECT THIS FILE WAS JUST REPAIRED FOR
+     * (`MIG-31`), AND RARER IS WORSE, NOT BETTER** — one run in sixteen
+     * thousand is a failure nobody will attribute, and it will look like a
+     * leak on a green tree. Found by this round's audit.
+     *
+     * Eight hex characters is thirty-two bits: no word supplies one, and a
+     * collision is one run in four thousand million. The property being
+     * asserted is unchanged — a prefix is a search filter and must not be
+     * printed — only the length at which it stops being an accident.
+     */
+    for (const n of [8, 12, 16, 24, 32]) expect(text).not.toContain(value.slice(0, n));
+    noStrayHexToken(text);
   };
 
   it('a commitment that is byte-identical to its own file name stem', () => {
@@ -463,7 +529,22 @@ describe('when naming the place and disclosing the value are the same act', () =
     write(`.midnight/sealed/default/${commitment}.k0.json`, JSON.stringify({ commitment }));
     write(`.midnight/sealed/default/${commitment}.backup.json`, JSON.stringify({ commitment }));
     const other = randomBytes(32).toString('hex');
-    write(`.midnight/sealed/default/${other}.k0.json`, JSON.stringify({ commitment: other }));
+    /*
+     * **`.k1.json`, AND THE DISTINCT SUFFIX IS THE FIX FOR A TEST THAT FAILED
+     * ON ROUGHLY HALF OF ALL RUNS AGAINST AN UNCHANGED TREE.**
+     *
+     * This third fixture used to end `.k0.json` as well, so TWO paths carried
+     * that suffix and `labelOn('.k0.json')` returned whichever of two random
+     * 32-byte values the report rendered first — decided by their sort order
+     * and by nothing else. **MEASURED before this change: twelve consecutive
+     * runs of `npx vitest run scripts/secret-scan.test.ts` with nothing edited
+     * between them gave four green and eight red, always this assertion.**
+     *
+     * **THE INVARIANT BELOW WAS NEVER THE DEFECT. THE LOCATOR WAS**, and a
+     * suffix that belongs to exactly one path is what makes `labelOn` a
+     * locator rather than a coin toss.
+     */
+    write(`.midnight/sealed/default/${other}.k1.json`, JSON.stringify({ commitment: other }));
 
     const result = runSecretScan(ROOT, [write('README.md', 'nothing')], config() as never);
 
@@ -471,11 +552,38 @@ describe('when naming the place and disclosing the value are the same act', () =
     // order the paths happen to be rendered in; what must hold is that ONE
     // VALUE IS ONE NUMBER wherever it appears, and two values are two numbers.
     const labelOn = (suffix: string): string => {
-      const m = new RegExp(`<sealed (\\d+)>\\${suffix}`).exec(result.report);
-      expect(m, `no label found for ${suffix}`).not.toBeNull();
-      return m![1];
+      /*
+       * **IT REFUSES AN AMBIGUOUS SUFFIX RATHER THAN TAKING THE FIRST MATCH,
+       * WHICH IS THE HALF THAT STOPS THIS COMING BACK.** Fixing the fixture
+       * alone leaves the next person free to add a second path ending the same
+       * way, and the failure they would get is `expected '2' to be '1'` — a
+       * sentence about the invariant, pointing at code that is correct. Read
+       * every match and require exactly one, and the failure names the cause.
+       */
+      const all = [...result.report.matchAll(new RegExp(`<sealed (\\d+)>\\${suffix}`, 'g'))];
+      /*
+       * THE MESSAGE BRANCHES, BECAUSE THE TWO FAILURES HAVE NOTHING TO DO WITH
+       * EACH OTHER. Zero matches means the report stopped rendering labelled
+       * paths at all — a change in the renderer. Two means the fixture has
+       * grown a second path with this suffix. One sentence covering both sends
+       * whoever reads it to the wrong place, and the whole point of this line
+       * is that the failure names the cause. Found by this round's audit.
+       */
+      expect(
+        all.length,
+        all.length === 0
+          ? `no <sealed N> label on any path ending ${suffix} — the report is not `
+            + 'rendering labelled paths, which is the renderer and not the fixture'
+          : `${suffix} matches ${all.length} paths in the report — a locator matching two `
+            + 'paths answers whichever of them sorted first, which is not a property of '
+            + 'the scanner',
+      ).toBe(1);
+      return all[0][1];
     };
     expect(labelOn('.backup.json')).toBe(labelOn('.k0.json'));   // same value, same number
+    // AND THE OTHER DIRECTION, WHICH IS ONLY SAYABLE ONCE EACH SUFFIX HAS ONE
+    // PATH: two values are two DIFFERENT numbers, named rather than counted.
+    expect(labelOn('.k1.json')).not.toBe(labelOn('.k0.json'));
     const numbers = new Set([...result.report.matchAll(/<sealed (\d+)>/g)].map((m) => m[1]));
     expect(numbers.size).toBe(2);                                // two values, two numbers
     expect(result.report).toContain('2 value(s) withheld from paths on this page.');

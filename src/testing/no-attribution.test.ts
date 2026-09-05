@@ -553,3 +553,545 @@ describe('a commit subject and a branch name describe the change, never the proc
     });
   });
 });
+
+/**
+
+/**
+ * ── `SHIP.command` — THE CHAIN, AND WHAT PINS IT ──────────────────────────
+ *
+ * **WHY THESE ARE IN THIS FILE, WHICH IS NAMED FOR SOMETHING ELSE.** `C393`
+ * forbids a NEW `.ts` under `src/`, `scripts/` or `contracts/test/`:
+ * `docs/design/edges.json` records their file count, the freshness gate
+ * compares it before any worker evaluates a test module, and one new file
+ * refuses EVERY `vitest` run in this tree — including a named-file one. The
+ * door that clears it is `DOCS.command`, which no session may run. The branch
+ * and commit guards above went into this file for that reason and recorded it
+ * as `MIG-32`; **this follows that precedent and deepens it, which is said
+ * here rather than left to look deliberate.**
+ *
+ * **THEY READ THE DOOR AS TEXT, AND THAT IS WEAKER THAN RUNNING IT.** Running
+ * `SHIP.command` means running the suite, making a commit and pushing a
+ * branch. So these catch a step deleted, two steps swapped, a `git` command
+ * appearing where none belongs, a guard whose body has gone, and a name that
+ * has gone stale in one of the two places that carry it.
+ *
+ * **AND EVERY ONE OF THEM WAS PLANTED AGAINST BEFORE IT WAS TRUSTED**, on
+ * copies outside the repository. Nine of the first draft's assertions could
+ * not fail — the audit found six of them after the round found three — and the
+ * comments below name the specific change each survived, because an assertion
+ * whose weakness is written down is one the next round can widen rather than
+ * inherit. `T-411`.
+ */
+describe('SHIP.command composes the doors and reimplements none of them', () => {
+  const raw = readFileSync(join(HERE, 'SHIP.command'), 'utf8');
+  /** Comments only. What the door RUNS lives here; what it SAYS does not. */
+  const noComments = raw.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
+  /*
+   * Comments AND `echo` lines stripped, for `COMMIT.command`'s reason one
+   * level up: this door's whole job is to print other doors' names, so a check
+   * reading the raw text would be satisfied by a sentence ABOUT the chain
+   * instead of by the chain.
+   */
+  const ship = noComments.split('\n').filter((l) => !/^\s*echo\b/.test(l)).join('\n');
+  /** Only what a person reads off the screen. */
+  const screen = raw.split('\n').filter((l) => /^\s*(echo|printf)\b/.test(l)).join('\n');
+
+  /** The five steps, in the order the chain runs them. */
+  const CHAIN = [
+    'TEST.command',
+    'COMMIT.command',
+    'PUSH-BRANCH.command',
+    'PR-OPEN.command',
+  ];
+  /** The two doors step 1 runs, and the trees each one owns. */
+  const KEY_DOORS = ['BUILD-KEYS.command', 'COMPILE-VAULT.command'];
+
+  it('reads a door that is actually there', () => {
+    /*
+     * THE FLOOR IS ON THE CODE, NOT ON THE FILE. Measured: this door's comment
+     * header alone is nearly 3 KB, so a byte count over the whole file is a
+     * floor the prose meets on its own.
+     */
+    expect(ship.replace(/\s+/g, '').length, 'SHIP.command has no code in it, or was not read')
+      .toBeGreaterThan(1500);
+    expect(ship, 'nothing in SHIP.command runs a door').toContain('run_door');
+  });
+
+  it('runs each door exactly once, and in the order the chain declares', () => {
+    let previous = -1;
+    for (const door of CHAIN) {
+      const sites = [...ship.matchAll(new RegExp(`run_door "${door}"`, 'g'))];
+      expect(sites.length, `SHIP.command runs ${door} ${sites.length} times, not once`).toBe(1);
+      const at = ship.indexOf(`run_door "${door}"`);
+      expect(at, `${door} runs before the step ahead of it in the chain`).toBeGreaterThan(previous);
+      previous = at;
+    }
+  });
+
+  /*
+   * **THE STEP THAT CARRIES `T-406`.** A standing check went red and STAYED
+   * red across three rounds that each added a door — because the only person
+   * who ever sees the suite cannot act on it, and nothing in the path he walks
+   * stopped him. `COMMIT.command` asks WHICH CODE its report describes and
+   * deliberately not whether that report was green, which is right and is not
+   * changed. **This is the first thing in this project that makes a red result
+   * unavoidable on the path somebody actually walks:** the suite runs before
+   * the commit, and a red one ends the chain with nothing committed.
+   */
+  it('stops the chain on a red suite, before anything is committed', () => {
+    const from = ship.indexOf('run_door "TEST.command"');
+    const to = ship.indexOf('run_door "COMMIT.command"');
+    expect(from, 'the chain no longer runs the suite').toBeGreaterThan(-1);
+    expect(to, 'the chain no longer runs the commit door').toBeGreaterThan(from);
+    const between = ship.slice(from, to);
+    /*
+     * **THREE SPELLINGS OF THIS COULD NOT FAIL, AND EACH WAS FOUND BY PLANTING
+     * THE BREAK RATHER THAN BY READING IT** — `T-411`.
+     *   · `toContain('TEST_STATUS')` plus `toContain('finish 1')` is satisfied
+     *     by `if false; then … finish 1 … fi`. So the condition is spelled out.
+     *   · The condition being spelled out is satisfied by `TEST_STATUS=0`
+     *     inserted one line later. So the assignment is counted: there is
+     *     exactly ONE, and it is the door's own exit code.
+     *   · Neither says the stop prints anything, so a stop nobody can act on
+     *     passes. Hence the two strings read out of the report.
+     */
+    const assignments = [...between.matchAll(/^\s*TEST_STATUS=/gm)];
+    expect(assignments.length, 'TEST_STATUS is assigned more than once, so the suite’s answer can be overwritten')
+      .toBe(1);
+    expect(between, 'TEST_STATUS no longer holds the suite door’s own exit code')
+      .toContain('TEST_STATUS=$?');
+    expect(between, 'the chain no longer stops when the suite answers non-zero')
+      .toMatch(/if \[ "\$TEST_STATUS" -ne 0 \]; then/);
+    expect(between, 'a non-zero suite no longer ends the chain').toContain('finish 1');
+    expect(between, 'the chain no longer prints which tests failed').toContain('FAIL');
+    expect(between, 'the chain no longer prints the counts').toContain('Test Files');
+  });
+
+  /*
+   * THE MERGE IS NOT IN THE CHAIN, AND IT IS THE ONE OMISSION WORTH A TEST.
+   * It is the step where somebody reads a diff before it becomes the history,
+   * and a chain that took it would have removed the only human check in the
+   * loop.
+   *
+   * **THE POSITIVE HALF READS THE SCREEN AND NOT THE FILE**, because reading
+   * the file is satisfied by a comment: deleting all four `echo` lines that
+   * name the merge door left this green, measured. A door that names the next
+   * step only in a comment names it to nobody.
+   */
+  it('stops at the link and never merges', () => {
+    expect(ship, 'SHIP.command now merges the pull request itself').not.toContain('PR-MERGE');
+    expect(screen, 'SHIP.command no longer tells anybody where the merge happens')
+      .toContain('PR-MERGE.command');
+  });
+
+  /*
+   * IT COMPOSES. Every `git` command in this chain belongs to the door that
+   * has always run it, and a second copy of a door's guard is a second thing
+   * to keep true — which is the whole argument for this file existing.
+   *
+   * **THIS READS THE COMMENT-STRIPPED TEXT AND NOT THE `echo`-STRIPPED ONE**,
+   * because the most natural way to grow a `git` command here is inside an
+   * `echo`, and command substitution in an `echo` RUNS. Measured: three real
+   * git invocations added that way were invisible to the first spelling.
+   */
+  it('runs no `git` of its own', () => {
+    /*
+     * **THE BOUNDARY IS A WORD BOUNDARY AND NOT A CHARACTER CLASS.** The first
+     * spelling required one of `; & | ( \`` or whitespace before `git`, so
+     * `/usr/bin/git rev-parse` was invisible — measured. `\bgit\s` catches a
+     * git reached by any path, and `legit ` is not a word ending in `git`
+     * followed by a space at a boundary.
+     */
+    const gitLines = noComments.split('\n').filter((l) => /\bgit\s/.test(l));
+    expect(gitLines, `SHIP.command has grown git commands of its own:\n  ${gitLines.join('\n  ')}`)
+      .toEqual([]);
+  });
+
+  /*
+   * NO DOOR IS RUN EXCEPT THROUGH `run_door`, which is what puts every one of
+   * them behind the same missing-file refusal, the same closed stdin and the
+   * same stop.
+   *
+   * **THREE HOLES WERE PLANTED AND ALL THREE WERE REAL:** it excluded any line
+   * CONTAINING `run_door`, so a trailing comment saying so was enough; it
+   * required a literal `./`, so `bash STAGENET-RESET.command` was invisible;
+   * and requiring a word boundary before the name missed `D=./PR-OPEN.command`.
+   * **SO IT NOW MATCHES THE NAME ANYWHERE ON THE LINE** and subtracts only the
+   * three shapes that are legitimate — the `run_door` call itself, a `case` arm
+   * in the report table, and `run_door`'s own body. A deploy door and a
+   * chain-state reset went in through the first two of those holes.
+   */
+  it('invokes no door except through run_door', () => {
+    /*
+     * THREE SHAPES, AND THEY ARE THE THREE WAYS A DOOR BECOMES A COMMAND.
+     * `run_door` reaches its door through `"./$door"`, so no legitimate line
+     * in this file writes `./` in front of a door's NAME — which makes (a) an
+     * exact test rather than a heuristic. Naming a door inside a string, as
+     * `REBUILD=` and `STOPPED_AT=` do, is not running it and is not matched by
+     * any of the three, and nor is a `case` arm in the report table — (c)
+     * excludes the `)` that makes one.
+     */
+    const INVOCATION = [
+      /\.\/[A-Z][A-Z0-9-]*\.command\b/,                                   // (a) an explicit path
+      /(?:^|[\s;&|(])(?:bash|sh|source|exec|\.)\s+[A-Z][A-Z0-9-]*\.command\b/, // (b) handed to an interpreter
+      /^\s*[A-Z][A-Z0-9-]*\.command\b(?!\))/,                             // (c) the first word on the line
+    ];
+    /*
+     * (d) A DOOR REACHED THROUGH A VARIABLE — the spelling `run_door` itself
+     * uses, so it is the one an edit is most likely to copy. Measured:
+     * `EXTRA=STAGENET-RESET.command` then `"./$EXTRA"` matched none of the
+     * three shapes above, because none of them appears on the invoking line.
+     * So every variable assigned a door name is collected, and any OTHER line
+     * that runs `"./$THAT"` is a door run outside `run_door`.
+     */
+    const doorVars = [...ship.matchAll(/^\s*(\w+)=(?:"|')?(?:\.\/)?[A-Z][A-Z0-9-]*\.command\b/gm)]
+      .map((m) => m[1])
+      .filter((v) => v !== 'door');
+    const viaVariable = (l: string): boolean =>
+      doorVars.some((v) => new RegExp(`(?:^|[\\s;&|(])"?\\.\\/\\$\\{?${v}\\}?"?`).test(l));
+    const direct = ship.split('\n')
+      .filter((l) => INVOCATION.some((rx) => rx.test(l)) || viaVariable(l))
+      .filter((l) => !/"\.\/\$door"|-x "\.\/\$door"/.test(l))            // run_door itself
+      .filter((l) => !/^\s*\w+=/.test(l) || INVOCATION.some((rx) => rx.test(l)));
+    expect(direct, `a door is named as a command outside run_door:\n  ${direct.join('\n  ')}`)
+      .toEqual([]);
+  });
+
+  /*
+   * THE REPORT NAMED BESIDE A STOP IS THE REPORT THAT DOOR ACTUALLY WRITES.
+   * A chain that sends somebody to a file that moved is worse than one naming
+   * none, and this is the half nothing else can see: both halves are correct
+   * on their own and only their agreement matters.
+   *
+   * **IT NAMES THE DOORS RATHER THAN COUNTING THEM.** A floor of `> 4` over
+   * six arms tolerates one door losing its report entirely — measured, by
+   * deleting the commit door's arm, which left a stop at step 3 naming no
+   * report at all.
+   */
+  it('names, for every door it runs, the report that door itself writes', () => {
+    const arms = new Map(
+      [...ship.matchAll(/^\s*([A-Z0-9-]+\.command)\)\s*echo "([^"]+)"/gm)]
+        .map((m) => [m[1], m[2]] as [string, string]),
+    );
+    for (const door of [...CHAIN, ...KEY_DOORS]) {
+      const report = arms.get(door);
+      expect(report, `SHIP.command names no report for ${door}, so a stop there sends nobody anywhere`)
+        .toBeDefined();
+      const text = readFileSync(join(HERE, door), 'utf8');
+      const own = /^(?:REPORT|LOG)="(?:\$\(pwd\)\/)?([^"]+)"/m.exec(text);
+      expect(own, `${door} no longer declares a report of its own`).not.toBeNull();
+      expect(own![1], `SHIP.command sends a reader to ${report} and ${door} writes ${own![1]}`)
+        .toBe(report);
+    }
+  });
+
+  /*
+   * STEP 1 IS PINNED BY ITS USE, NOT BY ITS VOCABULARY.
+   *
+   * **THE FIRST SPELLING SURVIVED THE DELETION OF THE ENTIRE STEP**, measured:
+   * it asserted that each key door's NAME appeared in the file, and the
+   * `report_for` case table names both of them anyway. So this asserts the
+   * mechanism — each tree is asked whether it needs rebuilding, each door is
+   * put into `REBUILD`, and `REBUILD` is what gets run.
+   *
+   * The two trees and their doors are declared in `scripts/artifact-scan.ts`,
+   * which has held that pairing since before this door existed; neither door's
+   * name says which contract it covers, and that is how somebody finds out one
+   * failed run at a time.
+   */
+  it('rebuilds each contract with the door artifact-scan names for it', () => {
+    const scan = readFileSync(join(HERE, 'scripts/artifact-scan.ts'), 'utf8');
+    const specs = [...scan.matchAll(/managed:\s*'([^']+)',\s*\n\s*keyDoor:\s*'([^']+)'/g)]
+      .map((m) => ({ managed: m[1], door: m[2] }));
+    expect(specs.length, 'scripts/artifact-scan.ts no longer declares a key door per contract').toBe(2);
+    expect(specs.map((s) => s.door).sort(), 'the key doors have moved apart in the two files')
+      .toEqual([...KEY_DOORS].sort());
+
+    /*
+     * **THE PAIRING, NOT THE PRESENCE — AND THAT IS THIS ROUND'S SECOND AUDIT.**
+     * The first spelling asked only that both trees were examined and both
+     * door names appeared somewhere in a `REBUILD=` line. Measured: SWAPPING
+     * THE TWO DOORS left it green — and the pairing is the single fact the
+     * doors' names do not carry, which is the whole reason this test exists.
+     *
+     * So the door reads the pairing off a `case` table of its own, and this
+     * compares that table with `artifact-scan`'s arm for arm.
+     */
+    const table = new Map(
+      [...ship.matchAll(/^\s*(contracts\/[a-z-]+)\)\s*echo "([^"]+)"/gm)]
+        .map((m) => [m[1], m[2]] as [string, string]),
+    );
+    expect([...table.keys()].sort(), 'SHIP.command no longer declares a door per contract tree')
+      .toEqual(specs.map((x) => x.managed).sort());
+    for (const { managed, door } of specs) {
+      expect(table.get(managed), `SHIP.command sends ${managed} to ${table.get(managed)} and artifact-scan says ${door}`)
+        .toBe(door);
+    }
+    // Each tree is actually asked the question, and the table is what selects
+    // the door — not a name typed a second time beside it.
+    /*
+     * `(?![-\w])` AND NOT `\b`, AND THE DIFFERENCE IS A WHOLE TREE. `-` is a
+     * word boundary, so `contracts/managed\b` matches inside
+     * `contracts/managed-vault` — and the account's assertion was satisfied by
+     * the VAULT's line. Measured: naming `BUILD-KEYS.command` directly instead
+     * of reading it from the table stayed green.
+     */
+    const exact = (t: string): string => `${t.replace(/[/\-]/g, (c) => `\\${c}`)}(?![-\\w])`;
+    for (const { managed } of specs) {
+      expect(ship, `nothing asks whether ${managed} needs rebuilding`)
+        .toMatch(new RegExp(`why_rebuild [^\\n]*${exact(managed)}`));
+      expect(ship, `${managed}'s door is named again instead of read from the table`)
+        .toMatch(new RegExp(`REBUILD=[^\\n]*key_door_for ${exact(managed)}`));
+    }
+    expect(ship, 'the rebuild list is built and never run').toContain('run_door "$d"');
+  });
+
+  /*
+   * AND THE CHAIN'S ONE EFFECT ON THE DOORS IT RUNS. Three of them end by
+   * waiting for a key press, which is right alone and wrong mid-chain.
+   *
+   * **THE MATCH IS BOUNDED BY THE BLOCK, AND THAT IS THE FIX FOR A REGEX THAT
+   * READ STRAIGHT PAST A `fi`** — measured: moving the `read` below the `fi`
+   * in all three doors, so every one of them waits for a key press under the
+   * flag, left the first spelling green.
+   */
+  it('exports SHIP_CHAIN, and the doors that wait for a key press read it', () => {
+    expect(ship, 'SHIP.command no longer exports SHIP_CHAIN').toMatch(/^export SHIP_CHAIN=1$/m);
+    for (const door of ['TEST.command', 'BUILD-KEYS.command', 'COMPILE-VAULT.command']) {
+      const text = readFileSync(join(HERE, door), 'utf8');
+      expect(text, `${door} no longer honours SHIP_CHAIN, so the chain stops at its key press`)
+        .toMatch(/\[ -[zn] "\$SHIP_CHAIN" \]/);
+      // `(?:(?!\n\s*fi\b)[\s\S])*?` — anything that is not the closing `fi`.
+      /*
+       * **COUNTED, NOT FOUND.** Two spellings failed here and both were
+       * measured. A line-anchored `fi` exclusion walked straight past
+       * `: ; fi` on one line; and finding ONE guarded `read` says nothing
+       * about a SECOND one sitting outside the guard, which is the shape that
+       * actually leaves a window waiting. So: every `read` in the door is
+       * counted, every guarded one is counted, and they must be the same
+       * number.
+       */
+      const guardedReads =
+        [...text.matchAll(/if \[ -z "\$SHIP_CHAIN" \]; then(?:(?!\bfi\b)[\s\S])*?\n\s*read [-\w]/g)].length;
+      const allReads = [...text.matchAll(/^\s*read [-\w]/gm)].length;
+      expect(allReads, `${door} no longer waits for a key press at all`).toBeGreaterThan(0);
+      expect(guardedReads, `${door} has ${allReads} key press(es) and ${guardedReads} inside its SHIP_CHAIN guard`)
+        .toBe(allReads);
+    }
+  });
+});
+
+/**
+ * ── `COMMIT.command` PUTS YOU BACK ON `main` ITSELF ───────────────────────
+ *
+ * Nothing used to, so every piece of work after a merge taken on the website
+ * started on the previous one's branch — and met a refusal a person who does
+ * not type `git` cannot clear. Read as text, with comments stripped, for the
+ * reason the block above gives.
+ */
+describe('COMMIT.command handles the branch a merge left behind', () => {
+  const raw = readFileSync(join(HERE, 'COMMIT.command'), 'utf8');
+  const body = raw.replace(/^\s*#.*$/gm, '');
+  const commands = body.split('\n').filter((l) => !/^\s*echo\b/.test(l)).join('\n');
+  const screen = raw.split('\n').filter((l) => /^\s*(echo|printf)\b/.test(l)).join('\n');
+
+  /*
+   * The whole guarded block. **ANCHORED ON THE FETCH RATHER THAN ON A CLAUSE
+   * THE ASSERTIONS BELOW ALSO TEST** — an anchor that names a clause makes
+   * every assertion about that clause true by construction, which is how one
+   * of these came to be dead. Measured: with the old anchor, removing
+   * `!= "main"` from the condition failed the not-null check and never the
+   * assertion written for it.
+   */
+  const CONDITION = /if \[[\s\S]{0,400}?git fetch origin[\s\S]{0,400}?; then/;
+  const condition = (): string => {
+    const m = CONDITION.exec(commands);
+    expect(m, 'COMMIT.command no longer measures whether this branch is already in `main`').not.toBeNull();
+    return m![0];
+  };
+  const block = (): string => {
+    const at = commands.search(CONDITION);
+    expect(at, 'COMMIT.command no longer moves you off a branch that is already in `main`')
+      .toBeGreaterThan(-1);
+    const end = commands.indexOf('CURRENT_BRANCH="main"', at);
+    expect(end, 'the branch move never reaches `main`').toBeGreaterThan(at);
+    return commands.slice(at, end);
+  };
+
+  it('measures CONTENT against origin/main, never commit ids', () => {
+    // A squash merge rewrites the commits, so two ids prove nothing about two
+    // trees. `git diff --name-only A..B` compares the trees.
+    expect(condition(), 'the already-merged measurement no longer diffs the trees')
+      .toContain('git diff --name-only origin/main..HEAD');
+    expect(condition(), 'the already-merged measurement compares commit ids again')
+      .not.toMatch(/rev-list|merge-base|rev-parse HEAD/);
+  });
+
+  /*
+   * `git diff` AGAINST A REF THAT IS NOT THERE PRINTS ITS COMPLAINT ON STDERR
+   * AND NOTHING ON STDOUT. With stderr discarded, the emptiness test would
+   * read *no ref at all* as *nothing left behind* and move somebody off their
+   * own work.
+   *
+   * **ORDER IS NOT ENOUGH, AND THAT WAS MEASURED.** Wrapping the verify in
+   * `{ … || true; }` leaves it textually first and gates nothing. So the two
+   * are asserted as one `&&` chain: the verify's answer is what the diff hangs
+   * off, not merely a line above it.
+   */
+  it('verifies origin/main exists, as the guard on the diff and not merely above it', () => {
+    expect(condition(), 'the origin/main verify no longer gates the diff that follows it')
+      .toMatch(/git rev-parse --verify --quiet origin\/main > \/dev\/null \\\n\s*&& \[ -z "\$\(git diff --name-only origin\/main\.\.HEAD/);
+  });
+
+  /*
+   * IT CAN ONLY TURN A REFUSAL INTO A SUCCESS. It runs in the case that was an
+   * outright refusal a moment ago — a branch that is neither `main` nor the
+   * declared one — so a person offline is never stopped from committing on the
+   * branch they declared. Take either clause out and a fetch stands in front
+   * of every commit.
+   */
+  it('runs only where the door refused a moment ago, so being offline never blocks a commit', () => {
+    expect(condition(), 'the branch move no longer excludes the declared branch')
+      .toContain('"$CURRENT_BRANCH" != "$BRANCH"');
+    expect(condition(), 'the branch move no longer excludes `main` itself')
+      .toContain('"$CURRENT_BRANCH" != "main"');
+    expect(condition(), 'the branch move no longer excludes `master`')
+      .toContain('"$CURRENT_BRANCH" != "master"');
+    // AND THERE IS EXACTLY ONE FETCH IN THIS DOOR, so it cannot have escaped
+    // the guard into the path every commit takes.
+    expect([...commands.matchAll(/git fetch\b/g)].length, 'COMMIT.command has gained a second fetch')
+      .toBe(1);
+  });
+
+  it('carries uncommitted work across and proves afterwards that it did', () => {
+    // Refusing on any modified tracked file is what made the deadlock; git's
+    // own `checkout` refusal is the guard, and the digests say so rather than
+    // assume it.
+    expect(block(), 'the branch move forces or discards').not.toMatch(/--force|git stash|checkout -f/);
+    /*
+     * **FOUR SPELLINGS OF THIS HAVE BEEN WRONG AND EVERY ONE WAS FOUND BY
+     * PLANTING THE BREAK** — `T-411`, and this is the assertion standing
+     * between a person and losing uncommitted work.
+     *   · `/shasum -a 256|sha256sum/` survived deleting either half of the
+     *     two-platform pair.
+     *   · Counting digest sites survived deleting one platform spelling at
+     *     both sites, which produces an EMPTY digest on the other machine —
+     *     and two empty digests compare equal.
+     *   · Asserting that the comparison APPEARS survived deleting the body of
+     *     the branch it opens, so the door printed *DO NOT RUN ANYTHING ELSE*
+     *     and carried straight on to commit.
+     * So: one digest site carrying both spellings, taken before and after, and
+     * a mismatch that reaches a stop.
+     */
+    const before = block().indexOf('MOVE_BEFORE="$(dirty_digest)"');
+    const move = block().indexOf('git checkout main');
+    const after = block().indexOf('MOVE_AFTER="$(dirty_digest)"');
+    expect(before, 'nothing digests the uncommitted paths before the switch').toBeGreaterThan(-1);
+    expect(after, 'nothing digests them again afterwards').toBeGreaterThan(-1);
+    expect(before, 'the before-digest is taken after the switch, which measures nothing')
+      .toBeLessThan(move);
+    expect(after, 'the after-digest is taken before the switch, which measures nothing')
+      .toBeGreaterThan(move);
+    // ONE SITE, BOTH PLATFORM SPELLINGS. `sha256sum` is not on macOS and
+    // `shasum` is not on every Linux; a site left with one of them digests
+    // nothing on the other machine and says it digested.
+    const sites = [...block().matchAll(/shasum -a 256 "\$f" 2>\/dev\/null \|\| sha256sum "\$f"/g)];
+    expect(sites.length, 'the digest site has gone, or has lost one of its two platform spellings')
+      .toBe(1);
+    /*
+     * AND A SYMLINK IS READ AS A LINK. `-f` FOLLOWS ONE, so under `-f` alone a
+     * symlink was digested as its TARGET and retargeting it at a different
+     * file with the same bytes compared equal — a link that moved, under a
+     * line saying nothing had. Measured by this round's audit.
+     */
+    expect(block(), 'a symlink is digested as its target again, so retargeting it is invisible')
+      .toContain('[ -L "$f" ]');
+    // The line that reads the link is an `echo`, so it is read off `body` —
+    // `commands` has the `echo` lines stripped.
+    expect(body, 'the symlink branch no longer reads what the link points at')
+      .toContain('readlink "$f"');
+    // AND THE LIST IS NUL-SEPARATED, because `git diff --name-only` C-quotes
+    // any path outside ASCII and a quoted path matches nothing.
+    expect(block(), 'the uncommitted paths are read in a form git quotes')
+      .toMatch(/git diff --name-only -z; git diff --cached --name-only -z/);
+    // AND THE MISMATCH REACHES A STOP. A guard whose body is deleted prints a
+    // contradiction and commits anyway.
+    /*
+     * **AND THE `fi` IS EXCLUDED ANYWHERE, NOT ONLY AT THE START OF A LINE.**
+     * Measured: closing the branch with `: ; fi` on one line and re-opening it
+     * as `if false; then` left a line-anchored version green — the match ran
+     * past the closed block and found the `exit 1` in the dead one.
+     */
+    expect(block(), 'a file that changed under the switch no longer stops the commit')
+      .toMatch(/if \[ "\$MOVE_BEFORE" != "\$MOVE_AFTER" \]; then(?:(?!\bfi\b)[\s\S])*?exit 1/);
+  });
+
+  it('moves you before it stages anything', () => {
+    // The offset is taken from inside the block, not from the whole file: a
+    // stray earlier `CURRENT_BRANCH="main"` satisfied the first spelling with
+    // the real move deleted. Measured.
+    const at = commands.search(CONDITION);
+    const move = commands.indexOf('CURRENT_BRANCH="main"', at);
+    const staging = commands.indexOf('git add --');
+    expect(move, 'the branch move is gone').toBeGreaterThan(at);
+    expect(staging, 'COMMIT.command no longer stages a named list').toBeGreaterThan(-1);
+    expect(move, 'the branch move happens after staging, which is not a branch it can move off')
+      .toBeLessThan(staging);
+  });
+
+  /*
+   * NOTHING TO COMMIT IS NEITHER A SUCCESS NOR A REFUSAL, AND BOTH HALVES OF
+   * THAT WERE FOUND BY AUDIT — the second inside the fix for the first.
+   *
+   *   · IT EXITED 0. Right when a person reads the sentence, wrong the day a
+   *     chain reads the number: `SHIP.command` went on to push and to open a
+   *     pull request over a commit that never happened, and its closing page
+   *     said THE PULL REQUEST IS OPEN.
+   *   · IT THEN EXITED 1, WHICH MADE THE CHAIN UNREPEATABLE. Commit, fail at
+   *     the push on a minute of bad network, fix it, double-click again — and
+   *     the second run stops here for ever, with the push and the pull request
+   *     unreachable from the door written to reach them.
+   *
+   * So: 3, and `SHIP.command` carries on. This asserts both ends, because
+   * either alone is a number nothing reads.
+   */
+  it('answers nothing-to-commit with its own code, and the chain carries on', () => {
+    const arm = /if git diff --cached --quiet; then(?:(?!\bfi\b)[\s\S])*?exit (\d)/.exec(commands);
+    expect(arm, 'COMMIT.command no longer notices that there is nothing to commit').not.toBeNull();
+    expect(arm![1], 'nothing-to-commit reports plain success, or is indistinguishable from a refusal')
+      .toBe('3');
+
+    const ship = readFileSync(join(HERE, 'SHIP.command'), 'utf8')
+      .split('\n').filter((l) => !/^\s*#/.test(l) && !/^\s*echo\b/.test(l)).join('\n');
+    const from = ship.indexOf('run_door "COMMIT.command"');
+    const to = ship.indexOf('run_door "PUSH-BRANCH.command"');
+    expect(to, 'the chain no longer pushes after committing').toBeGreaterThan(from);
+    const between = ship.slice(from, to);
+    expect(between, 'the chain does not read the commit door’s answer at all')
+      .toContain('COMMIT_STATUS=$?');
+    expect(between, 'the chain no longer recognises nothing-to-commit, so it cannot be run twice')
+      .toMatch(/\[ "\$COMMIT_STATUS" -eq 3 \]/);
+    expect(between, 'the chain no longer stops on a refusal from the commit door')
+      .toMatch(/\[ "\$COMMIT_STATUS" -ne 0 \][\s\S]*?finish 1/);
+  });
+
+  /*
+   * `T-415`. The door printed *the repo is not on GitHub yet* twice on every
+   * run, and it has been on GitHub since 5 Sep. It is screen text and reaches
+   * no commit message, which is why it was waved through twice — and it was
+   * the last thing a person read after every commit, telling them to do
+   * nothing when the next step was a door.
+   *
+   * **THE POSITIVE HALF READS THE SCREEN.** Reading the whole file was
+   * satisfied by a comment, measured: deleting the only `echo` that names the
+   * push door left it green, which is `T-415`'s own defect in the other
+   * direction.
+   */
+  it('does not say the repository is not on GitHub yet', () => {
+    const stale = raw.split('\n').filter((l) => /not on GitHub yet/i.test(l));
+    expect(stale, `COMMIT.command says something untrue about the world:\n  ${stale.join('\n  ')}`)
+      .toEqual([]);
+    expect(screen, 'nothing a person reads after a commit names the door that pushes the branch')
+      .toContain('PUSH-BRANCH.command');
+  });
+});
