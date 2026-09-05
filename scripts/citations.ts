@@ -59,10 +59,33 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, sep } from 'node:path';
 
 /** Repository trees a citation may name with a `/`-bearing path. */
-const REPO_TREES = ['src/', 'scripts/', 'contracts/', 'docs/', 'db/', '.claude/'];
+const REPO_TREES = ['src/', 'scripts/', 'contracts/', 'docs/', 'db/'];
 
-/** Present on this disk, absent from a clone. Skipped by name and counted. */
-const IGNORED_TREES = ['node_modules/', 'midnight-src/', 'SAFE/', 'Identity/', '_to_delete/', 'dist/', 'browser-proving/', 'logs/'];
+/**
+ * Present on this disk, absent from a clone. Skipped by name and counted.
+ *
+ * ── `.claude/` MOVED HERE FROM `REPO_TREES` ON 5 Sep, AND THE REASON IS THE
+ *    CLASSIFICATION RATHER THAN A BUG ────────────────────────────────────────
+ *
+ * `.claude/agents/*.md` are not in the repository — ruled 5 Sep, not in v1 —
+ * so `.claude/` is by definition *present here, absent from a clone*, which is
+ * the sentence this list is for and the same standing `Identity/` and
+ * `midnight-src/` already have.
+ *
+ * **IT WAS NOT SILENT WHERE IT WAS, WHICH IS WORTH SAYING BECAUSE IT WAS
+ * REPORTED AS SILENT.** In `REPO_TREES` a citation into `.claude/` resolved to
+ * `check`, `checkText` then found no file, and the citation came back as a
+ * finding — loud, and loud in the wrong place: **a permanent refusal, in a
+ * clone, over a correct document, that no reader could act on.** The silence is
+ * one layer up, in the WALK, and it is fixed there in `citations-run.ts`.
+ *
+ * **AND THE MOVE COSTS NOTHING TODAY, MEASURED: ZERO citations anywhere in this
+ * folder name `.claude/` at all** — `docs/`, the root markdown and `.claude/`
+ * itself, searched for `.claude/<path>:<line>`. So this entry has never
+ * resolved a citation and never refused one; it changes what a FUTURE one is
+ * called, from a defect into a counted skip.
+ */
+const IGNORED_TREES = ['node_modules/', 'midnight-src/', 'SAFE/', 'Identity/', '_to_delete/', 'dist/', 'browser-proving/', 'logs/', '.claude/'];
 
 /** Extensions a bare root-level filename may carry. */
 const ROOT_EXT = /\.(command|md|txt|json|ts|mjs|js|sh|py)$/;
