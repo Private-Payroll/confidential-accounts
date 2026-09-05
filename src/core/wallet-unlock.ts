@@ -1,0 +1,92 @@
+import { REQUEST_SCHEMA } from 'midnight-identity/profile/request';
+
+/**
+ * **ASKING THE WALLET FOR THE KEY THAT OPENS A COMPANY — this side's half.**
+ * `docs/NEXT.md` PI2a §1, `docs/scope-payroll-identity.md` §9b, `C129`.
+ *
+ * ── WHAT THIS ROUND IS, IN ONE PARAGRAPH ──────────────────────────────────
+ *
+ * A password did two jobs here: it let a person in, and it made the key that
+ * opened their sealed bundle. `PI1` replaced the first with a wallet sign-in
+ * and could not replace the second, because **a signature is not a key** and
+ * nothing the wallet exported handed one out. That was reported rather than
+ * worked around, and it is `C129`. The wallet's `W2`/`W3` rounds built the
+ * missing half — a third kind of ask, `unlock`, which derives a key for one
+ * company and releases it after a press on the wallet's own screen. This file
+ * and `src/web/wallet-unlock.ts` are the other end of it.
+ *
+ * ── THE ASK CARRIES NO ORIGIN AND NO ATTRIBUTES, AND HAS NOWHERE TO PUT ONE ─
+ *
+ * The same shape as `signInAsk` and for the same reasons — the wallet refuses
+ * either by name rather than ignoring it:
+ *
+ *   · **no `origin`.** A requester that can name its own origin can name
+ *     somebody else's. The wallet takes it from `MessageEvent.origin`.
+ *   · **no `wants`.** An unlock is not a disclosure that also hands over a key;
+ *     the wallet refuses an unlock carrying attributes as
+ *     `attributes-on-an-unlock`, because a screen that says both things at once
+ *     is a screen nobody reads correctly.
+ *
+ * So the builder has a parameter for neither.
+ *
+ * ── AND `company` IS THE ONE FIELD THAT IS CLAIMED ────────────────────────
+ *
+ * It has to be: the wallet holds no companies, so the company can only arrive
+ * from whoever is asking. **That is exactly why this side must not let the
+ * ASKING PAGE choose it either.** The value handed to this builder comes from
+ * `companyForSession` — the session, the membership check, and the address the
+ * ledger assigned — and never from anything a caller sent us. That rule lives
+ * in `src/core/company-address.ts`; this builder is downstream of it and simply
+ * has no way to fabricate one.
+ */
+
+/** What the wallet is opened with. `midnight-identity/profile/request`. */
+export const UNLOCK_KIND = 'unlock' as const;
+
+/**
+ * THE WIRE SHAPE OF AN UNLOCK, BUILT HERE SO ONE PLACE OWNS IT.
+ *
+ * `company` travels WHOLE — all sixty-four characters. `W2` ground two origins
+ * onto one 31-bit index in 2.86 billion tries on a single core, and the rule it
+ * bought applies to every identifier that reaches a key: **a selector narrower
+ * than the thing it selects can be ground.** Nothing here shortens, folds or
+ * hashes the address.
+ */
+export interface UnlockAsk {
+  readonly schema: typeof REQUEST_SCHEMA;
+  readonly kind: typeof UNLOCK_KIND;
+  readonly requester: { readonly name: string; readonly rdns: string };
+  readonly purpose: string;
+  readonly nonce: string;
+  readonly expiresAt: number;
+  readonly company: string;
+}
+
+export const unlockAsk = (parts: {
+  name: string; rdns: string; purpose: string;
+  nonce: string; expiresAt: number; company: string;
+}): UnlockAsk => Object.freeze({
+  schema: REQUEST_SCHEMA,
+  kind: UNLOCK_KIND,
+  requester: Object.freeze({ name: parts.name, rdns: parts.rdns }),
+  purpose: parts.purpose,
+  nonce: parts.nonce,
+  expiresAt: parts.expiresAt,
+  company: parts.company,
+});
+
+/**
+ * **WHAT THE PERSON IS BEING ASKED FOR, IN THEIR WORDS AND NOT OURS.**
+ *
+ * The wallet renders this as text beside the origin it observed and the company
+ * it was asked about. It says what the key does and what it does not, because
+ * a key is a capability for the future and — unlike a disclosure — the person
+ * cannot see afterwards what was done with it.
+ */
+export const UNLOCK_PURPOSE =
+  'So this page can open your company\'s records on this device. The key is made by your '
+  + 'wallet for this one company, it is never sent to our servers, and it is forgotten '
+  + 'when you close the tab.';
+
+/** How long an unlock ask is good for. The wallet refuses an expired one. */
+export const UNLOCK_WINDOW_MS = 5 * 60_000;

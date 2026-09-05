@@ -1,0 +1,262 @@
+node_modules/
+dist/
+.data/
+*.log
+.env
+.env.local
+.DS_Store
+
+# Compact build output. Regenerate with `npm run compact`.
+contracts/managed/
+contracts/managed-vault/
+# The symlink `compile-vault.sh` makes so the vault's generated caller can find
+# the account's generated module at the path it imports. Build output pointing
+# at build output.
+contracts/Acct
+contracts/build/
+
+# Network state: wallet seeds and deployed contract addresses.
+# The seed file controls real test funds on preview. It is not secret in the
+# sense that money is at stake, but losing it means asking the faucet again,
+# and committing it means anyone who reads the repo can spend those funds.
+.midnight/
+
+# THE MONEY-LOSS REGISTER. Internal only, decided 16 Aug.
+#
+# It names, precisely, every way a customer could currently lose access to their
+# funds and which of them are still open. That is exactly the document to keep
+# honest and exactly the wrong one to publish while the gaps are open — a public
+# version gets written deliberately when this repo is pushed (S-13).
+#
+# NOT BEING IN GIT MEANS IT IS NOT BACKED UP BY GIT. Its backup is a copy kept
+# outside this repository; the file here is the source and that copy is
+# refreshed whenever it changes.
+docs/how-money-can-be-lost.md
+
+# Private working documents. Never published.
+# BACKLOG.md is the live gap list: it churns constantly and contains honest
+# admissions about what is unfinished, which belong to us and not to a repo
+# anyone else may read. Keep it on disk, keep it out of git.
+BACKLOG.md
+NOTES.md
+scratch/
+REPORT.txt
+REPORT-PROVING.txt
+REPORT-PREFLIGHT.txt
+REPORT-DEPLOY.txt
+
+# Everything the .command files leave behind. The list had drifted: reports,
+# stack samples and symbol maps were all landing in git's view (M-40).
+REPORT-*.txt
+logs/
+.wallet-state/
+
+# The private state store. Contract-address-keyed, rebuilt on demand, and it
+# holds signer secrets in an encrypted LevelDB. Never in git.
+midnight-level-db/
+
+# Scratch left behind where `rm` is unavailable, and pre-reset archives.
+# Both are cleared out by hand; neither belongs in history.
+_to_delete/
+.pre-reset-*/
+.fuse_hidden*
+
+# Probe output. These are throwaway compiler runs from experiments — the same
+# kind of build artifact as contracts/managed/, which is ignored two rules up,
+# and they carry proving and verifier keys measured in megabytes.
+#
+# THREE OF THESE DIRECTORIES WERE COMMITTED on 16 Aug before this rule existed,
+# so removing them from the tree does not remove them from the history. That is
+# recorded in S-13, which is the pre-push checklist.
+contracts/probe-out*/
+contracts/probe/
+contracts/probe4/
+contracts/probe5/
+
+# The commit message COMMIT.command reads. It is regenerated for every commit,
+# so tracking it would put the previous message inside the next commit — the
+# message about the message.
+COMMIT-MESSAGE.md
+
+# The file list COMMIT.command stages from. Same shape and the same reason: it
+# is the round's own account of what it wrote, rewritten whole for each commit,
+# so tracking it would put the last round's list inside this round's commit.
+COMMIT-FILES.txt
+
+# The record PUBLIC-REPO-APPLY.command writes when it has run. It describes one
+# machine at one moment, like a report.
+PUBLIC-REPO-APPLIED.txt
+
+# Identity is its own repository. Nothing under here belongs to this one.
+/Identity/
+
+# REMOVED 5 Sep 2026. `src/testing/no-attribution.test.ts` IS TRACKED.
+#
+# The rule that used to sit here excluded it, and the reason it gave had
+# stopped being true: it said the test "reads files from `Identity` as well as
+# from here", so a clone of this repository alone could not run it. The test no
+# longer walks `Identity/` — its own header records that change, and its only
+# directory reads are rooted at this repository. Measured, not assumed.
+#
+# IT IS THE ONLY MECHANICAL ENFORCEMENT OF THE RULE THAT NO FILE ATTRIBUTES
+# WORK TO ANYTHING BUT A PERSON. Excluding it left that rule enforced by
+# nothing, in the repository where it finally matters.
+#
+# WHAT IS STILL OPEN, AND IT IS TRACKED RATHER THAN LEFT AS A SURPRISE: the
+# test asserts it found more than thirty `.command` files at the root. Those
+# are on disk here, so it passes; a fresh clone has none, so it will fail there
+# until the check is repointed at the tracked tree. That is owed BEFORE CI, and
+# CI does not exist yet.
+
+# A working list, like the register and the backlog. Not for the public repo.
+docs/cleanup-before-github.md
+
+# The Foundation's source, cloned in so this folder is self-contained. Never pushed.
+midnight-src/
+
+# An exploration written FOR THE CONTROLLER, not for the repository. It scopes a
+# possible integration with an external product and reasons about liquidity and
+# custody arrangements that have not been decided. It is a report, not a plan, and
+# it is not part of the software.
+docs/scope-safe-plugin.md
+
+# SAFE's source, cloned for reading by CLONE-SAFE-SRC.command. Same reason as
+# midnight-src/: a scope that cites source beats one that cites memory.
+SAFE/
+REPORT-CLONE-SAFE.txt
+
+# Key snapshots taken by BACKUP-KEYS.command. Private keys and chain records,
+# on the same disk as the originals, deliberately reachable by sessions and
+# .command files. Never in git.
+.keys-backup/
+
+# ROUND BRIEFS AND CONTROLLER WORKING FILES. Added 29 Aug.
+#
+# A brief is an instruction to one session. It is a working document with the
+# same character as BACKLOG.md and the register, both ignored above, and it has
+# no reader once the round it describes is finished. Tracking them put working
+# notes and product decisions into commits that carried nothing else, which is
+# the kind of history this repository has already paid to clean up once.
+#
+# THE BRIEFS ALREADY TRACKED ARE NOT REMOVED BY THIS RULE. Ignoring a tracked
+# file does nothing; they stay in the index and in the history until something
+# removes them, and that is `docs/cleanup-before-github.md`'s job, not this
+# rule's. What this rule does is stop the next one entering history at all.
+docs/ROUND-*.md
+docs/HOLD-*.md
+
+# CLAUDE.md. The operating manual for the sessions that build this.
+#
+# It names nobody, but it describes how work is done here rather than what the
+# software is: rounds, briefs, the register, the backlog, and the scripts a
+# person double-clicks. That is internal process, and it is the same class of
+# detail that is already kept out of commit messages.
+#
+# It costs nothing to ignore. Sessions read it from the working tree, never from
+# a clone, so a repository without it builds and tests exactly the same.
+#
+# ALREADY TRACKED. Ignoring it stops further changes entering history; it does
+# not remove what is already there. That is `docs/cleanup-before-github.md`.
+CLAUDE.md
+
+# THE CONVERTER DESIGN DOCUMENTS. Added 29 Aug.
+#
+# These describe a contract that has not been written. They carry custody
+# reasoning, the question that belongs to a lawyer, the governance of a
+# committee that does not exist, and product decisions that are still being
+# taken. That is design material, not software, and this repository publishes.
+#
+# ALREADY TRACKED, AND NOT REMOVED BY THIS RULE: docs/scope-the-converter.md and
+# docs/converter-research.md. Ignoring a tracked file does nothing; removing
+# them is docs/cleanup-before-github.md's job.
+docs/converter.md
+docs/converter-immutable.md
+docs/converter-upgradable.md
+
+# WHERE WE DIFFER FROM THE FOUNDATION'S CODE. Added 29 Aug. P0 document.
+#
+# It lists, with file and line, every place this project contradicts the
+# Foundation's code or its comments, claims a gap or a bug in it, works around a
+# behaviour, or declines to use a module it provides.
+#
+# IGNORED BY DEFAULT AND THIS IS A DECISION THAT CAN BE OVERTURNED. Publishing a
+# list of suspected defects in somebody else's audited code, from our own
+# repository, is not the same act as reporting them to the people who wrote it.
+# The document exists so those reports can be made accurately; where they are
+# made is a separate choice.
+docs/foundation-divergences.md
+
+# The controller briefing pack for the contract-stack scope. A working input, not software.
+docs/contract-stack-briefing.md
+
+# The corrections ledger. Internal quality data; it names roles and rounds.
+docs/corrections.md
+
+# ---------------------------------------------------------------------------
+# THE CONTROLLER'S FILES. Added 31 Aug 2026.
+#
+# docs/BOARD.md is the master build list. It carries round names, defect ids,
+# the founder's own words and the order of unreleased work, and it has exactly
+# the character of BACKLOG.md and the register, both ignored above.
+#
+# THREE OF THE FILES NAMED HERE ARE ALREADY TRACKED, AND IGNORING A TRACKED
+# FILE DOES NOTHING: docs/BOARD.md, docs/build-log.md and
+# docs/handoff/05-why-the-rules.md. Removing them from the index is `git rm
+# --cached`, which no session may run — it is a person's step, or it is settled
+# by the push gate's item 4, the fresh `git init`. These lines are here so that
+# a fresh init honours them from its first commit.
+#
+# docs/HOLD-*.md and docs/ROUND-*.md are already covered above.
+# ---------------------------------------------------------------------------
+docs/BOARD.md
+docs/build-log.md
+docs/handoff/05-why-the-rules.md
+
+# THE BUILD ORDER LIST. Added 31 Aug 2026, extracted out of docs/BOARD.md.
+#
+# Same character as docs/BOARD.md, ignored above: round names, defect ids, the
+# founder's own words and the order of unreleased work. It is CONTROLLER-ONLY
+# under rule 32 and it is ignored so that it can be edited while a build session
+# is running in this tree without either one touching the other.
+docs/BUILD-ORDER.md
+
+# The design doc set PLAN, not the set itself. Controller-only, like docs/BUILD-ORDER.md:
+# it is edited while sessions run and no round writes it. The SET it plans (docs/design/*.md)
+# IS tracked and does go to GitHub - this planning file does not.
+docs/the-doc-set.md
+
+# ROUND HANDOFF DOCUMENTS. Added 5 Sep 2026.
+#
+# A handoff doc is what a round writes INSTEAD OF writing the shared files, when
+# it is running in parallel with another round in this same working tree. It
+# carries the round's findings in full - claim, file:line, measurement, proposed
+# grade, done-when, proposed board row - and the CONTROLLER transcribes them into
+# BACKLOG.md, the register, docs/BUILD-ORDER.md and the build log afterwards.
+#
+# WHY IGNORED, AND IT IS THE SAME REASON docs/BUILD-ORDER.md IS: COMMIT.command
+# runs `git add -A`, so anything tracked in this tree lands in whichever round
+# commits next, under a message describing the other round's work. Ignoring it is
+# what makes two rounds in one tree safe rather than merely lucky.
+#
+# WHAT IT COSTS: rule 16 - a row cited and not yet written. That is a real loss
+# and it has been paid here before (T-311). Until CHECK-BOARD.command carries the
+# check that refuses an untranscribed handoff, the only thing holding it is the
+# controller, and a handoff is transcribed BEFORE the next round is prompted.
+#
+# THE ROUND NEVER ASSIGNS T- OR C- IDS. It labels findings F1, F2, F3. Two rounds
+# writing rows at once would both start at the same next id, in a file with no git
+# history, and nothing would ever say so.
+docs/HANDOFF-*.md
+
+# THE AGENT DEFINITIONS. Added 5 Sep 2026.
+#
+# `.claude/agents/*.md` define the subagents rounds spawn — the
+# `money-safety-auditor`, the `platform-fact-checker`, the `test-auditor`. They
+# describe HOW work is checked here rather than WHAT the software does, which is
+# the same class as CLAUDE.md two rules up, and the same reason.
+#
+# FOUND 5 Sep WHILE ANSWERING WHETHER A FRESH REPOSITORY WOULD START CLEAN. Every
+# other working file was already ignored; this one was not, and `.claude/` is
+# listed in docs/cleanup-before-github.md §A as tracked in this repository.
+# Ignoring it now means a fresh init excludes it from the first commit.
+.claude/

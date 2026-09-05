@@ -1,0 +1,17 @@
+{
+  // Everything the .command files actually execute.
+  //
+  // tsconfig.json only includes "src", so scripts/ was never typechecked and a
+  // reference to an undefined name shipped and cost a full run. tsc follows
+  // imports, so listing the entry points here also checks src/midnight/* and
+  // contracts/src/* — everything the scripts reach — without dragging in the
+  // web and server code, which has its own config and its own dependencies.
+  "compilerOptions": {
+    "target": "ES2022", "module": "ESNext", "moduleResolution": "bundler",
+    "strict": false, "esModuleInterop": true, "skipLibCheck": true,
+    "resolveJsonModule": true, "types": ["node"],
+    "noEmit": true, "allowImportingTsExtensions": true,
+    "allowJs": true, "checkJs": false
+  },
+  "include": ["scripts/**/*.ts", "src/midnight/**/*.ts", "contracts/src/**/*.ts", "contracts/test/**/*.ts"]
+}

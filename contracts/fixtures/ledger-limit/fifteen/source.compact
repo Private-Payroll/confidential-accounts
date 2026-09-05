@@ -1,0 +1,18 @@
+pragma language_version 0.25;
+import CompactStandardLibrary;
+export ledger f0: Uint<64>;
+export ledger f1: Uint<64>;
+export ledger f2: Uint<64>;
+export ledger f3: Uint<64>;
+export ledger f4: Uint<64>;
+export ledger f5: Uint<64>;
+export ledger f6: Uint<64>;
+export ledger f7: Uint<64>;
+export ledger f8: Uint<64>;
+export ledger f9: Uint<64>;
+export ledger f10: Uint<64>;
+export ledger f11: Uint<64>;
+export ledger f12: Uint<64>;
+export ledger f13: Uint<64>;
+export ledger f14: Uint<64>;
+export circuit touch(n: Uint<64>): [] { f0 = disclose(n); }

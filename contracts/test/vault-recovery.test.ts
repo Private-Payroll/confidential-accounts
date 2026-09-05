@@ -1,0 +1,567 @@
+/**
+ * THE DEVICE DIED MID-CALL. CAN THE MONEY STILL MOVE? `C199`, `C200`, `B1`.
+ *
+ * The vault's pool lives on the owner's device; the chain holds only
+ * commitments, which disclose nothing. The pool is written AFTER the
+ * transaction — deliberately, because that is the recoverable ordering — so a
+ * crash in between leaves the chain holding notes the pool has never heard of.
+ * **`replayVault` is what makes that ordering safe**, which is `C199`, and
+ * `C200` was that `replayVault` modelled a vault that no longer exists: one
+ * coin chained forward, where the contract has held a POOL since `V-58`.
+ *
+ * **THESE TESTS THROW THE POOL AWAY AND THEN PAY FROM WHAT THEY REBUILD.** That
+ * is the only evidence that counts: a derivation checked against another
+ * derivation proves the two agree and nothing about whether the money moves.
+ * `V-47` was exactly that mistake — a plausible nonce derivation that compiled,
+ * read well, and was wrong. **A recovered note that cannot be spent is not
+ * recovered.**
+ *
+ * ------------------------------------------------------------------------
+ * THE TWO CRASH WINDOWS, AND WHY ONE MECHANISM ANSWERS BOTH
+ *
+ *   **W1 — inside the call.** Submitted, outcome unknown. The chain may or may
+ *   not hold the new notes; the pool still holds the old ones.
+ *   **W2 — after the call, before the pool write.** The chain definitely holds
+ *   the new notes; the pool definitely does not.
+ *
+ * A replay that simply applied the history would have to know which window it
+ * is in, and it cannot. So the replay proposes **every note the history has
+ * ever held** and the chain's own `notes` set decides which are live — which
+ * makes the two windows the same question, *did it land?*, and that is the only
+ * question a commitment set can answer. Both are driven below, per operation.
+ */
+import { describe, it, expect, beforeEach } from 'vitest';
+import {
+  createConstructorContext, createCircuitContext, sampleContractAddress,
+} from '@midnight-ntwrk/compact-runtime';
+import {
+  Contract as Vault, ledger as vaultLedger, pureCircuits as vaultCircuits,
+} from '../managed-vault/contract/index.js';
+import { pureCircuits } from '../managed/contract/index.js';
+import { AccountSimulator, privateStateFor, change, type Change } from './simulator.js';
+import { buildPayoutTree, type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
+import { changeCoinOf, paidCoinTo } from '../../src/midnight/vault-coins.js';
+import {
+  replayVault, commitmentForNote, paidCoinOf, type VaultEvent,
+} from '../../src/midnight/vault-recovery.js';
+import { noteToSpend, type Note } from '../../src/midnight/vault-notes.js';
+import { toHex, fromHex, type Hex } from '../../src/core/crypto.js';
+
+/*
+ * THE CLOCK AND THE RUN'S WINDOW. `V-67`. Payments assert they fall inside the
+ * window the signers approved, so the account simulator and the vault's circuit
+ * context have to agree about the time. Seconds since the Unix epoch.
+ */
+const VAULT_NOW = 1_800_000_000;
+const WIN_FROM = BigInt(VAULT_NOW - 3_600);
+const WIN_UNTIL = BigInt(VAULT_NOW + 3_600);
+const BLOCK = '0'.repeat(64);
+
+const bytes = (n: number) => new Uint8Array(32).fill(n);
+
+const A = privateStateFor(1);
+const B = privateStateFor(2);
+const GBP = bytes(0x9b);
+const ALICE = bytes(0x0a);
+const BOB = bytes(0x0b);
+const CAROL = bytes(0x0c);
+
+/**
+ * The device's pool, and the witness the contract calls over it.
+ *
+ * **Coin selection is the PRODUCTION rule**, imported rather than written here:
+ * `noteToSpend` picks the smallest note that covers the payment, ties broken by
+ * nonce. A test with its own selection would be a second implementation of the
+ * thing `B3` is about — two operators picking differently and both
+ * half-succeeding — and would also let these tests pass while the client's rule
+ * was wrong.
+ */
+interface VaultPrivate { notes: Note[] }
+
+const vaultWitnesses = {
+  noteToSpend: (
+    ctx: { privateState: VaultPrivate }, token: Uint8Array, amount: bigint,
+  ) => {
+    const n = noteToSpend(ctx.privateState.notes, toHex(token), amount);
+    return [ctx.privateState, {
+      nonce: fromHex(n.nonce), color: fromHex(n.token), value: n.value, mt_index: n.index,
+    }];
+  },
+};
+
+/**
+ * `mt_index` IS NOT WHAT RECOVERY GIVES BACK, and this constant is where that is
+ * said rather than buried.
+ *
+ * The commitment tree assigns an index and it is not a function of anything the
+ * owner holds, so `replayVault` reports it as absent and a caller re-reads it
+ * from the chain. **Losing it costs a rescan; losing a nonce costs the money.**
+ * These tests run against an in-process contract with no real tree, so a
+ * placeholder is correct here AND these tests are not evidence that an index is
+ * recoverable. Nothing claims they are.
+ */
+const NO_INDEX_YET = 0n;
+
+const carrying = (sim: AccountSimulator, d: ReturnType<typeof privateStateFor>, c: Change) =>
+  sim.applying(d, c);
+
+describe('a vault whose pool is gone, and the chain that still knows', () => {
+  let sim: AccountSimulator;
+  let vault: Vault<VaultPrivate>;
+  let vaultAddr: string;
+  let vaultState: any;
+  let priv: VaultPrivate;
+
+  /* TWO notes, of one token. A vault holding two notes of a token is the normal
+   * case, not a mess to tidy — `Vault.compact`'s own words, and the whole of
+   * what the function this replaces could not model. */
+  const FIRST = { nonce: toHex(bytes(0x77)), token: toHex(GBP), value: 1_000n };
+  const SECOND = { nonce: toHex(bytes(0x88)), token: toHex(GBP), value: 400n };
+
+  const provider = () => ({
+    getContractState: async (_b: string, address: unknown) =>
+      String(address) === String(sim.address) ? (sim.contractStateForCall as never) : undefined,
+  });
+
+  const ctx = (circuit: string) => createCircuitContext<VaultPrivate>(
+    circuit, vaultAddr as never, BLOCK, vaultState, priv,
+    provider() as never, undefined, undefined, VAULT_NOW, BLOCK);
+
+  /** The vault's note set exactly as the chain publishes it: commitments. */
+  const chainNotes = (): Hex[] =>
+    [...vaultLedger(vaultState as never).notes].map((c: Uint8Array) => toHex(c));
+
+  const held = (coin: { nonce: Hex; token: Hex; value: bigint }) =>
+    commitmentForNote(vaultCircuits, vaultAddr as Hex, coin);
+
+  const asNotes = (coins: readonly { nonce: Hex; token: Hex; value: bigint }[]): Note[] =>
+    coins.map((c) => ({ ...c, index: NO_INDEX_YET }));
+
+  const deposit = async (coin: { nonce: Hex; token: Hex; value: bigint }) => {
+    const r = await vault.impureCircuits.deposit(ctx('deposit'), {
+      nonce: fromHex(coin.nonce), color: fromHex(coin.token), value: coin.value,
+    });
+    vaultState = r.context.callContext.currentQueryContext.state;
+    return r;
+  };
+
+  beforeEach(async () => {
+    sim = await AccountSimulator.liveAccount([A, B], 2n);
+    sim.at(VAULT_NOW);
+
+    vault = new Vault<VaultPrivate>(vaultWitnesses as never);
+    vaultAddr = sampleContractAddress() as never as string;
+    const init = await vault.initialState(
+      createConstructorContext({} as VaultPrivate, BLOCK),
+      { bytes: Uint8Array.from(Buffer.from(String(sim.address), 'hex')) } as never);
+    vaultState = init.currentContractState;
+
+    priv = { notes: [] };
+    await deposit(FIRST);
+    priv = { notes: asNotes([FIRST]) };
+    await deposit(SECOND);
+    priv = { notes: asNotes([FIRST, SECOND]) };
+  });
+
+  const approvedRun = async (
+    payments: Array<{ to: Uint8Array; amount: bigint; nonce: number }>, c: Change,
+  ) => {
+    const leaves: PayoutLeafInput[] = payments.map((p, i) => ({
+      details: toHex(vaultCircuits.payoutDetails(p.to, GBP, p.amount, bytes(0x40 + i))),
+      nonce: toHex(bytes(p.nonce)),
+    }));
+    const tree = buildPayoutTree(leaves);
+    const payload = pureCircuits.runPayload(
+      fromHex(tree.root), tree.payees, WIN_FROM, WIN_UNTIL);
+    const vaultBytes = Uint8Array.from(Buffer.from(vaultAddr, 'hex'));
+    await sim.as(carrying(sim, A, c)).proposeRun({
+      root: fromHex(tree.root), payees: tree.payees,
+      from: WIN_FROM, until: WIN_UNTIL, vault: vaultBytes });
+    const id = sim.proposalId(payload, c.salt, vaultBytes);
+    await sim.as(carrying(sim, A, c)).approve(id);
+    await sim.as(carrying(sim, B, c)).approve(id);
+    return { tree, id };
+  };
+
+  /** One payee of an approved run. Returns the call, and does NOT touch the pool. */
+  const pay = async (
+    run: { tree: ReturnType<typeof buildPayoutTree>; id: Uint8Array }, c: Change,
+    i: number, to: Uint8Array, amount: bigint, nonce: number,
+  ) => {
+    const r = await vault.impureCircuits.payout(
+      ctx('payout'), run.id, fromHex(run.tree.root), run.tree.payees, WIN_FROM, WIN_UNTIL,
+      c.salt, to, GBP, amount, bytes(0x40 + i), bytes(nonce), run.tree.pathFor(i) as never);
+    vaultState = r.context.callContext.currentQueryContext.state;
+    return r;
+  };
+
+  const recover = (history: VaultEvent[], pool: readonly Note[]) => replayVault({
+    vault: vaultAddr as Hex,
+    chain: chainNotes(),
+    pool,
+    history,
+    circuits: vaultCircuits,
+  });
+
+  /** The history that produced the two notes every test starts from. */
+  const OPENING: VaultEvent[] = [
+    { kind: 'deposit', coin: FIRST },
+    { kind: 'deposit', coin: SECOND },
+  ];
+
+  /* ---------------------------------------------------------------- *
+   * deposit
+   * ---------------------------------------------------------------- */
+
+  it('W2, DEPOSIT: the chain took the note, the pool never learned — and it SPENDS', async () => {
+    /*
+     * The deposit landed and the process died before `pool.save`. The pool knows
+     * about the first note only. This is `C199`'s window at the deposit site,
+     * which is the cheapest of the three to recover because a deposit's coin is
+     * the depositor's own record — and public in their transaction besides.
+     */
+    const poolBeforeCrash = asNotes([FIRST]);
+
+    const r = recover(OPENING, poolBeforeCrash);
+    expect(r.held).toHaveLength(2);
+    expect(r.recovered).toHaveLength(1);
+    expect(r.recovered[0].nonce).toBe(SECOND.nonce);
+    expect(r.recovered[0].value).toBe(400n);
+    expect(r.stale).toHaveLength(0);
+    expect(r.unexplained).toHaveLength(0);
+
+    /* The index is NOT recovered, and the shape says so rather than a comment. */
+    expect(r.recovered[0].index).toBeUndefined();
+
+    /* And now the only proof that counts: pay somebody out of the note nobody
+     * had written down. 400 is the smaller note, so a payment of 300 selects it. */
+    priv = { notes: asNotes(r.held) };
+    const c = change(0n, 51);
+    const run = await approvedRun([{ to: ALICE, amount: 300n, nonce: 0xe1 }], c);
+    const paid = await pay(run, c, 0, ALICE, 300n, 0xe1);
+
+    expect(vaultLedger(vaultState as never).payments).toBe(1n);
+    const spentTheRecoveredOne = changeCoinOf(
+      paid.context.callContext.currentZswapLocalState, vaultAddr as Hex);
+    expect(spentTheRecoveredOne!.value).toBe(100n);
+  });
+
+  it('W1, DEPOSIT: the call never landed, so the chain refuses the note and nothing invents it',
+    async () => {
+      /*
+       * The other window: submitted, outcome unknown, and in fact it did not
+       * land. The history records the deposit because the owner made it; the
+       * chain does not hold it. **The replay must not hand back a note the
+       * vault cannot spend** — that is the pool claiming more than the chain
+       * will honour, which is every later payment refused.
+       */
+      const NEVER_LANDED = { nonce: toHex(bytes(0x99)), token: toHex(GBP), value: 5_000n };
+      const r = recover([...OPENING, { kind: 'deposit', coin: NEVER_LANDED }],
+        asNotes([FIRST, SECOND]));
+
+      expect(r.held.map((n) => n.nonce).sort())
+        .toEqual([FIRST.nonce, SECOND.nonce].sort());
+      expect(r.held.some((n) => n.nonce === NEVER_LANDED.nonce)).toBe(false);
+      expect(r.recovered).toHaveLength(0);
+      expect(r.unexplained).toHaveLength(0);
+    });
+
+  /* ---------------------------------------------------------------- *
+   * payout
+   * ---------------------------------------------------------------- */
+
+  it('W2, PAYOUT: the change is on chain, the pool still holds the spent note — and it SPENDS',
+    async () => {
+      /*
+       * **THE WORST OF THE WINDOWS AND THE ONE `C199` NAMES.** The payment
+       * landed: the chain has nullified the note that was spent and holds the
+       * change instead. The pool believes it can still spend something the
+       * contract has already removed.
+       *
+       * Two things must come out of the recovery and both matter: the change
+       * note, which nobody wrote down, and the fact that the spent note is
+       * STALE — carrying it forward is a payment refused at the contract's
+       * membership check.
+       */
+      const c = change(0n, 52);
+      const run = await approvedRun([{ to: ALICE, amount: 250n, nonce: 0xd1 }], c);
+      await pay(run, c, 0, ALICE, 250n, 0xd1);          // spends SECOND (400), change 150
+
+      const poolBeforeCrash = asNotes([FIRST, SECOND]);   // never advanced
+      const history: VaultEvent[] = [
+        ...OPENING, { kind: 'payout', spent: SECOND.nonce, amount: 250n }];
+
+      const r = recover(history, poolBeforeCrash);
+      expect(r.stale.map((n) => n.nonce)).toEqual([SECOND.nonce]);
+      expect(r.recovered).toHaveLength(1);
+      expect(r.recovered[0].value).toBe(150n);
+      expect(r.recovered[0].nonce).not.toBe(SECOND.nonce);
+      expect(r.held.map((n) => n.value).sort((x, y) => Number(x - y))).toEqual([150n, 1_000n]);
+      expect(r.unexplained).toHaveLength(0);
+
+      /*
+       * **AND THE CHANGE NOTE IS SPENT.** If `changeNonceOf` were the almost-right
+       * derivation `V-47` is about, the note would not be in the pool the
+       * contract checks and this fails at "that note is not in this vault's
+       * pool". Nothing else in this file would notice.
+       */
+      priv = { notes: asNotes(r.held) };
+      const c2 = change(0n, 53);
+      const run2 = await approvedRun([{ to: BOB, amount: 120n, nonce: 0xd2 }], c2);
+      await pay(run2, c2, 0, BOB, 120n, 0xd2);           // 150 is the smallest that covers it
+
+      expect(vaultLedger(vaultState as never).payments).toBe(2n);
+      const after = chainNotes();
+      expect(after).toContain(held({ ...FIRST }));
+      expect(after).toHaveLength(2);
+    });
+
+  it('W1, PAYOUT: recorded but never landed, so the note the pool spent is still the vault\'s',
+    async () => {
+      /*
+       * The mirror image, and the reason the replay proposes every note that has
+       * EVER existed rather than the ones it believes are live. The owner's
+       * history says a payment was made; the chain says the note was never
+       * spent. **The note the replay had already retired comes back**, because
+       * the chain is what decides.
+       */
+      const history: VaultEvent[] = [
+        ...OPENING, { kind: 'payout', spent: SECOND.nonce, amount: 250n }];
+
+      const r = recover(history, asNotes([FIRST]));
+      expect(r.held.map((n) => n.nonce).sort()).toEqual([FIRST.nonce, SECOND.nonce].sort());
+      expect(r.recovered.map((n) => n.nonce)).toEqual([SECOND.nonce]);
+      expect(r.unexplained).toHaveLength(0);
+
+      /* And the note that was never really spent still spends. */
+      priv = { notes: asNotes(r.held) };
+      const c = change(0n, 54);
+      const run = await approvedRun([{ to: CAROL, amount: 400n, nonce: 0xd3 }], c);
+      await pay(run, c, 0, CAROL, 400n, 0xd3);           // SECOND, exactly
+      expect(vaultLedger(vaultState as never).payments).toBe(1n);
+    });
+
+  it('a note spent EXACTLY leaves no change, and the replay does not invent one', async () => {
+    /*
+     * `payout` inserts the change only `if (result.change.is_some)`. A pool
+     * entry for a zero note would be a note the chain does not have, which is
+     * the divergence that makes a pool unspendable.
+     */
+    const c = change(0n, 55);
+    const run = await approvedRun([{ to: ALICE, amount: 400n, nonce: 0xd4 }], c);
+    await pay(run, c, 0, ALICE, 400n, 0xd4);
+
+    const r = recover(
+      [...OPENING, { kind: 'payout', spent: SECOND.nonce, amount: 400n }],
+      asNotes([FIRST, SECOND]));
+
+    expect(r.held.map((n) => n.nonce)).toEqual([FIRST.nonce]);
+    expect(r.recovered).toHaveLength(0);
+    expect(r.stale.map((n) => n.nonce)).toEqual([SECOND.nonce]);
+    expect(r.unexplained).toHaveLength(0);
+    expect(chainNotes()).toHaveLength(1);
+  });
+
+  /* ---------------------------------------------------------------- *
+   * presplit
+   * ---------------------------------------------------------------- */
+
+  it('W2, PRESPLIT: BOTH halves are recovered, and one of them SPENDS', async () => {
+    /*
+     * `splitNote` removes one note and inserts two, so a crash after it leaves
+     * the pool short by two notes and holding a third the chain has dropped.
+     *
+     * **THIS IS THE NEWLY DERIVED VALUE OF THIS ROUND AND IT IS SPENT RATHER
+     * THAN COMPARED.** The piece a split sends to itself takes the SENT
+     * derivation and the remainder takes the CHANGE one — two hashes whose
+     * domains differ by the four characters `/2`, which is precisely the shape
+     * `V-47` cost two days over. Comparing them against each other would prove
+     * nothing; the assertion that matters is the payment at the end.
+     */
+    const r0 = await vault.impureCircuits.splitNote(ctx('splitNote'), GBP, 300n);
+    vaultState = r0.context.callContext.currentQueryContext.state;   // splits SECOND (400)
+
+    const r = recover(
+      [...OPENING, { kind: 'split', spent: SECOND.nonce, amount: 300n }],
+      asNotes([FIRST, SECOND]));
+
+    expect(r.stale.map((n) => n.nonce)).toEqual([SECOND.nonce]);
+    expect(r.recovered.map((n) => n.value).sort((x, y) => Number(x - y))).toEqual([100n, 300n]);
+    expect(r.held).toHaveLength(3);
+    expect(r.unexplained).toHaveLength(0);
+
+    priv = { notes: asNotes(r.held) };
+    const c = change(0n, 56);
+    const run = await approvedRun([{ to: ALICE, amount: 80n, nonce: 0xc1 }], c);
+    await pay(run, c, 0, ALICE, 80n, 0xc1);          // 100 is the smallest that covers it
+    expect(vaultLedger(vaultState as never).payments).toBe(1n);
+
+    /* And the larger half spends too, so neither derivation is right by luck. */
+    const r2 = recover(
+      [...OPENING,
+        { kind: 'split', spent: SECOND.nonce, amount: 300n },
+        { kind: 'payout', spent: r.recovered.find((n) => n.value === 100n)!.nonce, amount: 80n }],
+      []);
+    priv = { notes: asNotes(r2.held) };
+    const c2 = change(0n, 57);
+    const run2 = await approvedRun([{ to: BOB, amount: 250n, nonce: 0xc2 }], c2);
+    await pay(run2, c2, 0, BOB, 250n, 0xc2);         // 300 is the smallest that covers it
+    expect(vaultLedger(vaultState as never).payments).toBe(2n);
+  });
+
+  /* ---------------------------------------------------------------- *
+   * what the pool buys, and what is not recoverable at all
+   * ---------------------------------------------------------------- */
+
+  it('payments against DIFFERENT notes need no order between them', async () => {
+    /*
+     * The property the old shape could not have. It required every payment in
+     * order because each coin followed from the one before; a pool has no such
+     * order, which is exactly why one stuck payment does not stall the eleven
+     * behind it. Here the history is given with the two payments swapped and the
+     * answer is identical.
+     */
+    const c = change(0n, 58);
+    const run = await approvedRun([
+      { to: ALICE, amount: 300n, nonce: 0xb1 },
+      { to: BOB, amount: 100n, nonce: 0xb2 },
+    ], c);
+    await pay(run, c, 0, ALICE, 300n, 0xb1);        // SECOND (400) → change 100
+    priv = { notes: asNotes([FIRST]) };             // force the other note
+    await pay(run, c, 1, BOB, 100n, 0xb2);          // FIRST (1000) → change 900
+
+    const inOrder: VaultEvent[] = [...OPENING,
+      { kind: 'payout', spent: SECOND.nonce, amount: 300n },
+      { kind: 'payout', spent: FIRST.nonce, amount: 100n }];
+    const swapped: VaultEvent[] = [...OPENING,
+      { kind: 'payout', spent: FIRST.nonce, amount: 100n },
+      { kind: 'payout', spent: SECOND.nonce, amount: 300n }];
+
+    const a = recover(inOrder, []);
+    const b = recover(swapped, []);
+    expect(a.held.map((n) => n.value).sort((x, y) => Number(x - y))).toEqual([100n, 900n]);
+    expect(b.held.map((n) => n.nonce).sort()).toEqual(a.held.map((n) => n.nonce).sort());
+    expect(a.unexplained).toHaveLength(0);
+    expect(b.unexplained).toHaveLength(0);
+  });
+
+  it('A NOTE NOTHING EXPLAINS IS REPORTED AS SUCH, NEVER GUESSED AT', async () => {
+    /*
+     * **The one case this round does not recover, and it is a finding rather
+     * than a gap in the code.** `deposit` takes a coin from anybody — that is
+     * the point, nobody needs permission to be paid — so an outsider can put a
+     * note into this vault that the company has no record of. A commitment
+     * discloses nothing, so there is no path from those 32 bytes to a spendable
+     * note. The money is visibly on chain and only the depositor can say what it
+     * is.
+     *
+     * The right behaviour is to say so, loudly, and never to offer a plausible
+     * note in its place: a wrong note is refused at payment time and looks like
+     * a broken vault rather than a missing record.
+     */
+    const OUTSIDER = { nonce: toHex(bytes(0x5e)), token: toHex(GBP), value: 700n };
+    await deposit(OUTSIDER);
+
+    const r = recover(OPENING, asNotes([FIRST, SECOND]));
+    expect(r.held).toHaveLength(2);
+    expect(r.recovered).toHaveLength(0);
+    expect(r.unexplained).toEqual([held(OUTSIDER)]);
+
+    /* And it is genuinely the outsider's note, not a mis-derivation of ours. */
+    expect(chainNotes()).toContain(held(OUTSIDER));
+  });
+
+  it('A PAYEE WHO LOST THEIR PAYSLIP CAN BE SERVED AGAIN, from the payer\'s history alone',
+    async () => {
+      /*
+       * `B4`, and the backstop `C7` still leans on: a payment built with the
+       * wrong encryption key settles perfectly into a coin the payee's wallet
+       * never shows them. The payee's coin is derived from the note it was paid
+       * out of, so it falls out of the same replay — **and with a pool, "the
+       * note it was paid out of" is a thing the history has to name**, which is
+       * why every spending event carries `spent`.
+       */
+      const c = change(0n, 59);
+      const run = await approvedRun([
+        { to: ALICE, amount: 100n, nonce: 0xa1 },
+        { to: BOB, amount: 200n, nonce: 0xa2 },
+      ], c);
+      const first = await pay(run, c, 0, ALICE, 100n, 0xa1);   // SECOND (400)
+      priv = { notes: asNotes([FIRST]) };
+      const second = await pay(run, c, 1, BOB, 200n, 0xa2);    // FIRST (1000)
+
+      const alices = paidCoinTo(first.context.callContext.currentZswapLocalState, toHex(ALICE));
+      const bobs = paidCoinTo(second.context.callContext.currentZswapLocalState, toHex(BOB));
+
+      const { paid } = recover([...OPENING,
+        { kind: 'payout', spent: SECOND.nonce, amount: 100n },
+        { kind: 'payout', spent: FIRST.nonce, amount: 200n }], []);
+
+      expect(paid[0]).toEqual(alices);
+      expect(paid[1]).toEqual(bobs);
+    });
+
+  it('the coin that LEAVES and the coin that STAYS are different derivations', () => {
+    /*
+     * Three derivations exist and no two are the same; two share a domain and
+     * differ only by an argument. This pins that neither is quietly standing in
+     * for the other — the failure `V-47` was.
+     */
+    const r = replayVault({
+      vault: vaultAddr as Hex,
+      chain: [],
+      pool: [],
+      history: [{ kind: 'deposit', coin: FIRST },
+        { kind: 'payout', spent: FIRST.nonce, amount: 1n }],
+      circuits: vaultCircuits,
+    });
+    const leaving = paidCoinOf(FIRST.nonce, toHex(GBP), 1n).nonce;
+    expect(r.paid[0].nonce).toBe(leaving);
+    expect(leaving).not.toBe(FIRST.nonce);
+    /* The staying coin is not on chain here, so it is not in `held` — which is
+     * itself the rule: nothing is returned that the chain has not confirmed. */
+    expect(r.held).toHaveLength(0);
+  });
+
+  it('refuses a history that cannot be true rather than deriving from it', () => {
+    const run = (history: VaultEvent[]) => () => replayVault({
+      vault: vaultAddr as Hex, chain: chainNotes(), pool: [], history, circuits: vaultCircuits,
+    });
+
+    /* A note the vault has never held. With one chained coin this could not be
+     * expressed; with a pool it is the commonest way a history goes wrong. */
+    expect(run([...OPENING, { kind: 'payout', spent: toHex(bytes(0x01)), amount: 1n }]))
+      .toThrow(/never held/i);
+    /* The same note spent twice — the second spend has nothing to spend. */
+    expect(run([...OPENING,
+      { kind: 'payout', spent: FIRST.nonce, amount: 10n },
+      { kind: 'payout', spent: FIRST.nonce, amount: 10n }])).toThrow(/never held|already spent/i);
+    expect(run([...OPENING, { kind: 'payout', spent: FIRST.nonce, amount: 5_000n }]))
+      .toThrow(/which holds 1000/i);
+    expect(run([...OPENING, { kind: 'payout', spent: FIRST.nonce, amount: 0n }]))
+      .toThrow(/not a pays/i);
+    /* A split has to leave something behind — the contract refuses it, so a
+     * history claiming one happened is a history that is wrong. */
+    expect(run([...OPENING, { kind: 'split', spent: FIRST.nonce, amount: 1_000n }]))
+      .toThrow(/leave something behind/i);
+    /* Two notes cannot share a nonce. */
+    expect(run([...OPENING, { kind: 'deposit', coin: FIRST }])).toThrow(/already holds/i);
+  });
+
+  it('the rebuilt pool is what the CHAIN holds, not what the history says', async () => {
+    /*
+     * The whole contract of this file in one assertion. Every note returned has
+     * been checked for membership in the set the chain published, so a caller
+     * has nothing left to verify — which is the difference from the function
+     * this replaces, whose result was a candidate and whose callers had to know
+     * that.
+     */
+    const r = recover(OPENING, []);
+    const onChain = new Set(chainNotes());
+    expect(r.held).toHaveLength(2);
+    for (const n of r.held) {
+      expect(onChain.has(n.commitment)).toBe(true);
+      expect(n.commitment).toBe(held(n));
+    }
+  });
+});
