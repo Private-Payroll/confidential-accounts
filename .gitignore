@@ -308,5 +308,11 @@ scripts/check-commit-message.sh
 scripts/ship-lock.sh
 scripts/check-branch-name.sh
 scripts/check-commit-subject.sh
+
+# The last two were tracked before they were listed here, and ignoring a file
+# that is already tracked does nothing at all — it stays in the repository and
+# it stays published. They are removed from the index in the same commit that
+# carries this line, and they remain on disk, unchanged, where they are used.
+# The same is true of the local test listed above them.
 scripts/check-shipping-language.sh
 scripts/check-shipping-language.baseline
