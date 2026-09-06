@@ -316,3 +316,11 @@ scripts/check-commit-subject.sh
 # The same is true of the local test listed above them.
 scripts/check-shipping-language.sh
 scripts/check-shipping-language.baseline
+
+# The standing test for that program, and the guard that goes with the pass it
+# gates. The test drives the program above, which is not published; the guard
+# is the instrument a bulk edit of the published prose is checked with, and an
+# instrument for preparing what ships is not itself part of what ships.
+scripts/check-shipping-language.test.ts
+scripts/prose-edit-guard.mjs
+scripts/prose-edit-guard.test.ts
