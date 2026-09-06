@@ -49,6 +49,11 @@
  * `COMMIT-MESSAGE.md` never appears here**, which is what makes refusing —
  * rather than warning — affordable. That decision is not reopened here; it is
  * transcribed, so that changing it means changing one list in one file.
+ *
+ * **WITH ONE SUBTRACTION, AND IT IS NAMED AT `SKIP_FILES` BELOW WITH THE WHOLE
+ * ARGUMENT FOR IT.** A commit that improves the shipping language rewrites the
+ * ratchet's floor between the suite and this comparison, so the file the commit
+ * produced made the commit refuse. It is out of scope; nothing else is.
  */
 import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync, writeFileSync, existsSync, statSync, mkdirSync } from 'node:fs';
@@ -73,6 +78,34 @@ const FILES = ['package.json', 'tsconfig.json', 'tsconfig.scripts.json', 'vitest
  */
 const SKIP_DIRS = new Set(['node_modules']);
 
+/**
+ * FILES INSIDE THE SCOPE THAT A COMMIT REWRITES WHILE IT IS RUNNING.
+ *
+ * There is one, and it is the floor held by the check that decides what a
+ * published file may say. That check runs on the way into a commit, ahead of
+ * this comparison, and it writes its own floor down whenever a count falls. So
+ * on every commit where the language actually improved, a file inside this
+ * scope changed AFTER the suite ran and BEFORE this comparison — and the
+ * comparison refused, correctly by its own rule and uselessly by any other
+ * measure. **THE ONLY WAY THROUGH WAS TO RUN THE WHOLE SUITE A SECOND TIME**,
+ * whose entire effect was to record a number the commit had itself just
+ * produced. Twice the wall-clock, every time the work went well.
+ *
+ * WHY EXCLUDING IT IS SAFE RATHER THAN CONVENIENT, STATED SO IT CAN BE
+ * ARGUED WITH: this manifest answers ONE question — does the test report
+ * describe this code? Nothing in the suite reads this file. It is not an input
+ * to any test, it is not compiled, and no assertion anywhere depends on its
+ * contents; it is a record the commit writes about the commit. A file the suite
+ * never reads cannot make a report describe different code.
+ *
+ * AND WHY IT IS A NAMED LIST RATHER THAN A RULE. Everything else in this file
+ * is an explicit list for the reason the header gives — this does not parse
+ * `.gitignore`, and a rule like *skip what a door writes* is a rule nothing can
+ * check. One name, and the day a second door starts writing inside `src/`,
+ * `contracts/src/` or `scripts/` somebody has to add it here on purpose.
+ */
+const SKIP_FILES = new Set(['scripts/check-shipping-language.baseline']);
+
 const walk = (rel, out) => {
   const abs = join(ROOT, rel);
   if (!existsSync(abs)) return out;
@@ -94,7 +127,7 @@ export const filesInScope = () => {
   for (const name of readdirSync(ROOT).sort()) {
     if (name.endsWith('.command') && statSync(join(ROOT, name)).isFile()) found.push(name);
   }
-  return found.map((p) => p.split(sep).join('/')).sort();
+  return found.map((p) => p.split(sep).join('/')).sort().filter((p) => !SKIP_FILES.has(p));
 };
 
 /** `{ path: sha256 }`. Content only — no mtime, no size, no mode. */
