@@ -55,7 +55,7 @@ if [ "${1:-}" = "--full" ]; then
   # ${arr[@]+"${arr[@]}"} rather than "${arr[@]}": an EMPTY array expanded
   # under `set -u` is an unbound-variable error on the bash macOS ships, and
   # this line had never run — `--full` was invoked by nothing until 28 Aug
-  # (C204, C226) and it failed in under a second the first time it was.
+  # and it failed in under a second the first time it was.
   # The idiom expands to nothing when the array is empty and to the flag when
   # it is not, on every bash version.
   "$COMPACTC" ${ZKIR_FLAG[@]+"${ZKIR_FLAG[@]}"} "$SRC" "$OUT"

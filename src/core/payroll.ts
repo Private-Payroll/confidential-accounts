@@ -8,14 +8,14 @@ import { inviteKeyOf } from './store.js';
 import { companyAddressForOffer } from './company-address.js';
 import { newWords } from 'midnight-identity';
 /* `PI4c` — the code the payee's wallet produced, checked where the roster is
- * written. `C21`. Same function the admin's browser runs, one module, so the two
+ * written. Same function the admin's browser runs, one module, so the two
  * sides of the comparison cannot drift apart. */
 import { addressFingerprint, FingerprintError } from 'midnight-identity/profile/fingerprint';
 import { payslipKeypairForWallet } from './payslip-key.js';
 
 /**
  * **THE ORIGIN THE SEED'S STAND-IN WALLET IS ASKED AT, AND IT IS NOT AN
- * INGREDIENT.** `PI2b`.
+ * INGREDIENT.**
  *
  * `unlock.ts` gates on the origin and derives from the company alone
  * (`W3`), so this value cannot change a single byte of any key. It exists
@@ -150,7 +150,7 @@ export interface InviteDelivery {
   readonly delivers: boolean;
   /**
    * Drop whatever is still held for this person. Called when their handover is
-   * admitted, which is the moment the token stops being useful. `C30`.
+   * admitted, which is the moment the token stops being useful.
    *
    * Optional because a real mailer has nothing to forget — it hands the message
    * to a mail server and keeps none of it. The recorder does, and what it keeps
@@ -199,7 +199,7 @@ export class RecordingInviteDelivery implements InviteDelivery {
   }
 }
 
-/** The numbers on a run. Everything else about it is operational. S-9. */
+/** The numbers on a run. Everything else about it is operational. */
 type RunSecrets = Pick<PayrollRun, 'employees' | 'totals' | 'proposalIds'>;
 import type { AccountService } from './account.js';
 import type { ProofSystem, RunProposal } from './ledger.js';
@@ -216,7 +216,7 @@ export interface EmployeeSpec {
 export interface HireSpec {
   name: string;
   /**
-   * **NULL FOR A PERSON WITH NO EMAIL, AND NEVER AN EMPTY STRING.** `X8`.
+   * **NULL FOR A PERSON WITH NO EMAIL, AND NEVER AN EMPTY STRING.**
    *
    * `RosterEmployee.email` carries the whole argument. What matters at this
    * type is that the two doors below treat it differently and say so: `invite`
@@ -238,7 +238,7 @@ export interface EmployeeSecret {
   employeeId: string;
   name: string;
   /**
-   * **STILL HERE, AND NO LONGER A RANDOM NUMBER.** `PI2b`, `C135`.
+   * **STILL HERE, AND NO LONGER A RANDOM NUMBER.**
    *
    * Every caller that opens a payslip still takes this, so nothing about the
    * sealing guarantee or the tests that hold it moves. What changed is where it
@@ -326,14 +326,14 @@ export class PayrollService {
   ): {
     employee: RosterEmployee; sentTo: string; delivered: boolean;
     /**
-     * **THE LINK, ONCE.** `X11` §1. See the note where it is returned: this is
+     * **THE LINK, ONCE.** See the note where it is returned: this is
      * the only moment the raw token is ever visible, and every listing route
      * strips it from here on.
      */
     raw: string;
   } {
     /*
-     * **AN INVITATION IS ADDRESSED TO SOMEBODY.** `X8`.
+     * **AN INVITATION IS ADDRESSED TO SOMEBODY.**
      *
      * `HireSpec.email` became nullable so that `addSelfAsPayee` can write a
      * record about a person who has no email. **This door is the other case and
@@ -426,7 +426,7 @@ export class PayrollService {
       throw new Error('baseAmount must be a bigint in the asset\'s smallest unit');
     }
     if (spec.baseAmount <= 0n) throw new Error('salary must be positive');
-    /* Before a record is sealed with it, not after. `C25`. */
+    /* Before a record is sealed with it, not after. */
     this.requireKeyFor(accountId, viewingKey);
     const employee: RosterEmployee = {
       id: 'emp_' + nanoid(10),
@@ -449,7 +449,7 @@ export class PayrollService {
     this.putPerson(employee, viewingKey);
 
     /*
-     * The invite carries NO name, email or salary. S-9.
+     * The invite carries NO name, email or salary.
      *
      * It used to carry all four, duplicating what the employee record already
      * holds — so sealing the roster while leaving this alone would have moved
@@ -528,7 +528,7 @@ export class PayrollService {
      * makes "the payee's key comes from the payee" true rather than claimed.
      */
     /*
-     * **NOTHING IS DELIVERED TO NOBODY.** `X8`.
+     * **NOTHING IS DELIVERED TO NOBODY.**
      *
      * A null email reaches here from `addSelfAsPayee` alone, where the token is
      * redeemed inside the same call and never leaves the method. Calling the
@@ -578,7 +578,7 @@ export class PayrollService {
     /**
      * `Payee` since `S12`. A member adding their own address, or a company
      * recording its own, hands over whatever their wallet produced, and the
-     * string says which kind it is. `C250`.
+     * string says which kind it is.
      */
     handover: { wrappingPublicKey: Hex; address: Payee },
   ): RosterEmployee {
@@ -590,7 +590,7 @@ export class PayrollService {
     }
 
     /*
-     * "SELF" IS ENFORCED HERE, NOT ASSERTED IN THE METHOD NAME. `C24`.
+     * "SELF" IS ENFORCED HERE, NOT ASSERTED IN THE METHOD NAME.
      *
      * The first version took the payee's name, email, salary AND address as
      * request-body fields and checked exactly one thing: that the caller was on
@@ -617,7 +617,7 @@ export class PayrollService {
     if (!me) throw new Error('that sign-in no longer exists');
     /*
      * **A WALLET SIGN-IN CAN BE MADE PAYABLE, AND THIS IS WHERE IT CHANGED.**
-     * `X8` §3, `C153`. It used to refuse here, and the refusal was right at the
+     * It used to refuse here, and the refusal was right at the
      * time: this route's whole defence is that the record is unavoidably about
      * the CALLER, and until `X8` the only thing making it so was an email read
      * off their sign-in. A wallet sign-in has none — **and since `PI4b` there
@@ -657,12 +657,12 @@ export class PayrollService {
      * The one-entry-per-person cap USED TO BE HERE and is now in `admit`, where
      * both doors pass through it. It was on this door only, and `admit` — the
      * step that actually makes somebody payable — never consulted it, so the
-     * ordinary invite path reached the same outcome with the cap skipped. `C26`.
+     * ordinary invite path reached the same outcome with the cap skipped.
      */
     const { employee, raw } = this.raise(
       /* The email is the caller's own, whatever the body said — and `null`
        * when they signed in with their wallet, which is a fact about them and
-       * not a blank standing in for one (`X8`). */
+       * not a blank standing in for one. */
       accountId, { ...spec, email: me.email }, viewingKey, userId);
     /*
      * The token never leaves this method. It exists because the roster entry and
@@ -690,7 +690,7 @@ export class PayrollService {
           wrappingPublicKey: handover.wrappingPublicKey,
           address: handover.address.bech32,
           /*
-           * **NO CODE, BECAUSE THERE IS NOBODY TO COMPARE ONE WITH.** `X12` §2.
+           * **NO CODE, BECAUSE THERE IS NOBODY TO COMPARE ONE WITH.**
            * The comparison exists so an admin can check that the address which
            * arrived is the one the payee's wallet showed. Here the caller IS
            * the payee, in one call, with no page in between and no second
@@ -728,7 +728,7 @@ export class PayrollService {
    * **The address is produced here or not at all**, on the invite path — and
    * `addSelfAsPayee` is the one other place a payee address enters, where the
    * caller and the payee are the same person by construction rather than by
-   * assertion (`C24`). Nowhere can an operator supply an address for SOMEBODY
+   * assertion. Nowhere can an operator supply an address for SOMEBODY
    * ELSE, which is what `V-78` option 3 asks for.
    *
    * They stay `pending` until an admin admits them. That step is not ceremony —
@@ -808,7 +808,7 @@ export class PayrollService {
    * still set the address a salary is paid to. This is addressed by the PERSON
    * rather than by the token, because the admin does not hold the token —
    * `invite()` hands it back once, to the browser that raised it, and no route
-   * gives it out again (`X11` §1).
+   * gives it out again.
    *
    * **IT DOES ONE THING.** The roster entry is not touched: withdrawing the
    * PERSON is `setStatus`, it is a separate control on the same row, and the
@@ -862,7 +862,7 @@ export class PayrollService {
     if (!employee) throw new Error('employee not found');
 
     /*
-     * **NOTHING IS REFUSED HERE FOR A REUSED SUBWALLET.** `C155`, `C131`.
+     * **NOTHING IS REFUSED HERE FOR A REUSED SUBWALLET.**
      *
      * This read `if (byUserId) refuseReusedSubwallet(this.store, byUserId,
      * employee.accountId)`. It was the moment a person's wallet became the
@@ -882,7 +882,7 @@ export class PayrollService {
        * half of it applied by somebody holding no key and half of it waiting.
        */
       /*
-       * **TWO ENVELOPES, ONE KEY, AND THE OUTER ONE IS OURS.** `X11` §7.
+       * **TWO ENVELOPES, ONE KEY, AND THE OUTER ONE IS OURS.**
        *
        * The inner envelope is the invitee's and we cannot open it. `byUserId`
        * cannot go inside it — the invitee's browser would then be writing the
@@ -1091,7 +1091,7 @@ export class PayrollService {
       }
       /*
        * AN INVITE RAISED BEFORE THE PRODUCT RECORDED WHO RAISED IT, NAMED AS
-       * ITS OWN STATE. `C28`.
+       * ITS OWN STATE.
        *
        * This used to share a message with "we do not know who redeemed it",
        * which is a different situation with a different remedy — and the
@@ -1141,7 +1141,7 @@ export class PayrollService {
 
       /*
        * **THE POSITIVE, AND `PI4c` DELETED THE ONE THAT USED TO BE HERE.**
-       * `docs/how-money-can-be-lost.md` `C21`, `X12` §2.
+       * `docs/how-money-can-be-lost.md` `C21`.
        *
        * Everything above proves a NEGATIVE, or proves who was involved: an
        * invitation exists, it was not taken back, we know who raised it and who
@@ -1157,7 +1157,7 @@ export class PayrollService {
        * that string, and the check compared against that same string — so an
        * operator hiring somebody controlled BOTH SIDES of the only positive
        * evidence in the flow. Name a mailbox you own, sign in there, redeem,
-       * admit: every refusal passed. Reproduced end to end by audit. `C21`.
+       * admit: every refusal passed. Reproduced end to end by audit.
        *
        * **AND IT HAD STOPPED LETTING ANYBODY BE HIRED AT ALL.** `PI4b` deleted
        * the password, so a real invitee signs in with a wallet and a wallet
@@ -1201,7 +1201,7 @@ export class PayrollService {
        */
       /*
        * **X8 — WHAT THE CAP KEYS ON, AND WHY IT CANNOT BE TWO PEOPLE.**
-       * `docs/NEXT.md` X8 §3, `C153`.
+       * `docs/NEXT.md` X8 §3.
        *
        * It keyed on the email alone, which cannot serve somebody who has none —
        * and `X7` pinned a test saying the obvious repair, a blank, INVERTS it:
@@ -1243,7 +1243,7 @@ export class PayrollService {
         putBack();
         /*
          * **IT USED TO SAY *"change the address on that record"*, AND NOTHING
-         * IN THIS PRODUCT CAN.** Found by `product-copy-auditor` on `S12`, by
+         * IN THIS PRODUCT CAN.** Found by a product-copy pass on `S12`, by
          * reading every writer of a roster address rather than the message.
          *
          * `admit` is the only line that writes one, and it refuses an entry
@@ -1287,7 +1287,7 @@ export class PayrollService {
        * precisely when to refuse. `selfRaised` records the same fact for an
        * admin to see; here it is load-bearing.
        *
-       * **AND IT IS NOT THE DELETED COMPARISON WEARING A HAT.** `PI4c`. It
+       * **AND IT IS NOT THE DELETED COMPARISON WEARING A HAT.** It
        * reads no email on either side. It compares two SIGN-INS this service
        * watched arrive, neither of which an operator can name in a form field
        * — which is the whole of what was wrong with the one that went.
@@ -1343,7 +1343,7 @@ export class PayrollService {
       if (handover.confirmation !== null) {
         /* A string that is not address-shaped cannot have a code, and refusing
          * it HERE is recoverable where `payeeOf()` further down would throw
-         * past the put-back and strand the drop box. `C28`. */
+         * past the put-back and strand the drop box. */
         let ours: string | null = null;
         try {
           ours = addressFingerprint(handover.address);
@@ -1368,7 +1368,7 @@ export class PayrollService {
      * What comes out of the box is JSON — a shape that looks like an address,
      * not an address. Re-parsing means the value the roster holds came out of a
      * decode like every other one, so a handover carrying two halves that were
-     * never one address cannot get in by being well formed. A-1, `C7`.
+     * never one address cannot get in by being well formed. A-1.
      *
      * **`payeeOf` SINCE `S12`, AND IT IS THE SAME DECODE.** `C250`, `V-105`.
      * The kind is READ off the string the wallet produced rather than asked
@@ -1412,7 +1412,7 @@ export class PayrollService {
      * standing copy of a salary is just a second copy.
      */
     if (invite.offer) this.store.putInvite({ ...invite, offer: null });
-    /* And the delivery drops what it was still holding. `C30`. **Nothing was
+    /* And the delivery drops what it was still holding. **Nothing was
      * ever delivered for a record with no email** (`raise` does not call the
      * port at all), so there is nothing to forget and nothing to look up by a
      * value that is not there. */
@@ -1435,7 +1435,7 @@ export class PayrollService {
   hireDirect(accountId: string, spec: HireSpec, viewingKey: Hex): { employee: RosterEmployee; secret: EmployeeSecret } {
     /*
      * **THE SEED WALKS THE INVITE PATH, SO IT NEEDS WHAT THE INVITE PATH
-     * NEEDS.** `X8`.
+     * NEEDS.**
      *
      * `HireSpec.email` became nullable for `addSelfAsPayee`, and this helper
      * builds the seeded person a SIGN-IN of their own — which is an email
@@ -1454,7 +1454,7 @@ export class PayrollService {
     const { employee, raw } = this.raise(accountId, spec, viewingKey, 'usr_seed_operator');
     /*
      * **THE SEEDED PERSON GETS A WALLET, AND THEIR PAYSLIP KEY IS DERIVED FROM
-     * IT.** `PI2b`, `C135`.
+     * IT.**
      *
      * This line used to be `newWrappingKeypair()` — thirty-two random bytes,
      * handed back once, recomputable by nobody. **The seed is the only place in
@@ -1504,7 +1504,7 @@ export class PayrollService {
        * `accountId` in the clear by design — so `users` plus a substring gave
        * "this named person is paid by this company" with **no join at all.**
        * That is the mapping `Invite.acceptedBy` was deleted the same turn to
-       * prevent, reintroduced ten lines away by the seed. `C22`.
+       * prevent, reintroduced ten lines away by the seed.
        */
       id: 'usr_' + nanoid(12),
       email,
@@ -1552,7 +1552,7 @@ export class PayrollService {
     };
   }
 
-  /* ---------------- sealing the roster (S-9, M-90) ---------------- */
+  /* ---------------- sealing the roster ---------------- */
 
   /**
    * Seals a roster entry. The only way one reaches the store.
@@ -1601,7 +1601,7 @@ export class PayrollService {
 
   /**
    * **AN ADDRESS THAT COMES BACK OUT OF THE SEAL GOES THROUGH THE SAME DECODE
-   * AS ONE THAT WENT IN.** `A-1`, `C246`, `S6k`.
+   * AS ONE THAT WENT IN.** `A-1`.
    *
    * `openRecord` returns JSON. `PayeeAddress` is a BRANDED type whose brand is
    * a compile-time symbol, so the object that comes back type-checks as one and
@@ -1613,7 +1613,7 @@ export class PayrollService {
    * caller read — `bech32`, `coinPublicKey`, `encryptionPublicKey` — was in the
    * sealed record, so a revived payee behaved like a parsed one. `S6k` added
    * `kind`, which is not in a record sealed before it and **is the field that
-   * decides which door a payment leaves by** (`C246`). A roster sealed
+   * decides which door a payment leaves by**. A roster sealed
    * yesterday would hand `buildRun` a payee with no kind.
    *
    * **The failure that would have been is loud rather than silent** — indexing
@@ -1674,7 +1674,7 @@ export class PayrollService {
    * name would be a store that could read it.
    */
   /**
-   * **IS THERE SOMETHING WAITING TO BE ADMITTED FOR THIS PERSON?** `X11` §4.
+   * **IS THERE SOMETHING WAITING TO BE ADMITTED FOR THIS PERSON?**
    *
    * A boolean and deliberately not the contents. The drop box is sealed to the
    * account's inbox and this answers without opening it, so the one thing an
@@ -1743,7 +1743,7 @@ export class PayrollService {
    *
    * **`leaver` IS UNGUARDED AND MUST STAY THAT WAY.** Withdrawing a pending
    * person is the only exit from an invitation that can never be admitted
-   * (`C28`), and a guard here would strand exactly the people that exit exists
+   *, and a guard here would strand exactly the people that exit exists
    * for. Reinstating a LEAVER who was once admitted still works: they have an
    * address, because `admit` wrote one.
    */
@@ -1851,7 +1851,7 @@ export class PayrollService {
    * address whose secrets nobody holds — is not recoverable by anybody.
    */
   /*
-   * **`ShieldedPaymentFacts`, AND THE NARROWING IS THE POINT.** `S6k` §5.
+   * **`ShieldedPaymentFacts`, AND THE NARROWING IS THE POINT.**
    *
    * A vault holds both kinds of money and `payout-tree.ts` carries the kind per
    * payee. **This path produces private ones only**, and that is still true
@@ -1863,7 +1863,7 @@ export class PayrollService {
    * payee could exist to reach this line. The narrowing held because the door
    * upstream was shut.
    *
-   * **THE DOOR IS OPEN NOW AND THE NARROWING IS HELD BY A RULE.** `C250`. A
+   * **THE DOOR IS OPEN NOW AND THE NARROWING IS HELD BY A RULE.** A
    * roster entry can carry either kind, so every payee on a run is put through
    * `payrollPayee`, which refuses a public one by name and returns the other
    * narrowed. **A payroll run cannot contain a public payee**, and if that
@@ -1939,7 +1939,7 @@ export class PayrollService {
         publicKey = existing.wrappingPublicKey;
       } else {
         /*
-         * **THE ONE PLACE LEFT THAT MINTS A PAYSLIP KEY.** `PI2b`, `C135`.
+         * **THE ONE PLACE LEFT THAT MINTS A PAYSLIP KEY.**
          *
          * An ad hoc run pays somebody who is not on the roster, so there is no
          * handover, no wallet and nothing to derive from — `payslipKeypairFrom`
@@ -1983,7 +1983,7 @@ export class PayrollService {
        * It is kept because it is the right field in the right place — what a
        * payee was paid to belongs on their payslip — and because it becomes a
        * real check the moment the two halves stop travelling together. **It is
-       * not a defence today and must not be counted as one.** `C20`.
+       * not a defence today and must not be counted as one.**
        */
       const slipKey = newSymmetricKey();
       const slip = seal(canonical({
@@ -2000,7 +2000,7 @@ export class PayrollService {
       employees,
       payslips,
       /*
-       * A SUBTOTAL PER ASSET, never one total. M-125.
+       * A SUBTOTAL PER ASSET, never one total.
        *
        * Adding 5,000 GBP to 5,000 USDC and displaying 10,000 is not an
        * approximation, it is meaningless — and the sufficiency check that used
@@ -2020,12 +2020,12 @@ export class PayrollService {
    * inside the sealed payload.
    *
    * ONE PROPOSAL PER SETTLEMENT ASSET, and it was the visible consequence of
-   * the contract moving one asset per round (M-125). A run that pays everybody
+   * the contract moving one asset per round. A run that pays everybody
    * in pounds is one proposal, which is every run today. A run paying some
    * people in pounds and some in USDC is two, both referencing the same run id,
    * and both have to be paid before the run is done.
    *
-   * **THE CIRCUIT THAT MOVED ONE ASSET IS GONE** (`C292`), so this shape is no
+   * **THE CIRCUIT THAT MOVED ONE ASSET IS GONE**, so this shape is no
    * longer forced by the chain: a proposal's change commitment still names one
    * asset key and nothing opens it. What holds the rule now is
    * `AccountService.oneAssetOf`, which refuses a mixed batch here rather than
@@ -2044,7 +2044,7 @@ export class PayrollService {
     runId: string, viewingKey: Hex, proposedBy: string,
     /**
      * **THE RUN, AS THE CHAIN IS ASKED TO OPEN ONE — OR `null` FROM A CALLER
-     * THAT HAS NONE.** `C375`, `S47`.
+     * THAT HAS NONE.**
      *
      * **NULLABLE RATHER THAN OPTIONAL, so a call site that has no run material
      * has to say so out loud instead of forgetting** — the rule this file
@@ -2095,7 +2095,7 @@ export class PayrollService {
 
     /*
      * **THIS CALLED `this.accounts.propose({kind: 'payroll'})` AND THAT WAS
-     * `C375`, A `P0`.** `S47`.
+     * `C375`, A `P0`.**
      *
      * That door's payload hash is an APPLICATION digest — `commit(canonical(
      * {accountId, kind, sealedPayload, proposedBy}), '')`,
@@ -2161,7 +2161,7 @@ export class PayrollService {
   }
 
   /*
-   * **`settle` STOOD HERE AND IS DELETED.** `C292`, `S26`.
+   * **`settle` STOOD HERE AND IS DELETED.**
    *
    * It called `accounts.execute`, which spent the account's own balance. The
    * balance is gone — the account is an authority over a vault's money, not a
@@ -2231,14 +2231,14 @@ export class PayrollService {
     const run = this.requireRun(runId, viewingKey);
     /*
      * **THIS GATE CANNOT PASS, AND THE SENTENCE NOW SAYS SO.** `T-217`/`F10`,
-     * `T-234`, `S47`. Rule 14, and `C178`'s species.
+     * Rule 14, and `C178`'s species.
      *
      * *"cannot attest an unsettled run"* stood here, and it describes a run —
      * as though settling one were a thing a person could go and do. **Measured:
      * `run.status` is assigned in exactly two places in `src/`, `'draft'`
      * (`:2012`) and `'proposed'`, and `'settled'` is assigned NOWHERE; nor is
      * `run.settledAt`, which is only read.** The writer that set both, `settle`,
-     * went with the balance (`C292`, `S26`), and the note twenty lines above
+     * went with the balance, and the note twenty lines above
      * says so in its own words: *"NOTHING IN THIS SYSTEM PAYS ANYBODY NOW."*
      *
      * **SO `this.proofs.prove` BELOW IS UNREACHABLE, AND SO IS
@@ -2304,7 +2304,7 @@ export class PayrollService {
   }
 
   /**
-   * **THERE IS NO BALANCE TO ATTEST TO.** `C292`, `S26`.
+   * **THERE IS NO BALANCE TO ATTEST TO.**
    *
    * This read `state.balances[asset]` and proved it was at least `threshold`.
    * The account keeps no balance, so the only honest answer this could give is
@@ -2339,7 +2339,7 @@ export class PayrollService {
 
   /**
    * **IT CAN ONLY EVER ANSWER `false`, AND THAT IS THE DIRECTION THAT CALLS A
-   * TRUE CLAIM FALSE.** `T-217`, `T-234`, `S47`.
+   * TRUE CLAIM FALSE.**
    *
    * `store.putAttestation` has exactly one caller — inside `attestPayrollTotal`
    * above, BELOW a gate nothing can pass — so the attestation store can never
@@ -2371,7 +2371,7 @@ export class PayrollService {
     return this.proofs.verify(att.circuit as any, att.publicInputs, att.proof);
   }
 
-  /* ---------------- sealing runs (S-9) ---------------- */
+  /* ---------------- sealing runs ---------------- */
 
   private putRun(run: PayrollRun, viewingKey: Hex): void {
     const { employees, totals, proposalIds, ...operational } = run;

@@ -92,13 +92,13 @@ describe('WRITERS — the half `B5` turns on', () => {
       // The other half, so the empty cell above is not read as "unreachable".
       expect(field(q)?.writtenByConstructor).toBe(true);
     }
-    // And the fourth one IS written, by exactly one circuit. C213.
+    // And the fourth one IS written, by exactly one circuit.
     expect(field('ConfidentialAccount.retiredAt')?.writers).toEqual(['ConfidentialAccount.retireVault']);
   });
 
   it('`propose` is the only VALUE-writer of `runWindow`, which is what B5 rests on', () => {
     /*
-     * `T-169`: this column counts a REMOVAL as a write, and `closeProposal`
+     * This column counts a REMOVAL as a write, and `closeProposal`
      * removes the window on behalf of every circuit that closes a proposal — so
      * the writer set below is eight names and the number that matters is ONE.
      * The distinction is the whole of `B5`: `cancel` can be trusted to know
@@ -110,7 +110,7 @@ describe('WRITERS — the half `B5` turns on', () => {
     expect(writers).not.toContain('ConfidentialAccount.approve');
     expect(writers).not.toContain('ConfidentialAccount.recordPayment');
     // And the two circuits that READ it are the two that tell a run from a
-    // governance proposal, and nothing else. C359.
+    // governance proposal, and nothing else.
     expect(field('ConfidentialAccount.runWindow')?.readers.sort()).toEqual([
       'ConfidentialAccount.cancel', 'ConfidentialAccount.closeExpiredRun',
     ]);

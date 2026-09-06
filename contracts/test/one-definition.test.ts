@@ -30,7 +30,7 @@
  * Point 2 is the whole value. Point 1 is a test; point 2 is a ratchet.
  *
  * WHAT POINT 1 IS NOT, AND THIS FILE SAID OTHERWISE UNTIL `S28`. `C306`,
- * `T-65`. It is not a check between two implementations of a rule. Every
+ * It is not a check between two implementations of a rule. Every
  * `mirrored` entry's client side calls the contract's own generated function.
  * **RE-ANCHORED AND COMPLETED BY `S44`** — it named four lines, three of which
  * had drifted, and there are ten mirrored entries. Each anchor below is the
@@ -73,7 +73,7 @@ const BATCH = bytes(6);
 const SALT = bytes(7);
 const PAYLOAD = bytes(8);
 const ASSET_KEY = bytes(9);
-/* A run's payout-tree root. `S47`. */
+/* A run's payout-tree root. */
 const ROOT = bytes(10);
 /* 'GBP', zero padded — the encoding `core/assets.ts` owns. */
 const GBP = Uint8Array.from({ length: 32 }, (_, i) => 'GBP'.charCodeAt(i) || 0);
@@ -163,7 +163,7 @@ const SCHEMES: Entry[] = [
   },
   {
     /*
-     * M-128. The client MUST compute this one, which is what makes it the most
+     * The client MUST compute this one, which is what makes it the most
      * dangerous entry in the list.
      *
      * A signer's device needs a proposal's id to approve it, and the proposer
@@ -215,7 +215,7 @@ const SCHEMES: Entry[] = [
   {
     /*
      * **THIS WAS `contractOnly` UNTIL `S34`, AND THE NOTE WAS WRONG BY THEN.**
-     * `C328`.
+     *
      *
      * It said the client *holds the result rather than recomputing it*. It did
      * not hold it: `src/core/account.ts` and `src/web/App.tsx` passed an
@@ -302,7 +302,7 @@ const SCHEMES: Entry[] = [
   },
   {
     /*
-     * X-9. The chain's answer to "has this person been paid", and the client
+     * The chain's answer to "has this person been paid", and the client
      * CALLS it rather than deriving it — `src/midnight/run-status.ts` takes the
      * circuit as an argument and never reimplements it.
      *
@@ -328,7 +328,7 @@ const SCHEMES: Entry[] = [
      */
     /*
      * **THIS ENTRY WAS `contractOnly` UNTIL `S47`, AND ITS SENTENCE WAS TRUE
-     * WHEN WRITTEN AND FALSE AFTERWARDS.** `C375`. It read: *"the client calls
+     * WHEN WRITTEN AND FALSE AFTERWARDS.** It read: *"the client calls
      * this circuit rather than deriving the payload a second way — there is no
      * TypeScript copy to disagree with."*
      *
@@ -352,7 +352,7 @@ const SCHEMES: Entry[] = [
   {
     /*
      * **AND THE NAME DIFFERS ON THE CLIENT SIDE, WHICH IS WHY THIS ENTRY EARNS
-     * ITS KEEP TWICE OVER.** `S44`. The circuit is `setThresholdPayload`; the
+     * ITS KEEP TWICE OVER.** The circuit is `setThresholdPayload`; the
      * scheme method is `signerThresholdPayload`. Three of the four governance
      * payloads are renamed across that boundary and every one of them returns
      * 32 bytes for the arguments it is handed, so a swap is silent everywhere
@@ -398,7 +398,7 @@ const SCHEMES: Entry[] = [
     }),
   },
   {
-    /* `S44`. The client name is `signerRemovePayload`; the circuit's is this. */
+    /* The client name is `signerRemovePayload`; the circuit's is this. */
     circuit: 'removeSignerPayload',
     mirrored: () => ({
       fromContract: hex(pureCircuits.removeSignerPayload(LEAF)),
@@ -407,7 +407,7 @@ const SCHEMES: Entry[] = [
   },
   {
     /*
-     * S6a. **NO CLIENT COPY, AND `S44` CHECKED IT RATHER THAN INHERITING IT:**
+     * **NO CLIENT COPY, AND `S44` CHECKED IT RATHER THAN INHERITING IT:**
      * `grep` of `src/` returns no `adoptVaultPayload` outside `scripts/` and
      * the contract's own tests, and `src/core/account.ts` raises no adopt
      * round. So this stays `contractOnly` — a mirror for a caller that does not
@@ -497,7 +497,7 @@ describe('one definition: the contract and the client agree', () => {
    *
    * **WHAT THIS DOES.** Every member of `CommitmentScheme` — read as DATA off
    * both implementations, never off `Function.prototype.toString` (rule 41,
-   * `T-167`: the same artifact gives two different answers under `tsx` and
+   * The same artifact gives two different answers under `tsx` and
    * under `vitest`, so a binding is not a fact) — is declared here against the
    * circuit it derives and HOW — mirrored, a pass-through that reads the
    * circuit, or no derivation at all. Three assertions close the loop, and the
@@ -559,12 +559,12 @@ describe('one definition: the contract and the client agree', () => {
    *   · `NO_CIRCUIT` — not a derivation at all, with the reason beside it.
    *
    * **AND `NO_CIRCUIT` IS A SELF-CERTIFIED EXEMPTION, SAID PLAINLY BECAUSE THE
-   * ALTERNATIVE IS A READER ASSUMING IT IS NOT.** This round's `test-auditor`
+   * ALTERNATIVE IS A READER ASSUMING IT IS NOT.** This round's test-coverage pass
    * added a real derivation to both schemes, declared it `NO_CIRCUIT` with the
    * words *"internal helper"*, and every assertion below stayed green. Nothing
    * inside a repository can tell a helper from a derivation; **what this table
    * buys is that somebody had to WRITE the four words, in this file, next to
-   * the header that says what it costs to write them falsely.** `T-277`.
+   * the header that says what it costs to write them falsely.**
    */
   const SCHEME_MEMBERS: {
     method: string; circuit: string | null; kind: 'mirrored' | 'passthrough' | 'none'; why?: string;
@@ -652,7 +652,7 @@ describe('one definition: the contract and the client agree', () => {
 
   it('no two members claim the same circuit — a second copy under a second name', () => {
     /*
-     * **FOUND BY THIS ROUND'S `test-auditor`, AGAINST THIS ROUND'S OWN CHANGE,
+     * **FOUND BY THIS ROUND'S test-coverage pass, AGAINST THIS ROUND'S OWN CHANGE,
      * AND IT IS `C373`'s SHAPE GETTING BACK IN.** A member called `secondLeaf`
      * added to both schemes and declared `{ circuit: 'signerLeaf', kind:
      * 'mirrored' }` passed all three tests above: the mirror assertions iterate
@@ -703,7 +703,7 @@ describe('one definition: the contract and the client agree', () => {
 
   /**
    * **THE FOUR SIMULATED GOVERNANCE PAYLOADS, PINNED TO FIXED HEX.** `S44`,
-   * found by its own `test-auditor` against its own change.
+   * found by its own test-coverage pass against its own change.
    *
    * `S44` moved these four bodies from module scope in `src/core/ledger.ts`
    * behind `SimulatedCommitments`, and wrote down that they are byte-for-byte
@@ -765,7 +765,7 @@ describe('one definition: the contract and the client agree', () => {
    * **THE ADAPTERS PASS THE ARGUMENTS THEY ARE GIVEN, NOT A CONSTANT.** `S44`,
    * and the shape is `what-a-signer-is.test.ts:213`'s, which is where this
    * repository already learned that a mirror sampled at ONE value proves the
-   * value and not the parameter (`T-116`).
+   * value and not the parameter.
    *
    * The mirrors above call `vaultThresholdPayload` exactly once, at threshold
    * `2` against one vault. An adapter rewritten to ignore either argument —

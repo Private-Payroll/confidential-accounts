@@ -154,7 +154,7 @@ describe('X8 §2 — the address comes from the wallet, and this side judges it'
      * It read *AND AN UNSHIELDED ADDRESS IS NOT A PAYEE ADDRESS* and expected
      * `not-a-payee-address`, because until this round the only thing anybody
      * could be paid was a private address. **A company paying its own public
-     * address is a real movement** (`C255`) and a vendor may want public
+     * address is a real movement** and a vendor may want public
      * settlement, so this door takes either.
      *
      * **NOBODY IS ASKED WHICH KIND IT IS.** The type segment the platform put
@@ -169,7 +169,7 @@ describe('X8 §2 — the address comes from the wallet, and this side judges it'
     expect(got.address.kind).toBe('unshielded');
     expect(got.address.bech32).toBe(signingAddress(SLOT));
     /* Both addresses belong to the same subwallet and they are different
-     * values in different key spaces. `C246`. */
+     * values in different key spaces. */
     expect(got.address.bech32).not.toBe(shielded(SLOT));
   });
 

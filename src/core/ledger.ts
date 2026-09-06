@@ -102,7 +102,7 @@ export interface LedgerRecord {
  *
  *   - replace the blob first, then the records: a crash between them leaves the
  *     state sealed under a key that exists only in the rotating client's memory
- *     and was never wrapped to anybody. Unrecoverable (M-73).
+ *     and was never wrapped to anybody. Unrecoverable.
  *   - replace the records first, then the blob: a crash between them leaves the
  *     records under the new key and the state under the old one, whose wrapped
  *     copies have just been thrown away. Also unrecoverable.
@@ -152,7 +152,7 @@ export interface SealedStateAt {
  * described in this paragraph runs.
  */
 /**
- * The CHANGE a proposal makes, rather than the state it results in. M-71.
+ * The CHANGE a proposal makes, rather than the state it results in.
  *
  * The first fix for M-70 bound the resulting state, which closed the hole and
  * opened a smaller one: money arriving between the last approval and the
@@ -213,7 +213,7 @@ export interface StateChange {
  * The caller's view of ONE ASSET before a transition.
  *
  * **NO METHOD ON THIS BOUNDARY TAKES ONE ANY MORE.** `C292` removed the calls
- * that did, so this type — whose builder `S52` deleted (`T-226`) — has no
+ * that did, so this type — whose builder `S52` deleted — has no
  * reader left. Kept as the shape a vault-side view will need; it constrains
  * nothing today.
  *
@@ -245,7 +245,7 @@ export interface StateView {
 }
 
 /*
- * `StateOpening` STOOD HERE AND IS GONE WITH THE BALANCE. `C292`.
+ * `StateOpening` STOOD HERE AND IS GONE WITH THE BALANCE.
  *
  * It described the balance a transition moved an asset TO, and it existed for
  * `settleRound` and `credit`, both of which are gone. The account keeps no
@@ -262,7 +262,7 @@ export interface StateView {
  */
 export interface LedgerStatus {
   /**
-   * One entry per asset held. M-125.
+   * One entry per asset held.
    *
    * **ALWAYS EMPTY SINCE `C292`, ON BOTH IMPLEMENTATIONS.** The account keeps
    * no books, `assetBalances` is gone from the contract, and there is nothing
@@ -280,7 +280,7 @@ export interface LedgerStatus {
    */
   assets: Array<{ key: string; commitment: Hex }>;
   /**
-   * EVERY PROPOSAL CURRENTLY OPEN, not "the" open one. M-128.
+   * EVERY PROPOSAL CURRENTLY OPEN, not "the" open one.
    *
    * This was `proposalOpen: boolean`, `proposal: Hex | null`,
    * `proposedChange: Hex | null` and `approvalCount: number` — one set of
@@ -300,7 +300,7 @@ export interface LedgerStatus {
   threshold: number;
   /**
    * **ONE ENTRY PER VAULT SOMEBODY DELIBERATELY GAVE ITS OWN RULE, AND NO
-   * OTHERS.** `R5`, `C172`. Mirrors `thresholds: Map<Bytes<32>, Uint<64>>` at
+   * OTHERS.** Mirrors `thresholds: Map<Bytes<32>, Uint<64>>` at
    * `contracts/src/ConfidentialAccount.compact:251`.
    *
    * **ABSENCE MEANS INHERIT** (`thresholdFor`, `:1358`), which is what lets a
@@ -336,11 +336,11 @@ export interface LedgerStatus {
   /**
    * **HOW MANY PAYMENTS THE ACCOUNT HAS RECORDED AS COMPLETED, ACCOUNT-WIDE.**
    * The contract's `movements` (`contracts/src/ConfidentialAccount.compact:215`,
-   * a `Set<Bytes<32>>` of payee leaves). `T-220`, `S52`.
+   * a `Set<Bytes<32>>` of payee leaves).
    *
    * **IT IS HERE FOR ONE NAMED CONSUMER AND THAT CONSUMER IS NOT BUILT.**
    * `docs/accepted-risks.md` §1 is a ruling — *accept and detect* — and the
-   * detector it owes (`T-183`) compares Σ`payments` across the account's vaults
+   * detector it owes compares Σ`payments` across the account's vaults
    * against this number. **`SC10` measured that neither this field nor
    * `retiredVaults` below was on this boundary, so the detector could not have
    * been written against it**, and the founder's 4 Sep ruling on `C395` made
@@ -358,7 +358,7 @@ export interface LedgerStatus {
    *
    * **`SimulatedLedger` ANSWERS 0 FOR EVER AND SAYS SO**: nothing in that class
    * writes `movements` — `settleRound` was its only writer and went with
-   * `C292`. So this field is real on the Midnight side and a constant on the
+   * So this field is real on the Midnight side and a constant on the
    * simulated one, which is `LedgerStatus.assets`' shape and is named here so
    * nobody reads a zero as evidence. The product runs the simulated wiring
    * (`src/wiring/selection.ts:144`), so **today this number is 0 on the path
@@ -368,7 +368,7 @@ export interface LedgerStatus {
   /**
    * **EVERY VAULT THIS ACCOUNT HAS EVER RETIRED.** The KEYS of the contract's
    * `retiredAt` (`contracts/src/ConfidentialAccount.compact:517`, a
-   * `Map<Bytes<32>, Uint<64>>`). `T-220`, `S52`.
+   * `Map<Bytes<32>, Uint<64>>`).
    *
    * **EVER RETIRED, NOT IS RETIRED, AND THE DIFFERENCE IS `C362`.** Nothing in
    * the contract removes from this map — `retireVault` is its only writer
@@ -393,7 +393,7 @@ export interface LedgerStatus {
    */
   retiredVaults: Hex[];
   /*
-   * `round` IS GONE. M-128.
+   * `round` IS GONE.
    *
    * It existed to scope approval nullifiers, which is why an account could hold
    * one proposal at a time. Nullifiers bind to the proposal now, so there is no
@@ -405,7 +405,7 @@ export interface LedgerStatus {
 
 /**
  * **THE BAR FOR ONE VAULT: ITS OWN IF SOMEBODY SET ONE, THE ACCOUNT'S
- * OTHERWISE.** `R5`. One definition, mirroring `thresholdFor` at
+ * OTHERWISE.** One definition, mirroring `thresholdFor` at
  * `contracts/src/ConfidentialAccount.compact:1358`:
  *
  *     thresholds.member(vault) ? thresholds.lookup(vault) : threshold
@@ -425,7 +425,7 @@ export interface LedgerStatus {
  * `:1362-1382` and splits its two entry points on it.
  *
  * **RULE 27 — WHAT CONSUMES THIS NUMBER, AND THE HONEST ANSWER IS *NOTHING
- * THAT SETTLES ANYTHING*.** `T-218` `P1`, `C367` generalised, `S52`.
+ * THAT SETTLES ANYTHING*.** `T-218` `P1`, `C367` generalised.
  *
  * The chain side is a straight line with no branches: `thresholds` is read in
  * exactly one place, `thresholdFor` (`compact:1358`); its one caller is
@@ -481,7 +481,7 @@ export interface AccountOpening {
    * The blinded leaves of the founding signers.
    *
    * **AND `[0]` IS THE FOUNDING SIGNER — THE ONE SEAT THE CONSTRUCTOR CREATES.**
-   * `C334`.
+   *
    *
    * The account's first seat used to be derived, inside the constructor, from
    * the witnesses of whatever process ran the deploy — so the deployer was a
@@ -547,7 +547,7 @@ export interface AccountOpening {
  * deploy time is what that rule was bought with.
  */
 /**
- * **WHERE AN ADDRESS CAME FROM.** `PI2b`, `C140`, `C136`.
+ * **WHERE AN ADDRESS CAME FROM.**
  *
  * `'chain'` means a chain assigned it and we read it back. `'simulated'`
  * means THIS PROCESS INVENTED IT — thirty-two random bytes in the spelling a
@@ -556,7 +556,7 @@ export interface AccountOpening {
 export type AddressSource = 'chain' | 'simulated';
 
 /**
- * **AN ADDRESS AND WHERE IT CAME FROM, AND THEY TRAVEL TOGETHER.** `PI2b`.
+ * **AN ADDRESS AND WHERE IT CAME FROM, AND THEY TRAVEL TOGETHER.**
  *
  * The provenance is not a second method and not a second field to remember. A
  * ledger cannot hand out an address without saying where it got it, because the
@@ -574,7 +574,7 @@ export interface LedgerAddress {
 }
 
 /*
- * `RoundSettlement` STOOD HERE. `C292`, `S26`.
+ * `RoundSettlement` STOOD HERE.
  *
  * It was the argument to `settleRound`, the merged transfer-and-transition that
  * closed a round by moving the account's own balance. Both are gone with the
@@ -584,7 +584,7 @@ export interface LedgerAddress {
  */
 
 /**
- * **A PAYROLL RUN, AS THE CHAIN IS ASKED TO OPEN ONE.** `C375`, `S47`.
+ * **A PAYROLL RUN, AS THE CHAIN IS ASKED TO OPEN ONE.**
  *
  * Exactly the run branch's arguments at
  * `contracts/src/ConfidentialAccount.compact:2109-2115`, in the same order, so
@@ -618,7 +618,7 @@ export interface Ledger {
   open(accountId: string, opening: AccountOpening): Promise<TxRef>;
 
   /**
-   * **THE COMPANY'S OWN ADDRESS, AS THE LEDGER ASSIGNED IT.** `PI2a`, `C136`.
+   * **THE COMPANY'S OWN ADDRESS, AS THE LEDGER ASSIGNED IT.**
    *
    * Null when this ledger has no such account, and null is not an error: an
    * account with no contract has no address, and a caller that needs one has to
@@ -628,7 +628,7 @@ export interface Ledger {
    * keyring is derived from it and from nothing else, so an address that
    * changes is data that stops opening.
    *
-   * **AND IT SAYS WHETHER A CHAIN ASSIGNED IT.** `PI2b`, `C140`. The two
+   * **AND IT SAYS WHETHER A CHAIN ASSIGNED IT.** The two
    * arrive together because the shape of a simulated address is deliberately
    * the shape of a real one, so nothing downstream can work it out for itself.
    */
@@ -654,7 +654,7 @@ export interface Ledger {
    * compares an approved change to what was done with it.
    */
   /**
-   * **`vault` IS REQUIRED AND HAS NO DEFAULT.** `R5`. It matches the circuit —
+   * **`vault` IS REQUIRED AND HAS NO DEFAULT.** It matches the circuit —
    * `export circuit propose(…, vault: Bytes<32>)`,
    * `contracts/src/ConfidentialAccount.compact:2105`, whose parameter list grew
    * the run's own parts when `S11` merged `proposeRun` into it — and this
@@ -675,7 +675,7 @@ export interface Ledger {
 
   /**
    * **RAISES A PAYROLL RUN, AND IT IS A DIFFERENT ACT FROM `propose`.** `C375`,
-   * `S47`. Mirrors the RUN branch of the merged circuit —
+   * Mirrors the RUN branch of the merged circuit —
    * `contracts/src/ConfidentialAccount.compact:2119-2156`, reached by
    * `isRun: true`.
    *
@@ -711,7 +711,7 @@ export interface Ledger {
   ): Promise<TxRef & { proposalId: Hex }>;
 
   /**
-   * One approval per signer PER PROPOSAL. M-128.
+   * One approval per signer PER PROPOSAL.
    *
    * `proposalId` is the proposal's blinded on-chain commitment, and naming it is
    * the whole of the change: an account holds several open proposals at once,
@@ -721,7 +721,7 @@ export interface Ledger {
   approve(accountId: string, proposalId: Hex, by: SignerRef): Promise<TxRef>;
 
   /**
-   * Withdraws ONE proposal. M-128.
+   * Withdraws ONE proposal.
    *
    * It no longer rotates a round or burns anybody else's approvals — there is
    * no round, and every other proposal on the account is untouched. Nullifiers
@@ -731,7 +731,7 @@ export interface Ledger {
   cancel(accountId: string, proposalId: Hex, by: SignerRef): Promise<TxRef>;
 
   /**
-   * Puts a signer's leaf in the on-chain tree. M-69.
+   * Puts a signer's leaf in the on-chain tree.
    *
    * Two paths, and which one applies is not the caller's choice. While the
    * account still has fewer signers than its threshold it is being set up and
@@ -751,7 +751,7 @@ export interface Ledger {
   addSigner(accountId: string, leaf: Hex, proposalId: Hex | null, by: SignerRef): Promise<TxRef>;
 
   /**
-   * Removes a signer, by clearing the one slot they occupy. M-106.
+   * Removes a signer, by clearing the one slot they occupy.
    *
    * ONE ARGUMENT, where this used to take a sixteen-wide list of survivors to
    * re-seat. The signer tree is a plain Merkle tree with a slot per signer, so
@@ -765,7 +765,7 @@ export interface Ledger {
   removeSigner(accountId: string, removedLeaf: Hex, proposalId: Hex, by: SignerRef): Promise<TxRef>;
 
   /**
-   * Changes M in M of N, on chain. M-102.
+   * Changes M in M of N, on chain.
    *
    * The threshold used to be a `sealed` ledger field — writable once, in the
    * constructor — so this could not exist and the product's version of it wrote
@@ -782,7 +782,7 @@ export interface Ledger {
   ): Promise<TxRef>;
 
   /**
-   * **GIVES ONE VAULT ITS OWN THRESHOLD, OR CHANGES IT.** `R5`, `C172`.
+   * **GIVES ONE VAULT ITS OWN THRESHOLD, OR CHANGES IT.**
    * Mirrors `setVaultThreshold` at
    * `contracts/src/ConfidentialAccount.compact:2699`.
    *
@@ -811,7 +811,7 @@ export interface Ledger {
   ): Promise<TxRef>;
 
   /*
-   * `credit` STOOD HERE. `C292`.
+   * `credit` STOOD HERE.
    *
    * Value never arrived at the account: this contract has no receive operation
    * and never had one. `credit` wrote a number into the account's own book, and
@@ -842,7 +842,7 @@ export interface Ledger {
   describe(): string;
 }
 
-export type Circuit = /* `T-217`: NONE of the three exists in either `.compact` — measured, zero occurrences in `ConfidentialAccount.compact` and `Vault.compact`; `MidnightProofSystem.prove` throws for all three, and `SimulatedProofSystem` is symmetric so its verifier must BE its prover. `S55`. */ 'balance-at-least' | 'payroll-total' | 'payment-record';
+export type Circuit = /* `T-217`: NONE of the three exists in either `.compact` — measured, zero occurrences in `ConfidentialAccount.compact` and `Vault.compact`; `MidnightProofSystem.prove` throws for all three, and `SimulatedProofSystem` is symmetric so its verifier must BE its prover. */ 'balance-at-least' | 'payroll-total' | 'payment-record';
 
 export interface ProofSystem {
   prove(circuit: Circuit, publicInputs: Record<string, unknown>, witness: unknown): Promise<Hex>;
@@ -913,7 +913,7 @@ const simulatedSignerRemovePayload = (removedLeaf: Hex): Hex =>
   toHex(sha256(utf8('midnight-accounts:remove-signer:' + removedLeaf)));
 
 /**
- * What a proposal must commit to for `setThreshold` to accept it. M-102.
+ * What a proposal must commit to for `setThreshold` to accept it.
  *
  * Domain separated from the add and remove payloads for the same reason those
  * are separated from a payment: an approval to pay a supplier, to seat a signer
@@ -926,7 +926,7 @@ const simulatedSignerThresholdPayload = (newThreshold: number): Hex =>
   toHex(sha256(utf8('midnight-accounts:set-threshold:' + newThreshold)));
 
 /**
- * What a proposal must commit to for `setVaultThreshold` to accept it. `R5`.
+ * What a proposal must commit to for `setVaultThreshold` to accept it.
  *
  * The SIMULATED half of `setVaultThresholdPayload` (`:1148`) — including its
  * own domain string, separate from `setThresholdPayload`'s. An approval to move
@@ -947,7 +947,7 @@ const simulatedVaultThresholdPayload = (vault: Hex, newThreshold: number): Hex =
  * `changeKey` STOOD HERE AND `S52` DELETED IT. `T-226` `P3`.
  *
  * Its sole occurrence in the repository was its own definition: `settleRound`
- * was its only caller and went with the balance ledger (`C292`). It said so in
+ * was its only caller and went with the balance ledger. It said so in
  * its own comment, which is to this file's credit — **and the row is that
  * nothing MEASURED it.** `tsc --noEmit` cannot: `tsconfig.json` sets `strict`
  * and not `noUnusedLocals`, so five dead members sat here declaring their own
@@ -978,7 +978,7 @@ interface SimAccount {
   signerLeaves: Set<Hex>;
   threshold: number;
   /**
-   * WHAT THIS SIMULATION ASSIGNS IN PLACE OF A CONTRACT ADDRESS. `PI2a`.
+   * WHAT THIS SIMULATION ASSIGNS IN PLACE OF A CONTRACT ADDRESS.
    *
    * Thirty-two random bytes, in the shape and the spelling
    * `encodeContractAddress` produces on the real chain, so the two paths differ
@@ -1000,7 +1000,7 @@ interface SimAccount {
    */
   assetBlinding: Hex;
   /**
-   * EVERY OPEN PROPOSAL, keyed by its blinded id. M-128.
+   * EVERY OPEN PROPOSAL, keyed by its blinded id.
    *
    * A map, where this used to be four scalar fields describing the one proposal
    * an account was allowed to have. Payroll and a vendor invoice no longer
@@ -1012,7 +1012,7 @@ interface SimAccount {
     approvals: Set<string>;
     /**
      * **WHICH VAULT THIS ROUND CONCERNS, HELD BECAUSE THE CHAIN CANNOT HOLD
-     * IT.** `R5`.
+     * IT.**
      *
      * On chain the vault is committed inside the proposal's id and is NOT a
      * field beside it — `openProposals` there is `Map<Bytes<32>, Bytes<32>>`,
@@ -1030,7 +1030,7 @@ interface SimAccount {
   }>;
   /**
    * **THE WINDOW OF EVERY OPEN RUN, AND GOVERNANCE ROUNDS ARE NOT IN IT.**
-   * `C375`, `S47`. The counterpart of the contract's `runWindow`
+   * The counterpart of the contract's `runWindow`
    * (`contracts/src/ConfidentialAccount.compact:354`), whose only value-write
    * is in the RUN branch (`:2156`) — *"the governance branch below writes none,
    * so a governance proposal has NO ROW in `runWindow` at all"*.
@@ -1052,7 +1052,7 @@ interface SimAccount {
    */
   runWindows: Map<Hex, { opensAt: bigint; closesAt: bigint }>;
   /**
-   * **THE VAULTS SOMEBODY DELIBERATELY GAVE THEIR OWN THRESHOLD.** `R5`.
+   * **THE VAULTS SOMEBODY DELIBERATELY GAVE THEIR OWN THRESHOLD.**
    *
    * A `Map`, mirroring the contract's `thresholds`, and EMPTY on a new account
    * — absence is what "inherit the account's" is made of, so there is no
@@ -1067,7 +1067,7 @@ interface SimAccount {
    * two settlements conflicted even when they moved different money.
    *
    * **NOTHING WRITES IT IN THIS SIMULATION.** `settleRound` was its only writer
-   * and went with the balance ledger (`C292`); on chain the writer is
+   * and went with the balance ledger; on chain the writer is
    * `recordPayment`, which this layer has no counterpart for. It is initialised
    * empty at `open` and stays empty, so nothing reading it is reading anything.
    */
@@ -1096,7 +1096,7 @@ interface SimAccount {
  *
  *   - acting as someone who is not in the signer set
  *   - approving the same proposal twice
- *   - settling a governance round below the ACCOUNT's threshold (`C376`)
+ *   - settling a governance round below the ACCOUNT's threshold
  *   - spending a proposal on a payload other than the one approved
  *
  * THE LAST TWO USED TO BE ABOUT A CHANGE AND A BALANCE — "executing a change
@@ -1111,7 +1111,7 @@ interface SimAccount {
 export class SimulatedLedger implements Ledger {
   private accounts = new Map<string, SimAccount>();
   /*
-   * **`txs` STOOD HERE, AND `publicView().settlements` READ IT. `C313`, `S29`.**
+   * **`txs` STOOD HERE, AND `publicView().settlements` READ IT. `C313`.**
    *
    * `settleRound` was its only writer and `C292` removed it, so from that round
    * onward the array was appended to by nothing and read by one method — and
@@ -1148,7 +1148,7 @@ export class SimulatedLedger implements Ledger {
 
   /**
    * **THE SCHEME THIS LEDGER WAS HANDED, SO IDENTITY CAN BE ASSERTED RATHER
-   * THAN ASSUMED.** `T-278` `P2`, `S52`.
+   * THAN ASSUMED.** `T-278` `P2`.
    *
    * The comment above says the pair must match and says it **in a comment and
    * only in a comment**. `S46` closed the product path — `selection.ts:130`
@@ -1196,9 +1196,9 @@ export class SimulatedLedger implements Ledger {
       assetBlinding: opening.assetBlinding,
       // Empty, exactly as the contract's constructor leaves `openProposals`.
       openProposals: new Map(),
-      // Empty, exactly as the contract's constructor leaves `thresholds`. `R5`.
+      // Empty, exactly as the contract's constructor leaves `thresholds`.
       vaultThresholds: new Map(),
-      // Empty, exactly as the contract's constructor leaves `runWindow`. `C375`.
+      // Empty, exactly as the contract's constructor leaves `runWindow`.
       runWindows: new Map(),
       movements: new Set(),
       sealedStates: new Map([[opening.sealedState.keyEpoch, opening.sealedState.sealed]]),
@@ -1239,7 +1239,7 @@ export class SimulatedLedger implements Ledger {
     const a = this.accounts.get(accountId);
     if (!a) return null;
     return {
-      // No assets, ever. `C292`: the account keeps no book, so there is no map
+      // No assets, ever. The account keeps no book, so there is no map
       // of per-asset commitments to report and nothing that could ever put one
       // here. The field stays, empty, because `LedgerStatus` is the shape both
       // implementations answer in and the Midnight one reads the same absence
@@ -1261,7 +1261,7 @@ export class SimulatedLedger implements Ledger {
       signerCount: a.signerLeaves.size,
       /*
        * **ZERO AND EMPTY, ALWAYS, AND THE FIELDS ARE HERE ANYWAY.** `T-220`,
-       * `S52`. `movements` is declared on `SimAccount` and initialised empty at
+       * `movements` is declared on `SimAccount` and initialised empty at
        * `open` and nothing writes it; retirement is not modelled in this class
        * at all. Reporting them is what makes `LedgerStatus` one shape both
        * implementations answer in — the same reason `assets` is `[]` above —
@@ -1306,7 +1306,7 @@ export class SimulatedLedger implements Ledger {
      */
     /*
      * **THE CONTRACT REFUSES A GOVERNANCE ROUND THAT NAMES A VAULT, AND SO
-     * DOES THIS LINE NOW.** `T-237`, `C367`, `S55`.
+     * DOES THIS LINE NOW.**
      *
      * **`S47` WROTE THIS ASSERT, MEASURED WHAT IT COST AND REMOVED IT AGAIN,
      * AND I AM OVERTURNING THAT RECORDED DECISION.** Said in those words
@@ -1345,7 +1345,7 @@ export class SimulatedLedger implements Ledger {
     if (a.openProposals.has(id)) throw new Error('that proposal is already open');
     /*
      * THE PAYLOAD HASH IS KEPT, NOT JUST THE CHANGE, and dropping it was a real
-     * bug that made every governance action impossible. M-130.
+     * bug that made every governance action impossible.
      *
      * A proposal authorised two different things depending on who spent it.
      * `execute` checked the CHANGE — the asset, amount and entries the signers
@@ -1375,7 +1375,7 @@ export class SimulatedLedger implements Ledger {
 
   /**
    * **RAISES A PAYROLL RUN, AND THE DISTINCTION FROM `propose` IS KEPT RATHER
-   * THAN CLAIMED.** `C375`, `S47`. The counterpart of the RUN branch at
+   * THAN CLAIMED.** The counterpart of the RUN branch at
    * `contracts/src/ConfidentialAccount.compact:2119-2156`.
    *
    * **THE THREE THINGS THAT MAKE IT A RUN AND NOT A GOVERNANCE ROUND WITH A
@@ -1383,7 +1383,7 @@ export class SimulatedLedger implements Ledger {
    *   1. the payload is `runPayload(root, payees, opensAt, closesAt)` and not an
    *      application digest, so the id is one `recordPayment` can recompute;
    *   2. it writes `runWindows`, which `propose` above writes never;
-   *   3. it REQUIRES a real vault; `propose` above refuses one. `T-299`, `T-237`.
+   *   3. It REQUIRES a real vault; `propose` above refuses one.
    *
    * **WHAT THIS LAYER STILL CANNOT DO, WRITTEN DOWN UNDER RULE 27 RATHER THAN
    * LEFT TO BE DISCOVERED:** there is no `recordPayment` here and no block
@@ -1462,7 +1462,7 @@ export class SimulatedLedger implements Ledger {
 
   /**
    * **A RUN'S APPROVED WINDOW, OR `undefined` IF THAT ID IS NOT A RUN.**
-   * `C375`, `S47`, added after that round's `money-safety-auditor` measured
+   * `C375`, `S47`, added after that round's money-safety pass measured
    * that `runWindows` had NO READER anywhere in the repository.
    *
    * **A DISTINCTION NOTHING CAN OBSERVE IS NOT A DISTINCTION**, which is
@@ -1501,7 +1501,7 @@ export class SimulatedLedger implements Ledger {
   }
 
   /*
-   * `settleRound` STOOD HERE. `C292`, `S26`.
+   * `settleRound` STOOD HERE.
    *
    * It checked the approved change against the account's own balance, applied
    * it, and appended a transfer row — the balance book, end to end. The book is
@@ -1519,7 +1519,7 @@ export class SimulatedLedger implements Ledger {
       throw new Error('there is no open proposal with that id');
     }
     // One proposal closes. Nobody else's approvals are touched, because there is
-    // no round to rotate. M-128.
+    // no round to rotate.
     a.openProposals.delete(proposalId);
     /*
      * **AND ITS WINDOW GOES WITH IT**, as `closeProposal` drops the contract's
@@ -1601,7 +1601,7 @@ export class SimulatedLedger implements Ledger {
     }
     /*
      * **`Number.isInteger` IS HERE BECAUSE ITS SIBLING HAS IT AND THE TWO
-     * DISAGREED.** `T-225` `P3`, `S52`. `setVaultThreshold` below refuses a
+     * DISAGREED.** `T-225` `P3`. `setVaultThreshold` below refuses a
      * non-integer at BOTH boundaries and `setThreshold` refused it at NEITHER,
      * and `S46` closed the same asymmetry one layer down at
      * `src/midnight/ledger.ts:1293` — leaving this the last of the pair. Six
@@ -1631,14 +1631,14 @@ export class SimulatedLedger implements Ledger {
      * Every other open proposal keeps its approvals and will be measured against
      * the NEW threshold when it settles. Under the round design this call burned
      * every approval on the account, including ones given to a payment that was
-     * a signature from settling. M-128.
+     * a signature from settling.
      */
     a.openProposals.delete(proposalId);
     return this.touch(a);
   }
 
   /**
-   * **ONE VAULT'S OWN THRESHOLD.** `R5`, `C172`. The counterpart of
+   * **ONE VAULT'S OWN THRESHOLD.** The counterpart of
    * `setVaultThreshold` at `contracts/src/ConfidentialAccount.compact:2699`,
    * check for check.
    *
@@ -1679,9 +1679,9 @@ export class SimulatedLedger implements Ledger {
      * `S55`, rule 27. `compact:1372` says `thresholdFor(noVault())` cannot occur
      * *by construction*; `:2778` inserts whatever key it is handed, so the
      * construction is a CLIENT HABIT — `AccountService.setVaultThreshold`
-     * refuses the sentinel on BOTH paths (`T-265`, `S56`). **Not added here: the
+     * refuses the sentinel on BOTH paths. **Not added here: the
      * chain has none, and `MidnightLedger` has none either, so the INTER-LEDGER
-     * parity this file really applies does not compel it.** `T-321`.
+     * parity this file really applies does not compel it.**
      */
     a.vaultThresholds.set(vault, newThreshold);
     a.openProposals.delete(proposalId);
@@ -1736,7 +1736,7 @@ export class SimulatedLedger implements Ledger {
       })),
       /*
        * **THERE IS NO `settlements` HERE, AND ITS ABSENCE IS THE CLAIM.**
-       * `C313`, `S29`.
+       *
        *
        * This method is the evidence behind *a public observer learns nothing*,
        * so what it omits has to be omitted on purpose. Nothing settles at the
@@ -1749,7 +1749,7 @@ export class SimulatedLedger implements Ledger {
        * **WHOEVER BUILDS VAULT PAYROLL DECIDES WHAT AN OBSERVER SEES OF IT, AND
        * THIS IS WHERE THAT DECISION LANDS.** It is not a matter of refilling an
        * array: a settlement row carried the asset and the amount as a real
-       * integer to an endpoint with no sign-in on it (`C122`), so the next
+       * integer to an endpoint with no sign-in on it, so the next
        * shape has to be argued rather than inherited. Until then this method
        * shows commitments and the public face of a proposal, and says so.
        */
@@ -1790,7 +1790,7 @@ export class SimulatedLedger implements Ledger {
     if (!p) throw new Error('there is no open proposal with that id');
     /*
      * **THE BAR IS THE ACCOUNT'S, AND NEVER A VAULT'S.** `C376`, `T-215`,
-     * `S52`. This is the counterpart of the contract's `requireApproved`
+     * This is the counterpart of the contract's `requireApproved`
      * (`contracts/src/ConfidentialAccount.compact:1407`), which reads
      * `threshold` directly with NO map lookup — and every governance circuit
      * on chain lands there. Measured at source by this round: `requireApproved`
@@ -1827,13 +1827,13 @@ export class SimulatedLedger implements Ledger {
      * PARAGRAPH FALSE AND IS THE ROUND CORRECTING IT:** three of them now carry
      * the vault on a RUN (`proposeRun`), because `T-237` made a governance round
      * naming a vault refusable here as the contract refuses it; the fourth seats
-     * the SENTINEL (`C368`) and pins the bar on a genuine governance round. They
+     * the SENTINEL and pins the bar on a genuine governance round. They
      * drive this class directly — the five product doors all pass `noVault()`
      * (`account.ts:1137`, `:1236`, `:1423`, `:1634`, `:2349`). **MEASURED: a
      * vault-aware ternary turns FOUR red; `Math.max(account, vault)` turns ONE.**
      *
      * **WHAT IS STILL NOT MIRRORED, SAID SO IT IS NOT READ AS CLOSED.** The
-     * contract defends this THREE times, and `S52`'s `money-safety-auditor`
+     * contract defends this THREE times, and `S52`'s money-safety pass
      * corrected this paragraph from *twice*: the account-threshold bar here;
      * `propose`'s `assert(vault == noVault())` on the governance branch
      * (`:2319`, `C363`); and every governance circuit RE-DERIVING the proposal
@@ -1857,7 +1857,7 @@ export class SimulatedLedger implements Ledger {
      * payload, and a helper that answered with the wrong one made the domain
      * separators dead code — every governance call refused, and no test noticed
      * until the suite was run rather than reasoned about. `execute` went with
-     * the balance ledger (`C292`), so the change half of this pair now has no
+     * the balance ledger, so the change half of this pair now has no
      * reader and only the payload half is compared to anything.
      */
     return { payloadHash: p.payloadHash, change: p.change };
@@ -1929,7 +1929,7 @@ export class SimulatedProofSystem implements ProofSystem {
   private predicateHolds(circuit: Circuit, publicInputs: Record<string, unknown>, witness: any): boolean {
     switch (circuit) {
       /*
-       * EVERY COMPARISON BELOW IS BIGINT TO BIGINT. M-125.
+       * EVERY COMPARISON BELOW IS BIGINT TO BIGINT.
        *
        * These read `typeof witness.balance === 'number'` until today, and the
        * failure that change avoids is worth naming: a bigint balance would have
@@ -2007,7 +2007,7 @@ export class SimulatedProofSystem implements ProofSystem {
  */
 export interface CommitmentScheme {
   /**
-   * **A SIGNER'S PUBLIC IDENTITY, FROM THEIR SIGNING SECRET.** `C328`.
+   * **A SIGNER'S PUBLIC IDENTITY, FROM THEIR SIGNING SECRET.**
    *
    * The first argument of `signerLeaf`, and until `S34` every product writer
    * passed an ed25519 public key into it while the contract read something
@@ -2062,7 +2062,7 @@ export interface CommitmentScheme {
    */
   assetKey(asset: AssetId, assetBlinding: Hex): Hex;
   /**
-   * What the chain calls a proposal. M-128.
+   * What the chain calls a proposal.
    *
    * `commit([tag, payloadHash, vault], salt)` — blinded, unique because the
    * salt is fresh, and already the value every approval nullifier is derived
@@ -2132,7 +2132,7 @@ export interface CommitmentScheme {
    */
   changeCommitment(assetKey: Hex, amount: bigint, batchDigest: Hex, salt: Hex): Hex;
   /**
-   * **WHAT IS BEING APPROVED, IN THE FOUR GOVERNANCE ROUNDS.** `C373`, `S44`.
+   * **WHAT IS BEING APPROVED, IN THE FOUR GOVERNANCE ROUNDS.**
    *
    * These four were `sha256` functions at module scope in this file, imported
    * and called DIRECTLY by `AccountService` whatever ledger was wired beneath
@@ -2281,7 +2281,7 @@ export const SimulatedCommitments: CommitmentScheme = {
       `midnight-accounts:run:${root}:${payees}:${opensAt}:${closesAt}`)));
   },
   proposalId(payloadHash, salt, vault) {
-    const v = vault ?? this.noVault(); // `this`, not the name. `T-224`, `S52`.
+    const v = vault ?? this.noVault(); // `this`, not the name.
     return toHex(hmac(sha256, fromHexKey(salt), utf8('proposal:' + payloadHash + ':' + v)));
   },
   changeCommitment(assetKey, amount, batchDigest, salt) {
@@ -2291,7 +2291,7 @@ export const SimulatedCommitments: CommitmentScheme = {
   },
   /*
    * **THE FOUR GOVERNANCE PAYLOADS, SIMULATED — AND THEY KEEP `sha256`.**
-   * `C373`, `S44`.
+   *
    *
    * The bodies are the ones that stood at module scope in this file, moved
    * behind this object rather than rewritten: same domain strings, same hash,

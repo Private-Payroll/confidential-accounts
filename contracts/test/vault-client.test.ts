@@ -44,7 +44,7 @@ const bytes = (n: number) => new Uint8Array(32).fill(n);
 const A = privateStateFor(1);
 const B = privateStateFor(2);
 const GBP = bytes(0x9b);
-/** The token the product launches with, and it is UNSHIELDED by definition. `C245`. */
+/** The token the product launches with, and it is UNSHIELDED by definition. */
 const NIGHT = bytes(0x99);
 const ALICE = bytes(0x0a);
 const BOB = bytes(0x0b);
@@ -181,7 +181,7 @@ describe('V-74: a vault driven by the client\'s own note pool', () => {
      */
     /*
      * **AND THE CHANGE IS READ OUT OF THE CALL, NOT DERIVED.** `C239`, taken by
-     * `S6f`.
+     *
      *
      * This line used to hand `afterPayment` an index and let it compute the
      * change note's nonce with `changeNonceOf`. It is now the coin the circuit
@@ -268,7 +268,7 @@ describe('V-74: a vault driven by the client\'s own note pool', () => {
     expect(vaultLedger(vaultState as never).payments).toBe(0n);
   });
   /* ------------------------------------------------------------------ *
-   * C246 AT THE CLIENT, WHERE THE LEAF IS ACTUALLY BUILT. S6k.
+   * C246 AT THE CLIENT, WHERE THE LEAF IS ACTUALLY BUILT.
    * ------------------------------------------------------------------ */
 
   /**
@@ -417,7 +417,7 @@ describe('V-74: a vault driven by the client\'s own note pool', () => {
 
   /**
    * **THE HALF THAT IS EASY TO LEAVE OUT: a retry keeps each payee's kind.**
-   * `V-64`, `C246`.
+   * `V-64`.
    *
    * `buildRetryRun` reuses the ORIGINAL secrets, which is what stops a retry
    * being a second payment. It also reuses the original `payments` — the

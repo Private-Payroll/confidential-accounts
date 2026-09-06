@@ -1,6 +1,6 @@
 /**
  * WHAT A TRANSACTION PUBLISHES, AS OPPOSED TO WHAT THE LEDGER ENDS UP HOLDING.
- * `C389` `P1`, board row `2y9f0`, `S50`.
+ * `C389` `P1`, board row `2y9f0`.
  *
  * **THE GAP THIS EXISTS TO CLOSE.** Every privacy claim this project has ever
  * checked mechanically has been checked over ledger STATE.
@@ -44,7 +44,7 @@
  *
  * 1. **It reads ONE transaction's transcript.** Anything a watcher learns by
  *    counting transactions, timing them, or correlating them is outside it.
- *    The payout COUNT is exactly that shape (`C356`).
+ *    The payout COUNT is exactly that shape.
  * 2. **It does not read the circuit's `input`.** `PartialProofData.input`
  *    carries every argument in the clear, and it is PRIVATE — a proof witness,
  *    not chain data. A green run here says the chain does not learn the value;

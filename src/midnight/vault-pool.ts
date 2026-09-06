@@ -206,7 +206,7 @@ export const openPool = (
     return parseCanonical<VaultNotes>(unseal(rec.sealed, key));
   } catch {
     /*
-     * `parseCanonical`, not `JSON.parse`. `M-125`: a note's value is a bigint,
+     * `parseCanonical`, not `JSON.parse`. A note's value is a bigint,
      * which `canonical` writes as `{"$n":"…"}` and a plain parse hands back as
      * an object. An object in arithmetic is `NaN` or a concatenation, not an
      * error — a pool that opens and is wrong is worse than one that refuses.

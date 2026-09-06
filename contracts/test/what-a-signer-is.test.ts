@@ -1,6 +1,6 @@
 /**
  * **THE LEAF THIS PRODUCT WRITES IS THE LEAF `requireSigner` COMPUTES.**
- * `C328`, board `2y3`, `S34`.
+ * `C328`, board `2y3`.
  *
  * ── THE DEFECT THIS FILE IS THE ALARM FOR ────────────────────────────────
  *
@@ -37,7 +37,7 @@
  * file dies.
  *
  * **WHAT IT STILL CANNOT SEE, SAID HERE RATHER THAN CLAIMED AWAY** (rule 14,
- * and `S34`'s `test-auditor` corrected an earlier sentence in this header that
+ * and `S34`'s test-coverage pass corrected an earlier sentence in this header that
  * claimed otherwise): the circuit BODY. `requireSigner` calls the same
  * `signerLeaf` and `signerPublicKey` that `pureCircuits` exports and that
  * `MidnightCommitments` wraps, so a change to either body moves both sides and
@@ -160,7 +160,7 @@ describe('C328 — what a signer’s public identity is', () => {
     await sim.seatLeaf(fromHex(oldWay), [FOUNDER], 12);
 
     sim.as(sim.applying(INVITEE, change(0n, 12)));
-    /* **THE MESSAGE IS READ, NOT THE FACT OF A THROW.** `S34`'s `test-auditor`:
+    /* **THE MESSAGE IS READ, NOT THE FACT OF A THROW.** `S34`'s test-coverage pass:
      * `rejects.toThrow()` passes for a `TypeError` from a renamed helper, and a
      * broad pattern passes for any refusal mentioning a path. The witness that
      * refuses is `contracts/src/witnesses.ts`, by name. */
@@ -171,7 +171,7 @@ describe('C328 — what a signer’s public identity is', () => {
   it('SEATS WHAT `AccountService.create` WROTE, THROUGH THE WRITER AND NOT THE HELPER', async () => {
     /*
      * **THE WRITER ITSELF, BECAUSE THE HELPER IS NOT WHAT SHIPS.** `S34`'s
-     * `test-auditor`, and this is the finding that mattered most.
+     * test-coverage pass, and this is the finding that mattered most.
      *
      * The test above enters through `storedSignerLeaf`. That proved the helper
      * agrees with the contract and proved nothing about `AccountService.create`
@@ -213,7 +213,7 @@ describe('C328 — what a signer’s public identity is', () => {
   it('the adapter passes the SCOPE it is given, not the one it defaults to', () => {
     /*
      * **`T-116`, ONE LAYER BELOW WHERE THIS ROUND CLOSED IT.** `S34`'s
-     * `test-auditor`: forcing `src/midnight/commitments.ts` to ignore its
+     * test-coverage pass: forcing `src/midnight/commitments.ts` to ignore its
      * `scope` argument and always use `allVaults()` SURVIVED every test, because
      * every caller in the suite passes the default — so the coverage was of the
      * default value and not of the parameter.
@@ -271,7 +271,7 @@ describe('C328 — what a signer’s public identity is', () => {
 });
 
 /**
- * **`C334` — THE DEPLOYING DEVICE IS NOT A SIGNER.** `P0`, board `2y6`, `S35`.
+ * **THE DEPLOYING DEVICE IS NOT A SIGNER.** `P0`, board `2y6`.
  *
  * ── THE DEFECT THIS BLOCK IS THE ALARM FOR ───────────────────────────────
  *
@@ -336,7 +336,7 @@ describe('C334 — the deployer has no seat', () => {
      * `requireSigner()`, and the seat the deployer used to hold is what let it
      * walk the bootstrap window seating whoever it liked.
      *
-     * **THE WINDOW IS SHUT FOR EVERYBODY NOW (`S35d`), AND THAT DOES NOT MAKE
+     * **THE WINDOW IS SHUT FOR EVERYBODY NOW, AND THAT DOES NOT MAKE
      * THIS LINE REDUNDANT.** `requireSigner()` is still the first thing
      * `amendSigner` does, so a deploying device that held a seat would still
      * pass it and could still propose, approve and seat through the ordinary
@@ -377,7 +377,7 @@ describe('C334 — the deployer has no seat', () => {
   it('SEATS A LEAF THE PRODUCT WRITER PRODUCED, not one this test derived', async () => {
     /*
      * **THE COMPOSITION `C334` ACTUALLY INTRODUCES, AND NOTHING ELSE COVERED
-     * IT.** `S35`'s `test-auditor`.
+     * IT.** `S35`'s test-coverage pass.
      *
      * The three tests above hand the constructor `leafOfDevice(...)`, which is
      * `pureCircuits` directly — so they prove the CONTRACT seats its argument
@@ -507,7 +507,7 @@ describe('C340 + C343 — an account is founded at one, and one is a rule', () =
      * directly and `!(0 < 0)` is reached with an approval count of nought.
      *
      * **WHAT HAPPENS THEN, SAID EXACTLY, BECAUSE AN EARLIER DRAFT OF THIS
-     * PARAGRAPH OVERSTATED IT** — found by this round's `test-auditor` against
+     * PARAGRAPH OVERSTATED IT** — found by this round's test-coverage pass against
      * this round's own words. `setThreshold` runs `requireApproved` FIRST and
      * its payload check SECOND. `id` below was raised over `payload(31)`, which
      * is not a `setThresholdPayload`, so at a threshold of zero the approval bar

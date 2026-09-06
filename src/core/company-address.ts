@@ -3,7 +3,7 @@ import type { DataStore } from './store.js';
 /**
  * **WHICH COMPANY A PERSON MAY ASK THEIR WALLET TO OPEN — AND THE ANSWER COMES
  * FROM THE SESSION.** `docs/NEXT.md` PI2a §2, `docs/scope-payroll-identity.md`
- * §9, `C136`, `C129`.
+ * §9.
  *
  * ── THE ONE DANGEROUS LINE IN THE ROUND, AND THIS FILE IS IT ──────────────
  *
@@ -50,7 +50,7 @@ const COMPANY_ADDRESS = /^[0-9a-fA-F]{64}$/u;
 
 /**
  * **THE ONE DELIBERATE WAY PAST THE `C140` REFUSAL, AND IT IS NOT A
- * PARAMETER.** `PI2b`.
+ * PARAMETER.**
  *
  * `PI2a`'s rule is that this function has nowhere to put a claimed company,
  * and a fourth argument saying *serve me anyway* would be that rule undone by
@@ -80,7 +80,7 @@ export type CompanyFailure =
   | 'company-not-on-a-chain'
   /**
    * A real company of yours whose address **no chain ever assigned**. `PI2b`,
-   * `C140`. A separate code from `company-not-on-a-chain` on purpose: that
+   * A separate code from `company-not-on-a-chain` on purpose: that
    * one means *nothing is there*, this one means *something is there and we
    * made it up*, and only the second is a thing a developer may deliberately
    * work past.
@@ -125,7 +125,7 @@ export function companyForSession(
      * address has no such key, and substituting anything at all — our own
      * account id, a hash of the name, a value minted here — would be minting
      * the identifier the design chose the chain's for precisely so we could
-     * not. `C136`. So the person is told what is missing.
+     * not. So the person is told what is missing.
      */
     throw new NoCompanyAddress(
       'company-not-on-a-chain',
@@ -134,7 +134,7 @@ export function companyForSession(
       + 'until the company has been deployed.');
   }
   /*
-   * **AND AN ADDRESS NO CHAIN EVER ASSIGNED IS REFUSED TOO.** `PI2b`, `C140`.
+   * **AND AN ADDRESS NO CHAIN EVER ASSIGNED IS REFUSED TOO.**
    *
    * The check above tests the SHAPE, and `SimulatedLedger` mints that shape on
    * purpose — thirty-two random bytes spelled exactly as a contract address is
@@ -170,7 +170,7 @@ export function companyForSession(
 
 /**
  * **THE SAME ADDRESS, FOR SOMEBODY WHO IS NOT A MEMBER YET.** `docs/NEXT.md`
- * `X11` §0.
+ *
  *
  * ── WHY AN INVITEE NEEDS IT AT ALL ────────────────────────────────────────
  *

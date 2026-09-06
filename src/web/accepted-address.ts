@@ -22,7 +22,7 @@ import type { SealedHandover } from '../core/invite-handover.js';
  *
  * ── AND IT CARRIES NO WEBASSEMBLY ────────────────────────────────────────
  *
- * `C149`. `sealed-records.ts` and `invite-handover.ts` are `@noble` and nothing
+ * `sealed-records.ts` and `invite-handover.ts` are `@noble` and nothing
  * else, and `addressFingerprint` is a hash and an alphabet. **The address is a
  * plain string here and is never rebuilt through `payeeAddress()`** — that
  * happens at `admit`, on the machine that writes the roster, exactly as it
@@ -40,7 +40,7 @@ import type { SealedHandover } from '../core/invite-handover.js';
  * their own invitation pastes their own matching code and every screen agrees.
  * What catches that is the admin confirming the code with the person through a
  * channel where a wrong person would be noticed — and `App.tsx` says that on
- * the screen, in the way the unlock screen says what it cannot check (`C138`).
+ * the screen, in the way the unlock screen says what it cannot check.
  */
 
 export type Accepted =

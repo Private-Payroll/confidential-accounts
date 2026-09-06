@@ -1,5 +1,5 @@
 /**
- * THE BROWSER ERROR SINK, DRIVEN BY A FAKE WINDOW. `X4` §1.
+ * THE BROWSER ERROR SINK, DRIVEN BY A FAKE WINDOW.
  *
  * ── WHY A FAKE AND NOT A DOM ─────────────────────────────────────────────
  *
@@ -113,7 +113,7 @@ describe('the browser error sink', () => {
   });
 
   /*
-   * `C157`. A refusal recorded as `400 POST /api/accounts` and nothing else is
+   * A refusal recorded as `400 POST /api/accounts` and nothing else is
    * a refusal nobody can tell from a different refusal, which is what cost a
    * morning on 24 Aug. These three are the sink half of the row.
    *

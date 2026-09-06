@@ -1,7 +1,7 @@
 /**
- * The attempt limiter. S-2.
+ * The attempt limiter.
  *
- * **IT WAS THE LOGIN LIMITER AND LOGIN IS DELETED.** `PI4b`, `C129`. The attack
+ * **IT WAS THE LOGIN LIMITER AND LOGIN IS DELETED.** The attack
  * it was written for was a password one: argon2id ran on the CLIENT, so what
  * arrived was a 32-byte `authKey` that cost nothing to check — the expensive
  * step a password normally imposes on a guesser had already been paid, by the
@@ -15,11 +15,11 @@
  * attempt is BOUNDED and therefore visible.
  *
  * **THE WORD `METERED` IS DOING REAL WORK AND WAS MISSING UNTIL `S58`.**
- * `T-235`. This sentence said *the one door that answers a stranger*, flat, and
+ * This sentence said *the one door that answers a stranger*, flat, and
  * that is FALSE at source: **twelve routes in `src/server/index.ts` carry no
  * `authed`**, ten of them wrapped by `wrap` and two registered bare. Read as
  * written it says the unauthenticated surface is one endpoint wide and metered,
- * when it is twelve wide and one of them is metered. `docs/corrections.md`.
+ * when it is twelve wide and one of them is metered.
  *
  * ONE MECHANISM, A SCOPE PER DOOR. Each is the same bucket with a different
  * `scope`, so there is one rule to get right rather than one per caller.
@@ -57,14 +57,14 @@ export interface LimitPolicy {
  * like a script, and a script working from one address must not be invisible
  * because each thing it touched only saw two attempts.
  *
- * **THE `email` BUCKET IS DELETED.** `PI4b`. It counted attempts per account on
+ * **THE `email` BUCKET IS DELETED.** It counted attempts per account on
  * the way into `login`, and `login` was the only thing that ever recorded on it
  * or cleared it. **A bucket nothing fills is a limit that reads as protection
  * and is not one**, which is the same failure S-2 was written against from the
  * other side: back then the limiter existed and the route did not call it.
  */
 /**
- * **WHAT AN UNKNOWN SCOPE IS COUNTED UNDER.** `PI4b`.
+ * **WHAT AN UNKNOWN SCOPE IS COUNTED UNDER.**
  *
  * Both implementations fall back to this when `policy[scope]` is absent, so a
  * scope name with a typo in it is METERED rather than waved through. It used to
@@ -91,7 +91,7 @@ export const DEFAULT_POLICY: Record<string, LimitPolicy> = {
    * `GET /api/invites/:token/offer` is the one door in this product that
    * answers a stranger AND COUNTS THE ANSWER, and `X11` is the round that makes
    * it reachable by a real screen for the first time. **It is not the only
-   * unauthenticated door — `T-235`, `S58`.** Twelve routes carry no `authed`;
+   * unauthenticated door — `T-235`.** Twelve routes carry no `authed`;
    * what is unique here is the meter, which is what the paragraph was always
    * about and what it did not say. The scope's own words: *"about a hundred
    * bits of token is the only thing between a guesser and a salary."*
@@ -130,7 +130,7 @@ export interface RateLimiter {
   record(scope: string, key: string, now?: Date): Promise<LimitDecision>;
 
   /*
-   * **`clear` IS DELETED.** `PI4b`.
+   * **`clear` IS DELETED.**
    *
    * It emptied a key's bucket after a SUCCESSFUL login, and `login` was its
    * only caller — deliberately for the `email` scope and deliberately NOT for

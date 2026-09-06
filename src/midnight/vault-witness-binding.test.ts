@@ -15,13 +15,13 @@
  * Here THE FIND — and only the find — is intercepted, so `connect` runs for
  * real and what it hands over can be looked at.
  *
- * **WHICH FIND MOVED, AND THIS FILE MOVED WITH IT IN THE SAME TURN.** `S6e`.
+ * **WHICH FIND MOVED, AND THIS FILE MOVED WITH IT IN THE SAME TURN.**
  * `connect` used to call the SDK's `findDeployedContract`; it now calls
  * `findDeployedVaultContract` (`src/midnight/vault-contract.ts`), which is the
  * vault's own — it checks the operations map is exactly the vault's four,
- * addresses the private-state store per vault before anything reads (`C228`),
+ * addresses the private-state store per vault before anything reads,
  * and samples no signing key, which the SDK's find does for any address the
- * store has none for (`M-155`). So the seam this file stubs is that function
+ * store has none for. So the seam this file stubs is that function
  * rather than the SDK's. **Left pointing at the old name, this file would have
  * gone green while intercepting nothing** — a stub of a function nobody calls
  * is a test of nothing, which is exactly the failure the file was written to

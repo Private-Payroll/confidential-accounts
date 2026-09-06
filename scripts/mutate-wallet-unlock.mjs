@@ -128,7 +128,7 @@ const MUTATIONS = [
     id: 10,
     binding: 'THE ADDRESS IS THE LEDGER’S AND IS NOT MINTED HERE',
     /*
-     * **RE-AIMED, NOT DELETED.** `X8` §4. `UNLOCK-CHECK` reported this one as
+     * **RE-AIMED, NOT DELETED.** `UNLOCK-CHECK` reported this one as
      * `NOT RUN` — `PI2b` refactored the line it named eight days ago, when the
      * ledger started answering with the address AND where it came from, so the
      * text it searched for stopped existing and the mutation stopped running.
@@ -140,14 +140,14 @@ const MUTATIONS = [
      * rather than minted on this side — and it is read once and written down
      * immediately, because the simulated ledger holds its whole world in memory
      * and would answer differently after a restart. **That address is what the
-     * key opening this company's records is derived from** (`C136`), on every
+     * key opening this company's records is derived from**, on every
      * client, for as long as the company exists. An address invented here would
      * derive a key no chain will ever match, identically and repeatably, and
      * everything sealed under it would be unopenable by anything but this
      * process — which is `C127` arriving by the door `C136` was built to close.
      *
      * The replacement now also lies about the PROVENANCE, which the old one
-     * could not: `PI2b` made the two travel in one value (`C140`), so a
+     * could not: `PI2b` made the two travel in one value, so a
      * mutation that mints an address mints its source with it.
      */
     file: 'src/core/account.ts',

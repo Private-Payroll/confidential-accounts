@@ -166,7 +166,7 @@ describe('the deferral list: S25\'s decision, stated where a diff will show it',
     // propose+proposeRun → propose), thirteen after them, eleven once S23 shed
     // credit and attestSolvency, TEN since `C292`/`S26` removed `execute` with
     // the account's balance ledger.
-    //
+    
     // "No overlap" is what this used to claim, and while DEFERRED_CIRCUITS is
     // empty that claim cannot fail, so it is not made. What IS checked is that
     // the concatenation has no duplicate — which can fail — and that
@@ -188,7 +188,7 @@ describe('the deferral list: S25\'s decision, stated where a diff will show it',
      * deployable set: `partial-contract.ts` asks the zk config provider for a
      * verifier key per deployed circuit, so a name here without a key on disk
      * is a deploy that stops, and a key on disk without a name here is a
-     * circuit the deployment silently drops (`C224`).
+     * circuit the deployment silently drops.
      *
      * This is the test `V-251` asked for: the comparison is against the
      * artefact, so the NEXT contract change fails this line rather than a

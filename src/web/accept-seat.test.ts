@@ -1,6 +1,6 @@
 /**
  * **THE ORDER IS THE DEFECT, SO THE ORDER IS WHAT IS TESTED.** `C329`, `C328`,
- * `T-118`, `S34`.
+ *
  *
  * `acceptInvite` POSTed the leaf and THEN sealed the keyring. `putBundle` rolls
  * back and rethrows on a version conflict and the three secrets were only ever
@@ -11,7 +11,7 @@
  *
  * **AND UNTIL `S34` NOTHING COULD EXECUTE IT.** No test file in this repository
  * imports `src/web/App.tsx`. What stood in for rule 11 there was a
- * comment-stripped source pin, and `S34`'s `test-auditor` measured what that
+ * comment-stripped source pin, and `S34`'s test-coverage pass measured what that
  * bought: restoring `C328`'s ed25519 writer at that very line left 187 tests
  * green. The sequence moved out of the screen so a real test could drive it.
  *
@@ -117,7 +117,7 @@ describe('C328 — the leaf this path publishes', () => {
   it('is NOT the leaf the old writer made over the ed25519 public key', async () => {
     /*
      * **THE REGRESSION GUARD FOR `C328` AT THIS WRITER**, and `S34`'s
-     * `test-auditor` is why it exists: it restored the old line here and 187
+     * test-coverage pass is why it exists: it restored the old line here and 187
      * tests stayed green, because nothing in the repository executed this path.
      *
      * The old value is built with the real keypair helpers rather than written
@@ -157,7 +157,7 @@ describe('C328 — the leaf this path publishes', () => {
   });
 
   it('carries the scope the leaf was made under into the material that must reproduce it', async () => {
-    /* `T-116`. A seal that dropped the scope would agree today, while every
+    /* A seal that dropped the scope would agree today, while every
      * seat written on the day a per-vault scope arrives becomes unreproducible
      * on its own device. */
     const d = doorsThat();

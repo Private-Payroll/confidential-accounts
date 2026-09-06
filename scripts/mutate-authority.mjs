@@ -7,17 +7,17 @@
  *
  *   · **WHO SAYS A ROUND IS APPROVED** — the count and the bar come off one
  *     captured `LedgerStatus`, and "we could not read the chain" is a third
- *     outcome rather than a quiet "not enough". `R4`, `C121`, `C171`.
+ *     outcome rather than a quiet "not enough".
  *   · **WHO SAYS AN ACCOUNT CAN STILL APPROVE ANYTHING AT ALL** — the three
  *     guards that stand in front of a removal, a rotation and a threshold
  *     round measure against the contract's threshold and the contract's seat
- *     count, and a guard that cannot read either REFUSES. `X19`, `C177`.
+ *     count, and a guard that cannot read either REFUSES.
  *   · **WHO CHOOSES THE IMPLEMENTATION** — one selector, and the detector that
- *     says so is not blind. `R2`, `R3`, `C174`.
+ *     says so is not blind.
  *   · **WHETHER A ROUND CAN HALF-HAPPEN, AND WHICH TRANSACTION IT IS RECORDED
  *     UNDER** — the money moving and the state moving are ONE operation, and
  *     the identifier kept against a completed round is that operation's.
- *     `R6`, `C169`, `C170`.
+ *
  *
  * **WHY THESE ARE ONE FILE AND NOT TWO.** Both are about a place being the only
  * place entitled to give an answer, and about what happens when a second place
@@ -38,7 +38,7 @@
  * three under VERIFIED, and `R2`'s and `R3`'s allow-list control, which each ran
  * in a throwaway replication OUTSIDE the working tree. **A proof watched once
  * has no alarm.** (**The count below is not five and this sentence used to read
- * as though it were.** `S29`, `T-67`. Entries come and go, each with its reason;
+ * as though it were.** Entries come and go, each with its reason;
  * the harness derives the count from the array and prints it — **and since
  * `S56` this sentence writes none either. It said THIRTEEN against an array of
  * TWENTY-TWO, in the same breath. `T-312`.**) **THE VALUABLE HALF OF THE REPORT
@@ -76,7 +76,7 @@ import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 
 const ROOT = process.cwd();
 /*
- * **FOUR, NOT FIVE. `S29`, `T-67`.** `src/core/settling-and-executing-are-one.test.ts`
+ * **FOUR, NOT FIVE. `S29`.** `src/core/settling-and-executing-are-one.test.ts`
  * was the fifth and is not on disk — `C292`/`S26` moved it to
  * `_to_delete/S26-C292/`. It stayed in this list, and `AUTHORITY-CHECK.command`
  * printed it on screen as one of the files these mutations are judged against,
@@ -85,7 +85,7 @@ const ROOT = process.cwd();
  */
 /*
  * **AND A FIFTH SINCE `S33`, WHICH IS THE SAME SUBJECT ONE LEVEL LOWER DOWN.**
- * `C325`. Everything above asks who is entitled to answer *is this round
+ * Everything above asks who is entitled to answer *is this round
  * approved*. The signer leaf asks who is entitled to answer *may this device
  * approve at all* — it is the value the on-chain tree holds and the value
  * `requireSigner()` recomputes, and the two were stored in different places and
@@ -100,7 +100,7 @@ export const SUITES = [
   'src/wiring/one-wiring-point.test.ts',
   'src/core/signer-leaf.test.ts',
   /*
-   * **A CONTRACT SUITE IN THIS HARNESS, ADDED BY `S34`.** `C328`.
+   * **A CONTRACT SUITE IN THIS HARNESS, ADDED BY `S34`.**
    *
    * Every other suite here is isomorphic `core/`. This one is not, and it is
    * here because the binding it holds cannot be held anywhere else: `C328` was
@@ -108,11 +108,11 @@ export const SUITES = [
    * identity is, and only a test that seats what the product writes and then
    * acts through the real circuits can die when they part again. A mutation
    * answered by a mirror of two `pureCircuits` calls is a mutation that
-   * survives — measured, `C306`.
+   * survives — measured.
    */
   'contracts/test/what-a-signer-is.test.ts',
   /* The invite path's ordering and its leaf, out of the screen so a test can
-   * drive them. `C329`, `T-118`. */
+   * drive them. */
   'src/web/accept-seat.test.ts', 'src/core/core.test.ts', 'src/midnight/ledger.test.ts', // EIGHTH — S67, T-286. NINTH — S74, T-358: the maintenance boundary, tier 2 of the money-path set, which this corpus targeted at no entry at all. Both line-neutral on purpose: `edges.json` pins `:542` below and a suite added on its own line moves it. See `RUN_AS_DOOR`.
 ];
 const OUT = join(ROOT, 'logs', 'mutate-authority');
@@ -160,7 +160,7 @@ export const MUTATIONS = [
     ],
   },
   /*
-   * ── 03 IS DELETED, WITH ITS REASON. `S29`, `T-79`, `T-67`. ───────────────
+   * ── 03 IS DELETED, WITH ITS REASON. ──────────────────────────────────────
    *
    * **IT TARGETED `execute`'s UNKNOWN ARM, AND `execute` IS GONE FOR GOOD.**
    * `C292`/`S26` deleted `AccountService.execute`; `src/core/account.ts:2420`
@@ -186,7 +186,7 @@ export const MUTATIONS = [
    * **WHAT IS NOW UNCOVERED, SAID PLAINLY RATHER THAN LOST WITH THE ROW:**
    * `01` and `02` both kill their tests on the `approvalRound` assertion, so
    * whatever those tests say about an unreadable round AFTER that line is
-   * unwatched again — the exact hole `03` was written to close. `BACKLOG.md`.
+   * unwatched again — the exact hole `03` was written to close.
    */
   {
     id: 6,
@@ -262,7 +262,7 @@ export const MUTATIONS = [
    * **THE SAME SUBJECT AS 01 TO 03 WITH THE QUESTION MADE SHARPER.** `R4`
    * moved the approval answer to the boundary; `R5` made the answer per-vault,
    * and the contract has enforced a per-vault threshold since V-33 while the
-   * application could not express one (`C172`).
+   * application could not express one.
    *
    * **WHAT MAKES THESE FOUR WORTH HAVING IS THAT THE WRONG ANSWER IS RIGHT
    * ALMOST EVERYWHERE.** `thresholdFor` returns the account's threshold for
@@ -421,9 +421,9 @@ export const MUTATIONS = [
    * outright for that reason.
    */
   /*
-   * ── 19, 20, 22 TO 25. WHO MAY APPROVE AT ALL. `C325`, `C328`, `C329`. ───
+   * ── 19, 20, 22 TO 25. WHO MAY APPROVE AT ALL. ───────────────────────────
    *
-   * **21 IS DELETED AND ITS REASON IS AT THE FOOT OF THIS GROUP.** `S34`. The
+   * **21 IS DELETED AND ITS REASON IS AT THE FOOT OF THIS GROUP.** The
    * paragraph about it below is kept because it is the argument that produced
    * the replacement, not because the row is still here.
    *
@@ -447,7 +447,7 @@ export const MUTATIONS = [
    * blinding is hardcoded, so a device restored without its original blinding
    * — `C325`'s realistic case — is waved through while a substituted roster is
    * still caught. `S33`'s own first test set could not see 20, and its
-   * `test-auditor` is what found that.
+   * test-coverage pass is what found that.
    *
    * **21 IS THE CALL SITE AND IT IS THE WEAK ONE, SAID HERE RATHER THAN LEFT TO
    * BE FOUND.** `src/web/App.tsx` has no test file, so what stands in is a
@@ -482,7 +482,7 @@ export const MUTATIONS = [
     /*
      * **RE-POINTED BY `S34`, AND IT WENT STALE THE HONEST WAY.** The derivation
      * moved out of `ownLeafReading` into `storedSignerLeaf`, which is now the
-     * ONE definition every writer and this check share (`C328`). The binding is
+     * ONE definition every writer and this check share. The binding is
      * unchanged; the line holding it is somewhere else.
      */
     from: '    material.blinding,',
@@ -499,7 +499,7 @@ export const MUTATIONS = [
       + 'C328 itself restored at the writer — every founding signer of every account made '
       + 'afterwards is a seat no device can prove, and it is silent until a proof on chain',
     /*
-     * **REGISTERED BECAUSE IT SURVIVED.** `S34`'s `test-auditor` applied exactly
+     * **REGISTERED BECAUSE IT SURVIVED.** `S34`'s test-coverage pass applied exactly
      * this and measured **261 passed, 0 failed**, both typechecks clean — the
      * file whose header calls itself the alarm for `C328` entered through the
      * shared helper and never through the writer. `core.test.ts` cannot see it
@@ -542,7 +542,7 @@ export const MUTATIONS = [
     from: '    return toHex(pureCircuits.signerPublicKey(fromHex(signingSecret)));',
     /*
      * **THIS MUTATION COULD NOT BE SCORED AT ALL UNTIL `S56` RE-AIMED IT, AND
-     * THE OLD `to:` IS WHY.** `T-295` `P1`, `SC15` §2.
+     * THE OLD `to:` IS WHY.** `T-295` `P1`.
      *
      * The line above is not only a call — it is a SCANNED call site.
      * `scripts/edge-list.ts:147` looks for that shape across `src`, `scripts`
@@ -596,7 +596,7 @@ export const MUTATIONS = [
     ],
   },
   /*
-   * ── 21 IS DELETED, WITH ITS REASON. `S34`, `T-118`. ─────────────────────
+   * ── 21 IS DELETED, WITH ITS REASON. ─────────────────────────────────────
    *
    * It mutated `src/web/App.tsx` — a local no-op shadowing the imported
    * refusal — and its `kills` named the comment-stripped source pin, *is called
@@ -624,7 +624,7 @@ export const MUTATIONS = [
    * killed by tests that run the real circuits or the real scope.
    */
   /*
-   * ── 15 TO 18 ARE DELETED, WITH THEIR REASON. `S29`, `T-79`, `T-67`. ──────
+   * ── 15 TO 18 ARE DELETED, WITH THEIR REASON. ─────────────────────────────
    *
    * **THE WHOLE `R6`/`C169`/`C170` GROUP, AND EVERY LINE OF THE CODE IT GUARDED
    * IS GONE.** They mutated `SimulatedLedger.settleRound` — the round's two
@@ -651,7 +651,7 @@ export const MUTATIONS = [
    *
    * **BOTH ARE HERE BECAUSE OF WHAT KILLED THE DEFECTS THEY REVERSE: NOTHING.**
    * `C376` sat in `src/core/ledger.ts` and was invisible to every test in the
-   * repository — `SC10`'s `test-auditor` measured that replacing its ternary
+   * repository — `SC10`'s test-coverage pass measured that replacing its ternary
    * with the correct line left the whole suite green. `C377` was the last
    * statement of `approve` being the only durable write, and no test asked what
    * happened if the call above it threw. **A defect that no test can see is a
@@ -670,18 +670,18 @@ export const MUTATIONS = [
     /*
      * **THE REPLACEMENT IS THE CODE THAT WAS THERE UNTIL 4 Sep**, character for
      * character, so this entry scores the exact regression rather than an
-     * invented one. `C376`, `T-215`.
+     * invented one.
      */
     from: '    const bar = a.threshold;',
     to: '    const bar = a.vaultThresholds.has(p.vault) ? a.vaultThresholds.get(p.vault) : a.threshold;',
     /* The first three were MEASURED by `S52` against this exact replacement. The
      * third is the one that separates *does not look a vault up* from *takes
-     * the stricter of the two* — `S52`'s `test-auditor` showed a `Math.max` bar
+     * the stricter of the two* — `S52`'s test-coverage pass showed a `Math.max` bar
      * passed the first two, so without it this entry scored a weaker property
      * than its `binding` line claims.
      *
      * **THE LIST UNDER-CLAIMED BY TWO AND `S58` MEASURED THE TRUE SET.**
-     * `T-337`. Applying this entry's exact `to:` string to the working tree and
+     * Applying this entry's exact `to:` string to the working tree and
      * running `src/core/a-vault-s-own-threshold.test.ts` turns **five** cases
      * red, not three: `C368`'s sentinel case was already among them when `S56`
      * seated the sentinel, and `T-290`'s `removeSigner` case is `S58`'s.
@@ -719,10 +719,10 @@ export const MUTATIONS = [
     from: '    this.putProposal(proposal, viewingKey);\n\n    /*\n     * **AND THE STANDING, WHICH IS THE HALF THAT NEEDS THE CHAIN.**',
     to: '    /*\n     * **AND THE STANDING, WHICH IS THE HALF THAT NEEDS THE CHAIN.**',
     /* MEASURED by `S52`, and the list is the four that actually died — the
-     * third name here was RENAMED after `S52`'s `test-auditor` showed the old
+     * third name here was RENAMED after `S52`'s test-coverage pass showed the old
      * one was not the negative control it claimed to be, and a kill list
      * naming a test that no longer exists is a STALE EXPECTATION that aborts
-     * the whole run before mutation [1]. `T-184`. */
+     * the whole run before mutation [1]. */
     kills: [
       'keeps the approval when the status read throws, so the retry is not refused for ever',
       'recovers the standing on the retry, and still refuses the second approval',
@@ -789,7 +789,7 @@ export const MUTATIONS = [
     /*
      * **`T-265` `P1`. THE MUTATION IS THE DELETION OF `S56`'s OWN FIX**, which
      * is the point: a fix with a test and no mutation is a fix whose test
-     * nothing measures. `S56`'s `test-auditor` raised it — mutations 13 and 14
+     * nothing measures. `S56`'s test-coverage pass raised it — mutations 13 and 14
      * already prove the two neighbouring refusals in that same file load-bearing
      * and this one had nothing.
      */
@@ -808,7 +808,7 @@ export const MUTATIONS = [
     /*
      * **A THIRD MUTATION AIMED AT A CHECKER, FOR THE SAME REASON AS 04 AND 05
      * AND FROM A LIVE DEFECT RATHER THAN AN IMAGINED ONE.** `T-280` `P1`,
-     * `S46`'s `test-auditor` found it with planted text and `S56` fixed it.
+     * `S46`'s test-coverage pass found it with planted text and `S56` fixed it.
      *
      * 05 makes the BLOCK-COMMENT pass over-blank and the presence assertions
      * notice. This makes the QUOTE pass over-blank, which nothing noticed for as
@@ -892,7 +892,7 @@ export const MUTATIONS = [
       + '      || b.createdAt.localeCompare(a.createdAt))[0];',
     to: '      b.createdAt.localeCompare(a.createdAt))[0];',
     /* **MEASURED BY `S58` AGAINST THIS ENTRY'S EXACT `to:`: TWO, NOT ONE.**
-     * `T-332`. The second case drives `grantAccess`, the caller with two
+     * The second case drives `grantAccess`, the caller with two
      * product routes and the one no case reached until `S58`. */
     kills: [
       'a round the chain never held does not displace the APPROVED round for the same change',
@@ -979,7 +979,7 @@ export const MUTATIONS = [
       + 'ReplaceAuthority payload, and MEASURED on ledger 9 the chain then accepts a '
       + 'maintenance update carrying no signatures at all from anybody in the world',
     /*
-     * `T-356`. `S61` closed the READ side and its row says in its own words that
+     * `S61` closed the READ side and its row says in its own words that
      * nothing stopped the value being CHOSEN or INSTALLED. This guard is the
      * install side, and this entry is what keeps it there.
      */
@@ -1003,7 +1003,7 @@ export const MUTATIONS = [
       + 'verifier key swapped under an unchanged name, which is the act that actually moves '
       + 'the money — reports AGREE from the one instrument built to see it',
     /*
-     * `T-359`. `docs/scope-the-upgrade-path.md:216-231`'s SILENTLY WEAKEN is 32
+     * `docs/scope-the-upgrade-path.md:216-231`'s SILENTLY WEAKEN is 32
      * bytes on chain WITH THE OPERATIONS MAP LISTING THE SAME NAMES, which is
      * exactly the state this mutation produces and calls clean.
      */
@@ -1036,7 +1036,7 @@ const tail = (text, n = 20) => {
  * it PARSED.
  *
  * **`ran` USED TO MEAN *THE JSON PARSED*, AND THAT IS THE DEFECT THIS ROUND WAS
- * CALLED TO FIX.** `T-295`, `SC15` §2, `S56`. A vitest run that collects
+ * CALLED TO FIX.** A vitest run that collects
  * NOTHING — a `globalSetup` that threw, a config error, a crashed worker —
  * still writes a well-formed 483-byte report: `numTotalTestSuites: 0`,
  * `numTotalTests: 0`, `testResults: []`, `success: false`, exit 1. **That
@@ -1058,7 +1058,7 @@ const tail = (text, n = 20) => {
  * which the old return threw away at the one point the harness needed it; and
  * **`stderr` IS KEPT.** Under mutation 22 the only record of the cause was
  * vitest's refusal naming `DOCS.command`, and this function discarded it —
- * which is why that cost a round rather than a glance. `SC15` §2.5(4).
+ * which is why that cost a round rather than a glance.
  */
 function runSuite(tag) {
   const file = join(OUT, `${tag}.json`);
@@ -1103,7 +1103,7 @@ function runSuite(tag) {
     said,
     /*
      * **A SKIPPED ASSERTION IS NOT ONE THAT RAN, AND `titles` IS WHAT CHECK 4
-     * ASKS.** `S56`'s `test-auditor` measured vitest 4.1.10: when a `beforeAll`
+     * ASKS.** `S56`'s test-coverage pass measured vitest 4.1.10: when a `beforeAll`
      * throws, the file's assertions come back with `status: 'skipped'` and the
      * run reports ZERO failures — so a named guard that never executed would
      * have been present in `titles`, passed check 4, and scored SURVIVED. That
@@ -1146,7 +1146,7 @@ const realOrSelf = (p) => { try { return realpathSync(p); } catch { return p; } 
 
 /*
  * **THE RECORD NAMES A PATH RELATIVE TO THE REPOSITORY ROOT, AND `S67` EXISTS
- * BECAUSE IT DID NOT.** `T-348`.
+ * BECAUSE IT DID NOT.**
  *
  * The record `S58`'s killed run left behind held
  * `/sessions/rcw-018b58fnqybaxt3mkq6c8xu7/mnt/confidential-accounts-v5/src/core/account.ts`
@@ -1213,7 +1213,7 @@ export const endMutation = (path, before) => {
 
 /*
  * **RECOVERY REFUSES RATHER THAN WRITES WHEN WHAT IS ON DISK IS NOT WHAT THE
- * RECORD EXPECTS TO FIND THERE.** `T-348`. The version this replaced compared
+ * RECORD EXPECTS TO FIND THERE.** The version this replaced compared
  * NOTHING — not a hash, not an mtime, not a length — and did
  * `writeFileSync(held.path, held.before)` unconditionally, first thing, before
  * the baseline suite and before any mutation.
@@ -1263,7 +1263,7 @@ export function recoverFromLastRun(say, { root = ROOT, journal = JOURNAL } = {})
    * IS OPENED — AND THAT MEANS THE REAL PATH, NOT THE SPELT ONE.** `resolve`
    * does not follow links, so the first version of this check passed a
    * `src/link.ts` pointing anywhere on the machine and then WROTE THROUGH IT.
-   * Measured by `S67`'s `money-safety-auditor` against `S67`. The check exists
+   * Measured by `S67`'s money-safety pass against `S67`. The check exists
    * for records this door did not write, which is exactly where a link would
    * come from.
    */
@@ -1313,7 +1313,7 @@ export function recoverFromLastRun(say, { root = ROOT, journal = JOURNAL } = {})
  * ── THE EIGHTH SUITE — `src/core/core.test.ts`, ADDED BY `S67` ──────────────
  *
  * **IT IS IN `SUITES` BECAUSE OF WHAT WAS MEASURED, NOT BECAUSE IT LOOKED
- * RELEVANT.** `T-286`, `C377`.
+ * RELEVANT.**
  *
  * `S58` fixed a round dying permanently when its proposer was removed between
  * raising and approving, and pinned it with two cases. **BOTH LIVE IN THAT FILE
@@ -1338,7 +1338,7 @@ export function recoverFromLastRun(say, { root = ROOT, journal = JOURNAL } = {})
 
 /**
  * **WHAT AN ENTRY'S `kills:` LIST CLAIMED, AGAINST WHAT ACTUALLY DIED.**
- * `T-337`.
+ *
  *
  * `named` is the claim that held. `missed` is a name that RAN AND PASSED — the
  * entry credits a guard that observed the mutation and said nothing, and until
@@ -1362,7 +1362,7 @@ export const scoreKills = (kills, failed) => ({
  *
  * **EVERYTHING ABOVE THIS LINE IS DECLARATION; EVERYTHING BELOW IT IS THE RUN,
  * AND THE RUN HAPPENS ONLY WHEN THIS FILE IS THE PROCESS'S ENTRY POINT.**
- * `T-348`.
+ *
  *
  * `S58` was told by its brief to re-parse this corpus for rule 18. It
  * `import`ed this file to read `MUTATIONS` — **and because every statement
@@ -1378,7 +1378,7 @@ export const scoreKills = (kills, failed) => ({
  * `contracts/test/` matching `/\.(ts|tsx|mjs)$/` is counted by
  * `scripts/edge-list.ts`'s `clientFiles` walk (`CLIENT_TREES`, `CLIENT_EXT`)
  * into `coverage.clientFilesScanned` in `docs/design/edges.json`. **MEASURED BY
- * `S67`: that walk finds 298 files today and `edges.json` records 298.** So a
+ * That walk finds 298 files today and `edges.json` records 298.** So a
  * corpus in its own module makes the generated doc set stale the moment it is
  * created and refuses the WHOLE suite until `DOCS.command` is run — a door no
  * session may run, and one that would have held up a second round building in
@@ -1415,13 +1415,13 @@ const RUN_AS_DOOR = (() => {
 function main() {
   /*
    * **THE REPORT'S DIRECTORY IS MADE BEFORE ANYTHING CAN WRITE A REPORT.**
-   * `S67`'s `money-safety-auditor`, against `S67`. This `mkdirSync` used to sit
+   * `S67`'s money-safety pass, against `S67`. This `mkdirSync` used to sit
    * at the top level and the entry-point guard moved it into `beginMutation` —
    * **which is reached AFTER four `writeFileSync(reportAt, …)` sites, one of
    * them this round's own new refusal.** `logs/` is gitignored with no
    * `.gitkeep`, so on a fresh clone that refusal would have died with a node
    * stack and written no report at all, and the door would have shown a
-   * non-zero exit and no evidence. `C185`: the failure is not a red check, it
+   * non-zero exit and no evidence. The failure is not a red check, it
    * is an ABSENCE where evidence should be.
    */
   mkdirSync(OUT, { recursive: true });
@@ -1434,7 +1434,7 @@ function main() {
 
   /*
    * **A DOOR THAT CANNOT ESTABLISH THE TREE IS CLEAN DOES NOT GO ON TO MEASURE
-   * IT.** `T-348`. Every other refusal in this file stops before mutating; this
+   * IT.** Every other refusal in this file stops before mutating; this
    * one stops before even reading the baseline, because the thing it cannot
    * vouch for is the source the baseline would be measured against.
    */
@@ -1451,7 +1451,7 @@ function main() {
     /*
      * **RULE 19, AND THIS DOOR CANNOT SATISFY IT HONESTLY TODAY, SO IT SAYS SO
      * RATHER THAN NAMING A DOOR THAT WOULD NOT WORK.** `S67`'s own
-     * `money-safety-auditor` caught the first version of these lines telling
+     * money-safety pass caught the first version of these lines telling
      * the reader to run `AUTHORITY-CHECK.command` again — **which re-reads the
      * same record and refuses identically, for ever.** No `.command` in this
      * repository mentions `in-flight`. **Under rule 42a-i a state that lands
@@ -1492,13 +1492,13 @@ function main() {
 
   /*
    * **THE `kills:` MATCHING IS BY TITLE ALONE, AND UNTIL NOW IT HELD BY NAMING
-   * LUCK RATHER THAN BY CONSTRUCTION.** `SC15` §2.4, `T-295`, `S56`.
+   * LUCK RATHER THAN BY CONSTRUCTION.**
    *
    * `clean.titles` is a flat set of strings with no file against them, and both
    * the pre-flight `stale expectation` check and the scoring match below compare
    * on the title alone. **A `kills:` entry naming a title that lives in a
    * DIFFERENT file from the mutation's subject would pass both checks and watch
-   * nothing.** `SC15`'s `test-auditor` indexed every assertion title in the
+   * nothing.** `SC15`'s test-coverage pass indexed every assertion title in the
    * baseline to its suite file and measured that zero titles collide across the
    * seven — true, and true by accident.
    *
@@ -1517,7 +1517,7 @@ function main() {
     seenAt.get(a.title).push(a.file);
   }
   /*
-   * **TWO CORRECTIONS FROM `S56`'s OWN `money-safety-auditor`, BOTH ITS OWN
+   * **TWO CORRECTIONS FROM `S56`'s OWN money-safety pass, BOTH ITS OWN
    * SUBJECT.** The first version compared every title in the baseline, so a
    * duplicate in a file no `kills:` entry names would have stopped the whole
    * corpus for a reason unrelated to any of it. And it compared FILES — `files.size
@@ -1571,7 +1571,7 @@ function main() {
    * as `+ also:` — IS PRINTED PER ENTRY, FEEDS NO COUNTER, AND IS NOT FATAL.
    * THAT IS A DECISION RATHER THAN AN OVERSIGHT (rule 20)**, and the sentence
    * here first said *counted*, which was false and was caught by this round's
-   * own `money-safety-auditor` under rule 14. For it: an under-claim is a false
+   * own money-safety pass under rule 14. For it: an under-claim is a false
    * statement in the corpus too, and nothing refuses it. Against it, which is
    * why it is not fatal: **MEASURED by `S67` over the run of 4 Sep 22:56 in
    * `logs/REPORT-MUTATE-AUTHORITY.txt` — ZERO over-claims and TWENTY-ONE
@@ -1654,7 +1654,7 @@ function main() {
      *      inside a report that parses and names it.
      *   4. A TITLE IN `kills:` ABSENT FROM WHAT RAN — the post-mutation twin of
      *      the pre-flight `stale expectation` check at the top of this loop.
-     *      **`SC15`'s `test-auditor` proposed this against its own coarser count
+     *      **`SC15`'s test-coverage pass proposed this against its own coarser count
      *      comparison and was right:** it is per-mutation, so it survives the case
      *      where one file collapses, another gains failures, and the totals
      *      happen to coincide. **A named guard that did not execute has observed
@@ -1687,7 +1687,7 @@ function main() {
       if (result.failed.length) {
         /*
          * **AND WHAT DID GO RED IS PRINTED, NOT DISCARDED.** `S56`'s
-         * `test-auditor`: when check 2, 3 or 4 fires because ONE file collapsed
+         * test-coverage pass: when check 2, 3 or 4 fires because ONE file collapsed
          * while a named guard in another genuinely died, *"nothing executed to
          * say it"* is false and the list of tests that died was being thrown
          * away — `T-295`'s shape, one branch over.

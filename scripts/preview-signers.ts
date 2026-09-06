@@ -1,6 +1,6 @@
 /**
  * THE DEMO SIGNERS' REAL IDENTITIES, BORN ON THIS MACHINE AND KEPT OFF GIT.
- * `C334`, `S35`.
+ *
  *
  * **WHAT THIS REPLACES, AND WHY IT HAD TO BE REPLACED.** Every signer these
  * preview scripts seat on a real deployed account used to be
@@ -91,7 +91,7 @@ export interface PreviewSigner {
  * A is the FOUNDING signer — the seat the constructor creates. B is seated
  * through the bootstrap window, C through an approved proposal, and D and E
  * exist because four signers is the smallest account in which somebody can be
- * removed from the MIDDLE (M-115).
+ * removed from the MIDDLE.
  */
 export const PREVIEW_SIGNER_IDS = ['A', 'B', 'C', 'D', 'E'] as const;
 export type PreviewSignerId = (typeof PREVIEW_SIGNER_IDS)[number];

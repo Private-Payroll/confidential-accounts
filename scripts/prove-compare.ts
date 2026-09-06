@@ -72,7 +72,7 @@ const seededBytes = (seed: number): Uint8Array => {
 };
 
 /*
- * WHAT THIS COPY IS STILL FOR, NOW THAT IT DECIDES NO IDENTITY. `C334`.
+ * WHAT THIS COPY IS STILL FOR, NOW THAT IT DECIDES NO IDENTITY.
  *
  * It fills the asset blinding, the proposal salt and the batch digest below —
  * values a measurement needs to be the same on two runs and that no seat
@@ -83,7 +83,7 @@ const STATE_DIR = join(ROOT, '.midnight');
 const ACCOUNT_ID = 'default';
 
 /**
- * **SIGNER A AND B ARE READ FROM `.midnight/`, NOT COMPUTED.** `C334`, `S35`.
+ * **SIGNER A AND B ARE READ FROM `.midnight/`, NOT COMPUTED.**
  *
  * Their identities used to be `seededBytes(1)`/`seededBytes(401)` and
  * `seededBytes(2)`/`seededBytes(402)` — a published formula, on signers seated
@@ -107,7 +107,7 @@ if (!existsSync(previewSignersPath)) {
 const PREVIEW_SIGNERS = readOrCreatePreviewSigners(STATE_DIR, NETWORK, ACCOUNT_ID).signers;
 
 /**
- * Which asset this is measuring against. M-125.
+ * Which asset this is measuring against.
  *
  * A circuit moves ONE asset, and every witness below is about that one. Nothing
  * here is a currency decision — proving cost does not depend on which asset it
@@ -153,7 +153,7 @@ const signerA: AccountPrivateState = {
   assetId: assetIdBytes(ASSET),
   proposalSalt: seededBytes(301),
   // Unused by the constructor, but the type is one record and a partial one
-  // would not typecheck. M-71.
+  // would not typecheck.
   changeAmount: 0n,
   changeBatchDigest: seededBytes(601),
   pinnedPath: null,
@@ -256,7 +256,7 @@ async function main() {
   }
 
   /*
-   * SMALLEST FIRST — AND THE SMALLEST ONE NO LONGER EXISTS. S25.
+   * SMALLEST FIRST — AND THE SMALLEST ONE NO LONGER EXISTS.
    *
    * `attestSolvency` was this comparison's small end: 2.2K zkir, 2.7M prover
    * key, no Merkle path, no tree insert. `S23` shed it from the contract, so

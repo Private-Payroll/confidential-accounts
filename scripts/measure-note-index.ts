@@ -14,7 +14,7 @@
  *
  * ------------------------------------------------------------------------
  * **THE VAULT'S STATE IS READ THROUGH THE CLIENT'S OWN READ, AND THAT IS NOT
- * A STYLE CHOICE.** `C264`, `M-104`.
+ * A STYLE CHOICE.**
  *
  * This file used to fetch the state as hex and deserialise it itself, with
  * `ContractState` from `@midnight-ntwrk/midnight-js-protocol/ledger`. **It had
@@ -53,7 +53,7 @@
  * nothing in this file builds on it.
  *
  * ------------------------------------------------------------------------
- * **IT PRINTS ITS DERIVATION AND NEVER A PREDICTED NUMBER.** `C238`.
+ * **IT PRINTS ITS DERIVATION AND NEVER A PREDICTED NUMBER.**
  *
  * Every index this prints is accompanied by the surface it came off and the
  * bytes it was decoded from. **A measurement it could not take is a refusal
@@ -157,7 +157,7 @@
  *
  *      **AND IT READS AT PAIR GRANULARITY, NOT LEAF GRANULARITY, WHICH IS THE
  *      WHOLE OF WHAT THIS SURFACE MAY CLAIM.** Found by this round's
- *      `money-safety-auditor` against this round's own first draft, which
+ *      money-safety pass against this round's own first draft, which
  *      claimed leaf granularity and would have recorded an index that is not
  *      the vault's. **`partial_index` inspects the nodes at heights `h…1` and
  *      hands the node at height 0 straight to `root()` without matching it**
@@ -214,7 +214,7 @@ const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const NETWORK = process.env.MIDNIGHT_NETWORK_ID || 'stagenet';
 
 /**
- * **THE ENDPOINTS ARE NOT WRITTEN DOWN HERE.** `M-104`.
+ * **THE ENDPOINTS ARE NOT WRITTEN DOWN HERE.**
  *
  * `src/midnight/network.ts` is where they are declared and it is what every
  * client path already reads (`open-vault-pool.ts:289`). A URL typed into this
@@ -234,7 +234,7 @@ const INDEXER = process.env.MIDNIGHT_INDEXER_URL
 const INDEXER_WS = ENDPOINT?.indexerWsUrl
   || 'wss://indexer.stagenet.shielded.tools/api/v4/graphql/ws';
 /**
- * **WHICH VAULT, AND THERE IS NO DEFAULT.** `C264`, `M-104`.
+ * **WHICH VAULT, AND THERE IS NO DEFAULT.**
  *
  * A default here is not a fallback: `MEASURE-NOTE-INDEX.command` takes no
  * argument, so whatever is written here would be the ONLY value this instrument
@@ -277,7 +277,7 @@ const refuse = (what: string, why: string) => {
   say(`      ${D}${why}${O}`);
 };
 
-/** Commitments are truncated in print. The vault's ADDRESS is never printed: C236. */
+/** Commitments are truncated in print. The vault's ADDRESS is never printed: */
 const short = (h: string) => `${h.slice(0, 16)}…`;
 
 /**
@@ -584,7 +584,7 @@ async function stageTwo(): Promise<VaultSubject | undefined> {
      * EXIST.** A misspelling and an undeployed vault are the same refusal from
      * here, and the difference is the whole of what the person needs; the
      * registry is the only place a name and an address are tied together, and
-     * the addresses are never printed (`C236`).
+     * the addresses are never printed.
      */
     let known: string[] = [];
     try {
@@ -608,7 +608,7 @@ async function stageTwo(): Promise<VaultSubject | undefined> {
 
   /*
    * **THE VAULT'S NOTE SET IS READ THE WAY THE CLIENT READS IT, AND THAT IS THE
-   * WHOLE OF THIS BLOCK.** `C264`, `M-104`.
+   * WHOLE OF THIS BLOCK.**
    *
    * This used to fetch the state as hex over GraphQL and deserialise it here,
    * with `ContractState` from `@midnight-ntwrk/midnight-js-protocol/ledger`.
@@ -659,7 +659,7 @@ async function stageTwo(): Promise<VaultSubject | undefined> {
 
   if (!state) {
     /*
-     * REFUSAL TWO OF THREE. `C110`: an absent read is our ignorance, never
+     * REFUSAL TWO OF THREE. An absent read is our ignorance, never
      * "the vault holds nothing". The provider returns null for a state it did
      * not find, and the difference between that and an empty vault is the
      * whole of what a reader needs.
@@ -674,7 +674,7 @@ async function stageTwo(): Promise<VaultSubject | undefined> {
   try {
     /*
      * **NOTHING IS PRINTED UNTIL EVERY FIELD HAS DECODED, AND THAT ORDERING IS
-     * THE POINT OF THIS BLOCK.** `C110`, `C238`.
+     * THE POINT OF THIS BLOCK.**
      *
      * **MEASURED, 29 Aug, against `payroll-test-1`** — the four-circuit
      * deployment read by the seven-circuit reader: **the generated reader
@@ -779,7 +779,7 @@ export interface Attempt { located: Located[]; answered: number }
  * ------------------------------------------------------------------ *
  *
  * **THESE ARE PURE AND EXPORTED FOR ONE REASON: A TEST CAN DRIVE BOTH OF EACH
- * SURFACE'S VERDICTS WITHOUT AN INDEXER.** `C263`, `C265`. Twice now this file
+ * SURFACE'S VERDICTS WITHOUT AN INDEXER.** Twice now this file
  * has shipped a surface that could reach only the verdict ordering a redesign —
  * once because nothing wrote to `located`, once because the only writer asked a
  * question the schema refuses — and both times the branch tests passed because
@@ -880,7 +880,7 @@ export const siblingOf = (i: bigint): bigint => (i % 2n === 0n ? i + 1n : i - 1n
 
 /**
  * **TWO MESSAGES MEAN SOMETHING AND EVERY OTHER ONE IS A REFUSAL, DELIBERATELY
- * IN THAT DIRECTION.** `C238`, `C263`.
+ * IN THAT DIRECTION.**
  *
  * The constructor either builds — no ancestor of `index` above height 0 is
  * collapsed, so the pair containing it survived the filter — or it refuses.
@@ -915,7 +915,7 @@ export function classifyPair(
  * vault's leaf. NARROWED is what this surface reaches when a pair survives —
  * one of two leaves is the vault's and **nothing available to JS says which**,
  * which is exactly where surface B already stood. UNREADABLE is our ignorance
- * and rules on nothing (`C110`).
+ * and rules on nothing.
  *
  * **NOTHING HERE WRITES INTO `located`.** A first draft of this surface did,
  * on the strength of a claim about leaf granularity that is false; the reading
@@ -1022,7 +1022,7 @@ async function stageThree(v: VaultSubject): Promise<Attempt> {
       } else {
         /*
          * **THIS IS THE LEDGER'S OWN TYPE READING THE LEDGER'S OWN BYTES, AND
-         * IT DOES NOT CROSS THE BOUNDARY STAGE 2 CROSSED.** `C264`.
+         * IT DOES NOT CROSS THE BOUNDARY STAGE 2 CROSSED.**
          *
          * Stage 2's old defect was handing a `ledger-v9` object to a reader
          * compiled against `onchain-runtime-v4`. Here the object deserialised
@@ -1328,7 +1328,7 @@ async function stageThree(v: VaultSubject): Promise<Attempt> {
         + `contract state ${cstate ? 'present' : 'ABSENT'}`);
       if (!raw) {
         /*
-         * NOT AN ANSWER. `C110`. Null means "the contract does not exist at
+         * NOT AN ANSWER. Null means "the contract does not exist at
          * this block" by the schema's own words, which about a vault we just
          * read a state for is our ignorance and not a fact about the tree.
          */
@@ -1348,7 +1348,7 @@ async function stageThree(v: VaultSubject): Promise<Attempt> {
         /*
          * The same object and the same absence of a leaf iterator as surface A
          * (`V-149`, divergence 11), so the same discipline: the Debug string is
-         * searched, printed, and **no number is taken out of it**. `C238`.
+         * searched, printed, and **no number is taken out of it**.
          */
         const dump = String(st.toString(false));
         say(`     ${D}no leaf iterator on this type either, so its Debug string is${O}`);
@@ -1471,7 +1471,7 @@ async function stageThree(v: VaultSubject): Promise<Attempt> {
            * coins to one of this vault's commitments: `QualifiedShieldedCoinInfo`
            * carries nonce, type, value and index, and the commitment is a hash
            * of the first three with a recipient. Tying them is a derivation this
-           * file does not have and must not invent. C238.
+           * file does not have and must not invent.
            */
           say(`     ${G}${B}ANSWERED: applying the narrow update produced ${applied.qualifiedCoins} qualified${O}`);
           say(`     ${G}${B}coin(s), each carrying an mt_index.${O}`);
@@ -1549,7 +1549,7 @@ async function stageThree(v: VaultSubject): Promise<Attempt> {
      * and `ZswapChainState` has no root accessor at all. Writing the conversion
      * here would be reimplementing a serialisation from the outside — a guess
      * wearing a measurement's clothes, on the value the money depends on.
-     * `C238`. **And `pathForLeaf` in the same package is NOT the answer**: it
+     * **And `pathForLeaf` in the same package is NOT the answer**: it
      * is on `StateBoundedMerkleTree`, a contract's own state tree, which cannot
      * be loaded from a zswap state.
      */
@@ -1650,7 +1650,7 @@ async function stageThree(v: VaultSubject): Promise<Attempt> {
       } else if (q.verdict === 'EXCLUDED') {
         /*
          * **ANSWERED, AND IT COUNTS TOWARDS NOTHING UNTIL TWO DOORS ARE SHUT.**
-         * Both found by this round's `money-safety-auditor` against this
+         * Both found by this round's money-safety pass against this
          * round's own rework, and either one alone would be enough.
          *
          * **ONE — this is not pinned to the transaction it says it is.**
@@ -1704,7 +1704,7 @@ async function stageThree(v: VaultSubject): Promise<Attempt> {
          * leaf is one of two and the binding offers nothing that says which. It
          * must not be added to the tally the LOSS verdict is read off, because
          * that sentence would then count a surface that found the note's pair
-         * as evidence that the note cannot be found. `C263`, `C110`.
+         * as evidence that the note cannot be found.
          */
         say(`     ${Y}ANSWERED, AND IT NARROWS TO A PAIR AND STOPS.${O}`);
         if (q.excluded.length > 0) {
@@ -1815,10 +1815,10 @@ if (RUN_DIRECTLY) main().catch((e: any) => {
   /*
    * `WouldHaveShownASecret` reaches here rather than being caught locally,
    * deliberately: a line carrying the vault's address is a defect in this file
-   * and not a condition to carry on past. C236.
+   * and not a condition to carry on past.
    *
    * **AND ITS MESSAGE IS NOT PRINTED, WHICH IS THE WHOLE POINT OF IT.** `V-97`,
-   * found in this file by this round's `money-safety-auditor`. That error's own
+   * found in this file by this round's money-safety pass. That error's own
    * text ends `the line was: ${line.slice(0, 120)}` (`scripts/deploy-report.ts`)
    * — **the first 120 characters of the line that carried the address** — and
    * this catch is outside the screen and writes straight into

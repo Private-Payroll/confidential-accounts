@@ -10,7 +10,7 @@ import type { NetworkName } from './network.js';
  *
  * Paying somebody on Midnight needs two 32-byte keys and they are different
  * keys — and since `S58` this file ENFORCES both widths on every route in,
- * rather than stating one and enforcing only the pairing (`T-194`):
+ * rather than stating one and enforcing only the pairing:
  *
  *   the COIN public key       who may spend it. Goes to the circuit.
  *   the ENCRYPTION public key who may READ about it. Rides on the transaction,
@@ -19,7 +19,7 @@ import type { NetworkName } from './network.js';
  *                             wallet.
  *
  * THE FAILURE THIS TYPE EXISTS TO DELETE, because it is silent and it is the
- * worst one in the register (`C7`):
+ * worst one in the register:
  *
  *   no encryption key       midnight-js REFUSES to build the transaction. The
  *                           platform protecting us, and the right failure.
@@ -60,7 +60,7 @@ declare const unshieldedPayeeBrand: unique symbol;
 export interface PayeeAddress {
   readonly [payeeBrand]: true;
   /**
-   * WHICH KIND OF MONEY THIS PERSON CAN BE PAID IN, AND IT IS NOT A FLAG. `C246`.
+   * WHICH KIND OF MONEY THIS PERSON CAN BE PAID IN, AND IT IS NOT A FLAG.
    *
    * **Derived from the decode, exactly like `coinPublicKey` — never supplied.**
    * A `shield-addr` string decodes to this type and to no other; the platform's
@@ -151,7 +151,7 @@ const build = (
 
 /**
  * 32 bytes of lowercase hex, or a refusal naming which half was wrong. One
- * definition, used by `build` and by `payeeAddressFromKeys`. `T-194`, `S58`.
+ * definition, used by `build` and by `payeeAddressFromKeys`.
  */
 const requireHex32 = (key: string | undefined, what: string): Hex => {
   if (!HEX32.test(key ?? '')) {
@@ -234,7 +234,7 @@ export function payeeAddressFromKeys(
 ): PayeeAddress {
   const { coinPublicKey, encryptionPublicKey } = keys;
   /* `requireHex32` is `build`'s check too, since `S58` — one definition rather
-   * than this loop and a silence at the other door. `T-194`. */
+   * than this loop and a silence at the other door. */
   requireHex32(coinPublicKey, 'coin public key');
   requireHex32(encryptionPublicKey, 'encryption public key');
   /*
@@ -251,7 +251,7 @@ export function payeeAddressFromKeys(
 }
 
 /* ------------------------------------------------------------------------
- * THE OTHER KEY SPACE. C245, C246, S6k.
+ * THE OTHER KEY SPACE.
  * ------------------------------------------------------------------------ */
 
 /**
@@ -359,8 +359,8 @@ export function unshieldedPayeeAddress(
     address = parsed.decode(UnshieldedAddress, network);
   } catch (e) {
     /*
-     * **`(C246)` WAS PRINTED HERE, TO A CUSTOMER.** `product-copy-auditor`,
-     * `S12`. It is a row number in a gitignored internal register: nothing
+     * **`` WAS PRINTED HERE, TO A CUSTOMER.** product-copy pass,
+     * It is a row number in a gitignored internal register: nothing
      * outside this repository can resolve it, and a bare code in a refusal
      * reads as a leaked stack trace to a finance buyer. The row belongs in the
      * comment above, where it is.
@@ -445,7 +445,7 @@ export function payeeOf(bech32: string, network: NetworkName): Payee {
   if (type === UnshieldedAddress.codec.type) return unshieldedPayeeAddress(raw, network);
   /*
    * **REWRITTEN IN `S12`, BECAUSE THIS SENTENCE IS NOW SOMETHING A CUSTOMER
-   * READS.** `product-copy-auditor`.
+   * READS.** product-copy pass.
    *
    * Before this round a public address was refused by name upstream, so almost
    * nothing reached this dispatch. `wallet-payee.ts` surfaces it verbatim now

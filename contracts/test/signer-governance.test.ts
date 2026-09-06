@@ -32,7 +32,7 @@ type Device = ReturnType<typeof privateStateFor>;
 const payload = (n: number) => new Uint8Array(32).fill(n);
 
 /**
- * The change a GOVERNANCE proposal carries. M-128.
+ * The change a GOVERNANCE proposal carries.
  *
  * Seating a signer, dropping one or moving the threshold moves no money, so the
  * asset and the amount are beside the point — but every proposal commits to a
@@ -59,7 +59,7 @@ const proposeGov = async (
 /**
  * A deployed account whose signer set is already at the threshold.
  *
- * **IT USED TO BOOTSTRAP AND IT CANNOT ANY MORE.** `S35d`. The constructor took
+ * **IT USED TO BOOTSTRAP AND IT CANNOT ANY MORE.** The constructor took
  * a threshold, so `create(A, 2n)` gave one seat against a bar of two and A
  * could seat B alone through `addSigner(leaf, ZERO_32)`. The constructor now
  * takes no threshold and founds every account at one seat and one approval, so
@@ -146,7 +146,7 @@ describe('M-37: adding a signer needs the threshold once the account is live', (
      * Consumed exactly as execute() consumes one, so a single approved addition
      * cannot be replayed to seat a second signer.
      *
-     * The round counter that used to record the consumption is gone (M-128); it
+     * The round counter that used to record the consumption is gone; it
      * only ever meant "something closed the account's one proposal", and with
      * several open at once a global counter could not say which. A proposal is
      * consumed by BOTH of its map entries going away, and the replay it existed
@@ -246,7 +246,7 @@ describe('M-36: the same signer approving the same proposal on two accounts', ()
      * this a fair test of the leak rather than two unrelated approvals.
      *
      * `round` used to carry that point — both accounts sat at round 0 — and
-     * there is no round any more (M-128). A proposal id is `commit(payload,
+     * there is no round any more. A proposal id is `commit(payload,
      * salt)` and says nothing about which account it is on, so proposing the
      * same payload under the same salt reproduces the id exactly. The nullifier
      * therefore differs on the two accounts for one reason only, which is the
@@ -311,7 +311,7 @@ describe('M-83: the same signer cannot be added twice', () => {
    * Written against the failure rather than the fix: each test states what one
    * button pressed twice would have done.
    *
-   * ── AND THE BRANCH THAT HAD NOTHING IN FRONT OF IT IS GONE. `S35d`. ────────
+   * ── AND THE BRANCH THAT HAD NOTHING IN FRONT OF IT IS GONE. ────────────────
    *
    * `'refuses a duplicate during bootstrap'` STOOD HERE and is deleted rather
    * than rewritten, which is a loss of coverage and is stated rather than
@@ -343,7 +343,7 @@ describe('M-83: the same signer cannot be added twice', () => {
      * with the balance inside it.
      *
      * **THE TITLE SAID *"a 3 of N signer set"* AND THE FIXTURE IS NOT ONE.**
-     * `S35d`: the account here lives at a threshold of one for its whole life,
+     * The account here lives at a threshold of one for its whole life,
      * because `create` no longer takes a threshold and this test never raises
      * it. The damage above is what a duplicate WOULD cost once the threshold
      * was raised to the seat count, which is what `setThreshold`'s ceiling
@@ -355,7 +355,7 @@ describe('M-83: the same signer cannot be added twice', () => {
      *
      * ── AND THAT DAMAGE MODEL IS THE COUNTER'S, WHICH S35c DELETED ──────────
      *
-     * Found by S35c's `test-auditor` against S35c's own change. The killer above
+     * Found by S35c's test-coverage pass against S35c's own change. The killer above
      * ran through `signerCount`: a duplicate INFLATED it, so bootstrapping ended
      * early at a number larger than the people behind it. The seat count is
      * `signerLeaves.size()` now, and a `Set` insert of a value already present
@@ -378,7 +378,7 @@ describe('M-83: the same signer cannot be added twice', () => {
      * — that is operation (c)'s doing and it is stated rather than hidden.
      */
     /*
-     * ── AND THE SEATINGS ARE APPROVED ROUNDS NOW, NOT BOOTSTRAP CALLS. S35d.
+     * ── AND THE SEATINGS ARE APPROVED ROUNDS NOW, NOT BOOTSTRAP CALLS.
      *
      * The account is founded at one seat and one approval and there is no
      * unilateral path left, so B and C arrive through `propose` → `approve` →
@@ -456,7 +456,7 @@ describe('K-4: what the contract does when a signer is removed off chain', () =>
    * `requireSigner()`, which proves a Merkle path into `signers` — an
    * append-only tree with no removal circuit, whose `checkRoot` accepts any
    * historic root on purpose (M-13: a path taken before other signers joined
-   * has to stay valid). So a removed signer keeps every power they had. M-99.
+   * has to stay valid). So a removed signer keeps every power they had.
    */
 
   /*
@@ -465,7 +465,7 @@ describe('K-4: what the contract does when a signer is removed off chain', () =>
    * compute the same asset key, or the change commitment one of them approves
    * is not the one another recomputes, and the approval is of nothing.
    *
-   * NO BALANCE IS SEEDED because there is none to seed. `C292`, `S26`: the
+   * NO BALANCE IS SEEDED because there is none to seed. The
    * account keeps no books, and none of the tests below spends.
    */
   const FA = privateStateFor(1);
@@ -1086,7 +1086,7 @@ describe('M-102: changing the threshold, against the compiled circuits', () => {
     await sim.as(TA).approve(next);
     await sim.as(TB).approve(next);
     /*
-     * PROBED THROUGH `setThreshold` RATHER THAN `execute`. `C292`, `S26`.
+     * PROBED THROUGH `setThreshold` RATHER THAN `execute`.
      *
      * `execute` was the cheapest circuit that went through `requireApproved`,
      * and it is gone with the account's balance ledger.
@@ -1195,7 +1195,7 @@ describe('M-102: changing the threshold, against the compiled circuits', () => {
     await sim.as(carrying(sim, TA, c)).setThreshold(3n, id);
 
     /*
-     * The round counter this used to assert on is gone. M-128.
+     * The round counter this used to assert on is gone.
      *
      * It stood for "something consumed the account's one proposal" — `propose`
      * reset the approvals without bumping it, and only an operation that

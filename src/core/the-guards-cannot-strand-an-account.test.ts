@@ -20,7 +20,7 @@ import type { Account } from './types.js';
  * **THE DANGEROUS DIRECTION IS DRIFT BELOW THE CHAIN'S VALUE.** Our copy saying
  * 2 where the contract says 3 makes the guard permit a removal leaving two
  * signers where three are required, and from that moment every proposal on the
- * account is unapprovable and the money in it is unspendable by anybody. `C177`.
+ * account is unapprovable and the money in it is unspendable by anybody.
  * **Nothing goes wrong when the signer is removed.** It goes wrong the next time
  * somebody tries to approve something, which may be a month later.
  *

@@ -134,7 +134,7 @@ describe('JobQueue', () => {
 
   it('runs jobs one at a time, oldest first', async () => {
     /*
-     * Serial on purpose. The prover is single-threaded (M-78), so two proofs in
+     * Serial on purpose. The prover is single-threaded, so two proofs in
      * parallel take twice as long each and nothing finishes sooner — the user
      * just watches two spinners instead of one.
      */

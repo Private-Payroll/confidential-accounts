@@ -5,7 +5,7 @@
  * it stops it: no scrolling, no cancel button, the spinner itself frozen
  * mid-turn. `async` does not help, because the work is CPU rather than I/O and
  * there is nothing to await. The only fix is a second thread. That is true at 3
- * seconds as much as at the 108 we measured (M-78), so this survives whatever
+ * seconds as much as at the 108 we measured, so this survives whatever
  * the Foundation answers.
  *
  * WHAT THIS FILE IS. A protocol, not a Worker. It is written against a `Port`

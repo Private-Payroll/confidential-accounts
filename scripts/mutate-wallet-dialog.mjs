@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * MUTATING THE WINDOW THE WALLET OPENS IN, AND THE REFUSAL THAT IS GONE.
- * `docs/NEXT.md` X9 §1 and §2, `docs/how-money-can-be-lost.md` `C154`, `C155`.
+ * `docs/NEXT.md` X9 §1 and §2, `docs/how-money-can-be-lost.md` `C154`.
  *
  * The harness `scripts/mutate-self-payee.mjs` grew, aimed at two things this
  * round changed: **when the window is opened**, and **what the platform

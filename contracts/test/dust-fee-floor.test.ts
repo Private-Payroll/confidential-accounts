@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { DUST_FEE_FLOOR, dustCachePath } from '../../scripts/dust-wallet.js';
 
 /**
- * M-52. The node refuses a transaction whose DustActions carry no spends:
+ * The node refuses a transaction whose DustActions carry no spends:
  *   ledger/src/dust.rs — `if self.spends.is_empty() && self.registrations.is_empty()`
  * and the balancer selects no spends when it is handed an imbalance of 0.
  * A fee of exactly 0 is therefore not a cheap transaction, it is an invalid one.

@@ -39,7 +39,7 @@ import { signInWithAWallet } from '../testing/wallet-session.js';
  */
 process.env.ALLOW_MEMORY_SESSIONS = '1';
 /*
- * **AND THE DEVELOPER'S OWN DATABASE IS REFUSED OUT LOUD.** `X2`.
+ * **AND THE DEVELOPER'S OWN DATABASE IS REFUSED OUT LOUD.**
  *
  * `X2` made the server read `.env`, which is what lets a person start it — and
  * `.env` on a working machine holds the LIVE connection string. Saying
@@ -96,7 +96,7 @@ const call = async (
 };
 
 /**
- * **A DISTINCT SUBWALLET SLOT PER PERSON.** `PI4b`.
+ * **A DISTINCT SUBWALLET SLOT PER PERSON.**
  *
  * This was `register`, and the comment above it said *a distinct email per
  * test, so the per-email limiter does not leak across them*. **Both the route
@@ -153,7 +153,7 @@ describe('the HTTP layer', () => {
 
   /*
    * **`S-2 over HTTP: too many logins get 429 with Retry-After, not 400` IS
-   * DELETED.** `PI4b`, `C129`.
+   * DELETED.**
    *
    * It sent a wrong `authKey` forty times at `POST /api/auth/login` and
    * required the refusal to arrive as a `429` with a `Retry-After` rather than
@@ -245,7 +245,7 @@ describe('the HTTP layer', () => {
   it('NO AUTH RESPONSE CARRIES A KEY, AND NONE CARRIES WHAT A PASSWORD LEFT BEHIND',
     async () => {
       /*
-       * **THE GENERIC SWEEP, REPOINTED.** `PI4b`.
+       * **THE GENERIC SWEEP, REPOINTED.**
        *
        * It used to register and log in with an `authKey` of `'cd'.repeat(32)`
        * and require that neither response echoed it — the generic version of a

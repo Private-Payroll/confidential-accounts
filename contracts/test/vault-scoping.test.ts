@@ -342,7 +342,7 @@ describe('V-33: the reserved signer scope', () => {
 
     /*
      * **AND THE OCCURRENCES, NOT ONLY THE LINES.** `S40`, found by this round's
-     * `money-safety-auditor` against this round's own comment.
+     * money-safety pass against this round's own comment.
      *
      * `lines` is a per-LINE filter, so a SECOND reader written onto line 246
      * beside the first raises no count — and the shape check below tests the

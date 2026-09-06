@@ -51,7 +51,7 @@ export interface User {
   email: string | null;
   name: string;
   /*
-   * **`authHash` AND `authSalt` ARE DELETED.** `PI4b`, `C129`.
+   * **`authHash` AND `authSalt` ARE DELETED.**
    *
    * They were the server's half of a password: an HMAC of the client-stretched
    * `authKey`, and the salt it was keyed under. `register` was the only writer
@@ -66,7 +66,7 @@ export interface User {
   /** The user's signing and wrapping secrets, sealed under a key we cannot derive. */
   keyBundle: Sealed | null;
   /**
-   * HOW MANY TIMES THE BUNDLE HAS BEEN REPLACED. `C40`.
+   * HOW MANY TIMES THE BUNDLE HAS BEEN REPLACED.
    *
    * The bundle is ciphertext, so a version inside it would be one we cannot
    * read — it lives out here instead, where the only thing it discloses is a
@@ -113,7 +113,7 @@ export interface User {
 }
 
 /*
- * **THE DEVICE ROW WENT WITH THE ENVELOPE.** `PI4a`, `C31`.
+ * **THE DEVICE ROW WENT WITH THE ENVELOPE.**
  *
  * A device held a copy of the bundle key so that removing it could take access
  * away. **Nothing on a device holds anything now**: the key that opens a
@@ -253,13 +253,13 @@ export type PerAsset<T> = Partial<Record<AssetId, T>>;
  * survivor to the check and to anyone running it later. The names, the
  * arguments and the deletions are in `docs/build-log.md`,
  * `docs/scope-the-real-chain.md` §4.2–4.3 and `docs/how-money-can-be-lost.md`
- * `C171` and `C178`.
+ *
  */
 export interface Policy {
   /**
    * M of N, as WE last recorded it. Rendered, never decided from.
    *
-   * **AND IT IS THE ACCOUNT'S NUMBER ONLY.** `R5`. There is no per-vault
+   * **AND IT IS THE ACCOUNT'S NUMBER ONLY.** There is no per-vault
    * counterpart of this field and there must not be: a vault's threshold is
    * absent-means-inherit on chain, so a stored copy would have to represent
    * "no row" as well as a number, and a copy that got that wrong is a screen
@@ -285,7 +285,7 @@ export interface Account {
   createdAt: string;
   /**
    * THE COMPANY'S OWN ADDRESS ON THE CHAIN, AND IT IS HERE SO A RE-SEAL CANNOT
-   * DROP IT. `PI2a`, `C136`.
+   * DROP IT.
    *
    * It is a PUBLIC value and it is not sealed — it is on `SealedAccount`, in
    * the clear, where `threshold` and `signerCount` are and for the same reason.
@@ -299,7 +299,7 @@ export interface Account {
    */
   contractAddress?: string | null;
   /**
-   * WHERE `contractAddress` CAME FROM. `PI2b`, `C140`.
+   * WHERE `contractAddress` CAME FROM.
    *
    * Here for the reason `contractAddress` is here and no other: `sealAccount`
    * rebuilds the stored record from an opened `Account`, so a readable field
@@ -309,7 +309,7 @@ export interface Account {
 }
 
 /**
- * A signer who has accepted an invite and is waiting to be granted access. M-96.
+ * A signer who has accepted an invite and is waiting to be granted access.
  *
  * THIS RECORD IS WRITTEN BY SOMEBODY WHO HOLDS NO VIEWING KEY, and that is the
  * whole reason it exists rather than being a row in the sealed roster. The
@@ -357,7 +357,7 @@ export interface PendingSignerPayload {
 }
 
 /**
- * An account as the SERVER holds it. S-8, M-96.
+ * An account as the SERVER holds it.
  *
  * The company name, every signer's name, role and `leafCommitment`, the spending
  * limits as real money figures and the recovery quorum all live inside `sealed`
@@ -431,7 +431,7 @@ export interface SealedAccount {
   contractAddress?: string | null;
   /**
    * **WHETHER A CHAIN ASSIGNED THAT ADDRESS, OR THIS PROCESS INVENTED IT.**
-   * `PI2b`, `C140`.
+   *
    *
    * A simulated address is thirty-two random bytes written as sixty-four
    * lower-case hex characters **precisely because that is the shape of a real
@@ -462,7 +462,7 @@ export type EntryKind = 'deposit' | 'withdrawal' | 'payroll' | 'transfer';
 export interface ShieldedEntry {
   id: string;
   kind: EntryKind;
-  /** Which asset moved. An amount without one cannot be read. M-125. */
+  /** Which asset moved. An amount without one cannot be read. */
   asset: AssetId;
   /** In `asset`'s smallest unit. */
   amount: bigint;
@@ -476,7 +476,7 @@ export interface ShieldedEntry {
 }
 
 /**
- * WHAT THE ACCOUNT HAS DONE. Not what it holds — it holds nothing, `C292`.
+ * WHAT THE ACCOUNT HAS DONE. Not what it holds — it holds nothing.
  *
  * The plaintext behind the on-chain commitments, sealed under the viewing key
  * and never seen by us.
@@ -535,7 +535,7 @@ export interface StateBlinding {
 
 export type ProposalKind =
   | 'transfer' | 'payroll' | 'add-signer' | 'remove-signer' | 'set-threshold'
-  /** One vault's own threshold. `R5`. Its own kind for the same reason its
+  /** One vault's own threshold. Its own kind for the same reason its
    *  payload has its own domain string: it is not a change to the account's. */
   | 'set-vault-threshold'
   | 'change-policy';
@@ -543,7 +543,7 @@ export type ProposalKind =
  * `cancelled` is distinct from `rejected`: rejected is a judgement about the
  * proposal, cancelled is a round that was withdrawn. It existed because the
  * contract permitted exactly one open proposal at a time, so a single one that
- * would never reach its threshold wedged the account. M-29.
+ * would never reach its threshold wedged the account.
  *
  * M-128 ENDED THAT: several proposals are open at once and an abandoned one
  * blocks nothing. Withdrawing is still worth having — a stale item should not
@@ -559,7 +559,7 @@ export interface Approval {
 }
 
 /**
- * **WHY WE COULD NOT GET AN ANSWER OUT OF THE LEDGER.** `R4`.
+ * **WHY WE COULD NOT GET AN ANSWER OUT OF THE LEDGER.**
  *
  * Three distinct facts, and they are three rather than one because a caller
  * that has to act on them acts differently on each:
@@ -576,7 +576,7 @@ export type ApprovalUnknown = 'not-yet-proposed' | 'no-status' | 'not-open';
 
 /**
  * **WHAT THE CHAIN SAYS ABOUT ONE APPROVAL ROUND — OR THAT WE DO NOT KNOW.**
- * `R4`.
+ *
  *
  * `satisfied` used to be a boolean this service computed from its own count
  * against its own copy of the threshold, and a boolean cannot hold the third
@@ -600,7 +600,7 @@ export interface Proposal {
   id: string;
   accountId: string;
   /**
-   * WHAT THE CHAIN CALLS THIS PROPOSAL. M-128.
+   * WHAT THE CHAIN CALLS THIS PROPOSAL.
    *
    * The blinded commitment `commit(digest, salt)` that keys `openProposals` on
    * chain, and the value every approval nullifier is derived from. Distinct
@@ -614,7 +614,7 @@ export interface Proposal {
    */
   chainId: Hex;
   /**
-   * **WHICH VAULT THIS ROUND CONCERNS.** `R5`, `C172`. `noVault()` where it
+   * **WHICH VAULT THIS ROUND CONCERNS.** `noVault()` where it
    * concerns none, which is every round this product raises today.
    *
    * It decides how many approvals the round needs — `thresholdFor(vault)`,
@@ -637,11 +637,11 @@ export interface Proposal {
   summary: string;
   /** Sealed under the account viewing key. */
   sealedPayload: Sealed;
-  /** Public: the round's CONTENT. Binds kind and payload, NOT the account. `T-307`. */
+  /** Public: the round's CONTENT. Binds kind and payload, NOT the account. */
   digest: Hex;
   proposedBy: string;
   /**
-   * **THE SIGNATURES WE HOLD. NOT THE COUNT THAT DECIDES ANYTHING.** `R4`.
+   * **THE SIGNATURES WE HOLD. NOT THE COUNT THAT DECIDES ANYTHING.**
    *
    * These are kept because an approval is a signature over `digest` and we are
    * the ones storing it, and because `approval-signature.test.ts` spends one
@@ -653,7 +653,7 @@ export interface Proposal {
   approvals: Approval[];
   status: ProposalStatus;
   /**
-   * **WHAT THE LEDGER SAID ABOUT THIS ROUND, LAST TIME WE ASKED.** `R4`.
+   * **WHAT THE LEDGER SAID ABOUT THIS ROUND, LAST TIME WE ASKED.**
    *
    * Undefined on a proposal nothing has asked about yet. Written by `approve`
    * from a single `status()` read taken after the ledger accepted the approval,
@@ -666,7 +666,7 @@ export interface Proposal {
    * and filters.
    */
   approvalRound?: ApprovalOutcome;
-  /** Why OUR OWN ceiling stopped it being relayed, if one did. `R4`. */
+  /** Why OUR OWN ceiling stopped it being relayed, if one did. */
   blockedReason?: string;
   createdAt: string;
   executedAt?: string;
@@ -676,7 +676,7 @@ export interface Proposal {
 
 /** A person on the payroll, held at account level rather than inside a run. */
 /**
- * A proposal as the SERVER holds it. S-8.
+ * A proposal as the SERVER holds it.
  *
  * The sharpest item in this whole exercise is `approvals[].signerId`. The chain
  * records approvals as NULLIFIERS precisely so that nobody — including us — can
@@ -696,7 +696,7 @@ export interface SealedProposal {
   executedAt?: string;
   /** Already a hash, and what the chain's own commitment is taken over. */
   digest: Hex;
-  /** The blinded id the contract knows this proposal by. M-128. */
+  /** The blinded id the contract knows this proposal by. */
   chainId: Hex;
   /** Public on chain the moment it settles. */
   txRef?: string;
@@ -826,7 +826,7 @@ export interface RosterEmployee {
  * their own keys and sends back only public halves.
  */
 /**
- * A roster entry as the SERVER holds it. S-9, M-90.
+ * A roster entry as the SERVER holds it.
  *
  * The name, email, title and salary live inside `sealed` and nowhere else, so
  * there is no field on this type through which a salary could be written in the
@@ -842,7 +842,7 @@ export interface SealedEmployee {
   id: string;
   accountId: string;
   /**
-   * THE DROP BOX. A-2, and the same construction as a pending signer's (M-96).
+   * THE DROP BOX. A-2, and the same construction as a pending signer's.
    *
    * The employee has no viewing key and must never have one, so they cannot
    * write into the sealed roster themselves. They post here instead — sealed to
@@ -903,7 +903,7 @@ export interface Invite {
    * name, email, title and salary already held on the roster entry — so sealing
    * the roster while leaving this alone would have moved the leak into the
    * invites table rather than closing it, and left two copies of a salary that
-   * could disagree. S-9.
+   * could disagree.
    */
   name?: string;
   email?: string;
@@ -1019,7 +1019,7 @@ export interface Installation {
   /**
    * Null when the plug-in cannot propose spending at all.
    *
-   * A CEILING PER ASSET, in one installation. M-125.
+   * A CEILING PER ASSET, in one installation.
    *
    * The property that has to hold is that a limit and the spend it governs are
    * in the SAME currency — an allowance of 1,000 means a sensible weekly limit
@@ -1107,7 +1107,7 @@ export interface PayrollRun {
   status: 'draft' | 'proposed' | 'settled';
   /**
    * One proposal per settlement asset, because a proposal's change commitment
-   * names ONE asset key (M-125) and `execute`, which moved one balance per
+   * names ONE asset key and `execute`, which moved one balance per
    * round, was what made that a settlement rule. `C292` deleted it, so nothing
    * on chain opens the change commitment and nothing refuses a mixed round at
    * that layer; the refusal that is left is the application's, in
@@ -1163,7 +1163,7 @@ export interface Attestation {
 }
 
 /**
- * **WHAT WAS REFUSED AT THIS ROUND'S DOOR, KEPT.** `C398`, `T-310`, `S55`.
+ * **WHAT WAS REFUSED AT THIS ROUND'S DOOR, KEPT.**
  *
  * ── THE ROW THIS EXISTS FOR ──────────────────────────────────────────────
  *
@@ -1229,7 +1229,7 @@ export interface RefusedApproval {
 
 /**
  * **DECLARATION-MERGED ONTO `Proposal` RATHER THAN WRITTEN INSIDE IT, AND
- * `C366` IS THE WHOLE REASON.** `S55`.
+ * `C366` IS THE WHOLE REASON.**
  *
  * `Proposal` begins at `:599` and this file is cited by `file:line` from six
  * places below that point, three of them in files rule 32 forbids a session to
@@ -1241,14 +1241,14 @@ export interface RefusedApproval {
  */
 export interface Proposal {
   /**
-   * **REFUSED APPROVAL ATTEMPTS AGAINST THIS ROUND.** `C398`. Undefined until
+   * **REFUSED APPROVAL ATTEMPTS AGAINST THIS ROUND.** Undefined until
    * the first one, so an untouched round carries nothing rather than an empty
    * shape that reads like a checked-and-clean result.
    */
   refusedApprovals?: { count: number; recent: RefusedApproval[] };
   /**
    * **WHEN THIS SERVICE ESTABLISHED THAT THE ROUND IS ON CHAIN.** `C378`,
-   * `T-228`, `S55`. The ledger's own `TxRef.at` when the propose call returned;
+   * The ledger's own `TxRef.at` when the propose call returned;
    * the moment of the read when a later `confirmRaised` found the round in
    * `openProposals` instead.
    *
@@ -1268,7 +1268,7 @@ export interface Proposal {
   raisedAt?: string;
   /**
    * **THE ROLE THIS ROUND'S CEILING IS EVALUATED AGAINST, WRITTEN DOWN WHERE
-   * REMOVING THE PROPOSER CANNOT TAKE IT AWAY.** `C377`, `T-286`, `S58`.
+   * REMOVING THE PROPOSER CANNOT TAKE IT AWAY.**
    *
    * `evaluatePolicy` is given the PROPOSER's role, and until `S58` the only
    * place that role existed was the live `signers` row — which
@@ -1284,7 +1284,7 @@ export interface Proposal {
    * answer at all once the seat is gone.
    *
    * **WRITTEN AT ALL SIX PROPOSE DOORS**, and it took this round's
-   * `money-safety-auditor` to make that true: the first draft wrote it at
+   * money-safety pass to make that true: the first draft wrote it at
    * `propose` and `proposeRun` only, leaving the four GOVERNANCE doors — where
    * a proposer being removed is the ordinary case — falling through to the very
    * lookup this field replaces.
@@ -1308,7 +1308,7 @@ export interface Proposal {
    * `docs/BUILD-ORDER.md`'s file counts and has nothing to do with this. Rule 45
    * exists so a fix round reads the finding FIRST HAND, and a wrong row number
    * is the one defect that defeats it silently — the reader arrives somewhere
-   * plausible and never learns they are in the wrong place.** `T-366`.
+   * plausible and never learns they are in the wrong place.**
    */
   proposerRole?: Role;
 }

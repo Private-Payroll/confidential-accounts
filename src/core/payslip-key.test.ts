@@ -51,7 +51,7 @@ const handedOver = (
 
 /**
  * **THE PAYSLIP KEY IS DERIVED, NOT MINTED AND KEPT.** `docs/NEXT.md` PI2b §2,
- * `C135`, `C127`, `C136`.
+ *
  *
  * ── THE ONE TEST THIS ROUND IS JUDGED ON IS `§4` ──────────────────────────
  *
@@ -107,7 +107,7 @@ const signIn = (store: { putUser: (u: any) => void }, email: string) => {
 describe('§1 — THE DERIVATION IS A PURE FUNCTION OF A WALLET AND A COMPANY', () => {
   it('THE DERIVATION IS PINNED TO FIXED BYTES — the salt is not a thing anyone may tidy', () => {
     /*
-     * **`T-196` `P1`, `SC9` `F4`, `S46`. THE ONE ASSERTION IN THIS FILE THAT IS
+     * **`T-196` `P1`, `SC9` `F4`. THE ONE ASSERTION IN THIS FILE THAT IS
      * NOT SELF-REFERENTIAL.**
      *
      * Every other relation §1 pins — determinism, host-independence,
@@ -277,7 +277,7 @@ describe('§1 — THE DERIVATION IS A PURE FUNCTION OF A WALLET AND A COMPANY', 
  * no `.command` and nothing in `scripts/` derives a wallet from it. The
  * project's own wallet comes from `.midnight/wallet.seed`
  * (`ADDRESS.command:67`). **The count in this paragraph said TWENTY until this
- * round's `test-auditor` re-measured it recursively and found forty; the
+ * round's test-coverage pass re-measured it recursively and found forty; the
  * conclusion was unchanged and the instrument's stated reach was not.**
  *
  * ── THE NEGATIVE CONTROL — MEASURED, NOT ASSERTED (rule 40, rule 9) ───────
@@ -319,9 +319,9 @@ describe('§1 — THE DERIVATION IS A PURE FUNCTION OF A WALLET AND A COMPANY', 
  * **AND THE RESULT THAT WAS WORTH MORE THAN THE THREE PASSES: THE RELATION
  * TEST STAYED GREEN UNDER ALL THREE.** It compared two live computations, so a
  * derivation that moved moved both. **Both of this round's auditors then probed
- * it further and independently reached the same verdict** — the `test-auditor`
+ * it further and independently reached the same verdict** — the test-coverage pass
  * with eight mutations including a stubbed `payslip-key.ts:57`, the
- * `money-safety-auditor` by algebra — **and `§1b.4` was rewritten because of
+ * money-safety pass by algebra — **and `§1b.4` was rewritten because of
  * it.** What is there now is literal-in, literal-out; the relation is kept
  * beneath it, labelled as adding no detection. **The literals are the whole of
  * the drift guarantee** — which is exactly the mistake `C404` is, one level
@@ -346,8 +346,8 @@ describe('§1 — THE DERIVATION IS A PURE FUNCTION OF A WALLET AND A COMPANY', 
  * while this runs against `lib`. Nothing bridges the two at the `unlockKeyFor`
  * level. `§1b.1`'s `5781ec70…` is the one thread that does, at the authority
  * level, and it is why that literal was taken from Identity's table rather than
- * from a run here. **Found by this round's `money-safety-auditor` and by its
- * `test-auditor`, separately.**
+ * from a run here. **Found by this round's money-safety pass and by its
+ * test-coverage pass, separately.**
  */
 
 const VECTOR_COMPANY = 'a1'.repeat(32);
@@ -413,7 +413,7 @@ describe('§1b — A FIXED MNEMONIC AND A FIXED COMPANY GIVE A FIXED KEY, RECORD
      * DENORMALISED FOR THAT SENTENCE TO MEAN ANYTHING.**
      *
      * This line read `identityFromWords(TEST_MNEMONIC).words.join(' ')` until
-     * this round's `test-auditor` measured it: `TEST_MNEMONIC` is already
+     * this round's test-coverage pass measured it: `TEST_MNEMONIC` is already
      * lower-case, single-spaced and clean, so `phraseOf`
      * (`Identity/src/keys/derivation.ts:361-364`) is the identity function on
      * it — **the assertion stayed GREEN with NFKD, `trim`, `toLowerCase` and
@@ -497,7 +497,7 @@ describe('§1b — A FIXED MNEMONIC AND A FIXED COMPANY GIVE A FIXED KEY, RECORD
 
     /*
      * **THE SAME LITERAL FROM THE OTHER SPELLING OF THE SAME COMPANY.** Found
-     * by this round's `money-safety-auditor`, and it is `C404`'s own thesis
+     * by this round's money-safety pass, and it is `C404`'s own thesis
      * turned on `C137`: the fold that makes two spellings of one company one
      * key is pinned by `Identity/src/profile/unlock.test.ts:257-263` — **and
      * payroll does not run that file** (`vitest.config.ts:16-18`).
@@ -525,7 +525,7 @@ describe('§1b — A FIXED MNEMONIC AND A FIXED COMPANY GIVE A FIXED KEY, RECORD
 
     /*
      * **AND FROM THE OTHER SPELLING OF THE SAME WALLET.** Also the
-     * `money-safety-auditor`'s. `payslipKeypairForWallet` takes
+     * money-safety pass's. `payslipKeypairForWallet` takes
      * `readonly string[] | string` (`payslip-key.ts:36`) and **every production
      * caller passes the ARRAY** — `payroll.ts:1484-1485` hands it `newWords()`
      * — while every literal above went in as a string. Two different branches
@@ -555,10 +555,10 @@ describe('§1b — A FIXED MNEMONIC AND A FIXED COMPANY GIVE A FIXED KEY, RECORD
      * FINDING RATHER THAN THE FIX.** What stood here asserted
      * `payslipKeypairFrom(unlockKeyFor(…))` equals `payslipKeypairForWallet(…)`
      * — both sides computed live from the same mnemonic through the same code,
-     * so a derivation that moved moved both. **This round's `test-auditor`
+     * so a derivation that moved moved both. **This round's test-coverage pass
      * probed it eight ways and it was GREEN in all eight, including one that
      * replaced `payslip-key.ts:57` with a hard-coded return so the product
-     * function derived nothing at all.** The `money-safety-auditor` reached the
+     * function derived nothing at all.** The money-safety pass reached the
      * same conclusion by algebra, independently. **An assertion nobody has
      * watched fail is the class `§2`'s own note below records this file
      * shipping once already** — the `S29` regex that could not match the value
@@ -626,7 +626,7 @@ describe('§2 — NOBODY WRITES THE SECRET DOWN, INCLUDING US', () => {
      * OF THIS TEST HAD IT THE WRONG WAY ROUND.**
      *
      * `redactHex` blanks every hex run of 32 characters or more, which is what
-     * makes searching for a SALARY sound (M-101). A wrapping secret is 64 hex
+     * makes searching for a SALARY sound. A wrapping secret is 64 hex
      * characters — so redacting first deletes the very thing being looked for,
      * and the assertion passes whatever the store contains. `redact.ts`'s own
      * header says so: long values must be searched for literally, and at 64
@@ -669,11 +669,11 @@ describe('§2 — NOBODY WRITES THE SECRET DOWN, INCLUDING US', () => {
   /*
    * ──────────────────────────────────────────────────────────────────────────
    * **THIS TEST WAS RED ON PURPOSE FOR ONE ROUND, AND `S29` TOOK OPTION (a).**
-   * `C303`, `C312`, `T-63`.
+   *
    *
    * `S28` could not close it: the assertion is about a property OF the
    * projection `seedDemo` returns, `seedDemo` refuses as its first statement
-   * (`C292`, `S26`), and a tests-only round may not edit `src/core/demo.ts`.
+   *, and a tests-only round may not edit `src/core/demo.ts`.
    * It wrote three ways out with none marked correct (rule 20). (a) was
    * *extract the projection into a callable of its own and drive that*.
    *
@@ -697,7 +697,7 @@ describe('§2 — NOBODY WRITES THE SECRET DOWN, INCLUDING US', () => {
      * typing a line.
      *
      * **AND THAT IS ONE OF THE TWO ROUTES THAT RETURN AN `EmployeeSecret` TO
-     * THE WIRE.** `S29`, found by its own `money-safety-auditor`.
+     * THE WIRE.** `S29`, found by its own money-safety pass.
      * `POST /api/accounts/:id/payroll` returns `payroll.createRun`'s result
      * WHOLE — `{ run, secrets: EmployeeSecret[] }` — with no projection between
      * the interface and `res.json`. Nothing leaks there today, because the ad
@@ -751,7 +751,7 @@ describe('§2 — NOBODY WRITES THE SECRET DOWN, INCLUDING US', () => {
      * **THE FIELD LIST ITSELF, ASSERTED.** Without this the "somebody has to
      * type a line" half of the rule is watched by nothing: adding a fifth field
      * to the LISTED projection leaves every other assertion here green, which
-     * this round's `test-auditor` measured. Now an addition has to be read and
+     * this round's test-coverage pass measured. Now an addition has to be read and
      * re-approved rather than merely typed.
      */
     expect(Object.keys(employees[0]).sort())

@@ -75,7 +75,7 @@ loadEnvFile();
 const NETWORK = networkOfThePair(process.env.MIDNIGHT_NETWORK_ID);
 
 /**
- * How an amount crosses the HTTP boundary. M-125.
+ * How an amount crosses the HTTP boundary.
  *
  * A DECIMAL STRING PLUS AN ASSET CODE, never a JSON number, and both halves of
  * that are load-bearing.
@@ -201,10 +201,10 @@ if (DATABASE_URL) {
 const challenges = new MemoryChallengeStore();
 /*
  * `challenges` IS STILL PASSED TO THE WALLET SIGN-IN BELOW AND NOT TO THIS.
- * `PI4a`: recovery is gone, and `WalletIdentityService` uses the same store
+ * Recovery is gone, and `WalletIdentityService` uses the same store
  * for its sign-in nonce — so the const stays and this constructor loses it.
  *
- * **AND `limiter` HAS JUST LEFT IT THE SAME WAY.** `PI4b`. It was a required
+ * **AND `limiter` HAS JUST LEFT IT THE SAME WAY.** It was a required
  * argument so a deployment could not omit it by not thinking about it, and what
  * it guarded was `login`. `limiter` is still built above and still passed to
  * the wallet sign-in below, which is now the only door that counts attempts.
@@ -224,7 +224,7 @@ const identity = new IdentityService(store, sessions);
  * ── WHY A MISSING ONE DOES NOT STOP THE SERVER, WHICH `DATABASE_URL` DOES ──
  *
  * **THE ARGUMENT THAT PUT THIS HERE HAS BEEN DELETED, AND THE BEHAVIOUR HAS
- * NOT.** `PI4b`. It read: *password sign-in still exists, so refusing to start
+ * NOT.** It read: *password sign-in still exists, so refusing to start
  * would take down the door that works because the new one is not configured.*
  * **There is no other door now.** A deployment that boots without `APP_ORIGIN`
  * boots with NO WAY IN AT ALL: the two wallet routes answer `503` with the
@@ -257,7 +257,7 @@ try {
 const app = express();
 /*
  * EVERY AMOUNT LEAVES AS `{"$n":"…"}`, and without this line the server is
- * broken for every screen that shows money. M-134.
+ * broken for every screen that shows money.
  *
  * `res.json` calls `JSON.stringify`, which THROWS on a bigint — *Do not know
  * how to serialize a BigInt* — so `/state`, `/people`, `/plugins` and
@@ -280,7 +280,7 @@ app.use(express.json({ limit: '1mb' }));
  * client pick its own address and opt out of the limit entirely.
  */
 /*
- * **SAID OUT LOUD AT BOOT, BESIDE THE OTHER ONE.** `PI2b`, `C140`.
+ * **SAID OUT LOUD AT BOOT, BESIDE THE OTHER ONE.**
  *
  * A company opened by `SimulatedLedger` is handed an address this process
  * invented — thirty-two random bytes in the exact spelling a contract address
@@ -301,7 +301,7 @@ if (process.env.ALLOW_SIMULATED_COMPANY_ADDRESS === '1') {
 }
 
 /*
- * **SAID OUT LOUD AT BOOT, FOR THE SAME REASON AS THE TWO ABOVE.** `X4`, `C140`.
+ * **SAID OUT LOUD AT BOOT, FOR THE SAME REASON AS THE TWO ABOVE.**
  *
  * With this set, any page served from this machine can post what it observed —
  * uncaught errors, console messages, failed requests — and this service writes
@@ -326,7 +326,7 @@ if (process.env.TRUST_PROXY) app.set('trust proxy', process.env.TRUST_PROXY);
 
 /**
  * **EVERY REFUSAL THIS SERVICE MAKES, AND THE ONE PLACE IT IS SAID OUT LOUD.**
- * `C157`.
+ *
  *
  * This was four lines and answered every thrown error with `400` and a message
  * in a body, **keeping nothing.** The browser sink recorded the status and the
@@ -434,7 +434,7 @@ const ownsInstall = ownedBy('id', id => store.getInstallation(id));
 const ownsAttestation = ownedBy('id', id => store.getAttestation(id));
 
 /**
- * **A SIGNING SECRET IS REFUSED, OUT LOUD, RATHER THAN IGNORED.** `C121`.
+ * **A SIGNING SECRET IS REFUSED, OUT LOUD, RATHER THAN IGNORED.**
  *
  * The approve route used to require one. Now that the signature is made on the
  * signer's device, the field has no meaning here — and *no meaning* is the
@@ -469,7 +469,7 @@ const refuseSigningSecret: express.RequestHandler = (req, res, next) => {
 };
 
 /*
- * **`POST /api/auth/register` IS DELETED WITH THE PASSWORD.** `PI4b`, `C129`.
+ * **`POST /api/auth/register` IS DELETED WITH THE PASSWORD.**
  *
  * It took an `authKey` the client had stretched from a password and a bundle
  * sealed under the other half of that stretch, and it was the ONLY writer of
@@ -483,7 +483,7 @@ const refuseSigningSecret: express.RequestHandler = (req, res, next) => {
  * same thing to everybody except the person reading the source.
  */
 
-/* ---------------- signing in with the wallet (PI1) ---------------- */
+/* ---------------- signing in with the wallet ---------------- */
 
 /**
  * THE TWO HALVES OF A CHALLENGE, AND ONLY ONE OF THEM TRAVELS.
@@ -565,7 +565,7 @@ app.post('/api/auth/wallet', wrap(async (req, res) => {
 }));
 
 /*
- * **THE THREE RECOVERY ROUTES ARE DELETED.** `PI4a`.
+ * **THE THREE RECOVERY ROUTES ARE DELETED.**
  *
  * `/api/auth/recover/challenge`, `/api/auth/recover` and
  * `/api/auth/recover/password` were here. **No client ever called any of
@@ -575,7 +575,7 @@ app.post('/api/auth/wallet', wrap(async (req, res) => {
  */
 
 /*
- * **`POST /api/auth/login` IS DELETED WITH THE PASSWORD.** `PI4b`, `C129`.
+ * **`POST /api/auth/login` IS DELETED WITH THE PASSWORD.**
  *
  * It compared a client-stretched `authKey` against `authHash` and handed back
  * the session, the sealed bundle and its version. **It was also the only caller
@@ -585,10 +585,10 @@ app.post('/api/auth/wallet', wrap(async (req, res) => {
  *
  * **THE BUNDLE AND ITS VERSION STILL TRAVEL**, by `GET /api/me/keys` below,
  * which is what a wallet session reads them from; a client that could not learn
- * the version could never write one again (`C41`).
+ * the version could never write one again.
  */
 
-/* ---------------- sessions the owner can see and end (S-3) ---------------- */
+/* ---------------- sessions the owner can see and end ---------------- */
 
 app.get('/api/me/sessions', authed, wrap(async (req, res) => {
   res.json({ sessions: await identity.listSessions(req.userId!, bearer(req)) });
@@ -607,7 +607,7 @@ app.post('/api/me/sessions/others/revoke', authed, wrap(async (req, res) => {
 }));
 
 /**
- * End one listed session — "sign out that phone". M-118.
+ * End one listed session — "sign out that phone".
  *
  * The id comes from the URL and is a twelve-character handle, not a
  * credential; `endSession` is scoped to `req.userId` so that stays true.
@@ -646,7 +646,7 @@ app.get('/api/me', authed, wrap(async (req, res) => {
 app.get('/api/me/keys', authed, wrap(async (req, res) => {
   const u = identity.user(req.userId!);
   /*
-   * **ONE HALF NOW, BECAUSE THERE IS ONLY ONE.** `PI4a`. The bundle used to be
+   * **ONE HALF NOW, BECAUSE THERE IS ONLY ONE.** The bundle used to be
    * sealed under a bundle key which was itself sealed to the password, so a
    * client needed both. It is sealed under the key the wallet releases, and
    * there is no second half to hand over.
@@ -659,7 +659,7 @@ app.get('/api/me/keys', authed, wrap(async (req, res) => {
 }));
 
 /*
- * **THE DEVICE-ENVELOPE ROUTES ARE DELETED.** `PI4a`, `C31`.
+ * **THE DEVICE-ENVELOPE ROUTES ARE DELETED.**
  *
  * Six routes and `/api/me/keys/upgrade` were here. **Nothing ever called
  * them** — there is no devices screen in either build — and nothing could
@@ -675,7 +675,7 @@ app.get('/api/me/keys', authed, wrap(async (req, res) => {
  */
 
 /*
- * **THE ENVELOPE REFUSAL IS GONE WITH THE ENVELOPE.** `PI4a`.
+ * **THE ENVELOPE REFUSAL IS GONE WITH THE ENVELOPE.**
  *
  * This route used to refuse when `bundleKey` was set, because replacing the
  * bundle alone on an upgraded account killed every device's wrapped copy — one
@@ -685,7 +685,7 @@ app.get('/api/me/keys', authed, wrap(async (req, res) => {
 app.put('/api/me/keys', authed, wrap(async (req, res) => {
   const b = z.object({
     keyBundle: z.object({ iv: z.string(), tag: z.string(), body: z.string() }),
-    /* `C40`. Optional on the wire so an old client still works, and every client we ship sends it. */
+    /* Optional on the wire so an old client still works, and every client we ship sends it. */
     ifVersion: z.number().int().min(0).optional(),
   }).parse(req.body);
   try {
@@ -705,7 +705,7 @@ app.get('/api/health', (_req, res) => {
 });
 
 /*
- * WHERE THE BROWSER'S OWN RECORD OF ITSELF LANDS. `X4` §1.
+ * WHERE THE BROWSER'S OWN RECORD OF ITSELF LANDS.
  *
  * **REGISTERED ONLY WHEN THE RELAXATION IS DECLARED**, so a production build of
  * this service does not have the route at all and a post to it is an ordinary
@@ -782,7 +782,7 @@ app.get('/api/accounts/:id/state', authed, member, wrap(async (req, res) => {
 }));
 
 /*
- * `POST /api/accounts/:id/deposit` STOOD HERE AND IS GONE. `C292`, `S26`.
+ * `POST /api/accounts/:id/deposit` STOOD HERE AND IS GONE.
  *
  * It put money into the account's own book. The account keeps no book — it is
  * an authority over a vault — so there is nothing behind the route and it is
@@ -798,7 +798,7 @@ app.get('/api/accounts/:id/proposals', authed, member, wrap(async (req, res) => 
 }));
 
 /*
- * **WHAT ARRIVES IS A SIGNATURE. NOTHING HERE COULD PRODUCE ONE.** `C121`.
+ * **WHAT ARRIVES IS A SIGNATURE. NOTHING HERE COULD PRODUCE ONE.**
  *
  * `.strict()` is the second half of `refuseSigningSecret` and covers what the
  * named check cannot: any other spelling of a secret somebody adds to a client
@@ -841,7 +841,7 @@ app.get('/api/accounts/:id/ledger', authed, member, wrap(async (req, res) => {
 
 /*
  * ── ONE VAULT'S OWN APPROVAL THRESHOLD ──────────────────────────────────
- * `R5`, `C172`.
+ *
  *
  * **THERE IS NO READ ROUTE HERE, DELIBERATELY.** What every signer needs to see
  * is `LedgerStatus.vaultThresholds`, and that already crosses on
@@ -899,7 +899,7 @@ app.post('/api/accounts/:id/vault-threshold', authed, member, wrap(async (req, r
 }));
 
 /**
- * **WHICH COMPANY THIS SESSION MAY ASK A WALLET TO OPEN.** `PI2a` §2, `C129`.
+ * **WHICH COMPANY THIS SESSION MAY ASK A WALLET TO OPEN.**
  *
  * The page needs the company's own address to put in an unlock, because that is
  * what the wallet derives the key from. **It is not allowed to choose it**, and
@@ -965,12 +965,12 @@ app.post('/api/runs/:id/propose', authed, ownsRun, wrap(async (req, res) => {
   const b = z.object({
     viewingKey: z.string(), proposedBy: z.string(),
     // Optional, and only needed by a run that settles in more than one asset —
-    // each is its own approval round. M-125.
+    // each is its own approval round.
     asset: assetCode.optional(),
   }).parse(req.body);
   /*
    * **`null` RUN MATERIAL. THIS ROUTE REFUSES, AND THAT IS `C375`'s FIX
-   * REACHING THE SURFACE.** `S47`.
+   * REACHING THE SURFACE.**
    *
    * It used to answer 200 with a proposal id for a round no vault could ever
    * be presented with. Nothing in this product builds a payout root, a payment
@@ -982,7 +982,7 @@ app.post('/api/runs/:id/propose', authed, ownsRun, wrap(async (req, res) => {
 }));
 
 /*
- * `POST /api/runs/:id/settle` STOOD HERE AND IS GONE. `C292`, `S26`.
+ * `POST /api/runs/:id/settle` STOOD HERE AND IS GONE.
  *
  * It settled a run by spending the account's own balance. There is no balance
  * and no `PayrollService.settle`. Removed rather than left answering a refusal:
@@ -995,7 +995,7 @@ app.get('/api/runs/:runId/employee/:employeeId', wrap(async (req, res) => {
 }));
 
 /*
- * The roster needs the viewing key now, because the server cannot read it. S-9.
+ * The roster needs the viewing key now, because the server cannot read it.
  *
  * That is the property, not an inconvenience: a route that could list employees
  * without a key would be a route that proves we can read them.
@@ -1003,7 +1003,7 @@ app.get('/api/runs/:runId/employee/:employeeId', wrap(async (req, res) => {
 app.get('/api/accounts/:id/people', authed, member, wrap(async (req, res) => {
   /*
    * **`handedOver` SAYS WHETHER A ROW IS WAITING ON US OR ON THEM.** `X11` §4,
-   * `C156`.
+   *
    *
    * A run already refuses in two different sentences for the two cases — *has
    * not set up yet* and *is waiting to be admitted by an admin* — and the
@@ -1129,7 +1129,7 @@ app.post('/api/invites/:token/accept-signer', authed, wrap(async (req, res) => {
   const b = z.object({
     signingPublicKey: z.string(), wrappingPublicKey: z.string(),
     /*
-     * The commitment, and NOT the blinding factor behind it. M-106.
+     * The commitment, and NOT the blinding factor behind it.
      *
      * This endpoint briefly took both, because a removal re-seated every
      * remaining signer and could not compute their new leaves without their
@@ -1242,7 +1242,7 @@ app.post('/api/invites/:token/accept-employee', authed, wrap(async (req, res) =>
    * (`midnight-identity/wallet/address-shape`), and they still run HERE in the
    * sense that matters: `admit` rebuilds the value through the real
    * `payeeAddress()` from the string inside the envelope, on the machine that
-   * holds the key, exactly as it always has. `A-1`, `C7`.
+   * holds the key, exactly as it always has. `A-1`.
    */
   const refuseInTheClear = (field: string, what: string) => {
     if (req.body && typeof req.body === 'object' && field in (req.body as object)) {
@@ -1295,7 +1295,7 @@ app.post('/api/invites/:token/accept-employee', authed, wrap(async (req, res) =>
  * sockpuppet in `C21`.
  */
 /*
- * **THE NONCE A PAYEE DISCLOSURE ANSWERS.** `X8` §2.
+ * **THE NONCE A PAYEE DISCLOSURE ANSWERS.**
  *
  * The same store and the same two halves as the sign-in challenge — a nonce
  * that travels to the wallet inside the signature, and a HANDLE that never
@@ -1426,7 +1426,7 @@ app.post('/api/accounts/:id/grant', authed, member, wrap(async (req, res) => {
 
 app.post('/api/runs/:id/attest', authed, ownsRun, wrap(async (req, res) => {
   // A run has a subtotal per asset and never one total, so an attestation has
-  // to say which one it is about. M-125.
+  // to say which one it is about.
   const asset = assetCode.parse(req.query.asset);
   res.json(await payroll.attestPayrollTotal(
     String(req.params.id), String(req.query.viewingKey ?? ''), asset));
@@ -1457,7 +1457,7 @@ app.post('/api/accounts/:id/plugins', authed, member, wrap(async (req, res) => {
   const b = z.object({
     pluginId: z.string(), scopes: z.array(z.string()),
     /*
-     * A CEILING PER ASSET, as decimal strings. M-125, M-134.
+     * A CEILING PER ASSET, as decimal strings.
      *
      * The old shape was two bare numbers and no asset, which is a limit that
      * means a sensible weekly cap in pounds and roughly nothing in ether — with
@@ -1525,7 +1525,7 @@ app.post('/api/plugin/propose', wrap(async (req, res) => {
   /*
    * The plug-in names the asset, and that is safe because the CEILING IS LOOKED
    * UP BY IT — an asset the installation was not granted has no ceiling to
-   * reach and is refused outright. M-125.
+   * reach and is refused outright.
    */
   res.json(await plugins.propose(b.token, b.viewingKey, {
     summary: b.summary,
@@ -1547,7 +1547,7 @@ app.post('/api/plugin/propose', wrap(async (req, res) => {
  * face of every proposal*, AND TWO OF THOSE THREE WERE EMPTY OR CONSTANT.**
  * `C292` removed the account's balance: every commitment here is
  * `viewDigestOf([])`, one value for every account and every state. **The
- * settlements array is not empty any more — it is gone** (`C313`, `S29`),
+ * settlements array is not empty any more — it is gone**,
  * because an empty one read as evidence that an observer sees no settlements
  * when in fact nothing had ever written one. What is genuinely demonstrated is
  * the proposal face — ids, digests, counts, no names — and that is the whole of
@@ -1614,7 +1614,7 @@ if (process.env.SERVE !== '0') {
     console.log(`proofs     ${proofs.describe()}`);
     console.log(`data       ${DATA}`);
     /*
-     * `C157`. Said at boot for the same reason the file exists: a report nobody
+     * Said at boot for the same reason the file exists: a report nobody
      * knows about is a report nobody reads, and the whole point of it is to be
      * the first thing opened after a walk went wrong.
      */

@@ -1,6 +1,6 @@
 /**
  * THE FIFTEEN-FIELD LEDGER LIMIT IS ENFORCED BY NOBODY AND MUST BE ENFORCED BY
- * US. `C357`.
+ * US.
  *
  * MEASURED, `REPORT-PROBE-LAYOUT.txt:71-82,103-107`, 1 Sep: sixteen top-level
  * ledger declarations COMPILE. Fifteen emit `1 newArray() 15 arrayPush`;
@@ -147,7 +147,7 @@ export function readLayout(root: string, managed: string): Layout {
 /**
  * Every artifact that stops the build.
  *
- * IT THROWS ON AN EMPTY TARGET LIST. `C238`, `C263`: a check over nothing
+ * IT THROWS ON AN EMPTY TARGET LIST. A check over nothing
  * cannot fail, and the only way to disarm this guard from inside is to hand it
  * nothing to check.
  */

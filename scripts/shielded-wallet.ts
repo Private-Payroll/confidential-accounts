@@ -45,10 +45,10 @@
  *    **AND THE TESTKIT'S `syncWallet` IS BOUNDED AND DOES PRINT** — 90 seconds,
  *    a line per emission, `rx.timeout` on the end. An earlier draft of this
  *    comment said the SDK offered none of that, which was false and is
- *    corrected here by `S17`'s `platform-fact-checker`. It is still not called,
+ *    corrected here by `S17`'s platform fact-check. It is still not called,
  *    for reasons that are about this chain rather than about it being absent:
  *    it gates on `isStrictlyComplete()`, which asks a wallet to outrun a live
- *    chain (`M-26`); it THROWS rather than returning which state it ended in,
+ *    chain; it THROWS rather than returning which state it ended in,
  *    and this round exists because those states must be told apart; and it is
  *    reached through `wallet.start(true)`, whose `waitForFunds` can hit the
  *    faucet and submit a dust registration — a spend, which no door may take
@@ -95,7 +95,7 @@
  * does assign appears in none of them. `REPORT-CHAIN-PROBE.txt:38` prints
  * `dust 3195/0` and `shielded 3177/0` side by side, which settles it.
  *
- * Found by `S17`'s `platform-fact-checker`, against this file. The conclusion
+ * Found by `S17`'s platform fact-check, against this file. The conclusion
  * survives the correction — the platform's predicate is honest here — but the
  * reason given for it was a comparison that does not exist.
  *
@@ -159,7 +159,7 @@ export function deadlineFromEnv(raw: string | undefined): number {
    * `Number('soon')` is `NaN`, `elapsed > NaN` is false for every elapsed, and
    * the deadline branch below becomes unreachable — which is `M-22`, the
    * unbounded wait this whole file exists to avoid, restored by one typo in an
-   * environment variable. Found by `S17`'s `money-safety-auditor` pass, against
+   * environment variable. Found by `S17`'s money-safety pass, against
    * this file. Exported so a test drives it directly rather than reloading a
    * module. Rule 19: the refusal names the door.
    */
@@ -178,7 +178,7 @@ export function deadlineFromEnv(raw: string | undefined): number {
 export const SHIELDED_SCAN_TIMEOUT_MS =
   deadlineFromEnv(process.env.MIDNIGHT_SHIELDED_SCAN_TIMEOUT_MS);
 
-/** **NO SHIELDED SCAN HAS BEEN TIMED IN THIS REPOSITORY.** `C238`. */
+/** **NO SHIELDED SCAN HAS BEEN TIMED IN THIS REPOSITORY.** */
 export const deadlineIsMeasured = false;
 
 export const SHIELDED_DEADLINE_IS_NOT_MEASURED =
@@ -213,12 +213,12 @@ export const shieldedCaughtUp = (p: any, gap: bigint = SHIELDED_GAP): boolean =>
    * **THE SDK'S STATIC `SyncProgress.isCompleteWithin(data, gap)` TAKES A PLAIN
    * OBJECT AND WAS READ BEFORE THIS WAS WRITTEN.** It is not called because it
    * does `BigInt(Math.abs(Number(h - a)))` unguarded, which throws on exactly
-   * the partial data this branch exists for. `S17`'s `platform-fact-checker`.
+   * the partial data this branch exists for. `S17`'s platform fact-check.
    *
    * **THE FALLBACK DEFAULTED BOTH INDICES TO ZERO AND THEREFORE SAID YES TO
    * SILENCE** — `|0 - 0| <= 10` — which is exactly the `dustProgressKnown`
    * defect the header above claims this wallet does not have, reintroduced
-   * here. Found by `S17`'s `money-safety-auditor` pass, against this file, and
+   * here. Found by `S17`'s money-safety pass, against this file, and
    * no test reached the branch because every fake carried its own
    * `isCompleteWithin`.
    *
@@ -264,7 +264,7 @@ export const describeShieldedProgress = (p: any): string => {
  * a coin whose value would not parse, a colour spelled differently, or a
  * throwing getter zeroed the entire colour — and the door spelled that zero
  * *"there is no such coin … it was already spent."* Found by `S17`'s
- * `money-safety-auditor` pass, against this file. `C197`, `C268`, `C271`: a
+ * money-safety pass, against this file. A
  * read that failed must never be reported as a quantity that is absent.
  *
  * **SO `null` MEANS COULD NOT READ AND `0n` MEANS GENUINELY NONE**, and every
@@ -313,7 +313,7 @@ export const shieldedHeldOf = (state: any, colour: string): bigint | null => {
    * SDK's: a partial object, or a fake. It stays because returning `null` for
    * an unrecognised shape is the whole point of this function, and it is
    * labelled rather than presented as a live path. `S17`'s
-   * `platform-fact-checker`.
+   * platform fact-check.
    */
   try {
     const coins = shielded.availableCoins;
@@ -357,7 +357,7 @@ export interface ShieldedWaitOptions {
    * `caught-up` at `waitedMs: 0`, read zero, and printed *"there is no such
    * coin … or it was already spent"* about a coin minted seconds earlier. It
    * replaced a five-minute wait for the right thing with a zero-second wait for
-   * the wrong one. Found by `S17`'s `money-safety-auditor` pass, against this
+   * the wrong one. Found by `S17`'s money-safety pass, against this
    * file.
    *
    * So with `until` the exits are `found` and `deadline`; without it they are
@@ -430,7 +430,7 @@ export async function waitForShieldedScan(
  * either tells a person their money is gone while it is arriving, or sends
  * them away to wait for a coin that will never come.**
  *
- * `S17` asked for two. The `money-safety-auditor` pass found three more hiding
+ * `S17` asked for two. The money-safety pass found three more hiding
  * inside them — a read that failed, a wait that never ran, and a caller asking
  * about a coin it had just submitted, for which *there is no such coin* is
  * never a sound verdict at all.

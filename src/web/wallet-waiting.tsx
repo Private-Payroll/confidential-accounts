@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import * as keyring from './keyring.js';
 
 /**
- * **THE PAGE BEHIND THE WALLET WAITS VISIBLY, AND OFFERS A WAY OUT.** `C154`.
+ * **THE PAGE BEHIND THE WALLET WAITS VISIBLY, AND OFFERS A WAY OUT.**
  *
  * The dialog opens on top of this page, and then it can be moved, or covered,
  * or sent behind the window that opened it by anything the person does next.

@@ -12,7 +12,7 @@
  * MATCHES TEXT AGAINST A CONFIG, and that is `scripts/artifact-freshness.test.ts`'s
  * correction against itself rather than a preference. Its first version asserted
  * the wiring by reading `vitest.config.ts` as TEXT and matching a regex, and a
- * `test-auditor` pass found three separate ways to disarm the guard that left
+ * test-coverage pass found three separate ways to disarm the guard that left
  * the assertion green: comment the key out — a regex matches inside a comment;
  * wrap the call in `try {} catch {}`; put it behind `if (process.env.X)`. A
  * commented-out key is not a value.
@@ -39,7 +39,7 @@ import { fileURLToPath } from 'node:url';
 
 /*
  * **IMPORTING THIS IS SAFE, AND THAT IS THE THING BEING TESTED.** `T-348`,
- * `S67`. Until `S67` every statement in that file was at the top level, so an
+ * Until `S67` every statement in that file was at the top level, so an
  * `import` of it RAN the whole mutation door — which is how `S58` came to leave
  * a mutation live in `src/core/account.ts`. The door now runs only when it is
  * the process's entry point, and the corpus and the journal are exported for
@@ -89,7 +89,7 @@ describe('the real config still wires all three guards', () => {
     // kept makes every score meaningless. A red test puts that decision in the
     // same turn as the addition, with the diff in front of the person. Rule 27:
     // this line is what enforces it.
-    //
+    
     // `KEPT` and `DROPPED` are spelled here independently of the config, which
     // is deliberate and is the opposite call from `mustNotAppear` below. There
     // the runtime values ARE the instrument; here the independent spelling is —
@@ -144,12 +144,12 @@ describe('THE DIFFERENCE IS EXACTLY ONE ENTRY — the ruling\'s condition (2)', 
     // is written; the test above would pass, and it would drift the first time
     // somebody edited `vitest.config.ts`. So this reads the derived file's own
     // SOURCE and asks whether the values are there at all.
-    //
+    
     // THE LIST OF THINGS IT MAY NOT CONTAIN IS READ OFF THE REAL CONFIG AT
     // RUNTIME, not typed here. Add a key to `vitest.config.ts` and this check
     // extends itself to it; a list written out here would be the second
     // hand-maintained thing the ruling forbids, one level up.
-    //
+    
     // WHAT IT CANNOT SEE, said plainly rather than implied: it reads text, and
     // text is the instrument `artifact-freshness.test.ts` was corrected away
     // from for reading VALUES. Nothing here reads a value from text — the
@@ -157,7 +157,7 @@ describe('THE DIFFERENCE IS EXACTLY ONE ENTRY — the ruling\'s condition (2)', 
     // This one asks a different question, about the shape of a file, and it is
     // the same instrument that file's own tests use on
     // `artifact-freshness.globalSetup.ts` and `contracts/test/simulator.ts`.
-    //
+    
     // REFERENCE IDENTITY WAS THE OTHER CANDIDATE AND WAS REFUSED. A spread
     // carries the very `include` array, so `mutation.test.include === base.test.include`
     // would prove derivation outright — but whether two imports of one module
@@ -265,7 +265,7 @@ describe('ONLY THE MUTATION DOOR PASSES THE FLAG — the corrected sentence, che
   it('every vitest run inside MUTATE.command carries the flag — COUNTED, not floored', () => {
     // Two today: the baseline at MUTATE.command:1535 and the scoring run at
     // :1739. Both, and exactly both.
-    //
+    
     // THE FIRST VERSION OF THIS TEST ASSERTED A FLOOR — `runs.length > 0` and a
     // loop over whatever survived the filter — AND AN AUDITOR BROKE IT FOUR
     // WAYS, each leaving it green: put the flag in a TRAILING `#` comment (the
@@ -277,7 +277,7 @@ describe('ONLY THE MUTATION DOOR PASSES THE FLAG — the corrected sentence, che
     // real refactor; spell it `vitest --run`; or split it over a backslash
     // continuation. The last three shrink the population the loop iterates, and
     // a loop over a population the edit chose is satisfied by construction.
-    //
+    
     // So: the invocations are selected by the BINARY, the count is pinned, the
     // flag is matched as an ARGUMENT with a boundary after it, and the line is
     // required to carry exactly one `--config`.
@@ -308,7 +308,7 @@ describe('ONLY THE MUTATION DOOR PASSES THE FLAG — the corrected sentence, che
     // The ruling's condition (3). A mutation score was never a statement about
     // documentation, and a person reading REPORT-MUTATE.txt must not be able to
     // take it for one.
-    //
+    
     // THE FIRST VERSION CHECKED THAT EACH SENTENCE SAT ON A LINE BEGINNING
     // `echo "`, AND THAT IS THE `if (process.env.X)` ATTACK ONE LAYER OUT. An
     // auditor showed three edits it passed: wrap the echoes in `if false; then`;
@@ -340,7 +340,7 @@ describe('ONLY THE MUTATION DOOR PASSES THE FLAG — the corrected sentence, che
 
     // BEFORE ANY SCORE. The conditions of a run belong above the run, and the
     // first thing that can print a verdict is the baseline.
-    //
+    
     // **THE `#` IS STRIPPED, AND IT WAS NOT UNTIL `S56` FOUND IT FROM THE OTHER
     // SIDE.** This locator means *the first line that RUNS vitest with the
     // flag*, and a comment runs nothing — but it matched inside one, so a
@@ -361,7 +361,7 @@ describe('ONLY THE MUTATION DOOR PASSES THE FLAG — the corrected sentence, che
     // passes that flag". It now says only the mutation door does. That is a
     // claim about this repository, so it is measured rather than trusted.
     // Rule 14.
-    //
+    
     // ASSERTED ON THE SHAPE `--config <anything>` AND NOT ON THIS CONFIG'S NAME,
     // because a future door pointed at a SECOND weakened config satisfies the
     // narrow question and breaks the sentence. Vite's own `--config` is a
@@ -379,7 +379,7 @@ describe('ONLY THE MUTATION DOOR PASSES THE FLAG — the corrected sentence, che
     expect(offenders).toEqual([]);
 
     // And the corpus is not empty, or the sweep above passes by having read
-    // nothing. C238, C263.
+    // nothing.
     expect(corpus().length).toBeGreaterThan(20);
     expect(corpus().map((c) => c.file)).toContain('MUTATE.command');
     expect(corpus().map((c) => c.file)).toContain('package.json');
@@ -444,7 +444,7 @@ describe('NO DOOR SCORES A RUN THAT COLLECTED NOTHING AS A SURVIVOR — T-295, T
     && shaped(text);
 
   /*
-   * **THE THREE STRINGS ABOVE ARE NOT ENOUGH, AND `S56`'s OWN `test-auditor`
+   * **THE THREE STRINGS ABOVE ARE NOT ENOUGH, AND `S56`'s OWN test-coverage pass
    * WROTE THE DIFFS THAT PROVE IT.** All three survive `if (collapsed.length)`
    * → `if (false && collapsed.length)`; all three survive moving the
    * `result.failures === 0` branch in front of the collapse branch. So this
@@ -524,14 +524,14 @@ describe('NO DOOR SCORES A RUN THAT COLLECTED NOTHING AS A SURVIVOR — T-295, T
     for (const file of FIXED) {
       const { text } = harnesses().find(x => x.file === file)!;
       /*
-       * `SC15` §2.5(4). Under mutation 22 the refusal naming `DOCS.command` was
+       * Under mutation 22 the refusal naming `DOCS.command` was
        * printed on stderr and thrown away by an empty `catch`, so the report
        * carried the alarm and not one word of the cause. That is why it cost a
        * round rather than a glance.
        */
       expect(text, `${file} discards the child's output again`)
         .toContain('said = [e?.stderr, e?.stdout]');
-      /* And the three counts are three lines, never one sentence. `T-285`. */
+      /* And the three counts are three lines, never one sentence. */
       expect(text).toContain('RAN AND MEASURED NOTHING');
       expect(text).toContain('COULD NOT BE APPLIED');
       expect(text).not.toContain('} survived, ${stale} not run.');
@@ -555,7 +555,7 @@ describe('NO DOOR SCORES A RUN THAT COLLECTED NOTHING AS A SURVIVOR — T-295, T
   it('and the fourteen are still on the list for a reason — fixing one FORCES pruning it', () => {
     /*
      * **WITHOUT THIS THE LIST IS AN ALLOW-LIST, NOT A RATCHET**, and `S56`'s
-     * `test-auditor` is right that the difference matters: the day somebody
+     * test-coverage pass is right that the difference matters: the day somebody
      * gives `mutate-hiring.mjs` the guard and leaves it named here, the list
      * stops ratcheting for that file in BOTH directions and a later regression
      * on it is invisible. Requiring the list to be exactly the unfixed set
@@ -739,7 +739,7 @@ describe('THE MUTATION JOURNAL REFUSES RATHER THAN REVERTS — T-348', () => {
      */
     /*
      * **THIS WRITES A SCRATCH RECORD, NEVER THE DOOR'S LIVE ONE, AND THE FIRST
-     * DRAFT OF THIS TEST DID THE OPPOSITE.** `S67`'s own `money-safety-auditor`
+     * DRAFT OF THIS TEST DID THE OPPOSITE.** `S67`'s own money-safety pass
      * caught it. Writing `logs/mutate-authority/in-flight.json` here names
      * `src/core/account.ts` with a 59-byte `before`; a `try`/`finally` restores
      * it after a failure or a throw **but not after process death**, and vitest
@@ -791,7 +791,7 @@ describe('THE MUTATION JOURNAL REFUSES RATHER THAN REVERTS — T-348', () => {
 /*
  * ── A `kills:` LIST IS A CLAIM, AND UNTIL `S67` NOTHING COULD REFUSE IT ─────
  *
- * `T-337`, raised by `SC19` and its `money-safety-auditor`, half-discharged by
+ * `T-337`, raised by `SC19` and its money-safety pass, half-discharged by
  * `S58`, closed here on its actual subject.
  *
  * **AN ENTRY NAMES THE TESTS IT EXPECTS TO DIE. A NAME THAT RAN AND PASSED
@@ -878,7 +878,7 @@ describe('A kills: LIST THAT CREDITS A GUARD WHICH PASSED IS A FAILURE — T-337
  *
  * **RULE 27: A PROPERTY THAT HOLDS BECAUSE NOBODY HAS WRITTEN THE CODE THAT
  * WOULD BREAK IT SAYS SO IN THOSE WORDS — OR IT NAMES WHAT ENFORCES IT.**
- * Raised against `S67` by its own `money-safety-auditor`.
+ * Raised against `S67` by its own money-safety pass.
  *
  * `docs/design/edges.json` records exactly one scanned circuit call site in
  * `scripts/mutate-authority.mjs`, and it is mutation 22's `from:` text. **A

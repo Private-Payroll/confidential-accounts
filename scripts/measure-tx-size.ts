@@ -85,7 +85,7 @@ async function main() {
   line(`  network id  ${NETWORK}`);
 
   /* ---------------------------------------------------- the artefacts on disk */
-  //
+  
   // Read first and printed first, because it is the free measurement and it is
   // the one that survives if everything below fails.
   const keysDir = join(ARTIFACTS, 'keys');
@@ -141,7 +141,7 @@ async function main() {
    * and seated the leaf it committed from them. **`C334` made the sentence
    * true**, so it is kept — and `secretKey`, `blinding` and `scope` are gone
    * from the record below, because a filler for a witness nothing calls is
-   * three lines pretending to matter. `docs/corrections.md`.
+   * three lines pretending to matter.
    */
   const initialPrivateState: any = {
     assetBlinding: filler(4),

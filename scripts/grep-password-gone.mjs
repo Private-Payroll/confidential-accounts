@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * **THE PASSWORD IS NOT LEFT ANYWHERE IN `src/`.** `docs/ROUND-PI4b.md`,
- * `C129`.
+ *
  *
  * `scripts/grep-deleted-systems.mjs` for the round that followed it, and its
  * two rules are this file's rules:
@@ -43,7 +43,7 @@ const ALLOWED = new Set([
   'src/core/core.test.ts',
   'src/server/server.test.ts',
   /* Plant a credential in a fake log line to prove the redactor removes it.
-   * `C145`, `C159`: the redactor ships in production and is not a leak in any
+   * The redactor ships in production and is not a leak in any
    * direction — a person may still type a secret into the wrong field, and
    * third-party payloads are not ours to shape. */
   'src/core/redact-secrets.test.ts',

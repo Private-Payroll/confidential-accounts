@@ -78,7 +78,7 @@
  * it, `T-171`'s run order puts `DOCS.command` in front of `MUTATE.command`, and
  * `MUTATE.command` prints the condition into its own report.
  *
- * ── IT RENDERS AND COMPARES. IT DOES NOT HASH A LIST OF INPUTS. `T-167`. ─────
+ * ── IT RENDERS AND COMPARES. IT DOES NOT HASH A LIST OF INPUTS. ──────────────
  *
  * The first three versions of this gate hashed a list of files each block was
  * believed to be generated from, and the list was wrong three times in one
@@ -158,7 +158,7 @@ export type DocRefusal = {
  * render it controls and watch the comparison fail — and so the whole guard has
  * exactly one place that runs the extractor.
  *
- * IT THROWS ON AN EMPTY REGISTRY. `C238`, `C263`: a check over zero things
+ * IT THROWS ON AN EMPTY REGISTRY. A check over zero things
  * cannot fail, and a check that cannot fail has already failed.
  */
 export function docRefusals(

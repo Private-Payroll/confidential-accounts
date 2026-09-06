@@ -21,7 +21,7 @@ import { signInAsk } from '../core/wallet-sign-in-ask.js';
  * is not a check. What happens here is the plumbing: open the wallet, wait for
  * it to say it is listening, send one ask, and take one answer.
  *
- * **AND SO IT MUST NOT IMPORT THE THING THAT DOES.** `X5` §2, `C149`. This line
+ * **AND SO IT MUST NOT IMPORT THE THING THAT DOES.** This line
  * read `from '../core/wallet-identity.js'` and that one word is what left the
  * payroll page blank in every real browser: the service verifies, so it reaches
  * the wallet SDK, so it reaches `ledger-v9`, so the page was loading ten
@@ -108,7 +108,7 @@ export interface Openable {
 }
 
 /* ------------------------------------------------------------------------ *
- * THE DIALOG. `C154`.
+ * THE DIALOG.
  * ------------------------------------------------------------------------ */
 
 /**
@@ -165,7 +165,7 @@ const featuresFor = (view: Openable): string => {
 };
 
 /**
- * **THE WINDOW, OPENED WHILE THE CLICK IS STILL BEING HANDLED.** `C154`.
+ * **THE WINDOW, OPENED WHILE THE CLICK IS STILL BEING HANDLED.**
  *
  * A browser only lets a page open a window while it is handling a person's
  * press. Both wallet paths used to spend that permission on a round trip to
@@ -223,7 +223,7 @@ export function openWalletDialog(view: Openable, walletOrigin: string): WalletDi
 }
 
 /**
- * **WHAT IS SAID WHEN NO WINDOW OPENED, AND WHOSE FAULT IT NAMES.** `C154`.
+ * **WHAT IS SAID WHEN NO WINDOW OPENED, AND WHOSE FAULT IT NAMES.**
  *
  * It read *"your browser stopped this page opening your wallet. Allow pop-ups
  * for this site"*, which is advice for a problem the person does not have: the
@@ -264,7 +264,7 @@ export function askWalletToSignIn(
 }
 
 /**
- * **ONE PLUMBING, TWO ASKS.** `PI2a`.
+ * **ONE PLUMBING, TWO ASKS.**
  *
  * Everything below is what `askWalletToSignIn` was, with the ask it sends
  * passed in rather than built inside. `PI2a` needed the identical conversation

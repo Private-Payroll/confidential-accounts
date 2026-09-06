@@ -70,7 +70,7 @@ export interface SessionStore {
 
   /**
    * Ends one session BY ITS ID — the handle `list` hands out — so a person can
-   * sign out a device they are not currently holding. M-118.
+   * sign out a device they are not currently holding.
    *
    * `userId` is not decoration and must not be dropped. A token is 32 random
    * bytes and is its own authority; an id is twelve characters of a hash, shown

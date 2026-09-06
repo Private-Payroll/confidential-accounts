@@ -1,6 +1,6 @@
 /**
  * **THE PRODUCT'S OWN PAYROLL RUN, DRIVEN INTO THE REAL CIRCUITS.** `C375`,
- * `T-213`, board row `2y7d4`, `S47`.
+ * `T-213`, board row `2y7d4`.
  *
  * **WHAT THIS FILE EXISTS TO CATCH, AND IT WAS LIVE UNTIL THIS ROUND.**
  * `PayrollService.proposeRun` raised every payroll round through
@@ -212,7 +212,7 @@ describe('C375: a payroll run the PRODUCT raised is one a VAULT can pay', () => 
     });
 
   /**
-   * **THE DEFECT ITSELF, AS A REGRESSION TEST.** `C375`.
+   * **THE DEFECT ITSELF, AS A REGRESSION TEST.**
    *
    * The old door is still on `AccountService` and is still correct for the four
    * governance rounds, so it cannot be deleted — which means the thing that
@@ -266,7 +266,7 @@ describe('C375: a payroll run the PRODUCT raised is one a VAULT can pay', () => 
   });
 
   /**
-   * **THE PRODUCT'S DOOR REFUSES RATHER THAN RAISING THE WRONG THING.** `S47`.
+   * **THE PRODUCT'S DOOR REFUSES RATHER THAN RAISING THE WRONG THING.**
    *
    * Nothing in `src/` builds a payout root, a payment window or a vault today —
    * measured: `buildRun` and `buildPayoutTree` have no caller in `src/` at all,

@@ -1,6 +1,6 @@
 /**
  * **THE STORED LEAF, CHECKED AGAINST THE DEVICE THAT HAS TO REPRODUCE IT.**
- * `C325`.
+ *
  *
  * `Signer.leafCommitment` is written once — at creation (`account.ts:666`) or
  * handed over by an invitee's device (`src/web/App.tsx:2202`) — and the blinding
@@ -60,7 +60,7 @@
  * it?* That is `C325`'s question and this file answers it.
  *
  * **AND SINCE `S34` IT ALSO ANSWERS THE BIGGER ONE, BECAUSE THE WRITERS MOVED.**
- * `C328`: until `S34` both product writers passed an ed25519 public key where
+ * Until `S34` both product writers passed an ed25519 public key where
  * the contract reads `persistentHash([pad(32, "midnight-accounts:signer:pk:"),
  * sk])` — different, uncorrelated 32 bytes, so every seat this product had ever
  * written was one no device could prove on a chain. The public half now comes
@@ -97,7 +97,7 @@ import type { CommitmentScheme } from './ledger.js';
 export type LeafScheme = Pick<CommitmentScheme, 'signerLeaf' | 'signerPublicKey' | 'allVaults'>;
 
 /**
- * **WHAT A DEVICE HOLDS FOR ONE SEAT.** The scope joined it in `S34`, `T-116`.
+ * **WHAT A DEVICE HOLDS FOR ONE SEAT.** The scope joined it in `S34`.
  *
  * `scope` is the leaf's third argument. It is OPTIONAL and absent means
  * `allVaults()`, which is what every bundle written before `S34` means — those
@@ -192,7 +192,7 @@ export function storedSignerLeaf(
 /**
  * The reading, as a value rather than a branch inside a throw.
  *
- * Pure and exported for `mintedSignerIds`' reason (`C275`): a rule about money
+ * Pure and exported for `mintedSignerIds`' reason: a rule about money
  * that lives only inside its caller is a rule no test can reach.
  *
  * **THE SCOPE TRAVELS WITH THE DEVICE'S MATERIAL, AND `S33` LEFT A NOTE HERE
@@ -224,7 +224,7 @@ export function ownLeafReading(
     return { signerId, verdict: 'device-key-unusable', stored, derived: null };
   }
 
-  /* The writers' own function, not a reproduction of it. `C328`. */
+  /* The writers' own function, not a reproduction of it. */
   const derived = storedSignerLeaf(device, commitments);
 
   if (!seat) return { signerId, verdict: 'no-seat', stored: null, derived };
@@ -255,7 +255,7 @@ export function ownLeafReading(
  * **WHY THESE TWO FAIL CLOSED.** M-69's lesson, in this same product: a signer
  * shown as active whose every approval fails inside a proof is the defect, not
  * the safe state. **AND THE POSITION AGAINST, WRITTEN HERE BECAUSE `S33`'s
- * `money-safety-auditor` HELD IT AND IT WAS NOT MARKED WRONG (rule 20):** the
+ * money-safety pass HELD IT AND IT WAS NOT MARKED WRONG (rule 20):** the
  * leaf is never rewritten, so a derivation that moves puts EVERY signer on an
  * account into `disagrees` at once, and refusing the read refuses the app the
  * remedy is performed in. The end state is a screen that opens and disables the
@@ -322,14 +322,14 @@ declare const seatedHere: unique symbol;
 
 /**
  * **PROOF, IN THE TYPE, THAT THE LEAF CHECK RAN ON THIS DEVICE FOR THIS SEAT.**
- * `T-118`, `S34`.
+ *
  *
  * ── WHY A TYPE AND NOT A TEST ────────────────────────────────────────────
  *
  * `S33` put a money-safety refusal in `src/web/App.tsx`, no test file in this
  * repository imports that file, and what stood in for rule 11 was a
  * comment-stripped source pin over its text. **A source pin cannot see
- * semantics**: `S33`'s own `test-auditor` defeated the first version three ways
+ * semantics**: `S33`'s own test-coverage pass defeated the first version three ways
  * with the text intact — kept verbatim inside an arrow nothing calls, wrapped
  * in a condition never true, and shadowed by a local no-op one line above — and
  * the pin's own last line says *"a fourth will be found."*

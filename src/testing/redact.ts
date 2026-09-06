@@ -1,5 +1,5 @@
 /**
- * SEARCHING A SERIALISED RECORD FOR SOMETHING THAT SHOULD NOT BE IN IT. M-101, T-12.
+ * SEARCHING A SERIALISED RECORD FOR SOMETHING THAT SHOULD NOT BE IN IT.
  *
  * "The server cannot read a salary" is checked by serialising what the server
  * holds and asserting the salary does not appear in it. That check is unsound

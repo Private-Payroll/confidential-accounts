@@ -27,9 +27,9 @@
  * ---
  *
  * **WHAT `S34` CHANGED HERE, AND THE SOURCE PIN THAT IS GONE.** `C328`,
- * `T-116`, `T-118`.
  *
- *   · The public half is no longer an ed25519 key. `C328`: the contract reads
+ *
+ *   · The public half is no longer an ed25519 key. The contract reads
  *     `persistentHash([tag, sk])` and both product writers passed
  *     `ed25519.getPublicKey(sk)`, which is different, uncorrelated 32 bytes.
  *     The derivation now goes through `CommitmentScheme.signerPublicKey`, and
@@ -37,9 +37,9 @@
  *     the derived leaf is not the one the old writers made.
  *   · The device's material carries a `scope`, and a seat stored under a
  *     non-default one is reproduced rather than reported as a mismatch.
- *     `T-116`.
+ *
  *   · **THE SOURCE PIN OVER `src/web/App.tsx` IS DELETED, NOT DOUBLED.**
- *     `T-118`. It asserted that `openAccount` called the check exactly once,
+ *     It asserted that `openAccount` called the check exactly once,
  *     and `S34` found the fourth defeat its own comment predicted: `loadDemo`
  *     built a session without entering `openAccount` at all, so a second door
  *     into the product skipped the refusal with the pin green. What replaces it
@@ -69,12 +69,12 @@ const OTHER_BLINDING = '44'.repeat(32);
 /* A stored value no derivation produced, and NOT a repeating one: `de`.repeat(32)
  * has the same sixteen characters in every window, so an assertion that the
  * refusal printed "its first sixteen" could not tell which sixteen it printed.
- * `S33`'s `test-auditor`. */
+ * `S33`'s test-coverage pass. */
 const HAND_BUILT = '0123456789abcdef' + 'fedcba9876543210' + '00112233445566778899aabbccddeeff';
 
 /**
  * **ed25519, STRAIGHT FROM THE CURVE — AND IT IS HERE AS A NEGATIVE CONTROL
- * NOW.** `C328`.
+ * NOW.**
  *
  * This used to be what the derivation was checked against, because it was what
  * the writers passed. It is what the writers must never pass again: the leaf
@@ -138,13 +138,13 @@ describe('the stored signer leaf, against the device that has to reproduce it', 
     expect(reading.stored).toBe(stored);
     /* The derived side is asserted against the independent construction rather
      * than merely "not the stored one", which excludes one value out of all of
-     * them. `S33`'s `test-auditor`. */
+     * them. `S33`'s test-coverage pass. */
     expect(reading.derived).toBe(independentFrom(SIGNING_SECRET, BLINDING));
     expect(() => requireOwnLeaf(reading)).toThrow(/COMPUTES A DIFFERENT LEAF/);
   });
 
   it('refuses a leaf that agrees for 62 of its 64 characters', () => {
-    /* `C320`'s `test-auditor` finding, applied here before an auditor has to:
+    /* `C320`'s test-coverage pass finding, applied here before an auditor has to:
      * a comparison that reads one character passes every fixture that differs
      * everywhere. This one differs in the last two. */
     const real = independentFrom(SIGNING_SECRET, BLINDING);
@@ -158,7 +158,7 @@ describe('the stored signer leaf, against the device that has to reproduce it', 
 
   it('REFUSES when the blinding on this device is not the one the leaf was built from', () => {
     /* **THE REALISTIC CASE, AND EVERY OTHER TEST HERE VARIES THE STORED SIDE.**
-     * `S33`'s `test-auditor` mutated the derivation to ignore `device.blinding`
+     * `S33`'s test-coverage pass mutated the derivation to ignore `device.blinding`
      * entirely and thirteen tests stayed green, because one device was used
      * throughout. A blinding restored from the wrong backup, or lost and
      * replaced, is what `C325` is actually about: the record is right, the
@@ -212,7 +212,7 @@ describe('the stored signer leaf, against the device that has to reproduce it', 
   });
 
   it('agrees on a stored leaf recorded in UPPER case', () => {
-    /* `S31`'s `test-auditor` finding, applied here before an auditor has to:
+    /* `S31`'s test-coverage pass finding, applied here before an auditor has to:
      * dropping `.toLowerCase()` survived every mutation there because every
      * fixture was already lower case, and what it costs on a real record is a
      * present, correct leaf reported as a mismatch — a lockout invented by the
@@ -246,7 +246,7 @@ describe('the stored signer leaf, against the device that has to reproduce it', 
     expect(reading.verdict).toBe('no-seat');
     /* Both fields asserted to a value. `not.toBeNull()` passes for every string
      * there is, and `signerId` had a fallback nothing read. `S33`'s
-     * `test-auditor`. */
+     * test-coverage pass. */
     expect(reading.signerId).toBe('(no seat)');
     expect(reading.derived).toBe(independentFrom(SIGNING_SECRET, BLINDING));
     expect(() => requireOwnLeaf(reading)).not.toThrow();
@@ -272,7 +272,7 @@ describe('the stored signer leaf, against the device that has to reproduce it', 
       /* ANCHORED, and unanchored survives without these two: a keyring entry
        * that CONTAINS 64 hex characters is not one that IS 64 hex characters,
        * and the difference is a named refusal against a raw throw out of
-       * `hexToBytes`. `S33`'s `test-auditor`. */
+       * `hexToBytes`. `S33`'s test-coverage pass. */
       { signingSecret: '0x' + SIGNING_SECRET, blinding: BLINDING },
       { signingSecret: SIGNING_SECRET + SIGNING_SECRET, blinding: BLINDING },
     ]) {
@@ -311,7 +311,7 @@ describe('the stored signer leaf, against the device that has to reproduce it', 
      * remedies invert with the labels — restore this device's bundle, or
      * replace the seat — so a message that swaps them is `C320`'s confusion
      * with extra steps, and `toContain` on both halves cannot see it.
-     * `S33`'s `test-auditor`. */
+     * `S33`'s test-coverage pass. */
     expect(message).toMatch(new RegExp('roster records\\s+' + stored.slice(0, 16)));
     expect(message).toMatch(new RegExp('device computes\\s+' + reading.derived!.slice(0, 16)));
     /* It denies them rather than being silent about them — `C320`'s rule that a
@@ -330,12 +330,12 @@ describe('the stored signer leaf, against the device that has to reproduce it', 
   it('survives the redaction every shown error goes through', () => {
     /*
      * **THE SIXTEEN CHARACTERS ARE LOAD-BEARING AND NOTHING SAID SO.** `C145`,
-     * `C148`: every sentence this application shows goes through
+     * Every sentence this application shows goes through
      * `shownError`, which redacts any run of 32-or-more hex characters before
      * a person or a report sees it. A refusal printing 32 — never mind the
      * whole 64 — reaches the screen as `<redacted:hex>` and tells the person
      * nothing, which is the exact opposite of a refusal that says which case
-     * they are in. Measured by `S33`'s `test-auditor`, pinned here.
+     * they are in. Measured by `S33`'s test-coverage pass, pinned here.
      */
     const stored = HAND_BUILT;
     const reading = ownLeafReading(seatWith(stored), device, SimulatedCommitments);
@@ -355,11 +355,11 @@ describe('the stored signer leaf, against the device that has to reproduce it', 
   it('seatOnThisDevice REFUSES a mismatch and returns nothing a session can be built from', () => {
     /*
      * **THIS REPLACES THE SOURCE PIN OVER `src/web/App.tsx`, AND THE PIN IS
-     * DELETED RATHER THAN LEFT BESIDE IT.** `T-118`.
+     * DELETED RATHER THAN LEFT BESIDE IT.**
      *
      * The pin asserted that `openAccount` called the check exactly once, with
      * the text stripped of comments. It could not see semantics: its own
-     * round's `test-auditor` defeated the first version three ways with the
+     * round's test-coverage pass defeated the first version three ways with the
      * text intact, and `S34` found the fourth without looking — `loadDemo`
      * built a `Session` without entering `openAccount`, so the pin counted
      * calls in one function while a second door skipped the refusal entirely.
@@ -459,7 +459,7 @@ describe('the stored signer leaf, against the device that has to reproduce it', 
     const stored = independentFrom(SIGNING_SECRET, BLINDING, PER_VAULT);
     /* It really is a different leaf — otherwise this test would pass for a
      * derivation that dropped the scope entirely, which is `S33`'s
-     * `test-auditor` finding about the blinding, one argument along. */
+     * test-coverage pass finding about the blinding, one argument along. */
     expect(stored).not.toBe(independentFrom(SIGNING_SECRET, BLINDING));
 
     const scoped = { signingSecret: SIGNING_SECRET, blinding: BLINDING, scope: PER_VAULT };
@@ -507,8 +507,8 @@ describe('the stored signer leaf, against the device that has to reproduce it', 
     const pk = SimulatedCommitments.signerPublicKey(SIGNING_SECRET);
     expect(SimulatedCommitments.signerLeaf(pk, BLINDING)).toBe(independentLeaf(pk, BLINDING));
     /* And with the third argument passed, which is what both writers do since
-     * `S34`. The defaulted and the explicit call must be the same value or
-     * every seat written before this round is unreproducible. `T-116`. */
+     * The defaulted and the explicit call must be the same value or
+     * every seat written before this round is unreproducible. */
     expect(SimulatedCommitments.signerLeaf(pk, BLINDING, SimulatedCommitments.allVaults()))
       .toBe(independentLeaf(pk, BLINDING));
   });

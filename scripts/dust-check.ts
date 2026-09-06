@@ -34,7 +34,7 @@ import { testEnvironmentFor, startEnvironment } from './test-environment.js';
 const ROOT = process.cwd();
 const NETWORK = networkFromEnv(process.env.MIDNIGHT_NETWORK_ID, 'stagenet');
 /*
- * 6301, NOT 6300. M-144.
+ * 6301, NOT 6300.
  *
  * Two proof servers run on this machine: `8.1.0` on 6300 and the pinned one on
  * 6301. The pinned image is `9.0.0-rc.3` — the prover built from the ledger
@@ -116,7 +116,7 @@ async function main() {
   console.log(`  ${D}which is exactly how this went undiagnosed for four runs.${O}`);
 
   /*
-   * FORCE, because the flag is the thing under suspicion. M-145.
+   * FORCE, because the flag is the thing under suspicion.
    *
    * The deploy after the reset printed "nothing left to register; the NIGHT may
    * already be registered" and skipped registration entirely — then reported

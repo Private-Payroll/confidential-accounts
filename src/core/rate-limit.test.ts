@@ -56,7 +56,7 @@ const implementations: [string, () => RateLimiter, boolean][] = [
 for (const [name, make, run] of implementations) {
   (run ? describe : describe.skip)(`${name} rate limiter`, () => {
     /*
-     * **THE SCOPE THESE RUN ON CHANGED AND THE MECHANISM DID NOT.** `PI4b`.
+     * **THE SCOPE THESE RUN ON CHANGED AND THE MECHANISM DID NOT.**
      *
      * They were written against `email`, which was the scope `login` counted
      * on, and this round deleted both. **They were never tests about a
@@ -134,7 +134,7 @@ for (const [name, make, run] of implementations) {
     });
 
     /*
-     * **`clears on a successful login` IS DELETED.** `PI4b`.
+     * **`clears on a successful login` IS DELETED.**
      *
      * `clear` is gone from the interface and from both implementations, because
      * `login` was its only caller. **The two doors that count now have never

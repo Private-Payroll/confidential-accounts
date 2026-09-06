@@ -1,5 +1,5 @@
 /**
- * The wallet adapter. M-10.
+ * The wallet adapter.
  *
  * A real wallet extension cannot be driven from a test — or from the cloud
  * container this was written in — so what is checked here is the ORDER and the
@@ -150,7 +150,7 @@ describe('connectorProviders', () => {
     /*
      * `submitTransaction` returns void. A plausible-looking hash here would be
      * a lie that surfaces later as a link to a transaction that does not exist.
-     * Recovery asks the account rather than the id (M-82), so the honest
+     * Recovery asks the account rather than the id, so the honest
      * placeholder costs nothing that matters.
      */
     const submit = vi.fn(async () => {});

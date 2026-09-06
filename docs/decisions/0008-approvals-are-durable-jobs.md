@@ -71,7 +71,7 @@ here is money.
 
 ## Concurrency is one
 
-Not laziness. The prover is single-threaded (M-78), so two proofs in parallel
+Not laziness. The prover is single-threaded, so two proofs in parallel
 take twice as long each and nothing finishes sooner — the user watches two
 spinners instead of one. Serial is simpler *and* faster.
 
@@ -134,7 +134,7 @@ Thirty-three tests, mutation-tested: removing the recovery check, the
 blind-resubmit guard, the concurrency guard, the cancel guard, the `createdAt`
 ordering, the corrupt-record tolerance, or the key prefix each fails a test.
 
-Mutation also found a real defect (M-80): a store that fails to overwrite in
+Mutation also found a real defect: a store that fails to overwrite in
 place made `drain()` loop forever rather than fail. It now stops after eight
 steps on one job and throws, because a store that is not saving progress would
 not save a `failed` state either.

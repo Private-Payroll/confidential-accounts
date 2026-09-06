@@ -134,7 +134,7 @@
  *
  * Two further facts confirm the route is closed rather than merely awkward —
  * **AND THE FIRST OF THEM WAS FALSE WHEN IT WAS WRITTEN AND IS FALSE NOW.**
- * `S29`, `T-64`. It said: *`RUN-PROPOSAL.command` EXECUTES the proposal it
+ * It said: *`RUN-PROPOSAL.command` EXECUTES the proposal it
  * raises (`scripts/run-preview.ts:1972`), so it leaves no open approved
  * proposal behind*. **There is no `execute` circuit and that run executes
  * nothing** — `run-preview.ts:1947-1957` says in its own words that the
@@ -184,7 +184,7 @@
  * and a reachable indexer, and the session that wrote it had neither. The
  * PRECONDITION REFUSAL has been forced and is proved; the path past it has not.
  *
- * **AND THE SENTENCE THAT STOOD HERE WAS FALSE ON DISK.** `S29`, `T-64`. It
+ * **AND THE SENTENCE THAT STOOD HERE WAS FALSE ON DISK.** It
  * read *Until `REPORT-PROVING.txt` exists, this file has produced no number and
  * nothing may reason from one*. **That file exists**, dated 28 Aug, carrying
  * cold 5.14s, warm average 4.94s and a 5,916-byte proof — real measurements,
@@ -212,7 +212,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const ARTIFACTS = join(ROOT, 'contracts', 'managed');
 
 /**
- * 6301, NOT 6300. M-144.
+ * 6301, NOT 6300.
  *
  * Two proof servers have run on this machine: `8.1.0` on 6300 and the pinned
  * one on 6301. The pinned image is `9.0.0-rc.3` since 28 Aug 2026 — the prover
@@ -247,7 +247,7 @@ const STATE_DIR = join(ROOT, '.midnight');
 const CONTRACT_FILE = join(STATE_DIR, `${NETWORK}-contract.json`);
 
 /**
- * REFUSES BY NAMING WHAT MUST HAVE RUN, IN ORDER. `R1b`.
+ * REFUSES BY NAMING WHAT MUST HAVE RUN, IN ORDER.
  *
  * *"A precondition reported as a stack trace is a precondition nobody can act
  * on."* `R1a` stopped with an SDK sentence about a verifier key — accurate,
@@ -456,7 +456,7 @@ const blake = privateStateFor(2);
 const sim = await AccountSimulator.create(ada, 2n);
 
 // Fund it. `execute` requires the asset to exist on chain even for a zero
-// change: a spend comes out of a balance that is there. M-125.
+// change: a spend comes out of a balance that is there.
 const credited = sim.applying(ada, view(0n, 0), change(0n, 61, GBP), OPENING);
 await sim.as(credited).credit();
 const funded = credited.next;

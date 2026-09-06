@@ -1,5 +1,5 @@
 /**
- * PRIVATE STATE IS STAGED AGAINST THE CONTRACT THE CALL IS FOR. C228, S8c.
+ * PRIVATE STATE IS STAGED AGAINST THE CONTRACT THE CALL IS FOR.
  *
  * The defect this pins: the SDK's private state provider files everything
  * under `${contractAddress}:${privateStateId}`, and the address half is a
@@ -58,7 +58,7 @@ const ADDRESSES: Record<string, string> = {
 };
 
 /*
- * `viewFor` AND `NEXT` STOOD HERE, AND WENT WITH `stageView`. `C292`, `S26`.
+ * `viewFor` AND `NEXT` STOOD HERE, AND WENT WITH `stageView`.
  *
  * They built a `StateView` and a `StateOpening` — a balance and its salt — for
  * a stage that no longer exists. `StateOpening` is gone from `core/ledger.ts`
@@ -142,7 +142,7 @@ const physicalKey = (accountId: string): string =>
  * one ugly cast per method, in a test, on purpose.
  *
  * A `stageView` seam stood beside these and went with the circuit it fed
- * (`C292`, `S26`). `stageChange` is what every test that used it now drives. */
+ *. `stageChange` is what every test that used it now drives. */
 const stageChange = (l: MidnightLedger, accountId: string): Promise<void> =>
   (l as unknown as { stageChange(a: string, c: StateChange): Promise<void> })
     .stageChange(accountId, CHANGE);
@@ -205,7 +205,7 @@ describe('C228: private state is addressed per contract, explicitly, before ever
 
   /*
    * `it('stageChange follows the same rule')` STOOD HERE AND IS FOLDED INTO THE
-   * TEST ABOVE. `C292`, `S26`.
+   * TEST ABOVE.
    *
    * It existed to show that the stage NOT under test in this file obeyed the
    * same rule as `stageView`. `stageView` is gone, `stageChange` is the stage

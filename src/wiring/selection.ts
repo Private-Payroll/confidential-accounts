@@ -123,7 +123,7 @@ const SIMULATED: Wiring = {
   commitments: SimulatedCommitments,
   /*
    * **THE LEDGER TAKES ITS SCHEME OFF THIS OBJECT'S OWN FIELD**, not a second
-   * mention of the name. `T-209`, `S46`: after `S44` a mismatched pair raises
+   * mention of the name. After `S44` a mismatched pair raises
    * rounds no ledger will execute, and `src/core/ledger.ts:1047-1055` says so in
    * a comment and only in a comment. `one-wiring-point.test.ts` pins this.
    */

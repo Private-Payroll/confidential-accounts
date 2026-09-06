@@ -46,15 +46,15 @@
  *
  * This file used to hold `NORMAL_DISPATCH_RATIO = 0.75` as a literal, cited to
  * `runtime/src/lib.rs:307` — a real line, correctly read, and not the number
- * that decides (`C238`): on 28 Aug a 35,748-byte deploy sat UNDER the 37,500
+ * that decides: on 28 Aug a 35,748-byte deploy sat UNDER the 37,500
  * "75% ceiling" and the chain refused it with 1010. 75% is the NORMAL class's
  * per-BLOCK budget; ONE extrinsic is judged against `max_extrinsic` =
  * 0.75 − 0.10 − base_extrinsic ≈ 0.65 of the block. `scripts/dispatch-ceiling.ts`
  * derives it, cites every line, prints the chain on every run, and is
  * calibrated against the two real submissions (31,201 ACCEPTED, 35,748
- * REFUSED) by `scripts/dispatch-ceiling.test.ts`. `S11`.
+ * REFUSED) by `scripts/dispatch-ceiling.test.ts`.
  *
- * ── WHICH CONTRACT. `S8a`. ───────────────────────────────────────────────────
+ * ── WHICH CONTRACT. ──────────────────────────────────────────────────────────
  *
  *   npx tsx scripts/measure-deploy-shape.ts            the account (default)
  *   npx tsx scripts/measure-deploy-shape.ts vault      the vault
@@ -62,7 +62,7 @@
  * **The default is the account and it is the account this file was written
  * against**, so everything that ran it before this argument existed produces
  * the same numbers. The vault is the reason the argument exists: it had never
- * had verifier keys built (`C226`), so its deploy had never been measured by
+ * had verifier keys built, so its deploy had never been measured by
  * anything and the whole vault column of `docs/scope-what-a-contract-costs.md`
  * §7 is a PREDICTION.
  *
@@ -94,7 +94,7 @@ const line = (s = '') => console.log(s);
 const bold = (s: string) => `\x1b[1m${s}\x1b[0m`;
 
 /**
- * WHICH CONTRACT IS BEING MEASURED. `S8a`.
+ * WHICH CONTRACT IS BEING MEASURED.
  *
  * The argument first, the environment second, the ACCOUNT last — the default is
  * what every existing caller passes, which is nothing.
@@ -179,7 +179,7 @@ async function main() {
    * BOTH numbers, on every run — the class budget (75%) and the per-extrinsic
    * budget (~65%) — so the difference is on the page rather than in somebody's
    * head. `ceiling`, which every verdict below is judged against, is the
-   * per-EXTRINSIC one: a deploy is one extrinsic. S11, C238.
+   * per-EXTRINSIC one: a deploy is one extrinsic.
    */
   const ceiling = extrinsicCeiling(limits.bytesWritten ?? 0);
   line(`  bytesWritten limit ${(limits.bytesWritten ?? 0).toLocaleString()}   class max_total ${classCeiling(limits.bytesWritten ?? 0).toLocaleString()} (75%)   per-extrinsic ceiling ${ceiling.toLocaleString()} (~65%)`);
@@ -313,7 +313,7 @@ async function main() {
 
   /* ------------------------------------ the set the deploy will actually carry */
   /*
-   * THE EXACT SET, NOT A PREFIX OF AN ORDERING. S9.
+   * THE EXACT SET, NOT A PREFIX OF AN ORDERING.
    *
    * The two orderings above bound the answer, but the deploy carries the
    * specific circuits `src/midnight/deferral.ts` names, and WHICH names are
@@ -375,7 +375,7 @@ async function main() {
        * the 15-circuit refusal (unproven 41,067 → balanced 41,324, +257) and
        * the 11-circuit acceptance (unproven 31,450 → balanced 31,201, −249).
        * Neither is this contract, so the delta is stated as a band rather than
-       * subtracted from the rows above. C218, S11.
+       * subtracted from the rows above.
        */
       line('    Bounded by the two real submissions, both of the PRE-S11 contract:');
       line('    proving and balancing moved bytesWritten by +257 on the refused');

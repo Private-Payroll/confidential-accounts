@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /**
- * MUTATING THE COMPANY CREATION PATH. `docs/NEXT.md` PI3, `C141`.
+ * MUTATING THE COMPANY CREATION PATH. `docs/NEXT.md` PI3.
  *
  * The harness `scripts/mutate-wallet-unlock.mjs` built for `PI2a`, aimed at the
  * round that follows it: **whether the system can tell where a company's
- * address came from** (`C140`), and **whether the key that opens a person's
- * payslips is derived or minted** (`C135`).
+ * address came from**, and **whether the key that opens a person's
+ * payslips is derived or minted**.
  *
  * THREE SUITES. `C140`'s assertions are core; `C135`'s are core; and
  * `core.test.ts` is included because **it is where the payslip-sealing

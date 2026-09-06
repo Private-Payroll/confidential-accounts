@@ -1,6 +1,6 @@
 /**
  * **THE TWO SYSTEMS PI4a DELETED ARE GONE, AND STAY GONE.** `docs/NEXT.md`
- * PI4a, `C31`, `C129`.
+ *
  *
  * ── WHY THIS FILE EXISTS AT ALL ───────────────────────────────────────────
  *

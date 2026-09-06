@@ -403,8 +403,42 @@ export const scanFiles = (repoRoot, files, candidates, rawCfg) => {
     const h = homedir();
     if (h && h !== '/' && h.length > 3) personPatterns.push(h);
   }
-  const processPatterns = (cfg.process.patterns ?? []).map((p) =>
-    typeof p === 'string' ? { name: p, re: null, literal: p } : { name: p.name ?? p.pattern, re: p.pattern ? new RegExp(p.pattern, 'g') : null, literal: p.literal ?? null });
+  /**
+   * THE CASE RULE IS THE CONFIG'S, AND UNTIL 6 Sep THIS FILE IGNORED IT.
+   *
+   * `PUBLIC-REPO-CONFIG.json` has carried a `caseSensitive` field on a pattern
+   * since it was written, and the commit-message guard has honoured it since it
+   * was written. **This one compiled every pattern with `'g'` and nothing
+   * else**, so the sweep read the file's declaration and did the opposite of
+   * what it said, silently, and the number it printed was the number a sweep
+   * gets sized from.
+   *
+   * **MEASURED OVER THE 347 SHIPPING FILES, BEFORE AND AFTER: 7,539 -> 9,007
+   * occurrences, 290 -> 298 files.** The 1,468 it was blind to are not an even
+   * spread: 1,250 of them belong to the one pattern that DECLARES itself
+   * case-sensitive and therefore does not move. **What moves is the other ten
+   * patterns, by 218, and every distinct token in that 218 was checked by hand
+   * and is a real match** - capitals and sentence-initial capitals, which is
+   * how this project writes. Zero false positives in the added set.
+   *
+   * **THE ENGINE IS FIXED HERE RATHER THAN THE PATTERNS RE-SPELLED IN CHARACTER
+   * CLASSES**, which was the other route and is the one that has already failed
+   * once: applied to a single pattern in a sibling configuration, written down
+   * at length, and forgotten for the other fifteen. A spelling has to be
+   * remembered by whoever adds the next pattern. This cannot be forgotten, it
+   * makes every reader of that list agree, and it leaves the list readable by
+   * the person who approves it.
+   */
+  const processPatterns = (cfg.process.patterns ?? []).map((p) => {
+    if (typeof p === 'string') return { name: p, re: null, literal: p, fold: false };
+    const fold = p.caseSensitive !== true;
+    return {
+      name: p.name ?? p.pattern,
+      re: p.pattern ? new RegExp(p.pattern, fold ? 'gi' : 'g') : null,
+      literal: p.literal ?? null,
+      fold,
+    };
+  });
 
   const secretHits = [];
   const publicHits = [];
@@ -461,7 +495,7 @@ export const scanFiles = (repoRoot, files, candidates, rawCfg) => {
     for (const p of processPatterns) {
       let lines = [];
       let truncated = false;
-      if (p.literal) { const f2 = placesOf(text, p.literal, false); lines = f2.lines; truncated = f2.truncated; }
+      if (p.literal) { const f2 = placesOf(text, p.literal, p.fold === true); lines = f2.lines; truncated = f2.truncated; }
       else if (p.re) {
         p.re.lastIndex = 0;
         let m;

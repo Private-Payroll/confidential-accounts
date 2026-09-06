@@ -17,7 +17,7 @@
  *
  * ── NO `waitFor`, NO `findBy*`, AND THAT IS LOAD-BEARING ─────────────────
  *
- * `C134`. The wallet carries fifty-six polls in two files it has not fixed yet,
+ * The wallet carries fifty-six polls in two files it has not fixed yet,
  * every one able to lose a race. **Payroll starts without them rather than
  * acquiring them and unpicking them in six weeks.** Everything below awaits a
  * thing: the banner appears SYNCHRONOUSLY because `openTheWallet` runs before
@@ -103,7 +103,7 @@ describe('the page behind the wallet, rendered', () => {
     expect(banner.textContent).toContain('the only thing on your screen this page cannot write');
     expect(banner.textContent).toContain('Nothing is signed until you press the button there');
 
-    /* AND THE THING A SPINNER NEVER OFFERS. `C154`: without it a person who
+    /* AND THE THING A SPINNER NEVER OFFERS. Without it a person who
      * cannot find the window presses the button again, and a second press is a
      * second ask. */
     const giveUp = screen.getByText('Stop waiting');

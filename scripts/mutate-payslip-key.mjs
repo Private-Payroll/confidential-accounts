@@ -4,8 +4,8 @@
  *
  * The harness `scripts/mutate-wallet-unlock.mjs` built for `PI2a`, aimed at the
  * round that follows it: **whether the system can tell where a company's
- * address came from** (`C140`), and **whether the key that opens a person's
- * payslips is derived or minted** (`C135`).
+ * address came from**, and **whether the key that opens a person's
+ * payslips is derived or minted**.
  *
  * THREE SUITES. `C140`'s assertions are core; `C135`'s are core; and
  * `core.test.ts` is included because **it is where the payslip-sealing
@@ -277,7 +277,7 @@ function runSuite(tag) {
     said,
     /*
      * **A SKIPPED ASSERTION IS NOT ONE THAT RAN, AND `titles` IS WHAT CHECK 4
-     * ASKS.** `S56`'s `test-auditor` measured vitest 4.1.10: when a `beforeAll`
+     * ASKS.** `S56`'s test-coverage pass measured vitest 4.1.10: when a `beforeAll`
      * throws, the file's assertions come back with `status: 'skipped'` and the
      * run reports ZERO failures — so a named guard that never executed would
      * have been present in `titles`, passed check 4, and scored SURVIVED. That
@@ -395,7 +395,7 @@ for (const a of clean.byFile) {
   seenAt.get(a.title).push(a.file);
 }
 /*
- * **TWO CORRECTIONS FROM `S56`'s OWN `money-safety-auditor`, BOTH ITS OWN
+ * **TWO CORRECTIONS FROM `S56`'s OWN money-safety pass, BOTH ITS OWN
  * SUBJECT.** The first version compared every title in the baseline, so a
  * duplicate in a file no `kills:` entry names would have stopped the whole
  * corpus for a reason unrelated to any of it. And it compared FILES — `files.size
@@ -498,7 +498,7 @@ for (const m of MUTATIONS) {
     if (result.failed.length) {
       /*
        * **AND WHAT DID GO RED IS PRINTED, NOT DISCARDED.** `S56`'s
-       * `test-auditor`: when check 2, 3 or 4 fires because ONE file collapsed
+       * test-coverage pass: when check 2, 3 or 4 fires because ONE file collapsed
        * while a named guard in another genuinely died, *"nothing executed to
        * say it"* is false and the list of tests that died was being thrown
        * away — `T-295`'s shape, one branch over.

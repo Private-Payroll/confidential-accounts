@@ -153,7 +153,7 @@ describe('the real sources', () => {
     // PROSE saying `disclose`. The SITE count moved by ONE over that same edit.
     // A line count would have reported five times the change; that is the whole
     // reason this counts sites.)
-    //
+    
     // THE ACCOUNT'S SITE COUNT MOVED ON 2 Sep, AND `S35d` IS WHY: 68 -> 67.
     // MINUS TWO for the constructor's deleted threshold argument — its floor
     // assert and its assignment to the ledger field, `C340` + `C343`. PLUS ONE
@@ -161,20 +161,20 @@ describe('the real sources', () => {
     // governance branch. Read off `scanSourceFile` rather than derived from
     // those three, because rule 9 wants the instrument's number and not the
     // arithmetic. The vault's 48 is unchanged: `S35d` added only comments there.
-    //
+    
     // AND IT MOVED AGAIN ON 3 Sep, `S48`: 67 -> 68. ONE site,
     // `ConfidentialAccount.compact:2192`, in `propose`'s RUN branch —
     //     assert(disclose(vault) != noVault(), "a run must name the vault that will pay it");
     // — `C363`'s mirror: `:2319` says a governance proposal names NO vault,
     // this says a run names ONE. Raised here by `S49`, 4 Sep, board `2y7d5c`,
     // `C388`. The vault's 48 is again unchanged; `S48` did not touch that file.
-    //
+    
     // ======================================================================
     // WHY THAT SITE PUBLISHES NOTHING NEW. THE PIN EXISTS BECAUSE A `disclose()`
     // SITE IS PRIVACY-RELEVANT, SO RAISING THE NUMBER WITHOUT THIS PARAGRAPH IS
     // THE ONE WAY TO DO IT WRONG. Four things, in the order they were checked,
     // every line opened at source:
-    //
+    
     //   1. MEASURED IN THE COMPILED ARTIFACT, NOT ARGUED FROM THE SOURCE.
     //      `contracts/managed/contract/index.js:2201-2202` compiles the assert to
     //      `assert(!this._equal_10(vault_0, this._noVault_0()), …)`. NEITHER
@@ -203,13 +203,13 @@ describe('the real sources', () => {
     //      the string already resolved to bytes). AND THE CHANGE SHRINKS THE
     //      OBSERVABLE SURFACE RATHER THAN WIDENING IT: before `S48` a run raised
     //      at the sentinel LANDED and took a `runWindow` row that opened and
-    //      closed with no settlement against any vault (`C383`), which is a
+    //      closed with no settlement against any vault, which is a
     //      LOUDER signal than that run simply not existing.
     //   4. THE STRICTLY STRONGER SHAPE IS ALREADY INSIDE THIS NUMBER. `:2319` is
     //      `assert(disclose(vault) == noVault(), …)` — it PINS the value exactly
     //      where `:2192` only excludes one — and it is the `PLUS ONE` in the
     //      paragraph above, accepted by this pin on 2 Sep.
-    //
+    
     // THE STANDING FACT, AND IT MUST NOT BE COPIED OUT OF HERE WITHOUT ITS
     // SECOND CLAUSE, BECAUSE THE FIRST ALONE LICENSES THE NEXT MISTAKE.
     // `disclose()` HAS NO RUNTIME EFFECT — the compiler erases it, and both
@@ -223,7 +223,7 @@ describe('the real sources', () => {
     // transcript VERBATIM. Which is why point 1 above is a measurement over the
     // artifact and NOT the argument `C388`'s cell records — *`vault` is already
     // disclosed in the same branch at `:2200`, so `:2192` is free*.
-    //
+    
     // RULE 20, BOTH POSITIONS, NEITHER MARKED CORRECT. THAT ARGUMENT IS TRUE AND
     // `S49` DID NOT USE IT: `:2200` discloses `vault` INTO A SALTED COMMITMENT
     // and `:2192` discloses it INTO A CONDITION GATING PUBLIC STATE — the
@@ -235,7 +235,7 @@ describe('the real sources', () => {
     // publishing a revoked one names nobody"*, retracted 14 Aug as *"a serious
     // privacy regression"*. `S49` reached `C388`'s CONCLUSION and not its
     // reasoning, and this is where a later reader is told so.
-    //
+    
     // AND THE RESIDUAL, NAMED SO NOBODY READS THIS NUMBER AS SOMETHING IT IS NOT.
     // THIS IS A COUNT OF SITES AND IT IS NOT A PRIVACY BUDGET. What makes 68 safe
     // is not that 68 is a small number; it is that THIS site reaches no ledger
@@ -280,7 +280,7 @@ describe('the real sources', () => {
     // line off — both stayed green. The citation test cannot see the second
     // either: `ConfidentialAccount.compact` has 2,613 lines, so ±1 is always
     // in range.
-    //
+    
     // RE-PINNED 1045 -> 1270 BY `S40`, 2 Sep, AND RE-PINNING IS THE PIN
     // WORKING. `S35c` rewrote the contract and moved every line in it; a pin
     // by line is supposed to break when that happens, and this one did (it

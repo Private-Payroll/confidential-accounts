@@ -1,5 +1,5 @@
 /**
- * **THE TEST THAT WALKS THE SINK'S OWN REPORT.** `C145`, `X4` §1.
+ * **THE TEST THAT WALKS THE SINK'S OWN REPORT.**
  *
  * ── THE ROW, AND WHY THIS FILE IS THE DELIVERABLE ────────────────────────
  *

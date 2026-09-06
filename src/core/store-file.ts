@@ -9,7 +9,7 @@ import type { Shape } from './store.js';
  * inspect.
  *
  * `canonical`/`parseCanonical` rather than `JSON.stringify`/`JSON.parse`, and
- * this is not a preference. M-125.
+ * this is not a preference.
  *
  * Almost everything in here is ciphertext, but not all of it: a plug-in's
  * spending allowance and a plug-in event's amount are readable by design, and

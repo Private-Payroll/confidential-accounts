@@ -1,5 +1,5 @@
 /**
- * **THE ONE THING THE REPORT HAS TO GET RIGHT.** `X4` §2.
+ * **THE ONE THING THE REPORT HAS TO GET RIGHT.**
  *
  * *"No errors and an empty page" is a different fault from "an error", and the
  * report has to be able to tell them apart.* That sentence is the whole reason

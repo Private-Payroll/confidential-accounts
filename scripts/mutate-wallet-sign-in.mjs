@@ -140,7 +140,7 @@ const MUTATIONS = [
     kills: ['AN ACCOUNT WITH NO SUBWALLET IS NOT TOUCHED BY THIS RULE'],
   },
   /*
-   * `C151`. THE TWO REPOSITORIES ARE MADE TO DISAGREE, WHICH IS THE DEFECT
+   * THE TWO REPOSITORIES ARE MADE TO DISAGREE, WHICH IS THE DEFECT
    * ITSELF rather than a proxy for it: the wallet is compiled for one network,
    * payroll is given a second constant of its own, and the address one writes
    * is not the address the other derives.

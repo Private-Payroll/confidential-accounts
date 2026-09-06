@@ -21,10 +21,10 @@
  * wrong. `start(true)` uses the testkit's own sync gate, and that gate DOES
  * return: `syncWallet` is bounded at 90 seconds and throws. **The reason not to
  * call it is stronger than the one that was written.** It gates on
- * `isStrictlyComplete()`, which asks a wallet to outrun a live chain (`M-26`);
+ * `isStrictlyComplete()`, which asks a wallet to outrun a live chain;
  * and it is reached through `waitForFunds`, which can hit the faucet and submit
  * a dust registration — a SPEND, taken by a bring-up on nobody's instruction
- * (`CLAUDE.md` rule 2). Corrected by `S17`'s `platform-fact-checker`, which
+ * (`CLAUDE.md` rule 2). Corrected by `S17`'s platform fact-check, which
  * read the testkit rather than this comment.
  */
 import type { NetworkName } from '../src/midnight/network.js';
@@ -53,7 +53,7 @@ export interface LiveWallet {
   stop(): void;
 }
 
-/** Within a small gap, not strictly equal: a live chain keeps producing blocks. M-26. */
+/** Within a small gap, not strictly equal: a live chain keeps producing blocks. */
 const complete = (p: any): boolean => {
   try { if (typeof p?.isCompleteWithin === 'function') return !!p.isCompleteWithin(10n); } catch { /* fall through */ }
   const a = p?.appliedIndex ?? p?.appliedId;
@@ -89,7 +89,7 @@ export interface BringUpOptions {
    * **WAIT FOR THE SHIELDED SCAN TOO, AND IT IS OFF BY DEFAULT ON PURPOSE.**
    *
    * The dust catch-up below is unconditional because every door that SUBMITS
-   * needs it — `M-141`, `C243`. This one is not: only a door that spends or
+   * needs it — `M-141`. This one is not: only a door that spends or
    * reads a SHIELDED coin needs the shielded scan, and there is no cache for it
    * here, so a scan runs from genesis every time it is asked for. Turning it on
    * for every caller would put a genesis replay in front of `DEPLOY-VAULT`,
@@ -237,7 +237,7 @@ export async function bringUpWallet(
 
   /*
    * A DUST BALANCE IS NOT A SYNCED DUST WALLET, AND THE WAIT LIVES HERE SO NO
-   * CALLER CAN OMIT IT. `C243`.
+   * CALLER CAN OMIT IT.
    *
    * The loop above waits for a BALANCE. A spend proof built from a dust view
    * that has a balance and has not caught up is rejected by the node as
@@ -245,7 +245,7 @@ export async function bringUpWallet(
    *
    * `deploy-preview.ts` called `waitForDustCatchUp` itself, at its own call
    * site, and worked. `deploy-vault.ts` reused THIS function — correctly, per
-   * `M-75` — and did not know there was a second step afterwards, so the first
+   * And did not know there was a second step afterwards, so the first
    * vault deploy ever submitted was refused twice with 170: once from a
    * 123-minute-old cache, and again from a wallet freshly synced from genesis
    * in 22 seconds. Neither was stale data. Both were an uncaught-up view.
@@ -271,7 +271,7 @@ export async function bringUpWallet(
 
   /*
    * **AND THE SHIELDED SCAN, WHICH THE DUST CACHE MADE WORSE RATHER THAN
-   * BETTER.** `S17`.
+   * BETTER.**
    *
    * The loops above wait for DUST. Nothing anywhere waited for the shielded
    * sub-wallet, and the faster this function returns the less the shielded scan

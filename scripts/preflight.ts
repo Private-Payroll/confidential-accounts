@@ -14,11 +14,11 @@
  * networks exist — including the old, wrong line telling anyone who was told
  * "stagenet" that it meant preview. Fixing `src/midnight/network.ts` therefore
  * did nothing here, and this was the one script plain enough that the
- * typecheck gate (M-42) never covered it either.
+ * typecheck gate never covered it either.
  *
  * Now TypeScript, importing the one endpoint table, and inside the gate. The
  * same duplication has now bitten three times: deploy versus run on the sync
- * fix (M-50), the dust wallet in two places (M-52), and this. One source, or
+ * fix, the dust wallet in two places, and this. One source, or
  * it drifts.
  */
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
@@ -225,7 +225,7 @@ await check(
     const hit = out.split('\n').find((l) => l.includes('proof-server'));
     // Not just "a proof server": the right one. Every major ZKIR release
     // changes the format and verifier keys carry a versioned header, so a
-    // server of the wrong version rejects proofs it cannot read (M-54).
+    // server of the wrong version rejects proofs it cannot read.
     if (!hit) throw new Error('no proof-server image pulled yet');
     if (!out.includes(PROOF_IMAGE)) {
       throw new Error(`${PROOF_IMAGE} is not pulled; found instead: ${hit.trim()}`);

@@ -4,7 +4,7 @@ import { x25519 } from '@noble/curves/ed25519.js';
 import { toHex, utf8, type WrappingKeypair } from './crypto.js';
 
 /**
- * **THE DERIVATION ON ITS OWN, WITH NOTHING BEHIND IT.** `X7` §1, `C149`.
+ * **THE DERIVATION ON ITS OWN, WITH NOTHING BEHIND IT.**
  *
  * ── WHY THIS IS A FILE AND NOT A FUNCTION IN THE ONE NEXT DOOR ───────────
  *
@@ -29,7 +29,7 @@ import { toHex, utf8, type WrappingKeypair } from './crypto.js';
 
 /**
  * **THE KEY THAT OPENS A PERSON'S PAYSLIPS IS DERIVED, NOT MINTED AND KEPT.**
- * `docs/NEXT.md` PI2b §2, `C135`, `C127`, `C136`.
+ * `docs/NEXT.md` PI2b §2.
  *
  * ── WHAT WAS WRONG WITH THE OLD ONE ───────────────────────────────────────
  *

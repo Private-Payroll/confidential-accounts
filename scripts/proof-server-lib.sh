@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 #
-# THE PROOF SERVER, DECIDED BY WHAT THE PORT ANSWERS. `C214`.
+# THE PROOF SERVER, DECIDED BY WHAT THE PORT ANSWERS.
 #
 # SOURCED, NEVER EXECUTED. `. scripts/proof-server-lib.sh`
 #

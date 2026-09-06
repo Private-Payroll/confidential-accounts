@@ -188,7 +188,7 @@ export function checkText(root: string, file: string, text: string): CitationRep
     }
     // A FILE ENDING IN A NEWLINE HAS N LINES, NOT N+1. `split` yields a final
     // empty element for the text after the last newline, and counting it lets a
-    // citation to the line past the end pass. Caught by a `test-auditor` pass.
+    // citation to the line past the end pass. Caught by a test-coverage pass.
     const text2 = readFileSync(abs, 'utf8');
     const n = text2.split('\n').length - (text2.endsWith('\n') ? 1 : 0);
     if (c.first < 1) { findings.push({ file, at: c.at, raw: c.raw, why: 'line numbers start at 1' }); continue; }

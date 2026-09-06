@@ -123,7 +123,7 @@ describe('V-168 — the colour a payment moves against the colour a vault holds'
    * **THE DOOR'S OWN COMPARISON IS DRIVEN HERE, NOT RE-IMPLEMENTED.** An
    * earlier version of this file recomputed both values and asserted they were
    * 64 hex characters, which is a second implementation of the comparison
-   * (`M-104`) and tests nothing about the door.
+   * and tests nothing about the door.
    *
    * **AND IT DOES NOT PIN THE DEFECT IN PLACE.** Nothing here asserts that
    * NIGHT's two spellings differ, because that assertion would go red on the

@@ -108,7 +108,7 @@ describe('a vault pool wrapped per signer', () => {
     /*
      * Adding a signer changes who can read, not what the vault holds. Re-sealing
      * would be a rewrite of the money for a reason that is not about the money —
-     * and every rewrite is a chance to write half of it (`M-73`, `M-74`).
+     * and every rewrite is a chance to write half of it.
      */
     const a = signer('sgn_a'), c = signer('sgn_c');
     const rec = sealPool(VAULT, POOL, [a.who], 1);

@@ -4,7 +4,7 @@ import {
 import type { DetailsOfKind } from '../midnight/payout-tree.js';
 
 /**
- * THE VAULT'S TWO DETAILS CIRCUITS, AS `buildRun` TAKES THEM. `C246`, `S6k`.
+ * THE VAULT'S TWO DETAILS CIRCUITS, AS `buildRun` TAKES THEM.
  *
  * ONE DEFINITION, for `payees.ts`'s reason one file along: this pair is exactly
  * the kind of two-line object that gets retyped into the next test file that

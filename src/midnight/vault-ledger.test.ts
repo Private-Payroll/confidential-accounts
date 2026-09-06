@@ -26,7 +26,7 @@ import { payeeFor, unshieldedPayeeFor } from '../testing/payees.js';
 
 /*
  * **THE VAULT'S GENERATED MODULE, FAKED DOWN TO ITS READER AND NOTHING ELSE.**
- * `C198`.
+ *
  *
  * `ledger()` is identity — this harness supplies the decoded public state
  * directly, exactly as `ledger.test.ts` does for the account — while
@@ -45,7 +45,7 @@ vi.doMock('../../contracts/managed-vault/contract/index.js', () => ({
 }));
 
 const GBP = 'aa'.repeat(32);
-/** The token the product launches with, and it is UNSHIELDED by definition. `C245`. */
+/** The token the product launches with, and it is UNSHIELDED by definition. */
 const NIGHT = '99'.repeat(32);
 const SEED = '5e'.repeat(32);
 /*
@@ -67,7 +67,7 @@ const VAULT_ARTEFACTS = new URL('../../contracts/managed-vault', import.meta.url
  */
 const PAYEE = payeeFor(new Uint8Array(32).fill(0x44), 'preview');   // the harness's network
 /*
- * **THE SAME 32 BYTES, IN THE OTHER KEY SPACE.** `C246`, `S6k`.
+ * **THE SAME 32 BYTES, IN THE OTHER KEY SPACE.**
  *
  * Deliberately identical to `PAYEE`'s coin key, because that is the hazard: a
  * `UserAddress` and a `ZswapCoinPublicKey` of the same bytes are
@@ -91,7 +91,7 @@ function harness(opts: {
   asksForANote?: boolean;
   throws?: string;
   /**
-   * **WHAT THE CHAIN HOLDS FOR THIS VAULT.** `C198`.
+   * **WHAT THE CHAIN HOLDS FOR THIS VAULT.**
    *
    *   omitted            the chain agrees with the pool exactly
    *   'unreadable'       `queryContractState` returns nothing
@@ -102,7 +102,7 @@ function harness(opts: {
   chain?: 'unreadable' | 'read-throws' | 'no-notes-field'
     | Array<{ nonce: string; value: bigint }>;
   /**
-   * **WHAT THE PAYOUT CALL'S OWN RESULT SAYS THE VAULT KEPT.** `C239`.
+   * **WHAT THE PAYOUT CALL'S OWN RESULT SAYS THE VAULT KEPT.**
    *
    *   omitted        the change coin the contract would really have produced
    *   'absent'       a result carrying no Zswap local state at all
@@ -113,7 +113,7 @@ function harness(opts: {
   /** The store already holds a pool for this vault, so `create` must refuse. */
   poolExists?: boolean;
   /**
-   * **A NOTE POOL THAT REFUSES EVERY QUESTION.** `S6k` §1.
+   * **A NOTE POOL THAT REFUSES EVERY QUESTION.**
    *
    * Not a pool that is empty — one that cannot be reached at all, which is what
    * a vault holding only public money actually has: nothing created it, nothing
@@ -124,7 +124,7 @@ function harness(opts: {
    */
   poolThrows?: boolean;
   /**
-   * **WHAT THE CHAIN SAYS THIS VAULT HOLDS IN PUBLIC MONEY.** `C245`, `S6k`.
+   * **WHAT THE CHAIN SAYS THIS VAULT HOLDS IN PUBLIC MONEY.**
    *
    * The indexer's own door, `queryUnshieldedBalances`, which returns
    * `{ tokenType, balance }` rows rather than the `Map` keyed by TokenType
@@ -338,7 +338,7 @@ function harness(opts: {
   let witnesses: any;
 
   /*
-   * **A PUBLIC DATA PROVIDER, BECAUSE `balance` NOW ASKS THE CHAIN.** `C198`.
+   * **A PUBLIC DATA PROVIDER, BECAUSE `balance` NOW ASKS THE CHAIN.**
    *
    * The state it hands back is `{ data }` and the vault's real generated
    * `ledger()` reader decodes it — which is why the commitments below are built
@@ -362,12 +362,12 @@ function harness(opts: {
   };
 
   /*
-   * **THE INDEXER'S OWN DOOR FOR A CONTRACT'S PUBLIC BALANCES.** `S6k`.
+   * **THE INDEXER'S OWN DOOR FOR A CONTRACT'S PUBLIC BALANCES.**
    *
    * `queryUnshieldedBalances` returns `UnshieldedBalance[]` —
    * `{ tokenType: RawTokenType, balance: bigint }` — and `null` when the
    * indexer has no contract action for the address. Mirrored rather than
-   * simplified (`T-34`): the shape is what the client reads, and `null` is the
+   * simplified: the shape is what the client reads, and `null` is the
    * answer the client must NOT turn into zero.
    */
   const publicBalanceProvider = () => {
@@ -466,7 +466,7 @@ describe('V-74: the vault client', () => {
     const r = await ledger.payout(VAULT, payment(200n), BY, 9n);
 
     /*
-     * **THE KIND IS ESTABLISHED BEFORE THE NOTE IS READ.** `S6k`.
+     * **THE KIND IS ESTABLISHED BEFORE THE NOTE IS READ.**
      *
      * `VaultPaid` is a union: an unshielded payment spends no note and reports
      * none. A caller that wants the note has to say which payment it made, and
@@ -617,7 +617,7 @@ describe('V-74: the vault client', () => {
 });
 
 /**
- * **`C198`: A BALANCE NOTHING HAS RECONCILED IS NOT A BALANCE.**
+ * **A BALANCE NOTHING HAS RECONCILED IS NOT A BALANCE.**
  *
  * `balance` summed the local pool and returned it. It never asked the chain,
  * `matchesChain` had no production caller, and so every decision taken from a
@@ -682,7 +682,7 @@ describe('C198: balance reconciles against the chain, or refuses to answer', () 
   it('COULD NOT READ: refuses when the indexer returns no state, and never a local number',
     async () => {
       /*
-       * `C110`. A vault that reads as absent because we asked too early is not a
+       * A vault that reads as absent because we asked too early is not a
        * vault that disagrees, and it is certainly not a vault holding nothing.
        */
       const { ledger } = harness({ notes: [{ nonce: '01'.repeat(32), value: 600n }],
@@ -737,7 +737,7 @@ describe('C198: balance reconciles against the chain, or refuses to answer', () 
 });
 
 /**
- * **`C199`: THE POOL IS WRITTEN AFTER THE TRANSACTION, AND THE RECOVERY THAT
+ * **THE POOL IS WRITTEN AFTER THE TRANSACTION, AND THE RECOVERY THAT
  * MAKES THAT SAFE IS LOAD-BEARING.**
  *
  * The ordering is correct — of the two ways to fail, it picks the recoverable
@@ -750,7 +750,7 @@ describe('C198: balance reconciles against the chain, or refuses to answer', () 
  * shape as the `signerScope` test in `contracts/test/vault-scoping.test.ts`:
  * read the source, assert about the text, fail by name.
  */
-describe('C199: both pool-write sites name the recovery they depend on', () => {
+describe('both pool-write sites name the recovery they depend on', () => {
   const source = readFileSync(new URL('./vault-ledger.ts', import.meta.url), 'utf8');
 
   it('names replayVault at the deposit site and at the payout site', () => {
@@ -762,13 +762,49 @@ describe('C199: both pool-write sites name the recovery they depend on', () => {
     const mentions = source.match(/replayVault/g) ?? [];
     expect(mentions.length).toBeGreaterThanOrEqual(2);
 
-    // And each save is preceded by a comment that names it, within the same block.
+    /*
+     * AND EACH SAVE IS PRECEDED BY A COMMENT THAT SAYS THE WHOLE THING, WITHIN
+     * THE SAME BLOCK — NOT BY A COMMENT THAT CITES A ROW.
+     *
+     * **THIS USED TO REQUIRE THE STRING `C199` BESIDE `replayVault`, AND THAT
+     * HALF PINNED THE WRONG THING.** A register id is a pointer into a document
+     * that does not ship: a stranger who clones this repository, reads the
+     * comment and wants to check the claim has nowhere to go, and the suite was
+     * defending their inability to check it. It is the same correction the
+     * assertion below already made for `C200`, and for the same reason.
+     *
+     * **WHAT REPLACES IT IS THE CLAIM ITSELF, IN FOUR PARTS, EVERY ONE OF WHICH
+     * RESOLVES INSIDE THIS REPOSITORY.** The comment at each site must name the
+     * recovery, say where it lives, say what the window is, and say what closes
+     * it. A comment that keeps the word `replayVault` and loses any of the other
+     * three has lost the reason — which is precisely how the ordering here
+     * silently becomes the unrecoverable one.
+     *
+     * **EACH ASSERTION NAMES THE CHANGE THAT TURNS IT RED, and all four were
+     * watched doing it** against a copy of the source outside this tree.
+     */
     const saves = [...source.matchAll(/await this\.pool\.save\(/g)].map(m => m.index!);
     expect(saves).toHaveLength(2);
     for (const at of saves) {
-      const before = source.slice(Math.max(0, at - 2_500), at);
-      expect(before).toMatch(/replayVault/);
-      expect(before).toMatch(/C199/);
+      /*
+       * Flattened, for the reason the assertion below gives about itself: a
+       * comment is line-wrapped, and a check that broke when a sentence
+       * rewrapped would be noise rather than a guard.
+       */
+      const before = source.slice(Math.max(0, at - 2_500), at)
+        .replace(/^\s*\*/gm, ' ').replace(/\s+/g, ' ');
+
+      expect(before, 'RED WHEN: the name of the recovery is deleted from this comment, which is what lets a cleanup round grep for callers, find none, and delete it')
+        .toMatch(/replayVault/);
+
+      expect(before, 'RED WHEN: the comment stops saying WHERE the recovery lives, so a reader who wants to check the claim has to go looking for it')
+        .toMatch(/src\/midnight\/vault-recovery\.ts/);
+
+      expect(before, 'RED WHEN: the comment stops saying that the failure window is a crash BETWEEN the chain call and this write — which is the ordering, and without it the next reader cannot tell why the pool is not written first')
+        .toMatch(/crash[^.]{0,160}between/i);
+
+      expect(before, 'RED WHEN: the comment stops saying that the recovery REBUILDS the pool — the dependency rather than the mention, and the half that says this ordering is safe only because something else exists')
+        .toMatch(/rebuild/i);
     }
   });
 
@@ -787,7 +823,7 @@ describe('C199: both pool-write sites name the recovery they depend on', () => {
     expect(flat).toMatch(/nothing about this ordering is safe on its own/i);
 
     /*
-     * **AND THE RECOVERY IS NAMED AS RUN, NOT MERELY AS EXISTING.** `S6d`.
+     * **AND THE RECOVERY IS NAMED AS RUN, NOT MERELY AS EXISTING.**
      *
      * This assertion used to require the string `C200` — the row saying the
      * recovery was written for the vault's PREVIOUS shape — so that nobody read
@@ -807,7 +843,7 @@ describe('C199: both pool-write sites name the recovery they depend on', () => {
 });
 
 /**
- * **`C242`: A VAULT DEPLOYED TODAY CANNOT BE FUNDED, AND THIS IS WHERE THAT
+ * **A VAULT DEPLOYED TODAY CANNOT BE FUNDED, AND THIS IS WHERE THAT
  * ENDS.**
  *
  * `SealedNotePool.load` refuses when no record exists and `deposit` loads
@@ -853,7 +889,7 @@ describe('C242: an empty pool is created only for a vault the CHAIN says is empt
 
   it('REFUSES when the chain could not be read, and writes nothing', async () => {
     /*
-     * `C110`: a state the node had finalised read as absent to the indexer
+     * A state the node had finalised read as absent to the indexer
      * 168ms later. A vault that reads as empty because we asked too early is
      * the vault this refusal exists for, and the cost of getting it wrong here
      * is the whole treasury reported as zero.
@@ -869,7 +905,7 @@ describe('C242: an empty pool is created only for a vault the CHAIN says is empt
 
   it('leaves the store\'s own refusal to overwrite in place, rather than repeating it', async () => {
     /*
-     * `M-104`: two implementations of "do not replace the record of every note
+     * Two implementations of "do not replace the record of every note
      * a vault holds" is two chances to soften one of them. The store refuses,
      * this reports it.
      */
@@ -880,7 +916,7 @@ describe('C242: an empty pool is created only for a vault the CHAIN says is empt
 });
 
 /**
- * **`C239`: THE CHANGE NOTE IS READ FROM THE CALL, NOT DERIVED BESIDE IT.**
+ * **THE CHANGE NOTE IS READ FROM THE CALL, NOT DERIVED BESIDE IT.**
  *
  * The client holds the payout's own result, and the change coin is an OUTPUT of
  * that transaction — `V-47`'s rule, in the file `V-47` was written in. What
@@ -936,7 +972,7 @@ describe('C239: the pool advances by the coin the call reported', () => {
 
   it('records NO INDEX when the caller has none, rather than a zero', async () => {
     /*
-     * `S6f`: the ordinary case, because nothing in this repository reads a
+     * The ordinary case, because nothing in this repository reads a
      * commitment's place in the tree back. A zero would be a plausible wrong
      * number and `witnessesOver` would spend against it.
      */
@@ -1034,12 +1070,12 @@ describe('T-38: an affordability check refuses on EITHER refusal', () => {
 });
 
 /* ------------------------------------------------------------------------
- * PUBLIC MONEY, THROUGH THE CLIENT. C245, C246, C242, S6k.
+ * PUBLIC MONEY, THROUGH THE CLIENT.
  * ------------------------------------------------------------------------ */
 
 /**
  * **A VAULT HOLDING ONLY PUBLIC MONEY NEEDS NO POOL, AND THAT IS TESTED BY
- * TAKING THE POOL AWAY.** `S6k` §1, `C242`.
+ * TAKING THE POOL AWAY.**
  *
  * `C242`'s row is that a vault deployed today cannot be funded, because
  * `SealedNotePool.load` correctly refuses when no record exists and
@@ -1101,7 +1137,7 @@ describe('S6k: public money needs no pool', () => {
 
 /**
  * **`C246` AT THE CLIENT: THE PAYEE CHOOSES THE CIRCUIT, AND NOTHING ELSE
- * CAN.** `S6k` §2.
+ * CAN.**
  *
  * `PAYEE` and `PUBLIC_PAYEE` are built from the SAME 32 bytes. So every
  * assertion here is about the KIND and never about the values — if the dispatch
@@ -1160,7 +1196,7 @@ describe('C246: which door a payment leaves by', () => {
 
 /**
  * **WHAT `balance` MEANS FOR PUBLIC MONEY, AND WHY IT IS A DIFFERENT
- * FUNCTION.** `C198`, `C110`, `C188`'s family, `S6k` §1.
+ * FUNCTION.** `C198`, `C110`, `C188`'s family.
  *
  * `balance` reconciles a local record against the chain and has THREE outcomes.
  * `unshieldedBalance` has no local record to reconcile — the ledger's figure is
@@ -1234,7 +1270,7 @@ describe('S6k: the public balance is the chain\'s number, or no number', () => {
 });
 
 /**
- * **AFFORDABILITY, SPLIT BY THE PAYEE'S OWN KIND.** `T-38`, `C203`, `S6k`.
+ * **AFFORDABILITY, SPLIT BY THE PAYEE'S OWN KIND.**
  *
  * A run can hold both kinds side by side — that is `S6j`'s property, and it
  * falls out of the leaf carrying the kind rather than the run. So one question
@@ -1242,7 +1278,7 @@ describe('S6k: the public balance is the chain\'s number, or no number', () => {
  * chain's public balance says nothing about notes.
  *
  * **AND A SUM IS THE RIGHT QUESTION HERE, WHICH IS EXACTLY WHAT IT IS NOT ON
- * THE PRIVATE SIDE.** Notes do not merge (`C203`), so a pool of two sixties
+ * THE PRIVATE SIDE.** Notes do not merge, so a pool of two sixties
  * cannot pay a hundred. A public balance is one number the ledger subtracts
  * from, so a total is precisely the question.
  */

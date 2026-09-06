@@ -5,7 +5,7 @@
  * DUST gate in this repo is really budgeting against.
  *
  * WHY IT IS A FUNCTION AND NOT A NUMBER. `run-preview.ts` budgeted 11 calls for
- * a run that submits 14 (M-137). It passed the gate and would have run out of
+ * a run that submits 14. It passed the gate and would have run out of
  * DUST on the twelfth call — **the exact failure the gate exists to prevent**,
  * produced by a hand-counted constant that stopped matching the script beside
  * it. A payroll run makes that inevitable rather than unlucky: the count is not
@@ -19,7 +19,7 @@
  * right is this file's.
  *
  * **AND NOTHING IN THE PRODUCT CALLS THIS FILE YET, WHICH IS STATED HERE
- * RATHER THAN LEFT TO BE FOUND.** `T-344`, `SC13` §4 `F5`, `S58`. Its only
+ * RATHER THAN LEFT TO BE FOUND.** `T-344`, `SC13` §4 `F5`. Its only
  * importer is its own test. **`scripts/run-preview.ts` still carries
  * `const CIRCUITS = 13` behind four `.command` doors, and that is not a missed
  * wiring:** its thirteen counts a fixed scripted walk — two governance rounds

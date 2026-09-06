@@ -38,7 +38,7 @@ const staff = (n: number): PaymentFacts[] =>
  * The vault's own circuits, passed in. Never reimplemented here — see
  * `DetailsOf` — and BOTH of them since `S6k`, because `buildRun` now derives a
  * leaf by the payee's own kind rather than by the caller's single choice
- * (`C246`). Every payee in this file is shielded, so only that half is
+ *. Every payee in this file is shielded, so only that half is
  * exercised; the pair is required by the type, which is the point.
  */
 const detailsOf = vaultDetails;

@@ -474,7 +474,7 @@ describe('when naming the place and disclosing the value are the same act', () =
      * `'defa' + …` commitment turned this file red on an unmodified scanner.
      *
      * **THAT IS THE SAME CLASS AS THE DEFECT THIS FILE WAS JUST REPAIRED FOR
-     * (`MIG-31`), AND RARER IS WORSE, NOT BETTER** — one run in sixteen
+     *, AND RARER IS WORSE, NOT BETTER** — one run in sixteen
      * thousand is a failure nobody will attribute, and it will look like a
      * leak on a green tree. Found by this round's audit.
      *

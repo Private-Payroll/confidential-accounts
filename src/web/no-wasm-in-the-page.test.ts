@@ -1,9 +1,9 @@
 /**
- * **THE PAYROLL PAGE CARRIES NO WEBASSEMBLY.** `X5` §1 and §2, `C149`.
+ * **THE PAYROLL PAGE CARRIES NO WEBASSEMBLY.** `X5` §1 and §2.
  *
  * ── WHAT THIS IS GUARDING, AND WHY IT IS NOT THE OBVIOUS THING ───────────
  *
- * `C149`: the page was blank in every real browser for four rounds because
+ * The page was blank in every real browser for four rounds because
  * `@midnightntwrk/ledger-v9`'s wasm-bindgen glue threw while it was still being
  * evaluated — *Cannot access `__wbindgen_start` before initialization*. It was
  * reached from `src/web/wallet-sign-in.ts`, which imported one small function

@@ -1,6 +1,6 @@
 /**
  * **THE TWO DECISIONS THE KEYRING MAKES ABOUT KEY MATERIAL, AS FUNCTIONS A
- * TEST CAN REACH.** `C329`, `S34`.
+ * TEST CAN REACH.**
  *
  * `src/web/keyring.ts` does I/O — it holds the session, seals the bundle and
  * talks to the server — and `C275`'s rule is that a rule about money living
@@ -8,7 +8,7 @@
  * whether a signer's blinding survives, which decision 0003 says exists on one
  * device and nowhere else, so both are here and both are tested.
  *
- * `S34`'s `money-safety-auditor` found the first of them; its `test-auditor`
+ * `S34`'s money-safety pass found the first of them; its test-coverage pass
  * found that the whole of the new keyring code had no test at all.
  */
 import { signingPublicKeyOf, unwrapKey, type Hex, type Sealed } from '../core/crypto.js';
@@ -62,7 +62,7 @@ export function clobberRefusal(
  * The first version trial-unwrapped each wrapped viewing key with the pending
  * wrapping secret, took the `signerId` written beside whichever ciphertext
  * opened, and said a substituted roster could not forge one. **That was false
- * and `S34`'s `money-safety-auditor` caught it (rule 14).** `wrapKey` is
+ * and `S34`'s money-safety pass caught it (rule 14).** `wrapKey` is
  * public-key sealing: anyone holding the wrapping PUBLIC key — which this
  * device POSTed to the server one step earlier — can produce a ciphertext that
  * opens under the matching secret, and the `signerId` beside it is

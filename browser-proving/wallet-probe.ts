@@ -1,5 +1,5 @@
 /**
- * What does the wallet in THIS browser actually do? M-10.
+ * What does the wallet in THIS browser actually do?
  *
  * Read-only on purpose. It connects, asks four questions and stops — no
  * transaction is built, balanced or submitted, and nothing is spent. The

@@ -1,6 +1,6 @@
 /**
  * **ACCEPTING A SEAT, AS A FUNCTION A TEST CAN DRIVE.** `C329`, `C328`,
- * `T-118`, `S34`.
+ *
  *
  * ── WHY THIS IS NOT STILL A CLOSURE INSIDE A SCREEN ──────────────────────
  *
@@ -8,7 +8,7 @@
  * premise — **that the material is durable before the leaf is published** —
  * lived in the order of two lines nothing could execute, and the leaf that path
  * writes was the second of `C328`'s two wrong writers with no guard of any
- * kind. `S34`'s `test-auditor` measured both: restoring the old ed25519 writer
+ * kind. `S34`'s test-coverage pass measured both: restoring the old ed25519 writer
  * at that line left 187 tests green.
  *
  * A source pin is not the answer — `S34` deleted the last one, because a pin
@@ -78,7 +78,7 @@ export async function acceptSeatOnThisDevice(
   const keys = doors.newKeys();
   /*
    * Read once from the scheme and used for both the leaf and the material that
-   * has to reproduce it. `T-116`: the scope is the leaf's third argument, it
+   * has to reproduce it. The scope is the leaf's third argument, it
    * lives on the device because that is where the circuit's witness reads it,
    * and a writer that took it from somewhere else is a seat nobody can prove.
    */
@@ -93,7 +93,7 @@ export async function acceptSeatOnThisDevice(
   };
 
   /*
-   * **THE LEAF, FROM THE SECRET AND NOT FROM THE CURVE.** `C328`.
+   * **THE LEAF, FROM THE SECRET AND NOT FROM THE CURVE.**
    *
    * This line passed `sk.publicKey` — the raw ed25519 key — while the
    * contract's `requireSigner()` looks in the tree for a leaf over

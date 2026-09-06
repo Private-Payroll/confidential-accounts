@@ -23,7 +23,7 @@ import { recordShownError } from './error-sink.js';
  *
  * ── THROUGH `redactSecrets`, LIKE EVERYTHING ELSE THAT REACHES DISK ──────
  *
- * `C145`, `C148`. An error message can carry anything — a key, a seed, a
+ * An error message can carry anything — a key, a seed, a
  * session token, a company address, a password typed into the wrong field. It
  * is redacted HERE, before it crosses the wire, and again in the service before
  * it reaches the disk, which is the same two-layer arrangement the sink already

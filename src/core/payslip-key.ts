@@ -6,7 +6,7 @@ import { payslipKeypairFrom } from './payslip-key-derive.js';
 import { UNLOCK_PURPOSE, UNLOCK_WINDOW_MS, unlockAsk } from './wallet-unlock.js';
 
 /**
- * **THE WALLET'S HALF OF THE PAYSLIP KEY.** `docs/NEXT.md` PI2b §2, `C135`.
+ * **THE WALLET'S HALF OF THE PAYSLIP KEY.** `docs/NEXT.md` PI2b §2.
  *
  * The derivation itself — what it expands, what it deliberately does not, and
  * why any thirty-two bytes are a usable x25519 secret — lives in

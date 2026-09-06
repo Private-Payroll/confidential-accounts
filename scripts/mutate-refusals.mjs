@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * MUTATING THE THINGS `X10` CLAIMS. `docs/NEXT.md` X10, `C157` and `C148`.
+ * MUTATING THE THINGS `X10` CLAIMS. `docs/NEXT.md` X10.
  *
  * The harness `scripts/mutate-app-origin.mjs` built for `X1`, aimed at the
  * three claims this round makes that are worth nothing if nothing watches them.

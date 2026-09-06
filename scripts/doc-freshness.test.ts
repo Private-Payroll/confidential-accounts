@@ -1,5 +1,5 @@
 /**
- * A CHECK THAT CANNOT FAIL IS A CHECK THAT HAS ALREADY FAILED. `C238`, `C263`.
+ * A CHECK THAT CANNOT FAIL IS A CHECK THAT HAS ALREADY FAILED.
  *
  * The guard this tests is the kind of thing that gets written, wired, and never
  * once observed doing its job — and a doc gate that never refuses is
@@ -254,7 +254,7 @@ describe('THE REFUSAL FIRES — the whole reason this file exists', () => {
 
   it('cannot be disarmed by rendering NOTHING for a block the registry names', () => {
     // The comparison is `rendered vs on disk`, so an empty render would make
-    // every document look current for ever, silently. C238.
+    // every document look current for ever, silently.
     expect(() => docRefusals(root, [BLOCK], new Map())).toThrow(/nothing rendered for block/);
     expect(() => fileRefusals(root, [FILE], new Map())).toThrow(/nothing rendered for/);
   });
@@ -385,7 +385,7 @@ describe('the guard is WIRED IN, and is pointed at the doc set the registry name
     const wired = config.test?.globalSetup;
     expect(wired).toBeDefined();
     expect(Array.isArray(wired) ? wired : [wired]).toContain('./scripts/doc-freshness.globalSetup.ts');
-    // And the glob that collects THIS file. `C67`: narrowing `include` switches
+    // And the glob that collects THIS file. Narrowing `include` switches
     // tests off without a word.
     expect(config.test?.include).toContain('scripts/**/*.test.ts');
   });

@@ -1,5 +1,5 @@
 /**
- * The redactor, on its own. `C145`, `X4` §1.
+ * The redactor, on its own.
  *
  * The round's real deliverable is the test that greps the sink's own report —
  * `src/server/web-console-sink.test.ts`. This file is the layer beneath it:

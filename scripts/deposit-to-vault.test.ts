@@ -7,7 +7,7 @@
  *
  *   · **the circuit set.** A deployment the compiled reader does not match
  *     decodes field by field and hands back a well-formed EMPTY note set
- *     (`C268`). The deposit would land, the pool would record it, and every
+ *. The deposit would land, the pool would record it, and every
  *     later check would agree that nothing happened.
  *   · **the signer set.** A deposit re-seals the whole pool and wraps it to
  *     whatever list it is handed. A shorter list is a signer who can never read
@@ -103,7 +103,7 @@ describe('which vaults can take private money', () => {
 describe('the attempt journal', () => {
   it('is named after the vault and never addressed by it', () => {
     /*
-     * `C236`: a filename is a screen. And it is a SEPARATE file from the pool —
+     * A filename is a screen. And it is a SEPARATE file from the pool —
      * one records what was attempted, the other claims what the vault holds,
      * and merging them is the direction `C199` rejected.
      */
@@ -212,7 +212,7 @@ describe('THE DOOR THAT COULD NOT REACH ITS OWN CALL', () => {
      * all. The first draft of the shared read returned `0n` for that, and `0n`
      * on a caught-up scan is the sentence *"it was already spent"* — a fault in
      * this machine reported to a person as their money being gone. Found by
-     * `S17`'s `money-safety-auditor`.
+     * `S17`'s money-safety pass.
      */
     const m = noColourRefusal(COLOUR, caughtUp, null);
     expect(m).toMatch(/cannot tell whether the wallet holds a coin of that colour/);
@@ -231,14 +231,14 @@ describe('THE DOOR THAT COULD NOT REACH ITS OWN CALL', () => {
 
   it('HAS NO SECOND COPY OF THE COIN READ OR THE WAIT, AND REFUSES A PASSED DEADLINE', () => {
     /*
-     * `M-104`: one procedure, written twice, second copy missing the part that
+     * One procedure, written twice, second copy missing the part that
      * mattered. This door's copy read `availableCoins` once and never waited;
      * the mint door's read it again and polled for five minutes. Both are gone.
      *
      * The deadline check is here because a passed deadline used to be a NOTE:
      * a partial scan showing enough of the colour would have gone on to prove
      * and submit from a view this door had just called incomplete — `C243`'s
-     * sentence one sub-wallet along. Found by `S17`'s `money-safety-auditor`.
+     * sentence one sub-wallet along. Found by `S17`'s money-safety pass.
      */
     const src = readFileSync(new URL('./deposit-to-vault.ts', import.meta.url), 'utf8');
     expect(src).not.toMatch(/state\(\)\??\.?\s*\??\.?shielded\?\.availableCoins/);
@@ -246,7 +246,7 @@ describe('THE DOOR THAT COULD NOT REACH ITS OWN CALL', () => {
     /*
      * NOT /shieldedHeldOf/. That word is on the import line too, so the
      * expectation was met by an unrelated line and a second inline read of
-     * wallet state SURVIVED when `S31`'s `test-auditor` ran it — `M-104`
+     * wallet state SURVIVED when `S31`'s test-coverage pass ran it — `M-104`
      * reached by the exact road `T-70` names. Pinned on the CALL.
      */
     expect(src).toMatch(/shieldedHeldOf\(live\.state\(\), colour\)/);
@@ -256,7 +256,7 @@ describe('THE DOOR THAT COULD NOT REACH ITS OWN CALL', () => {
 });
 
 /*
- * **THE WRONG KEY IS CAUGHT INSTEAD OF MISREPORTED.** `C320`.
+ * **THE WRONG KEY IS CAUGHT INSTEAD OF MISREPORTED.**
  *
  * `C275` overwrote one vault's secrets with another's, twice, under identical
  * ids, and the refusal a person would have met said *THAT IS THE MECHANISM
@@ -273,7 +273,7 @@ const SECRET = K('7c');
  * **A KEY THAT AGREES FOR 48 CHARACTERS AND DIFFERS AFTER IT.** `RIGHT` and
  * `WRONG` differ in every position, so a comparison of the FIRST CHARACTER
  * passes every test that uses only those two — measured by `S31`'s
- * `test-auditor`, which ran `held[0] !== pub[0]` and got 31 green. The two keys
+ * test-coverage pass, which ran `held[0] !== pub[0]` and got 31 green. The two keys
  * in `C275` were sibling outputs of one generator, and `half()` truncating for
  * display sits four lines from the comparison.
  */
@@ -320,7 +320,7 @@ describe('the opener is chosen by the key it holds, not by the id it is filed un
     /*
      * Every other fixture here is lowercase, so removing the three
      * `.toLowerCase()` calls in `openerVerdicts` left 31 tests green — `S31`'s
-     * `test-auditor` ran it. What it costs on a real file: a present, correct
+     * test-coverage pass ran it. What it costs on a real file: a present, correct
      * secret scored `never-given`, and the door printing *THAT IS THE MECHANISM
      * WORKING* about a key that is right there. Which is `C320` exactly.
      */
@@ -370,7 +370,7 @@ describe('the opener is chosen by the key it holds, not by the id it is filed un
      * A deposit re-seals the whole pool to the signers file. Carrying on with a
      * working opener would re-seal a company's money to a set this machine's
      * own key material contradicts. Rule 28: downtime beats a pool nobody can
-     * open (`C284`).
+     * open.
      */
     expect(() => chooseOpener(
       ['v-signer-1', 'v-signer-2'],
@@ -411,7 +411,7 @@ describe('the opener is chosen by the key it holds, not by the id it is filed un
   it('IS THE RULE THE CALLER ACTUALLY USES, AND NOT A SECOND COPY BESIDE IT', () => {
     /*
      * `S30` deleted a test of exactly this shape with the suite green, and
-     * `S31`'s `test-auditor` then broke the first version of THIS test two
+     * `S31`'s test-coverage pass then broke the first version of THIS test two
      * ways, running both:
      *
      *   · the pinned call left as a `//` comment and the old by-id `.find`
@@ -439,7 +439,7 @@ describe('the opener is chosen by the key it holds, not by the id it is filed un
     /*
      * **AND NOTHING BETWEEN READING THE SECRETS FILE AND HANDING THE POOL ITS
      * IDENTITY MAY PICK A SIGNER OR TOUCH A SECRET.** That span is where a
-     * second selection path would go and where `S31`'s `test-auditor` put one.
+     * second selection path would go and where `S31`'s test-coverage pass put one.
      * `chooseOpener`'s own `verdicts.find` is inside the function and outside
      * this window, which is why the window and not the file is what is banned.
      */

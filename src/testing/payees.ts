@@ -39,7 +39,7 @@ export const payeeFor = (
 
 /**
  * A PAYEE WHO IS PAID IN **PUBLIC** MONEY, from the same bytes a test already
- * has. `C245`, `C246`, `S6k`.
+ * has.
  *
  * Here rather than in the next test file for `payeeFor`'s reason, and one
  * stronger: a public payee and a private one built from the SAME 32 bytes are
@@ -66,7 +66,7 @@ export const unshieldedPayeeFor = (
 
 /**
  * **A ROSTER PAYEE, NARROWED TO THE PRIVATE KIND, FOR A TEST THAT IS ABOUT ONE.**
- * `S12`.
+ *
  *
  * `RosterEmployee.address` is a `Payee` since `S12`, so a test reading
  * `coinPublicKey` off one no longer compiles — which is the compiler doing what

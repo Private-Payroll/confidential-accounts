@@ -8,7 +8,7 @@
  * because a rule living inside a heredoc is a rule no test can reach.
  *
  * **MOVING THE RULE IS HALF THE MECHANISM. THIS IS THE OTHER HALF.** The
- * `test-auditor` pass over `S30` found four one-line edits to that heredoc that
+ * test-coverage pass over `S30` found four one-line edits to that heredoc that
  * reintroduce `C275` in full **with every one of the rule's own tests still
  * green**: pass `[]` as the existing ids; inline the id construction and drop
  * the import; write the secrets file before the check; or catch a parse failure
@@ -20,7 +20,7 @@
  * signers by id and never by public key, so an id reused across two vaults
  * replaces the first vault's key with the second's and nothing can compare them
  * to notice. The pool is the only record of a note's nonce, colour and value
- * (`C284`) and a commitment on chain cannot be inverted to recover them. **It
+ * and a commitment on chain cannot be inverted to recover them. **It
  * had already fired twice on disk before it was found**: `payroll-test-1`'s
  * pool is wrapped to three keys whose secret halves exist nowhere.
  *

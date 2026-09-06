@@ -52,7 +52,7 @@
  *     closed: `artifact-freshness.test.ts` imports `vitest.config.ts` as a
  *     module and reads the value rather than grepping the text, and it calls
  *     this module's own default export against a stale fixture. A commented-out
- *     key is not a value, and a swallowed throw is not a throw. `C263`: a guard
+ *     key is not a value, and a swallowed throw is not a throw. A guard
  *     nobody wired in is invisible to a unit test of the guard, and a guard
  *     whose wiring is checked by substring is invisible to a comment character.
  */
@@ -125,7 +125,7 @@ const under = (root: string, path: string): string => (isAbsolute(path) ? path :
  * artifacts on disk were built from the sources on disk.
  *
  * IT THROWS ON AN EMPTY TABLE RATHER THAN RETURNING NO REFUSALS. `C238`,
- * `C263`: a check over zero things cannot fail, and a check that cannot fail
+ * A check over zero things cannot fail, and a check that cannot fail
  * has already failed. The only way this guard could ever be disarmed from
  * inside is by handing it nothing to check, so that is an error and not a pass.
  *

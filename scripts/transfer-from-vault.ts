@@ -1,6 +1,6 @@
 /**
  * **A COMPANY PAYING ITS OWN ADDRESS OUT OF ITS OWN VAULT, PUBLICLY.** `C255`,
- * `C258`, `S12`.
+ *
  *
  * Run it with `TRANSFER-FROM-VAULT.command`. What that door passes and refuses
  * is at the bottom of this file; where it sits in the sequence is
@@ -57,7 +57,7 @@
  *     secret key, which never leaves their device. That is the scheme, not a
  *     gap in it.
  *   · **the payroll roster**, which is what `transferOf` checks a public payee
- *     against (`C250`). This instrument holds none — see `NO_ROSTER_HERE`.
+ *     against. This instrument holds none — see `NO_ROSTER_HERE`.
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -91,7 +91,7 @@ const ASSET = 'NIGHT';
 
 /**
  * **THIS INSTRUMENT HOLDS NO PAYROLL ROSTER, AND THE CHECK THAT NEEDS ONE IS
- * THEREFORE NOT MADE HERE.** `C250`.
+ * THEREFORE NOT MADE HERE.**
  *
  * `transferOf` refuses a PUBLIC transfer to an address that is on the payroll
  * roster, because no employee is ever disclosed publicly, and it takes the
@@ -111,7 +111,7 @@ const NO_ROSTER_HERE: ReadonlyArray<Payee> = [];
  * the report
  * ------------------------------------------------------------------ */
 
-/** The vault's address, forbidden from every line from the moment it is read. C236. */
+/** The vault's address, forbidden from every line from the moment it is read. */
 let vaultAddress: string | null = null;
 
 const say = createScreen(() => (vaultAddress

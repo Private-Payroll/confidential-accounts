@@ -48,7 +48,7 @@ import type { User } from './types.js';
 const NETWORK = 'undeployed' as const;
 
 /**
- * A ROSTER ADDRESS AS THE OLD CODE WROTE IT, FROZEN AS TEXT. `S12`.
+ * A ROSTER ADDRESS AS THE OLD CODE WROTE IT, FROZEN AS TEXT.
  *
  * A literal rather than a derivation, because the property under test is that a
  * record sealed BEFORE this round still reads. A fixture recomputed by today's
@@ -260,7 +260,7 @@ describe('S12 — the door, the refusal, and the record', () => {
     expect(says).toContain('one-off transfer');
     /* Not a confirmation. */
     expect(says).not.toMatch(/are you sure|continue anyway|confirm|override/i);
-    /* Not written in the platform's vocabulary. `product-copy-auditor`. */
+    /* Not written in the platform's vocabulary. Product-copy pass. */
     expect(says).not.toMatch(/shielded|unshielded|note|wallet|mint|gas/i);
     /* And no em dash: this product must not read as machine written. */
     expect(says).not.toContain('—');
@@ -395,7 +395,7 @@ describe('S12 — the door, the refusal, and the record', () => {
   it('§3 A PUBLIC TRANSFER TO SOMEBODY ON THE ROSTER IS REFUSED, WHICH IS THE OTHER HALF OF THE RULE', () => {
     /*
      * **`payrollPayee` IS WRITTEN ON THE SHAPE OF A RUN AND THE RULE IS ABOUT
-     * WHO THE PAYEE IS.** Found by `money-safety-auditor` on this round, before
+     * WHO THE PAYEE IS.** Found by a money-safety pass on this round, before
      * `S12b` built a screen on this type.
      *
      * A bonus, an expense or a correction raised as a one-off transfer to an
@@ -589,7 +589,7 @@ describe('S12 — the door, the refusal, and the record', () => {
      * AND SAID NOT TO FORCE IT IF SOMETHING ASSUMES A PAYEE IS A PERSON. THIS
      * IS THE ANSWER, RUN RATHER THAN READ.**
      *
-     * `admit`'s one-payable-entry-per-person cap (`C26`) keys on the sign-in
+     * `admit`'s one-payable-entry-per-person cap keys on the sign-in
      * that set the address. **A member who is already a payee cannot record a
      * second address**, so a founder on payroll cannot also record the
      * company's own account, and the refusal is correct: for a PERSON, two

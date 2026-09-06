@@ -2,7 +2,7 @@
 declare module '*.css';
 
 /**
- * WHERE THE IDENTITY WALLET IS SERVED FROM. `PI1`.
+ * WHERE THE IDENTITY WALLET IS SERVED FROM.
  *
  * The page opens this origin and refuses to listen to any other, so it is
  * configuration rather than something a link can carry: a URL that could name

@@ -210,7 +210,7 @@ const UINT64_MAX = 18_446_744_073_709_551_615n;
 
 /**
  * **NO SCREEN GUARD HERE, AND THE ABSENCE IS A DECISION RATHER THAN AN
- * OVERSIGHT.** `C236`.
+ * OVERSIGHT.**
  *
  * `fund-vault.ts` and `open-vault-pool.ts` refuse to print a line carrying a
  * VAULT's address, because a plain send to a vault is money on chain nobody can
@@ -340,7 +340,7 @@ export function parseTestTokenRecord(parsed: any, network: string): {
  *
  * `docs/handoff/00-START-HERE.md` names not asking whether the platform already
  * does it as the failure this project has paid most for. This is that, caught
- * by the `platform-fact-checker` pass before the door was ever run.
+ * by the platform fact-check pass before the door was ever run.
  *
  * Exported and pure, so every outcome can be driven without a chain.
  */
@@ -382,7 +382,7 @@ export function theMintedCoin(newCoins: unknown): { type: string; value: bigint;
  * the size block
  * ------------------------------------------------------------------ */
 
-/** Printed on success and on refusal alike. `C218`, `R1c`, `C238`. */
+/** Printed on success and on refusal alike. */
 function printTxSize() {
   say();
   say('  \x1b[1mHow big the transactions were, against what the chain will carry\x1b[0m');
@@ -418,7 +418,7 @@ function printTxSize() {
   say('    that invented it. Compare it against the next run of this door.');
 }
 
-/** What proved, and how long it took. Measured, or said to be absent. `C238`. */
+/** What proved, and how long it took. Measured, or said to be absent. */
 function printProving() {
   say();
   say('  \x1b[1mWhat proved, and what it took\x1b[0m');
@@ -549,7 +549,7 @@ async function main(): Promise<Verdict> {
   const hexOf = (b: Uint8Array): string =>
     [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
   /*
-   * **THE SECOND COPY IS GONE.** `S17`, `M-104`.
+   * **THE SECOND COPY IS GONE.**
    *
    * This door had its own `heldOf` and its own five-minute poll; the deposit
    * door had a third reading of the same coin list and no wait at all. One
@@ -615,7 +615,7 @@ async function main(): Promise<Verdict> {
     /*
      * Settle before submitting. The node's websocket closes cleanly a few
      * seconds after the wallet connects, so submitting immediately is
-     * submitting into the gap on purpose. `M-23`.
+     * submitting into the gap on purpose.
      */
     note('letting the node websocket settle before submitting');
     await sleep(6000);
@@ -706,7 +706,7 @@ async function main(): Promise<Verdict> {
    * decrypts each output and keeps the coins whose commitment matches. **When
    * that happens is not something any source read here states.**
    *
-   * **THE FIVE MINUTES THIS DOOR USED TO CHOOSE ARE GONE.** `S17`. It was a
+   * **THE FIVE MINUTES THIS DOOR USED TO CHOOSE ARE GONE.** It was a
    * number with nothing under it, and the door beside this one copied it into
    * a place where it never ran at all. The wait is now one function, its
    * deadline is disclosed as unmeasured in its own output, and the answer it
@@ -850,7 +850,7 @@ if (RUN_DIRECTLY) {
 /*
  * **`MINT-TEST-TOKEN.command`.** Recorded here because the door is what a
  * person opens, and a run order naming `npx tsx scripts/mint-test-token.ts` is
- * an instruction nobody at the machine can follow (`C226`).
+ * an instruction nobody at the machine can follow.
  *
  * WHAT IT PASSES — exported, because this file reads the environment and
  * nothing else:
@@ -859,7 +859,7 @@ if (RUN_DIRECTLY) {
  *     MINT_AMOUNT           how much, digits only. NO DEFAULT.
  *     MIDNIGHT_PROOF_IMAGE  the pinned image, so the report records what the
  *                           proof was built against rather than what was meant
- *                           to be running (`C180`).
+ *                           to be running.
  *
  * WHAT IT REFUSES, before running anything:
  *

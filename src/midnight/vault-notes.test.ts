@@ -6,7 +6,7 @@
  * balance is permanently stuck — not stolen, just unspendable.
  *
  * ------------------------------------------------------------------------
- * WHAT LEFT THIS FILE, AND IT IS NOT A DELETED TEST. S6a.
+ * WHAT LEFT THIS FILE, AND IT IS NOT A DELETED TEST.
  *
  * Four tests used to stand at the top of this file, over `noteBlindingFor` and
  * `nextBlindingFor`, and the first of them was the one to read first: the
@@ -38,7 +38,7 @@ import { toHex, fromHex, type Hex } from '../core/crypto.js';
 
 /**
  * The change coin a payment handed back, as `changeCoinOf` reads it off the
- * call's own outputs. `C239`.
+ * call's own outputs.
  *
  * **BUILT FROM THE SPENT NOTE AND THE AMOUNT, WHICH IS WHAT THE CONTRACT
  * DOES** — `sendShielded` returns the remainder — so these tests describe a
@@ -162,7 +162,7 @@ describe('V-74: carrying the pool forward', () => {
 
   it('records the change note with NO INDEX when the chain has not filed one yet', () => {
     /*
-     * `S6f`: the ordinary case at the moment of a payment, and the reason
+     * The ordinary case at the moment of a payment, and the reason
      * `Note.index` is optional. A zero here would be a plausible wrong number
      * — the one thing this repository has paid for most.
      */
@@ -243,7 +243,7 @@ describe('V-74: the witnesses the contract actually calls', () => {
 
   it('DECLARES ONE WITNESS, because the blinding is no longer the device\'s to choose', () => {
     /*
-     * S6a. Two more used to be here — `noteBlinding` and `nextBlinding` — and
+     * Two more used to be here — `noteBlinding` and `nextBlinding` — and
      * a client that still offered them would be offering the contract
      * something it does not ask for, which is how a rule survives in two
      * places after only one of them was changed.

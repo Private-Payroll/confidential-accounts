@@ -1,5 +1,5 @@
 /**
- * WHAT A DEPLOY REPORT OWES, AND THE ONE THING IT MUST NEVER SAY. S6e.
+ * WHAT A DEPLOY REPORT OWES, AND THE ONE THING IT MUST NEVER SAY.
  *
  * `scripts/deploy-preview.ts` established what a deploy report is for, and this
  * module is the part of it a SECOND deploy needed: the phase clock, the node's
@@ -8,7 +8,7 @@
  * deploy there was.
  *
  * **AND ONE THING THAT IS NEW HERE RATHER THAN LIFTED: THE SCREEN GUARD.**
- * `C236`.
+ *
  *
  * A shielded output addressed to a vault, without a `deposit` call, is money on
  * chain that nobody can ever spend — `deposit` does `receiveShielded` AND
@@ -87,7 +87,7 @@ export function createScreen(
  * ------------------------------------------------------------------ */
 
 /**
- * How long each phase took, recorded as it goes. `R1b`.
+ * How long each phase took, recorded as it goes.
  *
  * Printed on SUCCESS AND ON REFUSAL alike — a refusal after nine minutes in
  * "Deploying" and a refusal after four seconds are different failures and the
@@ -135,7 +135,7 @@ export function phaseClock(say: (line?: string) => void) {
  * ------------------------------------------------------------------ */
 
 /**
- * Runs a promise, or gives up on it out loud. `M-112`.
+ * Runs a promise, or gives up on it out loud.
  *
  * **A `try/catch` cannot save you from a promise that never settles**, and that
  * is not hypothetical: a deploy sat silent for seven minutes inside
@@ -183,7 +183,7 @@ export function describeError(
   /*
    * A dropped websocket carries no rejection code, because the chain never saw
    * the transaction. Without saying so it reads like a protocol failure and
-   * sends you looking in the wrong place. M-23, M-59.
+   * sends you looking in the wrong place.
    */
   if (/normal closure|disconnected|socket hang up|ECONNRESET/i.test(String(msg))) {
     bits.push(`${pad}  \x1b[1mthe node websocket dropped — the transaction was never submitted, so this is worth retrying\x1b[0m`);

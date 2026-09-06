@@ -35,7 +35,7 @@ export function newWrappingKeypair(): WrappingKeypair {
 
 /**
  * THE PUBLIC NAME OF A SECRET, so a server that cannot hold the secret can
- * still tell who holds it. `C35`.
+ * still tell who holds it.
  *
  * A bundle key is symmetric: the server stores ciphertext wrapped to it and has
  * no way to distinguish a real wrap from noise. That is fine until a decision
@@ -99,10 +99,10 @@ export const newSymmetricKey = (): Hex => toHex(randomBytes(32));
 
 /**
  * THE PROPOSAL'S SALT. THIRTY-TWO BYTES, BECAUSE A CIRCUIT ARGUMENT SAYS SO.
- * `C371`, `S43`.
+ *
  *
  * **SEPARATE FROM `newNonce`, WHICH STOOD ABOVE UNTIL `S44` DELETED IT.**
- * `T-204`. It was DECLARED as `commit`'s nonce (`:93-95`), where the width is
+ * It was DECLARED as `commit`'s nonce (`:93-95`), where the width is
  * nobody's business: the value is concatenated into a string and hashed, so
  * every width works and none is required. It was ALSO the proposal salt, at
  * five sites in `src/core/account.ts`, and there the width is a contract's
@@ -293,7 +293,7 @@ export function canonical(value: unknown): string {
 }
 
 /* ------------------------------------------------------------------ *
- * bigint over the wire (M-125)
+ * bigint over the wire
  * ------------------------------------------------------------------ */
 
 /**
@@ -337,7 +337,7 @@ const isTagged = (v: unknown): v is Record<string, string> =>
  * fix is a one-line replacer written at the server, and it would have been a
  * SECOND definition of the wire encoding: the client revives `{"$n":…}` because
  * that is what `canonical` emits, and two places deciding what the tag looks
- * like is this project's oldest failure (M-104).
+ * like is this project's oldest failure.
  */
 export const bigintJsonReplacer = (_key: string, value: unknown): unknown =>
   typeof value === 'bigint' ? { [BIGINT_TAG]: value.toString() } : value;

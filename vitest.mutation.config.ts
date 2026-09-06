@@ -26,7 +26,7 @@
  * which passes no `--config`: its mutation 22 deletes a `pureCircuits` call
  * site `docs/design/edges.json` records, the gate threw, and vitest emitted
  * `logs/mutate-authority/mutation-22.json` — 483 bytes, 0 suites, 0 assertions
- * against 22 and 75 everywhere else in the same run. `T-295`.
+ * against 22 and 75 everywhere else in the same run.
  *
  * The mutation predicted to trip it first HERE is still `[3]` (`MUTATE.command:212`),
  * the first that deletes an `assert`: `[1]` and `[2]` (`:202`, `:207`) edit
@@ -80,7 +80,7 @@
  * both files would still look right.
  *
  * `dropDocGate` below REFUSES rather than returning the list unchanged when the
- * entry it removes is not there. `C238`, `C263`: a subtraction that subtracts
+ * entry it removes is not there. A subtraction that subtracts
  * nothing is a check that cannot fail. Rename or delete
  * `doc-freshness.globalSetup.ts` and this file throws at load, naming what
  * happened, instead of quietly becoming a copy of `vitest.config.ts` under a

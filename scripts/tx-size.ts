@@ -83,7 +83,7 @@
  *
  * ── WHAT THIS MODULE DOES NOT DO ─────────────────────────────────────────────
  *
- * It does not change, split or shrink anything. It measures. `R1c`: a contract
+ * It does not change, split or shrink anything. It measures. A contract
  * split is a redeploy of everything and a rewrite of the vault system's
  * assumptions, and it must not be chosen from a guess.
  *
@@ -256,7 +256,7 @@ export function measureTransaction(tx: any, stage: string, LedgerParameters?: an
 }
 
 /**
- * ALL FIVE DIMENSIONS, NOT JUST BYTES. `C218`.
+ * ALL FIVE DIMENSIONS, NOT JUST BYTES.
  *
  * `block_usage` — the serialised size — is one of five, and the node takes the
  * LARGEST of the five: `midnight-node@d9729c13`,

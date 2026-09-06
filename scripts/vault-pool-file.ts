@@ -1,6 +1,6 @@
 /**
  * **WHERE A VAULT'S SEALED NOTE POOL LIVES ON DISK, AND WHY IT IS NOT IN
- * `src/`.** `S6f`, `C242`.
+ * `src/`.**
  *
  * `src/midnight/vault-pool.ts` ends with `MemorySealedPoolStore` and says of it
  * that it is *"the smallest store with the right properties. Good enough to run
@@ -85,7 +85,7 @@ export class FileSealedPoolStore implements SealedPoolStore {
        * NOT a lookup miss. A store built for one vault, asked about another, is
        * a caller holding the wrong store — and answering `null` would read as
        * *"that vault has no pool"*, which is how a second vault gets a
-       * fabricated empty one. The address is not printed (`C236`).
+       * fabricated empty one. The address is not printed.
        */
       throw new Error(
         'this note pool store was built for a different vault than the one it is being asked '

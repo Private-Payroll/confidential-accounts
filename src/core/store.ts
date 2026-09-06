@@ -69,7 +69,7 @@ export class MemoryStore {
   putUser(u: User) { this.data.users[u.id] = u; this.flush(); }
 
   /*
-   * **THE DEVICE STORE WENT WITH THE ENVELOPE.** `PI4a`.
+   * **THE DEVICE STORE WENT WITH THE ENVELOPE.**
    *
    * `putDevice`, `getDevice`, `listDevices` and `replaceDeviceEnvelope` are
    * deleted. The last of those existed so that removing a device — mint a new
@@ -80,7 +80,7 @@ export class MemoryStore {
   getUser(id: string) { return this.data.users[id] ?? null; }
 
   /*
-   * **`getUserByEmail` IS DELETED.** `PI4b`.
+   * **`getUserByEmail` IS DELETED.**
    *
    * It found the row a password sign-in was for, and `register` used it to
    * refuse a second row for one email. **Both callers went with the password**,
@@ -103,7 +103,7 @@ export class MemoryStore {
   }
 
   /*
-   * Accounts are stored SEALED. S-8, M-96.
+   * Accounts are stored SEALED.
    *
    * The store can no longer answer "what is this company called" or "who is on
    * it" — it holds `memberUserIds`, which are opaque, and ciphertext. That is
@@ -146,7 +146,7 @@ export class MemoryStore {
   }
 
   /*
-   * Employees are stored SEALED. S-9.
+   * Employees are stored SEALED.
    *
    * The store cannot sort by name any more, because it cannot read one — and
    * that is the correct outcome rather than a limitation to work around. Sorting

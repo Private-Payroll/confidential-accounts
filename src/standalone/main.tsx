@@ -56,7 +56,7 @@ const plugins = new PluginService(store, accounts);
 // build since `PI4b`**: this holds the session and the sealed bundle, and who
 // somebody is comes from their wallet. The vault is sealed under a key the shim
 // never sees, exactly as in the hosted build.
-//
+
 // IN-MEMORY SESSIONS AND LIMITER ARE THE RIGHT ANSWER HERE AND ONLY HERE.
 // There is no server and no second process, so "per-process" is "per-tab",
 // which is what a single-tab build wants: closing it ends the session, and
@@ -182,7 +182,7 @@ async function route(url: URL, init?: RequestInit): Promise<Response> {
   }
   if (p === '/api/me/keys' && method === 'PUT') {
     /* **THE ENVELOPE REFUSAL IS GONE WITH THE ENVELOPE**, in both builds and in
-     * the same turn. `PI4a`. There is no bundle key and no device copy, so the
+     * the same turn. There is no bundle key and no device copy, so the
      * bundle is the only thing there is to replace. */
     const who = await caller(init);
     /* `C40`, same refusal as hosted and written in the same turn. */
@@ -214,7 +214,7 @@ async function route(url: URL, init?: RequestInit): Promise<Response> {
       // Sealed, exactly as the server sends it. The name and the roster are
       // inside the envelope and this half of the app does not hold the key
       // either — the standalone build has no server, so "we cannot read it"
-      // has to mean the same thing here. M-96.
+      // has to mean the same thing here.
       accounts: store.accountsForUser(u.id),
     });
   }
@@ -269,7 +269,7 @@ async function route(url: URL, init?: RequestInit): Promise<Response> {
     if (seg[3] === 'state' && method === 'GET') return ok(await accounts.readState(id, q.get('viewingKey') ?? ''));
     if (seg[3] === 'proposals' && method === 'GET') return ok(store.listProposals(id));
     if (seg[3] === 'runs' && method === 'GET') return ok(store.listRuns(id));
-    // `deposit` STOOD HERE. `C292`: the account keeps no book, so there is
+    // `deposit` STOOD HERE. The account keeps no book, so there is
     // nothing to deposit into. Removed on both servers in the same turn — a
     // route the hosted build refuses and the standalone build answers is `T-11`.
     if (seg[3] === 'attest-solvency' && method === 'POST')
@@ -277,8 +277,8 @@ async function route(url: URL, init?: RequestInit): Promise<Response> {
         id, body.viewingKey, body.asset, money(body.asset, body.threshold)));
     if (seg[3] === 'people' && method === 'GET')
       /* `handedOver` beside each row, exactly as the served build answers it —
-       * `X11` §4. The one place the compiler cannot see is the one place two
-       * implementations diverge (`T-11`), and this file has been caught by that
+       * The one place the compiler cannot see is the one place two
+       * implementations diverge, and this file has been caught by that
        * before. */
       return ok(payroll.listPeople(id, body.viewingKey)
         .map(p => ({ ...p, handedOver: payroll.hasHandover(p.id) })));
@@ -322,7 +322,7 @@ async function route(url: URL, init?: RequestInit): Promise<Response> {
   if (seg[1] === 'invites' && seg[3] === 'accept-employee' && method === 'POST') {
     /*
      * **THIS DOOR IS CLOSED IN THE STANDALONE BUILD, FOR THE REASON
-     * `self-payee` IS.** `X11` §7, `C160`, `C150`.
+     * `self-payee` IS.**
      *
      * It took `body.address` as a bech32 string — the address typed into a box
      * — and sealed it here. `X11` moved that seal onto the invitee's own
@@ -351,7 +351,7 @@ async function route(url: URL, init?: RequestInit): Promise<Response> {
   if (seg[1] === 'accounts' && seg[3] === 'self-payee' && method === 'POST') {
     /*
      * **THIS DOOR IS CLOSED IN THE STANDALONE BUILD, AND CLOSING IT IS THE
-     * POINT.** `X8` §2, `C153`, `C150`.
+     * POINT.**
      *
      * It took the payee's address as PASTED TEXT, exactly as the served build
      * did, and `X7` said in as many words that pasting is safe on that one door
@@ -390,7 +390,7 @@ async function route(url: URL, init?: RequestInit): Promise<Response> {
   // /api/proposals/:id/approve
   if (seg[1] === 'proposals' && seg[3] === 'approve' && method === 'POST') {
     /*
-     * **THE SAME REFUSAL THE SERVED BUILD MAKES.** `C121`.
+     * **THE SAME REFUSAL THE SERVED BUILD MAKES.**
      *
      * There is no network in this build, so a secret in this body would not
      * cross one — which is exactly the argument that would let the two doors
@@ -412,10 +412,10 @@ async function route(url: URL, init?: RequestInit): Promise<Response> {
     if (seg[3] === 'propose' && method === 'POST')
       /* `null` run material — the same refusal the hosted route gives, in the
        * same turn, because a route the standalone answers and the hosted build
-       * refuses is `T-11`. `C375`, `S47`. */
+       * refuses is `T-11`. */
       return ok(await payroll.proposeRun(
         runId, body.viewingKey, body.proposedBy, null, body.asset));
-    // `settle` STOOD HERE. `C292`: no balance, no `PayrollService.settle`.
+    // `settle` STOOD HERE. No balance, no `PayrollService.settle`.
     // Removed on both servers in the same turn — a route the hosted build
     // refuses and the standalone build answers is `T-11`.
     if (seg[3] === 'attest' && method === 'POST')

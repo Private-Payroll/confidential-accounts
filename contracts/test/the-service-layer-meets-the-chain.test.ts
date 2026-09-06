@@ -1,6 +1,6 @@
 /**
  * **THE FIRST TIME THIS PRODUCT'S SERVICE LAYER MEETS A REAL BINDING.**
- * `S43`, board row `2y7e`, `C371`.
+ * `S43`, board row `2y7e`.
  *
  * ── WHY THIS FILE EXISTS, AND IT IS NOT THE SIXTEEN BYTES ────────────────────
  *
@@ -25,7 +25,7 @@
  * is a statement about the boundary rather than about the service. The entry
  * amount in `aRoundTheProductRaised` is also this file's, and it is not a
  * `Bytes<32>` — it is `changeCommitmentOf` argument 2, a `Uint<128>`, whose
- * range this file does NOT pin. `S43`'s `test-auditor` found that sentence
+ * range this file does NOT pin. `S43`'s test-coverage pass found that sentence
  * overclaiming with two exceptions where there are three, and it is corrected
  * here rather than argued with.
  *
@@ -135,7 +135,7 @@ async function aRoundTheProductRaised() {
    * A blocked proposal never reaches the ledger (`src/core/account.ts:2323`).
    *
    * **IT DOES NOT MAKE THE ASSERTIONS BELOW VACUOUS, WHICH IS WHAT THIS COMMENT
-   * SAID UNTIL `S43`'S `test-auditor` CHECKED IT** — every value they read is
+   * SAID UNTIL `S43`'S test-coverage pass CHECKED IT** — every value they read is
    * built at `:2241-2272`, above the `if (!verdict.blocked)` branch, and no
    * test in this file reads the ledger. The guard is kept because a round the
    * product refused to relay is not the round these tests claim to be about,
@@ -151,7 +151,7 @@ async function aRoundTheProductRaised() {
 
 /**
  * **A LEDGER THAT RECORDS WHAT THE SERVICE HANDED IT, AND CHANGES NOTHING.**
- * `S44`.
+ *
  *
  * `AccountService.propose` seals `__change` into a TRANSFER proposal, which is
  * how the three tests above name a salt without writing one. **A governance
@@ -197,7 +197,7 @@ describe('the service layer meets the chain', () => {
      * VALUE OF THIS LINE.** Against the constant this is the same number on
      * both sides of an equals — an edit to `PROPOSAL_SALT_BYTES` moves the
      * salt and the assertion together and the line stays green. `S43`'s
-     * `money-safety-auditor` and its `test-auditor` found this independently,
+     * money-safety pass and its test-coverage pass found this independently,
      * and it matters beyond this file: `2y7g` will mutate that constant, and
      * against a self-referential assertion the catch belongs to the generated
      * binding rather than to anything this round wrote. Thirty-two is the
@@ -265,7 +265,7 @@ describe('the service layer meets the chain', () => {
     const device = {
       ...privateStateFor(9),
       /* **THE SAME BLINDING BOTH HALVES OF THIS FILE USE.** It was
-       * `privateStateFor(9)`'s until `S43`'s `test-auditor` pointed out that
+       * `privateStateFor(9)`'s until `S43`'s test-coverage pass pointed out that
        * the file then held two different account blindings and never compared
        * them — so the change commitment the circuit stores could not be checked
        * against the one the service's own material produces. */
@@ -282,7 +282,7 @@ describe('the service layer meets the chain', () => {
     /* The SERVICE's vault, not `sim.propose`'s default. The two are the same
      * value today — both are the contract's `noVault()` — so taking the default
      * worked by a coincidence rather than by the test using what the service
-     * chose. `S43`'s `test-auditor`: it was the one argument of four that did
+     * chose. `S43`'s test-coverage pass: it was the one argument of four that did
      * not come from the service. */
     await sim.as(device).propose(fromHex(proposal.digest), fromHex(proposal.vault));
 
@@ -299,7 +299,7 @@ describe('the service layer meets the chain', () => {
      * because every approval gathered against a disagreeing round is unusable.
      * Without this line a mismatch between the service's asset key, amount or
      * batch digest and the chain's would throw in production and leave this
-     * file green. `S43`'s `test-auditor` found that gap.
+     * file green. `S43`'s test-coverage pass found that gap.
      */
     expect(toHex(sim.ledger.openProposals.lookup(fromHex(proposal.chainId)))).toBe(
       MidnightCommitments.changeCommitment(
@@ -374,7 +374,7 @@ describe('the service layer meets the chain', () => {
 
   it('the range is refused where the change is BUILT, not left to the binding', () => {
     /*
-     * **`T-205`, SETTLED. `S46`, and the trace is its `money-safety-auditor`'s.**
+     * **`T-205`, SETTLED. `S46`, and the trace is its money-safety pass's.**
      *
      * **THE ANSWER TO `S43`'s QUESTION: over-ceiling was REACHABLE, negative was
      * not.** The live door is the plug-in one — `POST /api/accounts/:id/plugins`
@@ -441,7 +441,7 @@ describe('the service layer meets the chain', () => {
     /*
      * **THE MATCHERS NAME THE ARGUMENT, BECAUSE THIS TEST'S TITLE DOES.**
      * `/Bytes<32>/` alone matches arguments 1, 2 and 3 of `proposalIdOf`
-     * identically — measured by `S43`'s `test-auditor` — so a regression that
+     * identically — measured by `S43`'s test-coverage pass — so a regression that
      * narrowed `commit()` instead of the salt would leave this test green
      * under a name claiming it pinned the salt's refusal.
      */
@@ -458,7 +458,7 @@ describe('the service layer meets the chain', () => {
   });
 
   /**
-   * **`C373`. A GOVERNANCE ROUND, DRIVEN FROM `AccountService` TO THE CIRCUIT
+   * A GOVERNANCE ROUND, DRIVEN FROM `AccountService` TO THE CIRCUIT
    * THAT CONSUMES ITS PAYLOAD — WHICH IS THE ONLY PLACE THE DEFECT WAS
    * VISIBLE.** `S44`, board row `2y7f`.
    *
@@ -501,7 +501,7 @@ describe('the service layer meets the chain', () => {
    * objects or off the argument list it passed its ledger.
    *
    * **WHAT THE TEST WRITES ITSELF IS FIVE THINGS, NOT THREE — COUNTED AFTER
-   * `S44`'s `test-auditor` COUNTED IT, WHICH IS THE SAME CORRECTION `S43` HAD
+   * `S44`'s test-coverage pass COUNTED IT, WHICH IS THE SAME CORRECTION `S43` HAD
    * TO MAKE TO THIS FILE'S HEADER.** (1) `NEW_THRESHOLD`, the number the round
    * is about and the number the circuit is asked for — taking it from the
    * service would compare the service to itself. (2) The FOUNDING threshold

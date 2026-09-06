@@ -3,7 +3,7 @@
  *
  *   npx tsx scripts/diagnose-state.ts     (or DIAGNOSE.command)
  *
- * `addSigner` blocks the main thread for six minutes (M-34). Phase
+ * `addSigner` blocks the main thread for six minutes. Phase
  * instrumentation ruled out every provider — the proof server, the indexer,
  * the key files, the private state store — so the time is going into the SDK's
  * own synchronous work: reconstructing the ledger from on-chain state and
@@ -44,7 +44,7 @@ const STATE_DIR = join(ROOT, '.midnight');
 const ACCOUNT_ID = 'default';
 
 /**
- * **SIGNER A IS READ FROM `.midnight/`, NOT COMPUTED.** `C334`, `S35`.
+ * **SIGNER A IS READ FROM `.midnight/`, NOT COMPUTED.**
  *
  * This script recomputes A's leaf to find it in the tree and rebuilds A's
  * private state to read the store — both of which used to work because A's
@@ -209,7 +209,7 @@ async function main() {
    *
    * The private state store is the provider that was never wrapped with the
    * phase timer, so a stall inside it has been reporting as the ambient phase
-   * for five runs. It encrypts at rest and derives a key on access (M-25),
+   * for five runs. It encrypts at rest and derives a key on access,
    * and an expensive key derivation run per access is synchronous CPU work
    * that would look exactly like what we are chasing.
    * ---------------------------------------------------------------- */

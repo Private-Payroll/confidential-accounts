@@ -1,5 +1,5 @@
 /**
- * WHO HAS BEEN PAID, ANSWERED BY THE CHAIN. X-9.
+ * WHO HAS BEEN PAID, ANSWERED BY THE CHAIN.
  *
  * The standard set for this: pay a hundred people, have three fail, see exactly
  * which three,

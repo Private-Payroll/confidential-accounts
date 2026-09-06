@@ -1,5 +1,5 @@
 /**
- * REMOVING A SECRET FROM A LINE OF TEXT BEFORE ANYTHING KEEPS IT. `C145`.
+ * REMOVING A SECRET FROM A LINE OF TEXT BEFORE ANYTHING KEEPS IT.
  *
  * ── THE ROW THIS EXISTS FOR ──────────────────────────────────────────────
  *
@@ -87,7 +87,7 @@ const RULES: ReadonlyArray<readonly [RegExp, string]> = [
    *
    * ── THE `i`, AND WHY IT IS NOT A TIGHTENING BUT A CORRECTION ───────────
    *
-   * `C148`. This rule was lower-case only, and **one capital letter anywhere in
+   * This rule was lower-case only, and **one capital letter anywhere in
    * twenty-four words turned it off entirely** — `abandon ability able` was
    * removed and `abandon ability able about above Absent…` was written to disk
    * in full, as was a phrase in capitals. The words are a working wallet in any

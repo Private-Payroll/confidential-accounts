@@ -44,7 +44,7 @@ export interface AccountKeys {
   blinding: Hex;
   /**
    * **THE LEAF'S THIRD ARGUMENT, ON THE DEVICE AND NOT ON THE ROSTER.**
-   * `T-116`, `S34`.
+   *
    *
    * The circuit reads the scope from the DEVICE's private state
    * (`signerScope()`, a witness over `AccountPrivateState.scope`), so this is
@@ -63,7 +63,7 @@ export interface AccountKeys {
 
 /**
  * **KEY MATERIAL THAT IS DURABLE BEFORE ITS LEAF IS PUBLISHED.** `C329`,
- * `S34`.
+ *
  *
  * The invite path used to POST the leaf and then seal the keyring. `putBundle`
  * rolls back and rethrows on a version conflict and the secrets were only ever
@@ -90,7 +90,7 @@ export interface PendingSeat {
 
 /**
  * **THE APPROVAL SIGNATURE IS MADE HERE, WHICH IS TO SAY ON THIS MACHINE.**
- * `C121`.
+ *
  *
  * Approving used to be a POST carrying `signingSecret`, and the server made the
  * signature. That handed a whole signing key to a party that only ever needed
@@ -104,17 +104,17 @@ export interface PendingSeat {
  * can reach `signingSecret` is a screen that can put it in a request body, which
  * is exactly the mistake being removed — so the screens no longer can.
  *
- * **WHAT IS SIGNED IS `approvalMessage(proposal)`, NOT THE DIGEST ALONE.** `S45`.
+ * **WHAT IS SIGNED IS `approvalMessage(proposal)`, NOT THE DIGEST ALONE.**
  * A digest states what a round SAYS; `chainId` states which round it IS and which
  * vault will pay. Signing the digest alone made a signature replayable across
- * rounds (`C382`) and across vaults (`C397`). One definition, in `core/account.ts`.
+ * rounds and across vaults. One definition, in `core/account.ts`.
  */
 export function signApproval(proposal: { digest: Hex; chainId: Hex }, keys: { signingSecret: Hex }): Hex {
   return sign(approvalMessage(proposal), keys.signingSecret);
 }
 
 /**
- * THIS IS A KEYRING, NOT A VAULT, AND THE RENAME IS NOT COSMETIC. `X-10`.
+ * THIS IS A KEYRING, NOT A VAULT, AND THE RENAME IS NOT COSMETIC.
  *
  * It was called `Vault`, while `src/midnight/vault-*.ts` and
  * `docs/scope-vaults-and-settlement.md` use that same word for **the thing
@@ -131,18 +131,18 @@ export interface Keyring {
   accounts: Record<string, AccountKeys>;
   /**
    * **KEYED BY SIGNING PUBLIC KEY, NOT BY ACCOUNT**, and normally empty.
-   * `C329`.
+   *
    *
    * An entry here is key material this device sealed BEFORE publishing the leaf
    * it makes, and it survives until the seat it belongs to is on the roster and
    * has been promoted into `accounts`.
    *
    * **KEYED BY THE KEY BECAUSE KEYING BY ACCOUNT DESTROYS MATERIAL.** `S34`'s
-   * `money-safety-auditor`: if a POST succeeds and the promotion then fails, an
+   * money-safety pass: if a POST succeeds and the promotion then fails, an
    * entry here holds the ONLY copy of the blinding for a leaf that is already
    * on a roster. Under an account-keyed map a second accepted invite for the
    * same account overwrites it, and that is `C325` manufactured by the fix for
-   * `C329`. A signing public key is unique per seat and is the one half of this
+   * A signing public key is unique per seat and is the one half of this
    * material the server was given, so it names the seat without naming a
    * secret.
    *
@@ -159,7 +159,7 @@ let encKey: Hex | null = null;
 let keyring: Keyring = { accounts: {} };
 let me: Me | null = null;
 /**
- * WHAT VERSION OF THE BUNDLE THIS TAB LAST SAW. `C40`, `C41`.
+ * WHAT VERSION OF THE BUNDLE THIS TAB LAST SAW.
  *
  * Sent with every write so the server can refuse one that did not see the last
  * one — without it, two devices signed in silently overwrite each other.
@@ -169,7 +169,7 @@ let me: Me | null = null;
  */
 let bundleVersion = 0;
 /**
- * THE SUBWALLET THIS TAB SIGNED IN AS, or null for a password sign-in. `PI1`.
+ * THE SUBWALLET THIS TAB SIGNED IN AS, or null for a password sign-in.
  *
  * In memory only, like `encKey` and for the same reason — a reload signs you
  * out, and putting it in storage would put it where any script on the page can
@@ -179,7 +179,7 @@ let bundleVersion = 0;
 let walletAddress: string | null = null;
 /**
  * **THE KEY THE WALLET RELEASED, AND WHICH COMPANY IT WAS RELEASED FOR.**
- * `X7` §1, `PI2b`, `C135`.
+ *
  *
  * `encKey` alone cannot answer this. It means *"the key that opens the bundle,
  * however this tab came by it"* — a password-derived key and a wallet-released
@@ -203,7 +203,7 @@ let releasedCompanyKey: { accountId: string; key: Hex } | null = null;
 export const currentUser = () => me;
 export const signedInWallet = () => walletAddress;
 /**
- * **THE COMPANY KEY THIS TAB HOLDS FOR `accountId`, OR NULL.** `X7` §1.
+ * **THE COMPANY KEY THIS TAB HOLDS FOR `accountId`, OR NULL.**
  *
  * Null is the ordinary answer and is never an error to paper over: a password
  * sign-in has no released key at all, and a tab that unlocked a DIFFERENT
@@ -255,7 +255,7 @@ export const api = async (path: string, opts?: RequestInit) => {
 /* ---------------- sign in and out ---------------- */
 
 /*
- * **`register` AND `signIn` ARE DELETED.** `PI4b`, `C129`.
+ * **`register` AND `signIn` ARE DELETED.**
  *
  * They were the client half of the password: `derive` stretched it with
  * argon2id, the `authKey` half went to `/api/auth/register` or
@@ -274,7 +274,7 @@ export const api = async (path: string, opts?: RequestInit) => {
 /* ---------------- the wallet dialog, and the page behind it ---------------- */
 
 /**
- * **THE PAGE BEHIND THE DIALOG HAS TO SHOW THAT IT IS WAITING.** `C154`.
+ * **THE PAGE BEHIND THE DIALOG HAS TO SHOW THAT IT IS WAITING.**
  *
  * A person who presses a button, sees nothing change, and cannot see the window
  * that opened behind their browser presses it again — and a second press is a
@@ -302,7 +302,7 @@ const nowWaiting = (dialog: WalletDialog | null): void => {
 
 /**
  * **THE WINDOW IS OPENED HERE, AND EVERY CALLER CALLS THIS BEFORE ITS FIRST
- * `await`.** `C154`. That is the whole repair, and it is one line at each of
+ * `await`.** That is the whole repair, and it is one line at each of
  * the four call sites rather than a rule written down somewhere.
  *
  * `already` is the dialog a longer journey opened in its own click — creating a
@@ -356,7 +356,7 @@ export async function signInWithWallet(
   view: Openable = window as never,
 ): Promise<Me> {
   /*
-   * **OPENED HERE, IN THE CLICK, BEFORE ONE BYTE HAS BEEN AWAITED.** `C154`.
+   * **OPENED HERE, IN THE CLICK, BEFORE ONE BYTE HAS BEEN AWAITED.**
    * `scripts/mutate-wallet-dialog.mjs` 01 moves this line below the challenge
    * and a test dies by name.
    */
@@ -407,7 +407,7 @@ async function finishWalletSignIn(
 
 /**
  * **OPENING THE KEYRING WITH THE KEY THE WALLET RELEASED.** `docs/NEXT.md`
- * PI2a, `docs/scope-payroll-identity.md` §9b, `C129`.
+ * PI2a, `docs/scope-payroll-identity.md` §9b.
  *
  * The half `PI1` could not build. Three steps, and a password appears in none
  * of them:
@@ -436,14 +436,14 @@ async function finishWalletSignIn(
  * laptop opens the same bundle. `wallet-unlock.test.ts` holds that.
  */
 /**
- * **ASKING THE WALLET WHERE TO PAY THIS PERSON.** `X8` §2, `C153`.
+ * **ASKING THE WALLET WHERE TO PAY THIS PERSON.**
  *
  * It returns the three things `POST /api/accounts/:id/self-payee` needs and
  * **judges none of them**: the handle, the nonce, and whatever the wallet
  * answered. `src/core/wallet-payee.ts` decides on the server, where the record
  * is written — a check made in this page would be a second opinion about a
  * value the server has to judge for itself, and it would drag `ledger-v9` into
- * the bundle (`C149`).
+ * the bundle.
  *
  * **THE CHALLENGE IS ASKED FOR BEHIND THE MEMBERSHIP GATE**, on the company
  * this is about, because the row it leads to is on that company's roster.
@@ -486,7 +486,7 @@ export async function unlockWithWallet(
   if (!token) throw new Error('not signed in');
 
   /*
-   * **OPENED HERE, IN THE CLICK, BEFORE THE COMPANY IS ASKED FOR.** `C154`.
+   * **OPENED HERE, IN THE CLICK, BEFORE THE COMPANY IS ASKED FOR.**
    * `scripts/mutate-wallet-dialog.mjs` 02 moves this line below that question
    * and a test dies by name.
    */
@@ -518,7 +518,7 @@ async function unlockOnceOpen(
   const r = await api('/api/me/keys');
   /*
    * **THE ENVELOPE REFUSAL THAT WAS HERE IS DELETED WITH THE ENVELOPE.**
-   * `PI4a`, `A-17`, `C35`.
+   * `PI4a`, `A-17`.
    *
    * It refused an account whose bundle was sealed under a bundle key rather
    * than directly — *"a device envelope, which a wallet-released key does not
@@ -551,7 +551,7 @@ async function unlockOnceOpen(
   }
   encKey = ek;
   /* **RECORDED WITH THE COMPANY IT BELONGS TO**, so a payslip key can only ever
-   * be derived from the key this wallet released for THIS company. `X7` §1. */
+   * be derived from the key this wallet released for THIS company. */
   releasedCompanyKey = { accountId, key: ek };
   keyring = opened;
   bundleVersion = typeof r.version === 'number' ? r.version : 0;
@@ -568,7 +568,7 @@ export function forgetLocally() {
   token = null; encKey = null; keyring = { accounts: {} }; me = null; walletAddress = null;
   releasedCompanyKey = null;
   /*
-   * **AND THE FOUNDER'S UNSEALED SECRETS.** `PI3`.
+   * **AND THE FOUNDER'S UNSEALED SECRETS.**
    *
    * `pendingCompany` holds the only copy in existence of a founder's signing
    * secret, wrapping secret and blinding, between the company being created and
@@ -634,7 +634,7 @@ export async function rememberAccount(accountId: string, keys: AccountKeys) {
 
 /**
  * **NOTHING MAY SILENTLY REPLACE KEY MATERIAL THAT IS ALREADY HERE.** `S34`'s
- * `money-safety-auditor`, and it is the worst thing that audit found.
+ * money-safety pass, and it is the worst thing that audit found.
  *
  * `keyring.accounts` holds ONE entry per account and every writer used to
  * assign into it unconditionally. The field that is destroyed is the
@@ -655,7 +655,7 @@ function refuseToClobber(accountId: string, incoming: AccountKeys) {
 }
 
 /**
- * **STEP ONE OF ACCEPTING A SEAT: MAKE THE MATERIAL DURABLE.** `C329`.
+ * **STEP ONE OF ACCEPTING A SEAT: MAKE THE MATERIAL DURABLE.**
  *
  * Nothing that is not durable should reach a roster, so this is what runs
  * before the leaf is POSTed rather than after. If it refuses — a version
@@ -722,7 +722,7 @@ export async function promotePendingSeat(signingPublicKey: Hex, signerId: string
 }
 
 /**
- * **THE DOOR FOR A SEAT THAT WAS PUBLISHED AND NOT FINISHED.** `C329`.
+ * **THE DOOR FOR A SEAT THAT WAS PUBLISHED AND NOT FINISHED.**
  *
  * Called on the way into a company, before anything asks for that company's
  * keys. Nothing to do is the ordinary case and costs no write.
@@ -732,7 +732,7 @@ export async function promotePendingSeat(signingPublicKey: Hex, signerId: string
  * The first version trial-unwrapped each wrapped viewing key with the pending
  * wrapping secret, took the `signerId` written beside whichever ciphertext
  * opened, and said in its own comment that a substituted roster could not forge
- * one. **That was false and `S34`'s `money-safety-auditor` caught it (rule
+ * one. **That was false and `S34`'s money-safety pass caught it (rule
  * 14).** `wrapKey` is public-key sealing: anyone holding the wrapping PUBLIC
  * key — which this device POSTed to the server one step earlier — can produce a
  * ciphertext that opens under the matching secret, and the `signerId` beside it
@@ -764,7 +764,7 @@ export async function finishPendingSeat(
 
 /**
  * The one place the bundle is written, so the version cannot be forgotten by
- * one caller and remembered by another. `C40`.
+ * one caller and remembered by another.
  *
  * A refusal means another device changed the keys since this tab read them.
  * **Retrying would erase that change**, so it is surfaced rather than swallowed
@@ -793,7 +793,7 @@ async function putBundle() {
 /* ---------------- bringing a company into being ---------------- */
 
 /**
- * **A COMPANY THAT EXISTS AND WHOSE KEYS THIS TAB HAS NOT SEALED YET.** `PI3`.
+ * **A COMPANY THAT EXISTS AND WHOSE KEYS THIS TAB HAS NOT SEALED YET.**
  *
  * The window between step 1 and step 3 below is the only genuinely dangerous
  * moment in this round, and it is dangerous because of what `create` returns:
@@ -818,7 +818,7 @@ export const companyAwaitingSetup = (): string | null => pendingCompany?.account
 
 /**
  * **SOMEBODY WITH A WALLET STARTS A COMPANY.** `docs/NEXT.md` PI3, `C141`,
- * `C129`, `C136`, `C140`.
+ *
  *
  * ── THE ORDERING PROBLEM, WHICH IS THE WHOLE ROUND ────────────────────────
  *
@@ -833,7 +833,7 @@ export const companyAwaitingSetup = (): string | null => pendingCompany?.account
  * because the second cannot precede the first:
  *
  *   1. **The company is brought into being and the LEDGER assigns its address.**
- *      Nothing on this side invents one. `C136`: the identifier is the chain's
+ *      Nothing on this side invents one. The identifier is the chain's
  *      *because it is not ours to mint*, and `C140` records which it was.
  *   2. **The wallet is asked for that company's key** — through
  *      `unlockWithWallet`, so the company still comes from the authenticated
@@ -892,7 +892,7 @@ export async function createCompanyWithWallet(
    * become the exception to.
    */
   /*
-   * **THE WINDOW OPENS IN THE PRESS, AND THE COMPANY IS MADE AFTER IT.** `C154`.
+   * **THE WINDOW OPENS IN THE PRESS, AND THE COMPANY IS MADE AFTER IT.**
    *
    * This journey is the one that cannot be repaired by reordering two lines:
    * step 2 needs a company, and a company takes a round trip to make. So the
@@ -916,7 +916,7 @@ export async function createCompanyWithWallet(
       wrappingSecret: mine.wrappingSecret,
       blinding: mine.blinding,
       /* The scope the founder's own leaf was made under, carried from the
-       * response rather than defaulted here. `T-116`. */
+       * response rather than defaulted here. */
       scope: mine.scope,
     },
   };
@@ -957,7 +957,7 @@ export async function finishCompanyCreation(
    * wallet the address the creation response happened to carry. Two things
    * follow from going the long way round, and both are the round:
    *
-   *   · the company comes from the authenticated session (`PI2a`), so this new
+   *   · the company comes from the authenticated session, so this new
    *     door is not the one that takes a company from a caller; and
    *   · `C140`'s guard is in the path, so **a company whose address no chain
    *     assigned is refused here** — before anything is sealed under a key
@@ -987,7 +987,7 @@ export function viewingKeyFor(account: { id: string; wrappedKeys: any[] }): Hex 
 }
 
 /**
- * Opens an account the server just served us. M-96.
+ * Opens an account the server just served us.
  *
  * The server sends ciphertext because since M-96 that is all it has: the company
  * name, the signer list, the roles and the spending limits are sealed under a

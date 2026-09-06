@@ -52,7 +52,7 @@ export interface SignerSecrets {
   blinding: Hex;
   /**
    * **THE LEAF'S THIRD ARGUMENT, TRAVELLING WITH THE MATERIAL THAT MADE IT.**
-   * `T-116`, `S34`.
+   *
    *
    * It went with the secrets and not onto the roster because that is where the
    * circuit reads it: `signerScope()` is a witness over the DEVICE's
@@ -74,7 +74,7 @@ export interface CreatedAccount {
 
 /**
  * `threshold` here is OUR COPY of the number the account was opened with on the
- * ledger. It is rendered; it is not the bar. `R4`.
+ * ledger. It is rendered; it is not the bar.
  */
 export const defaultPolicy = (threshold: number): Policy => ({
   threshold,
@@ -82,7 +82,7 @@ export const defaultPolicy = (threshold: number): Policy => ({
 });
 
 /**
- * **TWO ANSWERS FROM TWO PLACES, AND THE TYPE KEEPS THEM APART.** `R4`.
+ * **TWO ANSWERS FROM TWO PLACES, AND THE TYPE KEEPS THEM APART.**
  *
  * `blocked` is OURS: this service declining to relay a proposal because the
  * company set a ceiling and asked us to apply it. Nobody's money moves and
@@ -104,7 +104,7 @@ export interface PolicyVerdict {
 
 /**
  * **THE LEDGER'S ANSWER ABOUT ONE ROUND, OR THE FACT THAT WE HAVE NONE.**
- * `R4`.
+ *
  *
  * Deliberately a separate value from `LedgerStatus` itself, so that a caller
  * has to reduce a status to an answer ONCE and then pass that answer around.
@@ -119,7 +119,7 @@ export type ChainApprovals =
       threshold: number;
       /**
        * **THE VAULT THAT THRESHOLD IS THE THRESHOLD OF WAS CARRIED HERE, AND IT
-       * IS GONE WITH THE CHECK IT EXISTED FOR.** `C286`, `T-216`, `S52`.
+       * IS GONE WITH THE CHECK IT EXISTED FOR.**
        *
        * It was here so `evaluatePolicy` could refuse a pair that did not agree.
        * **That comparison could never fail:** `approvalsOnChain` returned its
@@ -174,7 +174,7 @@ export function approvalsOnChain(
    * moved, and when the real ledger lands this call site does not change.
    */
   /*
-   * **THE BAR IS THIS PROPOSAL'S VAULT'S, NOT THE ACCOUNT'S.** `R5`, `C172`.
+   * **THE BAR IS THIS PROPOSAL'S VAULT'S, NOT THE ACCOUNT'S.**
    * `thresholdFor` is one definition, in `core/ledger.ts`, mirroring the
    * circuit at `contracts/src/ConfidentialAccount.compact:1358` — the vault's
    * own number if the chain holds one for it, the account's otherwise.
@@ -200,7 +200,7 @@ export function approvalsOnChain(
 }
 
 /**
- * **WHY WE HAVE NO USABLE ACCOUNT RULE FROM THE LEDGER.** `X19`.
+ * **WHY WE HAVE NO USABLE ACCOUNT RULE FROM THE LEDGER.**
  *
  * Three reasons and not one, because a guard that refuses has to say which
  * silence it hit — they are three different things to go and look at. An
@@ -211,7 +211,7 @@ export type SeatingUnknown = 'no-status' | 'unreadable' | 'incomplete';
 
 /**
  * **THE RULE THE CONTRACT ACTUALLY APPLIES TO THIS ACCOUNT, OR THE FACT THAT WE
- * DO NOT HAVE IT.** `X19`, `C177`. Deliberately the same shape as
+ * DO NOT HAVE IT.** Deliberately the same shape as
  * `ChainApprovals` above, for the same reason: a caller has to reduce a status
  * to an answer ONCE and then pass that answer around.
  *
@@ -255,7 +255,7 @@ export function seatingOnChain(status: LedgerStatus | null): ChainSeating {
 }
 
 /**
- * **WHAT OUR STORED COPY SAYS, WHERE IT DISAGREES WITH THE CHAIN.** `X19`.
+ * **WHAT OUR STORED COPY SAYS, WHERE IT DISAGREES WITH THE CHAIN.**
  *
  * The guards below no longer read our copy, so drift can no longer change one
  * of their outcomes. It is still worth saying out loud when one of them
@@ -289,7 +289,7 @@ export function seatingDrift(account: Account, seating: ChainSeating): string {
 
 /**
  * **IN A GUARD, NOT KNOWING MEANS REFUSING. THAT IS THE OPPOSITE DIRECTION FROM
- * `R4` AND IT IS NOT A CONTRADICTION.** `X19`.
+ * `R4` AND IT IS NOT A CONTRADICTION.**
  *
  * `R4` established that a status we cannot read is a distinct outcome from a
  * threshold that is not met, and on the approval path not knowing means not
@@ -322,7 +322,7 @@ export function requireSeating(
 
 /**
  * **HOW MANY SIGNERS COULD STILL APPROVE AFTERWARDS, TAKING THE SMALLER OF THE
- * TWO ACCOUNTS OF IT.** `X19`.
+ * TWO ACCOUNTS OF IT.**
  *
  * The BAR is the chain's and is never ours. The survivor COUNT is a different
  * question and it is not one the chain can answer alone: who is leaving is a
@@ -349,7 +349,7 @@ export function survivorsAfter(
 
 /**
  * **WHAT THIS SERVICE MAY STILL DECIDE, WHICH IS ONE THING.** `R4`, `C121`,
- * `C171`.
+ *
  *
  * It decides whether to RELAY a proposal, against ceilings the company set and
  * asked us to apply. It no longer decides whether a round is approved: that
@@ -365,7 +365,7 @@ export function survivorsAfter(
  * because agents-as-principals and delegated authority are the same mechanism
  * with different inputs, and retrofitting that later is expensive.
  *
- * `asset` is not optional and there is no default. M-125.
+ * `asset` is not optional and there is no default.
  *
  * A ceiling is a number in one currency and nothing else. Evaluating a payment
  * against a limit set for a different asset is not a slightly wrong answer, it
@@ -386,7 +386,7 @@ export function evaluatePolicy(
 
   /*
    * **A PAIRING GUARD STOOD HERE AND IT COULD NOT FIRE.** `C286`, `T-216`,
-   * `S52`. It threw when `chain.vault !== vault`, and both sides were the same
+   * It threw when `chain.vault !== vault`, and both sides were the same
    * expression — `approvalsOnChain` echoed its own argument back, and the one
    * call site that reaches the `read` arm passed `proposal.vault` to both. The
    * paragraph that stood with it claimed *"a reduction taken against a
@@ -406,7 +406,7 @@ export function evaluatePolicy(
     return {
       blocked: true,
       /*
-       * IT SAYS WHOSE RULE IT IS. `R4`.
+       * IT SAYS WHOSE RULE IT IS.
        *
        * The contract has no ceiling and never sees this number. A refusal
        * phrased as though the chain had refused is a promise this product is
@@ -427,7 +427,7 @@ export function evaluatePolicy(
 
   /*
    * **THE ESCALATION FIGURE IS GONE FROM THE TYPE AS WELL AS FROM HERE.** `R5`,
-   * `C178`, `X-11`. `R4` deleted the evaluation and kept the field; this round
+   * `R4` deleted the evaluation and kept the field; this round
    * deleted the field, and the argument is in `Policy`'s own comment in
    * `core/types.ts` and at length in `docs/build-log.md`.
    *
@@ -442,7 +442,7 @@ export function evaluatePolicy(
 
   /*
    * **THE DISCRIMINANT IS A STRING AND NOT A BOOLEAN, AND THAT IS NOT A STYLE
-   * CHOICE.** `R4`.
+   * CHOICE.**
    *
    * It was `known: true | false` and `tsconfig.json` narrowed it correctly.
    * `tsconfig.scripts.json` compiles with `strict: false`, which turns off
@@ -464,7 +464,7 @@ export function evaluatePolicy(
   };
 }
 
-/* ---------------- sealing the account (S-8, M-96) ---------------- */
+/* ---------------- sealing the account ---------------- */
 
 /** What the roster envelope holds. There is no other copy of any of it. */
 interface RosterSecrets { name: string; signers: Signer[]; }
@@ -511,7 +511,7 @@ export function sealAccount(
       'policy', account.id, { policy: account.policy, recovery: account.recovery }, viewingKey),
     /*
      * **CARRIED, NOT RECOMPUTED, AND CARRIED HERE BECAUSE THIS IS WHERE IT
-     * WOULD BE LOST.** `PI2a`.
+     * WOULD BE LOST.**
      *
      * `save()` rebuilds the stored record from an opened `Account` on every
      * write, so a readable field this function does not copy is written once at
@@ -523,7 +523,7 @@ export function sealAccount(
     contractAddress: account.contractAddress ?? null,
     /*
      * **AND SO DOES ITS PROVENANCE, FOR THE IDENTICAL REASON.** `PI2b`,
-     * `C140`. A source dropped on write-back reads as *we do not know*, which
+     * A source dropped on write-back reads as *we do not know*, which
      * fails closed — and a company that silently stops being unlockable is the
      * same lost afternoon as one that never was.
      */
@@ -544,7 +544,7 @@ export function openAccount(rec: SealedAccount, viewingKey: Hex): Account {
   const { name, signers } = openRecord<RosterSecrets>('roster', rec.id, rec.sealedRoster, viewingKey);
   const { policy: stored, recovery } = openRecord<PolicySecrets>('policy', rec.id, rec.sealedPolicy, viewingKey);
   /*
-   * **THE POLICY IS REBUILT FIELD BY FIELD, NOT PASSED THROUGH.** `R4`.
+   * **THE POLICY IS REBUILT FIELD BY FIELD, NOT PASSED THROUGH.**
    *
    * `openRecord` is a cast over decrypted JSON: it validates nothing, so a
    * record sealed before this round still carries the deleted auto-approve
@@ -601,7 +601,7 @@ export function openAccount(rec: SealedAccount, viewingKey: Hex): Account {
 }
 
 /**
- * **MOVES A DROP BOX TO A NEW INBOX KEY, BOTH ENVELOPES.** `X11` §7.
+ * **MOVES A DROP BOX TO A NEW INBOX KEY, BOTH ENVELOPES.**
  *
  * Written as its own function rather than inline because it is two nested
  * `openFromInbox` calls and one nested `sealToInbox`, and the shape of that
@@ -643,7 +643,7 @@ export class AccountService {
     private commitments: CommitmentScheme,
     /**
      * Injected rather than imported, for the reason the commitment scheme is:
-     * the registry becomes a Postgres table (D10), and a service that reaches
+     * the registry becomes a Postgres table, and a service that reaches
      * for a module-level singleton cannot be handed the real one.
      */
     private assets = defaultAssets,
@@ -671,7 +671,7 @@ export class AccountService {
 
     /*
      * Read once, from the scheme, and carried to every seat made below and into
-     * every secrets record that leaves here. `T-116`. Reading it per signer
+     * every secrets record that leaves here. Reading it per signer
      * would be the same value from the same place N times; reading it from
      * anywhere but the scheme would be a second spelling of a sentinel the
      * chain compares against, which is decision 0004's whole subject.
@@ -684,7 +684,7 @@ export class AccountService {
       const blinding = newBlinding();
       const id = 'sgn_' + nanoid(10);
       /*
-       * **THE PUBLIC HALF IS THE SCHEME'S, NOT THE CURVE'S.** `C328`, `S34`.
+       * **THE PUBLIC HALF IS THE SCHEME'S, NOT THE CURVE'S.**
        *
        * This line passed `sk.publicKey` — the raw ed25519 key — while the
        * contract's `requireSigner()` looks in the tree for a leaf built over
@@ -766,7 +766,7 @@ export class AccountService {
     });
 
     /*
-     * THE ADDRESS IS ASKED FOR ONCE, HERE, AND WRITTEN DOWN. `PI2a`, `C136`.
+     * THE ADDRESS IS ASKED FOR ONCE, HERE, AND WRITTEN DOWN.
      *
      * It is the company's identity to a wallet: the key that opens this
      * company's records is derived from it, on any client, for as long as the
@@ -782,7 +782,7 @@ export class AccountService {
     const assigned = await this.ledger.address(account.id);
     /*
      * **WRITTEN IN THE SAME BREATH AS THE ADDRESS, BECAUSE IT ARRIVES IN THE
-     * SAME VALUE.** `PI2b`, `C140`.
+     * SAME VALUE.**
      *
      * `Ledger.address` answers with the address AND where it came from, so
      * there is no version of this line that records one and not the other.
@@ -891,7 +891,7 @@ export class AccountService {
     }
 
     /*
-     * **NOTHING IS REFUSED HERE FOR A REUSED SUBWALLET.** `C155`, `C131`.
+     * **NOTHING IS REFUSED HERE FOR A REUSED SUBWALLET.**
      *
      * This read `if (userId) refuseReusedSubwallet(this.store, userId,
      * invite.accountId)`. The rule it enforced — one subwallet, one employer —
@@ -945,7 +945,7 @@ export class AccountService {
      * did. Now there is — the drop box — so keeping it would leave a second,
      * readable copy of a signer's name and email in the invites table for the
      * life of the account. That is the S-9 shape exactly: sealing one table and
-     * leaving the duplicate in another. S-10.
+     * leaving the duplicate in another.
      */
     invite.name = undefined;
     invite.email = undefined;
@@ -989,7 +989,7 @@ export class AccountService {
     if (!existing) throw new Error('account has no wrapped keys');
 
     /*
-     * M-69. The leaf goes in the tree, and this is not a detail.
+     * The leaf goes in the tree, and this is not a detail.
      *
      * This method used to set `status = 'active'` and stop. The viewing key was
      * re-wrapped, so the signer could READ the account — and every circuit
@@ -1007,12 +1007,12 @@ export class AccountService {
      * `proposeSigner` below.
      */
     /*
-     * WHICH approved proposal authorises this. M-128.
+     * WHICH approved proposal authorises this.
      *
      * Past the bootstrap window the contract requires one, and with several
      * proposals open at once it has to be told which. Null while bootstrapping,
      * where the contract does not look: the account cannot yet reach its own
-     * threshold, so requiring a round would deadlock it at creation (M-37).
+     * threshold, so requiring a round would deadlock it at creation.
      *
      * **AND SINCE `S35d` THERE IS NO BOOTSTRAP WINDOW, SO THIS IS ALWAYS FALSE
      * ON THE MIDNIGHT PATH.** `C340` + `C343`: the constructor takes no
@@ -1060,7 +1060,7 @@ export class AccountService {
   }
 
   /**
-   * Opens the approval round that authorises adding a signer. M-69, M-37.
+   * Opens the approval round that authorises adding a signer.
    *
    * Adding a signer to a live account is not one operation, it is a round —
    * because after M-37 a single existing signer adding signers freely would make
@@ -1088,14 +1088,14 @@ export class AccountService {
 
     const digest = this.commitments.signerAddPayload(signer.leafCommitment);
     // The change is built BEFORE the record, because its salt is what the
-    // chain's id for this proposal is derived from. M-128.
+    // chain's id for this proposal is derived from.
     const change: StateChange = {
       asset: NO_ASSET, amount: 0n, batchDigest: commit('', ''), salt: newProposalSalt(),
     };
     const proposal: Proposal = {
       id: 'prp_' + nanoid(12),
       /*
-       * `noVault()`, NAMED. `R5`. Seating a signer concerns no vault, so the
+       * `noVault()`, NAMED. Seating a signer concerns no vault, so the
        * round is measured against the account's own threshold — which is what
        * `thresholdFor(noVault())` answers by construction, because `noVault()`
        * is a hash of a domain string no vault address can equal
@@ -1118,7 +1118,7 @@ export class AccountService {
       sealedPayload: seal(canonical({ signerId, entries: [] }), viewingKey),
       digest,
       proposedBy,
-      /* `T-286`, `S58`. Kept because removing the proposer deletes their row, and
+      /* Kept because removing the proposer deletes their row, and
        * `recordStanding` would then have no role to judge the round by. Undefined
        * where the proposer is not seated, which is what this door already tolerates. */
       proposerRole: account.signers.find(sg => sg.id === proposedBy)?.role,
@@ -1143,7 +1143,7 @@ export class AccountService {
   }
 
   /**
-   * Opens the round that authorises changing the threshold. M-102.
+   * Opens the round that authorises changing the threshold.
    *
    * A round, and not a setting, because the threshold is the rule every other
    * operation on the account is measured against. Changing it with less
@@ -1172,7 +1172,7 @@ export class AccountService {
 
     /*
      * **THE SEATED COUNT IS THE LEDGER'S, AND SO IS THE THRESHOLD BELOW IT.**
-     * `X19`, `C177`. It was `account.signers.filter(active).length` and
+     * It was `account.signers.filter(active).length` and
      * `account.policy.threshold` — both OUR copies of numbers the contract
      * owns.
      *
@@ -1209,7 +1209,7 @@ export class AccountService {
     };
     const proposal: Proposal = {
       id: 'prp_' + nanoid(12),
-      /* `noVault()`: the ACCOUNT's threshold is not any vault's. `R5`. */
+      /* `noVault()`: the ACCOUNT's threshold is not any vault's. */
       chainId: this.commitments.proposalId(digest, change.salt, this.commitments.noVault()),
       vault: this.commitments.noVault(),
       accountId,
@@ -1221,7 +1221,7 @@ export class AccountService {
       sealedPayload: seal(canonical({ newThreshold, entries: [] }), viewingKey),
       digest,
       proposedBy,
-      /* `T-286`, `S58`. Kept because removing the proposer deletes their row, and
+      /* Kept because removing the proposer deletes their row, and
        * `recordStanding` would then have no role to judge the round by. Undefined
        * where the proposer is not seated, which is what this door already tolerates. */
       proposerRole: account.signers.find(sg => sg.id === proposedBy)?.role,
@@ -1246,7 +1246,7 @@ export class AccountService {
   }
 
   /**
-   * Changes the threshold once the round has reached it. M-102.
+   * Changes the threshold once the round has reached it.
    *
    * ON CHAIN FIRST, then our own copy — the same order as every other
    * governance operation here, and for the same reason. If the chain refuses,
@@ -1278,10 +1278,10 @@ export class AccountService {
     return this.open(accountId, viewingKey);
   }
 
-  /* ---------------- one vault's own threshold (R5, C172) ---------------- */
+  /* ---------------- one vault's own threshold ---------------- */
 
   /**
-   * **OPENS THE ROUND THAT GIVES ONE VAULT ITS OWN THRESHOLD.** `R5`, `C172`.
+   * **OPENS THE ROUND THAT GIVES ONE VAULT ITS OWN THRESHOLD.**
    *
    * `proposeThresholdChange`'s shape, applied to one vault instead of the
    * account, with one refusal added and one deliberately not added.
@@ -1336,7 +1336,7 @@ export class AccountService {
        *
        * IT HAS NOW BEEN WRONG THREE TIMES. It read `:2121`, was corrected to
        * `:2185`, and `C292`'s 240-line deletion moved the assert again. **Fixed
-       * in the executable string by `S27` (`T-62`), not only in this comment:**
+       * in the executable string by `S27`, not only in this comment:**
        * the assert is at `contracts/src/ConfidentialAccount.compact:2712` —
        * `assert(!(newThreshold == 0), "a vault threshold of zero would
        * authorise anything")` — verified against the source in the round that
@@ -1421,7 +1421,7 @@ export class AccountService {
       sealedPayload: seal(canonical({ vault, newThreshold, entries: [] }), viewingKey),
       digest,
       proposedBy,
-      /* `T-286`, `S58`. Kept because removing the proposer deletes their row, and
+      /* Kept because removing the proposer deletes their row, and
        * `recordStanding` would then have no role to judge the round by. Undefined
        * where the proposer is not seated, which is what this door already tolerates. */
       proposerRole: account.signers.find(sg => sg.id === proposedBy)?.role,
@@ -1437,7 +1437,7 @@ export class AccountService {
   }
 
   /**
-   * **APPLIES IT, ONCE THE ROUND HAS REACHED THE ACCOUNT'S THRESHOLD.** `R5`.
+   * **APPLIES IT, ONCE THE ROUND HAS REACHED THE ACCOUNT'S THRESHOLD.**
    *
    * ON CHAIN AND NOWHERE ELSE. `setThreshold` writes our copy afterwards
    * because `Policy.threshold` exists to be rendered; there is no copy of a
@@ -1459,7 +1459,7 @@ export class AccountService {
    * is `< 1` (`src/core/ledger.ts:1670`, `src/midnight/ledger.ts:1349`) and
    * nothing anywhere compares the vault against the sentinel.
    *
-   * **AND WHAT IT WOULD HAVE WRITTEN IS NOT AN INERT ROW. `C394`, `T-268`.**
+   * **AND WHAT IT WOULD HAVE WRITTEN IS NOT AN INERT ROW. `C394`.**
    * An earlier draft of this comment said `noVault()` can never be a key in the
    * contract's `thresholds` map. **That sentence is false and this repository
    * already knows it is false** — `ConfidentialAccount.compact:2764-2779` is the
@@ -1467,7 +1467,7 @@ export class AccountService {
    * nothing in that circuit excludes the sentinel. It is the same false sentence
    * that `T-268` records at `ConfidentialAccount.compact:1372-1376` and cannot
    * correct without a recompile; **`S56` copied it into a second file and its
-   * `money-safety-auditor` caught it.** `docs/corrections.md`.
+   * money-safety pass caught it.**
    *
    * **THE ROW WOULD BE READ.** `thresholdFor` (`:1358-1360`) consults the map,
    * `requireApprovedForVault` (`:1396`) calls it, and `recordPayment` reaches
@@ -1504,7 +1504,7 @@ export class AccountService {
 
   /*
    * THE VERSION THAT USED TO BE HERE WAS A LIE, AND THE REASON IS WORTH KEEPING.
-   * M-102.
+   *
    *
    * It wrote `policy.threshold` into the sealed account. The contract declares
    *
@@ -1548,10 +1548,10 @@ export class AccountService {
     return unwrapKey(wrapped, wrappingSecret);
   }
 
-  /* ---------------- removing a signer (M-106) ---------------- */
+  /* ---------------- removing a signer ---------------- */
 
   /**
-   * Who is leaving, and nothing else. M-106.
+   * Who is leaving, and nothing else.
    *
    * This used to compute a whole new signer set: the next generation, every
    * survivor's re-derived leaf, and a refusal for anybody whose blinding factor
@@ -1569,7 +1569,7 @@ export class AccountService {
       throw new Error('that signer has no leaf commitment, so they are not in the on-chain tree');
     }
     /*
-     * **THE BAR IS THE CONTRACT'S.** `X19`, `C177`. This read
+     * **THE BAR IS THE CONTRACT'S.** This read
      * `account.policy.threshold`, which is OUR copy of a number the contract
      * owns, and the dangerous direction is drift BELOW the chain's value: our
      * copy saying 2 where the contract says 3 lets this guard wave through a
@@ -1596,7 +1596,7 @@ export class AccountService {
   /**
    * Opens the round that authorises removing a signer.
    *
-   * A removal is a round for the same reason adding one is (M-37): a single
+   * A removal is a round for the same reason adding one is: a single
    * key that could drop other signers unilaterally could reduce an account to
    * itself and then approve anything alone.
    */
@@ -1615,7 +1615,7 @@ export class AccountService {
 
     const proposal: Proposal = {
       id: 'prp_' + nanoid(12),
-      /* `noVault()`: a removal concerns no vault. `R5`. */
+      /* `noVault()`: a removal concerns no vault. */
       chainId: this.commitments.proposalId(digest, change.salt, this.commitments.noVault()),
       vault: this.commitments.noVault(),
       accountId,
@@ -1627,7 +1627,7 @@ export class AccountService {
       sealedPayload: seal(canonical({ signerId, entries: [] }), viewingKey),
       digest,
       proposedBy,
-      /* `T-286`, `S58`. Kept because removing the proposer deletes their row, and
+      /* Kept because removing the proposer deletes their row, and
        * `recordStanding` would then have no role to judge the round by. Undefined
        * where the proposer is not seated, which is what this door already tolerates. */
       proposerRole: account.signers.find(sg => sg.id === proposedBy)?.role,
@@ -1674,7 +1674,7 @@ export class AccountService {
     const { rec, account } = this.load(accountId, viewingKey);
     /*
      * **READ AGAIN HERE, AND THAT IS NOT A SECOND READ OF ONE DECISION.**
-     * `X19`. `proposeRemoval` asked whether a round MAY BE OPENED, possibly
+     * `proposeRemoval` asked whether a round MAY BE OPENED, possibly
      * days ago and possibly with a different signer set on chain. This asks
      * whether the removal MAY BE PERFORMED, now. Two decisions, one capture
      * each, which is `R4`'s rule rather than an exception to it.
@@ -1806,7 +1806,7 @@ export class AccountService {
      * back — so the account is finished, with its money in it.
      *
      * **AND THE THRESHOLD IT IS MEASURED AGAINST IS THE CONTRACT'S.** `X19`,
-     * `C177`. It was `account.policy.threshold`. A guard whose entire job is to
+     * It was `account.policy.threshold`. A guard whose entire job is to
      * be conservative, deciding from a copy that can silently drift below the
      * number the contract will actually apply, is the one shape that turns this
      * check into permission to strand the account — and the damage is invisible
@@ -1859,7 +1859,7 @@ export class AccountService {
      * and there is nothing to submit. Generating a new asset blinding here
      * would change the asset key inside every change commitment already
      * approved, so a run one signature from settling could never be presented
-     * at a vault. See `StateBlinding.assetBlinding`. M-125.
+     * at a vault. See `StateBlinding.assetBlinding`.
      *
      * ONE THING IS ADDED RATHER THAN CARRIED: a new payout seed. V-63.
      *
@@ -1931,7 +1931,7 @@ export class AccountService {
        * default rather than by bad luck.
        *
        * The identical property for a pending signer is asserted twelve lines
-       * above and was green throughout. `C17`.
+       * above and was green throughout.
        */
       /*
        * **AND SINCE `X11` §7 THERE ARE TWO ENVELOPES, SO BOTH MOVE.**
@@ -2029,7 +2029,7 @@ export class AccountService {
   /**
    * The one asset a batch of entries moves, or a refusal.
    *
-   * ONE ASSET PER ROUND (M-125). `execute` moved one balance, so a proposal
+   * ONE ASSET PER ROUND. `execute` moved one balance, so a proposal
    * mixing assets was a proposal the chain could never settle, and refusing it
    * here — at the moment it is written — was the difference between a clear
    * error and a round that collects approvals and is then rejected with the fee
@@ -2078,7 +2078,7 @@ export class AccountService {
     keyEpoch: number,
   ): SealedStateAt {
     /*
-     * `canonical`, not `JSON.stringify`. M-125.
+     * `canonical`, not `JSON.stringify`.
      *
      * Every amount in here is a bigint — the balances were and the entries
      * still are — and `JSON.stringify` throws on one, which is the loud failure
@@ -2137,7 +2137,7 @@ export class AccountService {
   }
 
   /**
-   * **ONE READ OF THE BOUNDARY, REDUCED TO A VALUE, PER DECISION.** `X19`.
+   * **ONE READ OF THE BOUNDARY, REDUCED TO A VALUE, PER DECISION.**
    *
    * The three guards that stop an account being stranded all ask the same two
    * questions — what is the bar, and how many seats are there — and all three
@@ -2199,7 +2199,7 @@ export class AccountService {
   /*
    * ---------------- value in ----------------
    *
-   * THERE IS NO VALUE-IN PATH AT THE ACCOUNT, AND THAT IS THE DECISION. `C292`.
+   * THERE IS NO VALUE-IN PATH AT THE ACCOUNT, AND THAT IS THE DECISION.
    *
    * `deposit` stood here. It was the only thing that ever funded an account
    * balance, and it funded a book the account did not need: this service's
@@ -2224,12 +2224,12 @@ export class AccountService {
      * Both are derived from the entries where there are any — passing them
      * separately as well would be the same figure written twice, which is this
      * project's oldest failure. They are arguments only so that a proposal with
-     * no entries still names an asset. M-125.
+     * no entries still names an asset.
      */
     asset?: AssetId; amount?: bigint;
     /**
      * **REFUSED FOR ANY VALUE BUT `noVault()`, AND THE CAPABILITY IT USED TO
-     * DOCUMENT HAS NEVER WORKED ON CHAIN.** `C367`, `T-237`, `S55`.
+     * DOCUMENT HAS NEVER WORKED ON CHAIN.**
      *
      * It read that scoping a governance round to a vault was *expressible and
      * testable* before the vault path lands. **It was expressible and it was
@@ -2286,7 +2286,7 @@ export class AccountService {
       accountId: args.accountId, kind: args.kind, sealedPayload, proposedBy: args.proposedBy,
     }), '');
     /*
-     * WHAT THE CHAIN CALLS THIS PROPOSAL. M-128.
+     * WHAT THE CHAIN CALLS THIS PROPOSAL.
      *
      * `commit(digest, change.salt)`, computed here rather than read back from
      * the chain, so the proposal has an identity before it is submitted — which
@@ -2295,7 +2295,7 @@ export class AccountService {
      * the same salt inside `propose`.
      */
     /*
-     * **AND THE VAULT IS IN IT.** `R5`. `proposalIdOf(payload, vault, salt)` —
+     * **AND THE VAULT IS IN IT.** `proposalIdOf(payload, vault, salt)` —
      * `contracts/src/ConfidentialAccount.compact:874` — so the vault is part of
      * what the round IS rather than a label on it. Two rounds identical but for
      * their vault are two different ids, and an approval collected against one
@@ -2306,7 +2306,7 @@ export class AccountService {
 
     /*
      * **NO CHAIN READ HERE, AND THAT IS THE DELIBERATE HANDLING OF THE
-     * ASYNCHRONY RATHER THAN A GAP.** `R4`.
+     * ASYNCHRONY RATHER THAN A GAP.**
      *
      * `this.ledger.propose` is thirty lines below. At this instant the round
      * does not exist on chain, so a `status()` call could only ever answer "not
@@ -2350,7 +2350,7 @@ export class AccountService {
      * round on chain for something this service has already refused.
      *
      * **THE REASON THAT STOOD HERE WAS A RULE THE CONTRACT HAS NOT HAD SINCE
-     * M-128.** `T-223` `P3`, `S52`. It read *"the contract allows exactly one
+     * M-128.** `T-223` `P3`. It read *"the contract allows exactly one
      * open proposal, so a blocked one sitting on chain would have to be
      * cancelled before anything legitimate could be proposed"* — and `:2711`
      * in this same file, `src/core/ledger.ts:1151` and
@@ -2380,7 +2380,7 @@ export class AccountService {
 
   /**
    * **RAISES A PAYROLL RUN, AND IT IS A SEPARATE DOOR BECAUSE IT IS A SEPARATE
-   * ACT.** `C375`, `S47`.
+   * ACT.**
    *
    * **WHY `propose` ABOVE COULD NOT BE MADE TO DO THIS.** Its payload hash is
    * an APPLICATION digest — `commit(canonical({accountId, kind, sealedPayload,
@@ -2415,7 +2415,7 @@ export class AccountService {
    *
    * **AND THE ID IS CHECKED RATHER THAN TRUSTED — BUT THE CHECK IS WEAKER THAN
    * IT LOOKS AND THIS SAYS SO.** `S47`, corrected by its own
-   * `money-safety-auditor` before it was written down. Rule 14.
+   * money-safety pass before it was written down. Rule 14.
    *
    * It recomputes `proposalId(digest, salt, vault)` from the SERVICE's own
    * scheme and compares it to what the ledger returned, so it fires when the
@@ -2468,7 +2468,7 @@ export class AccountService {
 
     /*
      * **THE ROOT IS 32 BYTES, CHECKED HERE, AND `C369` IS WHY.** `S47`, found
-     * by this round's `money-safety-auditor` against this method.
+     * by this round's money-safety pass against this method.
      *
      * `MidnightCommitments.runPayload` hands the root to `fromHex` and the
      * binding refuses anything SHORT. **A FRONT-PADDED root is silent** — it is
@@ -2521,7 +2521,7 @@ export class AccountService {
       createdAt: new Date().toISOString(),
     };
     /* **A SIXTH DOOR WITH `C378`'s SHAPE** — the row names five and `S47` added
-     * this one after it. `S55`, `T-322`. The id check runs INSIDE `raise`. */
+     * this one after it. The id check runs INSIDE `raise`. */
     if (!verdict.blocked) {
       await this.raise(proposal, args.viewingKey, async () => {
         const raised = await this.ledger.proposeRun(
@@ -2542,7 +2542,7 @@ export class AccountService {
   }
 
   /**
-   * **THE SIGNATURE ARRIVES. IT IS NOT MADE HERE.** `C121`.
+   * **THE SIGNATURE ARRIVES. IT IS NOT MADE HERE.**
    *
    * This took the signer's `signingSecret` and called `sign` on it, in this
    * process. So approving meant posting your signing key to us, and two things
@@ -2596,7 +2596,7 @@ export class AccountService {
     if (signer.status !== 'active') throw new Error('that signer has not been granted access yet');
     /*
      * **THE RECONCILE, AND ITS TRIGGER IS THE LINE BELOW.** `C377`, `T-214`,
-     * `S52`.
+     *
      *
      * This signer's approval is already on the record and the round still reads
      * `open`. That is the state `C377` leaves behind: the burn landed, the
@@ -2629,7 +2629,7 @@ export class AccountService {
     if (proposal.status === 'open' && proposal.approvals.some(a => a.signerId === signerId)) {
       /*
        * **ONE CLASS OF FAILURE IS CAUGHT HERE AND EXACTLY ONE.** `T-286`,
-       * `S58`. A reconcile exists to retry something transient — a chain read
+       * A reconcile exists to retry something transient — a chain read
        * that did not answer. `ProposerRoleGone` is not transient: the seat is
        * deleted and no later call brings it back, so re-throwing it on every
        * call is a permanent refusal of a door that has nothing to recover.
@@ -2656,7 +2656,7 @@ export class AccountService {
      * key over some OTHER digest. THE THIRD IS THE ONE THIS LINE GOT WRONG
      * UNTIL `S45`: a signature over THIS digest, made for a DIFFERENT ROUND.
      * A digest is a pure function of a round's CONTENT, so a cancelled run
-     * re-raised (`C382`) and the same run at another vault (`C397`) rebuild
+     * re-raised and the same run at another vault rebuild
      * it byte for byte. `approvalMessage` binds `chainId` beside it, and
      * `chainId` is where the salt and the vault are. It does NOT bind the
      * account, and `T-307` is that residual. `approval-signature.test.ts`.
@@ -2681,7 +2681,7 @@ export class AccountService {
 
     /*
      * **THE DURABLE WRITE, THE INSTANT THE IRREVERSIBLE ONE RETURNS.** `C377`,
-     * `T-214`, `S52`. It used to be the LAST statement of this method, with a
+     * It used to be the LAST statement of this method, with a
      * second network call and four throw sites standing between it and the
      * burn above — so a rejection in that window left the approval **spent on
      * chain and absent from the record**, and the retry was refused for ever on
@@ -2716,10 +2716,10 @@ export class AccountService {
 
   /**
    * **WHAT THE CHAIN SAYS THIS ROUND NOW STANDS AT, WRITTEN DOWN.** `C377`,
-   * `T-214`, `S52`. Extracted whole out of `approve`, unchanged in what it
+   * Extracted whole out of `approve`, unchanged in what it
    * does, so that the recovery path and the ordinary path are the same code.
    *
-   * **ONE READ, AFTER THE LEDGER ACCEPTED THE APPROVAL, AND ONE ONLY.** `R4`.
+   * **ONE READ, AFTER THE LEDGER ACCEPTED THE APPROVAL, AND ONE ONLY.**
    * It is after `this.ledger.approve` because a status captured before it would
    * be missing the approval that call just made, and the round would appear one
    * short for ever. It is a single `await` whose result is reduced once by
@@ -2733,13 +2733,13 @@ export class AccountService {
    * `approve`, because we hold the signatures, but it stopped being the number
    * that decides anything — which is the whole round.
    *
-   * **REDUCED AGAINST THIS PROPOSAL'S OWN VAULT.** `R5`, `C172`. The bar is
+   * **REDUCED AGAINST THIS PROPOSAL'S OWN VAULT.** The bar is
    * `thresholdFor(proposal.vault)` — the vault's own number where the chain
    * holds one, the account's where it does not — and `proposal.vault` is the
    * value this round's id was computed from, so it cannot be a different
    * vault's than the one the contract will apply. **That is the PAYMENT rule
    * and it is right here; the GOVERNANCE rule is the account's threshold and
-   * lives at `src/core/ledger.ts`'s `requireApproved` (`C376`, `S52`). The two
+   * lives at `src/core/ledger.ts`'s `requireApproved`. The two
    * are separate on chain and separate here.**
    *
    * **RECORDED WHATEVER IT SAYS, INCLUDING WHEN IT SAYS NOTHING.** `status`
@@ -2753,7 +2753,7 @@ export class AccountService {
    * stays `open` with two approvals the chain can see and this record cannot —
    * a smaller residual than `C377` described, and not nothing. What would close
    * it is a caller on a read or a job, and the only honest way to add one is
-   * with the screen or job that calls it. `T-287`.
+   * with the screen or job that calls it.
    */
   private async recordStanding(
     proposal: Proposal, account: Account, viewingKey: Hex,
@@ -2764,7 +2764,7 @@ export class AccountService {
     const { asset, amount } = this.changeOf(proposal, viewingKey);
     /*
      * **THE ROLE, AND IT IS NOT A NON-NULL ASSERTION ANY MORE.** `C377`,
-     * `T-286`, `S58`. This line was
+     * This line was
      * `account.signers.find(s => s.id === proposal.proposedBy)!` and the `!`
      * was reachable by a sequence with no failure in it: A raises a round, A is
      * removed by a properly governed round, B approves. `removeSigner` DELETES
@@ -2816,7 +2816,7 @@ export class AccountService {
 
   /**
    * The asset and the amount, out of the sealed payload. Never stored in the
-   * clear, and never one without the other. M-125.
+   * clear, and never one without the other.
    *
    * `amountOf` until today, returning a bare number — which is the shape the
    * policy engine then evaluated against a ceiling belonging to some other
@@ -2848,7 +2848,7 @@ export class AccountService {
   }
 
   /*
-   * THE ROUND HAS NO LAST STEP AT THE ACCOUNT ANY MORE. `C292`.
+   * THE ROUND HAS NO LAST STEP AT THE ACCOUNT ANY MORE.
    *
    * `execute` stood here. It read the account's balance, checked the round
    * against it, and asked the ledger to move it — every line of it was the
@@ -2893,7 +2893,7 @@ export class AccountService {
      * fresh salt and is a different id.
      *
      * **THE JUSTIFICATION THAT STOOD HERE WAS FALSE AND LOAD-BEARING IN ONE
-     * DIRECTION.** `T-223` `P3`, `S52`. It read *"rotating the round burns
+     * DIRECTION.** `T-223` `P3`. It read *"rotating the round burns
      * every approval already given"*, contradicted by
      * `src/core/ledger.ts:639-642`: *"It no longer rotates a round or burns
      * anybody else's approvals — there is no round, and every other proposal
@@ -2963,7 +2963,7 @@ export class AccountService {
     this.store.putAccount(sealAccount(account, viewingKey, pendingSigners, rec.keyEpoch));
   }
 
-  /* ---------------- sealing proposals (S-8) ---------------- */
+  /* ---------------- sealing proposals ---------------- */
 
   /*
    * Proposals seal under `proposals`, not `policy`.
@@ -2972,7 +2972,7 @@ export class AccountService {
    * subkeys exist for: `k_policy` is the subkey you would delegate to an
    * accounting plug-in that needs the spending rules, and it was also opening
    * every proposal — summaries naming people and amounts, and the per-signer
-   * approval list that is the deanonymised form of the chain's nullifiers. S-11.
+   * approval list that is the deanonymised form of the chain's nullifiers.
    */
   private putProposal(proposal: Proposal, viewingKey: Hex): void {
     const approvalCount = proposal.approvals.length;
@@ -2992,7 +2992,7 @@ export class AccountService {
   }
 
   /**
-   * The approved proposal that authorises a specific governance action. M-128.
+   * The approved proposal that authorises a specific governance action.
    *
    * With several proposals open at once the contract has to be told WHICH one a
    * removal or a threshold change is spending, and the honest source for that is
@@ -3013,7 +3013,7 @@ export class AccountService {
     }
     /*
      * **APPROVED BEFORE OPEN, CONFIRMED BEFORE UNCONFIRMED, THEN NEWEST.**
-     * `S55`, found by this round's `money-safety-auditor` against `C378`'s fix.
+     * `S55`, found by this round's money-safety pass against `C378`'s fix.
      * The line here said *newest first: a re-proposal after a failed attempt is
      * the live one*, and that was true BECAUSE A FAILED ATTEMPT LEFT NO RECORD.
      * `C378` inverts the premise — a round the chain never held is now a durable
@@ -3023,7 +3023,7 @@ export class AccountService {
      * sentence somewhere else false, and that sentence would never have been
      * re-read.**
      *
-     * **AND IT POINTS FOUR CALLERS, NOT ONE. `T-332`, `S58`.** This paragraph
+     * **AND IT POINTS FOUR CALLERS, NOT ONE. `T-332`.** This paragraph
      * named `removeSigner` alone; the build log named it with `setThreshold`;
      * the mutation corpus named it alone again. **The callers are
      * `grantAccess`, `setThreshold`, `setVaultThreshold` and `removeSigner`,
@@ -3059,9 +3059,9 @@ export class AccountService {
 
   /**
    * **WRITES THE REFUSAL DOWN, THEN HANDS BACK THE ERROR TO THROW.** `C398`,
-   * `T-310`, `S55`. Called from exactly one place — the `verify` in `approve`
+   * Called from exactly one place — the `verify` in `approve`
    * — and it returns rather than throws so that call site stays three lines
-   * and nothing in this file moves (`C366`).
+   * and nothing in this file moves.
    *
    * ── WHY A RECORD AND NOT A CLOSED ROUTE ──────────────────────────────────
    *
@@ -3094,7 +3094,7 @@ export class AccountService {
    * viewing key. A MEMBER can submit another seat's bytes — but after `S45`
    * those bytes are round-specific, so what a member can relay is a genuine
    * consent that signer gave to THIS round. **The route lets a member choose
-   * the moment; it does not let anyone manufacture the consent.** `T-310`.
+   * the moment; it does not let anyone manufacture the consent.**
    *
    * ── WHAT IT COSTS, PRICED BEFORE IT WAS BUILT ────────────────────────────
    *
@@ -3111,7 +3111,7 @@ export class AccountService {
    * has always sat past the cap's return, so `count` freezes with the list.
    * `T-335`(3), and it is the same false sentence `S58` corrected in
    * `src/core/types.ts`, left standing here until this round's auditor found
-   * it. `docs/corrections.md`.
+   * it.
    *
    * **AND IT FAILS CLOSED.** No path through here accepts a signature that did
    * not verify: the refusal is the return value on every branch. Below the cap
@@ -3119,11 +3119,11 @@ export class AccountService {
    * throws, the write's error propagates instead — the approval is still
    * refused. **PAST THE CAP THERE IS NO WRITE AT ALL**, which `S58` made true
    * and this paragraph asserted the opposite of; what is returned there names
-   * the replay and says the attempt was not recorded. `T-335`.
+   * the replay and says the attempt was not recorded.
    */
   /**
    * **THE DURABLE RECORD FIRST, THEN THE IRREVERSIBLE CALL.** `C378`, `T-228`,
-   * `S55`. Every propose door in this class goes through here.
+   * Every propose door in this class goes through here.
    *
    * ── WHY THIS IS NOT `S52`'s REORDER, ARGUED RATHER THAN COPIED ───────────
    *
@@ -3196,7 +3196,7 @@ export class AccountService {
 
   /**
    * **ASKS THE CHAIN WHETHER A ROUND THIS SERVICE WROTE DOWN IS ACTUALLY
-   * THERE.** `C378`, `S55`. The recovery half of `raise`, and the reason the
+   * THERE.** The recovery half of `raise`, and the reason the
    * write may safely go first.
    *
    * **IT HAS TWO CALLERS AND BOTH ARE GUARANTEED, WHICH IS THE TEST `T-281`
@@ -3222,7 +3222,7 @@ export class AccountService {
     const status = await this.ledger.status(proposal.accountId);
     /*
      * **`null` IS *COULD NOT ASK*, NOT *NOT THERE*, AND CONFLATING THEM WAS A
-     * `P1` THIS ROUND'S AUDITOR CAUGHT BEFORE IT SHIPPED.** `R4`, `S55`.
+     * `P1` THIS ROUND'S AUDITOR CAUGHT BEFORE IT SHIPPED.**
      * `SimulatedLedger.status` answers `null` for an account it does not hold —
      * which after a restart is EVERY account, and `SIMULATED` is the shipped
      * wiring — and `MidnightLedger.status` answers `null` when the address is
@@ -3271,7 +3271,7 @@ export class AccountService {
     /*
      * **THE COMPARISON THAT IS THE PROOF — AND IT RUNS BEFORE THE CAP. THE
      * ORDER IS THE SECURITY-RELEVANT PART OF THIS METHOD AND MUST NOT BE
-     * SWAPPED BACK.** `C398`, `T-335`(2), `SC19`, `S58`.
+     * SWAPPED BACK.** `C398`, `T-335`(2).
      *
      * ed25519 is deterministic, so one signature standing on two rounds of one
      * account is not evidence of a replay, it IS one. Matched against every
@@ -3297,7 +3297,7 @@ export class AccountService {
      * Before this round an attempt past the cap cost nothing at all. Metering
      * this route is `T-323`'s, and until it lands `T-335` cannot close on its
      * fifth limb — said here rather than pointed back at `T-335`, which is a
-     * circle. Found by this round's `money-safety-auditor`, `F5`.
+     * circle. Found by this round's money-safety pass, `F5`.
      */
     const replayOf = this.listProposals(proposal.accountId, viewingKey)
       .filter(p => p.id !== proposal.id)
@@ -3310,7 +3310,7 @@ export class AccountService {
       : '';
 
     /*
-     * **THE CAP IS A WRITE BOUND AND NOT ONLY A SIZE BOUND.** `S55`. This route
+     * **THE CAP IS A WRITE BOUND AND NOT ONLY A SIZE BOUND.** This route
      * is `authed` and `ownsProposal` — membership, no rate limiter — and an
      * INVALID signature costs nothing to make, so without this line one member
      * could make the deployment re-serialise and rewrite the whole store once
@@ -3358,7 +3358,7 @@ export class AccountService {
 
 /**
  * **THE ROUND'S PROPOSER IS NOT ON THIS ACCOUNT ANY MORE, SO ITS POLICY
- * STANDING CANNOT BE RECOMPUTED.** `C377`, `T-286`, `S58`.
+ * STANDING CANNOT BE RECOMPUTED.**
  *
  * **A NAMED CLASS RATHER THAN A SENTENCE, BECAUSE ONE CALLER HAS TO TELL IT
  * APART FROM EVERY OTHER FAILURE.** `approve`'s reconcile retries what is
@@ -3370,7 +3370,7 @@ export class AccountService {
  * **REACHABLE ONLY ON A ROUND RAISED BEFORE THE ROLE WAS RECORDED**, which
  * from `S58` is every round: all SIX propose doors write `proposerRole`.
  * **THIS PARAGRAPH SAID *from this round* WHILE ONLY TWO DOORS WROTE IT, AND
- * THIS ROUND'S OWN `money-safety-auditor` CAUGHT IT.** `F1`. `propose` and
+ * THIS ROUND'S OWN money-safety pass CAUGHT IT.** `F1`. `propose` and
  * `proposeRun` were covered; `proposeSigner`, `proposeThresholdChange`,
  * `proposeVaultThresholdChange` and `proposeRemoval` were not — the four
  * GOVERNANCE doors, which is where a proposer being removed is most ordinary.
@@ -3384,7 +3384,7 @@ export class AccountService {
  * helps: the round keeps its approvals and its signatures, and what it cannot
  * do is move to `'approved'`, because that status is a function of a ceiling
  * evaluated against an authority nobody can now establish. `BACKLOG.md`
- * `T-286`.
+ *
  */
 export class ProposerRoleGone extends Error {
   constructor(readonly proposedBy: string) {
@@ -3401,7 +3401,7 @@ export class ProposerRoleGone extends Error {
 
 /**
  * **WHAT A SIGNER'S APPROVAL SIGNATURE IS ACTUALLY OVER.** `C382`, `C397`,
- * `S45`. One definition, because a producer and a verifier that each spell it
+ * One definition, because a producer and a verifier that each spell it
  * out are two places that must agree — `M-104`'s shape on the approve path.
  *
  * **IT WAS `proposal.digest` ALONE UNTIL THIS ROUND, AND THAT IS THE DEFECT.**
@@ -3455,10 +3455,10 @@ export function approvalMessage(proposal: { digest: Hex; chainId: Hex }): string
 
 /**
  * **HOW MANY REFUSED APPROVAL ATTEMPTS ONE ROUND RECORDS.** `C398`, `S55`,
- * `T-335`, `S58`. It bounds the list AND the counter: `refuseApproval` returns
+ * It bounds the list AND the counter: `refuseApproval` returns
  * at this number without writing, so `count` freezes here with `recent`. **It
  * said `count` is not capped until `S58` and that was false at source** — the
- * increment has always sat past the guard. `docs/corrections.md`.
+ * increment has always sat past the guard.
  *
  * **WHAT A MEMBER WHO POSTS RUBBISH AT A ROUND COSTS IS THEREFORE BOUNDED IN
  * BOTH FIELDS**, and the refusal past this number says so in its own sentence
@@ -3488,7 +3488,7 @@ const CANNOT_ASK_THE_CHAIN =
 
 /**
  * **THE VAULT A GOVERNANCE ROUND MAY NAME, WHICH IS EXACTLY ONE VALUE.**
- * `C367`, `T-237`, `S55`.
+ *
  *
  * `AccountService.propose` raises through `Ledger.propose`, which is the
  * contract's OPAQUE branch, and that branch asserts `vault == noVault()`

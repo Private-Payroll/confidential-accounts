@@ -11,7 +11,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
  * COOP/COEP are what turn on `crossOriginIsolated`, and therefore
  * SharedArrayBuffer. We serve the application ourselves in production, so these
  * headers are ours to set — this config is the proof that our side of the
- * threaded-WASM ask (M-78) is already in place and waiting on the artefact.
+ * threaded-WASM ask is already in place and waiting on the artefact.
  */
 export default defineConfig({
   /*
@@ -20,7 +20,7 @@ export default defineConfig({
    * then calls `wasm.__wbindgen_start()` at the top level. Webpack understands
    * both; Vite understands neither without these two plugins, and fails at
    * runtime rather than at build time — `__wbindgen_export_1 of undefined`,
-   * which names nothing useful. M-87.
+   * which names nothing useful.
    */
   // The dep optimiser rewrites the glue and breaks the wasm URL, so this
   // package has to be served as source.

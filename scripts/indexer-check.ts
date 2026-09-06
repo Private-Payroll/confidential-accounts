@@ -24,7 +24,7 @@
  * infrastructure and no change on this machine will fix it.
  */
 export {};   // makes this file a MODULE rather than a global script.
-//
+
 // Without it TypeScript puts every top-level `const` into one shared scope
 // across every script that also lacks an import, and two files declaring the
 // same colour constants collide. The error names the variable, not the cause,

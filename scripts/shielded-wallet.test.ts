@@ -113,7 +113,7 @@ describe('the platform decides what caught up means, not this repository', () =>
    * arithmetic defaulted both indices to `0n`, so `|0-0| <= 10` said CAUGHT UP
    * to a wallet that had said nothing — the exact `dustProgressKnown` defect
    * this module's header claims the shielded wallet does not have. Found by
-   * `S17`'s `money-safety-auditor`; these are the tests that were missing.
+   * `S17`'s money-safety pass; these are the tests that were missing.
    */
   describe('the fallback arithmetic, for a state with no isCompleteWithin', () => {
     it('REFUSES A PROGRESS THAT NAMES NO POSITION, rather than reading it as a zero gap', () => {
@@ -150,7 +150,7 @@ describe('what the wallet holds of one colour, and when it will not say', () => 
    * value, a colour spelled differently, or a throwing getter zeroed the entire
    * colour — and the door spelled that zero *"there is no such coin … it was
    * already spent."* `C197`, `C268`, `C271`: a read that failed reported as a
-   * quantity that is absent. Found by `S17`'s `money-safety-auditor`.
+   * quantity that is absent. Found by `S17`'s money-safety pass.
    */
   it('USES THE PLATFORM\x27S OWN BALANCE when the state carries one', () => {
     // `ShieldedWalletState.balances` is `getAvailableBalances(state)` — the
@@ -261,7 +261,7 @@ describe('the wait is bounded, which the SDK\x27s own wait is not', () => {
      * is no such coin … or it was already spent"* about a coin minted seconds
      * earlier — a five-minute wait for the right thing replaced by a
      * zero-second wait for the wrong one. Found by `S17`'s
-     * `money-safety-auditor`.
+     * money-safety pass.
      */
     let polls = 0;
     const live = { state: () => stateWith(progress(1_000n, 1_000n)) };   // at the tip throughout
@@ -294,7 +294,7 @@ describe('the wait is bounded, which the SDK\x27s own wait is not', () => {
      * `Number('soon')` is `NaN`, `elapsed > NaN` is false for every elapsed,
      * and the deadline branch becomes unreachable — `M-22` restored by a typo
      * in an environment variable, in the file written to avoid it. Found by
-     * `S17`'s `money-safety-auditor`. Rule 19: the refusal names a door.
+     * `S17`'s money-safety pass. Rule 19: the refusal names a door.
      */
     for (const bad of ['soon', '0', '-1', 'Infinity', '1e400']) {
       expect(() => deadlineFromEnv(bad)).toThrow(/not a positive number of milliseconds/);
@@ -384,7 +384,7 @@ describe('THE SENTENCES, AND NO TWO OF THEM INTERCHANGEABLE', () => {
 
   it('says a run that never waited is a defect in the door, not a wait to repeat', () => {
     // The old text told a person to run it again, which would produce the same
-    // answer forever. `S17`'s money-safety-auditor.
+    // answer forever. `S17`'s money-safety pass.
     const r = whyNoCoin(COLOUR, null);
     expect(r.kind).toBe('never-waited');
     expect(r.message).toMatch(/defect in the door/i);

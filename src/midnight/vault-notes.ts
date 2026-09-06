@@ -10,7 +10,7 @@
  * tested file in the client.
  *
  * ------------------------------------------------------------------------
- * THE TRAP THIS FILE USED TO CLOSE, AND WHERE IT WENT. S6a.
+ * THE TRAP THIS FILE USED TO CLOSE, AND WHERE IT WENT.
  *
  * A note's commitment covers its BLINDING, so spending a note means producing
  * the same blinding again. This file used to hold that rule: a per-vault seed,
@@ -178,7 +178,7 @@ export const noteToSpend = (notes: Note[], token: Hex, amount: bigint): Note => 
  * and stops.
  *
  * ------------------------------------------------------------------------
- * **`C239` IS TAKEN HERE: THE CHANGE NOTE IS READ, NOT DERIVED.** `S6f`.
+ * **`C239` IS TAKEN HERE: THE CHANGE NOTE IS READ, NOT DERIVED.**
  *
  * This used to compute the change's nonce with `changeNonceOf` — the kernel's
  * `nonce_evolve/2` hash — while its caller `VaultLedger.payout` was holding the
@@ -292,7 +292,7 @@ export const afterPayment = (
 
 /**
  * **WHETHER A RUN CAN BE PAID OUT OF THIS POOL, ONE PAYMENT AT A TIME.**
- * `C203`, `T-38`.
+ *
  *
  * **A SUM IS THE WRONG QUESTION AND ALWAYS WAS.** `noteToSpend` does not merge
  * — a vault holding two notes of 60 cannot pay 100 — so a pool whose TOTAL
@@ -364,7 +364,7 @@ export const balanceOf = (state: VaultNotes, token: Hex): bigint =>
  */
 /**
  * **THE WITNESSES FOR A CALL THAT HAS NO POOL, AND IT REFUSES RATHER THAN
- * ANSWERS.** `C245`, `S6k` §1.
+ * ANSWERS.**
  *
  * `depositUnshielded`, `payoutUnshielded` and `forgetUnshielded` read no
  * witness: public money is a ledger balance, so there is no note to choose. The
@@ -428,7 +428,7 @@ export const witnessesOver = (get: () => VaultNotes, pending: { spending?: Hex }
     }];
   },
   /*
-   * `noteBlinding` AND `nextBlinding` USED TO BE HERE. S6a.
+   * `noteBlinding` AND `nextBlinding` USED TO BE HERE.
    *
    * The vault declares one witness now. Coin selection is still the device's,
    * because which notes exist is exactly what the contract must not see; the

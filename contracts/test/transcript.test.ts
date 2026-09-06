@@ -485,7 +485,7 @@ describe('S50 §5 — THE SENSITIVITY CONTROL: the instrument goes red, and what
    * that failure. So the instrument is made to go red here, permanently, on a
    * real compiled circuit call — nothing stubbed, no hand-built operation.
    *
-   * **AND THE HONEST LABEL, WHICH IS THIS ROUND'S `money-safety-auditor`'s AND
+   * **AND THE HONEST LABEL, WHICH IS THIS ROUND'S money-safety pass's AND
    * NOT MINE. THIS IS A SENSITIVITY CONTROL AND NOT A DEMONSTRATED LEAK.**
    * The value put into the ledger read's argument is the VAULT IDENTIFIER, and
    * the vault identifier is PUBLIC by the founder's own ruling — `C356`, 1 Sep:
@@ -578,7 +578,7 @@ describe('S50 §5 — THE SENSITIVITY CONTROL: the instrument goes red, and what
 
     /*
      * **AND THE REASON IT REPORTS NOTHING IS WORSE THAN THE CHANNEL, WHICH IS A
-     * FINDING THIS ROUND DID NOT GO LOOKING FOR AND DOES NOT FIX.** `T-256`.
+     * FINDING THIS ROUND DID NOT GO LOOKING FOR AND DOES NOT FIX.**
      *
      * `JSON.stringify(sim.ledger, …)` renders EVERY container field as `{}`.
      * `signers`, `signerLeaves`, `openProposals`, `movements`, `vaults`,

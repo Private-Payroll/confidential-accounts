@@ -1,5 +1,5 @@
 /**
- * THE PER-EXTRINSIC CEILING, DERIVED — NEVER HELD AS A LITERAL. `S11`, `C238`.
+ * THE PER-EXTRINSIC CEILING, DERIVED — NEVER HELD AS A LITERAL.
  *
  * ── WHY THIS FILE EXISTS ─────────────────────────────────────────────────────
  *
@@ -12,7 +12,7 @@
  * NORMAL CLASS's per-BLOCK budget; a single extrinsic is judged against a
  * smaller number that the same helper derives two lines further down.
  *
- * THE RULE (`S11`): an instrument may not hold a limit as a literal. It
+ * THE RULE: an instrument may not hold a limit as a literal. It
  * derives it, prints the derivation, and names what it could not derive.
  *
  * ── THE DERIVATION, from the node's own source ───────────────────────────────
@@ -125,7 +125,7 @@ export const extrinsicFraction = (): number =>
 
 /**
  * bytesWritten of the eleven-circuit deploy ACCEPTED 28 Aug 2026 21:04 IST,
- * block 215,346, contract `93ac5860…` (`C218`).
+ * block 215,346, contract `93ac5860…`.
  */
 export const ACCEPTED_BYTES_WRITTEN = 31_201;
 /**

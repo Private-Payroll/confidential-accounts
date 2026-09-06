@@ -298,3 +298,15 @@ docs/handoff/
 
 # ── LOCAL TOOLING, KEPT ON DISK AND NOT PUBLISHED ──────────────────────────
 src/testing/no-attribution.test.ts
+
+# Local maintainer tooling. Each one reads or contains a word list that is
+# configuration for this working copy and not part of the published project,
+# and a checker whose data is the thing it screens for publishes that data in
+# the act of screening it. They are kept on disk and are not part of the
+# distributed source.
+scripts/check-commit-message.sh
+scripts/ship-lock.sh
+scripts/check-branch-name.sh
+scripts/check-commit-subject.sh
+scripts/check-shipping-language.sh
+scripts/check-shipping-language.baseline

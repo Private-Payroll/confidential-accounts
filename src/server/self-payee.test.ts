@@ -98,7 +98,7 @@ const call = async (
 
 let n = 20;
 /**
- * **`PI4b`: SIGNED IN WITH A WALLET, WHICH IS WHAT `C153` WAS ALWAYS ABOUT.**
+ * **SIGNED IN WITH A WALLET, WHICH IS WHAT `C153` WAS ALWAYS ABOUT.**
  *
  * This used to register with a password, and `X7`'s note says why that was
  * awkward from the start: *the walk had to use an email session, and the one

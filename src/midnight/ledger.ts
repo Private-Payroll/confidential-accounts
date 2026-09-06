@@ -58,7 +58,7 @@
  *
  *    **AND NOTHING MAKES THE OFF-CHAIN BLOB TAMPER EVIDENT TODAY.** The
  *    contract's `stateCommitment` field was what did, and it went with the
- *    balance ledger (`C292`); the value a blob is filed under is now
+ *    balance ledger; the value a blob is filed under is now
  *    `viewDigestOf([])`, one constant for every account and every state, which
  *    commits to nothing. Said in those words because rule 27 requires it: this
  *    property holds against nobody, and a vault-side commitment is what would
@@ -92,7 +92,7 @@ import type { MaintenanceAuthorityChoice } from './partial-contract.js';
  * ------------------------------------------------------------------ */
 
 /**
- * One step of a round, described rather than performed. M-82.
+ * One step of a round, described rather than performed.
  *
  * The shape mirrors the circuits exactly, so there is nothing to invent and
  * nothing to keep in sync by hand. A job carries one of these; `prepare` turns
@@ -106,7 +106,7 @@ export type PreparedStep =
   | { kind: 'removeSigner'; removedLeaf: Hex; proposalId: Hex }
   | { kind: 'setThreshold'; newThreshold: number; proposalId: Hex }
   /**
-   * `R5`. `vault` is the vault being GIVEN a threshold, and it is in the
+   * `vault` is the vault being GIVEN a threshold, and it is in the
    * payload the proposal committed to — not in the proposal's identity, which
    * names `noVault()` because this is a governance round.
    */
@@ -177,7 +177,7 @@ export interface MidnightConfig {
    * Load bearing since M-29: what a circuit is not handed as an argument it
    * reads from this store as a witness, so a caller has to write there before
    * it calls. `execute` was the case that established the rule and is gone
-   * (`C292`); `propose` is the one that has it now — the change and the
+   *; `propose` is the one that has it now — the change and the
    * proposal salt are staged by `stageChange` below. Keyed per network — M-61
    * was one deployment's private state being read on another chain because this
    * was a constant.
@@ -250,7 +250,7 @@ export interface SealedStateStore {
  * suffix exists because one `MidnightLedger` serves many accounts while a
  * script drives one; without a shared function the two conventions diverge and
  * the run script looks for a key the deploy never wrote. Caught before shipping
- * this time — it is the ninth instance of the pattern. M-68.
+ * this time — it is the ninth instance of the pattern.
  */
 export const privateStateKey = (base: string, accountId: string): string =>
   `${base}:${accountId}`;
@@ -270,7 +270,7 @@ export const privateStateKey = (base: string, accountId: string): string =>
 const ZERO_32: Hex = '00'.repeat(32);
 
 /**
- * The truthful missing-private-state message. C228.
+ * The truthful missing-private-state message.
  *
  * This used to say the device did not hold the account's SECRET KEY, which is
  * one of two causes and not the likelier one once a second contract exists:
@@ -329,7 +329,7 @@ export class MidnightLedger implements Ledger {
        * never defaulted: `deployContract`'s own default is
        * `sampleSigningKey()`, which is how every earlier deployment acquired
        * a single random key able to change which proofs the contract accepts
-       * (C225). The deploy refuses to run rather than sample —
+       *. The deploy refuses to run rather than sample —
        * `requireMaintenanceAuthority` in partial-contract.ts is the refusal,
        * and its error lays the options out.
        */
@@ -342,7 +342,7 @@ export class MidnightLedger implements Ledger {
   /* ------------------------------------------------------------ *
    * the lifecycle
    *
-   * M-29. This class used to have one write method, `publish(accountId,
+   * This class used to have one write method, `publish(accountId,
    * commitment, sealedState)`, and it could not be implemented. `execute()`
    * derived the new commitment from the witnesses `nextBalance`,
    * `nextEntriesDigest` and `nextStateSalt` — deliberately, so that no public
@@ -352,7 +352,7 @@ export class MidnightLedger implements Ledger {
    * The boundary passed the OPENING instead, which is what those witnesses
    * wanted, and named each step of the round rather than collapsing them into
    * one write. **THE OPENING, THE WITNESSES AND `execute` ARE ALL GONE**
-   * (`C292`), and `credit` — the one operation this class used to refuse by
+   *, and `credit` — the one operation this class used to refuse by
    * name — went with them, because the account keeps no book for either to
    * write to. WHAT SURVIVES IS THE SHAPE: one named method per circuit, no
    * guessing, and a gap that shows up as a missing method rather than as a
@@ -387,15 +387,15 @@ export class MidnightLedger implements Ledger {
      * IS BUILT.** These three are pure reads of the argument: they need no
      * node, no indexer and no import, they cannot be transient, and putting
      * them first means the refusals below are reachable from a test that has
-     * nothing else wired. `S35`.
+     * nothing else wired.
      */
     /*
      * **THE FOUNDING SIGNER, AND AN OPENING WITHOUT ONE IS REFUSED HERE RATHER
-     * THAN DEPLOYED.** `C334`.
+     * THAN DEPLOYED.**
      *
      * `signerLeaves[0]` is the founding signer — the type says the array is the
      * founding signers' leaves and this is the first of them, so there is ONE
-     * place the answer comes from and no second field to keep in step (M-104).
+     * place the answer comes from and no second field to keep in step.
      *
      * IT IS REFUSED BECAUSE THE CONTRACT CANNOT REFUSE IT LATER. `amendSigner`
      * opens with `requireSigner()`, so an account deployed with no seat can
@@ -422,7 +422,7 @@ export class MidnightLedger implements Ledger {
     /*
      * **THIS PATH SEATS ONE SIGNER, SO IT REFUSES AN OPENING THAT NAMES MORE
      * THAN ONE RATHER THAN SEATING THE FIRST AND DROPPING THE REST.**
-     * `money-safety-auditor`, `S35`.
+     * money-safety pass.
      *
      * `SimulatedLedger.open` seats EVERY leaf it is given and `AccountService`
      * writes all N onto the durable record. Without this, the day the wiring
@@ -509,9 +509,9 @@ export class MidnightLedger implements Ledger {
      * neither build a partial operations map nor read one back
      * (`partial-contract.ts` has the file:line for both refusals). The
      * contract is eleven circuits since S23 and the list defers none of them
-     * (S25), so the map this builds is currently the whole contract; the path
+     *, so the map this builds is currently the whole contract; the path
      * stays because it is also what pins the operations map to a decided list
-     * rather than to whatever compiled (`C224`). The partial deploy also
+     * rather than to whatever compiled. The partial deploy also
      * refuses to run without a deliberate maintenance authority, which is
      * C225's fix.
      */
@@ -528,7 +528,7 @@ export class MidnightLedger implements Ledger {
      * opening and not a commitment. `next` mirrored `current` because nothing
      * was moving yet, and leaving it undefined would have had the first
      * `execute` commit to whatever happened to be there. All of that went with
-     * the balance ledger; the paragraph below is what is true now. `C292`.
+     * the balance ledger; the paragraph below is what is true now.
      */
     /*
      * An account holds nothing, ever — `C292` — so there is no balance to open
@@ -539,7 +539,7 @@ export class MidnightLedger implements Ledger {
     const genesisSalt = randomBytes(32);
     /*
      * **THE RECORD THE DEPLOY PERSISTS CARRIES NO SIGNING SECRET, NO BLINDING
-     * AND NO SCOPE.** `C334`.
+     * AND NO SCOPE.**
      *
      * `secretKey`, `blinding` and `scope` STOOD AT THE TOP OF THIS OBJECT, in
      * that order, and they were the deploying device's. They were here because
@@ -584,7 +584,7 @@ export class MidnightLedger implements Ledger {
     /*
      * Settle before submitting. The node's websocket closes cleanly ~3s after
      * the wallet connects, so submitting immediately is submitting into the gap
-     * on purpose. M-23.
+     * on purpose.
      */
     await sleep(6000);
 
@@ -600,7 +600,7 @@ export class MidnightLedger implements Ledger {
          * `contract-info.json` carries no constructor entry, so
          * `circuit-arity.ts` does not guard this call either. The generated
          * `initialState` asserts the arity itself and would refuse at deploy
-         * time with a funded wallet. `T-137`.
+         * time with a funded wallet.
          *
          * THE THRESHOLD USED TO BE ARGUMENT ONE AND IS NOT PASSED AT ALL NOW.
          * `C340` + `C343`, ruled by the founder 2 Sep: the constructor takes no
@@ -617,7 +617,7 @@ export class MidnightLedger implements Ledger {
     const address = String(deployed.deployTxData.public.contractAddress);
 
     /*
-     * The opening blob, stored. M-73.
+     * The opening blob, stored.
      *
      * This was missing, and the gap was the product-path twin of the bug that
      * stopped the run script working twice: `open` was handed a `sealedState`
@@ -647,7 +647,7 @@ export class MidnightLedger implements Ledger {
      * the circuits this deployment carries — the SDK's
      * `findDeployedContract` would compare every compiled key and refuse its
      * own deployment. It also checks the deferred circuits are ABSENT — a
-     * check that is INERT while nothing is deferred (S25), and filed as such
+     * check that is INERT while nothing is deferred, and filed as such
      * rather than widened here. The private state was already written by
      * `submitPartialDeployTx`, under this contract's address.
      */
@@ -658,7 +658,7 @@ export class MidnightLedger implements Ledger {
 
     /*
      * **THE LOOP THAT SEATED THE REST OF THE FOUNDERS STOOD HERE, AND IT WENT
-     * WITH THE DEPLOYER'S SEAT.** `C334`.
+     * WITH THE DEPLOYER'S SEAT.**
      *
      * It walked `opening.signerLeaves`, skipped the one the deployer's own
      * material derived to, and seated each of the others through the contract's
@@ -694,7 +694,7 @@ export class MidnightLedger implements Ledger {
 
   /**
    * **THE ADDRESS THE CHAIN ASSIGNED, AND NOTHING NEARBY MAY CHOOSE IT.**
-   * `PI2a`, `C136`.
+   *
    *
    * `addressOf` is the deployment's own registry — the file a script writes or
    * the row a service writes at deploy — so this reads back exactly what
@@ -706,7 +706,7 @@ export class MidnightLedger implements Ledger {
     const address = await this.addressOf(accountId);
     /*
      * **`'chain'`, AND IT IS THE ONLY PLACE IN THIS REPOSITORY THAT SAYS SO.**
-     * `PI2b`, `C140`. `addressOf` reads back what
+     * `addressOf` reads back what
      * `deployTxData.public.contractAddress` said at deploy; nothing here
      * computes an address, so nothing here can claim a provenance it does not
      * have.
@@ -722,7 +722,7 @@ export class MidnightLedger implements Ledger {
     return {
       assets: s.assets,
       /*
-       * Every proposal open at once, not "the" open one. M-128.
+       * Every proposal open at once, not "the" open one.
        *
        * No "is it really open" dance either: a proposal that has been executed
        * or cancelled is REMOVED from the map, so presence is the answer. The old
@@ -732,7 +732,7 @@ export class MidnightLedger implements Ledger {
        */
       openProposals: s.openProposals,
       threshold: Number(s.threshold),
-      /* `R5`. Absence means inherit, so an account with no exceptions reports
+      /* Absence means inherit, so an account with no exceptions reports
        * an empty array and every vault is judged by `threshold` above. */
       vaultThresholds: s.vaultThresholds,
       signerCount: Number(s.signerCount), // `T-220` rides this line: see readContractState
@@ -838,7 +838,7 @@ export class MidnightLedger implements Ledger {
     /*
      * **A RUN MUST NAME A REAL VAULT, AND THIS GUARD WAS MISSING WHILE THE
      * SIMULATED ONE HAD IT.** `C375`, `S47`, found by that round's
-     * `money-safety-auditor` against the round's own change.
+     * money-safety pass against the round's own change.
      *
      * The contract's run branch takes the vault OPAQUE — it asserts nothing
      * about it (`contracts/src/ConfidentialAccount.compact:2119-2156`; only the
@@ -945,7 +945,7 @@ export class MidnightLedger implements Ledger {
   }
 
   /**
-   * One approval per signer per PROPOSAL. M-128.
+   * One approval per signer per PROPOSAL.
    *
    * Deliberately does NOT pre-check whether this signer has already approved.
    * It cannot: the nullifier is `H(domain, contractAddress, proposal, secretKey)`
@@ -959,7 +959,7 @@ export class MidnightLedger implements Ledger {
   }
 
   /*
-   * `settleRound` AND `sendTransition` STOOD HERE. `C292`, `S26`.
+   * `settleRound` AND `sendTransition` STOOD HERE.
    *
    * `settleRound` refused, because on Midnight the transfer and the transition
    * are one transaction and the transfer half was never written.
@@ -979,7 +979,7 @@ export class MidnightLedger implements Ledger {
    */
 
   /**
-   * M-69. Puts a signer's leaf in the on-chain tree.
+   * Puts a signer's leaf in the on-chain tree.
    *
    * The circuit decides which of its two paths applies — bootstrap or approved
    * round — from `signerCount < threshold`, and this does not second-guess it.
@@ -989,7 +989,7 @@ export class MidnightLedger implements Ledger {
    * The proposal salt is staged for the same reason `propose` stages it: on the
    * approved path the circuit recomputes the proposal's id from it, and the
    * adding device has to be using the proposer's. `execute` was the other
-   * circuit that read it and is gone (`C292`); `amendSigner`, `setThreshold`,
+   * circuit that read it and is gone; `amendSigner`, `setThreshold`,
    * `setVaultThreshold`, `adopt`, `retireVault` and `recordPayment` are the
    * readers that are left.
    */
@@ -1032,7 +1032,7 @@ export class MidnightLedger implements Ledger {
   }
 
   /**
-   * **ONE VAULT'S OWN THRESHOLD, ON CHAIN.** `R5`, `C172`. Mirrors
+   * **ONE VAULT'S OWN THRESHOLD, ON CHAIN.** Mirrors
    * `setVaultThreshold` at `contracts/src/ConfidentialAccount.compact:2699`.
    *
    * **NEVER RUN AGAINST A NODE.** Nothing in this class has been, apart from
@@ -1054,7 +1054,7 @@ export class MidnightLedger implements Ledger {
   }
 
   /*
-   * `credit` STOOD HERE AND REFUSED BY NAME. `C292`, `V-246`, `S26`.
+   * `credit` STOOD HERE AND REFUSED BY NAME. `C292`, `V-246`.
    *
    * It built a `credit` call — value arriving without an approval round, M-67 —
    * and `S23` had already shed that circuit, so it refused rather than staging
@@ -1078,7 +1078,7 @@ export class MidnightLedger implements Ledger {
    * above now call it rather than repeating their own checks. One copy of each
    * rule, because the failure this project keeps repeating is a procedure
    * written twice with the second copy missing a line — M-50, M-55, M-58, M-61,
-   * M-65, M-72, M-75.
+   *
    * ------------------------------------------------------------------ */
 
   /**
@@ -1107,18 +1107,18 @@ export class MidnightLedger implements Ledger {
       case 'propose': {
         /*
          * NO "a proposal is already open" REFUSAL, and its absence is the
-         * feature. M-128. This used to be the check that stopped an admin
+         * feature. This used to be the check that stopped an admin
          * raising a vendor invoice while payroll collected signatures.
          *
          * M-70/M-71. `propose` records the change, and it reads it from the
          * caller's private state because there is no argument for it. Staging
          * is therefore not optional here. `execute` was the other reader and is
-         * gone (`C292`), so this is the ONLY circuit that opens what is staged
+         * gone, so this is the ONLY circuit that opens what is staged
          * below and nothing on chain reopens what it commits to.
          */
         /*
          * **THE VAULT IS REFUSED BEFORE ANYTHING IS STAGED.** `C367`, `T-237`,
-         * `S55`. `contracts/src/ConfidentialAccount.compact:2319` asserts it on
+         * `contracts/src/ConfidentialAccount.compact:2319` asserts it on
          * this branch; job 1 of this method is to refuse before a fee and before
          * eighty seconds of proving — **and before the durable private-state
          * write below it**, which was this round's auditor's correction: a
@@ -1134,7 +1134,7 @@ export class MidnightLedger implements Ledger {
         if (step.vault !== MidnightCommitments.noVault()) throw new Error('a governance round cannot name a vault');
         await this.stageChange(accountId, step.change);
         /*
-         * The MERGED `propose` (S11): the opaque path. `isRun` false, the run
+         * The MERGED `propose`: the opaque path. `isRun` false, the run
          * parts zero — the branch that would read them is not taken, exactly
          * as `addSigner`'s unused `proposal` is zeroes on the bootstrap path.
          */
@@ -1149,7 +1149,7 @@ export class MidnightLedger implements Ledger {
       case 'proposeRun': {
         /*
          * **REFUSE EARLY, AND ALL THREE REFUSALS ARE FREE OF SIDE EFFECTS.**
-         * `T-324`, `S55`, `S58`. They read `step` alone — nothing `stageChange`
+         * They read `step` alone — nothing `stageChange`
          * produces — yet sat BELOW it until this round, so a refused call left
          * the device holding a `proposalSalt` for a round never raised and the
          * next apply for a legitimately open proposal recomputed the wrong id
@@ -1181,7 +1181,7 @@ export class MidnightLedger implements Ledger {
               'Block time is seconds since the Unix epoch, not milliseconds.');
         }
         await this.stageChange(accountId, step.change);
-        /* The MERGED `propose` (S11): the run path. `isRun` true, opaque hash zero. */
+        /* The MERGED `propose`: the run path. `isRun` true, opaque hash zero. */
         return {
           address, privateStateId, circuit: 'propose',
           args: [
@@ -1234,7 +1234,7 @@ export class MidnightLedger implements Ledger {
          * The bootstrap window needs no proposal and the contract does not look
          * for one, so a null id is correct there and an error anywhere else.
          * Zeroes are passed rather than nothing because the circuit's arity is
-         * fixed; the branch that would read them is not taken. M-37, M-128.
+         * fixed; the branch that would read them is not taken.
          */
         if (!bootstrapping) {
           if (!step.proposalId) {
@@ -1264,7 +1264,7 @@ export class MidnightLedger implements Ledger {
         /* `T-200`: `ConfidentialAccount.compact:1859-1860` refuses an unusable
          * leaf here too, and this path had no mirror for it either. */
         await this.refuseUnusableLeaf(step.leaf, 'the signer leaf being seated');
-        /* The MERGED `amendSigner` (S11), seating direction: `removing` false. */
+        /* The MERGED `amendSigner`, seating direction: `removing` false. */
         return {
           address, privateStateId, circuit: 'amendSigner',
           args: [
@@ -1282,7 +1282,7 @@ export class MidnightLedger implements Ledger {
         await this.requireApproved(address, step.proposalId, 'change the threshold');
         /*
          * **`Number.isInteger` IS HERE BECAUSE ITS SIBLING HAS IT AND THE TWO
-         * DISAGREED. `T-200` `P2`, `S46`.** `setVaultThreshold` below refused
+         * DISAGREED. `T-200` `P2`.** `setVaultThreshold` below refused
          * `NaN`; this one did not, in the same file, on the same kind of value
          * — so `NaN` reached `BigInt(...)` at `:1301` and threw a `RangeError`
          * naming nothing anybody can act on, while the vault path answered in
@@ -1368,7 +1368,7 @@ export class MidnightLedger implements Ledger {
           );
         }
         /*
-         * The MERGED `amendSigner` (S11), unseating direction: `removing`
+         * The MERGED `amendSigner`, unseating direction: `removing`
          * true; `intoVacatedSlot` is ignored on this path and passed false.
          */
         return {
@@ -1380,7 +1380,7 @@ export class MidnightLedger implements Ledger {
   }
 
   /**
-   * Has any slot been vacated by a removal? M-106.
+   * Has any slot been vacated by a removal?
    *
    * Read from the tree rather than remembered, because it is a property of the
    * account rather than of this call: the tree holds the vacancy marker at a
@@ -1410,7 +1410,7 @@ export class MidnightLedger implements Ledger {
    * opened the file: `:2712` is blank and `:2777` carries the vault-threshold
    * assert. That is `T-246`'s +65 shift, and the same slip is in `SC9`'s report
    * and in the `T-200` row. Every compact citation in this round was read at
-   * source rather than inherited (rule 23). `T-279`.
+   * source rather than inherited (rule 23).
    *
    * **ONE HELPER AND NOT TWO CHECKS, AND THAT IS NOT `M-106`.** The two
    * contract asserts are the same rule — *a leaf must be a value the tree can
@@ -1449,7 +1449,7 @@ export class MidnightLedger implements Ledger {
   }
 
   /**
-   * Is this proposal open on chain? M-128.
+   * Is this proposal open on chain?
    *
    * BY ID, because there is no longer a single "the" open proposal, and BY
    * PRESENCE, because the contract deletes a proposal when it settles or is
@@ -1491,7 +1491,7 @@ export class MidnightLedger implements Ledger {
   }
 
   /*
-   * `stageState`, `checkAfter` AND `viewDigestAfter` STOOD HERE. `C292`, `S26`.
+   * `stageState`, `checkAfter` AND `viewDigestAfter` STOOD HERE.
    *
    * All three served one call: the account's own spend. `stageState` wrote the
    * sealed blob and staged the balance opening, `checkAfter` compared the
@@ -1511,7 +1511,7 @@ export class MidnightLedger implements Ledger {
    *
    * The state is unchanged — only the key that opens it is — so there is
    * nothing to submit. Nothing on chain describes the state to begin with since
-   * `C292`: the blob is filed under `viewDigestOf([])`, one constant. The new
+   * The blob is filed under `viewDigestOf([])`, one constant. The new
    * ciphertext is filed alongside the old at a new epoch, which is what lets the
    * account stay readable on both sides of the flip.
    */
@@ -1560,7 +1560,7 @@ export class MidnightLedger implements Ledger {
   /* ---------------- internals ---------------- */
 
   /*
-   * `leafOf` STOOD HERE AND IT IS REMOVED, NOT LEFT UNUSED. `C334`.
+   * `leafOf` STOOD HERE AND IT IS REMOVED, NOT LEFT UNUSED.
    *
    * Its own docstring said what it was for: *"It is the only place that
    * computes the deployer's leaf"*. There is no deployer's leaf any more. Its
@@ -1571,7 +1571,7 @@ export class MidnightLedger implements Ledger {
    *
    * **THE DERIVATION IS NOT LOST AND IS NOT DUPLICATED.**
    * `MidnightCommitments.signerLeaf` / `.signerPublicKey` are the one wrapper
-   * (`M-107`, `C328`, `T-116`), and `src/core/signer-leaf.ts:181-190`'s
+   *, and `src/core/signer-leaf.ts:181-190`'s
    * `storedSignerLeaf` is the one derivation every product writer calls —
    * including whoever computes the founding leaf this class is now handed.
    */
@@ -1596,7 +1596,7 @@ export class MidnightLedger implements Ledger {
 
 
   /*
-   * `stageView` STOOD HERE. `C292`, `S26`.
+   * `stageView` STOOD HERE.
    *
    * It wrote the caller's balance opening — `current` and `next` — into private
    * state so the spend circuit could read it as witnesses. There is no such
@@ -1614,7 +1614,7 @@ export class MidnightLedger implements Ledger {
    * The rule `commitmentOf` used to carry alongside it, and which outlived it:
    * recomputing this hash in TypeScript would be a second definition of a
    * scheme. `commitmentOf` was over the account's state and went with the
-   * balance ledger (`C292`); decision 0004 binds what is left.
+   * balance ledger; decision 0004 binds what is left.
    */
   /**
    * The account's asset blinding, from this device's private state.
@@ -1628,7 +1628,7 @@ export class MidnightLedger implements Ledger {
    * **IT USED TO SAY THE KEY ADDRESSED NO BALANCE THE ACCOUNT HOLDS.** There is
    * no balance map for a key to address since `C292`, and no circuit compares
    * an asset key to anything on chain. **The error message below said so too,
-   * and `S27` corrected it (`T-62`)** — it is executable text a customer is
+   * and `S27` corrected it** — it is executable text a customer is
    * shown, which is why it could not be left for a comment sweep.
    *
    * WHAT THE REPLACEMENT DOES AND DOES NOT CLAIM. It says the blinding is what
@@ -1697,7 +1697,7 @@ export class MidnightLedger implements Ledger {
   private async stageChange(accountId: string, change: StateChange): Promise<void> {
     const providers = await this.providers();
     // The same rule as stageView, for the same reason: the address is set
-    // from the account this stage is for, never inherited. C228.
+    // from the account this stage is for, never inherited.
     const address = await this.requireDeployed(accountId);
     providers.privateStateProvider.setContractAddress(address);
     const key = privateStateKey(this.cfg.privateStateId, accountId);
@@ -1708,7 +1708,7 @@ export class MidnightLedger implements Ledger {
     await providers.privateStateProvider.set(key, {
       ...existing,
       // The asset travels with the change, because `propose` derives the asset
-      // key from it. M-125. It was BOTH ends of a round until `C292` removed
+      // key from it. It was BOTH ends of a round until `C292` removed
       // the far one, and there is no map for the key to index any more.
       assetId: assetIdBytes(change.asset),
       changeAmount: change.amount,
@@ -1775,7 +1775,7 @@ export class MidnightLedger implements Ledger {
    *
    * This comment previously claimed the opposite, and `publish` acted on that
    * claim by submitting a second time. Nothing caught it because the return
-   * type is untyped here. M-28.
+   * type is untyped here.
    *
    * `args` is `unknown[]`, which is how `execute` came to be called with an
    * argument it did not take. The arity is checked below so that mistake
@@ -1799,13 +1799,13 @@ export class MidnightLedger implements Ledger {
     }
     // Arity is checked against the CONTRACT's declared ABI, not against this
     // wrapper's signature.
-    //
+    
     // The first version of this guard read `call.length`, which is always 0:
     // every generated circuit function is `(...args) => {…}` and a rest
     // parameter contributes nothing to Function.length. So it never fired, and
     // the exact M-27 mistake would have sailed through it. The test missed it
     // because the stub was also written with `(...args)`. A test built from the
-    // same wrong model as the fix cannot catch the model. M-38.
+    // same wrong model as the fix cannot catch the model.
     assertArity(arityFrom(this.cfg.zkConfigPath), circuit, args.length);
     return call(...args);
   }
@@ -1837,7 +1837,7 @@ export class MidnightLedger implements Ledger {
     threshold: bigint;
     vaultThresholds: Array<{ vault: Hex; threshold: number }>;
     signerCount: bigint;
-    /* `T-220`, `S52`. The two `docs/accepted-risks.md` §1's detector needs. */
+    /* The two `docs/accepted-risks.md` §1's detector needs. */
     movementCount: bigint;
     retiredVaults: Hex[];
     updatedAt: string;
@@ -1851,7 +1851,7 @@ export class MidnightLedger implements Ledger {
     const parsed = readLedger(state.data);
     /*
      * **READ BEFORE THE OBJECT BELOW IS BUILT, SO A MISSING MAP REFUSES RATHER
-     * THAN RETURNING A STATUS WITH A ZERO IN IT.** `C188`.
+     * THAN RETURNING A STATUS WITH A ZERO IN IT.**
      *
      * The pair type is written here rather than inferred, for the reason
      * `mapField`'s own note gives: `tsconfig.scripts.json` has `strict: false`
@@ -1866,12 +1866,12 @@ export class MidnightLedger implements Ledger {
     // are what use them — and because they are public by design: the threshold
     // and the approval count are what make the account auditable. See decision
     // 0003. There is no commitment read alongside them any more, and `publish`
-    // and `execute`, which this sentence used to name, are both gone. `C292`.
+    // and `execute`, which this sentence used to name, are both gone.
     return {
 
       /*
        * NO ASSETS, AND THIS IS READ OFF THE CONTRACT RATHER THAN ASSUMED.
-       * `C292`.
+       *
        *
        * `assetBalances` was one of the contract's four public maps and it is
        * gone, so there is nothing to decode and the guard below counts three,
@@ -1882,10 +1882,10 @@ export class MidnightLedger implements Ledger {
       /*
        * Every open proposal, sorted so two reads of an unchanged account produce
        * an identical array — a map's iteration order is not a promise, and
-       * anything that gets compared has to be stable. M-128.
+       * anything that gets compared has to be stable.
        *
        * **THE APPROVAL COUNT COMES THROUGH `mapField` TOO, AND UNTIL `S6c` IT
-       * DID NOT.** `C188`. `R5b` guarded three of the contract's four maps and
+       * DID NOT.** `R5b` guarded three of the contract's four maps and
        * this line read the fourth off `parsed` directly — `parsed.approvalCounts
        * .lookup(id)` — which is the one shape the guard exists to refuse. A
        * reader that handed over no `approvalCounts` threw a `TypeError` about
@@ -1904,7 +1904,7 @@ export class MidnightLedger implements Ledger {
        * `:2314`), and `closeProposal` (`:1321`) removes the two together. Every
        * circuit that spends or withdraws a proposal goes through
        * `closeProposal` and there is no other remover; `execute` was one of its
-       * callers and is gone (`C292`), which is why this sentence used to name
+       * callers and is gone, which is why this sentence used to name
        * it. So a proposal without a count is a contract-level inconsistency and
        * not a case this boundary invents a zero for.
        */
@@ -1918,7 +1918,7 @@ export class MidnightLedger implements Ledger {
       threshold: parsed.threshold,
       /*
        * **THE VAULTS SOMEBODY GAVE THEIR OWN THRESHOLD, AND NO OTHERS.** `R5`,
-       * `C172`. `thresholds` is an `export ledger` map
+       * `thresholds` is an `export ledger` map
        * (`contracts/src/ConfidentialAccount.compact:251`), so this is a read of
        * public state and not a derivation.
        *
@@ -1951,8 +1951,8 @@ export class MidnightLedger implements Ledger {
        * `mapField`'s note ends *"if a fourth is ever exported again, this
        * paragraph is where somebody will find out"* — S35c is that fourth read,
        * and the first draft of this line spread it off `parsed` directly, which
-       * is `C188` exactly. Found by S35c's `test-auditor` and its
-       * `money-safety-auditor`, independently. What it costs unguarded is not a
+       * is `C188` exactly. Found by S35c's test-coverage pass and its
+       * money-safety pass, independently. What it costs unguarded is not a
        * crash: `?? 0n` is the repair anybody reaches for, and a seat count of
        * zero makes this client believe the M-37 bootstrap window is open, refuse
        * every threshold change and refuse every removal — the contract still
@@ -1961,7 +1961,7 @@ export class MidnightLedger implements Ledger {
       signerCount: setSize(parsed, 'signerLeaves'),
       /*
        * **THE TWO FIELDS `docs/accepted-risks.md` §1's DETECTOR NEEDS, AND THE
-       * ONLY REASON EITHER IS READ.** `T-220`, `S52`. `SC10` measured that
+       * ONLY REASON EITHER IS READ.** `SC10` measured that
        * `LedgerStatus` carried five of the contract's fourteen public fields
        * and that these two were not among them, so the detector the founder's
        * `C395` ruling rests on could not be written against this boundary.
@@ -1975,7 +1975,7 @@ export class MidnightLedger implements Ledger {
        * `movements` is a COUNT — the set's own `size()`, on chain — because the
        * comparison the ruling describes is between magnitudes. `retiredAt` is
        * read for its KEYS only: nothing removes from it, so presence is *ever
-       * retired* (`C362`) and the marker value it stores carries nothing else.
+       * retired* and the marker value it stores carries nothing else.
        */
       movementCount: setSize(parsed, 'movements'),
       retiredVaults: [...mapField<[Uint8Array, bigint]>(parsed, 'retiredAt')]
@@ -2025,7 +2025,7 @@ export class MidnightLedger implements Ledger {
  * as this function existed, which is to say the sentence above was true of
  * three maps and confidently wrong about the account. It goes through here now,
  * as a `CountedMap`. **THERE ARE NOW THREE MAPS AND THERE ARE THREE GUARDS** —
- * `assetBalances` went with the balance ledger (`C292`), which is a map
+ * `assetBalances` went with the balance ledger, which is a map
  * removed rather than a guard dropped. **If a fourth is ever exported again,
  * this paragraph is where somebody will find out that the count is a thing
  * this file states out loud.**
@@ -2078,7 +2078,7 @@ export class UndecodedLedgerField extends Error {
  * Copied from the generated reader
  * (`contracts/managed/contract/index.d.ts:281-287`) rather than inferred, and
  * the two halves are both used: `mapField` proves the map is THERE by its
- * iterator, and `lookup` is how a count is fetched for one proposal. `C188`.
+ * iterator, and `lookup` is how a count is fetched for one proposal.
  */
 type CountedMap = Iterable<[Uint8Array, bigint]> & { lookup(key: Uint8Array): bigint };
 
@@ -2170,7 +2170,7 @@ export class MidnightProofSystem implements ProofSystem {
 
 /**
  * WHAT AUTHORITY A DEPLOYED CONTRACT CARRIES ON CHAIN, AND WHETHER IT IS THE
- * ONE WE MEANT TO INSTALL. `C354` `P0`, board row `2y9-1`, `S61`.
+ * ONE WE MEANT TO INSTALL. `C354` `P0`, board row `2y9-1`.
  *
  * Nothing in this repository has ever read a contract's maintenance authority
  * back, so a half-applied change has been undetectable. The founder ruled on
@@ -2220,7 +2220,7 @@ export class MidnightProofSystem implements ProofSystem {
  *
  * And it matters more than a missing helper, because of what the founder's
  * ruling does: **choosing a committee switches Midnight's SDK maintenance
- * interface OFF for that contract, permanently** (`SC6b`). Under a committee no
+ * interface OFF for that contract, permanently**. Under a committee no
  * signing key is stored (`partial-contract.ts:358-360`), and every SDK
  * maintenance entry point opens by asserting exactly that slot —
  * `midnight-js-contracts/dist/index.mjs:398-399`, `:470-471`, `:547-548`. **A
@@ -2249,7 +2249,7 @@ export class MidnightProofSystem implements ProofSystem {
  *      from each `.midnight/*-authority.json` IS that contract's on-chain key.
  *      That is this comparison, run against the real chain, by the door.
  *      *(An earlier draft of this paragraph said "two" and named two of the
- *      three — three were measured. Caught by `S61`'s `money-safety-auditor`;
+ *      three — three were measured. Caught by `S61`'s money-safety pass;
  *      a comment in a money-path file is a truth claim under rule 14.)*
  *   2. **FOR A COMMITTEE**, which is on no disk anywhere and so cannot be read
  *      live: a `ContractState` carrying 2-of-3 and 3-of-3 committees round-trips
@@ -2309,7 +2309,7 @@ export class MidnightProofSystem implements ProofSystem {
  * `one-key` is named for what it is rather than for a kind, because it is what
  * `single-key` AND a committee of one at threshold one both look like on chain.
  *
- * **`anyone` EXISTS BECAUSE `S61`'s `money-safety-auditor` CAUGHT THIS ROUND
+ * **`anyone` EXISTS BECAUSE `S61`'s money-safety pass CAUGHT THIS ROUND
  * REPORTING THE MOST DANGEROUS VALUE ON CHAIN WITH THE NAME OF THE SAFEST.**
  * A threshold of ZERO is not *unmaintainable*: `verify.rs:1789` is
  * `if self.signatures.len() < authority.threshold as usize`, and it is the ONLY
@@ -2318,7 +2318,7 @@ export class MidnightProofSystem implements ProofSystem {
  * **Anybody in the world can rewrite that contract's rules.**
  * *(This paragraph used to continue "and the verification loop at `:1775` never
  * runs, so committee membership is never consulted either". **That is FALSE and was
- * measured false on ledger 9 by `S74`'s `platform-fact-checker`:** the loop iterates
+ * measured false on ledger 9 by `S74`'s platform fact-check:** the loop iterates
  * the SIGNATURES, not the threshold, so at threshold zero an out-of-range seat and a
  * wrong signature are both still refused. It has nothing to iterate only when no
  * signatures are attached — the one case that had been tried. The conclusion is
@@ -2344,7 +2344,7 @@ export interface OnChainAuthority {
   shape: AuthorityShape;
   /**
    * **THE COMMITTEE LISTS ONE KEY MORE THAN ONCE, SO ITS THRESHOLD IS NOT WHAT
-   * IT LOOKS LIKE.** Raised by `S61`'s `platform-fact-checker` as a READING of
+   * IT LOOKS LIKE.** Raised by `S61`'s platform fact-check as a READING of
    * `midnight-src/midnight-ledger/` at 8.2.0-rc.1 — **AND MEASURED ON LEDGER 9 BY
    * `S74`, WHICH IS THE BUILD THE CHAIN RUNS: it is real. One signature value,
    * attached at three seats holding the same key, satisfies `[K,K,K]` at threshold
@@ -2498,7 +2498,7 @@ export function intendedAuthorityValue(
       /*
        * **A THRESHOLD BELOW ONE IS REFUSED HERE AND NOT ONLY IN
        * `requireMaintenanceAuthority`, AND THE REASON IS THIS ROUND'S OWN
-       * NEAR-MISS.** `S61`'s `money-safety-auditor` found that a `0` typed into
+       * NEAR-MISS.** `S61`'s money-safety pass found that a `0` typed into
        * a choice file would make this return `threshold: 0`, the chain carry
        * `0`, and `compareAuthority` answer `agree` — the door then printing
        * *"Every contract carries the authority recorded for it"* over a contract
@@ -2626,12 +2626,12 @@ export function compareAuthority(
 
 /* ================================================================== *
  * BUILDING A MAINTENANCE INSTRUCTION BY HAND — `C351`'s BUILD LIMB,
- * `C354`'s SECOND LIMB, `T-161`. Board row `2y9-2`, `S74`.
+ * `C354`'s SECOND LIMB. Board row `2y9-2`.
  * ================================================================== */
 
 /**
  * THE MACHINERY THAT BUILDS A MAINTENANCE UPDATE, BECAUSE THE FOUNDER'S RULING
- * SWITCHES THE SDK's OFF. `C351` build limb, `C354` second limb, `T-161`.
+ * SWITCHES THE SDK's OFF. `C351` build limb, `C354` second limb.
  *
  * The founder ruled on 5 Sep that the COMPANY's OWN SIGNERS hold the maintenance
  * authority, for the account and for the vaults, and that we hold nothing. That
@@ -2776,7 +2776,7 @@ export interface MaintenanceRefusal {
  *
  * **THIS EXISTS BECAUSE THE FIRST DRAFT OF THIS BLOCK REFUSED FIVE THINGS ABOUT THE
  * AUTHORITY AND NOTHING AT ALL ABOUT THE VERIFIER KEYS, AND ITS OWN
- * `money-safety-auditor` SAID SO FIRST AND LOUDEST.** A `ReplaceAuthority` decides
+ * money-safety pass SAID SO FIRST AND LOUDEST.** A `ReplaceAuthority` decides
  * WHO may change a contract; a `VerifierKeyInsert` is the change that actually moves
  * the money — `C353`'s drain is a verifier-key swap performed USING the authority.
  * Building the second with no check at all, in the same function that refuses five
@@ -2988,7 +2988,7 @@ export type MaintenancePlan =
       action: 'build'; address: string; why: string; comparison: AuthorityComparison;
       /** The counter the update is valid against: the one just read off the chain. */
       updateCounter: bigint;
-      /** What the contract's counter will be once this update applies. `T-361`. */
+      /** What the contract's counter will be once this update applies. */
       expectedCounter: bigint;
       intended: { committee: AuthorityKey[]; threshold: number };
     }
@@ -3012,7 +3012,7 @@ export type MaintenancePlan =
  * paragraph said the counter is *read here*, and it is not: this takes an
  * `AuthorityRead` a caller supplies, and `AuthorityRead` carries no timestamp and no
  * block height, so a CACHED read passes a stale counter straight through. Found by
- * this round's own `money-safety-auditor` against this round's own sentence.
+ * this round's own money-safety pass against this round's own sentence.
  * **What is true is the narrower thing: no counter enters from any source OTHER than
  * that read, and none is a parameter of anything below.** A stale one is still a fee
  * spent on a recorded on-chain failure — maintenance applies in the fallible segment
@@ -3118,12 +3118,12 @@ export interface MaintenanceEndStateRecord {
   threshold: number;
   /** The counter the update was signed against — the value read off the chain when it was built. */
   builtAgainstCounter: bigint;
-  /** `builtAgainstCounter + 1`. What the contract's counter becomes if this update lands. `T-361`. */
+  /** `builtAgainstCounter + 1`. What the contract's counter becomes if this update lands. */
   expectedCounter: bigint;
   /**
    * Entry points whose verifier key this update also writes — **by name AND by the
    * first eight bytes of the key, because the name alone is what a swap leaves
-   * unchanged.** `T-359`, and this round's own `money-safety-auditor` found the first
+   * unchanged.** `T-359`, and this round's own money-safety pass found the first
    * draft storing the name and discarding the bytes: a record that says *we wrote
    * `recordPayment`* cannot afterwards say WHICH key was written, so `checkEndState`
    * could report `settled` for an update that also rewrote the thing `C353` is
@@ -3158,7 +3158,7 @@ export interface EndStateCheck {
 /**
  * DID THE CHANGE WE RECORDED ACTUALLY LAND, AND DID ANYTHING ELSE HAPPEN HERE?
  *
- * The value half is `compareAuthority` — reused, not rewritten (`S61` §7(2)).
+ * The value half is `compareAuthority` — reused, not rewritten.
  * The counter half is this function's own, and it never turns a `disagree` into
  * an `agree` or the reverse: it only splits `agree` into *settled* and
  * *unexplained*.
@@ -3248,7 +3248,7 @@ export interface VerifierKeyWrite {
   /**
    * The operation version, which the runtime has exactly two of
    * (`ledger-v9.d.ts:2239`). **Narrowed from `string` after this round's own
-   * `money-safety-auditor` pointed out that widening a two-member union is the
+   * money-safety pass pointed out that widening a two-member union is the
    * opposite of what a named interface is for.**
    */
   version: 'v3' | 'v4';
@@ -3283,7 +3283,7 @@ export interface BuiltMaintenanceInstruction {
    * **WHAT THE CONTRACT'S AUTHORITY LOOKS LIKE RIGHT NOW, CARRIED SO A PERSON SEES
    * IT BEFORE SIGNING.** `S61` built `shape` and `hasDuplicateMembers` for exactly
    * this and the first draft of this function read the committee and the threshold
-   * and threw both away — found by this round's own `money-safety-auditor`, which
+   * and threw both away — found by this round's own money-safety pass, which
    * also named the silent case: **a contract already at threshold ZERO gives
    * `signaturesRequired: 0`, so `signatureProgress` reports `complete` on NO
    * signatures at all, with nothing anywhere saying why.** Repairing such a contract
@@ -3329,7 +3329,7 @@ export interface BuiltMaintenanceInstruction {
  * pressed something is a check the recovery path walks around. **The verifier-key
  * half exists because the first draft of this function had none at all — five
  * refusals about who may change the contract and nothing whatever about the change
- * that moves the money. Its own `money-safety-auditor` said so first and loudest.**
+ * that moves the money. Its own money-safety pass said so first and loudest.**
  *
  * **AND THE CURRENT AUTHORITY IS DERIVED FROM THE PLAN RATHER THAN PASSED
  * ALONGSIDE IT.** The first draft took it as a second parameter, so a caller could
@@ -3341,7 +3341,7 @@ export interface BuiltMaintenanceInstruction {
  *
  * **NO SIGNING KEY IS A PARAMETER OF THIS FUNCTION OR OF ANYTHING IT CALLS.** It
  * returns the bytes to be signed; signing happens on the machine that holds the
- * key, which is not this one. `C400`.
+ * key, which is not this one.
  */
 export function buildMaintenanceInstruction(
   P: MaintenancePrimitives,
@@ -3439,7 +3439,7 @@ export function buildMaintenanceInstruction(
  * `BuiltMaintenanceInstruction.currentHasDuplicateMembers`, so a person sees it
  * before signing rather than being quietly allowed past it.** An earlier version of
  * this paragraph promised that reporting and nothing carried it; found by this
- * round's own `money-safety-auditor`, which is the second time in two rounds that a
+ * round's own money-safety pass, which is the second time in two rounds that a
  * sentence here was ahead of the code beneath it.
  */
 export function attachMaintenanceSignature(
@@ -3519,7 +3519,7 @@ export function signatureProgress(
  * `IrInsert`.** `scripts/measure-proving.mjs:94-108` had already written down that
  * the version cannot be stated on any evidence this project holds, and the first
  * draft of this block did not cite it (rule 23). **Raised by this round's own
- * `money-safety-auditor`; the `agree` sentence below says what it cannot see rather
+ * money-safety pass; the `agree` sentence below says what it cannot see rather
  * than claiming more than it looked at.**
  *
  * **AND THE OPERATIONS MAP IS THE WRONG THING TO CHECK, WHICH IS THE HALF THAT

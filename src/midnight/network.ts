@@ -49,7 +49,7 @@ import { NETWORK as WALLET_NETWORK } from 'midnight-identity/network';
  * loose way of saying "a staging network". That was a correct reading of the
  * wrong source. Stagenet is a real, separate chain with its own genesis at
  * `stagenet.shielded.tools`, and the Foundation's guidance is to build on it.
- * M-44, M-45, M-53.
+ *
  *
  * It is still not a network testkit has a class for — see `STAGENET_ONLY_VIA_ENV`
  * below — but it is a perfectly good network id, and the id is what goes into
@@ -209,7 +209,7 @@ export function networkFromEnv(raw: string | undefined, fallback: NetworkName = 
  *
  * So the value is imported from the wallet's own package — one constant, read
  * by both products, and `midnight-identity/network` is a leaf module that
- * pulls in no WebAssembly (`C149`). **There is no second constant to drift.**
+ * pulls in no WebAssembly. **There is no second constant to drift.**
  *
  * The two lists of network names ARE still two — this file has one and the
  * wallet has another — and the assignment below is what checks them: if the

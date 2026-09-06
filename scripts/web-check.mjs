@@ -1,6 +1,6 @@
 /**
  * DRIVING THE PAYROLL APP IN A REAL BROWSER AND WRITING DOWN WHAT IT SAID.
- * `X4` §2.
+ *
  *
  * ── WHAT IT IS FOR ───────────────────────────────────────────────────────
  *

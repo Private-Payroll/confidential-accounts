@@ -26,7 +26,7 @@ import type { AssetId } from '../core/assets.js';
 import { pureCircuits } from '../../contracts/managed/contract/index.js';
 
 /**
- * The largest amount the contract can hold. M-125.
+ * The largest amount the contract can hold.
  *
  * `Uint<128>`, and the width is a decision rather than a default. Amounts are
  * integers in the asset's smallest unit, so one ether is 10^18 — and a
@@ -40,7 +40,7 @@ import { pureCircuits } from '../../contracts/managed/contract/index.js';
  * over-wide amount reaches the circuit and fails there, naming nothing useful.
  */
 /**
- * **ONE DEFINITION, AND IT IS `src/core/assets.ts`'s.** `T-205`, `S46`. It moved
+ * **ONE DEFINITION, AND IT IS `src/core/assets.ts`'s.** It moved
  * there because `core/` builds the change and may not import `src/midnight/`
  * (`src/wiring/selection.ts:84-93`), so the value had to be readable from the
  * side that makes it. This name is kept because this file's error messages read
@@ -65,7 +65,7 @@ const checkAmount = (v: bigint, what: string): bigint => {
 
 /*
  * **`RunCommitments` STOOD HERE, AND `S47` DELETED IT RATHER THAN LEAVING IT
- * EMPTY.** `C375`.
+ * EMPTY.**
  *
  * It held one member, `runPayload`, above this sentence:
  *
@@ -98,7 +98,7 @@ export const MidnightCommitments: CommitmentScheme = {
    *
    * They used to carry one, and it cost a real defect: M-99 gave `signerLeaf` a
    * third parameter, and a second call site in `midnight/ledger.ts` went on
-   * passing two with the compiler unable to say so (M-107). A cast here
+   * passing two with the compiler unable to say so. A cast here
    * disables the only gate that catches an arity drifting away from the
    * contract — which is M-42's lesson, recorded and then repeated. M-125 adds a
    * parameter to `changeCommitmentOf` and splits `stateCommitmentOf` in two, so
@@ -106,7 +106,7 @@ export const MidnightCommitments: CommitmentScheme = {
    */
   /**
    * **A SIGNER'S PUBLIC IDENTITY, WHICH IS THE CONTRACT'S OWN CIRCUIT AND NOT A
-   * COPY OF IT.** `C328`, `S34`.
+   * COPY OF IT.**
    *
    * One line, and the line is a call. That is the entire answer to whether the
    * product path can reach `pureCircuits` where its writers run: it does not
@@ -156,11 +156,11 @@ export const MidnightCommitments: CommitmentScheme = {
 
   /*
    * `balanceCommitment` STOOD HERE, wrapping the contract's own
-   * `balanceCommitmentOf`. Both are gone with the balance. `C292`.
+   * `balanceCommitmentOf`. Both are gone with the balance.
    */
 
   /**
-   * What the chain calls a proposal. M-128.
+   * What the chain calls a proposal.
    *
    * A pure circuit for the same reason the commitments are: the client has to
    * produce a value the chain will accept without asking anything, and here
@@ -231,10 +231,10 @@ export const MidnightCommitments: CommitmentScheme = {
 
   /**
    * **WHAT IS BEING APPROVED IN A GOVERNANCE ROUND, WHICH IS THE CONTRACT'S OWN
-   * CIRCUIT AND NOT A COPY OF IT.** `C373`, `S44`.
+   * CIRCUIT AND NOT A COPY OF IT.**
    *
    * Four lines, and each line is a call — the shape `runPayload` above already
-   * had, and `signerPublicKey` (`C328`) before it. Until `S44` the client
+   * had, and `signerPublicKey` before it. Until `S44` the client
    * NAMED these four with `sha256` over a colon-joined string
    * (`src/core/ledger.ts:739`, `:758`, `:771`, `:789`) and `AccountService`
    * imported them directly, so on the Midnight wiring the round was raised
@@ -302,7 +302,7 @@ export const MidnightCommitments: CommitmentScheme = {
    *
    * **WHAT REFUSES WHAT, MEASURED RATHER THAN ASSUMED, BECAUSE THE FIRST
    * VERSION OF THIS COMMENT CREDITED ONE GUARD FOR ALL OF IT AND THAT IS
-   * `C286`'s SHAPE.** `S44`'s `money-safety-auditor`. Three different things
+   * `C286`'s SHAPE.** `S44`'s money-safety pass. Three different things
    * refuse three different arguments and none of them is this line:
    *   - **fractional or `NaN`** — `BigInt()` itself, before the binding is
    *     reached: *"The number 2.5 cannot be converted to a BigInt because it is
@@ -346,7 +346,7 @@ export const MidnightCommitments: CommitmentScheme = {
    * mirrored. It was the single most expensive near-miss in this project: the
    * first version reused `appendEntries`, whose domain tag differs, and would
    * have locked every surviving signer out of an account with money in it
-   * (M-104). The safest shared rule is the one that does not exist.
+   *. The safest shared rule is the one that does not exist.
    */
 
   describe() {
