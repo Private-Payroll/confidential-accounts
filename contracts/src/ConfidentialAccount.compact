@@ -751,19 +751,34 @@ export circuit signerPublicKey(sk: Bytes<32>): Bytes<32> {
  * same position is the whole of it, and that is injective because padding
  * distinct strings of at most 32 bytes to 32 bytes is.
  *
- * WHAT THE WIDTH DOES COST IS WORTH KNOWING: the three-vector family was
- * already occupied. `changeCommitmentOf` below is
- * `persistentCommit<Vector<3, Bytes<32>>>([assetKey, …], salt)` and
- * `Vault.compact`'s `payoutDetails` is `([recipient, token, amount], blinding)`
- * — NEITHER CARRIES A TAG. Rule 27: name what stops a tagged derivation from
- * equalling an untagged one of the same shape, because it is not a check.
- * Against `changeCommitmentOf` it is preimage resistance — `assetKey` is only
- * ever `assetKeyOf(...)`, a `persistentCommit` output, and `vacantSlot` below
- * records why a padded ASCII constant is not one. Against `payoutDetails` it is
- * an INTEGER WIDTH: the second slot there is a `Uint<128>` cast to bytes, and
- * the value it would have to match here is a full-width hash. A preimage and a
- * range constraint, neither of them written down as a rule anywhere, and no
- * test pins either.
+ * WHAT THE WIDTH DOES COST IS WORTH KNOWING: THE THREE-VECTOR FAMILY WAS
+ * ALREADY OCCUPIED WHEN THESE TWO JOINED IT, AND ONE OF THE TWO OCCUPANTS HAS
+ * SINCE BEEN MOVED OUT OF IT.
+ *
+ * `changeCommitmentOf` below was `persistentCommit<Vector<3, Bytes<32>>>(
+ * [assetKey, …], salt)` with no tag of its own. What held it apart from these
+ * two was preimage resistance: `assetKey` is only ever `assetKeyOf(...)`, a
+ * `persistentCommit` output, and `vacantSlot` below records why a padded ASCII
+ * constant is not one. THAT IS AN ASSUMPTION ABOUT WHAT CALLERS PASS AND NOT A
+ * PROPERTY OF THE DERIVATION — both of this contract's own call sites happen
+ * to pass an asset key, and nothing in the circuit requires it. It now pads its
+ * own tag and commits over four, so the separation is a property of the
+ * derivation and holds whatever a caller passes.
+ *
+ * ONE UNTAGGED NEIGHBOUR REMAINS AND IT IS NOT THIS CONTRACT'S. The vault's
+ * `payoutDetails` is `([recipient, token, amount], blinding)` and carries no
+ * tag. Name what stops a tagged derivation from equalling an untagged one of
+ * the same shape, because it is not a check: here it is an INTEGER WIDTH, and
+ * the slot it acts on is the THIRD one. That commitment's third element is a
+ * `Uint<128>` cast to bytes; to equal a value from this family the element it
+ * lands against would have to be under 2^128. For a proposal id that element is
+ * the vault, an address nobody chooses, so the constraint holds. FOR A SIGNER
+ * LEAF IT IS `scope`, WHICH IS WITNESS-SUPPLIED, so the same sentence is
+ * weaker there than it reads and is written down here rather than left to be
+ * discovered. `payoutDetails` carries no tag and its first element IS caller
+ * chosen, so no preimage argument covers it either. A range constraint,
+ * written down as a rule nowhere else and pinned by no test, and the contract
+ * that could retire it is not this one.
  *
  * THE SIGNATURE DOES NOT MOVE AND THE VALUE DOES. Every caller compiles
  * unchanged; every leaf ever computed under the old body is a different 32
@@ -834,6 +849,43 @@ export circuit assetKeyOf(asset: Bytes<32>, blinding: Bytes<32>): Bytes<32> {
  * separator inside `payoutDetails`. Stated rather than left to be assumed,
  * because four witnesses and two `persistentCommit`s in the most-called circuit
  * are being paid for a value nobody reads.
+ *
+ * THE DOMAIN SEPARATOR, AND WHY IT ARRIVED LATE. Read `signerLeaf` above first.
+ *
+ * This derivation sat in the same three-vector family as `signerLeaf` and
+ * `proposalIdOf` and carried no tag of its own. Nothing in the CIRCUIT kept it
+ * out of their outputs; what did was that its first element is only ever an
+ * asset key, and an asset key is a `persistentCommit` output rather than a
+ * padded ASCII constant. That is a statement about the two call sites this
+ * contract happens to have, not about the function — the circuit is exported,
+ * its first argument is an ordinary `Bytes<32>`, and a third call site written
+ * later would owe the assumption nothing.
+ *
+ * A PROPERTY HELD BY WHO PASSES WHAT IS THE KIND THAT ONE REFACTOR REMOVES,
+ * AND THIS ONE HAD ALREADY THINNED ONCE: the circuit that opened this
+ * commitment at settlement was deleted, so the value is written and never
+ * compared today. Nothing is exploitable while nothing reads it. That is the
+ * weakest possible thing to rely on permanently, and permanent is what this
+ * derivation becomes at the redeploy — after it, every leaf ever computed
+ * under this body is a value real money depends on.
+ *
+ * SO THE TAG IS THE FIRST ELEMENT AND THE VECTOR WIDENS TO FOUR, which is the
+ * shape `unshieldedPayoutDetails` already uses in the vault. Two distinct
+ * padded ASCII strings in the same position cannot produce each other, because
+ * padding distinct strings of at most 32 bytes to 32 bytes is injective, and
+ * no tag in EITHER contract is repeated — the vault's two carry their own
+ * `midnight-vault:` prefix, and saying "this contract" would have scoped the
+ * claim to one file while naming a neighbour in the other. The width is not
+ * what does the work —
+ * read `signerLeaf` for why — but it costs nothing to be out of a crowded
+ * family as well as tagged.
+ *
+ * THE SIGNATURE DOES NOT MOVE AND THE VALUE DOES. All four arguments keep
+ * their names, types and order, so both call sites in this contract, the
+ * client's wrapper and every mirror compile unchanged; every change
+ * commitment ever computed under the old body becomes a different 32 bytes.
+ * That is free only while the account is redeployed and no real money sits on
+ * the old one, which is why this edit is made now and could not be made later.
  */
 export circuit changeCommitmentOf(
   assetKey: Bytes<32>,
@@ -841,8 +893,9 @@ export circuit changeCommitmentOf(
   batch: Bytes<32>,
   salt: Bytes<32>,
 ): Bytes<32> {
-  return persistentCommit<Vector<3, Bytes<32>>>(
-    [assetKey, amount as Field as Bytes<32>, batch], salt
+  return persistentCommit<Vector<4, Bytes<32>>>(
+    [pad(32, "midnight-accounts:change:"),
+     assetKey, amount as Field as Bytes<32>, batch], salt
   );
 }
 
@@ -1369,11 +1422,63 @@ circuit thresholdFor(vault: Bytes<32>): Uint<64> {
  * because it is why the split exists.
  * Governance was paying for a map lookup it can never use.
  *
- * It can never use it because governance proposals name `noVault()`, and
- * `noVault()` is a hash of a domain string that no vault address can equal, so
- * it is never a key in `thresholds`. `thresholdFor(noVault())` is therefore
- * `threshold`, always, by construction — the branch has a fixed outcome and the
- * circuit was proving it anyway.
+ * It can never use it because governance proposals name `noVault()`, and no
+ * vault address can equal `noVault()` — it is the hash of a domain string. So
+ * the lookup a governance circuit would perform is one no VAULT can ever have
+ * seated, and removing it removes nothing a vault could reach.
+ *
+ * WHAT THAT SENTENCE MUST NOT BE STRETCHED INTO, SAID HERE BECAUSE AN EARLIER
+ * DRAFT OF IT WAS AND THE STRETCHED VERSION IS FALSE AT SOURCE. It said
+ * `noVault()` "is never a key in `thresholds`", and therefore that
+ * `thresholdFor(noVault())` is the account threshold "by construction". IT IS
+ * NOT, AND NOTHING IN THIS CONTRACT MAKES IT SO. `setVaultThreshold` seats
+ * whatever 32 bytes it is handed; its only guard refuses a threshold of zero,
+ * never a key. `noVault()` is 32 bytes like any other and can be seated at any
+ * number a governed round chooses, and once seated it cannot be removed —
+ * there is no `remove` on that map anywhere in this file.
+ *
+ * WHAT ACTUALLY HOLDS IT, NAMED BECAUSE IT IS NOT A CHECK, AND STATED IN FULL
+ * BECAUSE A SHORTER VERSION OF THIS PARAGRAPH WAS WRONG IN A WAY THAT READ
+ * REASSURINGLY.
+ *
+ * Seating that key needs a proposal carried at the ACCOUNT'S OWN FULL
+ * THRESHOLD. That bounds where the road STARTS and nothing further — read to
+ * the end of this block before taking it for a bound on the road.
+ *
+ * IT IS NOT TRUE THAT NOBODY CAN PRESENT THE KEY AFTERWARDS. `recordPayment`
+ * takes the vault as an ARGUMENT and this contract constrains it with nothing:
+ * a contract here cannot see its caller, so what makes a real vault hand its
+ * own address is the vault's own code and not anything on this side. Anyone
+ * can call `recordPayment` with any 32 bytes, including a key that has been
+ * seated.
+ *
+ * WHAT SUCH A CALL CAN AND CANNOT DO, AND THE SECOND HALF IS THE PART THAT
+ * MATTERS. It moves no money — this contract holds none, and no vault will
+ * pay against a key it does not hold. But `recordPayment` is what records a
+ * payee as paid, and that record is permanent: nothing in this file removes
+ * from `movements`, and a payee written there can never be paid out of that
+ * run. So a seated key lowers the bar on the one circuit that can burn a
+ * payee without moving anything.
+ *
+ * THAT IS A LIMIT THIS CONTRACT ALREADY HAS AND THIS IS A SECOND ROAD INTO IT,
+ * NOT A NEW ONE. `recordPayment` carries no signer check by design — its only
+ * caller is a contract, and a contract holds no key and sits in no tree — so
+ * its whole authorisation is knowledge of its arguments, and every signer can
+ * reconstruct those by design. A seated key changes how many approvals that
+ * road needs; it does not create the road.
+ *
+ * AND THE FAR END OF THAT ROAD NEEDS NO APPROVAL OF THE CALLER'S OWN, WHICH IS
+ * WHY THE SENTENCE ABOUT WHERE IT STARTS IS NOT A SENTENCE ABOUT WHERE IT
+ * ENDS. The approvals `requireApprovedForVault` counts belong to a run the
+ * signers raised and approved for their own reasons, gathered before anyone
+ * reached for this. On that road whoever presents the arguments gathers
+ * nothing; on the seated road what they gather is the seated number. So the
+ * full-threshold requirement bounds the seating and bounds nothing after it,
+ * and an earlier draft of this paragraph said "both ends" and was wrong twice
+ * over — once about this end, and once about the seated end, whose bar is
+ * whatever number the row was seated at.
+ *
+ * SO THE HONEST WORD FOR THE GUARANTEE IS THAT, AND NOT "BY CONSTRUCTION".
  *
  * So governance uses `requireApproved`, which reads the account threshold
  * directly; only `recordPayment` — the one circuit that genuinely concerns a
@@ -2760,6 +2865,70 @@ export circuit recordPayment(
  * bootstrap window, and a vault has no bootstrap window: a vault threshold
  * nobody can meet makes that vault unspendable, which is recoverable by
  * lowering it, rather than dangerous.
+ *
+ * AND IT DOES NOT CHECK THAT `vault` IS A VAULT. That is deliberate and the
+ * whole of what this circuit will and will not refuse is written out here,
+ * because the missing check is the first thing a reader reaches for.
+ *
+ * WHAT IT REFUSES: a threshold of zero, below, which would authorise anything
+ * at that key for ever. WHAT IT DOES NOT: anything about the key itself. Any
+ * 32 bytes can be seated at any non-zero number, including bytes no vault will
+ * ever present and including the sentinel this contract uses to mean "no
+ * vault". A row, once seated, has no way out — nothing in this file removes
+ * from this map — so the number can be moved afterwards but the exception
+ * cannot be given up, and a vault that gets its own bar stops inheriting the
+ * account's for ever.
+ *
+ * THE OBVIOUS GUARD WAS CONSIDERED AND REFUSED, AND THE REASON IS WRITTEN DOWN
+ * SO IT IS NOT PROPOSED A THIRD TIME. Refusing the sentinel here closes ONE
+ * value out of 2^256. Every other value that is not a deployed vault reaches
+ * exactly the same place, is seated exactly as easily, and is refused by
+ * nothing — so the guard would name the one case a reader thinks of and leave
+ * the class it belongs to untouched, which reads as protection and is not.
+ *
+ * WHAT THE SEATED ROW THEN COSTS, AND IT IS NOT NOTHING. Seating any key at
+ * all needs a proposal carried at the account's own full threshold, so the
+ * road starts where the account is already held. But two things follow that an
+ * earlier draft of this paragraph got wrong, and both are written out because
+ * the wrong version read like a reason not to worry.
+ *
+ * FIRST, THE KEY CAN BE PRESENTED. The one reader of this map takes its key
+ * from `recordPayment`'s ARGUMENT, which this contract constrains with
+ * nothing: a contract here cannot see its caller, so a real vault handing its
+ * own address is the vault's property and not this contract's. Anyone may call
+ * `recordPayment` with a seated key. No money moves — this contract holds none
+ * — but `recordPayment` is what writes a payee into `movements`, permanently,
+ * and a payee written there is unpayable from that run for ever. A seated row
+ * lowers the approval bar on exactly that circuit. It is a second road into a
+ * limit this contract already has rather than a new door, and it is not a
+ * harmless one.
+ *
+ * SECOND, IT IS NOT REVERSIBLE THE WAY THE ACCOUNT'S OWN BAR IS. Raising the
+ * account threshold afterwards restores nothing here: a seated key stops
+ * inheriting for ever, and only another governed round can re-set its number.
+ * So this is not a party degrading a bar they already control — it is a
+ * permanent divorce from the bar they control, granted in one round.
+ *
+ * NONE OF WHICH ARGUES FOR THE SENTINEL GUARD, AND THAT IS THE POINT. Every
+ * sentence above is equally true of any other 32 bytes no vault will present,
+ * and the guard would refuse exactly one of them.
+ *
+ * WHAT WOULD CHANGE THE ANSWER, AND IT IS SCOPED TO THE SENTINEL BECAUSE THAT
+ * IS THE QUESTION THIS BLOCK IS ABOUT: a reader of this map that a caller who
+ * is NOT a vault can reach and that moves value on the answer.
+ *
+ * SAID THAT WAY ON PURPOSE. The broad form — "a reader of this map that moves
+ * value" — reads as though the map never gates money, and the opposite is what
+ * the map is FOR: a vault's payout calls the account first and pays only if it
+ * was not refused, so a vault seated at one approval pays at one approval, in
+ * the same transaction, today. That is the feature. What is absent is a reader
+ * a non-vault caller can reach that moves value.
+ *
+ * AND THAT ABSENCE IS NOT WHY THE SENTINEL GOES UNGUARDED. It is contingent,
+ * and a later circuit could end it. The reason is the one above: the guard
+ * would refuse one value out of 2^256 while every other key no vault will
+ * present is seated and reached identically. That reason is structural and
+ * survives the absence ending, which is why it is the one to read.
  */
 export circuit setVaultThreshold(
   vault: Bytes<32>,

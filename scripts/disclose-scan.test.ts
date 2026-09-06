@@ -272,40 +272,109 @@ describe('the real sources', () => {
     );
   });
 
-  it('PINS THE LINE AND THE TEXT, not only the count', () => {
+  it('AGREES WITH THE FILE ABOUT THE LINE AND THE TEXT, not only the count', () => {
     // Every assertion in this file used to be a length or a `via` chain, and an
     // auditor showed what that misses: `text.slice(openParen + 1, …)` off by
     // one — dropping the first character of EVERY disclosed expression — and
-    // `lineOf(...) + 1` — moving all 118 generated `file:line` citations one
-    // line off — both stayed green. The citation test cannot see the second
-    // either: `ConfidentialAccount.compact` has 2,613 lines, so ±1 is always
-    // in range.
-    
-    // RE-PINNED 1045 -> 1270 BY `S40`, 2 Sep, AND RE-PINNING IS THE PIN
-    // WORKING. `S35c` rewrote the contract and moved every line in it; a pin
-    // by line is supposed to break when that happens, and this one did (it
-    // failed `expected 1270 to be 1045`). It is NOT relaxed to a count in
-    // response — a count is precisely what this test was written to replace,
-    // because the count survived both defects above. The line below was
-    // verified against the file, not against the scanner: 1270 reads
-    // `assert(signers.checkRoot(disclose(root)), "not a signer on this
-    // account");`.
-    const account = scanSourceFile(ROOT, 'contracts/src/ConfidentialAccount.compact');
-    const rs = own(account, 'requireSigner');
-    expect(rs).toHaveLength(1);
-    expect(rs[0].line).toBe(1270);
-    expect(rs[0].text).toBe('root');
-    // Read back off the file itself, so the expectation above is derived
-    // independently of the scanner that produced it.
-    const line1270 = readFileSync(join(ROOT, 'contracts/src/ConfidentialAccount.compact'), 'utf8').split('\n')[1269];
-    expect(line1270).toContain('disclose(root)');
+    // `lineOf(...) + 1` — moving every generated `file:line` citation one line
+    // off — both stayed green. The citation check cannot see the second
+    // either: it only asks whether a cited file is long enough to have that
+    // line, so ±1 is always in range.
 
-    const vault = scanSourceFile(ROOT, 'contracts/src/Vault.compact');
-    const ctor = own(vault, 'constructor');
+    // THE LINE IS DERIVED FROM THE FILE'S CONTENT AND IS NO LONGER A LITERAL,
+    // AND THAT CHANGE IS THE FINDING RATHER THAN A RELAXATION.
+    //
+    // It was a literal, twice: 1045, then 1270 when a rewrite moved every line
+    // in the contract. The second time it broke it was called the pin working.
+    // It is not. A pin by line answers "has anything above this moved", and
+    // NOTHING IN THIS SUITE IS SUPPOSED TO ANSWER THAT — the contract is a
+    // file whose comments are edited, and inserting a paragraph of prose two
+    // hundred lines above a circuit is not a defect in the scanner. Each time
+    // the literal broke, the fix was to read the new number off the file and
+    // write it down, which restores nothing and buys the next break.
+    //
+    // WHAT THE TEST IS ACTUALLY DEFENDING is narrower and does not involve a
+    // number at all: THE SCANNER SEES THIS DISCLOSE, AT THE PLACE THE FILE
+    // ACTUALLY HAS IT, AND REPORTS THE RIGHT EXPRESSION. Both defects above
+    // break that and neither moves a line, so deriving the line loses nothing
+    // they would have caught — and a comment edit, which breaks a literal and
+    // catches nothing, now costs no red.
+    //
+    // A COUNT IS STILL NOT WHAT THIS IS. The count survived both defects. What
+    // stands here is an independent reading of the file compared against the
+    // scanner's answer, which is the same instrument the literal was standing
+    // in for, with the one thing it could not survive removed.
+
+    // Comments and string bodies are blanked before the search, with newlines
+    // kept so line numbers do not move. Two reasons, and the first is this
+    // file's own subject: a `disclose(` written in prose must not be found
+    // here any more than the scanner may count it — traps 1 and 2 above. The
+    // second is that it makes this reading and the scanner's agree about what
+    // the file's CODE is, so a disagreement between them is about the scanner
+    // and not about which of the two read a comment.
+    const discloseLineIn = (relPath: string, opensWith: string): number => {
+      const lines = blankNonCode(readFileSync(join(ROOT, relPath), 'utf8')).split('\n');
+
+      const from = lines.findIndex((l) => l.startsWith(opensWith));
+      expect(from, `no line in ${relPath} starts with \`${opensWith}\` — the circuit this test `
+        + 'reads has been renamed, moved behind an export, or deleted').toBeGreaterThan(-1);
+
+      // The body ends at the first `}` in column 0 after the opener, which is
+      // how every circuit in both contracts closes.
+      const span = lines.slice(from).findIndex((l, i) => i > 0 && l === '}');
+      expect(span, `\`${opensWith}\` in ${relPath} has no closing brace in column 0`)
+        .toBeGreaterThan(0);
+
+      const found = lines.slice(from, from + span)
+        .map((text, i) => ({ line: from + i + 1, text }))
+        .filter((e) => e.text.includes('disclose('));
+
+      // EXACTLY ONE, so the derivation cannot quietly pick the first of
+      // several. If a second disclose is added to one of these circuits this
+      // test must be looked at rather than silently keep reading the old one.
+      expect(found.map((e) => e.line),
+        `expected exactly one disclose in \`${opensWith}\` in ${relPath}`).toHaveLength(1);
+      return found[0].line;
+    };
+
+    // THE ACCOUNT. `requireSigner` is the circuit seven exported circuits
+    // inherit their signer-root disclosure from, which is why it is the one
+    // read here.
+    const ACCOUNT = 'contracts/src/ConfidentialAccount.compact';
+    const rsLine = discloseLineIn(ACCOUNT, 'circuit requireSigner(');
+    const rs = own(scanSourceFile(ROOT, ACCOUNT), 'requireSigner');
+    expect(rs).toHaveLength(1);
+    expect(rs[0].line,
+      'the scanner reports a different line for `requireSigner`\'s disclose than the file has '
+      + 'it on. An off-by-one here moves every generated `file:line` citation and nothing else '
+      + 'in this repository refuses it — the citation check only asks whether the file is long '
+      + 'enough to have the line.').toBe(rsLine);
+    expect(rs[0].text,
+      'the scanner reports the wrong expression for `requireSigner`\'s disclose. Dropping or '
+      + 'adding one character here is the defect this test was written for, and it changes what '
+      + 'a published privacy document says a circuit reveals.').toBe('root');
+
+    // And the derived line really is the disclose, read raw rather than
+    // blanked, so the two halves cannot both be satisfied by a search that
+    // found the wrong line.
+    expect(readFileSync(join(ROOT, ACCOUNT), 'utf8').split('\n')[rsLine - 1])
+      .toContain('disclose(root)');
+
+    // THE VAULT. Same shape, and a different declaration keyword on purpose:
+    // the account's is `circuit`, the vault's is `constructor`, so the helper
+    // is exercised on both spellings.
+    const VAULT = 'contracts/src/Vault.compact';
+    const ctorLine = discloseLineIn(VAULT, 'constructor(');
+    const ctor = own(scanSourceFile(ROOT, VAULT), 'constructor');
     expect(ctor).toHaveLength(1);
-    expect(ctor[0].line).toBe(263);
-    expect(ctor[0].text).toBe('a');
-    expect(readFileSync(join(ROOT, 'contracts/src/Vault.compact'), 'utf8').split('\n')[262]).toContain('account = disclose(a);');
+    expect(ctor[0].line,
+      'the scanner reports a different line for the vault constructor\'s disclose than the file '
+      + 'has it on.').toBe(ctorLine);
+    expect(ctor[0].text,
+      'the scanner reports the wrong expression for the vault constructor\'s disclose.')
+      .toBe('a');
+    expect(readFileSync(join(ROOT, VAULT), 'utf8').split('\n')[ctorLine - 1])
+      .toContain('account = disclose(a);');
   });
 
   it('the vault declares NO bodiless circuit as its own', () => {

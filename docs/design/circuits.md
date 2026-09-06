@@ -69,7 +69,7 @@ of what is actually public belongs in `docs/design/privacy.md` and is not this.
 | `slotOf` | pure | — | — | 0 | 0 | — | — (pure) |
 | `amendSigner` | provable | approvalCounts, openProposals, signerLeaves, signers, threshold | approvalCounts, openProposals, runWindow, signerLeaves, signers | 13 | 16 | — | 2,119 B `cb38e9b31d5f` |
 | `setThreshold` | provable | approvalCounts, openProposals, signerLeaves, signers, threshold | approvalCounts, openProposals, runWindow, threshold | 7 | 7 | — | 2,119 B `51bf0a8c90d3` |
-| `propose` | provable | openProposals, signers | approvalCounts, openProposals, runWindow | 7 | 19 | — | 2,119 B `cb6c1156eef5` |
+| `propose` | provable | openProposals, signers | approvalCounts, openProposals, runWindow | 7 | 19 | — | 2,119 B `97d704dee942` |
 | `approve` | provable | approvalCounts, approvals, openProposals, signers | approvalCounts, approvals | 4 | 3 | — | 2,119 B `0103a77296e6` |
 | `cancel` | provable | openProposals, runWindow, signers | approvalCounts, openProposals, runWindow | 4 | 2 | — | 2,119 B `f1cc6a9bbaa3` |
 | `closeExpiredRun` | provable | openProposals, runWindow | approvalCounts, openProposals, runWindow | 3 | 1 | — | 1,351 B `ba3755a6770c` |
@@ -95,7 +95,7 @@ constructor(foundingLeaf: Bytes<32>)
 - **asserts**
     - "that is not a usable signer leaf"
 - **discloses** — 1 site
-    - `contracts/src/ConfidentialAccount.compact:1591` — `foundingLeaf`
+    - `contracts/src/ConfidentialAccount.compact:1696` — `foundingLeaf`
 
 #### `signerPublicKey`
 
@@ -394,22 +394,22 @@ amendSigner(leaf: Bytes<32>, proposal: Bytes<32>, intoVacatedSlot: Boolean, remo
     - "that slot has not been vacated" *(through `_takeVacatedSlot_0`)*
     - "that path is not from this tree" *(through `_takeVacatedSlot_0`)*
 - **discloses** — 16 sites
-    - `contracts/src/ConfidentialAccount.compact:1752` — `removing`
-    - `contracts/src/ConfidentialAccount.compact:1755` — `proposal`
-    - `contracts/src/ConfidentialAccount.compact:1758` — `proposalIdOf(removeSignerPayload(removedLeaf), noVault(), proposalSalt()) == proposal`
-    - `contracts/src/ConfidentialAccount.compact:1769` — `merkleTreePathRoot<10, Bytes<32>>(path)`
-    - `contracts/src/ConfidentialAccount.compact:1781` — `slotOf(path)`
-    - `contracts/src/ConfidentialAccount.compact:1790` — `removedLeaf`
-    - `contracts/src/ConfidentialAccount.compact:1884` — `newSignerLeaf`
-    - `contracts/src/ConfidentialAccount.compact:1920` — `proposal`
-    - `contracts/src/ConfidentialAccount.compact:1926` — `proposalIdOf(signerAddPayload(newSignerLeaf), noVault(), proposalSalt()) == proposal`
-    - `contracts/src/ConfidentialAccount.compact:1955` — `intoVacatedSlot`
-    - `contracts/src/ConfidentialAccount.compact:1956` — `newSignerLeaf`
-    - `contracts/src/ConfidentialAccount.compact:1956` — `takeVacatedSlot()`
-    - `contracts/src/ConfidentialAccount.compact:1958` — `newSignerLeaf`
-    - `contracts/src/ConfidentialAccount.compact:1960` — `newSignerLeaf`
-    - `contracts/src/ConfidentialAccount.compact:1270` — `root` *(through `requireSigner`)*
-    - `contracts/src/ConfidentialAccount.compact:1433` — `root` *(through `takeVacatedSlot`)*
+    - `contracts/src/ConfidentialAccount.compact:1857` — `removing`
+    - `contracts/src/ConfidentialAccount.compact:1860` — `proposal`
+    - `contracts/src/ConfidentialAccount.compact:1863` — `proposalIdOf(removeSignerPayload(removedLeaf), noVault(), proposalSalt()) == proposal`
+    - `contracts/src/ConfidentialAccount.compact:1874` — `merkleTreePathRoot<10, Bytes<32>>(path)`
+    - `contracts/src/ConfidentialAccount.compact:1886` — `slotOf(path)`
+    - `contracts/src/ConfidentialAccount.compact:1895` — `removedLeaf`
+    - `contracts/src/ConfidentialAccount.compact:1989` — `newSignerLeaf`
+    - `contracts/src/ConfidentialAccount.compact:2025` — `proposal`
+    - `contracts/src/ConfidentialAccount.compact:2031` — `proposalIdOf(signerAddPayload(newSignerLeaf), noVault(), proposalSalt()) == proposal`
+    - `contracts/src/ConfidentialAccount.compact:2060` — `intoVacatedSlot`
+    - `contracts/src/ConfidentialAccount.compact:2061` — `newSignerLeaf`
+    - `contracts/src/ConfidentialAccount.compact:2061` — `takeVacatedSlot()`
+    - `contracts/src/ConfidentialAccount.compact:2063` — `newSignerLeaf`
+    - `contracts/src/ConfidentialAccount.compact:2065` — `newSignerLeaf`
+    - `contracts/src/ConfidentialAccount.compact:1323` — `root` *(through `requireSigner`)*
+    - `contracts/src/ConfidentialAccount.compact:1538` — `root` *(through `takeVacatedSlot`)*
 
 #### `setThreshold`
 
@@ -432,13 +432,13 @@ setThreshold(newThreshold: Uint<0..18446744073709551615>, proposal: Bytes<32>): 
     - "there is no open proposal with that id" *(through `_requireApproved_0`)*
     - "not enough approvals yet" *(through `_requireApproved_0`)*
 - **discloses** — 7 sites
-    - `contracts/src/ConfidentialAccount.compact:2013` — `proposal`
-    - `contracts/src/ConfidentialAccount.compact:2016` — `proposalIdOf(setThresholdPayload(newThreshold), noVault(), proposalSalt()) == proposal`
-    - `contracts/src/ConfidentialAccount.compact:2022` — `newThreshold`
-    - `contracts/src/ConfidentialAccount.compact:2029` — `newThreshold`
-    - `contracts/src/ConfidentialAccount.compact:2032` — `newThreshold`
-    - `contracts/src/ConfidentialAccount.compact:2044` — `proposal`
-    - `contracts/src/ConfidentialAccount.compact:1270` — `root` *(through `requireSigner`)*
+    - `contracts/src/ConfidentialAccount.compact:2118` — `proposal`
+    - `contracts/src/ConfidentialAccount.compact:2121` — `proposalIdOf(setThresholdPayload(newThreshold), noVault(), proposalSalt()) == proposal`
+    - `contracts/src/ConfidentialAccount.compact:2127` — `newThreshold`
+    - `contracts/src/ConfidentialAccount.compact:2134` — `newThreshold`
+    - `contracts/src/ConfidentialAccount.compact:2137` — `newThreshold`
+    - `contracts/src/ConfidentialAccount.compact:2149` — `proposal`
+    - `contracts/src/ConfidentialAccount.compact:1323` — `root` *(through `requireSigner`)*
 
 #### `propose`
 
@@ -461,25 +461,25 @@ propose(payloadHash: Bytes<32>, root: Bytes<32>, payees: Uint<0..184467440737095
     - "that membership path is not yours" *(through `_requireSigner_0`)*
     - "not a signer on this account" *(through `_requireSigner_0`)*
 - **discloses** — 19 sites
-    - `contracts/src/ConfidentialAccount.compact:2119` — `isRun`
-    - `contracts/src/ConfidentialAccount.compact:2126` — `payees`
-    - `contracts/src/ConfidentialAccount.compact:2127` — `opensAt`
-    - `contracts/src/ConfidentialAccount.compact:2127` — `closesAt`
-    - `contracts/src/ConfidentialAccount.compact:2192` — `vault`
-    - `contracts/src/ConfidentialAccount.compact:2195` — `changeCommitmentOf( assetKeyOf(assetId(), assetBlinding()), changeAmount(), changeBatchDigest(), salt)`
-    - `contracts/src/ConfidentialAccount.compact:2198` — `proposalIdOf( runPayload(disclose(root), disclose(payees), disclose(opensAt), disclose(closesAt)), disclose(vault), salt)`
-    - `contracts/src/ConfidentialAccount.compact:2199` — `root`
-    - `contracts/src/ConfidentialAccount.compact:2199` — `payees`
-    - `contracts/src/ConfidentialAccount.compact:2199` — `opensAt`
-    - `contracts/src/ConfidentialAccount.compact:2199` — `closesAt`
-    - `contracts/src/ConfidentialAccount.compact:2200` — `vault`
-    - `contracts/src/ConfidentialAccount.compact:2221` — `opensAt`
-    - `contracts/src/ConfidentialAccount.compact:2221` — `closesAt`
-    - `contracts/src/ConfidentialAccount.compact:2319` — `vault`
-    - `contracts/src/ConfidentialAccount.compact:2348` — `changeCommitmentOf( assetKeyOf(assetId(), assetBlinding()), changeAmount(), changeBatchDigest(), salt)`
-    - `contracts/src/ConfidentialAccount.compact:2375` — `proposalIdOf(payloadHash, disclose(vault), salt)`
-    - `contracts/src/ConfidentialAccount.compact:2375` — `vault`
-    - `contracts/src/ConfidentialAccount.compact:1270` — `root` *(through `requireSigner`)*
+    - `contracts/src/ConfidentialAccount.compact:2224` — `isRun`
+    - `contracts/src/ConfidentialAccount.compact:2231` — `payees`
+    - `contracts/src/ConfidentialAccount.compact:2232` — `opensAt`
+    - `contracts/src/ConfidentialAccount.compact:2232` — `closesAt`
+    - `contracts/src/ConfidentialAccount.compact:2297` — `vault`
+    - `contracts/src/ConfidentialAccount.compact:2300` — `changeCommitmentOf( assetKeyOf(assetId(), assetBlinding()), changeAmount(), changeBatchDigest(), salt)`
+    - `contracts/src/ConfidentialAccount.compact:2303` — `proposalIdOf( runPayload(disclose(root), disclose(payees), disclose(opensAt), disclose(closesAt)), disclose(vault), salt)`
+    - `contracts/src/ConfidentialAccount.compact:2304` — `root`
+    - `contracts/src/ConfidentialAccount.compact:2304` — `payees`
+    - `contracts/src/ConfidentialAccount.compact:2304` — `opensAt`
+    - `contracts/src/ConfidentialAccount.compact:2304` — `closesAt`
+    - `contracts/src/ConfidentialAccount.compact:2305` — `vault`
+    - `contracts/src/ConfidentialAccount.compact:2326` — `opensAt`
+    - `contracts/src/ConfidentialAccount.compact:2326` — `closesAt`
+    - `contracts/src/ConfidentialAccount.compact:2424` — `vault`
+    - `contracts/src/ConfidentialAccount.compact:2453` — `changeCommitmentOf( assetKeyOf(assetId(), assetBlinding()), changeAmount(), changeBatchDigest(), salt)`
+    - `contracts/src/ConfidentialAccount.compact:2480` — `proposalIdOf(payloadHash, disclose(vault), salt)`
+    - `contracts/src/ConfidentialAccount.compact:2480` — `vault`
+    - `contracts/src/ConfidentialAccount.compact:1323` — `root` *(through `requireSigner`)*
 
 #### `approve`
 
@@ -499,9 +499,9 @@ approve(proposal: Bytes<32>): []
     - "that membership path is not yours" *(through `_requireSigner_0`)*
     - "not a signer on this account" *(through `_requireSigner_0`)*
 - **discloses** — 3 sites
-    - `contracts/src/ConfidentialAccount.compact:2397` — `proposal`
-    - `contracts/src/ConfidentialAccount.compact:2400` — `approvalNullifier(sk, id)`
-    - `contracts/src/ConfidentialAccount.compact:1270` — `root` *(through `requireSigner`)*
+    - `contracts/src/ConfidentialAccount.compact:2502` — `proposal`
+    - `contracts/src/ConfidentialAccount.compact:2505` — `approvalNullifier(sk, id)`
+    - `contracts/src/ConfidentialAccount.compact:1323` — `root` *(through `requireSigner`)*
 
 #### `cancel`
 
@@ -521,8 +521,8 @@ cancel(proposal: Bytes<32>): []
     - "that membership path is not yours" *(through `_requireSigner_0`)*
     - "not a signer on this account" *(through `_requireSigner_0`)*
 - **discloses** — 2 sites
-    - `contracts/src/ConfidentialAccount.compact:2422` — `proposal`
-    - `contracts/src/ConfidentialAccount.compact:1270` — `root` *(through `requireSigner`)*
+    - `contracts/src/ConfidentialAccount.compact:2527` — `proposal`
+    - `contracts/src/ConfidentialAccount.compact:1323` — `root` *(through `requireSigner`)*
 
 #### `closeExpiredRun`
 
@@ -541,7 +541,7 @@ closeExpiredRun(proposal: Bytes<32>): []
     - "that is not a run"
     - "the payment window for this run has not closed yet"
 - **discloses** — 1 site
-    - `contracts/src/ConfidentialAccount.compact:2497` — `proposal`
+    - `contracts/src/ConfidentialAccount.compact:2602` — `proposal`
 
 #### `recordPayment`
 
@@ -565,17 +565,17 @@ recordPayment(proposal: Bytes<32>, vault: Bytes<32>, root: Bytes<32>, payees: Ui
     - "there is no open proposal with that id" *(through `_requireApprovedForVault_0`)*
     - "not enough approvals yet" *(through `_requireApprovedForVault_0`)*
 - **discloses** — 11 sites
-    - `contracts/src/ConfidentialAccount.compact:2651` — `proposal`
-    - `contracts/src/ConfidentialAccount.compact:2652` — `vault`
-    - `contracts/src/ConfidentialAccount.compact:2672` — `proposalIdOf( runPayload(disclose(root), disclose(payees), disclose(opensAt), disclose(closesAt)), forVault, disclose(salt)) == id`
-    - `contracts/src/ConfidentialAccount.compact:2673` — `root`
-    - `contracts/src/ConfidentialAccount.compact:2673` — `payees`
-    - `contracts/src/ConfidentialAccount.compact:2673` — `opensAt`
-    - `contracts/src/ConfidentialAccount.compact:2673` — `closesAt`
-    - `contracts/src/ConfidentialAccount.compact:2674` — `salt`
-    - `contracts/src/ConfidentialAccount.compact:2694` — `opensAt`
-    - `contracts/src/ConfidentialAccount.compact:2695` — `closesAt`
-    - `contracts/src/ConfidentialAccount.compact:2726` — `paidMovementOf(leaf)`
+    - `contracts/src/ConfidentialAccount.compact:2756` — `proposal`
+    - `contracts/src/ConfidentialAccount.compact:2757` — `vault`
+    - `contracts/src/ConfidentialAccount.compact:2777` — `proposalIdOf( runPayload(disclose(root), disclose(payees), disclose(opensAt), disclose(closesAt)), forVault, disclose(salt)) == id`
+    - `contracts/src/ConfidentialAccount.compact:2778` — `root`
+    - `contracts/src/ConfidentialAccount.compact:2778` — `payees`
+    - `contracts/src/ConfidentialAccount.compact:2778` — `opensAt`
+    - `contracts/src/ConfidentialAccount.compact:2778` — `closesAt`
+    - `contracts/src/ConfidentialAccount.compact:2779` — `salt`
+    - `contracts/src/ConfidentialAccount.compact:2799` — `opensAt`
+    - `contracts/src/ConfidentialAccount.compact:2800` — `closesAt`
+    - `contracts/src/ConfidentialAccount.compact:2831` — `paidMovementOf(leaf)`
 
 #### `setVaultThreshold`
 
@@ -597,11 +597,11 @@ setVaultThreshold(vault: Bytes<32>, newThreshold: Uint<0..18446744073709551615>,
     - "there is no open proposal with that id" *(through `_requireApproved_0`)*
     - "not enough approvals yet" *(through `_requireApproved_0`)*
 - **discloses** — 5 sites
-    - `contracts/src/ConfidentialAccount.compact:2770` — `proposal`
-    - `contracts/src/ConfidentialAccount.compact:2772` — `proposalIdOf( setVaultThresholdPayload(vault, newThreshold), noVault(), proposalSalt()) == id`
-    - `contracts/src/ConfidentialAccount.compact:2778` — `vault`
-    - `contracts/src/ConfidentialAccount.compact:2778` — `newThreshold`
-    - `contracts/src/ConfidentialAccount.compact:1270` — `root` *(through `requireSigner`)*
+    - `contracts/src/ConfidentialAccount.compact:2939` — `proposal`
+    - `contracts/src/ConfidentialAccount.compact:2941` — `proposalIdOf( setVaultThresholdPayload(vault, newThreshold), noVault(), proposalSalt()) == id`
+    - `contracts/src/ConfidentialAccount.compact:2947` — `vault`
+    - `contracts/src/ConfidentialAccount.compact:2947` — `newThreshold`
+    - `contracts/src/ConfidentialAccount.compact:1323` — `root` *(through `requireSigner`)*
 
 #### `adopt`
 
@@ -623,11 +623,11 @@ adopt(vault: Bytes<32>, proposal: Bytes<32>): []
     - "there is no open proposal with that id" *(through `_requireApproved_0`)*
     - "not enough approvals yet" *(through `_requireApproved_0`)*
 - **discloses** — 5 sites
-    - `contracts/src/ConfidentialAccount.compact:2805` — `proposal`
-    - `contracts/src/ConfidentialAccount.compact:2807` — `proposalIdOf( adoptVaultPayload(vault), noVault(), proposalSalt()) == id`
-    - `contracts/src/ConfidentialAccount.compact:2819` — `vault`
-    - `contracts/src/ConfidentialAccount.compact:2820` — `vault`
-    - `contracts/src/ConfidentialAccount.compact:1270` — `root` *(through `requireSigner`)*
+    - `contracts/src/ConfidentialAccount.compact:2974` — `proposal`
+    - `contracts/src/ConfidentialAccount.compact:2976` — `proposalIdOf( adoptVaultPayload(vault), noVault(), proposalSalt()) == id`
+    - `contracts/src/ConfidentialAccount.compact:2988` — `vault`
+    - `contracts/src/ConfidentialAccount.compact:2989` — `vault`
+    - `contracts/src/ConfidentialAccount.compact:1323` — `root` *(through `requireSigner`)*
 
 #### `retireVault`
 
@@ -647,10 +647,10 @@ retireVault(proposal: Bytes<32>, vault: Bytes<32>, salt: Bytes<32>): []
     - "there is no open proposal with that id" *(through `_requireApproved_0`)*
     - "not enough approvals yet" *(through `_requireApproved_0`)*
 - **discloses** — 4 sites
-    - `contracts/src/ConfidentialAccount.compact:2864` — `proposal`
-    - `contracts/src/ConfidentialAccount.compact:2865` — `vault`
-    - `contracts/src/ConfidentialAccount.compact:2867` — `proposalIdOf(retireVaultPayload(forVault), noVault(), disclose(salt)) == id`
-    - `contracts/src/ConfidentialAccount.compact:2867` — `salt`
+    - `contracts/src/ConfidentialAccount.compact:3033` — `proposal`
+    - `contracts/src/ConfidentialAccount.compact:3034` — `vault`
+    - `contracts/src/ConfidentialAccount.compact:3036` — `proposalIdOf(retireVaultPayload(forVault), noVault(), disclose(salt)) == id`
+    - `contracts/src/ConfidentialAccount.compact:3036` — `salt`
 
 ## Vault
 
@@ -914,4 +914,4 @@ retire(proposal: Bytes<32>, salt: Bytes<32>): []
     - `contracts/src/Vault.compact:1092` — `proposal`
     - `contracts/src/Vault.compact:1099` — `kernel.self().bytes`
     - `contracts/src/Vault.compact:1100` — `salt`
-<!-- GENERATED:END id="circuits" body="81f496259dcda442" -->
+<!-- GENERATED:END id="circuits" body="f5749bf0dff94f12" -->
