@@ -113,7 +113,7 @@ export const SUITES = [
   'contracts/test/what-a-signer-is.test.ts',
   /* The invite path's ordering and its leaf, out of the screen so a test can
    * drive them. `C329`, `T-118`. */
-  'src/web/accept-seat.test.ts', 'src/core/core.test.ts', // EIGHTH — S67, T-286. Reasoning below, at `THE EIGHTH SUITE`. Line-neutral on purpose: see `RUN_AS_DOOR`.
+  'src/web/accept-seat.test.ts', 'src/core/core.test.ts', 'src/midnight/ledger.test.ts', // EIGHTH — S67, T-286. NINTH — S74, T-358: the maintenance boundary, tier 2 of the money-path set, which this corpus targeted at no entry at all. Both line-neutral on purpose: `edges.json` pins `:542` below and a suite added on its own line moves it. See `RUN_AS_DOOR`.
 ];
 const OUT = join(ROOT, 'logs', 'mutate-authority');
 
@@ -940,6 +940,78 @@ export const MUTATIONS = [
     kills: [
       'A ROUND SURVIVES ITS PROPOSER BEING REMOVED, AND THE NEXT APPROVAL DOES NOT THROW — `C377`, `T-286`, `S58`',
       'AND THE SAME THROUGH A GOVERNANCE DOOR, WHICH IS THE HALF THE FIRST DRAFT MISSED — `T-286`, `S58`',
+    ],
+  },
+  {
+    id: 37,
+    binding: '"THE CHAIN COULD NOT BE ASKED" IS NOT "THE CHAIN DISAGREES"',
+    file: 'src/midnight/ledger.ts',
+    says: 'the third state collapses into the second, so an unreachable indexer, an address '
+      + 'the provider holds nothing for, and a state this cannot parse all report that the '
+      + 'contract carries the WRONG maintenance authority — and the round downstream rebuilds '
+      + 'and re-signs a real maintenance update against a chain it never read',
+    /*
+     * **`T-358`'s OWN *done when*, TAKEN LITERALLY.** That row says: at least one
+     * mutation against the three-state comparator, and the obvious one flips
+     * `unknown` to `disagree` for a non-`read`. This is that one.
+     *
+     * `S55` shipped a `P1` collapsing exactly this three into two, in a
+     * different file, six days ago. The comparator this mutates is the one a
+     * maintenance update is judged by.
+     */
+    from: "  if (read.state !== 'read') {\n"
+      + '    return {\n'
+      + "      verdict: 'unknown', address: read.address, intended,",
+    to: "  if (read.state !== 'read') {\n"
+      + '    return {\n'
+      + "      verdict: 'disagree', address: read.address, intended,",
+    kills: [
+      'says UNKNOWN and never DISAGREE when the chain could not be asked',
+      'says UNKNOWN and not DISAGREE when the provider holds no state for the address',
+      'REFUSES when the chain could not be asked, and never calls that a disagreement',
+    ],
+  },
+  {
+    id: 38,
+    binding: 'A THRESHOLD BELOW ONE IS REFUSED WHERE AN AUTHORITY IS BUILT, NOT ONLY WHERE IT IS READ',
+    file: 'src/midnight/ledger.ts',
+    says: 'the world-writable value can be BUILT again — a threshold of zero passes into a '
+      + 'ReplaceAuthority payload, and MEASURED on ledger 9 the chain then accepts a '
+      + 'maintenance update carrying no signatures at all from anybody in the world',
+    /*
+     * `T-356`. `S61` closed the READ side and its row says in its own words that
+     * nothing stopped the value being CHOSEN or INSTALLED. This guard is the
+     * install side, and this entry is what keeps it there.
+     */
+    from: '  if (!Number.isInteger(threshold) || threshold < 1) {\n'
+      + '    out.push({\n'
+      + "      code: 'threshold-below-one',",
+    to: '  if (false) {\n'
+      + '    out.push({\n'
+      + "      code: 'threshold-below-one',",
+    kills: [
+      'refuses a threshold of zero and calls it WORLD-WRITABLE, never unmaintainable',
+      'refuses an unbuildable intended value without asking the chain for a verdict on it',
+      'requireBuildableAuthority throws with EVERY reason, not the first one',
+    ],
+  },
+  {
+    id: 39,
+    binding: 'THE VERIFIER KEYS ARE COMPARED BY THEIR BYTES, NOT BY THEIR NAMES',
+    file: 'src/midnight/ledger.ts',
+    says: 'every entry point whose name matches is called a match, so `C353`\'s drain — a '
+      + 'verifier key swapped under an unchanged name, which is the act that actually moves '
+      + 'the money — reports AGREE from the one instrument built to see it',
+    /*
+     * `T-359`. `docs/scope-the-upgrade-path.md:216-231`'s SILENTLY WEAKEN is 32
+     * bytes on chain WITH THE OPERATIONS MAP LISTING THE SAME NAMES, which is
+     * exactly the state this mutation produces and calls clean.
+     */
+    from: '    const same = op.verifierKey.length === want.length &&\n'
+      + '      op.verifierKey.every((b, i) => b === want[i]);',
+    to: '    const same = true;',
+    kills: [
+      'DISAGREES and names the entry point when the key on chain is not the one this build produces — `C353` seen',
     ],
   },
 ];

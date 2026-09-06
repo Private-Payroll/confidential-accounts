@@ -223,6 +223,11 @@ docs/round-index.md
 
 docs/BOARD.md
 docs/BUILD-ORDER.md
+# The same board rendered for reading. Written by the controller in the same turn
+# as the .md above, so the two cannot drift. Controller-only, exactly like its
+# source, and it ships for the same reason that one does not: it is the plan and
+# the plan is not the product.
+docs/BUILD-ORDER.html
 docs/NEXT.md
 docs/THE-MIGRATION.md
 docs/accepted-risks.md
@@ -289,3 +294,7 @@ docs/handoff/
 # Ruled 5 Sep: not in v1, decided later. Adding a file after publication is
 # easy; removing one is impossible.
 .claude/
+
+
+# ── LOCAL TOOLING, KEPT ON DISK AND NOT PUBLISHED ──────────────────────────
+src/testing/no-attribution.test.ts

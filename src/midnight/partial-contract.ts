@@ -178,22 +178,22 @@ export function requireMaintenanceAuthority(
   }
   if (choice.kind === 'committee') {
     if (!Array.isArray(choice.committee) || choice.committee.length === 0) {
-      throw new Error(
-        'a committee maintenance authority needs at least one verifying key. ' +
-          'For "no maintenance, ever", say { kind: "unmaintainable" } — deliberately, not as an empty list.',
-      );
+      throw new Error('a committee maintenance authority needs at least one verifying key. ' +
+        'For "no maintenance, ever", say { kind: "unmaintainable" } — deliberately, not an empty list.');
     }
-    if (
-      !Number.isInteger(choice.threshold) ||
-      choice.threshold < 1 ||
-      choice.threshold > choice.committee.length
-    ) {
-      throw new Error(
-        `a committee of ${choice.committee.length} cannot have threshold ${choice.threshold}: ` +
-          'it must be an integer between 1 and the committee size. A threshold above the size ' +
-          'is the unmaintainable state — say { kind: "unmaintainable" } if that is the intent.',
-      );
+    if (!Number.isInteger(choice.threshold) || choice.threshold < 1 ||
+        choice.threshold > choice.committee.length) {
+      throw new Error(`a committee of ${choice.committee.length} cannot have threshold ${choice.threshold}: ` +
+        'it must be an integer between 1 and the committee size. A threshold above the size ' +
+        'is the unmaintainable state — say { kind: "unmaintainable" } if that is the intent.');
     }
+    /* `T-357`, 6 Sep. MEASURED on ledger 9: one holder of `K` signs ONCE and attaches that
+     * one signature at EVERY seat holding `K` — well-formed, because the signed data does
+     * not cover the signer index. `[K,K,K]`@3 is not a 3-of-3, and this checked size and
+     * range only. `authorityValueRefusals` is its twin at BUILD time. **The rewrite above
+     * is LINE-FOR-LINE** — `C366`, and the anchors below this function. */
+    const seats = choice.committee.map((k) => `${k.tag.toLowerCase()}:${k.value.toLowerCase()}`);
+    if (new Set(seats).size !== seats.length) throw new Error(`this committee of ${seats.length} lists at least one key more than once, so it is not the ${choice.threshold}-of-${seats.length} it appears to be: one holder signs once and attaches that signature at every seat holding their key. Give each seat a distinct verifying key, or set the threshold to what the distinct holders can actually meet.`);
   }
   if (choice.kind === 'single-key' && !choice.temporary?.fixedBy?.trim()) {
     throw new Error(
