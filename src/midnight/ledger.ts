@@ -2313,10 +2313,16 @@ export class MidnightProofSystem implements ProofSystem {
  * REPORTING THE MOST DANGEROUS VALUE ON CHAIN WITH THE NAME OF THE SAFEST.**
  * A threshold of ZERO is not *unmaintainable*: `verify.rs:1789` is
  * `if self.signatures.len() < authority.threshold as usize`, and it is the ONLY
- * read of `threshold` in the whole ledger crate — so at `0`, `0 < 0` is false, a
- * maintenance update carrying NO SIGNATURES AT ALL is well-formed, and the
- * verification loop at `:1775` never runs, so committee membership is never
- * consulted either. **Anybody in the world can rewrite that contract's rules.**
+ * FUNCTIONAL read of `threshold` in that crate at 8.2 — so at `0`, `0 < 0` is false
+ * and a maintenance update carrying NO SIGNATURES AT ALL is well-formed.
+ * **Anybody in the world can rewrite that contract's rules.**
+ * *(This paragraph used to continue "and the verification loop at `:1775` never
+ * runs, so committee membership is never consulted either". **That is FALSE and was
+ * measured false on ledger 9 by `S74`'s `platform-fact-checker`:** the loop iterates
+ * the SIGNATURES, not the threshold, so at threshold zero an out-of-range seat and a
+ * wrong signature are both still refused. It has nothing to iterate only when no
+ * signatures are attached — the one case that had been tried. The conclusion is
+ * unchanged; the mechanism was wrong. `docs/corrections.md`.)*
  * The first draft of this function returned `'no-one'` for it — the word this
  * codebase uses for `unmaintainable`, documented at `partial-contract.ts:118-130`
  * as *"nobody — not us, not a stolen key — can ever change which proofs this
@@ -2338,8 +2344,12 @@ export interface OnChainAuthority {
   shape: AuthorityShape;
   /**
    * **THE COMMITTEE LISTS ONE KEY MORE THAN ONCE, SO ITS THRESHOLD IS NOT WHAT
-   * IT LOOKS LIKE.** Raised by `S61`'s `platform-fact-checker`, as a READING of
-   * `midnight-src/midnight-ledger/` at 8.2.0-rc.1 and not a measurement.
+   * IT LOOKS LIKE.** Raised by `S61`'s `platform-fact-checker` as a READING of
+   * `midnight-src/midnight-ledger/` at 8.2.0-rc.1 — **AND MEASURED ON LEDGER 9 BY
+   * `S74`, WHICH IS THE BUILD THE CHAIN RUNS: it is real. One signature value,
+   * attached at three seats holding the same key, satisfies `[K,K,K]` at threshold
+   * 3 and the transaction is WELL-FORMED.** `MAINTENANCE-INSTRUCTION-CHECK.command`
+   * variant (b) is where a person re-takes that measurement.
    * `committee` is a plain `Vec<VerifyingKey>` (`state.rs:701`) and nothing
    * anywhere requires its entries to be distinct; `data_to_sign`
    * (`structure.rs:2737-2747`) covers address, updates and counter and NOT the
@@ -2611,5 +2621,1091 @@ export function compareAuthority(
     why: 'the chain carries a DIFFERENT SET OF KEYS from the intended end state at the same ' +
       'threshold. On a maintenance authority this is the whole of `C353`: whoever these keys ' +
       'belong to can replace the rules this contract obeys.',
+  };
+}
+
+/* ================================================================== *
+ * BUILDING A MAINTENANCE INSTRUCTION BY HAND — `C351`'s BUILD LIMB,
+ * `C354`'s SECOND LIMB, `T-161`. Board row `2y9-2`, `S74`.
+ * ================================================================== */
+
+/**
+ * THE MACHINERY THAT BUILDS A MAINTENANCE UPDATE, BECAUSE THE FOUNDER'S RULING
+ * SWITCHES THE SDK's OFF. `C351` build limb, `C354` second limb, `T-161`.
+ *
+ * The founder ruled on 5 Sep that the COMPANY's OWN SIGNERS hold the maintenance
+ * authority, for the account and for the vaults, and that we hold nothing. That
+ * is the same rule as everything else here — we never custody funds and never
+ * hold the wallet key — applied to the key that can replace a contract's
+ * verifier keys, which `C353` establishes is a drain key on every vault's
+ * unshielded money.
+ *
+ * **THE COST IS PERMANENT AND WAS ACCEPTED KNOWINGLY: a committee authority
+ * switches Midnight's SDK maintenance interface OFF for that contract, for
+ * ever.** Under a committee no signing key is stored
+ * (`partial-contract.ts:358-360`) and every SDK maintenance entry point opens by
+ * asserting exactly that slot (`midnight-js-contracts/dist/index.mjs:398-399`,
+ * `:470-471`, `:547-548`). And it would not help if it were there:
+ * `createSignedMaintenanceUpdate` always signs at `DEFAULT_SIGNATURE_INDEX = 0`
+ * (`ContractExecutable.js:269`, `:31`), a 1-of-N vote the chain refuses at any
+ * threshold above one. **So every maintenance instruction this product will ever
+ * issue is built here, from `ledger-v9`'s own primitives.**
+ *
+ * **IT BUILDS. IT DOES NOT SUBMIT.** Nothing in this block sends a transaction,
+ * pays a fee, or contacts a chain. Constructing, checking and assembling
+ * signatures is a session's work; submitting is a person's act behind a door
+ * (rules 1, 42a-i).
+ *
+ * **AND IT NEVER TOUCHES A SIGNING KEY. NOT AS A PARAMETER, NOT AS A FIXTURE,
+ * NOT AS A LITERAL.** `C400` is the reason the sentence is this blunt: on 5 Sep
+ * a round put the live maintenance-authority signing key — the key `C353` is
+ * about — into a TRACKED source file in a repository that is going public, and
+ * its own auditor caught it. **The API below accepts SIGNATURES, which are
+ * public the moment they reach a chain, and VERIFYING keys, which are already on
+ * one. There is no parameter anywhere in this block that a signing key fits.**
+ * Signing happens outside this repository, on the machine that holds the key.
+ *
+ * ── WHY IT IS APPENDED HERE AND NOT IN A FILE OF ITS OWN ─────────────────────
+ *
+ * **`C393`, re-measured rather than inherited.** `scripts/edge-list.ts:162-163`
+ * walks `src`, `scripts` and `contracts/test` for `/\.(ts|tsx|mjs)$/` and
+ * `docs/design/edges.json`'s `coverage.clientFilesScanned` records the count.
+ * Measured this round: the live walk finds **302** and `edges.json` records
+ * **302**, so the gate is green and ONE new file in those three trees turns it
+ * red — and it refuses in `globalSetup`, which stops every named-file `vitest`
+ * run, the only measuring instrument rule 3 leaves a round. The door that clears
+ * it is `DOCS.command`, which no session may run. **So this is appended at the
+ * END of the file that already holds the read-back and the comparator, where no
+ * line moves**: `src/midnight/ledger.ts`'s last `edges.json` locator is `:1796` —
+ * MEASURED, by listing every locator into this file rather than taking the number
+ * from `S61`'s account, which recorded `:1672` and was one entry short — and this
+ * block begins far below it.
+ *
+ * ── THE FOUR THINGS `S61` SETTLED BY MEASUREMENT, USED AND NOT RE-LITIGATED ──
+ *
+ *   1. The read-back is a LEDGER PROPERTY and not an SDK call, so building
+ *      without the SDK costs nothing in the ability to verify the work.
+ *   2. `compareAuthority` above IS the *did my change land* test — whole-value,
+ *      end-state, counter excluded. It is reused; no second comparator is
+ *      written.
+ *   3. **`unknown` REFUSES.** A plan that treated *the chain could not be asked*
+ *      as *disagree* would re-sign against a chain it never read, which is the
+ *      whole of `C354`.
+ *   4. `T-356`, `T-357`, `T-359` and `T-361` are this block's, and each is
+ *      answered below at the place it belongs.
+ *
+ * ── WHAT WAS MEASURED HERE, AGAINST THE BUILD THE NODE PINS ──────────────────
+ *
+ * Every claim in this block was taken off `@midnightntwrk/ledger-v9@1.0.0-rc.3` by
+ * constructing the object, deploying it into a `LedgerState` and calling
+ * `Transaction.wellFormed` (`ledger-v9.d.ts:2508`) with proofs disabled and
+ * signature verification ON. **NO PROVING, NO DEPLOY, NO SUBMISSION, NO KEY
+ * GENERATED, NO CHAIN CONTACT.** That is `T-360`'s door, and
+ * `MAINTENANCE-INSTRUCTION-CHECK.command` is where a person runs it.
+ *
+ * **AND THE VERSION CLAIM IS STATED AS NARROWLY AS THE EVIDENCE ALLOWS, BECAUSE THIS
+ * PROJECT HAS BEEN CORRECTED TWICE FOR THE OPPOSITE.** The node's
+ * `midnight-src/midnight-node/Cargo.toml:108` asks for `=1.0.0`, which a pre-release does
+ * NOT satisfy; what actually pins the build is the `[patch.crates-io]` entry at `:464`,
+ * `tag = "crate-ledger-9.1.0.0-rc.3"`. **So this package carries THE SAME VERSION STRING
+ * as the tag the node patches in.** The npm package ships no source and the `.wasm` carries
+ * no version string, so *built from that tag* is NOT established — it is the best evidence
+ * available and it is not a measurement. `docs/corrections.md`, 1 Sep, twice, for exactly
+ * this shape.
+ *
+ * **AND WHERE THIS BLOCK CITES RUST IT IS CITING LEDGER `8.2.0-rc.1`** — the vendored
+ * `midnight-src/midnight-ledger/` tree (`Cargo.toml:4`), which is NOT what the chain runs.
+ * Every such citation was checked against the ledger-9 measurement standing beside it and
+ * they agree.
+ *
+ * **THE MEASUREMENTS THAT CHANGED THE DESIGN, RATHER THAN CONFIRMING IT:**
+ *
+ *   - **`T-357` IS NO LONGER A READING. IT IS MEASURED, ON LEDGER 9.** A
+ *     committee of `[K, K, K]` at threshold 3, satisfied by the single holder of
+ *     `K` signing ONCE and attaching that one signature at indices 0, 1 and 2,
+ *     is **WELL-FORMED**. `T-360` variant (b), answered.
+ *   - **`T-356` IS MEASURED TOO.** A contract whose authority is at threshold 0
+ *     accepts a maintenance update carrying NO SIGNATURES AT ALL: **WELL-FORMED**.
+ *     `T-360` variant (c), answered.
+ *   - **AND VARIANT (a) GOES THE OTHER WAY, WHICH IS THE ONE WORTH KNOWING:** the
+ *     same signature index twice is refused — *"transaction is not in normal
+ *     form"* — so the ascending-index guard DOES reach ledger 9. The bypass lives
+ *     in the committee list and not in the signature list, exactly as `T-357`
+ *     says and not as the claim `S61` withdrew said.
+ *   - **THE NEW AUTHORITY'S OWN COUNTER MUST BE `updateCounter + 1`, AND IT IS
+ *     NOT THE CALLER'S TO CHOOSE.** Measured: any other value is refused as *"not
+ *     in normal form"*, including `0`. So `buildMaintenanceInstruction` derives
+ *     it and takes no parameter for it.
+ *   - **`wellFormed` DOES NOT CHECK THE UPDATE's COUNTER AGAINST THE CHAIN.**
+ *     Measured: an update built against counter 1 for a contract sitting at
+ *     counter 0 is WELL-FORMED, and fails at APPLY with *"the signed counter …
+ *     did not match the expected one"* as a `partialSuccess` — on chain, with the
+ *     fee spent (`semantics.rs:1481`, and `2.2`'s note that maintenance is
+ *     fallible-segment only). **Rule 14: no screen and no door may read a
+ *     well-formed verdict as *this will land*.**
+ *   - **AND A NEGATIVE THRESHOLD IS NOT REFUSED — IT WRAPS.** Measured: passing `-1` to
+ *     `ContractMaintenanceAuthority` installs a threshold of `4294967295`, silently, and it
+ *     applies; `-2` gives `4294967294`, and `1.7` truncates to `1`. Nothing throws. The
+ *     product is held off it only by `authorityValueRefusals` refusing a NON-INTEGER as
+ *     well as a value below one, which is why that check tests both and not just the sign.
+ *   - **A THRESHOLD ABOVE THE COMMITTEE SIZE INSTALLS.** Measured: replacing a
+ *     1-of-1 with a 2-of-1 is WELL-FORMED and applies. The ledger validates
+ *     nothing about a new authority except its counter
+ *     (`verify.rs:1749-1798`; apply is `cstate.maintenance_authority = auth`,
+ *     `semantics.rs:1488-1490`). **Every refusal below is ours or it is nobody's
+ *     — rule 27, and this block is the code that makes it not-nobody's.**
+ */
+
+/** One reason an authority value may not be built. Machine-readable, so a door prints and a test names. */
+export interface MaintenanceRefusal {
+  code:
+    | 'threshold-below-one'
+    | 'threshold-above-committee'
+    | 'committee-emptied'
+    | 'repeated-committee-member'
+    | 'malformed-committee-key'
+    | 'unnamed-verifier-key-operation'
+    | 'empty-verifier-key'
+    | 'unknown-verifier-key-version';
+  why: string;
+}
+
+/**
+ * WHAT MUST BE REFUSED ABOUT A VERIFIER KEY THIS UPDATE WRITES — `T-359`, from the
+ * other side.
+ *
+ * **THIS EXISTS BECAUSE THE FIRST DRAFT OF THIS BLOCK REFUSED FIVE THINGS ABOUT THE
+ * AUTHORITY AND NOTHING AT ALL ABOUT THE VERIFIER KEYS, AND ITS OWN
+ * `money-safety-auditor` SAID SO FIRST AND LOUDEST.** A `ReplaceAuthority` decides
+ * WHO may change a contract; a `VerifierKeyInsert` is the change that actually moves
+ * the money — `C353`'s drain is a verifier-key swap performed USING the authority.
+ * Building the second with no check at all, in the same function that refuses five
+ * things about the first, is the wrong way round.
+ *
+ * **WHAT IS REFUSED HERE AND WHAT IS NOT, STATED SO THE GAP IS NOT MISTAKEN FOR
+ * COVER.** This refuses what can be judged from the write alone: an unnamed entry
+ * point, empty bytes, and a version the runtime does not have. **It does NOT check
+ * that the bytes are the artefact on disk**, because the artefact set belongs to the
+ * caller and this module must stay loadable without a filesystem. That check is
+ * `compareVerifierKeys`, against the chain, after the fact — and the round that
+ * wires a caller owes it before submission rather than after.
+ *
+ * **THE VERSION IS NOT COSMETIC AND IT IS NOT FREE-FORM.** Measured: the runtime's
+ * `ContractOperationVersionedVerifierKey` performs a VERSION-KEYED HEADER PARSE —
+ * `'v3'` requires a `midnight:verifier-key[v6]:` header and `'v4'` requires `[v7]` —
+ * and throws on a mismatch, on an unknown version, and on bytes whose header has
+ * already been stripped. It cannot silently produce the wrong key, which is the one
+ * reassuring thing in this area.
+ */
+export function verifierKeyRefusals(
+  writes: readonly VerifierKeyWrite[],
+): MaintenanceRefusal[] {
+  const out: MaintenanceRefusal[] = [];
+  for (const [i, w] of writes.entries()) {
+    if (typeof w?.operation !== 'string' || w.operation.trim() === '') {
+      out.push({
+        code: 'unnamed-verifier-key-operation',
+        why: `verifier-key write [${i}] names no entry point. A key written at an entry point ` +
+          'nobody named is a key nothing can read back or compare, which is the state `T-359` ' +
+          'exists about.',
+      });
+    }
+    if (!(w?.verifierKey instanceof Uint8Array) || w.verifierKey.length === 0) {
+      out.push({
+        code: 'empty-verifier-key',
+        why: `verifier-key write [${i}] ("${String(w?.operation)}") carries no key bytes. This ` +
+          'must be the `.verifier` artefact EXACTLY as it sits on disk, header and all — ' +
+          'measured: that is what the chain hands back, not the header-stripped form the ' +
+          'runtime constructor is handed.',
+      });
+    }
+    if (w?.version !== 'v3' && w?.version !== 'v4') {
+      out.push({
+        code: 'unknown-verifier-key-version',
+        why: `verifier-key write [${i}] ("${String(w?.operation)}") names version ` +
+          `"${String(w?.version)}", and the runtime has exactly two: "v3" and "v4". They are ` +
+          'not labels — each one requires its own header tag on the bytes and the constructor ' +
+          'throws on a mismatch.',
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * WHAT MUST BE REFUSED BEFORE ANYTHING IS BUILT — `docs/scope-the-maintenance-list.md`
+ * 2.6, plus `T-356` and `T-357`.
+ *
+ * **THE CHECK IS ON THE POST-CHANGE PAIR, AS ONE UNIT, AND THAT IS THE WHOLE
+ * REASON THE REMOVAL CASE IS NOT A SEPARATE CASE.** There is no *remove a member*
+ * instruction: `ReplaceAuthority` carries a whole authority applied wholesale. So
+ * removing four of seven and leaving the threshold at five arrives at the chain
+ * as `ReplaceAuthority(committee=[3], threshold=5)` — byte-indistinguishable from
+ * somebody typing 5-of-3. **A check that fires only when the THRESHOLD FIELD
+ * CHANGED misses the removal path entirely**, which is why this takes the pair
+ * and never a diff.
+ *
+ * **AND IT RUNS AT EVERY REBUILD, NOT ONCE WHEN A PERSON PRESSED SOMETHING.**
+ * The recovery path rebuilds the payload against a freshly read counter, so a
+ * check placed in whatever assembles the transaction is a check the recovery path
+ * walks around. `buildMaintenanceInstruction` calls this every time it runs.
+ *
+ * `emptyCommitteeIsDeliberate` exists because an empty committee arrived at BY
+ * REMOVAL is byte-identical to the deliberate `unmaintainable` choice
+ * (`partial-contract.ts:315` writes `([], 1, 0n)`; the ledger's own default is the
+ * same shape). **Neither the product nor the chain can tell them apart
+ * afterwards, so only a named choice may produce it** — and the flag has no
+ * default, because a default is how the accident happens.
+ */
+export function authorityValueRefusals(
+  committee: readonly AuthorityKey[],
+  threshold: number,
+  opts: { emptyCommitteeIsDeliberate: boolean },
+): MaintenanceRefusal[] {
+  const out: MaintenanceRefusal[] = [];
+
+  for (const [i, k] of committee.entries()) {
+    if (!isAuthorityKey(k) || k.tag.trim() === '' || k.value.trim() === '') {
+      out.push({
+        code: 'malformed-committee-key',
+        why: `committee member [${i}] is not a {tag, value} verifying key with both parts set. ` +
+          'A committee is a literal list of keys inside the contract and nothing on chain will ' +
+          'ever repair a bad entry: the seat is simply one nobody can sign for.',
+      });
+    }
+  }
+
+  /* FIRST AND IT MUST STAY FIRST — `T-356`. MEASURED on ledger 9: a contract at
+   * threshold 0 accepts a maintenance update carrying NO SIGNATURES AT ALL, and
+   * `wellFormed` returns cleanly. `verify.rs:1789` at LEDGER 8.2 — `signatures.len()
+   * < threshold` — is the only functional read of `threshold` in that crate, so
+   * `0 < 0` is false. **It is NOT that membership goes unchecked: measured on ledger
+   * 9, a signature at an out-of-range seat is still refused at threshold zero and so
+   * is a wrong one at a valid seat. What is missing is any REQUIREMENT to attach
+   * one.** THIS IS NOT THE UNMAINTAINABLE STATE. IT IS ITS OPPOSITE: anybody in the
+   * world can rewrite that contract's rules, for nothing, holding nothing. */
+  if (!Number.isInteger(threshold) || threshold < 1) {
+    out.push({
+      code: 'threshold-below-one',
+      why: `threshold ${threshold} is WORLD-WRITABLE, not unmaintainable. MEASURED on ` +
+        '`@midnightntwrk/ledger-v9@1.0.0-rc.3`: a maintenance update carrying NO SIGNATURES AT ' +
+        'ALL is well-formed against an authority at threshold zero, so anybody could replace ' +
+        'this contract\'s verifier keys while holding nothing at all.',
+    });
+  }
+
+  /* `T-357`, AND IT IS MEASURED ON LEDGER 9 RATHER THAN READ OFF 8.2. A
+   * committee of `[K, K, K]` at threshold 3 is satisfied by the single holder of
+   * `K` signing ONCE and attaching that one signature at indices 0, 1 and 2:
+   * WELL-FORMED. The signed data covers address, updates and counter and NOT the
+   * signer index, so one signature value is valid at every seat holding that key;
+   * the indices are strictly ascending, so the normal-form guard passes. **An
+   * M-of-N with a repeated key is not an M-of-N, and nothing on chain says so.**
+   * `requireMaintenanceAuthority` (`partial-contract.ts:174-205`) checks the
+   * committee's SIZE and the threshold's RANGE and does not check this. */
+  const seen = new Map<string, number>();
+  for (const [i, k] of committee.entries()) {
+    if (!isAuthorityKey(k)) continue;
+    const id = `${k.tag.toLowerCase()}:${k.value.toLowerCase()}`;
+    const first = seen.get(id);
+    if (first === undefined) { seen.set(id, i); continue; }
+    out.push({
+      code: 'repeated-committee-member',
+      why: `committee seats [${first}] and [${i}] hold the SAME key, so this is not a ` +
+        `${threshold}-of-${committee.length}. MEASURED on ledger 9: one holder signs ONCE and ` +
+        'attaches that one signature at every seat holding their key, which is well-formed. ' +
+        'The threshold this reads as is not the threshold it buys.',
+    });
+  }
+
+  /* `2.6`, and the runtime documents this state as valid: *"If the threshold is
+   * greater than the number of committee members, it is impossible for them to
+   * sign anything"*. MEASURED: installing a 2-of-1 is well-formed and applies. It
+   * is `no-one` for ever, and it is reachable by REMOVING members without
+   * touching the threshold. */
+  /* **AND THE ONE EXEMPTION, WHICH THIS ROUND'S OWN TEST FOUND BY GOING RED.**
+   * The deliberate `unmaintainable` choice IS an over-threshold state:
+   * `partial-contract.ts:315` writes `([], 1, 0n)` and `intendedAuthorityValue`
+   * projects `{ kind: 'unmaintainable' }` to `{ committee: [], threshold: 1 }`.
+   * So `1 > 0` is true of the chosen state exactly as it is true of the
+   * accident, and a refusal without this exemption refuses the one authority
+   * kind this repository has always been able to express. **The named choice is
+   * the only thing that separates them — which is the same sentence
+   * `committee-emptied` is built on, one line down, and it is the reason that
+   * flag exists at all.** A 2-of-1 is still refused: the exemption is for the
+   * EMPTY committee and for nothing else. */
+  const deliberatelyUnmaintainable = committee.length === 0 && opts.emptyCommitteeIsDeliberate;
+  if (Number.isInteger(threshold) && threshold > committee.length && !deliberatelyUnmaintainable) {
+    out.push({
+      code: 'threshold-above-committee',
+      why: `threshold ${threshold} over a committee of ${committee.length} can never be met, so ` +
+        'this contract would become permanently unmaintainable — and MEASURED on ledger 9 it ' +
+        'installs without complaint. It is reachable by REMOVING members and leaving the ' +
+        'threshold alone, which is why this is checked on the pair and not on what changed.',
+    });
+  }
+
+  if (committee.length === 0 && !opts.emptyCommitteeIsDeliberate) {
+    out.push({
+      code: 'committee-emptied',
+      why: 'this would leave an EMPTY committee, which is byte-identical on chain to the ' +
+        'deliberate `unmaintainable` choice. Nothing afterwards — not this product and not the ' +
+        'chain — can tell an emptied committee from a chosen one, so only a named choice may ' +
+        'produce it.',
+    });
+  }
+
+  return out;
+}
+
+/** The refusals as one throw, for callers that cannot carry on. Returns the pair when there are none. */
+export function requireBuildableAuthority(
+  committee: readonly AuthorityKey[],
+  threshold: number,
+  opts: { emptyCommitteeIsDeliberate: boolean },
+): { committee: AuthorityKey[]; threshold: number } {
+  const refusals = authorityValueRefusals(committee, threshold, opts);
+  if (refusals.length > 0) {
+    throw new Error(
+      'this maintenance authority will not be built:\n' +
+        refusals.map((r) => `  - [${r.code}] ${r.why}`).join('\n'),
+    );
+  }
+  return { committee: committee.map((k) => ({ tag: k.tag, value: k.value })), threshold };
+}
+
+/**
+ * WHAT TO DO ABOUT ONE CONTRACT, DECIDED BEFORE ANYTHING IS BUILT.
+ *
+ * Three actions and not two, for the reason `compareAuthority` has three
+ * verdicts. **`refuse` is the load-bearing one**: a plan that turned *the chain
+ * could not be asked* into *build it again* would re-sign against a chain it
+ * never read and spend a real update on a contract that may already be correct.
+ */
+export type MaintenancePlan =
+  | { action: 'settled'; address: string; why: string; comparison: AuthorityComparison }
+  | {
+      action: 'build'; address: string; why: string; comparison: AuthorityComparison;
+      /** The counter the update is valid against: the one just read off the chain. */
+      updateCounter: bigint;
+      /** What the contract's counter will be once this update applies. `T-361`. */
+      expectedCounter: bigint;
+      intended: { committee: AuthorityKey[]; threshold: number };
+    }
+  | { action: 'refuse'; address: string; why: string; refusals: MaintenanceRefusal[]; comparison?: AuthorityComparison };
+
+/**
+ * PLAN ONE CONTRACT'S AUTHORITY CHANGE. `C354`'s second limb, stated as code.
+ *
+ * **THE NO-OP IS NOT A RETRY AND THAT IS THE POINT OF THE ROW.** Resubmitting a
+ * byte-identical signed update after it landed hits `ReplayCounterMismatch`
+ * (`semantics.rs:1481-1485`), and that error carries only the address (`:1482`) —
+ * it cannot say whose update landed. So *did my change land* is asked of the LIVE
+ * AUTHORITY against the INTENDED END STATE, whole-value, before anything is
+ * built. Equal: do nothing, and doing nothing is the correct outcome rather than
+ * a missed opportunity. Not equal: build against the counter JUST READ, because
+ * the counter is inside the signed data and every older signature is dead.
+ * Unreadable: refuse.
+ *
+ * **THE COUNTER COMES FROM THE CHAIN READ AND FROM NOWHERE ELSE — AND THE FRESHNESS
+ * OF THAT READ IS THE CALLER'S, WHICH THIS CANNOT CHECK.** An earlier draft of this
+ * paragraph said the counter is *read here*, and it is not: this takes an
+ * `AuthorityRead` a caller supplies, and `AuthorityRead` carries no timestamp and no
+ * block height, so a CACHED read passes a stale counter straight through. Found by
+ * this round's own `money-safety-auditor` against this round's own sentence.
+ * **What is true is the narrower thing: no counter enters from any source OTHER than
+ * that read, and none is a parameter of anything below.** A stale one is still a fee
+ * spent on a recorded on-chain failure — maintenance applies in the fallible segment
+ * only, so a refusal lands as `partialSuccess` with the fee already taken. Making a
+ * read carry its own age is raised rather than built here.
+ */
+export function planAuthorityReplacement(
+  read: AuthorityRead,
+  intended: { committee: readonly AuthorityKey[]; threshold: number },
+  opts: { emptyCommitteeIsDeliberate: boolean },
+): MaintenancePlan {
+  const refusals = authorityValueRefusals(intended.committee, intended.threshold, opts);
+  if (refusals.length > 0) {
+    return {
+      action: 'refuse', address: read.address, refusals,
+      why: 'the intended end state is not a value this product will install: ' +
+        refusals.map((r) => r.code).join(', ') + '. Nothing was built and no chain was consulted ' +
+        'for a verdict on it.',
+    };
+  }
+
+  const pair = {
+    committee: intended.committee.map((k) => ({ tag: k.tag, value: k.value })),
+    threshold: intended.threshold,
+  };
+  const comparison = compareAuthority(read, pair);
+
+  /* `unknown` REFUSES. `S61` §7(3), and `S55` shipped a `P1` collapsing exactly
+   * this three into two. *The ledger cannot answer* is NOT *the answer is no*. */
+  if (comparison.verdict === 'unknown') {
+    return {
+      action: 'refuse', address: read.address, comparison, refusals: [],
+      why: `NOTHING MAY BE BUILT FOR THIS CONTRACT: ${comparison.why} Building anyway would ` +
+        'mean signing a counter nobody read, against a contract that may already carry the ' +
+        'intended authority. Ask again when the chain answers.',
+    };
+  }
+
+  if (comparison.verdict === 'agree') {
+    return {
+      action: 'settled', address: read.address, comparison,
+      why: 'the chain already carries the intended end state, so there is nothing to build and ' +
+        'nothing to sign. Re-running this change is a NO-OP here rather than a refusal on ' +
+        'chain, which is `C354`\'s second limb.',
+    };
+  }
+
+  const chain = read.state === 'read' ? read.authority : undefined;
+  /* Unreachable in practice: `compareAuthority` returns `unknown` for every
+   * non-`read` state and that branch returned above. Stated rather than
+   * asserted, because a later edit to either function should fail HERE. */
+  if (!chain) {
+    return {
+      action: 'refuse', address: read.address, comparison, refusals: [],
+      why: 'the comparison disagreed without a chain value to disagree with, which is a defect ' +
+        'in this module rather than a fact about the contract. Nothing was built.',
+    };
+  }
+
+  return {
+    action: 'build', address: read.address, comparison, intended: pair,
+    updateCounter: chain.counter,
+    expectedCounter: chain.counter + 1n,
+    why: `${comparison.why} The update will be built against counter ${chain.counter}, which is ` +
+      `the value just read, and the contract's counter becomes ${chain.counter + 1n} if it lands.`,
+  };
+}
+
+/**
+ * THE DURABLE PER-CONTRACT END-STATE RECORD — `T-361`, and `2.3`'s *what must be
+ * durable, and when*.
+ *
+ * A maintenance change has NO on-chain handle: it is not a circuit call, it
+ * leaves no proposal, and the job runner's three recovery branches all miss it
+ * (`src/midnight/job-runner.ts:247-299`). So the intended end state and the target
+ * address must be written somewhere a second device reads BEFORE anything is
+ * submitted, or a device that did not build the change has nothing to compare
+ * against.
+ *
+ * **AND IT CARRIES AN EXPECTED COUNTER, WHICH IS THE PART `T-361` IS ABOUT.**
+ * `compareAuthority` deliberately excludes the counter, and that exclusion is
+ * correct — `ReplaceAuthority` replaces wholesale, so the VALUE is the
+ * settlement, and comparing counters would make every settled contract look
+ * unsettled for ever. **But the counter can never be rolled back or reset**
+ * (`semantics.rs:1481`, `:1484-1485`; `verify.rs:1771`), which makes it the one
+ * monotonic witness the chain offers. Without an expected value, `agree` cannot
+ * tell *we installed this* from *somebody replaced it, did something else in the
+ * same update, and put an identical authority back* — and one `MaintenanceUpdate`
+ * carries `ReplaceAuthority` AND `VerifierKeyInsert` in one `updates` array,
+ * which is precisely how `T-359`'s verifier-key swap would be packaged.
+ *
+ * **NOTHING SECRET GOES IN IT.** Verifying keys are on a public chain; the
+ * address is public; the counter is public. There is no field here a signing key
+ * fits, and that is deliberate (`C400`, `C232`: a record is a plaintext home for
+ * whatever is put in it).
+ */
+export interface MaintenanceEndStateRecord {
+  /** The contract this record is about. One record per contract, never per logical change. */
+  address: string;
+  /** An operator-facing name, for a screen. Never used in a comparison. */
+  label: string;
+  committee: AuthorityKey[];
+  threshold: number;
+  /** The counter the update was signed against — the value read off the chain when it was built. */
+  builtAgainstCounter: bigint;
+  /** `builtAgainstCounter + 1`. What the contract's counter becomes if this update lands. `T-361`. */
+  expectedCounter: bigint;
+  /**
+   * Entry points whose verifier key this update also writes — **by name AND by the
+   * first eight bytes of the key, because the name alone is what a swap leaves
+   * unchanged.** `T-359`, and this round's own `money-safety-auditor` found the first
+   * draft storing the name and discarding the bytes: a record that says *we wrote
+   * `recordPayment`* cannot afterwards say WHICH key was written, so `checkEndState`
+   * could report `settled` for an update that also rewrote the thing `C353` is
+   * about. **Eight bytes is an identifier for a person and not a proof** — the proof
+   * is `compareVerifierKeys` over full bytes against the chain.
+   */
+  verifierKeyInserts: { operation: string; version: string; fingerprint: string }[];
+  /** When it was built, for a person reading a stalled change. Never compared. */
+  builtAt: string;
+}
+
+/**
+ * WHAT THE CHAIN SAYS ABOUT A RECORD WE WROTE. Four answers, and the fourth is
+ * the one `T-361` buys.
+ *
+ *   `settled`     — the value matches AND the counter is exactly what we expected.
+ *   `not-yet`     — the value does not match; the change has not landed.
+ *   `unexplained` — the value matches and the counter does NOT. Something else
+ *                   moved this contract. It is not a failure and it is not a
+ *                   success, and it must not be printed as either.
+ *   `unknown`     — the chain could not be asked.
+ */
+export type EndStateVerdict = 'settled' | 'not-yet' | 'unexplained' | 'unknown';
+
+export interface EndStateCheck {
+  verdict: EndStateVerdict;
+  address: string;
+  why: string;
+  comparison: AuthorityComparison;
+}
+
+/**
+ * DID THE CHANGE WE RECORDED ACTUALLY LAND, AND DID ANYTHING ELSE HAPPEN HERE?
+ *
+ * The value half is `compareAuthority` — reused, not rewritten (`S61` §7(2)).
+ * The counter half is this function's own, and it never turns a `disagree` into
+ * an `agree` or the reverse: it only splits `agree` into *settled* and
+ * *unexplained*.
+ */
+export function checkEndState(
+  record: MaintenanceEndStateRecord,
+  read: AuthorityRead,
+): EndStateCheck {
+  const comparison = compareAuthority(read, {
+    committee: record.committee, threshold: record.threshold,
+  });
+  if (comparison.verdict === 'unknown') {
+    return { verdict: 'unknown', address: record.address, comparison, why: comparison.why };
+  }
+  if (comparison.verdict === 'disagree') {
+    return {
+      verdict: 'not-yet', address: record.address, comparison,
+      why: `the change recorded for this contract has NOT landed: ${comparison.why}`,
+    };
+  }
+  const actual = read.state === 'read' ? read.authority.counter : undefined;
+  if (actual === record.expectedCounter) {
+    return {
+      verdict: 'settled', address: record.address, comparison,
+      why: `the chain carries the recorded end state and its counter is ${actual}, exactly the ` +
+        'value this change was expected to leave. Nothing else has been applied here since.',
+    };
+  }
+  return {
+    verdict: 'unexplained', address: record.address, comparison,
+    why: `THE VALUE MATCHES AND THE COUNTER DOES NOT. Expected ${record.expectedCounter}, the ` +
+      `chain carries ${actual}. The counter can never be rolled back or reset, so this contract ` +
+      'has taken a maintenance update this record does not account for. One update carries a ' +
+      'ReplaceAuthority AND a VerifierKeyInsert in the same array, so an identical authority ' +
+      'put back is exactly what a verifier-key swap looks like from here. This is neither a ' +
+      'pass nor a failure: somebody reads the verifier keys (`T-359`) before anything else.',
+  };
+}
+
+/**
+ * A signature over a maintenance update, in the shape the runtime uses
+ * (`ledger-v9.d.ts:154`). **It is the same `{tag, value}` shape as a key and it
+ * is NOT a key**: a signature is public the moment the update reaches a chain,
+ * which is why this API accepts one and accepts no signing key anywhere.
+ */
+export type MaintenanceSignature = AuthorityKey;
+
+/**
+ * The `ledger-v9` pieces this builder needs, PASSED IN rather than imported.
+ *
+ * The same reason `intendedAuthorityValue` takes `deriveVerifyingKey`: this
+ * module must stay loadable without ten megabytes of WebAssembly, because the web
+ * bundle imports it and `C-` rows already exist about dragging `ledger-v9` into
+ * the page. **A named interface rather than `any`, so a change in the runtime is
+ * a compile error HERE** — `tsconfig.scripts.json` has `strict: false` and would
+ * let an `any` flow through a mismatch unnoticed.
+ *
+ * Line references are `node_modules/@midnightntwrk/ledger-v9/ledger-v9.d.ts`,
+ * read this round: `:779`, `:2251`, `:2276`, `:2238`, `:2312`, `:457`.
+ */
+export interface MaintenanceUpdateLike {
+  readonly dataToSign: Uint8Array;
+  readonly counter: bigint;
+  readonly signatures: [bigint, MaintenanceSignature][];
+  addSignature(idx: bigint, signature: MaintenanceSignature): MaintenanceUpdateLike;
+}
+
+export interface MaintenancePrimitives {
+  ContractMaintenanceAuthority: new (
+    committee: AuthorityKey[], threshold: number, counter?: bigint,
+  ) => object;
+  ReplaceAuthority: new (authority: object) => object;
+  VerifierKeyInsert: new (operation: string, vk: object) => object;
+  ContractOperationVersionedVerifierKey: new (
+    version: 'v3' | 'v4', rawVk: Uint8Array,
+  ) => object;
+  MaintenanceUpdate: new (address: string, updates: object[], counter: bigint) => MaintenanceUpdateLike;
+  verifySignature: (
+    vk: AuthorityKey, data: Uint8Array, signature: MaintenanceSignature,
+  ) => boolean;
+}
+
+/** One entry point whose verifier key this update writes. `T-359`'s other half. */
+export interface VerifierKeyWrite {
+  /** The entry-point name exactly as the contract carries it. */
+  operation: string;
+  /**
+   * The operation version, which the runtime has exactly two of
+   * (`ledger-v9.d.ts:2239`). **Narrowed from `string` after this round's own
+   * `money-safety-auditor` pointed out that widening a two-member union is the
+   * opposite of what a named interface is for.**
+   */
+  version: 'v3' | 'v4';
+  /**
+   * The verifier key EXACTLY AS THE BUILT ARTEFACT HOLDS IT, header included.
+   *
+   * **MEASURED, AND IT IS THE TRAP IN THIS WHOLE AREA:**
+   * `ContractOperationVersionedVerifierKey` STRIPS the 26-byte
+   * `midnight:verifier-key[v6]:` header — a 2,119-byte `.verifier` file becomes a
+   * 2,093-byte `rawVk` — **and yet what ends up on chain, readable at
+   * `ContractOperation.verifierKey` (`ledger-v9.d.ts:752`), is byte-identical to
+   * the FILE, header and all.** Deployed one and read it back to check. So the
+   * constructor takes the file bytes and `compareVerifierKeys` compares against
+   * the file bytes; **a comparison written against `rawVk` reports a MISMATCH on
+   * a perfectly correct contract**, and it is the obvious thing to write.
+   */
+  verifierKey: Uint8Array;
+}
+
+/** A built, unsigned-or-partly-signed maintenance instruction, with everything a signer needs. */
+export interface BuiltMaintenanceInstruction {
+  address: string;
+  /** The runtime object. Free-standing and portable: build here, sign on M other machines, submit from a third. */
+  update: MaintenanceUpdateLike;
+  /** Exactly what each signer signs. Bound to (address, updates, counter) and to nothing else. */
+  dataToSign: Uint8Array;
+  /** The committee that must sign THIS update: the one on chain NOW, not the one being installed. */
+  signWith: AuthorityKey[];
+  /** How many of `signWith` must sign. The chain's CURRENT threshold. */
+  signaturesRequired: number;
+  /**
+   * **WHAT THE CONTRACT'S AUTHORITY LOOKS LIKE RIGHT NOW, CARRIED SO A PERSON SEES
+   * IT BEFORE SIGNING.** `S61` built `shape` and `hasDuplicateMembers` for exactly
+   * this and the first draft of this function read the committee and the threshold
+   * and threw both away — found by this round's own `money-safety-auditor`, which
+   * also named the silent case: **a contract already at threshold ZERO gives
+   * `signaturesRequired: 0`, so `signatureProgress` reports `complete` on NO
+   * signatures at all, with nothing anywhere saying why.** Repairing such a contract
+   * is exactly the right thing to do; doing it without being told what you are
+   * repairing is not.
+   */
+  currentShape: AuthorityShape;
+  /** Whether the committee that must sign THIS update lists one key more than once. */
+  currentHasDuplicateMembers: boolean;
+  /**
+   * True when the contract's current authority means this update needs NO signatures
+   * — the `anyone` state. **Not a refusal: refusing would strand a contract that can
+   * only be repaired this way.** It is a warning, and a door that does not print it
+   * is a door that shows a normal-looking instruction for a contract anybody in the
+   * world could already have rewritten.
+   */
+  needsNoSignatures: boolean;
+  /** What this update leaves behind, ready to be written down before anything is submitted. */
+  endState: MaintenanceEndStateRecord;
+}
+
+/**
+ * BUILD ONE CONTRACT'S MAINTENANCE UPDATE. **It builds. It does not submit.**
+ *
+ * **THE COMMITTEE THAT SIGNS IS THE ONE ON CHAIN NOW, NOT THE ONE BEING
+ * INSTALLED**, and this is the mistake worth naming because it reads backwards.
+ * A 2-of-3 being replaced by a 5-of-7 is signed by two of the OLD three: the
+ * ledger verifies each signature against the CURRENT committee (`verify.rs:1782`)
+ * and counts against the CURRENT threshold (`:1789`). `signWith` and
+ * `signaturesRequired` are therefore taken off the chain read and never off the
+ * intended value.
+ *
+ * **THE NEW AUTHORITY'S OWN COUNTER IS DERIVED AND IS NOT A PARAMETER.** MEASURED
+ * on ledger 9: a `ReplaceAuthority` payload whose authority does not carry
+ * exactly `updateCounter + 1` is refused as *"transaction is not in normal
+ * form"* — including the obvious `0`. There is no reason to let a caller supply
+ * a value that has exactly one correct answer.
+ *
+ * **THE REFUSALS RUN HERE TOO, ON EVERY BUILD — AND THEY NOW COVER BOTH KINDS OF
+ * INSTRUCTION AND NOT ONLY THE AUTHORITY.** `planAuthorityReplacement` already ran
+ * the authority half, and the recovery path rebuilds against a freshly read counter
+ * without necessarily re-planning. `2.6`: a check that ran once when a person
+ * pressed something is a check the recovery path walks around. **The verifier-key
+ * half exists because the first draft of this function had none at all — five
+ * refusals about who may change the contract and nothing whatever about the change
+ * that moves the money. Its own `money-safety-auditor` said so first and loudest.**
+ *
+ * **AND THE CURRENT AUTHORITY IS DERIVED FROM THE PLAN RATHER THAN PASSED
+ * ALONGSIDE IT.** The first draft took it as a second parameter, so a caller could
+ * hand a plan for one contract and an authority from another and nothing would
+ * notice — and a `signaturesRequired` lower than the chain's real bar makes
+ * `signatureProgress` report `complete` below it, which is a fee spent on a recorded
+ * on-chain failure. Every `build` plan already carries `comparison.onChain`, so
+ * there was never a second value to disagree with.
+ *
+ * **NO SIGNING KEY IS A PARAMETER OF THIS FUNCTION OR OF ANYTHING IT CALLS.** It
+ * returns the bytes to be signed; signing happens on the machine that holds the
+ * key, which is not this one. `C400`.
+ */
+export function buildMaintenanceInstruction(
+  P: MaintenancePrimitives,
+  plan: Extract<MaintenancePlan, { action: 'build' }>,
+  opts: {
+    label: string;
+    emptyCommitteeIsDeliberate: boolean;
+    verifierKeys?: readonly VerifierKeyWrite[];
+    now?: () => Date;
+  },
+): BuiltMaintenanceInstruction {
+  const chainNow = plan.comparison.onChain;
+  if (!chainNow) {
+    throw new Error(
+      'this plan carries no on-chain authority, so there is nothing to say who must sign the ' +
+        'update it describes. A `build` plan always carries one; a plan that does not is a ' +
+        'defect in this module rather than a fact about the contract, and building anyway ' +
+        'would produce an instruction nobody can be told how to sign.',
+    );
+  }
+
+  const { committee, threshold } = requireBuildableAuthority(
+    plan.intended.committee, plan.intended.threshold,
+    { emptyCommitteeIsDeliberate: opts.emptyCommitteeIsDeliberate },
+  );
+  const keyRefusals = verifierKeyRefusals(opts.verifierKeys ?? []);
+  if (keyRefusals.length > 0) {
+    throw new Error(
+      'these verifier-key writes will not be built:\n' +
+        keyRefusals.map((r) => `  - [${r.code}] ${r.why}`).join('\n'),
+    );
+  }
+
+  const updates: object[] = [
+    new P.ReplaceAuthority(
+      new P.ContractMaintenanceAuthority(committee, threshold, plan.updateCounter + 1n),
+    ),
+  ];
+  for (const vk of opts.verifierKeys ?? []) {
+    updates.push(new P.VerifierKeyInsert(
+      vk.operation,
+      new P.ContractOperationVersionedVerifierKey(vk.version, vk.verifierKey),
+    ));
+  }
+
+  const update = new P.MaintenanceUpdate(plan.address, updates, plan.updateCounter);
+
+  return {
+    address: plan.address,
+    update,
+    dataToSign: update.dataToSign,
+    signWith: chainNow.committee.map((k) => ({ tag: k.tag, value: k.value })),
+    signaturesRequired: chainNow.threshold,
+    currentShape: chainNow.shape,
+    currentHasDuplicateMembers: chainNow.hasDuplicateMembers,
+    needsNoSignatures: chainNow.threshold < 1,
+    endState: {
+      address: plan.address,
+      label: opts.label,
+      committee,
+      threshold,
+      builtAgainstCounter: plan.updateCounter,
+      expectedCounter: plan.expectedCounter,
+      verifierKeyInserts: (opts.verifierKeys ?? []).map((v) => ({
+        operation: v.operation, version: v.version, fingerprint: toHex(v.verifierKey.slice(0, 8)),
+      })),
+      builtAt: (opts.now ?? (() => new Date()))().toISOString(),
+    },
+  };
+}
+
+/**
+ * ATTACH ONE SIGNATURE, HAVING CHECKED IT AGAINST THE SEAT IT CLAIMS.
+ *
+ * Three refusals, each of which the chain would also make — **and making them
+ * here is the difference between a person being told and a fee being spent on a
+ * recorded on-chain failure.** Maintenance applies in the fallible segment only,
+ * so a refused update lands as `partialSuccess` with the fee already taken.
+ *
+ *   - **an index outside the current committee.** MEASURED: *"declared signture
+ *     for key id 5 does not correspond to a committee member"* (the runtime's own
+ *     spelling).
+ *   - **an index already signed.** MEASURED: *"transaction is not in normal
+ *     form"* — the ascending-index guard, which DOES reach ledger 9. This is the
+ *     one place `T-357`'s bypass does not work, and it is why that row is about
+ *     the committee list and not the signature list.
+ *   - **a signature that does not verify against that seat's key.** MEASURED:
+ *     *"signature for key id 0 invalid"*.
+ *
+ * **A REPEATED KEY IN THE CURRENT COMMITTEE IS NOT REFUSED HERE, DELIBERATELY,
+ * AND THE REASON MATTERS.** If the chain already carries `[K, K, K]` then signing
+ * it at three seats is the only way to satisfy it, and refusing would leave a
+ * contract nobody can fix. **The refusal belongs where such a committee is
+ * BUILT** — `authorityValueRefusals` — **and the state is REPORTED instead, on
+ * `BuiltMaintenanceInstruction.currentHasDuplicateMembers`, so a person sees it
+ * before signing rather than being quietly allowed past it.** An earlier version of
+ * this paragraph promised that reporting and nothing carried it; found by this
+ * round's own `money-safety-auditor`, which is the second time in two rounds that a
+ * sentence here was ahead of the code beneath it.
+ */
+export function attachMaintenanceSignature(
+  P: MaintenancePrimitives,
+  built: BuiltMaintenanceInstruction,
+  index: number,
+  signature: MaintenanceSignature,
+): BuiltMaintenanceInstruction {
+  if (!Number.isInteger(index) || index < 0 || index >= built.signWith.length) {
+    throw new Error(
+      `seat ${index} is not a seat on the committee that currently maintains ${built.address}: ` +
+        `it holds ${built.signWith.length} seat(s), numbered 0 to ${built.signWith.length - 1}. ` +
+        'The signatures on a maintenance update are checked against the CURRENT committee, not ' +
+        'the one being installed.',
+    );
+  }
+  if (built.update.signatures.some(([i]) => i === BigInt(index))) {
+    throw new Error(
+      `seat ${index} has already signed this update. A second signature at the same index is ` +
+        'refused by the chain as a malformed transaction, and attaching it here would waste a ' +
+        'submission rather than add a vote.',
+    );
+  }
+  const seat = built.signWith[index]!;
+  if (!P.verifySignature(seat, built.dataToSign, signature)) {
+    throw new Error(
+      `this signature does not verify against the key in seat ${index} of ${built.address}'s ` +
+        'current committee. Either it was made by a different key, or it was made over ' +
+        'different data — a signature is bound to (contract address, exact update list, ' +
+        'counter), so one collected for another contract, or before the counter moved, is dead.',
+    );
+  }
+  return { ...built, update: built.update.addSignature(BigInt(index), signature) };
+}
+
+/** How far along the signing is, without asking anything of a chain. */
+export function signatureProgress(
+  built: BuiltMaintenanceInstruction,
+): { have: number; required: number; complete: boolean; seatsSigned: number[] } {
+  const seatsSigned = built.update.signatures.map(([i]) => Number(i)).sort((a, b) => a - b);
+  return {
+    have: seatsSigned.length,
+    required: built.signaturesRequired,
+    complete: seatsSigned.length >= built.signaturesRequired,
+    seatsSigned,
+  };
+}
+
+/* ── `T-359` — READING THE VERIFIER KEYS BACK, WHICH IS THE THING `C353`
+ *              ACTUALLY SWAPS ────────────────────────────────────────────── */
+
+/**
+ * WHAT THE AUTHORITY READ-BACK CANNOT SEE, AND IT IS THE ACT THAT MOVES THE
+ * MONEY. `T-359` `P1`.
+ *
+ * `readContractAuthority` answers WHO MAY CHANGE a contract.
+ * **`C353`'s drain is not an authority change — it is a VERIFIER KEY SWAP
+ * performed USING the authority.** A contract whose `recordPayment` verifier key
+ * has been replaced answers `MAINTENANCE-AUTHORITY-CHECK` with AGREE, and that
+ * door prints *"Every contract carries the authority recorded for it."* The
+ * sentence is true and reads as more than it says.
+ *
+ * **THE EVIDENCE COSTS NOTHING, WHICH IS WHY IT IS HERE:** it is on the same
+ * `ContractState` object the authority read-back already fetches and discards.
+ * `operations()` lists the entry points and `operation(name).verifierKey` is the
+ * key itself (`ledger-v9.d.ts:816`, `:822`, `:752`). One query answers both
+ * questions.
+ *
+ * **AND IT SEES ONLY THE LATEST VERSION OF EACH KEY, WHICH IS A LIMIT OF THE
+ * RUNTIME AND IS SAID HERE RATHER THAN DISCOVERED.** `ledger-v9.d.ts:742-745`:
+ * a `ContractOperation` holds verifier keys *"potentially for different versions of
+ * the proving system"* and **"Only the latest available version is exposed to this
+ * API."** Versions are the closed pair `'v3' | 'v4'` (`:2239`). So a contract can
+ * hold a key at a version this read cannot reach, and nothing here can say whether
+ * such a key could verify a call — **the ledger-9 apply path is not vendored, the
+ * same limit `docs/scope-the-maintenance-list.md` 2.6 records for `IrRemove` and
+ * `IrInsert`.** `scripts/measure-proving.mjs:94-108` had already written down that
+ * the version cannot be stated on any evidence this project holds, and the first
+ * draft of this block did not cite it (rule 23). **Raised by this round's own
+ * `money-safety-auditor`; the `agree` sentence below says what it cannot see rather
+ * than claiming more than it looked at.**
+ *
+ * **AND THE OPERATIONS MAP IS THE WRONG THING TO CHECK, WHICH IS THE HALF THAT
+ * MAKES THIS WORTH BUILDING.** `docs/scope-the-upgrade-path.md:216-231`'s
+ * SILENTLY WEAKEN is 32 bytes on chain **with the operations map still listing
+ * exactly the same names.** `findDeployedPartialContract`, `findDeployedVaultContract`
+ * and the SDK's own `verifyContractState` all check that the names are present.
+ * **The names being present is what a swap looks like. The keys are the evidence.**
+ */
+export interface OnChainOperation {
+  /** The entry-point name as the chain carries it. */
+  name: string;
+  /** The verifier key bytes, exactly as the chain holds them. */
+  verifierKey: Uint8Array;
+}
+
+export type OperationsRead =
+  | { state: 'read'; address: string; operations: OnChainOperation[] }
+  | { state: 'unreadable'; address: string; why: string };
+
+/**
+ * The entry points and their verifier keys off a `ContractState`, or a refusal.
+ *
+ * Structural rather than typed against the runtime class, for the same reason
+ * `authorityFromContractState` is: this is a boundary, and it states what it
+ * relies on rather than trusting a type.
+ */
+export function operationsFromContractState(
+  state: unknown, address: string,
+): OperationsRead {
+  if (!state || typeof state !== 'object') {
+    return { state: 'unreadable', address, why: 'contract state was not an object' };
+  }
+  const s = state as {
+    operations?: () => unknown;
+    operation?: (name: unknown) => unknown;
+  };
+  if (typeof s.operations !== 'function' || typeof s.operation !== 'function') {
+    return {
+      state: 'unreadable', address,
+      why: 'contract state does not expose `operations()` and `operation(name)`, so its verifier ' +
+        'keys cannot be read. NOTHING may be concluded about them from this.',
+    };
+  }
+  let names: unknown;
+  try { names = s.operations(); } catch (e) {
+    return {
+      state: 'unreadable', address,
+      why: `listing this contract's entry points threw: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+  if (!Array.isArray(names)) {
+    return { state: 'unreadable', address, why: '`operations()` did not return a list' };
+  }
+  const operations: OnChainOperation[] = [];
+  for (const raw of names) {
+    const name = typeof raw === 'string' ? raw : String(raw);
+    let op: unknown;
+    try { op = s.operation(raw); } catch (e) {
+      return {
+        state: 'unreadable', address,
+        why: `reading entry point "${name}" threw: ${e instanceof Error ? e.message : String(e)}`,
+      };
+    }
+    const vk = (op as { verifierKey?: unknown } | undefined)?.verifierKey;
+    if (!(vk instanceof Uint8Array)) {
+      return {
+        state: 'unreadable', address,
+        why: `entry point "${name}" carries no readable \`verifierKey\`. A partial answer here is ` +
+          'worse than none: it would let a swapped key hide behind an unreadable one.',
+      };
+    }
+    operations.push({ name, verifierKey: vk });
+  }
+  return { state: 'read', address, operations };
+}
+
+export type VerifierKeyVerdict = 'agree' | 'disagree' | 'unknown';
+
+export interface VerifierKeyComparison {
+  verdict: VerifierKeyVerdict;
+  address: string;
+  why: string;
+  /** Entry points whose on-chain key is byte-identical to the built artefact. */
+  matched: string[];
+  /** **Entry points whose on-chain key DIFFERS. This is `C353`'s act, seen.** */
+  mismatched: string[];
+  /** On chain and not in the artefact: an entry point this build does not know about. */
+  onChainOnly: string[];
+  /** In the artefact and not on chain: a circuit that was never deployed here. */
+  missingOnChain: string[];
+  /** First eight bytes of each side, for a person. **Display only — the comparison is over full bytes.** */
+  fingerprints: { name: string; onChain: string; expected: string }[];
+}
+
+/**
+ * DOES EVERY DEPLOYED ENTRY POINT STILL CARRY THE KEY THIS BUILD PRODUCES?
+ * `T-359`'s *done when*.
+ *
+ * **THE COMPARISON IS OVER FULL BYTES AND THE EXPECTED SIDE IS THE `.verifier`
+ * FILE EXACTLY AS IT SITS ON DISK, HEADER INCLUDED.** Measured this round by
+ * deploying a contract, inserting `contracts/managed/keys/adopt.verifier` through
+ * `VerifierKeyInsert` and reading the result back: what the chain returns is
+ * byte-identical to the file, all 2,119 bytes of it — **even though the
+ * constructor strips the 26-byte `midnight:verifier-key[v6]:` header to a
+ * 2,093-byte `rawVk` on the way in.** A comparison written against `rawVk` — the
+ * obvious thing to write, since that is what the caller hands the constructor —
+ * calls a correct contract WRONG on every entry point.
+ *
+ * **A MISSING OR EXTRA ENTRY POINT IS NOT A MISMATCH AND IS NOT SILENCE.** It is
+ * reported in its own list and it makes the verdict `disagree`, because a build
+ * that does not know about an entry point cannot say anything about the key on
+ * it, and *cannot say* is not *fine*.
+ *
+ * **`unknown` REFUSES, EXACTLY AS THE AUTHORITY COMPARISON DOES.** An unreadable
+ * state is not a swapped key and is not a clean one. **AND SO DOES AN EMPTY
+ * COMPARISON:** both sides empty used to answer `agree` over nothing, which is a pass
+ * on no evidence — the shape `C185` is about, where the failure is an ABSENCE where
+ * evidence should be.
+ */
+export function compareVerifierKeys(
+  read: OperationsRead,
+  expected: ReadonlyMap<string, Uint8Array>,
+): VerifierKeyComparison {
+  const empty = { matched: [], mismatched: [], onChainOnly: [], missingOnChain: [], fingerprints: [] };
+  if (read.state !== 'read') {
+    return {
+      ...empty, verdict: 'unknown', address: read.address,
+      why: `this contract's verifier keys could not be read — ${read.why}. NOTHING may be ` +
+        'concluded: an unreadable state is not a clean one.',
+    };
+  }
+  const fp = (b: Uint8Array) => toHex(b.slice(0, 8));
+  const matched: string[] = [], mismatched: string[] = [], onChainOnly: string[] = [];
+  const fingerprints: VerifierKeyComparison['fingerprints'] = [];
+  const seen = new Set<string>();
+
+  for (const op of read.operations) {
+    seen.add(op.name);
+    const want = expected.get(op.name);
+    if (!want) { onChainOnly.push(op.name); continue; }
+    const same = op.verifierKey.length === want.length &&
+      op.verifierKey.every((b, i) => b === want[i]);
+    (same ? matched : mismatched).push(op.name);
+    if (!same) fingerprints.push({ name: op.name, onChain: fp(op.verifierKey), expected: fp(want) });
+  }
+  const missingOnChain = [...expected.keys()].filter((n) => !seen.has(n));
+
+  if (mismatched.length > 0) {
+    return {
+      verdict: 'disagree', address: read.address, matched, mismatched, onChainOnly,
+      missingOnChain, fingerprints,
+      why: `${mismatched.length} entry point(s) carry a verifier key this build did not produce: ` +
+        `${mismatched.join(', ')}. **THIS IS WHAT \`C353\` LOOKS LIKE FROM OUTSIDE.** Whoever ` +
+        'holds the maintenance authority can replace an entry point\'s verifier key, and the ' +
+        'contract then accepts proofs of a DIFFERENT statement under the same name, with the ' +
+        'operations map unchanged. Do not submit anything against this contract.',
+    };
+  }
+  if (onChainOnly.length > 0 || missingOnChain.length > 0) {
+    return {
+      verdict: 'disagree', address: read.address, matched, mismatched, onChainOnly,
+      missingOnChain, fingerprints,
+      why: 'every key this build knows about matches, and the ENTRY POINT SETS DIFFER: ' +
+        `${onChainOnly.length} on chain that this build does not know (${onChainOnly.join(', ') || '-'}) ` +
+        `and ${missingOnChain.length} in this build that the chain does not carry ` +
+        `(${missingOnChain.join(', ') || '-'}). A key this build cannot name is a key nothing here ` +
+        'can check, which is a disagreement rather than a silence.',
+    };
+  }
+  if (matched.length === 0) {
+    return {
+      verdict: 'unknown', address: read.address, matched, mismatched, onChainOnly,
+      missingOnChain, fingerprints,
+      why: 'there was nothing to compare: the chain carries no entry points this build knows ' +
+        'about and this build named none. NOTHING may be concluded — a pass over an empty set ' +
+        'is an absence where evidence should be, not evidence of absence.',
+    };
+  }
+  return {
+    verdict: 'agree', address: read.address, matched, mismatched, onChainOnly,
+    missingOnChain, fingerprints,
+    why: `all ${matched.length} deployed entry point(s) carry exactly the verifier key this ` +
+      'build produces, compared over FULL BYTES against the artefact on disk — AT THE LATEST ' +
+      'VERSION OF EACH, which is the only version the runtime exposes ' +
+      '(`ledger-v9.d.ts:742-745`). A key held at an earlier version is not visible from here ' +
+      'and this says nothing about one.',
   };
 }

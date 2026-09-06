@@ -2612,3 +2612,821 @@ describe('comparing the chain against the maintenance authority chosen on disk',
       .toEqual({ committee: [LIVE_ACCOUNT_KEY], threshold: 1 });
   });
 });
+
+/* ================================================================== *
+ * `S74` — THE MAINTENANCE INSTRUCTION, BUILT BY HAND. Board `2y9-2`.
+ * ================================================================== */
+
+/**
+ * WHY THESE ARE APPENDED AND NOT IN A FILE OF THEIR OWN: `C393`, re-measured
+ * this round. `scripts/edge-list.ts:162-163` counts every `.ts`/`.tsx`/`.mjs`
+ * under `src`, `scripts` and `contracts/test` into
+ * `docs/design/edges.json`'s `coverage.clientFilesScanned`; the walk finds 302
+ * and the file records 302, so ONE new file turns the gate red — in
+ * `globalSetup`, which stops every named-file `vitest` run, including this one.
+ * The door that clears it is `DOCS.command`, which no session may run.
+ *
+ * **NO SIGNING KEY IN THIS FILE IS SECRET, AND THAT IS STRUCTURAL RATHER THAN
+ * CAREFUL.** `C400`: on 5 Sep a round put the LIVE maintenance-authority signing
+ * key into this very file, and its own auditor caught it. The keys below are
+ * derived at run time from the integers 1, 2 and 3 — their verifying keys are the
+ * secp256k1 generator and its first two multiples, printed in every textbook and
+ * already pinned in this file above as `AUTH_KEY_1`, `AUTH_KEY_2`, `AUTH_KEY_3`.
+ * **There is no value here that is worth anything to anybody**, and no literal
+ * signing key at all: the derivation is the point.
+ */
+/** One instant for every ledger-9 harness below. See the block context comment. */
+const NOW = new Date();
+const NOW_SECONDS = BigInt(Math.floor(NOW.getTime() / 1000));
+const ttl = () => new Date(NOW.getTime() + 1_800_000);
+
+describe('S74: what a maintenance authority may not be, refused before anything is built', () => {
+  const key = (v: string) => ({ tag: 'schnorr', value: v });
+  const K1 = key('79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798');
+  const K2 = key('c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5');
+  const K3 = key('f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9');
+  const strict = { emptyCommitteeIsDeliberate: false };
+
+  it('refuses a threshold of zero and calls it WORLD-WRITABLE, never unmaintainable', async () => {
+    /* `T-356`, and the naming is the whole finding: `S61`'s first draft reported
+     * this state with the word for its opposite. MEASURED on ledger 9 this round
+     * — an update with NO signatures at all is well-formed against it. */
+    const { authorityValueRefusals } = await import('./ledger.js');
+    const r = authorityValueRefusals([K1, K2, K3], 0, strict);
+    expect(r.map((x) => x.code)).toContain('threshold-below-one');
+    expect(r.find((x) => x.code === 'threshold-below-one')!.why)
+      .toMatch(/WORLD-WRITABLE.*NO SIGNATURES AT ALL/s);
+    expect(authorityValueRefusals([K1], -1, strict).map((x) => x.code))
+      .toContain('threshold-below-one');
+    expect(authorityValueRefusals([K1, K2], 1.5, strict).map((x) => x.code))
+      .toContain('threshold-below-one');
+  });
+
+  it('refuses a threshold above the committee size, and a REMOVAL reaches it without touching the threshold', async () => {
+    /* `2.6`: there is no *remove a member* instruction. Removing four of seven
+     * and leaving the threshold at five arrives as `(committee=[3], threshold=5)`
+     * — indistinguishable from typing 5-of-3, which is why the check is on the
+     * PAIR. A check that fired only on a changed threshold field would miss this
+     * entire path. */
+    const { authorityValueRefusals } = await import('./ledger.js');
+    expect(authorityValueRefusals([K1, K2, K3], 5, strict).map((x) => x.code))
+      .toContain('threshold-above-committee');
+    expect(authorityValueRefusals([K1], 2, strict).map((x) => x.code))
+      .toContain('threshold-above-committee');
+    expect(authorityValueRefusals([K1, K2, K3], 3, strict)).toEqual([]);
+  });
+
+  it('refuses a committee that lists one key more than once, and says the threshold is not what it looks like', async () => {
+    /* `T-357`, MEASURED on ledger 9 this round rather than read off 8.2: one
+     * holder of `K` signs ONCE and attaches that signature at seats 0, 1 and 2 of
+     * `[K,K,K]` at threshold 3, and the transaction is well-formed. Nothing in
+     * `requireMaintenanceAuthority` checks this: it checks SIZE and RANGE. */
+    const { authorityValueRefusals } = await import('./ledger.js');
+    const r = authorityValueRefusals([K1, K2, K1], 3, strict);
+    expect(r.map((x) => x.code)).toContain('repeated-committee-member');
+    expect(r.find((x) => x.code === 'repeated-committee-member')!.why)
+      .toMatch(/seats \[0\] and \[2\] hold the SAME key/);
+    /* Case-folded, because a committee is compared case-insensitively everywhere
+     * else in this module and a duplicate that differs only in case is a
+     * duplicate. */
+    expect(authorityValueRefusals(
+      [K1, { tag: 'SCHNORR', value: K1.value.toUpperCase() }], 2, strict,
+    ).map((x) => x.code)).toContain('repeated-committee-member');
+  });
+
+  it('refuses an emptied committee unless emptying it is a NAMED choice', async () => {
+    /* An empty committee arrived at by removal is byte-identical to the
+     * deliberate `unmaintainable` choice, and nothing afterwards can tell them
+     * apart — so only a named choice may produce it. The flag has no default,
+     * because a default is how the accident happens. */
+    const { authorityValueRefusals } = await import('./ledger.js');
+    expect(authorityValueRefusals([], 1, strict).map((x) => x.code))
+      .toContain('committee-emptied');
+    expect(authorityValueRefusals([], 1, { emptyCommitteeIsDeliberate: true }))
+      .toEqual([]);
+  });
+
+  it('refuses a malformed committee key rather than seating one nobody can sign for', async () => {
+    const { authorityValueRefusals } = await import('./ledger.js');
+    expect(authorityValueRefusals([K1, { tag: 'schnorr', value: '' }], 2, strict)
+      .map((x) => x.code)).toContain('malformed-committee-key');
+    expect(authorityValueRefusals([K1, { tag: '  ', value: K2.value }], 2, strict)
+      .map((x) => x.code)).toContain('malformed-committee-key');
+  });
+
+  it('requireBuildableAuthority throws with EVERY reason, not the first one', async () => {
+    /* A caller that fixes one refusal and resubmits should not discover the next
+     * one on the next round trip. */
+    const { requireBuildableAuthority } = await import('./ledger.js');
+    let message = '';
+    try { requireBuildableAuthority([K1, K1], 0, strict); } catch (e) { message = String(e); }
+    expect(message).toMatch(/threshold-below-one/);
+    expect(message).toMatch(/repeated-committee-member/);
+    expect(requireBuildableAuthority([K1, K2, K3], 2, strict))
+      .toEqual({ committee: [K1, K2, K3], threshold: 2 });
+  });
+});
+
+describe('S74: planning one contract\'s authority change, where UNKNOWN refuses', () => {
+  const key = (v: string) => ({ tag: 'schnorr', value: v });
+  const K1 = key('79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798');
+  const K2 = key('c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5');
+  const K3 = key('f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9');
+  const strict = { emptyCommitteeIsDeliberate: false };
+  const readOf = (
+    committee: { tag: string; value: string }[], threshold: number, counter: bigint,
+  ) => ({
+    state: 'read' as const, address: 'addr',
+    authority: {
+      committee, threshold, counter,
+      shape: 'committee' as const, hasDuplicateMembers: false,
+    },
+  });
+
+  it('the deliberate unmaintainable state is buildable and the 2-of-1 accident is not', async () => {
+    /* Found by this round's own test going red. `partial-contract.ts:315` writes
+     * `([], 1, 0n)`, so the CHOSEN unmaintainable authority is itself an
+     * over-threshold state — and the accident this refusal exists for is the same
+     * pair of numbers. The named flag is the only thing that separates them. */
+    const { authorityValueRefusals } = await import('./ledger.js');
+    expect(authorityValueRefusals([], 1, { emptyCommitteeIsDeliberate: true })).toEqual([]);
+    expect(authorityValueRefusals([K1], 2, { emptyCommitteeIsDeliberate: true })
+      .map((x) => x.code)).toContain('threshold-above-committee');
+  });
+
+  it('REFUSES when the chain could not be asked, and never calls that a disagreement', async () => {
+    /* `S61` §7(3) and `S55`'s `P1` inverted: a plan that read *the chain could
+     * not be asked* as *build it again* would re-sign against a chain it never
+     * read and spend a real update on a contract that may already be correct.
+     * That is the whole of `C354`. */
+    const { planAuthorityReplacement } = await import('./ledger.js');
+    for (const read of [
+      { state: 'unreachable' as const, address: 'a', why: 'the indexer did not answer' },
+      { state: 'absent' as const, address: 'a', why: 'nothing is deployed there' },
+      { state: 'unreadable' as const, address: 'a', why: 'no maintenanceAuthority field' },
+    ]) {
+      const p = planAuthorityReplacement(read, { committee: [K1, K2, K3], threshold: 2 }, strict);
+      expect(p.action).toBe('refuse');
+      expect(p.why).toMatch(/NOTHING MAY BE BUILT/);
+      expect(p.action === 'refuse' && p.comparison?.verdict).toBe('unknown');
+    }
+  });
+
+  it('says SETTLED and builds nothing when the chain already carries the end state', async () => {
+    /* `C354`'s second limb in one line: re-running a maintenance change on a
+     * contract already at that state does NOTHING. It is not a retry — a
+     * byte-identical resubmission hits `ReplayCounterMismatch`, an error that
+     * carries only the address and cannot say whose update landed. */
+    const { planAuthorityReplacement } = await import('./ledger.js');
+    const p = planAuthorityReplacement(
+      readOf([K1, K2, K3], 2, 7n), { committee: [K1, K2, K3], threshold: 2 }, strict);
+    expect(p.action).toBe('settled');
+    expect(p.why).toMatch(/NO-OP/);
+  });
+
+  it('builds against the counter JUST READ and expects exactly one more', async () => {
+    /* The counter is inside the signed data, so every signature collected against
+     * an older one is dead. `T-361`: the expected counter is the record's, and it
+     * is derived here rather than taken from a caller. */
+    const { planAuthorityReplacement } = await import('./ledger.js');
+    const p = planAuthorityReplacement(
+      readOf([K1], 1, 4n), { committee: [K1, K2, K3], threshold: 2 }, strict);
+    expect(p.action).toBe('build');
+    if (p.action !== 'build') throw new Error('unreachable');
+    expect(p.updateCounter).toBe(4n);
+    expect(p.expectedCounter).toBe(5n);
+    expect(p.intended).toEqual({ committee: [K1, K2, K3], threshold: 2 });
+  });
+
+  it('refuses an unbuildable intended value without asking the chain for a verdict on it', async () => {
+    /* The refusal set runs BEFORE the comparison, so a `0` typed into a choice
+     * file can never reach a comparison that would agree about it — which is the
+     * near-miss `S61`'s auditor found on the read side. */
+    const { planAuthorityReplacement } = await import('./ledger.js');
+    const p = planAuthorityReplacement(readOf([K1], 0, 0n), { committee: [K1], threshold: 0 }, strict);
+    expect(p.action).toBe('refuse');
+    expect(p.action === 'refuse' && p.comparison).toBeUndefined();
+    expect(p.action === 'refuse' && p.refusals.map((r) => r.code)).toContain('threshold-below-one');
+  });
+});
+
+describe('S74: the end-state record, and the counter that says something else happened here', () => {
+  const key = (v: string) => ({ tag: 'schnorr', value: v });
+  const K1 = key('79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798');
+  const K2 = key('c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5');
+  const record = {
+    address: 'addr', label: 'ACCOUNT', committee: [K1, K2], threshold: 2,
+    builtAgainstCounter: 3n, expectedCounter: 4n, verifierKeyInserts: [], builtAt: 'x',
+  };
+  const readOf = (
+    committee: { tag: string; value: string }[], threshold: number, counter: bigint,
+  ) => ({
+    state: 'read' as const, address: 'addr',
+    authority: {
+      committee, threshold, counter, shape: 'committee' as const, hasDuplicateMembers: false,
+    },
+  });
+
+  it('SETTLED only when the value AND the counter are what the record expected', async () => {
+    const { checkEndState } = await import('./ledger.js');
+    expect(checkEndState(record, readOf([K1, K2], 2, 4n)).verdict).toBe('settled');
+  });
+
+  it('UNEXPLAINED when the value matches and the counter has moved past it — `T-361`', async () => {
+    /* The counter can never be rolled back or reset (`semantics.rs:1481`,
+     * `:1484-1485`; `verify.rs:1771`), so it is the one monotonic witness the
+     * chain offers. Without it, `agree` cannot tell *we installed this* from
+     * *somebody replaced it, did something else in the same update, and put an
+     * identical authority back* — and one `MaintenanceUpdate` carries a
+     * `ReplaceAuthority` and a `VerifierKeyInsert` in the same array, which is
+     * exactly how `T-359`'s swap would be packaged. It is neither a pass nor a
+     * failure and must not be printed as either. */
+    const { checkEndState } = await import('./ledger.js');
+    const c = checkEndState(record, readOf([K1, K2], 2, 9n));
+    expect(c.verdict).toBe('unexplained');
+    expect(c.comparison.verdict).toBe('agree');
+    expect(c.why).toMatch(/THE VALUE MATCHES AND THE COUNTER DOES NOT/);
+    expect(c.why).toMatch(/T-359/);
+  });
+
+  it('NOT-YET when the value differs, and UNKNOWN when the chain could not be asked', async () => {
+    const { checkEndState } = await import('./ledger.js');
+    expect(checkEndState(record, readOf([K1], 1, 4n)).verdict).toBe('not-yet');
+    expect(checkEndState(record, {
+      state: 'unreachable', address: 'addr', why: 'the indexer did not answer',
+    }).verdict).toBe('unknown');
+  });
+
+  it('carries no field a signing key fits — `C400`, checked rather than promised', async () => {
+    /* `C232`: a record is a plaintext home for whatever is put in it, and this one
+     * is meant to be durable and readable by a second device. The keys in it are
+     * VERIFYING keys, which are already on a public chain. */
+    const keys = Object.keys(record);
+    expect(keys.some((k) => /signing|secret|private|seed/i.test(k))).toBe(false);
+  });
+});
+
+/**
+ * THE MEASUREMENTS, AGAINST THE BUILD THE NODE PINS.
+ *
+ * Everything below runs on `@midnightntwrk/ledger-v9@1.0.0-rc.3` — the exact
+ * build `midnight-src/midnight-node/Cargo.toml` pins — and NOTHING in it proves,
+ * deploys, submits, spends, or contacts a chain. A `LedgerState.blank` in memory,
+ * a contract deployed INTO THAT OBJECT, and `Transaction.wellFormed`
+ * (`ledger-v9.d.ts:2508`) with proofs disabled and signature verification ON.
+ *
+ * **`T-360` IS THE ROW THIS ANSWERS, AND IT IS ANSWERED BY MEASUREMENT RATHER
+ * THAN BY READING RUST.** Every maintenance citation this project holds is scoped
+ * to ledger `8.2.0-rc.1`; the chain runs ledger 9, whose verification source is
+ * nowhere in this tree. These run against the shipped artefact instead.
+ *
+ * **THE SIGNING KEYS ARE THE INTEGERS 1, 2 AND 3.** Their verifying keys are the
+ * secp256k1 generator and its first two multiples — the values already pinned
+ * above as `AUTH_KEY_1`/`_2`/`_3`. Nothing secret exists in this file (`C400`).
+ */
+describe('S74/T-360: what ledger 9 actually accepts, measured rather than read off 8.2', () => {
+  const NET = 'undeployed';
+  const be = (n: number) => { const b = new Uint8Array(32); b[31] = n; return b; };
+
+  const load = async () => {
+    const L: any = await import('@midnightntwrk/ledger-v9');
+    const sks = [1, 2, 3].map((n) => L.signingKeyFromBip340(be(n)));
+    const vks = sks.map((sk: unknown) => L.signatureVerifyingKey(sk));
+    const strictness = () => {
+      const s = new L.WellFormedStrictness();
+      s.enforceBalancing = false; s.verifyNativeProofs = false;
+      s.verifyContractProofs = false; s.enforceLimits = false; s.verifySignatures = true;
+      return s;
+    };
+    /*
+     * **ONE INSTANT FOR THE BLOCK CONTEXT, THE TTL AND `tblock`, AND A TTL WELL
+     * INSIDE THE WINDOW.** MEASURED: the ledger refuses an intent whose TTL is more
+     * than 3600 seconds past the block context's `secondsSinceEpoch` — `+3600`
+     * applies, `+3601` throws `IntentTtlTooFarInFuture`. The first draft of this
+     * harness froze the block context and then took `Date.now() + 3600_000` per
+     * call, **so the first second that elapsed during a run put every later intent
+     * one second over the edge**, and the run failed part-way through on code that
+     * was correct. Rule 40 names this species and says what it costs: this project
+     * has dismissed two real defects as flakiness already. `ttl()` is half the
+     * window, from the same instant.
+     */
+    const blockContext = {
+      secondsSinceEpoch: NOW_SECONDS, secondsSinceEpochErr: 30,
+      parentBlockHash: '00'.repeat(32), lastBlockTime: NOW_SECONDS - 6n,
+    };
+    /* A contract really deployed into an in-memory state, because
+     * `LedgerState.updateIndex` takes a ChargedState and CARRIES NO AUTHORITY —
+     * a harness built on it silently tests the blank default instead of the
+     * committee it thinks it installed, and answers *not a committee member* to
+     * everything. Measured the hard way. */
+    const deployWith = (committee: unknown[], threshold: number) => {
+      const cs = new L.ContractState();
+      cs.maintenanceAuthority = new L.ContractMaintenanceAuthority(committee, threshold, 0n);
+      const dep = new L.ContractDeploy(cs);
+      const intent = L.Intent.new(ttl()).addDeploy(dep);
+      const tx = L.Transaction.fromParts(NET, undefined, undefined, intent);
+      let ls = L.LedgerState.blank(NET);
+      const verified = tx.wellFormed(ls, strictness(), NOW);
+      [ls] = ls.apply(verified, new L.TransactionContext(ls, blockContext));
+      return { ls, address: dep.address };
+    };
+    const wellFormed = (ls: unknown, update: unknown) => {
+      const intent = L.Intent.new(ttl()).addMaintenanceUpdate(update);
+      const tx = L.Transaction.fromParts(NET, undefined, undefined, intent);
+      try { tx.wellFormed(ls, strictness(), NOW); return 'WELL-FORMED'; }
+      catch (e) { return String((e as Error).message ?? e); }
+    };
+    const primitives = {
+      ContractMaintenanceAuthority: L.ContractMaintenanceAuthority,
+      ReplaceAuthority: L.ReplaceAuthority,
+      VerifierKeyInsert: L.VerifierKeyInsert,
+      ContractOperationVersionedVerifierKey: L.ContractOperationVersionedVerifierKey,
+      MaintenanceUpdate: L.MaintenanceUpdate,
+      verifySignature: L.verifySignature,
+    };
+    return { L, sks, vks, strictness, blockContext, deployWith, wellFormed, primitives };
+  };
+
+  const chainAuthority = (committee: unknown[], threshold: number, counter: bigint) => ({
+    committee, threshold, counter,
+    shape: 'committee' as const, hasDuplicateMembers: false,
+  });
+
+  it('builds a committee update the chain accepts, signed by the OLD committee at the OLD threshold', async () => {
+    /* The mistake that reads backwards: a 2-of-3 being replaced is signed by two
+     * of the OLD three. `verify.rs:1782` verifies each signature against the
+     * CURRENT committee and `:1789` counts against the CURRENT threshold. */
+    const { L, sks, vks, deployWith, wellFormed, primitives } = await load();
+    const { planAuthorityReplacement, buildMaintenanceInstruction, attachMaintenanceSignature,
+      signatureProgress } = await import('./ledger.js');
+    const { ls, address } = deployWith([vks[0], vks[1], vks[2]], 2);
+
+    const now = chainAuthority([vks[0], vks[1], vks[2]], 2, 0n);
+    const plan = planAuthorityReplacement(
+      { state: 'read', address, authority: now as never },
+      { committee: [vks[0]], threshold: 1 }, { emptyCommitteeIsDeliberate: false });
+    expect(plan.action).toBe('build');
+    if (plan.action !== 'build') throw new Error('unreachable');
+
+    let built = buildMaintenanceInstruction(primitives as never, plan,
+      { label: 'ACCOUNT', emptyCommitteeIsDeliberate: false });
+    expect(built.signaturesRequired).toBe(2);
+    expect(built.signWith).toHaveLength(3);
+    expect(signatureProgress(built).complete).toBe(false);
+    expect(wellFormed(ls, built.update)).toMatch(/does not meet required threshold \(0\/2/);
+
+    built = attachMaintenanceSignature(primitives as never, built, 0,
+      L.signData(sks[0], built.dataToSign));
+    expect(signatureProgress(built).complete).toBe(false);
+    expect(wellFormed(ls, built.update)).toMatch(/does not meet required threshold \(1\/2/);
+
+    built = attachMaintenanceSignature(primitives as never, built, 2,
+      L.signData(sks[2], built.dataToSign));
+    expect(signatureProgress(built)).toEqual(
+      { have: 2, required: 2, complete: true, seatsSigned: [0, 2] });
+    expect(wellFormed(ls, built.update)).toBe('WELL-FORMED');
+    expect(built.endState.builtAgainstCounter).toBe(0n);
+    expect(built.endState.expectedCounter).toBe(1n);
+  });
+
+  it('gives the new authority exactly `updateCounter + 1`, which is the only value the chain accepts', async () => {
+    /* MEASURED: any other value — including the obvious `0` — is refused as
+     * *"transaction is not in normal form"*. There is one correct answer, so the
+     * builder derives it and takes no parameter for it. This is the assertion
+     * that goes red if that derivation is ever made a caller's business. */
+    const { L, sks, vks, deployWith, wellFormed, primitives } = await load();
+    const { planAuthorityReplacement, buildMaintenanceInstruction,
+      attachMaintenanceSignature } = await import('./ledger.js');
+    const { ls, address } = deployWith([vks[0]], 1);
+    const now = chainAuthority([vks[0]], 1, 0n);
+    const plan = planAuthorityReplacement(
+      { state: 'read', address, authority: now as never },
+      { committee: [vks[0], vks[1]], threshold: 2 }, { emptyCommitteeIsDeliberate: false });
+    if (plan.action !== 'build') throw new Error('unreachable');
+    let built = buildMaintenanceInstruction(primitives as never, plan,
+      { label: 'ACCOUNT', emptyCommitteeIsDeliberate: false });
+    built = attachMaintenanceSignature(primitives as never, built, 0,
+      L.signData(sks[0], built.dataToSign));
+    expect(wellFormed(ls, built.update)).toBe('WELL-FORMED');
+
+    /* The same update with a hand-built authority at the WRONG counter, to show
+     * the value is load-bearing and not decoration. */
+    const wrong = new L.MaintenanceUpdate(address,
+      [new L.ReplaceAuthority(new L.ContractMaintenanceAuthority([vks[0], vks[1]], 2, 0n))], 0n);
+    const signedWrong = wrong.addSignature(0n, L.signData(sks[0], wrong.dataToSign));
+    expect(wellFormed(ls, signedWrong)).toMatch(/not in normal form/);
+  });
+
+  it('refuses a seat outside the committee, a seat that already signed, and a signature that does not verify', async () => {
+    /* Each of the three is a refusal the chain would also make. Making it here is
+     * the difference between a person being told and a fee being spent: a refused
+     * maintenance update lands as `partialSuccess` with the fee already taken. */
+    const { L, sks, vks, deployWith, primitives } = await load();
+    const { planAuthorityReplacement, buildMaintenanceInstruction,
+      attachMaintenanceSignature } = await import('./ledger.js');
+    const { address } = deployWith([vks[0], vks[1]], 2);
+    const now = chainAuthority([vks[0], vks[1]], 2, 0n);
+    const plan = planAuthorityReplacement(
+      { state: 'read', address, authority: now as never },
+      { committee: [vks[2]], threshold: 1 }, { emptyCommitteeIsDeliberate: false });
+    if (plan.action !== 'build') throw new Error('unreachable');
+    const built = buildMaintenanceInstruction(primitives as never, plan,
+      { label: 'ACCOUNT', emptyCommitteeIsDeliberate: false });
+
+    expect(() => attachMaintenanceSignature(primitives as never, built, 5,
+      L.signData(sks[0], built.dataToSign))).toThrow(/is not a seat on the committee/);
+    expect(() => attachMaintenanceSignature(primitives as never, built, -1,
+      L.signData(sks[0], built.dataToSign))).toThrow(/is not a seat on the committee/);
+    /* Seat 1 holds key 2, so key 1's signature must not be accepted there —
+     * and the ONLY reason it can be caught locally is that we hold the committee. */
+    expect(() => attachMaintenanceSignature(primitives as never, built, 1,
+      L.signData(sks[0], built.dataToSign))).toThrow(/does not verify against the key in seat 1/);
+
+    const once = attachMaintenanceSignature(primitives as never, built, 0,
+      L.signData(sks[0], built.dataToSign));
+    expect(() => attachMaintenanceSignature(primitives as never, once, 0,
+      L.signData(sks[0], built.dataToSign))).toThrow(/has already signed/);
+  });
+
+  it('`T-360`(b): a committee holding one key at three seats IS satisfied by that one holder — MEASURED, on ledger 9', async () => {
+    /* `T-357` stops being a reading here. `[K,K,K]` at threshold 3, one signature
+     * value attached at seats 0, 1 and 2: WELL-FORMED. The signed data covers
+     * address, updates and counter and NOT the signer index, so one signature is
+     * valid at every seat holding that key, and the indices are ascending so the
+     * normal-form guard passes. **An M-of-N with a repeated key is not an M-of-N,
+     * and nothing on chain says so — which is why `authorityValueRefusals`
+     * refuses to BUILD one.** */
+    const { L, sks, vks, deployWith, wellFormed } = await load();
+    const { ls, address } = deployWith([vks[0], vks[0], vks[0]], 3);
+    let u = new L.MaintenanceUpdate(address,
+      [new L.ReplaceAuthority(new L.ContractMaintenanceAuthority([vks[1]], 1, 1n))], 0n);
+    const one = L.signData(sks[0], u.dataToSign);
+    u = u.addSignature(0n, one).addSignature(1n, one).addSignature(2n, one);
+    expect(wellFormed(ls, u)).toBe('WELL-FORMED');
+  });
+
+  it('`T-360`(c): a contract at threshold ZERO accepts an update with NO signatures — MEASURED, on ledger 9', async () => {
+    /* `T-356` stops being a reading here too. This is not the unmaintainable
+     * state; it is its opposite, and anybody in the world can rewrite that
+     * contract's verifier keys for the price of a fee. */
+    const { L, vks, deployWith, wellFormed } = await load();
+    const { ls, address } = deployWith([vks[0], vks[1], vks[2]], 0);
+    const u = new L.MaintenanceUpdate(address,
+      [new L.ReplaceAuthority(new L.ContractMaintenanceAuthority([vks[0]], 1, 1n))], 0n);
+    expect(u.signatures).toHaveLength(0);
+    expect(wellFormed(ls, u)).toBe('WELL-FORMED');
+  });
+
+  it('`T-360`(a): the SAME signature index twice is refused, so the bypass is in the committee list and not the signature list', async () => {
+    /* This is the claim `S61` drafted and withdrew, checked on ledger 9 rather
+     * than on 8.2: the ascending-index guard DOES reach here. `T-357` is the same
+     * bypass relocated to the committee list, where no guard reaches. */
+    const { L, sks, vks, deployWith, wellFormed } = await load();
+    const { ls, address } = deployWith([vks[0], vks[1]], 2);
+    const base = new L.MaintenanceUpdate(address,
+      [new L.ReplaceAuthority(new L.ContractMaintenanceAuthority([vks[0]], 1, 1n))], 0n);
+    const sig = L.signData(sks[0], base.dataToSign);
+    expect(wellFormed(ls, base.addSignature(0n, sig).addSignature(0n, sig)))
+      .toMatch(/not in normal form/);
+  });
+
+  it('well-formed is NOT `this will land`: a stale counter passes here and fails on chain — rule 14', async () => {
+    /* MEASURED: an update built against counter 1 for a contract sitting at
+     * counter 0 is WELL-FORMED. The counter is checked at APPLY
+     * (`semantics.rs:1481`), and maintenance runs in the fallible segment only,
+     * so the failure lands as `partialSuccess` WITH THE FEE ALREADY SPENT. **No
+     * door and no screen may read a well-formed verdict as a prediction that the
+     * update will apply** — which is exactly why `planAuthorityReplacement` reads
+     * the counter off the chain immediately before building and never takes one. */
+    const { L, sks, vks, deployWith, wellFormed } = await load();
+    const { ls, address } = deployWith([vks[0]], 1);
+    const stale = new L.MaintenanceUpdate(address,
+      [new L.ReplaceAuthority(new L.ContractMaintenanceAuthority([vks[1]], 1, 2n))], 1n);
+    expect(wellFormed(ls, stale.addSignature(0n, L.signData(sks[0], stale.dataToSign))))
+      .toBe('WELL-FORMED');
+  });
+});
+
+describe('S74/T-359: reading the verifier keys back, which is what `C353` actually swaps', () => {
+  const NET = 'undeployed';
+  const be = (n: number) => { const b = new Uint8Array(32); b[31] = n; return b; };
+  const ARTEFACT = 'contracts/managed/keys/adopt.verifier';
+
+  const load = async () => {
+    const L: any = await import('@midnightntwrk/ledger-v9');
+    const { readFileSync } = await import('node:fs');
+    const sk = L.signingKeyFromBip340(be(1));
+    const vk = L.signatureVerifyingKey(sk);
+    const strictness = () => {
+      const s = new L.WellFormedStrictness();
+      s.enforceBalancing = false; s.verifyNativeProofs = false;
+      s.verifyContractProofs = false; s.enforceLimits = false; s.verifySignatures = true;
+      return s;
+    };
+    /*
+     * **ONE INSTANT FOR THE BLOCK CONTEXT, THE TTL AND `tblock`, AND A TTL WELL
+     * INSIDE THE WINDOW.** MEASURED: the ledger refuses an intent whose TTL is more
+     * than 3600 seconds past the block context's `secondsSinceEpoch` — `+3600`
+     * applies, `+3601` throws `IntentTtlTooFarInFuture`. The first draft of this
+     * harness froze the block context and then took `Date.now() + 3600_000` per
+     * call, **so the first second that elapsed during a run put every later intent
+     * one second over the edge**, and the run failed part-way through on code that
+     * was correct. Rule 40 names this species and says what it costs: this project
+     * has dismissed two real defects as flakiness already. `ttl()` is half the
+     * window, from the same instant.
+     */
+    const blockContext = {
+      secondsSinceEpoch: NOW_SECONDS, secondsSinceEpochErr: 30,
+      parentBlockHash: '00'.repeat(32), lastBlockTime: NOW_SECONDS - 6n,
+    };
+    const file = new Uint8Array(readFileSync(ARTEFACT));
+    const cs = new L.ContractState();
+    cs.maintenanceAuthority = new L.ContractMaintenanceAuthority([vk], 1, 0n);
+    const dep = new L.ContractDeploy(cs);
+    let ls = L.LedgerState.blank(NET);
+    let tx = L.Transaction.fromParts(NET, undefined, undefined,
+      L.Intent.new(ttl()).addDeploy(dep));
+    [ls] = ls.apply(tx.wellFormed(ls, strictness(), NOW),
+      new L.TransactionContext(ls, blockContext));
+    const versioned = new L.ContractOperationVersionedVerifierKey('v3', file);
+    let u = new L.MaintenanceUpdate(dep.address,
+      [new L.VerifierKeyInsert('adopt', versioned)], 0n);
+    u = u.addSignature(0n, L.signData(sk, u.dataToSign));
+    tx = L.Transaction.fromParts(NET, undefined, undefined,
+      L.Intent.new(ttl()).addMaintenanceUpdate(u));
+    const [after] = ls.apply(tx.wellFormed(ls, strictness(), NOW),
+      new L.TransactionContext(ls, blockContext));
+    return { L, file, versioned, address: dep.address, state: after.index(dep.address) };
+  };
+
+  it('a real inserted verifier key comes back byte-identical to the FILE, header and all — and NOT as `rawVk`', async () => {
+    /* **THE TRAP, MEASURED, AND IT IS THE OBVIOUS THING TO GET WRONG.**
+     * `ContractOperationVersionedVerifierKey` STRIPS the 26-byte
+     * `midnight:verifier-key[v6]:` header on the way in — 2,119 bytes of file
+     * become a 2,093-byte `rawVk` — **and what the chain hands back is the FILE.**
+     * A comparison written against `rawVk`, which is what the caller passed the
+     * constructor, calls a perfectly correct contract WRONG on every entry point.
+     * This assertion is what keeps that from being rediscovered. */
+    const { file, versioned, state } = await load();
+    const onChain: Uint8Array = state.operation('adopt').verifierKey;
+    expect(Array.from(onChain)).toEqual(Array.from(file));
+    expect(onChain.length).toBe(file.length);
+    expect(versioned.rawVk.length).toBe(file.length - 26);
+    expect(Array.from(onChain)).not.toEqual(Array.from(versioned.rawVk as Uint8Array));
+  });
+
+  it('AGREES when every deployed entry point carries the key this build produces', async () => {
+    const { file, address, state } = await load();
+    const { operationsFromContractState, compareVerifierKeys } = await import('./ledger.js');
+    const read = operationsFromContractState(state, address);
+    expect(read.state).toBe('read');
+    const c = compareVerifierKeys(read, new Map([['adopt', file]]));
+    expect(c.verdict).toBe('agree');
+    expect(c.matched).toEqual(['adopt']);
+    expect(c.mismatched).toEqual([]);
+  });
+
+  it('DISAGREES and names the entry point when the key on chain is not the one this build produces — `C353` seen', async () => {
+    /* This is the whole reason the row exists. A contract whose `recordPayment`
+     * verifier key has been swapped answers the AUTHORITY check with AGREE, and
+     * that door prints *"Every contract carries the authority recorded for it."*
+     * True, and it reads as more than it says. */
+    const { file, address, state } = await load();
+    const { operationsFromContractState, compareVerifierKeys } = await import('./ledger.js');
+    const swapped = new Uint8Array(file); swapped[swapped.length - 1] ^= 0xff;
+    const c = compareVerifierKeys(operationsFromContractState(state, address),
+      new Map([['adopt', swapped]]));
+    expect(c.verdict).toBe('disagree');
+    expect(c.mismatched).toEqual(['adopt']);
+    expect(c.why).toMatch(/THIS IS WHAT `C353` LOOKS LIKE FROM OUTSIDE/);
+    expect(c.fingerprints[0]!.name).toBe('adopt');
+  });
+
+  it('DISAGREES when the entry-point SETS differ, because a key it cannot name is a key it cannot check', async () => {
+    /* And the operations map is the wrong thing to check on its own:
+     * `docs/scope-the-upgrade-path.md:216-231`'s SILENTLY WEAKEN is 32 bytes on
+     * chain with the map listing exactly the same names. */
+    const { file, address, state } = await load();
+    const { operationsFromContractState, compareVerifierKeys } = await import('./ledger.js');
+    const read = operationsFromContractState(state, address);
+    const extra = compareVerifierKeys(read, new Map([['adopt', file], ['recordPayment', file]]));
+    expect(extra.verdict).toBe('disagree');
+    expect(extra.missingOnChain).toEqual(['recordPayment']);
+    expect(extra.mismatched).toEqual([]);
+    const none = compareVerifierKeys(read, new Map());
+    expect(none.verdict).toBe('disagree');
+    expect(none.onChainOnly).toEqual(['adopt']);
+  });
+
+  it('answers UNKNOWN and never `agree` when the state cannot be read, and refuses a partial answer', async () => {
+    /* A partial answer is worse than none here: it would let a swapped key hide
+     * behind an unreadable one. */
+    const { operationsFromContractState, compareVerifierKeys } = await import('./ledger.js');
+    expect(operationsFromContractState(null, 'a').state).toBe('unreadable');
+    expect(operationsFromContractState({}, 'a').state).toBe('unreadable');
+    const halfRead = operationsFromContractState({
+      operations: () => ['a', 'b'],
+      operation: (n: unknown) => (n === 'a' ? { verifierKey: new Uint8Array([1]) } : {}),
+    }, 'addr');
+    expect(halfRead.state).toBe('unreadable');
+    expect(halfRead.state === 'unreadable' && halfRead.why).toMatch(/"b" carries no readable/);
+    const c = compareVerifierKeys(halfRead, new Map());
+    expect(c.verdict).toBe('unknown');
+    expect(c.why).toMatch(/NOTHING may be concluded/);
+  });
+});
+
+/**
+ * WHAT THIS ROUND'S OWN `money-safety-auditor` FOUND, PINNED SO IT CANNOT COME
+ * BACK. Every case below is a defect the first draft of `S74` shipped past its own
+ * reading and its auditor caught — the verifier-key half of a builder that refused
+ * five things about the authority and nothing about the keys; a current authority
+ * passed alongside the plan instead of taken from it; and a promise to report a
+ * state that nothing carried.
+ */
+describe('S74: the verifier-key half of the builder, which the first draft refused nothing about', () => {
+  const key = (v: string) => ({ tag: 'schnorr', value: v });
+  const K1 = key('79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798');
+  const K2 = key('c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5');
+  const strict = { emptyCommitteeIsDeliberate: false };
+  const readOf = (
+    committee: { tag: string; value: string }[], threshold: number, counter: bigint,
+    extra: { shape?: 'anyone' | 'no-one' | 'one-key' | 'committee'; dup?: boolean } = {},
+  ) => ({
+    state: 'read' as const, address: 'addr',
+    authority: {
+      committee, threshold, counter,
+      shape: extra.shape ?? ('committee' as const), hasDuplicateMembers: extra.dup ?? false,
+    },
+  });
+  const stubs = {
+    ContractMaintenanceAuthority: class { constructor(..._a: unknown[]) {} },
+    ReplaceAuthority: class { constructor(..._a: unknown[]) {} },
+    VerifierKeyInsert: class { constructor(..._a: unknown[]) {} },
+    ContractOperationVersionedVerifierKey: class { constructor(..._a: unknown[]) {} },
+    MaintenanceUpdate: class {
+      dataToSign = new Uint8Array([1, 2, 3]); counter = 0n;
+      signatures: [bigint, { tag: string; value: string }][] = [];
+      constructor(..._a: unknown[]) {}
+      addSignature() { return this; }
+    },
+    verifySignature: () => true,
+  };
+  const planFor = async (
+    read: ReturnType<typeof readOf>, committee: { tag: string; value: string }[], threshold: number,
+  ) => {
+    const { planAuthorityReplacement } = await import('./ledger.js');
+    const p = planAuthorityReplacement(read, { committee, threshold }, strict);
+    if (p.action !== 'build') throw new Error(`expected a build plan, got ${p.action}`);
+    return p;
+  };
+
+  it('refuses an unnamed entry point, empty key bytes, and a version the runtime does not have', async () => {
+    /* `C353`'s drain is a VERIFIER KEY SWAP performed using the authority, so a
+     * builder that refuses five things about who may change a contract and nothing
+     * about the change itself has it exactly the wrong way round. */
+    const { verifierKeyRefusals } = await import('./ledger.js');
+    const good = { operation: 'adopt', version: 'v3' as const, verifierKey: new Uint8Array([1]) };
+    expect(verifierKeyRefusals([good])).toEqual([]);
+    expect(verifierKeyRefusals([{ ...good, operation: '  ' }]).map((r) => r.code))
+      .toContain('unnamed-verifier-key-operation');
+    expect(verifierKeyRefusals([{ ...good, verifierKey: new Uint8Array() }]).map((r) => r.code))
+      .toContain('empty-verifier-key');
+    expect(verifierKeyRefusals([{ ...good, version: 'v9' as never }]).map((r) => r.code))
+      .toContain('unknown-verifier-key-version');
+    /* Measured: the runtime's version is a VERSION-KEYED HEADER PARSE — `v3` wants a
+     * `midnight:verifier-key[v6]:` header and `v4` wants `[v7]` — and it throws on a
+     * mismatch. It is not a label, so a free-form string is not an option. */
+    expect(verifierKeyRefusals([{ ...good, version: 'v4' as const }])).toEqual([]);
+  });
+
+  it('the builder throws on a bad verifier-key write rather than handing it to the runtime', async () => {
+    const { buildMaintenanceInstruction } = await import('./ledger.js');
+    const plan = await planFor(readOf([K1], 1, 0n), [K1, K2], 2);
+    expect(() => buildMaintenanceInstruction(stubs as never, plan, {
+      label: 'x', emptyCommitteeIsDeliberate: false,
+      verifierKeys: [{ operation: '', version: 'v3', verifierKey: new Uint8Array([1]) }],
+    })).toThrow(/unnamed-verifier-key-operation/);
+  });
+
+  it('records WHICH key was written and not only that one was, because the name is what a swap leaves alone', async () => {
+    /* A record saying *we wrote `recordPayment`* cannot afterwards say which key
+     * went in, so `checkEndState` could report `settled` over an update that also
+     * rewrote the thing `C353` is about. Eight bytes is an identifier for a person;
+     * the proof is `compareVerifierKeys` over full bytes. */
+    const { buildMaintenanceInstruction } = await import('./ledger.js');
+    const plan = await planFor(readOf([K1], 1, 3n), [K1, K2], 2);
+    const built = buildMaintenanceInstruction(stubs as never, plan, {
+      label: 'ACCOUNT', emptyCommitteeIsDeliberate: false,
+      verifierKeys: [{
+        operation: 'recordPayment', version: 'v3',
+        verifierKey: new Uint8Array([0xde, 0xad, 0xbe, 0xef, 1, 2, 3, 4, 5, 6]),
+      }],
+    });
+    expect(built.endState.verifierKeyInserts).toEqual([
+      { operation: 'recordPayment', version: 'v3', fingerprint: 'deadbeef0102030405'.slice(0, 16) },
+    ]);
+    expect(built.endState.expectedCounter).toBe(4n);
+  });
+
+  it('takes the committee that must sign FROM THE PLAN, so no second value can disagree with it', async () => {
+    /* The first draft took it as a separate parameter, so a caller could hand a plan
+     * for one contract and an authority from another and nothing would notice — and
+     * a `signaturesRequired` below the chain's real bar makes `signatureProgress`
+     * report `complete` under it, which is a fee spent on a recorded on-chain
+     * failure. Every build plan already carries `comparison.onChain`. */
+    const { buildMaintenanceInstruction } = await import('./ledger.js');
+    const plan = await planFor(readOf([K1, K2], 2, 0n), [K1], 1);
+    const built = buildMaintenanceInstruction(stubs as never, plan,
+      { label: 'x', emptyCommitteeIsDeliberate: false });
+    expect(built.signWith).toEqual([K1, K2]);
+    expect(built.signaturesRequired).toBe(2);
+    expect(buildMaintenanceInstruction.length).toBe(3);
+  });
+
+  it('carries the CURRENT authority\'s shape and duplicates, and flags a contract that needs no signatures', async () => {
+    /* `S61` built `shape` and `hasDuplicateMembers` for exactly this and the first
+     * draft read the committee and the threshold and threw both away. The silent
+     * case is the one that matters: a contract already at threshold ZERO gives
+     * `signaturesRequired: 0`, so signing is `complete` on nothing at all. Repairing
+     * such a contract is right; doing it without being told is not. */
+    const { buildMaintenanceInstruction, signatureProgress } = await import('./ledger.js');
+    const dup = await planFor(readOf([K1, K1], 2, 0n, { dup: true }), [K1, K2], 2);
+    const onDup = buildMaintenanceInstruction(stubs as never, dup,
+      { label: 'x', emptyCommitteeIsDeliberate: false });
+    expect(onDup.currentHasDuplicateMembers).toBe(true);
+    expect(onDup.needsNoSignatures).toBe(false);
+
+    const anyone = await planFor(readOf([K1, K2], 0, 0n, { shape: 'anyone' }), [K1, K2], 2);
+    const onAnyone = buildMaintenanceInstruction(stubs as never, anyone,
+      { label: 'x', emptyCommitteeIsDeliberate: false });
+    expect(onAnyone.currentShape).toBe('anyone');
+    expect(onAnyone.needsNoSignatures).toBe(true);
+    expect(signatureProgress(onAnyone).complete).toBe(true);
+    expect(signatureProgress(onAnyone).have).toBe(0);
+  });
+
+  it('compareVerifierKeys answers UNKNOWN over an empty comparison rather than agreeing about nothing', async () => {
+    /* `C185`: the failure is not a red check, it is an ABSENCE where evidence should
+     * be. Both sides empty used to answer `agree` over zero entry points. */
+    const { compareVerifierKeys } = await import('./ledger.js');
+    const c = compareVerifierKeys(
+      { state: 'read', address: 'a', operations: [] }, new Map());
+    expect(c.verdict).toBe('unknown');
+    expect(c.why).toMatch(/NOTHING may be concluded/);
+  });
+
+  it('says in AGREE\'s own words that it saw only the latest version of each key', async () => {
+    /* `ledger-v9.d.ts:742-745`: a ContractOperation holds keys "potentially for
+     * different versions of the proving system" and "Only the latest available
+     * version is exposed to this API". A sentence wider than what was looked at is
+     * the silent-success shape. */
+    const { compareVerifierKeys } = await import('./ledger.js');
+    const bytes = new Uint8Array([1, 2, 3]);
+    const c = compareVerifierKeys(
+      { state: 'read', address: 'a', operations: [{ name: 'adopt', verifierKey: bytes }] },
+      new Map([['adopt', bytes]]));
+    expect(c.verdict).toBe('agree');
+    expect(c.why).toMatch(/LATEST VERSION OF EACH/);
+    expect(c.why).toMatch(/ledger-v9\.d\.ts:742-745/);
+  });
+});
+
+describe('S74/T-357: the CHOSEN half — the deploy front door refuses a repeated committee key too', () => {
+  const key = (v: string) => ({ tag: 'schnorr', value: v });
+  const K1 = key('79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798');
+  const K2 = key('c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5');
+
+  it('refuses a committee that lists one key twice, at the door every deploy path goes through', async () => {
+    /* `T-357`'s *done when* names BOTH halves — refused where an authority is CHOSEN
+     * and where one is BUILT — and the first draft of `S74` closed only the second,
+     * on a stated reason its own auditor measured false. `requireMaintenanceAuthority`
+     * is the CHOSEN half: `partial-contract.ts:261`, `vault-contract.ts:241` and
+     * `ledger.ts:492` all reach it, so one check covers every deploy path and the
+     * door that validates a choice file before comparing it against the chain.
+     *
+     * **THE EDIT THAT ADDED IT IS LINE-FOR-LINE** — eleven documents and five source
+     * comments cite lines below that function, and `C366` is what a moved anchor
+     * costs. Measured after: the file is 438 lines before and after, and `:198`,
+     * `:311`, `:315`, `:331`, `:358` and `:417` all read exactly as cited. */
+    const { requireMaintenanceAuthority } = await import('./partial-contract.js');
+    expect(() => requireMaintenanceAuthority(
+      { kind: 'committee', committee: [K1, K2, K1], threshold: 3 } as never,
+    )).toThrow(/lists at least one key more than once/);
+    /* Case-folded, exactly as the chain compares them. */
+    expect(() => requireMaintenanceAuthority({
+      kind: 'committee', threshold: 2,
+      committee: [K1, { tag: 'SCHNORR', value: K1.value.toUpperCase() }],
+    } as never)).toThrow(/more than once/);
+    /* And a real M-of-N still passes, with every check it already made intact. */
+    expect(requireMaintenanceAuthority(
+      { kind: 'committee', committee: [K1, K2], threshold: 2 } as never,
+    )).toEqual({ kind: 'committee', committee: [K1, K2], threshold: 2 });
+    expect(() => requireMaintenanceAuthority(
+      { kind: 'committee', committee: [K1, K2], threshold: 3 } as never,
+    )).toThrow(/cannot have threshold 3/);
+    expect(() => requireMaintenanceAuthority(
+      { kind: 'committee', committee: [], threshold: 1 } as never,
+    )).toThrow(/at least one verifying key/);
+  });
+});
