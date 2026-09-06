@@ -1,6 +1,6 @@
 /**
  * **THE FIRST MONEY EVER TO ENTER A VAULT, AND IT IS PUBLIC MONEY.** `C245`,
- * `C242`, `C236`.
+ *
  *
  * Run it with `FUND-VAULT.command`. What that door must pass and must refuse is
  * at the bottom of this file; the order the doors go in, and what each one needs
@@ -125,7 +125,7 @@ const FUND_AMOUNT = (process.env.FUND_AMOUNT ?? '').trim();
 
 /**
  * The vault's address, held here so the screen guard can forbid it from the
- * moment it is read. `C236`.
+ * moment it is read.
  *
  * A plain send to a vault's address is money on chain that nobody can spend and
  * no contract can refuse. Everything this script prints goes through `say`,
@@ -273,7 +273,7 @@ function vaultFromRegistry(name: string): VaultEntry {
 
 /**
  * **THE VAULT'S PINNED ACCOUNT AGAINST THE ACCOUNT THAT IS ACTUALLY DEPLOYED.**
- * `C266`.
+ *
  *
  * A vault holds its account's address from the moment it is built and can never
  * be redirected (`V-37`). **The account's deploy overwrites its own record
@@ -362,7 +362,7 @@ const DEPOSITOR: SignerRef = {
   leaf: '',
 };
 
-/** The size block, printed on success and on refusal alike. `C218`, `R1c`. */
+/** The size block, printed on success and on refusal alike. */
 function printTxSize() {
   say();
   say('  \x1b[1mHow big the transaction is, against what the chain will carry\x1b[0m');
@@ -391,7 +391,7 @@ function printTxSize() {
   }
   say();
   /*
-   * NO EXPECTED FIGURE IS PRINTED HERE, AND THAT IS DELIBERATE. `C251`, `C238`.
+   * NO EXPECTED FIGURE IS PRINTED HERE, AND THAT IS DELIBERATE.
    *
    * `DEPLOY-VAULT.command` carries one in its own header and it has already
    * disagreed with the script beside it. No vault CIRCUIT CALL has ever been
@@ -403,7 +403,7 @@ function printTxSize() {
   say('    be compared against is the next run of this door, not a number written here.');
 }
 
-/** What proved, and how long it took. Measured, or said to be absent. C238. */
+/** What proved, and how long it took. Measured, or said to be absent. */
 function printProving() {
   say();
   say('  \x1b[1mWhat proved, and what it took\x1b[0m');
@@ -684,7 +684,7 @@ async function main(): Promise<MovementVerdict | 'not-read'> {
    *
    * `unshieldedBalance` answers `0n` when the chain publishes rows for this
    * contract and none of them carries this colour, and that is correct: it is a
-   * true statement about the vault (`C198`). **What has never been observed is
+   * true statement about the vault. **What has never been observed is
    * how the indexer SPELLS the native token type.** It arrives as
    * `HexEncoded`, the client compares it case-insensitively against
    * `nativeToken().raw`, and both sides of that comparison in
@@ -840,7 +840,7 @@ async function main(): Promise<MovementVerdict | 'not-read'> {
   live.stop();
   /*
    * **THE VERDICT LEAVES THIS PROCESS AS AN EXIT CODE, BECAUSE THE DOOR PRINTS
-   * THE LOUDEST LINE ON THE SCREEN AND MUST NOT CONTRADICT IT.** `C113`.
+   * THE LOUDEST LINE ON THE SCREEN AND MUST NOT CONTRADICT IT.**
    *
    * A run that deposited and could not confirm the balance is not a success and
    * is not a failure: the money moved and the check did not answer. It has its
@@ -947,7 +947,7 @@ if (RUN_DIRECTLY) {
 /*
  * **`FUND-VAULT.command`.** What that door does, recorded here because the door
  * is what a person opens and a run order naming `npx tsx scripts/fund-vault.ts`
- * is an instruction nobody at the machine can follow (`C226`).
+ * is an instruction nobody at the machine can follow.
  *
  * WHAT IT PASSES — exported, because this file reads the environment and
  * nothing else:
@@ -959,7 +959,7 @@ if (RUN_DIRECTLY) {
  *                           NO DEFAULT, for the same reason.
  *     MIDNIGHT_PROOF_IMAGE  the pinned image, so the report can record what the
  *                           proof was built against rather than what was meant
- *                           to be running (`C180`).
+ *                           to be running.
  *
  * WHAT IT REFUSES, before running anything:
  *

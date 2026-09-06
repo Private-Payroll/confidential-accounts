@@ -1,5 +1,5 @@
 /**
- * **STARTING THE SERVER IS NOW SOMETHING THE SUITE DOES.** `X2` §1.
+ * **STARTING THE SERVER IS NOW SOMETHING THE SUITE DOES.**
  *
  * ── THE DEFECT THIS FILE EXISTS FOR ──────────────────────────────────────
  *

@@ -1,5 +1,5 @@
 /**
- * **THE FILE THAT DECIDES WHO IS ON THE PREVIEW ACCOUNT.** `C334`, `S35`.
+ * **THE FILE THAT DECIDES WHO IS ON THE PREVIEW ACCOUNT.**
  *
  * Five identities live in `.midnight/` because two processes have to agree on
  * them and a formula both could compute is what `C334` is. So what this file
@@ -31,7 +31,7 @@ describe('C334 — the preview signers file', () => {
   it('refuses a traversing account id THROUGH THE FUNCTION THAT SHIPS, not just the guard', () => {
     /*
      * **THE GUARD IS NOT WHAT SHIPS — `previewSignersFile` IS.** `S34`'s
-     * `test-auditor` named this shape one file over: a test that enters through
+     * test-coverage pass named this shape one file over: a test that enters through
      * the helper proves the helper and proves nothing about the caller calling
      * it. Delete `assertPreviewAccountId(...)` from `previewSignersFile` and
      * the direct test below stays green while a `..` escapes `.midnight/`.
@@ -83,7 +83,7 @@ describe('C334 — the preview signers file', () => {
     /*
      * **WHAT THIS MEASURES IS "DIFFERS BETWEEN RUNS", WHICH IS LESS THAN
      * "UNPREDICTABLE", AND THE TITLE IS ONE CLAUSE STRONGER THAN THE
-     * ASSERTION.** `S35`'s `test-auditor`. A counter or a `Date.now()` seed
+     * ASSERTION.** `S35`'s test-coverage pass. A counter or a `Date.now()` seed
      * would pass this. It does catch `C334`'s actual defect — `seededBytes(1)`
      * returns the same 32 bytes on every machine for ever — and the generator
      * it is guarding is named at `preview-signers.ts`: `randomSecretKey` and
@@ -125,7 +125,7 @@ describe('C334 — the preview signers file', () => {
 
     /*
      * **ONE BAD FIELD AT A TIME, AND THAT IS THE WHOLE POINT.** `S35`'s
-     * `test-auditor`: a case with BOTH fields malformed passes for either check
+     * test-coverage pass: a case with BOTH fields malformed passes for either check
      * alone, so deleting one of the two conditions leaves the suite green. Each
      * of the two is covered by a case in which the OTHER field is valid.
      */
@@ -152,7 +152,7 @@ describe('C334 — the preview signers file', () => {
 
   it('hands the two values out AS THEMSELVES, not merely as two 32-byte arrays', () => {
     /*
-     * **THE SWAP IS THE FAILURE THIS ASSERTS AGAINST.** `S35`'s `test-auditor`:
+     * **THE SWAP IS THE FAILURE THIS ASSERTS AGAINST.** `S35`'s test-coverage pass:
      * `secretKey: fromHex(s.blinding), blinding: fromHex(s.signingSecret)` gives
      * two 32-byte `Uint8Array`s and satisfies every shape assertion — and the
      * deploy then seats A's leaf from one pair while the run derives from the
@@ -171,7 +171,7 @@ describe('C334 — the preview signers file', () => {
 
   it('writes the file 0600, because it is key material on a shared disk', () => {
     /* A truth claim the file makes about itself (rule 14), pinned rather than
-     * asserted in a comment. `S35`'s `test-auditor`. */
+     * asserted in a comment. `S35`'s test-coverage pass. */
     const { file } = readOrCreatePreviewSigners(tmp(), 'stagenet', 'default');
     expect(statSync(file).mode & 0o777).toBe(0o600);
   });

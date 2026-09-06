@@ -113,7 +113,7 @@ const PRIVATE_STATE_ID = `chainprobe-${NETWORK}`;
 const PRIVATE_STATE_PASSWORD =
   process.env.MIDNIGHT_PRIVATE_STATE_PASSWORD || 'ConfidentialAccounts-Dev-2026';
 /*
- * 6301, NOT 6300. M-144.
+ * 6301, NOT 6300.
  *
  * Two proof servers run on this machine: `8.1.0` on 6300 and the pinned one on
  * 6301. The pinned image is `9.0.0-rc.3` — the prover built from the ledger
@@ -281,7 +281,7 @@ function describeError(e: any, depth = 0): string {
  * How far each sub-wallet has synced, as one line. Module scope, deliberately —
  * it is built in one stage and called from another, and the copy that lived
  * inside `main()` in an earlier script was a ReferenceError that fired inside a
- * provider wrapper and cost a run. M-26.
+ * provider wrapper and cost a run.
  */
 const progressOf = (s: any): string => {
   const one = (p: any, name: string) => {
@@ -491,7 +491,7 @@ async function main() {
    * A worker thread, because the main thread cannot be relied upon to notice
    * its own problems: a circuit call blocks the event loop synchronously, so an
    * in-process timeout and an in-process heartbeat both simply never fire.
-   * M-33. It reads a timestamp out of shared memory, so it can measure a stall
+   * It reads a timestamp out of shared memory, so it can measure a stall
    * without the main thread participating.
    *
    * Same shared-buffer layout as run-preview.ts because it drives the same
@@ -531,7 +531,7 @@ async function main() {
    * Deliberately wrapping the providers rather than reassembling the call from
    * `createUnprovenCallTx` and `submitTx` by hand — hand-assembly is what M-16
    * lost six rounds to, and the point is to watch the SDK do its normal thing.
-   * The prototype is preserved because this SDK does `instanceof` checks (M-30).
+   * The prototype is preserved because this SDK does `instanceof` checks.
    */
   const timed = <T extends object>(obj: T, phases: Partial<Record<keyof T & string, number>>): T => {
     const proto = Object.getPrototypeOf(obj) ?? Object.prototype;
@@ -567,7 +567,7 @@ async function main() {
   const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_000);
 
   /*
-   * M-46. Count every fee computation and record the last fee, so a stall
+   * Count every fee computation and record the last fee, so a stall
    * inside the dust wallet's fixed-point balancing loop is legible from the
    * watchdog thread while the main thread is blocked. Read-only: it calls
    * through and returns the real value.
@@ -685,7 +685,7 @@ async function main() {
   /*
    * Retried, because the testkit's own startup health check gives each endpoint
    * ONE SECOND, hardcoded in four places. Against public endpoints that is
-   * marginal by design and a slow moment kills the run before it starts. M-116.
+   * marginal by design and a slow moment kills the run before it starts.
    */
   const cfg = await startEnvironment(env, new StaticProofServerContainer(PROVER_PORT), note);
   good(`node      ${cfg.node}`);
@@ -712,7 +712,7 @@ async function main() {
    *
    * `dust > 0` passed at 1.1e16 on a young Stagenet and the transaction then
    * died inside the coin selector with "Insufficient Funds: could not balance
-   * dust" (M-58). The target is measured against this chain rather than
+   * dust". The target is measured against this chain rather than
    * constant, because ledger 8 quoted 0 and 1 for the same operations that
    * ledger 9 charges 1e14 for.
    *
@@ -746,7 +746,7 @@ async function main() {
   }
 
   /*
-   * WAIT FOR THE DUST WALLET TO CATCH UP BEFORE SUBMITTING ANYTHING. M-141.
+   * WAIT FOR THE DUST WALLET TO CATCH UP BEFORE SUBMITTING ANYTHING.
    *
    * The first run of this script died here — three attempts, all rejected by
    * the node with `1010: Invalid Transaction: Custom error: 170`, which is
@@ -766,7 +766,7 @@ async function main() {
   await waitForDustCatchUp(live, note, progressOf);
   if (!dustProgressKnown(dustProgressOf(live.state()))) {
     // Not a tick. The wallet will not say how far behind it is, so claiming it
-    // has caught up would be printing a fact nobody established. M-141.
+    // has caught up would be printing a fact nobody established.
     note(`the wallet does not report how far behind its dust view is — ${progressOf(live.state())}`);
     note('so nothing here can promise the fee proof will verify; the cache age limit is the guard');
   } else if (dustCaughtUp(dustProgressOf(live.state()))) {
@@ -866,7 +866,7 @@ async function main() {
    * `withRetry` alone is not enough: it catches a throw, and the failure this
    * guards against is a HANG — sixteen minutes of silence waiting on an indexer
    * subscription that had closed. A wait with no bound throws nothing and
-   * retries never, so the watchdog thread is what bounds this. M-32.
+   * retries never, so the watchdog thread is what bounds this.
    *
    * `landed()` is what makes retrying safe. A timeout waiting for confirmation
    * does not mean the transaction failed, and every circuit in this contract
@@ -950,7 +950,7 @@ async function main() {
     /*
      * Settle before submitting. The node's websocket closes cleanly a few
      * seconds after the wallet connects, so submitting immediately is
-     * submitting into the gap on purpose. M-23.
+     * submitting into the gap on purpose.
      */
     note('letting the node websocket settle before submitting');
     await sleep(6000);
@@ -1050,7 +1050,7 @@ async function main() {
   /*
    * If the compiler put `publicToken`/`privateToken` in `pureCircuits`, USE
    * THEM — the contract's own derivation cannot disagree with itself, which is
-   * the same rule as `assetKeyOf` in run-preview.ts (M-14).
+   * the same rule as `assetKeyOf` in run-preview.ts.
    *
    * It probably did not: both call `kernel.self()`, which needs a call context,
    * and a circuit that needs a context is not pure. Hence the fallback, and

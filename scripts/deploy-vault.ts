@@ -137,7 +137,7 @@ const PRIVATE_STATE_PASSWORD =
 
 /**
  * The address, once it exists — held here so the SCREEN GUARD can forbid it
- * from the moment it does. `C236`.
+ * from the moment it does.
  *
  * Everything printed by this script goes through `say`, and `say` refuses a
  * line carrying this value or any eight-character window of it. That is the
@@ -162,7 +162,7 @@ let ledgerParameters: any = null;
 let proofServerImage = '(not established)';
 let proofServerVersion = '(not asked)';
 
-/** The size block, printed on success and on refusal alike. `C218`, `R1c`. */
+/** The size block, printed on success and on refusal alike. */
 function printTxSize() {
   say();
   say('  \x1b[1mHow big the transaction is, against what the chain will carry\x1b[0m');
@@ -226,7 +226,7 @@ function accountAddressFromRecord(): string {
       'address cannot be changed afterwards.');
   }
   /*
-   * THE ACCOUNT MUST CARRY THE CIRCUITS A VAULT CALLS. S9, S11.
+   * THE ACCOUNT MUST CARRY THE CIRCUITS A VAULT CALLS.
    *
    * `payout` calls the account's `recordPayment`; `retire` calls `retireVault`,
    * which is DEFERRED from the account's deployment and therefore has no
@@ -340,7 +340,7 @@ async function main() {
    * The compiled vault, with its keys.
    *
    * `contracts/managed-vault/` has held no `keys/` since the vault was written
-   * (`C226`) and COMPILE-VAULT.command is the only file that builds them. The
+   * and COMPILE-VAULT.command is the only file that builds them. The
    * deploy layer asks the zk config provider for all four before a fee is
    * spent and names that file when they are missing; this checks the directory
    * first so the message arrives before the network rather than after it.
@@ -501,7 +501,7 @@ async function main() {
   });
   /*
    * THE ADDRESS BECOMES A SECRET THE MOMENT IT EXISTS. Everything printed from
-   * here on is refused if it carries it. C236.
+   * here on is refused if it carries it.
    */
   vaultAddress = deployed.contractAddress;
   good(`deployed in ${((Date.now() - startedAt) / 1000).toFixed(1)}s`);
@@ -534,7 +534,7 @@ async function main() {
   good(`recorded in ${registryFile.replace(ROOT + '/', '')} under the name "${VAULT_NAME}"`);
 
   /*
-   * THE FEE ACTUALLY PAID, AND THE BLOCK. `R1b`.
+   * THE FEE ACTUALLY PAID, AND THE BLOCK.
    *
    * Read off the finalized transaction rather than estimated. It does NOT fail
    * the run: the vault has landed and its address is already on disk, and a
@@ -592,7 +592,7 @@ async function main() {
    * THE READ-BACK, through THE VAULT'S OWN FIND.
    *
    * Not `findDeployedPartialContract` — that one refuses a full deployment by
-   * design (C231), which is right for the account and wrong here. Not the SDK's
+   * design, which is right for the account and wrong here. Not the SDK's
    * `findDeployedContract` either: it samples and stores a signing key for any
    * address the private-state store has none for (index.mjs:1951-1963), which
    * would file a key that maintains nothing in the slot the real one lives in.
@@ -737,7 +737,7 @@ main().then(
  *
  *   IT MUST EXPORT
  *     MIDNIGHT_PROOF_IMAGE   the image it verified, so the report can record
- *                            what the proof was built against (C180)
+ *                            what the proof was built against
  *     MIDNIGHT_NETWORK_ID    the network, defaulting to stagenet
  *     VAULT_NAME, VAULT_PURPOSE   passed straight through
  *
@@ -749,7 +749,7 @@ main().then(
  *     · retry. One attempt, for the reason at the top of this file.
  *     · print the vault's address, or grep the report for it. The report will
  *       not contain one, and a `.command` that added it would defeat the guard
- *       this script enforces in code (C236).
+ *       this script enforces in code.
  *
  *   WHAT TO RUN, IN ORDER, BY THE PERSON AT THE MACHINE
  *     1. COMPILE-VAULT.command          the vault's keys. Minutes. Once.

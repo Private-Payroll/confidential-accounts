@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * **MUTATING THE ROUND THAT LETS SOMEBODY BE HIRED.** `docs/NEXT.md` `X11`,
- * `docs/how-money-can-be-lost.md` `C160`, `C156`, `C159`, `C21`.
+ * `docs/how-money-can-be-lost.md` `C160`.
  *
  * The harness `scripts/mutate-self-payee.mjs` grew, aimed at the five things
  * `X11` changed: **where the token can be reached**, **what the accept door is

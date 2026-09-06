@@ -2,7 +2,7 @@ import { REQUEST_SCHEMA } from 'midnight-identity/profile/request';
 
 /**
  * **ASKING THE WALLET FOR THE KEY THAT OPENS A COMPANY — this side's half.**
- * `docs/NEXT.md` PI2a §1, `docs/scope-payroll-identity.md` §9b, `C129`.
+ * `docs/NEXT.md` PI2a §1, `docs/scope-payroll-identity.md` §9b.
  *
  * ── WHAT THIS ROUND IS, IN ONE PARAGRAPH ──────────────────────────────────
  *

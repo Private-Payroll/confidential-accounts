@@ -1,5 +1,5 @@
 /**
- * THE SCREEN GUARD, AND THE PHASE CLOCK. S6e.
+ * THE SCREEN GUARD, AND THE PHASE CLOCK.
  *
  * The guard is the one that matters: `C236` says a vault's raw address must
  * never reach a screen, and the difference between that being a rule and it

@@ -1,5 +1,5 @@
 /**
- * The key-location parser. M-77.
+ * The key-location parser.
  *
  * A tiny amount of string handling, tested because it was wrong on a live chain
  * and the failure cost a run. The SDK asks for proving material by a structured
@@ -25,11 +25,11 @@ function artefacts() {
   mkdirSync(join(root, 'keys'), { recursive: true });
   mkdirSync(join(root, 'zkir'), { recursive: true });
   /*
-   * `credit` IS A SHED CIRCUIT AND IS KEPT HERE ON PURPOSE. S25.
+   * `credit` IS A SHED CIRCUIT AND IS KEPT HERE ON PURPOSE.
    *
    * This is not a fixture standing in for a live circuit: it is the exact key
    * location the chain asked for during the failing run this file exists
-   * because of (M-77). The parser under test does not know or care which
+   * because of. The parser under test does not know or care which
    * circuits the contract has, and renaming it to a surviving circuit would
    * quietly edit a recorded observation into something nobody saw.
    */

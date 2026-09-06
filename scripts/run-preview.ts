@@ -23,7 +23,7 @@
  *   3. approve as A   that proposal's count 0 -> 1, one nullifier appears
  *   4. approve as B   that proposal's count 1 -> 2, a second nullifier appears
  *
- * WHAT STOOD EITHER SIDE OF THAT AND IS GONE. `C292`, `S26`.
+ * WHAT STOOD EITHER SIDE OF THAT AND IS GONE.
  *
  * A credit before the round and a settlement after it: money in, then the
  * threshold met and the asset's balance commitment moved. The account keeps no
@@ -137,7 +137,7 @@ const PRIVATE_STATE_ID = `confidential-accounts-${NETWORK}`;
 const ACCOUNT_ID = 'default';
 const PRIVATE_STATE_KEY = privateStateKey(PRIVATE_STATE_ID, ACCOUNT_ID);
 /*
- * 6301, NOT 6300. M-144.
+ * 6301, NOT 6300.
  *
  * Two proof servers run on this machine: `8.1.0` on 6300 and the pinned one on
  * 6301. The pinned image is `9.0.0-rc.3` — the prover built from the ledger
@@ -196,7 +196,7 @@ function describeError(e: any, depth = 0): string {
  * from the day it was written, which is why the drift that cost M-50/55/58/61/65
  * never bit here. `callCircuit` below is what this script actually uses, and it
  * does more: `withRetry` catches a throw, and the failure seen on preview was a
- * **hang**. A wait with no bound throws nothing and retries never. M-32, M-68.
+ * **hang**. A wait with no bound throws nothing and retries never.
  */
 
 /**
@@ -241,7 +241,7 @@ const progressOf = (s: any): string => {
 };
 
 /**
- * A PROPOSAL SALT, AND IT MUST BE DIFFERENT ON EVERY RUN. M-137.
+ * A PROPOSAL SALT, AND IT MUST BE DIFFERENT ON EVERY RUN.
  *
  * Everything else in this script is seeded on purpose — signer A's key has to
  * match what the deploy wrote or A is not a signer on the account. A proposal
@@ -273,7 +273,7 @@ const ADD_C_SALT = freshSalt();
  * the two signers
  *
  * A IS THE FOUNDING SIGNER — the one seat the CONSTRUCTOR creates — and it is
- * no longer "the deployer". `C334`, `S35`. Its secret and blinding MUST be the
+ * no longer "the deployer". Its secret and blinding MUST be the
  * ones `deploy-preview.ts` used, or A is not in the tree and every circuit
  * fails with "not a signer".
  *
@@ -283,14 +283,14 @@ const ADD_C_SALT = freshSalt();
  * anyone who reads this repository, on an account these scripts seat them on.
  * `scripts/preview-signers.ts` keeps the agreement and removes the
  * computability: real entropy, generated once, written under `.midnight/`,
- * per network AND per account (`C275`).
+ * per network AND per account.
  *
  * **A REFUSAL HERE IS THE HONEST ONE.** If the file is absent this script does
  * NOT invent a signer set — it would deploy nothing and simply fail against a
  * live account minutes later. `DEPLOY-PREVIEW.command` is the door that creates
  * the file, and it is named in the refusal (rule 19).
  *
- * WHAT IS NO LONGER SET HERE, and why the placeholders below are safe. M-125.
+ * WHAT IS NO LONGER SET HERE, and why the placeholders below are safe.
  *
  * The account's asset blinding — which is what turns an asset code into the key
  * a change commitment names — is not knowable until the view file has been
@@ -326,7 +326,7 @@ const PLACEHOLDER_32 = new Uint8Array(32);
  * `CHANGE_AMOUNT` and `NEXT` USED TO BE HERE. The amount is now decided at the
  * point each round is raised, in the asset's smallest unit. `NEXT` described
  * the state a call would write, and there is no such state left to describe:
- * the account keeps no balance (`C292`, `S26`), so a change is an amount of an
+ * the account keeps no balance, so a change is an amount of an
  * asset that the signers approve, and nothing else. What this digest is for is
  * untouched by that.
  */
@@ -353,7 +353,7 @@ const CHANGE_BATCH = seededBytes(601);
 const ZERO_32 = new Uint8Array(32);
 
 /**
- * THE FIVE, FROM THE FILE `DEPLOY-PREVIEW.command` WROTE. `C334`.
+ * THE FIVE, FROM THE FILE `DEPLOY-PREVIEW.command` WROTE.
  *
  * Not created here. `readOrCreatePreviewSigners` would happily make a fresh set
  * if the file were missing, and a fresh set is five identities that are not on
@@ -381,7 +381,7 @@ const device = (id: PreviewSignerId): AccountPrivateState => ({
   assetBlinding: PLACEHOLDER_32,
   assetId: PLACEHOLDER_32,
   // `current` and `next` stood here, staging the balance a call read and the
-  // balance it would write. Both went with the balance ledger (`C292`, `S26`).
+  // balance it would write. Both went with the balance ledger.
   // What decision 0002 said about them still holds for what is left: every
   // signer opens the same shielded state with the viewing key shared off chain,
   // and only the secret and the blinding differ.
@@ -414,7 +414,7 @@ const signerB = device('B');
 const signerC = device('C');
 
 /*
- * Two more devices, used only by the governance run (M-115). Four signers is
+ * Two more devices, used only by the governance run. Four signers is
  * the smallest account in which somebody can be removed from the MIDDLE, which
  * is the only arrangement that tells a correct slot derivation apart from
  * several wrong ones; the fifth is the one that reuses the vacated slot.
@@ -428,13 +428,13 @@ const leafOf = (s: AccountPrivateState) =>
 /* ------------------------------------------------------------------ */
 
 /**
- * Every circuit this script CALLS, so it can refuse before it spends. S25.
+ * Every circuit this script CALLS, so it can refuse before it spends.
  *
  * Not derived from the code below — that is the point. A list a reader can
  * check against the calls, so a circuit this run drives can never be one the
  * deployment does not carry.
  *
- * IT LISTED FOUR IT NEVER CALLS UNTIL S27 (`T-61`), and a list that overstates
+ * IT LISTED FOUR IT NEVER CALLS UNTIL S27, and a list that overstates
  * is a guard that refuses runs which would have worked — the opposite failure
  * from the one it exists to prevent, and just as expensive to diagnose. The
  * four were `closeExpiredRun`, `adopt`, `recordPayment` and `setVaultThreshold`.
@@ -463,7 +463,7 @@ async function main() {
   console.log('────────────────────────────────────────────────────────────');
 
   /*
-   * BEFORE A WALLET SYNCS, A PROOF IS BUILT OR A TRANSACTION IS SUBMITTED. S25.
+   * BEFORE A WALLET SYNCS, A PROOF IS BUILT OR A TRANSACTION IS SUBMITTED.
    *
    * Not theoretical. The circuits this run does call are called well inside it,
    * after `cancel`, `amendSigner`, `propose` and two `approve`s have each been
@@ -513,7 +513,7 @@ async function main() {
    * It was not proving — the proof provider gives up after 300s — it was
    * waiting for confirmation over an indexer subscription that had closed
    * four seconds after the wallet started. A wait with no bound throws nothing
-   * and retries never. M-32.
+   * and retries never.
    *
    * `landed()` is what makes retrying safe. A timeout waiting for confirmation
    * does not mean the transaction failed, and re-running `addSigner` blindly
@@ -537,7 +537,7 @@ async function main() {
  * Three minutes, not thirty.
  *
  * Thirty was a debug ceiling chosen while a single call could block for six
- * minutes and we needed to see how far it would go. That cause is fixed (M-48),
+ * minutes and we needed to see how far it would go. That cause is fixed,
  * and a ceiling that high now just means a failure takes half an hour to
  * surface — with three retries behind it. The longest legitimate wait here is
  * the indexer confirming a transaction, which is a block or two.
@@ -750,7 +750,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
    * IT USED TO HAVE TO BE UPDATED THE MOMENT A CALL LANDED, or the next one
    * failed as "stale" — since M-70 every state-moving circuit checked it
    * against the chain. Those circuits checked a balance, and both went with
-   * `C292`/`S26`. What is left does not move within a run.
+   * What is left does not move within a run.
    *
    * The `assetId` and `assetBlinding` on the signer constants above are
    * placeholders that nothing reads — `becomeSigner()` overrides both per
@@ -766,9 +766,9 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
    * This started as a hardcoded `CURRENT` — the state as it was at deploy — and
    * that worked exactly once. The second run against the same contract failed
    * with `failed assert: your view of the account is stale`, because the first
-   * run had moved the account and nothing wrote down where it moved to. M-73.
+   * run had moved the account and nothing wrote down where it moved to.
    *
-   * THE STALENESS ASSERT WENT WITH THE BOOKS. `C292`, `S26`. Since M-70 every
+   * THE STALENESS ASSERT WENT WITH THE BOOKS. Since M-70 every
    * state-moving circuit had checked the caller's view against the chain — and
    * what it checked was a balance the account no longer keeps, so the check and
    * the circuits that made it are gone together. Nothing left in this file can
@@ -810,7 +810,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
   }
 
   /**
-   * Reads the view, and REFUSES BY NAME rather than guessing. M-125.
+   * Reads the view, and REFUSES BY NAME rather than guessing.
    *
    * A view written before the multi-asset change says nothing about which
    * asset it describes, and the account's blinding — which is what derives the
@@ -845,7 +845,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
      * got a sentence naming the file, the field, and what to do about it.
      *
      * `balance` and the blinding factor it was committed under have since left
-     * the file altogether, with the balance ledger (`C292`, `S26`). The rule
+     * the file altogether, with the balance ledger. The rule
      * M-137 bought is what stays, and it is why this list is not now shorter
      * than what is read below: two fields are read, and both are named here.
      */
@@ -859,7 +859,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
       }
     }
     /*
-     * THE VIEW AND THE CONTRACT FILE MUST DESCRIBE THE SAME ACCOUNT. M-137.
+     * THE VIEW AND THE CONTRACT FILE MUST DESCRIBE THE SAME ACCOUNT.
      *
      * The deploy writes `${NETWORK}-contract.json` and then `${NETWORK}-view.json`,
      * so a crash between the two leaves a pair that disagree. Nothing compared
@@ -877,7 +877,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
     }
     const bytes = (field: 'assetBlinding'): Uint8Array => {
       /*
-       * `Buffer.from(x, 'hex')` TRUNCATES rather than throwing. M-137.
+       * `Buffer.from(x, 'hex')` TRUNCATES rather than throwing.
        *
        * One bad character yields a short — often empty — buffer, and the first
        * thing to touch it is `assetKeyOf` inside WASM, which fails naming
@@ -930,7 +930,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
   /**
    * The asset this run's round is denominated in, out of the registry rather
    * than as a bare code. It moves nothing — the account keeps no balances
-   * (`C292`, `S26`) — but the amount the signers approve still names it.
+   * — but the amount the signers approve still names it.
    *
    * The registry is the only place that knows how many decimal places it has,
    * which is what makes every figure printed below unambiguous. `require`
@@ -954,7 +954,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
    * The key an asset's changes are committed under, on this account.
    *
    * IT ADDRESSED AN ENTRY IN THE ON-CHAIN BALANCE MAP, and that map went with
-   * the balance ledger (`C292`, `S26`). The key outlived it, because `propose`
+   * the balance ledger. The key outlived it, because `propose`
    * still binds it inside the change commitment
    * (contracts/src/ConfidentialAccount.compact:2130,2283) — which is what makes
    * an approval to pay dollars not an approval to move the same integer of
@@ -1001,7 +1001,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
   note(`network ${NETWORK} — ${how}`);
   /*
    * Retried, because the testkit's own startup health check gives each endpoint
-   * ONE SECOND. M-116.
+   * ONE SECOND.
    *
    * `env.start()` pings the node, the indexer, the proof server and the faucet
    * with `axios … { timeout: 1000 }` — the value is hardcoded in four places in
@@ -1046,7 +1046,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
    * costs 2 minutes once; best case saves 4-5 minutes on every run after this.
    */
   /*
-   * M-75. Bring-up lives in `scripts/wallet-bringup.ts` now.
+   * Bring-up lives in `scripts/wallet-bringup.ts` now.
    *
    * This block was the original, and it was correct. The problem was that
    * `sponsor-test.ts` was written from memory of it rather than from it, and
@@ -1089,7 +1089,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
    * place — the enumeration beside `CIRCUITS` — and this paragraph names no
    * figure of its own.
    *
-   * The deploy learned this the hard way (M-58): `dust > 0` passed at 1.1e16 on
+   * The deploy learned this the hard way: `dust > 0` passed at 1.1e16 on
    * a young Stagenet and the transaction then died inside the coin selector
    * with "Insufficient Funds: could not balance dust". This script does far
    * more work than the deploy — a dozen circuits rather than one — so it is
@@ -1097,7 +1097,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
    *
    * Measured on Stagenet, ledger 9: a single circuit costs 7.5e13 to 4.6e14,
    * so a full run is on the order of 3e15. Ledger 8 on preview quoted 0 and 1
-   * for the same operations (M-52, M-63), which is exactly why this cannot be
+   * for the same operations, which is exactly why this cannot be
    * a constant — it is measured per chain via `estimateRegistration`, the only
    * fee number the SDK will tell you without building a transaction first.
    *
@@ -1106,7 +1106,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
    */
   {
     /*
-     * Every transaction a full run against a fresh deploy submits. M-137.
+     * Every transaction a full run against a fresh deploy submits.
      * Thirteen, counted off the call sites: the approved add of B (propose, one
      * approve, amendSigner), then the approved add of C (propose, two approves,
      * amendSigner), the payment round (propose, two approves), and the job
@@ -1116,11 +1116,11 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
      * window by construction (`docs/company-accounts.md` section 10a), so B's
      * single `amendSigner` became three transactions, for ever. IT WAS FOURTEEN
      * BEFORE THAT: two credits and a settlement went with the balance ledger
-     * (`C292`, `S26`). Revised rather than left generous, because the number IS
+     *. Revised rather than left generous, because the number IS
      * the enumeration — under-counting makes this gate pass and then run out of
      * DUST partway through, the failure it exists to prevent.
      *
-     * **HAND-COUNTED DELIBERATELY — `T-344`, `SC13` §4 `F5`, `S58`.**
+     * **HAND-COUNTED DELIBERATELY — `T-344`, `SC13` §4 `F5`.**
      * `src/midnight/run-cost.ts` DERIVES a count and is called by nothing,
      * which looks like a missed wiring. It is not: `circuitsForRun` models ONE
      * payroll run with no term for `amendSigner` or `cancel`, so no input
@@ -1182,7 +1182,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
    */
   {
     // One dump of the real shape. `progressOf` guesses where each sub-wallet
-    // keeps its progress and only ever finds the unshielded one (M-26), so
+    // keeps its progress and only ever finds the unshielded one, so
     // every sync number for dust and shielded has been `?/?` for the whole
     // session. This prints the truth once and ends the guessing.
     const shapeOf = (o: any) => { try { return Object.keys(o ?? {}).join(', ') || '(none)'; } catch { return '(unreadable)'; } };
@@ -1246,7 +1246,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
     get: PH.readKey, getVerifierKeys: PH.readKey,
   } as any);
   /*
-   * M-77. Proving in this process, behind a flag.
+   * Proving in this process, behind a flag.
    *
    * Decision 0007 rules out a hosted proof server: the preimage IS the private
    * input. So the customer's device has to prove, and for a web product that
@@ -1306,7 +1306,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
         // three steps gets its own phase code and its own number. Copied from
         // the installed testkit-js, not from the GitHub repo, which is ahead
         // of what npm publishes.
-        //
+        
         // If any field it needs is missing — a version bump renames one, say —
         // fall straight back to the SDK's own method rather than failing.
         const inner = wallet.wallet;
@@ -1359,7 +1359,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
    * derives the key from the caller's `assetId` witness and binds it inside the
    * change commitment, so what the signers approve says which asset it is in.
    * It used to be checked at BOTH ends of a round; the far end was the
-   * settlement, and that went with the balance ledger (`C292`, `S26`), so the
+   * settlement, and that went with the balance ledger, so the
    * binding is made once, at the end that still exists. Governance rounds move
    * no money and carry the reserved `NONE`.
    */
@@ -1373,7 +1373,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
   /**
    * What the chain calls the proposal in flight: `commit(payloadHash, salt)`.
    *
-   * COMPUTED HERE, BEFORE ANYTHING IS SUBMITTED. M-128. Every call that spends
+   * COMPUTED HERE, BEFORE ANYTHING IS SUBMITTED. Every call that spends
    * a proposal names which one, and a signer's device needs the id to approve —
    * so it has to be derivable without a round trip, which is why the contract
    * exports `proposalIdOf` rather than writing the commitment inline.
@@ -1382,7 +1382,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
     pureCircuits.proposalIdOf(payloadHash, pureCircuits.noVault(), salt);
 
   /*
-   * A STATE-STAGING HELPER STOOD HERE and is gone. `C292`, `S26`.
+   * A STATE-STAGING HELPER STOOD HERE and is gone.
    *
    * It computed the balance a call would land on — what the account holds now,
    * less the change in flight, plus anything credited — and the salt that
@@ -1408,7 +1408,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
     await providers.privateStateProvider.set(PRIVATE_STATE_KEY, {
       ...s,
       /*
-       * THE ASSET, STAGED PER CALL. M-125.
+       * THE ASSET, STAGED PER CALL.
        *
        * `assetId` says which asset this call concerns and `assetBlinding` is
        * the account-level value that turns it into the key the change
@@ -1439,7 +1439,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
    *
    * A FOURTH READ THE ACCOUNT'S ASSETS — every entry in the on-chain balance
    * map, as opaque keys, sorted, because only the count was ever public. The
-   * map went with the balance ledger (`C292`, `S26`) and the reader went with
+   * map went with the balance ledger and the reader went with
    * it. What it was for survives in the three below: the account still answers
    * questions about itself, and every one of them is now about a proposal.
    *
@@ -1448,7 +1448,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
    * anything that gets compared has to be stable.
    * ------------------------------------------------------------------ */
 
-  /** Every proposal open at once, not "the" open one. M-128. */
+  /** Every proposal open at once, not "the" open one. */
   const openProposalsOf = (l: any): Array<{ id: string; change: string; approvals: number }> =>
     [...l.openProposals]
       .map(([id, change]: [Uint8Array, Uint8Array]) => ({
@@ -1477,7 +1477,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
     openProposalsOf(l).find(p => p.id === hex(id))?.approvals ?? 0;
 
   /*
-   * TWO BALANCE READERS AND THE CREDIT STEP STOOD HERE. `C292`, `S26`.
+   * TWO BALANCE READERS AND THE CREDIT STEP STOOD HERE.
    *
    * One read the commitment the chain held for the asset this run moves, and
    * answered null when the account had never held it — an asset never held was
@@ -1485,8 +1485,8 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
    * held" are the same fact. The other recomputed that commitment from the
    * balance this device believed in, using the contract's own pure circuit, so
    * the two could be compared. The third recorded value arriving, with no
-   * approval round at all, because nobody needs permission to be paid (M-67),
-   * and it was how an asset first appeared on an account (M-125).
+   * approval round at all, because nobody needs permission to be paid,
+   * and it was how an asset first appeared on an account.
    *
    * All three read or wrote a book the account does not keep. What they were
    * for is not replaced here, and this script must not pretend otherwise: there
@@ -1524,7 +1524,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
   };
 
   /*
-   * WHAT THIS PRINTS, and what it no longer can. M-125, M-128.
+   * WHAT THIS PRINTS, and what it no longer can.
    *
    *   round             gone. It scoped approval nullifiers, which is what
    *                     limited an account to one proposal at a time.
@@ -1619,7 +1619,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
   /* -------------------------------------------------- 3b, and only on request
    *
    * The governance run: remove a signer, reuse the slot, move the threshold.
-   * M-115.
+   *
    *
    * It branches HERE, after the contract is found and before the spending path
    * begins, and returns rather than falling through. Everything above this line
@@ -1668,7 +1668,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
 
 
   /*
-   * Clearing out anything an earlier run left open. M-128.
+   * Clearing out anything an earlier run left open.
    *
    * This used to be one `if (before.proposalOpen)`, because an account could
    * hold exactly one proposal and a stale one would make the next `propose`
@@ -1677,7 +1677,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
    * account exactly as it was, which is the whole of M-128 and is why this is
    * a loop rather than a single blind call.
    *
-   * WHY IT IS STILL DONE, now that the reason it was written has gone. M-137.
+   * WHY IT IS STILL DONE, now that the reason it was written has gone.
    *
    * The old justification was that this run re-proposed the same payload under
    * the same salt every time, so a leftover proposal held the id this run needed
@@ -1704,7 +1704,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
   }
 
   /*
-   * WHICHEVER SECOND SIGNER IS ACTUALLY SEATED, rather than B by name. M-143.
+   * WHICHEVER SECOND SIGNER IS ACTUALLY SEATED, rather than B by name.
    *
    * This script used to insist on B, and bootstrap-add them when absent. That
    * was correct on an account nothing else had touched, and it stopped being
@@ -1747,7 +1747,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
     good(`using signer ${secondName} as the second approver — already seated on this account`);
   } else if (Number(before.threshold) > 1) {
     /*
-     * THE REFUSAL IS ABOUT THE THRESHOLD, NOT THE WINDOW. `S35d`.
+     * THE REFUSAL IS ABOUT THE THRESHOLD, NOT THE WINDOW.
      *
      * It used to fire on `signerLeaves.size() >= threshold` and say the
      * bootstrap window was closed. That condition is TRUE OF EVERY ACCOUNT
@@ -1774,7 +1774,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
 
   if (!seatedAlready.length) {
     /*
-     * SEATING B, THROUGH THE ONLY PATH THERE IS. `S35d`.
+     * SEATING B, THROUGH THE ONLY PATH THERE IS.
      *
      * This was ONE call — `amendSigner(leaf, ZERO_32, false, false)` — straight
      * through the bootstrap window, and it would now be refused on a real chain
@@ -1823,7 +1823,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
     pendingChange = { asset: NO_ASSET, amount: 0n, batch: seededBytes(602), salt: ADD_B_SALT };
 
     /*
-     * The proposal's id, computed BEFORE it is submitted. M-128.
+     * The proposal's id, computed BEFORE it is submitted.
      *
      * `commit(payloadHash, salt)`, from the contract's own circuit. The approve
      * binds its nullifier to it and the `amendSigner` below names it.
@@ -1866,12 +1866,12 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
     // attempt consumed is gone — where the free path it used to take would have
     // put signer B in the tree at two indices. What the check saves today is
     // the fee and the proving time that refusal would cost.
-    //
+    
     // DECOMPOSED, deliberately. `callTx` is one opaque call and three separate
     // hypotheses about where its six minutes go have now been wrong: the
     // `settled` tree depth, the Merkle path shape, and the Zswap chain state's
     // postBlockUpdate. Each was ruled out by measurement, and each cost a run.
-    //
+    
     // `createUnprovenCallTx` reproduces with every real input — contract
     // state, Zswap state, ledger parameters — in 161ms elsewhere. So the stall
     // is somewhere else in `callTx`, and the only honest way to find out is to
@@ -1998,8 +1998,8 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
      * asset. Naming a real one would put a claim in the ledger that this round
      * concerns pounds, and `NONE` derives a perfectly valid key that addresses
      * nothing — which used to be a statement about the on-chain balance map,
-     * and is now simply true of every key: the account keeps no balances at all
-     * (`C292`, `S26`).
+     * and is now simply true of every key: the account keeps no balances at
+     * all.
      *
      * Its own salt, so this proposal's id cannot collide with the payment round
      * raised further down.
@@ -2008,7 +2008,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
     pendingChange = { asset: NO_ASSET, amount: 0n, batch: seededBytes(603), salt: addSalt };
 
     /*
-     * The proposal's id, computed BEFORE it is submitted. M-128.
+     * The proposal's id, computed BEFORE it is submitted.
      *
      * `commit(payloadHash, salt)`, from the contract's own circuit. Every call
      * below names it: `approve` binds its nullifier to it, and `addSigner`
@@ -2038,11 +2038,11 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
     // state, and the id on chain was made with A's salt. Any signer can apply
     // it, but only one holding the same salt can reproduce the id. That was
     // once the same constraint the settlement circuit had with its next-state
-    // witnesses; those went with the balance ledger (`C292`, `S26`) and the
+    // witnesses; those went with the balance ledger and the
     // constraint on the salt is unchanged by it.
     await becomeSigner(signerA, 'A');
     // `addId` names which approved proposal authorises this, and `false` takes
-    // a fresh slot. See the note on the addSigner above. M-106, M-128.
+    // a fresh slot. See the note on the addSigner above.
     await callCircuit('addSigner C (approved)',
       () => found.callTx.amendSigner(leafOf(signerC), addId, false, false),
       async () => !!(await readState()).signers.findPathForLeaf(leafOf(signerC)));
@@ -2064,7 +2064,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
 
   /*
    * A VIEW-AGAINST-CHAIN CHECK STOOD HERE, AND IT IS NOT MERELY MOVED. M-73,
-   * `C292`, `S26`.
+   *
    *
    * It compared the balance commitment this device believed in against the one
    * the chain held for this asset, before anything was spent, so that a stale
@@ -2085,7 +2085,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
   const payloadHash = seededBytes(777); // stands in for a real payroll payload
 
   /*
-   * THE CREDIT THAT OPENED THIS STAGE IS GONE. `C292`, `S26`.
+   * THE CREDIT THAT OPENED THIS STAGE IS GONE.
    *
    * Money went in first, and since M-125 that was not merely sensible ordering
    * but the only order that worked: a deployed account held nothing, the first
@@ -2103,7 +2103,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
   const PAYING = 20_000n;
 
   /*
-   * The change this round is for: an amount OF AN ASSET. M-125.
+   * The change this round is for: an amount OF AN ASSET.
    *
    * The asset is part of what the signers approve, and it is bound inside
    * `changeCommitmentOf`. Without it the approved change would say "20,000
@@ -2115,7 +2115,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
   };
 
   /*
-   * The proposal's id, before it exists on chain. M-128.
+   * The proposal's id, before it exists on chain.
    *
    * Everything below names it: both approvals bind their nullifiers to it. It
    * is what makes an approval an approval OF SOMETHING rather than a vote on
@@ -2143,7 +2143,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
   }
 
   /*
-   * A DEPOSIT IN THE MIDDLE OF AN OPEN ROUND STOOD HERE. M-71, `C292`, `S26`.
+   * A DEPOSIT IN THE MIDDLE OF AN OPEN ROUND STOOD HERE. M-71.
    *
    * It was the whole reason the contract binds a change rather than a resulting
    * state. Under the design M-71 replaced, the approved outcome was an absolute
@@ -2168,7 +2168,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
     async () => approvalsFor(await readState(), proposalId) > countBeforeB);
 
   /*
-   * THE THRESHOLD IS MET, AND THAT IS WHERE THIS ROUND ENDS. `C292`, `S26`.
+   * THE THRESHOLD IS MET, AND THAT IS WHERE THIS ROUND ENDS.
    *
    * A settlement stood here. It named which proposal it spent, moved the
    * asset's balance commitment, inserted the movement into the audit trail and
@@ -2204,7 +2204,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
   const after = await readState();
   show(after, 'after');
   /*
-   * `sub.unsubscribe()` USED TO BE HERE, and it calls `live.stop()`. M-137.
+   * `sub.unsubscribe()` USED TO BE HERE, and it calls `live.stop()`.
    *
    * Stage 7 below submits three more transactions — a propose, an approve
    * through the job runner, and a cancel — every one of which balances against
@@ -2218,7 +2218,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
 
   /*
    * WHAT IS CHECKED HERE, AND WHAT IS NO LONGER CHECKABLE. M-125, M-128,
-   * `C292`, `S26`.
+   *
    *
    * Every check that stood here read a book the account no longer keeps. The
    * list is written out with what became of each, rather than quietly
@@ -2296,7 +2296,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
   console.log('  \x1b[1mProving and settlement time per circuit\x1b[0m  \x1b[2m(M-16)\x1b[0m');
   for (const [name, secs] of timings) {
     // Wider than it was: step names carry a proposal id now, because a call
-    // that spends a proposal names which one. M-128.
+    // that spends a proposal names which one.
     console.log(`    ${name.padEnd(24)} ${secs.toFixed(1)}s`);
   }
 
@@ -2325,7 +2325,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
    */
 
   /*
-   * The account's public state, in the shape the boundary declares. M-125, M-128.
+   * The account's public state, in the shape the boundary declares.
    *
    * `LedgerStatus` used to be eight scalars, four of which described the one
    * proposal an account could have. It is now two lists and two numbers, and
@@ -2334,7 +2334,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
    * shared definition in core/ledger.ts, not a copy — turns the asset list into
    * the single handle recovery compares against.
    *
-   * `assets` IS EMPTY AND IS READ OFF NOTHING. `C292`, `S26`: the on-chain
+   * `assets` IS EMPTY AND IS READ OFF NOTHING. The on-chain
    * balance map is gone, so there is nothing to decode. The field stays on
    * `LedgerStatus` because it is the shape both ledger implementations answer
    * in, and `MidnightLedger.readContractState` answers it the same way
@@ -2348,7 +2348,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
       openProposals: openProposalsOf(l),
       threshold: Number(l.threshold),
       /*
-       * `R5`. The vaults somebody deliberately gave their own threshold — read
+       * The vaults somebody deliberately gave their own threshold — read
        * from the contract's own `thresholds` map, empty on every account this
        * script drives, because nothing here sets one.
        */
@@ -2475,7 +2475,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
      * NEVER REACHED — `recover` plans nothing, it reads the account. It names
      * `approve` because a plan naming a circuit the contract does not have is a
      * trap for whoever wires a second caller to this runner; it named `credit`,
-     * which went with the balance ledger (`C292`, `S26`).
+     * which went with the balance ledger.
      */
     plan: async () => ({
       contractAddress, circuit: 'approve', args: [jobProposalId],
@@ -2507,7 +2507,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
    * definition, in core/ledger.ts, shared with both ledger implementations —
    * digests the public asset list instead.
    *
-   * IT NO LONGER DISTINGUISHES ANYTHING, AND THIS SAYS SO. `C292`, `S26`: the
+   * IT NO LONGER DISTINGUISHES ANYTHING, AND THIS SAYS SO. The
    * asset list is empty for every account and every state, so the digest is one
    * constant and a job whose handle is that constant is "settled" whether it
    * landed or not. What this still exercises is that the branch is wired and
@@ -2526,7 +2526,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
   //    so redoing it is safe. `approve` is that circuit: a signer's nullifier is
   //    burned per proposal, so a second attempt is refused rather than counted
   //    twice. It stood on `credit`, which carried a staleness assert and went
-  //    with the balance ledger (`C292`, `S26`); this is repointed to a circuit
+  //    with the balance ledger; this is repointed to a circuit
   //    the contract still has rather than left naming one it does not.
   const redo = await runner.recover(inFlight('00'.repeat(32)));
   if (redo !== null) throw new Error('recover should have allowed a redo of a guarded circuit');
@@ -2534,7 +2534,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
 
   // 3. The runner records NO on-chain duplicate check for `addSigner`, so it
   //    refuses rather than guessing, and this branch proves it still refuses.
-  //
+  
   //    THE REASON IT RECORDS IS STALE, AND SAYING SO HERE IS CHEAPER THAN
   //    RE-DERIVING IT. `src/midnight/job-runner.ts:333` names M-83's bootstrap
   //    path — insert the leaf, close no round, nothing stopping it twice — and
@@ -2544,7 +2544,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
   //    true (the paragraph beside `threshold = 1` in the contract, and
   //    `docs/company-accounts.md` section 10a). Every seat closes an approved
   //    proposal now, so a replay is refused on chain like any other.
-  //
+  
   //    The refusal below is therefore CONSERVATIVE rather than required. That
   //    is the safe direction and it is another file's line to change, so this
   //    round names it and leaves it.

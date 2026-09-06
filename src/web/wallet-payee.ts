@@ -31,7 +31,7 @@ import { askWallet, type Openable, type WalletDialog } from './wallet-sign-in.js
  *
  * ── AND THIS FILE IMPORTS NOTHING THAT VERIFIES ───────────────────────────
  *
- * `C149`, `X5` §2. `wallet-payee-ask.ts` imports one constant;
+ * `wallet-payee-ask.ts` imports one constant;
  * `wallet-payee.ts` is the half that reaches `ledger-v9` and is never imported
  * from `src/web/`. `no-wasm-in-the-page.test.ts` is what keeps that true.
  */

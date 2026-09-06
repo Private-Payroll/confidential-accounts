@@ -73,7 +73,7 @@ const PRIVATE_STATE_PASSWORD =
 const PRIVATE_STATE_KEY = privateStateKey(PRIVATE_STATE_ID, ACCOUNT_ID);
 
 /**
- * **SIGNER A AND B ARE READ FROM `.midnight/`, NOT COMPUTED.** `C334`, `S35`.
+ * **SIGNER A AND B ARE READ FROM `.midnight/`, NOT COMPUTED.**
  *
  * Their identities used to be `seededBytes(1)`/`seededBytes(401)` and
  * `seededBytes(2)`/`seededBytes(402)` — a published formula, on signers seated
@@ -128,7 +128,7 @@ async function main() {
 
   /*
    * BEFORE any wallet syncs or money moves, AND THE TEST IS NOW "IS IT
-   * DEPLOYED", NOT "IS IT DEFERRED". S25.
+   * DEPLOYED", NOT "IS IT DEFERRED".
    *
    * `S9` DEFERRED `attestSolvency` — the circuit this rig calls, chosen
    * because it was the contract's ONLY read-only circuit. `S23` then SHED it
@@ -141,7 +141,7 @@ async function main() {
    * There is no drop-in replacement: §6 of docs/scope-what-a-contract-costs.md
    * shows every other circuit writes state. Re-running M-4's experiment needs
    * a deliberate choice of a state-changing circuit (and of the account it is
-   * allowed to change) — a decision, not a substitution made in passing. M-152.
+   * allowed to change) — a decision, not a substitution made in passing.
    */
   if (!isDeployedCircuit(SPONSORED_CIRCUIT)) {
     console.log();
@@ -194,7 +194,7 @@ async function main() {
   }
 
   /*
-   * Both wallets come up through `bringUpWallet`. M-75.
+   * Both wallets come up through `bringUpWallet`.
    *
    * This block used to be hand-written and was wrong four separate times, most
    * fatally by never calling `wallet.start(false)` — so the wallets were built,
@@ -357,7 +357,7 @@ async function main() {
 
   const viewRaw = JSON.parse(readFileSync(VIEW_FILE, 'utf8'));
   /*
-   * THE VIEW NAMES ITS ASSET, and refusing is better than guessing. M-125.
+   * THE VIEW NAMES ITS ASSET, and refusing is better than guessing.
    *
    * A view written before the multi-asset change carries one balance, one salt
    * and an entry digest, and none of those say WHICH ASSET they describe — the
@@ -395,7 +395,7 @@ async function main() {
      * rather than a seed: every signer has to derive the same asset key from
      * it, or a signer recomputes a different change commitment from the one the
      * proposer committed to and their approval is not an approval of that
-     * proposal. M-125.
+     * proposal.
      *
      * IT USED TO KEY AN ON-CHAIN MAP, and the older reason given here was that
      * two derivations would make the account hold its money twice under two

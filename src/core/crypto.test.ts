@@ -27,7 +27,7 @@ import {
 import type { Hex, Sealed } from './crypto.js';
 
 /**
- * **`src/core/crypto.ts` — KNOWN-ANSWER VECTORS. `T-197`, `T-195`, `S46`.**
+ * **`src/core/crypto.ts` — KNOWN-ANSWER VECTORS. `T-197`.**
  *
  * ── WHY THIS FILE EXISTS, AND WHY IT IS NOT A ROUND-TRIP FILE ────────────────
  *
@@ -68,7 +68,7 @@ import type { Hex, Sealed } from './crypto.js';
  * **RFC 8032 TEST 2 AND NOT TEST 1, AND THE REASON IS A CORRECTION RATHER THAN
  * A JUDGEMENT ABOUT THE RFC.** `S46` first wrote here that TEST 1 *"did not
  * reproduce under OpenSSL"*. **That was false, and this round's own
- * `test-auditor` demonstrated it**: TEST 1 reproduces exactly, and what did not
+ * test-coverage pass demonstrated it**: TEST 1 reproduces exactly, and what did not
  * reproduce was `S46`'s transcription of its SEED — the last eight bytes were
  * wrong. `docs/corrections.md`, rule 26. **A sentence saying a published
  * standard's test vector is untrustworthy is the worst thing to leave in the
@@ -120,7 +120,7 @@ const APPROVAL_SIGNATURE: Hex =
  * A different signer's public key, for the wrong-signer case: OpenSSL's Ed25519
  * public key of the seed `'20'.repeat(32)`. **The seed is written down because a
  * constant nobody can re-derive is a constant nobody can check** — this round's
- * `test-auditor` had to recover it by search, which is rule 9's point exactly.
+ * test-coverage pass had to recover it by search, which is rule 9's point exactly.
  */
 const OTHER_SEED: Hex = '20'.repeat(32);
 const OTHER_PUBLIC: Hex = '4ed32f63bf35f0eeefcb25f28a2e1fbdc873ae2835671b0c9460f5f12e4556a8';
@@ -236,7 +236,7 @@ describe('crypto.ts: fixed vectors, because a round trip agrees with itself', ()
 
   it('wrapKey\'s EPHEMERAL IS FRESH PER CALL — freezing it is worse than freezing an IV', () => {
     /*
-     * **FOUND BY THIS ROUND'S `test-auditor`, AGAINST THIS ROUND'S OWN FILE.**
+     * **FOUND BY THIS ROUND'S test-coverage pass, AGAINST THIS ROUND'S OWN FILE.**
      * `crypto.ts:251` draws a fresh x25519 secret per wrap. Replace it with a
      * constant and **every assertion in this file still passed** — including
      * the two known-answer ones above, because they supply the ephemeral as
@@ -497,7 +497,7 @@ describe('crypto.ts: fixed vectors, because a round trip agrees with itself', ()
     /*
      * `crypto.ts:330-341`: the client revives `{"$n":…}` because that is what
      * `canonical` emits, and two places deciding what the tag looks like is
-     * `M-104`. This is the assertion that they are one place.
+     * This is the assertion that they are one place.
      */
     expect(JSON.stringify({ amount: 500000n }, bigintJsonReplacer))
       .toBe('{"amount":{"$n":"500000"}}');
@@ -524,7 +524,7 @@ describe('crypto.ts: fixed vectors, because a round trip agrees with itself', ()
 
     /*
      * **AND THE DECODE HALF, WHICH NOTHING IN THIS REPOSITORY TESTED.** Found
-     * by this round's `test-auditor`: replacing `crypto.ts:21`'s `TextDecoder`
+     * by this round's test-coverage pass: replacing `crypto.ts:21`'s `TextDecoder`
      * with a byte-per-character loop passed every other assertion here and
      * every `unseal` in the repository, because every sealed fixture anywhere
      * is ASCII. A payslip sealed for `Müller` comes back `MÃ¼ller` and the
@@ -577,7 +577,7 @@ describe('crypto.ts: fixed vectors, because a round trip agrees with itself', ()
     expect(newBlinding()).not.toBe('00'.repeat(32));
     /*
      * **A ZERO-PADDED NARROWING IS THE FORM A WIDTH CHECK CANNOT SEE**, found
-     * by this round's `test-auditor`: `new Uint8Array(32)` with 16 random bytes
+     * by this round's test-coverage pass: `new Uint8Array(32)` with 16 random bytes
      * written into the front is 32 bytes wide and passed everything above.
      * This is a SHAPE check and not an entropy check — it catches padding at
      * either end and nothing subtler, which is all a test can honestly claim.
@@ -634,7 +634,7 @@ describe('crypto.ts: fixed vectors, because a round trip agrees with itself', ()
     expect(w.publicKey).not.toBe(signingPublicKeyOf(w.secret));
     /*
      * **AND THE WRAPPING PAIR IS A MATCHED PAIR, WHICH THE LINE ABOVE DOES NOT
-     * SAY.** `test-auditor`, this round: a `newWrappingKeypair` returning a
+     * SAY.** test-coverage pass, this round: a `newWrappingKeypair` returning a
      * public half derived from a DIFFERENT secret satisfies `not.toBe` and
      * passed everything here. `vault-pool.test.ts:44` catches it elsewhere; the
      * test named *matched pairs* should catch it itself.

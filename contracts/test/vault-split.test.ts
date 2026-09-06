@@ -64,7 +64,7 @@ const carrying = (sim: AccountSimulator, d: ReturnType<typeof privateStateFor>, 
  * more than one output addressed to the vault — deliberately, because one
  * payment produces at most one change coin and guessing between two would hand
  * a caller something that is not the whole of what the vault holds. A split
- * produces exactly two. So the client that drives this circuit (S6h) needs a
+ * produces exactly two. So the client that drives this circuit needs a
  * plural reader, and does not have one yet.
  */
 const coinsBackTo = (zswap: unknown, vaultAddress: string) => {

@@ -87,7 +87,7 @@ export interface Expectation {
    * The proposal this job was built against, or null where there is none.
    *
    * `round` used to do this work — "the account is now at round N, so this can
-   * never land". There is no round any more (M-128), and asking about the
+   * never land". There is no round any more, and asking about the
    * proposal is the better question anyway: it is the thing that actually
    * became unusable, and it stays answerable while every other proposal on the
    * account carries on.
@@ -337,7 +337,7 @@ export const expectationFor = (
        * On the approved path `addSigner` closes the round, so a replay fails.
        * On the BOOTSTRAP path — `signerCount < threshold` — it just inserts the
        * leaf and increments the count, with nothing stopping it happening
-       * twice. M-83.
+       * twice.
        *
        * Treated as unsafe on both paths here, because which path applied
        * depends on `signerCount` at the moment the transaction was executed,

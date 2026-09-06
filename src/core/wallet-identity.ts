@@ -157,7 +157,7 @@ function asResponse(raw: unknown): DisclosureResponse {
 export function walletSignInOrigin(value: string | undefined): string {
   const origin = (value ?? '').trim().replace(/\/+$/, '');
   /*
-   * **THE SAME ONE CHECK THE WALLET USES, IMPORTED FROM IT.** `X1`, `C132`.
+   * **THE SAME ONE CHECK THE WALLET USES, IMPORTED FROM IT.**
    *
    * This tested `startsWith('https://')` and then looked separately for a
    * path — the same prefix-then-patch shape as the wallet's own parser, and it

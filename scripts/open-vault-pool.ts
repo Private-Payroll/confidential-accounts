@@ -1,5 +1,5 @@
 /**
- * **`C242`: GIVE A VAULT THE NOTE POOL IT CANNOT BE FUNDED WITHOUT.** `S6f`.
+ * **GIVE A VAULT THE NOTE POOL IT CANNOT BE FUNDED WITHOUT.**
  *
  * Run it with `OPEN-VAULT-POOL.command`. What that door must pass and must
  * refuse is at the bottom of this file; the order the doors go in, and what each
@@ -38,7 +38,7 @@
  * vault. That is downtime on its own, and it becomes loss the moment somebody
  * funds it another way: a vault has an address, anybody can address a shielded
  * output to it, and money that arrives without a `deposit` call is owned by the
- * vault and spendable by nobody, permanently (`C236`, `C240`).
+ * vault and spendable by nobody, permanently.
  *
  * ------------------------------------------------------------------------
  * **AND THE HALF THAT IS NOT ABOUT CREATION AT ALL.**
@@ -54,7 +54,7 @@
  * `VaultLedger.openPool` asks it — and this instrument exists to give it a
  * chain to ask. It writes a pool only for a vault whose on-chain note set is
  * EMPTY, refuses with `replayVault` named for a vault that holds notes, and
- * refuses without writing anything when the chain could not be read (`C110`).
+ * refuses without writing anything when the chain could not be read.
  *
  * ------------------------------------------------------------------------
  * WHAT IT DOES NOT DO, AND WILL NOT
@@ -104,7 +104,7 @@ const signersFile = (name: string) =>
   join(STATE_DIR, `vault-pool-signers-${assertVaultName(name)}.json`);
 
 /*
- * THE ADDRESS IS A SECRET FROM THE MOMENT IT IS READ. `C236`.
+ * THE ADDRESS IS A SECRET FROM THE MOMENT IT IS READ.
  *
  * Everything printed goes through `say`, which refuses a line carrying the
  * address or any eight-character window of it — the abbreviations a careful
@@ -359,7 +359,7 @@ main().then(
      */
     /**
      * **REDACTED HERE, WHERE THE SUCCESS PATH REFUSES — AND THE DIFFERENCE IS
-     * THE RULE, NOT AN EXCEPTION.** `C236`, `S6f`.
+     * THE RULE, NOT AN EXCEPTION.**
      *
      * `createScreen` throws rather than redacting, for a good reason: a
      * redacted line is a line somebody wrote intending to show something,
@@ -430,7 +430,7 @@ main().then(
  * **`OPEN-VAULT-POOL.command`.** What that door must do, recorded here because
  * the door is what a person opens, and a run order naming
  * `npx tsx scripts/open-vault-pool.ts` is an instruction nobody at the machine
- * can follow (`C226`).
+ * can follow.
  *
  * WHAT IT MUST PASS — exported, because this file reads the environment and
  * nothing else:

@@ -1,5 +1,5 @@
 /**
- * A CHECK THAT CANNOT FAIL HAS ALREADY FAILED. `C238`, `C263`.
+ * A CHECK THAT CANNOT FAIL HAS ALREADY FAILED.
  *
  * `C357` is a defect that COMPILES, DEPLOYS and produces no error anywhere, so
  * a guard against it is unusually easy to write, wire, and never see fire. The

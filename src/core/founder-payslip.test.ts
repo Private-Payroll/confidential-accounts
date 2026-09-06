@@ -41,7 +41,7 @@ import type { User } from './types.js';
  *
  * What is NOT simulated and could not be is the founder's EMAIL. `X7` §1 says
  * the founder has signed in with their wallet; a wallet sign-in has no email,
- * and `addSelfAsPayee` refuses one by name (`PI1`). So the founder here signs
+ * and `addSelfAsPayee` refuses one by name. So the founder here signs
  * in the way the product supports TODAY — with an email — and the wall that
  * puts in front of a wallet-signed-in founder is reported, not worked around.
  */
@@ -104,7 +104,7 @@ describe('a founder pays themselves — the first end-to-end money path', () => 
     const { account, viewingKey, founder, company: addr, words } = await company();
 
     /*
-     * **THE KEYPAIR IS THE WALLET'S, DERIVED.** `PI2b`, `C135`. This is the call
+     * **THE KEYPAIR IS THE WALLET'S, DERIVED.** This is the call
      * the screen makes — `payslipKeypairFrom` over the key the wallet released —
      * reached here through the words, so the test can play the second device
      * further down.
@@ -122,7 +122,7 @@ describe('a founder pays themselves — the first end-to-end money path', () => 
     /* Payable immediately: no token ever existed, so there was nothing to
      * deliver and nothing to intercept. */
     expect(me.status).toBe('active');
-    /* And the record is about the CALLER, whatever the body said. `C24`. */
+    /* And the record is about the CALLER, whatever the body said. */
     expect(me.email).toBe('founder@solo.example');
 
     const { run } = await h.payroll.createRunFromRoster(account.id, '2026-08', viewingKey);
@@ -165,7 +165,7 @@ describe('a founder pays themselves — the first end-to-end money path', () => 
   });
 
   /**
-   * **THE WALL `X7` RAN INTO, AND IT IS DOWN.** `X8` §3, `C153`.
+   * **THE WALL `X7` RAN INTO, AND IT IS DOWN.**
    *
    * `X7` described a founder who signed in with their WALLET and pinned the
    * refusal instead of working around it: `addSelfAsPayee`'s defence was that

@@ -72,14 +72,14 @@ const bytes = (seed: number): Uint8Array => {
 };
 
 /**
- * A DEVICE'S LEAF, WITHOUT AN ACCOUNT TO ASK. `C334`.
+ * A DEVICE'S LEAF, WITHOUT AN ACCOUNT TO ASK.
  *
  * `AccountSimulator.leafOf` is a method, and a method needs an instance. The
  * FOUNDING leaf has to exist BEFORE the constructor runs — that is the whole of
- * `C334`: the leaf is computed on the founder's own device and handed to the
+ * The leaf is computed on the founder's own device and handed to the
  * deploy as a public value, so the deploying process never holds the material
  * it was made from. Same three inputs and the same circuit as `leafOf`, which
- * now calls this rather than spelling it a second time (M-104).
+ * now calls this rather than spelling it a second time.
  */
 export const leafOfDevice = (state: AccountPrivateState): Uint8Array =>
   pureCircuits.signerLeaf(
@@ -97,7 +97,7 @@ export const GBP = assetBytes('GBP');
 export const USDC = assetBytes('USDC');
 
 /*
- * `view(balance, seed)` STOOD HERE. `C292`, `S26`.
+ * `view(balance, seed)` STOOD HERE.
  *
  * It built one asset's `{ balance, balanceSalt }` for a device's `current` and
  * `next`. The account keeps no balance, `ShieldedView` is gone from
@@ -113,7 +113,7 @@ export const USDC = assetBytes('USDC');
  * signer must derive the same asset key or the change commitment one of them
  * approves is not the one another recomputes.
  *
- * `balance` AND THE `current`/`next` PAIR STOOD HERE. `C292`, `S26`: the account
+ * `balance` AND THE `current`/`next` PAIR STOOD HERE. The account
  * keeps no balance, so a device holds no view of one. What is left is what a
  * device genuinely holds — its secret, its blinding, which asset a call
  * concerns, and the change a proposal makes.
@@ -154,7 +154,7 @@ export const privateStateFor = (
 });
 
 /**
- * A change, as a proposer's device would hold it. M-71.
+ * A change, as a proposer's device would hold it.
  *
  * `salt` is the proposal's blinding factor and must be identical on the
  * proposing and executing devices — the circuit recomputes the commitment from
@@ -207,7 +207,7 @@ export class AccountSimulator {
    */
   /**
    * **THE FOUNDING LEAF IS A SEPARATE THING FROM THE DEVICE THAT DEPLOYS, AND
-   * THE DEFAULT IS WHAT MAKES THAT INVISIBLE TO EVERY OTHER TEST.** `C334`.
+   * THE DEFAULT IS WHAT MAKES THAT INVISIBLE TO EVERY OTHER TEST.**
    *
    * The constructor used to derive its one seat from the DEPLOYING device's
    * witnesses. It now takes the founder's leaf as a public argument and calls
@@ -260,7 +260,7 @@ export class AccountSimulator {
 
   /**
    * **AN ACCOUNT WITH `devices` SEATED AND THE THRESHOLD AT `threshold`, BUILT
-   * THE WAY A FOUNDER NOW HAS TO BUILD ONE.** `S35d`.
+   * THE WAY A FOUNDER NOW HAS TO BUILD ONE.**
    *
    * **THIS REPLACES `create(x, n)` FOLLOWED BY `addSigner(leaf, ZERO_32)`,
    * WHICH WAS HOW ALMOST EVERY FIXTURE IN THIS DIRECTORY WAS MADE.** That
@@ -381,7 +381,7 @@ export class AccountSimulator {
    * passing milliseconds would put every test in the year 56000 and every
    * window assert would pass for the wrong reason.
    *
-   * **THE DEFAULT IS A FIXED INSTANT, NOT THE WALL CLOCK.** T-12. A simulator
+   * **THE DEFAULT IS A FIXED INSTANT, NOT THE WALL CLOCK.** A simulator
    * that reads `Date.now()` makes every test that touches a window depend on
    * when it happens to run, and a test near a window boundary is then a coin
    * flip — which presents as flakiness and trains whoever runs the suite to
@@ -492,7 +492,7 @@ export class AccountSimulator {
   }
 
   /*
-   * `commitmentOf` AND `balanceEntry` STOOD HERE. `C292`, `S26`. One wrapped
+   * `commitmentOf` AND `balanceEntry` STOOD HERE. One wrapped
    * `balanceCommitmentOf`, the other looked an asset up in `assetBalances`;
    * both are gone from the contract.
    */
@@ -507,7 +507,7 @@ export class AccountSimulator {
    *
    * From the contract's own `proposalIdOf`, not recomputed here — a test that
    * derived the id a second way would pass while agreeing with itself rather
-   * than with the contract. M-128.
+   * than with the contract.
    */
   proposalId(payloadHash: Uint8Array, salt: Uint8Array, vault: Uint8Array = NO_VAULT): Uint8Array {
     return pureCircuits.proposalIdOf(payloadHash, vault, salt);
@@ -561,7 +561,7 @@ export class AccountSimulator {
   }
 
   /**
-   * Seats a signer. M-106.
+   * Seats a signer.
    *
    * `intoVacatedSlot` defaults to false — append into a fresh slot — because
    * that is what an account does until somebody leaves. Pass true to take a
@@ -588,7 +588,7 @@ export class AccountSimulator {
   }
 
   /**
-   * Removes a signer by clearing their one slot. M-106.
+   * Removes a signer by clearing their one slot.
    *
    * One argument, where the previous design took the departing leaf plus a
    * sixteen-wide vector of survivors to re-seat. Nobody but the person leaving
@@ -600,14 +600,14 @@ export class AccountSimulator {
       (c) => this.contract.impureCircuits.amendSigner(c, removedLeaf, proposal, false, true));
   }
 
-  /** Changes M in M of N, through an approved round. M-102. */
+  /** Changes M in M of N, through an approved round. */
   setThreshold(newThreshold: bigint, proposal: Uint8Array) {
     return this.run('setThreshold',
       (c) => this.contract.impureCircuits.setThreshold(c, newThreshold, proposal));
   }
 
   propose(payloadHash: Uint8Array, vault: Uint8Array = NO_VAULT) {
-    /* The opaque path of the merged `propose` (S11): `isRun` false, run parts zero. */
+    /* The opaque path of the merged `propose`: `isRun` false, run parts zero. */
     return this.run('propose', (c) => this.contract.impureCircuits.propose(
       c, payloadHash, ZERO_32, 0n, 0n, 0n, false, vault));
   }
@@ -639,7 +639,7 @@ export class AccountSimulator {
         args.salt, args.details, args.nonce, args.path as never));
   }
 
-  /** Raises a payroll run with its window. V-67. An OMITTED `vault` defaults to `NO_VAULT` DELIBERATELY, and `payout-runs.test.ts:698` is the case that walks it — `T-248`, `S45`. */
+  /** Raises a payroll run with its window. V-67. An OMITTED `vault` defaults to `NO_VAULT` DELIBERATELY, and `payout-runs.test.ts:698` is the case that walks it — `T-248`. */
   proposeRun(args: {
     root: Uint8Array;
     payees: bigint;
@@ -647,7 +647,7 @@ export class AccountSimulator {
     until: bigint;
     vault?: Uint8Array;
   }) {
-    /* The run path of the merged `propose` (S11): `isRun` true, opaque hash zero. */
+    /* The run path of the merged `propose`: `isRun` true, opaque hash zero. */
     return this.run('propose',
       (c) => this.contract.impureCircuits.propose(
         c, ZERO_32, args.root, args.payees, args.from, args.until, true,
@@ -689,7 +689,7 @@ export class AccountSimulator {
   }
 
   /**
-   * Declares a vault to be this company's, through an approved round. S6a.
+   * Declares a vault to be this company's, through an approved round.
    *
    * THERE IS NO `retireVault` HERE, and its absence is the design rather than a
    * gap: retirement is refused while the vault still holds notes, only the
@@ -718,7 +718,7 @@ export class AccountSimulator {
    * A device about to raise or recognise the change `c`.
    *
    * IT TOOK A `current: ShieldedView` AS ITS SECOND ARGUMENT and computed the
-   * `next` balance the way the circuit would check it. `C292`, `S26`: there is
+   * `next` balance the way the circuit would check it. There is
    * no balance, no `current`, no `next`. What a device carries into a call is
    * which asset, how much, over which entries, under which proposal salt — and
    * `changeCommitmentOf` binds all four.

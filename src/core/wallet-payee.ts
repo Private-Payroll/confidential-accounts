@@ -120,7 +120,7 @@ export interface PayeeFromWallet {
    * Parsed and rebuilt from its own string, like every other address here.
    *
    * **`Payee` SINCE `S12`: EITHER KIND, AND THE WALLET'S STRING SAYS WHICH.**
-   * `C250`. Nothing here asks a person which kind of address they are handing
+   * Nothing here asks a person which kind of address they are handing
    * over, because the address already says. Whether the person may then be paid
    * from a PAYROLL run is a different question, answered by `movement.ts` on
    * the payroll path and not at this door.
@@ -244,7 +244,7 @@ export async function payeeFromWallet(
   }
 
   /*
-   * **REBUILT FROM ITS OWN STRING RATHER THAN TRUSTED.** `A-1`, `C7`. What
+   * **REBUILT FROM ITS OWN STRING RATHER THAN TRUSTED.** `A-1`. What
    * arrived is text; `payeeOf` is the platform's checksum, the address TYPE and
    * the network, exactly as `payeeAddress` was — it is the same decode, and the
    * rebuild-rather-than-trust rule is unchanged rather than relaxed.
@@ -252,7 +252,7 @@ export async function payeeFromWallet(
    * **WHAT CHANGED IN `S12` IS WHICH TYPES ARE PAYEES, NOT HOW HARD THEY ARE
    * CHECKED.** This line used to refuse an `mn_addr_` BY NAME. It no longer
    * does, because a company paying its own public address is a real movement
-   * (`C255`) and because a vendor may want public settlement. **A third type is
+   * and because a vendor may want public settlement. **A third type is
    * still refused naming both** — `payeeOf` throws on a `mn_dust_`, which is
    * not a payee at all.
    *

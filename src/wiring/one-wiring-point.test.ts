@@ -1,7 +1,7 @@
 /**
  * **NOTHING ON THE PRODUCT PATH REACHES A SIMULATED IMPLEMENTATION DIRECTLY.**
  *
- * This is the round's owed check made standing. `C174`: a sweeping change is
+ * This is the round's owed check made standing. A sweeping change is
  * verified by looking for what should be GONE, not by re-running what changed.
  * The change was collapsing four selection sites into `selection.ts`, so the
  * check is a search for a fifth — and a search anybody has to remember to run is
@@ -45,7 +45,7 @@ import { join, relative } from 'node:path';
  * **A TEST NAMES ITS OWN WORLD OUT LOUD**, which is the same reason `sources()`
  * below excludes `*.test.ts` from the walk. These three are imported so the
  * last test in this file can assert on the OBJECT the product is handed rather
- * than on the text of the literal that built it. `T-209`, `S46`.
+ * than on the text of the literal that built it.
  */
 import { SimulatedCommitments, SimulatedLedger } from '../core/ledger.js';
 import { wiring } from './selection.js';
@@ -87,7 +87,7 @@ const ALLOWED = new Set([
  * so the stripped text is the same shape as the file.
  *
  * **AND THE QUOTE PASS WAS BLIND TO 395 LINES OF THE TREE IT SEARCHES.**
- * `T-280` `P1`, found by `S46`'s `test-auditor` with planted text, re-measured
+ * `T-280` `P1`, found by `S46`'s test-coverage pass with planted text, re-measured
  * here. The single pattern this replaces —
  * `/(['"`])(?:\\.|(?!\1)[\s\S])*?\1/g` — accepted an apostrophe as an
  * OPENING delimiter with no context at all, and its body matched `\n`. So
@@ -107,7 +107,7 @@ const ALLOWED = new Set([
  * apostrophe does. Then backticks, also bounded to one line.
  *
  * **THE FIRST VERSION OF THIS FIX TOOK TEMPLATES FIRST AND LET THEM SPAN
- * LINES, AND `S56`'s OWN `test-auditor` BROKE IT IN THREE WAYS** — a backtick
+ * LINES, AND `S56`'s OWN test-coverage pass BROKE IT IN THREE WAYS** — a backtick
  * inside a `'…'` string, a backtick in a TRAILING `//` comment (only
  * whole-line comments are blanked above), and one stray backtick with no
  * partner. Each opened a template span that ran to the next backtick anywhere
@@ -178,7 +178,7 @@ describe('one wiring point', () => {
    * `src/wiring/selection.ts:67`, `:87`, `:88`, `:125`, `:142` and `:177`;
    * every one is inside a block comment the first pass blanks before the quote
    * pass runs. An earlier draft of this sentence said it had none — `S56`'s
-   * `test-auditor` counted. Right conclusion, wrong reason, rule 14.)
+   * test-coverage pass counted. Right conclusion, wrong reason, rule 14.)
    *
    * **A DETECTOR WHOSE GREEN IS CHEAP NEEDS A CONTROL THAT COSTS SOMETHING**,
    * and the three below are it: the exact failure on a fixture, the same
@@ -241,7 +241,7 @@ describe('one wiring point', () => {
 
     /*
      * **AND THE SAME FAILURE ON THE OTHER DELIMITER, WHICH THE FIRST VERSION OF
-     * THIS FIX STILL HAD.** `S56`'s own `test-auditor` planted these three and
+     * THIS FIX STILL HAD.** `S56`'s own test-coverage pass planted these three and
      * showed the guard blind to two of them: a backtick inside a `'…'` string,
      * a backtick in a TRAILING `//` comment — only whole-line comments are
      * blanked — and one stray backtick with no partner anywhere. Each opened a
@@ -356,7 +356,7 @@ describe('one wiring point', () => {
 
   /**
    * **THE LEDGER AND THE SERVICE GET THE SAME SCHEME OBJECT, FROM ONE FIELD.**
-   * `T-209` `P2`, `S46`.
+   * `T-209` `P2`.
    *
    * `AccountService` is handed `wiring().commitments`; the ledger is built by
    * `wiring().createLedger()`. **Before `S46` those were two separate
@@ -394,7 +394,7 @@ describe('one wiring point', () => {
 
   /**
    * **AND THE SAME CLAIM ABOUT THE OBJECT, NOT THE TEXT.** `T-209`, `S46`,
-   * **added after this round's own `test-auditor` broke the test above.**
+   * **added after this round's own test-coverage pass broke the test above.**
    *
    * The three patterns above read `SIMULATED`'s object literal. The product
    * does not get `SIMULATED` — it gets `SELECTED` (`selection.ts:144`), through

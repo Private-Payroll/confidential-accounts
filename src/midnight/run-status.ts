@@ -1,5 +1,5 @@
 /**
- * WHO HAS BEEN PAID, ANSWERED BY THE CHAIN. X-9.
+ * WHO HAS BEEN PAID, ANSWERED BY THE CHAIN.
  *
  * A payroll run is paid one payee at a time, so at any moment some are paid and
  * some are not. **A run that reports "completed" while two people are unpaid is

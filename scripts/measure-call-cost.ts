@@ -49,9 +49,9 @@
  * the number, cites every source line, prints the chain on every run, and is
  * calibrated against the two real submissions by
  * `scripts/dispatch-ceiling.test.ts`. Every dimension below is reported
- * against the DERIVED per-extrinsic ceiling. `C218`, `C219`, `S11`.
+ * against the DERIVED per-extrinsic ceiling.
  *
- * ── WHICH CONTRACT. `S8a`. ───────────────────────────────────────────────────
+ * ── WHICH CONTRACT. ──────────────────────────────────────────────────────────
  *
  *   npx tsx scripts/measure-call-cost.ts            the account (default)
  *   npx tsx scripts/measure-call-cost.ts vault      the vault
@@ -60,7 +60,7 @@
  * ran this before the argument existed produces the same rows.
  *
  * The vault is why the argument exists. It had never had verifier keys built
- * (`C226`) — `COMPILE-VAULT.command` is the file that builds them — so `payout`
+ * — `COMPILE-VAULT.command` is the file that builds them — so `payout`
  * has never been measured by anything, and `payout` is the one that matters: it
  * carries the vault's own call AND the account's `recordPayment` in ONE INTENT,
  * which is the first measurement of what a cross-contract transaction costs.
@@ -121,13 +121,13 @@ const NETWORK = networkFromEnv(process.env.MIDNIGHT_NETWORK_ID, 'stagenet');
 
 /**
  * What a NORMAL extrinsic may take of one dimension — DERIVED, never a
- * literal (S11, C238). ~0.65 of the limit, not 0.75: see
+ * literal. ~0.65 of the limit, not 0.75: see
  * scripts/dispatch-ceiling.ts for the chain and its calibration test.
  */
 const ceilingOf = (limit: number): number => extrinsicCeiling(limit);
 
 /**
- * WHICH CONTRACT IS BEING MEASURED. `S8a`. The argument first, the environment
+ * WHICH CONTRACT IS BEING MEASURED. The argument first, the environment
  * second, the ACCOUNT last — the default is what every existing caller passes,
  * which is nothing.
  */
@@ -434,7 +434,7 @@ async function main() {
     await sim.as(sim.applying(ada, c)).adopt(vaultAddrBytes, id);
   }
 
-  /* setVaultThreshold — ONE VAULT's threshold, judged at the ACCOUNT's. S6b. */
+  /* setVaultThreshold — ONE VAULT's threshold, judged at the ACCOUNT's. */
   {
     const { id, c } = await approvedRound(
       pureCircuits.setVaultThresholdPayload(vaultAddrBytes, 2n), change(0n, 55));
@@ -547,7 +547,7 @@ async function main() {
 
 /**
  * THE VAULT'S FOUR CIRCUITS, MEASURED FROM STATES THE VAULT CAN ACTUALLY BE IN.
- * `S8a`.
+ *
  *
  * ── THERE IS NO VAULT SIMULATOR ──────────────────────────────────────────────
  *
@@ -640,7 +640,7 @@ async function measureVault(
   const blake = privateStateFor(2);
   /* Two seats at a bar of two, reached the way the chain now requires: the
    * constructor founds at one and `liveAccount` runs the governed rounds.
-   * `S35d`. */
+   */
   const sim = await AccountSimulator.liveAccount([ada, blake], 2n);
   sim.at(NOW);
   /*

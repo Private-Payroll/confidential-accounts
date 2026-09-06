@@ -35,7 +35,7 @@ describe('network id: the regression that could never have worked', () => {
     // numeric enum. On the 5.0 stack that package is gone entirely — the ledger
     // arrives as `@midnightntwrk/ledger-v9` via midnight-js-protocol — and
     // neither exports a `NetworkId` at all.
-    //
+    
     // So the mistake is now unmakeable rather than merely fixed, which is the
     // outcome worth asserting. If a future version reintroduces the enum, this
     // fails and we look again.

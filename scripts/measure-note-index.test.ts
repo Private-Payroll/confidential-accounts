@@ -125,7 +125,7 @@ describe('the array the verdict is read from has a writer', () => {
      * characters before a commitment in a `ZswapChainState` Debug dump and said
      * it "stands before it". The adjacency was never established and the format
      * is undocumented. C238 in miniature, in the instrument written to enforce
-     * C238.
+     *
      *
      * **THE ASSERTION IS ON `.exec(` AND NOT ON THE SENTENCE**, because the
      * sentence still appears in this file and in that file's comments, saying
@@ -414,7 +414,7 @@ describe('what the new surfaces may and may not do to the verdict', () => {
 describe('G — an exclusion is a claim about EVERY candidate', () => {
   it('a candidate that was never asked about makes the whole surface UNREADABLE', () => {
     /*
-     * Found by this round's money-safety-auditor against this round's own
+     * Found by this round's money-safety pass against this round's own
      * rework. Until this assertion existed, completeness was held only by the
      * `for (const i of cands)` loop several hundred lines from the function
      * that rules — the same "one level up" gap the `located.push` source

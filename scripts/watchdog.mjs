@@ -57,7 +57,7 @@ const PHASE = 4;
 const WITNESS_CALLS = 5;
 const LAST_WITNESS = 6;
 /**
- * M-46. FEE_CALLS is the dust wallet's fee-convergence loop counter — that loop
+ * FEE_CALLS is the dust wallet's fee-convergence loop counter — that loop
  * calls `feesWithMargin` once per pass — and LAST_FEE is the value it last
  * produced. Reported from here because the main thread is blocked while the
  * loop spins, so nothing on it can print.
@@ -200,7 +200,7 @@ const sampleNow = (secs) => {
     };
 
     // Follow the HEAVIEST PATH down the tree, not the tail of the file.
-    //
+    
     // The first version took the last twelve named lines in file order and
     // printed twelve garbage-collector frames from unrelated subtrees — true,
     // and useless. `sample` prints children in descending sample count, so the

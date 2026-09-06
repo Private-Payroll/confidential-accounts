@@ -119,7 +119,7 @@ describe('§10 step 1 — THE WALLET IS THE ACCOUNT', () => {
     const u = store.getUser(r.user.id)!;
     expect(u.email).toBeNull();
     /*
-     * **THE TWO PASSWORD ASSERTIONS ARE STRONGER NOW, NOT WEAKER.** `PI4b`.
+     * **THE TWO PASSWORD ASSERTIONS ARE STRONGER NOW, NOT WEAKER.**
      *
      * They read `expect(u.authHash).toBeNull()` and the same for `authSalt` —
      * *a wallet account has no password*, checked field by field. **Both fields

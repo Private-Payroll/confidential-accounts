@@ -1,5 +1,5 @@
 /**
- * WHAT IS WRITTEN DOWN WHEN A VAULT IS CREATED. S6e.
+ * WHAT IS WRITTEN DOWN WHEN A VAULT IS CREATED.
  *
  * Four properties, and every one of them is a money property rather than a
  * bookkeeping one:
@@ -218,14 +218,14 @@ describe('C236: no vault address reaches a screen', () => {
 });
 
 /*
- * `C275`. THE MINT THAT OVERWROTE THE KEY TO A FUNDED VAULT.
+ * THE MINT THAT OVERWROTE THE KEY TO A FUNDED VAULT.
  *
  * Every one of these is a money property. The ids a vault's signers get are
  * the names under which their SECRETS are filed, and the sealed pool record
  * names its signers by id and never by public key — so an id reused across two
  * vaults silently replaces the first vault's key with the second's, and
  * nothing in the system can compare them to notice. The pool is the only
- * record of a note's nonce, colour and value (`C284`), and a commitment on
+ * record of a note's nonce, colour and value, and a commitment on
  * chain cannot be inverted to recover them.
  *
  * **It had already fired twice on disk before it was found.** These tests are

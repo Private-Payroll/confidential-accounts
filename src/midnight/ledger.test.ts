@@ -22,8 +22,8 @@
  *
  * **WHAT DID NOT GO IS WORTH NAMING, BECAUSE IT IS EASY TO DELETE BY ACCIDENT.**
  * Four rules those tests happened to be the only carrier of are not rules about
- * money at all — callTx submits and must not be submitted again (M-28), a
- * device with no private state refuses before calling (M-29), a proposal below
+ * money at all — callTx submits and must not be submitted again, a
+ * device with no private state refuses before calling, a proposal below
  * its threshold refuses before a fee is spent, and a transaction id comes from
  * the chain's answer rather than being invented. All four are REPOINTED onto
  * surviving circuits below rather than deleted.
@@ -36,7 +36,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MidnightLedger, type MidnightConfig, type FeeSponsor, type SealedStateStore } from './ledger.js';
 /*
  * `StateOpening`, `StateView`, `RoundSettlement` and `TxRef` were imported here
- * too. `C292`, `S26`: the first three are gone from `core/ledger.ts` or emptied
+ * too. The first three are gone from `core/ledger.ts` or emptied
  * of everything this file used, and `TxRef` was only the return type of the
  * `sendTransition` seam.
  */
@@ -61,7 +61,7 @@ const CFG: MidnightConfig = {
   indexerUrl: 'http://indexer', indexerWsUrl: 'ws://indexer', proverUrl: 'http://prover',
   nodeUrl: 'http://node',
   // A real path, so the arity guard reads the real compiled ABI rather than a
-  // stub that would share the bug's blind spot. M-38.
+  // stub that would share the bug's blind spot.
   zkConfigPath: new URL('../../contracts/managed', import.meta.url).pathname,
   networkId: 'preview',
   privateStateId: 'confidential-accounts-preview',
@@ -70,7 +70,7 @@ const CFG: MidnightConfig = {
 const SEALED_BYTES = { iv: '00', ct: '11', tag: '22' } as unknown as Sealed;
 /*
  * `SEALED` — a sealed state and the key epoch that sealed it, K-4 — STOOD HERE
- * AND HAS NO CALLER LEFT. `C292`, `S26`: it was passed to `settleRound`,
+ * AND HAS NO CALLER LEFT. It was passed to `settleRound`,
  * `sendTransition` and the `execute` prepare step, and `stageState` was the
  * only thing that ever wrote it down. `SEALED_BYTES` survives because the blob
  * store below still has to answer a `get`.
@@ -86,7 +86,7 @@ const OTHER = 'bb'.repeat(32) as Hex;
 const PAYLOAD_HASH = 'cc'.repeat(32) as Hex;
 
 /**
- * ONE ASSET, NAMED EVERYWHERE. M-125.
+ * ONE ASSET, NAMED EVERYWHERE.
  *
  * The account's asset blinding is what turns a code into the opaque key the
  * on-chain map is filed under, so it has to be the same value in the device's
@@ -97,7 +97,7 @@ const ASSET = 'GBP';
 const ASSET_BLINDING = '44'.repeat(32) as Hex;
 
 /*
- * `CURRENT` AND `NEXT` STOOD HERE. `C292`, `S26`.
+ * `CURRENT` AND `NEXT` STOOD HERE.
  *
  * A `StateView` at 500,000 and a `StateOpening` at 480,000 — the balance a
  * transition moved an asset FROM and TO. Both types are gone or emptied and no
@@ -136,7 +136,7 @@ const BY: SignerRef = { signerId: 'sgn_1', leaf: 'ff'.repeat(32) };
  */
 const ASSET_KEY = MidnightCommitments.assetKey(ASSET, ASSET_BLINDING);
 /*
- * `BALANCE_BEFORE`, `BALANCE_AFTER` AND `VIEW_AFTER` STOOD HERE. `C292`, `S26`.
+ * `BALANCE_BEFORE`, `BALANCE_AFTER` AND `VIEW_AFTER` STOOD HERE.
  *
  * The first two came from `MidnightCommitments.balanceCommitment`, which is
  * gone with the contract circuit it wrapped; `VIEW_AFTER` was the digest over a
@@ -159,7 +159,7 @@ const argHex = (a: unknown): string => Buffer.from(a as Uint8Array).toString('he
  *
  * **WHICH `harness()` SERVED THE CALL, AND WHICH ONE SERVED THE READ.**
  *
- * `X21`. The failure this exists for is intermittent — it survived two passes of
+ * The failure this exists for is intermittent — it survived two passes of
  * `SUITE-BISECT` and failed in the run straight after — and it fires on the
  * NO-MATCH branch with `ids on chain (0): none`. The state read back fine and
  * held nothing. So the question is not how an id is derived. It is how
@@ -209,7 +209,7 @@ beforeEach((ctx) => {
 
 /**
  * **WHICH HARNESS A LEDGER IS BOUND TO, AND IT IS NOT "THE LAST ONE BUILT".**
- * `C222`.
+ *
  *
  * The three module mocks below used to be registered INSIDE `harness()`, each
  * factory closing over that call's `callTx`. `vi.doMock` keeps one factory per
@@ -312,10 +312,10 @@ vi.doMock('./partial-contract.js', async () => ({
 function harness(chain: {
   /*
    * `assets` STOOD HERE — the on-chain balance map, defaulting to one entry.
-   * `C292`, `S26`: the contract has no `assetBalances` map, so a fake chain
+   * The contract has no `assetBalances` map, so a fake chain
    * that still handed one over would be a fake carrying a field the deployed
    * contract does not have. That is the same defect as the `proposeRun` stub
-   * that outlived its circuit (S11b), pointing the other way.
+   * that outlived its circuit, pointing the other way.
    */
   /** Every proposal open at once. M-128 — there is no longer "the" open one. */
   openProposals?: Array<{ id: Hex; change: Hex }>;
@@ -347,14 +347,14 @@ function harness(chain: {
   /* THREE READS, ONE RULE: `null` omits the accessor entirely, which the
    * boundary must REFUSE rather than read as zero. Seats are
    * `signerLeaves.size()` since S35c; `T-220`/`S52` added completions and
-   * `retiredAt`'s KEYS — *ever* retired, not *is* (`C362`) — for `T-183`. */
+   * `retiredAt`'s KEYS — *ever* retired, not *is* — for `T-183`. */
   signerCount?: bigint | null;
   movementCount?: bigint | null;
   retiredVaults?: Array<[Hex, bigint]> | null;
   /*
    * `balanceAfterMove` STOOD HERE — what an asset's entry became once `execute`
    * landed, so a chain committing to a DIFFERENT balance could be simulated.
-   * `C292`, `S26`: no circuit moves a balance and no map records one.
+   * No circuit moves a balance and no map records one.
    */
   /** What the chain records for a proposal, so a mismatch can be exercised. */
   changeOnPropose?: Hex;
@@ -412,7 +412,7 @@ deployment?: ConstructorParameters<typeof MidnightLedger>[6]) {
     }
     if (circuit === 'propose' && (chain.proposeLands ?? true)) {
       /*
-       * The id the MERGED contract keys it under (S11): one circuit, two
+       * The id the MERGED contract keys it under: one circuit, two
        * derivations, and `args[5]` — `isRun` — picks between them exactly as
        * the contract's own branch does. THE CONTRACT IS THE AUTHORITY for
        * this shape; a fake chain still modelling the pre-merge siblings is
@@ -461,7 +461,7 @@ deployment?: ConstructorParameters<typeof MidnightLedger>[6]) {
     closeExpiredRun: record('closeExpiredRun'),
   };
   /*
-   * THE FAKE MUST NOT OUTLIVE THE CONTRACT IT FAKES. S11b.
+   * THE FAKE MUST NOT OUTLIVE THE CONTRACT IT FAKES.
    *
    * This harness held a `proposeRun` stub after the S11 merge deleted the
    * circuit, and the stub stayed reachable enough to feed undefineds into the
@@ -500,7 +500,7 @@ deployment?: ConstructorParameters<typeof MidnightLedger>[6]) {
   // reached the place the circuit reads them from. `stageView` wrote here too
   // until `C292`/`S26` removed it with the balance opening it staged.
   const staged: Array<{ key: string; value: any }> = [];
-  // Every contract address the class set on the provider before staging. C228.
+  // Every contract address the class set on the provider before staging.
   const addressed: string[] = [];
   const held = chain.privateState === undefined
     ? {
@@ -522,7 +522,7 @@ deployment?: ConstructorParameters<typeof MidnightLedger>[6]) {
 
   const providers = async () => ({
     /*
-     * **WHICH HARNESS THIS BUNDLE BELONGS TO.** `C222`.
+     * **WHICH HARNESS THIS BUNDLE BELONGS TO.**
      *
      * The module mock reads `callTx` from here rather than from a closure, so
      * a ledger is served by the harness it was CONSTRUCTED with and by no
@@ -553,7 +553,7 @@ deployment?: ConstructorParameters<typeof MidnightLedger>[6]) {
              * lets a broken read pass — and a fake that hands over one the
              * deployed contract does NOT have is the same defect pointing the
              * other way. `assetBalances` was here and went with the map
-             * (`C292`, `S26`), so the reader below is asked for three maps and
+             *, so the reader below is asked for three maps and
              * gets three.
              */
             openProposals: [...proposals].map(([id, change]) => [fromHex(id), fromHex(change)]),
@@ -578,7 +578,7 @@ deployment?: ConstructorParameters<typeof MidnightLedger>[6]) {
              * `thresholds` in the contract, `vaultThresholds` on our boundary.
              * `[Uint8Array, bigint]` pairs, matching the generated reader's own
              * declared iterator (`contracts/managed/contract/index.d.ts:277`).
-             * `null` here means the reader handed nothing over. `R5b`.
+             * `null` here means the reader handed nothing over.
              */
             thresholds: chain.vaultThresholds === null
               ? undefined
@@ -642,7 +642,7 @@ deployment?: ConstructorParameters<typeof MidnightLedger>[6]) {
   /*
    * A `sendTransition` SEAM STOOD HERE — one deliberately ugly cast, reaching
    * past the boundary at the transition half that `R6` had left with no public
-   * door. `C292`, `S26`: the half it reached is gone, so the seam is gone with
+   * door. The half it reached is gone, so the seam is gone with
    * it rather than being pointed somewhere else. **A cast that survives the
    * thing it was built to reach is how a test file acquires a door nobody
    * decided on.**
@@ -651,7 +651,7 @@ deployment?: ConstructorParameters<typeof MidnightLedger>[6]) {
 }
 
 /**
- * **THE FOUR RULES THE TRANSITION HALF WAS THE ONLY CARRIER OF.** `C292`, `S26`.
+ * **THE FOUR RULES THE TRANSITION HALF WAS THE ONLY CARRIER OF.**
  *
  * `describe('MidnightLedger: the transition half, built and unreachable')` stood
  * here with NINE tests, driving `sendTransition` through a harness seam, and
@@ -795,7 +795,7 @@ describe('MidnightLedger: the rest of the round', () => {
   });
 
   /*
-   * X20. THE TWO WAYS `propose`'S POST-CHECK FINDS NOTHING, PINNED SEPARATELY.
+   * THE TWO WAYS `propose`'S POST-CHECK FINDS NOTHING, PINNED SEPARATELY.
    *
    * `landed` is undefined either because the state read came back empty — so
    * nothing was ever searched — or because a state arrived and holds no
@@ -819,7 +819,7 @@ describe('MidnightLedger: the rest of the round', () => {
   it('X20: says no id matched, and prints the id looked for beside the ids held', async () => {
     // Any payload but this test's, so the id differs from PROPOSAL_ID. It used
     // to be derived from `VIEW_AFTER`, which went with the balance map
-    // (`C292`, `S26`); nothing here ever needed that value to BE a view digest.
+    //; nothing here ever needed that value to BE a view digest.
     const OTHER = MidnightCommitments.proposalId('99'.repeat(32) as Hex, CHANGE.salt);
     const { ledger } = harness({
       openProposals: [{ id: OTHER, change: CHANGE_COMMITMENT }],
@@ -882,7 +882,7 @@ describe('MidnightLedger: the rest of the round', () => {
      * the one supplied is unusable, and the round can never settle. Found by
      * id, because "the change the chain recorded" is only a question about one
      * proposal now — asking it of the account would compare this proposal
-     * against whichever was written last. M-128.
+     * against whichever was written last.
      */
     const { ledger } = harness({ openProposals: [], changeOnPropose: OTHER });
     await expect(ledger.propose('acct', PAYLOAD_HASH, CHANGE, BY, MidnightCommitments.noVault()))
@@ -922,7 +922,7 @@ describe('MidnightLedger: the rest of the round', () => {
     expect(calls[0].circuit).toBe('cancel');
     expect(argHex(calls[0].args[0])).toBe(PROPOSAL_ID);
     // The other proposal is untouched: there is no round to rotate, so nobody
-    // else's approvals are burned. M-128.
+    // else's approvals are burned.
     expect((await ledger.status('acct'))?.openProposals.map(p => p.id)).toEqual([other]);
   });
 
@@ -948,7 +948,7 @@ describe('MidnightLedger: the rest of the round', () => {
     expect(await open.ledger.status('acct')).toEqual({
       /*
        * **EMPTY, ALWAYS, AND READ OFF THE CONTRACT RATHER THAN ASSUMED.**
-       * `C292`, `S26`. The account keeps no book, so there is no map of
+       * The account keeps no book, so there is no map of
        * per-asset commitments to report and nothing that could put an entry
        * here. The field stays on `LedgerStatus` because it is the shape both
        * implementations answer in (`src/core/ledger.ts:911` is the simulated
@@ -1001,7 +1001,7 @@ describe('MidnightLedger: the rest of the round', () => {
  * made about a circuit that does not exist.
  *
  * **`MidnightLedger.credit` NO LONGER EXISTS EITHER, AND NEITHER DOES THE
- * REFUSAL THAT REPLACED IT.** `C292`, `S26`. `S25` left it in place refusing by
+ * REFUSAL THAT REPLACED IT.** `S25` left it in place refusing by
  * name, because `AccountService.deposit` called it and whether the account keeps
  * a book of its own was the founder's to decide. It was decided — the account
  * keeps no books — so `deposit`, `Ledger.credit` and `MidnightLedger.credit`
@@ -1027,7 +1027,7 @@ describe('M-38: buildCall arity, against the real wrapper shape', () => {
    */
 
   /*
-   * **BOTH OF THESE DROVE `execute` AND NOW DRIVE `approve`.** `C292`, `S26`.
+   * **BOTH OF THESE DROVE `execute` AND NOW DRIVE `approve`.**
    *
    * The guard is `buildCall`'s and knows nothing about which circuit it is
    * checking — it reads the declared arity out of the compiled
@@ -1197,7 +1197,7 @@ describe('V-73: a payroll run, raised and swept through the client', () => {
        * stale and refuses EVERY test file in the repository until a person runs
        * `DOCS.command` (rule 38's gate). Measured, not assumed: the import was
        * written, the gate refused with those two line numbers, and it was taken
-       * out again. `S54`.
+       * out again.
        */
       const { readFileSync } = await import('node:fs');
       const info = JSON.parse(
@@ -1243,7 +1243,7 @@ describe('V-73: a payroll run, raised and swept through the client', () => {
 
   /*
    * **THE GOVERNANCE TWIN IS PINNED THE SAME WAY AND IT IS NOT THIS ROUND'S,
-   * FOR A MEASURED REASON RATHER THAN A SCOPE ONE.** `S54`.
+   * FOR A MEASURED REASON RATHER THAN A SCOPE ONE.**
    *
    * `src/midnight/ledger.ts:1141-1146` has the identical two-copies defect on
    * the identical seven slots — `:781-794` above asserts it against indices
@@ -1379,14 +1379,14 @@ describe('prepare: the same round, stopped before the chain', () => {
    * refusing in the wrong order.
    *
    * **"and getting the recovery commitment wrong" STOOD IN THAT SENTENCE.**
-   * `C292`, `S26`: no case of `prepare` sets `expectCommitment` any more, so
+   * No case of `prepare` sets `expectCommitment` any more, so
    * there is no longer a recovery commitment for it to get wrong. See the note
    * beside the deleted test below.
    */
 
   /*
    * **THIS STEP WAS `{ kind: 'execute', … }` AND IS NOW A `propose`.** `C292`,
-   * `S26`. `PreparedStep` has no `execute` member and `prepare` has no
+   * `PreparedStep` has no `execute` member and `prepare` has no
    * `execute` case; the balance opening and the sealed state the old step
    * carried have nowhere to go.
    *
@@ -1445,7 +1445,7 @@ describe('prepare: the same round, stopped before the chain', () => {
 
   /*
    * `it('hands back the commitment an interrupted job is recovered against')`
-   * STOOD HERE. `C292`, `S26`.
+   * STOOD HERE.
    *
    * It read `expectCommitment` back as this asset's balance commitment after
    * the move — the value M-82 turned *"did my payment go out?"* from a guess
@@ -1477,7 +1477,7 @@ describe('prepare: the same round, stopped before the chain', () => {
      * block time, a fee, and eighty seconds of proving before it.
      *
      * REPOINTED ONTO THE `approve` STEP, because `propose` deliberately has no
-     * "already open" refusal (M-128) and so cannot demonstrate this. `approve`
+     * "already open" refusal and so cannot demonstrate this. `approve`
      * goes through `requireOpen`, which is the same read this test always
      * exercised.
      */
@@ -1537,7 +1537,7 @@ describe('R5b/C188: the boundary tells an empty map apart from a missing one', (
   };
 
   /*
-   * **ONE TEST PER MAP, AND THE COUNT IS THE POINT.** `C188`.
+   * **ONE TEST PER MAP, AND THE COUNT IS THE POINT.**
    *
    * The previous shape was one test for `thresholds` and one loop over the two
    * maps the wrong analogy was drawn from — three maps, and the contract
@@ -1608,7 +1608,7 @@ describe('R5b/C188: the boundary tells an empty map apart from a missing one', (
 
   it('approvalCounts: empty means nobody has approved anything; missing refuses', async () => {
     /*
-     * **THE FOURTH MAP, AND THE ONE THAT WAS READ OUTSIDE THE GUARD.** `C188`.
+     * **THE FOURTH MAP, AND THE ONE THAT WAS READ OUTSIDE THE GUARD.**
      *
      * An account with no open proposals has an EMPTY `approvalCounts` — the
      * contract inserts a zero at `propose` and removes it at `execute` or
@@ -1744,10 +1744,10 @@ describe('C222: a ledger is bound to the harness it was built with', () => {
 });
 
 /**
- * **`C334`: WHAT `open` REFUSES BEFORE IT SPENDS ANYTHING.** `S35`, board `2y6`.
+ * **WHAT `open` REFUSES BEFORE IT SPENDS ANYTHING.** `S35`, board `2y6`.
  *
  * Three refusals were added to `MidnightLedger.open` this round and none of
- * them had a test — which `S35`'s `test-auditor` named, and which matters more
+ * them had a test — which `S35`'s test-coverage pass named, and which matters more
  * than usual here because each one is the last thing between a mistake and a
  * DEPLOYED contract: past this point there is a transaction on chain, a fee
  * spent, and an account that may be impossible to fix.
@@ -1792,7 +1792,7 @@ describe('C222: a ledger is bound to the harness it was built with', () => {
  *
  * **WHAT THIS BLOCK DOES NOT COVER, SAID HERE BECAUSE IT IS FOUR GREEN TESTS
  * NAMED AFTER A `P0` AND WILL BE READ AS THAT `P0`'s COVERAGE.** `S40`, from
- * this round's `money-safety-auditor`. Rule 14.
+ * this round's money-safety pass. Rule 14.
  *
  * `C334`'s client-side half is two claims and these tests hold NEITHER of them
  * directly. That an opening's leaf can be DERIVED by somebody is `C339` (`P0`,
@@ -1817,7 +1817,7 @@ describe('C334: MidnightLedger.open refuses an opening it cannot honour', () => 
 
   /**
    * **CREDENTIALS THAT EXIST, CARRYING AN AUTHORITY THE NEXT GATE REFUSES —
-   * AND BOTH HALVES ARE DELIBERATE.** `S40`.
+   * AND BOTH HALVES ARE DELIBERATE.**
    *
    * They must EXIST, or `open`'s first guard fires and none of the three
    * refusals below is ever reached. The authority must be REFUSABLE, or the
@@ -1867,12 +1867,12 @@ describe('C334: MidnightLedger.open refuses an opening it cannot honour', () => 
   it('refuses a threshold the chain will never be told about', async () => {
     /*
      * **THIS TEST WAS CALLED *"refuses a threshold of zero, which the CONTRACT
-     * does not refuse"* AND ITS SUBJECT CHANGED UNDER IT.** `S35d`.
+     * does not refuse"* AND ITS SUBJECT CHANGED UNDER IT.**
      *
      * What it pinned: the constructor took the threshold as argument one, and
      * `requireApproved` asserts `!(approvals < threshold)` — at zero that is
      * `!(0 < 0)` and it PASSES with nobody having approved, so `recordPayment`
-     * would move money on a proposal no signer voted for. `C340`. This refusal
+     * would move money on a proposal no signer voted for. This refusal
      * was the only thing enforcing it and the name said so.
      *
      * **WHAT IS TRUE NOW: THE CONSTRUCTOR TAKES NO THRESHOLD AND SETS
@@ -1897,7 +1897,7 @@ describe('C334: MidnightLedger.open refuses an opening it cannot honour', () => 
       .rejects.toThrow(/is not a rule/);
     /*
      * **AND THE OTHER HALF OF THE GUARD, WHICH ZERO AND MINUS ONE DO NOT
-     * REACH.** `S40`, from this round's `money-safety-auditor`.
+     * REACH.** `S40`, from this round's money-safety pass.
      *
      * The refusal is `!Number.isInteger(opening.threshold) || opening.threshold
      * < 1`. Both cases above are caught by the SECOND clause alone, so deleting
@@ -1936,7 +1936,7 @@ describe('C334: MidnightLedger.open refuses an opening it cannot honour', () => 
     const why = await h.ledger.open('acct', opening()).then(() => '', (e: Error) => e.message);
     expect(why).not.toMatch(/names no founding signer|can seat exactly one|is not a rule/);
     /*
-     * **AND WHERE IT DID STOP, NAMED.** `S40`.
+     * **AND WHERE IT DID STOP, NAMED.**
      *
      * The line above is a NEGATIVE, and a negative was satisfied for two days
      * by a refusal that fired BEFORE all three — so this control was green
@@ -1951,11 +1951,11 @@ describe('C334: MidnightLedger.open refuses an opening it cannot honour', () => 
 
 /**
  * **`T-220`'s TWO READS, AND THE GUARDS THAT WERE ENFORCED BY NOTHING UNTIL
- * THIS BLOCK.** `S52`, and it exists because `S52`'s own `test-auditor` found
+ * THIS BLOCK.** `S52`, and it exists because `S52`'s own test-coverage pass found
  * the gap in `S52`'s own work.
  *
  * `LedgerStatus` gained `movementCount` and `retiredVaults` for
- * `docs/accepted-risks.md` §1's detector (`T-183`). Both go through
+ * `docs/accepted-risks.md` §1's detector. Both go through
  * `setSize`/`mapField`, which refuse rather than repairing — `C188`'s rule, and
  * `src/midnight/ledger.ts`'s own note beside `signerCount` spells out what
  * skipping them costs. **The round added the harness dials that make a refusal
@@ -1988,7 +1988,7 @@ describe('T-220: the detector\'s two fields are read, and a reader that omits th
      * has to be stable. **And the VALUES are deliberately not 1**, so a reader
      * that returned `retiredAt`'s values instead of its keys could not pass —
      * the contract stores a marker there (`retireVault` inserts `1`), and
-     * *ever retired* is the KEY's presence (`C362`).
+     * *ever retired* is the KEY's presence.
      */
     const A = 'a1'.repeat(32) as Hex;
     const B = 'b2'.repeat(32) as Hex;
@@ -2033,7 +2033,7 @@ describe('T-220: the detector\'s two fields are read, and a reader that omits th
 
 /**
  * **THE GOVERNANCE BRANCH REFUSES A VAULT, AT THE LAYER THAT PAYS FOR IT.**
- * `C367`, `T-237`, `S55`.
+ *
  *
  * **APPENDED AT THE END OF THIS FILE RATHER THAN BESIDE THE `propose` CASES IT
  * BELONGS WITH, AND `C393` IS THE REASON.** `docs/design/edges.json` cites this
@@ -2073,7 +2073,7 @@ describe('C367: a governance round may not name a vault, and the boundary says s
 });
 
 /**
- * **A REFUSED `proposeRun` STAGES NOTHING.** `T-324`, `S55`, `S58`.
+ * **A REFUSED `proposeRun` STAGES NOTHING.**
  *
  * **APPENDED AT THE END OF THIS FILE FOR `C393`'s REASON, WHICH `S55` ALREADY
  * MET HERE.** `docs/design/edges.json` cites this file at `:794` and `:1125`,
@@ -2157,7 +2157,7 @@ describe('T-324: a refused run leaves no salt behind, because nothing was staged
 /**
  * **THE TWO COMMITTEE REFUSALS, PINNED THROUGH THE ACCOUNT DOOR — AND THE
  * ACCOUNT DOOR IS THE ONLY ONE THAT REACHES THEM IN PRODUCT SHAPE.** `T-345`,
- * `SC13` §4 `F6`, `S58`.
+ * `SC13` §4 `F6`.
  *
  * `requireMaintenanceAuthority` has four refusals and two were asserted by
  * nothing: `partial-contract.ts:181` (an empty or non-array committee) and
@@ -2178,7 +2178,7 @@ describe('T-324: a refused run leaves no salt behind, because nothing was staged
  * these two are pinned.**
  *
  * **AND `partial-contract.ts` STILL HAS NO OWNING TEST FILE**, which is the
- * other half of `T-345` and is not this round's to create — `C393`: a new test
+ * other half of `T-345` and is not this round's to create — A new test
  * file makes the generated doc set stale and refuses the whole suite until a
  * person runs `DOCS.command`. The row stays open for it.
  */
@@ -2193,7 +2193,7 @@ describe('T-345: a committee the SDK could never sign with is refused at the acc
 
   /* The type is reached THROUGH the constructor rather than imported: an added
    * import line at the top of this file moves `:794` and `:1125`, which
-   * `docs/design/edges.json` cites and the freshness gate refuses. `C393`. */
+   * `docs/design/edges.json` cites and the freshness gate refuses. */
   type Deployment = NonNullable<ConstructorParameters<typeof MidnightLedger>[6]>;
   const withAuthority = (
     maintenanceAuthority: Deployment['maintenanceAuthority'],
@@ -2238,7 +2238,7 @@ describe('T-345: a committee the SDK could never sign with is refused at the acc
    * and handed back unchanged.
    *
    * **IT IS TAKEN AT THE VALIDATOR AND NOT AT `open`, AND THE REASON WAS
-   * MEASURED RATHER THAN ASSUMED.** `S58`. The first draft drove it through
+   * MEASURED RATHER THAN ASSUMED.** The first draft drove it through
    * `open` like the three above and **timed out at 30,000 ms** — a well-formed
    * committee passes the authority gate and carries on into
    * `submitPartialDeployTx`, against a harness that has no chain. That is a
@@ -2310,7 +2310,7 @@ describe('reading a deployed contract\'s maintenance authority back off the chai
 
   it('reads a committee the same way it reads one key, because it consults no signing key', async () => {
     /*
-     * `SC6b`: a committee switches the SDK's whole maintenance interface OFF for
+     * A committee switches the SDK's whole maintenance interface OFF for
      * that contract, permanently — every SDK entry point opens by asserting a
      * stored signing key (`index.mjs:398-399`, `:470-471`, `:547-548`) and under
      * a committee none is stored (`partial-contract.ts:358-360`). This read is a
@@ -2325,7 +2325,7 @@ describe('reading a deployed contract\'s maintenance authority back off the chai
     expect(many.state).toBe('read');
     if (one.state !== 'read' || many.state !== 'read') return;
     /*
-     * **THE CONTENTS, NOT ONLY THE STATE.** `S61`'s `money-safety-auditor`
+     * **THE CONTENTS, NOT ONLY THE STATE.** `S61`'s money-safety pass
      * graded the first version of this test `P2` for asserting only
      * `state === 'read'` on both: it passed against any implementation that
      * returned a `read` with a garbage authority, and would have passed
@@ -2342,7 +2342,7 @@ describe('reading a deployed contract\'s maintenance authority back off the chai
   it('calls a threshold of zero `anyone` and never `no-one`, at any committee size', async () => {
     /*
      * **THE MOST DANGEROUS VALUE ON CHAIN, AND THE FIRST DRAFT REPORTED IT WITH
-     * THE NAME OF THE SAFEST.** Found by `S61`'s `money-safety-auditor`.
+     * THE NAME OF THE SAFEST.** Found by `S61`'s money-safety pass.
      * `verify.rs:1789` — `if self.signatures.len() < authority.threshold` — is
      * the ONLY read of `threshold` in the ledger crate, so at zero an update
      * with NO signatures is well-formed and the committee is never consulted.
@@ -2359,7 +2359,7 @@ describe('reading a deployed contract\'s maintenance authority back off the chai
 
   it('reports a committee that lists one key more than once, because its threshold is not what it looks like', async () => {
     /*
-     * Raised by `S61`'s `platform-fact-checker`, as a READING of ledger
+     * Raised by `S61`'s platform fact-check, as a READING of ledger
      * 8.2.0-rc.1 rather than a measurement: `data_to_sign`
      * (`structure.rs:2737-2747`) does not cover the signer index, so one
      * signature is valid at every index whose committee slot holds that key —
@@ -2399,8 +2399,8 @@ describe('reading a deployed contract\'s maintenance authority back off the chai
   });
 
   it('answers `unreachable` and not `absent` when the provider throws', async () => {
-    /* `R4`. An unreachable chain is not an empty one, and the round that shipped
-     * this backwards shipped a `P1` (`S55`). */
+    /* An unreachable chain is not an empty one, and the round that shipped
+     * this backwards shipped a `P1`. */
     const { readContractAuthority } = await import('./ledger.js');
     const r = await readContractAuthority(async () => { throw new Error('ECONNREFUSED'); }, 'addr');
     expect(r.state).toBe('unreachable');
@@ -2471,7 +2471,7 @@ describe('comparing the chain against the maintenance authority chosen on disk',
    *
    * `S61` first wrote `.midnight/maintenance-authority.json`'s ACTUAL
    * `signingKey` into this file, so that the pair under test would be the pair
-   * the chain carries. **Its `money-safety-auditor` graded that `P0` and it was
+   * the chain carries. **Its money-safety pass graded that `P0` and it was
    * removed in the same round.** That key is what `C353` is about — whoever
    * holds it can swap `recordPayment`'s verifier key and every vault's
    * unshielded money leaves — and this file is tracked, in a repository rule 10
@@ -2584,7 +2584,7 @@ describe('comparing the chain against the maintenance authority chosen on disk',
 
   it('REFUSES to compare a chosen threshold of zero rather than agreeing about it', async () => {
     /*
-     * **THE NEAR-MISS `S61`'s `money-safety-auditor` CAUGHT.** A `0` typed into
+     * **THE NEAR-MISS `S61`'s money-safety pass CAUGHT.** A `0` typed into
      * a committee choice file would have made `intendedAuthorityValue` return
      * `threshold: 0`, the chain carry `0`, and `compareAuthority` answer
      * `agree` — the door then printing *"Every contract carries the authority
@@ -2614,7 +2614,7 @@ describe('comparing the chain against the maintenance authority chosen on disk',
 });
 
 /* ================================================================== *
- * `S74` — THE MAINTENANCE INSTRUCTION, BUILT BY HAND. Board `2y9-2`.
+ * THE MAINTENANCE INSTRUCTION, BUILT BY HAND. Board `2y9-2`.
  * ================================================================== */
 
 /**
@@ -2786,7 +2786,7 @@ describe('S74: planning one contract\'s authority change, where UNKNOWN refuses'
 
   it('builds against the counter JUST READ and expects exactly one more', async () => {
     /* The counter is inside the signed data, so every signature collected against
-     * an older one is dead. `T-361`: the expected counter is the record's, and it
+     * an older one is dead. The expected counter is the record's, and it
      * is derived here rather than taken from a caller. */
     const { planAuthorityReplacement } = await import('./ledger.js');
     const p = planAuthorityReplacement(
@@ -2882,7 +2882,7 @@ describe('S74: the end-state record, and the counter that says something else ha
  *
  * **THE SIGNING KEYS ARE THE INTEGERS 1, 2 AND 3.** Their verifying keys are the
  * secp256k1 generator and its first two multiples — the values already pinned
- * above as `AUTH_KEY_1`/`_2`/`_3`. Nothing secret exists in this file (`C400`).
+ * above as `AUTH_KEY_1`/`_2`/`_3`. Nothing secret exists in this file.
  */
 describe('S74/T-360: what ledger 9 actually accepts, measured rather than read off 8.2', () => {
   const NET = 'undeployed';
@@ -3237,7 +3237,7 @@ describe('S74/T-359: reading the verifier keys back, which is what `C353` actual
 });
 
 /**
- * WHAT THIS ROUND'S OWN `money-safety-auditor` FOUND, PINNED SO IT CANNOT COME
+ * WHAT THIS ROUND'S OWN money-safety pass FOUND, PINNED SO IT CANNOT COME
  * BACK. Every case below is a defect the first draft of `S74` shipped past its own
  * reading and its auditor caught — the verifier-key half of a builder that refused
  * five things about the authority and nothing about the keys; a current authority

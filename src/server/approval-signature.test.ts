@@ -1,5 +1,5 @@
 /**
- * **`C121` — THE SIGNING KEY STOPS LEAVING THE DEVICE, HELD OVER REAL HTTP.**
+ * **THE SIGNING KEY STOPS LEAVING THE DEVICE, HELD OVER REAL HTTP.**
  *
  * A green suite proves nothing about this change on its own. `approve` used to
  * take a `signingSecret`, and every existing test that calls it now passes a
@@ -306,7 +306,7 @@ describe('approving a proposal', () => {
 
   it('REFUSES a signature made for a DIFFERENT ROUND WITH THE SAME DIGEST — `C382`, `C397`, `T-236`', async () => {
     /*
-     * **THE CASE THIS FILE DID NOT HAVE, AND COULD NOT HAVE HAD.** `S45`.
+     * **THE CASE THIS FILE DID NOT HAVE, AND COULD NOT HAVE HAD.**
      *
      * Every other case here spends a signature over a DIFFERENT digest, and the
      * fixture guarantees the difference by naming a different vault each call
@@ -368,7 +368,7 @@ describe('approving a proposal', () => {
   it('RECORDS a replay against the round it was spent at, and names the round it came from — `C398`, `T-310`, `S55`', async () => {
     /*
      * **`S45` MADE A REPLAY FAIL. THIS IS THE HALF THAT MAKES A PAST ONE
-     * VISIBLE.** `C398`. The case above spends a signature that was never
+     * VISIBLE.** The case above spends a signature that was never
      * accepted anywhere, so nothing in the record could match it and the
      * refusal is all there is. **This one spends a signature that is STANDING
      * on another round of the same account**, which is the shape the register

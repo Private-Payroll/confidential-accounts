@@ -5,7 +5,7 @@
  * halfway. This sentence named `execute` and `credit` until `C292` deleted
  * both; nothing about the argument depended on which circuits they were.
  * Proving takes seconds at best and ~108 seconds against the
- * single-threaded WASM prover (M-78), and settlement adds ~23 seconds of block
+ * single-threaded WASM prover, and settlement adds ~23 seconds of block
  * time that no amount of engineering removes. So no version of this product
  * gets to treat "click approve" as a function call that returns.
  *
@@ -69,7 +69,7 @@ export const isTerminal = (s: JobState): boolean => TERMINAL.includes(s);
  * `credit` WAS HERE AND IS GONE: S23 shed the circuit, and nothing ever
  * enqueued that kind.
  *
- * `execute` FOLLOWED IT, `C292`, `S26`. The circuit it named spent the
+ * `execute` FOLLOWED IT. The circuit it named spent the
  * account's own balance and was removed with the balance. Nothing ever
  * enqueued that kind either — the only kind anything enqueues is `approve` —
  * so this is a name removed, not a queue drained.
@@ -112,7 +112,7 @@ export interface QueueOptions {
   /**
    * How many jobs run at once.
    *
-   * ONE, and that is not laziness. The prover is single-threaded (M-78), so two
+   * ONE, and that is not laziness. The prover is single-threaded, so two
    * proofs do not go twice as fast — they take twice as long each and the user
    * sees nothing finish. Serial is both simpler and faster here.
    */

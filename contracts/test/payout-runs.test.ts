@@ -548,7 +548,7 @@ describe('V-41: the tree the client builds', () => {
 });
 
 /**
- * **`C363` — THE SECOND ROUTE TO A RUN'S PROPOSAL ID, AND THE ONE LINE THAT
+ * THE SECOND ROUTE TO A RUN'S PROPOSAL ID, AND THE ONE LINE THAT
  * CLOSES IT.** `P0`, found 2 Sep by `SC5`, closed by `S35d`.
  *
  * ── THE FAILURE, WHICH IS `V-52` REACHED FROM A NEW DIRECTION ────────────
@@ -653,7 +653,7 @@ describe('C363: a run cannot be raised through the governance branch', () => {
 });
 
 /**
- * **`C375` / `S48` — A RUN NAMES THE VAULT THAT WILL PAY IT.** Board row `2y7d5`,
+ * **A RUN NAMES THE VAULT THAT WILL PAY IT.** Board row `2y7d5`,
  * 3 Sep. The mirror of the block above: `C363` made the governance branch refuse
  * a vault, this makes the run branch refuse the ABSENCE of one.
  *
@@ -738,7 +738,7 @@ describe('C375/S48: a run cannot be raised at the no-vault sentinel', () => {
 });
 
 /**
- * **`C369` — THE ROOT THAT COMES BACK THIRTY-ONE BYTES.** `P1`, found 2 Sep by
+ * **THE ROOT THAT COMES BACK THIRTY-ONE BYTES.** `P1`, found 2 Sep by
  * `MUTATE.command`'s baseline, fixed by `S41`.
  *
  * ── THE DEFECT ───────────────────────────────────────────────────────────
@@ -896,7 +896,7 @@ describe('C369: a run whose root has a zero top byte', () => {
      * Without this, a change that mangled full-length roots while leaving short
      * ones alone would be caught only by the `runOf`-built runs elsewhere in
      * this file — which is exactly the corpus coupling the preamble above
-     * argues against. Found by this round's `test-auditor`.
+     * argues against. Found by this round's test-coverage pass.
      */
     const c = govChange(152);
     const run = await approvedRun(sim, PAYROLL, ORDINARY, c);
@@ -916,7 +916,7 @@ describe('C369: a run whose root has a zero top byte', () => {
      * `merkleTreePathRoot(path) == root` and is silently misread. Every
      * generated binding checks the length first — so `runPayload` refuses, and
      * `recordPayment` refuses in the same way rather than paying attention to
-     * the merkle comparison at all. `docs/corrections.md`, `S41`.
+     * the merkle comparison at all.
      *
      * The run is raised with the CORRECT root and only the claim is shortened,
      * so what is under test is the door and not the proposal.

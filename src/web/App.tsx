@@ -21,7 +21,7 @@ import { AuthScreen, AccountPicker, WALLET_ORIGIN } from './Auth.js';
 import { WalletWaiting } from './wallet-waiting.js';
 import { JoinScreen, joinTokenFromLocation } from './Join.js';
 /* X12 §2 — the drop box is opened HERE, on this machine, because computing the
- * code on ours would mean holding the address. `C21`. */
+ * code on ours would mean holding the address. */
 import { acceptedCodes, type Accepted } from './accepted-address.js';
 
 /**
@@ -53,7 +53,7 @@ const api = async <T,>(path: string, opts?: RequestInit): Promise<T> =>
 /* ------------------------------------------------------------------ */
 
 /**
- * THE ONLY WAY AN AMOUNT REACHES THE SCREEN. M-125.
+ * THE ONLY WAY AN AMOUNT REACHES THE SCREEN.
  *
  * The asset travels with the value and is never optional: 500000 is five
  * thousand pounds, half a USDC or a rounding error in ether, and nothing in the
@@ -134,9 +134,9 @@ const nextPeriod = (runs: Array<{ period: string }>) => {
 /* records the server holds as ciphertext                              */
 /* ------------------------------------------------------------------ */
 
-/** The numbers on a run. Everything else about it is operational. S-9. */
+/** The numbers on a run. Everything else about it is operational. */
 type RunSecrets = Pick<PayrollRun, 'employees' | 'totals' | 'proposalIds'>;
-/** Everything on a proposal that says who, what or how much. S-8. */
+/** Everything on a proposal that says who, what or how much. */
 type ProposalSecrets = Omit<Proposal,
   'id' | 'accountId' | 'status' | 'createdAt' | 'executedAt' | 'digest' | 'txRef' | 'chainId'>;
 
@@ -177,11 +177,11 @@ interface EmployeeIdentity {
 
 /**
  * **A SESSION CANNOT BE BUILT WITHOUT `seat`, AND `seat` CANNOT BE BUILT
- * WITHOUT THE LEAF CHECK.** `T-118`, `S34`.
+ * WITHOUT THE LEAF CHECK.**
  *
  * `S33` put a money-safety refusal in this file and no test in this repository
  * imports it, so what stood in for rule 11 was a source pin over this file's
- * text — and a source pin cannot see semantics: its own round's `test-auditor`
+ * text — and a source pin cannot see semantics: its own round's test-coverage pass
  * defeated the first version three ways with the text intact, and `S34` found a
  * fourth without looking, because `loadDemo` built a session here without ever
  * entering `openAccount`, which is the only function the pin counted calls in.
@@ -202,7 +202,7 @@ interface Session {
 type Act = (fn: () => Promise<void>) => Promise<void>;
 
 /**
- * A roster row as the LISTING answers it. `X11` §4.
+ * A roster row as the LISTING answers it.
  *
  * `handedOver` is not on `RosterEmployee` on purpose — that type is what gets
  * SEALED, so a derived fact stored in it would be frozen into the envelope and
@@ -245,7 +245,7 @@ type Page = 'dashboard' | 'payroll' | 'people' | 'approvals' | 'apps' | 'disclos
  */
 export default function App({ commitments }: { commitments: CommitmentScheme }) {
   const [user, setUser] = useState<keyring.Me | null>(null);
-  /** A company created on this tab whose keys are not sealed yet. `PI3`. */
+  /** A company created on this tab whose keys are not sealed yet. */
   const [awaitingSetup, setAwaitingSetup] = useState<string | null>(null);
   const [myAccounts, setMyAccounts] = useState<Array<{
     id: string; name: string; signers: number; threshold: number;
@@ -262,7 +262,7 @@ export default function App({ commitments }: { commitments: CommitmentScheme }) 
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
-  /* `X11` §2. Null on every page that is not an invitation. */
+  /* Null on every page that is not an invitation. */
   const [joinToken] = useState(() => joinTokenFromLocation(window.location));
 
   const load = useCallback(async (sess: Session) => {
@@ -276,11 +276,11 @@ export default function App({ commitments }: { commitments: CommitmentScheme }) 
       api<SealedRun[]>(`/api/accounts/${id}/runs`),
       // The roster is sealed, so the server needs the key to read one back. A
       // route that could list employees without it would be a route that proves
-      // we can read them. S-9.
+      // we can read them.
       api<RosterEmployee[]>(`/api/accounts/${id}/people?viewingKey=${key}`),
       api<SealedProposal[]>(`/api/accounts/${id}/proposals`),
     ]);
-    // The account arrives sealed. Opening it is this device's job now. M-96.
+    // The account arrives sealed. Opening it is this device's job now.
     setS(prev => (prev ? { ...prev, account: openSealedAccount(acct, key) } : prev));
     setState(st); setPeople(pe);
     // Runs and proposals arrive sealed for the same reason, and the amounts
@@ -328,7 +328,7 @@ export default function App({ commitments }: { commitments: CommitmentScheme }) 
       const sealed = await api<SealedAccount>(`/api/accounts/${id}`);
       /*
        * **A SEAT THIS DEVICE PUBLISHED AND DID NOT FINISH SEALING IS FINISHED
-       * HERE, BEFORE ANYTHING ASKS FOR ITS KEYS.** `C329`.
+       * HERE, BEFORE ANYTHING ASKS FOR ITS KEYS.**
        *
        * The material was made durable before the leaf was sent, so this is a
        * move rather than a rescue: it matches the pending entry to a seat by
@@ -380,7 +380,7 @@ export default function App({ commitments }: { commitments: CommitmentScheme }) 
           ...keys, name: mine?.name ?? 'You',
           /* Absent on a bundle sealed before `S34`, and absent means the
            * scheme's default — which is what those seats were written under.
-           * `T-116`. */
+           */
           scope: keys.scope ?? commitments.allVaults(),
         }],
       };
@@ -389,7 +389,7 @@ export default function App({ commitments }: { commitments: CommitmentScheme }) 
   }, [load, commitments]);
 
   /**
-   * **ASKING THE WALLET TO OPEN A COMPANY.** `PI2a`, `C129`.
+   * **ASKING THE WALLET TO OPEN A COMPANY.**
    *
    * The other half of `PI1`'s sign-in. Nothing here decides anything: which
    * company may be opened comes from the server, the key comes from the
@@ -431,7 +431,7 @@ export default function App({ commitments }: { commitments: CommitmentScheme }) 
         signerId: mine.signerId, signingSecret: mine.signingSecret,
         wrappingSecret: mine.wrappingSecret, blinding: mine.blinding,
         /* The scope this seat's leaf was made under, carried from the response
-         * rather than defaulted here. `T-116`. */
+         * rather than defaulted here. */
         scope: mine.scope,
       });
       await refreshAccounts();
@@ -453,7 +453,7 @@ export default function App({ commitments }: { commitments: CommitmentScheme }) 
       // The demo hands over every signer's secrets so the approval flow can be
       // walked alone. A real account only ever holds your own.
       /*
-       * **AND THE LEAF CHECK RUNS HERE TOO, WHICH IT DID NOT BEFORE.** `T-118`.
+       * **AND THE LEAF CHECK RUNS HERE TOO, WHICH IT DID NOT BEFORE.**
        *
        * This door built a session without going near `openAccount`, so the
        * source pin that counted call sites inside `openAccount` was green while
@@ -473,7 +473,7 @@ export default function App({ commitments }: { commitments: CommitmentScheme }) 
   }, [refreshAccounts, load]);
 
   /**
-   * **STARTING A COMPANY FROM A WALLET SESSION.** `PI3`, `C141`.
+   * **STARTING A COMPANY FROM A WALLET SESSION.**
    *
    * `createAccount` above cannot serve this and the difference is an ORDER,
    * not a branch: it seals the founder's secrets into the keyring immediately,
@@ -544,7 +544,7 @@ export default function App({ commitments }: { commitments: CommitmentScheme }) 
 
   /*
    * **THE INVITATION SCREEN IS ABOVE EVERY OTHER GATE, INCLUDING SIGN-IN.**
-   * `X11` §2.
+   *
    *
    * It is public: the person opening it has no account yet, and seeing the
    * offer before accepting it is the whole reason `GET /api/invites/:token/offer`
@@ -558,7 +558,7 @@ export default function App({ commitments }: { commitments: CommitmentScheme }) 
   if (joinToken) return <JoinScreen token={joinToken} />;
 
   /*
-   * `C154` — MOUNTED ONCE, ABOVE EVERY GATE. Every wallet ask in `keyring.ts`
+   * MOUNTED ONCE, ABOVE EVERY GATE. Every wallet ask in `keyring.ts`
    * announces itself to this, whichever screen started it, so no screen has to
    * remember to draw a wait of its own.
    */
@@ -718,7 +718,7 @@ function Dashboard({ state, runs, people, pending, onGo }: {
   const upcoming = nextPeriod(runs);
 
   /*
-   * **THE TREASURY TILE STOOD HERE AND IS DELETED.** `C292`, `S26`.
+   * **THE TREASURY TILE STOOD HERE AND IS DELETED.**
    *
    * It rendered `state.balances` with a runway line underneath. The account
    * keeps no balance — the field is gone, not empty — so there is nothing here
@@ -756,8 +756,8 @@ function Dashboard({ state, runs, people, pending, onGo }: {
             ))}
             {/* THE SETTLEMENT ROW STOOD HERE — "One aggregate transfer per
                 asset". Nothing transfers anything: the account has no send
-                operation and the circuit that closed a round is deleted
-                (`C292`). Deleted rather than reworded, because any wording of
+                operation and the circuit that closed a round is deleted.
+                Deleted rather than reworded, because any wording of
                 it is a claim about a payment this system cannot make. */}
             <div style={{ marginTop: 16 }}>
               <button className="btn pri" onClick={() => onGo('payroll')}>Go to payroll</button>
@@ -783,7 +783,7 @@ function Dashboard({ state, runs, people, pending, onGo }: {
                         sequence across all of them, so the code is not optional. */}
                     {/* THE INCOMING BRANCH STOOD HERE — a `deposit` entry drawn
                         in the positive colour with a leading `+`. Nothing can
-                        write one: the account's deposit is deleted (`C292`), so
+                        write one: the account's deposit is deleted, so
                         every entry this log can hold is a payment out. */}
                     <td className="num">−{money(e.amount, e.asset)}</td>
                   </tr>
@@ -860,7 +860,7 @@ function PayrollList({ runs, people, busy, session, onOpen, act }: {
  *
  * The screen used to assume a run had one total and one proposal, and offered
  * one Submit / Approve / Settle button for the pair. `execute` moves one asset
- * per round (M-125), so a run paying some people in pounds and some in USDC is
+ * per round, so a run paying some people in pounds and some in USDC is
  * two rounds against the same run — each proposed, approved and settled on its
  * own, and the run is done only when every leg is. Every action below is
  * therefore per leg, and the leg names its asset.
@@ -879,7 +879,7 @@ function RunDetail({ run, proposals, account, session, me, busy, onBack, act }: 
 
   /*
    * **`submit` STOOD HERE AND IS GONE WITH THE CONTROL IT DROVE.** `C375`,
-   * `S47`.
+   *
    *
    * It POSTed `{viewingKey, proposedBy, asset}` to `/api/runs/:id/propose`,
    * which raised a governance round carrying a payload hash no vault can ever
@@ -894,7 +894,7 @@ function RunDetail({ run, proposals, account, session, me, busy, onBack, act }: 
    * three lines the round that builds vault payroll will write.
    */
   /*
-   * **THE SIGNATURE, NOT THE KEY.** `C121`. The digest is the proposal's own and
+   * **THE SIGNATURE, NOT THE KEY.** The digest is the proposal's own and
    * is already public; `signApproval` is in the keyring because this screen is
    * not allowed to reach a secret.
    */
@@ -909,7 +909,7 @@ function RunDetail({ run, proposals, account, session, me, busy, onBack, act }: 
     });
   });
   /*
-   * **THE SETTLE CONTROL STOOD HERE AND IS DELETED.** `C292`, `S26`.
+   * **THE SETTLE CONTROL STOOD HERE AND IS DELETED.**
    *
    * It posted to `/api/runs/:id/settle`, which spent the account's own balance.
    * The balance, that route and `PayrollService.settle` are all deleted. A leg
@@ -967,7 +967,7 @@ function RunDetail({ run, proposals, account, session, me, busy, onBack, act }: 
                     <td style={{ textAlign: 'right' }}>
                       {/* **DISABLED, WITH ITS REASON, IN THE ROUND THAT MADE THE
                           DOOR REFUSE.** `C375`, `S47`, found by that round's
-                          `money-safety-auditor` against the round itself: it
+                          money-safety pass against the round itself: it
                           disabled the two disclosure controls for exactly this
                           test and left this one live, POSTing to a route that
                           now answers 400 every time. Rule 22b — shown with its
@@ -986,7 +986,7 @@ function RunDetail({ run, proposals, account, session, me, busy, onBack, act }: 
                         <button className="btn sm pri" onClick={() => approve(proposal)} disabled={busy || mine}>
                           {mine ? 'You have signed' : `Approve as ${me.name}`}</button>}
                       {/* Nothing here at the threshold: the Settle control was
-                          deleted with the account's balance (`C292`). The
+                          deleted with the account's balance. The
                           approvals column already says the round is at its bar. */}
                     </td>
                   </tr>
@@ -1084,7 +1084,7 @@ function People({ people, session, busy, act }: {
   const [form, setForm] = useState({ name: '', email: '', title: '', salary: '', asset: defaultAsset() });
   const [open, setOpen] = useState(false);
   /*
-   * **NO EMAIL FIELD, AND THAT IS `C24`.** `X7` §1.
+   * **NO EMAIL FIELD, AND THAT IS `C24`.**
    *
    * The route has no `email` parameter and must not gain one: the address on
    * the record is read off the caller's own sign-in inside the service, which
@@ -1136,7 +1136,7 @@ function People({ people, session, busy, act }: {
      */
     /*
      * **THE TOKEN COMES BACK HERE, ONCE, AND IT IS THE ONLY TIME IT IS EVER
-     * VISIBLE.** `X11` §1.
+     * VISIBLE.**
      *
      * `invite()` has always returned it to its caller and this screen has
      * always thrown it away, which is why nobody has ever been hired: the token
@@ -1217,7 +1217,7 @@ function People({ people, session, busy, act }: {
 
   /*
    * **THE STEP THAT MAKES SOMEBODY PAYABLE, WITH A CONTROL BEHIND IT AT
-   * LAST.** `X11` §4, `C156`.
+   * LAST.**
    *
    * `POST /api/employees/:id/admit` has existed and worked for rounds and **a
    * search of `src/web` for that path returned nothing**, while a run stopped
@@ -1259,7 +1259,7 @@ function People({ people, session, busy, act }: {
    *
    * ── THE KEYPAIR IS DERIVED FROM THE WALLET, NEVER MINTED HERE ────────────
    *
-   * `PI2b`, `C135`. `newWrappingKeypair()` on this line would be thirty-two
+   * `newWrappingKeypair()` on this line would be thirty-two
    * random bytes handed to the server as a public key and kept nowhere: **the
    * founder's own payslips would be sealed to a secret this tab forgets on
    * reload, and nothing — not another device, not a recovery, not us — could
@@ -1274,7 +1274,7 @@ function People({ people, session, busy, act }: {
    *
    * ── THE ADDRESS COMES FROM THE WALLET, AND THE BOX IS GONE ──────────────
    *
-   * `X8` §2, `C153`. `X7` asked for the founder's own address *from the same
+   * `X7` asked for the founder's own address *from the same
    * wallet* and the wallet could not give one, so this screen took it as pasted
    * text — safe on this one door because the caller and the payee are the same
    * person by construction, and **a precedent that must not spread to any door
@@ -1679,7 +1679,7 @@ function Approvals({ pending, account, session, me, busy, runs, act }: {
       }),
     });
   });
-  // The Settle control was deleted here too, with the account's balance. `C292`.
+  // The Settle control was deleted here too, with the account's balance.
 
   if (!pending.length) {
     return <div className="card"><div className="empty"><b>Nothing to approve</b>You are all caught up.</div></div>;
@@ -1826,7 +1826,7 @@ function Apps({ session, me, busy, act }: {
     try {
       if (what === 'read') {
         // A totals-scoped plug-in used to get a balance per asset. There are no
-        // balances (`C292`), so the entry count is the whole of what a totals
+        // balances, so the entry count is the whole of what a totals
         // scope can honestly be given, and this renders exactly that.
         const r = await api<{ entries?: ShieldedEntry[]; entryCount?: number }>(
           `/api/plugin/state?token=${i.token}&viewingKey=${session.viewingKey}`);
@@ -2184,7 +2184,7 @@ function Disclosures({ runs, session, busy, act }: {
  * What `/api/public` shows: everything an outside observer can see.
  *
  * **`settlements` STOOD HERE AND IS GONE WITH THE FIELD BEHIND IT.** `C313`,
- * `S29`. It was `Array<{ ref, accountId, asset, amount, memo, at }>` and it was
+ * It was `Array<{ ref, accountId, asset, amount, memo, at }>` and it was
  * unconditionally empty from `C292` onward, because nothing settles at the
  * account. The card below still has its row — rule 22b — and the row now says
  * why there is nothing in it instead of showing a zero that reads as a result.
@@ -2194,7 +2194,7 @@ interface PublicView {
 }
 
 /**
- * **WHAT THE CHAIN SAYS ABOUT THIS ACCOUNT'S APPROVAL RULES.** `R5`, `C172`.
+ * **WHAT THE CHAIN SAYS ABOUT THIS ACCOUNT'S APPROVAL RULES.**
  *
  * The shape of `LedgerStatus`, narrowed to the two fields this screen renders.
  * Both are public on chain by design (decision 0003), so showing them is the
@@ -2212,7 +2212,7 @@ interface LedgerView {
 }
 
 /*
- * **A BLANK BOX IS NOT A ZERO, AND `Number('')` IS.** `R5`.
+ * **A BLANK BOX IS NOT A ZERO, AND `Number('')` IS.**
  *
  * `Number('')` is `0`, so a predicate written as `Number(v) < 1` calls an empty
  * field a refused threshold and shows a person the zero refusal before they
@@ -2239,7 +2239,7 @@ function Settings({ account, state, session, me, busy, act, commitments }: {
   useEffect(() => { api<PublicView>('/api/public').then(setPub).catch(() => {}); }, [state, account]);
 
   /*
-   * **ONE READ, AND IT IS THE LEDGER'S.** `R5`. `null` while it has not
+   * **ONE READ, AND IT IS THE LEDGER'S.** `null` while it has not
    * answered, and the card below says so rather than rendering
    * `account.policy.threshold` in the meantime — our copy is a number to
    * render on a screen that is ABOUT our copy, and this card is about the
@@ -2309,7 +2309,7 @@ function Settings({ account, state, session, me, busy, act, commitments }: {
   const acceptInvite = (inv: Invite) => act(async () => {
     /*
      * **THE SEQUENCE IS IN `accept-seat.ts` AND A TEST DRIVES IT.** `C329`,
-     * `T-118`.
+     *
      *
      * It was thirty lines here, in a file no test imports, and the two things
      * that matter about it are both invisible from outside: that the material

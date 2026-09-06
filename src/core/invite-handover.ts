@@ -30,7 +30,7 @@ import { sealToInbox, openFromInbox } from './sealed-records.js';
  *
  * ── AND IT CARRIES NO WEBASSEMBLY, WHICH IS WHY IT IS ITS OWN FILE ────────
  *
- * `C149`. It reaches `sealed-records.ts`, which is `@noble` and nothing else.
+ * It reaches `sealed-records.ts`, which is `@noble` and nothing else.
  * The ADDRESS is a plain string here rather than a `PayeeAddress`, because
  * building one of those reaches `@midnightntwrk/wallet-sdk-address-format` and
  * therefore the ledger, and `src/web` may not contain it. **That is not a
@@ -134,7 +134,7 @@ export function openHandover(
   }
   /*
    * **X12 §2 — ABSENT AND `null` ARE ONE ANSWER HERE, AND THE SCHEMA DID NOT
-   * MOVE.** `C21`.
+   * MOVE.**
    *
    * A handover sealed before this field existed carries no code, and neither
    * does one from `addSelfAsPayee`. Both mean *there is no code to compare*,

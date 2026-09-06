@@ -8,7 +8,7 @@
  *
  * ── IT REDACTS AGAIN, AND THAT IS NOT BELT AND BRACES ────────────────────
  *
- * `C145`. The page already put every message through `redactSecrets` before it
+ * The page already put every message through `redactSecrets` before it
  * crossed the wire. This does it again on the way to the disk, because **this
  * is the boundary the row is actually about**: the row is not "a secret must
  * not be sent", it is *"nothing this project keeps on disk ever contains a

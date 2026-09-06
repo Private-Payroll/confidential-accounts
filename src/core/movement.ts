@@ -8,7 +8,7 @@ import type { EntryKind } from './types.js';
 
 /**
  * **THE TWO KINDS OF MOVEMENT, AND THE PRODUCT RULE THAT SEPARATES THEM.**
- * `S12`, `C250`, `C255`.
+ *
  *
  * The word MOVEMENT already means something in this repository: the append-only
  * set of blinded commitments the contract keeps, one per settlement
@@ -127,7 +127,7 @@ export const entryKindOf = (m: MovementKind): EntryKind => m;
  *
  * ── AND IT DOES NOT SAY "PAYROLL IS ALWAYS PRIVATE" ──────────────────────
  *
- * It did, and `product-copy-auditor` was right to refuse it. **No asset has a
+ * It did, and a product-copy pass was right to refuse it. **No asset has a
  * private form today** — `privateForm` answers `not-yet` for every row of the
  * registry — so a sentence telling a customer their payroll already settles
  * where nobody can read it is the overclaim that ends the company, printed at
@@ -278,7 +278,7 @@ export function transferOf(spec: TransferSpec): Transfer {
 
   /*
    * **NO EMPLOYEE IS EVER DISCLOSED PUBLICLY, CHECKED WHERE THE TRANSFER IS
-   * MADE.** `C250`. See `TransferSpec.employees`.
+   * MADE.** See `TransferSpec.employees`.
    *
    * **THE PRIVATE DIRECTION IS DELIBERATELY NOT REFUSED HERE**, and the reason
    * is that it is a filing question rather than a disclosure one: an expense
@@ -322,7 +322,7 @@ export function transferOf(spec: TransferSpec): Transfer {
 
 /**
  * **WHAT THE CHAIN NEEDS TO SETTLE A TRANSFER, AND IT IS A ONE-PAYEE RUN.**
- * `C255`.
+ *
  *
  * `recordPayment` never checks who the recipient is: it checks the proposal,
  * the window, approval at the vault's threshold, leaf membership in the

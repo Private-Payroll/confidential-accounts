@@ -13,7 +13,7 @@
  * That is `B1`, and `C199` is the ordering that depends on this file existing.
  *
  * ------------------------------------------------------------------------
- * WHAT CHANGED, AND WHY THE OLD SHAPE WAS THE DEFECT. `C200`.
+ * WHAT CHANGED, AND WHY THE OLD SHAPE WAS THE DEFECT.
  *
  * This file used to model **one coin chained forward**: a deposit, then a list
  * of amounts, each payment's change following from the one before. **The

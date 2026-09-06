@@ -1,6 +1,6 @@
 /**
  * **THE COMPANY COMES FROM THE SESSION. NEVER FROM THE REQUEST.**
- * `docs/NEXT.md` PI2a §2, `docs/scope-payroll-identity.md` §9, `C136`.
+ * `docs/NEXT.md` PI2a §2, `docs/scope-payroll-identity.md` §9.
  *
  * This is the most dangerous line in the round and it is a ROUTE, so it is
  * tested over real HTTP for `server.test.ts`'s reason: the two leaks that
@@ -23,7 +23,7 @@ import { signInWithAWallet } from '../testing/wallet-session.js';
 
 /*
  * **THIS SERVER RUNS ON `SimulatedLedger`, SO IT IS DEVELOPMENT AND SAYS SO.**
- * `PI2b`, `C140`.
+ *
  *
  * Every company below is opened by a simulation that mints its own address, and
  * from `PI2b` on that is refused unless the process was deliberately started
@@ -87,7 +87,7 @@ let n = 10;
 /**
  * A person with a company of their own.
  *
- * **`PI4b`: THIS USED TO REGISTER WITH A PASSWORD.** It never wanted one — the
+ * **THIS USED TO REGISTER WITH A PASSWORD.** It never wanted one — the
  * suite is about where a company comes from — it wanted a session, and
  * registering was the cheapest way to get one. A slot is a person, so each call
  * takes the next one.

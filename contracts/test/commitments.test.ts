@@ -27,7 +27,7 @@ describe('commitment schemes agree with the contract', () => {
    * This file called the constructor directly — which has been PRIVATE since
    * the compact-runtime 0.18 migration, because `initialState` became async and
    * a constructor cannot await. It "worked" only because nothing ever
-   * typechecked `contracts/test/`. M-72.
+   * typechecked `contracts/test/`.
    */
   beforeAll(async () => {
     /* One founding signer at a threshold of one, which is the only shape a
@@ -46,7 +46,7 @@ describe('commitment schemes agree with the contract', () => {
 
   /*
    * `produces the same balance commitment as the contract` STOOD HERE. `C292`,
-   * `S26`. It pinned `MidnightCommitments.balanceCommitment` against the
+   * It pinned `MidnightCommitments.balanceCommitment` against the
    * contract's `balanceCommitmentOf`; both are gone with the balance.
    *
    * DELETED RATHER THAN REWRITTEN, because the scheme it compared no longer
@@ -57,7 +57,7 @@ describe('commitment schemes agree with the contract', () => {
 
   it('produces the same asset key as the contract', () => {
     /*
-     * M-125. Both sides must derive the SAME asset key, or the change
+     * Both sides must derive the SAME asset key, or the change
      * commitment one signer approves is not the one another recomputes, and an
      * approval of a run is an approval of nothing.
      *
@@ -117,7 +117,7 @@ describe('commitment schemes agree with the contract', () => {
 
   it('refuses an amount too wide for the contract, in both directions', () => {
     /*
-     * `Uint<128>` in the circuit, and neither refusal is theoretical. M-125.
+     * `Uint<128>` in the circuit, and neither refusal is theoretical.
      *
      * A negative balance cannot be represented at all. An over-wide one is the
      * interesting case: `BigInt` has no width, so without this check the value
@@ -126,7 +126,7 @@ describe('commitment schemes agree with the contract', () => {
      */
     /*
      * DRIVEN THROUGH `changeCommitment` RATHER THAN `balanceCommitment`.
-     * `C292`, `S26`.
+     *
      *
      * `checkAmount` is one guard with two callers; `balanceCommitment` was the
      * other and went with the account's balance. The rule is unchanged — an
@@ -158,7 +158,7 @@ describe('commitment schemes agree with the contract', () => {
 });
 
 /**
- * WHAT A COMMITMENT NAMES — the half a mirror cannot check. `C306`, `T-65`.
+ * WHAT A COMMITMENT NAMES — the half a mirror cannot check.
  *
  * The describe above asks whether the client and the contract AGREE. It cannot
  * ask whether either of them is right, and the reason is mechanical rather than
@@ -184,7 +184,7 @@ describe('commitment schemes agree with the contract', () => {
  * These are the tests those two mutations are pointed at. If one of them is
  * ever weakened, `MUTATE.command` reports the money rule as uncertified.
  *
- * **AND FROM `S29` THERE ARE FOUR MUTATIONS, NOT TWO.** `C311`. The two above
+ * **AND FROM `S29` THERE ARE FOUR MUTATIONS, NOT TWO.** The two above
  * replace an argument; the two added beside them SWAP two same-typed arguments,
  * which no property in this describe can catch — see the fixed vectors at the
  * foot of this file, which are what those two are pointed at.
@@ -213,7 +213,7 @@ describe('what a commitment names, which no mirror can check', () => {
 
   it('the asset key BINDS THE ACCOUNT BLINDING, so two companies holding one asset do not share a key', () => {
     /*
-     * `C306`. THE RULE: an asset key is the account's, not the asset's.
+     * THE RULE: an asset key is the account's, not the asset's.
      *
      * The contract's own reason, above `assetKeyOf` in
      * `ConfidentialAccount.compact`: keying
@@ -264,7 +264,7 @@ describe('what a commitment names, which no mirror can check', () => {
 
   it('the approved change NAMES ITS ASSET, so two changes alike but for the currency are two commitments', () => {
     /*
-     * `C306`. THE RULE: what the signers approved includes WHICH asset moves.
+     * THE RULE: what the signers approved includes WHICH asset moves.
      *
      * The asset is the first field of `changeCommitmentOf`, and the contract
      * states both halves of its own position in that circuit's own comment in
@@ -317,7 +317,7 @@ describe('what a commitment names, which no mirror can check', () => {
   /*
    * ───────────────────────────────────────────────────────────────────────────
    * **THE FOUR ABOVE ARE INJECTIVITY TESTS, AND A SWAP STAYS INJECTIVE.**
-   * `C311`, `T-78`. `S29`.
+   *
    *
    * Every assertion above is one of three shapes: *n distinct inputs give n
    * distinct outputs*, *these two specific inputs differ*, and *the same inputs
@@ -360,11 +360,11 @@ describe('what a commitment names, which no mirror can check', () => {
    * `persistentCommit<Vector<2, Bytes<32>>>` over a two-vector with the third
    * argument as the opening, and NEITHER carried a domain separator, where
    * `runPayload` and `payoutLeaf` both pad a `"midnight-accounts:…"` tag.
-   * Measured 31 Aug off the live circuit by `S29`'s `test-auditor`:
+   * Measured 31 Aug off the live circuit by `S29`'s test-coverage pass:
    * `signerLeaf(X, Y, Z)` and `proposalIdOf(X, Z, Y)` returned THE SAME 32
    * BYTES, so a signer leaf and a proposal id were one value under a
    * relabelling of three arguments. **`S32` made the `.compact` edit** — each
-   * now pads its own tag into a three-vector. `C317`.
+   * now pads its own tag into a three-vector.
    *
    * **THEY ARE STILL UNPINNED AND THAT IS A DEBT, NOT A CLOSURE.** The
    * separators are asserted below by their SOURCE TEXT and by the property they
@@ -389,7 +389,7 @@ describe('what a commitment names, which no mirror can check', () => {
     /*
      * **THE TOP BIT OF THE `Uint<128>` IS SET, AND THAT IS THE WHOLE REASON FOR
      * THE SHAPE OF THIS NUMBER.** `S29`, caught by this round's own
-     * `test-auditor` before it reached a report.
+     * test-coverage pass before it reached a report.
      *
      * It was `12345678901234567890n`, under a comment claiming it used the
      * whole field. **That value is 64 bits wide**, and the auditor measured
@@ -443,7 +443,7 @@ describe('what a commitment names, which no mirror can check', () => {
 
   /*
    * ───────────────────────────────────────────────────────────────────────────
-   * `C317`: THE SIGNER LEAF AND THE PROPOSAL ID WERE ONE FUNCTION. `S32`.
+   * THE SIGNER LEAF AND THE PROPOSAL ID WERE ONE FUNCTION.
    *
    * Until this round `signerLeaf(pk, blinding, scope)` and
    * `proposalIdOf(payloadHash, vault, salt)` were both
@@ -455,7 +455,7 @@ describe('what a commitment names, which no mirror can check', () => {
    * contract kept them apart. What kept them apart was that a caller would have
    * had to hold a signer's blinding and a proposal's salt at once, and the
    * witnesses that supply them are per-device — a property held by who holds
-   * what, not by a check. Rule 27, `C286`.
+   * what, not by a check. Rule 27.
    *
    * **WHY THREE TESTS AND NOT ONE PINNED VECTOR.**
    *
@@ -546,7 +546,7 @@ describe('what a commitment names, which no mirror can check', () => {
      * contract" in a two-contract repository. `Vault.compact` pads two tags of
      * its own and they are not read here; they carry a different prefix
      * (`midnight-vault:`) so they cannot collide with these, but that is an
-     * argument and not a check. `BACKLOG.md`.
+     * argument and not a check.
      *
      * `MUTATE.command`'s adopt/retire row reddens this test as well as its own,
      * deliberately — it replaces one tag with another. Noted so a report naming
@@ -593,7 +593,7 @@ describe('what a commitment names, which no mirror can check', () => {
 
 /*
  * ─────────────────────────────────────────────────────────────────────────────
- * OWED, AND NAMED HERE RATHER THAN LEFT TO BE NOTICED. `C317`, `S32`.
+ * OWED, AND NAMED HERE RATHER THAN LEFT TO BE NOTICED.
  *
  * `signerLeaf` and `proposalIdOf` HAVE NO PINNED VECTOR. Everything above
  * asserts the separator's TEXT and the property it buys; neither is the
@@ -616,6 +616,6 @@ describe('what a commitment names, which no mirror can check', () => {
  *
  * then add each as an `it` beside the two in *"AND IT READS THEM IN THE RIGHT
  * ORDER"*, and point the two `C317` mutations in `MUTATE.command` at those
- * titles instead of at the source-text ones. `BACKLOG.md`.
+ * titles instead of at the source-text ones.
  * ─────────────────────────────────────────────────────────────────────────────
  */

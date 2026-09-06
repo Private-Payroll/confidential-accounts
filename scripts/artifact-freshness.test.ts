@@ -1,5 +1,5 @@
 /**
- * A CHECK THAT CANNOT FAIL IS A CHECK THAT HAS ALREADY FAILED. `C238`, `C263`.
+ * A CHECK THAT CANNOT FAIL IS A CHECK THAT HAS ALREADY FAILED.
  *
  * This file exists because the guard it tests is the kind of thing that gets
  * written, wired, and never once observed doing its job — and a staleness guard
@@ -18,7 +18,7 @@
  * typechecker and to a unit test of the function that reads it. The same shape
  * here is a guard nobody wired in. The first version of this file asserted the
  * wiring by reading `vitest.config.ts` as TEXT and matching a regex — and a
- * `test-auditor` pass showed three separate ways to disarm the guard that left
+ * test-coverage pass showed three separate ways to disarm the guard that left
  * that assertion green: comment the key out (a regex matches inside a comment),
  * wrap the call in `try {} catch {}`, or put it behind `if (process.env.X)`.
  * So the config is now imported as a MODULE and its value read, and the
@@ -157,7 +157,7 @@ describe('THE REFUSAL FIRES — the whole reason this file exists', () => {
     // rule 9, surviving inside the test written to enforce rule 9. Both got
     // through because the default fixture's two stamps are one second apart and
     // render to the same MINUTE, so either line satisfied the assertion.
-    //
+    
     // So the artifact is moved to a different minute here, and both stamps are
     // asserted. The expected strings were read off `Intl.DateTimeFormat`
     // directly rather than out of `ist()`, so this is an independent derivation
@@ -238,7 +238,7 @@ describe('THE REFUSAL FIRES — the whole reason this file exists', () => {
 
   it('cannot be disarmed by being given nothing to check', () => {
     // The only way past this guard from inside is an empty table, so an empty
-    // table is an error rather than a pass. C238, C263.
+    // table is an error rather than a pass.
     expect(() => findRefusals(root, [])).toThrow(/ZERO source\/artifact pairs/);
   });
 });
@@ -310,7 +310,7 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
     // CONTRACT_ARTIFACTS was never exercised. An auditor changed that default
     // to the account alone, and to a self-referential dummy that can never be
     // stale, with this file fully green both times.
-    //
+    
     // WHAT THIS TEST DOES NOT DO, because a second auditor pass caught the
     // first version of this comment claiming it: it cannot see the table
     // SHRINKING, because the fixture and the loop below both iterate

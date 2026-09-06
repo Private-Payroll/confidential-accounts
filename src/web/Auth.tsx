@@ -4,7 +4,7 @@ import * as keyring from './keyring.js';
 /**
  * Sign in, and account selection.
  *
- * **THERE IS ONE WAY IN AND IT IS A WALLET.** `PI4b`, `C129`.
+ * **THERE IS ONE WAY IN AND IT IS A WALLET.**
  *
  * An email-and-password form was here, below the wallet button, with the
  * comment above that button saying so. It had two fields, a create-an-account
@@ -27,7 +27,7 @@ import * as keyring from './keyring.js';
  * the same claim.
  */
 /**
- * WHERE THE WALLET IS. `PI1`.
+ * WHERE THE WALLET IS.
  *
  * Absent means signing in with a wallet is not configured for this build, and
  * the button says so rather than opening `undefined/#/approve`.
@@ -86,7 +86,7 @@ export function AccountPicker({
   onUnlock: (id: string) => void;
   onCreate: (name: string) => void;
   /**
-   * **PI3, `C141`.** Create a company from a wallet session — three steps in
+   * **PI3.** Create a company from a wallet session — three steps in
    * an order the ordinary button cannot perform, because sealing needs a key
    * that does not exist until the company does.
    */

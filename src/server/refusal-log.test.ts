@@ -1,5 +1,5 @@
 /**
- * **THE REPORT A REFUSAL LEAVES BEHIND.** `C157`, `X10` §1.
+ * **THE REPORT A REFUSAL LEAVES BEHIND.**
  *
  * ── THE ROW, AND WHAT THIS FILE IS FOR ───────────────────────────────────
  *

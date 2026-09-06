@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * MUTATING WHAT THE PAGE LOADS. `docs/NEXT.md` X5, `C149`.
+ * MUTATING WHAT THE PAGE LOADS. `docs/NEXT.md` X5.
  *
  * The harness `scripts/mutate-web-sink.mjs` built for `X4`, aimed at the one
  * claim this round makes that is worth nothing if nothing watches it:

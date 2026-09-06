@@ -1,5 +1,5 @@
 /**
- * THE PARTIAL DEPLOY, AND THE CLIENT THAT SERVES IT. S8c.
+ * THE PARTIAL DEPLOY, AND THE CLIENT THAT SERVES IT.
  *
  * **THIS IS THE ACCOUNT'S. THE VAULT'S IS `src/midnight/vault-contract.ts`,
  * AND THEY MUST NOT BE SWAPPED.** `S6e`, and the distinction is not stylistic:
@@ -7,12 +7,12 @@
  * and deployed eleven of thirteen circuits. **Since S23 shed two circuits and
  * S25 emptied the deferred list the account is eleven of eleven and defers
  * nothing** — this path stays because it is also what pins the operations map
- * to a decided list rather than to whatever compiled (`C224`), and because a
+ * to a decided list rather than to whatever compiled, and because a
  * contract that grows past the ceiling again needs it back. **A vault fits — four circuits,
  * 16,040 bytesWritten, 49.4% of the ceiling — so it deploys whole, through the
  * SDK's ordinary `deployContract`, and reads back through its own find.**
  * `findDeployedPartialContract` below refuses a FULL deployment on purpose
- * (`C231`), which is right for the account and wrong for a vault; pointed at
+ *, which is right for the account and wrong for a vault; pointed at
  * one it would compare verifier keys against circuit names a vault has never
  * had.
  *
@@ -22,7 +22,7 @@
  * oversight. `C225` is `deployContract`'s own `signingKey ?? sampleSigningKey()`
  * default, which is the FULL deploy path's defect before it is anybody else's,
  * so the rule is not about partiality and two validators of it would be
- * `M-104`. The vault narrows the choice further in its own module, because the
+ * The vault narrows the choice further in its own module, because the
  * SDK's full path can express only a single key.
  *
  * How many circuits deploy and which defer is `src/midnight/deferral.ts`'s
@@ -103,7 +103,7 @@ export interface TaggedKey {
 }
 
 /**
- * The maintenance authority the deploy is given. There is NO default. C225.
+ * The maintenance authority the deploy is given. There is NO default.
  *
  * `deployContract` falls through to `sampleSigningKey()` when no key is
  * passed (`midnight-js-contracts/dist/index.mjs:1907`), and that default is
@@ -349,7 +349,7 @@ export async function submitPartialDeployTx(
    * (`midnight-js-contracts/dist/index.mjs:1180-1185`), against the PRUNED
    * deploy's address: the provider's contract address is set BEFORE the
    * private state is written, so the state lands under this contract's prefix
-   * and no other (C228). The signing key is stored only when a single key
+   * and no other. The signing key is stored only when a single key
    * exists — a committee has no single key to store, and the SDK's
    * maintenance interface could not drive it anyway.
    */
@@ -379,7 +379,7 @@ export async function submitPartialDeployTx(
  * A vault has its own: `findDeployedVaultContract` in
  * `src/midnight/vault-contract.ts`. This one refuses a full deployment by
  * design (see the deferred-absence check below), which is correct for the
- * account and would be a confusing failure against a vault. `S6e`.
+ * account and would be a confusing failure against a vault.
  *
  * Keeps M-9's property — the deployed verifier keys are compared
  * byte-for-byte against the compiled ones via the SDK's own

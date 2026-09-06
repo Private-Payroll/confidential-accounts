@@ -209,7 +209,7 @@ export function topLevelStrings(args: string): string[] {
 
 export type LedgerField = {
   readonly name: string;
-  /** A bare number at a flat top level; an array once the state has nested. `C357`. */
+  /** A bare number at a flat top level; an array once the state has nested. */
   readonly index: number | readonly number[];
   readonly storage: string;
   readonly exported: boolean;
@@ -348,7 +348,7 @@ export function indicesFromLedgerFn(moduleText: string, desc: string): Map<strin
   const objBody = obj.slice(1, spanEnd(obj, 0) - 1);
 
   const out = new Map<string, number>();
-  // Top-level keys of the returned object: `name: {` , `get name()` or `name,`.
+  // Top-level keys of the returned object: `name: {`, `get name()` or `name,`.
   let i = 0;
   let depth = 0;
   let keyStart = 0;
@@ -390,7 +390,7 @@ function readKeys(root: string, spec: ArtifactSpec, circuitNames: readonly strin
   } catch {
     // NOT an error and NOT a blank. `COMPILE-CONTRACT.command` and
     // `COMPILE-VAULT.command` compile with `--skip-zk` and leave no `keys/`
-    // at all (`C327`), which is the state after every ordinary compile. A
+    // at all, which is the state after every ordinary compile. A
     // number nobody measured is a refusal, so every row says so and names the
     // door that would produce it. Rule 9, rule 19.
     for (const c of circuitNames) {
@@ -501,7 +501,7 @@ function classify(name: string, text: string, circuitNames: ReadonlySet<string>)
  * are recognised, every one of them observed in the artifacts on disk. A fifth
  * — a compiler change, a new stdlib operation — stops the generator with the
  * op array printed, rather than being folded into whichever bucket the code
- * happened to fall through to. `C238`: a classifier with a default branch is a
+ * happened to fall through to. A classifier with a default branch is a
  * classifier that cannot report that it did not know.
  */
 export type QueryKind =
@@ -852,7 +852,7 @@ export async function readContract(root: string, spec: ArtifactSpec): Promise<Co
      *             'Bytes<32>', foundingLeaf_0)
      * The worked example named `requiredApprovals_0` and a line number until
      * `S35d`; the argument is gone (`C340` + `C343`) and the line was three
-     * hundred out besides (`C366`). It carries no number now — an illustration
+     * hundred out besides. It carries no number now — an illustration
      * does not need one and this file has no way to keep one true.
      * That is read here rather than invented. If a compiler stops emitting
      * them the signature comes back empty — which is visibly missing rather
@@ -872,7 +872,7 @@ export async function readContract(root: string, spec: ArtifactSpec): Promise<Co
    * column is the one the brief calls a MEASUREMENT rather than a list, because
    * a money circuit with a low count beside a sibling with a higher one is a
    * question worth asking on sight — and a column that silently read zero
-   * everywhere would answer that question wrongly and confidently. `C238`.
+   * everywhere would answer that question wrongly and confidently.
    */
   const totalAsserts = circuits0.reduce((n, c) => n + c.asserts.length, 0);
   if (totalAsserts === 0) {
@@ -895,7 +895,7 @@ export async function readContract(root: string, spec: ArtifactSpec): Promise<Co
    * counter would miscount, and every contract read would classify as a KERNEL
    * access — leaving the READS and WRITES columns EMPTY rather than throwing.
    * That is the same silent shape the assert guard below was written for, and
-   * it had no equivalent until an auditor traced it. `C238`.
+   * it had no equivalent until an auditor traced it.
    */
   const totalFields = circuits0.reduce((n, c) => n + c.reads.length + c.writes.length, 0);
   if (totalFields === 0) {

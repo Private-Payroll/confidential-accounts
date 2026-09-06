@@ -81,7 +81,7 @@ describe('sealing and opening', () => {
 
   it('seals the same value identically regardless of key order', async () => {
     // Canonical JSON: otherwise the same record re-saved produces a different
-    // commitment later (M-91) and looks like it changed when it did not.
+    // commitment later and looks like it changed when it did not.
     const vk = newSymmetricKey();
     const a = openRecord('roster', ACCOUNT, sealRecord('roster', ACCOUNT, { b: 2, a: 1 }, vk), vk);
     const b = openRecord('roster', ACCOUNT, sealRecord('roster', ACCOUNT, { a: 1, b: 2 }, vk), vk);
@@ -205,7 +205,7 @@ describe('what the server would hold', () => {
     const whatWeHold = redactHex(stored);
 
     /*
-     * NAMES AND EMAILS ARE SEARCHED AS SUBSTRINGS; SALARIES ARE NOT. T-12.
+     * NAMES AND EMAILS ARE SEARCHED AS SUBSTRINGS; SALARIES ARE NOT.
      *
      * `expect(whatWeHold).not.toContain('9000')` looks like the same check and
      * is a different one, because the ciphertext is rendered as HEX and every

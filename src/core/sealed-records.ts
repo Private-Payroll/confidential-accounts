@@ -1,5 +1,5 @@
 /**
- * Locking a company's records so we cannot read them. M-90, S-8, S-9.
+ * Locking a company's records so we cannot read them.
  *
  * The shielded balance has always been sealed. Everything around it — the staff
  * list with names, emails and salaries, the signer roster, the spending rules —
@@ -23,7 +23,7 @@
  *
  * It does not stop us WITHHOLDING a record — we host the ciphertext, so we can
  * refuse to serve it (decision 0002, S-7). It does not stop us serving an OLD
- * one; that needs a commitment on chain (M-91). And it does not hide access
+ * one; that needs a commitment on chain. And it does not hide access
  * patterns: sizes, counts and timing are still ours to see. Each of those is a
  * separate piece of work, and none of them is fixed by encryption.
  *
@@ -68,7 +68,7 @@ export const purposeKey = (viewingKey: Hex, accountId: string, purpose: Purpose)
  * failure — one rule in two places, and this pair had genuinely drifted: the
  * crypto.ts copy mis-serialises an absent optional field. Stable serialisation
  * is load-bearing for anything signed or committed, so a private near-copy was
- * the worst possible thing to duplicate. M-97.
+ * the worst possible thing to duplicate.
  */
 
 export const sealRecord = <T>(
@@ -95,7 +95,7 @@ export const openRecord = <T>(
 ): T => {
   try {
     /*
-     * `parseCanonical`, not `JSON.parse`. M-125.
+     * `parseCanonical`, not `JSON.parse`.
      *
      * `sealRecord` writes with `canonical`, which encodes a bigint as
      * `{"$n":"…"}` because `JSON.stringify` cannot serialise one at all. A plain
@@ -113,7 +113,7 @@ export const openRecord = <T>(
   }
 };
 
-/* ---------------- the account inbox (M-96) ---------------- */
+/* ---------------- the account inbox ---------------- */
 
 /*
  * A one-way drop box for people who hold no viewing key.

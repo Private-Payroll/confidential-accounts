@@ -85,7 +85,7 @@ export const DEPLOYED_CIRCUITS = [
 ] as const;
 
 /**
- * NOTHING IS DEFERRED. S25.
+ * NOTHING IS DEFERRED.
  *
  * `S9` deferred `attestSolvency` and `retireVault`. `S23` shed `attestSolvency`
  * and `credit` from the contract, which took the contract to eleven circuits, and
@@ -95,7 +95,7 @@ export const DEPLOYED_CIRCUITS = [
  *
  * IT IS KEPT AS A LIST RATHER THAN DELETED. The deferral machinery below is
  * what makes a smaller-than-decided deployment impossible to reach by accident
- * (`C224`), and an empty list is the honest statement that the current contract
+ *, and an empty list is the honest statement that the current contract
  * needs none of it — not that the mechanism was removed. Everything that reads
  * it derives its behaviour from the list, so refilling it is the whole of
  * re-deferring.
@@ -140,7 +140,7 @@ export function assertKnownCircuitSet(names: string[]): void {
 }
 
 /**
- * The error a call to a deferred circuit gets, and it names the cause. S8c.
+ * The error a call to a deferred circuit gets, and it names the cause.
  *
  * UNREACHABLE WHILE `DEFERRED_CIRCUITS` IS EMPTY — its only caller gates on
  * `isDeferredCircuit`, which is false for every name — and kept for that

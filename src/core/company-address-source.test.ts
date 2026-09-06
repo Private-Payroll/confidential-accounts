@@ -6,7 +6,7 @@ import { NoCompanyAddress, companyForSession } from './company-address.js';
 
 /**
  * **THE SYSTEM CAN TELL WHETHER AN ADDRESS CAME FROM A CHAIN.** `docs/NEXT.md`
- * PI2b §1, `C140`, `C136`, `C127`.
+ * PI2b §1.
  *
  * ── WHAT THIS FILE IS FOR, AND WHY IT IS NOT A FIELD TEST ─────────────────
  *

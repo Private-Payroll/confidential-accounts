@@ -1,5 +1,5 @@
 /**
- * ONE VAULT, BOTH KINDS OF MONEY, SIDE BY SIDE. C245, S6j.
+ * ONE VAULT, BOTH KINDS OF MONEY, SIDE BY SIDE.
  *
  * NIGHT is an UNSHIELDED token by definition — `nativeToken()` returns
  * `UnshieldedTokenType` — and until this round `Vault.compact` was `receiveShielded`,

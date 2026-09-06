@@ -4,7 +4,7 @@
  *
  * TWO PROBLEMS, ONE PLACE.
  *
- * 1. NO PERSISTENCE (M-47). Every start replays the chain from genesis to
+ * 1. NO PERSISTENCE. Every start replays the chain from genesis to
  *    rebuild the dust wallet's state — 271s to 284s, measured, on every single
  *    run. The DUST is already on chain and already registered; the wallet just
  *    cannot see it until it catches up. `DustWallet(config).restore(serialized)`
@@ -14,7 +14,7 @@
  *    plain public field and `facade.start()` calls `this.dust.start(secretKey)`,
  *    so a restored instance starts in place of a cold one.
  *
- * 2. A ZERO FEE PRODUCES AN INVALID TRANSACTION (M-52). `calculateFee` is
+ * 2. A ZERO FEE PRODUCES AN INVALID TRANSACTION. `calculateFee` is
  *    `feesWithMargin(...) + additionalFeeOverhead`, and the testkit's default
  *    for that overhead is `0n`. When `feesWithMargin` returns 0 the balancer is
  *    told nothing is owed, selects no dust coin, and the transaction goes out
@@ -98,7 +98,7 @@ export async function installDustWallet(
     const cache = dustCachePath(root, network, masterSeed);
     if (existsSync(cache)) {
       /*
-       * A CACHE OLDER THAN THIS IS NOT USED. M-141.
+       * A CACHE OLDER THAN THIS IS NOT USED.
        *
        * The cache exists to skip a five-minute resync, and that is worth having
        * between runs minutes apart. Across a long gap it is a liability: DUST
@@ -191,7 +191,7 @@ export async function saveDustState(
  * meaning unknown, not "zero blocks". So `applied >= highest` is trivially true
  * and a completeness check built on it always says yes. Anything relying on
  * `dustCaughtUp` should say "cannot tell" rather than print a tick it has not
- * earned. M-141.
+ * earned.
  */
 export const dustProgressKnown = (p: any): boolean => {
   if (!p) return false;
@@ -214,7 +214,7 @@ export const dustProgressOf = (s: any) => s?.dust?.state?.progress ?? s?.dust?.p
 
 /**
  * BLOCKS UNTIL THE DUST WALLET HAS CAUGHT UP, and every script that submits a
- * transaction must call it. M-141.
+ * transaction must call it.
  *
  * A DUST BALANCE IS NOT A SYNCED DUST WALLET, and submitting on the difference
  * is what produces `1010: Invalid Transaction: Custom error: 170` —

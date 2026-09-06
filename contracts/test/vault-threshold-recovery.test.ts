@@ -1,5 +1,5 @@
 /**
- * THE RECOVERY IN `docs/scope-the-vault-system.md` §3.8, RUN. S6b.
+ * THE RECOVERY IN `docs/scope-the-vault-system.md` §3.8, RUN.
  *
  * A vault whose approval threshold nobody can meet is unspendable. The contract
  * describes the way out and, until this file, NO TEST HAD EVER EXECUTED IT — so

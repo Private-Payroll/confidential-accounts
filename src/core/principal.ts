@@ -27,7 +27,7 @@ import type { PayeeAddress } from '../midnight/payee-address.js';
  * concludes the ladder and the money gate are live is reading a file with no
  * callers. `A-5` is the row that would wire it.
  *
- * **THIS BLOCK IS AT THE TOP AND IT MOVED LINES IN A CITED FILE (`C366`).** The
+ * **THIS BLOCK IS AT THE TOP AND IT MOVED LINES IN A CITED FILE.** The
  * re-anchor list to TRUE CURRENT LINES is in `S55`'s build-log account.
  */
 /**
@@ -41,7 +41,7 @@ import type { PayeeAddress } from '../midnight/payee-address.js';
  *
  * Having a contract on chain is a switch, not part of the definition — on for
  * companies from day one, off for a person until they want several of their own
- * devices guarding their own money. `docs/scope-identity.md`.
+ * devices guarding their own money.
  *
  * WHY ONE SHAPE RATHER THAN TWO. The hardest problem in this product is "who
  * gets back in when a key is lost", and the company answer already exists and

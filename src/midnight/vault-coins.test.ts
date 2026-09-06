@@ -1,9 +1,9 @@
 /**
- * **"I COULD NOT READ IT" IS NOT "THERE IS NONE", IN THE MONEY PATH.** `C197`.
+ * **"I COULD NOT READ IT" IS NOT "THERE IS NONE", IN THE MONEY PATH.**
  *
  * This file had no test at all, which is part of why the defect it now pins
  * survived a round that had already fixed the same defect one map along
- * (`C188`, `R5b`). The only exercise these two readers got was through
+ *. The only exercise these two readers got was through
  * `contracts/test/vault-payout.test.ts` and `vault-recovery.test.ts`, which
  * drive the real circuits and therefore ALWAYS hand over a well-formed Zswap
  * local state — so the unreadable branch was never once taken, and returning
@@ -118,7 +118,7 @@ describe('C197: paidCoinTo tells "not paid" apart from "could not read"', () => 
 
 /*
  * ---------------------------------------------------------------------------
- * **`C239`: THE SHAPE THE CLIENT ACTUALLY GETS, WHICH IS NOT THE SHAPE EVERY
+ * **THE SHAPE THE CLIENT ACTUALLY GETS, WHICH IS NOT THE SHAPE EVERY
  * TEST ABOVE BUILDS.**
  *
  * Every case above hands these readers an `EncodedZswapLocalState` — the form a
@@ -209,7 +209,7 @@ describe('C239: both spellings of a Zswap output, and anything else refused', ()
 
   it('REFUSES a coin whose value is not a bigint, rather than coercing it', async () => {
     /*
-     * `M-125`: a value that arrives as a number or a `{"$n":…}` object reads as
+     * A value that arrives as a number or a `{"$n":…}` object reads as
      * a note the pool can do arithmetic on and cannot. A pool that opens and is
      * wrong is worse than one that refuses.
      */

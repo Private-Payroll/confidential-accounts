@@ -5,7 +5,7 @@ import { addressOfVerifyingKey, mint } from 'midnight-identity/profile/disclosur
 
 /**
  * **A REAL SIGN-IN OVER REAL HTTP, FOR TESTS THAT ONLY NEED A SESSION.**
- * `PI4b`.
+ *
  *
  * ── WHY THIS EXISTS AT ALL ────────────────────────────────────────────────
  *

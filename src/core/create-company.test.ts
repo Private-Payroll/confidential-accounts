@@ -16,7 +16,7 @@ const x25519PublicOf = (secret: string) => toHex(x25519.getPublicKey(fromHex(sec
 
 /**
  * **SOMEBODY WITH A WALLET STARTS A COMPANY.** `docs/NEXT.md` PI3, `C141`,
- * `C129`, `C136`, `C140`.
+ *
  *
  * ── WHAT IS BEING PROVED, AND WHY IT IS PROVED BY WATCHING ────────────────
  *

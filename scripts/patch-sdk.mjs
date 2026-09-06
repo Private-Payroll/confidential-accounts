@@ -3,7 +3,7 @@
  *
  *   node scripts/patch-sdk.mjs        (run by every .command after npm install)
  *
- * WHAT IS WRONG (M-46, M-48)
+ * WHAT IS WRONG
  *
  * `computeBalancingRecipe` in @midnight-ntwrk/wallet-sdk-dust-wallet asks the
  * balancer for a recipe using the fee as the imbalance:

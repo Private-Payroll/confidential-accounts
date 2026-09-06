@@ -17,7 +17,7 @@ import type { Openable } from '../web/wallet-sign-in.js';
 
 /**
  * **THE WALLET OPENS THE BOX THE PASSWORD USED TO.** `docs/NEXT.md` PI2a,
- * `docs/scope-payroll-identity.md` §9 and §9b, `C129`, `C136`.
+ * `docs/scope-payroll-identity.md` §9 and §9b.
  *
  * ── EVERY KEY IN THIS FILE IS A REAL RELEASED KEY ─────────────────────────
  *
@@ -249,7 +249,7 @@ describe('§2 — A RELEASE IS CHECKED HERE, BECAUSE NO SERVER EVER SEES IT', ()
 describe('§2 — THE COMPANY COMES FROM THE SESSION, NEVER FROM THE REQUEST', () => {
   /*
    * **EVERY COMPANY IN THIS BLOCK IS A SIMULATED ONE, AND FROM `PI2b` THAT
-   * HAS TO BE SAID OUT LOUD.** `C140`.
+   * HAS TO BE SAID OUT LOUD.**
    *
    * `SimulatedLedger` mints an address shaped exactly like a chain's, so
    * `companyForSession` now refuses it unless the process was started to

@@ -295,7 +295,7 @@ export async function buildEdgeList(root: string): Promise<EdgeList> {
   // A ROOT THAT IS NOT IN THE GRAPH IS A SILENTLY EMPTY WALK. Rename `payout`
   // in a rebuild and every field only it touches reads `cold`, with nothing
   // red anywhere — the heat flag would go on being printed, about nothing.
-  // `C238`: a check over nothing cannot fail.
+  // A check over nothing cannot fail.
   const allCircuits = new Set(models.flatMap((m) => m.circuits.map((c) => q(m.label, c.name))));
   const absent = roots.filter((r) => !allCircuits.has(r));
   if (absent.length > 0) {

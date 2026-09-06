@@ -6,7 +6,7 @@ import { askWallet, type Openable, type WalletDialog } from './wallet-sign-in.js
 
 /**
  * **OPENING THE WALLET AND ASKING IT TO RELEASE ONE COMPANY'S KEY.**
- * `docs/NEXT.md` PI2a §1, `C129`.
+ * `docs/NEXT.md` PI2a §1.
  *
  * ── THE ONE PLACE IN THIS PRODUCT THAT RECEIVES A SECRET ON THE WIRE ──────
  *

@@ -30,7 +30,7 @@ export interface VaultCoin {
 }
 
 /**
- * **THE CALL'S OUTPUTS, OR A REFUSAL. NEVER AN EMPTY LIST.** `C197`.
+ * **THE CALL'S OUTPUTS, OR A REFUSAL. NEVER AN EMPTY LIST.**
  *
  * Both readers in this file used to open with
  *
@@ -73,7 +73,7 @@ export class UnreadableZswapState extends Error {
 }
 
 /**
- * The outputs of one call, refusing rather than coercing. `C197`.
+ * The outputs of one call, refusing rather than coercing.
  *
  * `what` completes the sentence "nothing here can say what …", so each caller
  * says which reading was lost rather than sharing one anonymous message.
@@ -183,7 +183,7 @@ const coinOn = (o: unknown, what: string): VaultCoin => {
   const nonce = hexOf(c?.nonce, what, 'coinInfo.nonce');
   /*
    * **AND THE TOKEN FIELD IS RENAMED BETWEEN THE TWO SPELLINGS, WHICH IS WORSE
-   * THAN BEING RE-ENCODED.** `C239`.
+   * THAN BEING RE-ENCODED.**
    *
    * Encoded, a coin is `{ color: Uint8Array, nonce, value }` — the Compact
    * struct (`onchain-runtime-v4.d.ts:511`). Decoded, it is
@@ -265,7 +265,7 @@ export const changeCoinOf = (zswap: unknown, vaultAddress: Hex): VaultCoin | und
  */
 export const paidCoinTo = (zswap: unknown, recipient: Hex): VaultCoin | undefined => {
   /*
-   * The same refusal as `changeCoinOf`'s and for the same reason. `C197`. Here
+   * The same refusal as `changeCoinOf`'s and for the same reason. Here
    * `undefined` means this call paid that recipient nothing — so a state we
    * could not read, answered as `undefined`, is what sends a payee away with
    * "you were not paid" about a payment that settled, and their coin is one
@@ -276,7 +276,7 @@ export const paidCoinTo = (zswap: unknown, recipient: Hex): VaultCoin | undefine
 
   const theirs = outputs.filter((o) =>
     /* `is_left` true means a person rather than a contract — the opposite of the
-     * change, which comes back to the vault. Both spellings, `C239`. */
+     * change, which comes back to the vault. Both spellings. */
     recipientOf(o, what).toPerson === recipient);
 
   if (theirs.length === 0) return undefined;

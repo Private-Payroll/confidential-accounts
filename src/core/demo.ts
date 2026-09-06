@@ -4,7 +4,7 @@ import type { RosterEmployee } from './types.js';
 import { sign } from './crypto.js';
 
 /**
- * The demo company pays in pounds, and every figure here is in PENCE. M-125.
+ * The demo company pays in pounds, and every figure here is in PENCE.
  *
  * `salary: 9_400` meant nine thousand four hundred pounds and now means ninety
  * four pounds, so every number below is multiplied by a hundred and written
@@ -37,7 +37,7 @@ export async function seedDemo(
 ) {
   /*
    * **THE DEMO IS DARK, ON PURPOSE, AND IT STOPS BEFORE IT TOUCHES ANYTHING.**
-   * `C292`, `S26`.
+   *
    *
    * It funded the company with `accounts.deposit(…, 480_000_00n, 'Monument
    * Bank')` and then settled two months of payroll by spending that balance.
@@ -99,12 +99,12 @@ export async function seedDemo(
     const { run } = await payroll.createRunFromRoster(account.id, period, viewingKey);
     /*
      * **`null` RUN MATERIAL, SO THIS REFUSES, AND THE SEEDER SAYS SO RATHER
-     * THAN PRETENDING.** `C375`, `S47`.
+     * THAN PRETENDING.**
      *
      * Until `S47` this line raised a governance round carrying a payload hash
      * no vault can ever reproduce, and the seeder showed it as a proposed run.
      * There is no run material to hand it: the vault path is not built
-     * (`C292`) and nothing in `src/` builds a payout tree.
+     * and nothing in `src/` builds a payout tree.
      *
      * **THIS BLOCK IS ALREADY UNREACHABLE — `S26` MADE THE SEEDER THROW ABOVE,
      * AND THE `no-unreachable` DISABLE TWENTY LINES UP IS THAT FACT WRITTEN
@@ -117,7 +117,7 @@ export async function seedDemo(
     const proposal = await payroll.proposeRun(
       run.id, viewingKey, secrets[0].signerId, null);
     /*
-     * **THE SEEDER SIGNS FOR ITSELF, AND THE SERVICE STILL CANNOT.** `C121`.
+     * **THE SEEDER SIGNS FOR ITSELF, AND THE SERVICE STILL CANNOT.**
      *
      * These two calls are the reason `signingSecret` survives a grep of this
      * file, and the reason is not the one it looks like. Nothing is being
@@ -140,7 +140,7 @@ export async function seedDemo(
 
 /**
  * **THE ONE PROJECTION THAT DECIDES WHETHER A MNEMONIC LEAVES THIS PROCESS.**
- * `C45`, `PI2b`, `C312`.
+ *
  *
  * `hireDirect` derives each seeded person's payslip key from a wallet it mints
  * for them, and returns the words so the derivation can be checked against its
@@ -158,12 +158,12 @@ export async function seedDemo(
  * **THIS COVERS THIS ROUTE AND NOT THE OTHER ONE.**
  * `POST /api/accounts/:id/payroll` returns `PayrollService.createRun`'s result
  * whole, `secrets: EmployeeSecret[]` included, with no projection in between —
- * `S29`, found by its `money-safety-auditor`. Nothing leaks there today only
- * because the branch that mints a secret sets three fields. `BACKLOG.md`.
+ * `S29`, found by its money-safety pass. Nothing leaks there today only
+ * because the branch that mints a secret sets three fields.
  *
  * **AND IT IS A FUNCTION RATHER THAN AN EXPRESSION INSIDE `seedDemo` BECAUSE
  * THE RULE HAS TO BE TESTABLE WITHOUT SEEDING.** `seedDemo` refuses as its
- * first statement (`C292`, `S26`), so a test that reaches this projection
+ * first statement, so a test that reaches this projection
  * through it cannot run at all — which left `payslip-key.test.ts` deliberately
  * red for a round. `S28` wrote the three ways out with none marked correct;
  * this is (a), and it changes what crosses the wire in exactly no way: the same

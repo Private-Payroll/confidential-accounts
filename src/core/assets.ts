@@ -19,7 +19,7 @@
  *
  * The registry lives in code here and in a Postgres table from migration 0004.
  * `SEED_ASSETS` below is what seeds it, so there is one list rather than two —
- * this project's oldest failure is a shared rule written twice (M-104).
+ * this project's oldest failure is a shared rule written twice.
  */
 
 /** An asset's code. `GBP`, `USDC`, `NIGHT`. Uppercase, ASCII, no spaces. */
@@ -72,7 +72,7 @@ export const SEED_ASSETS: readonly Asset[] = Object.freeze([
  * ------------------------------------------------------------------ */
 
 /**
- * **CAN MONEY IN THIS ASSET BE PAID PRIVATELY?** `S12`, `C250`, `C252`.
+ * **CAN MONEY IN THIS ASSET BE PAID PRIVATELY?**
  *
  * **A FUNCTION AND NOT A LIST AT A CALL SITE**, because the answer changes for
  * every asset at once on the day the converter is deployed, and a screen that
@@ -108,7 +108,7 @@ export type PrivateForm =
 export function privateForm(asset: Asset): PrivateForm {
   /*
    * **`why` SAYS WHAT THE AVAILABLE SIDE COSTS, NOT ONLY THAT THE OTHER SIDE IS
-   * SHUT.** `product-copy-auditor`, `S12`.
+   * SHUT.** product-copy pass.
    *
    * This is the sentence beside the option a company cannot pick, which makes
    * it the sentence they read at the moment they settle for a public payment.
@@ -297,7 +297,7 @@ export const sumAmounts = (xs: readonly bigint[]): bigint => xs.reduce((a, b) =>
 
 /**
  * **THE LARGEST AMOUNT ANY CHANGE MAY CARRY, AND THE ONE PLACE IT IS WRITTEN.**
- * `T-205`, `S46`.
+ *
  *
  * `Uint<128>`, because that is what `changeCommitmentOf` argument 2 is
  * (`contracts/managed/contract/index.js:4220`) and what the `changeAmount`
@@ -314,7 +314,7 @@ export const MAX_CHANGE_AMOUNT = (1n << 128n) - 1n;
 
 /**
  * **THE SUM A CHANGE COMMITS TO, REFUSED WHERE IT IS BUILT.** `T-205` `P2`,
- * raised to a money finding by `S46`'s `money-safety-auditor`.
+ * raised to a money finding by `S46`'s money-safety pass.
  *
  * ── WHY A SECOND SUMMING FUNCTION AND NOT A CHECK INSIDE `sumAmounts` ────────
  *
@@ -324,7 +324,7 @@ export const MAX_CHANGE_AMOUNT = (1n << 128n) - 1n;
  * inherited by a caller that only wanted to add three numbers up — the shape
  * `newProposalSalt` uses (`src/core/crypto.ts:141-146`): the assert is where
  * the value is MADE, not at either consumer, and it is a NAMED generator rather
- * than a widened shared one (`M-106`).
+ * than a widened shared one.
  *
  * ── WHAT WAS REACHABLE BEFORE IT, MEASURED ──────────────────────────────────
  *

@@ -1,5 +1,5 @@
 /**
- * Deterministic filler bytes for the preview scripts. M-137.
+ * Deterministic filler bytes for the preview scripts.
  *
  * **IT DECIDES NO IDENTITY ANY MORE, AND THAT IS `C334`.** `S35`, 31 Aug.
  *

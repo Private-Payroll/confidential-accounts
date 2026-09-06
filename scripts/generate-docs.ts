@@ -17,7 +17,7 @@
  *
  * WHAT IT REFUSES TO WRITE. The verifier-key column, when there are no verifier
  * keys on disk. `COMPILE-CONTRACT.command` and `COMPILE-VAULT.command` compile
- * with `--skip-zk` and delete `keys/` as they go (`C327`), which is the state
+ * with `--skip-zk` and delete `keys/` as they go, which is the state
  * after every ordinary compile — so this is the NORMAL case, not an edge one.
  * The cell then says the measurement was not taken and names the door that
  * would take it. Rule 9: a measurement you could not take is a refusal, and the
@@ -203,7 +203,7 @@ function fieldsBlock(edges: EdgeList): string {
 /**
  * THE BYTES, PRODUCED ONCE, FOR BOTH THE WRITER AND THE GATE.
  *
- * `T-167`. `generate()` writes what this returns and `scripts/doc-freshness.ts`
+ * `generate()` writes what this returns and `scripts/doc-freshness.ts`
  * COMPARES what this returns against what is on disk. One function, so the two
  * cannot disagree about what a current document is — which is what a list of
  * input files could never guarantee, because it was always a guess about what
@@ -244,7 +244,7 @@ export async function render(root: string): Promise<Rendered> {
   }
 
   // A RENDER THAT PRODUCED NOTHING IS AN ERROR RATHER THAN A CLEAN COMPARISON.
-  // `C238`: the gate compares rendered against on-disk, so an empty render
+  // The gate compares rendered against on-disk, so an empty render
   // would make every document look current, for ever, silently.
   for (const [id, body] of bodies) {
     if (body.trim().length === 0) throw new Error(`generate-docs: block "${id}" rendered EMPTY. Nothing was written and nothing was compared.`);

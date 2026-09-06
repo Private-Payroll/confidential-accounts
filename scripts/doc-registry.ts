@@ -28,7 +28,7 @@ export type GeneratedBlock = {
 /**
  * THERE IS NO LIST OF INPUT FILES HERE ANY MORE, AND ITS ABSENCE IS THE FIX.
  *
- * `T-167`. This registry used to carry one, and it was wrong three times in one
+ * This registry used to carry one, and it was wrong three times in one
  * round, each time in the same shape and each time repaired by moving a
  * boundary one step outwards:
  *
@@ -90,8 +90,8 @@ export const GENERATED_BLOCKS: readonly GeneratedBlock[] = [
 /**
  * FILES GENERATED WHOLE, WITH NO PROSE AROUND THEM AND THEREFORE NO DELIMITERS.
  *
- * `docs/design/edges.json` was outside the gate entirely until a `test-auditor`
- * and a `money-safety-auditor` found it independently — and it is the ONE
+ * `docs/design/edges.json` was outside the gate entirely until a test-coverage pass
+ * and a money-safety pass found it independently — and it is the ONE
  * artefact a later round reads INSTEAD of building its own picture. A hand-edit
  * setting a field's writers to `[]` passed the whole suite in silence.
  *

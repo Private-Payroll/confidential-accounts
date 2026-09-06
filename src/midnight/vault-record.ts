@@ -1,5 +1,5 @@
 /**
- * WHAT IS WRITTEN DOWN WHEN A VAULT IS CREATED, AND WHERE. S6e.
+ * WHAT IS WRITTEN DOWN WHEN A VAULT IS CREATED, AND WHERE.
  *
  * The account has one deployment and one file: `.midnight/<network>-contract.json`,
  * written by `scripts/deploy-preview.ts`. **A company has MANY vaults**, so a
@@ -134,12 +134,12 @@ export const vaultPoolSignersFile = (stateDir: string, name: string): string =>
 /**
  * THE IDS A VAULT'S TEST SIGNERS GET, AND WHY THEY CARRY THE VAULT'S NAME.
  *
- * `C275`. The mint used to hand every vault the ids `test-signer-1..N` and
+ * The mint used to hand every vault the ids `test-signer-1..N` and
  * write the secret halves into ONE shared file keyed by id. So the second
  * vault's run overwrote the first vault's secrets in place, under the same
  * names — and **the sealed pool record names its signers by ID and never by
  * public key**, so no code anywhere could compare the two and notice. The pool
- * key is the only record of a note's nonce, colour and value (`C284`) and a
+ * key is the only record of a note's nonce, colour and value and a
  * commitment on chain cannot be inverted to recover them, so the result is
  * money on chain that nobody can describe.
  *
@@ -209,7 +209,7 @@ export interface VaultEntry {
   name: string;
   /** Free text, for a person: "the UK payroll pot". Never load-bearing. */
   purpose?: string;
-  /** RECORDED, NEVER DISPLAYED. C236. */
+  /** RECORDED, NEVER DISPLAYED. */
   contractAddress: string;
   /** The account this vault is married to, pinned in its ledger at creation. V-37. */
   accountAddress: string;
@@ -357,7 +357,7 @@ export function updateVault(registry: VaultRegistry, entry: VaultEntry): VaultRe
 }
 
 /**
- * What a report, a console or a screen may say about a vault. `C236`.
+ * What a report, a console or a screen may say about a vault.
  *
  * **THE ADDRESS IS NOT IN IT, AND THAT IS THE WHOLE FUNCTION.** A shielded
  * output addressed to a vault without a `deposit` call is money on chain that

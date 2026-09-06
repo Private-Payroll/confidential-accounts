@@ -48,7 +48,7 @@ beforeEach(() => {
 });
 
 /*
- * **THE DEFAULT KIND WAS `'execute'` AND IS NOW `'approve'`. `C292`, `S26`.**
+ * **THE DEFAULT KIND WAS `'execute'` AND IS NOW `'approve'`. `C292`.**
  *
  * `JobKind` no longer has `'execute'` — the account's balance ledger went and
  * the circuit with it — so a job of that kind is an unrecognised kind, which
@@ -76,7 +76,7 @@ const job = (over: Partial<Job> = {}): Job => ({
 });
 
 /**
- * The proposal this job was built against. M-128.
+ * The proposal this job was built against.
  *
  * `round: 4` used to stand here, and an account had exactly one open proposal
  * at a time. Recovery asks about the proposal now, which is both narrower and
@@ -89,7 +89,7 @@ const PROPOSAL = 'bb'.repeat(32) as Hex;
  * TWO DIFFERENT ANSWERS FROM `viewDigestOf`, WHICH IS ALL THESE ARE FOR NOW.
  *
  * They used to be the on-chain balance map before and after a job's transition
- * (M-125), and `C292`/`S26` removed that map: `LedgerStatus.assets` survives on
+ *, and `C292`/`S26` removed that map: `LedgerStatus.assets` survives on
  * the interface but BOTH implementations now answer `[]` and nothing can ever
  * put an entry in it (`src/core/ledger.ts:911`, `src/midnight/ledger.ts`
  * `readContractState`). So these are no longer a picture of anything the chain
@@ -115,9 +115,9 @@ const status = (over: Partial<LedgerStatus> = {}): LedgerStatus => ({
   assets: ASSETS_BEFORE,
   openProposals: [{ id: PROPOSAL, change: 'ee'.repeat(32), approvals: 2 }],
   threshold: 2,
-  /* `R5`. Absence means inherit, so an account with no deliberate exception
+  /* Absence means inherit, so an account with no deliberate exception
    * reports an empty map and every vault is judged by `threshold` above. */
-  vaultThresholds: [], movementCount: 0, retiredVaults: [], // `T-220`, `S52`
+  vaultThresholds: [], movementCount: 0, retiredVaults: [], 
   ...over,
 });
 
@@ -130,7 +130,7 @@ const deps = (over: Partial<JobRunnerDeps> = {}): JobRunnerDeps => ({
   compiled: {},
   plan: async () => ({
     contractAddress: '0xcontract',
-    // `'execute'` stood here and went with the circuit. `C292`, `S26`. What is
+    // `'execute'` stood here and went with the circuit. What is
     // under test is the ORDER of prove/balance/submit, which no circuit name
     // changes — but a name the contract does not declare is a fixture lying
     // about the product, which is the one thing a fake must never do.
@@ -274,7 +274,7 @@ describe('recover', () => {
      * "retry" would rebuild against a proposal that no longer exists.
      *
      * This replaced "the round has moved past the one this job was built
-     * against" (M-128). Narrower on purpose: under the round design an
+     * against". Narrower on purpose: under the round design an
      * unrelated payment settling rotated the round and triggered this branch
      * for a job that was still perfectly applicable.
      */
@@ -363,7 +363,7 @@ describe('recover', () => {
 
 describe('expectationFor', () => {
   /*
-   * `'execute'` WAS THE FOURTH NAME IN THIS LIST AND IS GONE. `C292`, `S26`.
+   * `'execute'` WAS THE FOURTH NAME IN THIS LIST AND IS GONE.
    *
    * `JobKind` no longer declares it and `expectationFor` no longer has a case
    * for it, so it now falls to the `default` arm — UNSAFE to redo. Leaving it
@@ -402,7 +402,7 @@ describe('expectationFor', () => {
 
   it('carries the intended view digest through when the caller supplies one', () => {
     /*
-     * REPOINTED FROM `'execute'` ONTO `'approve'`. `C292`, `S26`.
+     * REPOINTED FROM `'execute'` ONTO `'approve'`.
      *
      * The rule is `expectationFor`'s, not the spend's: when the caller hands in
      * a digest the job was expected to produce, it must reach the expectation
@@ -417,7 +417,7 @@ describe('expectationFor', () => {
     const e = expectationFor(job({ kind: 'approve' }), PROPOSAL, LANDED);
     expect(e.viewDigest).toBe(LANDED);
     // And the proposal it was built against, which is what says whether it can
-    // still be applied at all. M-128.
+    // still be applied at all.
     expect(e.proposalId).toBe(PROPOSAL);
   });
 });

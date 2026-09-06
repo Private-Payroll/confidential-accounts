@@ -30,7 +30,7 @@
  *
  * ------------------------------------------------------------------------
  * **THE WINDOW THIS DOOR OPENS FOR THE FIRST TIME, AND WHY IT NEEDED MORE THAN
- * A SENTENCE.** `C199`, `C240`.
+ * A SENTENCE.**
  *
  * The pool is written AFTER the transaction, deliberately: the alternative
  * leaves a pool holding a note the chain does not have, which refuses every
@@ -39,7 +39,7 @@
  * chain and the history.
  *
  * **THAT WAS NOT TRUE FOR THIS ROUTE WHEN THIS DOOR WAS FIRST WRITTEN, AND THE
- * `money-safety-auditor` PASS IS WHAT SAID SO.** `replayVault` rebuilds from a
+ * money-safety pass PASS IS WHAT SAID SO.** `replayVault` rebuilds from a
  * `history` of vault events whose deposit events carry the whole coin —
  * `src/midnight/vault-recovery.ts` — and **nothing in this repository produces
  * a history.** The deposit's nonce is chosen here, a few statements before the
@@ -70,11 +70,11 @@
  * **WHAT IS CHECKED BEFORE ANYTHING IS SPENT, IN THE ORDER IT IS CHEAPEST**
  *
  *   · the vault carries all seven circuits **in its record** — a drifted
- *     deployment reads as an EMPTY vault rather than refusing (`C268`), which
+ *     deployment reads as an EMPTY vault rather than refusing, which
  *     is the one failure this door cannot detect afterwards;
- *   · the vault is married to the account deployed now (`C266`) — the same
- *     check `fund-vault.ts` makes, IMPORTED from it rather than written again
- *     (`M-104`);
+ *   · the vault is married to the account deployed now — the same
+ *     check `fund-vault.ts` makes, IMPORTED from it rather than written
+ *     again;
  *   · a colour recorded by `MINT-TEST-TOKEN.command`, and a wallet that holds
  *     enough of it;
  *   · **a pool this machine can open, and one whose signer set this run can
@@ -86,7 +86,7 @@
  *
  * `ROUND-S16.md` reasons that `C272` closes for a shielded deposit: no NIGHT
  * change output, and Zswap offers present, so both halves of `V-176`'s gap go
- * away. **The `platform-fact-checker` pass reads the ledger's own source
+ * away. **The platform fact-check pass reads the ledger's own source
  * differently, and the difference is the whole shape of the gap.**
  *
  * `per_tx_cost_reserve` counts Zswap items off the **contract's effects** —
@@ -212,7 +212,7 @@ let provingSeconds: number | null = null;
 
 /**
  * **THE REFUSAL WHEN THE WALLET HOLDS NONE OF THE COLOUR, AND WHICH OF TWO
- * THINGS IT SAYS.** `S17`.
+ * THINGS IT SAYS.**
  *
  * Exported so a test can pin both sentences without a chain. The states have
  * opposite remedies — waiting fixes one and nothing fixes the other — so a door
@@ -269,14 +269,14 @@ export function amountFromText(text: string): bigint {
 
 /**
  * **REFUSES A VAULT WHOSE RECORD IS NOT THE SEVEN-CIRCUIT ONE, AND IT IS A
- * STRICTER TEST THAN THE PUBLIC PATH'S.** `C268`, `C264`.
+ * STRICTER TEST THAN THE PUBLIC PATH'S.**
  *
  * `fund-vault.ts` asks only for `depositUnshielded`, because a public balance
  * is the ledger's own figure and a drifted reader cannot make it wrong. **The
  * private path reads a NOTE SET through a generated reader that decodes field
  * by field**, and against a deployment it does not match `.notes` can come back
  * as a well-formed EMPTY set with a working `member()` while `.payments`
- * throws. Measured on `payroll-test-1`, `C268`.
+ * throws. Measured on `payroll-test-1`.
  *
  * **AND THE REASON THIS GUARD FIRST CARRIED WAS FALSE, WHICH IS WORTH KEEPING
  * WRITTEN DOWN.** It said the deposit would land and *"every check this door
@@ -372,7 +372,7 @@ export function assertNoSignerIsDropped(
 
 /**
  * **WHICH SIGNER THIS RUN OPENS THE POOL AS, CHOSEN BY THE KEY AND NOT BY THE
- * NAME.** `C320`.
+ * NAME.**
  *
  * This used to be one `.find()` over `wrapped[].signerId` keeping the first id
  * whose `wrappingSecret` on this machine was 64 hex. **It never asked whether
@@ -415,7 +415,7 @@ export function assertNoSignerIsDropped(
  * what resolves a mismatch. Restoring one is a session's job — `BACKLOG.md`.
  *
  * Exported and pure so every outcome can be driven without a chain, a pool or a
- * key: `mintedSignerIds`' lesson (`C275`) is that a rule about money living
+ * key: `mintedSignerIds`' lesson is that a rule about money living
  * only inside a caller is a rule no test can reach.
  */
 export type OpenerVerdict = 'usable' | 'never-given' | 'mismatch' | 'uncheckable';
@@ -512,7 +512,7 @@ export function chooseOpener(
  *
  * Named after the vault rather than addressed by it, for `vault-pool-file.ts`'s
  * reason: a filename is a screen, and it is in every listing, every error and
- * every backup log (`C236`).
+ * every backup log.
  *
  * **IT IS A SEPARATE FILE FROM THE POOL AND THAT IS THE WHOLE DESIGN.** One
  * says what the vault HOLDS and the other says what was ATTEMPTED. Merging them
@@ -918,7 +918,7 @@ async function main(): Promise<DepositVerdict> {
    * into proving.
    *
    * **THE READ IS TAKEN AFTER THE SCAN, NOT THREE SECONDS AFTER THE WALLET WAS
-   * BUILT.** `S17`. This read happened once, immediately, and threw — twice on
+   * BUILT.** This read happened once, immediately, and threw — twice on
    * 30 August against a wallet that had held ten trillion of this colour
    * minutes earlier. The wait is `bringUpWallet`'s `withShielded`, above, and
    * its implementation is `shielded-wallet.ts`.
@@ -936,7 +936,7 @@ async function main(): Promise<DepositVerdict> {
      * **THE DISCLOSURE IS PRINTED ON EVERY PATH, INCLUDING THE ONE WHERE THE
      * NUMBER DECIDED THE OUTCOME.** The first draft printed it only on success,
      * which withheld *the deadline is a guess* from the single case where the
-     * guess is what a person is looking at. `S17`'s `money-safety-auditor`.
+     * guess is what a person is looking at. `S17`'s money-safety pass.
      */
     note(`  ${SHIELDED_DEADLINE_IS_NOT_MEASURED}`);
     if (scan.reached !== 'deadline' && scan.waitedMs > 0) {
@@ -944,7 +944,7 @@ async function main(): Promise<DepositVerdict> {
        * **AN UPPER BOUND, NOT A TIMING.** The wait samples every two seconds,
        * so this overstates by up to one poll and is not the first qualifying
        * emission. Calling it a measurement would be rule 9. `S17`'s
-       * `platform-fact-checker`.
+       * platform fact-check.
        */
       note(`  the scan finished within ${Math.round(scan.waitedMs / 1000)}s — an upper bound sampled every 2s, not a measurement.`);
     }
@@ -959,7 +959,7 @@ async function main(): Promise<DepositVerdict> {
    * would go on to prove and submit a spend from a view this door had just
    * finished calling incomplete. A partial scan can also over-report: it has
    * applied a coin's arrival and not yet the event that spent it. Found by
-   * `S17`'s `money-safety-auditor` pass, against this door.
+   * `S17`'s money-safety pass, against this door.
    */
   if (scan && scan.reached === 'deadline') {
     throw new Error(
@@ -971,7 +971,7 @@ async function main(): Promise<DepositVerdict> {
   if (shielded === null || shielded === 0n) {
     /*
      * **THREE STATES REACH THIS LINE AND NONE OF THEM IS SPELT LIKE ANOTHER.**
-     * `S17`. Waiting fixes one of them, nothing fixes another, and the third is
+     * Waiting fixes one of them, nothing fixes another, and the third is
      * this machine failing to read its own wallet. `whyNoCoin` decides on the
      * platform's own caught-up predicate and names which state it is in;
      * `null` is a read that failed and is never reported as an absence.
@@ -1028,8 +1028,8 @@ async function main(): Promise<DepositVerdict> {
    * `VaultLedger.balance` loads the pool, asks the chain for the vault's note
    * set, checks that every note the pool claims IS on chain and that the counts
    * agree, and only then returns a number. So this call answers three questions
-   * at once before anything is spent: the chain is readable (`C110`), the
-   * deployed state decodes against this reader (`C268`), and the pool and the
+   * at once before anything is spent: the chain is readable, the
+   * deployed state decodes against this reader, and the pool and the
    * chain already agree.
    *
    * **IT IS THE CLIENT'S OWN PATH AND NOT A SECOND ONE.** `M-104`, and `S13c`
@@ -1062,7 +1062,7 @@ async function main(): Promise<DepositVerdict> {
   /*
    * **THE NONCE IS THIS SIDE'S, AND IT IS FRESH.** The deposit CREATES the
    * coin, so the nonce is chosen before the transaction exists — that is what
-   * lets the note be recorded in the same breath (`C240`). Two deposits of the
+   * lets the note be recorded in the same breath. Two deposits of the
    * same amount and colour under one nonce are one coin, which the ledger will
    * not take twice.
    */
@@ -1265,14 +1265,14 @@ if (RUN_DIRECTLY) {
 
 /*
  * **`DEPOSIT-TO-VAULT.command`.** Recorded here because the door is what a
- * person opens (`C226`).
+ * person opens.
  *
  * WHAT IT PASSES:
  *
  *     MIDNIGHT_NETWORK_ID   the network the vault was deployed on.
  *     VAULT_NAME            the vault, by name. NO DEFAULT.
  *     DEPOSIT_AMOUNT        how much, digits only. NO DEFAULT.
- *     MIDNIGHT_PROOF_IMAGE  the pinned image (`C180`).
+ *     MIDNIGHT_PROOF_IMAGE  the pinned image.
  *
  * WHAT IT REFUSES, before running anything:
  *

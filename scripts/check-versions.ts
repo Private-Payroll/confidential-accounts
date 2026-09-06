@@ -1,5 +1,5 @@
 /**
- * M-17. Two questions, both of which have bitten this project.
+ * Two questions, both of which have bitten this project.
  *
  * 1. **Is what is installed exactly what is declared?** M-30 was two copies of
  *    the WASM runtime in `node_modules` — one pulled by a caret range resolving

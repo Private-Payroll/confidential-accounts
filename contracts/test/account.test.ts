@@ -26,13 +26,13 @@ describe('confidential account contract', () => {
   let cleo: AccountPrivateState;
   let mallory: AccountPrivateState;
   let sim: AccountSimulator;
-  /** Who is seated, in seating order — `addSigners` is cumulative. `S35d`. */
+  /** Who is seated, in seating order — `addSigners` is cumulative. */
   let seated: AccountPrivateState[] = [];
   /** A fresh salt per governed round, so two fixture rounds never collide. */
   let roundSeed = 310;
   /*
    * `funded` STOOD HERE — a zero `ShieldedView` passed into every `applying`.
-   * `C292`, `S26`: the account keeps no balance, so a device holds no view of
+   * The account keeps no balance, so a device holds no view of
    * one and `applying` takes only the change.
    */
 
@@ -40,7 +40,7 @@ describe('confidential account contract', () => {
    * Ada deploys. The account holds nothing and cannot.
    *
    * **THE `threshold` ARGUMENT WENT WITH THE CONSTRUCTOR'S.** `S35d`, `C340` +
-   * `C343`. Every account is founded one seat at one approval; `addSigners`
+   * Every account is founded one seat at one approval; `addSigners`
    * below seats the rest through approved rounds and takes the threshold up
    * afterwards, which is what a founder now does on chain.
    */
@@ -74,7 +74,7 @@ describe('confidential account contract', () => {
     sim.as(ada);
   };
 
-  /** Propose, and hand back the id the chain knows it by. M-128. */
+  /** Propose, and hand back the id the chain knows it by. */
   const propose = async (payload: Uint8Array, c = change(0n, 41)) => {
     await sim.as(sim.applying(ada, c)).propose(payload);
     return sim.proposalId(payload, c.salt);
@@ -110,7 +110,7 @@ describe('confidential account contract', () => {
     expect(sim.ledger.openProposals.size()).toBe(0n);
     /*
      * THERE IS NO BALANCE FIELD AT ALL, and that is a stronger assertion than
-     * the one it replaces. `C292`, `S26`.
+     * the one it replaces.
      *
      * This checked `assetBalances.size() === 0` — an empty map, on a contract
      * that still had one. An empty map is a claim about today; a missing field
@@ -159,7 +159,7 @@ describe('confidential account contract', () => {
   });
 
   /*
-   * M-13. Leaves are blinded commitments rather than public key hashes.
+   * Leaves are blinded commitments rather than public key hashes.
    *
    * Before this, addSigner published signerPublicKey(sk) directly, so anyone
    * reading transaction history had the whole signer set, and anyone with a
@@ -218,7 +218,7 @@ describe('confidential account contract', () => {
 
   it('COUNTS EVERY APPROVAL, AND COUNTS EACH ONE ONCE — the number the threshold is read against', async () => {
     /*
-     * `C307`. THE COUNTER ITSELF, WHICH NOTHING WAS TESTING ON PURPOSE.
+     * THE COUNTER ITSELF, WHICH NOTHING WAS TESTING ON PURPOSE.
      *
      * `MUTATE.command`'s `approving a proposal does not count` deletes the one
      * increment in `approve`. On 31 Aug it scored `WRONG TEST`: its named
@@ -232,7 +232,7 @@ describe('confidential account contract', () => {
      * about the counter — read off `REPORT-MUTATE.txt` entry [22], which prints
      * `Tests 110 failed | 122 passed (232)`. The brief and `T-69` both said
      * *ten*, inherited from `S27`; the instrument's own output is on disk and
-     * says otherwise. `docs/corrections.md`.
+     * says otherwise.
      *
      * The correction cuts against this test rather than for it: the line was
      * guarded by accident far more heavily than anybody thought. That does not
@@ -272,7 +272,7 @@ describe('confidential account contract', () => {
 
   it('holds a second proposal open alongside the first', async () => {
     /*
-     * THE OPPOSITE OF WHAT THIS FILE USED TO ASSERT. M-128.
+     * THE OPPOSITE OF WHAT THIS FILE USED TO ASSERT.
      *
      * The test here was `refuses a second proposal while one is open`, checking
      * `assert(!proposalOpen, "a proposal is already open")` — the line that
@@ -343,7 +343,7 @@ describe('confidential account contract', () => {
      */
     expect(sim.approvalsFor(next)).toBe(0n);
     /*
-     * PROBED THROUGH `setThreshold` RATHER THAN `execute`. `C292`, `S26`.
+     * PROBED THROUGH `setThreshold` RATHER THAN `execute`.
      *
      * This called `execute`, not because the test is about spending — it never
      * was — but because `execute` was the cheapest circuit that went through

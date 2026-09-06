@@ -1,10 +1,10 @@
 /**
  * **THE TWO DECISIONS THAT KEEP A SIGNER'S BLINDING ALIVE.** `C329`, `C325`,
- * `S34`.
+ *
  *
  * Both were written this round and both were found by `S34`'s own auditors —
- * the clobber by `money-safety-auditor`, the fact that the whole of the new
- * keyring code had no test at all by `test-auditor`. A blinding lives on one
+ * the clobber by a money-safety pass, the fact that the whole of the new
+ * keyring code had no test at all by a test-coverage pass. A blinding lives on one
  * device and nowhere else (decision 0003), so a function that can overwrite one
  * or bind material to the wrong seat decides whether an M-of-N account can
  * still reach its threshold.
@@ -103,7 +103,7 @@ describe('a published seat is bound to this device only on proof, never on a lab
   it('REFUSES a forged wrapped key that names somebody else’s seat', () => {
     /*
      * **THE FINDING THIS FUNCTION WAS REWRITTEN FOR.** `S34`'s
-     * `money-safety-auditor`, rule 14: the first version said a substituted
+     * money-safety pass, rule 14: the first version said a substituted
      * roster could not forge a match. `wrapKey` is PUBLIC-key sealing, and this
      * device published its wrapping public key one step earlier — so anybody
      * can produce a ciphertext that opens under this device's secret, and the

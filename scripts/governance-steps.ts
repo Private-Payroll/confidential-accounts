@@ -1,6 +1,6 @@
 /**
  * Removing a signer, reusing the slot they left, and moving the threshold —
- * on a real chain. M-115.
+ * on a real chain.
  *
  * WHY THIS EXISTS SEPARATELY. `run-preview.ts` drives the proposal path:
  * propose, approve, and the durable-job version of the same. `execute` and
@@ -63,7 +63,7 @@ const ZERO_32 = new Uint8Array(32);
 
 /**
  * The circuits this file calls, DERIVED from the generated contract rather than
- * transcribed from it. M-137.
+ * transcribed from it.
  *
  * This block used to be eight signatures written out by hand, with a comment
  * saying they had been copied from `contracts/managed/contract/index.d.ts` "by
@@ -104,7 +104,7 @@ export interface GovernanceContext {
   setProposalSalt: (salt: Uint8Array) => void;
   seededBytes: (seed: number) => Uint8Array;
   /**
-   * 32 fresh random bytes, DIFFERENT ON EVERY RUN. M-137.
+   * 32 fresh random bytes, DIFFERENT ON EVERY RUN.
    *
    * A proposal's id is `commit(payloadHash, salt)` and an approval's nullifier
    * is bound to that id, in a set the contract never clears. Seeded salts
@@ -171,7 +171,7 @@ export async function runGovernanceSteps(ctx: GovernanceContext): Promise<void> 
    * to be stable.
    * ------------------------------------------------------------------ */
 
-  /** Every proposal open at once, not "the" open one. M-128. */
+  /** Every proposal open at once, not "the" open one. */
   const openProposalsOf = (l: Ledger): Array<{ id: string; change: string; approvals: number }> =>
     [...l.openProposals]
       .map(([id, change]) => ({
@@ -216,7 +216,7 @@ export async function runGovernanceSteps(ctx: GovernanceContext): Promise<void> 
   /**
    * What the chain calls a proposal: `commit(payloadHash, salt)`.
    *
-   * COMPUTED HERE, BEFORE ANYTHING IS SUBMITTED. M-128. Every call that spends
+   * COMPUTED HERE, BEFORE ANYTHING IS SUBMITTED. Every call that spends
    * a proposal names which one, so the id has to be derivable without a round
    * trip — which is why the contract exports `proposalIdOf` rather than writing
    * the commitment inline.
@@ -317,7 +317,7 @@ export async function runGovernanceSteps(ctx: GovernanceContext): Promise<void> 
    * ------------------------------------------------------------------ */
 
   /**
-   * Enough approvers for whatever threshold the chain holds. M-137.
+   * Enough approvers for whatever threshold the chain holds.
    *
    * Every round below used to name two signers, which is correct only on an
    * account whose threshold is exactly 2 — the number RUN-PROPOSAL leaves
@@ -358,7 +358,7 @@ export async function runGovernanceSteps(ctx: GovernanceContext): Promise<void> 
   const before = await showSlots('slots before');
 
   /*
-   * What the account's money looks like before any of this. M-125, `C292`/`S26`.
+   * What the account's money looks like before any of this. M-125.
    *
    * Kept so the end of the run can say that governance moved none of it, rather
    * than leaving a reader to assume so.
@@ -378,13 +378,13 @@ export async function runGovernanceSteps(ctx: GovernanceContext): Promise<void> 
   }
 
   /*
-   * Clearing out anything an earlier run left open. M-128.
+   * Clearing out anything an earlier run left open.
    *
    * This used to be one `if (start.proposalOpen)`, because an account could hold
    * exactly one proposal and a stale one blocked the next `propose` outright.
    * An account holds as many as have been raised now, and a stale one blocks
    * nothing on its own — every proposal this run raises takes a FRESH salt
-   * (M-137) and therefore an id no earlier run can have used. So this is
+   * and therefore an id no earlier run can have used. So this is
    * housekeeping rather than a precondition: a run interrupted midway leaves
    * proposals behind that nothing will ever spend, and an account carrying a
    * growing pile of them makes every later reading of the chain harder to
@@ -416,7 +416,7 @@ export async function runGovernanceSteps(ctx: GovernanceContext): Promise<void> 
   await becomeSigner(A, 'A');
   // Three arguments. `addDId` names WHICH approved proposal authorises this —
   // the contract recomputes it from the caller's `proposalSalt` and refuses a
-  // proposal that commits to a different leaf (M-128). `false` asks for a fresh
+  // proposal that commits to a different leaf. `false` asks for a fresh
   // slot: nothing has been vacated yet, and asking to reuse one that does not
   // exist is refused rather than quietly corrected.
   await callCircuit('amendSigner D (seat)', () => found.callTx.amendSigner(leafD, addDId, false, false),
@@ -447,7 +447,7 @@ export async function runGovernanceSteps(ctx: GovernanceContext): Promise<void> 
   if (afterRemove.C !== before.C) throw new Error(`C moved from ${before.C} to ${afterRemove.C}`);
   if (afterRemove.D !== withD.D) throw new Error(`D moved from ${withD.D} to ${afterRemove.D}`);
   /*
-   * THE MARKER IS READ BACK, and absence of B is not enough. M-137.
+   * THE MARKER IS READ BACK, and absence of B is not enough.
    *
    * `removeSigner` writes `vacantSlot()` into the slot rather than blanking it,
    * and that distinction IS M-106: a blanked slot has no path in a sparse tree,
@@ -582,7 +582,7 @@ export async function runGovernanceSteps(ctx: GovernanceContext): Promise<void> 
     () => found.callTx.propose(bitePayload, ZERO_32, 0n, 0n, 0n, false, pureCircuits.noVault()),
     async () => isOpen(await readState(), biteId));
   /*
-   * ONE SHORT OF THE RAISED THRESHOLD, then the one more it now demands. M-137.
+   * ONE SHORT OF THE RAISED THRESHOLD, then the one more it now demands.
    *
    * This used to be a hardcoded A and C, then D — correct only when the raised
    * threshold is exactly 3, and silently the wrong test at any other number:
@@ -647,7 +647,7 @@ export async function runGovernanceSteps(ctx: GovernanceContext): Promise<void> 
    * ------------------------------------------------------------------ */
 
   /*
-   * BACK TO WHERE THE RUN FOUND IT, not to a literal 2. M-137.
+   * BACK TO WHERE THE RUN FOUND IT, not to a literal 2.
    *
    * `raised` is derived from the chain and the descent was hardcoded, so this
    * script LOWERED the threshold of any account that started above 2 and then

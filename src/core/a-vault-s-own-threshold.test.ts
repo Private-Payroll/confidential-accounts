@@ -82,7 +82,7 @@ const entry = (amount: bigint) => ({
 
 /**
  * **A RUN, WHICH IS THE ONLY ROUND THAT MAY NAME A VAULT.** `C367`, `T-237`,
- * `S55`.
+ *
  *
  * Every case below used to name its vault on a GOVERNANCE round, through
  * `AccountService.propose` or `SimulatedLedger.propose`. **That round cannot
@@ -229,7 +229,7 @@ describe('R5: the bar is the vault\'s own, and absence inherits the account\'s',
 
     /*
      * A THIRD CHECK STOOD HERE and is deleted with the thing it called. `C292`,
-     * `S26`. It settled the round through `accounts.execute` and asserted the
+     * It settled the round through `accounts.execute` and asserted the
      * proposal reached `executed` — the ledger agreeing at 2 as well as our
      * record, which was the point of asserting it twice over.
      *
@@ -335,7 +335,7 @@ describe('R5: a vault threshold nobody can meet is refused before anybody signs'
      * And nothing was written on the way through. A row against `noVault()` can
      * never be READ — it is not a key the contract's map can hold — so a version
      * that wrote one would look identical from the outside until somebody
-     * wondered why the number they set did nothing. `C178`.
+     * wondered why the number they set did nothing.
      */
     const after = (await h.accounts.ledgerStatus(account.id))!;
     expect(after.vaultThresholds).toEqual([]);
@@ -359,7 +359,7 @@ describe('R5: a vault threshold nobody can meet is refused before anybody signs'
      * the contract directly can still set it. `R4` made that a standing rule
      * for ceilings and it applies here unchanged.
      *
-     * **AND THE OTHER HALF OF THE PAIR IS NOW RUN RATHER THAN QUOTED.** `S6b`.
+     * **AND THE OTHER HALF OF THE PAIR IS NOW RUN RATHER THAN QUOTED.**
      * *"The contract would take it"* was, until this round, a claim read off
      * the circuit's own comment. `contracts/test/vault-threshold-recovery.test.ts`
      * now sets a vault threshold of nine on a two-signer account against the
@@ -390,7 +390,7 @@ describe('R5: a vault threshold nobody can meet is refused before anybody signs'
 /**
  * **AND THE OTHER HALF OF `R5`, WHICH IS THE HALF THAT WAS MISSING: A
  * GOVERNANCE ROUND IS JUDGED BY THE ACCOUNT'S THRESHOLD AND NEVER BY A
- * VAULT'S.** `C376`, `T-215`, `S52`.
+ * VAULT'S.**
  *
  * Everything above this line is the PAYMENT rule — a vault's own number decides
  * rounds against that vault — and it is right. The contract has a second rule
@@ -415,13 +415,13 @@ describe('R5: a vault threshold nobody can meet is refused before anybody signs'
  * REPOSITORY.** All four of the service's governance doors hard-code
  * `noVault()` (`src/core/account.ts:1105`, `:1210`, `:1406`, `:1571`), and
  * `noVault()` can never be a key in the map, so **no test written through the
- * service can reach the line at all** — `SC10`'s `test-auditor` measured
+ * service can reach the line at all** — `SC10`'s test-coverage pass measured
  * exactly that and reported the branch dead in every test. A rule the product
  * obeys only because no caller has yet passed the argument that would break it
  * is `C286`'s shape and rule 27's own question, and the answer has to be a test
  * that passes the argument.
  *
- * **THE POSITIVE CONTROL IS NOT OPTIONAL** (`T-69`): each case ends by adding
+ * **THE POSITIVE CONTROL IS NOT OPTIONAL**: each case ends by adding
  * the missing approval and watching the same call SUCCEED, so a service that
  * refused everything could not pass.
  *
@@ -439,7 +439,7 @@ describe('R5: a governance round is judged by the ACCOUNT\'s threshold, never a 
    *
    * **IT WAS `governanceRoundNaming` AND IT RAISED THE ROUND THROUGH
    * `SimulatedLedger.propose` WITH A VAULT. THAT ROUND CANNOT EXIST.** `C367`,
-   * `T-237`, `S55`. `contracts/src/ConfidentialAccount.compact:2319` asserts
+   * `contracts/src/ConfidentialAccount.compact:2319` asserts
    * `vault == noVault()` on the governance branch and this layer now mirrors
    * it, so the setup these three cases were built on is a state the chain
    * refuses — which is `C286`'s shape inside the pin that was written to catch
@@ -561,7 +561,7 @@ describe('R5: a governance round is judged by the ACCOUNT\'s threshold, never a 
   it('judges a round naming a vault whose bar is HIGHER by the account\'s lower one', async () => {
     /*
      * **THE CASE THAT SEPARATES *does not look a vault up* FROM *takes the
-     * stricter of the two*, AND IT IS HERE BECAUSE `S52`'s OWN `test-auditor`
+     * stricter of the two*, AND IT IS HERE BECAUSE `S52`'s OWN test-coverage pass
      * SHOWED THE FIRST TWO DID NOT.** It demonstrated that
      * `const bar = Math.max(a.threshold, a.vaultThresholds.get(p.vault) ?? 0)`
      * — an implementation that still performs the lookup the contract's
@@ -617,7 +617,7 @@ describe('R5: a governance round is judged by the ACCOUNT\'s threshold, never a 
   it('judges a GOVERNANCE round by the account, with the SENTINEL seated in the map — `C368`', async () => {
     /*
      * **THE PIN THE OTHER THREE CASES CAN NO LONGER CARRY, AND THIS ROUND'S
-     * `money-safety-auditor` IS WHY IT IS HERE.** `S55`.
+     * money-safety pass IS WHY IT IS HERE.**
      *
      * `C376`'s property is *a GOVERNANCE round is judged by the account's
      * threshold, never a vault's*. After `T-237` no governance proposal can
@@ -715,7 +715,7 @@ describe('R5: a governance round is judged by the ACCOUNT\'s threshold, never a 
   it('refuses a removeSigner round that has only met the vault it names — `T-290`, `S58`', async () => {
     /*
      * **THE FOURTH CALLER, AND UNTIL THIS CASE IT WAS DRIVEN BY NOTHING.**
-     * `T-290`, `C376`. `SimulatedLedger.requireApproved` has exactly four
+     * `SimulatedLedger.requireApproved` has exactly four
      * callers — `addSigner`, `removeSigner`, `setThreshold` and
      * `setVaultThreshold` — and the three cases above drive two of them.
      * **`grep -c removeSigner` over this file returned 1 before this case, and

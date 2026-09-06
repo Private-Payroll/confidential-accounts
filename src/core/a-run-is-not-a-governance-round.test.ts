@@ -1,7 +1,7 @@
 /**
  * **THE `Ledger` BOUNDARY CAN RAISE A PAYROLL RUN, AND A RUN IS NOT A
  * GOVERNANCE ROUND WITH A DIFFERENT NAME.** `C375`, `T-213`, board row
- * `2y7d4`, `S47`.
+ * `2y7d4`.
  *
  * **WHY THIS FILE EXISTS BESIDE `contracts/test/the-payroll-run-meets-the-chain.test.ts`
  * RATHER THAN INSTEAD OF IT.** That file is the one that matters: it drives the
@@ -13,7 +13,7 @@
  * and refuses the four ways a run can be built that nobody could ever pay.
  *
  * **AND IT EXISTS BECAUSE `runWindows` HAD NO READER.** `S47`'s own
- * `money-safety-auditor` measured that the window write could be deleted with
+ * money-safety pass measured that the window write could be deleted with
  * the whole suite staying green — so the distinction was held up by the comment
  * asserting it. Rule 27, and the reason `runWindowOf` was added.
  */

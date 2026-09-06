@@ -134,7 +134,7 @@ export class PluginService {
       throw new Error('this plug-in cannot propose spending, so an allowance is meaningless');
     }
     /*
-     * A ceiling per asset, and every asset named has to be a real one. M-125.
+     * A ceiling per asset, and every asset named has to be a real one.
      *
      * Checked here rather than at spend time because an allowance granted in a
      * currency the registry has never heard of is a limit nobody can enforce —
@@ -227,7 +227,7 @@ export class PluginService {
     // leak them.
     this.log(install, 'read state', 'totals only', true);
     /*
-     * THE ENTRY COUNT, AND NOTHING ELSE. `C292`.
+     * THE ENTRY COUNT, AND NOTHING ELSE.
      *
      * A balance per asset stood here. The account keeps no balance, so a
      * totals-scoped plug-in has one honest number to be given: how many entries
@@ -242,13 +242,13 @@ export class PluginService {
    * A plug-in can no longer read the roster, and that is the correct outcome.
    *
    * This used to return names, titles and statuses — which worked only because
-   * WE could read them. Sealing the roster (S-9) removes that, and it should:
+   * WE could read them. Sealing the roster removes that, and it should:
    * a plug-in reading employee names off the back of the operator's own access
    * was never a permission the customer granted, it was a side effect of the
    * data being in the clear.
    *
    * Giving a plug-in genuine scoped access means delegating a key to it, which
-   * is real design work and is tracked separately (M-95). Until then this
+   * is real design work and is tracked separately. Until then this
    * returns what the store can actually see, and the scope is honest about
    * being unimplemented rather than quietly over-delivering.
    */
@@ -258,7 +258,7 @@ export class PluginService {
   }
 
   /**
-   * A plug-in can see that runs exist, not what they cost. S-9, M-95.
+   * A plug-in can see that runs exist, not what they cost.
    *
    * `total` and headcount used to be here, and worked only because WE could
    * read them. Real scoped access means delegating a key to the installation.
@@ -283,7 +283,7 @@ export class PluginService {
       throw new Error('this plug-in has no spending allowance');
     }
     /*
-     * THE CEILING IS LOOKED UP BY THE ASSET BEING SPENT. M-125.
+     * THE CEILING IS LOOKED UP BY THE ASSET BEING SPENT.
      *
      * That one line is the whole safety property, and it is why the caller may
      * name the asset here where a single-asset allowance would have had to

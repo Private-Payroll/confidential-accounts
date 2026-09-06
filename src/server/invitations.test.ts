@@ -1,7 +1,7 @@
 /**
  * **THE ROUND THAT LETS SOMEBODY BE HIRED, TESTED AT THE DOORS IT OPENS.**
  * `docs/NEXT.md` `X11` §1, §6 and §7,
- * `docs/how-money-can-be-lost.md` `C160`, `C156`, `C21`.
+ * `docs/how-money-can-be-lost.md` `C160`.
  *
  * ── WHY OVER REAL HTTP ───────────────────────────────────────────────────
  *
@@ -44,7 +44,7 @@ const NETWORK = networkOfThePair(process.env.MIDNIGHT_NETWORK_ID);
 
 /**
  * **WHY THESE PEOPLE ARE SEEDED WITH AN EMAIL, AND WHY IT NO LONGER DECIDES
- * ANYTHING.** `PI4c`, `PI4b`, `C21`, `C153`.
+ * ANYTHING.**
  *
  * ── WHAT THIS BLOCK USED TO BE FOR ───────────────────────────────────────
  *
@@ -75,7 +75,7 @@ const NETWORK = networkOfThePair(process.env.MIDNIGHT_NETWORK_ID);
  * spec without one, and the delivery port is keyed on it. That is `C21`'s other
  * half and it reaches the hire form, the roster and `C24`; it is not this
  * round's. These rows also give each test a distinct person, which the one
- * payable entry per person cap (`C26`) needs.
+ * payable entry per person cap needs.
  *
  * ── HOW THE SEEDING WORKS, AND WHY IT IS NOT A FAKE SIGN-IN ──────────────
  *
@@ -362,7 +362,7 @@ describe('§7 — the browser seals and the route takes a blob it cannot open', 
        * corrupt one can only be found where the key is. What matters is that
        * finding it there does not strand the person: **a refusal that spends
        * the invitation freezes the whole account's payroll behind one hire**
-       * (`C17`, `C28`), and no route re-opens an invitation.
+       *, and no route re-opens an invitation.
        */
       const c = await withACompany();
       const other = await withACompany();
@@ -413,7 +413,7 @@ describe('§4 — `active` is not a status somebody can just be given', () => {
     expect(forced.body.error).toMatch(/no address on file/u);
 
     /* And withdrawing still works, because it is the only exit from an
-     * invitation that can never be admitted. `C28`. */
+     * invitation that can never be admitted. */
     const withdrawn = await call('POST', `/api/people/${employeeId}/status`, {
       token: c.admin.token, body: { status: 'leaver', viewingKey: c.viewingKey },
     });
@@ -464,7 +464,7 @@ describe('§2 — the code the invitee pasted, and the one this machine works ou
         offer.body.inboxPublicKey);
 
       /* **NEITHER VALUE CROSSES THE WIRE.** The address was already sealed —
-       * `C160` — and the code is a hundred bits that identify one address, so
+       * And the code is a hundred bits that identify one address, so
        * it goes INSIDE the envelope rather than beside it. */
       const onTheWire = JSON.stringify(handover);
       expect(onTheWire).not.toContain(address);
@@ -642,7 +642,7 @@ describe('§3 — expiry and revocation, enforced where the offer is read', () =
      * there is putting somebody on the payroll whose hire was called off.
      *
      * And it refuses the way every other refusal in `admit` does — the box
-     * emptied, nobody stranded `pending` behind a run (`C28`).
+     * emptied, nobody stranded `pending` behind a run.
      */
     const c = await withACompany();
     const dana = await register('Dana');
@@ -684,7 +684,7 @@ describe('PI4c — AND WHAT A REAL INVITEE GETS TODAY, WHICH IS HIRED', () => {
     async () => {
       /*
        * **THIS TEST WAS THE OPPOSITE CLAIM UNTIL `PI4c`, AND IT WAS RIGHT
-       * WHEN IT WAS WRITTEN.** `C21`, `C153`, `X12` §2.
+       * WHEN IT WAS WRITTEN.**
        *
        * It asserted that a real invitee — somebody who signs in with a wallet,
        * which is everybody, because `PI4b` deleted the password — **is refused
@@ -761,7 +761,7 @@ describe('PI4c — AND WHAT A REAL INVITEE GETS TODAY, WHICH IS HIRED', () => {
     async () => {
       /*
        * **THE POINT OF THE ROUND. REMOVING A CHECK IS ONLY SAFE IF THE THING
-       * THAT REPLACED IT ACTUALLY BITES.** `X12` §2, `C21`.
+       * THAT REPLACED IT ACTUALLY BITES.**
        *
        * The scenario is a join page that took the person's approval and sealed
        * SOMEBODY ELSE'S address. Every other check in `admit` passes: the
@@ -778,7 +778,7 @@ describe('PI4c — AND WHAT A REAL INVITEE GETS TODAY, WHICH IS HIRED', () => {
        * than advice.
        *
        * **AND IT REFUSES THE WAY EVERY OTHER REFUSAL IN `admit` DOES** —
-       * `C28`: the box emptied, the invitation put back, nobody stranded
+       * The box emptied, the invitation put back, nobody stranded
        * `pending` behind a run that will not build while anybody is.
        */
       const c = await withACompany();

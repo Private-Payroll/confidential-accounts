@@ -186,7 +186,7 @@ describe('the real artifacts, read end to end', () => {
     expect(account.fields.map((f) => f.name)).toEqual([
       // S35c fixed this table for ever. Slots 0-13, in declaration order; slot
       // 14 is deliberately empty and is the guard's margin, not inventory
-      // (`T-170`). `runStart`+`runEnd` became `runWindow` and `signerCount` was
+      //. `runStart`+`runEnd` became `runWindow` and `signerCount` was
       // deleted as derivable from `signerLeaves.size()`; the last four are
       // reserved, and three of them have no circuit anywhere.
       'signers', 'approvals', 'openProposals', 'approvalCounts', 'movements', 'threshold',
@@ -293,7 +293,7 @@ describe('the real artifacts, read end to end', () => {
 
   it('THE VERIFIER-KEY COLUMN REFUSES RATHER THAN GOING BLANK when keys are absent', async () => {
     // COMPILE-CONTRACT.command compiles with --skip-zk and leaves no keys/
-    // (C327), which is the state after every ordinary compile. A blank cell
+    //, which is the state after every ordinary compile. A blank cell
     // reads as "this circuit has no verifier key", which is a different claim.
     const account = await readContract(ROOT, ARTIFACTS[0]);
     for (const c of account.circuits.filter((x) => !x.pure)) {

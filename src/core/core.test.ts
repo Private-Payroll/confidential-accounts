@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FileStore } from './store-file.js';
-/* `signerRemovePayload` was imported here until `S44`; it is a scheme method now. `C373`. */
+/* `signerRemovePayload` was imported here until `S44`; it is a scheme method now. */
 import { SimulatedLedger, SimulatedProofSystem, SimulatedCommitments } from './ledger.js';
 import type { LedgerStatus, StateChange, StateView } from './ledger.js';
 import { AccountService, openAccount, sealAccount, approvalMessage } from './account.js';
@@ -61,7 +61,7 @@ const handedOver = (
 };
 
 /**
- * **`limits` IS GONE FROM HERE.** `PI4b`.
+ * **`limits` IS GONE FROM HERE.**
  *
  * It existed so a test about the SHAPE of the limiter did not have to spend
  * sixty round trips reaching the production ceiling — and every test that used
@@ -119,7 +119,7 @@ const signIn = (h: { store: { putUser: (u: any) => void } }, email: string, name
 };
 
 /**
- * The store as text, with every ciphertext and key blanked. M-101.
+ * The store as text, with every ciphertext and key blanked.
  *
  * Searching raw ciphertext for a salary is a false-positive generator, and it
  * was firing about one run in twenty. The sealed bodies are hex, `"6200"` and
@@ -138,7 +138,7 @@ const signIn = (h: { store: { putUser: (u: any) => void } }, email: string, name
  * hex characters — are searched in the RAW text instead. At that length a
  * chance collision is not a thing that happens.
  *
- * BIGINTS ARE RENDERED AS THEIR DIGITS. M-125. Every amount is a bigint now and
+ * BIGINTS ARE RENDERED AS THEIR DIGITS. Every amount is a bigint now and
  * `JSON.stringify` throws on one, which would turn this helper into a crash
  * rather than a check. Their decimal digits are exactly what a leaked salary
  * would look like in the file the store writes, so rendering them is the
@@ -148,7 +148,7 @@ const signIn = (h: { store: { putUser: (u: any) => void } }, email: string, name
  * MOVED OUT, 16 Aug. This was a private helper here, and `sealed-records.test.ts`
  * wrote the same check without it — because there was no way to reach it — and
  * flaked at random for two afternoons. One rule held somewhere nobody else can
- * get to is the same defect as one rule written twice. T-12.
+ * get to is the same defect as one rule written twice.
  */
 const readableStore = redactHex;
 
@@ -163,7 +163,7 @@ const LEAF = 'ab'.repeat(32);
  */
 
 /**
- * Edits an account the way a signer holding the key would. M-96.
+ * Edits an account the way a signer holding the key would.
  *
  * Since the account is sealed, a test that wants to change a spending limit or
  * shove a ghost signer into the roster can no longer reach into the store and
@@ -236,7 +236,7 @@ describe('account layer', () => {
   it('blocks a proposal that breaches a role spending limit', async () => {
     const { account, viewingKey, secrets } = await h.accounts.create('Acme', THREE_SIGNERS, 2);
     /*
-     * A CEILING IS KEYED BY ASSET. M-125.
+     * A CEILING IS KEYED BY ASSET.
      *
      * `limitsByRole.approver` used to be one `SpendingLimit`; it is now one per
      * asset, because 5,000 is a sensible monthly ceiling in pounds and a
@@ -268,7 +268,7 @@ describe('payroll and disclosure', () => {
   async function setup() {
     const created = await h.accounts.create('Acme', THREE_SIGNERS, 2);
     // Every figure is an integer in the asset's smallest unit, so £6,200.00 is
-    // `6_200_00n`. There is no float anywhere in this system. M-125, D11.
+    // `6_200_00n`. There is no float anywhere in this system.
     const { run, secrets: emp } = await h.payroll.createRun(created.account.id, '2026-07', [
       { name: 'Dana', asset: 'GBP', amount: 6_200_00n },
       { name: 'Eli', asset: 'GBP', amount: 4_800_00n },
@@ -300,7 +300,7 @@ describe('payroll and disclosure', () => {
 
   it('leaks no salary, name or email TO US — the store itself', async () => {
     /*
-     * S-9. The test that was missing, and whose absence let the leak survive.
+     * The test that was missing, and whose absence let the leak survive.
      *
      * The one below it checks what the CHAIN can see, and its name reads as
      * "everyone" when it means "an outside observer of the ledger". Our own
@@ -351,7 +351,7 @@ describe('payroll and disclosure', () => {
   });
 
   /*
-   * THREE SOLVENCY TESTS STOOD HERE AND ARE REPLACED BY ONE. `C292`, `S26`.
+   * THREE SOLVENCY TESTS STOOD HERE AND ARE REPLACED BY ONE.
    *
    * They proved a threshold against the account's balance, refused an asset it
    * had never held, and refused a false statement. All three needed a balance,
@@ -372,7 +372,7 @@ describe('payroll and disclosure', () => {
 
   /**
    * **THE REFUSAL USED TO SAY *"cannot attest an unsettled run"*, AND `S47`
-   * CHANGED THE SENTENCE RATHER THAN THE BEHAVIOUR.** `T-217` `F10`, `T-234`.
+   * CHANGED THE SENTENCE RATHER THAN THE BEHAVIOUR.** `T-217` `F10`.
    *
    * That wording describes a RUN, as though settling one were a step somebody
    * could go and take. It is not: `run.status` is assigned in exactly two
@@ -489,7 +489,7 @@ describe('onboarding', () => {
       proposedBy: secrets[0].signerId,
     });
     /*
-     * **A REAL SIGNATURE, SO THE REFUSAL IS THE ONE THIS TEST NAMES.** `C121`.
+     * **A REAL SIGNATURE, SO THE REFUSAL IS THE ONE THIS TEST NAMES.**
      *
      * Passing `sk.secret` where a signature belongs would also be refused, and
      * this test would stay green while asserting nothing about `status` — the
@@ -620,7 +620,7 @@ describe('onboarding', () => {
      * redeemer the payee?", and the email check answers it directly — so a
      * founder inviting themselves passes naturally, because they ARE that
      * address. What the refusal bought was one extra step for an attacker who
-     * succeeds anyway (`C21`); what it cost was a second flow so founders could
+     * succeeds anyway; what it cost was a second flow so founders could
      * get on their own payroll, and that flow became `C24` — an active payable
      * entry under anybody's name for one POST.
      *
@@ -922,7 +922,7 @@ describe('onboarding', () => {
      * later compares against, so they can redeem it themselves either way. This
      * removes one step from that; it creates nothing. And the delivery port
      * beside it already retained every raw token it was handed, in memory, for
-     * the life of the process (`C8`).
+     * the life of the process.
      *
      * **THE EXHAUSTIVE KEY CHECK STAYS, AND IT IS THE POINT OF THIS LINE.** The
      * first version of this test asserted `not.toContain('invite')` — a key that
@@ -1091,7 +1091,7 @@ describe('onboarding', () => {
      * **SO WHAT ACTUALLY STANDS HERE NOW.** The fact is recorded rather than
      * refused: `selfRaised` is written onto the roster entry, where an admin
      * reviewing can see that one sign-in both raised and redeemed this
-     * invitation. And the one payable entry per person cap (`C26`) still means
+     * invitation. And the one payable entry per person cap still means
      * this cannot be repeated into a second salary — the test above is that.
      *
      * **AND WHAT IS OPEN, SAID OUT LOUD RATHER THAN IMPLIED.** `X12`'s
@@ -1142,7 +1142,7 @@ describe('onboarding', () => {
     });
 
     const me = h.payroll.addSelfAsPayee(account.id, solo, {
-      /* The email here is IGNORED — it comes off the caller's sign-in. C24. */
+      /* The email here is IGNORED — it comes off the caller's sign-in. */
       name: 'Me', email: 'somebody-else@a.co', title: 'Founder', asset: 'GBP', baseAmount: 100_00n,
     }, viewingKey, {
       wrappingPublicKey: newWrappingKeypair().publicKey,
@@ -1157,7 +1157,7 @@ describe('onboarding', () => {
      * THE RECORD IS ABOUT THE CALLER, whatever the body asked for. The first
      * version took the email from the request, so one authenticated call could
      * mint an active payee under somebody else's name pointing at the caller's
-     * address, repeatably, at any amount. `C24`.
+     * address, repeatably, at any amount.
      */
     expect(me.email).toBe('solo@acme.co');
     expect(me.email).not.toBe('somebody-else@a.co');
@@ -1400,7 +1400,7 @@ describe('onboarding', () => {
      * the new one opens the roster entry and not the box. The invite refuses a
      * second handover as "already used", so the person was permanently
      * unadmittable — and since a run refuses to build while anybody is pending,
-     * the whole company's payroll froze behind one new hire. C17.
+     * the whole company's payroll froze behind one new hire.
      */
     const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2);
     const { employee, sentTo } = h.payroll.invite(account.id, {
@@ -1525,7 +1525,7 @@ describe('onboarding', () => {
 
   /**
    * **AN ADDRESS THAT COMES BACK OUT OF THE SEAL IS A PARSED ONE, NOT A REVIVED
-   * OBJECT.** `A-1`, `C246`, `S6k`.
+   * OBJECT.** `A-1`.
    *
    * `openRecord` returns JSON and `PayeeAddress`'s brand is a compile-time
    * symbol, so what comes back type-checks as an address and, before this, was
@@ -1639,7 +1639,7 @@ describe('plug-ins', () => {
       accountId: c.account.id, pluginId: 'treasury-yield',
       scopes: ['state:read', 'proposal:create'],
       /*
-       * A CEILING PER ASSET, in ONE installation. M-125.
+       * A CEILING PER ASSET, in ONE installation.
        *
        * The first version of this made an installation single-asset and said a
        * plug-in needing two should be installed twice — the same safety,
@@ -1665,7 +1665,7 @@ describe('plug-ins', () => {
      * The other half of the per-asset ceiling, and the reason the allowance is
      * a map with no fallback. An asset with no entry is not a limit of zero and
      * not a limit of infinity — it is an asset this plug-in was never granted,
-     * and the refusal says which assets it may spend instead. M-125.
+     * and the refusal says which assets it may spend instead.
      *
      * Without this a plug-in granted a sterling ceiling could spend ether
      * against it: 5,000 is a sensible weekly limit in pounds and roughly
@@ -1695,7 +1695,7 @@ describe('plug-ins', () => {
      * Checked when the grant is made rather than at the first payment, because
      * an allowance in a currency nobody can resolve is a limit nobody can
      * enforce — and the first payment is the worst possible moment to discover
-     * that. M-125.
+     * that.
      */
     const c = await acct();
     expect(() => h.plugins.install({
@@ -1745,7 +1745,7 @@ describe('identity', () => {
 
   /**
    * **A PERSON WITH A SESSION AND A SEALED BUNDLE, AND NO CREDENTIAL AT ALL.**
-   * `PI4b`.
+   *
    *
    * This used to be `enrol(email, password)`: it stretched the password with
    * argon2id, sent the `authKey` half to `register`, and sealed the bundle
@@ -1779,7 +1779,7 @@ describe('identity', () => {
   };
 
   /*
-   * `C40`. The bundle is replaced WHOLE, so two devices signed in at once used
+   * The bundle is replaced WHOLE, so two devices signed in at once used
    * to overwrite each other silently: one records a seat, the other creates a
    * company, and the second write erased the first with a 200. What it erased
    * is the one value a derived seat still stores, so the membership it recorded
@@ -1818,7 +1818,7 @@ describe('identity', () => {
     const seal2 = seal(JSON.stringify({ from: 'phone' }), encKey);
 
     /*
-     * THE ROW ARRIVES AT ONE, so the count starts there. `C41`.
+     * THE ROW ARRIVES AT ONE, so the count starts there.
      *
      * The first version of this test asserted zero here, which was the server
      * half of a disagreement with the client — and because the test agreed with
@@ -1855,7 +1855,7 @@ describe('identity', () => {
   });
 
   /*
-   * **NINE RECOVERY TESTS WERE DELETED HERE, NOT REWRITTEN.** `PI4a`.
+   * **NINE RECOVERY TESTS WERE DELETED HERE, NOT REWRITTEN.**
    *
    * They covered a flow that could not serve a wallet account and had no client
    * — see `docs/reports/PI4a-proof-of-death.md`, written before the deletion.
@@ -1865,7 +1865,7 @@ describe('identity', () => {
    */
   /*
    * **AND TEN PASSWORD TESTS WENT FROM HERE, FOR THE SAME REASON.**
-   * `PI4b`, `C129`. **Every one is named**, so that what stopped being watched
+   * **Every one is named**, so that what stopped being watched
    * is legible rather than implied by a smaller number at the bottom of a run:
    *
    *   · *registers and logs in, and the server never holds anything that
@@ -1933,7 +1933,7 @@ describe('identity', () => {
   it('signs out the other devices and keeps the one asking', async () => {
     /*
      * **THIS IS THE WHOLE OF WHAT A PASSWORD CHANGE USED TO BE GOOD FOR.**
-     * `PI4b`. `replaceKeyBundle` ended every other session as a side effect of
+     * `replaceKeyBundle` ended every other session as a side effect of
      * rotating the bundle; the rotation is gone and this is the door that was
      * doing the useful half all along.
      */
@@ -2034,7 +2034,7 @@ describe('multi-tenancy', () => {
   /**
    * A person on this deployment.
    *
-   * **`PI4b`: THIS USED TO STRETCH A PASSWORD AND REGISTER.** Nothing in this
+   * **THIS USED TO STRETCH A PASSWORD AND REGISTER.** Nothing in this
    * describe is about how somebody proved who they were — it is about whether
    * two tenants on one deployment can reach each other — so what it needs is a
    * `User` row, which is what a wallet sign-in leaves.
@@ -2146,7 +2146,7 @@ describe('multi-tenancy', () => {
 });
 
 /**
- * M-29. The approval round is enforced, not recorded.
+ * The approval round is enforced, not recorded.
  *
  * Before this, `SimulatedLedger` accepted any state at any time. That made the
  * boundary a faithful model of the easiest implementation to write and an
@@ -2181,7 +2181,7 @@ describe('the approval round, as the chain enforces it', () => {
 
   /*
    * 'a fresh account is at round 1 with nothing open — matching the constructor'
-   * WAS HERE AND IS DELETED. M-128.
+   * WAS HERE AND IS DELETED.
    *
    * It checked that `LedgerStatus.round` started at 1, because the contract's
    * constructor did `round.increment(1)` and a simulation starting at 0 would
@@ -2200,7 +2200,7 @@ describe('the approval round, as the chain enforces it', () => {
     expect(status.threshold).toBe(2);
     expect(status.signerCount).toBe(3);
     /*
-     * NO ASSET ENTRIES, EVER. `C292`, `S26`.
+     * NO ASSET ENTRIES, EVER.
      *
      * This asserted ONE entry, for the one asset a deposit had credited, and
      * that the key was opaque rather than the asset code. The account keeps no
@@ -2217,7 +2217,7 @@ describe('the approval round, as the chain enforces it', () => {
   /*
    * ───────────────────────────────────────────────────────────────────────────
    * **WHAT REPLACED `publicView().settlements`, AND WHY A TEST HAD TO.**
-   * `C313`, `C286`, rule 27. `S29`.
+   * `C313`, `C286`, rule 27.
    *
    * `publicView` is the evidence behind *a public observer learns nothing*, and
    * until `S29` it answered with `settlements: []` — an array `settleRound`
@@ -2240,7 +2240,7 @@ describe('the approval round, as the chain enforces it', () => {
    * spreads this object and then overwrites `proposals` with a store-derived
    * list of its own (`src/server/index.ts`), so the half of the response a
    * stranger actually reads is not walked here at all, and nothing in this
-   * repository exercises `GET /api/public`. `BACKLOG.md`.
+   * repository exercises `GET /api/public`.
    *
    * **THE WALKER IS CONTROLLED BOTH WAYS.** An absence test whose probe cannot
    * see the thing it looks for passes perfectly, so the probe is run over an
@@ -2373,7 +2373,7 @@ describe('the approval round, as the chain enforces it', () => {
      * account was allowed to have and burned every approval on the account,
      * including approvals given to something else. It existed because a single
      * proposal that would never reach its threshold wedged the account
-     * permanently (M-29).
+     * permanently.
      *
      * M-128 gives it a proposal id. The named proposal is deleted along with
      * the approvals given to it, and nothing else on the account moves — and
@@ -2418,7 +2418,7 @@ describe('the approval round, as the chain enforces it', () => {
     const c = await funded();
     // A signer the account service knows about but the tree does not: exactly
     // what `grantAccess` produces today, because it makes a signer active
-    // locally without adding their leaf on chain. M-69.
+    // locally without adding their leaf on chain.
     const outsider = newSigningKeypair();
     editAccount(h, c.account.id, c.viewingKey, a => {
       a.signers.push({
@@ -2465,7 +2465,7 @@ describe('the approval round, as the chain enforces it', () => {
 });
 
 /**
- * M-69. A granted signer can actually act.
+ * A granted signer can actually act.
  *
  * `grantAccess` used to set `status = 'active'` and stop. The viewing key was
  * re-wrapped, so the signer could READ the account — and every circuit begins
@@ -2492,7 +2492,7 @@ describe('granting access puts the signer in the on-chain set', () => {
     await h.accounts.grantAccess(c.account.id, c.viewingKey, blake.id);
 
     // The proposal that seated them is consumed, exactly as an execute consumes
-    // one. `round` used to advance here as well; there is no round. M-128.
+    // one. `round` used to advance here as well; there is no round.
     const seated = (await h.accounts.ledgerStatus(c.account.id))!;
     expect(seated.openProposals).toEqual([]);
     expect(seated.signerCount).toBe(2);
@@ -2522,7 +2522,7 @@ describe('granting access puts the signer in the on-chain set', () => {
       invite.token, null, sk.publicKey, wk.publicKey, 'be'.repeat(32));
 
     /*
-     * THE REFUSAL MOVED UP A LAYER. M-128.
+     * THE REFUSAL MOVED UP A LAYER.
      *
      * `Ledger.addSigner` takes a proposal id now, because an account holds
      * several open proposals at once and the contract has to be told WHICH one
@@ -2628,7 +2628,7 @@ describe('granting access puts the signer in the on-chain set', () => {
      * approved round is matched on its DIGEST, which is
      * `signerAddPayload(leaf)`, so a round raised for Blake's leaf is simply not
      * a round for Mallory's and there is nothing to hand the contract. The
-     * ledger's own version of this check is pinned directly above. M-128.
+     * ledger's own version of this check is pinned directly above.
      */
     await expect(h.accounts.grantAccess(c.account.id, c.viewingKey, other.id))
       .rejects.toThrow(/no open proposal on this account for that change/i);
@@ -2686,7 +2686,7 @@ describe('S-9 follow-up: what a RUN leaves in the store', () => {
      * Nor WHICH ASSET each leg settles in. `totals` and the per-asset proposal
      * map are inside the envelope; the copy left outside is a bare list of
      * proposal ids with no asset attached, so the store cannot see that this
-     * company pays anyone in ether. M-125.
+     * company pays anyone in ether.
      *
      * Asserted as a shape rather than a substring: an asset code is three
      * characters and a nanoid is drawn from a 64-character alphabet, so
@@ -2739,7 +2739,7 @@ describe('S-8: what the proposals table leaves in the store', () => {
      * `amountOf` USED TO BE THE READER HERE and returned a bare number — which
      * is the shape the policy engine then evaluated against a ceiling belonging
      * to some other asset. `changeOf` returns the pair, which is what makes
-     * that impossible to write. M-125.
+     * that impossible to write.
      */
     expect(h2.accounts.changeOf(h2.accounts.requireProposal(p.id, c.viewingKey), c.viewingKey))
       .toEqual({ asset: 'GBP', amount: 12_000_00n });
@@ -2875,7 +2875,7 @@ describe('M-96: what the ACCOUNTS table leaves in the store', () => {
     const { h, c, blake, pending } = await company();
     /*
      * A KEYED WRITE STOOD HERE and there is no longer one to make. `C292`,
-     * `S26`: it was `accounts.deposit`, the simplest thing that routed through
+     * It was `accounts.deposit`, the simplest thing that routed through
      * `sealAccount`, and the account keeps no balance to deposit into.
      *
      * The assertions below still hold — `acceptSignerInvite` writes the record
@@ -2967,7 +2967,7 @@ describe('M-96: what the ACCOUNTS table leaves in the store', () => {
 
   it('the roster and the policy are under DIFFERENT keys, so one can be delegated without the other', async () => {
     /*
-     * The first place per-purpose subkeys buy anything concrete (M-90, M-95).
+     * The first place per-purpose subkeys buy anything concrete.
      * If both envelopes opened under one key, handing an accounting plug-in the
      * spending rules would hand it the staff list too.
      */
@@ -2979,7 +2979,7 @@ describe('M-96: what the ACCOUNTS table leaves in the store', () => {
 
   it('a proposal does not open under the policy subkey either', async () => {
     /*
-     * S-11. Proposals were sealed under `policy` until M-96, so the subkey you
+     * Proposals were sealed under `policy` until M-96, so the subkey you
      * would delegate for spending rules also opened every proposal summary and
      * the per-signer approval list — the deanonymised form of the chain's
      * nullifiers. Separation that a delegation would defeat is not separation.
@@ -2987,7 +2987,7 @@ describe('M-96: what the ACCOUNTS table leaves in the store', () => {
     const { h, c } = await company();
     /*
      * No entries, so the asset cannot be derived from them — which is the only
-     * reason `asset` is still an argument to `propose`. M-125.
+     * reason `asset` is still an argument to `propose`.
      */
     const p = await h.accounts.propose({
       accountId: c.account.id, viewingKey: c.viewingKey, kind: 'transfer',
@@ -3200,7 +3200,7 @@ describe('M-99: removing a signer', () => {
    * Each signer holds a SLOT in the tree, and removing somebody clears that one
    * slot. Nobody else is touched, nothing is recomputed, and nobody is ever
    * identified: the removal proves membership exactly as approving a payment
-   * does. M-106.
+   * does.
    */
 
   async function threeSigners() {
@@ -3279,7 +3279,7 @@ describe('M-99: removing a signer', () => {
      * now — an account holds several open proposals at once and the contract
      * has to be told which one is being spent — so `removeSigner` has to find
      * that approved round before it can call the chain, and finds nothing.
-     * M-128. The ledger's own guard is pinned separately below.
+     * The ledger's own guard is pinned separately below.
      */
     await expect(h.accounts.removeSigner(c.account.id, c.viewingKey, c.secrets[2].signerId))
       .rejects.toThrow(/no open proposal on this account for that change/);
@@ -3381,7 +3381,7 @@ describe('M-99: removing a signer', () => {
      * It derives a perfectly valid map key that can never appear in
      * `assetBalances`, because no governance circuit writes to the map — and
      * naming a real asset would be a lie in the ledger a client could read as
-     * "this round concerns pounds". M-125.
+     * "this round concerns pounds".
      */
     const change = { asset: NO_ASSET, amount: 0n, batchDigest: 'bb'.repeat(32), salt: 'cc'.repeat(32) };
 
@@ -3524,7 +3524,7 @@ describe('M-99: removing a signer', () => {
 
   it('AND THE SAME THROUGH A GOVERNANCE DOOR, WHICH IS THE HALF THE FIRST DRAFT MISSED — `T-286`, `S58`', async () => {
     /*
-     * **THIS ROUND'S `money-safety-auditor` FOUND THAT THE CASE ABOVE COVERED
+     * **THIS ROUND'S money-safety pass FOUND THAT THE CASE ABOVE COVERED
      * TWO PROPOSE DOORS OF SIX**, and the four it did not cover are the
      * GOVERNANCE doors — where a proposer being removed between raising and
      * approving is the ordinary case rather than the odd one. The fix now
@@ -3729,7 +3729,7 @@ describe('M-99: removing a signer', () => {
 });
 
 /**
- * M-125. One account, several currencies.
+ * One account, several currencies.
  *
  * The contract's `assetBalances` is a map because a company owing dollars to
  * one person and pounds to another is the ordinary case — and `execute` moves

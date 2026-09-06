@@ -1,5 +1,5 @@
 /**
- * **ONE REFUSAL, THE SAME REASON IN BOTH ARTEFACTS.** `C157`, `X10` §1.
+ * **ONE REFUSAL, THE SAME REASON IN BOTH ARTEFACTS.**
  *
  * ── WHY THIS FILE EXISTS SEPARATELY FROM THE OTHER TWO ───────────────────
  *
@@ -111,7 +111,7 @@ describe('a refusal, read the way a walk reads one', () => {
     async () => {
       /*
        * **`refusal-log.ts`'s HEADER CLAIMED THESE WERE ONE STRING AND THEY ARE
-       * TWO.** `T-326`. It said *the same redactor answers the browser in
+       * TWO.** It said *the same redactor answers the browser in
        * `wrap`, so the person's sentence and the line on disk are one string
        * rather than two that can drift*. `wrap` calls no redactor at all: it
        * forks one value, sending it raw to the browser and redacted to

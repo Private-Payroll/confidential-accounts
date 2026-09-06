@@ -1,6 +1,6 @@
 /**
  * **THE PACKAGED DOOR STILL DOES THE WHOLE SEQUENCE, IN THE ORDER THAT MAKES
- * THE WINDOW SHORT, AND STILL STOPS AT THE FIRST REFUSAL.** `C321`, `S31`.
+ * THE WINDOW SHORT, AND STILL STOPS AT THE FIRST REFUSAL.**
  *
  * `NEW-VAULT.command` exists for one number: the time between a vault's deploy
  * settling on chain and its note pool being opened. **In that window one
@@ -43,7 +43,7 @@ const mint = readFileSync(join(ROOT, 'MAKE-TEST-SIGNERS.command'), 'utf8');
 /**
  * **THE DOOR WITH ITS COMMENTS GONE, WHICH IS WHAT EVERY POSITION IS READ OFF.**
  *
- * `S31`'s `test-auditor` moved the signer stage after the deploy — the one edit
+ * `S31`'s test-coverage pass moved the signer stage after the deploy — the one edit
  * that lengthens the window — and left one `#` line mentioning
  * `./MAKE-TEST-SIGNERS.command </dev/null` above the sequence. **All twenty
  * tests stayed green**, because `indexOf` over the raw file found the comment
@@ -95,7 +95,7 @@ describe('the packaged door calls the three doors rather than replacing them', (
     // A door that stops to ask halfway through has re-opened the window it
     // exists to close.
     /*
-     * NOT the position of three known variable names. `S31`'s `test-auditor`
+     * NOT the position of three known variable names. `S31`'s test-coverage pass
      * inserted a FOURTH prompt — `open its pool now? [Y/n]` — between the
      * deploy and the pool, and all twenty tests stayed green: a person away
      * from the keyboard holds the window open for as long as they are away,
@@ -120,7 +120,7 @@ describe('a stage is judged by what it produced, not only by what it returned', 
      * default — exit 0, nothing written. So each stage asserts its own output.
      */
     /*
-     * ANCHORED WHOLE LINES, not substrings. `S31`'s `test-auditor` wrapped one
+     * ANCHORED WHOLE LINES, not substrings. `S31`'s test-coverage pass wrapped one
      * of these in `[ "${SKIP_POOL_CHECK:-0}" = "0" ] && false && { … }` — the
      * pinned substring was still there verbatim, the post-deploy refusal was
      * unreachable, and twenty tests passed.
@@ -133,7 +133,7 @@ describe('a stage is judged by what it produced, not only by what it returned', 
   it('reads a real exit status, from a call that is not piped into anything', () => {
     /*
      * `$?` after a pipeline is the LAST command's status, so a door piped into
-     * `tee` always looks successful — `S31`'s `test-auditor` swapped
+     * `tee` always looks successful — `S31`'s test-coverage pass swapped
      * `${PIPESTATUS[0]}` for `$?` under the old piped form and every
      * `[ "$STATUS" -ne 0 ]` went dead with twenty tests green. These doors are
      * no longer piped at all (`C232`, below), so the status is honest — and
@@ -149,7 +149,7 @@ describe('a stage is judged by what it produced, not only by what it returned', 
     // carried on would deploy a vault whose signers were never made.
     /*
      * COUNTED PER REFUSAL BLOCK, not once over the file. `S31`'s
-     * `test-auditor` replaced the post-deploy `finish 1` with a COMMENT
+     * test-coverage pass replaced the post-deploy `finish 1` with a COMMENT
      * mentioning it — the count stayed at six and twenty tests passed, while a
      * vault that was on chain with no pool ran on to print a window
      * measurement and exit 0.
@@ -200,7 +200,7 @@ describe('the window is a measurement and never an estimate', () => {
     // earlier than any moment this door can observe by itself, so the only
     // honest start is the block's own timestamp out of the vault registry.
     /*
-     * WITH ITS `?? null`. `S31`'s `test-auditor` changed it to
+     * WITH ITS `?? null`. `S31`'s test-coverage pass changed it to
      * `?? Number(deployDone)` and the door printed a window computed from this
      * machine's own clock, under the paragraph saying it came from the node —
      * rule 9 exactly — with twenty tests green, because the words
@@ -234,7 +234,7 @@ describe('the window is a measurement and never an estimate', () => {
     /*
      * The first version required a digit right after the verb, so `the window
      * was open for 12.4s, which is typical for stagenet` walked straight
-     * through — `S31`'s `test-auditor` added exactly that line and nothing
+     * through — `S31`'s test-coverage pass added exactly that line and nothing
      * failed. Any digit within forty characters of the word now fails, unless
      * it arrived through a `${…}` the door computed.
      */
@@ -252,11 +252,11 @@ describe('what the packaged door must never do', () => {
 
   it('DOES NOT COPY THE THREE DOORS OUTPUT INTO ITS OWN REPORT', () => {
     /*
-     * `C232`: the wallet SDK logs the seed at info level and
+     * The wallet SDK logs the seed at info level and
      * `REPORT-DEPLOY-VAULT.txt` already carries it. Teeing each door through
      * this file would make `REPORT-NEW-VAULT.txt` a FIFTH plaintext home for a
      * spendable key, produced by the door the index calls EVERYDAY. Found by
-     * `S31`'s `money-safety-auditor`.
+     * `S31`'s money-safety pass.
      */
     for (const n of ['MAKE-TEST-SIGNERS', 'DEPLOY-VAULT', 'OPEN-VAULT-POOL']) {
       const at = callAt(n);
@@ -270,7 +270,7 @@ describe('what the packaged door must never do', () => {
      * `C110`, and `MAKE-TEST-SIGNERS.command`'s own `readSecrets` is the
      * doctrine. Scoring an unparseable registry as *no such vault* prints
      * NOTHING IS ON CHAIN over vaults that are — which is the one question this
-     * door exists to answer. Found by `S31`'s `money-safety-auditor`.
+     * door exists to answer. Found by `S31`'s money-safety pass.
      */
     expect(body).toMatch(/process\.exit\(2\)/);
     expect(body).toMatch(/could not be read/);
@@ -291,7 +291,7 @@ describe('what the packaged door must never do', () => {
   it('SAYS ON SCREEN THAT deposit IS STILL UNPERMISSIONED AFTER THE POOL EXISTS', () => {
     /*
      * The first draft of this door's header said the window CLOSED at stage 3.
-     * `S31`'s own `money-safety-auditor` read the contract and the client and
+     * `S31`'s own money-safety pass read the contract and the client and
      * showed it does not: `deposit` takes a coin and no signer for ever
      * (`Vault.compact:452-460`), `VaultLedger.reconcile` refuses any vault
      * whose chain holds notes its pool does not (`vault-ledger.ts:1438-1452`),

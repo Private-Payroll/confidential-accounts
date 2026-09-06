@@ -19,7 +19,7 @@ export default defineConfig({
     root: '.',
     testTimeout: 30_000,
     /*
-     * **THE ENVIRONMENT IS NOT SET HERE, ON PURPOSE.** `X10` §3.
+     * **THE ENVIRONMENT IS NOT SET HERE, ON PURPOSE.**
      *
      * Almost every test in this repository is a node test: it spawns the real
      * service, opens sqlite, reads the filesystem, loads ledger WASM. Turning
@@ -39,7 +39,7 @@ export default defineConfig({
     setupFiles: ['./src/test-setup.ts'],
     /*
      * **THE SUITE REFUSES TO RUN AGAINST AN ARTIFACT OLDER THAN ITS SOURCE.**
-     * `C294`, `M-85`.
+     *
      *
      * `globalSetup` and not `setupFiles`, and the difference is the whole
      * point. `setupFiles` above runs once per test FILE, inside each worker —
@@ -100,10 +100,10 @@ export default defineConfig({
      * imports this file as a MODULE and reads the value, and calls that
      * module's own default export against a stale fixture, so a deleted key, a
      * commented-out key and a swallowed throw are each a red suite rather than
-     * a silent hole. `C263`.
+     * a silent hole.
      */
     /*
-     * **AND TWO MORE GUARDS, EACH WIRED SEPARATELY.** `S38`.
+     * **AND TWO MORE GUARDS, EACH WIRED SEPARATELY.**
      *
      * `doc-freshness` refuses when a generated block in `docs/design/` no
      * longer describes the contracts it was generated from, or when somebody
@@ -115,11 +115,11 @@ export default defineConfig({
      * the block above says under what ruling and what pins it.**
      *
      * `ledger-limit` refuses a contract whose ledger has passed fifteen
-     * top-level fields. `C357`: sixteen COMPILES and DEPLOYS, the state nests,
+     * top-level fields. Sixteen COMPILES and DEPLOYS, the state nests,
      * and EVERY field's path moves — field 0 included — with no error anywhere
      * in the compiler. It is here rather than in a test file because it is a
      * property of the built artifact, and because a guard nobody wired in is
-     * invisible to a unit test of the guard (`C263`).
+     * invisible to a unit test of the guard.
      *
      * THREE ENTRIES RATHER THAN ONE MODULE CALLING THREE THINGS, so that each
      * one's own test can import its wiring module and call its default export
@@ -132,7 +132,7 @@ export default defineConfig({
       './scripts/ledger-limit.globalSetup.ts',
     ],
     /*
-     * **THE SUITE'S OWN REFUSALS DO NOT GO IN THE FILE A WALK READS.** `C157`.
+     * **THE SUITE'S OWN REFUSALS DO NOT GO IN THE FILE A WALK READS.**
      *
      * `X10` made the service write every 400 it answers to
      * `logs/REPORT-REFUSALS.txt`, and the server tests provoke dozens of them

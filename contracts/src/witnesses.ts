@@ -18,7 +18,7 @@ export interface SignerPath {
 
 /*
  * `ShieldedView` STOOD HERE, AND WITH IT THE `current`/`next` PAIR ON
- * `AccountPrivateState`. `C292`, `S26`.
+ * `AccountPrivateState`.
  *
  * It held one asset's balance and the salt that committed to it, on a signer's
  * device, so the spend circuit could read them as witnesses. The account keeps
@@ -66,7 +66,7 @@ export interface AccountPrivateState {
    */
   scope: Uint8Array;
   /**
-   * Hides WHICH ASSETS this account holds. M-125.
+   * Hides WHICH ASSETS this account holds.
    *
    * NOT a per-device secret, and the difference from `blinding` above is the
    * whole reason both exist. A signer's blinding stands for one person, so it
@@ -78,7 +78,7 @@ export interface AccountPrivateState {
    * WHAT THAT DIVERGENCE USED TO COST WAS THE ACCOUNT'S MONEY: the two keys
    * were two entries in `assetBalances`, so the account held its money twice
    * under two names, each unspendable by half the signers. That map went with
-   * the balance ledger (`C292`), and nothing opens a change commitment any
+   * the balance ledger, and nothing opens a change commitment any
    * more, so the cost today is smaller and is not nothing — a proposer's own
    * post-check recomputes the commitment and compares it against the one the
    * chain recorded, and a divergent blinding fails there.
@@ -105,7 +105,7 @@ export interface AccountPrivateState {
    *
    * READ AT ONE END OF A ROUND NOW, NOT BOTH. The proposer committed to them
    * and `execute` was checked against that commitment; `execute` went with the
-   * balance ledger (`C292`), so `propose` is the only circuit that reads these
+   * balance ledger, so `propose` is the only circuit that reads these
    * and NOTHING ON CHAIN OPENS WHAT IT COMMITS TO. They still travel between
    * devices in the sealed payload, like every other shared secret here
    * (decision 0002); what still reads them is the proposer's own post-check in
@@ -150,7 +150,7 @@ export interface AccountPrivateState {
  *
  * Not a TypeScript constant. The marker has to be byte-identical on both sides
  * or a removal writes something the next addition cannot find, and a shared
- * value written twice is this project's oldest failure (M-104).
+ * value written twice is this project's oldest failure.
  */
 export const VACANT_SLOT: Uint8Array = pureCircuits.vacantSlot();
 
@@ -194,7 +194,7 @@ export const witnesses = {
    *   a departing signer's leaf `removeSigner`  — prove which slot to clear
    *   the vacancy marker        `addSigner`     — prove a slot is free to take
    *
-   * The third is what makes slots reusable (M-106), and it only works because a
+   * The third is what makes slots reusable, and it only works because a
    * removal WRITES the marker rather than blanking the slot. The tree is
    * sparse: an index nobody has written does not exist in it, `pathForLeaf`
    * refuses one outright, and there is consequently no such thing as a proof
@@ -228,7 +228,7 @@ export const witnesses = {
     );
   },
 
-  /* ---------------- which asset (M-125) ---------------- */
+  /* ---------------- which asset ---------------- */
 
   assetId: ({ privateState }: WitnessContext<Ledger, AccountPrivateState>):
     [AccountPrivateState, Uint8Array] => [same(privateState), privateState.assetId],

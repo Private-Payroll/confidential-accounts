@@ -18,7 +18,7 @@ import type { Account } from './types.js';
  *
  * 1. **No amount is small enough to need fewer approvals**, and our own copy of
  *    the threshold cannot lower the bar even when somebody edits it. This is
- *    the deleted auto-approve exception (`C171`) held down: the feature is gone
+ *    the deleted auto-approve exception held down: the feature is gone
  *    from the type, so the only way to show the BEHAVIOUR is gone is to drive
  *    the smallest payment the system can express and watch it still need M, and
  *    then to put a lower number in the place the old rule read from and watch
@@ -33,7 +33,7 @@ import type { Account } from './types.js';
  * this service asks, that it asks once, and that it has no path left by which
  * a local number can answer instead.
  *
- * ── WHAT `S28` REWROTE, AND WHAT IT COULD NOT GET BACK. `C304`, `T-59`. ──
+ * ── WHAT `S28` REWROTE, AND WHAT IT COULD NOT GET BACK. ──
  *
  * This file was moved out whole by `C292`/`S26` and its five tests went with
  * it. `T-59`'s finding was that the deletion took things whose subject was
@@ -122,7 +122,7 @@ const entry = (amount: bigint) => ({
 
 /*
  * **IT WAS `fundedAccount` AND THE FUNDING IS GONE, NOT THE SUBJECT.** `C292`,
- * `S26`. It deposited 10,000.00 into the account's own book before returning.
+ * It deposited 10,000.00 into the account's own book before returning.
  * No test in this file ever read that balance: the amounts below are what a
  * proposal SAYS it moves, and a proposal says that whether or not anything is
  * there. Renamed rather than left with a name that describes a deposit nobody
@@ -277,8 +277,8 @@ describe('R4: "we do not know" is not "not enough approvals"', () => {
 });
 
 /**
- * **`C377` / `T-214` — THE APPROVAL IS BURNT ON CHAIN BEFORE ANYTHING DURABLE
- * IS WRITTEN, AND A THROW IN BETWEEN LOSES IT.** `S52`.
+ * THE APPROVAL IS BURNT ON CHAIN BEFORE ANYTHING DURABLE
+ * IS WRITTEN, AND A THROW IN BETWEEN LOSES IT.**
  *
  * This file already owns the case where the status read ANSWERS BADLY — `null`,
  * or without the round in it — and in both of those `approve` completes and
@@ -379,7 +379,7 @@ describe('C377: a burnt approval survives a throw between the chain and the reco
      * end of the round.** The reconcile runs first and the record catches up to
      * the two approvals the chain has held all along.
      *
-     * **THE MESSAGE IS ANCHORED, AND `S52`'s `test-auditor` IS WHY.** An
+     * **THE MESSAGE IS ANCHORED, AND `S52`'s test-coverage pass IS WHY.** An
      * unanchored `/already approved/` also matches the LEDGER's *"you have
      * already approved this proposal"* (`src/core/ledger.ts:1498`) — which is
      * what the pre-fix code threw, from the chain, having reached it precisely
@@ -411,7 +411,7 @@ describe('C377: a burnt approval survives a throw between the chain and the reco
      * **THE CLAIM THIS PINS IS ONE `approve` MAKES IN ITS OWN WORDS** — *"AND
      * IT DOES NOT SWALLOW A THROW. If the chain is still unreachable this
      * rejects, and the signer is told that rather than told they have already
-     * approved"* — and until `S52`'s `test-auditor` said so, nothing checked
+     * approved"* — and until `S52`'s test-coverage pass said so, nothing checked
      * it: a `try { … } catch { }` around the reconcile left the whole file
      * green. Rule 14 and `C286`, in this round's own new code.
      *
@@ -448,7 +448,7 @@ describe('C377: a burnt approval survives a throw between the chain and the reco
     /*
      * **THE GATE, BOTH CONJUNCTS, AND A READ COUNT IS WHAT MAKES THEM
      * VISIBLE.** The reconcile is gated on *this signer has already approved*
-     * AND *the round still reads open*. `S52`'s `test-auditor` measured that
+     * AND *the round still reads open*. `S52`'s test-coverage pass measured that
      * dropping the second conjunct left every test green, so nothing held it
      * down — and a reconcile that ran on every call would put a SECOND chain
      * read into every ordinary approval, which is `R4`'s one-read rule broken
@@ -498,8 +498,8 @@ describe('C377: a burnt approval survives a throw between the chain and the reco
 
 
 /**
- * **`C378` — AND IT IS `C377`'s SHAPE WITH THE HALVES THE OTHER WAY ROUND,
- * WHICH IS WHY IT LIVES BESIDE IT.** `T-228`, `S55`.
+ * AND IT IS `C377`'s SHAPE WITH THE HALVES THE OTHER WAY ROUND,
+ * WHICH IS WHY IT LIVES BESIDE IT.**
  *
  * `C377` is the burn landing and the record not: the chain half is
  * irrecoverable, so `S52` moved the write up against it and added a reconcile
@@ -624,8 +624,8 @@ describe('C378: the record is written before the chain call, so a lost round is 
 
   it('REFUSES to cancel when the ledger did not answer, rather than clearing consent on a guess', async () => {
     /*
-     * **`P1`, FOUND BY THIS ROUND'S `money-safety-auditor` AGAINST THIS ROUND'S
-     * OWN FIX, BEFORE IT WAS WRITTEN UP.** `S55`.
+     * **`P1`, FOUND BY THIS ROUND'S money-safety pass AGAINST THIS ROUND'S
+     * OWN FIX, BEFORE IT WAS WRITTEN UP.**
      *
      * The first draft of `chainHolds` read `status?.openProposals` and returned
      * on a `null`. **`null` IS NOT ABSENCE.** `SimulatedLedger.status` answers
@@ -695,7 +695,7 @@ describe('C378: the record is written before the chain call, so a lost round is 
   it('a round the chain never held does not displace the APPROVED round for the same change', async () => {
     /*
      * **`P2`, THE SECOND OF THIS ROUND'S AUDITOR'S FINDINGS AGAINST ITS OWN
-     * FIX, AND IT IS RULE 37's SHAPE.** `S55`.
+     * FIX, AND IT IS RULE 37's SHAPE.**
      *
      * `approvedFor` sorted *newest first: a re-proposal after a failed attempt
      * is the live one*, and that sentence was TRUE precisely because a failed
@@ -706,7 +706,7 @@ describe('C378: the record is written before the chain call, so a lost round is 
      * an id no chain holds, with no screen able to say which row is which.
      *
      * **THIS PARAGRAPH NAMED TWO CALLERS AND THE CASE BELOW DRIVES A THIRD,
-     * WHICH IS `T-332` AND IS CORRECTED HERE.** `S58`. `approvedFor` has FOUR
+     * WHICH IS `T-332` AND IS CORRECTED HERE.** `approvedFor` has FOUR
      * callers — `grantAccess`, `setThreshold`, `setVaultThreshold` and
      * `removeSigner` — and every one is order-dependent. The two this
      * paragraph named are the two with NO product route today; the one it
@@ -769,7 +769,7 @@ describe('C378: the record is written before the chain call, so a lost round is 
   it('and `grantAccess` reaches the APPROVED round too, not the phantom — `T-332`, `S58`', async () => {
     /*
      * **THE CALLER WITH TWO PRODUCT ROUTES, AND IT WAS THE ONE NOTHING DROVE.**
-     * `T-332`. The case above drives `setVaultThreshold`; the description above
+     * The case above drives `setVaultThreshold`; the description above
      * it named `setThreshold` and `removeSigner`. `grantAccess` is reachable
      * from `POST /api/accounts/:id/access` and from the standalone client, and
      * it takes `approvedFor(...).chainId` exactly as the other three do

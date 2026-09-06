@@ -86,7 +86,7 @@ beforeEach(() => {
  * callback returns, which is waiting on the fetch. It hangs for the whole test
  * timeout and says nothing about why.
  *
- * **AND IT IS NOT A REASON TO POLL.** `C134`, `X9`. Two `act`s, each awaiting a
+ * **AND IT IS NOT A REASON TO POLL.** Two `act`s, each awaiting a
  * thing: the first the commit, the second the promise this test itself settles.
  * No `waitFor`, no `findBy*`, no sleep.
  */
@@ -132,7 +132,7 @@ describe('§5 — a shown error is a recorded error', () => {
 
   it('AND IT IS REDACTED ON THE WAY, LIKE EVERYTHING ELSE THAT REACHES DISK', async () => {
     /*
-     * `C145`, `C148`. An error message can carry anything — and the one this
+     * An error message can carry anything — and the one this
      * round can most easily produce carries a COMPANY ADDRESS or a payee
      * address, because those are what the failing steps are about.
      */

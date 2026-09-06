@@ -1,6 +1,6 @@
 import { REQUEST_SCHEMA } from 'midnight-identity/profile/request';
 /*
- * **THE ATTRIBUTE'S NAME COMES FROM THE WALLET'S OWN VOCABULARY.** `X8`.
+ * **THE ATTRIBUTE'S NAME COMES FROM THE WALLET'S OWN VOCABULARY.**
  *
  * It was going to be a string literal here, on the grounds that importing the
  * registry to reach one word is what `C149` is about — but `attributes.ts`
@@ -25,7 +25,7 @@ import { RECEIVING_ADDRESS } from 'midnight-identity/profile/attributes';
  * as PASTED TEXT.** That was safe on that one door because the person pasting
  * and the person being paid are the same by construction — and it is a
  * precedent that must not spread to any door where they are not, which is every
- * other door money enters by. `C153`. The wallet's `X8` round added the
+ * other door money enters by. The wallet's `X8` round added the
  * attribute; this file is the ask that reaches it.
  *
  * ── IT IS A DISCLOSURE, AND NOT A KIND OF ITS OWN ─────────────────────────
@@ -52,7 +52,7 @@ import { RECEIVING_ADDRESS } from 'midnight-identity/profile/attributes';
  *
  * ── AND NO WASM IN THIS FILE, WHICH IS WHY IT IS ITS OWN FILE ─────────────
  *
- * `C149`, `X5` §2. It imports one constant. The thing that VERIFIES what comes
+ * It imports one constant. The thing that VERIFIES what comes
  * back is `wallet-payee.ts` beside it, which reaches the wallet SDK and must
  * never be imported from `src/web/`; `no-wasm-in-the-page.test.ts` is what
  * keeps that true rather than a convention.

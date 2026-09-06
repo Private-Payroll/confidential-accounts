@@ -82,7 +82,7 @@ describe('arity, against the vault\'s own compiled ABI', () => {
     /*
      * ONE SINCE S6a, and this line is the guard that would catch a client still
      * passing a blinding. `deposit` took the blinding as a second argument and
-     * the vault wrote down whatever it was handed (C124); the circuit derives
+     * the vault wrote down whatever it was handed; the circuit derives
      * it now, so a second argument is a call the ABI refuses rather than a
      * value nobody can reproduce.
      */

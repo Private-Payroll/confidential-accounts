@@ -46,7 +46,7 @@ const ROOT_WIDTH = 32;
 
 /**
  * THE ROOT AS THIRTY-TWO BYTES, AND IT IS NOT ALWAYS THIRTY-TWO WITHOUT THIS.
- * `C369`.
+ *
  *
  * `rehash().root()` hands back a FIELD ELEMENT, and the runtime encodes one
  * MINIMALLY: a root whose top byte is zero arrives thirty-one bytes long, about
@@ -61,7 +61,7 @@ const ROOT_WIDTH = 32;
  * before the circuit runs — `recordPayment`'s at
  * `contracts/managed/contract/index.js:610`, `runPayload`'s beside it — so the
  * run cannot be raised, and could not be claimed if it somehow were. Nobody has
- * signed anything and no money is at risk. `docs/corrections.md`, `S41`.
+ * signed anything and no money is at risk.
  *
  * **THE SILENT FAILURE IS THE OBVIOUS-LOOKING FIX, AND THAT IS WHY THE END IS
  * WRITTEN DOWN HERE.** A root padded at the FRONT is thirty-two bytes: every
@@ -243,7 +243,7 @@ export const buildPayoutTree = (payments: PayoutLeafInput[]): PayoutTree => {
   /*
    * The root arrives as a field element wrapped in a digest, which is why the
    * contract casts it before comparing — and why it needs padding to the width
-   * the circuit declares. One helper, used here and by `rootOfLeaves`. `C369`.
+   * the circuit declares. One helper, used here and by `rootOfLeaves`.
    */
   const rootBytes = rootBytesOf(rootValue);
 
@@ -285,7 +285,7 @@ export const buildPayoutTree = (payments: PayoutLeafInput[]): PayoutTree => {
 export interface PaymentFacts {
   /**
    * **AND THE KIND OF MONEY LIVES HERE, PER PAYEE, BECAUSE THAT IS WHERE IT
-   * ACTUALLY LIVES.** `C246`, `S6k`.
+   * ACTUALLY LIVES.**
    *
    * `S6j` established the property from the contract's side: the kind is
    * committed into each LEAF and nothing at the account learns about it, so
@@ -305,7 +305,7 @@ export interface PaymentFacts {
 
 /**
  * **A RUN'S PAYMENTS WHERE EVERY PAYEE IS PRIVATE, SAID IN THE TYPE RATHER THAN
- * IN A COMMENT.** `S6k` §5.
+ * IN A COMMENT.**
  *
  * `PaymentFacts` carries either kind, because the vault holds both and one
  * approved run can mix them. **The ROSTER cannot yet**: a roster entry's
@@ -430,7 +430,7 @@ export const buildRun = (
   identity: RunIdentity,
   facts: PaymentFacts[],
   /**
-   * **BOTH DERIVATIONS, AND THE PAYEE PICKS.** `C246`.
+   * **BOTH DERIVATIONS, AND THE PAYEE PICKS.**
    *
    * This used to be a single `DetailsOf` for a whole run, which is `V-103`'s
    * client half: a run built through it was entirely one kind, and the kind it

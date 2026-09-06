@@ -121,7 +121,7 @@ export async function midnightProviders(b: ProviderBundle): Promise<MidnightProv
 
   // Every wallet and contract operation throws until this is set, with a clear
   // message. Set it once, here, so no caller has to remember.
-  //
+  
   // This used to read `setNetworkId(ledger.NetworkId[...])`, which passed a
   // NUMBER. The network id is interpolated verbatim into every bech32m address
   // the SDK encodes, so that produced `mn_shield-cpk_2...` where the wallet

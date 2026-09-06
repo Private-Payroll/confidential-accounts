@@ -7,7 +7,7 @@ import type { SessionStore, SessionSummary } from './sessions.js';
  * is not trusted with anything that decrypts.
  *
  * **THERE IS NO PASSWORD ANY MORE, AND NOTHING HERE IS DISABLED.** `PI4b`,
- * `C129`.
+ *
  *
  * `deriveAuthMaterial`, `KDF`, `register`, `login`, `hashAuth`,
  * `replaceKeyBundle`, `timingSafeEqual`, `authHash` and `authSalt` were here.
@@ -51,7 +51,7 @@ export interface RequestContext {
 }
 
 /**
- * Thrown when a key bundle write did not see the current one. `C40`.
+ * Thrown when a key bundle write did not see the current one.
  *
  * Carries the version the caller should have seen, so a client can fetch, merge
  * and retry rather than guess.
@@ -114,7 +114,7 @@ export class IdentityService {
   /* ---------------- what used to be registration and login ---------------- */
 
   /*
-   * **`register` AND `login` ARE DELETED WITH THE PASSWORD.** `PI4b`, `C129`.
+   * **`register` AND `login` ARE DELETED WITH THE PASSWORD.**
    *
    * `register` was the only thing that ever wrote `authHash` and `authSalt`,
    * and both fields are gone from `User` with it. `login` was the only caller
@@ -221,7 +221,7 @@ export class IdentityService {
   }
 
   /*
-   * **`replaceKeyBundle` IS DELETED.** `PI4b`.
+   * **`replaceKeyBundle` IS DELETED.**
    *
    * It rotated the bundle FOR A PASSWORD CHANGE: a fresh `authSalt`, a fresh
    * `authHash`, the new ciphertext, and every other session ended. Two of those

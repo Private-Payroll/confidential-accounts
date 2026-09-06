@@ -4,7 +4,7 @@ import {
   AddressShapeError, checkShieldedAddress,
 } from 'midnight-identity/wallet/address-shape';
 /* X12 §2 — the one place the code's spelling is decided, in the repository
- * that decides its width. `C21`. */
+ * that decides its width. */
 import { tidyFingerprint } from 'midnight-identity/profile/fingerprint';
 import { RECEIVING_ADDRESS } from '../core/wallet-payee-ask.js';
 import { reviveBigints, toHex, type Hex } from '../core/crypto.js';
@@ -61,9 +61,9 @@ import { openWalletDialog } from './wallet-sign-in.js';
 /** What `offerFor` returns. `bigint` arrives as a tagged value; see below. */
 interface Offer {
   company: string;
-  /** `X11` §0. Null when no chain has given this company an address. */
+  /**  Null when no chain has given this company an address. */
   companyAddress: string | null;
-  /** `X11` §7. What this browser seals the handover to. */
+  /**  What this browser seals the handover to. */
   inboxPublicKey: Hex;
   name: string;
   title: string;
@@ -71,7 +71,7 @@ interface Offer {
   asset: AssetId;
   baseAmount: bigint;
   startDate: string;
-  /** `X12` §3. When this offer stops being one. Beside the sealed offer
+  /**  When this offer stops being one. Beside the sealed offer
    * rather than inside it — the service is what enforces it. */
   expiresAt: string;
 }
@@ -181,7 +181,7 @@ export function JoinScreen({ token }: { token: string }) {
   const [code, setCode] = useState('');
 
   /*
-   * **PUBLIC, AND NO SESSION.** `X11` §2. The person has no account yet, and
+   * **PUBLIC, AND NO SESSION.** The person has no account yet, and
    * seeing the offer before accepting it is the whole reason this route exists:
    * the person best placed to notice that a hire is wrong is the person it is
    * about.
@@ -215,7 +215,7 @@ export function JoinScreen({ token }: { token: string }) {
   const approve = async () => {
     setErr(''); setBusy(true);
     /*
-     * **THE WALLET IS OPENED IN THE CLICK.** `C154`. Everything after this is a
+     * **THE WALLET IS OPENED IN THE CLICK.** Everything after this is a
      * round trip, and a permission spent on one is gone by the time a window is
      * wanted. Both asks reuse this one dialog, so a person sees one wallet
      * window with two things to approve rather than two windows.
@@ -250,7 +250,7 @@ export function JoinScreen({ token }: { token: string }) {
        * ── ONE: THE COMPANY KEY, SO THE PAYSLIP KEY IS DERIVED AND NEVER
        * MINTED ──────────────────────────────────────────────────────────────
        *
-       * `C135`. `newWrappingKeypair()` here would be thirty-two random bytes
+       * `newWrappingKeypair()` here would be thirty-two random bytes
        * handed to the server as a public key and kept nowhere: **every payslip
        * this person is ever issued would be sealed to a secret this tab forgets
        * on reload**, and nothing — not another device, not a recovery, not us —
@@ -302,7 +302,7 @@ export function JoinScreen({ token }: { token: string }) {
        * ── THREE: THE THREE CHECKS, HERE, WHERE YOU CAN DO SOMETHING ABOUT
        * THEM ────────────────────────────────────────────────────────────────
        *
-       * `X11` §7. `payeeAddress()`'s checks did not disappear, they moved: the
+       * `payeeAddress()`'s checks did not disappear, they moved: the
        * Bech32m checksum, the `shield-addr` TYPE and the NETWORK. A preview
        * address handed to a stagenet company is still refused by name — and now
        * it is refused on the screen of the person who can pick a different

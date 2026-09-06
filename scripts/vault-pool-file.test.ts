@@ -1,6 +1,6 @@
 /**
  * **THE POOL ON DISK, AND THE FOUR THINGS THAT ARE NOT AN EMPTY VAULT.**
- * `S6f`, `C242`.
+ *
  *
  * `vault-pool.ts`'s standing rule is that *"the pool could not be read"* and
  * *"the pool read as empty"* must never become the same answer, because the
@@ -100,7 +100,7 @@ describe('C242: absent is null, and everything else present is a refusal', () =>
   it('REFUSES to answer about a vault it was not built for', async () => {
     const d = dir();
     await expect(storeIn(d).get(OTHER)).rejects.toThrow(/built for a different vault/);
-    /* And it does not name the address it holds. C236. */
+    /* And it does not name the address it holds. */
     await expect(storeIn(d).get(OTHER)).rejects.not.toThrow(new RegExp(VAULT));
   });
 });
@@ -124,7 +124,7 @@ describe('the pool is written whole or not at all', () => {
 
   it('carries an ABSENT index across the file, rather than filling it in', async () => {
     /*
-     * `S6f`: a note whose place in the commitment tree has never been read
+     * A note whose place in the commitment tree has never been read
      * records `index: undefined`, and a store that turned that into a zero on
      * the way to disk would hand the contract a merkle path for another leaf.
      */
@@ -165,7 +165,7 @@ describe('the pool is written whole or not at all', () => {
 
   it('behaves as the memory store does, so an instrument and a test see one contract', async () => {
     /*
-     * `T-34`: the in-memory store is what every test of `SealedNotePool` runs
+     * The in-memory store is what every test of `SealedNotePool` runs
      * against, so a file store with different refusals would mean the tested
      * behaviour and the shipped behaviour were two things.
      */

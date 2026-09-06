@@ -1,5 +1,5 @@
 /*
- * THE SINK IS THE FIRST IMPORT AND THAT IS DELIBERATE. `X4` §1.
+ * THE SINK IS THE FIRST IMPORT AND THAT IS DELIBERATE.
  *
  * Module imports are evaluated in source order, so this one is installed before
  * React, before `App` and before the stylesheet — and therefore before anything

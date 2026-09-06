@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /**
  * **THE SIGN-IN SCREEN, RENDERED, WITH ONE WAY IN ON IT.** `PI4b`, `C129`,
- * `X10` §3.
+ *
  *
  * ── WHY THIS IS RENDERED AND NOT GREPPED ─────────────────────────────────
  *

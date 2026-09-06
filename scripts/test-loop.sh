@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs the suite until it fails, keeping every run's OUTPUT. T-12.
+# Runs the suite until it fails, keeping every run's OUTPUT.
 #
 # The failure this exists for has now been seen twice and lost twice, both times
 # for the same reason: the run was piped straight into `grep`, so when it failed

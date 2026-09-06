@@ -1,5 +1,5 @@
 /**
- * **WHY THE SERVICE REFUSED, ON DISK, AFTER THE WINDOW IS CLOSED.** `C157`.
+ * **WHY THE SERVICE REFUSED, ON DISK, AFTER THE WINDOW IS CLOSED.**
  *
  * ── THE ROW THIS EXISTS FOR ──────────────────────────────────────────────
  *
@@ -26,7 +26,7 @@
  *
  * ── IT REDACTS, AND THAT IS THE POINT RATHER THAN A PRECAUTION ───────────
  *
- * `C145`, `C148`. **A refusal about a key is exactly the kind of message that
+ * **A refusal about a key is exactly the kind of message that
  * quotes one** — *this viewing key does not open …* — and the path carries a
  * query string, which is where `viewingKey` travels. So the reason and the path
  * both go through `redactSecrets` before anything is written.

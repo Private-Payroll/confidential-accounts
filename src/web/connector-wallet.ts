@@ -1,9 +1,9 @@
 /**
- * The customer's wallet, in a browser tab. M-10.
+ * The customer's wallet, in a browser tab.
  *
  * This is the link the web path was missing. Everything else in the browser
- * chain is proven — the prover loads (M-87), the queue runs on a Worker with
- * IndexedDB (M-79), and the prove/balance/submit split settles on chain (M-82)
+ * chain is proven — the prover loads, the queue runs on a Worker with
+ * IndexedDB, and the prove/balance/submit split settles on chain
  * — but every one of those runs balanced and signed with a testkit wallet in a
  * Node process. A tab has no such thing. It has a wallet extension, reached
  * through `@midnightntwrk/dapp-connector-api`, and this file is the adapter.
@@ -115,7 +115,7 @@ export interface ConnectorOptions {
    * process; whether that process is on this machine is a question about a
    * specific wallet, not about the API. Proving in our own tab is the only
    * option we can verify ourselves, so it is the default, and turning this on
-   * should follow a confirmation rather than an assumption. M-10.
+   * should follow a confirmation rather than an assumption.
    */
   preferWallet?: boolean;
   /** Our own in-browser prover — `wasmProofProvider` from `wasm-proving.ts`. */
@@ -219,7 +219,7 @@ export const connectorProviders = async (wallet: ConnectedWallet, options: Conne
        *
        * The honest answer is not to invent one. Recovery in this system asks
        * the ACCOUNT whether a job's effect is present rather than asking about
-       * a transaction id (M-82), so an absent id costs nothing there; it costs
+       * a transaction id, so an absent id costs nothing there; it costs
        * only the ability to link a settled job to a block explorer. Marked as
        * such rather than filled with a plausible-looking hash.
        */

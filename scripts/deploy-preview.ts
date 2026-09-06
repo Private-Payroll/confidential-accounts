@@ -76,7 +76,7 @@ const STATE_DIR = join(ROOT, '.midnight');
 const SEED_FILE = join(STATE_DIR, 'wallet.seed');
 /*
  * The maintenance authority the deploy will set, chosen OUTSIDE this script.
- * S8c, C225. There is no default and no sampling: an absent file is a refusal
+ * There is no default and no sampling: an absent file is a refusal
  * at stage 1, with the options printed. Single-key mode holds key material,
  * which is why this lives beside wallet.seed in the gitignored state
  * directory rather than anywhere the repo carries.
@@ -115,13 +115,13 @@ const ACCOUNT_ID = 'default';
 const PRIVATE_STATE_KEY = privateStateKey(PRIVATE_STATE_ID, ACCOUNT_ID);
 /*
  * **THE DEMO SIGNERS' MATERIAL, WHICH THIS SCRIPT NO LONGER COMPUTES FROM A
- * FORMULA.** `C334`, `S35`. `scripts/preview-signers.ts` is where the reasoning
+ * FORMULA.** `scripts/preview-signers.ts` is where the reasoning
  * is; what matters here is that the file is per network AND per account, is
  * generated once with real entropy, is reused for ever after, and lives under
  * `.midnight/`, which is gitignored.
  */
 /*
- * 6301, NOT 6300. M-144.
+ * 6301, NOT 6300.
  *
  * Two proof servers run on this machine: `8.1.0` on 6300 and the pinned one on
  * 6301. The pinned image is `9.0.0-rc.3` — the prover built from the ledger
@@ -167,7 +167,7 @@ const PROVER_PORT = Number(process.env.MIDNIGHT_PROVER_PORT || 6301);
 const THRESHOLD = 1n;
 
 /**
- * WHICH ASSET the run script will move on this account. M-125.
+ * WHICH ASSET the run script will move on this account.
  *
  * The account itself is not tied to it. IT USED TO HOLD ONE `assetBalances`
  * entry per asset, opened by the first `credit` of each; the map and every
@@ -202,7 +202,7 @@ let stage = 'startup';
  *
  * `R1b` requires the elapsed time of each phase in the report. It is not
  * cosmetic: the only proving figure this project has ever reasoned from is a
- * number derived from a settlement total (`C180`), and a phase table is the
+ * number derived from a settlement total, and a phase table is the
  * cheapest honest observation of where a deploy's minutes actually go. It is
  * printed on SUCCESS AND ON REFUSAL alike — a refusal after nine minutes in
  * "Deploying" and a refusal after four seconds are different failures, and the
@@ -393,7 +393,7 @@ function describeError(e: any, depth = 0): string {
   if (explained) bits.push(`${pad}  \x1b[1m${explained}\x1b[0m`);
   // A dropped websocket carries no rejection code, because the chain never saw
   // the transaction. Without saying so it reads like a protocol failure and
-  // sends you looking in the wrong place. M-23, M-59.
+  // sends you looking in the wrong place.
   if (/normal closure|disconnected|socket hang up|ECONNRESET/i.test(String(msg))) {
     bits.push(`${pad}  \x1b[1mthe node websocket dropped — the transaction was never submitted, so this is worth retrying\x1b[0m`);
   }
@@ -530,7 +530,7 @@ async function main() {
   // reason that was knowable before anything started. Anything checkable up
   // front belongs up front.
   /*
-   * The asset, resolved before anything touches the network. M-125.
+   * The asset, resolved before anything touches the network.
    *
    * `require` throws with a readable message on an unknown code. Checking it
    * here rather than at the point of use is the same rule as the password check
@@ -539,7 +539,7 @@ async function main() {
    */
   const runAsset = assets.require(RUN_ASSET);
   /*
-   * ENABLED, not merely resolvable. M-137.
+   * ENABLED, not merely resolvable.
    *
    * `require` answers for every asset the registry has ever known, enabled or
    * not, and it must: an account holding a since-retired asset has to stay able
@@ -573,7 +573,7 @@ async function main() {
   }
 
   /*
-   * The maintenance authority, checked FIRST. S8c, C225.
+   * The maintenance authority, checked FIRST.
    *
    * Same rule as the password and the asset: anything knowable up front
    * belongs up front, and this one is more than knowable — it is a governance
@@ -654,7 +654,7 @@ async function main() {
   good(`prover /version ${proofServerVersion}`);
 
   /*
-   * THE CHAIN'S LIMITS, READ BEFORE ANYTHING IS BUILT. `C218`.
+   * THE CHAIN'S LIMITS, READ BEFORE ANYTHING IS BUILT.
    *
    * Read here rather than at the point of comparison so that a run which never
    * reaches a transaction can still report what the limit is. The derivation is
@@ -700,18 +700,18 @@ async function main() {
   // NOT startMidnightWalletProviders(). That calls wallet.start() with its
   // default, which blocks until the testkit considers the wallet "strictly
   // complete" on all three sub-wallets at once: shielded, unshielded and dust.
-  //
+  
   // On a wallet whose only funds are unshielded NIGHT from the faucet, the
   // shielded and dust sub-wallets never reach that state, so it emits the same
   // line every two seconds forever. Observed: 900+ identical emissions of
   // `{ shielded=false, unshielded=true, dust=false }`.
-  //
+  
   // We do not need that gate. We need two specific things, and we can wait for
   // each of them by name, with a timeout and something to look at.
   const wallet: any = await MidnightWalletProvider.build(logger, cfg, masterSeed);
 
   // The dust sub-wallet, cached across runs and given a non-zero fee floor.
-  // Both problems and the reasoning are in scripts/dust-wallet.ts (M-47, M-52).
+  // Both problems and the reasoning are in scripts/dust-wallet.ts.
   {
     const installed = await installDustWallet(wallet, cfg, masterSeed, NETWORK, ROOT);
     if (installed.how === 'restored') good(`dust wallet restored from the last run — ${installed.detail}`);
@@ -784,7 +784,7 @@ async function main() {
 
   /** Waits for `done(state)`, printing what it sees, and gives up out loud. */
   /**
-   * Runs a promise, or gives up on it. M-112.
+   * Runs a promise, or gives up on it.
    *
    * **A `try/catch` cannot save you from a promise that never settles**, and
    * that is not hypothetical: a deploy sat silent for seven minutes inside
@@ -860,14 +860,14 @@ async function main() {
             unregistered,
             wallet.unshieldedKeystore.getPublicKey(),
         // signDataAsync, not signData.
-        //
+        
         // wallet-sdk 2.0 made the signing callback async — `SignSegment` is now
         // `(data: Uint8Array) => Promise<ledger.Signature>` where it used to
         // return a Signature directly — and added a separate method for it. The
         // synchronous `signData` still exists, which is why this type-checks and
         // then fails at runtime with "Wallet.Sign: Signer callback failed", a
         // message that names neither the method nor the reason.
-        //
+        
         // Taken from testkit 5.0's own signRecipe call, not guessed.
             (payload: Uint8Array) => wallet.unshieldedKeystore.signDataAsync(payload),
           );
@@ -1020,7 +1020,7 @@ async function main() {
       // The SDK encrypts the private state store at rest and requires a
       // password provider. In the product this is the vault key derived from
       // the user's password; here it is a local development value.
-      //
+      
       // It is validated, and the rules are not obvious: at least 16 characters
       // and at least 3 of uppercase / lowercase / digits / special. The
       // previous value here had only lowercase and hyphens, which is 2, and it
@@ -1060,7 +1060,7 @@ async function main() {
   }, ledgerParameters);
 
   /*
-   * M-68. The deploy lives in `MidnightLedger.open` now, and this script calls
+   * The deploy lives in `MidnightLedger.open` now, and this script calls
    * it.
    *
    * It was written out here — constructor witnesses, the websocket settle, the
@@ -1145,7 +1145,7 @@ async function main() {
    * The derivation is `storedSignerLeaf`, which is the ONE derivation every
    * writer in the product uses (`C328`, `src/core/signer-leaf.ts:181`), through
    * `MidnightCommitments`, which is the ONE wrapper around the generated
-   * circuits (`M-107`). Not a third spelling of the rule that decides who may
+   * circuits. Not a third spelling of the rule that decides who may
    * approve a payment.
    */
   const previewSigners = readOrCreatePreviewSigners(STATE_DIR, NETWORK, ACCOUNT_ID);
@@ -1183,7 +1183,7 @@ async function main() {
     },
     null as any,   // the sponsor: this script is its own, through the wallet provider
     /*
-     * A real store, not a stub. M-73.
+     * A real store, not a stub.
      *
      * This was `{ put: async () => {}, get: async () => null }` — a store that
      * silently discarded every blob. Only the commitment goes on chain, so a
@@ -1196,7 +1196,7 @@ async function main() {
     compiled,
     {
       /*
-       * `deployer` STOOD HERE. `C334`.
+       * `deployer` STOOD HERE.
        *
        * `async () => ({ secretKey: seededBytes(1), blinding: seededBytes(401) })`
        * — the only implementation of that injection point that ever existed,
@@ -1206,7 +1206,7 @@ async function main() {
        */
       register: async (_id, address) => { contractAddress = address; },
       // Chosen at stage 1, from the file beside the wallet seed. The deploy
-      // layer refuses to run without it, and never samples. C225.
+      // layer refuses to run without it, and never samples.
       maintenanceAuthority,
       retry: retryOptions,
     },
@@ -1321,7 +1321,7 @@ async function main() {
       threshold: Number(THRESHOLD),
       deployedAt: new Date().toISOString(),
       /*
-       * A PARTIAL DEPLOYMENT, SAID WHERE THE ADDRESS IS SAID. S8c, S9.
+       * A PARTIAL DEPLOYMENT, SAID WHERE THE ADDRESS IS SAID.
        *
        * This file is where S6 and the client find the address, so it is also
        * where they must find what the address IS: a deployment carrying some
@@ -1360,7 +1360,7 @@ async function main() {
   );
 
   /*
-   * The opening this contract was deployed with. M-73.
+   * The opening this contract was deployed with.
    *
    * Only commitments go on chain. The account's asset blinding lives off it and
    * cannot be recovered from anything the chain holds — so if this is not
@@ -1411,7 +1411,7 @@ async function main() {
    *                  approved under. Every signer must derive the same one.
    *
    *   entriesDigest and salt ARE GONE. There is no entry-log digest anywhere
-   *   any more (M-128), and `salt` was the old whole-account state salt.
+   *   any more, and `salt` was the old whole-account state salt.
    *
    *   `balance` AND `balanceSalt` ARE GONE TOO, under `C292`/`S26`. They were
    *   this file's opening record of what the account held, and the blinding
@@ -1441,7 +1441,7 @@ async function main() {
   /* -------------------------------------------------- 6 */
   begin(6, 6, 'Reading the contract back off the chain');
   /*
-   * THIS LINE USED TO BE PRINTED BEFORE THE QUERY BELOW. M-137.
+   * THIS LINE USED TO BE PRINTED BEFORE THE QUERY BELOW.
    *
    * Stage 6 performs no `findDeployedContract` — it queries the indexer for the
    * contract's state. The verifier-key comparison is real, but it happens in
@@ -1455,7 +1455,7 @@ async function main() {
   good('read back off the chain — the indexer has this contract\'s state');
 
   /*
-   * WHAT IS PRINTED HERE, and what is no longer printable. M-125, M-128.
+   * WHAT IS PRINTED HERE, and what is no longer printable.
    *
    * `round`, `proposalOpen`, `approvalCount` and `stateCommitment` used to be
    * these four lines and none of them exist on chain any more:
@@ -1493,7 +1493,7 @@ async function main() {
 
   /*
    * **THE THRESHOLD ON CHAIN IS A LITERAL IN THE CONSTRUCTOR, SO THIS CHECKS
-   * THE CONTRACT RATHER THAN THE DEPLOY.** `S35d`.
+   * THE CONTRACT RATHER THAN THE DEPLOY.**
    *
    * It used to compare the chain against `ACCOUNT_THRESHOLD`, which the deploy
    * passed as the constructor's first argument. Nothing is passed now, so what
@@ -1627,7 +1627,7 @@ async function unshieldedAddressFromSeed(masterSeed: string): Promise<string | n
  * server pin. It is called out by name below rather than left to be misread.
  *
  * **AND ALL THREE ARE NOW BOUNDED, BECAUSE ON 28 AUG (3) REACHED 3.04 GB IN
- * THREE MINUTES.** `C217`. The serialiser lives in `scripts/error-report.ts`
+ * THREE MINUTES.** The serialiser lives in `scripts/error-report.ts`
  * with the whole account of why the old `WeakSet` guard could not fire, and it
  * caps depth, width and rendered bytes and de-duplicates repeated errors. Every
  * cap prints its own count: a report that drops evidence silently is worse than

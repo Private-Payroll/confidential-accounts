@@ -1,5 +1,5 @@
 /**
- * THE CEILING, CALIBRATED AGAINST THE TWO REAL SUBMISSIONS. `S11`.
+ * THE CEILING, CALIBRATED AGAINST THE TWO REAL SUBMISSIONS.
  *
  * On 28 Aug 2026 the chain accepted an eleven-circuit deploy at bytesWritten
  * 31,201 (21:04 IST, block 215,346, contract `93ac5860…`) and refused a

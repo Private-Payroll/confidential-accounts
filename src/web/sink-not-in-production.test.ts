@@ -45,7 +45,7 @@ const MARKERS = ['/api/dev/web-console'];
 
 /**
  * **THE REDACTOR SHIPS IN PRODUCTION SINCE `X11` §5, AND THAT IS A DECISION.**
- * `C159`, `C145`.
+ *
  *
  * These two markers used to be in the list above, because the ONLY thing that
  * reached `redactSecrets` from the page was the sink — so a production build

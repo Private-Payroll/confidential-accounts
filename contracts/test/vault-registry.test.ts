@@ -260,7 +260,7 @@ describe('S6a: an account keeps a register of its own vaults', () => {
      * `C213`'s *done when* has two halves and S35c built one of them.
      *
      * `setVaultThreshold` inserts into `thresholds` and NOTHING ANYWHERE
-     * REMOVES (`SC2` §2.6). So a retired vault keeps its own governing
+     * REMOVES. So a retired vault keeps its own governing
      * threshold — a number for an address the account has just declared it no
      * longer runs, which `thresholdFor` would hand straight back to
      * `requireApprovedForVault` if that address were ever adopted again.

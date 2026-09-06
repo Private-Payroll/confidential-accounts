@@ -1,5 +1,5 @@
 /**
- * WHAT THE BROWSER SAID, ON DISK, WITHOUT ANYBODY HAVING BEEN LOOKING. `X4` §1.
+ * WHAT THE BROWSER SAID, ON DISK, WITHOUT ANYBODY HAVING BEEN LOOKING.
  *
  * ── WHY THIS IS THE FIRST IMPORT IN `main.tsx` ───────────────────────────
  *
@@ -35,7 +35,7 @@
  * the guard is the `C140` shape: the relaxation is declared in the `dev` script
  * in `package.json` and nowhere a person types.
  *
- * **2. IT NEVER WRITES A SECRET.** `C145`. Every message goes through
+ * **2. IT NEVER WRITES A SECRET.** Every message goes through
  * `redactSecrets` HERE, before it crosses the wire, and again in the service
  * before it reaches the disk. An error message can carry anything — a key, a
  * seed, a session token, a password typed into the wrong field.
@@ -92,7 +92,7 @@ export type SinkWindow = {
 };
 
 /**
- * **HOW MUCH OF A REFUSAL'S BODY IS KEPT BESIDE ITS STATUS.** `C157`.
+ * **HOW MUCH OF A REFUSAL'S BODY IS KEPT BESIDE ITS STATUS.**
  *
  * The sink recorded `400 POST /api/accounts` and stopped there, so a policy
  * refusal and a viewing key that could not open a record were the same line.
@@ -111,7 +111,7 @@ const QUEUE_CAP = 200;
 const FLUSH_AFTER_MS = 250;
 
 /**
- * **THE REASON OUT OF A REFUSAL'S BODY — REDACTED FIRST, CUT SECOND.** `C157`.
+ * **THE REASON OUT OF A REFUSAL'S BODY — REDACTED FIRST, CUT SECOND.**
  *
  * ── THAT ORDER IS THE WHOLE OF THIS FUNCTION ─────────────────────────────
  *
@@ -240,7 +240,7 @@ export const installErrorSink = (
   };
 
   /*
-   * **THE SHOWN-ERROR SEAM IS POINTED AT THE SAME `record`.** `C159`, `X11` §5.
+   * **THE SHOWN-ERROR SEAM IS POINTED AT THE SAME `record`.**
    * Registered here rather than exported from the closure so that a page which
    * never installed a sink has a `recordShownError` that does nothing at all,
    * rather than one that throws into a screen already showing a failure.
@@ -286,7 +286,7 @@ export const installErrorSink = (
 
   /**
    * **THE STATUS, THE PATH, AND THE REASON — WITHOUT TOUCHING THE RESPONSE.**
-   * `C157`.
+   *
    *
    * ── `clone()`, AND IT IS NOT AN OPTIMISATION ─────────────────────────────
    *

@@ -1,5 +1,5 @@
 /**
- * WHAT A PAGE SAID, AND HOW IT READS ON DISK. `X4` §2.
+ * WHAT A PAGE SAID, AND HOW IT READS ON DISK.
  *
  * The observing half of `WEB-CHECK.command`, kept apart from the half that
  * starts servers and launches browsers **so that there is one copy of it.** A
