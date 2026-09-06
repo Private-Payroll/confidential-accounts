@@ -16,6 +16,36 @@ import { toHex } from '../../src/core/crypto.js';
  *
  * These tests are the only thing standing between us and that.
  */
+/*
+ * READING THE CONTRACT'S OWN SOURCE, FOR THE TESTS THAT PIN A DOMAIN SEPARATOR.
+ *
+ * Comments stripped before reading, for `vault-scoping.test.ts:303-307`'s
+ * reason: this file's own explanation of the rule must not be able to satisfy
+ * the check on the rule.
+ *
+ * AT MODULE SCOPE BECAUSE TWO BLOCKS NEED THEM. They were local to the block
+ * below until a third derivation gained a separator and its test sits in the
+ * fixed-vector block instead, beside the value assertions it replaces.
+ */
+const codeOf = (): string =>
+  readFileSync(new URL('../src/ConfidentialAccount.compact', import.meta.url), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/\/\/[^\n]*/g, ' ');
+
+/*
+ * The body between a circuit's `export circuit <name>` and the first `}` at
+ * column 0 after it. Narrow on purpose: an assertion over the whole file would
+ * pass on a tag padded anywhere, including in another circuit.
+ */
+const bodyOf = (code: string, name: string): string => {
+  const from = code.indexOf(`export circuit ${name}`);
+  expect(from, `${name} is not exported from ConfidentialAccount.compact any more`)
+    .toBeGreaterThan(-1);
+  const to = code.indexOf('\n}', from);
+  expect(to, `${name}'s body has no closing brace at column 0`).toBeGreaterThan(from);
+  return code.slice(from, to);
+};
+
 describe('commitment schemes agree with the contract', () => {
   const ada = privateStateFor(1);
   const blake = privateStateFor(2);
@@ -356,6 +386,13 @@ describe('what a commitment names, which no mirror can check', () => {
    * `runPayload(root, payees, opensAt, closesAt)` and `payoutLeaf(details,
    * nonce)` each carry same-typed arguments and have no vector.
    *
+   * **AND `changeCommitmentOf` HAS JOINED THEM, WHICH IS A LOSS AND IS WRITTEN
+   * HERE RATHER THAN ONLY WHERE IT HAPPENED.** It had a vector; the derivation
+   * gained a domain separator, so the value it pinned is a value the circuit no
+   * longer produces. Only ONE of the two literals below is still live. What
+   * replaced it is an assertion over the body's own source text, which catches
+   * a transposition and cannot catch a change in the primitive underneath.
+   *
    * **AND THE FIRST TWO COLLIDED EXACTLY UNTIL `S32`.** Both were
    * `persistentCommit<Vector<2, Bytes<32>>>` over a two-vector with the third
    * argument as the opening, and NEITHER carried a domain separator, where
@@ -419,7 +456,61 @@ describe('what a commitment names, which no mirror can check', () => {
 
     it('changeCommitmentOf(assetKey, amount, batch, salt) — three same-typed arguments, one order', () => {
       const base = toHex(pureCircuits.changeCommitmentOf(KEY, AMOUNT, BATCH, SALT));
-      expect(base).toBe('d4a1c9538956809664a88b9ddf203459f5fef7151597e86f9ca052c5de00e84a');
+
+      /*
+       * **THIS TEST HAS LOST ITS PINNED VECTOR AND GAINED A SOURCE ASSERTION,
+       * AND THE SWAP IS A DOWNGRADE THAT IS STATED RATHER THAN HIDDEN.**
+       *
+       * The literal that stood here was read off the live circuit and was
+       * correct for a body that no longer exists: this derivation now pads a
+       * domain separator and commits over four elements, so every value it
+       * produces is different. A number for the NEW body cannot be read
+       * without a recompile, and no session may run one — writing one anyway
+       * is the exact failure the rule against unmeasured numbers names. So the
+       * vector is refused rather than guessed, and it is OWED at the foot of
+       * this file beside the two that have been owed since the separators
+       * landed.
+       *
+       * **WHAT IS LOST IN THE MEANTIME, MEASURED RATHER THAN WAVED AT.** A
+       * value is the only instrument that catches a TRANSPOSITION: a circuit
+       * that reads its arguments in a different order is still injective, so
+       * every relative assertion below passes against it unchanged. The three
+       * `.not.toBe(base)` lines that follow do NOT catch the mutation they look
+       * like they catch.
+       *
+       * **WHAT STANDS IN ITS PLACE.** The body's own text, pinned element by
+       * element. A transposition rewrites it; replacing an element with a
+       * default rewrites it; dropping the separator rewrites it. That is
+       * weaker than a value — it cannot see a change in what `persistentCommit`
+       * DOES, only in what this file asks it to do — and it is the strongest
+       * thing available until the recompile.
+       */
+      const body = bodyOf(codeOf(), 'changeCommitmentOf');
+
+      expect(body, 'changeCommitmentOf has lost its domain separator. Without it this '
+        + 'derivation sits in the same commitment family as signerLeaf and proposalIdOf with '
+        + 'nothing in the circuit keeping it out of their outputs — what kept it out was that '
+        + 'callers happen to pass an asset key, which is an assumption about call sites and '
+        + 'not a property of the function.')
+        .toContain('pad(32, "midnight-accounts:change:")');
+
+      expect(body, 'changeCommitmentOf commits over three elements again, which is the family '
+        + 'the untagged body shared with the two tagged derivations and with the vault\'s '
+        + 'payout details.')
+        .toContain('persistentCommit<Vector<4, Bytes<32>>>');
+
+      /*
+       * THE ORDER, AS ONE STRING. Whitespace-normalised so re-wrapping the
+       * source does not redden it, and every element named so a transposition
+       * of any two cannot satisfy it.
+       */
+      expect(body.replace(/\s+/g, ' '),
+        'changeCommitmentOf reads its elements in a different order. Nothing else in this '
+        + 'suite goes red for that: every behavioural test takes both sides from the contract, '
+        + 'so a relabelling returns silently, and this test has no pinned value while the '
+        + 'vector is owed.')
+        .toContain('[pad(32, "midnight-accounts:change:"), assetKey, '
+          + 'amount as Field as Bytes<32>, batch], salt');
 
       /*
        * **AND THE AMOUNT REALLY IS 128 BITS, WATCHED RATHER THAN ASSERTED IN A
@@ -475,7 +566,9 @@ describe('what a commitment names, which no mirror can check', () => {
    *      `one-definition.test.ts:32-40` and `MUTATE.command:240-257` record
    *      exactly that happening to `assetKeyOf` and `changeCommitmentOf`: two
    *      mutations broke the contract and all 232 tests stayed green, twice.
-   *      Those two now have vectors; these two have no vector yet, so a source
+   *      `assetKeyOf` still has its vector and `changeCommitmentOf` no longer
+   *      does — its separator moved the value the same way these two moved —
+   *      so three of the four have no vector now, and a source
    *      assertion is the only thing that goes red for one stripped separator
    *      and nothing else. It is the shape `vault-scoping.test.ts:299` already
    *      uses on this same file.
@@ -488,30 +581,6 @@ describe('what a commitment names, which no mirror can check', () => {
    * ───────────────────────────────────────────────────────────────────────────
    */
   describe('C317: a signer leaf and a proposal id are different families', () => {
-    /*
-     * Comments stripped before reading, for `vault-scoping.test.ts:303-307`'s
-     * reason: this file's own explanation of the rule must not be able to
-     * satisfy the check on the rule.
-     */
-    const codeOf = (): string =>
-      readFileSync(new URL('../src/ConfidentialAccount.compact', import.meta.url), 'utf8')
-        .replace(/\/\*[\s\S]*?\*\//g, ' ')
-        .replace(/\/\/[^\n]*/g, ' ');
-
-    /*
-     * The body between a circuit's `export circuit <name>` and the first `}` at
-     * column 0 after it. Narrow on purpose: an assertion over the whole file
-     * would pass on a tag padded anywhere, including in the other circuit.
-     */
-    const bodyOf = (code: string, name: string): string => {
-      const from = code.indexOf(`export circuit ${name}`);
-      expect(from, `${name} is not exported from ConfidentialAccount.compact any more`)
-        .toBeGreaterThan(-1);
-      const to = code.indexOf('\n}', from);
-      expect(to, `${name}'s body has no closing brace at column 0`).toBeGreaterThan(from);
-      return code.slice(from, to);
-    };
-
     it('signerLeaf pads its own domain tag into the commitment', () => {
       const body = bodyOf(codeOf(), 'signerLeaf');
       expect(body, 'signerLeaf has lost its domain separator. Without it signerLeaf(X, Y, Z) '
@@ -595,10 +664,18 @@ describe('what a commitment names, which no mirror can check', () => {
  * ─────────────────────────────────────────────────────────────────────────────
  * OWED, AND NAMED HERE RATHER THAN LEFT TO BE NOTICED.
  *
- * `signerLeaf` and `proposalIdOf` HAVE NO PINNED VECTOR. Everything above
- * asserts the separator's TEXT and the property it buys; neither is the
- * instrument the `C311` block uses on `assetKeyOf` and `changeCommitmentOf`,
- * and neither would catch a change that kept a tag and moved an argument.
+ * `signerLeaf`, `proposalIdOf` AND NOW `changeCommitmentOf` HAVE NO PINNED
+ * VECTOR. Everything above asserts each separator's TEXT and, for the first
+ * two, the property it buys; neither is the instrument the fixed-vector block
+ * uses on `assetKeyOf`. A source assertion sees what this file asks the
+ * primitive to do and not what the primitive does, so it would not catch a
+ * change underneath a body that still reads correctly.
+ *
+ * `changeCommitmentOf` IS THE ONE THAT LOST A VECTOR IT ALREADY HAD, and the
+ * loss is worth naming separately: for the other two the vector was never
+ * written, and for this one a live literal was deleted because the separator
+ * moved the value. Until it is re-pinned, the transposition mutation aimed at
+ * this circuit is scored by a source assertion rather than by a value.
  *
  * WHY IT IS NOT HERE: the vector is whatever the recompiled circuit returns,
  * and a session may not run `COMPILE-CONTRACT.command` — rule 1. A number
@@ -613,6 +690,12 @@ describe('what a commitment names, which no mirror can check', () => {
  *
  *     pureCircuits.signerLeaf(b(11), b(12), b(13))       → owed
  *     pureCircuits.proposalIdOf(b(11), b(12), b(13))     → owed
+ *
+ * and, with the fixed-vector block's own inputs so the restored line sits
+ * where the deleted one stood — `KEY = b(2)`, `BATCH = b(3)`, `SALT = b(4)`
+ * and the 128-bit `AMOUNT` defined there, none of them equal to another:
+ *
+ *     pureCircuits.changeCommitmentOf(KEY, AMOUNT, BATCH, SALT)  → owed
  *
  * then add each as an `it` beside the two in *"AND IT READS THEM IN THE RIGHT
  * ORDER"*, and point the two `C317` mutations in `MUTATE.command` at those
