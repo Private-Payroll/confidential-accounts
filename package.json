@@ -14,7 +14,13 @@
     "docs": "tsx scripts/docs-run.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "typecheck:scripts": "tsc --noEmit -p tsconfig.scripts.json",
-    "pretest": "npm run compact:fast && npm run typecheck:scripts && npm run typecheck",
+    "typecheck:identity": "tsc --noEmit -p packages/identity/tsconfig.json",
+    "typecheck:wallet": "tsc --noEmit -p apps/wallet/tsconfig.json",
+    "pretest": "npm run compact:fast && npm run typecheck:scripts && npm run typecheck && npm run typecheck:identity && npm run typecheck:wallet",
+    "wallet": "VITE_ALLOW_LOCALHOST_ORIGIN=1 vite --config apps/wallet/vite.config.ts",
+    "wallet:build": "vite build --config apps/wallet/vite.config.ts",
+    "identity:build": "tsc -p packages/identity/tsconfig.build.json",
+    "vendor-keys": "node apps/wallet/scripts/vendor-keys.mjs",
     "deploy": "tsx scripts/deploy-preview.ts",
     "preflight": "node scripts/preflight-preview.mjs",
     "migrate": "tsx scripts/migrate.ts"
@@ -24,7 +30,7 @@
   "license": "Apache-2.0",
   "type": "module",
   "dependencies": {
-    "midnight-identity": "file:./Identity",
+    "midnight-identity": "file:./packages/identity",
     "@midnight-ntwrk/compact-js": "2.5.5-rc.6",
     "@midnight-ntwrk/compact-runtime": "0.18.0-rc.1",
     "@midnight-ntwrk/midnight-js-contracts": "5.0.0-beta.4",

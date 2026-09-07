@@ -1,0 +1,159 @@
+{
+  "name": "midnight-identity",
+  "version": "0.1.0",
+  "description": "A person's identity and wallet on Midnight: passkey sign-in, sharded recovery, and keys derived from one secret they hold.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "sideEffects": [
+    "./lib/browser/buffer.js"
+  ],
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./browser": {
+      "types": "./lib/browser/index.d.ts",
+      "default": "./lib/browser/index.js"
+    },
+    "./profile/request": {
+      "types": "./lib/profile/request.d.ts",
+      "default": "./lib/profile/request.js"
+    },
+    "./profile/payload": {
+      "types": "./lib/profile/payload.d.ts",
+      "default": "./lib/profile/payload.js"
+    },
+    "./profile/disclosure": {
+      "types": "./lib/profile/disclosure.d.ts",
+      "default": "./lib/profile/disclosure.js"
+    },
+    "./profile/channel": {
+      "types": "./lib/profile/channel.d.ts",
+      "default": "./lib/profile/channel.js"
+    },
+    "./profile/unlock": {
+      "types": "./lib/profile/unlock.d.ts",
+      "default": "./lib/profile/unlock.js"
+    },
+    "./profile/inbox": {
+      "types": "./lib/profile/inbox.d.ts",
+      "default": "./lib/profile/inbox.js"
+    },
+    "./profile/fingerprint": {
+      "types": "./lib/profile/fingerprint.d.ts",
+      "default": "./lib/profile/fingerprint.js"
+    },
+    "./profile/model": {
+      "types": "./lib/profile/model.d.ts",
+      "default": "./lib/profile/model.js"
+    },
+    "./profile/definition": {
+      "types": "./lib/profile/definition.d.ts",
+      "default": "./lib/profile/definition.js"
+    },
+    "./profile/attributes": {
+      "types": "./lib/profile/attributes.d.ts",
+      "default": "./lib/profile/attributes.js"
+    },
+    "./profile/origin": {
+      "types": "./lib/profile/origin.d.ts",
+      "default": "./lib/profile/origin.js"
+    },
+    "./network": {
+      "types": "./lib/wallet/network.d.ts",
+      "default": "./lib/wallet/network.js"
+    },
+    "./wallet/address-shape": {
+      "types": "./lib/wallet/address-shape.d.ts",
+      "default": "./lib/wallet/address-shape.js"
+    }
+  },
+  "files": [
+    "lib",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "tsc --noEmit -p tsconfig.json && vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "check": "npm test",
+    "build": "tsc -p tsconfig.build.json",
+    "prepare": "npm run build",
+    "check:consumer": "node scripts/check-library-build.mjs",
+    "vendor-keys": "node scripts/vendor-keys.mjs"
+  },
+  "dependencies": {
+    "@fontsource-variable/inter": "5.3.0",
+    "@fontsource-variable/jetbrains-mono": "5.3.0",
+    "@hugeicons/core-free-icons": "4.3.0",
+    "@hugeicons/react": "1.1.9",
+    "@midnightntwrk/ledger-v9": "1.0.0-rc.3",
+    "@midnightntwrk/wallet-sdk": "2.0.0-beta.2",
+    "@midnightntwrk/wallet-sdk-address-format": "4.0.0-beta.2",
+    "@midnightntwrk/wallet-sdk-hd": "3.1.0-beta.1",
+    "@noble/ciphers": "2.3.0",
+    "@noble/curves": "2.3.0",
+    "@noble/hashes": "2.3.0",
+    "@scure/base": "2.3.0",
+    "@scure/bip39": "2.3.0",
+    "buffer": "6.0.3",
+    "class-variance-authority": "0.7.1",
+    "clsx": "2.1.1",
+    "effect": "^3.22.1",
+    "radix-ui": "1.6.7",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "shamir-secret-sharing": "0.0.4",
+    "tailwind-merge": "3.6.0"
+  },
+  "devDependencies": {
+    "@midnight-ntwrk/testkit-js": "5.0.0-beta.4",
+    "@midnight-ntwrk/zkir-v2": "2.1.0",
+    "@midnightntwrk/wallet-sdk-capabilities": "4.0.0-beta.2",
+    "@midnightntwrk/wallet-sdk-dust-wallet": "5.0.0-beta.2",
+    "@midnightntwrk/wallet-sdk-facade": "5.0.0-beta.2",
+    "@midnightntwrk/wallet-sdk-indexer-client": "1.3.0-beta.1",
+    "@midnightntwrk/wallet-sdk-unshielded-wallet": "4.0.0-beta.2",
+    "@scure/bip32": "2.3.0",
+    "@swc/core": "1.12.14",
+    "@tailwindcss/vite": "4.3.3",
+    "@testing-library/dom": "10.4.1",
+    "@testing-library/react": "16.3.2",
+    "@types/node": "26.2.0",
+    "@types/qrcode": "1.5.5",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
+    "@vitejs/plugin-react": "6.0.5",
+    "esbuild": "0.27.2",
+    "fake-indexeddb": "6.2.5",
+    "jsdom": "30.0.1",
+    "jsqr": "1.4.0",
+    "qrcode": "1.5.4",
+    "rollup": "4.62.4",
+    "rxjs": "7.8.2",
+    "tailwindcss": "4.3.3",
+    "typescript": "7.0.2",
+    "vite": "8.2.1",
+    "vite-plugin-top-level-await": "1.6.0",
+    "vite-plugin-wasm": "3.6.0",
+    "vitest": "4.1.11"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Private-Payroll/confidential-accounts.git"
+  },
+  "keywords": [
+    "midnight",
+    "wallet",
+    "identity",
+    "passkey",
+    "recovery",
+    "shamir",
+    "zero-knowledge"
+  ]
+}

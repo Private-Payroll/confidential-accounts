@@ -1,6 +1,89 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
+/*
+ * ── THE WALLET REACHES THE LIBRARY FROM SOURCE. NOTHING ELSE DOES. ──────────
+ *
+ * Two products share this runner. Both import `midnight-identity`, and they
+ * must not resolve it the same way.
+ *
+ * PAYROLL IS AN OUTSIDE CONSUMER and resolves it the way an outside consumer
+ * does: through the package's `exports` map, at the emitted build. One of its
+ * tests pins a key derivation against exactly that artefact, so redirecting
+ * payroll at the source would quietly change what that test is a pin ON.
+ *
+ * THE WALLET IS NOT AN OUTSIDE CONSUMER. It is built from this repository and
+ * reaches modules the `exports` map does not publish; those are written down in
+ * `packages/identity/internal-subpaths.json` and pinned by
+ * `apps/wallet/internal-reach.test.ts`.
+ *
+ * SO THE RESOLVER ASKS WHO IS IMPORTING. A file under `apps/wallet/` gets the
+ * source; everything else gets `null`, which is this resolver saying it has no
+ * opinion, and the request goes on to resolve normally. **THE IMPORTER TEST IS
+ * THE WHOLE OF IT** - without it this is a repository-wide redirection wearing
+ * an application-scoped comment, and the pin it breaks is on the money path.
+ */
+const WALLET = fileURLToPath(new URL('./apps/wallet/', import.meta.url));
+const LIB = fileURLToPath(new URL('./packages/identity/src/', import.meta.url));
+
+/*
+ * The three exact spellings mirror the library's own `exports` map, so a
+ * published subpath is written the same way in both products.
+ * `midnight-identity/network` is `wallet/network` inside the library, and an
+ * entry that got that wrong would resolve to a file that is not there.
+ */
+const EXACT: Record<string, string> = {
+  'midnight-identity': LIB + 'index.ts',
+  'midnight-identity/browser': LIB + 'browser/index.ts',
+  'midnight-identity/network': LIB + 'wallet/network.ts',
+};
+
+export const walletLibraryResolver = (source: string, importer: string | undefined): string | null => {
+  if (importer === undefined || !importer.startsWith(WALLET)) return null;
+  const exact = EXACT[source];
+  if (exact !== undefined) return exact;
+  if (source.startsWith('midnight-identity/')) return LIB + source.slice('midnight-identity/'.length);
+  return null;
+};
+
 export default defineConfig({
+  /*
+   * A PLUGIN AND NOT AN ALIAS ENTRY, because an alias cannot ask who is
+   * importing without `customResolver`, which vite has deprecated. `enforce:
+   * 'pre'` puts it ahead of node resolution, and returning `null` means it has
+   * no opinion - which is the answer for every importer that is not the wallet.
+   */
+  plugins: [
+    {
+      name: 'wallet-reaches-the-library-from-source',
+      enforce: 'pre' as const,
+      /*
+       * `this.resolve` FINISHES THE JOB AND THAT IS NOT A DETAIL. What the
+       * mapping produces for a subpath is a path with no extension - the
+       * library is TypeScript and the import is spelled the way the `exports`
+       * map spells it. A `pre` plugin's return value is taken as FINAL, so
+       * returning that would name a file that is not there, and the failure
+       * reads as a missing module rather than as an unfinished resolution.
+       */
+      async resolveId(source: string, importer: string | undefined) {
+        const mapped = walletLibraryResolver(source, importer);
+        if (mapped === null) return null;
+        const finished = await this.resolve(mapped, importer, { skipSelf: true });
+        return finished ?? mapped;
+      },
+    },
+  ],
+  resolve: {
+    alias: [
+      /*
+       * The wallet's own `@/`. A STRING find matches only an import that is
+       * exactly `@` or begins `@/`, so no scoped package is touched - measured
+       * here as well as in the wallet's own config: nothing outside
+       * `apps/wallet/` imports either spelling.
+       */
+      { find: '@', replacement: WALLET.replace(/\/$/, '') },
+    ],
+  },
   test: {
     /*
      * contracts/ runs the compiled Compact circuits in process, so it needs
@@ -15,6 +98,14 @@ export default defineConfig({
      */
     include: [
       'src/**/*.test.{ts,tsx}', 'contracts/test/**/*.test.ts', 'scripts/**/*.test.ts',
+      /*
+       * BOTH PRODUCTS' TESTS RUN HERE, and that is the whole of what the merge
+       * changed about this file. The wallet's tests used to run under a second
+       * runner in a folder of their own; there is one repository now and one
+       * suite, so a change to the shared library goes red in whichever product
+       * it broke rather than in whichever product somebody thought to run.
+       */
+      'packages/identity/src/**/*.test.{ts,tsx}', 'apps/wallet/**/*.test.{ts,tsx}',
     ],
     root: '.',
     testTimeout: 30_000,
@@ -36,7 +127,7 @@ export default defineConfig({
      * failures in code that is fine. `src/test-setup.ts` sets the second, once,
      * centrally, and carries the discipline that goes with it.
      */
-    setupFiles: ['./src/test-setup.ts'],
+    setupFiles: ['./src/test-setup.ts', './packages/identity/src/test-setup.ts'],
     /*
      * **THE SUITE REFUSES TO RUN AGAINST AN ARTIFACT OLDER THAN ITS SOURCE.**
      *

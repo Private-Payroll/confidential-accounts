@@ -1,0 +1,64 @@
+{
+  /*
+   * THE LIBRARY BUILD.
+   *
+   * WHY THIS FILE EXISTS AND WHY IT IS NOT `tsconfig.json`.
+   * `tsconfig.json` is the TYPECHECK config: `noEmit: true`, and it includes
+   * the application (`apps/wallet/`) and every test, because that is what
+   * `npm run typecheck` has to read. A published package needs the opposite —
+   * emitted JavaScript and declarations, and NOTHING from the application.
+   * Making one file do both would either emit the app into the package or stop
+   * the typecheck reading it. So the two configs are separate on purpose and
+   * `tsconfig.json` is unchanged.
+   *
+   * WHAT IS IN THE LIBRARY, MEASURED RATHER THAN CHOSEN.
+   * Every `.ts` under `src/` that is not a test, not `test-setup.ts`, and not
+   * under `apps/wallet/`. That is 34 files. The measurement that makes the split
+   * safe: NO file outside `apps/wallet/` imports anything from `apps/wallet/` or
+   * through the `@/` alias — only three TEST files do, and tests are excluded
+   * here and keep running from source under `vitest`. So the library half has
+   * no edge into the application half and the exclusion cannot silently drop a
+   * module the package needs.
+   *
+   * WHY THE EMITTED JAVASCRIPT RUNS UNDER A PLAIN NODE LOADER, WHICH IS THE
+   * WHOLE POINT OF THIS FILE. `moduleResolution: Bundler` accepts extensionless
+   * relative imports, and TypeScript emits import specifiers VERBATIM — so a
+   * single extensionless relative import anywhere in this set would emit a
+   * specifier Node ESM cannot resolve, and the package would fail exactly as it
+   * does today, one layer further down. MEASURED: of the relative imports in
+   * this set, zero are extensionless; every one already carries `.js`. The
+   * extensionless spelling exists only under `apps/wallet/`, which shadcn's output
+   * introduced and which is not in the package.
+   *
+   * `types` IS `["node"]` AND NOT THE BASE CONFIG'S LIST, FOR TWO SEPARATE
+   * REASONS. What comes OUT: the base loads `vitest/globals` and `vite/client`,
+   * a test runner's and a bundler's ambient types, which a consumer of this
+   * package has not installed — a declaration file referring to them would not
+   * typecheck on the other side. The one place the library reads
+   * `import.meta.env` (`packages/identity/src/profile/origin.ts:89`) already does it through a
+   * cast rather than through `vite/client`, so nothing here needs it.
+   * What goes IN: `packages/identity/src/profile/disclosure.ts:101,192` uses the GLOBAL `Buffer`
+   * with no import, so the build needs `@types/node` to name it. Emptying the
+   * list made those two lines the only errors in the whole set, which is how
+   * the dependency was found rather than assumed — and it is recorded as a
+   * finding in its own right, because `@types/node` was not declared by this
+   * package until the work that added this file declared it.
+   */
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "./lib",
+    "rootDir": "./src",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": [
+    "apps/wallet/**",
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx",
+    "packages/identity/src/test-setup.ts"
+  ]
+}

@@ -1,0 +1,71 @@
+{
+  /*
+   * THE WALLET APPLICATION'S TYPECHECK.
+   *
+   * WHY IT IS ITS OWN FILE. The library and the application used to sit in one
+   * source tree under one config; the application is now a folder of its own
+   * beside the package it consumes, and a single config covering both would
+   * put the application's DOM types, its JSX and its `@/` alias into the
+   * library's build - which is exactly the mixing `tsconfig.build.json` exists
+   * to prevent.
+   *
+   * WHAT IS SET HERE AND WHY EACH IS NOT INHERITED. `jsx`, `lib` and the `@/`
+   * alias belong to an application and to nothing else. `strict`,
+   * `noUncheckedIndexedAccess` and `noUnusedLocals` are the same values the
+   * library holds; they are repeated rather than extended because a config
+   * that reaches up out of its own folder to borrow settings is a config whose
+   * behaviour depends on where it sits.
+   */
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    /*
+     * THE LIBRARY, BY ITS PACKAGE NAME, RESOLVED FROM SOURCE.
+     *
+     * THE THREE EXACT ENTRIES MIRROR THE LIBRARY'S `exports` MAP so that a
+     * published subpath is spelled here exactly as an outside consumer spells
+     * it. `midnight-identity/network` is `wallet/network` inside the library,
+     * and that one difference is the reason these cannot be a single pattern.
+     *
+     * THE WILDCARD REACHES MODULES `exports` DOES NOT PUBLISH. That is
+     * deliberate and it is why `internal-subpaths.json` exists beside the
+     * library: the set reached this way is written down, it is not public API,
+     * and `internal-reach.test.ts` turns red if it grows without being said.
+     *
+     * These MUST agree with the matching block in `vite.config.ts`. The
+     * typechecker reads this file and the bundler reads that one, so a change
+     * to one alone is a build that is green in the compiler and dead at
+     * runtime - which is the split `alias.test.ts` was written for.
+     */
+    "paths": {
+      "@/*": ["./*"],
+      "midnight-identity": ["../../packages/identity/src/index.ts"],
+      "midnight-identity/browser": ["../../packages/identity/src/browser/index.ts"],
+      "midnight-identity/network": ["../../packages/identity/src/wallet/network.ts"],
+      "midnight-identity/*": ["../../packages/identity/src/*"]
+    },
+    "lib": ["ES2022", "DOM"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "exactOptionalPropertyTypes": false,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": ["vitest/globals", "vite/client"],
+    "jsx": "react-jsx"
+  },
+  /*
+   * THE TWO CROSS-REACHING TESTS ARE READ HERE, and `packages/identity`'s own
+   * config excludes them for the reason written there: they import this
+   * application, and this is the only config that can resolve both halves.
+   */
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    "../../packages/identity/src/profile/registry-open.test.tsx",
+    "../../packages/identity/src/profile/unlock.test.ts"
+  ],
+  "exclude": ["dist", "node_modules", "public"]
+}
