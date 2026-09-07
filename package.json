@@ -11,6 +11,7 @@
     "standalone": "vite build --config vite.standalone.config.ts",
     "compact": "./scripts/compile-contract.sh --full",
     "compact:fast": "./scripts/compile-contract.sh",
+    "docs": "tsx scripts/docs-run.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "typecheck:scripts": "tsc --noEmit -p tsconfig.scripts.json",
     "pretest": "npm run compact:fast && npm run typecheck:scripts && npm run typecheck",

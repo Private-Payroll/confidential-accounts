@@ -1057,7 +1057,7 @@ const tail = (text, n = 20) => {
  * compares against the baseline's; `byFile` keeps each assertion's SUITE FILE,
  * which the old return threw away at the one point the harness needed it; and
  * **`stderr` IS KEPT.** Under mutation 22 the only record of the cause was
- * vitest's refusal naming `DOCS.command`, and this function discarded it —
+ * vitest's refusal naming the regeneration, and this function discarded it —
  * which is why that cost a round rather than a glance.
  */
 function runSuite(tag) {
@@ -1380,8 +1380,8 @@ export const scoreKills = (kills, failed) => ({
  * into `coverage.clientFilesScanned` in `docs/design/edges.json`. **MEASURED BY
  * That walk finds 298 files today and `edges.json` records 298.** So a
  * corpus in its own module makes the generated doc set stale the moment it is
- * created and refuses the WHOLE suite until `DOCS.command` is run — a door no
- * session may run, and one that would have held up a second round building in
+ * created and refuses the WHOLE suite until the documents are regenerated —
+ * which would have held up a second round building in
  * this folder at the same time. The guard costs no file and reaches the same
  * end.
  *
@@ -1389,7 +1389,7 @@ export const scoreKills = (kills, failed) => ({
  * LOOKS LIKE CARELESSNESS AND IS NOT.** `docs/design/edges.json` records
  * exactly one scanned circuit call site in this file — `:542`, mutation 22's
  * `from:` text — and `S67` measured the gate firing on a two-line import
- * addition that moved it to `:544`: *1 line(s) differ … Run DOCS.command, then
+ * addition that moved it to `:544`: *1 line(s) differ … Run npm run docs, then
  * run this again*, with the WHOLE suite refused until a person does. `S67`
  * could not run that door (rule 1) and a second round was building in this
  * folder at the time, so it kept the line count above `:542` unchanged instead.

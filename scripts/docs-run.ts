@@ -1,5 +1,5 @@
 /**
- * The entry point `DOCS.command` runs, and the only thing that writes a
+ * The entry point `npm run docs` runs, and the only thing that writes a
  * generated block. It holds no decision — `scripts/generate-docs.ts` is the
  * generator — so there is nothing here that can be got wrong separately.
  */

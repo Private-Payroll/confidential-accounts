@@ -12,14 +12,14 @@
  * over fixtures alone proves the code can compute a graph, not that the graph
  * it computes is this repository's.
  */
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { beforeAll, describe, expect, it } from 'vitest';
 
-import { CLIENT_TREES, DYNAMIC, PAYMENT_ROOTS, SHAPES, buildEdgeList, type EdgeList } from './edge-list.js';
-import { EDGE_LIST_FILE } from './doc-registry.js';
+import { CLIENT_TREES, DYNAMIC, MONEY_PATH, PAYMENT_ROOTS, SHAPES, buildEdgeList, type EdgeList } from './edge-list.js';
+import { EDGE_LIST_FILE, GENERATED_BLOCKS, GENERATED_FILES } from './doc-registry.js';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 let edges: EdgeList;
@@ -186,7 +186,10 @@ describe('the list says what it does NOT know', () => {
     // `expect(unresolved.length).toBe(coverage.unresolvedInvocations)` is the
     // counter agreeing with the array it was incremented beside. These are the
     // numbers printed into a public document, so they get floors.
-    expect(edges.coverage.clientFilesScanned).toBeGreaterThan(200);
+    // `clientFilesScanned` IS THE SAME NUMBER AS `modulesWalked` — one file
+    // list, counted twice — so it is asserted as equal rather than floored
+    // twice, and the module-graph block carries the tighter floor.
+    expect(edges.coverage.clientFilesScanned).toBe(edges.moduleCoverage.modulesWalked);
     expect(edges.coverage.resolvedInvocations).toBeGreaterThan(300);
     // And the dynamic dispatchers are FOUND, not merely counted: with both
     // dynamic shapes deleted the old test still passed, because ambiguous
@@ -229,12 +232,152 @@ describe('the list says what it does NOT know', () => {
   });
 
   it('every edge carries which instrument produced it', () => {
-    for (const e of edges.edges) expect(['artifact', 'source', 'client']).toContain(e.source);
+    // `module` JOINED THIS LIST WITH THE IMPORT GRAPH and the list is asserted
+    // rather than derived: an edge with an instrument nobody named is an edge a
+    // reader cannot weigh, and the four are not equally sure of themselves.
+    for (const e of edges.edges) expect(['artifact', 'source', 'client', 'module']).toContain(e.source);
     // `disclose` cannot come from the artifact and nothing else may come from
     // the source: the compiler erases disclose and nothing else is missing.
     for (const e of edges.edges) {
       if (e.kind === 'discloses') expect(e.source).toBe('source');
       if (e.source === 'source') expect(e.kind).toBe('discloses');
+    }
+  });
+});
+
+describe('THE IMPORT GRAPH — the half that did not exist', () => {
+  it('THE DECLARED SET IS PINNED, and every member is a module the walk found', () => {
+    // RED WHEN: a path is removed from MONEY_PATH, or one is added that is not
+    // on disk. The list is a SECOND COPY of a set declared elsewhere and
+    // nothing reconciles the two, so the only thing standing between a
+    // silently shorter reference and a reader is this assertion.
+    expect(MONEY_PATH).toEqual([
+      'src/midnight/payout-tree.ts', 'src/midnight/run-keys.ts', 'src/midnight/commitments.ts',
+      'src/core/signer-leaf.ts', 'src/core/crypto.ts', 'src/midnight/payee-address.ts',
+      'src/core/payslip-key.ts', 'src/core/payslip-key-derive.ts',
+      'src/midnight/ledger.ts', 'src/midnight/vault-ledger.ts', 'src/midnight/vault-notes.ts',
+      'src/midnight/vault-coins.ts', 'src/core/movement.ts', 'src/midnight/run-status.ts',
+    ]);
+    expect(edges.moduleCoverage.declaredButAbsent).toEqual([]);
+    expect(edges.moneyPath.map((m) => m.file)).toEqual([...MONEY_PATH]);
+    for (const f of MONEY_PATH) expect(existsSync(join(ROOT, f))).toBe(true);
+    /*
+     * AND THE TIER IS THE FIRST EIGHT, WHICH THE ARRAY ALONE DOES NOT SAY.
+     * `scripts/generate-docs.ts` reads tier off array POSITION, so reordering
+     * this list republishes a boundary module as one that computes a value the
+     * contracts compare — and the two tiers owe different halves of the parity
+     * rule. RED WHEN: an entry moves across the eighth position.
+     */
+    expect(MONEY_PATH.slice(0, 8)).toEqual([
+      'src/midnight/payout-tree.ts', 'src/midnight/run-keys.ts', 'src/midnight/commitments.ts',
+      'src/core/signer-leaf.ts', 'src/core/crypto.ts', 'src/midnight/payee-address.ts',
+      'src/core/payslip-key.ts', 'src/core/payslip-key-derive.ts',
+    ]);
+  });
+
+  it('THE HOLES ARE COUNTED, INCLUDING THE BIG ONE THAT IS NOT A DEFECT', () => {
+    // A specifier naming a real file outside the three walked trees is not an
+    // edge and not an error — a compiled contract module is a real dependency
+    // of a test and not a module of this graph — and it is 86 sites here, the
+    // largest single thing the graph does not draw. Counted where the other
+    // holes are counted. RED WHEN: the counter is dropped, or the branch that
+    // records it is removed.
+    expect(edges.moduleCoverage.resolvedOutsideTheWalkedSet).toBeGreaterThan(50);
+  });
+
+  it('REACHING CROSSES THE CONTRACT BOUNDARY, so the column answers its own heading', () => {
+    // `Vault.payout` lands `ConfidentialAccount.recordPayment` on chain and no
+    // IMPORT says so. Before the second closure, the vault boundary reached 24
+    // circuits and not that one — the column read as an upper bound on what can
+    // end up on chain and was a lower one. RED WHEN: `circuitCalls` stops being
+    // passed to the walker, or the second flood is removed.
+    const vault = edges.modules.find((m) => m.file === 'src/midnight/vault-ledger.ts');
+    expect(vault?.circuits).toContain('Vault.payout');
+    expect(vault?.circuits).not.toContain('ConfidentialAccount.recordPayment');
+    expect(vault?.circuitsReached).toContain('ConfidentialAccount.recordPayment');
+    // And the cross-contract edge it rides is in this same list, so a reader
+    // can follow the hop rather than take the column's word for it.
+    expect(edges.edges.some((e) => e.kind === 'calls' && e.circuit === 'Vault.payout'
+      && e.callee === 'ConfidentialAccount.recordPayment')).toBe(true);
+  });
+
+  it('THERE ARE MODULE-TO-MODULE EDGES AT ALL, which is the whole point of the row', () => {
+    // Before this existed every client edge ran from a file to a CIRCUIT and
+    // none ran from a file to a file — 529 to 0 — so nothing could draw the
+    // layers. A floor rather than a self-consistency check: the count is the
+    // measurement, so it gets a number to fall below.
+    const imports = edges.edges.filter((e) => e.kind === 'imports');
+    expect(imports.length).toBeGreaterThan(800);
+    expect(edges.moduleCoverage.importEdges).toBe(imports.length);
+    expect(edges.moduleCoverage.modulesWalked).toBe(edges.modules.length);
+    // 309 TODAY, AND NINE FILES OF SLACK IS THE TIGHTEST FLOOR HERE. A red on
+    // this line means COUNT THE FILES, not "the walker broke" — a consolidation
+    // round that removes ten modules trips it with nothing wrong.
+    expect(edges.moduleCoverage.modulesWalked).toBeGreaterThan(300);
+  });
+
+  it('EVERY EDGE NAMES TWO FILES THAT EXIST, at both ends', () => {
+    // An edge to a path nothing answers to is worse than a missing edge: it
+    // reads as a dependency and sends a reader to nothing.
+    for (const e of edges.edges) {
+      if (e.kind !== 'imports') continue;
+      expect(existsSync(join(ROOT, e.from))).toBe(true);
+      expect(existsSync(join(ROOT, e.to))).toBe(true);
+      expect(e.at.startsWith(`${e.from}:`)).toBe(true);
+    }
+  });
+
+  it('NOTHING WAS SKIPPED SILENTLY — the two loud counters agree with their lists', () => {
+    // A walk that drops what it cannot read reports a graph with a hole in it,
+    // and a hole looks exactly like a module nothing imports — a check over
+    // nothing cannot fail. Both counters are asserted against their arrays AND
+    // against the tree, so a counter incremented beside an empty list fails.
+    expect(edges.moduleCoverage.unreadableModules).toBe(0);
+    const unresolved = edges.edges.filter((e) => e.kind === 'imports-unresolved');
+    expect(edges.moduleCoverage.unresolvedSpecifiers).toBe(unresolved.length);
+    /*
+     * AND IT IS ZERO TODAY, WHICH IS A STRONGER STATEMENT THAN THE ONE ABOVE.
+     * A counter agreeing with the array it was incremented beside says nothing
+     * about the tree; this says every specifier in the three client trees
+     * resolves. RED WHEN: an import names a file that is not there, or a string
+     * literal somewhere carries the text of a dynamic import — which is a real
+     * shape and cost three phantom entries the first time this walker read its
+     * own test file.
+     */
+    expect(edges.moduleCoverage.unresolvedSpecifiers).toBe(0);
+    for (const e of unresolved) {
+      if (e.kind !== 'imports-unresolved') continue;
+      expect(existsSync(join(ROOT, e.from))).toBe(true);
+    }
+  });
+
+  it('REACHING IS WIDER THAN NAMING, and never narrower, for every circuit', () => {
+    // The invariant behind the column. A module that names a circuit must
+    // reach it; a module that reaches one need not name it, and the difference
+    // between the two sets IS the layering the row was opened for. Reversing
+    // the walk, or dropping the transitive step, breaks this in one direction
+    // each.
+    let widened = 0;
+    for (const c of edges.contracts) {
+      for (const circuit of c.circuits) {
+        const naming = edges.modules.filter((m) => m.circuits.includes(circuit.qualified)).map((m) => m.file);
+        const reaching = new Set(edges.modules.filter((m) => m.circuitsReached.includes(circuit.qualified)).map((m) => m.file));
+        for (const f of naming) expect(reaching.has(f)).toBe(true);
+        if (reaching.size > naming.length) widened += 1;
+      }
+    }
+    // And it is wider somewhere, or the transitive walk is not running at all.
+    expect(widened).toBeGreaterThan(0);
+  });
+
+  it('A MODULE`S OWN EDGES ARE THE INVERSE OF EVERYBODY ELSE`S, over the real tree', () => {
+    // The fixture pins this shape; this pins it against 300-odd real modules,
+    // where an off-by-one in the inversion is the kind of thing a fixture of
+    // two files cannot show.
+    const byFile = new Map(edges.modules.map((m) => [m.file, m]));
+    for (const e of edges.edges) {
+      if (e.kind !== 'imports') continue;
+      expect(byFile.get(e.to)?.importedBy).toContain(e.from);
     }
   });
 });
@@ -270,11 +413,20 @@ describe('the generated artefacts on disk are the ones this produces', () => {
    * mutation: `scripts/doc-freshness.test.ts`, sequential within itself.
    */
 
-  it('every new door is on disk and executable — a refusal may not name a door nobody can open', () => {
-    for (const door of ['DOCS.command', 'WHAT-BREAKS.command', 'CITATIONS.command']) {
-      const st = statSync(join(ROOT, door));
-      expect(st.isFile()).toBe(true);
-      expect(st.mode & 0o111).toBeGreaterThan(0);
-    }
+  it('every door a refusal names is one a reader of the published repository can open', () => {
+    /*
+     * THIS USED TO STAT THREE `.command` FILES, AND IT PASSED FOR THE WRONG
+     * REASON. A clone has none of them — they are on no take list and cannot
+     * be — so "a refusal may not name a door nobody can open" was checked
+     * against a folder the reader does not have. What the doc set's refusals
+     * name now is a script in the shipping `package.json`, and that is what is
+     * asserted: the script exists, and it runs something that ships.
+     */
+    const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { scripts: Record<string, string> };
+    expect(pkg.scripts.docs).toBe('tsx scripts/docs-run.ts');
+    expect(existsSync(join(ROOT, 'scripts/docs-run.ts'))).toBe(true);
+    // And the entry point it names is the one the generator's own registry
+    // points at, so the two cannot drift into naming different things.
+    for (const b of [...GENERATED_BLOCKS, ...GENERATED_FILES]) expect(b.door).toBe('npm run docs');
   });
 });

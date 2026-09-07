@@ -17,8 +17,10 @@ import {
   buildPayoutTree, rootOfLeaves, type PayoutLeafInput,
 } from '../../src/midnight/payout-tree.js';
 import {
-  runStatus, stillToPay, describeRun, type PayeeAttempts,
+  runStatus, stillToPay, describeRun, runPayments,
+  type PayeeAttempts, type RunPayments,
 } from '../../src/midnight/run-status.js';
+import type { PaymentsAmong } from '../../src/core/ledger.js';
 import { emptyRegister, decide, skippedIndices } from '../../src/midnight/run-skips.js';
 import { toHex, fromHex } from '../../src/core/crypto.js';
 
@@ -81,6 +83,21 @@ describe('X-9: a run reports its progress from the chain', () => {
       skips: skip ? skipping(skip) : undefined,
       attempts,
       proposal: { id: toHex(id), idFrom },
+    },
+    sim.ledger as never, pureCircuits.paidMovementOf, now);
+
+  /*
+   * THE SAME VIEW WITH NOTHING PROVING THE LEAVES ARE THIS RUN'S.
+   *
+   * A caller who genuinely holds only a leaf list gets this, and every sentence
+   * it produces has to say so. The helper above passes a proposal and is
+   * therefore always verified, so it cannot reach the branch below.
+   */
+  const unverifiedStatus = (skip?: number[], now: number = NOW) => runStatus(
+    {
+      leaves: tree.leaves,
+      window: { from: OPENS, until: CLOSES },
+      skips: skip ? skipping(skip) : undefined,
     },
     sim.ledger as never, pureCircuits.paidMovementOf, now);
 
@@ -313,6 +330,89 @@ describe('X-9: a run reports its progress from the chain', () => {
     expect(sim.isOpen(id)).toBe(true);
   });
 
+  /*
+   * THE REASSURING SENTENCE IS THE ONE THAT HAS TO CARRY THE DISCLAIMER.
+   *
+   * An unverified view is a list of payments that may belong to a stale run, an
+   * edited spreadsheet or last month's file, and every sentence this function
+   * produces leads with that. The two COMPLETED ones are where a reader is
+   * least likely to go looking for the warning and most likely to stop reading,
+   * so they are the two worth pinning separately from the rest.
+   *
+   * RED WHEN the disclaimer is dropped from the no-skips completed branch:
+   * this reads `all 5 paid` and nothing says the five may be somebody else's.
+   */
+  it('says UNVERIFIED over a run where EVERYBODY has been paid, which is where it matters most',
+    async () => {
+    for (let i = 0; i < 5; i++) await payOne(i);
+
+    const s = unverifiedStatus();
+    expect(s.verified).toBe(false);
+    expect(s.complete).toBe(true);
+    expect(describeRun(s)).toBe('UNVERIFIED against the proposal — all 5 paid');
+  });
+
+  /*
+   * THE OTHER COMPLETED BRANCH, WHICH IS A SEPARATE RETURN AND FAILS SEPARATELY.
+   *
+   * RED WHEN the disclaimer is dropped from the completed-with-skips branch.
+   * The assertion above stays green through that change, which is why this one
+   * exists rather than being folded into it.
+   */
+  it('and says it over a run completed with people deliberately skipped', async () => {
+    await payOne(0);
+    await payOne(1);
+    await payOne(4);
+
+    const s = unverifiedStatus([2, 3]);
+    expect(s.verified).toBe(false);
+    expect(s.complete).toBe(true);
+    expect(describeRun(s)).toBe('UNVERIFIED against the proposal — all 3 paid, 2 skipped');
+  });
+
+  /*
+   * **THE STRANDED SENTENCE, WHICH IS THE ONE THAT TELLS SOMEBODY TO ACT.**
+   *
+   * The two completed sentences above are the reassuring ones. This is the
+   * opposite and it is not safer for being alarming: it says the window has
+   * closed and these people need a NEW proposal. Unverified and without the
+   * disclaimer, it instructs an operator to raise a fresh payroll for payees
+   * taken from a leaf list that may belong to a different run.
+   *
+   * Nothing on chain refuses that. The account's paid-once guard is keyed on
+   * the payout LEAF, which is what makes retrying a run safe — the same leaf
+   * twice is refused. Leaves from ANOTHER run are values it has never seen, so
+   * it accepts every one of them, and the money goes to recipients this
+   * month's payroll never approved.
+   *
+   * RED WHEN the disclaimer is dropped from the stranded branch.
+   */
+  it('says UNVERIFIED over the sentence that tells somebody to raise another proposal',
+    async () => {
+    await payOne(0);
+    await payOne(1);
+
+    const s = unverifiedStatus(undefined, Number(CLOSES));
+    expect(s.phase).toBe('closed');
+    expect(s.stranded.map((p) => p.index)).toEqual([2, 3, 4]);
+    expect(describeRun(s)).toBe(
+      'UNVERIFIED against the proposal — 2 of 5 paid — the window has CLOSED with 3 still '
+      + 'owed. They need a new proposal; nothing can pay them from this run.');
+  });
+
+  /*
+   * AND THE LAST OF THE FIVE, SO THE DISCLAIMER IS HELD AT EVERY SITE THAT
+   * PRODUCES IT RATHER THAN AT THE FOUR SOMEBODY THOUGHT OF.
+   *
+   * RED WHEN the disclaimer is dropped from the not-started branch.
+   */
+  it('and over a run whose window has not opened yet', () => {
+    const s = unverifiedStatus(undefined, Number(OPENS) - 1);
+    expect(s.phase).toBe('not started');
+    expect(describeRun(s)).toBe(
+      'UNVERIFIED against the proposal — not started — 5 payees, window opens later');
+  });
+
   it('THE ONE THAT MATTERS: a stranger with only the chain can finish an interrupted run', async () => {
     /*
      * The operator's laptop died after two payments and nobody knows which two.
@@ -346,5 +446,156 @@ describe('X-9: a run reports its progress from the chain', () => {
     }
     expect(outcomes).toEqual(['refused', 'refused', 'paid', 'paid', 'paid']);
     expect(status().complete).toBe(true);
+  });
+});
+
+/**
+ * THE SAME QUESTION ASKED OF A LEDGER, WHICH IS WHAT A SCREEN ACTUALLY HOLDS.
+ *
+ * The view above takes the chain's payment set and the contract's own
+ * derivation as arguments. A product screen has neither: it has a run, and a
+ * ledger that may or may not be able to say who was paid. The door between the
+ * two answers a union, and the whole point of the union is that a caller cannot
+ * reach a count of paid people without first branching on whether the question
+ * was answered at all.
+ *
+ * **THE FAILURE EVERY ASSERTION BELOW IS ABOUT.** A ledger that cannot answer
+ * and a ledger answering that nobody was paid are different facts. Collapsed
+ * into one, the second is printed over a run that paid everybody — or "all 0
+ * paid" is printed over a payroll nobody has been paid from, which reads as a
+ * finished month to the person whose job is to notice it is not.
+ *
+ * None of this needs a chain, a simulator or a compiled circuit: the door takes
+ * plain data on both sides. It lives here because this is the file that owns
+ * the module.
+ */
+describe('a run\'s payments, read from a ledger\'s answer rather than a set somebody assembled', () => {
+  const tree = buildPayoutTree(runOf(5, 400));
+  const window = { from: OPENS, until: CLOSES };
+  const inputs = () => ({ leaves: tree.leaves, window });
+  const holding = (paid: string[]): PaymentsAmong => ({ known: true, paid });
+
+  /*
+   * NARROWS THE UNION OR THROWS, AND THE THROW IS THE ASSERTION.
+   *
+   * Three things are deliberate here. The throw says WHAT was answered when
+   * nothing should have been, so a red run prints the sentence that would have
+   * reached a person rather than `true is not false`. There is no `expect`
+   * beside it: once the throw has narrowed the value, an assertion that it is
+   * narrowed is an assertion the compiler already knows the answer to, and one
+   * that cannot fail is worse than none — it reads as a check and is not one.
+   * The assertions that CAN fail are in the tests below, over the fields.
+   *
+   * And the narrowing goes through a named predicate rather than reading the
+   * flag inline. The config these files are checked under does not reduce a
+   * union by a boolean discriminant, so `if (v.answered)` narrows nothing and
+   * every field access afterwards is an error; a predicate narrows under both.
+   */
+  type Refusal = Extract<RunPayments, { answered: false }>;
+  type Answer = Extract<RunPayments, { answered: true }>;
+  const isAnswered = (v: RunPayments): v is Answer => v.answered;
+  const refused = (v: RunPayments): Refusal => {
+    if (isAnswered(v)) throw new Error(`answered when it could not: "${v.sentence}"`);
+    return v;
+  };
+  const told = (v: RunPayments): Answer => {
+    if (!isAnswered(v)) throw new Error(`refused when it could answer: "${v.why}"`);
+    return v;
+  };
+
+  /*
+   * RED WHEN the null input stops being refused. There is then nothing to read
+   * a leaf list off, and the reader dereferences it.
+   */
+  it('refuses a run with no payout material at all', () => {
+    const v = refused(runPayments(null, holding([]), NOW));
+    expect(v.payees).toBe(0);
+    expect(v.why).toMatch(/no payout leaves on record/);
+  });
+
+  /*
+   * **THE ONE THAT COSTS SOMEBODY THEIR SALARY, AND IT IS THE CHEAPEST MUTATION
+   * IN THIS FILE.**
+   *
+   * RED WHEN the empty-leaf-list clause is dropped. An empty run is internally
+   * consistent and externally a lie: no payee is outstanding, so the run is
+   * complete, so the sentence is `all 0 paid` — printed over a payroll nobody
+   * has been paid from. The failure message below prints that sentence, because
+   * a reader of a red run should not have to reconstruct why it is bad.
+   */
+  it('refuses a run whose leaf list is empty, rather than reporting it complete', () => {
+    const v = refused(runPayments({ leaves: [], window }, holding([]), NOW));
+    expect(v.payees).toBe(0);
+    expect(v.why).toMatch(/no payout leaves on record/);
+  });
+
+  /*
+   * RED WHEN the no-such-account branch is dropped: the reader then treats a
+   * ledger that has never heard of this company as one that has heard of it and
+   * recorded nothing, and every payee reads as unpaid.
+   */
+  it('refuses when the ledger does not hold this account at all', () => {
+    const v = refused(runPayments(inputs(), null, NOW));
+    expect(v.payees).toBe(5);
+    expect(v.why).toMatch(/not on the ledger this service is wired to/);
+  });
+
+  /*
+   * **THE DISCRIMINANT, AND THE REASON THE RETURN IS A UNION.**
+   *
+   * RED WHEN the `known` branch is dropped. The refusal becomes a status in
+   * which nobody is paid, and the sentence a reader would be handed is
+   * `UNVERIFIED against the proposal — 0 of 5 paid, 5 outstanding` over a run
+   * the ledger cannot say anything about at all.
+   */
+  it('refuses when the ledger records no payments, and never says that nobody was paid', () => {
+    const v = refused(runPayments(inputs(), { known: false, paid: [] }, NOW));
+    expect(v.payees).toBe(5);
+    expect(v.why).toMatch(/not a statement that nobody has been/);
+  });
+
+  /*
+   * **BOTH DIRECTIONS OF THE WRONG ANSWER, PINNED BY ONE ASSERTION.**
+   *
+   * RED WHEN the set test always answers true — every payee reads paid and the
+   * sentence becomes `all 5 paid` over a run that paid two people. RED ALSO
+   * WHEN it always answers false — the two who were paid read as outstanding.
+   * The first is the direction that costs somebody their salary; the second is
+   * the one that sends an operator to pay them twice.
+   */
+  it('reports exactly the payees the ledger named, and no others', () => {
+    const v = told(runPayments(inputs(), holding([tree.leaves[0], tree.leaves[2]]), NOW));
+    expect(v.status.paid.map((p) => p.index)).toEqual([0, 2]);
+    expect(v.status.outstanding.map((p) => p.index)).toEqual([1, 3, 4]);
+    expect(v.status.complete).toBe(false);
+    expect(v.sentence).toBe('UNVERIFIED against the proposal — 2 of 5 paid, 3 outstanding');
+  });
+
+  /*
+   * RED WHEN the check that the answer is about THIS run's payees is dropped.
+   * A boundary that started answering with derived values instead of the leaves
+   * asked about would still typecheck, and would produce a view in which nobody
+   * had ever been paid — every count present and every one of them zero.
+   */
+  it('refuses an answer naming somebody who is not in this run', () => {
+    const stranger = buildPayoutTree(runOf(5, 900));
+    expect(() => runPayments(inputs(), holding([stranger.leaves[0]]), NOW))
+      .toThrow(/not one of this run's payees/);
+  });
+
+  /*
+   * RED WHEN the two sides stop being spelled the same way before they are
+   * compared. The hex round-trip in this repository produces lower case; a leaf
+   * that arrives in any other casing is accepted everywhere else and would
+   * match nothing here, reporting every paid person as never attempted. Upper
+   * case is used below because it is a spelling the parser genuinely accepts,
+   * so there is something for the normalisation to do.
+   */
+  it('matches a payment however the leaf is spelled, rather than reporting the paid as unpaid', () => {
+    const shouted = tree.leaves.map((l) => l.toUpperCase());
+    const v = told(runPayments(
+      { leaves: shouted, window }, holding([shouted[1], shouted[3]]), NOW));
+    expect(v.status.paid.map((p) => p.index)).toEqual([1, 3]);
+    expect(v.status.outstanding.map((p) => p.index)).toEqual([0, 2, 4]);
   });
 });

@@ -37,6 +37,7 @@ import {
 import { payrollPayee } from './movement.js';
 import type { NetworkName } from '../midnight/network.js';
 import type { ShieldedPaymentFacts } from '../midnight/payout-tree.js';
+import type { RunInputs } from '../midnight/run-status.js';
 
 /**
  * The private half of a roster entry — everything a salary slip is built from.
@@ -2401,5 +2402,33 @@ export class PayrollService {
     const r = this.store.getRun(id);
     if (!r) throw new Error('run not found');
     return this.openRun(r, viewingKey);
+  }
+
+  /**
+   * **WHAT A RUN WOULD HAVE TO CARRY FOR ANYBODY TO BE TOLD WHO WAS PAID — AND
+   * NO RUN CARRIES IT.**
+   *
+   * A payment view is built against a run's payout LEAVES and the window its
+   * signers approved. **A run record here holds the people, the amounts, the
+   * payslips and the approval rounds, and holds no payout root, no window and
+   * no vault** — the same three the propose door refuses without, and for the
+   * same reason: nothing in this product writes any of them yet.
+   *
+   * **SO THIS ANSWERS `null`, AND IT IS ONE PLACE ANSWERING IT RATHER THAN
+   * EVERY READER WORKING IT OUT.** A reader that assembled an empty leaf list
+   * for itself would get a view in which no payee is outstanding and the run is
+   * therefore complete — "all 0 paid" over a payroll nobody has been paid from.
+   * The absence has to be stated somewhere, once, in the shape a reader is
+   * forced to handle; this is that shape and that place.
+   *
+   * **AND IT IS THE SEAM.** When a run is raised with its payout material, this
+   * is the line that reads it back off the record, and every reader downstream
+   * already handles what comes out.
+   */
+  payoutMaterialOf(runId: string, viewingKey: Hex): RunInputs | null {
+    /* Read for the refusal it carries: a run nobody may open is not a run whose
+     * payments this caller may be told about. */
+    this.requireRun(runId, viewingKey);
+    return null;
   }
 }

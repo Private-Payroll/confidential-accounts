@@ -1,6 +1,6 @@
 # CIRCUITS — EVERY CIRCUIT ON BOTH CONTRACTS
 
-**THIS FILE IS GENERATED. `DOCS.command` WRITES IT AND NOTHING ELSE MAY.**
+**THIS FILE IS GENERATED. `npm run docs` WRITES IT AND NOTHING ELSE MAY.**
 
 It is a REFERENCE, not a document: nobody opens it to read it, they search it.
 The reasoning — why a circuit exists, what it protects, what was rejected — is in
@@ -10,13 +10,13 @@ The reasoning — why a circuit exists, what it protects, what was rejected — 
 **Everything between the two `GENERATED` markers below is machine-written from the
 compiled artifacts and the `.compact` sources.** Editing inside it is caught by the
 suite, and a regeneration would overwrite it anyway. To change what it says, change
-the contract and run `DOCS.command`.
+the contract and run `npm run docs`.
 
 **AN `asserts` COLUMN IS A MEASUREMENT AND NOT ONLY A LIST.** A provable circuit
 that moves money with a low count next to a sibling with a higher one is a question
 worth asking on sight. **A `writes` entry with no matching reader is another.**
 
-<!-- GENERATED:BEGIN id="circuits" door="DOCS.command" -->
+<!-- GENERATED:BEGIN id="circuits" door="npm run docs" -->
 
 Every circuit on both contracts. **Generated — nothing in this block is hand-written.**
 

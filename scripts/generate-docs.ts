@@ -1,5 +1,5 @@
 /**
- * THE GENERATOR. `DOCS.command` IS ITS ONLY DOOR AND THAT IS THE WHOLE DESIGN.
+ * THE GENERATOR. `npm run docs` IS ITS ONLY DOOR AND THAT IS THE WHOLE DESIGN.
  *
  * This reads the COMPILED artifact, so it is only correct where a compile is
  * correct. Rule 1 forbids a session to compile. Therefore generation cannot be
@@ -29,7 +29,7 @@ import { dirname, join } from 'node:path';
 
 import { ARTIFACTS, readContract, type ContractModel, type KeyFact } from './artifact-scan.js';
 import { scanSourceFile, type SourceCircuit } from './disclose-scan.js';
-import { buildEdgeList, type EdgeList } from './edge-list.js';
+import { MONEY_PATH, buildEdgeList, type EdgeList } from './edge-list.js';
 import { GENERATED_BLOCKS, GENERATED_FILES } from './doc-registry.js';
 import { digest, replaceBlock } from './generated-blocks.js';
 
@@ -47,7 +47,16 @@ export const ist = (d: Date): string =>
     hour: '2-digit', minute: '2-digit', hour12: false,
   }) + ' IST';
 
-const cell = (s: string): string => (s.length === 0 ? '—' : s.replace(/\|/g, '\\|'));
+/**
+ * A TABLE CELL, WITH THE BACKSLASH ESCAPED BEFORE THE PIPE AND NOT AFTER.
+ *
+ * The order is the whole correction. Escaping only the pipe turns `A\|B` into
+ * `A\\|B`, which a markdown table reader parses as an escaped BACKSLASH
+ * followed by a live delimiter — so the cell that was being protected is the
+ * cell that splits the row. Measured at zero occurrences in the declared set
+ * today; a regular expression in an exported declaration is how one arrives.
+ */
+const cell = (s: string): string => (s.length === 0 ? '—' : s.replace(/\\/g, '\\\\').replace(/\|/g, '\\|'));
 const list = (xs: readonly string[]): string => (xs.length === 0 ? '—' : xs.join(', '));
 
 const keyCell = (k: KeyFact | undefined): string => {
@@ -200,6 +209,171 @@ function fieldsBlock(edges: EdgeList): string {
   return out.join('\n');
 }
 
+function modulesBlock(edges: EdgeList): string {
+  const out: string[] = [];
+  const tier1 = new Set(MONEY_PATH.slice(0, 8));
+
+  out.push('');
+  out.push('Every module the money path is declared over, in full, and the import graph of the');
+  out.push('whole client tree around them. **Generated — nothing in this block is hand-written.**');
+  out.push('');
+  out.push('**THIS CARRIES NO DESCRIPTION OF WHAT A MODULE IS FOR, AND THE OMISSION IS THE DESIGN.**');
+  out.push('A description is prose, the generator writes none, and a sentence copied out of a');
+  out.push('source comment is a sentence nothing keeps true. What a module IS, here, is its');
+  out.push('exported surface, what it refuses, where it fixes a width, and what it can reach.');
+  out.push('');
+  out.push('**THE IMPORT GRAPH IS MATCHED, NOT PARSED, AND THE SHAPES ARE NAMED BELOW.** A');
+  out.push('specifier built from a variable has no name at its site and is invisible to all of');
+  out.push('them — the same limit the circuit scan carries, for the same reason. What the walk');
+  out.push('could not read or could not resolve is COUNTED here and NAMED in the machine-');
+  out.push('readable edge list beside this document, never dropped: a module missing from a');
+  out.push('graph looks exactly like a module nothing imports, and *nothing imports this* is a');
+  out.push('conclusion somebody acts on.');
+  out.push('');
+  out.push('**`reaches` IS NOT A CALL GRAPH AND MUST NOT BE READ AS ONE.** It is two closures,');
+  out.push('one after the other: forward along imports, importer to imported; then forward along');
+  out.push('what those circuits themselves run, including across the contract boundary. So a');
+  out.push('module that imports a boundary reaches every circuit that boundary names, whether or');
+  out.push('not any particular function of it does, and reaches whatever those circuits land on');
+  out.push('chain. Within the import graph it is an upper bound.');
+  out.push('');
+  out.push('**IT IS STILL NOT A LOWER BOUND ON WHAT REACHES THE CHAIN**, and the gap is named');
+  out.push('rather than left: a call made through a runtime string has no circuit name at its');
+  out.push('site, so a module whose only route to a circuit runs through one of those does not');
+  out.push('show it here. Those sites are counted and named in the field reference beside this');
+  out.push('one — **not in the table below**, whose zero is about import specifiers and is a');
+  out.push('different question.');
+  out.push('');
+  out.push('**AND TWO TABLES BELOW ARE MATCHED RATHER THAN UNDERSTOOD, WHICH IS SAID HERE');
+  out.push('BECAUSE AN EMPTY CELL IN EITHER WOULD OTHERWISE READ AS A GUARANTEE.** *What it');
+  out.push('refuses* finds a `throw`, an `assert` and an `invariant` whose message is written');
+  out.push('from literals; a refusal raised some other way, or carrying no literal at all, is');
+  out.push('not here. *Where a width is fixed* finds a width written as a number or as a');
+  out.push('capitalised constant; a width arriving in a variable is not here. **AND IT');
+  out.push('OVER-MATCHES AS WELL AS UNDER-MATCHING** — a length compared against a small');
+  out.push('number, or a slice taken of a string, looks the same to a matcher as a byte width');
+  out.push('and appears here. A row is a site the shapes matched, never a byte width');
+  out.push('confirmed. Neither table is a proof that a module refuses nothing or fixes');
+  out.push('nothing.');
+  out.push('');
+
+  const mc = edges.moduleCoverage;
+  const sites = new Set(edges.edges.flatMap((e) => (e.kind === 'invokes' ? [`${e.from} ${e.circuit}`] : [])));
+  out.push('## What the walk covered');
+  out.push('');
+  out.push('| | |');
+  out.push('|---|---|');
+  out.push(`| modules walked | ${String(mc.modulesWalked)} |`);
+  out.push(`| module-to-module import sites | ${String(mc.importEdges)} |`);
+  out.push(`| modules that could not be read | ${String(mc.unreadableModules)} |`);
+  out.push(`| specifiers that resolved to nothing | ${String(mc.unresolvedSpecifiers)} |`);
+  out.push(`| specifiers naming a real file outside the walked set | ${String(mc.resolvedOutsideTheWalkedSet)} |`);
+  out.push(`| call sites carrying a literal circuit name | ${String(sites.size)} |`);
+  out.push('');
+  out.push('The last row counts a SITE once. A site whose text answers to more than one of the');
+  out.push('circuit-scan shapes is one call, and counting it twice would overstate how much of');
+  out.push('the product this list has actually seen.');
+  out.push('');
+  out.push('The shapes an import is recognised by:');
+  out.push('');
+  for (const sh of mc.shapes) out.push(`- \`${sh}\``);
+  out.push('');
+  out.push('What the import walk cannot see, named rather than implied complete:');
+  out.push('');
+  for (const b of mc.knownBlind) out.push(`- ${b}`);
+  out.push('');
+
+  out.push('## The declared set, at a glance');
+  out.push('');
+  out.push('| module | tier | imports | imported by | exports | refuses | fixed widths | reaches |');
+  out.push('|---|---|---|---|---|---|---|---|');
+  for (const m of edges.moneyPath) {
+    out.push(
+      `| \`${m.file}\` | ${tier1.has(m.file) ? '1' : '2'} | ${String(m.imports.length)} | ${String(m.importedBy.length)} | ` +
+        `${String(new Set(m.exports.map((x) => x.name)).size)} | ${String(m.refusals.length)} | ${String(m.byteWidths.length)} | ` +
+        `${String(m.circuitsReached.length)} |`,
+    );
+  }
+  out.push('');
+
+  out.push('## Every circuit, and what reaches it');
+  out.push('');
+  out.push('**THIS IS THE COLUMN AN AUDIT OF A CONTRACT ARRIVES WANTING.**');
+  out.push('');
+  out.push('**THE TWO COLUMNS ANSWER DIFFERENT QUESTIONS AND A ROW CAN BE EMPTY IN THE FIRST');
+  out.push('AND NOT THE SECOND.** *Naming* means a TypeScript file writes that circuit\'s name at');
+  out.push('a call site. *Reaching* includes a circuit that another circuit runs, across the');
+  out.push('contract boundary — so **NONE** in the first column does not mean the circuit is');
+  out.push('never invoked here, only that no TypeScript names it directly. Read the two');
+  out.push('together: **NONE** with a reaching count above zero is a circuit only ever entered');
+  out.push('through another contract, which is a fact about the design and not a dead circuit.');
+  out.push('');
+  out.push('| circuit | modules naming it | modules reaching it |');
+  out.push('|---|---|---|');
+  for (const c of edges.contracts) {
+    for (const circuit of c.circuits) {
+      const naming = edges.modules.filter((m) => m.circuits.includes(circuit.qualified)).map((m) => m.file);
+      const reaching = edges.modules.filter((m) => m.circuitsReached.includes(circuit.qualified));
+      out.push(
+        `| \`${circuit.qualified}\` | ${naming.length === 0 ? '**NONE**' : cell(naming.map((f) => `\`${f}\``).join(' '))} | ${String(reaching.length)} |`,
+      );
+    }
+  }
+  out.push('');
+
+  for (const m of edges.moneyPath) {
+    out.push(`## \`${m.file}\``);
+    out.push('');
+    out.push(`Tier ${tier1.has(m.file) ? '1' : '2'} of the declared set.`);
+    out.push('');
+    out.push(`- **imports** — ${m.imports.length === 0 ? '*nothing in these trees*' : m.imports.map((x) => `\`${x}\``).join(', ')}`);
+    out.push(`- **imported by** — ${m.importedBy.length === 0 ? '*nothing in these trees*' : m.importedBy.map((x) => `\`${x}\``).join(', ')}`);
+    out.push(`- **outside packages** — ${m.external.length === 0 ? '*none*' : m.external.map((x) => `\`${x}\``).join(', ')}`);
+    out.push(`- **platform modules** — ${m.builtin.length === 0 ? '*none*' : m.builtin.map((x) => `\`${x}\``).join(', ')}`);
+    out.push(`- **circuits named here** — ${m.circuits.length === 0 ? '*none*' : m.circuits.map((x) => `\`${x}\``).join(', ')}`);
+    out.push(`- **circuits reached** — *through imports, then through what those circuits themselves run* — ${m.circuitsReached.length === 0 ? '*none*' : m.circuitsReached.map((x) => `\`${x}\``).join(', ')}`);
+    out.push('');
+
+    out.push(`### \`${m.file}\` — exported surface`);
+    out.push('');
+    if (m.exports.length === 0) {
+      out.push('*Nothing is exported.*');
+    } else {
+      out.push('| line | name | as written |');
+      out.push('|---|---|---|');
+      for (const x of m.exports) out.push(`| ${String(x.line)} | \`${x.name}\` | \`${cell(x.signature)}\` |`);
+    }
+    out.push('');
+
+    out.push(`### \`${m.file}\` — what it refuses`);
+    out.push('');
+    if (m.refusals.length === 0) {
+      out.push('*No refusal here matches the shapes above.* That is a statement about the');
+      out.push('matcher and not about the module: read it as "look for yourself", never as');
+      out.push('"every value that reaches this module is one it accepts".');
+    } else {
+      out.push('| line | kind | message |');
+      out.push('|---|---|---|');
+      for (const r of m.refusals) out.push(`| ${String(r.line)} | ${r.kind} | ${cell(r.message)} |`);
+    }
+    out.push('');
+
+    out.push(`### \`${m.file}\` — where a width is fixed`);
+    out.push('');
+    if (m.byteWidths.length === 0) {
+      out.push('*No width here matches the shapes above.* A width this module works to may');
+      out.push('arrive in a variable, and this list sees only a number or a capitalised constant.');
+    } else {
+      out.push('| line | site | what fixes it |');
+      out.push('|---|---|---|');
+      for (const w of m.byteWidths) out.push(`| ${String(w.line)} | \`${cell(w.text)}\` | ${w.why} |`);
+    }
+    out.push('');
+  }
+
+  return out.join('\n');
+}
+
 /**
  * THE BYTES, PRODUCED ONCE, FOR BOTH THE WRITER AND THE GATE.
  *
@@ -230,6 +404,7 @@ export async function render(root: string): Promise<Rendered> {
   const bodies = new Map<string, string>([
     ['circuits', circuitsBlock(models, sources)],
     ['ledger-fields', fieldsBlock(edges)],
+    ['modules', modulesBlock(edges)],
   ]);
   for (const spec of GENERATED_BLOCKS) {
     if (!bodies.has(spec.id)) {

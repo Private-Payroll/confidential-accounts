@@ -1,6 +1,6 @@
 # LEDGER FIELDS — WHO WRITES EACH ONE, WHO READS IT, AND WHAT THE PAYMENT PATH REACHES
 
-**THIS FILE IS GENERATED. `DOCS.command` WRITES IT AND NOTHING ELSE MAY.**
+**THIS FILE IS GENERATED. `npm run docs` WRITES IT AND NOTHING ELSE MAY.**
 
 A reference, like `docs/design/circuits.md`, and searched rather than read.
 
@@ -13,7 +13,7 @@ neither.
 The machine-readable form of everything below, plus the client-side and witness
 edges, is `docs/design/edges.json`, which `WHAT-BREAKS.command` queries.
 
-<!-- GENERATED:BEGIN id="ledger-fields" door="DOCS.command" -->
+<!-- GENERATED:BEGIN id="ledger-fields" door="npm run docs" -->
 
 Every ledger field on both contracts, with **who writes it**, **who reads it**, and
 whether the **payment path** reaches it. **Generated — nothing here is hand-written.**
@@ -76,7 +76,7 @@ writer of any record it is merged into.
 
 ## What the client-side scan does NOT know
 
-Scanned 305 files; 526 invocations carry a literal circuit name and 3 do not.
+Scanned 309 files; 530 invocations carry a literal circuit name and 3 do not.
 
 Five layers stand between a product call and a circuit, three of which rename:
 
@@ -88,7 +88,7 @@ Five layers stand between a product call and a circuit, three of which rename:
 
 Unresolved call sites, named rather than dropped:
 
-- `src/midnight/ledger.ts:1796` — callTx[<expr>]: the circuit is a runtime string; there is no name at this call site
+- `src/midnight/ledger.ts:1856` — callTx[<expr>]: the circuit is a runtime string; there is no name at this call site
 - `src/midnight/vault-ledger.ts:530` — callTx[<expr>]: the circuit is a runtime string; there is no name at this call site
 - `scripts/sponsor-test.ts:457` — callTx[<expr>]: the circuit is a runtime string; there is no name at this call site
-<!-- GENERATED:END id="ledger-fields" body="ca99a417f92d9722" -->
+<!-- GENERATED:END id="ledger-fields" body="e135112231a55279" -->

@@ -32,7 +32,7 @@ export function loadEdges(root: string): EdgeList {
   if (!existsSync(path)) {
     throw new Error(
       `${EDGE_LIST_FILE} is not on disk, so there is no graph to query.\n\n` +
-        '  Run DOCS.command, then run this again.',
+        '  Run `npm run docs`, then run this again.',
     );
   }
   return JSON.parse(readFileSync(path, 'utf8')) as EdgeList;

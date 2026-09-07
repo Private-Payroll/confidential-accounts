@@ -46,11 +46,11 @@ import { digest, parseBlocks, renderBlock } from './generated-blocks.js';
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 
 /** The fixture's own block and file. Deliberately not the real ones. */
-const BLOCK: GeneratedBlock = { file: 'docs/design/fixture.md', id: 'fixture', door: 'FIXTURE-DOCS.command' };
-const FILE: GeneratedFile = { file: 'docs/design/fixture.json', door: 'FIXTURE-DOCS.command' };
+const BLOCK: GeneratedBlock = { file: 'docs/design/fixture.md', id: 'fixture', door: 'npm run fixture-docs' };
+const FILE: GeneratedFile = { file: 'docs/design/fixture.json', door: 'npm run fixture-docs' };
 
 const BODY = 'rows, as a generator would have written them\n';
-const PAYLOAD = '{\n  "generatedBy": "FIXTURE-DOCS.command",\n  "rows": [1, 2, 3]\n}\n';
+const PAYLOAD = '{\n  "generatedBy": "npm run fixture-docs",\n  "rows": [1, 2, 3]\n}\n';
 
 /** What a render of the fixture would produce. The tests vary this at will. */
 const rendered = (body = BODY, payload = PAYLOAD) => ({
@@ -134,7 +134,7 @@ describe('THE REFUSAL FIRES — the whole reason this file exists', () => {
   });
 
   it('refuses a STALE GENERATED FILE, which is the artefact SC8 reads', () => {
-    const r = rendered(BODY, '{\n  "generatedBy": "FIXTURE-DOCS.command",\n  "rows": [1, 2, 3, 4]\n}\n');
+    const r = rendered(BODY, '{\n  "generatedBy": "npm run fixture-docs",\n  "rows": [1, 2, 3, 4]\n}\n');
     const refusals = fileRefusals(root, [FILE], r.files);
     expect(refusals).toHaveLength(1);
     expect(refusals[0].kind).toBe('stale');
@@ -174,17 +174,17 @@ describe('THE REFUSAL FIRES — the whole reason this file exists', () => {
 
   it('REFUSES A DRIFTED DELIMITER, because the delimiter is generated output too', () => {
     // The gate compared only the body between the markers, so `door=` sat
-    // outside it: an auditor changed `door="DOCS.command"` to
-    // `door="ELSEWHERE.command"` in the real doc set and the suite stayed
+    // outside it: an auditor changed `door="npm run docs"` to
+    // `door="npm run elsewhere"` in the real doc set and the suite stayed
     // green, while the generator on the same tree reported the file as needing
     // a rewrite. That is T-167's own symptom — gate green at one moment, door
     // rewriting at the next — reached through the generator's own output.
     const path = join(root, BLOCK.file);
-    writeFileSync(path, readFileSync(path, 'utf8').replace(`door="${BLOCK.door}"`, 'door="ELSEWHERE.command"'));
+    writeFileSync(path, readFileSync(path, 'utf8').replace(`door="${BLOCK.door}"`, 'door="npm run elsewhere"'));
     const refusals = docRefusals(root, [BLOCK], rendered().blocks);
     expect(refusals).toHaveLength(1);
     expect(refusals[0].kind).toBe('stale');
-    expect(docRefusalText(refusals)).toContain('ELSEWHERE.command');
+    expect(docRefusalText(refusals)).toContain('npm run elsewhere');
   });
 
   it('SHOWS A DIFFERENCE THAT IS PAST COLUMN 96, rather than two identical lines', () => {
@@ -230,7 +230,7 @@ describe('THE REFUSAL FIRES — the whole reason this file exists', () => {
   });
 
   it('reports EVERY stale block, not the first one it meets', () => {
-    const second: GeneratedBlock = { file: 'docs/design/second.md', id: 'second', door: 'OTHER-DOCS.command' };
+    const second: GeneratedBlock = { file: 'docs/design/second.md', id: 'second', door: 'npm run other-docs' };
     write(second.file, `# Second\n\n${renderBlock({ id: second.id, door: second.door }, 'second\n')}\n`);
     const map = new Map([[BLOCK.id, 'changed\n'], [second.id, 'changed too\n']]);
     const refusals = docRefusals(root, [BLOCK, second], map);
@@ -273,7 +273,7 @@ describe('T-167 — A CHANGE IN A TREE THE GENERATOR READS TURNS THE GATE RED', 
    *
    * `scripts/edge-list.ts` walks `src`, `scripts` and `contracts/test` for
    * client-file→circuit edges. None of those trees was ever in the digest, so
-   * `TEST.command` passed the gate at 07:23 and `DOCS.command` rewrote two
+   * the suite passed the gate at 07:23 and a regeneration rewrote two
    * documents at 07:24 with nothing changed in between.
    *
    * A FIXTURE CANNOT CATCH THIS. Every fixture above tests the comparison the
@@ -304,7 +304,7 @@ describe('T-167 — A CHANGE IN A TREE THE GENERATOR READS TURNS THE GATE RED', 
    * and be faithfully restored.
    *
    * So both probes carry the same marker and this refuses before touching
-   * anything. It does not repair: running `DOCS.command` to clear the red would
+   * anything. It does not repair: running `npm run docs` to clear the red would
    * bake the probe's line-shift into `edges.json`, and the refusal says so.
    */
   beforeAll(() => {
@@ -313,7 +313,8 @@ describe('T-167 — A CHANGE IN A TREE THE GENERATOR READS TURNS THE GATE RED', 
       if (text.includes(MARK)) {
         throw new Error(
           `${rel} still carries a T-167 probe line from an interrupted run.\n` +
-            '  Remove that line by hand. Do NOT run DOCS.command first — it would bake the probe\n' +
+            '  Remove that line by hand. Do NOT regenerate the documents first — it would bake\n' +
+            '  the probe\n' +
             "  line's locator shift into docs/design/edges.json.",
         );
       }
@@ -352,7 +353,7 @@ describe('T-167 — A CHANGE IN A TREE THE GENERATOR READS TURNS THE GATE RED', 
     }
     expect(refused).toContain('THE SUITE DID NOT RUN');
     expect(refused).toContain('docs/design/edges.json');
-    expect(refused).toContain('Run DOCS.command, then run this again.');
+    expect(refused).toContain('Run npm run docs, then run this again.');
 
     // AND IT IS RESTORED, byte for byte, before anything else runs.
     writeFileSync(path, original);
@@ -432,11 +433,25 @@ describe('the guard is WIRED IN, and is pointed at the doc set the registry name
     // A `>=` on the length is not a pin: replacing one entry with a copy of the
     // other leaves the count unchanged and takes a document out of the guard.
     expect(GENERATED_BLOCKS.map((b) => [b.file, b.id, b.door])).toEqual([
-      ['docs/design/circuits.md', 'circuits', 'DOCS.command'],
-      ['docs/design/ledger-fields.md', 'ledger-fields', 'DOCS.command'],
+      ['docs/design/circuits.md', 'circuits', 'npm run docs'],
+      ['docs/design/ledger-fields.md', 'ledger-fields', 'npm run docs'],
+      ['docs/design/modules.md', 'modules', 'npm run docs'],
     ]);
-    expect(GENERATED_FILES.map((f) => [f.file, f.door])).toEqual([['docs/design/edges.json', 'DOCS.command']]);
-    for (const b of GENERATED_BLOCKS) expect(() => readFileSync(join(ROOT, b.door), 'utf8')).not.toThrow();
+    expect(GENERATED_FILES.map((f) => [f.file, f.door])).toEqual([['docs/design/edges.json', 'npm run docs']]);
+    /*
+     * AND THE DOOR IS ONE A READER OF THE PUBLISHED REPOSITORY CAN ACTUALLY
+     * OPEN. This used to `readFileSync` the door name as a PATH, which passed
+     * only because the door was a file in this folder — a file no clone has, so
+     * the assertion proved the opposite of what it was for. Every door named by
+     * the registry must now be an `npm run <script>` that the SHIPPING
+     * `package.json` defines.
+     */
+    const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { scripts: Record<string, string> };
+    for (const b of [...GENERATED_BLOCKS, ...GENERATED_FILES]) {
+      const m = /^npm run ([A-Za-z0-9:_-]+)$/.exec(b.door);
+      expect({ door: b.door, shipped: m !== null && typeof pkg.scripts[m[1]] === 'string' })
+        .toEqual({ door: b.door, shipped: true });
+    }
   });
 
   it('THE RENDER COVERS EVERY REGISTRY ENTRY, so nothing is silently uncompared', async () => {
@@ -452,7 +467,7 @@ describe('the guard is WIRED IN, and is pointed at the doc set the registry name
 
   it('THE REAL DOC SET IS CURRENT — the live default, no arguments', async () => {
     // The assertion that turns red when somebody changes a contract, the
-    // generator, or a file the generator reads, and does not run DOCS.command.
+    // generator, or a file the generator reads, and does not regenerate.
     await expect(assertDocsFresh(ROOT)).resolves.toBeUndefined();
     // The delimiters carry no input digest any more; there is nothing there to
     // go out of date with what the render actually depends on.

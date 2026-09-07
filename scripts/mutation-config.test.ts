@@ -459,7 +459,7 @@ describe('NO DOOR SCORES A RUN THAT COLLECTED NOTHING AS A SURVIVOR — T-295, T
    * CALL**, and that is blocked today for a stated reason: these are standalone
    * `.mjs` scripts that run a suite on import, and a new file to hold the shared
    * logic would move `coverage.clientFilesScanned` in `docs/design/edges.json`
-   * and refuse the whole suite until `DOCS.command` ran. `BACKLOG.md` carries
+   * and refuse the whole suite until `npm run docs` ran. `BACKLOG.md` carries
    * the row. Until then this is a ratchet and it is not a proof.
    */
   const shaped = (text: string): boolean => {
@@ -524,7 +524,7 @@ describe('NO DOOR SCORES A RUN THAT COLLECTED NOTHING AS A SURVIVOR — T-295, T
     for (const file of FIXED) {
       const { text } = harnesses().find(x => x.file === file)!;
       /*
-       * Under mutation 22 the refusal naming `DOCS.command` was
+       * Under mutation 22 the refusal naming the regeneration was
        * printed on stderr and thrown away by an empty `catch`, so the report
        * carried the alarm and not one word of the cause. That is why it cost a
        * round rather than a glance.
@@ -883,9 +883,9 @@ describe('A kills: LIST THAT CREDITS A GUARD WHICH PASSED IS A FAILURE — T-337
  * `docs/design/edges.json` records exactly one scanned circuit call site in
  * `scripts/mutate-authority.mjs`, and it is mutation 22's `from:` text. **A
  * single line added ABOVE it makes the generated doc set stale and refuses
- * EVERY test in this repository** until `DOCS.command` is run — a door no
- * session may run (rule 1). `S67` hit this and paid for it: two import lines
- * moved the site to `:544` and the whole suite went red.
+ * EVERY test in this repository** until the documents are regenerated. `S67`
+ * hit this and paid for it: two import lines moved the site to `:544` and the
+ * whole suite went red.
  *
  * What held the line afterwards was three comments asking people not to
  * reformat — an import statement carrying three declarations on one line, and
@@ -904,8 +904,8 @@ describe('THE ONE SCANNED EDGE IN THE HARNESS IS WHERE THE DOC SET SAYS IT IS', 
       line,
       `docs/design/edges.json pins ${sites[0]}, and that line no longer holds the call it `
         + 'records. A line was added above it. The whole suite is about to be refused by the '
-        + 'doc-freshness gate, which needs DOCS.command — and no session may run that. '
-        + 'Move the addition BELOW that line instead.',
+        + 'doc-freshness gate until the documents are regenerated. Move the addition BELOW '
+        + 'that line instead, and nothing has to be regenerated at all.',
       /*
        * **ASSEMBLED FROM TWO PIECES SO THIS TEST DOES NOT ITSELF BECOME A
        * SCANNED CALL SITE — and the first draft did.** `scripts/edge-list.ts`

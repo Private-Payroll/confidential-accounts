@@ -28,6 +28,7 @@ import { bigintJsonReplacer } from '../core/crypto.js';
 import type { Hex } from '../core/crypto.js';
 import { payeeAddress } from '../midnight/payee-address.js';
 import { networkOfThePair } from '../midnight/network.js';
+import { runPayments } from '../midnight/run-status.js';
 import { loadEnvFile } from '../db/connect.js';
 import { appendWebConsole, webConsoleLogPath } from './web-console-log.js';
 /* `C157` — every refusal this service makes, kept. See `wrap` below. */
@@ -979,6 +980,41 @@ app.post('/api/runs/:id/propose', authed, ownsRun, wrap(async (req, res) => {
    */
   res.json(await payroll.proposeRun(
     String(req.params.id), b.viewingKey, b.proposedBy, null, b.asset));
+}));
+
+/*
+ * **WHO HAS BEEN PAID ON THIS RUN — OR WHY NOBODY CAN SAY.**
+ *
+ * A run is paid one payee at a time, so at any moment some are paid and some
+ * are not. **A run reported as finished while two people are unpaid is worse
+ * than one that fails outright, because nobody goes looking.** This is the
+ * route that answers which two.
+ *
+ * **IT ASKS THE LEDGER, AND ONLY ABOUT THIS RUN'S OWN PAYEES.** The account's
+ * record of completed payments is public and append-only; the question asked
+ * here is bounded by the run rather than by the set, so what it costs is the
+ * size of one payroll and not the age of the company.
+ *
+ * **AND IT CAN ANSWER THAT IT DOES NOT KNOW, WHICH IS A DIFFERENT ANSWER FROM
+ * "NOBODY".** Two things can be missing: the run's payout leaves, which this
+ * product does not write yet, and a ledger that records payments at all. Either
+ * one produces a refusal to report rather than a report of nobody paid — the
+ * body carries `answered: false` and a sentence, and there is no count in it to
+ * misread.
+ *
+ * **A POST FOR A READ, AND THE KEY IN THE BODY IS WHY.** The viewing key is
+ * what decrypts this company's own records, and a web address is the one part
+ * of a request that gets written down all the way along: browser history,
+ * proxies, load balancers, access logs. Three older reads here take it in the
+ * query and each is a place it has already been written; this one does not add
+ * a fourth. The verb is the cost of that and it is worth paying.
+ */
+app.post('/api/runs/:id/payments', authed, ownsRun, wrap(async (req, res) => {
+  const b = z.object({ viewingKey: z.string() }).parse(req.body ?? {});
+  const run = payroll.requireRun(String(req.params.id), b.viewingKey);
+  const material = payroll.payoutMaterialOf(run.id, b.viewingKey);
+  const among = material ? await ledger.paidAmong(run.accountId, material.leaves) : null;
+  res.json(runPayments(material, among));
 }));
 
 /*

@@ -73,7 +73,7 @@
 import type {
   Ledger, LedgerAddress, LedgerRecord, TxRef, ProofSystem, Circuit,
   StateView, StateChange, LedgerStatus, SignerRef, AccountOpening,
-  SealedStateAt,
+  SealedStateAt, PaymentsAmong,
 } from '../core/ledger.js';
 import { viewDigestOf } from '../core/ledger.js';
 import type { AssetId } from '../core/assets.js';
@@ -740,6 +740,56 @@ export class MidnightLedger implements Ledger {
   }
 
   /**
+   * **WHICH OF THESE PAYEES THE ACCOUNT HAS RECORDED A COMPLETED PAYMENT FOR.**
+   *
+   * A SECOND READ OF THE CONTRACT'S STATE RATHER THAN A FIELD ADDED TO
+   * `status`. The two answer different questions and are asked at different
+   * moments: a lifecycle view is read whenever a screen opens, and this is read
+   * when somebody asks about one run's people. Folding this into `status` would
+   * make every screen in the product pay for a question almost none of them
+   * ask, and would need a payee list at a door that has none.
+   *
+   * **THE MEMBERSHIP TEST IS THE DECODED SET'S OWN, AND THE VALUE TESTED IS THE
+   * CONTRACT'S OWN DERIVATION FROM THE LEAF.** Neither is recomputed here. A
+   * second derivation of either would answer confidently about the wrong
+   * people, and it would answer at the one moment nobody checks: after payday,
+   * on the screen somebody opens to find out who is still owed money.
+   *
+   * **A MISSING SET REFUSES RATHER THAN READING AS "NOBODY".** The same rule
+   * every other field on this boundary follows, and here it is the sharpest it
+   * gets: a repaired empty answer would report a run of paid people as a run of
+   * unpaid ones, which is the exact reading this whole path exists to prevent.
+   */
+  async paidAmong(accountId: string, leaves: Hex[]): Promise<PaymentsAmong | null> {
+    const address = await this.addressOf(accountId);
+    if (!address) return null;
+
+    const { ledger: readLedger, pureCircuits } = await import(
+      '../../contracts/managed/contract/index.js');
+    const providers = await this.providers();
+
+    const state = await providers.publicDataProvider.queryContractState(address as any);
+    if (!state) return null;
+
+    const parsed: any = readLedger(state.data);
+    const movements = parsed?.movements;
+    if (movements == null || typeof movements.member !== 'function') {
+      throw new UndecodedLedgerField('movements', 'set');
+    }
+
+    /*
+     * ONE MEMBERSHIP TEST PER PAYEE ASKED ABOUT, AND NO ENUMERATION OF THE SET.
+     * The work is the size of the run; the set is the size of everything the
+     * account has ever paid, and those two numbers stop being comparable
+     * quickly.
+     */
+    const paid = leaves.filter(
+      (leaf) => movements.member(pureCircuits.paidMovementOf(fromHex(leaf))));
+
+    return { known: true, paid };
+  }
+
+  /**
    * Opens a round. The chain gets a commitment to the payload, never the
    * payload — `propose(payloadHash)` commits it again under `proposalSalt`, so
    * even the digest is blinded on chain.
@@ -1392,9 +1442,14 @@ export class MidnightLedger implements Ledger {
    * `T-200` `P2`, `S46`, mirroring two contract asserts that had no client
    * counterpart at all.
    *
-   * `ConfidentialAccount.compact:1508-1509` refuses a founding leaf that is
-   * `default<Bytes<32>>` or `vacantSlot()`; `:1859-1860` refuses the same two
-   * for a leaf being seated by `amendSigner`. **Both were unmirrored**, so
+   * The contract's `constructor` refuses a founding leaf that is
+   * `default<Bytes<32>>` or `vacantSlot()`, and `amendSigner` refuses the same
+   * two for a leaf being seated — both with the same message, *"that is not a
+   * usable signer leaf"*. **NAMED RATHER THAN CITED, AND THE CITATIONS THAT
+   * STOOD HERE WERE BOTH WRONG:** `:1508-1509` is `requireApproved`'s
+   * approval-count assert and `:1859-1860` is `const removedLeaf = leaf;`. The
+   * asserts are at `:1613-1614` and `:1964-1965` today and will not stay there.
+   * **Both were unmirrored**, so
    * `:611` and `:1271` passed `fromHex(...)` straight through and the refusal
    * arrived from the chain — for the founding leaf, after a deploy and a fee,
    * and `src/midnight/ledger.ts:400-406` already reasons that an unusable
@@ -1426,16 +1481,21 @@ export class MidnightLedger implements Ledger {
   private async refuseUnusableLeaf(leaf: Hex, what: string): Promise<void> {
     if (leaf === ZERO_32) {
       throw new Error(
-        `${what} is thirty-two zero bytes, which the contract refuses: it is the value an `
-        + 'empty slot reads as, so a seat holding it is a seat nothing can ever prove. '
-        + 'ConfidentialAccount.compact:1508-1509, :1859-1860.');
+        `${what} is thirty-two zero bytes. Supply a signer leaf that is neither thirty-two `
+        + 'zero bytes nor the vacancy marker. The contract refuses this value — it answers '
+        + '"that is not a usable signer leaf", in its constructor for a founding leaf and in '
+        + '`amendSigner` for a leaf being seated — because thirty-two zero bytes is what an '
+        + 'empty slot reads as, so a seat holding it is a seat nothing can ever prove.');
     }
     const { pureCircuits } = await import('../../contracts/managed/contract/index.js');
     if (leaf === toHex(pureCircuits.vacantSlot())) {
       throw new Error(
-        `${what} is the vacancy marker itself, which the contract refuses: the tree uses it `
-        + 'to mean THIS SLOT IS EMPTY, so seating it makes a slot that is simultaneously '
-        + 'taken and free. ConfidentialAccount.compact:1508-1509, :1859-1860.');
+        `${what} is the vacancy marker itself. Supply a signer leaf that is neither `
+        + 'thirty-two zero bytes nor the vacancy marker. The contract refuses this value — it '
+        + 'answers "that is not a usable signer leaf", in its constructor for a founding leaf '
+        + 'and in `amendSigner` for a leaf being seated — because the tree uses the marker to '
+        + 'mean THIS SLOT IS EMPTY, so seating it makes a slot that is simultaneously taken '
+        + 'and free.');
     }
   }
 
@@ -2510,10 +2570,18 @@ export function intendedAuthorityValue(
        */
       if (!Number.isInteger(choice.threshold) || choice.threshold < 1) {
         throw new Error(
-          `a maintenance authority at threshold ${choice.threshold} is not a committee: at a ` +
-            'threshold below one, `verify.rs:1789` accepts a maintenance update carrying NO ' +
-            'SIGNATURES AT ALL and never consults the committee, so ANYBODY can rewrite this ' +
-            'contract\'s rules. This refuses rather than comparing it against the chain.',
+          `a maintenance authority at threshold ${choice.threshold} is not a committee. Set ` +
+            'the threshold to at least one and no more than the number of keys in the ' +
+            'committee. A threshold ABOVE the committee size is the unmaintainable state — ' +
+            'say { kind: "unmaintainable" } deliberately if that is the intent, rather than ' +
+            'reaching it by arithmetic. A threshold BELOW one is WORLD-WRITABLE, not ' +
+            'unmaintainable: MEASURED on `@midnightntwrk/ledger-v9@1.0.0-rc.3`, a maintenance ' +
+            'update carrying NO SIGNATURES AT ALL is well-formed against an authority at ' +
+            'threshold zero, so anybody at all could replace this contract\'s verifier keys ' +
+            'while holding nothing. Committee membership IS still checked — a signature at an ' +
+            'out-of-range seat is refused, and so is a wrong signature at a valid seat — what ' +
+            'is missing is any requirement to attach one. This refuses rather than comparing ' +
+            'the value against the chain.',
         );
       }
       return {
