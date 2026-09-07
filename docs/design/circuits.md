@@ -658,7 +658,7 @@ retireVault(proposal: Bytes<32>, vault: Bytes<32>, salt: Bytes<32>): []
 
 | circuit | kind | reads | writes | asserts | discloses | calls | verifier key |
 |---|---|---|---|---|---|---|---|
-| `constructor` | **constructor** | — | account, notes, payments, unshieldedTokens | 0 | 1 | — | — (not a circuit) |
+| `constructor` | **constructor** | — | account, notes, payments, spendingCaps, unshieldedTokens | 0 | 1 | — | — (not a circuit) |
 | `payoutDetails` | pure | — | — | 0 | 0 | — | — (pure) |
 | `unshieldedPayoutDetails` | pure | — | — | 0 | 0 | — | — (pure) |
 | `heldCommitmentOf` | pure | — | — | 0 | 0 | — | — (pure) |
@@ -680,14 +680,14 @@ constructor(a: contract Acct[recordPayment(Bytes<32>, Bytes<32>, Bytes<32>, Uint
 ```
 
 - **reads** — *nothing*
-- **writes** — `account`; `notes`; `payments`; `unshieldedTokens`
+- **writes** — `account`; `notes`; `payments`; `spendingCaps`; `unshieldedTokens`
 - **witnesses** — *none*
 - **kernel** — *none*
 - **calls** — *none*
 - **uses** — *no other circuit*
 - **asserts** — *none*
 - **discloses** — 1 site
-    - `contracts/src/Vault.compact:263` — `a`
+    - `contracts/src/Vault.compact:347` — `a`
 
 #### `payoutDetails`
 
@@ -763,8 +763,8 @@ deposit(coin: struct ShieldedCoinInfo): []
 - **uses** — `heldCommitmentOf`; `noteBlindingOf`
 - **asserts** — *none*
 - **discloses** — 2 sites
-    - `contracts/src/Vault.compact:474` — `coin`
-    - `contracts/src/Vault.compact:500` — `heldCommitmentOf(coin, noteBlindingOf(kernel.self().bytes, coin))`
+    - `contracts/src/Vault.compact:558` — `coin`
+    - `contracts/src/Vault.compact:584` — `heldCommitmentOf(coin, noteBlindingOf(kernel.self().bytes, coin))`
 
 #### `depositUnshielded`
 
@@ -781,9 +781,9 @@ depositUnshielded(token: Bytes<32>, amount: Uint<0..3402823669209384634633746074
 - **asserts**
     - "a deposit of nothing is not a deposit"
 - **discloses** — 3 sites
-    - `contracts/src/Vault.compact:541` — `token`
-    - `contracts/src/Vault.compact:541` — `amount`
-    - `contracts/src/Vault.compact:542` — `token`
+    - `contracts/src/Vault.compact:625` — `token`
+    - `contracts/src/Vault.compact:625` — `amount`
+    - `contracts/src/Vault.compact:626` — `token`
 
 #### `payout`
 
@@ -803,22 +803,22 @@ payout(proposal: Bytes<32>, root: Bytes<32>, payees: Uint<0..1844674407370955161
     - "that note is not in this vault's pool"
     - "result of subtraction would be negative" *(through `_sendShielded_0`)*
 - **discloses** — 16 sites
-    - `contracts/src/Vault.compact:598` — `proposal`
-    - `contracts/src/Vault.compact:599` — `kernel.self().bytes`
-    - `contracts/src/Vault.compact:600` — `root`
-    - `contracts/src/Vault.compact:601` — `payees`
-    - `contracts/src/Vault.compact:602` — `opensAt`
-    - `contracts/src/Vault.compact:603` — `closesAt`
-    - `contracts/src/Vault.compact:604` — `salt`
-    - `contracts/src/Vault.compact:605` — `details`
-    - `contracts/src/Vault.compact:606` — `nonce`
-    - `contracts/src/Vault.compact:607` — `path`
-    - `contracts/src/Vault.compact:644` — `heldCommitmentOf( unqualified, noteBlindingOf(kernel.self().bytes, unqualified))`
-    - `contracts/src/Vault.compact:650` — `coin`
-    - `contracts/src/Vault.compact:651` — `recipient`
-    - `contracts/src/Vault.compact:652` — `amount`
-    - `contracts/src/Vault.compact:683` — `result.change.is_some`
-    - `contracts/src/Vault.compact:684` — `heldCommitmentOf( result.change.value, noteBlindingOf(kernel.self().bytes, result.change.value))`
+    - `contracts/src/Vault.compact:682` — `proposal`
+    - `contracts/src/Vault.compact:683` — `kernel.self().bytes`
+    - `contracts/src/Vault.compact:684` — `root`
+    - `contracts/src/Vault.compact:685` — `payees`
+    - `contracts/src/Vault.compact:686` — `opensAt`
+    - `contracts/src/Vault.compact:687` — `closesAt`
+    - `contracts/src/Vault.compact:688` — `salt`
+    - `contracts/src/Vault.compact:689` — `details`
+    - `contracts/src/Vault.compact:690` — `nonce`
+    - `contracts/src/Vault.compact:691` — `path`
+    - `contracts/src/Vault.compact:728` — `heldCommitmentOf( unqualified, noteBlindingOf(kernel.self().bytes, unqualified))`
+    - `contracts/src/Vault.compact:734` — `coin`
+    - `contracts/src/Vault.compact:735` — `recipient`
+    - `contracts/src/Vault.compact:736` — `amount`
+    - `contracts/src/Vault.compact:767` — `result.change.is_some`
+    - `contracts/src/Vault.compact:768` — `heldCommitmentOf( result.change.value, noteBlindingOf(kernel.self().bytes, result.change.value))`
 
 #### `payoutUnshielded`
 
@@ -835,21 +835,21 @@ payoutUnshielded(proposal: Bytes<32>, root: Bytes<32>, payees: Uint<0..184467440
 - **asserts**
     - "this vault does not hold enough of that token to make this payment"
 - **discloses** — 15 sites
-    - `contracts/src/Vault.compact:771` — `proposal`
-    - `contracts/src/Vault.compact:772` — `kernel.self().bytes`
-    - `contracts/src/Vault.compact:773` — `root`
-    - `contracts/src/Vault.compact:774` — `payees`
-    - `contracts/src/Vault.compact:775` — `opensAt`
-    - `contracts/src/Vault.compact:776` — `closesAt`
-    - `contracts/src/Vault.compact:777` — `salt`
-    - `contracts/src/Vault.compact:778` — `details`
-    - `contracts/src/Vault.compact:779` — `nonce`
-    - `contracts/src/Vault.compact:780` — `path`
-    - `contracts/src/Vault.compact:803` — `token`
-    - `contracts/src/Vault.compact:803` — `amount`
-    - `contracts/src/Vault.compact:825` — `token`
-    - `contracts/src/Vault.compact:825` — `amount`
-    - `contracts/src/Vault.compact:826` — `recipient`
+    - `contracts/src/Vault.compact:855` — `proposal`
+    - `contracts/src/Vault.compact:856` — `kernel.self().bytes`
+    - `contracts/src/Vault.compact:857` — `root`
+    - `contracts/src/Vault.compact:858` — `payees`
+    - `contracts/src/Vault.compact:859` — `opensAt`
+    - `contracts/src/Vault.compact:860` — `closesAt`
+    - `contracts/src/Vault.compact:861` — `salt`
+    - `contracts/src/Vault.compact:862` — `details`
+    - `contracts/src/Vault.compact:863` — `nonce`
+    - `contracts/src/Vault.compact:864` — `path`
+    - `contracts/src/Vault.compact:887` — `token`
+    - `contracts/src/Vault.compact:887` — `amount`
+    - `contracts/src/Vault.compact:909` — `token`
+    - `contracts/src/Vault.compact:909` — `amount`
+    - `contracts/src/Vault.compact:910` — `recipient`
 
 #### `splitNote`
 
@@ -870,12 +870,12 @@ splitNote(token: Bytes<32>, amount: Uint<0..340282366920938463463374607431768211
     - "a split produced no remainder, which the size check forbids"
     - "result of subtraction would be negative" *(through `_sendShielded_0`)*
 - **discloses** — 6 sites
-    - `contracts/src/Vault.compact:910` — `kernel.self().bytes`
-    - `contracts/src/Vault.compact:921` — `heldCommitmentOf( unqualified, noteBlindingOf(self, unqualified))`
-    - `contracts/src/Vault.compact:939` — `coin`
-    - `contracts/src/Vault.compact:941` — `amount`
-    - `contracts/src/Vault.compact:944` — `heldCommitmentOf( result.sent, noteBlindingOf(self, result.sent))`
-    - `contracts/src/Vault.compact:955` — `heldCommitmentOf( result.change.value, noteBlindingOf(self, result.change.value))`
+    - `contracts/src/Vault.compact:994` — `kernel.self().bytes`
+    - `contracts/src/Vault.compact:1005` — `heldCommitmentOf( unqualified, noteBlindingOf(self, unqualified))`
+    - `contracts/src/Vault.compact:1023` — `coin`
+    - `contracts/src/Vault.compact:1025` — `amount`
+    - `contracts/src/Vault.compact:1028` — `heldCommitmentOf( result.sent, noteBlindingOf(self, result.sent))`
+    - `contracts/src/Vault.compact:1039` — `heldCommitmentOf( result.change.value, noteBlindingOf(self, result.change.value))`
 
 #### `forgetUnshielded`
 
@@ -892,8 +892,8 @@ forgetUnshielded(token: Bytes<32>): []
 - **asserts**
     - "this vault still holds some of that token"
 - **discloses** — 2 sites
-    - `contracts/src/Vault.compact:989` — `token`
-    - `contracts/src/Vault.compact:991` — `token`
+    - `contracts/src/Vault.compact:1073` — `token`
+    - `contracts/src/Vault.compact:1075` — `token`
 
 #### `retire`
 
@@ -911,7 +911,7 @@ retire(proposal: Bytes<32>, salt: Bytes<32>): []
     - "this vault still holds notes, and retiring it would strand them"
     - "this vault still holds public money, and retiring it would strand that too"
 - **discloses** — 3 sites
-    - `contracts/src/Vault.compact:1092` — `proposal`
-    - `contracts/src/Vault.compact:1099` — `kernel.self().bytes`
-    - `contracts/src/Vault.compact:1100` — `salt`
-<!-- GENERATED:END id="circuits" body="f5749bf0dff94f12" -->
+    - `contracts/src/Vault.compact:1176` — `proposal`
+    - `contracts/src/Vault.compact:1183` — `kernel.self().bytes`
+    - `contracts/src/Vault.compact:1184` — `salt`
+<!-- GENERATED:END id="circuits" body="476abe57d14f05fc" -->
