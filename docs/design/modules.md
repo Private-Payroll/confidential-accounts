@@ -75,8 +75,8 @@ nothing.
 
 | | |
 |---|---|
-| modules walked | 316 |
-| module-to-module import sites | 912 |
+| modules walked | 318 |
+| module-to-module import sites | 913 |
 | modules that could not be read | 0 |
 | specifiers that resolved to nothing | 0 |
 | specifiers naming a real file outside the walked set | 87 |
@@ -856,4 +856,4 @@ Tier 2 of the declared set.
 
 *No width here matches the shapes above.* A width this module works to may
 arrive in a variable, and this list sees only a number or a capitalised constant.
-<!-- GENERATED:END id="modules" body="9a60612ab4467e7d" -->
+<!-- GENERATED:END id="modules" body="8ed0f7a141896924" -->
