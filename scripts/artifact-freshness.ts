@@ -59,7 +59,17 @@
 import { statSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 
-/** A source a person edits, the artifact the tests import, and the door between them. */
+/**
+ * A source a person edits, the artifact the tests import, and the door between
+ * them.
+ *
+ * THE DOOR IS NAMED AS A COMMAND THIS REPOSITORY DEFINES, not as a file on one
+ * machine. It used to name a local launcher that is not published, so the
+ * refusal a stranger met sent them to a file their copy does not contain -- and
+ * a refusal naming something nobody can open is not a refusal anybody can act
+ * on. `package.json` carries both commands, and a test below holds them to
+ * being there.
+ */
 export type ArtifactPair = {
   /** Repository-relative path to the `.compact` a person edits. */
   readonly source: string;
@@ -85,12 +95,12 @@ export const CONTRACT_ARTIFACTS: readonly ArtifactPair[] = [
   {
     source: 'contracts/src/ConfidentialAccount.compact',
     artifact: 'contracts/managed/contract/index.js',
-    door: 'COMPILE-CONTRACT.command',
+    door: 'npm run compact:fast',
   },
   {
     source: 'contracts/src/Vault.compact',
     artifact: 'contracts/managed-vault/contract/index.js',
-    door: 'COMPILE-VAULT.command',
+    door: 'npm run compact:vault',
   },
 ];
 

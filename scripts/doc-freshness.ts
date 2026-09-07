@@ -64,8 +64,8 @@
  * that passes it; `process.env.SOMETHING` is readable nowhere.
  *
  * **AND THE EXCEPTION IS ITSELF GUARDED, or it is the hole it looks like.**
- * `scripts/mutation-config.test.ts` imports both configs as MODULES rather than
- * matching text, pins the difference at this one entry with every other key
+ * A test held outside the published set imports both configs as MODULES rather
+ * than matching text, pins the difference at this one entry with every other key
  * deeply equal, and asserts that `MUTATE.command` is the ONLY `.command` in the
  * repository that names that config. `TEST.command` runs under
  * `vitest.config.ts` with this gate wired, and remains the only door that
@@ -295,11 +295,19 @@ export function fileRefusals(
   files: readonly GeneratedFile[],
   rendered: ReadonlyMap<string, string>,
 ): DocRefusal[] {
+  // AN EMPTY LIST IS THE DECLARED STATE HERE AND IT IS NOT A DISARMED CHECK.
+  //
+  // This used to throw, on the ground that a check over nothing cannot fail. The
+  // ground is right and the conclusion was aimed at the wrong list: what must
+  // never be empty is the REGISTRY, and `blockRefusals` above throws on an empty
+  // `GENERATED_BLOCKS` for exactly that reason. Whole-file artefacts are a
+  // SHAPE the registry supports and has no members of today, because the one
+  // member was a file this repository does not publish and a gate may not depend
+  // on a file the repository does not publish. `doc-registry.ts` carries the
+  // decision and `doc-freshness.test.ts` asserts it, so an entry that reappeared
+  // by accident is caught where it would be made rather than here.
   if (files.length === 0) {
-    throw new Error(
-      'doc-freshness: asked to check ZERO generated files. A check over nothing cannot fail, ' +
-        'so this is an error rather than a pass. Something has emptied GENERATED_FILES.',
-    );
+    return [];
   }
   const out: DocRefusal[] = [];
   for (const f of files) {

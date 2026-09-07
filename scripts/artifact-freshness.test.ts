@@ -35,7 +35,7 @@
  * order. Under `sequence.concurrent` it goes red for a reason that has nothing
  * to do with the guard.
  */
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -343,24 +343,230 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
       [
         'contracts/src/ConfidentialAccount.compact',
         'contracts/managed/contract/index.js',
-        'COMPILE-CONTRACT.command',
+        'npm run compact:fast',
       ],
       [
         'contracts/src/Vault.compact',
         'contracts/managed-vault/contract/index.js',
-        'COMPILE-VAULT.command',
+        'npm run compact:vault',
       ],
     ]);
   });
 
-  it('every named door exists on disk, and every named source does too', () => {
+  it('every named door is one a reader of this repository can open, and every named source is here', () => {
     // A refusal naming a door nobody can open is not a refusal a person can act
-    // on. The sources are checked here because a rename would otherwise turn
-    // every run into a `source-missing` refusal nobody predicted.
+    // on. This used to read the door as a PATH, which passed only because the
+    // door was a file in one folder -- a file no clone has, so the assertion
+    // proved the opposite of what it was for. The sources are checked because a
+    // rename would otherwise turn every run into a `source-missing` refusal
+    // nobody predicted.
+    const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { scripts: Record<string, string> };
     for (const pair of CONTRACT_ARTIFACTS) {
-      expect(() => readFileSync(join(ROOT, pair.door), 'utf8')).not.toThrow();
+      const named = /^npm run ([A-Za-z0-9:_-]+)$/.exec(pair.door);
+      expect({ door: pair.door, defined: named !== null && typeof pkg.scripts[named[1]] === 'string' })
+        .toEqual({ door: pair.door, defined: true });
       expect(() => readFileSync(join(ROOT, pair.source), 'utf8')).not.toThrow();
     }
+  });
+
+  /*
+   * A SKIP THAT NOBODY EVER UNSKIPS IS A DELETED TEST WITH A TICK NEXT TO IT.
+   *
+   * Some assertions read the verifier keys: that a deployed entry point still
+   * carries the key this build produces, and that the deferral list names
+   * exactly the circuits with keys. Those keys come from the proving backend,
+   * which an ordinary compile skips, so they are skipped wherever nobody has
+   * built them - which is every clone, and five of the six machines the checks
+   * run on.
+   *
+   * That is only acceptable because ONE of those machines builds the keys and
+   * then runs every file that gates on them. The rule below reads the checks
+   * and refuses if that stops being true.
+   *
+   * -- WHY IT PARSES RATHER THAN MATCHES, WHICH IS THE WHOLE OF THIS ----------
+   *
+   * The first version of this rule asked whether the text `run: npm run compact`
+   * appeared and whether the two filenames appeared in the same job. EIGHT edits
+   * left it green with the assertions running nowhere: commenting the build step
+   * out, `if: false` on the step or on the job, `continue-on-error`, replacing
+   * the runner with `echo`, running one file and naming the other in a comment,
+   * `--passWithNoTests` with a filter that matches nothing, and - the cheap one,
+   * and the one a person would actually make - moving the build step BELOW the
+   * test step, so the tests run first, find no keys, skip, and report green.
+   *
+   * A rule that reads a file as text answers questions about the text. These are
+   * questions about ORDER, about whether a step runs at all, and about whether a
+   * failure counts - so the shape has to be read. What is below is not a YAML
+   * parser and does not pretend to be one: it models the shape this file
+   * actually has, and it REFUSES on a shape it cannot read rather than treating
+   * unknown as satisfied.
+   *
+   * AND THE LIST OF FILES IS DERIVED FROM THE TREE, NOT TYPED HERE. It was two
+   * paths written by hand, so a third file that started gating on the keys
+   * tomorrow would have joined nothing at all.
+   */
+
+  /** A step, read far enough to answer whether it runs and what it runs. */
+  type WorkflowStep = { readonly run: string | null; readonly conditional: boolean; readonly tolerated: boolean };
+  /** A job, in the order its steps are written. */
+  type WorkflowJob = { readonly id: string; readonly conditional: boolean; readonly steps: readonly WorkflowStep[] };
+
+  const parseWorkflow = (text: string): WorkflowJob[] => {
+    const lines = text.split('\n');
+    const jobsAt = lines.findIndex((l) => l === 'jobs:');
+    if (jobsAt === -1) throw new Error('this is not a workflow: it has no `jobs:` block');
+    const jobs: WorkflowJob[] = [];
+    let job: { id: string; conditional: boolean; steps: WorkflowStep[] } | null = null;
+    let step: { run: string | null; conditional: boolean; tolerated: boolean } | null = null;
+    let inSteps = false;
+    let block: { indent: number; parts: string[] } | null = null;
+
+    const closeStep = () => { if (job && step) job.steps.push({ ...step, run: block ? block.parts.join(' ').trim() : step.run }); step = null; block = null; };
+    const closeJob = () => { closeStep(); if (job) jobs.push({ ...job, steps: job.steps }); job = null; inSteps = false; };
+
+    for (const raw of lines.slice(jobsAt + 1)) {
+      const line = raw.replace(/\s+$/, '');
+      if (line === '' ) continue;
+      const indent = line.length - line.trimStart().length;
+      const body = line.trim();
+      if (block && indent > block.indent) { block.parts.push(body); continue; }
+      if (block) block = null;
+      if (body.startsWith('#')) continue;
+
+      if (indent === 2 && /^[A-Za-z0-9_-]+:$/.test(body)) { closeJob(); job = { id: body.slice(0, -1), conditional: false, steps: [] }; continue; }
+      if (!job) continue;
+      if (indent === 4 && body === 'steps:') { inSteps = true; continue; }
+      if (indent === 4 && body.startsWith('if:')) { job.conditional = true; continue; }
+      if (!inSteps) continue;
+      if (indent === 6 && body.startsWith('- ')) {
+        closeStep();
+        step = { run: null, conditional: false, tolerated: false };
+      }
+      if (!step) continue;
+      const field = body.replace(/^- /, '');
+      if (field.startsWith('run:')) {
+        const rest = field.slice(4).trim();
+        if (rest === '|' || rest === '>') block = { indent, parts: [] };
+        else step.run = rest;
+        continue;
+      }
+      if (field.startsWith('if:')) { step.conditional = true; continue; }
+      if (field.startsWith('continue-on-error:')) { step.tolerated = !/false\s*$/.test(field); continue; }
+    }
+    closeJob();
+    if (jobs.length === 0) throw new Error('this workflow declares no jobs, so nothing below would mean anything');
+    return jobs;
+  };
+
+  /*
+   * Every file in the tree whose assertions are gated on the verifier keys.
+   *
+   * THE TWO THINGS IT LOOKS FOR ARE ASSEMBLED FROM PIECES, AND THAT IS NOT
+   * DECORATION. Written out whole, they would appear in THIS file, and this file
+   * is under one of the trees the walk reads - so the search found itself, and
+   * the derived list gained an entry that gates on nothing. A scanner whose own
+   * source is a match is a scanner that reports itself.
+   */
+  const KEY_DIR = ['contracts', 'managed', 'keys'].join('/');
+  const GATE = `skip${'If'}(`;
+
+  const gatedOnKeys = (): string[] => {
+    const out: string[] = [];
+    const walk = (rel: string) => {
+      for (const name of readdirSync(join(ROOT, rel))) {
+        if (name.startsWith('.') || name === 'node_modules') continue;
+        const child = `${rel}/${name}`;
+        if (statSync(join(ROOT, child)).isDirectory()) { walk(child); continue; }
+        if (!/\.test\.tsx?$/.test(name)) continue;
+        const text = readFileSync(join(ROOT, child), 'utf8');
+        // Gated means BOTH: it names the key directory, and it turns something
+        // off. Either alone is a file that merely mentions one of them.
+        if (text.includes(KEY_DIR) && text.includes(GATE)) out.push(child);
+      }
+    };
+    for (const tree of ['src', 'scripts', 'contracts/test']) walk(tree);
+    return out.sort();
+  };
+
+  const keysCoverageProblem = (workflow: string, gated: readonly string[]): string | null => {
+    if (gated.length === 0) return 'nothing in the tree gates on the verifier keys, so this rule is checking nothing';
+    const jobs = parseWorkflow(workflow);
+
+    // `npm run compact` is the full build. The fast one leaves no keys and is
+    // the whole reason anything is gated. Matched as a whole command so that
+    // `compact:fast` is not mistaken for it.
+    const builds = (s: WorkflowStep) => s.run !== null && /(^|&&\s*)npm run compact(\s|$)/.test(s.run);
+    const carrying = jobs.filter((j) => j.steps.some(builds));
+    if (carrying.length !== 1) return `${carrying.length} jobs build the proving keys; there must be exactly one`;
+    const job = carrying[0];
+    if (job.conditional) return `the ${job.id} job is conditional, so it need never run`;
+
+    const at = job.steps.findIndex(builds);
+    const build = job.steps[at];
+    if (build.conditional) return `the step that builds the keys in ${job.id} is conditional, so it need never run`;
+    if (build.tolerated) return `the step that builds the keys in ${job.id} tolerates its own failure`;
+
+    // AFTER the build, not merely in the same job. Ordered the other way, the
+    // tests run against no keys, skip, and report green.
+    const after = job.steps.slice(at + 1);
+    const reads = after.filter((s) => s.run !== null && /(^|&&\s*)(npx )?vitest run(\s|$)/.test(s.run));
+    if (reads.length === 0) return `nothing in ${job.id} runs the suite after the keys are built`;
+    for (const missing of gated.filter((f) => !reads.some((s) => (s.run as string).includes(f)))) {
+      return `${missing} gates on the keys and is run by no step after they are built`;
+    }
+    for (const s of reads) {
+      if (s.conditional) return `a step in ${job.id} that reads the keys is conditional, so it need never run`;
+      if (s.tolerated) return `a step in ${job.id} that reads the keys tolerates its own failure`;
+      if (/--passWithNoTests/.test(s.run as string)) return `a step in ${job.id} passes when it collects nothing`;
+    }
+    return null;
+  };
+
+  const WORKFLOW = () => readFileSync(join(ROOT, '.github/workflows/ci.yml'), 'utf8');
+
+  it('THE ASSERTIONS THAT NEED PROVING KEYS ARE STILL MADE SOMEWHERE, or this goes red', () => {
+    const gated = gatedOnKeys();
+    // The list is derived, so say what it found: a rule over an empty list is a
+    // rule over nothing, and the refusal above says so rather than passing.
+    expect(gated).toEqual(['src/midnight/deferred-set.test.ts', 'src/midnight/ledger.test.ts']);
+    expect(keysCoverageProblem(WORKFLOW(), gated)).toBeNull();
+  });
+
+  it('and the rule above refuses every way that coverage can be taken away', () => {
+    /*
+     * EACH OF THESE LEFT THE FIRST VERSION OF THIS RULE GREEN. They are written
+     * out rather than described because the first version's own three named
+     * breakages were three it already caught, which is how it passed while
+     * eight real ones walked through it.
+     */
+    const real = WORKFLOW();
+    const gated = gatedOnKeys();
+    const refuses = (label: string, edited: string, matching: RegExp) => {
+      expect(edited, `${label}: the edit changed nothing, so it proves nothing`).not.toBe(real);
+      expect(keysCoverageProblem(edited, gated), label).toMatch(matching);
+    };
+
+    refuses('the build step is commented out',
+      real.replace(/\n(\s+)run: npm run compact\n/, '\n$1# run: npm run compact\n'), /build the proving keys|exactly one/);
+    refuses('the build step is made conditional',
+      real.replace(/\n(\s+)run: npm run compact\n/, '\n$1if: false\n$1run: npm run compact\n'), /conditional/);
+    refuses('the build step tolerates its own failure',
+      real.replace(/\n(\s+)run: npm run compact\n/, '\n$1continue-on-error: true\n$1run: npm run compact\n'), /tolerates/);
+    refuses('the whole job is made conditional',
+      real.replace(/\n    name: keys\n/, '\n    name: keys\n    if: false\n'), /job is conditional/);
+    refuses('the runner is replaced by something that only prints',
+      real.replace(/- run: npx vitest run src\/midnight/, '- run: echo npx vitest run src/midnight'), /runs the suite after/);
+    refuses('one of the two files is dropped and named in a comment',
+      real.replace(/- run: npx vitest run (src\/midnight\/ledger\.test\.ts) (src\/midnight\/deferred-set\.test\.ts)\n/,
+        '- run: npx vitest run $1\n      # also $2\n'), /deferred-set\.test\.ts gates on the keys/);
+    refuses('the run passes when it collects nothing',
+      real.replace(/- run: npx vitest run /, '- run: npx vitest run --passWithNoTests '), /collects nothing/);
+    refuses('THE CHEAP ONE: the keys are built AFTER the tests that read them',
+      real.replace(/      - name: build the proving and verifier keys\n        run: npm run compact\n(      - run: npx vitest run [^\n]*\n)/,
+        '$1      - name: build the proving and verifier keys\n        run: npm run compact\n'), /runs the suite after/);
+
+    // AND A SHAPE IT CANNOT READ IS A REFUSAL RATHER THAN A PASS.
+    expect(() => keysCoverageProblem('name: check\non: push\n', gated)).toThrow(/no `jobs:` block/);
   });
 
   it('the artifact paths are the ones the tests really import', () => {

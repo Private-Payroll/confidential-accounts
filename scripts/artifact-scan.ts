@@ -246,7 +246,7 @@ export type CircuitModel = {
  */
 export type KeyFact =
   | { readonly measured: true; readonly bytes: number; readonly sha256: string }
-  | { readonly measured: false; readonly why: string; readonly door: string };
+  | { readonly measured: false; readonly why: string };
 
 export type ContractModel = {
   readonly label: string;
@@ -292,10 +292,8 @@ export type ArtifactSpec = {
   readonly label: string;
   /** The `.compact` a person edits. Carried so a refusal can name it. */
   readonly source: string;
-  /** Directory holding `contract/`, `compiler/` and, after a `--full` build, `keys/`. */
+  /** Directory holding `contract/` and `compiler/`. */
   readonly managed: string;
-  /** The door that rebuilds the verifier keys this contract's rows quote. */
-  readonly keyDoor: string;
 };
 
 /**
@@ -308,13 +306,11 @@ export const ARTIFACTS: readonly ArtifactSpec[] = [
     label: 'ConfidentialAccount',
     source: 'contracts/src/ConfidentialAccount.compact',
     managed: 'contracts/managed',
-    keyDoor: 'BUILD-KEYS.command',
   },
   {
     label: 'Vault',
     source: 'contracts/src/Vault.compact',
     managed: 'contracts/managed-vault',
-    keyDoor: 'COMPILE-VAULT.command',
   },
 ];
 
@@ -380,7 +376,16 @@ export function indicesFromLedgerFn(moduleText: string, desc: string): Map<strin
   return out;
 }
 
-/** Verifier keys as they are on disk, or the reason there are none and the door. */
+/**
+ * Verifier keys as they are on disk, or the reason there are none.
+ *
+ * NOT RENDERED INTO ANY GENERATED DOCUMENT, AND THAT IS THE POINT OF THE
+ * `measured` FLAG SURVIVING HERE. What a document may say has to be a function
+ * of what this repository contains, and these keys are made by a separate build
+ * that most copies of it have never run. So the facts stay available to anything
+ * that wants to ask -- a size gate, a deploy check -- and no document quotes
+ * them.
+ */
 function readKeys(root: string, spec: ArtifactSpec, circuitNames: readonly string[]): Map<string, KeyFact> {
   const dir = join(root, spec.managed, 'keys');
   const out = new Map<string, KeyFact>();
@@ -388,20 +393,19 @@ function readKeys(root: string, spec: ArtifactSpec, circuitNames: readonly strin
   try {
     names = readdirSync(dir).filter((n) => n.endsWith('.verifier'));
   } catch {
-    // NOT an error and NOT a blank. `COMPILE-CONTRACT.command` and
-    // `COMPILE-VAULT.command` compile with `--skip-zk` and leave no `keys/`
-    // at all, which is the state after every ordinary compile. A
-    // number nobody measured is a refusal, so every row says so and names the
-    // door that would produce it. Rule 9, rule 19.
+    // NOT an error and NOT a blank. An ordinary compile skips the proving
+    // backend and leaves no `keys/` at all, which is the state on almost every
+    // machine. A number nobody measured is a refusal, so the fact says which
+    // measurement was not taken rather than reporting a zero.
     for (const c of circuitNames) {
-      out.set(c, { measured: false, why: `${spec.managed}/keys is not on disk`, door: spec.keyDoor });
+      out.set(c, { measured: false, why: `${spec.managed}/keys is not on disk` });
     }
     return out;
   }
   for (const c of circuitNames) {
     const file = `${c}.verifier`;
     if (!names.includes(file)) {
-      out.set(c, { measured: false, why: `${spec.managed}/keys/${file} is not on disk`, door: spec.keyDoor });
+      out.set(c, { measured: false, why: `${spec.managed}/keys/${file} is not on disk` });
       continue;
     }
     const bytes = statSync(join(dir, file)).size;

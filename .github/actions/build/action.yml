@@ -1,0 +1,75 @@
+name: build a clone
+description: >
+  Everything that has to happen to a fresh clone of this repository before any
+  check can read it, in the order it has to happen in.
+
+# WHY THIS IS ONE FILE AND NOT REPEATED IN EVERY JOB.
+#
+# The checks below it are meant to be separate ticks on a pull request page, so
+# somebody can see WHICH one failed without opening a log. Separate jobs get
+# separate machines, and every one of them starts from nothing, so every one of
+# them has to do all of this first.
+#
+# Written once, they cannot drift apart. Written five times, the day somebody
+# adds a step to four of them is the day the fifth quietly checks something
+# else.
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        cache: npm
+
+    # THE COMPILER IS FETCHED ONCE PER MACHINE AND THEN KEPT.
+    #
+    # It is a release asset rather than a dependency, so nothing else here knows
+    # how to get it. The key carries the version, so moving the pin forward
+    # fetches the new one instead of reusing the old under a name that no longer
+    # describes it.
+    - uses: actions/cache@v4
+      with:
+        path: ~/.compact
+        key: compactc-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/checks/toolchain.mjs') }}
+
+    - name: fetch the pinned Compact compiler if it is not already here
+      shell: bash
+      run: node .github/checks/fetch-compiler.mjs >> "$GITHUB_ENV"
+
+    - name: install what the manifest pins
+      shell: bash
+      # ONE PACKAGE FETCHES A SET OF BROWSERS WHEN IT IS INSTALLED, AND NOTHING
+      # HERE RUNS A BROWSER. That download is tens of megabytes, from somewhere
+      # this does not cache, on every machine in the matrix, and the day it is
+      # unreachable every mark here goes red for a reason that has nothing to do
+      # with the change being checked. Told not to, it installs the package and
+      # skips the browsers, which is all any of this needs.
+      env:
+        PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+      run: npm ci
+
+    # THE CONTRACTS ARE COMPILED BEFORE ANYTHING READS THE SOURCE.
+    #
+    # The compiled output is not in this repository, and the TypeScript imports
+    # it by path, so a clone that has not compiled cannot be typechecked and
+    # cannot be tested. Two contracts, two outputs, and the account first: the
+    # vault's generated caller reaches the account's generated module by path
+    # and the account has to be there for it to reach.
+    #
+    # Without proving keys, which take minutes and which nothing here reads. A
+    # proof is made where a transaction is made, not where a check runs.
+    - name: compile the account
+      shell: bash
+      run: npm run compact:fast
+
+    - name: compile the vault
+      shell: bash
+      run: npm run compact:vault
+
+    # The library the wallet and the payroll share is consumed the way anything
+    # outside it consumes it: through its published entry points, at the built
+    # output. That output is not in this repository either.
+    - name: build the shared library
+      shell: bash
+      run: npm run identity:build

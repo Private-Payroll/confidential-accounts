@@ -14,9 +14,9 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-import { ist, stripGeneratedAt } from './generate-docs.js';
+import { ist, render, stripGeneratedAt } from './generate-docs.js';
 import { MONEY_PATH } from './edge-list.js';
-import { GENERATED_BLOCKS, GENERATED_FILES } from './doc-registry.js';
+import { EDGE_LIST_FILE, GENERATED_BLOCKS, GENERATED_FILES } from './doc-registry.js';
 import { parseBlocks } from './generated-blocks.js';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -84,17 +84,26 @@ describe('the documents on disk are well-formed markdown, not merely present', (
     }
   });
 
-  it('the verifier-key column REFUSES or MEASURES — it is never blank', () => {
+  it('NO GENERATED BLOCK QUOTES A VERIFIER KEY, because most copies of this repository have none', () => {
+    // THE DEFECT THIS EXISTS TO STOP COMING BACK. There was a verifier-key
+    // column here. Those keys come from a separate build that takes minutes and
+    // that an ordinary compile skips, so the value in the document was decided
+    // by which build the machine had run rather than by the contract - and this
+    // block is compared against what is on disk. Frozen with keys it refused on
+    // every machine without them; frozen without, on every machine with them.
+    // A clone could not start the suite at all.
     const text = read('docs/design/circuits.md');
     const rows = text.split('\n').filter((l) => l.startsWith('| `') && l.includes('provable'));
     expect(rows.length).toBeGreaterThan(10);
     for (const r of rows) {
-      const last = r.split('|').at(-2)?.trim() ?? '';
-      expect(last).not.toBe('');
-      expect(last).not.toBe('—');
-      // Either a measured size in bytes, or a refusal that names a door.
-      expect(/\d+ B `[0-9a-f]{12}`|NOT MEASURED.*\.command/.test(last)).toBe(true);
+      expect(/\d+ B `[0-9a-f]{12}`/.test(r), `a key measurement is quoted in: ${r}`).toBe(false);
+      expect(/NOT MEASURED/.test(r), `a key refusal is quoted in: ${r}`).toBe(false);
     }
+    // And the header says the same thing, so a column added back with a
+    // different cell format is caught too.
+    const header = text.split('\n').find((l) => l.startsWith('| circuit | kind |')) ?? '';
+    expect(header.split('|').map((c) => c.trim()).filter((c) => c !== ''))
+      .toEqual(['circuit', 'kind', 'reads', 'writes', 'asserts', 'discloses', 'calls']);
   });
 
   it('CARRIES THE CAVEAT that `discloses` is not a list of what is public', () => {
@@ -234,16 +243,24 @@ describe('the documents on disk are well-formed markdown, not merely present', (
     }
   });
 
-  it('the generated file carries the hand-edit digest, and NO input digest. T-167.', () => {
-    for (const spec of GENERATED_FILES) {
-      const text = read(spec.file);
-      expect(text).toMatch(/^ {2}"payload": "[0-9a-f]{16}",$/m);
+  it('a generated whole FILE carries the hand-edit digest, and NO input digest. T-167.', async () => {
+    // READ OFF THE RENDER RATHER THAN OFF THIS MACHINE'S DISK. The one such
+    // artefact is deliberately not part of this repository, so a clone has no
+    // copy to read and a loop over the gated list is now empty; either way,
+    // reading the disk would make this test pass by having nothing to look at.
+    const rendered = await render(ROOT);
+    const named = [EDGE_LIST_FILE, ...GENERATED_FILES.map((f) => f.file)];
+    expect(named.length).toBeGreaterThan(0);
+    for (const file of named) {
+      const text = rendered.files.get(file);
+      expect(text, `${file} is not rendered`).toBeDefined();
+      expect(text as string).toMatch(/^ {2}"payload": "[0-9a-f]{16}",$/m);
       // A list of inputs was a proxy for "would the generator write this", and
       // it was wrong three times in one round. Staleness is now answered by
       // rendering and comparing, so there is nothing stored here to go stale
       // against what the render actually depends on.
-      expect(text).not.toContain('"inputs"');
-      expect(JSON.parse(text)).toHaveProperty('generatedBy', spec.door);
+      expect(text as string).not.toContain('"inputs"');
+      expect(JSON.parse(text as string)).toHaveProperty('generatedBy', 'npm run docs');
     }
-  });
+  }, 60_000);
 });

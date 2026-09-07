@@ -8,14 +8,51 @@
  * thing tested here, and the rest follows.
  */
 import { describe, expect, it } from 'vitest';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { EDGE_LIST_FILE } from './doc-registry.js';
 import { answer, index, loadEdges } from './what-breaks.js';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
-const edges = loadEdges(ROOT);
 
-describe('a name it does not know is a REFUSAL, not an empty answer', () => {
+/*
+ * THE GRAPH THIS QUERIES IS NOT PART OF THIS REPOSITORY.
+ *
+ * It is a large machine artefact, regenerated on every source edit and
+ * deliberately left behind. So the tool has two behaviours worth holding and
+ * only one of them can be exercised in any given copy: WITH the graph, that it
+ * answers and refuses correctly; WITHOUT it, that it says there is nothing to
+ * query and names what would produce one.
+ *
+ * Loading it at the top used to take this whole file down in a copy that has no
+ * graph -- which is every clone. Each half now runs where it applies, and the
+ * half that does not runs a line saying so.
+ */
+const HAS_GRAPH = existsSync(join(ROOT, EDGE_LIST_FILE));
+if (!HAS_GRAPH) {
+  console.log(
+    `  NOT CHECKED HERE: ${EDGE_LIST_FILE} is not part of this repository, so the queries over it\n` +
+    '  did not run. What DID run is the refusal a reader without one meets.',
+  );
+}
+
+describe('with no graph on disk, it says so rather than answering', () => {
+  it.skipIf(HAS_GRAPH)('refuses, and names what would produce one', () => {
+    let refused = '';
+    try { loadEdges(ROOT); } catch (e) { refused = String((e as Error).message); }
+    expect(refused).toContain(EDGE_LIST_FILE);
+    expect(refused).toContain('no graph to query');
+    // AND IT DOES NOT ANSWER. The one thing this tool must never do is give the
+    // shape of a real answer when it has nothing to answer from.
+    expect(refused).not.toContain('WRITTEN BY');
+  });
+});
+
+const edges = HAS_GRAPH ? loadEdges(ROOT) : (undefined as never);
+
+describe.skipIf(!HAS_GRAPH)('a name it does not know is a REFUSAL, not an empty answer [needs the edge list, which this repository does not publish]', () => {
   it('says so, and does not say "nothing depends on it"', () => {
     const out = answer(edges, 'payoutDetalis');
     expect(out).toContain('IS NOT IN THE GRAPH');
@@ -35,7 +72,7 @@ describe('a name it does not know is a REFUSAL, not an empty answer', () => {
   });
 });
 
-describe('it answers the question that keeps getting asked', () => {
+describe.skipIf(!HAS_GRAPH)('it answers the question that keeps getting asked [needs the edge list, which this repository does not publish]', () => {
   it('a ledger field: who writes it, who reads it, and whether money flows through it', () => {
     const out = answer(edges, 'movements');
     expect(out).toContain('LEDGER FIELD');
@@ -85,7 +122,7 @@ describe('it answers the question that keeps getting asked', () => {
   });
 });
 
-describe('the index, which is what a double-click with no name prints — rule 8', () => {
+describe.skipIf(!HAS_GRAPH)('the index, which is what a double-click with no name prints — rule 8 [needs the edge list, which this repository does not publish]', () => {
   it('lists every field of both contracts with its heat', () => {
     const out = index(edges);
     for (const c of edges.contracts) {

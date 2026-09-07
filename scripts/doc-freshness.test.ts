@@ -39,6 +39,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { GENERATED_BLOCKS, GENERATED_FILES, type GeneratedBlock, type GeneratedFile } from './doc-registry.js';
+import { isIgnored, parseIgnore, unsupportedRules } from './gitignore-rules.mjs';
 import { assertDocsFresh, docRefusalText, docRefusals, fileRefusals } from './doc-freshness.js';
 import { render, stripGeneratedAt, withGeneratedAt } from './generate-docs.js';
 import { digest, parseBlocks, renderBlock } from './generated-blocks.js';
@@ -248,8 +249,22 @@ describe('THE REFUSAL FIRES — the whole reason this file exists', () => {
   });
 
   it('cannot be disarmed by being given nothing to check', () => {
+    // THE REGISTRY IS WHAT MAY NEVER BE EMPTY, and the blocks are the registry:
+    // three documents that ship, compared on every run.
     expect(() => docRefusals(root, [], rendered().blocks)).toThrow(/ZERO generated blocks/);
-    expect(() => fileRefusals(root, [], rendered().files)).toThrow(/ZERO generated files/);
+  });
+
+  it('and a registry with no whole-FILE artefacts is a decision, not a disarmed check', () => {
+    // Whole-file artefacts are a shape the registry supports and has no members
+    // of. It had one, and that one was a file this repository does not publish,
+    // so the gate asked every reader of a clone for something a clone is never
+    // given and threw before a single test could run. What replaced the throw is
+    // not a tolerance: it is an empty list, declared in the registry with its
+    // reason, and asserted below to be empty rather than merely short.
+    expect(fileRefusals(root, [], rendered().files)).toEqual([]);
+    // And a member that came back would still be checked, so this is a decision
+    // about the list and not a hole in the comparison.
+    expect(fileRefusals(root, [FILE], rendered().files)).toEqual([]);
   });
 
   it('cannot be disarmed by rendering NOTHING for a block the registry names', () => {
@@ -341,9 +356,16 @@ describe('T-167 — A CHANGE IN A TREE THE GENERATOR READS TURNS THE GATE RED', 
     // tautology, and the gate's refusal alone cannot tell that apart from a
     // gate that works. This says the bytes the generator would write are no
     // longer the bytes on disk, which a disk-echoing render can never satisfy.
+    //
+    // READ OFF A DOCUMENT THE GATE ACTUALLY COMPARES, which is the point of the
+    // change that moved it here. It used to be read off the machine-readable
+    // edge list, and that file is not part of this repository: the gate no
+    // longer compares it, so a tautology check aimed at it would have proved
+    // nothing about the gate. `modules.md` ships, is compared, and records the
+    // locator this probe moves.
     const moved = await render(ROOT);
-    const onDisk = readFileSync(join(ROOT, 'docs/design/edges.json'), 'utf8');
-    expect(stripGeneratedAt(moved.files.get('docs/design/edges.json') as string)).not.toBe(stripGeneratedAt(onDisk));
+    const onDisk = readFileSync(join(ROOT, 'docs/design/modules.md'), 'utf8');
+    expect(onDisk).not.toContain((moved.blocks.get('modules') as string).trim());
 
     let refused = '';
     try {
@@ -352,7 +374,7 @@ describe('T-167 — A CHANGE IN A TREE THE GENERATOR READS TURNS THE GATE RED', 
       refused = String((e as Error).message);
     }
     expect(refused).toContain('THE SUITE DID NOT RUN');
-    expect(refused).toContain('docs/design/edges.json');
+    expect(refused).toContain('docs/design/modules.md');
     expect(refused).toContain('Run npm run docs, then run this again.');
 
     // AND IT IS RESTORED, byte for byte, before anything else runs.
@@ -437,7 +459,11 @@ describe('the guard is WIRED IN, and is pointed at the doc set the registry name
       ['docs/design/ledger-fields.md', 'ledger-fields', 'npm run docs'],
       ['docs/design/modules.md', 'modules', 'npm run docs'],
     ]);
-    expect(GENERATED_FILES.map((f) => [f.file, f.door])).toEqual([['docs/design/edges.json', 'npm run docs']]);
+    // EMPTY, AND THE EMPTINESS IS THE PIN. The one entry there had ever been
+    // named a file this repository does not publish, so every clone's gate threw
+    // before a test could run. An entry that came back by accident is caught
+    // here and by the rule below it.
+    expect(GENERATED_FILES).toEqual([]);
     /*
      * AND THE DOOR IS ONE A READER OF THE PUBLISHED REPOSITORY CAN ACTUALLY
      * OPEN. This used to `readFileSync` the door name as a PATH, which passed
@@ -452,6 +478,31 @@ describe('the guard is WIRED IN, and is pointed at the doc set the registry name
       expect({ door: b.door, shipped: m !== null && typeof pkg.scripts[m[1]] === 'string' })
         .toEqual({ door: b.door, shipped: true });
     }
+  });
+
+  it('AND NO REGISTRY ENTRY NAMES A FILE THIS REPOSITORY DOES NOT PUBLISH', () => {
+    /*
+     * THE RULE THAT WOULD HAVE CAUGHT THE DEFECT THAT PUT THIS TEST HERE, AND
+     * IT IS ONE SENTENCE: this gate runs in every copy of this repository, so
+     * it may only depend on what every copy is given.
+     *
+     * It depended on a large machine artefact that is deliberately left behind.
+     * Nothing said so, because "is it in the registry" and "is it published"
+     * were never asked in the same place. The ignore rules are the answer to
+     * the second question and they ship, so the question now has the same
+     * answer wherever it is asked.
+     */
+    const rules = parseIgnore(readFileSync(join(ROOT, '.gitignore'), 'utf8'));
+    // The matcher is not git. A rule it cannot read is not treated as "no
+    // match", so an unreadable rule fails here rather than passing quietly.
+    expect(unsupportedRules(rules)).toEqual([]);
+    for (const entry of [...GENERATED_BLOCKS, ...GENERATED_FILES]) {
+      expect({ file: entry.file, excluded: isIgnored(rules, entry.file) })
+        .toEqual({ file: entry.file, excluded: false });
+    }
+    // AND THE CHECK IS NOT VACUOUS: the artefact that was removed IS excluded,
+    // so this would have gone red the day it was added.
+    expect(isIgnored(rules, 'docs/design/edges.json')).toBe(true);
   });
 
   it('THE RENDER COVERS EVERY REGISTRY ENTRY, so nothing is silently uncompared', async () => {
