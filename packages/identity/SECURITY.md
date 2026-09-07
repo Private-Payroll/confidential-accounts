@@ -80,12 +80,12 @@ access to their funds, say so in the title.
   from**: expanding it with this library's HKDF reproduces every login, device and seat credential
   byte for byte. A wallet offered at account 1 would hand its holder a spending key that is also the
   credential root.
-  **PINNED, four ways:** the expansion itself at `apps/wallet/subwallets.test.ts:137` and
+  **PINNED, four ways:** the expansion itself at `apps/wallet/src/accounts/subwallets.test.ts:137` and
   `packages/identity/src/keys/derivation.portability.test.ts:237-240`, `:347`; the refusal at the derivation door —
-  `moneyAt(1)` throws `account-reserved` — at `apps/wallet/subwallets.test.ts:127`; the offered set,
-  accounts **0 and 2–11**, at `apps/wallet/shell.test.tsx:294`; and the refusals at the storage and
-  balance doors at `apps/wallet/shell/wallets.test.ts:73`, `:93`, `:148` and
-  `apps/wallet/balance.test.tsx:89`. **Anything built on this seed must hold the same line.**
+  `moneyAt(1)` throws `account-reserved` — at `apps/wallet/src/accounts/subwallets.test.ts:127`; the offered set,
+  accounts **0 and 2–11**, at `apps/wallet/src/shell/shell.test.tsx:294`; and the refusals at the storage and
+  balance doors at `apps/wallet/src/shell/wallets.test.ts:73`, `:93`, `:148` and
+  `apps/wallet/src/chain/balance.test.tsx:89`. **Anything built on this seed must hold the same line.**
 
   **What this means for a person who imports these twenty-four words into another wallet:** that
   wallet knows nothing of the reservation. It will offer a plain series — account 0, 1, 2, 3 — and
@@ -102,32 +102,32 @@ access to their funds, say so in the title.
   from the secret alone).
 
 - **THE SECRET ITSELF IS AT REST IN THIS BROWSER, AND SO IS THE KEY THAT OPENS IT.** The account
-  secret is AES-GCM sealed into `localStorage` (`apps/wallet/storage.ts:269`) and the key that unseals it
-  is generated non-extractable and kept in IndexedDB (`apps/wallet/storage.ts:213-218`).
+  secret is AES-GCM sealed into `localStorage` (`apps/wallet/src/accounts/storage.ts:269`) and the key that unseals it
+  is generated non-extractable and kept in IndexedDB (`apps/wallet/src/accounts/storage.ts:213-218`).
   **DESCRIPTION — CHECK BY READING** those two ranges. **Non-extractable means the ciphertext cannot
   be carried off and opened somewhere else. It does not mean there is no key at rest**, and the
   passkey does not gate these bytes: the sealed copy is opened without any ceremony
-  (`apps/wallet/storage.ts:30-32`, and the same limitation is stated again below). **THAT KEY CAN ALSO
+  (`apps/wallet/src/accounts/storage.ts:30-32`, and the same limitation is stated again below). **THAT KEY CAN ALSO
   BE LOST**, and losing it costs the local copy of the wallet — the failure has a name in the type
-  system, `sealed-copy-unopenable` (`apps/wallet/storage.ts:57-61`) — after which recovery is only from
+  system, `sealed-copy-unopenable` (`apps/wallet/src/accounts/storage.ts:57-61`) — after which recovery is only from
   pieces. **An earlier version of this document said there was no key at rest to steal and none to
   lose. Both halves were false, and this repository's own storage layer is where they are false.**
 
 - **An 8-byte fingerprint of the secret, and each account's coin public key, are stored
-  UNENCRYPTED.** **DESCRIPTION — CHECK BY READING** `apps/wallet/storage.ts:270`, `:571`, `:635`, `:723`,
+  UNENCRYPTED.** **DESCRIPTION — CHECK BY READING** `apps/wallet/src/accounts/storage.ts:270`, `:571`, `:635`, `:723`,
   `:848` and `:1173` for the fingerprint — an HKDF-SHA256 of the secret, `packages/identity/src/recovery/pieces.ts:84-89`
-  — and `apps/wallet/storage.ts:499-503` for the coin public key. **Neither is a spending key and neither
+  — and `apps/wallet/src/accounts/storage.ts:499-503` for the coin public key. **Neither is a spending key and neither
   is invertible; both are stable correlators** that link records in this browser to one another and
   the coin public key to on-chain activity.
 
 - **This library ships no destination that phones home.** **DESCRIPTION — CHECK BY READING**
-  `apps/wallet/config.ts:62`: `INBOX_HOST` is `null`, not an unreachable address — there is no server
+  `apps/wallet/src/config.ts:62`: `INBOX_HOST` is `null`, not an unreachable address — there is no server
   of ours anywhere in this repository. A host may add a destination of its own.
 
   **AND THE LIMITATION THAT BELONGS BESIDE THAT, SAID PLAINLY:** the secret is held in this
   browser, so **script running on this origin can read it without any ceremony** — a cross-site
   scripting hole here is a total compromise of the wallet, and the passkey does not stand in its
-  way. `apps/wallet/storage.ts:26-35` says the same thing where the storage is written.
+  way. `apps/wallet/src/accounts/storage.ts:26-35` says the same thing where the storage is written.
 
 ### Recovery
 
@@ -137,7 +137,7 @@ access to their funds, say so in the title.
 - **A threshold of one is refused**, and **no two pieces may sit behind the same holder**.
   **PINNED:** `packages/identity/src/recovery/pieces.test.ts:242` and `:261` (`holders-collide`, including the
   case-folded duplicate), `packages/identity/src/recovery/session.test.ts:114`, and the stored-record read path at
-  `apps/wallet/storage.test.ts:143`.
+  `apps/wallet/src/accounts/storage.test.ts:143`.
 
 - **A recovery piece carries the threshold and a fingerprint of the account it belongs to**, and
   **the rebuilt answer is checked.** Shamir itself has no integrity check and no knowledge of its own
@@ -169,7 +169,7 @@ access to their funds, say so in the title.
   `waiting` is precisely the state designed to be serialised and carried between devices.**
   **THIS IS AN INSTRUCTION TO A HOST AND NOTHING IN THIS LIBRARY ENFORCES IT: a session that has
   reached its threshold must not be written anywhere a host can read without being sealed first.**
-  The reference wallet keeps it in memory only (`apps/wallet/session.tsx`), and no test would notice if
+  The reference wallet keeps it in memory only (`apps/wallet/src/session.tsx`), and no test would notice if
   that changed. The terminal states are safe by construction — `completeRecovery`
   (`packages/identity/src/recovery/session.ts:376-381`) and `cancelRecovery` (`:323-329`) both return a session with
   `gathered` emptied. **An earlier version of this document said a gathering session holds more than
@@ -212,7 +212,7 @@ access to their funds, say so in the title.
 
 - **Replay is refused by a one-use challenge, and the challenge STORE is the thing that refuses
   it.** **PINNED at two levels:** `packages/identity/src/passkey/challenges.test.ts:27` (the store spends a challenge
-  exactly once) and `apps/wallet/session.test.tsx:343`, which injects a store that spends everything and
+  exactly once) and `apps/wallet/src/session.test.tsx:343`, which injects a store that spends everything and
   asserts the verifier is never even reached. **THE VERIFIER IS NOT A THIRD LEVEL AND MUST NOT BE
   READ AS ONE.** `verifyAssertion` checks that the challenge presented is the one expected, which is
   a stateless comparison (`packages/identity/src/passkey/verify.ts:287-291`), **so a replayed assertion carrying the
@@ -256,15 +256,15 @@ access to their funds, say so in the title.
 - **The wallet does reach the network later, and here is every party it reaches.** **PINNED:**
   `packages/identity/src/security-claims.test.ts:148`, which derives this list from the source rather than trusting
   the prose below, and fails if a fourth file anywhere in the application names an absolute origin.
-  - **The indexer**, for balances — `apps/wallet/config.ts:33`, `:38`. Asked **only when the person
+  - **The indexer**, for balances — `apps/wallet/src/config.ts:33`, `:38`. Asked **only when the person
     presses *Check the balance***, and named on screen for that reason: asking it tells its
     operator this wallet's address.
-  - **A stagenet RPC node**, through the SDK facade — `apps/wallet/facade.ts`.
-  - **`rehearsal.invalid`** — `apps/wallet/rehearsal.ts`, deliberately unresolvable, so a rehearsal
+  - **A stagenet RPC node**, through the SDK facade — `apps/wallet/src/chain/facade.ts`.
+  - **`rehearsal.invalid`** — `apps/wallet/src/chain/rehearsal.ts`, deliberately unresolvable, so a rehearsal
     reaches nothing.
   **AND SEPARATELY, FROM THIS WALLET'S OWN ORIGIN:** the proving-key manifest and the key artefacts
-  themselves, `apps/wallet/key-material.ts:167`, `:227`, reached from the send path via
-  `apps/wallet/proving.ts:61`. Same-origin and hash-pinned against a committed manifest, so it is not a
+  themselves, `apps/wallet/src/chain/key-material.ts:167`, `:227`, reached from the send path via
+  `apps/wallet/src/chain/proving.ts:61`. Same-origin and hash-pinned against a committed manifest, so it is not a
   third party — but it **is** a network request, and an earlier draft of this file said there was
   only one and named only the manifest. That is why the list above is derived and not written.
 

@@ -39,7 +39,7 @@
      * runtime - which is the split `alias.test.ts` was written for.
      */
     "paths": {
-      "@/*": ["./*"],
+      "@/*": ["./src/*"],
       "midnight-identity": ["../../packages/identity/src/index.ts"],
       "midnight-identity/browser": ["../../packages/identity/src/browser/index.ts"],
       "midnight-identity/network": ["../../packages/identity/src/wallet/network.ts"],

@@ -109,7 +109,7 @@ describe('no extended public key above the leaf leaves this library', () => {
      * of them names itself and the other does not. A tripwire is allowed to be
      * broader than the thing it is watching for. */
     expect(carrying(/HDKey/u)).toEqual([
-      'apps/wallet/subwallets.test.ts',
+      'apps/wallet/src/accounts/subwallets.test.ts',
       'packages/identity/src/keys/derivation.portability.test.ts',
       'packages/identity/src/profile/unlock.test.ts',
       SELF,
@@ -154,7 +154,7 @@ describe('the wallet page asks nobody anything when it opens', () => {
    *
    * SCOPE. This pins the page as it OPENS. The wallet does read balances from
    * a named indexer later, when the person presses the button — that is a
-   * deliberate, disclosed request (`apps/wallet/config.ts:26-27`) and it is named on
+   * deliberate, disclosed request (`apps/wallet/src/config.ts:26-27`) and it is named on
    * screen. The claim is about opening, and so is the test. */
 
   it('every URL in the page shell is relative or inline — no third-party origin', () => {
@@ -172,8 +172,8 @@ describe('the wallet page asks nobody anything when it opens', () => {
     /* THE ENUMERATION IS THE POINT, AND THE FIRST VERSION OF THIS FILE DID NOT
      * HAVE IT. `SECURITY.md` tried to enumerate the wallet's network activity
      * in prose and got it wrong twice in one sentence — it missed the proving
-     * artefacts (`apps/wallet/key-material.ts:227`, reached from the send path via
-     * `apps/wallet/proving.ts:61`) and missed `apps/wallet/facade.ts` entirely. A list in
+     * artefacts (`apps/wallet/src/chain/key-material.ts:227`, reached from the send path via
+     * `apps/wallet/src/chain/proving.ts:61`) and missed `apps/wallet/src/chain/facade.ts` entirely. A list in
      * prose is a list that goes stale; this is the same list, derived.
      *
      * A FOURTH FILE HERE IS A NEW PARTY THIS WALLET TALKS TO, and whoever
@@ -183,19 +183,19 @@ describe('the wallet page asks nobody anything when it opens', () => {
       .filter(([, code]) => /["'`](?:https?|wss?):\/\//u.test(code))
       .map(([file]) => file).sort();
     expect(offenders).toEqual([
-      /* The indexer balances are read from, asked only when the person
-       * presses the button, and named on screen for that reason. */
-      'apps/wallet/config.ts',
       /* The stagenet RPC node the SDK facade talks to. */
-      'apps/wallet/facade.ts',
+      'apps/wallet/src/chain/facade.ts',
       /* `rehearsal.invalid` — deliberately unresolvable, so a rehearsal
        * cannot reach anything. Not a party; the absence of one. */
-      'apps/wallet/rehearsal.ts',
+      'apps/wallet/src/chain/rehearsal.ts',
+      /* The indexer balances are read from, asked only when the person
+       * presses the button, and named on screen for that reason. */
+      'apps/wallet/src/config.ts',
     ]);
   });
 
   it('the stylesheet pulls in no remote font or sheet', () => {
-    const css = stripComments(readFileSync(path.join(REPO, 'apps', 'wallet', 'app.css'), 'utf8'));
+    const css = stripComments(readFileSync(path.join(REPO, 'apps', 'wallet', 'src', 'app.css'), 'utf8'));
     expect(css).not.toMatch(/@import\s+(?:url\()?["']?https?:/u);
     expect(css).not.toMatch(/fonts\.googleapis|fonts\.gstatic|@font-face/u);
   });

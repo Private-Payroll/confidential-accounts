@@ -22,7 +22,7 @@ import {
   RELEASE_SCHEMA, UnlockError, readRelease, releaseFor, unlockKeyFor,
 } from './unlock.js';
 import { emptyProfile, grantTo, originsFor, recordRelease, releasesOf } from './model.js';
-import { WALLET_ACCOUNTS } from '../../../../apps/wallet/subwallets.js';
+import { WALLET_ACCOUNTS } from '../../../../apps/wallet/src/accounts/subwallets.js';
 
 /**
  * **THE WALLET RELEASES A KEY, AND THE FIVE THINGS THAT MAKE THAT SAFE.**

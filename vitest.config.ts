@@ -15,7 +15,7 @@ import { defineConfig } from 'vitest/config';
  * THE WALLET IS NOT AN OUTSIDE CONSUMER. It is built from this repository and
  * reaches modules the `exports` map does not publish; those are written down in
  * `packages/identity/internal-subpaths.json` and pinned by
- * `apps/wallet/internal-reach.test.ts`.
+ * `apps/wallet/src/internal-reach.test.ts`.
  *
  * SO THE RESOLVER ASKS WHO IS IMPORTING. A file under `apps/wallet/` gets the
  * source; everything else gets `null`, which is this resolver saying it has no
@@ -81,7 +81,7 @@ export default defineConfig({
        * here as well as in the wallet's own config: nothing outside
        * `apps/wallet/` imports either spelling.
        */
-      { find: '@', replacement: WALLET.replace(/\/$/, '') },
+      { find: '@', replacement: WALLET + 'src' },
     ],
   },
   test: {

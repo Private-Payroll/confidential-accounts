@@ -16,7 +16,7 @@
     "everybody - publishes the key derivation, the passkey verification and the",
     "recovery pieces as library API by accident.",
     "",
-    "SO THE LIST IS THE STATEMENT, AND `apps/wallet/internal-reach.test.ts` IS",
+    "SO THE LIST IS THE STATEMENT, AND `apps/wallet/src/internal-reach.test.ts` IS",
     "WHAT KEEPS IT TRUE: it reads every import in the application, takes the ones",
     "that are not in `exports`, and refuses when the two sets differ in either",
     "direction. A new internal reach is a line added here on purpose, or a red",

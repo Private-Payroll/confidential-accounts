@@ -10,7 +10,7 @@
  * Node (no CORS applies), downloads every artefact a send can need, hashes
  * each one, and writes the files plus a manifest of SHA-256 pins into
  * apps/wallet/public/keys/ — which vite serves from the wallet's OWN origin at
- * /keys/. The app's provider (apps/wallet/key-material.ts) verifies every byte
+ * /keys/. The app's provider (apps/wallet/src/chain/key-material.ts) verifies every byte
  * against those pins before proving, and refuses loudly on any mismatch.
  *
  * THE PINS ARE TAKEN ONCE AND THEN DEFENDED. The first run writes the
