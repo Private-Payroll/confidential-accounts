@@ -129,8 +129,66 @@ _to_delete/
 midnight-src/
 /SAFE/
 
-# Identity is its own repository. Nothing under here belongs to this one.
-/Identity/
+# ── THE WALLET AND THE LIBRARY, WHICH ARE NOW IN THIS REPOSITORY ───────────
+# The folder this block used to exclude whole is gone: the wallet's source is
+# `apps/wallet/`, the library it consumes is `packages/identity/`, and both are
+# named on the take list file by file like everything else here. What is left
+# to exclude is what those two BUILD or download, and one test fixture.
+#
+# THE PROVING-KEY MATERIAL IS THE LINE THAT MATTERS. It is ~117 MB, it is
+# re-downloadable, and it is verified against the SHA-256 pins in
+# `manifest.json` on every use - so the manifest is committed and the material
+# never is.
+/packages/identity/lib/
+/packages/identity/dist/
+/packages/identity/.vite-cache/
+/apps/wallet/dist/
+/apps/wallet/public/keys/*
+!/apps/wallet/public/keys/manifest.json
+
+# The stable test wallet's seed. A test fixture, nobody's money - but a seed is
+# a seed, and no seed is ever committed.
+/apps/wallet/test-wallet.seed
+
+# ── AND THE SHAPES, NOT ONLY THE TWO EXACT PATHS ABOVE ─────────────────────
+#
+# THESE CAME ACROSS WITH THE WALLET AND ALMOST DID NOT. They lived in that
+# folder's own `.gitignore`, which is now at `packages/identity/.gitignore` and
+# therefore governs that subtree and nothing else - so on the day of the merge
+# `apps/wallet/**` was covered for two exact filenames and for no SHAPE at all,
+# and a root `.gitignore` holding no `*.pem`, no `*.key` and no `*.mnemonic`
+# sat under a commit door that runs `git add -A`. Nothing occupied the gap.
+# That is the point: a guard that stops covering the tree it was written for
+# fails towards silence, and the next file is the one nobody looks at.
+#
+# UNANCHORED ON PURPOSE, ALL OF THEM. Anchoring a rule NARROWS it, and every
+# rule here protects something rather than merely tidying - so matching at any
+# depth is the safer error, wherever a rule protects something.
+*.pem
+*.key
+*.mnemonic
+*.p12
+seed*.txt
+*.seed
+id_rsa
+id_ed25519
+
+# `.env.*` AND NOT `.env` OR `.env.example`, BECAUSE THIS FILE ALREADY DECIDES
+# BOTH OF THOSE ABOVE AND GIT TAKES THE LAST MATCHING RULE. The wallet's own
+# ignore file carried `!.env.example` - an un-ignore - and copying that line
+# here would have reached back over this repository's line 93 and started
+# TRACKING a file it deliberately excludes. Only the pattern that is genuinely
+# missing is added.
+.env.*
+
+# The wallet's dependency cache, which its config deliberately keeps out of
+# node_modules: a cache is not a dependency.
+/.vite-cache/
+
+# The wallet's own working record, moved here when its folder stopped existing.
+# Working documents, never part of the software - the same rule the rest of
+# `docs/` is held to.
+docs/wallet/
 
 
 # ── THE THREE FILES A COMMIT IS BUILT FROM, WHICH A COMMIT MUST NOT CARRY ──
