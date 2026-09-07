@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<!--
+  THE BROWSER PROBE — a dev-only page.
+
+  Here is the reason this exists: this wallet once could not produce an
+  address in a browser while 179 tests passed, because the suite only ever
+  ran in Node. The SDK's shielded wallet is rxjs, Effect and WASM, and
+  before any screen depends on it, this page answers one question in a REAL
+  browser: does it start, sync and report a balance against stagenet?
+
+  Run it with the wallet probe — never by pasting keys anywhere. The
+  probe builds a THROWAWAY wallet from fresh random bytes each run; nothing
+  about any real account is used, shown or sent.
+
+  Dev-only: `vite build` bundles only index.html (vite.config.ts sets no
+  extra inputs), so this page never ships. The wallet probe drives it
+  against the dev server and records every network request it makes.
+-->
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Wallet probe — does the SDK run in this browser?</title>
+  <style>
+    body { background: #0b0d13; color: #e9ebf2; font-family: ui-monospace, monospace;
+           padding: 2rem; line-height: 1.6; }
+    h1 { font-size: 1.2rem; }
+    .muted { color: #9aa1b4; }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+  </style>
+</head>
+<body>
+  <h1>Browser probe — the SDK wallet, live</h1>
+  <p class="muted">
+    A throwaway wallet from fresh random bytes, synced against the stagenet
+    indexer. No real account is involved. Close the tab when done; nothing is
+    stored.
+  </p>
+  <pre id="log" aria-live="polite"></pre>
+  <pre id="probe-out"></pre>
+  <script type="module" src="./probe.ts"></script>
+</body>
+</html>

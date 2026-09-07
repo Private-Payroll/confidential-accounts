@@ -1,0 +1,35 @@
+{
+  "note": [
+    "MODULES THE WALLET APPLICATION REACHES THAT THIS PACKAGE DOES NOT PUBLISH.",
+    "",
+    "Every entry below is INTERNAL. None of them is in this package's `exports`",
+    "map and none of them is available to anybody who installs this package. The",
+    "wallet reaches them because it is built from this repository and its own",
+    "config aliases the package name at this folder's `src`, from source.",
+    "",
+    "WHY THE LIST EXISTS RATHER THAN THE REACH BEING LEFT IMPLICIT. An alias that",
+    "quietly grants one consumer more than every other consumer gets is invisible",
+    "at the import site: `midnight-identity/keys/derivation` reads exactly like",
+    "`midnight-identity/profile/model`, and one of those is published and the",
+    "other is not. Somebody meeting the first a year from now has no way to tell,",
+    "and the natural repair - widening `exports` until the imports resolve for",
+    "everybody - publishes the key derivation, the passkey verification and the",
+    "recovery pieces as library API by accident.",
+    "",
+    "SO THE LIST IS THE STATEMENT, AND `apps/wallet/internal-reach.test.ts` IS",
+    "WHAT KEEPS IT TRUE: it reads every import in the application, takes the ones",
+    "that are not in `exports`, and refuses when the two sets differ in either",
+    "direction. A new internal reach is a line added here on purpose, or a red",
+    "suite."
+  ],
+  "internal": [
+    "devices/pairing",
+    "keys/derivation",
+    "passkey/bytes",
+    "passkey/verify",
+    "profile/inbox-poll",
+    "profile/seal",
+    "profile/store",
+    "recovery/pieces"
+  ]
+}

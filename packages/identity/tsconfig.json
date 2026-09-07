@@ -1,0 +1,56 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    /*
+     * THE RESOLUTION CHANGE, AND IT IS THE ONLY REASON THIS FILE LEFT THE
+     * FROZEN SET THE INTERFACE WORK WAS HELD TO.
+     *
+     * This repo was `module: NodeNext` with no `paths`, so every relative
+     * import carries an explicit `.js`. shadcn's output uses `@/` aliases and
+     * extensionless imports and compiles under neither. The swap was MEASURED
+     * rather than asserted: `ESNext` + `Bundler` typechecked clean,
+     * the suite stayed green, the build stayed green, and **every existing
+     * `.js`-suffixed import kept working** — which was the thing assumed to
+     * break. Bundler resolution accepts both spellings, which is the point.
+     *
+     * Nothing else here moves. `rootDir`, `strict`, `noUncheckedIndexedAccess`
+     * and `noUnusedLocals` are all as they were.
+     */
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "exactOptionalPropertyTypes": false,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": ["vitest/globals", "vite/client"],
+    "jsx": "react-jsx",
+    "rootDir": "src"
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
+  /*
+   * TWO TESTS ARE TYPECHECKED BY THE APPLICATION'S CONFIG INSTEAD OF BY THIS
+   * ONE, AND THEY ARE THE TWO THAT REACH ACROSS.
+   *
+   * `tsconfig.build.json` records the measurement this split rests on: no file
+   * outside the application imports the application - only TEST files do, and
+   * tests are excluded from the build. Those tests still exist and they still
+   * reach. Under THIS config only half of what they import can be resolved,
+   * because the application's `@/` alias and its view of this package's
+   * subpaths belong to the application's config.
+   *
+   * So they are read by `apps/wallet/tsconfig.json`, which can see both halves,
+   * and they are excluded here. THEY ARE STILL RUN BY THIS PACKAGE'S OWN
+   * `vitest` - a runner reads its include glob and not this file - so nothing
+   * this package tests stops being tested. What moves is which compiler reads
+   * them, and the alternative was to leave a config claiming to typecheck a
+   * file it cannot resolve.
+   */
+  "exclude": [
+    "src/profile/registry-open.test.tsx",
+    "src/profile/unlock.test.ts"
+  ]
+}
