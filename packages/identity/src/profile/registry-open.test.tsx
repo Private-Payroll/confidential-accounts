@@ -11,8 +11,8 @@ import { emptyProfile, recordIssued, selfAssert } from './model.js';
 import { save } from './store.js';
 import type { Port } from './store.js';
 import { verify } from './disclosure.js';
-import { ProfileScreen } from '../../../../apps/wallet/screens/profile.js';
-import { Approve } from '../../../../apps/wallet/screens/approve.js';
+import { ProfileScreen } from '../../../../apps/wallet/src/screens/profile.js';
+import { Approve } from '../../../../apps/wallet/src/screens/approve.js';
 import type { ChannelWindow } from './channel.js';
 
 /**

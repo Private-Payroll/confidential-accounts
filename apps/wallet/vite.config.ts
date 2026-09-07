@@ -33,7 +33,7 @@ export default defineConfig({
   /*
    * `@tailwindcss/vite` is the whole of Tailwind v4's build integration —
    * there is no `tailwind.config.js` and no PostCSS step. It processes
-   * `apps/wallet/app.css`, which `index.html` links directly.
+   * `apps/wallet/src/app.css`, which `index.html` links directly.
    *
    * IT SHIPS A NATIVE BINARY (`@tailwindcss/oxide`), one per platform, which
    * is the class of dependency `vite.config.ts` already turns CSS
@@ -87,10 +87,10 @@ export default defineConfig({
        * like it would swallow every scoped package. A STRING `find` matches
        * only when the import is exactly `@` or begins `@/`.
        * `@radix-ui/react-dialog` and `@midnightntwrk/ledger-v9` do not begin
-       * `@/` and are untouched - pinned by `apps/wallet/kit/alias.test.ts`,
+       * `@/` and are untouched - pinned by `apps/wallet/src/kit/alias.test.ts`,
        * which resolves one of each.
        */
-      { find: '@', replacement: fileURLToPath(new URL('.', import.meta.url)) },
+      { find: '@', replacement: fileURLToPath(new URL('./src', import.meta.url)) },
       /*
        * THE LIBRARY, REACHED BY ITS PACKAGE NAME AND RESOLVED FROM SOURCE.
        *

@@ -38,7 +38,7 @@ import type { Disclosure, Sent } from './model.js';
  * **A disclosure is signed by the SUBWALLET'S OWN UNSHIELDED (NIGHT) KEY**,
  * through the SDK's own `createKeystore({ kind: 'schnorr' })` path — the same
  * key, the same kind and the same code that already produce the address that
- * subwallet is paid at (`apps/wallet/unshielded.ts:51-59`).
+ * subwallet is paid at (`apps/wallet/src/chain/unshielded.ts:51-59`).
  *
  * ── WHY NOT `Purposes.Seat`, WHICH IS THE OTHER CANDIDATE ─────────────────
  * 1. **A Seat key cannot make the statement the recipient needs.** What payroll

@@ -5,7 +5,7 @@
   "tsx": true,
   "tailwind": {
     "config": "",
-    "css": "apps/wallet/app.css",
+    "css": "apps/wallet/src/app.css",
     "baseColor": "slate",
     "cssVariables": true,
     "prefix": ""
