@@ -353,22 +353,25 @@ describe('X-9: a run reports its progress from the chain', () => {
   });
 
   /*
-   * THE OTHER COMPLETED BRANCH, WHICH IS A SEPARATE RETURN AND FAILS SEPARATELY.
+   * **THE FIFTH SITE, AND IT IS UNREACHABLE RATHER THAN UNHELD. AN ASSERTION
+   * STOOD HERE AND IS GONE, WHICH IS WORTH THE PARAGRAPH BECAUSE THE NEXT
+   * READER WILL COUNT FIVE SITES AND FOUR PINS.**
    *
-   * RED WHEN the disclaimer is dropped from the completed-with-skips branch.
-   * The assertion above stays green through that change, which is why this one
-   * exists rather than being folded into it.
+   * The completed-with-skips sentence has its own return, and the disclaimer
+   * was pinned over it. Skips are now applied only to a run whose leaves have
+   * been proved to be that run's, so through `runStatus` a view carrying skips
+   * is always a verified one: the disclaimer and the skipped count can no
+   * longer appear in the same sentence, and the assertion that pinned them
+   * together pinned a state the software cannot produce.
+   *
+   * What that assertion was left holding once the disclaimer went - the
+   * skipped count in the completed sentence - is already pinned above, and
+   * MEASURED to be: dropping the count from that branch turns this file red at
+   * the assertion in *SKIPPED AND FAILED ARE DIFFERENT THINGS* and turned this
+   * one red in the same run, over the same string. Two assertions failing
+   * together over one property is the shape this file argues against
+   * everywhere else, so the duplicate went rather than the original.
    */
-  it('and says it over a run completed with people deliberately skipped', async () => {
-    await payOne(0);
-    await payOne(1);
-    await payOne(4);
-
-    const s = unverifiedStatus([2, 3]);
-    expect(s.verified).toBe(false);
-    expect(s.complete).toBe(true);
-    expect(describeRun(s)).toBe('UNVERIFIED against the proposal — all 3 paid, 2 skipped');
-  });
 
   /*
    * **THE STRANDED SENTENCE, WHICH IS THE ONE THAT TELLS SOMEBODY TO ACT.**
@@ -581,6 +584,71 @@ describe('a run\'s payments, read from a ledger\'s answer rather than a set some
     const stranger = buildPayoutTree(runOf(5, 900));
     expect(() => runPayments(inputs(), holding([stranger.leaves[0]]), NOW))
       .toThrow(/not one of this run's payees/);
+  });
+
+  /*
+   * **THE SKIP THAT SILENCES SOMEBODY NOBODY DECIDED TO SILENCE, ASKED AT THE
+   * DOOR THE PRODUCT ACTUALLY CALLS RATHER THAN AT THE VIEW BEHIND IT.**
+   *
+   * A skip is a deliberate decision not to pay one person this month. Carried
+   * into a run it was not raised for, it marks somebody nobody discussed as
+   * deliberately unpaid: they are not paid, they are not outstanding, the run
+   * reports itself complete, and nothing anywhere raises a hand.
+   *
+   * The skip record below is another run's and carries the same headcount, which
+   * is what a monthly payroll of unchanged size looks like - so the payee
+   * count is no help, and the identity is the only thing standing between
+   * those decisions and these people.
+   *
+   * RED WHEN the identity handed to the check falls back to the record's own
+   * id. The check is then a value against itself, cannot fire, and this
+   * answers with payee 0 marked skipped instead of refusing.
+   */
+  it('refuses another run\'s skip register rather than applying it to these payees', () => {
+    const foreign = decide(emptyRegister('00'.repeat(32), 5), {
+      index: 0, skip: true, by: 'kc', at: '2026-09-01T09:00:00Z', reason: 'left the company',
+    });
+    /*
+     * Everybody but payee 0 is paid, so a run that applies these skips reports
+     * itself FINISHED with one person silenced. The inner throw is what a red
+     * prints: the sentence that would have reached whoever was reading, rather
+     * than a function that did not throw. It can never satisfy the matcher, so
+     * it cannot turn a miss into a pass.
+     */
+    const applied = () => {
+      const v = runPayments(
+        { ...inputs(), skips: foreign }, holding(tree.leaves.slice(1)), NOW);
+      throw new Error(isAnswered(v)
+        ? `applied another run's skips to these payees: "${v.sentence}"`
+        : `refused, but not over the identity: "${v.why}"`);
+    };
+    expect(applied).toThrow(/nothing here says which run is being reported on/);
+
+    /*
+     * **AND THE SAME REFUSAL WHERE THE IDENTITY IS BLANK, BECAUSE AN ID IS A
+     * STRING AND A BLANK ONE SATISFIES THE TYPE.** A record minted with the
+     * same nothing compares equal to it, so the comparison carries no
+     * information by a second route. This defends the exported function's own
+     * boundary rather than a route a screen can take: with a real derivation a
+     * proposal carrying a blank id is refused earlier, over the leaves.
+     *
+     * The proposal is a fixture and not the subject. Its derivation reproduces
+     * its id so the leaves are accepted and the identity is the only thing
+     * left to refuse; what the derivation itself owes is pinned separately,
+     * with the contract's own, in *a skip register raised for a DIFFERENT run
+     * is refused, not applied*.
+     *
+     * **THE IDENTITY IS ONE SPACE, AND THAT IS THE POINT RATHER THAN A TASTE.**
+     * RED WHEN the guard stops trimming - a space is then an identity, and
+     * this falls through to the refusal that names two ids and prints one. RED
+     * ALSO WHEN it asks whether the identity is undefined rather than whether
+     * there is one. One value, two mutations, and the empty string is refused
+     * by any guard that refuses this.
+     */
+    expect(() => runPayments(
+      { ...inputs(), skips: foreign, proposal: { id: ' ', idFrom: () => ' ' } },
+      holding([]), NOW))
+      .toThrow(/nothing here says which run is being reported on/);
   });
 
   /*
