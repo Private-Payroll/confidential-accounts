@@ -613,6 +613,50 @@ export interface RunProposal {
   vault: Hex;
 }
 
+/**
+ * **WHICH OF A RUN'S PAYEES THE ACCOUNT HAS RECORDED A COMPLETED PAYMENT FOR.**
+ *
+ * The account records one blinded value per completed payment, derived from the
+ * payee's leaf by a rule the contract owns. Asking whether one payee's leaf is
+ * among them is a membership test. Asking for the whole set is a different
+ * question and this is not it.
+ *
+ * **BOUNDED BY THE CALLER'S OWN LIST, WHICH IS THE WHOLE DESIGN.** The set is
+ * append-only and nothing anywhere removes from it, so it grows for the life of
+ * the account and reading it whole is a read nobody can size in advance. A run
+ * asks about its own payees and nothing else, so what this costs is the size of
+ * the run rather than the age of the company.
+ *
+ * **AND THE DERIVATION HAPPENS BELOW THIS BOUNDARY RATHER THAN ABOVE IT.** The
+ * rule that turns a payee's leaf into the value the account records is the
+ * contract's own, and an implementation of this interface is the only layer
+ * that holds both that rule and the set. A caller deriving the value itself
+ * would be a second definition of the one fact that decides whether somebody
+ * has their salary.
+ */
+export interface PaymentsAmong {
+  /**
+   * **WHETHER THIS LEDGER CAN ANSWER THE QUESTION AT ALL.**
+   *
+   * **FALSE IS NOT "NOBODY WAS PAID", AND THE TWO MUST NEVER REACH A SCREEN IN
+   * THE SAME SHAPE.** A ledger that records no payments answers false, and its
+   * silence is then an absence of knowledge rather than a statement about
+   * people. Rendered the other way round it is the worst sentence this product
+   * could print: a hundred people shown as still owed money on a run that paid
+   * every one of them.
+   */
+  known: boolean;
+  /**
+   * The subset of the leaves asked about that the account holds a completed
+   * payment for, in the order they were asked about.
+   *
+   * **ALWAYS EMPTY WHEN `known` IS FALSE, AND EMPTY THEN MEANS NOTHING.** A
+   * caller that reads this array without reading `known` first has an answer
+   * about nobody.
+   */
+  paid: Hex[];
+}
+
 export interface Ledger {
   /** Brings the account into being. On Midnight, deploying the contract. */
   open(accountId: string, opening: AccountOpening): Promise<TxRef>;
@@ -636,6 +680,23 @@ export interface Ledger {
 
   /** The public lifecycle state. Null when the account is not on this ledger. */
   status(accountId: string): Promise<LedgerStatus | null>;
+
+  /**
+   * **WHICH OF THESE PAYEES HAVE BEEN PAID, ANSWERED BY THE LEDGER.** Null when
+   * the account is not on this ledger, exactly as `status` above is null.
+   *
+   * `leaves` are a run's payout leaves, in the order the run's tree was built.
+   * They are not secret to the company and are not on chain — the tree travels
+   * as a root — so they come from the company's own record of the run, and the
+   * answer that comes back is about exactly those people and no others.
+   *
+   * **IT IS A READ AND IT MUST STAY ONE.** Nothing here decides whether a
+   * payment may be made, and nothing above it may use this answer as an
+   * authorisation: the contract is what refuses a payee who has already been
+   * paid, and a client that gated on this instead would be a second opinion
+   * about the one thing the chain is authoritative on.
+   */
+  paidAmong(accountId: string, leaves: Hex[]): Promise<PaymentsAmong | null>;
 
   /**
    * Opens a round. The chain receives a commitment to the payload, never the
@@ -1273,6 +1334,29 @@ export class SimulatedLedger implements Ledger {
       movementCount: a.movements.size,
       retiredVaults: [],
     };
+  }
+
+  /**
+   * **THIS CLASS RECORDS NO PAYMENTS, SO IT ANSWERS THAT IT DOES NOT KNOW.**
+   *
+   * `movements` is declared on the simulated account and initialised empty, and
+   * **nothing in this class ever writes to it** — the circuit that settled a
+   * round is gone and nothing replaced it here. So every membership test over
+   * it would answer false for every payee of every run, for ever.
+   *
+   * **`known: false` RATHER THAN AN EMPTY `paid`, AND THE DIFFERENCE IS THE
+   * WHOLE REASON THE FIELD EXISTS.** An empty answer with `known: true` says
+   * *these hundred people have not been paid*, which is a claim this class is
+   * in no position to make about anybody. Saying instead that it cannot answer
+   * leaves the screen with an absence to render, and an absence is the truth.
+   *
+   * A caller wanting the real answer wires a ledger that reads a chain. That is
+   * a choice made in one place, and this method does not pretend to be it.
+   */
+  async paidAmong(accountId: string, _leaves: Hex[]): Promise<PaymentsAmong | null> {
+    const a = this.accounts.get(accountId);
+    if (!a) return null;
+    return { known: false, paid: [] };
   }
 
   async propose(

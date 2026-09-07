@@ -5,9 +5,10 @@ import { join } from 'node:path';
 import { FileStore } from './store-file.js';
 /* `signerRemovePayload` was imported here until `S44`; it is a scheme method now. */
 import { SimulatedLedger, SimulatedProofSystem, SimulatedCommitments } from './ledger.js';
-import type { LedgerStatus, StateChange, StateView } from './ledger.js';
+import type { LedgerStatus, StateChange, StateView, PaymentsAmong } from './ledger.js';
 import { AccountService, openAccount, sealAccount, approvalMessage } from './account.js';
 import { payeeAddressFromKeys } from '../midnight/payee-address.js';
+import { runPayments } from '../midnight/run-status.js';
 import { PayrollService, RecordingInviteDelivery } from './payroll.js';
 import { PluginService } from './plugins.js';
 import { NO_ASSET } from './assets.js';
@@ -3769,4 +3770,149 @@ describe('several assets in one account', () => {
     expect((await h.accounts.ledgerStatus(c.account.id))!.openProposals).toEqual([]);
   });
 
+});
+
+
+/**
+ * WHAT THE SIMULATED LEDGER SAYS ABOUT WHO HAS BEEN PAID, WHICH IS NOTHING.
+ *
+ * The distinction these hold is the one a payment screen is built on: a ledger
+ * that CANNOT answer and a ledger answering that NOBODY was paid are different
+ * facts, and the second one, printed over a run that paid a hundred people, is
+ * the worst sentence this product could produce.
+ */
+describe('the payment set, on a ledger that keeps none', () => {
+  /* Lower-case and unprefixed, which is the one spelling this repository's
+   * hex round-trip produces — a fixture in any other spelling would pass here
+   * and mislead the first reader who makes this class look at its argument. */
+  const leaf = (n: number) => String(n).padStart(64, '0');
+
+  /*
+   * Null for an account this ledger does not hold, exactly as `status` is null.
+   * Return `{ known: false, paid: [] }` here instead and this goes red — and a
+   * caller could no longer tell "not this ledger's account" from "this ledger
+   * cannot say", which are different things to put in front of a person.
+   */
+  it('answers null for an account it does not hold', async () => {
+    const ledger = new SimulatedLedger(SimulatedCommitments);
+    expect(await ledger.paidAmong('acct_nobody', [leaf(1)])).toBeNull();
+  });
+
+  /*
+   * Change `known` to `true` here and this goes red. That mutation is the whole
+   * defect in one character: every payee of every run would read as unpaid, on
+   * the authority of a class that records no payments at all.
+   */
+  it('answers that it does not know, rather than that nobody was paid', async () => {
+    const h = harness();
+    const { account } = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const answer = await h.ledger.paidAmong(account.id, [leaf(1), leaf(2)]);
+    expect(answer).not.toBeNull();
+    expect(answer!.known).toBe(false);
+    expect(answer!.paid).toEqual([]);
+  });
+
+  /*
+   * **THE PIN UNDER THE ANSWER ABOVE.**
+   *
+   * `known: false` is only honest while this class writes nothing into its
+   * payment set. Add a write to it — `movements.add(...)` anywhere in the class
+   * — and this goes red, which is the reminder that the answer above has to be
+   * revisited in the same turn rather than discovered to be stale later.
+   */
+  it('holds that answer honest: nothing in the class writes to the payment set', () => {
+    const src = readFileSync(new URL('./ledger.ts', import.meta.url), 'utf8');
+    const start = src.indexOf('export class SimulatedLedger');
+    expect(start).toBeGreaterThan(-1);
+    const next = src.indexOf('\nexport class ', start + 1);
+    const body = src.slice(start, next === -1 ? src.length : next);
+    /* The field really is in this class, so the check below is over something. */
+    expect(body).toContain('movements');
+    expect(body).not.toMatch(/movements\s*\.\s*(add|delete|clear)\s*\(/);
+  });
+});
+
+/**
+ * WHAT A RUN CAN TELL ANYBODY ABOUT WHO HAS BEEN PAID, WHICH IS NOTHING YET.
+ *
+ * A payment view is built against a run's payout LEAVES and the window its
+ * signers approved. A run record holds the people, the amounts, the payslips
+ * and the approval rounds, and holds none of those three — nothing in this
+ * product writes them yet.
+ *
+ * **THE ABSENCE IS STATED ONCE, IN ONE PLACE, IN A SHAPE A READER IS FORCED TO
+ * HANDLE.** A reader that assembled an empty leaf list for itself would get a
+ * view in which no payee is outstanding, therefore a run that is complete,
+ * therefore "all 0 paid" over a payroll nobody has been paid from. These hold
+ * that seam: what it answers today, that it still refuses a caller who may not
+ * open the run, and that the view built from its answer says nothing about
+ * people at all.
+ */
+describe('what a run can tell anybody about who has been paid', () => {
+  let h: ReturnType<typeof harness>;
+  beforeEach(() => { h = harness(); });
+
+  const aRun = async () => {
+    const created = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const { run } = await h.payroll.createRun(created.account.id, '2026-07', [
+      { name: 'Dana', asset: 'GBP', amount: 6_200_00n },
+    ], created.viewingKey);
+    return { ...created, run };
+  };
+
+  /*
+   * Return anything but null here — an empty leaf list, a fabricated window —
+   * and this goes red. The nullable return is what forces every reader to say
+   * out loud that it has no material, rather than each of them inventing the
+   * empty shape that reads as a finished payroll.
+   */
+  it('answers that a run carries no payout material, rather than an empty one', async () => {
+    const s = await aRun();
+    expect(h.payroll.payoutMaterialOf(s.run.id, s.viewingKey)).toBeNull();
+  });
+
+  /*
+   * Drop the read that carries the refusal and this goes red. A run nobody may
+   * open is not a run whose payments this caller may be told about, and the
+   * answer being null today is not a reason to skip asking: the day this line
+   * returns real material, the check has to already be there.
+   *
+   * The refusal's own sentence is matched rather than any throw at all, because
+   * a bare check for an exception cannot tell "this key may not open the run"
+   * from a mistake anywhere else in the call.
+   */
+  it('refuses a viewing key that cannot open the run, before it answers anything', async () => {
+    const s = await aRun();
+    const other = await h.accounts.create('Beta', THREE_SIGNERS, 2);
+    expect(() => h.payroll.payoutMaterialOf(s.run.id, other.viewingKey))
+      .toThrow(/will not open/);
+  });
+
+  /*
+   * **THE END OF THE SEAM, WHICH IS WHERE THE SENTENCE WOULD HAVE REACHED A
+   * PERSON.**
+   *
+   * The ledger's answer here is a stub that says it CAN see payments and has
+   * none, because that is the only shape in which the run's own absence is the
+   * thing being tested — a ledger that cannot answer refuses first, for its own
+   * reason, and would leave this assertion green whatever the run returned.
+   *
+   * Make the run answer with any material at all and this goes red with the
+   * sentence it would have printed. It stays green if the material is an EMPTY
+   * leaf list, because the reader refuses that separately — two guards, one
+   * assertion each, and this one pins the run's half.
+   */
+  it('and the view built from that answer says nothing about people at all', async () => {
+    const s = await aRun();
+    const seeing: PaymentsAmong = { known: true, paid: [] };
+    const view = runPayments(h.payroll.payoutMaterialOf(s.run.id, s.viewingKey), seeing);
+    /* The throw, not an assertion, and it comes first: it prints the sentence
+     * that would have reached a person, and after it the compiler already knows
+     * the answer — so `expect(view.answered).toBe(false)` here would be a check
+     * that cannot fail. The assertion that can is the one below, over `why`. */
+    if (view.answered) {
+      throw new Error(`reported on a run with no payout material: "${view.sentence}"`);
+    }
+    expect(view.why).toMatch(/no payout leaves on record/);
+  });
 });

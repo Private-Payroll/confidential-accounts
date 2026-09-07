@@ -180,8 +180,11 @@ export const newProposalSalt = (): Hex => {
  * **AND IT IS ALSO THE ACCOUNT'S PAYOUT SEED, WHICH IS A SECOND JOB AND THE
  * REASON THE WIDTH IS CHECKED HERE. `T-195`, `SC9` `F3`.**
  *
- * `src/core/account.ts:763` (creation) and `:1821` (rotate) take a payout seed
- * off this function, and `src/midnight/run-keys.ts:124` expands it with HKDF —
+ * `AccountService.create` (at the `payoutSeeds` genesis entry) and the key
+ * rotation beside it both take a payout seed off this function — named rather
+ * than cited, because the two line citations that stood here were BOTH WRONG
+ * and had been since before anything moved: `:763` is the `threshold` field and
+ * `:1821` is prose in a block comment. `runKeyOf` expands the seed with HKDF —
  * **which accepts any IKM length and returns 32 bytes regardless.** So at any
  * seed width every run key, every `V-43` per-payee nonce and every blinding
  * stays well-formed and self-consistent, and the contract sees a hash and
@@ -214,11 +217,15 @@ export const newBlinding = (): Hex => {
   const b = randomBytes(BLINDING_BYTES);
   if (b.length !== BLINDING_BYTES) {
     throw new Error(
-      `a blinding is ${BLINDING_BYTES} bytes and this one is ${b.length}. It is the account's ` +
-        'payout seed (account.ts:763, :1821) as well as a signer blinding, and run-keys.ts:124 ' +
-        'expands it with HKDF, which takes any width and returns a well-formed 32 bytes from ' +
-        'all of them — so a narrowing here degrades every per-payee nonce in every run and ' +
-        'nothing on chain or downstream can see it. T-195.',
+      `a blinding is ${BLINDING_BYTES} bytes and this one is ${b.length}: the platform's ` +
+        'random source returned short, and no account may be created, no key rotated and no ' +
+        'payout run until it stops doing so. This value does three jobs — the account\'s ' +
+        'payout seed, written when the account is created and again at every key rotation; ' +
+        'the account\'s asset blinding; and a signer blinding. THE PAYOUT SEED IS THE SILENT ' +
+        'ONE: `runKeyOf` expands the seed with HKDF, which accepts a seed of any width and ' +
+        'returns a well-formed 32 bytes from all of them, so a short seed weakens every ' +
+        'per-payee nonce in every payout run while nothing on chain and nothing downstream ' +
+        'can see that it happened.',
     );
   }
   return toHex(b);

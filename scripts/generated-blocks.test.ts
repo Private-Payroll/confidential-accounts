@@ -11,14 +11,14 @@ import { describe, expect, it } from 'vitest';
 
 import { digest, parseBlocks, renderBlock, replaceBlock } from './generated-blocks.js';
 
-const header = { id: 'x', door: 'DOCS.command' };
+const header = { id: 'x', door: 'npm run docs' };
 const doc = (body: string) => `# Title\n\nBEFORE\n\n${renderBlock(header, body)}\n\nAFTER\n`;
 
 describe('a block round-trips, and its digest answers exactly one question', () => {
   it('records its id, its door and a digest of its own body', () => {
     const [b] = parseBlocks(doc('rows\n'));
     expect(b.id).toBe('x');
-    expect(b.door).toBe('DOCS.command');
+    expect(b.door).toBe('npm run docs');
     expect(b.body).toBe(digest(b.text));
   });
 

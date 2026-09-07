@@ -36,10 +36,13 @@
  * `amendSigner`, `proposeRun` reaches `propose`, `MidnightCommitments.assetKey`
  * reaches `assetKeyOf`, `.proposalId` reaches `proposalIdOf`,
  * `.changeCommitment` reaches `changeCommitmentOf`, and
- * `AccountSimulator`'s methods rename again. Two dispatchers pick the circuit
- * from a RUNTIME STRING — `src/midnight/ledger.ts:1653` and
- * `src/midnight/vault-ledger.ts:530` — so at those two lines there is no name in
- * the text at all.
+ * `AccountSimulator`'s methods rename again. THREE dispatchers pick the circuit
+ * from a RUNTIME STRING — `src/midnight/ledger.ts:1796`,
+ * `src/midnight/vault-ledger.ts:530` and `scripts/sponsor-test.ts:457` — so at
+ * those three lines there is no name in the text at all. **THIS SENTENCE SAID
+ * TWO, AND NAMED A LINE THAT HAD MOVED.** The count and the locations are read
+ * off the unresolved edges this file emits, which is the only place they cannot
+ * go stale independently of the thing they describe.
  *
  * A scanner that resolved all of that would be a TypeScript analyser, and a
  * scanner that pretended to would emit a call graph with holes nobody could
@@ -55,8 +58,9 @@ import { join, relative, sep } from 'node:path';
 
 import { ARTIFACTS, readContract, type ContractModel } from './artifact-scan.js';
 import { scanSourceFile, type SourceCircuit } from './disclose-scan.js';
+import { IMPORT_SHAPES, absentFrom, buildModuleGraph, type ModuleNode } from './module-graph.js';
 
-export type EdgeSource = 'artifact' | 'source' | 'client';
+export type EdgeSource = 'artifact' | 'source' | 'client' | 'module';
 
 export type Edge =
   | { kind: 'reads' | 'writes'; source: 'artifact'; circuit: string; field: string; via: string[] }
@@ -68,7 +72,16 @@ export type Edge =
   | { kind: 'kernel'; source: 'artifact'; circuit: string; through: string; slot: number | null; access: 'reads' | 'writes'; via: string[] }
   | { kind: 'discloses'; source: 'source'; circuit: string; at: string; text: string; via: string[] }
   | { kind: 'invokes'; source: 'client'; from: string; circuit: string; shape: string }
-  | { kind: 'invokes-unresolved'; source: 'client'; from: string; shape: string; note: string };
+  | { kind: 'invokes-unresolved'; source: 'client'; from: string; shape: string; note: string }
+  /**
+   * ONE TYPESCRIPT MODULE IMPORTING ANOTHER. Until this existed every client
+   * edge in this list ran from a file to a CIRCUIT, so the list could say what
+   * calls the chain and could not say what calls what -- and nothing could draw
+   * the layers between a screen and a payment.
+   */
+  | { kind: 'imports'; source: 'module'; from: string; to: string; spec: string; at: string }
+  /** A specifier that named nothing. Reported, exactly as an unresolved circuit is. */
+  | { kind: 'imports-unresolved'; source: 'module'; from: string; spec: string; at: string; note: string };
 
 export type FieldRow = {
   name: string;
@@ -107,6 +120,49 @@ export type EdgeList = {
     unresolvedInvocations: number;
     renamingLayers: string[];
   };
+  /** One row per `.ts`, `.tsx` or `.mjs` module in the three client trees. */
+  modules: ModuleSummary[];
+  /** The full reference detail, for the declared money-path set only. */
+  moneyPath: ModuleNode[];
+  moduleCoverage: {
+    modulesWalked: number;
+    importEdges: number;
+    unreadableModules: number;
+    unresolvedSpecifiers: number;
+    /**
+     * Specifiers that name a REAL file this walk does not cover — a contract's
+     * generated module, a config, a probe tree. Not an edge and not a defect,
+     * and the largest hole in the graph, so it is counted where the other
+     * holes are counted rather than left to be discovered.
+     */
+    resolvedOutsideTheWalkedSet: number;
+    /** Members of `MONEY_PATH` that the walk did not find. Always empty or a refusal. */
+    declaredButAbsent: string[];
+    shapes: string[];
+    knownBlind: string[];
+  };
+};
+
+/**
+ * WHAT GOES IN THE MACHINE LIST FOR EVERY MODULE, AS OPPOSED TO WHAT GOES IN
+ * THE DOCUMENT FOR FOURTEEN OF THEM.
+ *
+ * `importedBy` is DERIVABLE from the `imports` edges and is carried anyway,
+ * because the question a reader arrives with is *what breaks if I change this*
+ * and answering it should not require them to invert a 300-node graph first.
+ * `imports` is NOT carried here, because it is exactly the edge list and a
+ * second copy of it could disagree with the first.
+ */
+export type ModuleSummary = {
+  file: string;
+  importedBy: string[];
+  external: string[];
+  builtin: string[];
+  circuits: string[];
+  circuitsReached: string[];
+  exportedNames: string[];
+  refusalCount: number;
+  byteWidthSites: number;
 };
 
 const q = (label: string, name: string) => `${label}.${name}`;
@@ -127,6 +183,43 @@ const q = (label: string, name: string) => `${label}.${name}`;
  * contracts. Folding it in would make the flag mean "touched by anything
  * cross-contract", which is a different question.
  */
+/**
+ * THE DECLARED MONEY-PATH SET -- THE MODULES THE GENERATED REFERENCE COVERS IN
+ * FULL, AS OPPOSED TO THE 300-ODD IT DRAWS EDGES BETWEEN.
+ *
+ * TIER 1 computes a value the contracts compare; TIER 2 is a boundary the money
+ * crosses. Both are in the reference; the distinction is which of them owes a
+ * changelog line when it changes, and that is not this file's question.
+ *
+ * **THIS LIST IS A SECOND COPY AND NOTHING CHECKS IT AGAINST THE FIRST.** The
+ * set is declared in a working document that does not ship, and shipping code
+ * may not cite a file a reader of the published repository cannot open -- so
+ * the choice is between a copy nothing reconciles and a citation nobody can
+ * follow. The copy is the lesser of the two AND IT IS A REAL EXPOSURE: a module
+ * added to the declared set and not to this line is a module the reference goes
+ * on omitting, silently, while every gate stays green.
+ *
+ * A MEMBER THAT IS NOT ON DISK IS A REFUSAL rather than a quietly shorter
+ * document, for the reason the payment roots are checked the same way below: a
+ * renamed file would empty its own row and nothing anywhere would be red.
+ */
+export const MONEY_PATH: readonly string[] = [
+  'src/midnight/payout-tree.ts',
+  'src/midnight/run-keys.ts',
+  'src/midnight/commitments.ts',
+  'src/core/signer-leaf.ts',
+  'src/core/crypto.ts',
+  'src/midnight/payee-address.ts',
+  'src/core/payslip-key.ts',
+  'src/core/payslip-key-derive.ts',
+  'src/midnight/ledger.ts',
+  'src/midnight/vault-ledger.ts',
+  'src/midnight/vault-notes.ts',
+  'src/midnight/vault-coins.ts',
+  'src/core/movement.ts',
+  'src/midnight/run-status.ts',
+];
+
 export const PAYMENT_ROOTS: readonly string[] = [
   'ConfidentialAccount.recordPayment',
   'Vault.payout',
@@ -283,6 +376,69 @@ export async function buildEdgeList(root: string): Promise<EdgeList> {
     }
   }
 
+  /* ---- module-to-module edges ---- */
+  /*
+   * THE SAME FILE LIST THE CIRCUIT SCAN USED, so the two halves of this list
+   * cannot disagree about which files exist. `read` and `exists` are handed in
+   * rather than reached for inside the walker: everything the walker DECIDES
+   * lives in `scripts/module-graph.ts`, where a test can hand it a fixture and
+   * watch an assertion go red without breaking this tree.
+   */
+  const graph = buildModuleGraph({
+    files,
+    read: (rel) => readFileSync(join(root, rel), 'utf8'),
+    exists: (rel) => { try { return statSync(join(root, rel)).isFile(); } catch { return false; } },
+    invocations: edges.flatMap((e) => (e.kind === 'invokes' ? [{ from: e.from.split(':')[0], circuit: e.circuit }] : [])),
+    /*
+     * BOTH KINDS, AND THE CROSS-CONTRACT ONE IS THE POINT. `Vault.payout` lands
+     * `ConfidentialAccount.recordPayment` on chain and no import says so; the
+     * same pair of edge kinds is what the heat flag walks, so the two columns
+     * cannot disagree about what a circuit runs.
+     */
+    circuitCalls: edges.flatMap((e) => ((e.kind === 'calls' || e.kind === 'uses') ? [{ from: e.circuit, to: e.callee }] : [])),
+  });
+
+  for (const e of graph.edges) {
+    edges.push({ kind: 'imports', source: 'module', from: e.from, to: e.to, spec: e.spec, at: `${e.from}:${String(e.line)}` });
+  }
+  for (const u of graph.unresolved) {
+    edges.push({
+      kind: 'imports-unresolved', source: 'module', from: u.from, spec: u.spec,
+      at: `${u.from}:${String(u.line)}`,
+      note: `nothing on disk answers to this specifier; ${String(u.tried.length)} name(s) were tried`,
+    });
+  }
+
+  /*
+   * A MODULE THAT COULD NOT BE READ IS A REFUSAL AND NOT A SHORTER GRAPH.
+   * The circuit scan above has already read every one of these files, so
+   * reaching here means the second read failed where the first succeeded --
+   * which is a tree changing underneath a running walk, and a graph built half
+   * from before and half from after is worse than none.
+   */
+  if (graph.unreadable.length > 0) {
+    throw new Error(
+      `edge-list: ${String(graph.unreadable.length)} module(s) could not be read while the graph was built, ` +
+        `after the same files had been read once: ${graph.unreadable.map((u) => u.file).join(', ')}. ` +
+        'Nothing was emitted, because a graph missing a node is indistinguishable from a module nothing imports.',
+    );
+  }
+
+  /*
+   * A DECLARED MEMBER THAT IS NOT THERE EMPTIES ITS OWN ROW AND NOTHING ELSE
+   * GOES RED, which is the failure the payment roots are checked against below
+   * and the same answer applies: refuse, and name what is missing.
+   */
+  const byFile = new Map(graph.modules.map((m) => [m.file, m]));
+  const declaredButAbsent = absentFrom(MONEY_PATH, graph.modules.map((m) => m.file));
+  if (declaredButAbsent.length > 0) {
+    throw new Error(
+      `edge-list: the reference is declared over ${declaredButAbsent.join(', ')}, which the walk did not find. ` +
+        'Each one would render as a module with no imports, no importers and no reachable circuits — ' +
+        'a row that reads as a measurement and is an absence. Nothing was emitted.',
+    );
+  }
+
   /* ---- the payment path ---- */
   /*
    * FORWARD REACHABILITY FROM THE THREE ROOTS THE BRIEF NAMES, and nothing
@@ -344,6 +500,18 @@ export async function buildEdgeList(root: string): Promise<EdgeList> {
     circuits: m.circuits.map((c) => ({ name: c.name, qualified: q(m.label, c.name), pure: c.pure, signature: c.signature })),
   }));
 
+  const modules = graph.modules.map((m) => ({
+    file: m.file,
+    importedBy: [...m.importedBy],
+    external: [...m.external],
+    builtin: [...m.builtin],
+    circuits: [...m.circuits],
+    circuitsReached: [...m.circuitsReached],
+    exportedNames: [...new Set(m.exports.map((x) => x.name))].sort(),
+    refusalCount: m.refusals.length,
+    byteWidthSites: m.byteWidths.length,
+  }));
+
   return {
     compiler: { compact: models[0].compilerVersion, language: models[0].languageVersion, runtime: models[0].runtimeVersion },
     contracts,
@@ -359,6 +527,32 @@ export async function buildEdgeList(root: string): Promise<EdgeList> {
         'contracts/test/simulator.ts — AccountSimulator: addSigner/removeSigner reach amendSigner; proposeRun reaches propose',
         'src/core/ledger.ts — LedgerPort/SimulatedLedger: method names SHADOW circuit names and reach no circuit at all',
         'src/midnight/vault-recovery.ts, src/midnight/payout-tree.ts — circuits passed as function-valued parameters; no name at the call site',
+      ],
+    },
+    modules,
+    moneyPath: MONEY_PATH.map((f) => byFile.get(f) as ModuleNode),
+    moduleCoverage: {
+      modulesWalked: graph.modules.length,
+      importEdges: graph.edges.length,
+      unreadableModules: graph.unreadable.length,
+      unresolvedSpecifiers: graph.unresolved.length,
+      resolvedOutsideTheWalkedSet: graph.outsideTheWalkedSet.length,
+      declaredButAbsent,
+      shapes: IMPORT_SHAPES.map((x) => x.name),
+      /*
+       * WHAT THE MODULE WALK CANNOT SEE, NAMED RATHER THAN IMPLIED COMPLETE.
+       * The circuit scan carries the same section for the same reason: a graph
+       * that omits silently cannot be questioned.
+       */
+      knownBlind: [
+        'a specifier built from a variable — there is no name at the site, exactly as at a dynamic circuit dispatch',
+        'a multi-line import whose brace list carries a semicolon inside a comment — measured at zero occurrences here',
+        'the second and any later static import statement written on one physical line — this occurs ONCE in this tree and costs two platform modules',
+        'an indented static import — measured at zero occurrences here; the column-zero anchor is what keeps prose out of the graph',
+        'a dynamic import written on a line this treats as a comment line',
+        'the text of a dynamic import written inside a string is MATCHED rather than missed — it invents a dependency, and the two shapes that can do it now refuse a match preceded by a dot, a quote, a backtick or a word character',
+        're-exports are edges to the module named, never to wherever the name was originally declared',
+        'a specifier naming a real file outside these three trees — a compiled contract module, a config, a probe tree — is counted above and is not an edge',
       ],
     },
   };

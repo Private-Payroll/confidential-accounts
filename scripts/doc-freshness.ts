@@ -18,7 +18,10 @@
  * repaired itself would regenerate from whatever artifact happened to be on
  * disk and emit a document that is confidently wrong — worse than one that is
  * missing, because a missing document is obviously missing. So generation is a
- * DOOR, `DOCS.command`, which a person opens, and this names it. Rule 19.
+ * SEPARATE STEP, `npm run docs`, which somebody runs deliberately, and this
+ * names it. Rule 19 — and it names a script in the shipping `package.json`
+ * rather than a local `.command`, because a reader of the published repository
+ * has no `.command` files and a refusal naming one sends them nowhere.
  *
  * `scripts/artifact-freshness.ts` made the identical call for the compiler and
  * its reasoning transfers unchanged; read that file's header for the part about
@@ -40,8 +43,8 @@
  * runs `contracts/test` against it and puts the contract back. Inside that LOOP
  * the artifact is a DELIBERATE TEMPORARY LIE; the documents describing the
  * unmutated contract are correct, and this gate firing there is a FALSE
- * POSITIVE — it is not catching a human who forgot to run
- * `DOCS.command`, which is the only thing it was written to catch. Since
+ * POSITIVE — it is not catching a human who forgot to regenerate, which is the
+ * only thing it was written to catch. Since
  * `T-167` made this a render-and-compare against the COMPILED artifact, the
  * first mutation to change an `assert` throws here in `globalSetup`, no worker
  * evaluates a test module, no failing test is named, and the harness aborts
@@ -75,7 +78,7 @@
  * different reason: `C293` says the baseline certifies the invocation the loop
  * will use, so it must BE that invocation. **The consequence is that a stale
  * doc set now survives a full mutation run.** `TEST.command` is what catches
- * it, `T-171`'s run order puts `DOCS.command` in front of `MUTATE.command`, and
+ * it, `T-171`'s run order puts the regeneration in front of `MUTATE.command`, and
  * `MUTATE.command` prints the condition into its own report.
  *
  * ── IT RENDERS AND COMPARES. IT DOES NOT HASH A LIST OF INPUTS. ──────────────
@@ -84,8 +87,8 @@
  * believed to be generated from, and the list was wrong three times in one
  * round: `edges.json` was outside it; then it held the contracts and not the
  * generator; then the generator and not the three trees the generator READS.
- * **MEASURED, and it is what settled the design:** `TEST.command` passed this
- * gate at 07:23 and `DOCS.command` rewrote two documents at 07:24 with nothing
+ * **MEASURED, and it is what settled the design:** the suite passed this
+ * gate at 07:23 and a regeneration rewrote two documents at 07:24 with nothing
  * changed in between, while a later run rewrote nothing — so the generator is
  * deterministic and that was real staleness a digest of inputs could not see.
  *
@@ -100,7 +103,7 @@
  * was compared, and that was `T-167`'s symptom reachable one more time.
  *
  * IT STILL DOES NOT WRITE ANYTHING. Computing the answer is not repairing it —
- * the refusal names `DOCS.command` and a person opens it.
+ * the refusal names `npm run docs` and somebody runs it.
  *
  * ── WHY CONTENT DIGESTS AND NOT MTIMES, WHICH IS WHAT THAT FILE USES ─────────
  *
@@ -117,14 +120,14 @@
  * ── TWO REFUSALS, BECAUSE THERE ARE TWO FAULTS AND ONE DOOR FIXES ONE ────────
  *
  *   - STALE. The files the block was generated FROM have changed. The block
- *     describes a contract that is no longer there. `DOCS.command` fixes it,
+ *     describes a contract that is no longer there. `npm run docs` fixes it,
  *     and the refusal says so.
  *   - HAND-EDITED. Somebody typed inside a generated region. NO DOOR FIXES
  *     THIS: running the generator would silently delete what they wrote, so the
  *     refusal names the region and stops, exactly as `artifact-freshness.ts`
  *     refuses to send somebody through a door for a missing source.
  *
- * Reporting both as one message would send a person to `DOCS.command` to
+ * Reporting both as one message would send a person to `npm run docs` to
  * destroy their own paragraph.
  */
 import { existsSync, readFileSync } from 'node:fs';
@@ -203,7 +206,7 @@ export function docRefusals(
      *
      * `renderBlock` emits the BEGIN line too, and it carries `door=`. Comparing
      * only the body left that attribute outside the gate: an auditor changed
-     * `door="DOCS.command"` to `door="ELSEWHERE.command"` in
+     * `door="npm run docs"` to `door="npm run elsewhere"` in
      * `docs/design/circuits.md` and the suite stayed GREEN, while `generate()`
      * on the same tree reported the file as needing a rewrite. **That is
      * `T-167`'s own measurement reproduced** — the gate passing at one moment

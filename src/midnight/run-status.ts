@@ -24,7 +24,8 @@
  * secret to the company and are not on chain — the tree only travels as a root.
  * A company that lost them can rebuild them from the payroll they approved.
  */
-import { fromHex, type Hex } from '../core/crypto.js';
+import { fromHex, toHex, type Hex } from '../core/crypto.js';
+import type { PaymentsAmong } from '../core/ledger.js';
 import {
   skippedIndices, skipReasonFor, registerFor,
   type SkipRegister, type SkipDecision,
@@ -291,9 +292,22 @@ export const describeRun = (status: RunStatus): string => {
       + `from this run.`;
   }
   if (status.complete) {
+    /*
+     * **BOTH BRANCHES CARRY THE DISCLAIMER, AND ONE OF THEM DID NOT.**
+     *
+     * The no-skips branch read `all ${total} paid` with no prefix, so the one
+     * sentence that says *this list may describe a different payroll* was
+     * dropped from the one case where nobody would go looking for it — the
+     * reassuring one. Every other branch of this function carried it.
+     *
+     * That is the worst place to lose it. An unverified view is a list of
+     * payments that may belong to a stale run, an edited spreadsheet, or last
+     * month's file, and "all 12 paid" printed over the wrong run reads as a
+     * finished payroll to the person whose job is to notice it is not.
+     */
     return status.skipped.length > 0
       ? `${unverified}all ${status.paid.length} paid${skipped}`
-      : `all ${total} paid`;
+      : `${unverified}all ${total} paid`;
   }
   if (status.phase === 'not started') {
     return `${unverified}not started — ${total} payees${skipped}, window opens later`;
@@ -307,4 +321,154 @@ export const describeRun = (status: RunStatus): string => {
     ? `, ${status.failed.length} FAILED and needing attention` : '';
   return `${unverified}${status.paid.length} of ${total} paid${skipped}${failed}, `
     + `${status.outstanding.length} outstanding`;
+};
+
+
+/**
+ * **THE SAME VIEW, ASKED OF A LEDGER RATHER THAN OF A SET SOMEBODY ASSEMBLED.**
+ *
+ * `runStatus` above takes the chain's payment set and the contract's derivation
+ * as arguments, because that is what makes it testable against the real
+ * circuits without a chain anywhere near it. **A product screen has neither.**
+ * It has a run, and a ledger that may or may not be able to say who was paid.
+ *
+ * This is the door between the two, and it lives beside `runStatus` rather than
+ * in a module of its own for one reason: there is exactly one definition of
+ * *who has been paid* in this product and it should stay countable on no
+ * fingers.
+ *
+ * **WHAT IT ADDS THAT MATTERS, AND IT IS THE DISCRIMINANT AND NOT THE
+ * CONVENIENCE.** A ledger that cannot answer and a ledger that answers *nobody*
+ * are different facts, and a screen holding a `RunStatus` cannot tell them
+ * apart — every payee reads `unsent` either way. So the answer is a union, and
+ * a caller has to branch on `answered` before it can reach a single count.
+ * **A screen cannot print "0 of 100 paid" over an unanswered question, because
+ * there is no field to print it from.**
+ */
+export type RunPayments =
+  /**
+   * **NOTHING HERE IS ABOUT PEOPLE.** The question was not answered, and
+   * `why` is the sentence saying so in words an operator can act on.
+   */
+  | { readonly answered: false; readonly payees: number; readonly why: string }
+  /** The question was answered, and `status` is about these people. */
+  | { readonly answered: true; readonly status: RunStatus; readonly sentence: string };
+
+/**
+ * Reads a run's progress from a ledger's answer about its own payees.
+ *
+ * @param inputs the run's leaves, window and any deliberate skips — from the
+ *   company's own record, because the tree travels to the chain as a root and
+ *   the leaves never do
+ * @param among  what the ledger said about exactly those leaves, or `null` when
+ *   the ledger does not hold this account at all
+ */
+export const runPayments = (
+  inputs: RunInputs | null,
+  among: PaymentsAmong | null,
+  now: number | bigint = Math.floor(Date.now() / 1_000),
+): RunPayments => {
+  /*
+   * **A RUN WITH NO PAYOUT MATERIAL IS REFUSED HERE AND NOT REPORTED ON.**
+   *
+   * `runStatus` over an empty list is internally consistent and externally a
+   * lie: no payee is outstanding, so `complete` is true, and `describeRun`
+   * prints "all 0 paid" for a run nobody has been paid from.
+   *
+   * **NULLABLE RATHER THAN AN EMPTY SHAPE, so a caller that has no material has
+   * to say so out loud.** The alternative asks it to invent a window and a leaf
+   * list to fill the type with, and a fabricated window is a number nothing
+   * measured sitting in the input of a view about money. The empty list is
+   * refused too, for a caller that assembles one from a record that turns out
+   * to hold nothing.
+   */
+  if (inputs === null || inputs.leaves.length === 0) {
+    return {
+      answered: false,
+      payees: 0,
+      why: 'this run has no payout leaves on record, so there is nothing to check against '
+        + 'the payments the account holds. The leaves are not secret and are not on chain — '
+        + 'the run reaches the chain as a single root — so they live with the run here, and '
+        + 'a run raised without them cannot be reported on. They can be rebuilt from the '
+        + 'payroll that was approved.',
+    };
+  }
+
+  if (among === null) {
+    return {
+      answered: false,
+      payees: inputs.leaves.length,
+      why: 'this account is not on the ledger this service is wired to, so nothing can be '
+        + 'said about who has been paid.',
+    };
+  }
+
+  if (!among.known) {
+    return {
+      answered: false,
+      payees: inputs.leaves.length,
+      why: 'the ledger this service is wired to does not record payments, so it cannot say '
+        + 'who has been paid. This is not a statement that nobody has been: it is that '
+        + 'nobody here can tell you either way.',
+    };
+  }
+
+  /*
+   * **THE ANSWER MUST BE ABOUT THIS RUN'S PAYEES, CHECKED AND NOT ASSUMED.**
+   *
+   * The ledger derives the recorded value from each leaf and answers with the
+   * LEAVES that matched, so what comes back is a subset of what went out. The
+   * composition below depends on that and would still typecheck if it stopped
+   * being true — a boundary that started answering with the derived values
+   * instead would produce a view in which nobody had ever been paid, silently,
+   * with every count present and every one of them zero.
+   *
+   * So it is checked. A value that is not one of this run's leaves means the
+   * answer is about something else, and an answer about something else is not
+   * an answer.
+   *
+   * **WHAT THIS DOES NOT COVER, SAID HERE SO NOBODY READS IT AS MORE THAN IT
+   * IS.** It checks where the answer came from and never whether it is right.
+   * A ledger returning the WRONG SUBSET of the right leaves passes it
+   * completely — the inverted test that reports the paid as unpaid, and the
+   * over-generous one that reports everybody paid. The second of those is the
+   * direction that costs somebody their salary, and nothing on this side of
+   * the boundary can see it. It is held where the set is read, and by the
+   * tests over that reader, not here.
+   */
+  const asked = new Set(inputs.leaves);
+  for (const leaf of among.paid) {
+    if (!asked.has(leaf)) {
+      throw new Error(
+        'the ledger answered with a payment that is not one of this run\'s payees, so this '
+        + 'view would be describing something other than this run. Nothing is being reported.');
+    }
+  }
+
+  /*
+   * **BOTH SIDES ARE SPELLED THE SAME WAY BEFORE EITHER IS COMPARED.**
+   *
+   * The comparison below is between a string the ledger returned and a string
+   * this function derives by taking a leaf apart and putting it back together.
+   * Those agree only while every leaf is spelled in the one casing the
+   * round-trip produces, and a leaf that arrives spelled any other way would
+   * match nothing — reporting a paid person as never attempted, silently and
+   * for every payee at once. Normalising both ends removes the assumption
+   * rather than documenting it.
+   */
+  const spelling = (h: Hex) => toHex(fromHex(h));
+  const paid = new Set(among.paid.map(spelling));
+  /*
+   * **THE IDENTITY, AND IT IS NOT A SHORTCUT.** `runStatus` composes
+   * `movements.member(movementOf(leaf))`, and the ledger has already done both
+   * halves: it applied the contract's own derivation and tested the set. What
+   * is left for this side is the leaf it asked about, so the derivation here is
+   * the one that does nothing — rather than a second spelling of a rule the
+   * contract owns, which is the mistake `movementOf` exists to make impossible.
+   */
+  const alreadyDerived = (leaf: Uint8Array) => leaf;
+  const chain: ChainView = { movements: { member: (v) => paid.has(toHex(v)) } };
+
+  const status = runStatus(inputs, chain, alreadyDerived, now);
+  return { answered: true, status, sentence: describeRun(status) };
 };

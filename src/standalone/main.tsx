@@ -18,6 +18,7 @@ import { MemoryStore } from '../core/store.js';
 import { wiring, observerView } from '../wiring/selection.js';
 import { AccountService } from '../core/account.js';
 import { PayrollService, RecordingInviteDelivery } from '../core/payroll.js';
+import { runPayments } from '../midnight/run-status.js';
 import { bigintJsonReplacer } from '../core/crypto.js';
 
 /**
@@ -418,6 +419,17 @@ async function route(url: URL, init?: RequestInit): Promise<Response> {
     // `settle` STOOD HERE. No balance, no `PayrollService.settle`.
     // Removed on both servers in the same turn — a route the hosted build
     // refuses and the standalone build answers is `T-11`.
+    /* **THE SAME PAYMENT VIEW THE HOSTED BUILD ANSWERS**, so a route one build
+     * answers and the other refuses cannot arise here. On this build the ledger
+     * records no payments at all, and the view says so in those words rather
+     * than reporting a payroll in which nobody was paid. */
+    if (seg[3] === 'payments' && method === 'POST') {
+      const viewingKey = body.viewingKey ?? '';
+      const run = payroll.requireRun(runId, viewingKey);
+      const material = payroll.payoutMaterialOf(runId, viewingKey);
+      const among = material ? await ledger.paidAmong(run.accountId, material.leaves) : null;
+      return ok(runPayments(material, among));
+    }
     if (seg[3] === 'attest' && method === 'POST')
       return ok(await payroll.attestPayrollTotal(runId, body.viewingKey, body.asset ?? q.get('asset')));
     if (seg[3] === 'employee' && seg[4])

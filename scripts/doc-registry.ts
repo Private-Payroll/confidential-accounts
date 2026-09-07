@@ -21,7 +21,16 @@ export type GeneratedBlock = {
   readonly file: string;
   /** `id` on both delimiters. Unique across the repository. */
   readonly id: string;
-  /** The `.command` that rewrites it. Rule 19: a refusal names a door. */
+  /**
+   * THE COMMAND THAT REWRITES IT, AND IT SHIPS. Rule 19: a refusal names a door,
+   * and a reader of the published repository must be able to open the thing it
+   * names. It used to name a local `.command`, which no clone has — so every
+   * mention of it, here, in each document's delimiter and in the refusal text,
+   * was a path the reader could not follow, and registering a document RAISED
+   * the count of two files that were already at their floor. Naming a script in
+   * the shipping `package.json` makes the citation followable and the count
+   * falls instead.
+   */
   readonly door: string;
 };
 
@@ -39,7 +48,7 @@ export type GeneratedBlock = {
  *   3. The list then held the generator and not the three trees the generator
  *      READS — `src`, `scripts`, `contracts/test` — so the client-file→circuit
  *      edges were derived from files the gate could not see change. MEASURED:
- *      `TEST.command` passed the gate at 07:23 and `DOCS.command` rewrote two
+ *      the suite passed the gate at 07:23 and a regeneration rewrote two
  *      documents at 07:24 with nothing changed in between; a second run rewrote
  *      nothing, so the generator is deterministic and that was real staleness.
  *
@@ -68,7 +77,7 @@ export type GeneratedBlock = {
  *   - What it does still catch, and a person should expect: editing one of the
  *     33 contributing files in a way that shifts a LINE moves a `file:line`
  *     locator in the edge list, which is a real change to the artefact and turns
- *     the gate red until `DOCS.command` runs.
+ *     the gate red until `npm run docs` runs.
  *   - And the gate now depends on the extractor working. If `artifact-scan.ts`
  *     throws, the suite does not start and the message is the extractor's.
  *     `scripts/artifact-freshness.globalSetup.ts` runs first, so a stale or
@@ -83,8 +92,9 @@ export type GeneratedBlock = {
  * adding a document is one entry here plus the delimiters in the file.
  */
 export const GENERATED_BLOCKS: readonly GeneratedBlock[] = [
-  { file: 'docs/design/circuits.md', id: 'circuits', door: 'DOCS.command' },
-  { file: 'docs/design/ledger-fields.md', id: 'ledger-fields', door: 'DOCS.command' },
+  { file: 'docs/design/circuits.md', id: 'circuits', door: 'npm run docs' },
+  { file: 'docs/design/ledger-fields.md', id: 'ledger-fields', door: 'npm run docs' },
+  { file: 'docs/design/modules.md', id: 'modules', door: 'npm run docs' },
 ];
 
 /**
@@ -105,7 +115,7 @@ export type GeneratedFile = {
 };
 
 export const GENERATED_FILES: readonly GeneratedFile[] = [
-  { file: 'docs/design/edges.json', door: 'DOCS.command' },
+  { file: 'docs/design/edges.json', door: 'npm run docs' },
 ];
 
 /** The machine-readable edge list, which is generated whole rather than as a block. */

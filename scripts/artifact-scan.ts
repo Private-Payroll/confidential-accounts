@@ -25,7 +25,7 @@
  * `this._helper_0`) and punctuation survive every loader; module-scope bindings
  * do not. Where a name is needed, it comes from `compiler/contract-info.json`.
  *
- * AND THE GATE IS WHAT KEEPS THAT HONEST FROM NOW ON. `DOCS.command` renders
+ * AND THE GATE IS WHAT KEEPS THAT HONEST FROM NOW ON. `npm run docs` renders
  * under `tsx` and `scripts/doc-freshness.ts` renders under `vitest` and compares
  * the two, so any future dependence on loader-specific text turns the suite red
  * on the next run rather than years later.
@@ -702,7 +702,7 @@ export async function readContract(root: string, spec: ArtifactSpec): Promise<Co
        * `vitest`, whose runner rewrites a namespace import, it is something
        * else. The generator wrote `Acct.recordPayment` and the gate computed
        * `UNKNOWN.recordPayment` — the same artifact, two answers, and a gate
-       * that would have refused for ever with `DOCS.command` unable to fix it.
+       * that would have refused for ever with `npm run docs` unable to fix it.
        * The same fault in the assert needle emptied a whole column earlier in
        * this round.
        *

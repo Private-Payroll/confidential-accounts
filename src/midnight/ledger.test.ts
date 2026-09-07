@@ -1807,6 +1807,11 @@ describe('C222: a ledger is bound to the harness it was built with', () => {
  * in `contracts/test/what-a-signer-is.test.ts`.
  */
 describe('C334: MidnightLedger.open refuses an opening it cannot honour', () => {
+  /* The two values the contract will not seat, in the spellings the product
+   * itself produces: `ZERO_32`'s and `pureCircuits.vacantSlot()`'s. */
+  const ZERO_LEAF = '00'.repeat(32) as Hex;
+  const VACANT_LEAF = toHex(pureCircuits.vacantSlot());
+
   const opening = (over: Partial<AccountOpening> = {}): AccountOpening => ({
     signerLeaves: ['aa'.repeat(32)],
     threshold: 2,
@@ -1908,8 +1913,8 @@ describe('C334: MidnightLedger.open refuses an opening it cannot honour', () => 
      * **WHAT THAT USED TO COST AND WHAT IT COSTS NOW.** It reached
      * `BigInt(opening.threshold)` in the constructor's argument list and the
      * operator got a `RangeError` after a six-second wait instead of a refusal
-     * that names the door (rule 19). `S35d` deleted that argument, so today a
-     * `NaN` gets no further than `account.policy.threshold` and
+     * naming what they had actually got wrong. That argument is gone, so today
+     * a `NaN` gets no further than `account.policy.threshold` and
      * `SimulatedLedger`, where it makes every later comparison against the
      * policy `false` silently. **The clause is still load-bearing and what it
      * prevents is now a wrong number in our own record rather than a
@@ -1920,6 +1925,84 @@ describe('C334: MidnightLedger.open refuses an opening it cannot honour', () => 
       .rejects.toThrow(/is not a rule/);
     await expect(h.ledger.open('acct', opening({ threshold: NaN })))
       .rejects.toThrow(/is not a rule/);
+  });
+
+  /*
+   * **THE FOURTH REFUSAL IN THIS FUNCTION, AND UNTIL NOW IT WAS HELD BY
+   * NOTHING.** `refuseUnusableLeaf` appeared in no test file in this
+   * repository: deleting the method and both its call sites left the suite
+   * green, and `MUTATE` never sees it because that harness mutates only the
+   * two `.compact` files. The refusal's own message says *the contract
+   * refuses this value* — a claim of safety, and rule 14 says a claim is only
+   * held if an assert exists AND something goes red when it is removed.
+   *
+   * The contract's half is pinned separately, through the simulator, in
+   * `contracts/test/what-a-signer-is.test.ts` and
+   * `contracts/test/signer-governance.test.ts`. **Those stay green with this
+   * client guard deleted**, which is exactly why this half needs its own.
+   */
+  it('refuses a founding leaf of thirty-two zero bytes, which is what an empty slot reads as', async () => {
+    /*
+     * RED WHEN: the `if (leaf === ZERO_32)` branch is removed from
+     * `refuseUnusableLeaf`. Watched.
+     */
+    const h = harness({}, deployment);
+    await expect(h.ledger.open('acct', opening({ signerLeaves: [ZERO_LEAF] })))
+      .rejects.toThrow(/thirty-two zero bytes/);
+  });
+
+  it('refuses a founding leaf that is the vacancy marker itself', async () => {
+    /*
+     * RED WHEN: the `if (leaf === toHex(pureCircuits.vacantSlot()))` branch is
+     * removed from `refuseUnusableLeaf`. Watched.
+     *
+     * The marker is read off `pureCircuits` here for the same reason the
+     * product reads it there — a TypeScript constant would be a second
+     * definition of a value the chain compares against.
+     */
+    const h = harness({}, deployment);
+    await expect(h.ledger.open('acct', opening({ signerLeaves: [VACANT_LEAF] })))
+      .rejects.toThrow(/vacancy marker itself/);
+  });
+
+  it('DOES NOT catch the same marker spelled in upper case — a known limit, recorded rather than repaired', async () => {
+    /*
+     * **THIS TEST DOCUMENTS A HOLE. IT IS NOT A PASSING GUARD AND MUST NOT BE
+     * READ AS ONE.**
+     *
+     * `refuseUnusableLeaf` compares hex STRINGS; the contract compares BYTES.
+     * So the vacancy marker written `6D69...` is the same value to the chain
+     * and a different string to this guard, walks past it, and is refused on
+     * chain instead — after a proof and after a fee. No money is lost and
+     * nothing is seated; what is not delivered is the *before a fee is paid*
+     * benefit the guard exists for, against a caller who spells it that way
+     * deliberately. `src/core/signer-leaf.ts` already lower-cases both sides
+     * of its own leaf comparison, so the fix is one line and the precedent is
+     * in the tree.
+     *
+     * **THE REFUSAL MESSAGES ABOVE DELIBERATELY PROMISE NOTHING ABOUT A FEE**,
+     * because this is the state of the guard. An earlier draft of them said
+     * the refusal *costs no fee*; that sentence would have been false exactly
+     * here, and it was cut for this reason rather than for length.
+     *
+     * RED WHEN: the guard is made case-insensitive — `.toLowerCase()` on both
+     * sides of either comparison, which is the repair. **A round that makes
+     * that fix should expect this test to go red and should rewrite it as the
+     * guard CATCHING the uppercase spelling, not delete it.** Watched red
+     * against exactly that change.
+     */
+    const h = harness({}, deployment);
+    const why = await h.ledger
+      .open('acct', opening({ signerLeaves: [VACANT_LEAF.toUpperCase()] }))
+      .then(() => '', (e: Error) => e.message);
+    expect(why).not.toMatch(/thirty-two zero bytes|vacancy marker itself/);
+    /*
+     * AND WHERE IT GOT TO INSTEAD, NAMED — the same gate the positive control
+     * below names. A bare `not.toMatch` would be satisfied by any other
+     * refusal firing earlier, including one that happened to stop this for a
+     * different reason, and would then read as *the hole is closed*.
+     */
+    expect(why).toMatch(/single-key maintenance authority is accepted only as a RECORDED/);
   });
 
   it('lets a well-formed opening past all three', async () => {
@@ -1934,7 +2017,8 @@ describe('C334: MidnightLedger.open refuses an opening it cannot honour', () => 
      * would pass for the very refusals this is meant to rule out — so the
      * message is caught and read. */
     const why = await h.ledger.open('acct', opening()).then(() => '', (e: Error) => e.message);
-    expect(why).not.toMatch(/names no founding signer|can seat exactly one|is not a rule/);
+    expect(why).not.toMatch(
+      /names no founding signer|can seat exactly one|is not a rule|thirty-two zero bytes|vacancy marker itself/);
     /*
      * **AND WHERE IT DID STOP, NAMED.**
      *

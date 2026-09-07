@@ -5,6 +5,7 @@ import {
 import { fromHex } from '../core/crypto.js';
 import { payslipKeypairFrom } from '../core/payslip-key-derive.js';
 import type { CommitmentScheme } from '../core/ledger.js';
+import type { RunPayments } from '../midnight/run-status.js';
 import { openAccount as openSealedAccount, type CreatedAccount, type SignerSecrets } from '../core/account.js';
 import { openRecord } from '../core/sealed-records.js';
 import { seatOnThisDevice, type SeatOnThisDevice } from '../core/signer-leaf.js';
@@ -226,7 +227,8 @@ type Roster = RosterEmployee & { handedOver?: boolean };
 const joinLink = (token: string): string =>
   `${window.location.origin}/join#${encodeURIComponent(token)}`;
 
-type Page = 'dashboard' | 'payroll' | 'people' | 'approvals' | 'apps' | 'disclosures' | 'settings';
+type Page = 'dashboard' | 'payroll' | 'people' | 'approvals' | 'vault' | 'apps'
+  | 'disclosures' | 'settings';
 
 /* ------------------------------------------------------------------ */
 
@@ -605,6 +607,7 @@ export default function App({ commitments }: { commitments: CommitmentScheme }) 
     payroll:     ['Payroll', 'Runs and settlement'],
     people:      ['People', `${people.filter(p => p.status === 'active').length} active`],
     approvals:   ['Approvals', `${pending.length} awaiting signature`],
+    vault:       ['Vault', 'Where the money is, and who has been paid from it'],
     apps: ['Apps', 'Extensions installed on this account'],
     disclosures: ['Disclosures', 'Proofs issued to third parties'],
     settings:    ['Settings', 'Signers, policy and visibility'],
@@ -625,6 +628,7 @@ export default function App({ commitments }: { commitments: CommitmentScheme }) 
         {nav('people', '☰', 'People')}
         {nav('approvals', '✓', 'Approvals', pending.length)}
 
+        {nav('vault', '▣', 'Vault')}
         {nav('apps', '◱', 'Apps')}
 
         <div className="navlabel">Compliance</div>
@@ -685,6 +689,8 @@ export default function App({ commitments }: { commitments: CommitmentScheme }) 
             pending={pending} account={s.account} session={s} me={me} busy={busy}
             runs={runs} act={act} />}
 
+          {page === 'vault' && <Vault />}
+
           {page === 'apps' && <Apps session={s} me={me} busy={busy} act={act} />}
 
           {page === 'disclosures' && <Disclosures runs={runs} session={s} busy={busy} act={act} />}
@@ -693,6 +699,334 @@ export default function App({ commitments }: { commitments: CommitmentScheme }) 
               a named signer, exactly as every other governance round is. */}
           {page === 'settings' && <Settings account={s.account} state={state} session={s} me={me}
             busy={busy} act={act} commitments={commitments} />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* who has been paid                                                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * **WHO HAS BEEN PAID ON THIS RUN, AND WHERE THAT ANSWER CAME FROM.**
+ *
+ * A run is paid one payee at a time, so at any moment some people have their
+ * money and some do not. **The number that matters is not how many — it is
+ * which ones**, and a run shown as finished while two people are unpaid is
+ * worse than one that visibly failed, because nobody goes looking.
+ *
+ * ── THE RULE THIS SCREEN IS BUILT ON ─────────────────────────────────────
+ *
+ * **THERE ARE THREE ANSWERS HERE AND ONLY TWO OF THEM ARE ABOUT PEOPLE.**
+ * *These were paid*, *these were not*, and *nobody can tell you*. The third is
+ * not a number and is never drawn as one: no zero, no empty list, no progress
+ * bar sitting at nought. A list of unpaid people, shown on the strength of a
+ * question nobody answered, is the failure this whole screen exists to prevent.
+ *
+ * The service answers in a shape that makes that impossible to get wrong: when
+ * it cannot say, there is no count in the body to draw.
+ */
+function RunPaymentsCard({ runId, viewingKey }: { runId: string; viewingKey: string }) {
+  const [view, setView] = useState<RunPayments | null>(null);
+  const [failed, setFailed] = useState('');
+
+  useEffect(() => {
+    let live = true;
+    setView(null); setFailed('');
+    /* The key travels in the body: it decrypts this company's records, and a
+     * web address is written down by every machine between here and the
+     * service. */
+    api<RunPayments>(`/api/runs/${runId}/payments`,
+      { method: 'POST', body: JSON.stringify({ viewingKey }) })
+      .then(v => { if (live) setView(v); })
+      .catch(e => { if (live) setFailed(shownError(e, 'who has been paid on this run')); });
+    return () => { live = false; };
+  }, [runId, viewingKey]);
+
+  /*
+   * **THE PROVENANCE LINE APPEARS ONLY WHERE SOMETHING WAS ACTUALLY READ.**
+   * A heading saying *read from the account's record* sitting above a body
+   * saying the question was not answered is a claim about a read that did not
+   * happen — and it is the reading somebody takes at speed, which is the only
+   * speed this card is ever read at.
+   */
+  const head = (from?: string) => (
+    <div className="hd"><h3>Who has been paid</h3>
+      {from && <span className="sub">{from}</span>}</div>
+  );
+
+  if (failed) {
+    return <div className="card">{head()}<div className="bd"><div className="err">{failed}</div></div></div>;
+  }
+  if (!view) {
+    return <div className="card">{head()}<div className="bd">
+      <div className="empty">Asking…</div></div></div>;
+  }
+
+  /*
+   * **THE UNANSWERED CASE, AND IT IS DELIBERATELY NOT A TABLE WITH NOTHING IN
+   * IT.** An empty table of payees reads as *nobody has been paid*. A sentence
+   * saying the question was not answered reads as what it is.
+   */
+  if (!view.answered) {
+    return (
+      <div className="card">{head()}<div className="bd">
+        <div className="empty">
+          <b>Nobody can be told yet.</b>
+          <div style={{ marginTop: 8 }}>{view.why}</div>
+        </div>
+        {view.payees > 0 && <div className="hint" style={{ marginTop: 14 }}>
+          This run has {view.payees} {view.payees === 1 ? 'payee' : 'payees'} on it.{' '}
+          <b>That number is from this company's own record of the run, and says nothing about
+          whether any of them has been paid.</b>
+        </div>}
+      </div></div>
+    );
+  }
+
+  const st = view.status;
+  const total = st.paid.length + st.outstanding.length + st.skipped.length;
+  const chip = (state: string) => state === 'paid' ? 'ok'
+    : state === 'skipped' ? 'off'
+    : state === 'failed' ? 'no' : 'pend';
+  const everyone = [...st.paid, ...st.failed,
+    ...st.outstanding.filter(p => p.state === 'unsent'), ...st.skipped]
+    .sort((a, b) => a.index - b.index);
+
+  return (
+    <div className="card">{head("read from the account's own record of completed payments")}
+      <div className="bd">
+        {/*
+          * **THE DISCLAIMER GOES ABOVE THE NUMBERS, NOT BESIDE THEM.**
+          * An unverified view is a list of payments that may belong to another
+          * payroll entirely — a stale run, an edited spreadsheet, last month's
+          * file — and every name and every state below it would then be about
+          * somebody else. It is not a footnote to the figures; it is a
+          * condition on reading them at all.
+          */}
+        {!st.verified && <div className="hint" style={{ marginBottom: 14 }}>
+          <b>Not checked against the approved run.</b> These payees have not been proved to be
+          this run's, so everything below may describe a different payroll. Treat it as a
+          working note rather than an answer.
+        </div>}
+
+        <div className="stats" style={{ gridTemplateColumns: 'repeat(4,1fr)' }}>
+          <div className="stat"><div className="k">Paid</div>
+            <div className="v">{st.paid.length}</div>
+            <div className="m">of {total}</div></div>
+          <div className="stat"><div className="k">Outstanding</div>
+            <div className="v">{st.outstanding.length}</div>
+            {/* **NAMED SEPARATELY FROM OUTSTANDING, ALWAYS.** Somebody reading
+                "3 outstanding" fills the gap themselves — usually with "the
+                leavers" — and the person whose payment was refused four times
+                waits another month. */}
+            <div className="m">{st.failed.length} of them refused</div></div>
+          <div className="stat"><div className="k">Not being paid</div>
+            <div className="v">{st.skipped.length}</div>
+            <div className="m">decided here, not on chain</div></div>
+          <div className="stat"><div className="k">Window</div>
+            <div className="v" style={{ fontSize: 20 }}>{st.phase}</div>
+            <div className="m">{st.stranded.length > 0
+              ? `${st.stranded.length} still owed` : '—'}</div></div>
+        </div>
+
+        {/*
+          * The one state nobody may miss: the window has closed with people
+          * still owed, and nothing can pay them from this run any more.
+          */}
+        {st.stranded.length > 0 && <div className="err" style={{ marginTop: 14 }}>
+          The payment window has closed with {st.stranded.length}{' '}
+          {st.stranded.length === 1 ? 'person' : 'people'} still owed. They cannot be paid from
+          this run at all now — they need a new one.
+        </div>}
+      </div>
+
+      <div className="bd tight">
+        <table>
+          <thead><tr>
+            <th>#</th><th>State</th><th>Why</th>
+          </tr></thead>
+          <tbody>
+            {everyone.map(p => (
+              <tr key={p.index}>
+                <td className="name">{p.index + 1}</td>
+                <td><span className={`chip ${chip(p.state)}`}>{p.state}</span></td>
+                <td>
+                  {/* **A SKIP CARRIES A NAME AND A REASON OR IT IS NOT A
+                      RECORD.** An unpaid person with nobody's name on the
+                      decision is the report saying "somebody decided
+                      something". */}
+                  {p.state === 'skipped' && p.skipDecision &&
+                    <span className="sub">{p.skipDecision.reason} — {p.skipDecision.by}</span>}
+                  {p.state === 'failed' && p.attempts &&
+                    <span className="sub">{p.attempts.tries}{' '}
+                      {p.attempts.tries === 1 ? 'try' : 'tries'}
+                      {p.attempts.lastError ? ` — ${p.attempts.lastError}` : ''}</span>}
+                  {p.state === 'unsent' && <span className="sub">not attempted</span>}
+                  {p.state === 'paid' && <span className="sub">recorded by the account</span>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="bd">
+        <div className="hint">{view.sentence}</div>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* vault                                                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * **THE VAULT SURFACE, BUILT FOR THE END STATE.**
+ *
+ * An account is an authority over a vault, not a holder of money: the vault is
+ * where the money actually sits and it is the thing that pays people. Every
+ * control that surface will carry is on this screen now, disabled, each with
+ * the reason it cannot be used — because a control that is missing is a control
+ * nobody can ask about, and the questions people ask about this screen are the
+ * ones worth answering before it goes live.
+ *
+ * **NOT ONE OF THESE IS A PLACEHOLDER FOR A FEATURE THAT MERELY HAS NOT BEEN
+ * TYPED.** Each reason below is a thing that is genuinely not settled, and two
+ * of them are reasons not to ship the button rather than reasons it is late.
+ */
+function Vault() {
+  return (
+    <div className="stack">
+      <div className="card">
+        <div className="hd"><h3>This account's vaults</h3>
+          <span className="sub">a vault is taken on by a round every signer approves</span></div>
+        <div className="bd">
+          <div className="empty">
+            <b>No vault is listed here.</b>
+            <div style={{ marginTop: 8 }}>
+              This service keeps no record of which vaults an account has taken on, and this
+              screen asks nothing — there is no read here to show you the result of. The
+              account's own published list is deliberately not the answer either: it can be
+              missing exactly the funded vault that is still paying people out, so a screen
+              built on it would be confidently short.
+            </div>
+          </div>
+          <div className="hint" style={{ marginTop: 14 }}>
+            Taking on a vault is a round every signer approves, and this product raises no such
+            round yet. There is a limitation to fix before it can: the device that opens a round
+            is currently the only one able to close it, and opening a second round from that
+            device destroys the first one's only key — no error, and the fee already spent. Once
+            that is fixed, several rounds can be open at once, which the account itself has
+            always allowed.
+          </div>
+        </div>
+      </div>
+
+      <div className="grid2">
+        <div className="card">
+          <div className="hd"><h3>Deploy a vault</h3>
+            <span className="sub">publishes a contract and fixes who may maintain it</span></div>
+          <div className="bd">
+            <div className="field"><label>Name</label>
+              <input disabled placeholder="Payroll" /></div>
+            <div className="field"><label>Who may maintain it afterwards</label>
+              <select disabled><option>One key, held here</option></select></div>
+            <button className="btn pri" disabled>Deploy</button>
+            <div className="hint" style={{ marginTop: 14 }}>
+              <b>Not available yet.</b> Deploying a vault fixes, permanently, who may maintain
+              it. A maintenance key that nobody actually holds is accepted by every check this
+              product makes today, and the vault it produces can never be changed again by
+              anyone. That is not a control to put behind a button while it is still true.
+            </div>
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="hd"><h3>What a vault holds</h3>
+            <span className="sub">read from the chain, checked against this device's record</span></div>
+          <div className="bd">
+            <div className="field"><label>Vault</label>
+              <select disabled><option>No vault</option></select></div>
+            <button className="btn" disabled>Read the balance</button>
+            <div className="hint" style={{ marginTop: 14 }}>
+              <b>Not available yet.</b> A vault's balance is the chain's answer reconciled
+              against this device's own record of the notes the vault holds. There are three
+              outcomes and only one is a number: the two agree, they disagree, or the chain
+              could not be reached. When it is built, this will say which of the three happened
+              — and it will never fall back to the last number it saw.
+            </div>
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="hd"><h3>Put money in</h3>
+            <span className="sub">a call into the vault, never a transfer to it</span></div>
+          <div className="bd">
+            <div className="two">
+              <div className="field"><label>Asset</label>
+                <select disabled><option>GBP</option></select></div>
+              <div className="field"><label>Amount</label><input disabled placeholder="0.00" /></div>
+            </div>
+            <button className="btn pri" disabled>Fund</button>
+            {/*
+              * **THE DISTINCTION IN THIS SENTENCE IS THE WHOLE DEFENCE, AND IT
+              * IS THE ONE THING ON THIS PAGE THAT MUST NOT BE LOOSENED.**
+              * Funding is a call: the vault takes the money in and records
+              * holding it, in one transaction. A plain send to a vault's
+              * address does the first half only — the money arrives, the vault
+              * has no record of it, and every later payment refuses to spend
+              * it. It is then on chain, owned by the vault, and spendable by
+              * nobody, permanently, and no contract can refuse the send that
+              * caused it. That is why no vault address is shown anywhere in
+              * this product, and why this card says CALL and not TRANSFER.
+              */}
+            <div className="hint" style={{ marginTop: 14 }}>
+              <b>Not available yet.</b> Money is put into a vault by calling it, not by sending
+              to it: the vault has to take the money in and record that it holds it, in one
+              step. A plain send to a vault leaves money it can never spend — permanently, with
+              no way to recover it and nothing able to refuse it — which is why this product
+              never shows a vault address to paste into a wallet.
+            </div>
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="hd"><h3>Pay a run from a vault</h3>
+            <span className="sub">one payee at a time, against an approved round</span></div>
+          <div className="bd">
+            <div className="field"><label>Run</label>
+              <select disabled><option>No payable run</option></select></div>
+            <button className="btn pri" disabled>Pay</button>
+            <div className="hint" style={{ marginTop: 14 }}>
+              <b>Not available yet.</b> A vault pays against the payout root a run was approved
+              on, inside the window its signers approved, and this product writes neither yet.
+              A run raised without them collects real signatures and can never be paid, which is
+              why the control that would raise one is disabled on the payroll screen too.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/*
+        * **NOT DRAWN AT ALL, AND SAYING SO IS THE POINT.** A spending cap that
+        * cannot be lifted does not restrain one payment, it stops every payment
+        * that vault will ever make. Nothing in this product will offer to set
+        * one until there is an answer to how it is lifted again.
+        */}
+      <div className="card">
+        <div className="hd"><h3>Spending limits</h3>
+          <span className="sub">deliberately not offered</span></div>
+        <div className="bd">
+          <div className="hint">
+            <b>There is no control here on purpose.</b> A limit that could be set and not lifted
+            again would not cap one payment — it would stop every payment that vault would ever
+            make, permanently, with no way back. Until setting one can be undone, offering it
+            would be offering to freeze a payroll.
+          </div>
         </div>
       </div>
     </div>
@@ -996,6 +1330,8 @@ function RunDetail({ run, proposals, account, session, me, busy, onBack, act }: 
           </table>
         </div>
       </div>
+
+      <RunPaymentsCard runId={run.id} viewingKey={session.viewingKey} />
 
       <div className="card">
         <div className="hd"><h3>Recipients</h3><span className="sub">visible to signers only</span></div>
