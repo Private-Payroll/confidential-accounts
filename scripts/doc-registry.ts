@@ -100,23 +100,50 @@ export const GENERATED_BLOCKS: readonly GeneratedBlock[] = [
 /**
  * FILES GENERATED WHOLE, WITH NO PROSE AROUND THEM AND THEREFORE NO DELIMITERS.
  *
- * `docs/design/edges.json` was outside the gate entirely until a test-coverage pass
- * and a money-safety pass found it independently — and it is the ONE
- * artefact a later round reads INSTEAD of building its own picture. A hand-edit
- * setting a field's writers to `[]` passed the whole suite in silence.
+ * Such a file carries its hand-edit digest in its own payload rather than in
+ * delimiters: `payload`, which is the same question a block's `body` digest
+ * answers. Its staleness is answered the same way a block's is, by rendering and
+ * comparing.
  *
- * It carries its hand-edit digest in its own payload rather than in delimiters:
- * `payload`, which is the same question a block's `body` digest answers. Its
- * staleness is answered the same way a block's is — by rendering and comparing.
+ * ── THE LIST IS EMPTY, AND THAT IS A DECISION WITH A REASON ─────────────────
+ *
+ * `docs/design/edges.json` was the one entry. It is a large machine artefact
+ * that is regenerated on every source edit and is deliberately not part of this
+ * repository, and the gate below runs in EVERY copy of it. So the gate asked
+ * every reader for a file the repository does not give them, and threw before a
+ * single test module was evaluated: a clone could not run the suite at all, and
+ * the message named a document rather than a test.
+ *
+ * A GATE MAY ONLY DEPEND ON WHAT THE REPOSITORY PUBLISHES. That is the rule this
+ * empty list keeps, it is asserted directly by
+ * `doc-freshness.test.ts`, and it is why the entry is gone rather than made
+ * optional: a gate taught to accept a missing file has been taught to accept its
+ * own absence, which is the failure this whole mechanism exists to prevent.
+ *
+ * WHAT IT COSTS, SAID PLAINLY RATHER THAN DISCOVERED. That artefact is the one a
+ * later reader consults INSTEAD of building its own picture of the module graph,
+ * and a hand-edit to it -- setting a field's writers to `[]`, say -- once passed
+ * the whole suite in silence. Nothing here catches that any more. It is
+ * regenerated whole by the generator's door, so the edit does not survive the
+ * next run; what is gone is the refusal that would have named it.
  */
 export type GeneratedFile = {
   readonly file: string;
   readonly door: string;
 };
 
-export const GENERATED_FILES: readonly GeneratedFile[] = [
-  { file: 'docs/design/edges.json', door: 'npm run docs' },
-];
+export const GENERATED_FILES: readonly GeneratedFile[] = [];
 
-/** The machine-readable edge list, which is generated whole rather than as a block. */
+/**
+ * The machine-readable edge list, which is generated whole rather than as a
+ * block.
+ *
+ * IT IS NAMED HERE AND IT IS NOT IN THE LIST ABOVE, AND THE TWO ARE DIFFERENT
+ * QUESTIONS. The list above is what the GATE compares; this is what the
+ * generator WRITES. This artefact is written on every run and compared by
+ * nothing, because it is not part of what this repository publishes and a gate
+ * may only depend on what it does. Taking it out of the gate without leaving it
+ * here would have stopped it being written at all, which is a stale map rather
+ * than an ungated one.
+ */
 export const EDGE_LIST_FILE = 'docs/design/edges.json';

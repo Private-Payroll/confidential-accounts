@@ -86,7 +86,7 @@
  * happened, instead of quietly becoming a copy of `vitest.config.ts` under a
  * name that says it is not one.
  *
- * `scripts/mutation-config.test.ts` is the ruling's second condition: it
+ * A test held outside the published set is the ruling's second condition: it
  * imports BOTH configs as modules, reads their values, and asserts the
  * difference is exactly this one entry with everything else deeply equal.
  *
@@ -103,7 +103,7 @@
  *
  * THIS FILE IS TYPECHECKED ONLY BECAUSE THAT TEST IMPORTS IT. It sits at the
  * repository root and matches neither `tsconfig.json`'s `include` (`src`) nor
- * `tsconfig.scripts.json`'s. `tsc` follows imports, so `scripts/mutation-config.test.ts`
+ * `tsconfig.scripts.json`'s. `tsc` follows imports, so that test
  * is the single thread holding it inside both programs — exactly as
  * `scripts/artifact-freshness.test.ts` holds `vitest.config.ts`. **Delete or
  * skip that test file and this config silently leaves the typecheck as well as

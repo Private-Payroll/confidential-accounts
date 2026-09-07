@@ -154,7 +154,33 @@ import { httpClientProofProvider } from '@midnight-ntwrk/midnight-js-http-client
 import { levelPrivateStateProvider } from '@midnight-ntwrk/midnight-js-level-private-state-provider';
 import { indexerPublicDataProvider } from '@midnight-ntwrk/midnight-js-indexer-public-data-provider';
 
-import { Contract as MinterContract } from '../contracts/probe-out4/mint-64/contract/index.js';
+/*
+ * THE COMPILED PROBE CONTRACT IS LOADED AT RUN TIME, NOT AT IMPORT TIME.
+ *
+ * What it names is compiler output. It is not in this repository and no step
+ * here builds it, so a static import makes this file unresolvable in any copy
+ * that has not built it by hand: the typecheck fails, and every tool that only
+ * had to READ this file fails with it. Loaded at run time, the file is readable
+ * and checkable everywhere, and the thing that is missing is reported at the
+ * moment it is actually needed, by the one function that needs it.
+ *
+ * The path is assembled rather than written into the call so that no build step
+ * tries to resolve it either.
+ */
+const MINTER_CONTRACT = ['..', 'contracts', 'probe-out4', 'mint-64', 'contract', 'index.js'].join('/');
+
+async function loadMinterContract(): Promise<any> {
+  try {
+    return (await import(MINTER_CONTRACT)).Contract;
+  } catch (e: any) {
+    throw new Error(
+      `this needs a compiled minter at contracts/probe-out4/mint-64, and it is not there.\n` +
+      `  That directory is compiler output for a throwaway contract; nothing in this repository builds it,\n` +
+      `  and it is never committed. Compile it with the pinned compiler first.\n` +
+      `  (${e?.message ?? e})`,
+    );
+  }
+}
 import { applyNetworkId, networkFromEnv } from '../src/midnight/network.js';
 import { sleep } from '../src/midnight/retry.js';
 import { explainNodeError, NODE_ERROR_CODES } from './node-errors.js';
@@ -591,6 +617,7 @@ async function main(): Promise<Verdict> {
    * circuit argument — so the witness object is empty and that is correct
    * rather than an omission.
    */
+  const MinterContract = await loadMinterContract();
   const compiled = CompiledContract.make('TestTokenMinter', MinterContract as any).pipe(
     CompiledContract.withWitnesses({} as any),
     CompiledContract.withCompiledFileAssets(MINTER_ARTEFACTS as never),

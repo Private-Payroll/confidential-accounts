@@ -213,10 +213,17 @@ describe('the guard is WIRED IN, and both contracts are under it', () => {
     // editing the account off to recompile the vault. Rule 19 asks for the door
     // that RESOLVES it.
     expect(LEDGER_LIMIT_TARGETS.map((t) => [t.label, t.managed, t.door])).toEqual([
-      ['ConfidentialAccount', 'contracts/managed', 'COMPILE-CONTRACT.command'],
-      ['Vault', 'contracts/managed-vault', 'COMPILE-VAULT.command'],
+      ['ConfidentialAccount', 'contracts/managed', 'npm run compact:fast'],
+      ['Vault', 'contracts/managed-vault', 'npm run compact:vault'],
     ]);
-    for (const t of LEDGER_LIMIT_TARGETS) expect(() => readFileSync(join(ROOT, t.door), 'utf8')).not.toThrow();
+    // AND EACH IS A COMMAND A READER CAN ACTUALLY RUN. Read as a path, this
+    // passed only in the one folder that happened to hold a file of that name.
+    const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { scripts: Record<string, string> };
+    for (const t of LEDGER_LIMIT_TARGETS) {
+      const named = /^npm run ([A-Za-z0-9:_-]+)$/.exec(t.door);
+      expect({ door: t.door, defined: named !== null && typeof pkg.scripts[named[1]] === 'string' })
+        .toEqual({ door: t.door, defined: true });
+    }
   });
 
   it('THE REAL CONTRACTS ARE UNDER THE CEILING — the live default, no arguments', () => {

@@ -15,22 +15,32 @@
  * documents — nobody opens them to read them, they search them (§4) — and they
  * are one band all the way down.
  *
- * WHAT IT REFUSES TO WRITE. The verifier-key column, when there are no verifier
- * keys on disk. `COMPILE-CONTRACT.command` and `COMPILE-VAULT.command` compile
- * with `--skip-zk` and delete `keys/` as they go, which is the state
- * after every ordinary compile — so this is the NORMAL case, not an edge one.
- * The cell then says the measurement was not taken and names the door that
- * would take it. Rule 9: a measurement you could not take is a refusal, and the
- * one thing it must not be is blank, because a blank cell reads as "this
- * circuit has no verifier key".
+ * WHAT IT NO LONGER WRITES, AND WHY THE REASON IS NOT TIDINESS. There was a
+ * verifier-key column here, quoting each key's size and digest off disk. Those
+ * keys are made by a separate build that takes minutes and produces a hundred
+ * megabytes; an ordinary compile skips it and leaves no `keys/` at all. So the
+ * cell's value was decided by which build the machine happened to have run, not
+ * by the contract — and this block is COMPARED against what is on disk. Frozen
+ * with keys, it refused on every machine without them; frozen without, it
+ * refused on every machine with them. **A generated block has to be a function
+ * of what the repository contains, or the check it feeds reports on build state
+ * and calls it drift.**
+ *
+ * The measurement itself was worth having and is not lost: the build that makes
+ * the keys reports every one of them, with its size, as it makes them. What is
+ * gone is the claim in a document that no reader of this repository can
+ * reproduce.
  */
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
-import { ARTIFACTS, readContract, type ContractModel, type KeyFact } from './artifact-scan.js';
+import { ARTIFACTS, readContract, type ContractModel } from './artifact-scan.js';
 import { scanSourceFile, type SourceCircuit } from './disclose-scan.js';
 import { MONEY_PATH, buildEdgeList, type EdgeList } from './edge-list.js';
-import { GENERATED_BLOCKS, GENERATED_FILES } from './doc-registry.js';
+import { EDGE_LIST_FILE, GENERATED_BLOCKS, GENERATED_FILES } from './doc-registry.js';
+
+/** The door that writes the edge list, recorded inside it so a reader knows what to run. */
+const EDGE_LIST_DOOR = 'npm run docs';
 import { digest, replaceBlock } from './generated-blocks.js';
 
 /**
@@ -58,13 +68,6 @@ export const ist = (d: Date): string =>
  */
 const cell = (s: string): string => (s.length === 0 ? '—' : s.replace(/\\/g, '\\\\').replace(/\|/g, '\\|'));
 const list = (xs: readonly string[]): string => (xs.length === 0 ? '—' : xs.join(', '));
-
-const keyCell = (k: KeyFact | undefined): string => {
-  if (!k) return '—';
-  return k.measured === true
-    ? `${k.bytes.toLocaleString('en-GB')} B \`${k.sha256.slice(0, 12)}\``
-    : `**NOT MEASURED** — ${k.why}; run \`${k.door}\``;
-};
 
 function circuitsBlock(models: readonly ContractModel[], sources: ReadonlyMap<string, SourceCircuit[]>): string {
   const out: string[] = [];
@@ -100,19 +103,19 @@ function circuitsBlock(models: readonly ContractModel[], sources: ReadonlyMap<st
     out.push('');
     out.push(`\`${m.source}\` → \`${m.artifact}\` · compactc ${m.compilerVersion} · language ${m.languageVersion} · runtime ${m.runtimeVersion}`);
     out.push('');
-    out.push('| circuit | kind | reads | writes | asserts | discloses | calls | verifier key |');
-    out.push('|---|---|---|---|---|---|---|---|');
+    out.push('| circuit | kind | reads | writes | asserts | discloses | calls |');
+    out.push('|---|---|---|---|---|---|---|');
     for (const c of m.ctor ? [m.ctor] : []) {
       const sc = src.find((s2) => s2.name === 'constructor');
       out.push(
-        `| \`constructor\` | **constructor** | ${cell(list(c.reads.map((r) => r.field)))} | ${cell(list(c.writes.map((w) => w.field)))} | ${c.asserts.length} | ${sc?.discloses.length ?? 0} | ${cell(list(c.calls.map((x) => x.circuit)))} | — (not a circuit) |`,
+        `| \`constructor\` | **constructor** | ${cell(list(c.reads.map((r) => r.field)))} | ${cell(list(c.writes.map((w) => w.field)))} | ${c.asserts.length} | ${sc?.discloses.length ?? 0} | ${cell(list(c.calls.map((x) => x.circuit)))} |`,
       );
     }
     for (const c of m.circuits) {
       const sc = src.find((s) => s.name === c.name);
       const d = sc?.discloses.length ?? 0;
       out.push(
-        `| \`${c.name}\` | ${c.pure ? 'pure' : 'provable'} | ${cell(list(c.reads.map((r) => r.field)))} | ${cell(list(c.writes.map((w) => w.field)))} | ${c.asserts.length} | ${d} | ${cell(list(c.calls.map((x) => x.circuit)))} | ${c.pure ? '— (pure)' : keyCell(m.keys.get(c.name))} |`,
+        `| \`${c.name}\` | ${c.pure ? 'pure' : 'provable'} | ${cell(list(c.reads.map((r) => r.field)))} | ${cell(list(c.writes.map((w) => w.field)))} | ${c.asserts.length} | ${d} | ${cell(list(c.calls.map((x) => x.circuit)))} |`,
       );
     }
     out.push('');
@@ -412,8 +415,16 @@ export async function render(root: string): Promise<Rendered> {
     }
   }
 
+  // THE EDGE LIST IS RENDERED WHETHER OR NOT ANYTHING GATES IT. It is written
+  // on every run because a later reader consults it INSTEAD of building its own
+  // picture of the graph, and a map nobody regenerates is worse than no map.
+  // `GENERATED_FILES` decides what is COMPARED, which is a different question
+  // and is empty on purpose; `doc-registry.ts` says why.
   const files = new Map<string, string>();
+  const edgeBody = JSON.stringify({ generatedBy: EDGE_LIST_DOOR, ...edges }, null, 2) + '\n';
+  files.set(EDGE_LIST_FILE, ['{', `  "payload": ${JSON.stringify(digest(edgeBody))},`, edgeBody.slice(1)].join('\n'));
   for (const spec of GENERATED_FILES) {
+    if (files.has(spec.file)) continue;
     const body = JSON.stringify({ generatedBy: spec.door, ...edges }, null, 2) + '\n';
     files.set(spec.file, ['{', `  "payload": ${JSON.stringify(digest(body))},`, body.slice(1)].join('\n'));
   }
@@ -452,15 +463,15 @@ export async function generate(root: string): Promise<string[]> {
     if (after !== before) { writeFileSync(path, after); written.push(spec.file); }
   }
 
-  for (const spec of GENERATED_FILES) {
-    const path = join(root, spec.file);
+  for (const [file] of rendered.files) {
+    const path = join(root, file);
     mkdirSync(dirname(path), { recursive: true });
-    const next = withGeneratedAt(rendered.files.get(spec.file) as string, new Date());
+    const next = withGeneratedAt(rendered.files.get(file) as string, new Date());
     const prev = existsSync(path) ? readFileSync(path, 'utf8') : '';
     // The timestamp changes on every run, so compare everything but it: a
     // regeneration that changed nothing should leave the file alone rather than
     // producing a diff a reader has to inspect to find is empty.
-    if (stripGeneratedAt(next) !== stripGeneratedAt(prev)) { writeFileSync(path, next); written.push(spec.file); }
+    if (stripGeneratedAt(next) !== stripGeneratedAt(prev)) { writeFileSync(path, next); written.push(file); }
   }
 
   return written;

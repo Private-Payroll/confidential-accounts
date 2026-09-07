@@ -171,7 +171,7 @@ export default defineConfig({
      * **WHAT IS STILL TRUE, AND IT IS NARROWER RATHER THAN WEAKER: only the
      * mutation door passes that flag, it DERIVES the config it weakens rather
      * than maintaining a second one, and the difference is pinned at that one
-     * entry.** `scripts/mutation-config.test.ts` imports both configs as
+     * entry.** A test held outside the published set imports both configs as
      * MODULES, compares every other key deeply, and asserts that nothing else
      * in this repository passes `--config` to vitest at all — not a `.command`,
      * not `package.json`, not a script — and that no second `vitest.*.config.ts`

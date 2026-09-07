@@ -1,0 +1,194 @@
+name: check
+
+# WHAT THIS IS FOR, IN ONE SENTENCE: a stranger with a clone and no knowledge of
+# this project can tell, from this page, whether their change builds, typechecks,
+# passes the tests, and is named in a way this history can carry.
+#
+# Nothing here needs a setting to be turned on somewhere before it can go green.
+# A check that cannot pass until somebody clicks something is a check that
+# blocks merges and teaches people to ignore a red mark, which costs more than
+# the thing it was watching for.
+
+on:
+  push:
+    branches: [main]
+  # `edited` is not one of the default activity types, and without it a title or
+  # a body changed on the page after the checks went green is merged on the
+  # strength of a run that never read it.
+  pull_request:
+    types: [opened, synchronize, reopened, edited, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.ref }}
+  # CANCELLED ON A PULL REQUEST AND NEVER ON THE DEFAULT BRANCH. Pushing twice
+  # to a branch under review should stop the first run: nobody is reading it any
+  # more. Pushing twice to the default branch and cancelling the first leaves a
+  # commit that is permanently there with no completed check against it, and
+  # this history is the point.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # ONE JOB PER THING SOMEBODY WOULD LOOK FOR, AND THAT IS THE WHOLE LAYOUT.
+  #
+  # A typecheck run as a step inside a build job is a typecheck nobody can see
+  # ran: the page shows one mark, and reading which half of it failed means
+  # opening a log. Separate jobs cost a repeated setup and buy a page that
+  # answers the question by itself.
+
+  compile:
+    name: compile
+    runs-on: ubuntu-latest
+    # A CEILING ON EVERY JOB. Without one a hung step runs for six hours, on
+    # every machine in the matrix, and the first anybody knows is the bill.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        # A CHANGE FROM OUTSIDE BRINGS ITS OWN FILES, AND SOME OF THEM RUN HERE.
+        # Nothing in this workflow pushes anything, so the token this action
+        # would otherwise leave in the working copy has no use except to
+        # something that should not have it.
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/build
+
+  typecheck:
+    # FOUR CONFIGURATIONS, FOUR MARKS. They cover different trees with different
+    # settings, and running them as one step means the first refusal hides the
+    # other three.
+    name: typecheck (${{ matrix.what }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - what: scripts
+            run: npm run typecheck:scripts
+          - what: source
+            run: npm run typecheck
+          - what: library
+            run: npm run typecheck:identity
+          - what: wallet
+            run: npm run typecheck:wallet
+    steps:
+      - uses: actions/checkout@v4
+        # A CHANGE FROM OUTSIDE BRINGS ITS OWN FILES, AND SOME OF THEM RUN HERE.
+        # Nothing in this workflow pushes anything, so the token this action
+        # would otherwise leave in the working copy has no use except to
+        # something that should not have it.
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/build
+      - run: ${{ matrix.run }}
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        # A CHANGE FROM OUTSIDE BRINGS ITS OWN FILES, AND SOME OF THEM RUN HERE.
+        # Nothing in this workflow pushes anything, so the token this action
+        # would otherwise leave in the working copy has no use except to
+        # something that should not have it.
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/build
+      # The runner rather than the manifest's `test` script, which compiles and
+      # typechecks first. Both have already happened above, as marks of their
+      # own, and doing them again here would hide them behind this one.
+      - run: npx vitest run
+
+  keys:
+    # THE ASSERTIONS THAT READ A VERIFIER KEY, WHICH THE JOB ABOVE SKIPS.
+    #
+    # Those keys are produced by the proving backend rather than by an ordinary
+    # compile: about a minute, and a hundred megabytes that nothing else here
+    # reads. Building them in every job above would put that on six machines to
+    # serve five assertions, so it happens once, here, and those five are the
+    # only thing this runs.
+    #
+    # It is a mark of its own so that "the keys were not built" and "the keys
+    # disagree with the contract" are different lines on the page. What it
+    # covers is the check that a deployed entry point still carries the key this
+    # build produces, which is the one an operator cannot make for themselves.
+    name: keys
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/build
+      - name: build the proving and verifier keys
+        run: npm run compact
+      - run: npx vitest run src/midnight/ledger.test.ts src/midnight/deferred-set.test.ts
+
+  rules:
+    # THE RULES THE JOB BELOW APPLIES, CHECKED BEFORE IT APPLIES THEM.
+    #
+    # They are pure functions with no dependencies, so this needs nothing
+    # installed and finishes in about a second. It runs on a push as well as on
+    # a pull request, because a rule that stopped refusing passes every case
+    # that was ever written to show it working.
+    name: rules
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        # A CHANGE FROM OUTSIDE BRINGS ITS OWN FILES, AND SOME OF THEM RUN HERE.
+        # Nothing in this workflow pushes anything, so the token this action
+        # would otherwise leave in the working copy has no use except to
+        # something that should not have it.
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm run test:checks
+
+  message:
+    # A SQUASHED MERGE MAKES THE TITLE THE SUBJECT AND THE BODY THE BODY, so
+    # both are read here as the message they are about to become. The branch
+    # name is read too: it stays on this page after the branch is gone, and no
+    # later change reaches it.
+    #
+    # What this cannot do, said plainly because it is the gap: some of what must
+    # never reach a public history can only be recognised from a list, and a
+    # check that carried that list would publish it. That half runs where the
+    # list is, before a commit is made. What runs here is the half that names
+    # nothing: shapes, lengths and characters.
+    name: message
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        # A CHANGE FROM OUTSIDE BRINGS ITS OWN FILES, AND SOME OF THEM RUN HERE.
+        # Nothing in this workflow pushes anything, so the token this action
+        # would otherwise leave in the working copy has no use except to
+        # something that should not have it.
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # Written through the environment rather than into the command line, so
+      # nothing a title says can become part of the command that reads it.
+      #
+      # The number is appended because that is what a squashed merge writes: the
+      # subject that reaches the history is the title plus " (#N)", and a title
+      # read without it passes at a length the commit will not have.
+      - name: read the title and the body as the message they will become
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+          BODY: ${{ github.event.pull_request.body }}
+          NUMBER: ${{ github.event.pull_request.number }}
+        run: printf '%s (#%s)\n\n%s\n' "$TITLE" "$NUMBER" "$BODY" > "$RUNNER_TEMP/message"
+      - name: hold the message and the branch to what this history can carry
+        env:
+          BRANCH: ${{ github.head_ref }}
+        run: node .github/checks/message-check.mjs "$RUNNER_TEMP/message" --branch "$BRANCH"

@@ -298,21 +298,43 @@ describe('the real artifacts, read end to end', () => {
     expect(sig).not.toContain('18446744073709552000');
   });
 
-  it('THE VERIFIER-KEY COLUMN REFUSES RATHER THAN GOING BLANK when keys are absent', async () => {
-    // COMPILE-CONTRACT.command compiles with --skip-zk and leaves no keys/
-    //, which is the state after every ordinary compile. A blank cell
-    // reads as "this circuit has no verifier key", which is a different claim.
+  it('A KEY FACT REFUSES RATHER THAN GOING BLANK when the keys are absent', async () => {
+    // An ordinary compile skips the proving backend and leaves no keys/, which
+    // is the state on almost every machine. A fact that came back blank would
+    // read as "this circuit has no verifier key", which is a different claim
+    // from "nobody has measured one here".
     const account = await readContract(ROOT, ARTIFACTS[0]);
-    for (const c of account.circuits.filter((x) => !x.pure)) {
+    const provable = account.circuits.filter((x) => !x.pure);
+    expect(provable.length).toBeGreaterThan(5);
+    for (const c of provable) {
       const k = account.keys.get(c.name);
       expect(k).toBeDefined();
       if (k && k.measured === false) {
-        expect(k.door).toBe('BUILD-KEYS.command');
         expect(k.why).toContain('keys');
       } else if (k && k.measured === true) {
         expect(k.bytes).toBeGreaterThan(0);
         expect(k.sha256).toMatch(/^[0-9a-f]{64}$/);
       }
+    }
+  });
+
+  it('AND A KEY FACT NAMES NO DOOR, because a fact nothing publishes may not name one', async () => {
+    // It used to carry the name of a local launcher, and that name was rendered
+    // into a document this repository publishes. Both halves of that were
+    // wrong: a published document may not name a tool that is not published,
+    // and a document may not quote a measurement most copies of this repository
+    // cannot take.
+    //
+    // READ OFF A LIVE SCAN. The first version of this built a literal three
+    // lines above and asserted its own keys, so restoring the field tomorrow
+    // would have left it green: a test with no subject.
+    const account = await readContract(ROOT, ARTIFACTS[0]);
+    const facts = [...account.keys.values()];
+    expect(facts.length).toBeGreaterThan(5);
+    for (const fact of facts) {
+      expect(Object.keys(fact).sort()).toEqual(
+        fact.measured ? ['bytes', 'measured', 'sha256'] : ['measured', 'why'],
+      );
     }
   });
 });

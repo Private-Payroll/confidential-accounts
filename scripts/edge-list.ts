@@ -57,6 +57,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 
 import { ARTIFACTS, readContract, type ContractModel } from './artifact-scan.js';
+import { isIgnored, parseIgnore } from './gitignore-rules.mjs';
 import { scanSourceFile, type SourceCircuit } from './disclose-scan.js';
 import { IMPORT_SHAPES, absentFrom, buildModuleGraph, type ModuleNode } from './module-graph.js';
 
@@ -255,7 +256,38 @@ export const DYNAMIC: readonly { name: string; re: RegExp }[] = [
 export const CLIENT_TREES = ['src', 'scripts', join('contracts', 'test')];
 const CLIENT_EXT = /\.(ts|tsx|mjs)$/;
 
+/**
+ * EVERY CLIENT FILE THIS REPOSITORY CONTAINS, AND ONLY THOSE.
+ *
+ * -- WHY THE WALK ASKS WHAT IS IGNORED, WHICH IS NOT AN OPTIMISATION ---------
+ *
+ * The count this returns is rendered into generated documents, and those
+ * documents are compared against what a generator would write now. So the count
+ * has to be the same number for everybody who has this repository, or the
+ * comparison reports on WHICH COPY somebody has and calls it drift.
+ *
+ * It was not. This folder carries local tooling beside the software - checkers
+ * that read private lists, probes that hard-code one machine's paths - and every
+ * one of those is excluded from the repository by a rule in `.gitignore`. The
+ * walk counted them anyway, so a document said 318 where a clone could only ever
+ * derive 299, and the gate refused before a single test ran. **The rule is that
+ * no generated document may carry a number derived from files the repository
+ * does not contain**, and asking the repository's own ignore rules is how this
+ * walk keeps it: `.gitignore` ships, so the question has the same answer
+ * wherever it is asked.
+ *
+ * A missing or unreadable `.gitignore` excludes nothing rather than throwing.
+ * That is the safe direction here: this is a walk that produces a description,
+ * and a description of too much is visible in the comparison, while a walk that
+ * threw would take the whole suite down over a file that is not the subject.
+ */
 function clientFiles(root: string): string[] {
+  let ignoreRules: ReturnType<typeof parseIgnore> = [];
+  try {
+    ignoreRules = parseIgnore(readFileSync(join(root, '.gitignore'), 'utf8'));
+  } catch {
+    ignoreRules = [];
+  }
   const out: string[] = [];
   const walk = (rel: string) => {
     let names: string[];
@@ -263,9 +295,15 @@ function clientFiles(root: string): string[] {
     for (const n of names.sort()) {
       if (n.startsWith('.') || n === 'node_modules') continue;
       const child = join(rel, n);
+      const posix = child.split(sep).join('/');
       const st = statSync(join(root, child));
-      if (st.isDirectory()) walk(child);
-      else if (st.isFile() && CLIENT_EXT.test(n)) out.push(child.split(sep).join('/'));
+      if (st.isDirectory()) {
+        if (isIgnored(ignoreRules, posix, true)) continue;
+        walk(child);
+      } else if (st.isFile() && CLIENT_EXT.test(n)) {
+        if (isIgnored(ignoreRules, posix, false)) continue;
+        out.push(posix);
+      }
     }
   };
   for (const t of CLIENT_TREES) walk(t);

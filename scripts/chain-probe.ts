@@ -62,7 +62,39 @@ import { indexerPublicDataProvider } from '@midnight-ntwrk/midnight-js-indexer-p
  * this one: they export the same three names and TypeScript would not complain.
  * Hence the explicit path everywhere below, and the artifact check in stage 1.
  */
-import { Contract, ledger as readLedger, pureCircuits } from '../contracts/chainprobe/managed/contract/index.js';
+/*
+ * THE COMPILED PROBE CONTRACT IS LOADED AT RUN TIME, NOT AT IMPORT TIME.
+ *
+ * What it names is compiler output. It is not in this repository and no step
+ * here builds it, so a static import makes this file unresolvable in any copy
+ * that has not built it by hand: the typecheck fails, and every tool that only
+ * had to READ this file fails with it. Loaded at run time, the file is readable
+ * and checkable everywhere, and the thing that is missing is reported at the
+ * moment it is actually needed, by the one function that needs it.
+ *
+ * The path is assembled rather than written into the call so that no build step
+ * tries to resolve it either.
+ */
+const PROBE_CONTRACT = ['..', 'contracts', 'chainprobe', 'managed', 'contract', 'index.js'].join('/');
+
+let Contract: any;
+let readLedger: (data: unknown) => any;
+let pureCircuits: any;
+
+async function loadProbeContract(): Promise<void> {
+  let mod: any;
+  try {
+    mod = await import(PROBE_CONTRACT);
+  } catch (e: any) {
+    throw new Error(
+      `this probe reads a compiled contract at contracts/chainprobe/managed, and it is not there.\n` +
+      `  That directory is compiler output for a throwaway contract; nothing in this repository builds it,\n` +
+      `  and it is never committed. Compile contracts/chainprobe with the pinned compiler first.\n` +
+      `  (${e?.message ?? e})`,
+    );
+  }
+  ({ Contract, ledger: readLedger, pureCircuits } = mod);
+}
 import { applyNetworkId, networkFromEnv } from '../src/midnight/network.js';
 import { explainNodeError } from './node-errors.js';
 import {
@@ -472,6 +504,7 @@ const classifyFailure = (e: any, phaseWasProving: boolean): Layer => {
 /* ------------------------------------------------------------------ */
 
 async function main() {
+  await loadProbeContract();
   annotateNodeErrorsOnConsole();
   writeFileSync(
     REPORT_FILE,

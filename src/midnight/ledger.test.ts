@@ -32,6 +32,7 @@
  * was reachable offline: the only thing needed was a stand-in for `callTx` that
  * records what it was called with.
  */
+import { existsSync } from 'node:fs';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MidnightLedger, type MidnightConfig, type FeeSponsor, type SealedStateStore } from './ledger.js';
 /*
@@ -3191,7 +3192,41 @@ describe('S74/T-360: what ledger 9 actually accepts, measured rather than read o
   });
 });
 
-describe('S74/T-359: reading the verifier keys back, which is what `C353` actually swaps', () => {
+/*
+ * THESE ASSERTIONS READ THE VERIFIER KEYS, AND MOST COPIES OF THIS REPOSITORY
+ * HAVE NONE.
+ *
+ * The keys are made by a build that runs the proving backend. It takes about a
+ * minute and produces a hundred megabytes, and the ordinary compile skips it
+ * entirely, so `contracts/managed/keys` is absent wherever nobody has asked for
+ * it. A file that read them at load time took the whole suite down with it.
+ *
+ * SO THEY ARE SKIPPED WHERE THE KEYS ARE NOT, AND THE SKIP SAYS SO OUT LOUD.
+ * A measurement that was not taken is a refusal rather than a pass, and the
+ * line below is that refusal: it names what did not run and the command that
+ * makes it run. They are not skipped in the checks every change passes
+ * through - a job there builds the keys and runs exactly these.
+ */
+// DERIVED FROM THIS FILE'S OWN LOCATION, NOT FROM THE WORKING DIRECTORY. Read
+// relatively, a run started from anywhere but the root answers "no keys" and
+// skips the block below in silence, which is the failure this whole arrangement
+// is trying not to have.
+const KEYS_ON_DISK = existsSync(new URL('../../contracts/managed/keys/adopt.verifier', import.meta.url));
+if (!KEYS_ON_DISK) {
+  // Printed where the runner is attached to a terminal, and NOT where it is
+  // not: a reporter writing to a file drops console output entirely. So this
+  // line is a convenience and the reason a reader can always see is in the
+  // name of the block below. What guarantees the assertions are still MADE is
+  // neither of those: it is a job in the checks that builds the keys and runs
+  // this file, and `scripts/artifact-freshness.test.ts` holds that job to
+  // existing.
+  console.log(
+    '  NOT CHECKED HERE: the verifier keys a deployed entry point is read back against are not on\n' +
+    '  disk, so the four assertions that compare them did not run. `npm run compact` builds them.',
+  );
+}
+
+describe.skipIf(!KEYS_ON_DISK)('S74/T-359: reading the verifier keys back, which is what `C353` actually swaps [needs contracts/managed/keys; `npm run compact` builds them]', () => {
   const NET = 'undeployed';
   const be = (n: number) => { const b = new Uint8Array(32); b[31] = n; return b; };
   const ARTEFACT = 'contracts/managed/keys/adopt.verifier';
@@ -3302,6 +3337,18 @@ describe('S74/T-359: reading the verifier keys back, which is what `C353` actual
     expect(none.onChainOnly).toEqual(['adopt']);
   });
 
+});
+
+/*
+ * LIFTED OUT OF THE BLOCK ABOVE, WHICH IS SKIPPED WHERE THE KEYS ARE NOT.
+ *
+ * This one reads no key. It drives the comparison against a state that cannot be
+ * read, and the property it holds is the one that keeps a swapped key from
+ * hiding behind an unreadable one: an answer that is not `agree` and not a
+ * guess. Left inside the block above it ran in almost no copy of this
+ * repository, for a reason that does not apply to it.
+ */
+describe('reading a state that cannot be read: never `agree`, and never a partial answer', () => {
   it('answers UNKNOWN and never `agree` when the state cannot be read, and refuses a partial answer', async () => {
     /* A partial answer is worse than none here: it would let a swapped key hide
      * behind an unreadable one. */

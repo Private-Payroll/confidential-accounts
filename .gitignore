@@ -379,8 +379,51 @@ docs/handoff/
 .claude/
 
 
+# ── NINE MORE THAT WERE ON NO LIST AT ALL, NAMED 7 Sep ─────────────────────
+#
+# EVERY ONE OF THESE WAS NEITHER ALLOWLISTED NOR IGNORED, WHICH IS THE ONE
+# STATE THIS PAIR OF FILES EXISTS TO MAKE IMPOSSIBLE: a file nobody has
+# classified. They were found by measuring, not by reading — the walk that
+# feeds a generated document counted them, so this folder derived 308 client
+# files where a clone can only ever derive 299, and the documentation gate
+# refused every test run in a clone over the difference.
+#
+# ALL NINE READ SOMETHING THAT DOES NOT SHIP: the publication allowlist, the
+# ignore rules, the merge-admission list, the record of how money can be lost,
+# or the shipping-language baseline. Each is a checker whose data is this working copy's
+# configuration, which is the same reason the four guards below them are here.
+# None is imported by anything on the allowlist — measured before writing this.
+#
+# They were never tracked, because the repository was built from the allowlist
+# and the allowlist never named them, so these rules take effect immediately
+# rather than needing anything removed from the index.
+scripts/backup-process-rules.mjs
+scripts/backup-process-rules.test.ts
+scripts/check-take-list-vs-gitignore.mjs
+# Its type declarations, which are not walked by the counter above but which
+# would otherwise ship a declaration for a program that does not.
+scripts/check-take-list-vs-gitignore.d.mts
+scripts/merge-admission-list.mjs
+scripts/merge-admission-rules.mjs
+# Its type declarations, for the reason given beside the other one below.
+scripts/merge-admission-rules.d.mts
+scripts/merge-admission-rules.test.ts
+scripts/public-repo-lists.test.ts
+scripts/register-index.mjs
+scripts/shipping-language-door.test.ts
+
+
 # ── LOCAL TOOLING, KEPT ON DISK AND NOT PUBLISHED ──────────────────────────
 src/testing/no-attribution.test.ts
+# THE REST OF THE SAME FAMILY, NAMED 7 Sep. Each reads a local launcher at this
+# root, or the index of them, at load time - so in a copy that does not have
+# those, the file is red before a single assertion runs rather than merely
+# weaker. All four are already in the index, so these rules do not remove them:
+# UNTRACK-SHIPPED-BY-MISTAKE.command does, and they stay on disk where they work.
+src/testing/command-index.test.ts
+src/testing/mint-signers-call.test.ts
+src/testing/new-vault-door.test.ts
+scripts/mutation-config.test.ts
 
 # Local maintainer tooling. Each one reads or contains a word list that is
 # configuration for this working copy and not part of the published project,

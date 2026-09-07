@@ -46,37 +46,37 @@ of what is actually public belongs in `docs/design/privacy.md` and is not this.
 
 `contracts/src/ConfidentialAccount.compact` → `contracts/managed/contract/index.js` · compactc 0.33.0 · language 0.25.0 · runtime 0.18.0-rc.1
 
-| circuit | kind | reads | writes | asserts | discloses | calls | verifier key |
-|---|---|---|---|---|---|---|---|
-| `constructor` | **constructor** | — | approvalCounts, approvals, movements, openProposals, proposalHolds, retiredAt, runWindow, signerLeaves, signerRoles, signers, successor, threshold, thresholds, vaults | 1 | 1 | — | — (not a circuit) |
-| `signerPublicKey` | pure | — | — | 0 | 0 | — | — (pure) |
-| `signerLeaf` | pure | — | — | 0 | 0 | — | — (pure) |
-| `assetKeyOf` | pure | — | — | 0 | 0 | — | — (pure) |
-| `changeCommitmentOf` | pure | — | — | 0 | 0 | — | — (pure) |
-| `proposalIdOf` | pure | — | — | 0 | 0 | — | — (pure) |
-| `signerAddPayload` | pure | — | — | 0 | 0 | — | — (pure) |
-| `removeSignerPayload` | pure | — | — | 0 | 0 | — | — (pure) |
-| `setThresholdPayload` | pure | — | — | 0 | 0 | — | — (pure) |
-| `allVaults` | pure | — | — | 0 | 0 | — | — (pure) |
-| `noVault` | pure | — | — | 0 | 0 | — | — (pure) |
-| `paidMovementOf` | pure | — | — | 0 | 0 | — | — (pure) |
-| `runPayload` | pure | — | — | 0 | 0 | — | — (pure) |
-| `payoutLeaf` | pure | — | — | 0 | 0 | — | — (pure) |
-| `setVaultThresholdPayload` | pure | — | — | 0 | 0 | — | — (pure) |
-| `vacantSlot` | pure | — | — | 0 | 0 | — | — (pure) |
-| `adoptVaultPayload` | pure | — | — | 0 | 0 | — | — (pure) |
-| `retireVaultPayload` | pure | — | — | 0 | 0 | — | — (pure) |
-| `slotOf` | pure | — | — | 0 | 0 | — | — (pure) |
-| `amendSigner` | provable | approvalCounts, openProposals, signerLeaves, signers, threshold | approvalCounts, openProposals, runWindow, signerLeaves, signers | 13 | 16 | — | 2,119 B `cb38e9b31d5f` |
-| `setThreshold` | provable | approvalCounts, openProposals, signerLeaves, signers, threshold | approvalCounts, openProposals, runWindow, threshold | 7 | 7 | — | 2,119 B `51bf0a8c90d3` |
-| `propose` | provable | openProposals, signers | approvalCounts, openProposals, runWindow | 7 | 19 | — | 2,119 B `97d704dee942` |
-| `approve` | provable | approvalCounts, approvals, openProposals, signers | approvalCounts, approvals | 4 | 3 | — | 2,119 B `0103a77296e6` |
-| `cancel` | provable | openProposals, runWindow, signers | approvalCounts, openProposals, runWindow | 4 | 2 | — | 2,119 B `f1cc6a9bbaa3` |
-| `closeExpiredRun` | provable | openProposals, runWindow | approvalCounts, openProposals, runWindow | 3 | 1 | — | 1,351 B `ba3755a6770c` |
-| `recordPayment` | provable | approvalCounts, movements, openProposals, threshold, thresholds | movements | 8 | 11 | — | 2,119 B `14b4de421ecf` |
-| `setVaultThreshold` | provable | approvalCounts, openProposals, signers, threshold | approvalCounts, openProposals, runWindow, thresholds | 6 | 5 | — | 2,119 B `88f1c2ccae90` |
-| `adopt` | provable | approvalCounts, openProposals, signers, threshold, vaults | approvalCounts, openProposals, runWindow, vaults | 6 | 5 | — | 2,119 B `7bf55bcf7b39` |
-| `retireVault` | provable | approvalCounts, openProposals, threshold, vaults | approvalCounts, openProposals, retiredAt, runWindow, vaults | 4 | 4 | — | 2,119 B `e3bf78cdbe7f` |
+| circuit | kind | reads | writes | asserts | discloses | calls |
+|---|---|---|---|---|---|---|
+| `constructor` | **constructor** | — | approvalCounts, approvals, movements, openProposals, proposalHolds, retiredAt, runWindow, signerLeaves, signerRoles, signers, successor, threshold, thresholds, vaults | 1 | 1 | — |
+| `signerPublicKey` | pure | — | — | 0 | 0 | — |
+| `signerLeaf` | pure | — | — | 0 | 0 | — |
+| `assetKeyOf` | pure | — | — | 0 | 0 | — |
+| `changeCommitmentOf` | pure | — | — | 0 | 0 | — |
+| `proposalIdOf` | pure | — | — | 0 | 0 | — |
+| `signerAddPayload` | pure | — | — | 0 | 0 | — |
+| `removeSignerPayload` | pure | — | — | 0 | 0 | — |
+| `setThresholdPayload` | pure | — | — | 0 | 0 | — |
+| `allVaults` | pure | — | — | 0 | 0 | — |
+| `noVault` | pure | — | — | 0 | 0 | — |
+| `paidMovementOf` | pure | — | — | 0 | 0 | — |
+| `runPayload` | pure | — | — | 0 | 0 | — |
+| `payoutLeaf` | pure | — | — | 0 | 0 | — |
+| `setVaultThresholdPayload` | pure | — | — | 0 | 0 | — |
+| `vacantSlot` | pure | — | — | 0 | 0 | — |
+| `adoptVaultPayload` | pure | — | — | 0 | 0 | — |
+| `retireVaultPayload` | pure | — | — | 0 | 0 | — |
+| `slotOf` | pure | — | — | 0 | 0 | — |
+| `amendSigner` | provable | approvalCounts, openProposals, signerLeaves, signers, threshold | approvalCounts, openProposals, runWindow, signerLeaves, signers | 13 | 16 | — |
+| `setThreshold` | provable | approvalCounts, openProposals, signerLeaves, signers, threshold | approvalCounts, openProposals, runWindow, threshold | 7 | 7 | — |
+| `propose` | provable | openProposals, signers | approvalCounts, openProposals, runWindow | 7 | 19 | — |
+| `approve` | provable | approvalCounts, approvals, openProposals, signers | approvalCounts, approvals | 4 | 3 | — |
+| `cancel` | provable | openProposals, runWindow, signers | approvalCounts, openProposals, runWindow | 4 | 2 | — |
+| `closeExpiredRun` | provable | openProposals, runWindow | approvalCounts, openProposals, runWindow | 3 | 1 | — |
+| `recordPayment` | provable | approvalCounts, movements, openProposals, threshold, thresholds | movements | 8 | 11 | — |
+| `setVaultThreshold` | provable | approvalCounts, openProposals, signers, threshold | approvalCounts, openProposals, runWindow, thresholds | 6 | 5 | — |
+| `adopt` | provable | approvalCounts, openProposals, signers, threshold, vaults | approvalCounts, openProposals, runWindow, vaults | 6 | 5 | — |
+| `retireVault` | provable | approvalCounts, openProposals, threshold, vaults | approvalCounts, openProposals, retiredAt, runWindow, vaults | 4 | 4 | — |
 
 ### ConfidentialAccount — per circuit, in full
 
@@ -656,20 +656,20 @@ retireVault(proposal: Bytes<32>, vault: Bytes<32>, salt: Bytes<32>): []
 
 `contracts/src/Vault.compact` → `contracts/managed-vault/contract/index.js` · compactc 0.33.0 · language 0.25.0 · runtime 0.18.0-rc.1
 
-| circuit | kind | reads | writes | asserts | discloses | calls | verifier key |
-|---|---|---|---|---|---|---|---|
-| `constructor` | **constructor** | — | account, notes, payments, spendingCaps, unshieldedTokens | 0 | 1 | — | — (not a circuit) |
-| `payoutDetails` | pure | — | — | 0 | 0 | — | — (pure) |
-| `unshieldedPayoutDetails` | pure | — | — | 0 | 0 | — | — (pure) |
-| `heldCommitmentOf` | pure | — | — | 0 | 0 | — | — (pure) |
-| `noteBlindingOf` | pure | — | — | 0 | 0 | — | — (pure) |
-| `deposit` | provable | — | notes | 0 | 2 | — | 2,119 B `fcd735b0a085` |
-| `depositUnshielded` | provable | — | unshieldedTokens | 1 | 3 | — | 1,351 B `9027c53fec59` |
-| `payout` | provable | account, notes | notes, payments | 4 | 16 | recordPayment | 2,119 B `0d5f30177995` |
-| `payoutUnshielded` | provable | account | payments | 1 | 15 | recordPayment | 2,119 B `2f6ee61a8ff2` |
-| `splitNote` | provable | notes | notes | 5 | 6 | — | 2,119 B `abe237593b76` |
-| `forgetUnshielded` | provable | — | unshieldedTokens | 1 | 2 | — | 1,351 B `5c97e5981254` |
-| `retire` | provable | account, notes, unshieldedTokens | — | 2 | 3 | retireVault | 1,351 B `6862578d6436` |
+| circuit | kind | reads | writes | asserts | discloses | calls |
+|---|---|---|---|---|---|---|
+| `constructor` | **constructor** | — | account, notes, payments, spendingCaps, unshieldedTokens | 0 | 1 | — |
+| `payoutDetails` | pure | — | — | 0 | 0 | — |
+| `unshieldedPayoutDetails` | pure | — | — | 0 | 0 | — |
+| `heldCommitmentOf` | pure | — | — | 0 | 0 | — |
+| `noteBlindingOf` | pure | — | — | 0 | 0 | — |
+| `deposit` | provable | — | notes | 0 | 2 | — |
+| `depositUnshielded` | provable | — | unshieldedTokens | 1 | 3 | — |
+| `payout` | provable | account, notes | notes, payments | 4 | 16 | recordPayment |
+| `payoutUnshielded` | provable | account | payments | 1 | 15 | recordPayment |
+| `splitNote` | provable | notes | notes | 5 | 6 | — |
+| `forgetUnshielded` | provable | — | unshieldedTokens | 1 | 2 | — |
+| `retire` | provable | account, notes, unshieldedTokens | — | 2 | 3 | retireVault |
 
 ### Vault — per circuit, in full
 
@@ -914,4 +914,4 @@ retire(proposal: Bytes<32>, salt: Bytes<32>): []
     - `contracts/src/Vault.compact:1176` — `proposal`
     - `contracts/src/Vault.compact:1183` — `kernel.self().bytes`
     - `contracts/src/Vault.compact:1184` — `salt`
-<!-- GENERATED:END id="circuits" body="476abe57d14f05fc" -->
+<!-- GENERATED:END id="circuits" body="a77bd582221a9827" -->

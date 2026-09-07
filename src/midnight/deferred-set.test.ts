@@ -40,7 +40,7 @@
  * rule: a stub without the semantics could not fail the way the product would.
  */
 import { describe, it, expect, vi } from 'vitest';
-import { readdirSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 
 import {
   DEPLOYED_CIRCUITS,
@@ -55,6 +55,17 @@ import {
  * ------------------------------------------------------------------ */
 
 /** A deterministic per-circuit verifier key, distinct per name. */
+// Derived from this file's own location: read relatively, a run started from
+// anywhere but the root skips the assertion below without saying so.
+const KEY_DIR = new URL('../../contracts/managed/keys', import.meta.url);
+
+if (!existsSync(KEY_DIR)) {
+  console.log(
+    '  NOT CHECKED HERE: contracts/managed/keys is not on disk, so the assertion that the deferral\n' +
+    '  list names exactly the circuits with keys did not run. `npm run compact` builds them.',
+  );
+}
+
 const keyFor = (name: string): Uint8Array => new TextEncoder().encode(`vk:${name}`);
 
 const bytesEqual = (a: Uint8Array, b: Uint8Array): boolean =>
@@ -177,7 +188,7 @@ describe('the deferral list: S25\'s decision, stated where a diff will show it',
     expect(() => assertKnownCircuitSet(all)).not.toThrow();
   });
 
-  it('names exactly the circuits the COMPILED CONTRACT has keys for', () => {
+  it.skipIf(!existsSync(KEY_DIR))('names exactly the circuits the COMPILED CONTRACT has keys for [needs contracts/managed/keys; `npm run compact` builds them]', () => {
     /*
      * READ OFF DISK, NOT TRANSCRIBED, and the difference is the whole point.
      *
@@ -200,12 +211,12 @@ describe('the deferral list: S25\'s decision, stated where a diff will show it',
      * holds the eleven keys of the last compile, `execute.verifier` among them.
      * The number below is the count the source decides, not a reading of the
      * directory, so both assertions go red together and for one reason.
-     * **THE DOOR IS `COMPILE-CONTRACT.command`**, followed by the redeploy that
+     * **THE DOOR IS `npm run compact`**, followed by the redeploy that
      * a changed contract already owes. Editing either number to make this green
      * against a stale artefact is the whole of `V-251`.
      */
     const keyed = [...new Set(
-      readdirSync('contracts/managed/keys')
+      readdirSync(KEY_DIR)
         .filter((f) => f.endsWith('.verifier'))
         .map((f) => f.replace(/\.verifier$/, '')),
     )].sort();

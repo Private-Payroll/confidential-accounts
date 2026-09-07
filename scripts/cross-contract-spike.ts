@@ -29,12 +29,43 @@
 import {
   createConstructorContext, createCircuitContext, sampleContractAddress,
 } from '@midnight-ntwrk/compact-runtime';
-import {
-  Contract as Vault, ledger as vaultLedger,
-} from '../contracts/probe-out-vault4/vault-pins-account/contract/index.js';
-import {
-  Contract as Acct, ledger as acctLedger,
-} from '../contracts/probe-out-vault4/Acct/contract/index.js';
+/*
+ * THE COMPILED PROBE CONTRACT IS LOADED AT RUN TIME, NOT AT IMPORT TIME.
+ *
+ * What it names is compiler output. It is not in this repository and no step
+ * here builds it, so a static import makes this file unresolvable in any copy
+ * that has not built it by hand: the typecheck fails, and every tool that only
+ * had to READ this file fails with it. Loaded at run time, the file is readable
+ * and checkable everywhere, and the thing that is missing is reported at the
+ * moment it is actually needed, by the one function that needs it.
+ *
+ * The path is assembled rather than written into the call so that no build step
+ * tries to resolve it either.
+ */
+const PROBE_DIR = ['..', 'contracts', 'probe-out-vault4'].join('/');
+const VAULT_CONTRACT = `${PROBE_DIR}/vault-pins-account/contract/index.js`;
+const ACCT_CONTRACT = `${PROBE_DIR}/Acct/contract/index.js`;
+
+let Vault: any;
+let vaultLedger: (data: unknown) => any;
+let Acct: any;
+let acctLedger: (data: unknown) => any;
+
+async function loadProbeContracts(): Promise<void> {
+  try {
+    const vaultMod: any = await import(VAULT_CONTRACT);
+    const acctMod: any = await import(ACCT_CONTRACT);
+    ({ Contract: Vault, ledger: vaultLedger } = vaultMod);
+    ({ Contract: Acct, ledger: acctLedger } = acctMod);
+  } catch (e: any) {
+    throw new Error(
+      `this probe reads two compiled contracts under contracts/probe-out-vault4, and they are not there.\n` +
+      `  That directory is compiler output for throwaway contracts; nothing in this repository builds it,\n` +
+      `  and it is never committed. Compile them with the pinned compiler first.\n` +
+      `  (${e?.message ?? e})`,
+    );
+  }
+}
 
 const BLOCK = '0'.repeat(64);
 const bytes = (n: number) => Uint8Array.from({ length: 32 }, (_, i) => (i + n) & 0xff);
@@ -47,11 +78,15 @@ const ok = (s: string) => console.log(`  \x1b[32mYES\x1b[0m  ${s}`);
 const no = (s: string) => console.log(`  \x1b[31mNO \x1b[0m  ${s}`);
 
 const main = async () => {
+  await loadProbeContracts();
   console.log('\nCan a cross-contract call be executed offline?\n');
 
   /* ---------------------------------------------------------------- the account */
   const witnesses = { proposalSalt: () => [{}, bytes(7)] } as never;
-  const acct = new Acct<{}>(witnesses);
+  // No type argument: the generated module is loaded at run time and carries no
+  // types here, and a type argument on an untyped constructor is a compile error
+  // rather than a claim about anything.
+  const acct = new Acct(witnesses);
   const acctAddr = sampleContractAddress();
   const acctInit = await acct.initialState(createConstructorContext({}, BLOCK));
   /* Kept as a ContractState rather than a bare state value: the state provider
@@ -77,7 +112,7 @@ const main = async () => {
   const proposalId: Uint8Array = ids[0][0];
 
   /* ---------------------------------------------------------------- the vault */
-  const vault = new Vault<{}>({} as never);
+  const vault = new Vault({} as never);
   const vaultAddr = sampleContractAddress();
   const vaultInit = await vault.initialState(
     createConstructorContext({}, BLOCK), asRef(acctAddr) as never);
@@ -134,7 +169,7 @@ const main = async () => {
    * `proposalSalt()`, which is exactly the shape `claimApproval` used to have.
    */
   const { crossContractCall } = await import('@midnight-ntwrk/compact-runtime');
-  const acctModule = await import('../contracts/probe-out-vault4/Acct/contract/index.js');
+  const acctModule: any = await import(ACCT_CONTRACT);
   try {
     const ctx = createCircuitContext<{}>(
       'payout', sampleContractAddress() as never, BLOCK, vaultCS, {} as never,

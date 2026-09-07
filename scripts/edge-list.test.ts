@@ -20,6 +20,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 
 import { CLIENT_TREES, DYNAMIC, MONEY_PATH, PAYMENT_ROOTS, SHAPES, buildEdgeList, type EdgeList } from './edge-list.js';
 import { EDGE_LIST_FILE, GENERATED_BLOCKS, GENERATED_FILES } from './doc-registry.js';
+import { render } from './generate-docs.js';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 let edges: EdgeList;
@@ -313,7 +314,12 @@ describe('THE IMPORT GRAPH — the half that did not exist', () => {
     // 309 TODAY, AND NINE FILES OF SLACK IS THE TIGHTEST FLOOR HERE. A red on
     // this line means COUNT THE FILES, not "the walker broke" — a consolidation
     // round that removes ten modules trips it with nothing wrong.
-    expect(edges.moduleCoverage.modulesWalked).toBeGreaterThan(300);
+    // THE FLOOR MOVED DOWN BY NINE ON 7 Sep AND THE REASON IS NOT ATTRITION.
+    // The walk now skips what this repository's own ignore rules exclude, so it
+    // counts what a clone contains rather than what this folder happens to hold.
+    // The floor is well under the real number on purpose: it is here to catch a
+    // walker that found nothing, not to pin a count that ordinary work moves.
+    expect(edges.moduleCoverage.modulesWalked).toBeGreaterThan(250);
   });
 
   it('EVERY EDGE NAMES TWO FILES THAT EXIST, at both ends', () => {
@@ -383,13 +389,22 @@ describe('THE IMPORT GRAPH — the half that did not exist', () => {
 });
 
 describe('the generated artefacts on disk are the ones this produces', () => {
-  it('edges.json exists', () => {
-    // It used to also assert that "the inputs it declares are all on disk".
-    // `edges.json` no longer declares inputs — `T-167` removed the list, because
-    // a list of inputs was a proxy that was wrong three times in one round — so
-    // that assertion was statusing something nothing consumes.
-    expect(existsSync(join(ROOT, EDGE_LIST_FILE))).toBe(true);
-  });
+  it('the edge list is still WRITTEN, whether or not this copy of the repository has one', async () => {
+    // IT USED TO ASSERT THAT THE FILE WAS ON DISK HERE, and that is a fact about
+    // one machine rather than about this program. The file is deliberately not
+    // part of this repository, so in a clone the assertion was false and the
+    // whole suite went red over a working-tree artefact.
+    //
+    // What matters is that the generator still produces it: it is the map a
+    // later reader consults instead of building its own, and it is compared by
+    // nothing now, so a generator that quietly stopped writing it would leave a
+    // stale map with no one to say so.
+    const r = await render(ROOT);
+    const body = r.files.get(EDGE_LIST_FILE);
+    expect(body, `${EDGE_LIST_FILE} is no longer rendered by the generator`).toBeDefined();
+    expect((body as string).length).toBeGreaterThan(1000);
+    expect(body as string).toMatch(/^\{\n {2}"payload": "[0-9a-f]{16}",/);
+  }, 60_000);
 
   /*
    * THE LIVE `assertDocsFresh(ROOT)` ASSERTION IS NOT HERE, AND THAT IS A RACE

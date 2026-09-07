@@ -60,7 +60,12 @@ export type LedgerLimitTarget = {
   readonly label: string;
   /** Directory holding `compiler/contract-info.json` and `contract/index.js`. */
   readonly managed: string;
-  /** The door that rebuilds this artifact, for a refusal to name. */
+  /**
+   * The command that rebuilds this artifact, for a refusal to name. A command
+   * this repository defines rather than a file on one machine: a refusal
+   * pointing at something a reader's copy does not contain is not one they can
+   * act on.
+   */
   readonly door: string;
 };
 
@@ -70,8 +75,8 @@ export type LedgerLimitTarget = {
  * somebody adds to it.
  */
 export const LEDGER_LIMIT_TARGETS: readonly LedgerLimitTarget[] = [
-  { label: 'ConfidentialAccount', managed: 'contracts/managed', door: 'COMPILE-CONTRACT.command' },
-  { label: 'Vault', managed: 'contracts/managed-vault', door: 'COMPILE-VAULT.command' },
+  { label: 'ConfidentialAccount', managed: 'contracts/managed', door: 'npm run compact:fast' },
+  { label: 'Vault', managed: 'contracts/managed-vault', door: 'npm run compact:vault' },
 ];
 
 /** `langs.ss:851`. Read off the compiler's own source, not chosen here. */

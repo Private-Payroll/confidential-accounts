@@ -19,13 +19,34 @@
  * be excluded.
  */
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { parseIgnore, isIgnored, unsupportedRules, SECRET_SHAPES, shapeProbes } from './gitignore-rules.mjs';
 
 const ignoreText = () => readFileSync(new URL('../.gitignore', import.meta.url), 'utf8');
 const rules = () => parseIgnore(ignoreText());
 
-const takeList = () => readFileSync(new URL('../PUBLIC-REPO-TAKE-LIST.txt', import.meta.url), 'utf8')
+/*
+ * THE PUBLICATION ALLOWLIST IS NOT PART OF WHAT IS PUBLISHED, so the one
+ * assertion that compares against it can only be made where that file is.
+ *
+ * It is a decision record with this project's own reasoning in it, and it is
+ * left behind deliberately. Read at load time it took this whole file down in
+ * every copy that does not have it -- and this file now holds a module the
+ * generated documents depend on, so taking it down is expensive.
+ *
+ * The check below therefore states what it did not check, rather than passing
+ * quietly over an empty list.
+ */
+const TAKE_LIST = new URL('../PUBLIC-REPO-TAKE-LIST.txt', import.meta.url);
+const HAS_TAKE_LIST = existsSync(TAKE_LIST);
+if (!HAS_TAKE_LIST) {
+  console.log(
+    '  NOT CHECKED HERE: the publication allowlist is not part of this repository, so the check\n' +
+    '  that no ignore rule swallows a file due to be published did not run.',
+  );
+}
+
+const takeList = () => readFileSync(TAKE_LIST, 'utf8')
   .split('\n').map((l) => l.split('#')[0].trim()).filter(Boolean);
 
 /**
@@ -86,7 +107,7 @@ describe('the ignore file excludes every place this repository keeps key materia
 });
 
 describe('and it excludes NOTHING that ships, which is the other direction', () => {
-  it('leaves every file on the take list tracked', () => {
+  it.skipIf(!HAS_TAKE_LIST)('leaves every file on the take list tracked [needs the publication allowlist, which this repository does not publish]', () => {
     const r = rules();
     const excluded = takeList().filter((f) => isIgnored(r, f));
     expect(
