@@ -214,6 +214,90 @@ export ledger unshieldedTokens: Set<Bytes<32>>;
  */
 export ledger payments: Counter;
 
+/* ------------------------------------------------------------------ *
+ * RESERVED STORAGE. ONE FIELD, DECLARED AND NOTHING ELSE.
+ *
+ * A DEPLOYED CONTRACT'S MACHINERY CAN BE REPLACED. ITS STORAGE CAN NEVER BE
+ * ADDED TO. A circuit can be swapped at the same address with the state
+ * intact; a ledger field is fixed when the contract is constructed, and no
+ * update, upgrade or maintenance operation can add one. The only way to gain a
+ * field is a new contract at a new address, which for a company means new
+ * vaults, every note moved, every signer re-seated and every payee's key
+ * material re-issued. So the one below is declared now, empty, for a feature
+ * that is designed later.
+ *
+ * NO CIRCUIT IN THIS FILE READS OR WRITES IT, and none must be given one except
+ * by the work that designs the feature itself: storage is permanent and
+ * circuits are not, so a circuit written now for an unspecified feature spends
+ * deploy bytes on a guess.
+ *
+ * FOUR OTHER FIELDS WERE CONSIDERED FOR THIS SAME MOMENT AND WERE CUT. THAT WAS
+ * DELIBERATE AND THE REASON IS STRUCTURAL, SO NOBODY LATER READS THE ABSENCE AS
+ * AN OVERSIGHT AND "FIXES" IT WITH A CONTRACT NOBODY CAN MIGRATE TO. They were
+ * a record of retirements, a hold on a proposal, a successor address, and a
+ * per-signer permission map.
+ *
+ * WHY NONE OF THE FOUR COULD EVER HAVE BEEN WRITTEN. `contract Acct` above is
+ * the whole of what a vault may ask an account, and BOTH of its circuits are
+ * calls this contract makes OUTWARD. Nothing calls inward. Each answers one
+ * operation-specific question and performs that operation's own side effect —
+ * was this PAYMENT approved, and was this RETIREMENT approved — and neither
+ * answers "did the signers approve this" in general. NO SIGNER'S IDENTITY
+ * CROSSES THAT BOUNDARY IN EITHER DIRECTION. So a circuit here that placed a
+ * hold, seated a role or named a successor would have nothing to check its
+ * caller against, and a value the caller simply asserts is a claim this
+ * contract would be TRUSTING rather than a guard — the objection `retire` below
+ * already makes about handing the account a fact only this contract can see.
+ * There is no inbound governed write path into this contract, and no later
+ * circuit creates one. Those three fields would have been storage that nothing
+ * could ever fill.
+ *
+ * AND THE FOURTH IS A DIFFERENT REASON: THE ACCOUNT ALREADY RECORDS RETIREMENTS.
+ * A contract cannot read another contract's state, so the same fact written in
+ * both places could never be reconciled on chain and neither copy would be
+ * authoritative — a company would get two answers from the two places it is
+ * entitled to ask. Every rule about who may authorise a payment belongs to the
+ * account, as the top of this file says, and a record of what the account
+ * retired belongs beside the registry it was removed from.
+ *
+ * THE ONE BELOW IS THE ONE THIS CONTRACT CAN ACTUALLY ENFORCE, and the same
+ * structure is why: it is written on the path this contract already
+ * authorises, out of values it already holds.
+ * ------------------------------------------------------------------ */
+
+/*
+ * HOW MUCH THIS VAULT MAY SPEND IN A PERIOD. RESERVED. DECLARED ONLY.
+ *
+ * WHY IT IS THE VAULT'S AND NOT THE ACCOUNT'S: the vault is the thing that
+ * holds the money and initiates the payment, so it is the only place a cap can
+ * be checked at the moment it is spent. Everything such a check needs — the
+ * amount, the token, and this vault's own address — is already an argument of
+ * the circuits that pay, and their authorisation has already crossed the
+ * boundary for that payment by the time the check would run.
+ *
+ * `Bytes<32>` per vault, and the type deliberately does not decide the design.
+ * A running total kept in the clear would publish how much the company pays
+ * out, which is the first thing this product is supposed to keep. Thirty-two
+ * bytes hold a commitment to a running total and a period instead, and a later
+ * circuit can prove a payment stays under the cap without the total ever being
+ * readable on chain. They also hold a plain total, cast, if the recoverable
+ * design is preferred once somebody prices both — though that cast can fail at
+ * run time, so the plain form puts a new way for a payment to abort on the
+ * money path and the committed form does not.
+ *
+ * AND THE COST OF THE COMMITTED FORM, WHICH IS NOT A DETAIL: a commitment is
+ * opened by a value kept off chain. A running total nobody can reproduce is a
+ * cap that can never be satisfied again, and unlike a note that cannot be
+ * opened, that stops every payment this vault will ever make rather than one.
+ * Whoever builds the circuit owes a way for any signer to rebuild the opening,
+ * not one device — and owes it before the cap is switched on, not after.
+ *
+ * WHAT IT WOULD PUBLISH ONCE A CIRCUIT WRITES IT: in the committed form,
+ * nothing but the fact that this vault has a cap at all. In the plain form,
+ * how much the company pays out.
+ */
+export ledger spendingCaps: Map<Bytes<32>, Bytes<32>>;
+
 /*
  * The coin this vault is about to spend, and the blinding that commits to it.
  *

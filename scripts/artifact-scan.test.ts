@@ -193,7 +193,12 @@ describe('the real artifacts, read end to end', () => {
       'thresholds', 'vaults', 'runWindow', 'signerLeaves', 'retiredAt', 'proposalHolds',
       'successor', 'signerRoles',
     ]);
-    expect(vault.fields.map((f) => f.name)).toEqual(['account', 'notes', 'unshieldedTokens', 'payments']);
+    // DECLARATION ORDER. `spendingCaps` is reserved: the constructor's emitted
+    // `initialState` writes it, and no circuit reads or writes it yet, so it
+    // appears here and in the constructor list below and nowhere else.
+    expect(vault.fields.map((f) => f.name)).toEqual([
+      'account', 'notes', 'unshieldedTokens', 'payments', 'spendingCaps',
+    ]);
   });
 
   it('`Vault.payout` does NOT write the vault fields its stdlib touches in the kernel', async () => {
@@ -237,7 +242,9 @@ describe('the real artifacts, read end to end', () => {
     // corrected sentence coming back as machine-written fact.
     const vault = await readContract(ROOT, ARTIFACTS[1]);
     expect(vault.ctor).not.toBeNull();
-    expect(vault.ctor?.writes.map((w) => w.field).sort()).toEqual(['account', 'notes', 'payments', 'unshieldedTokens']);
+    expect(vault.ctor?.writes.map((w) => w.field).sort()).toEqual([
+      'account', 'notes', 'payments', 'spendingCaps', 'unshieldedTokens',
+    ]);
     // And no CIRCUIT writes `account`, which is the property C286 is about.
     expect(vault.circuits.filter((c) => c.writes.some((w) => w.field === 'account'))).toEqual([]);
     // Its signature is read off its own type checks, not invented.

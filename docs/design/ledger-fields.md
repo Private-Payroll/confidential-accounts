@@ -64,6 +64,7 @@ writer of any record it is merged into.
 | 1 | `notes` | Set | **hot** | `deposit` `payout` `splitNote` | `payout` `retire` `splitNote` | writes it |
 | 2 | `unshieldedTokens` | Set | cold | `depositUnshielded` `forgetUnshielded` | `retire` | writes it |
 | 3 | `payments` | Counter | **hot** | `payout` `payoutUnshielded` | **NO CIRCUIT** | writes it |
+| 4 | `spendingCaps` | Map | cold | **NO CIRCUIT** | **NO CIRCUIT** | writes it |
 
 ## Cross-contract calls
 
@@ -90,4 +91,4 @@ Unresolved call sites, named rather than dropped:
 - `src/midnight/ledger.ts:1796` — callTx[<expr>]: the circuit is a runtime string; there is no name at this call site
 - `src/midnight/vault-ledger.ts:530` — callTx[<expr>]: the circuit is a runtime string; there is no name at this call site
 - `scripts/sponsor-test.ts:457` — callTx[<expr>]: the circuit is a runtime string; there is no name at this call site
-<!-- GENERATED:END id="ledger-fields" body="2ecfe266712077c0" -->
+<!-- GENERATED:END id="ledger-fields" body="ca99a417f92d9722" -->
