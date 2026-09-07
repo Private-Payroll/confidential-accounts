@@ -173,6 +173,31 @@ seed*.txt
 id_rsa
 id_ed25519
 
+# AND THE TEN THAT WERE MISSING FROM THAT LIST, ADDED 7 Sep. Every one of them
+# is a container for a private key, a seed or a passphrase, and every one was
+# measured against the take list first: none of them matches a file that ships,
+# so nothing is being excluded that anybody meant to publish.
+#
+# THE PUBLIC HALVES ARE DELIBERATELY ABSENT. A certificate and a public key are
+# meant to be read, and a rule excluding them is a rule somebody later deletes
+# for being wrong - taking the rest of this list with it.
+#
+# WHAT MAKES THIS LIST HOLD FROM TODAY IS NOT THAT IT IS LONGER. It is that
+# scripts/gitignore-rules.test.ts asks whether each shape would actually be
+# EXCLUDED, at the top of the tree and buried deep in it - so a rule that is
+# later anchored, or reached back over by a negation written below it, turns
+# red instead of quietly covering less than it reads as covering.
+*.pfx
+*.p8
+*.jks
+*.keystore
+*.kdbx
+*.ppk
+*.asc
+*.gpg
+id_ecdsa
+id_dsa
+
 # `.env.*` AND NOT `.env` OR `.env.example`, BECAUSE THIS FILE ALREADY DECIDES
 # BOTH OF THOSE ABOVE AND GIT TAKES THE LAST MATCHING RULE. The wallet's own
 # ignore file carried `!.env.example` - an un-ignore - and copying that line
