@@ -123,8 +123,34 @@ export const skipReasonFor = (
  * The failure it prevents is quiet and expensive: last month's skips applied to
  * this month's run marks the wrong people as deliberately unpaid, and they are
  * the people nobody then looks at.
+ *
+ * **THE RUN'S IDENTITY IS AN ARGUMENT AND NEVER A DEFAULT, WHICH IS WHY IT IS
+ * TYPED AS POSSIBLY ABSENT.** A caller that does not know which run it is
+ * reporting on has to arrive here and be refused. Typed as always present, it
+ * reaches instead for the nearest value that satisfies the type, and the
+ * nearest value is this record's own id: the comparison below then holds a
+ * value against itself, returns the record, and reports success having
+ * compared nothing. That is not a weaker check than this one. It is no check,
+ * wearing this one's clothes.
+ *
+ * **AND A BLANK ID IS ABSENT, NOT AN IDENTITY.** An id is a string, so the
+ * empty one satisfies the type, and a record minted with the same nothing
+ * compares equal to it - a comparison carrying no information again, reached by
+ * a second route. Trimmed, on the same ground and by the same means `decide`
+ * refuses an unattributed decision: a guard that cites that one and does not
+ * trim is a space away from the hole it was written to close.
  */
-export const registerFor = (register: SkipRegister, proposalId: Hex, payees: number): SkipRegister => {
+export const registerFor = (
+  register: SkipRegister, proposalId: Hex | undefined, payees: number,
+): SkipRegister => {
+  if (!proposalId?.trim()) {
+    throw new Error(
+      'these skips cannot be applied: they were decided about one particular run, and '
+      + 'nothing here says which run is being reported on. Skips carried over from another '
+      + 'run mark the wrong people as deliberately unpaid, and those are the people nobody '
+      + 'then looks at. Identify the run these payees belong to, or ask for it without '
+      + 'its skips.');
+  }
   if (register.proposalId !== proposalId) {
     throw new Error(
       `those skips are for run ${register.proposalId}, not ${proposalId}`);

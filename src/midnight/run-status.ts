@@ -211,9 +211,9 @@ export const runStatus = (
     verified = true;
   }
 
+  /* The run's own identity, never a stand-in for it. See `registerFor`. */
   const register = inputs.skips
-    ? registerFor(inputs.skips, inputs.proposal?.id ?? inputs.skips.proposalId,
-                  inputs.leaves.length)
+    ? registerFor(inputs.skips, inputs.proposal?.id, inputs.leaves.length)
     : undefined;
   const skip = new Set(register ? skippedIndices(register) : []);
 
