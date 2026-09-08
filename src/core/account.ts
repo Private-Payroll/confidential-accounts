@@ -1351,12 +1351,9 @@ export class AccountService {
        *
        * **AND THE PATTERN IS THE POINT, NOT THIS INSTANCE.** A `file:line`
        * inside a customer-facing string survives exactly until the next
-       * deletion above it, and nothing in this repository checks one. That is
-       * `C189`'s subject with a customer on the far end of it; the row is
-       * described in `BACKLOG.md` for the controller rather than written here.
-       *
-       * The other thirteen are V-83's and are deliberately not touched here:
-       * fourteen mechanical edits is what the standing block excludes.
+       * deletion above it, and nothing here checks one. Every such citation is
+       * a promise to a reader that something is at a place, made by a string
+       * that cannot know whether it still is.
        */
       throw new Error(
         'a vault threshold of zero would authorise anything, so it must be a whole number, ' +

@@ -534,41 +534,41 @@ Tier 2 of the declared set.
 | 290 | `MidnightLedger` | `export class MidnightLedger implements Ledger` |
 | 2115 | `UndecodedLedgerField` | `export class UndecodedLedgerField extends Error` |
 | 2209 | `MidnightProofSystem` | `export class MidnightProofSystem implements ProofSystem` |
-| 2392 | `AuthorityShape` | `export type AuthorityShape = 'anyone' \| 'no-one' \| 'one-key' \| 'committee';` |
-| 2398 | `OnChainAuthority` | `export interface OnChainAuthority` |
-| 2433 | `AuthorityRead` | `export type AuthorityRead` |
-| 2455 | `authorityShapeOf` | `export function authorityShapeOf(` |
-| 2475 | `authorityFromContractState` | `export function authorityFromContractState(` |
-| 2507 | `ContractStateReader` | `export type ContractStateReader = (address: string) => Promise<unknown>;` |
-| 2516 | `readContractAuthority` | `export async function readContractAuthority(` |
-| 2552 | `intendedAuthorityValue` | `export function intendedAuthorityValue(` |
-| 2606 | `AuthorityVerdict` | `export type AuthorityVerdict = 'agree' \| 'disagree' \| 'unknown';` |
-| 2608 | `AuthorityComparison` | `export interface AuthorityComparison` |
-| 2643 | `compareAuthority` | `export function compareAuthority(` |
-| 2828 | `MaintenanceRefusal` | `export interface MaintenanceRefusal` |
-| 2868 | `verifierKeyRefusals` | `export function verifierKeyRefusals(` |
-| 2928 | `authorityValueRefusals` | `export function authorityValueRefusals(` |
-| 3030 | `requireBuildableAuthority` | `export function requireBuildableAuthority(` |
-| 3053 | `MaintenancePlan` | `export type MaintenancePlan` |
-| 3090 | `planAuthorityReplacement` | `export function planAuthorityReplacement(` |
-| 3180 | `MaintenanceEndStateRecord` | `export interface MaintenanceEndStateRecord` |
-| 3217 | `EndStateVerdict` | `export type EndStateVerdict = 'settled' \| 'not-yet' \| 'unexplained' \| 'unknown';` |
-| 3219 | `EndStateCheck` | `export interface EndStateCheck` |
-| 3234 | `checkEndState` | `export function checkEndState(` |
-| 3275 | `MaintenanceSignature` | `export type MaintenanceSignature = AuthorityKey;` |
-| 3290 | `MaintenanceUpdateLike` | `export interface MaintenanceUpdateLike` |
-| 3297 | `MaintenancePrimitives` | `export interface MaintenancePrimitives` |
-| 3313 | `VerifierKeyWrite` | `export interface VerifierKeyWrite` |
-| 3340 | `BuiltMaintenanceInstruction` | `export interface BuiltMaintenanceInstruction` |
-| 3414 | `buildMaintenanceInstruction` | `export function buildMaintenanceInstruction(` |
-| 3513 | `attachMaintenanceSignature` | `export function attachMaintenanceSignature(` |
-| 3547 | `signatureProgress` | `export function signatureProgress(` |
-| 3600 | `OnChainOperation` | `export interface OnChainOperation` |
-| 3607 | `OperationsRead` | `export type OperationsRead` |
-| 3618 | `operationsFromContractState` | `export function operationsFromContractState(` |
-| 3668 | `VerifierKeyVerdict` | `export type VerifierKeyVerdict = 'agree' \| 'disagree' \| 'unknown';` |
-| 3670 | `VerifierKeyComparison` | `export interface VerifierKeyComparison` |
-| 3711 | `compareVerifierKeys` | `export function compareVerifierKeys(` |
+| 2386 | `AuthorityShape` | `export type AuthorityShape = 'anyone' \| 'no-one' \| 'one-key' \| 'committee';` |
+| 2392 | `OnChainAuthority` | `export interface OnChainAuthority` |
+| 2427 | `AuthorityRead` | `export type AuthorityRead` |
+| 2449 | `authorityShapeOf` | `export function authorityShapeOf(` |
+| 2469 | `authorityFromContractState` | `export function authorityFromContractState(` |
+| 2501 | `ContractStateReader` | `export type ContractStateReader = (address: string) => Promise<unknown>;` |
+| 2510 | `readContractAuthority` | `export async function readContractAuthority(` |
+| 2546 | `intendedAuthorityValue` | `export function intendedAuthorityValue(` |
+| 2600 | `AuthorityVerdict` | `export type AuthorityVerdict = 'agree' \| 'disagree' \| 'unknown';` |
+| 2602 | `AuthorityComparison` | `export interface AuthorityComparison` |
+| 2637 | `compareAuthority` | `export function compareAuthority(` |
+| 2822 | `MaintenanceRefusal` | `export interface MaintenanceRefusal` |
+| 2862 | `verifierKeyRefusals` | `export function verifierKeyRefusals(` |
+| 2922 | `authorityValueRefusals` | `export function authorityValueRefusals(` |
+| 3024 | `requireBuildableAuthority` | `export function requireBuildableAuthority(` |
+| 3047 | `MaintenancePlan` | `export type MaintenancePlan` |
+| 3084 | `planAuthorityReplacement` | `export function planAuthorityReplacement(` |
+| 3174 | `MaintenanceEndStateRecord` | `export interface MaintenanceEndStateRecord` |
+| 3211 | `EndStateVerdict` | `export type EndStateVerdict = 'settled' \| 'not-yet' \| 'unexplained' \| 'unknown';` |
+| 3213 | `EndStateCheck` | `export interface EndStateCheck` |
+| 3228 | `checkEndState` | `export function checkEndState(` |
+| 3269 | `MaintenanceSignature` | `export type MaintenanceSignature = AuthorityKey;` |
+| 3284 | `MaintenanceUpdateLike` | `export interface MaintenanceUpdateLike` |
+| 3291 | `MaintenancePrimitives` | `export interface MaintenancePrimitives` |
+| 3307 | `VerifierKeyWrite` | `export interface VerifierKeyWrite` |
+| 3334 | `BuiltMaintenanceInstruction` | `export interface BuiltMaintenanceInstruction` |
+| 3408 | `buildMaintenanceInstruction` | `export function buildMaintenanceInstruction(` |
+| 3507 | `attachMaintenanceSignature` | `export function attachMaintenanceSignature(` |
+| 3541 | `signatureProgress` | `export function signatureProgress(` |
+| 3594 | `OnChainOperation` | `export interface OnChainOperation` |
+| 3601 | `OperationsRead` | `export type OperationsRead` |
+| 3612 | `operationsFromContractState` | `export function operationsFromContractState(` |
+| 3662 | `VerifierKeyVerdict` | `export type VerifierKeyVerdict = 'agree' \| 'disagree' \| 'unknown';` |
+| 3664 | `VerifierKeyComparison` | `export interface VerifierKeyComparison` |
+| 3705 | `compareVerifierKeys` | `export function compareVerifierKeys(` |
 
 ### `src/midnight/ledger.ts` — what it refuses
 
@@ -613,13 +613,13 @@ Tier 2 of the declared set.
 | 2214 | throw | no Compact circuit for "[value]" yet |
 | 2215 | throw | not implemented: requires the proof server at |
 | 2219 | throw | not implemented: verification happens on chain |
-| 2572 | throw | a maintenance authority at threshold [value] is not a committee. Set the threshold to at least one and no more than the number of keys in the committee. A threshold ABOVE the committee size is the unmaintainable state — say { kind: "unmaintainable" } deliberately if that is the intent, rather than reaching it by arithmetic. A threshold BELOW one is WORLD-WRITABLE, not unmaintainable: MEASURED on `@midnightntwrk/ledger-v9@1.0.0-rc.3`, a maintenance update carrying NO SIGNATURES AT ALL is well-formed against an authority at threshold zero, so anybody at all could replace this contract's verifier keys while holding nothing. Committee membership IS still checked — a signature at an out-of-range seat is refused, and so is a wrong signature at a valid seat — what is missing is any requirement to attach one. This refuses rather than comparing the value against the chain. |
-| 3037 | throw | this maintenance authority will not be built:n - [[value]] [value]n |
-| 3426 | throw | this plan carries no on-chain authority, so there is nothing to say who must sign the update it describes. A `build` plan always carries one; a plan that does not is a defect in this module rather than a fact about the contract, and building anyway would produce an instruction nobody can be told how to sign. |
-| 3440 | throw | these verifier-key writes will not be built:n - [[value]] [value]n |
-| 3520 | throw | seat [value] is not a seat on the committee that currently maintains [value]: it holds [value] seat(s), numbered 0 to [value]. The signatures on a maintenance update are checked against the CURRENT committee, not the one being installed. |
-| 3528 | throw | seat [value] has already signed this update. A second signature at the same index is refused by the chain as a malformed transaction, and attaching it here would waste a submission rather than add a vote. |
-| 3536 | throw | this signature does not verify against the key in seat [value] of [value]'s current committee. Either it was made by a different key, or it was made over different data — a signature is bound to (contract address, exact update list, counter), so one collected for another contract, or before the counter moved, is dead. |
+| 2566 | throw | a maintenance authority at threshold [value] is not a committee. Set the threshold to at least one and no more than the number of keys in the committee. A threshold ABOVE the committee size is the unmaintainable state — say { kind: "unmaintainable" } deliberately if that is the intent, rather than reaching it by arithmetic. A threshold BELOW one is WORLD-WRITABLE, not unmaintainable: MEASURED on `@midnightntwrk/ledger-v9@1.0.0-rc.3`, a maintenance update carrying NO SIGNATURES AT ALL is well-formed against an authority at threshold zero, so anybody at all could replace this contract's verifier keys while holding nothing. Committee membership IS still checked — a signature at an out-of-range seat is refused, and so is a wrong signature at a valid seat — what is missing is any requirement to attach one. This refuses rather than comparing the value against the chain. |
+| 3031 | throw | this maintenance authority will not be built:n - [[value]] [value]n |
+| 3420 | throw | this plan carries no on-chain authority, so there is nothing to say who must sign the update it describes. A `build` plan always carries one; a plan that does not is a defect in this module rather than a fact about the contract, and building anyway would produce an instruction nobody can be told how to sign. |
+| 3434 | throw | these verifier-key writes will not be built:n - [[value]] [value]n |
+| 3514 | throw | seat [value] is not a seat on the committee that currently maintains [value]: it holds [value] seat(s), numbered 0 to [value]. The signatures on a maintenance update are checked against the CURRENT committee, not the one being installed. |
+| 3522 | throw | seat [value] has already signed this update. A second signature at the same index is refused by the chain as a malformed transaction, and attaching it here would waste a submission rather than add a vote. |
+| 3530 | throw | this signature does not verify against the key in seat [value] of [value]'s current committee. Either it was made by a different key, or it was made over different data — a signature is bound to (contract address, exact update list, counter), so one collected for another contract, or before the counter moved, is dead. |
 
 ### `src/midnight/ledger.ts` — where a width is fixed
 
@@ -627,9 +627,9 @@ Tier 2 of the declared set.
 |---|---|---|
 | 539 | `randomBytes(32)` | a fixed-width random draw |
 | 1528 | `.slice(0, 12)` | a fixed-width slice |
-| 2463 | `.length === 1` | a width compared |
-| 3477 | `.slice(0, 8)` | a fixed-width slice |
-| 3723 | `.slice(0, 8)` | a fixed-width slice |
+| 2457 | `.length === 1` | a width compared |
+| 3471 | `.slice(0, 8)` | a fixed-width slice |
+| 3717 | `.slice(0, 8)` | a fixed-width slice |
 
 ## `src/midnight/vault-ledger.ts`
 
@@ -856,4 +856,4 @@ Tier 2 of the declared set.
 
 *No width here matches the shapes above.* A width this module works to may
 arrive in a variable, and this list sees only a number or a capitalised constant.
-<!-- GENERATED:END id="modules" body="3d2f0475046bafd4" -->
+<!-- GENERATED:END id="modules" body="0f69ac63cbdfcd1c" -->

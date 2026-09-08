@@ -76,48 +76,39 @@ fi
 
 say "Compact toolchain"
 
+# THE DEVTOOLS WRAPPER IS NOT INSTALLED HERE EITHER, AND FOR A SHARPER REASON
+# THAN THE COMPILER BELOW: it was fetched from `latest`, which is not a pin at
+# all, so what a stranger got depended on the day they ran this. Nothing in this
+# repository calls it - every build step finds the compiler through
+# `COMPACT_HOME` or `scripts/find-compactc.sh` - so it was installing an
+# unpinned tool that nothing here uses.
 if command -v compact >/dev/null 2>&1; then
-  note "devtools present: $(compact --version)"
-else
-  note "installing devtools"
-  curl --proto '=https' --tlsv1.2 -LsSf \
-    https://github.com/midnightntwrk/compact/releases/latest/download/compact-installer.sh | sh
-  export PATH="$HOME/.local/bin:$HOME/.compact/bin:$PATH"
+  note "devtools present: $(compact --version), and nothing here uses them"
 fi
 
-# The normal path. It queries the GitHub API, which is fine on a laptop and
-# blocked in some CI and sandbox environments, hence the fallback below.
-if compact update 2>/dev/null; then
-  note "compiler installed via devtools"
+# THE COMPILER IS NOT INSTALLED HERE ANY MORE, AND THAT IS THE FIX RATHER THAN
+# THE OMISSION.
+#
+# This block used to download a compiler of its own: a version pinned here, from
+# a publisher named here, unpacked to a path computed here. Three separate files
+# then declared which compiler this repository is built with, they disagreed, and
+# the one a reader was sent to - this one - installed a version the build script
+# refused. Somebody following the instructions could not build.
+#
+# `.github/checks/toolchain.mjs` is the single declaration now, and
+# `.github/checks/fetch-compiler.mjs` installs exactly what it names. Both ship,
+# both run on every push, so the path a stranger is sent down is the path proven
+# on a machine that has never built this before - and it covers one more kind of
+# machine than the block that was here.
+say "Compiler"
+note "installing the pinned compiler with the program the checks use"
+if node "$(dirname "${BASH_SOURCE[0]}")/../.github/checks/fetch-compiler.mjs"; then
+  note "compiler ready"
 else
-  note "devtools update failed (usually GitHub API rate limiting)"
-  note "falling back to a direct release download"
-
-  case "$(uname -s)-$(uname -m)" in
-    Darwin-arm64)  PLAT=aarch64-darwin ;;
-    Darwin-x86_64) PLAT=x86_64-darwin ;;
-    Linux-x86_64)  PLAT=x86_64-unknown-linux-musl ;;
-    *) echo "unsupported platform: $(uname -s)-$(uname -m)"; exit 1 ;;
-  esac
-
-  # Pin deliberately. The language version the compiler accepts is not the same
-  # number as the toolchain version, and a mismatch fails with an unhelpful
-  # "language version X mismatch". Toolchain 0.31.1 speaks language 0.23.0,
-  # which is what contracts/src is written against.
-  V="${COMPACTC_VERSION:-0.31.1}"
-  URL="https://github.com/midnightntwrk/compact/releases/download/compactc-v$V/compactc_v${V}_${PLAT}.zip"
-
-  TARGET="$HOME/.compact/versions/$V/$PLAT"
-  mkdir -p "$TARGET"
-  note "downloading compactc $V for $PLAT"
-  curl -sL -o "$TARGET/c.zip" "$URL"
-  unzip -oq "$TARGET/c.zip" -d "$TARGET"
-  rm "$TARGET/c.zip"
-  chmod +x "$TARGET"/* 2>/dev/null || true
-
-  say "Add this to your shell profile"
-  echo "  export COMPACT_HOME=\"$TARGET\""
-  echo "  export PATH=\"\$COMPACT_HOME:\$PATH\""
+  echo ""
+  echo "  THE COMPILER WAS NOT INSTALLED, and its own words are above."
+  echo "  Nothing else here depends on it, so the source clone below is unaffected."
+  echo ""
 fi
 
 # ---------------------------------------------------------------- verify

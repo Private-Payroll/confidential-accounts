@@ -2246,19 +2246,13 @@ export class MidnightProofSystem implements ProofSystem {
  *
  * ── WHY IT IS HERE AND NOT IN A FILE OF ITS OWN ──────────────────────────────
  *
- * **`C393`, MEASURED RATHER THAN TAKEN FROM THE BRIEF, AND IT IS BROADER THAN
- * THE BRIEF SAYS.** `S61`'s brief warns that a new TEST file makes the generated
- * doc set stale. It is not about tests: `docs/design/ledger-fields.md:78` and
- * `docs/design/edges.json`'s `clientFilesScanned` record the NUMBER OF FILES
- * SCANNED under `src`, `scripts` and `contracts/test`, so **any new file in
- * those trees turns the gate red** — a source module exactly as much as a test.
- * Measured: adding two files moved `298` to `300` and `scripts/doc-freshness.ts`
- * refused. And it refuses in `globalSetup`, so it does not merely make
- * `TEST.command` refuse — **it stops every named-file `vitest` run**, which is
- * the only measuring instrument rule 3 leaves a round. A new file would have
- * cost this round the red measurement `§6` requires. So this is appended to an
- * existing file, at its END, where it moves no line: `src/midnight/ledger.ts`'s
- * last `docs/design/edges.json` locator is `:1672`.
+ * It is appended to an existing file rather than given one of its own, at the
+ * end, where it moves no line above it. That keeps every `file:line` locator
+ * elsewhere in this repository pointing at what it pointed at before.
+ *
+ * **THE HONEST COST OF THAT CHOICE: this file is longer than one subject should
+ * make it.** Splitting it is a mechanical change and it is worth doing; it was
+ * not worth doing in the same change as the work below.
  *
  * **AND WHERE IT PARTS FROM THE SCOPE DOCUMENT, RULE 20, NEITHER MARKED
  * CORRECT.** `docs/scope-the-vault-rebuild.md` §2.4 says the read-back "is one

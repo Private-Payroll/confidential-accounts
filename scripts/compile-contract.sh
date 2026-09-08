@@ -50,7 +50,21 @@ export PATH="$REAL:$PATH"
 # it here costs nothing and says it in the right place.
 #
 # Override with COMPACT_EXPECTED_VERSION= to build with something else on purpose.
-EXPECTED="${COMPACT_EXPECTED_VERSION-0.33.0}"
+#
+# THE NUMBER IS NOT WRITTEN HERE. It is read from `.github/checks/toolchain.mjs`,
+# which is the single place this repository declares which compiler it is built
+# with, and which the automated checks fetch from on every push. It used to be
+# repeated here, and a repeated fact is a fact that drifts: for three days this
+# file demanded one version while the script a reader was sent to installed a
+# different one from a different publisher, and the build refused what the
+# instructions produced.
+PIN_FILE="$ROOT/.github/checks/toolchain.mjs"
+EXPECTED="${COMPACT_EXPECTED_VERSION-$(node -e "import('file://$PIN_FILE').then(m=>process.stdout.write(m.COMPACTC_REPORTS))" 2>/dev/null)}"
+if [ -z "$EXPECTED" ] && [ -z "${COMPACT_EXPECTED_VERSION+x}" ]; then
+  echo "  COULD NOT READ THE PINNED COMPILER VERSION from .github/checks/toolchain.mjs." >&2
+  echo "  That file is where it is declared. Nothing has been compiled." >&2
+  exit 2
+fi
 ACTUAL="$("$COMPACTC" --version 2>/dev/null)"
 if [ -n "$EXPECTED" ] && [ "${ACTUAL#*$EXPECTED}" = "$ACTUAL" ]; then
   cat >&2 <<EOF
