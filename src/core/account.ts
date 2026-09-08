@@ -429,7 +429,7 @@ export function evaluatePolicy(
    * **THE ESCALATION FIGURE IS GONE FROM THE TYPE AS WELL AS FROM HERE.** `R5`,
    * `R4` deleted the evaluation and kept the field; this round
    * deleted the field, and the argument is in `Policy`'s own comment in
-   * `core/types.ts` and at length in `docs/build-log.md`.
+   * `core/types.ts`, with the short form immediately below.
    *
    * The short of it: the one meaning on offer was *"above this amount use the
    * account's threshold rather than the vault's lower one"*, and NOTHING ON
@@ -3327,8 +3327,8 @@ export class AccountService {
      * **`count` IS CAPPED WITH THE LIST, AND THE TYPE NOW SAYS SO.** The
      * increment below is past this return, so `count` freezes at
      * `REFUSED_APPROVALS_KEPT`. It has always meant *recorded*, never *made*;
-     * `src/core/types.ts` said the opposite until `S58` and
-     * `docs/corrections.md` carries that.
+     * `src/core/types.ts` said the opposite until `S58`, and the sentence
+     * there now says what this one does.
      */
     if (before.recent.length >= REFUSED_APPROVALS_KEPT) {
       return new Error(

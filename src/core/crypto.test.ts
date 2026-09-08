@@ -70,7 +70,7 @@ import type { Hex, Sealed } from './crypto.js';
  * reproduce under OpenSSL"*. **That was false, and this round's own
  * test-coverage pass demonstrated it**: TEST 1 reproduces exactly, and what did not
  * reproduce was `S46`'s transcription of its SEED — the last eight bytes were
- * wrong. `docs/corrections.md`, rule 26. **A sentence saying a published
+ * wrong. **A sentence saying a published
  * standard's test vector is untrustworthy is the worst thing to leave in the
  * file future rounds will read for what a known-answer vector means here**, so
  * it is written out rather than quietly deleted. TEST 2 is what is used and it

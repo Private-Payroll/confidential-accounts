@@ -758,7 +758,7 @@ describe('C375/S48: a run cannot be raised at the no-vault sentinel', () => {
  * checks the length before the circuit runs — `recordPayment`'s at
  * `contracts/managed/contract/index.js:610` — so the run cannot be raised and
  * could not be claimed if it were. The last test below pins that, and
- * `docs/corrections.md` carries the correction.
+ * the *quiet half* is a state this system cannot reach.
  *
  * ── SO WHAT IS THIS BLOCK ACTUALLY GUARDING ──────────────────────────────
  *

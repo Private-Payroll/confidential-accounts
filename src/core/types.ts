@@ -236,7 +236,7 @@ export type PerAsset<T> = Partial<Record<AssetId, T>>;
  * above this, the full threshold applies"*. Its only ever effect was to cancel
  * the exception above it, so deleting that one left it expressing nothing — a
  * setting a company could set, believe, and be wrong about. **The argument for
- * deleting rather than redefining it is in `docs/build-log.md` under `R5`**,
+ * deleting rather than redefining it was `R5`'s**,
  * and it is short: the meaning on offer was *"above this amount use the
  * account's threshold rather than the vault's lower one"*, which is a rule
  * NOTHING ON CHAIN WOULD ENFORCE. The contract's `thresholdFor` is
@@ -251,8 +251,8 @@ export type PerAsset<T> = Partial<Record<AssetId, T>>;
  * identifier appears nowhere under `src/`, and `R5` owes the same for the
  * second; a tombstone carrying either would be indistinguishable from a
  * survivor to the check and to anyone running it later. The names, the
- * arguments and the deletions are in `docs/build-log.md`,
- * `docs/scope-the-real-chain.md` §4.2–4.3 and `docs/how-money-can-be-lost.md`
+ * arguments and the deletions are recorded off this tree. A file that ships
+ * may carry neither identifier, not even as a tombstone.
  *
  */
 export interface Policy {
@@ -1196,7 +1196,7 @@ export interface Attestation {
  * approval history `cancel` erases on purpose. `BACKLOG.md` `T-319`.
  *
  * **BOUNDED, BECAUSE A MEMBER CAN CAUSE THESE — AND BOTH FIELDS ARE BOUNDED,
- * WHICH THIS SENTENCE DENIED UNTIL `S58`.** `T-335`(3), `docs/corrections.md`.
+ * WHICH THIS SENTENCE DENIED UNTIL `S58`.** `T-335`(3).
  * It said *`count` is every attempt ever refused against this round*, and that
  * is FALSE at source: `refuseApproval` returns at `REFUSED_APPROVALS_KEPT`
  * without writing, and the increment sits past that return, so **`count`
@@ -1305,7 +1305,7 @@ export interface Proposal {
    * — but it is a behaviour change nobody has decided, so it is written here
    * rather than discovered. `BACKLOG.md` `T-349`, register `C125`.
    * **THE ROW NUMBER WAS `T-346` HERE UNTIL `S67` CHECKED IT: that row is about
-   * `docs/BUILD-ORDER.md`'s file counts and has nothing to do with this. Rule 45
+   * file counts elsewhere and has nothing to do with this. Rule 45
    * exists so a fix round reads the finding FIRST HAND, and a wrong row number
    * is the one defect that defeats it silently — the reader arrives somewhere
    * plausible and never learns they are in the wrong place.**

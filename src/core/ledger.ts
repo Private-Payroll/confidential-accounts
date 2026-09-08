@@ -339,7 +339,7 @@ export interface LedgerStatus {
    * a `Set<Bytes<32>>` of payee leaves).
    *
    * **IT IS HERE FOR ONE NAMED CONSUMER AND THAT CONSUMER IS NOT BUILT.**
-   * `docs/accepted-risks.md` §1 is a ruling — *accept and detect* — and the
+   * The accepted position is *accept and detect*, and the
    * detector it owes compares Σ`payments` across the account's vaults
    * against this number. **`SC10` measured that neither this field nor
    * `retiredVaults` below was on this boundary, so the detector could not have
@@ -357,7 +357,8 @@ export interface LedgerStatus {
    * than assumed.**
    *
    * **`SimulatedLedger` ANSWERS 0 FOR EVER AND SAYS SO**: nothing in that class
-   * writes `movements` — `settleRound` was its only writer and went with
+   * writes `movements` — `settleRound` was its only writer and went with the
+   * balance ledger it belonged to.
    * So this field is real on the Midnight side and a constant on the
    * simulated one, which is `LedgerStatus.assets`' shape and is named here so
    * nobody reads a zero as evidence. The product runs the simulated wiring
@@ -377,14 +378,14 @@ export interface LedgerStatus {
    * retired* would be answering a question the chain does not hold.
    *
    * **THE PAIR WITH `movementCount` IS THE POINT, NOT EITHER ALONE.**
-   * `docs/accepted-risks.md` §1's detector needs the account's vault list from
+   * The accepted *accept and detect* position's detector needs the vault list from
    * the PRODUCT's own record rather than from the contract's `vaults` set —
-   * because §2 of that same file permits `vaults` to lose precisely the funded
+   * because a second accepted position permits `vaults` to lose precisely the funded
    * vault that is still paying out — and it needs to know which of those the
    * account has retired. This field answers the second half. **It does not
    * answer the first, and `vaults` is deliberately still not on this boundary:
-   * putting it here would invite exactly the naive detector §1 was corrected to
-   * forbid.**
+   * putting it here would invite exactly the naive detector the accepted
+   * position was corrected to forbid.**
    *
    * **`SimulatedLedger` ANSWERS `[]` FOR EVER**: that class models no
    * retirement of any kind — there is no `retireVault` on the `Ledger`
@@ -1328,7 +1329,7 @@ export class SimulatedLedger implements Ledger {
        * implementations answer in — the same reason `assets` is `[]` above —
        * and the interface's own comments say which side is real. **A reader
        * that treats a 0 here as "no payments have completed" is reading a
-       * simulator, and `docs/accepted-risks.md` §1's detector must not be
+       * simulator, and the *accept and detect* detector must not be
        * pointed at this class.**
        */
       movementCount: a.movements.size,

@@ -2,7 +2,7 @@
  * THE SUITE REFUSES TO RUN AGAINST A GENERATED DOCUMENT THAT NO LONGER
  * DESCRIBES THE CONTRACT IT WAS GENERATED FROM.
  *
- * `docs/the-doc-set.md` §2 states the principle this exists to serve: *make
+ * The principle this exists to serve is *make
  * staleness impossible, not a discipline.* Every document in this repository
  * that a human typed and a human had to remember to update has gone stale —
  * board rows went stale twice on 1 Sep alone, each time after a ruling that

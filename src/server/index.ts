@@ -237,7 +237,7 @@ const identity = new IdentityService(store, sessions);
  * name and restarting restores every account exactly as it was. **Whether a
  * server with no way in should refuse to boot the way a missing `DATABASE_URL`
  * does is a decision, not a tidy-up**, and it is reported in
- * `docs/build-log.md` rather than taken quietly inside a deletion round.
+ * full here rather than taken quietly inside a deletion round.
  *
  * The failure is still LOUD and still at the route: the two wallet routes
  * answer with the reason, in full, rather than with a generic error, and the

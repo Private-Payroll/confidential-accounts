@@ -34,7 +34,7 @@
  * second reference used to be minted.
  *
  * **WHY THIS IS A HARNESS AT ALL.** The FIVE THIS FILE STARTED WITH were each
- * performed by hand, watched once, and quoted in `docs/build-log.md` — `R4`'s
+ * performed by hand, watched once, and written down off this tree — `R4`'s
  * three under VERIFIED, and `R2`'s and `R3`'s allow-list control, which each ran
  * in a throwaway replication OUTSIDE the working tree. **A proof watched once
  * has no alarm.** (**The count below is not five and this sentence used to read

@@ -1,4 +1,4 @@
-pragma language_version 0.25;
+pragma language_version 0.26.0;
 import CompactStandardLibrary;
 export ledger f0: Uint<64>;
 export ledger f1: Uint<64>;

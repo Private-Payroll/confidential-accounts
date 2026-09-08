@@ -74,9 +74,10 @@ if [ -n "$EXPECTED" ] && [ "${ACTUAL#*$EXPECTED}" = "$ACTUAL" ]; then
       $ACTUAL
       $COMPACTC
 
-  The Stagenet stack needs 0.33.0-rc.2; compiling with an older compiler
-  produces a contract the 0.18 runtime refuses to load, and you will not find
-  out until a test or a deploy runs.
+  Compiling with a different compiler produces a contract the installed runtime
+  refuses to load, and you will not find out until a test or a deploy runs. The
+  version above is read from .github/checks/toolchain.mjs, which is where this
+  repository declares it.
 
   Install the right one, or set COMPACT_EXPECTED_VERSION= to build anyway.
 
@@ -86,8 +87,8 @@ fi
 
 # ZKIR v3, off by default and deliberately explicit.
 #
-# compactc 0.33.0-rc.2 ships two backends side by side — `zkir` and `zkir-v3` —
-# and `--feature-zkir-v3` chooses. It is not a free choice: every major ZKIR
+# The compiler ships two backends side by side — `zkir` and `zkir-v3` — and
+# `--feature-zkir-v3` chooses between them. It is not a free choice: every major ZKIR
 # release changes the format, verifier keys carry a versioned header
 # (verifier-key[v6], [v7]), and a proof server that does not handle that header
 # rejects the proof. The Q2 document says contracts built with the flag require

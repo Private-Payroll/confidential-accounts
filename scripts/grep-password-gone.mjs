@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 /**
- * **THE PASSWORD IS NOT LEFT ANYWHERE IN `src/`.** `docs/ROUND-PI4b.md`,
+ * **THE PASSWORD IS NOT LEFT ANYWHERE IN `src/`.** That is the property this
+ * file holds, and `C129` is what it would cost to lose it.
  *
  *
- * `scripts/grep-deleted-systems.mjs` for the round that followed it, and its
+ * See `scripts/grep-deleted-systems.mjs` for the round that followed it, and its
  * two rules are this file's rules:
  *
  * **COMMENTS MAY NAME WHAT USED TO BE THERE. CODE MAY NOT.** Several comments

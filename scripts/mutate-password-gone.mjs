@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * MUTATING THE PASSWORD BACK IN. `docs/ROUND-PI4b.md`,
- * `docs/how-money-can-be-lost.md` `C129`.
+ * MUTATING THE PASSWORD BACK IN. This harness puts it back so the
+ * guard next door can be watched failing. `C129`.
  *
  * The harness `scripts/mutate-deleted-systems.mjs` built for `PI4a`, aimed at
  * the round that finished what it started: **a deletion leaves no code to fail

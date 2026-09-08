@@ -44,7 +44,7 @@ of what is actually public belongs in `docs/design/privacy.md` and is not this.
 
 ## ConfidentialAccount
 
-`contracts/src/ConfidentialAccount.compact` → `contracts/managed/contract/index.js` · compactc 0.33.0 · language 0.25.0 · runtime 0.18.0-rc.1
+`contracts/src/ConfidentialAccount.compact` → `contracts/managed/contract/index.js` · compactc 0.34.0 · language 0.26.0 · runtime 0.19.0
 
 | circuit | kind | reads | writes | asserts | discloses | calls |
 |---|---|---|---|---|---|---|
@@ -654,7 +654,7 @@ retireVault(proposal: Bytes<32>, vault: Bytes<32>, salt: Bytes<32>): []
 
 ## Vault
 
-`contracts/src/Vault.compact` → `contracts/managed-vault/contract/index.js` · compactc 0.33.0 · language 0.25.0 · runtime 0.18.0-rc.1
+`contracts/src/Vault.compact` → `contracts/managed-vault/contract/index.js` · compactc 0.34.0 · language 0.26.0 · runtime 0.19.0
 
 | circuit | kind | reads | writes | asserts | discloses | calls |
 |---|---|---|---|---|---|---|
@@ -914,4 +914,4 @@ retire(proposal: Bytes<32>, salt: Bytes<32>): []
     - `contracts/src/Vault.compact:1176` — `proposal`
     - `contracts/src/Vault.compact:1183` — `kernel.self().bytes`
     - `contracts/src/Vault.compact:1184` — `salt`
-<!-- GENERATED:END id="circuits" body="a77bd582221a9827" -->
+<!-- GENERATED:END id="circuits" body="2894ec404c2d2e66" -->
