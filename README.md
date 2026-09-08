@@ -51,9 +51,9 @@ found real bugs.
 
 | Layer                        | State                                                                  |
 | ---------------------------- | ---------------------------------------------------------------------- |
-| Cryptography                 | Real. ed25519, x25519, AES-256-GCM, argon2id, all `@noble`              |
+| Cryptography                 | Real. ed25519, x25519, AES-256-GCM, all `@noble`. Passkeys via WebAuthn |
 | Account, policy, payroll     | Real                                                                    |
-| Identity and multi-tenancy   | Real. The password never reaches the server                             |
+| Identity and multi-tenancy   | Real. A wallet signs in. There is no password, anywhere                 |
 | Key custody                  | Real. `packages/identity` derives and holds them; see its `SECURITY.md` |
 | Wallet application           | Real. `apps/wallet`                                                     |
 | Contracts                    | Two. The account and the vault. Both compile; their circuits are tested |
@@ -113,7 +113,7 @@ contracts/     Compact source. The account and the vault
 src/core/      isomorphic. runs identically on a server and in a browser
   crypto.ts    the part that does not change when we move to Midnight
   ledger.ts    THE BOUNDARY. Ledger and ProofSystem interfaces
-  identity.ts  argon2id, zero-knowledge-of-password auth
+  identity.ts  sessions and the sealed bundle the server cannot open
   account.ts   signers, policy, proposals, approvals, membership
   payroll.ts   roster, runs, per-employee sealed payslips
   plugins.ts   capability tokens. propose-never-execute
@@ -179,14 +179,16 @@ docker run -p 6301:6300 midnightntwrk/proof-server:9.0.0-rc.3 midnight-proof-ser
 
 Not style preferences. Breaking one turns this into a normal SaaS app that mentions a blockchain.
 
-- **The server never holds anything that decrypts.** No viewing keys, no signer secrets, no passwords.
+- **The server never holds anything that decrypts.** No viewing keys, no signer secrets, and no
+  password to hold: a wallet signs in, and the key that unseals a person's keyring is made on their
+  own device.
 - **`core/` stays isomorphic.** No `node:*`, no `Buffer`. The standalone build is the test that it
   still is.
 - **Midnight stays behind `Ledger` and `ProofSystem`.** Nothing above the boundary knows which
   implementation is running.
 - **A plug-in can propose. A plug-in can never execute.** And it never receives the viewing key.
-- **Errors do not leak existence.** A foreign account and a missing account return the same 404. A
-  wrong password and an unknown email return the same message.
+- **Errors do not leak existence.** A foreign account and a missing account return the same 404, so
+  the product cannot be used to find out who its customers are.
 
 ## Next
 
