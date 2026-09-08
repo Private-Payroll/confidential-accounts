@@ -364,8 +364,8 @@ export function parseTestTokenRecord(parsed: any, network: string): {
  * which produced a whole failure mode, a whole exit code and a whole banner
  * for a question that was never open.
  *
- * `docs/handoff/00-START-HERE.md` names not asking whether the platform already
- * does it as the failure this project has paid most for. This is that, caught
+ * Not asking whether the platform already
+ * does it is the failure this project has paid most for. This is that, caught
  * by the platform fact-check pass before the door was ever run.
  *
  * Exported and pure, so every outcome can be driven without a chain.

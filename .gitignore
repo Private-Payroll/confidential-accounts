@@ -451,3 +451,7 @@ scripts/check-shipping-language.test.ts
 scripts/check-shipping-language.rules.cjs
 scripts/prose-edit-guard.mjs
 scripts/prose-edit-guard.test.ts
+scripts/replacement-vocabulary-guard.mjs
+scripts/replacement-vocabulary-guard.test.ts
+scripts/sweep-measure.mjs
+scripts/sweep-measure.test.ts

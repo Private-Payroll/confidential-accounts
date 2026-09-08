@@ -32,8 +32,8 @@
  * both go through `redactSecrets` before anything is written.
  *
  * **THE BROWSER GETS THE RAW SENTENCE AND THE DISK GETS THE REDACTED ONE, AND
- * THIS PARAGRAPH CLAIMED THE OPPOSITE UNTIL `S58`.** `T-326`,
- * `docs/corrections.md`. It said *the same redactor answers the browser in
+ * THIS PARAGRAPH CLAIMED THE OPPOSITE UNTIL `S58`.** `T-326` records it.
+ * The paragraph said *the same redactor answers the browser in
  * `wrap`, so the person's sentence and the line on disk are one string rather
  * than two that can drift*. **`wrap` calls no redactor** — it computes one
  * `reason` and forks it, sending it to the browser untouched

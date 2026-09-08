@@ -216,8 +216,8 @@ describe('the real sources', () => {
     // compiled artifacts contain ZERO occurrences of it against these 68 and 48
     // sites (`scripts/disclose-scan.ts:5-9`, measured again 4 Sep) — SO WHAT IS
     // PUBLIC IS MEASURED OVER LEDGER WRITES *AND OVER WHAT A TRANSACTION CANNOT
-    // HIDE*, NEVER OVER `disclose()` CALLS (`docs/the-doc-set.md:582`,
-    // `docs/corrections.md:311`; `C356` is what reading it the other way cost).
+    // HIDE*, NEVER OVER `disclose()` CALLS. Reading it the other way is what
+    // `C356` cost.
     // THE SECOND CLAUSE IS THE ONE THAT BITES HERE: a `disclose()` feeding a
     // ledger READ writes no field and still pushes its value into the public
     // transcript VERBATIM. Which is why point 1 above is a measurement over the
@@ -243,7 +243,7 @@ describe('the real sources', () => {
     // publish its value. `docs/design/circuits.md:34-43` says the same in its own
     // words — *"`DISCLOSES` IS NOT A LIST OF WHAT IS PUBLIC, AND MUST NOT BE
     // READ AS ONE"* — and the enumeration that IS that list is `docs/design/
-    // privacy.md`, which does not exist yet (`docs/the-doc-set.md`, `SD4`).
+    // privacy.md`, which does not exist yet.
     // ======================================================================
     const account = scanSourceFile(ROOT, 'contracts/src/ConfidentialAccount.compact');
     const vault = scanSourceFile(ROOT, 'contracts/src/Vault.compact');

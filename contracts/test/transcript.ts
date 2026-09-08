@@ -40,7 +40,18 @@
  * ---
  *
  * **WHAT THIS INSTRUMENT DOES AND DOES NOT CLAIM — READ THIS BEFORE TRUSTING A
- * GREEN RUN.** The long form is `docs/build-log.md`'s `S50` §5.
+ * GREEN RUN.** Four CONCEPTUAL bounds are numbered below. **TWO FURTHER BOUNDS
+ * ARE MECHANICAL AND ARE STATED HERE RATHER THAN NUMBERED, BECAUSE A LIST THAT
+ * LOOKS COMPLETE IS READ AS COMPLETE:** this reads a SIMULATOR and not a chain,
+ * so no proof is made and whether a proof reveals anything the transcript does
+ * not is outside it; and it reads values only from `push`, `popeq` and `idx`
+ * keys, which is every value-carrying position in the `Op` union except the
+ * `addi`/`subi` immediates, and those are compile-time constants.
+ *
+ * **THE WRONG CONCLUSION FROM A GREEN RUN, STATED PLAINLY:** what it earns is
+ * *this transaction does not publish that value, in that encoding, on the
+ * ledger-query channel, in this process* — and a reader who takes it as *this
+ * payment is private* has been told six things the instrument did not check.
  *
  * 1. **It reads ONE transaction's transcript.** Anything a watcher learns by
  *    counting transactions, timing them, or correlating them is outside it.

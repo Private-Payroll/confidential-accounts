@@ -2,7 +2,7 @@
  * THE BLOCK FORMAT IS THE THING THAT MAKES THREE BANDS POSSIBLE, so what it
  * must never do is eat the other two.
  *
- * `docs/the-doc-set.md` §9 puts GENERATED, RULED and NARRATIVE in every design
+ * The design set puts GENERATED, RULED and NARRATIVE in every design
  * document and only the first is machine-written. If a regeneration can drift
  * one byte past its marker, the reasoning a person wrote is gone and nothing
  * says so. So the tests below are mostly about what is left ALONE.

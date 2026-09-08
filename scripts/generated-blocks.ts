@@ -2,7 +2,7 @@
  * A REGION OF A MARKDOWN FILE THAT A PERSON MAY NOT EDIT AND A REGENERATION MAY
  * NOT EAT.
  *
- * `docs/the-doc-set.md` §9 asks for three bands in every design document:
+ * The design set asks for three bands in every design document:
  * GENERATED, RULED and NARRATIVE. Only the first is machine-written, and the
  * whole value of the arrangement is that regenerating it cannot touch the other
  * two. That needs a delimiter, and this repository had none — 176 markdown

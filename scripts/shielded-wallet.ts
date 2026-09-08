@@ -23,7 +23,7 @@
  * WHAT THE PLATFORM ALREADY DOES, READ BEFORE ANY OF THIS WAS WRITTEN
  * ------------------------------------------------------------------
  *
- * `docs/handoff/00-START-HERE.md` names not asking this as the failure this
+ * Not asking this is the failure this
  * project has paid most for, so it was asked first.
  *
  * 1. **THE PREDICATE IS THE PLATFORM'S AND IS NOT REIMPLEMENTED HERE.**
@@ -124,8 +124,8 @@
  *     and no deadline at all. `mint-test-token.ts` already builds the provider
  *     that does the first of these.
  *
- * `docs/handoff/00-START-HERE.md` names not asking whether the platform already
- * does it as the failure this project has paid most for. It was asked about the
+ * Not asking whether the platform already
+ * does it is the failure this project has paid most for. It was asked about the
  * predicate and about the wait. **It was not asked about the replay, and the
  * replay is the part that costs twelve minutes.**
  */

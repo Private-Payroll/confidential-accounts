@@ -160,14 +160,14 @@ const MUTATIONS = [
      *
      * The text this entry named lived inside `seedDemo`'s return object.
      * **`S29` lifted it out into `seededEmployeesForHttp` on 31 Aug** —
-     * `docs/build-log.md:22884`, register `C312` — and nothing re-aimed the
+     * register `C312` — and nothing re-aimed the
      * mutation, so from that day `PAYSLIP-KEY-CHECK` reported
      * `0 survived, 1 not run` on every run **and the only check that a person's
      * wallet words never leave in an HTTP body produced no evidence at all.**
      * The four fields are still listed and still not spread, so there is no
      * reason to think anything was ever wrong — only that nothing was checking.
-     * **`T-285` says the lift was 3 Sep; the build log says 31 Aug and the
-     * build log is the evidence.**
+     * **`T-285` says the lift was 3 Sep. It was 31 Aug, and the row is what is
+     * wrong about it rather than the date.**
      *
      * The `to:` restores exactly the failure `C312`'s positive control was
      * written for: `...e.secret` carries `words` — a string ARRAY, which is why

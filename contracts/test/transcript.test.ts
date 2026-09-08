@@ -254,7 +254,7 @@ describe('S50 §3 — the founder\'s three priorities, over a real cross-contrac
     /*
      * The amount is an argument to `payout` and it is in `PartialProofData.input`
      * in the clear. **`input` IS NOT PUBLIC** — it is the proof's witness, and
-     * `docs/corrections.md` carries the standing form of that distinction. What
+     * a proof witness is not chain data, and that is the standing distinction. What
      * this asserts is the public half: no operation in either contract's
      * transcript carries the number.
      *
@@ -290,7 +290,7 @@ describe('S50 §3 — the founder\'s three priorities, over a real cross-contrac
      * `ConfidentialAccount.compact:1082-1085`, inserted into `movements`.
      * **So anyone who can reconstruct a candidate leaf can confirm from public
      * data that that payment happened, and by design every signer can**
-     * (`docs/accepted-risks.md` §1 rests on that). An instrument that reported
+     * (the accepted privacy position rests on that). An instrument that reported
      * only "the leaf is absent" would be telling the truth and leaving a reader
      * with a false impression, which is what §5 of the build log is about.
      */
@@ -365,7 +365,7 @@ describe('S50 §4 — SC14\'s worked example: what a LEDGER READ does to the tra
    * agree and rule 20 says `SC16` is the source.
    *
    * **`SC16` DID NOT LEAVE `assert(vaults.member(disclose(vault)), …)` OPEN AS
-   * A NEUTRAL ALTERNATIVE.** `docs/build-log.md:28558` §2 is
+   * A NEUTRAL ALTERNATIVE.** The recommendation on record was
    * *"RECOMMENDATION: COMPILE `S48`'s ASSERT AS IT STANDS. BUILD NEITHER HALF
    * OF THE PAIR"*, and its reason is that nothing in this system can satisfy
    * the check: no product code and no door has ever adopted a vault, so the

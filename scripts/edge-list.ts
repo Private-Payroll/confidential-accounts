@@ -4,7 +4,7 @@
  *
  * The doc set needs *what exists*. `SC8` needs *who writes each field and what
  * the payment path reaches*, which is a harder extraction and the one this was
- * built for first (`docs/the-doc-set.md` §2a). A field list without its writers
+ * built for first. A field list without its writers
  * is useless to `SC8` and merely incomplete for the docs.
  *
  * WHY THE TWO COLLISIONS ARE DIFFERENT AND BOTH ARE HERE. `B5` reopens on a

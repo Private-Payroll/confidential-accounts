@@ -168,7 +168,7 @@ describe('§1 — THE DERIVATION IS A PURE FUNCTION OF A WALLET AND A COMPANY', 
      * would break. **It says nothing whatever about WHICH key comes out**, and
      * it stays green while `unlockKeyFor` returns entirely different bytes from
      * the ones every payslip already issued was sealed to. `§1b` is the test
-     * that does not. `C404`, `docs/HANDOFF-SC22.md` §2 `F1`.
+     * that does not. `C404`.
      */
     const words = newWords();
     expect(payslipKeypairForWallet(words, 'a1'.repeat(32), ORIGIN).secret)
@@ -220,8 +220,8 @@ describe('§1 — THE DERIVATION IS A PURE FUNCTION OF A WALLET AND A COMPANY', 
 /* ======================================================================== */
 
 /**
- * **§1b — THE RECORDED DERIVATION VECTOR.** `C404` `P0`, board `D-1f`,
- * `docs/HANDOFF-SC22.md` §2 `F1`.
+ * **§1b — THE RECORDED DERIVATION VECTOR.** `C404` `P0`, board `D-1f`.
+ * The vector it records is the one pinned below.
  *
  * ── WHAT WAS MISSING, AND WHY §1 ABOVE DID NOT COVER IT ───────────────────
  *

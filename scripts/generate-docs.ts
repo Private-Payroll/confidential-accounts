@@ -9,10 +9,10 @@
  * names this door; it never runs anything in this file.
  *
  * WHAT IS NOT WRITTEN HERE. No prose, no narrative, no claim about why anything
- * is built the way it is. `docs/the-doc-set.md` §9 gives every design document
+ * is built the way it is. The design set gives every design document
  * three bands and only the first is machine-written; `docs/design/circuits.md`
  * and `docs/design/ledger-fields.md` are generated REFERENCES rather than
- * documents — nobody opens them to read them, they search them (§4) — and they
+ * documents — nobody opens them to read them, they search them — and they
  * are one band all the way down.
  *
  * WHAT IT NO LONGER WRITES, AND WHY THE REASON IS NOT TIDINESS. There was a

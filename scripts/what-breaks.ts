@@ -2,7 +2,7 @@
  * *"IF I CHANGE `payoutDetails`, WHAT ELSE IS AFFECTED?"*
  *
  * A graph of interconnectedness, so that a change in one place shows its
- * cascade. A DIAGRAM SHOWS THAT; A QUERY ANSWERS IT (`docs/the-doc-set.md` §7).
+ * cascade. A DIAGRAM SHOWS THAT; A QUERY ANSWERS IT.
  * Until this file existed the answer came from somebody's recollection, which is
  * not a thing a money system should rest on.
  *

@@ -26,7 +26,7 @@
  * ---
  *
  * **WHY THE CHECK IS HERE AND NOT AT THE SEAT, WHICH IS WHERE `C325` AND BOARD
- * `2y` BOTH PUT IT.** `docs/corrections.md`, 31 Aug.
+ * `2y` BOTH PUT IT.** Corrected 31 Aug.
  *
  * Both of the register's *Done when* options need the owning device's blinding
  * at the moment of seating, and it is not there and must not be:

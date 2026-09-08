@@ -2,7 +2,7 @@
  * A `file:line` CITATION THAT NO LONGER RESOLVES IS A FALSE CLAIM ABOUT WHERE
  * THE EVIDENCE IS.
  *
- * `docs/the-doc-set.md` §10 accepts the cost knowingly: the design set goes to
+ * The cost is accepted knowingly: the design set goes to
  * GitHub, which makes every sentence in it a public truth claim about a system
  * that holds money, and rule 14 says such a claim is checked when it is
  * WRITTEN. Without a mechanical check the set becomes the largest surface of

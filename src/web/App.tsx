@@ -368,8 +368,8 @@ export default function App({ commitments }: { commitments: CommitmentScheme }) 
        * reach a device: `grantAccess` runs on an existing signer's machine and
        * the invitee's blinding never leaves the invitee's (decision 0003).
        * `src/core/signer-leaf.ts` carries the argument in full, and
-       * `docs/corrections.md` carries the correction to the row that put it at
-       * the seat.
+       * the earlier position that put it at
+       * the seat is corrected.
        *
        * Only `disagrees` refuses. A null leaf and a machine with no key
        * material are two different states with two different remedies, and
