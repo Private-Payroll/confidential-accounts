@@ -2481,8 +2481,7 @@ function Disclosures({ runs, session, busy, act }: {
               <b>Not available yet.</b> This account holds no balance to prove a threshold
               against — it is an authority over a vault, not a holder of money. Proving what a
               vault holds is a different statement over a different commitment, and it is not
-              built. The hint that stood here said &ldquo;try a number above the balance&rdquo;,
-              of an account that has none.
+              built.
             </div>
           </div>
         </div>
