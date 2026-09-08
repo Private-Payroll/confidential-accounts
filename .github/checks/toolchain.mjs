@@ -23,15 +23,20 @@
  */
 
 /** The pinned release. */
-export const COMPACTC_VERSION = '0.33.0-rc.2';
+export const COMPACTC_VERSION = '0.34.0';
 
 /**
- * What the compiler reports when asked. It is not the release name: the
- * candidate suffix is part of how the release is published and not part of what
+ * What the compiler reports when asked. It is not always the release name: a
+ * candidate suffix is part of how a release is published and not part of what
  * the binary calls itself, so the two are written down separately rather than
  * derived from one another and hoped about.
+ *
+ * They are the same string for this release, and that is a measurement rather
+ * than an assumption: the published binary answers `0.34.0` to `--version`.
+ * They stay two constants because the day a candidate is pinned again they
+ * differ again, and a single constant would have to be split under pressure.
  */
-export const COMPACTC_REPORTS = '0.33.0';
+export const COMPACTC_REPORTS = '0.34.0';
 
 const RELEASE = 'https://github.com/LFDT-Minokawa/compact/releases/download';
 

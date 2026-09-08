@@ -34,7 +34,7 @@
   "dependencies": {
     "midnight-identity": "file:./packages/identity",
     "@midnight-ntwrk/compact-js": "2.5.5-rc.6",
-    "@midnight-ntwrk/compact-runtime": "0.18.0-rc.1",
+    "@midnight-ntwrk/compact-runtime": "0.19.0",
     "@midnight-ntwrk/midnight-js-contracts": "5.0.0-beta.4",
     "@midnight-ntwrk/midnight-js-http-client-proof-provider": "5.0.0-beta.4",
     "@midnight-ntwrk/midnight-js-indexer-public-data-provider": "5.0.0-beta.4",
@@ -80,6 +80,7 @@
   },
   "private": true,
   "overrides": {
-    "@midnightntwrk/onchain-runtime-v4": "4.0.0-rc.3"
+    "@midnightntwrk/onchain-runtime-v4": "4.0.0-rc.3",
+    "@midnight-ntwrk/compact-runtime": "0.19.0"
   }
 }
