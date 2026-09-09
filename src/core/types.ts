@@ -2,6 +2,7 @@ import type { Hex, Sealed } from './crypto.js';
 import type { PayoutSeed } from '../midnight/run-keys.js';
 import type { Payee } from '../midnight/payee-address.js';
 import type { PaymentFacts } from '../midnight/payout-tree.js';
+import type { SkipRegister } from '../midnight/run-skips.js';
 
 export type { PayoutSeed };
 import type { AssetId } from './assets.js';
@@ -1162,7 +1163,74 @@ export interface PayrollRun {
    * money.
    */
   payout?: Record<AssetId, RunPayout>;
+  /**
+   * **WHO THIS RUN LEFT OUT ON PURPOSE, AND ON WHOSE SAY-SO.**
+   *
+   * Absent when nobody was, which is every run drawn from a roster on which
+   * nobody is pending. **Absent is not the same as an empty record** and
+   * nothing writes one: a run that left nobody out has no decision to attribute,
+   * and an empty register would be a person's name against nothing.
+   *
+   * **INSIDE THE ENVELOPE, because it is a list of this company's people and
+   * what it says about each of them is that they did not get paid this month.**
+   * That is the staff list's kind of fact, and `run-skips.ts` seals its own
+   * register under the same `payroll` purpose key for the same reason.
+   *
+   * **AND IT IS NOT THE INDEX `runStatus` READS, WHICH IS SAID HERE BECAUSE
+   * THE TYPE IS THE SAME AND THE INDEX BASIS IS NOT.** `RunInputs.skips` is
+   * indexed over a leg's PAYOUT LEAVES and identified by the proposal id the
+   * leg was raised under. This one is indexed over `RunSkips.people` — persons
+   * who have no leaf, because a run cannot pay somebody it has no address for —
+   * and identified by the run's own id. **Handing this one to `runStatus` is
+   * refused rather than misread**: `registerFor` compares both the identity and
+   * the count, and neither matches. Joining the two up is scheduled elsewhere, and
+   * this change does not do it.
+   */
+  skips?: RunSkips;
   settledAt?: string;
+}
+
+/**
+ * **ONE PERSON A RUN DID NOT PAY, AND WHICH OF THE TWO REASONS IT WAS.**
+ *
+ * The name is frozen here rather than looked up later, and that is the same
+ * argument `RunPayout.leaves` is kept for: the roster moves. Somebody admitted
+ * next week, renamed, or withdrawn would be reported under whatever their row
+ * says at reading time, and a report about a payday is about who was left out
+ * THAT day.
+ */
+export interface RunSkip {
+  employeeId: string;
+  name: string;
+  /**
+   * **TWO STATES, NAMED SEPARATELY AND NEVER MERGED.** `A-2`, and it is `B15`'s
+   * lesson: "outstanding" that covers two different situations is how an
+   * operator stops looking.
+   *
+   *   `them`  they have handed nothing over — the invitation is with them
+   *   `us`    their drop box is full and an admin has not admitted them
+   *
+   * **The second is ours to fix and the first is not**, so collapsing them
+   * turns a queue an admin can clear into a queue an admin waits on.
+   */
+  waiting: 'them' | 'us';
+}
+
+/**
+ * **THE RUN'S SKIP RECORD: THE PEOPLE, AND THE DECISION LOG OVER THEM.**
+ *
+ * **THE PAIR IS ONE FIELD BECAUSE EITHER HALF ALONE IS UNREADABLE.** A
+ * `SkipDecision` carries an INDEX and no name — deliberately, because indices
+ * are what a payout tree is addressed by — so the log says who only against a
+ * frozen list. Stored apart, a reader that found one without the other would
+ * have either names with no attribution or attributions with no names, and the
+ * second reads like a record while saying nothing.
+ */
+export interface RunSkips {
+  /** The people left out, in the order `decisions` indexes them. Never reordered. */
+  people: RunSkip[];
+  /** `run-skips.ts`'s own append-only log. Indices are into `people`. */
+  decisions: SkipRegister;
 }
 
 /**

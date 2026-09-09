@@ -1275,11 +1275,55 @@ app.post('/api/people/:id/status', authed, ownsPerson, wrap(async (req, res) => 
   res.json(payroll.setStatus(String(req.params.id), b.status, b.viewingKey));
 }));
 
+/*
+ * **THE ACKNOWLEDGEMENT IS A ROUTE PARAMETER AND NOT A FLAG.**
+ *
+ * A pending employee no longer freezes the whole company's payroll — the run
+ * refuses ONCE, naming who would be left out and which of the two things is
+ * wrong with each, and an admin who has read that may proceed. **What they send
+ * back is the names and a reason**, because the service compares those names
+ * against the people it is actually about: a boolean here would let a client
+ * that never showed a name drop whoever happened to be pending.
+ *
+ * `.optional()` is what makes the default refuse, and it is the whole default:
+ * a body without this field is a body the service will not skip anybody for.
+ *
+ * **AND `by` IS NOT IN THIS SCHEMA, WHICH IS THE POINT OF THIS PARAGRAPH.**
+ * The record this produces is permanent, sealed and append-only, and the one
+ * question it exists to answer is WHO DECIDED not to pay somebody. **A name
+ * taken from the request body answers that question with whatever the caller
+ * typed** — so any member seat could leave people out of payroll and file the
+ * decision under a colleague's name, and the record would be confidently wrong
+ * about the only fact it was built to hold. That is worse than no record.
+ *
+ * So it is taken from the signed-in caller instead. **There is nowhere in this body to
+ * put a name**, which is the same shape as the roster's addresses: a value that
+ * must be somebody's own is not a parameter.
+ *
+ * **THE SERVICE STILL TAKES IT AS A STRING AND MUST**, because it also runs
+ * with no server in front of it and cannot authenticate anybody. This route is
+ * where the string stops being a claim. `proposedBy` on the neighbouring routes
+ * has the older shape and is not this change's to make — reported rather than
+ * swept.
+ */
 app.post('/api/accounts/:id/runs', authed, member, wrap(async (req, res) => {
   const b = z.object({
     period: z.string().min(1), employeeIds: z.array(z.string()).optional(), viewingKey: z.string(),
+    skipPending: z.object({
+      employeeIds: z.array(z.string()),
+      reason: z.string(),
+    }).optional(),
   }).parse(req.body);
-  res.json(await payroll.createRunFromRoster(String(req.params.id), b.period, b.viewingKey, b.employeeIds));
+  const me = identity.user(req.userId!);
+  res.json(await payroll.createRunFromRoster(
+    String(req.params.id), b.period, b.viewingKey, b.employeeIds,
+    /*
+     * `name` is never null on a `User`; `id` is the fallback for a record whose
+     * name is blank, because an attribution nobody can resolve is what `decide`
+     * refuses and a run refused for want of a name would be a worse answer than
+     * an id somebody can look up.
+     */
+    b.skipPending && { ...b.skipPending, by: me.name.trim() || me.id }));
 }));
 
 
