@@ -53,6 +53,14 @@ export type WalletRefusal =
   | { readonly of: 'declined' }
   | { readonly of: 'expired' }
   | { readonly of: 'no-wallet-tab' }
+  /**
+   * The window opened and is not there any more — the person closed it, or
+   * something else did. It is separate from `no-wallet-tab` because the
+   * remedies differ: one is a window that never appeared, this one is a window
+   * that appeared and has gone, and neither is `silent`, which is a window
+   * that is still there and has not spoken.
+   */
+  | { readonly of: 'window-gone' }
   | { readonly of: 'gave-up' }
   | { readonly of: 'silent' };
 
@@ -185,6 +193,44 @@ const featuresFor = (view: Openable): string => {
 export interface WalletDialog {
   /** `null` when the browser would not open it. */
   readonly wallet: WalletWindow | null;
+  /**
+   * **THE WINDOW FOR ONE ASK, WITH A DOCUMENT THAT HAS NOT ANSWERED YET.**
+   *
+   * A dialog outlives a single ask — accepting an invitation drives two
+   * through one window, so that a person meets one wallet with two things in
+   * it. Two things follow, and neither is optional:
+   *
+   *   · **The wallet's channel answers ONE request per load.** A window that
+   *     is merely still on screen has already settled, and a second ask posted
+   *     into it reaches a document that is finished listening. So the window is
+   *     RE-NAVIGATED for every ask after the first, which is what the rising
+   *     number in the URL is for.
+   *   · **A window that has GONE cannot be replaced here.** A browser only
+   *     lets a page open one while it is handling a press, and by this point
+   *     the press is over; opening again is the thing that fails in browsers
+   *     that enforce the rule. So this answers `null` and the ask refuses by
+   *     name, rather than posting into nothing and waiting out its deadline.
+   */
+  take(): WalletWindow | null;
+  /**
+   * **THIS WINDOW IS FOR MORE THAN ONE ASK, SO AN ASK MUST NOT PUT IT AWAY.**
+   *
+   * An ask closes the dialog when it settles, which is right when the ask is
+   * the whole of what the window was opened for. **Accepting an invitation is
+   * not that**: it drives two asks through one window on purpose, and the
+   * first one's success was closing the window the second one was about to
+   * use. A caller that says this owns the window and closes it itself.
+   *
+   * It is said by the CALLER rather than worked out here because only the
+   * caller knows there is a second ask coming, and a window cannot be reopened
+   * once the press that was allowed to open it is over.
+   */
+  moreThanOneAsk(): void;
+  /**
+   * One ask has finished with this window. The dialog closes it unless it was
+   * told there is more to ask.
+   */
+  askEnded(): void;
   /** Close it and refuse whatever is in flight. Safe to call twice. */
   giveUp(): void;
   /** What `askWallet` runs when the person gives up. One at a time. */
@@ -192,7 +238,15 @@ export interface WalletDialog {
 }
 
 export function openWalletDialog(view: Openable, walletOrigin: string): WalletDialog {
-  const wallet = view.open(dialogUrl(walletOrigin), WALLET_DIALOG_NAME, featuresFor(view));
+  /*
+   * **THE HANDLE IS A `let` BECAUSE A RE-NAVIGATION CAN HAND BACK A DIFFERENT
+   * WINDOW.** `view.open` answers with the window the name reached — and a
+   * name whose window has gone reaches nothing, so the browser makes a new
+   * one and returns THAT. Holding the first handle for ever is how a page ends
+   * up talking to a window nobody can see while a second one sits on the
+   * screen with nothing able to close it.
+   */
+  let wallet = view.open(dialogUrl(walletOrigin), WALLET_DIALOG_NAME, featuresFor(view));
   /*
    * ALREADY THERE. When the name matched a window this page had open, the
    * browser handed back that same window rather than a new one — so bring it
@@ -203,17 +257,80 @@ export function openWalletDialog(view: Openable, walletOrigin: string): WalletDi
 
   let over = false;
   let onCancel: (() => void) | null = null;
+  /*
+   * The document this window is showing has not been asked anything yet. It
+   * was just navigated to, one line above, so the first ask may use it as it
+   * stands; every ask after that needs a new one.
+   */
+  let unasked = true;
+  /* Told by the caller, and only ever by the caller. See `moreThanOneAsk`. */
+  let more = false;
+  let shut = false;
+  /* **CLOSING IS SAID ONCE.** Two paths can reach it — an ask settling and the
+   * person giving up — and a `close()` on a window that is already gone is not
+   * an error but is not a second event either. */
+  const closeNow = (): void => {
+    if (shut) return;
+    shut = true;
+    wallet?.close?.();
+  };
   return {
-    wallet: wallet ?? null,
+    get wallet(): WalletWindow | null { return wallet ?? null; },
+    take(): WalletWindow | null {
+      if (!wallet) return null;
+      /* **THE ONE PLACE `closed` IS READ.** It was declared on `WalletWindow`
+       * and never looked at, so a window that had been put away was
+       * indistinguishable here from one waiting to be asked. It is a snapshot
+       * and not a guarantee — the person can close the window in the moment
+       * after it is read, which is why the answer below is taken from
+       * `view.open` rather than assumed. */
+      if (wallet.closed === true) return null;
+      if (!unasked) {
+        /*
+         * Re-navigated rather than merely focused: a hash is not a navigation
+         * and a browser does not reload a window whose URL is unchanged, so
+         * the URL carries a number that goes up. Brought forward too — a
+         * wallet behind the page that asked looks exactly like a page that
+         * did nothing.
+         *
+         * **AND WHAT COMES BACK IS TAKEN RATHER THAN DROPPED**, which is the
+         * difference between this working and this looking as if it works.
+         * `null` is a browser refusing — and a page that then posted into the
+         * document that has already answered would wait out its whole deadline
+         * and say the wallet had not answered, which is the exact failure this
+         * function exists to end. A DIFFERENT window is the person having
+         * closed theirs in the meantime: the browser deregistered the name and
+         * made a fresh one, and adopting it is what stops this dialog closing
+         * a window nobody is looking at while the new one stays on screen for
+         * ever.
+         */
+        const reached = view.open(dialogUrl(walletOrigin), WALLET_DIALOG_NAME, featuresFor(view));
+        if (!reached) return null;
+        wallet = reached;
+        wallet.focus?.();
+      }
+      unasked = false;
+      return wallet;
+    },
+    moreThanOneAsk(): void { more = true; },
+    askEnded(): void {
+      /*
+       * **THE CLOSE THAT USED TO LIVE INSIDE THE ASK.** It read
+       * `wallet.close?.()` at the end of every ask, unconditionally, and for
+       * one ask through one window that is exactly right — a wallet screen
+       * left up after the conversation is over is a screen somebody presses.
+       * What it could not know is whether the window was still wanted.
+       */
+      if (!more) closeNow();
+    },
     giveUp(): void {
       if (over) return;
       over = true;
-      /* **ONE CLOSE, NOT TWO.** When an ask is in flight, `askWallet`'s own
-       * settling is what closes the window — closing it here as well would
-       * put a dialog away twice, and the second is a `close()` on a window
-       * that is already gone. With nothing in flight there is nobody else to
-       * do it. */
-      if (onCancel) onCancel(); else wallet?.close?.();
+      /* Refuse whatever is in flight, then put the window away — in that
+       * order, so the person's refusal is about a window that was still
+       * theirs to close. `closeNow` makes the two paths one close. */
+      onCancel?.();
+      closeNow();
     },
     onGiveUp(run: () => void): void {
       onCancel = run;
@@ -236,6 +353,19 @@ const NO_WINDOW_SAYS =
   + 'Press the button again. A window can only be opened at the moment a button is '
   + 'pressed, so this is something this page has to get right rather than a setting for '
   + 'you to change.';
+
+/**
+ * **WHAT IS SAID WHEN THE WINDOW WAS THERE AND IS NOT.**
+ *
+ * It used to say nothing: the ask posted into a window that had gone, heard
+ * nothing back, and after twenty seconds said *your wallet did not answer, it
+ * may not have finished loading* — which sends somebody to wait longer for a
+ * window that is not coming back. Naming what happened is the difference
+ * between a person pressing the button again and a person watching a clock.
+ */
+const WINDOW_GONE_SAYS =
+  'your wallet window could not be reached, so nothing has been signed and nothing has been '
+  + 'sent. Press the button again — a press is what lets this page open a fresh one.';
 
 const GAVE_UP_SAYS =
   'you stopped waiting for your wallet. Nothing was signed, nothing was released, and '
@@ -290,9 +420,14 @@ export function askWallet(
   dialog: WalletDialog = openWalletDialog(view, walletOrigin),
 ): Promise<unknown> {
   return new Promise<unknown>((resolve, reject) => {
-    const opened = dialog.wallet;
+    const opened = dialog.take();
     if (!opened) {
-      reject(new WalletClosed({ of: 'no-wallet-tab' }, NO_WINDOW_SAYS));
+      /* Two different mornings: a window that never opened is this page having
+       * spent the press before it used it; a window that has gone is a window
+       * the person closed. Neither is the other and neither is a silence. */
+      reject(dialog.wallet
+        ? new WalletClosed({ of: 'window-gone' }, WINDOW_GONE_SAYS)
+        : new WalletClosed({ of: 'no-wallet-tab' }, NO_WINDOW_SAYS));
       return;
     }
     /* Typed rather than narrowed: `onMessage` below is a hoisted declaration
@@ -311,12 +446,16 @@ export function askWallet(
       view.clearTimeout(timer);
       view.removeEventListener('message', onMessage);
       /*
-       * **CLOSED WHEN THE ANSWER ARRIVES OR THE ASK IS REFUSED.** A dialog this
-       * page opened is this page's to put away: leaving it up after the
-       * conversation is over is how a person ends up looking at a wallet
-       * screen that is no longer about anything, and pressing it.
+       * **CLOSED WHEN THE ANSWER ARRIVES OR THE ASK IS REFUSED — IF THIS ASK
+       * IS WHAT THE WINDOW WAS FOR.** A dialog this page opened is this page's
+       * to put away: leaving it up after the conversation is over is how a
+       * person ends up looking at a wallet screen that is no longer about
+       * anything, and pressing it. **But a caller with a second ask coming
+       * says so**, and then the window stays and is that caller's to close —
+       * closing it here is what left an invitee's second ask talking to a
+       * window that had gone.
        */
-      wallet.close?.();
+      dialog.askEnded();
       if (err) reject(err);
     };
 

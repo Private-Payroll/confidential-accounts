@@ -76,26 +76,89 @@ class ARecordingView implements Openable {
    */
   private last: WalletWindow | null = null;
 
+  /**
+   * Every window this view has ever made, closed or not. A dialog that closes
+   * the handle it is holding while a DIFFERENT window of its own is still on
+   * screen is a wallet nobody can put away, and that is only visible against
+   * the whole set rather than against one handle.
+   */
+  readonly made: WalletWindow[] = [];
+
+  /**
+   * **THE BROWSER SAYS NO TO THE NEXT ONE.** A page may only open a window
+   * while it is handling a press, so a window wanted after the press is over
+   * is a window a browser may refuse — `ABlockedView` below models that for
+   * the FIRST open and nothing could model it for a later one.
+   */
+  refuseTheNextOpen = false;
+
+  /**
+   * **WHAT THE PERSON DID WHILE THE PAGE WAS OPENING A WINDOW.** Reading
+   * `closed` and then opening are two steps and a person is not obliged to
+   * wait between them; this is the only way to put a test inside that gap.
+   */
+  duringTheNextOpen: (() => void) | null = null;
+
   open(url: string, target: string, features?: string): WalletWindow | null {
+    const during = this.duringTheNextOpen;
+    this.duringTheNextOpen = null;
+    if (during) during();
+    if (this.refuseTheNextOpen) {
+      this.refuseTheNextOpen = false;
+      this.opened.push({ url, target, features: features ?? '' });
+      this.happened.push(`open ${target} REFUSED`);
+      return null;
+    }
     this.opened.push({ url, target, features: features ?? '' });
     this.happened.push(`open ${target}`);
+    /*
+     * **A NAME REACHES A WINDOW THAT IS STILL THERE, AND A CLOSED ONE IS NOT
+     * THERE.** A browser hands back the window already on screen for a name it
+     * recognises — and once that window has been closed the name reaches
+     * nothing, so opening again makes a NEW one. Modelling only the first half
+     * is what let a journey that talks to a closed window read as a journey
+     * that talks to a window.
+     */
     const existing = this.windows.get(target);
-    if (existing) return existing;
+    if (existing && existing.closed !== true) return existing;
+
+    let gone = false;
     const made: WalletWindow = {
       postMessage: (message: unknown, t: string) => {
+        /*
+         * **A CLOSED WINDOW SWALLOWS IT.** `window.postMessage` on a window
+         * that has been closed is not an error and is not delivered: there is
+         * no document at the other end to receive it. Nothing is recorded here
+         * for the same reason — a message that reached nobody is not a message
+         * this page sent to a wallet.
+         */
+        if (gone) return;
         this.posted.push({ message, target: t });
         if (this.answers) {
           const said = this.answers(message);
-          queueMicrotask(() => this.fromTheWallet(said));
+          queueMicrotask(() => this.fromTheWallet(said, WALLET, made));
         }
       },
       focus: () => { this.focused += 1; },
-      close: () => { this.closed += 1; },
+      /*
+       * **CLOSING IS A STATE AND NOT A TALLY.** This counted and returned, so
+       * every window in this file went on answering after it had been put away
+       * and no test in it could express the one thing that breaks the invitee's
+       * journey. The count is kept because the assertions about *how many
+       * times* a dialog is closed are about a real property; what is added is
+       * that the window is afterwards GONE.
+       */
+      close: () => { gone = true; this.closed += 1; },
+      get closed(): boolean { return gone; },
     };
     this.windows.set(target, made);
+    this.made.push(made);
     this.last = made;
     return made;
   }
+
+  /** Windows this view made that are still on somebody's screen. */
+  stillOpen(): WalletWindow[] { return this.made.filter(w => w.closed !== true); }
 
   addEventListener(_t: 'message', h: (e: MessageEvent) => void): void {
     this.handler = h;
@@ -109,9 +172,33 @@ class ARecordingView implements Openable {
   }
   clearTimeout(id: number): void { this.timers.delete(id); }
 
-  /** A message from the wallet's window, at the wallet's origin. */
-  fromTheWallet(data: unknown, origin = WALLET): void {
-    this.handler?.({ origin, source: this.last, data } as unknown as MessageEvent);
+  /**
+   * **THE DEADLINE, RUN RATHER THAN WAITED FOR.** `setTimeout` above records
+   * and never fires, so a silence this page gives up on after twenty seconds
+   * could not be reached from a test at all — and a silence is exactly what a
+   * closed window produces. This runs whatever is pending, once, so the
+   * refusal a person would read is a value a test can hold.
+   */
+  fireTimers(): void {
+    const due = [...this.timers.entries()];
+    this.timers.clear();
+    for (const [, run] of due) run();
+  }
+
+  /** Is anything still waiting on a deadline? */
+  get waiting(): number { return this.timers.size; }
+
+  /**
+   * A message from the wallet's window, at the wallet's origin.
+   *
+   * **FROM A NAMED WINDOW, BECAUSE `event.source` IS WHAT THE PAGE CHECKS.**
+   * It defaulted to whichever window was opened last, which is right while
+   * there is one; a journey that opens a second window needs to be able to say
+   * which of them spoke, and a CLOSED window must not be able to speak at all.
+   */
+  fromTheWallet(data: unknown, origin = WALLET, from: WalletWindow | null = this.last): void {
+    if (from !== null && from.closed === true) return;
+    this.handler?.({ origin, source: from, data } as unknown as MessageEvent);
   }
 }
 
@@ -332,4 +419,323 @@ describe('§1 — THE PERSON CAN STOP WAITING, AND THE REFUSAL IS NOT BLAME', ()
       expect(refusal!.message).toContain('nothing has been signed');
       expect(refusal!.message).toContain('this page has to get right');
     });
+});
+
+/* ------------------------------------------------------------------------ */
+
+/**
+ * **THE INVITEE'S TWO ASKS, THROUGH ONE WINDOW.**
+ *
+ * Accepting an invitation asks a wallet twice through ONE dialog — the key
+ * that opens this person's payslips, and then which of their own wallets the
+ * company would be paying — because a person should meet one wallet window
+ * with two things in it rather than two windows.
+ *
+ * **NO TEST IN THIS FILE COULD SEE WHETHER THAT WORKED, AND THE REASON WAS IN
+ * THE DOUBLE RATHER THAN IN THE PRODUCT.** `close()` counted and returned, so
+ * every window here went on answering after it had been put away — and putting
+ * the window away when an answer arrives is precisely what the second ask then
+ * runs into. A harness that cannot express a closed window cannot fail on the
+ * one mechanism that breaks this journey, which is why these cases come with
+ * the double's own behaviour pinned beside them.
+ */
+describe('§2 — TWO ASKS THROUGH ONE DIALOG', () => {
+  /** Let queued work run, the way a browser would between two paints. */
+  const flush = (): Promise<void> => new Promise(resolve => { setTimeout(resolve, 0); });
+
+  /**
+   * **WHAT HAPPENED, RATHER THAN WHETHER IT HUNG.** An ask that reaches nothing
+   * does not fail — it waits, and a test that merely awaited it would report a
+   * thirty-second timeout instead of the sentence a person actually reads. So
+   * the deadline is RUN, and what comes back is a value.
+   */
+  async function whatHappened<T>(
+    view: ARecordingView, journey: Promise<T>,
+  ): Promise<
+    | { readonly of: 'answered'; readonly answer: T }
+    | { readonly of: 'refused'; readonly refusal: WalletClosed }
+    | { readonly of: 'never' }
+  > {
+    let seen:
+      | { of: 'answered'; answer: T }
+      | { of: 'refused'; refusal: WalletClosed }
+      | null = null;
+    void journey.then(
+      answer => { seen = { of: 'answered', answer }; },
+      (refusal: WalletClosed) => { seen = { of: 'refused', refusal }; });
+    await flush();
+    if (seen === null) { view.fireTimers(); await flush(); }
+    return seen ?? { of: 'never' };
+  }
+
+  it('WATCHED FAILING: THE DOUBLE CAN EXPRESS A CLOSED WINDOW AT ALL', () => {
+    /*
+     * **THIS IS THE HARNESS'S OWN PIN AND IT IS THE FIRST CASE ON PURPOSE.**
+     * The journey below is only evidence about the product while these four
+     * lines hold. Putting `close: () => { this.closed += 1; }` back — the
+     * shape this file shipped with — turns every one of them red, and without
+     * this case that change would turn nothing red and leave the journey
+     * passing against a window that cannot be shut.
+     */
+    const view = new ARecordingView();
+    const dialog = openWalletDialog(view, WALLET);
+    const window = dialog.wallet!;
+
+    expect(window.closed).toBe(false);
+    window.close!();
+    expect(window.closed).toBe(true);
+
+    /* A closed window is not an error to post to. It is a nobody. */
+    window.postMessage({ schema: 'an-ask' }, WALLET);
+    expect(view.posted).toHaveLength(0);
+
+    /* And the name no longer reaches it, so opening again makes a new one —
+     * which is what a retry does, and why a retry gets a window at all. */
+    expect(openWalletDialog(view, WALLET).wallet).not.toBe(window);
+  });
+
+  it('WATCHED FAILING: BOTH ASKS GET AN ANSWER, AND THE SECOND DOES NOT TIME OUT',
+    async () => {
+      /*
+       * **THE WHOLE OF THE INVITEE'S JOURNEY, AT THE LAYER THAT BREAKS IT.**
+       * One dialog, opened in the click; two asks driven through it, in order,
+       * each answered by the wallet. The second one is the one nobody could
+       * see: the first ask's success put the window away, so the second was
+       * handed a window that was no longer there and waited out its twenty
+       * seconds against it.
+       */
+      const view = new ARecordingView();
+      const dialog = openWalletDialog(view, WALLET);
+      /* What the invitation screen says the moment it opens the window, and
+       * the whole of what it says. Without it the first answer takes the
+       * window away with it. */
+      dialog.moreThanOneAsk();
+
+      const one = askWallet(view, WALLET, { schema: 'the-company-key' }, dialog);
+      view.fromTheWallet({ schema: READY_PING });
+      view.fromTheWallet({ schema: 'the-key' });
+      expect(await whatHappened(view, one))
+        .toEqual({ of: 'answered', answer: { schema: 'the-key' } });
+      /* The window is STILL THERE, which is the whole of the repair. */
+      expect(dialog.wallet!.closed).toBe(false);
+
+      const two = askWallet(view, WALLET, { schema: 'where-the-money-goes' }, dialog);
+      view.fromTheWallet({ schema: READY_PING });
+      view.fromTheWallet({ schema: 'the-address' });
+      expect(await whatHappened(view, two))
+        .toEqual({ of: 'answered', answer: { schema: 'the-address' } });
+
+      /* Two asks, and the person saw ONE window — which is the thing the
+       * shared dialog was for. */
+      expect(view.opened.map(o => o.target)).toEqual(
+        [WALLET_DIALOG_NAME, WALLET_DIALOG_NAME]);
+      expect(new Set(view.opened.map(o => o.url)).size).toBe(2);
+    });
+
+  it('WATCHED FAILING: AND THE SECOND ASK REACHES A DOCUMENT THAT HAS NOT ANSWERED YET',
+    async () => {
+      /*
+       * **THE SECOND MECHANISM, AND IT IS INDEPENDENT OF THE FIRST.** Even
+       * with the window left open, the wallet's channel answers ONE request
+       * per load and ignores every later one — so a window that is merely
+       * still there is not a window that can be asked again. The URL carries a
+       * number that goes up precisely so that each ask meets a fresh document,
+       * and this is the assertion that the second ask gets one.
+       *
+       * Turning it red: make the second ask reuse the URL the first one had.
+       */
+      const view = new ARecordingView();
+      const dialog = openWalletDialog(view, WALLET);
+      dialog.moreThanOneAsk();
+
+      const one = askWallet(view, WALLET, { schema: 'the-company-key' }, dialog);
+      view.fromTheWallet({ schema: READY_PING });
+      view.fromTheWallet({ schema: 'the-key' });
+      await whatHappened(view, one);
+
+      const before = view.opened.length;
+      const two = askWallet(view, WALLET, { schema: 'where-the-money-goes' }, dialog);
+      view.fromTheWallet({ schema: READY_PING });
+      view.fromTheWallet({ schema: 'the-address' });
+      await whatHappened(view, two);
+
+      expect(view.opened.length).toBe(before + 1);
+      const [first, second] = [view.opened[before - 1]!.url, view.opened[before]!.url];
+      expect(second).not.toBe(first);
+    });
+
+  it('WATCHED FAILING: A WINDOW THE PERSON CLOSED IS REFUSED BY NAME RATHER THAN WAITED ON',
+    async () => {
+      /*
+       * **AND WHEN THERE IS GENUINELY NO WINDOW, IT SAYS SO AT ONCE.** A page
+       * may only open a window while it is handling a press, so a dialog whose
+       * window has gone cannot quietly make another one — the honest answer is
+       * a refusal naming what happened, now, rather than twenty seconds of
+       * *your wallet did not answer*, which sends somebody to look at their
+       * wallet for a window this page no longer has.
+       */
+      const view = new ARecordingView();
+      const dialog = openWalletDialog(view, WALLET);
+      dialog.wallet!.close!();
+
+      const asking = askWallet(view, WALLET, { schema: 'an-ask' }, dialog);
+      /*
+       * **READ BEFORE ANYTHING RUNS THE TIMERS, AND THAT IS THE ASSERTION.**
+       * `whatHappened` fires whatever is pending, so a `waiting` read after it
+       * is zero whichever way the product behaves — which is an assertion that
+       * cannot fail dressed as the one that carries the point. `askWallet`
+       * sets its deadline synchronously, so by the line below it either
+       * refused without one or it is waiting out twenty seconds.
+       *
+       * Turning it red: take the `closed` read out of `take()`.
+       */
+      expect(view.waiting).toBe(0);
+
+      const what = await whatHappened(view, asking);
+
+      expect(what.of).toBe('refused');
+      const refusal = (what as { refusal: WalletClosed }).refusal;
+      expect(refusal.refusal.of).toBe('window-gone');
+      expect(refusal.message).toContain('nothing has been signed');
+      /* And it did not talk to the window that is not there. */
+      expect(view.posted).toHaveLength(0);
+    });
+
+  it('WATCHED FAILING: A RE-NAVIGATION THE BROWSER REFUSES IS REFUSED BY NAME TOO',
+    async () => {
+      /*
+       * **THE ANSWER FROM `view.open` IS THE ONLY THING THAT KNOWS.** A page
+       * may open a window while it is handling a press and not afterwards, and
+       * the second ask is well after the press — so the re-navigation can be
+       * refused. A refusal that is DROPPED leaves this page posting into the
+       * document that has already answered, which produces twenty seconds of
+       * *your wallet did not answer*: the very failure this section exists
+       * about, reached by a second road.
+       *
+       * Turning it red: ignore what `view.open` returns inside `take()`.
+       */
+      const view = new ARecordingView();
+      const dialog = openWalletDialog(view, WALLET);
+      dialog.moreThanOneAsk();
+
+      const one = askWallet(view, WALLET, { schema: 'the-company-key' }, dialog);
+      view.fromTheWallet({ schema: READY_PING });
+      view.fromTheWallet({ schema: 'the-key' });
+      await whatHappened(view, one);
+
+      view.refuseTheNextOpen = true;
+      const posted = view.posted.length;
+      const two = askWallet(view, WALLET, { schema: 'where-the-money-goes' }, dialog);
+      expect(view.waiting).toBe(0);
+
+      const what = await whatHappened(view, two);
+      expect(what.of).toBe('refused');
+      expect((what as { refusal: WalletClosed }).refusal.refusal.of).toBe('window-gone');
+      /* Nothing was said into the document that had already answered. */
+      expect(view.posted).toHaveLength(posted);
+    });
+
+  it('WATCHED FAILING: A WINDOW CLOSED WHILE THE PAGE IS OPENING ONE LEAVES NOTHING BEHIND',
+    async () => {
+      /*
+       * **THE GAP BETWEEN READING `closed` AND OPENING.** A person can close
+       * the wallet in that gap. The name then reaches nothing, so the browser
+       * makes a NEW window and hands it back — and a dialog that kept its old
+       * handle would afterwards be talking to a window that is gone and
+       * closing that one, while the window actually on the person's screen
+       * stays there with nothing in this product able to put it away.
+       *
+       * Turning it red: drop what `view.open` returns inside `take()` and go
+       * on using the handle from the first open.
+       */
+      const view = new ARecordingView();
+      const dialog = openWalletDialog(view, WALLET);
+      dialog.moreThanOneAsk();
+      const firstWindow = dialog.wallet!;
+
+      const one = askWallet(view, WALLET, { schema: 'the-company-key' }, dialog);
+      view.fromTheWallet({ schema: READY_PING });
+      view.fromTheWallet({ schema: 'the-key' });
+      await whatHappened(view, one);
+
+      /* The person closes it exactly as this page reaches for it. */
+      view.duringTheNextOpen = () => { firstWindow.close!(); };
+
+      const two = askWallet(view, WALLET, { schema: 'where-the-money-goes' }, dialog);
+      view.fromTheWallet({ schema: READY_PING });
+      view.fromTheWallet({ schema: 'the-address' });
+      expect(await whatHappened(view, two))
+        .toEqual({ of: 'answered', answer: { schema: 'the-address' } });
+
+      /* It is talking to the window that exists, not to the one that went. */
+      expect(view.made).toHaveLength(2);
+      expect(dialog.wallet).not.toBe(firstWindow);
+
+      /* And when the journey ends, no wallet is left on the screen. */
+      dialog.giveUp();
+      expect(view.stillOpen()).toHaveLength(0);
+    });
+
+  it('AND A DIALOG NOBODY CLAIMED IS STILL PUT AWAY BY THE ASK THAT USED IT',
+    async () => {
+      /*
+       * **THE DEFAULT IS UNCHANGED, AND THAT IS DELIBERATE.** Every other
+       * wallet journey in this product is one ask through one window, and for
+       * those the ask closing the window when it settles is the right
+       * behaviour and the reason a person never meets a wallet screen that is
+       * no longer about anything. Only a caller with a second ask coming says
+       * otherwise.
+       *
+       * Turning it red: make `askEnded` never close, or make
+       * `moreThanOneAsk` the default.
+       */
+      const view = new ARecordingView();
+      const dialog = openWalletDialog(view, WALLET);
+
+      const one = askWallet(view, WALLET, { schema: 'an-ask' }, dialog);
+      view.fromTheWallet({ schema: READY_PING });
+      view.fromTheWallet({ schema: 'the-answer' });
+      await whatHappened(view, one);
+
+      expect(dialog.wallet!.closed).toBe(true);
+      expect(view.closed).toBe(1);
+    });
+
+  it('AND THE CALLER THAT CLAIMED IT IS WHAT CLOSES IT, ON EVERY OUTCOME', async () => {
+    /*
+     * **THE OTHER HALF OF THE CONTRACT.** A window an ask will not close has
+     * to be closed by somebody, and it is the `finally` of the journey that
+     * opened it — including when that journey fails half way, which is the
+     * case that would otherwise leave a wallet on screen for ever.
+     *
+     * Turning it red: make `giveUp` stop closing a dialog that has been
+     * claimed.
+     *
+     * **AND WHAT IT DOES NOT PIN, SAID HERE RATHER THAN LEFT TO BE ASSUMED.**
+     * This case builds its own dialog. **It says nothing about whether the
+     * invitation screen actually claims one or actually gives it up** —
+     * deleting either of those two lines from that screen turns nothing in
+     * this file red, and the journey breaks again. What stops that being a
+     * silent return of the same defect is that a second ask through an
+     * unclaimed dialog now meets a window that has gone, and refuses by name
+     * at once instead of waiting out twenty seconds and blaming the wallet.
+     * A test that would close the gap drives the screen itself.
+     */
+    const view = new ARecordingView();
+    const dialog = openWalletDialog(view, WALLET);
+    dialog.moreThanOneAsk();
+
+    const one = askWallet(view, WALLET, { schema: 'an-ask' }, dialog);
+    view.fromTheWallet({ schema: READY_PING });
+    view.fromTheWallet({ schema: 'the-answer' });
+    await whatHappened(view, one);
+    expect(dialog.wallet!.closed).toBe(false);
+
+    dialog.giveUp();
+    expect(dialog.wallet!.closed).toBe(true);
+    expect(view.closed).toBe(1);
+    /* Twice is not two closes. */
+    dialog.giveUp();
+    expect(view.closed).toBe(1);
+  });
 });
