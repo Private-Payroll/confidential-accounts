@@ -413,6 +413,33 @@ scripts/register-index.mjs
 scripts/shipping-language-door.test.ts
 
 
+# ── THE BROWSER-ONLY BUILD, TAKEN OFF 9 Sep ────────────────────────────────
+# It ran the whole product in a browser with no server, against a simulated
+# ledger. The product runs against a chain now, and a build with no filesystem
+# cannot read a contract address, an indexer, a node or a proof server - so it
+# has nothing to select. It stays on disk, it still builds, and it comes back
+# the day it selects the chain for itself.
+#
+# ALL THREE ARE ALREADY IN THE INDEX, so these rules do not remove them:
+# ignoring a tracked file does nothing at all. They come out with the others
+# UNTRACK-SHIPPED-BY-MISTAKE.command names, and they stay on disk where they
+# work.
+#
+# HELD, DELIBERATELY, AND THE TWO LINES ARE COMMENTED RATHER THAN DELETED SO
+# THE DECISION IS VISIBLE. Taking the browser-only build off the published set
+# is TWO acts: the lists stop naming it, and the paths leave the index.
+# Ignoring a tracked path achieves neither. Both are done together, in their
+# own change, and the tool that takes paths out of the index needs its own
+# fixed list updated first - it refuses any set but the one it was written
+# for, so that a mis-edited list cannot make it remove the wrong thing.
+# src/standalone/
+# vite.standalone.config.ts
+# Its measurement, which used to live in a file that ships. A published test
+# that builds an entry point a clone does not have is red in that clone before
+# a single assertion runs.
+src/testing/the-standalone-build.test.ts
+
+
 # ── LOCAL TOOLING, KEPT ON DISK AND NOT PUBLISHED ──────────────────────────
 src/testing/no-attribution.test.ts
 # THE REST OF THE SAME FAMILY, NAMED 7 Sep. Each reads a local launcher at this

@@ -37,6 +37,46 @@ process.env.SERVE = '0';
 process.env.APP_ORIGIN = 'https://payroll.example';
 process.env.DATA_PATH = join(DIR, 'db.json');
 
+/**
+ * **THIS FILE DRIVES THE ROUTES OVER A TEST DOUBLE, NOT OVER A DEPLOYMENT, AND
+ * THAT IS SAID HERE SO NOBODY READS THESE CASES AS EVIDENCE ABOUT A CHAIN.**
+ *
+ * This file is about a refusal reaching both the log and the browser's report. It reaches no ledger write - but which ledger the entry point held decided itself from whatever was on the machine.
+ *
+ * **THAT IS THE DEFECT THIS BLOCK CLOSES, AND IT IS NOT ABOUT THIS FILE'S OWN
+ * CASES.** The entry point resolves a deployment from the working directory and
+ * the environment. On a machine with a deployment record and a proof server it
+ * therefore built a ledger pointed at a REAL contract, with a sealed-state
+ * store rooted in the working tree; in a clone with neither it built one that
+ * refuses everything. **Two different subjects, one green result, and nothing
+ * saying which ran.** The next case added here would have reached whichever one
+ * the machine happened to have.
+ *
+ * So this file says which one it drives, and hands it over before the entry
+ * point is imported. The services, the routes, the sign-in state handling and the
+ * checks are the real ones - the LEDGER is a double, named here out loud.
+ * Nothing outside a test may do this: the walk beside the selector refuses
+ * `handInWiring` in every non-test module.
+ *
+ * **WHAT THESE CASES PROVE AND WHAT THEY DO NOT.** They prove what they proved
+ * before the product selected a chain, and nothing more. **They are not
+ * evidence that this server works against a chain.** `server-starts.test.ts` is
+ * the file that exercises the real chain wiring, and it is deliberately the one
+ * file here that takes no double.
+ *
+ * The three come from one object because they may never be chosen apart: a leaf
+ * computed under one commitment scheme is meaningless to a ledger running under
+ * another.
+ */
+const { SimulatedLedger, SimulatedProofSystem, SimulatedCommitments } = await import('../core/ledger.js');
+const { handInWiring } = await import('../wiring/handed-in.js');
+handInWiring({
+  name: 'simulated',
+  commitments: SimulatedCommitments,
+  createLedger: () => new SimulatedLedger(SimulatedCommitments),
+  createProofSystem: () => new SimulatedProofSystem(),
+});
+
 const { app } = await import('./index.js');
 
 let server: Server;

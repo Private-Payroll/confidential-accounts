@@ -51,6 +51,33 @@ const store = new MemoryStore();
  * rather than being defaulted separately by `AccountService`.
  */
 const chosen = wiring();
+/*
+ * **THIS BUILD CANNOT REACH THE LEDGER THE PRODUCT SELECTS, AND IT SAYS SO ON
+ * THE PAGE RATHER THAN GOING BLANK.**
+ *
+ * The product runs against a chain. Reaching one needs a contract address, an
+ * indexer, a node and a proof server, and this build has no filesystem and no
+ * environment to read any of them from - so `createLedger` refuses, here, at
+ * the top of the module.
+ *
+ * **AN UNCAUGHT REFUSAL AT MODULE SCOPE IS A WHITE PAGE WITH NOTHING ON IT.**
+ * Nothing below this line runs, React never mounts, and the person who opened
+ * it has no sentence to report and nothing to act on - which is the exact
+ * injury `src/web/no-wasm-in-the-page.test.ts` exists for, arrived at from a
+ * different direction. So the refusal is written into the page BEFORE it is
+ * re-raised: the message is on screen, and the throw that follows stops the
+ * rest of this module from building a product on a ledger it has not got.
+ */
+try {
+  chosen.createLedger();
+} catch (refusal) {
+  const root = document.getElementById('root');
+  if (root) {
+    root.textContent = refusal instanceof Error ? refusal.message : String(refusal);
+    root.setAttribute('style', 'padding:2rem;font:14px system-ui;max-width:44rem;line-height:1.6');
+  }
+  throw refusal;
+}
 const ledger = chosen.createLedger();
 const proofs = chosen.createProofSystem();
 const accounts = new AccountService(store, ledger, chosen.commitments);
@@ -280,6 +307,22 @@ async function route(url: URL, init?: RequestInit): Promise<Response> {
     return ok(plugins.setStatus(seg[2], body.status));
 
   if (p === '/api/public') {
+  /*
+   * **THIS ROUTE REFUSES WHOLE RATHER THAN SERVING THE HALF IT CAN ANSWER.**
+   *
+   * It is the evidence behind the claim that a public observer learns nothing,
+   * and the observer's own view of the ledger is the half that cannot be
+   * answered by reading a chain today - the shape it should return is an
+   * undecided design question, not a missing function. Serving the rounds
+   * without it would be a privacy-evidence route quietly showing less than it
+   * claims to, which is worse than one that stops. The refusal is spread into
+   * the reply below rather than raised here, so that the day it answers, this
+   * route answers WITH it.
+   *
+   * `src/wiring/selection.ts` holds the refusal and the question it leaves
+   * open, so the hosted build and the browser-only build cannot answer this
+   * differently.
+   */
     /* An observer is held to the same rule as a company, and the decision is
      * taken per company rather than over the estate - see the hosted build. */
     const withheld: string[] = [];
@@ -297,7 +340,7 @@ async function route(url: URL, init?: RequestInit): Promise<Response> {
       txRef: pr.txRef ?? null,
       provenance: pr.provenance,
     }));
-    /* Not on the `Ledger` boundary — see `src/wiring/selection.ts`. */
+    /* Spread and not merely called, for the reason the hosted build gives. */
     return ok({ ...observerView(ledger), proposals, withheldAccounts: withheld.length });
   }
 
