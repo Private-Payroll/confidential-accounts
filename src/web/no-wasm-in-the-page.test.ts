@@ -1,5 +1,6 @@
 /**
- * **THE PAYROLL PAGE CARRIES NO WEBASSEMBLY.** `X5` §1 and §2.
+ * **WHAT THE PAYROLL PAGE LOADS, AND WHETHER IT COULD LOAD THE CONTRACT'S OWN
+ * CIRCUITS IF IT WERE ASKED TO.**
  *
  * ── WHAT THIS IS GUARDING, AND WHY IT IS NOT THE OBVIOUS THING ───────────
  *
@@ -7,54 +8,56 @@
  * `@midnightntwrk/ledger-v9`'s wasm-bindgen glue threw while it was still being
  * evaluated — *Cannot access `__wbindgen_start` before initialization*. It was
  * reached from `src/web/wallet-sign-in.ts`, which imported one small function
- * from `wallet-identity.ts` and got the wallet SDK behind it.
+ * from `wallet-identity.ts` and got the wallet SDK behind it. **Nothing
+ * rendered: no text, no background, no error on the screen**, because the
+ * failure happened before React was reached. **THAT is the injury this file and
+ * `the-page-renders.test.tsx` exist for**, and the absence of WebAssembly was
+ * only ever one way of arriving at it.
  *
- * **THE ROUND EXPECTED A BUILD THAT THROWS AND THERE ISN'T ONE.** `X5` was
- * written believing the defect would show up as a failing build, the way the
- * wallet's own configuration warns it does. It does not, and the reason is the
- * whole trap: **a production build TREE-SHOOK the glue** — nothing in the page
- * used `verify`, so the JavaScript came out byte-for-byte the same size with the
- * wasm module gone — **and emitted the 10 MB `.wasm` file anyway.** The
- * development server does not tree-shake, so it evaluated the glue and died.
- * Measured, both ways round, before this file was written:
+ * ── NEITHER A BUILD NOR A SEARCH OF THE OUTPUT IS EVIDENCE HERE ──────────
+ *
+ * Measured twice, in opposite directions:
  *
  *     page graph, before the split   114 modules, 24 of them ledger-v9, one
  *                                    10,322,794-byte .wasm asset emitted,
  *                                    `__wbindgen` NOT in the JavaScript
  *     page graph, after the split     74 modules, no ledger-v9, no .wasm asset
  *
- * So a check that watched the build's exit status would have passed throughout,
- * and a check that grepped the bundle for `__wbindgen` would have passed
- * throughout too. **The thing that was true and is now false is that the page's
- * MODULE GRAPH contained WebAssembly**, so that is what this asks about.
+ * A production build TREE-SHOOK the glue — nothing in the page used `verify`,
+ * so the JavaScript came out byte-for-byte the same size with the WebAssembly
+ * module gone — and emitted the 10 MB `.wasm` file anyway. **So a check on the
+ * build's exit status passed throughout, and so did a search of the output for
+ * `__wbindgen`.**
+ *
+ * And measured again the day the build was taught to handle WebAssembly, with
+ * the contract's own scheme in the page's graph: **`vite build` SUCCEEDS
+ * without that handling, and the BUILT page renders correctly — while the
+ * development server on the same source renders nothing at all.** The build is
+ * the weaker evaluator of the two, in both directions.
+ *
+ * **SO THE EVIDENCE THAT SETTLES IT IS THE PAGE OPENED IN A REAL BROWSER WITH
+ * THE TEXT IT RENDERED READ BACK.** The check that drives a browser at the
+ * running application and reports every console message, every uncaught error,
+ * every failed request and the rendered text is where that evidence lives, and
+ * a person runs it. **Nothing in this file is a substitute for it.**
  *
  * ── IT ASKS THE BUNDLER, BECAUSE READING THE SOURCE GIVES THE WRONG ANSWER ─
  *
- * `X4`'s audit tried a static read first and it named an innocent file:
- * `src/core/types.ts` imports `payee-address` with `import type`, which erases.
- * `moduleParsed` fires for what is actually resolved and loaded, which is the
- * only account of the graph worth having.
+ * A static read of the source names an innocent file: `src/core/types.ts`
+ * imports `payee-address` with `import type`, which erases. `moduleParsed`
+ * fires for what is actually resolved and loaded, which is the only account of
+ * the graph worth having.
  *
- * ── THE SECOND CASE IS A POSITIVE CONTROL AND IT IS NOT DECORATION ───────
+ * ── THE POSITIVE CONTROL IS NOT DECORATION ───────────────────────────────
  *
  * Without it, "no WebAssembly in the output" would also be true of a build that
  * produced nothing, a pattern that matches nothing, and an `outDir` read from
  * the wrong place. `src/standalone` is a REAL entry point in this repository
- * that reaches the ledger for a real reason — `payeeAddress` — and it is built
- * here through the SAME configuration, so the two cases differ in one thing:
- *
- * **`X11` NOTE: IT REACHES IT TRANSITIVELY NOW, AND THE CONTROL IS UNAFFECTED.**
- * That build used to `import { payeeAddress }` directly, for a door that took a
- * typed address; `X11` §7 closed that door there and the import went with it. It
- * still loads the ledger, through `PayrollService`, which is what `admit` needs
- * in order to rebuild an address from its own string — **so the control's
- * subject is the same code for the same reason, one import further away.**
- * Checked by running this file after the import was removed, rather than by
- * reading the graph.
- *
- * which entry point they start from. **If this case ever goes red because the
- * standalone build stopped importing the ledger, that is not a broken test, it
- * is the news that the control needs a new subject.**
+ * that reaches the ledger for a real reason, and it is built here through the
+ * SAME configuration, so the two cases differ in one thing: which entry point
+ * they start from. **If that case ever goes red because the standalone build
+ * stopped importing the ledger, that is not a broken test, it is the news that
+ * the control needs a new subject.**
  *
  * ── AND IT BUILDS INTO A TEMPORARY DIRECTORY WITH ITS OWN CACHE ──────────
  *
@@ -63,7 +66,7 @@
  * corrupt the cache the next real run depends on.
  */
 import { describe, it, expect } from 'vitest';
-import { build } from 'vite';
+import { build, resolveConfig } from 'vite';
 import { mkdtempSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -74,11 +77,26 @@ const REPO = fileURLToPath(new URL('../..', import.meta.url));
 /**
  * What WebAssembly looks like in a module graph here.
  *
- * The package name AND the extension, because either alone is half an answer:
- * a `.wasm` from somewhere else is still WebAssembly in the page, and
- * `ledger-v9`'s glue is `.js` files that are only meaningful beside the binary.
+ * The extension AND the packages, because either alone is half an answer: a
+ * `.wasm` from somewhere else is still WebAssembly in the page, and a
+ * wasm-bindgen package's glue is `.js` files that are only meaningful beside
+ * the binary.
+ *
+ * **THE TWO HALVES DO NOT BOTH FIRE ON BOTH ROUTES, WHICH THE EARLIER WORDING
+ * HERE CLAIMED.** Measured: on the WALLET-SDK route the package half matches 23
+ * glue modules the extension half never sees. On the CONTRACT route — the page
+ * reaching its own circuits — the package half matched NOTHING until
+ * `onchain-runtime-v4` was named here, because that route goes
+ * `src/midnight/commitments.ts` -> the compiled contract ->
+ * `@midnight-ntwrk/compact-runtime` -> `@midnightntwrk/onchain-runtime-v4`,
+ * and only the last of those is wasm-bindgen. **Note the scopes are spelled
+ * differently and that is not a typo here:** the two runtime packages have no
+ * hyphen, `compact-runtime` does. `compact-runtime` is deliberately absent — it
+ * is ordinary JavaScript that REACHES WebAssembly, and naming it would report
+ * WebAssembly where there is none.
  */
-const WEBASSEMBLY = /@midnightntwrk[/\\]ledger-v9|\.wasm(\?|$)/;
+const WEBASSEMBLY =
+  /@midnightntwrk[/\\](?:ledger-v9|onchain-runtime-v4)|\.wasm(\?|$)/;
 
 interface Built {
   readonly wasmModules: readonly string[];
@@ -131,10 +149,31 @@ const built = async (root: string): Promise<Built> => {
 };
 
 describe('WebAssembly and the payroll page', () => {
-  it('THE ONE THAT KEEPS IT OUT OF THE PAGE: nothing the page loads is WebAssembly',
-    { timeout: 180_000 }, async () => {
+  it('WHAT THE PAGE LOADS TODAY: nothing in its graph is WebAssembly, because the scheme it '
+    + 'is handed is the simulated one', { timeout: 180_000 }, async () => {
       const page = await built(join('src', 'web'));
-      expect(page.wasmModules, 'the payroll page is loading WebAssembly again — C149')
+      /*
+       * **THIS CASE IS A MEASUREMENT OF THE SELECTION, NOT A PROHIBITION ANY
+       * MORE, AND THE DIFFERENCE MATTERS TO WHOEVER SEES IT GO RED.**
+       *
+       * It used to mean *the page must never carry WebAssembly*. The page CAN
+       * carry it now — the build handles it, and the case at the foot of this
+       * file is what keeps that true. What this case says is narrower and still
+       * worth saying: the page is handed a scheme by one selector, that
+       * selector holds the simulated scheme, and therefore no circuit reaches
+       * the page. **If it goes red, one of two things happened, and they need
+       * opposite responses.** Either a chain wiring was deliberately selected —
+       * in which case this case is out of date and is rewritten to say what the
+       * page now carries — or something reached the contract's circuits from
+       * the page by accident, which is a 10 MB module in everybody's browser
+       * that nobody decided to send.
+       */
+      expect(page.wasmModules,
+        'the payroll page is loading WebAssembly. If a chain wiring was just selected, this '
+        + 'case is out of date — but a chain wiring may not be selected until a stored record '
+        + 'says which wiring wrote it, or simulated runs are listed beside chain-backed ones '
+        + 'with no way to tell them apart. If no wiring was selected, something reached the '
+        + 'contract\'s circuits from the page by accident')
         .toEqual([]);
       expect(page.wasmAssets, 'the payroll build emitted a .wasm file').toEqual([]);
       // A build that produced almost nothing would satisfy both of the above.
@@ -161,10 +200,65 @@ describe('WebAssembly and the payroll page', () => {
        * **THE NUMBER IS EXACT ON PURPOSE.** A `greaterThan` here would let a
        * third arrive unnoticed, and the whole subject of this file is that
        * WebAssembly gets into a module graph without anybody deciding it
-       * should. **The case above is what protects the PAGE, and it is
-       * untouched: the page talks to a server and holds none of this.** If this
-       * number changes again, read what changed before changing the number.
+       * should. If this number changes again, read what changed before changing
+       * the number.
        */
       expect(standalone.wasmAssets).toHaveLength(2);
+    });
+
+  it('THE ONE THAT KEEPS THE PAGE LOADABLE: the build handles WebAssembly at a target that '
+    + 'can carry it, so the day the page is handed the contract\'s own scheme it is not a '
+    + 'blank screen', { timeout: 60_000 }, async () => {
+      /*
+       * **WHY A CONFIGURATION AND NOT A RENDER.** The injury this guards is a
+       * page that renders nothing under the DEVELOPMENT SERVER while the
+       * production build of the same source is fine — so neither the build
+       * cases above nor anything this runner can execute reaches it. The runner
+       * loads modules through Node, where the WebAssembly binding is a file
+       * read and the evaluation ordering that breaks a browser never arises.
+       * **The page rendering under the contract\'s scheme was measured in a real
+       * browser, and the check that drives a browser at the running application
+       * is what repeats that measurement.**
+       *
+       * **SO THIS IS A PIN AND IT SAYS SO.** It is here because deleting one
+       * line from the build configuration is a change nothing else in this
+       * runner would notice, and the injury it causes is a blank screen with no
+       * error on it.
+       *
+       * **NO INLINE `root`, AND THAT IS THE CORRECTION RATHER THAN A DETAIL.**
+       * The first version of this case passed a root of its own, which meant it
+       * resolved a configuration the build tool never resolves and could not
+       * see `root` at all — measured: pointing `vite.config.ts` at a directory
+       * that does not exist left this case green. What is read here is what the
+       * configuration says on its own.
+       */
+      const resolved = await resolveConfig({ configFile: join(REPO, 'vite.config.ts') }, 'serve');
+
+      expect(resolved.plugins.map(plugin => plugin.name),
+        'the page build no longer handles WebAssembly, so a page that reaches the contract\'s '
+        + 'circuits will serve a blank screen with nothing on it and no error')
+        .toContain('vite-plugin-wasm');
+
+      expect(resolved.root.replace(/\\/g, '/'),
+        'the page build no longer points at the page')
+        .toMatch(/\/src\/web$/);
+
+      /*
+       * **THE PLUGIN IS NECESSARY AND NOT SUFFICIENT, AND THIS IS THE OTHER
+       * HALF.** The glue it generates instantiates the module with a top-level
+       * `await`, so every browser the build targets has to support one. The
+       * targets below were measured to carry it; a narrower target is a page
+       * that goes blank again with the plugin still in the list above, which is
+       * why the two are asserted together rather than separately.
+       *
+       * If this goes red because the target was deliberately widened, the
+       * answer is not to change this line: it is to add the plugin that
+       * rewrites top-level await for older targets, and to re-measure the page
+       * in a browser before believing either.
+       */
+      expect(resolved.build.target,
+        'the page build targets a browser that cannot carry the top-level await the '
+        + 'WebAssembly glue is generated with')
+        .toEqual(['chrome111', 'edge111', 'firefox114', 'safari16.4', 'ios16.4']);
     });
 });
