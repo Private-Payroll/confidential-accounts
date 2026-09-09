@@ -31,17 +31,21 @@ import wasm from 'vite-plugin-wasm';
  * a real browser with its rendered text read back, which the check that drives a
  * browser at the running app already reports.
  *
- * ── WHAT IS DELIBERATELY NOT COVERED: THE WORKER ─────────────────────────
+ * ── AND THE WORKER GETS THE SAME HANDLING, NOW THAT IT HAS REAL WORK ─────
  *
- * `worker.plugins` is not given this handling, and that is a decision rather
- * than an oversight. A worker is one of the shapes the seat derivation could
- * take, and `src/web/prover-worker.ts` is the seam it would arrive through —
- * but nothing instantiates that worker today, so wiring a build for a graph
- * that does not exist would be a configuration nobody can measure. **Whoever
- * gives that worker real work adds the same handling to `worker.plugins`
- * and measures the page again**, because a module that throws while a Worker
- * evaluates it is worse than one that throws in the page: the page sees
- * nothing at all.
+ * This block used to say `worker.plugins` was deliberately left bare, because
+ * nothing instantiated a worker and wiring a build for a graph that did not
+ * exist would be a configuration nobody could measure. **That is no longer
+ * true.** The page starts a proving worker, and that worker's whole job is to
+ * reach a WebAssembly prover — so it needs exactly what the page needed, for
+ * exactly the same reason.
+ *
+ * **AND THE FAILURE IT PREVENTS IS WORSE IN A WORKER THAN IN A PAGE.** A module
+ * that throws while a page evaluates it leaves a blank screen; a module that
+ * throws while a Worker evaluates it leaves a thread that simply never answers,
+ * with nothing on screen and nothing in the console. The worker posts a ready
+ * notice once its listener stands and the page waits for it, so this failure
+ * presents as a strip that never appears rather than as an error.
  *
  * ── ONE PLUGIN, NOT TWO ──────────────────────────────────────────────────
  *
@@ -58,6 +62,13 @@ import wasm from 'vite-plugin-wasm';
 export default defineConfig({
   root: 'src/web',
   plugins: [react(), wasm()],
+  /*
+   * The worker's own plugin list is separate from the page's, so the handling
+   * above does not reach it and has to be stated again here. `react()` is
+   * deliberately absent: a worker renders nothing, and a plugin that rewrites
+   * JSX in a graph that contains none is a plugin that can only cost.
+   */
+  worker: { format: 'es', plugins: () => [wasm()] },
   server: { port: 5173, host: true, proxy: { '/api': 'http://localhost:8787' } },
   build: { outDir: '../../dist/web', emptyOutDir: true },
 });

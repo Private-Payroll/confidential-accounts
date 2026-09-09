@@ -26,6 +26,7 @@ import { JoinScreen, joinTokenFromLocation } from './Join.js';
 /* X12 §2 — the drop box is opened HERE, on this machine, because computing the
  * code on ours would mean holding the address. */
 import { acceptedCodes, type Accepted } from './accepted-address.js';
+import { ProvingStrip } from './proving-strip.js';
 
 /**
  * Key generation happens here, in the invitee's browser, using the same module
@@ -697,6 +698,21 @@ export default function App({ commitments }: { commitments: CommitmentScheme }) 
             <button className="signout" onClick={signOut}>Sign out</button>
           </div>
         </header>
+
+        {/*
+          * **PINNED UNDER THE HEADER AND ACROSS THE WHOLE APPLICATION, NOT
+          * INSIDE THE SCREEN THAT STARTED THE WORK.**
+          *
+          * Proving an approval takes over two minutes on this device, measured,
+          * and it runs on a thread that is not this one - so the person is free
+          * to go and look at anything they like while it happens. A progress
+          * indicator that lived on the approvals screen would be an indicator
+          * they have to stay on one page to see, which gives back the only
+          * thing moving the work off this thread bought.
+          *
+          * It renders nothing at all when nothing is in flight.
+          */}
+        <ProvingStrip />
 
         <div className="content">
           {err && <div className="err">{err}</div>}

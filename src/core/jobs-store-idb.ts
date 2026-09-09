@@ -80,6 +80,56 @@ const run = <T>(db: any, mode: 'readonly' | 'readwrite', fn: (store: any) => any
     tx.onerror = () => reject(tx.error ?? new Error('the database transaction failed'));
   });
 
+/**
+ * Reads one key and writes it back inside ONE transaction.
+ *
+ * **THIS IS THE ONLY PLACE IN THIS PRODUCT THAT MAKES A CLAIM ABOUT ANOTHER
+ * TAB, SO IT IS WRITTEN OUT RATHER THAN LEFT TO THE SHAPE OF THE CODE.**
+ * IndexedDB transactions over the same object store are serialised by the
+ * browser across every connection to that database, including connections from
+ * other tabs and other workers. So the read below and the write that follows it
+ * cannot have another tab's read and write threaded between them: the second
+ * tab's transaction begins after this one has committed and sees what it wrote.
+ * That is what turns a lease from a convention into a lock.
+ *
+ * The whole decision therefore has to happen INSIDE the transaction, with no
+ * `await` on anything else. Awaiting something outside lets the transaction go
+ * inactive, and the write then fails with a message about the transaction
+ * rather than about the lease - which is why `decide` is synchronous in the
+ * interface.
+ */
+const swapInOneTransaction = (
+  db: any,
+  key: string,
+  decide: (current: string | null) => string | null,
+): Promise<string | null> =>
+  new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readwrite');
+    const store = tx.objectStore(STORE);
+    const read = store.get(key);
+    let written: string | null = null;
+    read.onsuccess = () => {
+      const current = read.result === undefined ? null : String(read.result);
+      let next: string | null;
+      try {
+        next = decide(current);
+      } catch (e) {
+        // Abort rather than leave a half-decided transaction open: an
+        // exception thrown here would otherwise commit the read and nothing
+        // else, and the caller would never hear why.
+        tx.abort?.();
+        return reject(e);
+      }
+      if (next === null) return;
+      written = next;
+      store.put(next, key);
+    };
+    read.onerror = () => reject(read.error ?? new Error('the database request failed'));
+    tx.oncomplete = () => resolve(written);
+    tx.onabort = () => reject(tx.error ?? new Error('the database transaction was rolled back'));
+    tx.onerror = () => reject(tx.error ?? new Error('the database transaction failed'));
+  });
+
 export class IndexedDbKeyValue implements KeyValue {
   private db: Promise<any> | null = null;
 
@@ -121,6 +171,11 @@ export class IndexedDbKeyValue implements KeyValue {
      */
     const all = await run<unknown[]>(db, 'readonly', (s) => s.getAllKeys());
     return (all ?? []).map(String).filter((k) => k.startsWith(prefix));
+  }
+
+  async swap(key: string, decide: (current: string | null) => string | null): Promise<string | null> {
+    const db = await this.open();
+    return swapInOneTransaction(db, key, decide);
   }
 
   /** Lets a Worker shut down without leaving a connection blocking the next one. */

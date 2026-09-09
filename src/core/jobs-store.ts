@@ -17,7 +17,7 @@
  * than millions. Reading them all to find the pending ones is fine, and staying
  * that simple is what keeps the browser and native stores identical.
  */
-import type { Job, JobStore } from './jobs.js';
+import { mayClaim, mayWrite, type Job, type JobLease, type JobStore } from './jobs.js';
 
 /**
  * The least a storage backend has to do.
@@ -30,6 +30,26 @@ export interface KeyValue {
   get(key: string): Promise<string | null>;
   set(key: string, value: string): Promise<void>;
   keys(prefix: string): Promise<string[]>;
+  /**
+   * Reads one key and writes it back in one indivisible step.
+   *
+   * **THE FOURTH METHOD, AND IT IS HERE FOR ONE REASON: A LEASE.** Everything
+   * else this seam does is safe to interleave, because a job is only ever
+   * written by the worker that is working it. Deciding WHICH worker that is
+   * cannot be, and a `get` followed by a `set` from two tabs interleaves in
+   * exactly the order that gives them both the same job.
+   *
+   * `decide` is handed the current value, or `null` where there is none, and
+   * returns the value to write - or `null` to write nothing and leave what is
+   * there. It may be called more than once if the backend has to retry, so it
+   * must not do anything but decide.
+   *
+   * The three backends satisfy this for three different reasons and each says
+   * which: a Map and `localStorage` are synchronous within one process, and
+   * IndexedDB serialises transactions across every connection to the database,
+   * which is the only one of the three that is a claim about other tabs.
+   */
+  swap(key: string, decide: (current: string | null) => string | null): Promise<string | null>;
 }
 
 const PREFIX = 'job:';
@@ -71,6 +91,59 @@ export class KeyValueJobStore implements JobStore {
   async put(job: Job): Promise<void> {
     await this.kv.set(PREFIX + job.id, JSON.stringify(job));
   }
+
+  /**
+   * The same one indivisible read-and-write `claim` uses, for the same reason.
+   * A conditional claim with an unconditional write beside it is not a lock:
+   * the write is where a worker that lost its lease takes the job back.
+   */
+  async writeHeld(job: Job, owner: string, now: Date): Promise<boolean> {
+    let kept = false;
+    await this.kv.swap(PREFIX + job.id, (current) => {
+      kept = false;
+      let stored: Job | undefined;
+      if (current !== null) {
+        try {
+          stored = JSON.parse(current) as Job;
+        } catch {
+          /*
+           * A record nobody can parse is left alone, exactly as `claim` leaves
+           * it. Overwriting it would destroy whatever it held, and this is the
+           * write path rather than a repair.
+           */
+          return null;
+        }
+      }
+      if (!mayWrite(stored, job, owner, now)) return null;
+      kept = true;
+      return JSON.stringify(job);
+    });
+    return kept;
+  }
+
+  async claim(id: string, lease: JobLease, now: Date): Promise<Job | null> {
+    let taken: Job | null = null;
+    await this.kv.swap(PREFIX + id, (current) => {
+      taken = null;
+      if (current === null) return null;
+      let job: Job;
+      try {
+        job = JSON.parse(current) as Job;
+      } catch {
+        /*
+         * A record nobody can parse is left exactly as it is. `list` already
+         * skips it for the same reason - one bad write must not cost a
+         * customer every other pending approval - and taking a lease on a job
+         * whose contents are unknown would be worse than not working it.
+         */
+        return null;
+      }
+      if (!mayClaim(job.lease, lease.owner, now)) return null;
+      taken = { ...job, lease };
+      return JSON.stringify(taken);
+    });
+    return taken;
+  }
 }
 
 /**
@@ -92,6 +165,13 @@ export class MemoryKeyValue implements KeyValue {
   }
   async keys(prefix: string): Promise<string[]> {
     return [...this.data.keys()].filter((k) => k.startsWith(prefix));
+  }
+
+  /** Atomic because a Map is in one process and nothing suspends in between. */
+  async swap(key: string, decide: (current: string | null) => string | null): Promise<string | null> {
+    const next = decide(this.data.get(key) ?? null);
+    if (next !== null) this.data.set(key, next);
+    return next;
   }
 }
 
@@ -131,5 +211,21 @@ export class WebStorageKeyValue implements KeyValue {
       if (k && k.startsWith(prefix)) out.push(k);
     }
     return out;
+  }
+
+  /**
+   * Atomic WITHIN ONE PROCESS ONLY, and that is the honest statement of it.
+   *
+   * `localStorage` is synchronous, so nothing interleaves between the read and
+   * the write on this thread. It is shared with every other tab on the origin
+   * and offers no way to lock, so two tabs CAN both pass this. That is not a
+   * defect being tolerated: this backend is already labelled above as the one
+   * the browser should not use, and IndexedDB is the one that carries the
+   * lease for real.
+   */
+  async swap(key: string, decide: (current: string | null) => string | null): Promise<string | null> {
+    const next = decide(this.storage.getItem(key));
+    if (next !== null) this.storage.setItem(key, next);
+    return next;
   }
 }

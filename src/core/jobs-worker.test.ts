@@ -320,18 +320,24 @@ describe('the drain guard survives the boundary', () => {
      * — the thread just spins — so the error reaching the host is the only way
      * anyone finds out.
      */
+    const stuck: Job = {
+      id: 'job_stuck', accountId: 'acc_1', kind: 'approve', signerId: 'sgn_1',
+      payload: {}, state: 'queued', attempts: 0, createdAt: 'x', updatedAt: 'x',
+    };
     const [hostPort, workerPort] = directPorts();
     const queue = new JobQueue(
       { prove: async () => ({ proof: 'P' }), submit: async () => ({ txRef: 't' }) },
       {
         store: {
-          list: async () => [
-            {
-              id: 'job_stuck', accountId: 'acc_1', kind: 'approve', signerId: 'sgn_1',
-              payload: {}, state: 'queued', attempts: 0, createdAt: 'x', updatedAt: 'x',
-            } as Job,
-          ],
+          list: async () => [{ ...stuck }],
           put: async () => {},
+          // Always granted: the subject is a store that does not SAVE. A claim
+          // that refused would end the drain with no error, which is the one
+          // outcome this case exists to rule out.
+          claim: async () => ({ ...stuck }),
+          // Accepted every time: the subject is a store that does not SAVE, and a
+          // write that refused would end the drain quietly instead of loudly.
+          writeHeld: async () => true,
         },
         onChange: changeReporter(workerPort),
       },

@@ -210,6 +210,30 @@ export interface FeeSponsor {
   /** Phase 3: submits. Whoever pays the fee submits. */
   submit(finalisedTransaction: unknown): Promise<TxRef>;
 
+  /**
+   * Releases coins a balance booked and no submission took.
+   *
+   * **THE PHASES ABOVE ARE TWO SEPARATE CALLS THE SDK MAKES AT TWO SEPARATE
+   * TIMES, AND UNTIL THIS MEMBER EXISTED NOTHING BETWEEN THEM COULD LET GO.**
+   * Phase 2 marks coins in-flight in the wallet's own state and returns; phase
+   * 3 is a different entry point the SDK reaches later. Anything that goes
+   * wrong in between - proving, staging, an expiry, a caller giving up - ends
+   * the operation with the booking still standing, and nothing releases it
+   * afterwards: the vendor's time-based sweep is a documented no-op, and its
+   * own cleanup only acts on transactions that got an answer from the chain,
+   * which one that was never submitted never does.
+   *
+   * The effect is quiet and cumulative. Each failure takes a little of the fee
+   * budget out of circulation, the next attempt balances onto fresh coins
+   * because the booked ones are filtered out as pending, and the balance that
+   * gets reported looks healthy right up until it does not.
+   *
+   * **REQUIRED, FOR THE SAME REASON PHASE 3 IS.** An optional member would mean
+   * a sponsor could be wired in with no way to release, and every caller above
+   * would carry on as though there were one.
+   */
+  release(booking: unknown): Promise<void>;
+
   /** Remaining DUST capacity, so we can alarm before customers start failing. */
   capacity(): Promise<{ dust: bigint; night: bigint }>;
 }

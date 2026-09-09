@@ -74,6 +74,16 @@ import { refusalForCapability, type WriteCapability } from './write-capability.j
 const noSponsor = (refusal: string): FeeSponsor => ({
   addFeeAndFinalise: async () => Promise.reject(new Error(refusal)),
   submit: async () => Promise.reject(new Error(refusal)),
+  /*
+   * **THE ONE MEMBER THAT SUCCEEDS ON A DEPLOYMENT THAT CANNOT PAY, AND IT IS
+   * NOT AN INCONSISTENCY.** A release says *let go of what a balance booked*.
+   * Nothing here has balanced anything - every other member refuses - so there
+   * is nothing booked and the honest answer is that it is already released.
+   * Refusing instead would put a second error in front of whoever is handling
+   * the first one, on the cleanup path, which is exactly where an error is
+   * least useful.
+   */
+  release: async () => {},
   capacity: async () => Promise.reject(new Error(
     'the fee sponsor\'s remaining capacity is not available on this deployment: '
     + 'nothing is wired to pay fees, so there is no balance to report')),

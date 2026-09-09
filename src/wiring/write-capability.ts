@@ -166,7 +166,7 @@ export function refusalForCapability(capability: WriteCapability | undefined): s
     circuits: capability.compiled !== undefined && capability.compiled !== null,
     customerWallet: has(capability.customer,
       'balanceOwnLegs', 'coinPublicKey', 'encryptionPublicKey'),
-    feePayer: has(capability.sponsor, 'addFeeAndFinalise', 'submit', 'capacity'),
+    feePayer: has(capability.sponsor, 'addFeeAndFinalise', 'submit', 'capacity', 'release'),
     privateStateKey: typeof capability.storagePassword === 'function',
   });
 }
