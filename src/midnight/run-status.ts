@@ -146,7 +146,17 @@ export interface RunInputs {
    * a view — clearly marked `verified: false`.
    */
   proposal?: {
-    /** The id the run is open under, read from the chain. */
+    /**
+     * The id the run is open under.
+     *
+     * **WHERE IT COMES FROM IN THIS PRODUCT, SAID EXACTLY, BECAUSE IT IS
+     * NARROWER THAN IT SOUNDS.** It is the id recorded when the leg was raised,
+     * and it is offered only for a leg the ledger actually accepted — a round
+     * blocked by policy, or one whose raise threw, has no id to be checked
+     * against. **Nothing here asks the chain anything.** So what the comparison
+     * below proves is that these leaves are the ones the approved root commits
+     * to; it does not prove the chain still holds the payroll run.
+     */
     id: Hex;
     /**
      * The contract's own id derivation, composed by the caller and passed in —

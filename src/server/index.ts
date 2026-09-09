@@ -29,6 +29,8 @@ import type { Hex } from '../core/crypto.js';
 import { payeeAddress } from '../midnight/payee-address.js';
 import { networkOfThePair } from '../midnight/network.js';
 import { runPayments } from '../midnight/run-status.js';
+import { rootOfLeaves } from '../midnight/payout-tree.js';
+import { runMaterialFor } from '../midnight/run-material.js';
 import { loadEnvFile } from '../db/connect.js';
 import { appendWebConsole, webConsoleLogPath } from './web-console-log.js';
 /* `C157` — every refusal this service makes, kept. See `wrap` below. */
@@ -968,18 +970,55 @@ app.post('/api/runs/:id/propose', authed, ownsRun, wrap(async (req, res) => {
     // Optional, and only needed by a run that settles in more than one asset —
     // each is its own approval round.
     asset: assetCode.optional(),
+    /*
+     * **THE VAULT THAT WILL PAY THIS LEG.** A contract address — `Bytes<32>` in
+     * the contract's signature — as sixty-four lower-case hexadecimal
+     * characters. **The width is not restated here**: it is checked where the
+     * run's payout root's width is checked, so the rule has one home and every
+     * propose surface gets the same answer.
+     *
+     * **NOTHING ANYWHERE CHECKS THAT IT NAMES A DEPLOYED VAULT.** The account
+     * contract does not consult its own vault registry when a payment is
+     * recorded, and the registry is not on the ledger boundary, so there is
+     * nothing to compare against. The vault is folded into the proposal's
+     * identity, so a well-formed wrong one produces a round that is approved,
+     * paid for, and presentable by nobody. What bounds it is a person typing it
+     * and a person reading it back before they approve.
+     */
+    vault: z.string(),
+    /*
+     * **THE WINDOW, IN SECONDS SINCE THE UNIX EPOCH.** Seconds because block
+     * time is what it is compared against; a window in milliseconds opens in
+     * the year 56000, is approved, and pays nobody. Taken as digits in a string
+     * because these are the chain's own 64-bit values and JSON has no integer
+     * wide enough to carry one without rounding it.
+     */
+    opensAt: z.string().regex(/^[0-9]+$/, 'a window bound is whole seconds since the Unix epoch'),
+    closesAt: z.string().regex(/^[0-9]+$/, 'a window bound is whole seconds since the Unix epoch'),
   }).parse(req.body);
+
   /*
-   * **`null` RUN MATERIAL. THIS ROUTE REFUSES, AND THAT IS `C375`'s FIX
-   * REACHING THE SURFACE.**
-   *
-   * It used to answer 200 with a proposal id for a round no vault could ever
-   * be presented with. Nothing in this product builds a payout root, a payment
-   * window or a vault, so there is nothing honest to pass here; the refusal
-   * names what is missing. `PayrollService.proposeRun` carries the sentence.
+   * **THE RUN'S MATERIAL IS BUILT HERE AND NOT INSIDE THE SERVICE**, because
+   * the root is a merkle tree hashed the way the chain hashes it and the layer
+   * that holds the payroll may not reach the runtime that does it. What the
+   * service supplies is the payroll and the account's own payout seeds; what
+   * this adds is the window and the vault, neither of which is derivable from
+   * anything this product holds.
    */
+  const inputs = await payroll.runMaterialInputs(
+    String(req.params.id), b.viewingKey, b.asset);
+  const material = await runMaterialFor({
+    accountId: inputs.accountId,
+    runId: inputs.runId,
+    seeds: inputs.seeds,
+    facts: inputs.facts,
+    opensAt: BigInt(b.opensAt),
+    closesAt: BigInt(b.closesAt),
+    vault: b.vault,
+  });
+
   res.json(await payroll.proposeRun(
-    String(req.params.id), b.viewingKey, b.proposedBy, null, b.asset));
+    String(req.params.id), b.viewingKey, b.proposedBy, material, b.asset));
 }));
 
 /*
@@ -996,11 +1035,11 @@ app.post('/api/runs/:id/propose', authed, ownsRun, wrap(async (req, res) => {
  * size of one payroll and not the age of the company.
  *
  * **AND IT CAN ANSWER THAT IT DOES NOT KNOW, WHICH IS A DIFFERENT ANSWER FROM
- * "NOBODY".** Two things can be missing: the run's payout leaves, which this
- * product does not write yet, and a ledger that records payments at all. Either
- * one produces a refusal to report rather than a report of nobody paid — the
- * body carries `answered: false` and a sentence, and there is no count in it to
- * misread.
+ * "NOBODY".** Two things can be missing: the run's payout leaves, which a run
+ * only has once one of its legs has been raised, and a ledger that records
+ * payments at all. Either one produces a refusal to report rather than a report
+ * of nobody paid — the body carries `answered: false` and a sentence, and there
+ * is no count in it to misread.
  *
  * **A POST FOR A READ, AND THE KEY IN THE BODY IS WHY.** The viewing key is
  * what decrypts this company's own records, and a web address is the one part
@@ -1010,9 +1049,23 @@ app.post('/api/runs/:id/propose', authed, ownsRun, wrap(async (req, res) => {
  * a fourth. The verb is the cost of that and it is worth paying.
  */
 app.post('/api/runs/:id/payments', authed, ownsRun, wrap(async (req, res) => {
-  const b = z.object({ viewingKey: z.string() }).parse(req.body ?? {});
+  const b = z.object({
+    viewingKey: z.string(),
+    /* One approval per settlement asset, so one payment view per settlement
+     * asset. Only a run that settles in more than one needs to say which. */
+    asset: assetCode.optional(),
+  }).parse(req.body ?? {});
   const run = payroll.requireRun(String(req.params.id), b.viewingKey);
-  const material = payroll.payoutMaterialOf(run.id, b.viewingKey);
+  /*
+   * **`rootOfLeaves` IS PASSED IN, WHICH IS WHAT MAKES THE ANSWER VERIFIED.**
+   * The view rebuilds this leg's proposal id from the leaves in hand and
+   * refuses to report on them if it does not match the payroll run they are filed
+   * under. Without it every answer this route can produce carries a disclaimer
+   * that is permanently on — and a warning that is always on stops being read,
+   * which is how the one genuine case is missed later.
+   */
+  const material = payroll.payoutMaterialOf(
+    run.id, b.viewingKey, { asset: b.asset, rootOf: rootOfLeaves });
   const among = material ? await ledger.paidAmong(run.accountId, material.leaves) : null;
   res.json(runPayments(material, among));
 }));

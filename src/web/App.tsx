@@ -1217,15 +1217,20 @@ function RunDetail({ run, proposals, account, session, me, busy, onBack, act }: 
    *
    * It POSTed `{viewingKey, proposedBy, asset}` to `/api/runs/:id/propose`,
    * which raised a governance round carrying a payload hash no vault can ever
-   * reproduce — approved, paid for, and unpayable for ever. That route now
-   * refuses, so the handler could only ever produce an error; it is deleted
-   * rather than kept beside a disabled button, because a live request to a
-   * refusing door is how a control gets quietly re-enabled by somebody who
-   * finds the handler and assumes it works.
+   * reproduce — approved, paid for, and unpayable for ever. **That route now
+   * raises a real run and takes three more fields for it: a vault, and the two
+   * ends of the window.** The old handler sent none of them, so restoring it
+   * would produce a refusal rather than a round; it stays deleted rather than
+   * kept beside a disabled button, because a handler that looks finished is how
+   * a control gets quietly re-enabled by somebody who assumes it works.
    *
-   * **THE BUTTON STAYS, DISABLED, WITH ITS REASON** (rule 22b) — the request
-   * that replaces this one carries a payout root, a window and a vault, and is
-   * three lines the round that builds vault payroll will write.
+   * **THE BUTTON STAYS, DISABLED, WITH ITS REASON.** The request that replaces
+   * it carries a payout root, a payment window and a vault. Two of those three
+   * now exist: the route builds the root from this run's own payees and the
+   * company's own payout seed, and the window is a number somebody picks. **The
+   * vault is the one this screen cannot supply**, because there is nowhere for a
+   * company to record which vault pays its payroll, and a run raised at the
+   * wrong 32 bytes is approved and then presentable by nobody.
    */
   /*
    * **THE SIGNATURE, NOT THE KEY.** The digest is the proposal's own and
@@ -1299,21 +1304,23 @@ function RunDetail({ run, proposals, account, session, me, busy, onBack, act }: 
                     <td>{paid}</td>
                     <td>{proposal ? `${approvals} of ${need}` : 'not proposed'}</td>
                     <td style={{ textAlign: 'right' }}>
-                      {/* **DISABLED, WITH ITS REASON, IN THE ROUND THAT MADE THE
-                          DOOR REFUSE.** `C375`, `S47`, found by that round's
-                          money-safety pass against the round itself: it
-                          disabled the two disclosure controls for exactly this
-                          test and left this one live, POSTing to a route that
-                          now answers 400 every time. Rule 22b — shown with its
-                          reason, never hidden — and the reason is the honest
-                          one: a run is raised against a payout root, a window
-                          and the vault that will pay it, and nothing in this
-                          product writes any of the three yet. */}
+                      {/* **STILL DISABLED, AND THE REASON HAS CHANGED — WHICH IS
+                          WHY IT IS REWRITTEN RATHER THAN LEFT.** The three
+                          values a run is raised against are no longer all
+                          missing: the payout root is now derived from this
+                          run's own payees and the company's own seed, and the
+                          window is a number somebody chooses. **What this
+                          screen still has no way to collect is the vault** —
+                          the contract that will pay the run — and a run raised
+                          without one is approved, paid for, and presentable by
+                          nobody. Shown with its reason rather than hidden, so
+                          the gap is visible to whoever is looking at the run. */}
                       {!proposal && <button className="btn sm pri" disabled
                         title={'A run is submitted against a payout root, a payment window and '
-                          + 'the vault that will pay it. The vault path is not built, so there '
-                          + 'is nothing a vault could be presented with — and a round raised '
-                          + 'without them collects real signatures and can never be paid.'}>
+                          + 'the vault that will pay it. This screen has no way to name a vault '
+                          + 'yet, and the vault is folded into what the signers approve — so a '
+                          + 'run raised without one collects real signatures and can never be '
+                          + 'paid by anybody.'}>
                         Submit {asset} for approval</button>}
                       {proposal && proposal.status === 'executed' && <span className="chip ok">settled</span>}
                       {proposal && proposal.status !== 'executed' && approvals < need &&

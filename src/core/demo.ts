@@ -98,21 +98,24 @@ export async function seedDemo(
   for (const period of ['2026-05', '2026-06']) {
     const { run } = await payroll.createRunFromRoster(account.id, period, viewingKey);
     /*
-     * **`null` RUN MATERIAL, SO THIS REFUSES, AND THE SEEDER SAYS SO RATHER
-     * THAN PRETENDING.**
+     * **`null` RUN MATERIAL, AND IT STAYS `null` NOW THAT THE PRODUCT CAN BUILD
+     * SOME — WHICH IS THE POINT, NOT AN OVERSIGHT.**
      *
-     * Until `S47` this line raised a governance round carrying a payload hash
-     * no vault can ever reproduce, and the seeder showed it as a proposed run.
-     * There is no run material to hand it: the vault path is not built
-     * and nothing in `src/` builds a payout tree.
+     * The served build raises a run with a payout root derived from the run's
+     * own payees, a window somebody chose, and **the address of the vault that
+     * will pay it**. A seeded company has no vault: nothing was deployed for it
+     * and nothing funded it. Passing 32 bytes here to make the call compile
+     * would be a value nothing measured, sitting in the field that decides
+     * where the money goes — and the run would be approved, shown as proposed,
+     * and payable by nobody, which is the exact appearance of working that this
+     * seeder is not allowed to produce.
      *
-     * **THIS BLOCK IS ALREADY UNREACHABLE — `S26` MADE THE SEEDER THROW ABOVE,
-     * AND THE `no-unreachable` DISABLE TWENTY LINES UP IS THAT FACT WRITTEN
-     * DOWN.** So the `null` changes nothing that runs and is not a fix; it is
-     * this line saying what it would do if the seeder came back, so the round
-     * that rebuilds the demo on vaults inherits the truth rather than a call
-     * that compiles and lies. It would refuse, with the sentence
-     * `PayrollService.proposeRun` carries.
+     * **THIS BLOCK IS ALREADY UNREACHABLE — THE SEEDER THROWS ABOVE, AND THE
+     * `no-unreachable` DISABLE TWENTY LINES UP IS THAT FACT WRITTEN DOWN.** So
+     * this line is here to say what it would do if the seeder came back: it
+     * would refuse, with the sentence `PayrollService.proposeRun` carries. The
+     * round that rebuilds the demo on vaults funds one first and passes its
+     * address.
      */
     const proposal = await payroll.proposeRun(
       run.id, viewingKey, secrets[0].signerId, null);

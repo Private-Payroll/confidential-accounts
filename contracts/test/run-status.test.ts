@@ -21,7 +21,9 @@ import {
   type PayeeAttempts, type RunPayments,
 } from '../../src/midnight/run-status.js';
 import type { PaymentsAmong } from '../../src/core/ledger.js';
-import { emptyRegister, decide, skippedIndices } from '../../src/midnight/run-skips.js';
+import {
+  emptyRegister, decide, skippedIndices, registerFor,
+} from '../../src/midnight/run-skips.js';
 import { toHex, fromHex } from '../../src/core/crypto.js';
 
 const A = privateStateFor(1);
@@ -44,7 +46,7 @@ const runOf = (n: number, seed = 0): PayoutLeafInput[] =>
     nonce: toHex(bytes(seed + i + 101)),
   }));
 
-describe('X-9: a run reports its progress from the chain', () => {
+describe('a run reports its progress from the chain', () => {
   let sim: AccountSimulator;
   let payments: PayoutLeafInput[];
   let tree: ReturnType<typeof buildPayoutTree>;
@@ -278,6 +280,27 @@ describe('X-9: a run reports its progress from the chain', () => {
     expect(skippedIndices(r)).toEqual([]);
     // And nothing was deleted: the argument is still readable afterwards.
     expect(r.decisions).toHaveLength(2);
+  });
+
+  /**
+   * **A REGISTER WITH NO RUN ON IT IS REFUSED WHERE IT IS CREATED, NOT ONLY
+   * WHERE IT IS USED.**
+   *
+   * `registerFor` already refuses this identity when a skip register is applied.
+   * Without the same refusal at the other end, the only way IN mints a value the
+   * only way OUT rejects: somebody records who is deliberately not being paid,
+   * and on whose say-so, into a skip register that turns out to be unusable at the
+   * moment the report is drawn.
+   *
+   * **THE CHANGE THAT TURNS THIS RED:** remove the blank-identity refusal from
+   * `emptyRegister`, and it mints a blank skip register again.
+   */
+  it('refuses to MINT a register with no run on it, as well as to apply one', () => {
+    expect(() => emptyRegister('' as never, 5)).toThrow(/belongs to one particular run/i);
+    expect(() => emptyRegister('   ' as never, 5)).toThrow(/belongs to one particular run/i);
+    /* And the identity it refuses is exactly the one the apply side refuses. */
+    expect(() => registerFor(emptyRegister(toHex(id), 5), '', 5))
+      .toThrow(/nothing here says which run is being reported on/i);
   });
 
   it('refuses an unattributed skip, a blank reason, and a payee who is not in the run', () => {
