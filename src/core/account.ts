@@ -853,6 +853,41 @@ export class AccountService {
     if (!this.membership(accountId, userId)) throw new Error('account not found');
   }
 
+  /**
+   * **WHICH SEAT ON THIS ACCOUNT BELONGS TO THIS SIGNED-IN PERSON.**
+   *
+   * A seat is the unit the contract knows about; a user is the unit a sign-in
+   * knows about. Everything a person does on an account is done as a seat, and
+   * until something resolves the one to the other, a route that needs to know
+   * WHO DID THIS has only what the caller typed.
+   *
+   * **THAT IS WORTH BEING EXACT ABOUT, BECAUSE THE COST IS NOT MISATTRIBUTION
+   * ALONE.** An approval is judged against the ceiling of the role that raised it.
+   * A caller free to name any seat is a caller free to choose which ceiling
+   * applies, so a viewer naming an admin's seat is not filing under the wrong
+   * name - they are raising an approval the policy would otherwise have refused.
+   *
+   * **THE MAPPING NEEDS THE VIEWING KEY AND THAT IS NOT AN INCONVENIENCE.**
+   * Which person holds which seat is precisely the pairing the roster is sealed
+   * to hide, so it cannot be answered from the public record, and a route that
+   * could answer it without the key would be a route that leaked it.
+   *
+   * Refuses rather than answering null: every caller of this is about to write
+   * something attributable, and there is no version of that which is safe to do
+   * anonymously.
+   */
+  seatOf(accountId: string, viewingKey: Hex, userId: string): string {
+    const account = this.open(accountId, viewingKey);
+    const seat = account.signers.find(s => s.userId === userId && s.status === 'active');
+    if (!seat) {
+      throw new Error(
+        'you do not hold a seat on this account, so there is nothing to raise this approval '
+        + 'as. An approval is raised by a signer, and it is judged against the ceiling of that '
+        + 'signer\'s role - which is why it cannot be raised on somebody else\'s behalf.');
+    }
+    return seat.id;
+  }
+
   /* ---------------- onboarding ---------------- */
 
   /**

@@ -273,6 +273,13 @@ async function main() {
       balanceFinalizedTransaction: facade.balanceFinalizedTransaction.bind(facade),
       finalizeRecipe: facade.finalizeRecipe.bind(facade),
       submitTransaction: (tx) => sponsorWallet.submitTx(tx as never),
+      /*
+       * Bound off the facade like the two above it. This is what releases coins
+       * the sponsor booked and did not spend: nothing else does, and a balance
+       * that is never released falls a little on every failure with nothing
+       * anywhere saying why.
+       */
+      revert: async (booking) => { await facade.revert(booking as never); },
       balances: async () => ({ dust: sponsorLive.dust(), night: sponsorLive.night() }),
     },
     /*

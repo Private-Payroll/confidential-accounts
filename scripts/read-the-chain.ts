@@ -70,6 +70,7 @@ import { loadEnvFile } from '../src/db/connect.js';
 import { networkOfThePair } from '../src/midnight/network.js';
 import { deployment, deploymentRecordPath, type Deployment } from '../src/wiring/deployment.js';
 import { startProduct, type Startup } from '../src/wiring/product.js';
+import { ContractBook, type RecordedContract } from '../src/wiring/account-contract.js';
 import type { LedgerStatus } from '../src/core/ledger.js';
 import {
   sayReading, carriesNumbers, compareReadbacks, vaultNumbers, verdict,
@@ -238,7 +239,7 @@ async function main(): Promise<number> {
   const storeExists = existsSync(storePath);
   say(`  ${D}store  ${process.env.DATA_PATH ?? '.data/beta.json'}${O}`);
 
-  const stored = new Map<string, string>();
+  const stored = new Map<string, RecordedContract>();
   if (!storeExists) {
     say(`  ${Y}!${O} ${B}THERE IS NO STORE FILE.${O} The service's lookup answers with nothing`);
     say(`    for every account id, so no read it performs can name a contract.`);
@@ -248,7 +249,19 @@ async function main(): Promise<number> {
       const accounts = shape?.accounts ?? {};
       for (const [id, a] of Object.entries<any>(accounts)) {
         if (typeof a?.contractAddress === 'string' && a.contractAddress.trim() !== '') {
-          stored.set(id, a.contractAddress);
+          /*
+           * **THE TWO FACTS BESIDE THE ADDRESS TRAVEL WITH IT.** An address on
+           * its own cannot be told from one a process invented for itself, and
+           * an instrument that dropped them would be pointing a real indexer at
+           * a value nobody assigned - which answers "no state" rather than
+           * failing, so the report would call the account deployed and empty
+           * when it was never deployed at all.
+           */
+          stored.set(id, {
+            address: a.contractAddress,
+            source: a.addressSource ?? null,
+            wiring: a.wiring ?? null,
+          });
           secret.push({ what: 'a stored account address', value: a.contractAddress });
         }
       }
@@ -275,7 +288,7 @@ async function main(): Promise<number> {
   clock.begin(3, 6, "The product's boundary, as this deployment is configured");
 
   const asConfigured = await runOne(
-    async id => stored.get(id) ?? null,
+    id => stored.get(id) ?? null,
     stored.size > 0 ? [...stored.keys()] : ['the-account-this-deployment-was-built-for'],
     (id) => stored.has(id));
   say();
@@ -286,8 +299,15 @@ async function main(): Promise<number> {
   say(`  ${D}Same ledger, same providers, same deployment. The lookup answers with the${O}`);
   say(`  ${D}address the product itself resolved above. This cannot settle the question.${O}`);
 
+  /*
+   * The deployment's own contract, presented the way the product's store would
+   * present a company it had opened. **The provenance is asserted here rather
+   * than read**, and it is the deploy record's address, which a chain did
+   * assign - so this phase measures the read and not the rule.
+   */
   const supplied = await runOne(
-    async () => d!.contractAddress, ['supplied'], () => true);
+    () => ({ address: d!.contractAddress, source: 'chain', wiring: 'chain' }),
+    ['supplied'], () => true);
   say();
 
   /* ---- 5. a contract the indexer has no state for ---- */
@@ -298,7 +318,8 @@ async function main(): Promise<number> {
 
   const absent = neighbourOf(d.contractAddress);
   secret.push({ what: 'the undeployed address', value: absent });
-  const absentRead = await runOne(async () => absent, ['absent'], () => true);
+  const absentRead = await runOne(
+    () => ({ address: absent, source: 'chain', wiring: 'chain' }), ['absent'], () => true);
 
   if (absentRead.reading.kind === 'no-state') {
     say(`  ${B}THE SAME ABSENT VALUE THE EMPTY LOOKUP PRODUCES.${O} The boundary answers`);
@@ -359,11 +380,18 @@ async function main(): Promise<number> {
   /* ---------------- helpers that need the closure ---------------- */
 
   async function runOne(
-    addressOf: (id: string) => Promise<string | null>,
+    recordedFor: (id: string) => RecordedContract | null,
     ids: string[],
     resolvable: (id: string) => boolean,
   ): Promise<{ reading: Reading; ms: number }> {
-    const startup = startProduct(addressOf, ROOT, process.env);
+    /*
+     * **THE PRODUCT'S OWN RULE RUNS HERE, WHICH IS THE POINT OF THE
+     * INSTRUMENT.** The records go in through the reading half, so an address
+     * no chain assigned - or one written by a ledger that is not this one - is
+     * refused exactly as it would be in the product, and this report says so
+     * rather than sending a question about it to a real indexer.
+     */
+    const startup = startProduct(new ContractBook(recordedFor, 'chain'), ROOT, process.env);
     if (!startup.started) {
       /*
        * **NAMED, BECAUSE THIS FILE IS TYPECHECKED WITHOUT STRICT NULL CHECKS

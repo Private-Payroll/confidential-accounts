@@ -36,6 +36,7 @@ import {
   startProduct, startupRefusal, assembleFor, unconfiguredLedger,
   unconfiguredProofSystem, unconfiguredWiring, halvesDisagree, CANNOT_START,
 } from './product.js';
+import { ContractBook } from './account-contract.js';
 import { wiring } from './selection.js';
 import { deploymentRecordPath, type Deployment } from './deployment.js';
 import { networkOfThePair } from '../midnight/network.js';
@@ -56,7 +57,11 @@ const FACTS: Deployment = {
   zkConfigPath: join(tmpdir(), 'mn-s97-zk'),
 };
 
-const noAddress = async () => null;
+/**
+ * A book over a store with nothing in it. Every account resolves to no
+ * contract, which is what an account nobody has opened looks like.
+ */
+const noAddress = new ContractBook(() => null, 'chain');
 
 describe('what a person is told when there is no deployment', () => {
   /**

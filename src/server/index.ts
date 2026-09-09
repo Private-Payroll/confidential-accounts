@@ -3,8 +3,10 @@ import cors from 'cors';
 import { z } from 'zod';
 import { join } from 'node:path';
 import { FileStore } from '../core/store-file.js';
-import { observerView } from '../wiring/selection.js';
+import { observerView, wiring } from '../wiring/selection.js';
 import { startProduct } from '../wiring/product.js';
+import { ContractBook } from '../wiring/account-contract.js';
+import type { WriteCapability } from '../wiring/write-capability.js';
 import { handedInWiring } from '../wiring/handed-in.js';
 import { AccountService } from '../core/account.js';
 import { PayrollService, RecordingInviteDelivery } from '../core/payroll.js';
@@ -140,7 +142,48 @@ const store = new FileStore(DATA);
  * ledger that answers nothing and says why - and stop the process listening,
  * below.
  */
-const startup = startProduct(async id => store.getAccount(id)?.contractAddress ?? null);
+/*
+ * **AN ACCOUNT'S CONTRACT COMES OFF ITS OWN RECORD, WITH THE TWO FACTS THAT
+ * MAKE THAT RECORD CHECKABLE, AND THERE IS NO FALLBACK.**
+ *
+ * This used to hand over the address by itself. An address alone is sixty-four
+ * hex characters that cannot be told from sixty-four hex characters some
+ * process invented for itself, so the check downstream had nothing to check
+ * with. The record already carries where the address came from and which ledger
+ * wrote it; they travel together now because they are only useful together.
+ *
+ * **AND THE OBVIOUS REPAIR IS THE DANGEROUS ONE.** An account with no recorded
+ * address could be pointed at the contract this deployment already resolved at
+ * boot - it is real, it is right there, and it is THE SAME ONE FOR EVERY
+ * ACCOUNT. Every company would then read the same balances, the same rounds and
+ * the same signers, and no screen would look broken. So an unrecorded account
+ * resolves to nothing and the boundary says it cannot answer.
+ */
+const book = new ContractBook(
+  id => {
+    const a = store.getAccount(id);
+    if (!a) return null;
+    return {
+      address: a.contractAddress ?? null,
+      source: a.addressSource ?? null,
+      wiring: a.wiring ?? null,
+    };
+  },
+  wiring().name,
+);
+/*
+ * **NOTHING IS WIRED TO WRITE HERE YET, AND THE ABSENCE IS THE ARGUMENT.**
+ *
+ * Writing needs a funded wallet, somebody to pay the fee, the compiled contract
+ * this build proves against, a chosen maintenance authority and a key for the
+ * private state store. A server acquires none of those by starting up, and one
+ * that quietly acquired them would be a server that can spend. So this stays
+ * absent until a deployment is deliberately given one, every write refuses by
+ * name and says which pieces are missing, and the day a deployment has them the
+ * writes are delegated whole without a single route changing.
+ */
+const writeCapability: WriteCapability | undefined = undefined;
+const startup = startProduct(book, process.cwd(), process.env, writeCapability);
 /*
  * **AND THE ONE CASE WHERE THIS PROCESS DOES NOT RESOLVE ITS OWN SET: A TEST
  * HANDED IT ONE BEFORE IMPORTING THIS FILE.**
@@ -984,10 +1027,17 @@ app.post('/api/accounts/:id/vault-threshold/propose', authed, member, wrap(async
      * refusing a state. The message a person reads comes from `core/`.
      */
     newThreshold: z.number().int().min(1),
-    proposedBy: z.string(),
+    /*
+     * **WHO IS RAISING THIS IS NOT IN THIS SCHEMA, AND THAT IS THE POINT.**
+     * It used to be, and it was whatever the caller typed - so any seat could
+     * raise a round under a colleague's name. The cost is not the name: a round
+     * is judged against the ceiling of the ROLE that raised it, so a caller
+     * free to name any seat is a caller choosing which ceiling applies.
+     */
   }).parse(req.body);
   res.json(await accounts.proposeVaultThresholdChange(
-    String(req.params.id), b.viewingKey, b.vault as Hex, b.newThreshold, b.proposedBy));
+    String(req.params.id), b.viewingKey, b.vault as Hex, b.newThreshold,
+    accounts.seatOf(String(req.params.id), b.viewingKey as Hex, req.userId!)));
 }));
 
 app.post('/api/accounts/:id/vault-threshold', authed, member, wrap(async (req, res) => {
@@ -1069,7 +1119,12 @@ app.get('/api/accounts/:id/runs', authed, member, wrap(async (req, res) => {
 
 app.post('/api/runs/:id/propose', authed, ownsRun, wrap(async (req, res) => {
   const b = z.object({
-    viewingKey: z.string(), proposedBy: z.string(),
+    /*
+     * **NO `proposedBy` HERE EITHER.** Same field, same shape, same reason as
+     * the vault-threshold round next door: the seat comes from the signed-in
+     * caller, because it selects the ceiling this approval is judged against.
+     */
+    viewingKey: z.string(),
     // Optional, and only needed by a run that settles in more than one asset —
     // each is its own approval round.
     asset: assetCode.optional(),
@@ -1120,8 +1175,15 @@ app.post('/api/runs/:id/propose', authed, ownsRun, wrap(async (req, res) => {
     vault: b.vault,
   });
 
+  /*
+   * The account is resolved from the RUN and not from the URL - this route is
+   * scoped by run id, so `inputs.accountId` is the only account in scope and
+   * taking it from anywhere else would be taking it from the caller again.
+   */
   res.json(await payroll.proposeRun(
-    String(req.params.id), b.viewingKey, b.proposedBy, material, b.asset));
+    String(req.params.id), b.viewingKey,
+    accounts.seatOf(inputs.accountId, b.viewingKey as Hex, req.userId!),
+    material, b.asset));
 }));
 
 /*
@@ -1302,9 +1364,11 @@ app.post('/api/people/:id/status', authed, ownsPerson, wrap(async (req, res) => 
  *
  * **THE SERVICE STILL TAKES IT AS A STRING AND MUST**, because it also runs
  * with no server in front of it and cannot authenticate anybody. This route is
- * where the string stops being a claim. `proposedBy` on the neighbouring routes
- * has the older shape and is not this change's to make — reported rather than
- * swept.
+ * where the string stops being a claim. **The neighbouring propose routes
+ * carried the same shape and no longer do**; they take the seat from the
+ * signed-in caller too, and there the cost was sharper than a wrong name on a
+ * record, because a round is judged against the ceiling of the role that
+ * raised it.
  */
 app.post('/api/accounts/:id/runs', authed, member, wrap(async (req, res) => {
   const b = z.object({
@@ -1708,7 +1772,20 @@ app.post('/api/accounts/:id/plugins', authed, member, wrap(async (req, res) => {
         perPeriod: z.string().min(1),
       })),
     }).nullable().default(null),
-    installedBy: z.string(),
+    /*
+     * **WHICH SEAT INSTALLED THIS IS NOT IN THIS SCHEMA, AND IT BECAME
+     * LOAD-BEARING THE DAY A PLUG-IN'S ROUNDS STARTED BEING RAISED UNDER IT.**
+     *
+     * It used to be whatever the caller typed, which read as a record of who
+     * accepted the allowance and nothing more. It is not: every round this
+     * plug-in raises is now attributed to this seat and judged against that
+     * seat's ceiling, so a seat a caller could name here would be the same hole
+     * one step earlier - moved rather than closed.
+     *
+     * The viewing key is what makes the mapping possible at all: which person
+     * holds which seat is exactly the pairing the roster is sealed to hide.
+     */
+    viewingKey: z.string(),
   }).parse(req.body);
 
   const allowance = b.allowance && {
@@ -1729,7 +1806,7 @@ app.post('/api/accounts/:id/plugins', authed, member, wrap(async (req, res) => {
     pluginId: b.pluginId,
     scopes: b.scopes as Parameters<typeof plugins.install>[0]['scopes'],
     allowance,
-    installedBy: b.installedBy,
+    installedBy: accounts.seatOf(String(req.params.id), b.viewingKey as Hex, req.userId!),
   }));
 }));
 
@@ -1756,7 +1833,18 @@ app.post('/api/plugin/propose', wrap(async (req, res) => {
   const b = z.object({
     token: z.string(), viewingKey: z.string(), summary: z.string(),
     asset: assetCode, amount: z.string().min(1),
-    recipient: z.string(), proposedBy: z.string(),
+    /*
+     * **A PLUG-IN DOES NOT SAY WHO IS RAISING ITS ROUND, AND UNLIKE THE OTHER
+     * TWO ROUTES THE ANSWER IS NOT THE SIGNED-IN CALLER - THERE IS NOT ONE.**
+     *
+     * This route is called by a plug-in holding a capability token, with no
+     * session behind it, so the fix that works next door has nothing to reach
+     * for here. What a plug-in DOES have is an installation: a seat granted it
+     * an allowance, deliberately, and every ceiling it spends against is that
+     * installation's. So the approval is raised under the seat that installed it,
+     * which is the authority the plug-in is actually acting on.
+     */
+    recipient: z.string(),
   }).parse(req.body);
   /*
    * The plug-in names the asset, and that is safe because the CEILING IS LOOKED
@@ -1768,7 +1856,6 @@ app.post('/api/plugin/propose', wrap(async (req, res) => {
     asset: b.asset,
     amount: money(b.asset, b.amount),
     recipient: b.recipient,
-    proposedBy: b.proposedBy,
   }));
 }));
 

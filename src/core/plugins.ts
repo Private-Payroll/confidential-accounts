@@ -287,8 +287,21 @@ export class PluginService {
    * A plug-in proposes. It never executes. The proposal enters the same queue a
    * human proposal does and needs the same threshold of signatures.
    */
+  /**
+   * **WHO RAISED IT IS NOT AN ARGUMENT, AND THAT IS THE WHOLE OF THIS CHANGE.**
+   *
+   * It used to be one, passed through from the plug-in's own request body - so
+   * a plug-in could raise a round under any seat it cared to name. The harm is
+   * not the wrong name on a record: the approval is judged against the ceiling of
+   * the ROLE that raised it, so naming a seat is choosing a ceiling.
+   *
+   * The seat that installed this plug-in is the right answer rather than a
+   * convenient one. It is the seat that granted the allowance, every limit
+   * checked above belongs to that installation, and a plug-in acting outside
+   * that authority has none of its own to act on.
+   */
   async propose(token: string, viewingKey: Hex, args: {
-    summary: string; asset: AssetId; amount: bigint; recipient: string; proposedBy: string;
+    summary: string; asset: AssetId; amount: bigint; recipient: string;
   }) {
     const install = this.authorise(token, 'proposal:create', 'propose');
 
@@ -353,7 +366,7 @@ export class PluginService {
     const proposal = await this.accounts.propose({
       accountId: install.accountId, viewingKey, kind: 'transfer',
       summary: args.summary, payload: { entries }, asset: args.asset,
-      proposedBy: args.proposedBy,
+      proposedBy: install.installedBy,
     });
 
     this.log(install, 'propose', `${args.summary} (awaiting signatures)`, true, args.asset, args.amount);

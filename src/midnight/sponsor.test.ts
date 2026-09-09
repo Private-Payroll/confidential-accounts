@@ -32,6 +32,9 @@ function fakeWallet(overrides: Partial<SponsorWallet> = {}) {
       calls.push({ method: 'submitTransaction', args: [tx] });
       return 'tx_sponsored';
     },
+    async revert(booking) {
+      calls.push({ method: 'revert', args: [booking] });
+    },
     async balances() { return { dust: 5_000n, night: 100n }; },
     ...overrides,
   };
@@ -130,5 +133,119 @@ describe('WalletFeeSponsor', () => {
      */
     const { wallet } = fakeWallet();
     expect(await new WalletFeeSponsor(wallet).capacity()).toEqual({ dust: 5_000n, night: 100n });
+  });
+});
+
+/**
+ * **COINS BOOKED BY A BALANCE THAT WAS NOT SPENT ARE RELEASED, ON EVERY WAY
+ * OUT.**
+ *
+ * The property is not "the failure propagates" - it did that already. It is
+ * that the wallet is told to let the coins go before it does, because nothing
+ * else ever will: the vendor's time-based sweep for this is documented as a
+ * no-op, and its own cleanup poller only acts on transactions that acquired a
+ * result from chain sync, which a transaction that was never submitted never
+ * does. **A booking made by a call that then threw stands for ever.**
+ *
+ * And it compounds rather than costing once. The next attempt balances onto a
+ * fresh coin set, because coin selection filters out anything already marked
+ * in-flight - so the fee budget falls a little on every failure and the balance
+ * that is reported looks healthy right up until it does not.
+ */
+describe('a sponsor releases what it booked and did not spend', () => {
+  /*
+   * RED WHEN: the release around `finalizeRecipe` is removed. This is the
+   * narrow window - the coins are booked by the line above and the proof of the
+   * fee leg has not been made yet.
+   */
+  it('releases when proving the fee leg throws', async () => {
+    const { wallet, calls } = fakeWallet({
+      async finalizeRecipe() { throw new Error('the prover refused'); },
+    });
+    await expect(new WalletFeeSponsor(wallet).addFeeAndFinalise({ tx: 1 }, new Date()))
+      .rejects.toThrow(/the prover refused/);
+
+    /*
+     * **THE ARGUMENT IS THE LOAD-BEARING PART AND IT IS ASSERTED.** Checking
+     * only that a method called `revert` ran leaves the wallet free to be
+     * handed the wrong object - the customer's transaction rather than the
+     * sponsor's own booking - and nothing would notice. Measured: it did not.
+     */
+    const released = calls.find(c => c.method === 'revert');
+    expect(released, 'nothing was released').toBeDefined();
+    const balanced = calls.find(c => c.method === 'balanceFinalizedTransaction')!;
+    expect(released!.args[0], 'the wrong object was released')
+      .toEqual({ type: 'FINALIZED_TRANSACTION', originalTransaction: balanced.args[0], balancingTransaction: 'unproven' });
+  });
+
+  /*
+   * **AND ON THE PATH WHERE THE OUTCOME IS UNKNOWN, WHICH IS THE ONE MOST
+   * LIKELY TO BE TRIED AGAIN.**
+   *
+   * RED WHEN: the release around `submitTransaction` is removed.
+   */
+  it('releases when the submission throws', async () => {
+    const submitted = { tx: 1 };
+    const { wallet, calls } = fakeWallet({
+      async submitTransaction() { throw new Error('the node closed the socket'); },
+    });
+    await expect(new WalletFeeSponsor(wallet).submit(submitted))
+      .rejects.toThrow(/the node closed the socket/);
+
+    /* The transaction that was submitted, and not something else. */
+    const released = calls.find(c => c.method === 'revert');
+    expect(released, 'nothing was released').toBeDefined();
+    expect(released!.args[0], 'the wrong object was released').toBe(submitted);
+  });
+
+  /*
+   * **THE POSITIVE CONTROL. Without it both cases above also pass against a
+   * sponsor that releases every time**, which would throw away the coins of
+   * every transaction that worked.
+   *
+   * RED WHEN: the release is moved out of the failure path.
+   */
+  it('releases nothing when the transaction goes out', async () => {
+    const { wallet, calls } = fakeWallet();
+    const sponsor = new WalletFeeSponsor(wallet);
+    await sponsor.addFeeAndFinalise({ tx: 1 }, new Date());
+    await sponsor.submit({ tx: 1 });
+    expect(calls.map(c => c.method)).not.toContain('revert');
+  });
+
+  /*
+   * **A RELEASE THAT FAILS MUST NOT REPLACE THE FAILURE THAT CAUSED IT.**
+   *
+   * RED WHEN: the release stops being guarded, so a wallet that refuses to
+   * release swaps the error naming what actually happened for a complaint about
+   * tidying up - and sends whoever reads it to the wrong place.
+   */
+  it('the original failure survives a release that fails too', async () => {
+    const { wallet } = fakeWallet({
+      async submitTransaction() { throw new Error('the node closed the socket'); },
+      async revert() { throw new Error('nothing to revert'); },
+    });
+    await expect(new WalletFeeSponsor(wallet).submit({ tx: 1 }))
+      .rejects.toThrow(/the node closed the socket/);
+  });
+
+  /*
+   * **THE BALANCING ARGUMENT IS NEVER OMITTED, ON ANY PATH THROUGH THIS
+   * CLASS.** Its default is *everything*, which would pay a customer's shielded
+   * and unshielded legs out of the sponsor's own coins, silently.
+   *
+   * RED WHEN: the argument is dropped, or widened, anywhere.
+   */
+  it('never leaves the token kinds to the argument\'s own default', async () => {
+    const { wallet, calls } = fakeWallet({
+      async finalizeRecipe() { throw new Error('stopped after balancing'); },
+    });
+    await expect(new WalletFeeSponsor(wallet).addFeeAndFinalise({ tx: 1 }, new Date()))
+      .rejects.toThrow();
+
+    const balance = calls.find(c => c.method === 'balanceFinalizedTransaction')!;
+    const options = balance.args[2] as { tokenKindsToBalance?: string[] };
+    expect(options.tokenKindsToBalance, 'the argument was omitted').toBeDefined();
+    expect(options.tokenKindsToBalance).toEqual(['dust']);
   });
 });
