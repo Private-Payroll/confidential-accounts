@@ -26,7 +26,7 @@ import { payslipKeypairForWallet } from './payslip-key.js';
 const SEED_WALLET_ORIGIN = 'https://payroll.example';
 import type { AssetId } from './assets.js';
 import { assets as defaultAssets, subtotals, formatAmount, assetIdBytes } from './assets.js';
-import type { Account, Employee, PayrollRun, SealedRun, ShieldedEntry, Attestation, RosterEmployee, SealedEmployee, Invite, User } from './types.js';
+import type { Account, Employee, PayrollRun, SealedRun, ShieldedEntry, Attestation, RosterEmployee, SealedEmployee, Invite, User, RunSkip, RunSkips } from './types.js';
 import { sealRecord, openRecord, sealToInbox, openFromInbox } from './sealed-records.js';
 import {
   sealHandover, openHandover, type SealedHandover,
@@ -38,6 +38,7 @@ import { payrollPayee } from './movement.js';
 import type { NetworkName } from '../midnight/network.js';
 import type { ShieldedPaymentFacts, PaymentFacts } from '../midnight/payout-tree.js';
 import type { RunInputs } from '../midnight/run-status.js';
+import { emptyRegister, decide } from '../midnight/run-skips.js';
 import type { RunMaterial } from '../midnight/run-material.js';
 import type { PayoutSeed } from '../midnight/run-keys.js';
 
@@ -202,8 +203,112 @@ export class RecordingInviteDelivery implements InviteDelivery {
   }
 }
 
+/**
+ * **WHAT AN ADMIN HAS TO SAY TO RUN PAYROLL WITHOUT SOMEBODY ON IT.**
+ *
+ * **NOT A BOOLEAN, AND THAT IS THE WHOLE OF IT.** A flag says *yes, whatever
+ * that was*; it can be set by a screen that never showed a name, carried over
+ * from a previous attempt, or defaulted true by a client somebody wrote in a
+ * hurry — and in each case whoever happens to be pending at the moment the
+ * button is pressed is dropped without anybody reading their name. **That is
+ * the silent skip the old refusal existed to prevent, and it would be the way
+ * this change reintroduced it.**
+ *
+ * So the acknowledgement carries the NAMES, the PERSON accepting it, and the
+ * REASON — and the door compares the names against the ones it is actually
+ * about.
+ */
+export interface SkipAcknowledgement {
+  /**
+   * **THE SAME SET as the people this run would leave out — neither a superset
+   * nor a subset of it.**
+   *
+   * A run that skips somebody the admin did not name is the silent drop. A run
+   * naming somebody who is NOT being skipped is the same failure seen from the
+   * other side: the list the admin read is not the list the run would act on,
+   * so their agreement is about a different payroll. Both are refused.
+   *
+   * **COMPARED AS A SET AND NOT AS A LIST**, said here because the first
+   * wording of this sentence said *exactly these ids* and a reviewer was right
+   * that a repeated id passes. It should: a duplicate is the same person named
+   * twice, one `RunSkip` is still recorded, and nobody is dropped. Order is not
+   * compared either, for the same reason.
+   */
+  employeeIds: string[];
+  /**
+   * **WHO IS ACCEPTING IT, AND IT IS NOT SOMETHING A CALLER GETS TO CHOOSE
+   * WHERE THERE IS ANYBODY TO ASK.**
+   *
+   * Checked by `decide`, which refuses an unattributed decision. **What `decide`
+   * cannot check is whether the name is the caller's own**, and this service
+   * cannot either: it runs with no server in front of it. So the served routes
+   * take this from the signed-in caller and do not read it off the request body — see
+   * `src/server/index.ts`'s run-creation route, which says why at length. **A
+   * string here is a claim; it stops being one at the door.**
+   */
+  by: string;
+  /** Why, in their words. Checked by `decide`, which refuses a blank reason on a skip. */
+  reason: string;
+}
+
+/**
+ * **THE RUN'S RECORD OF WHO IT LEFT OUT, BUILT THROUGH `run-skips.ts` RATHER
+ * THAN BESIDE IT.**
+ *
+ * The skip reader was written and tested against the compiled contract, and
+ * wired it to nothing. **This is its second and closer caller and it does not
+ * close that** — the index `runStatus` reads is a different one, over a
+ * leg's payout leaves and under the proposal id that leg was raised with, and
+ * joining the two is still owed.
+ *
+ * **EVERY RULE ABOUT A SKIP IS ASKED BY CALLING `decide`, AND NOT ONE OF THEM
+ * IS RESTATED HERE.** An unattributed decision, a blank reason and an index
+ * outside the run are refused by that function, in its own sentences, because a
+ * rule written twice is this project's oldest failure and a refusal written
+ * twice is one that can be deleted in one place and go on looking enforced.
+ * **What that costs is that the values handed to it have to be capable of
+ * failing its checks** — see the note on `reason` below, which is where the
+ * first draft of this function quietly stopped being able to. **The
+ * consequence is deliberate: this throws before a run exists**, so an
+ * acknowledgement with nobody's name on it produces no payroll rather than a
+ * payroll with an unsigned skip in it.
+ */
+export const recordSkips = (
+  runId: string, people: RunSkip[], ack: SkipAcknowledgement, at: string,
+): RunSkips => {
+  let decisions = emptyRegister(runId, people.length);
+  people.forEach((person, index) => {
+    decisions = decide(decisions, {
+      index,
+      skip: true,
+      by: ack.by,
+      at,
+      /*
+       * **THE OPERATOR'S WORDS, VERBATIM AND ALONE.**
+       *
+       * **THE FIRST DRAFT COMPOSED THIS** — the operator's reason, then which
+       * of the two pending states the person is in — and a test written to
+       * watch `decide` refuse a blank reason went green instead. **The
+       * composition is never blank, so `decide`'s check could not fail, and the
+       * rule this function's own comment says it delegates was not being
+       * asked.** A guard whose written reason does not match its behaviour is
+       * the next round's false confidence, and this file already carries that
+       * sentence about somebody else's code.
+       *
+       * So the two facts stay apart, which is what they are: **`reason` is what
+       * a person said, and `RunSkips.people[index].waiting` is what the system
+       * measured.** They travel together by construction — the index and the
+       * list are one field, at one index — so a report has both without either
+       * being able to defeat a check on the other.
+       */
+      reason: ack.reason,
+    });
+  });
+  return { people, decisions };
+};
+
 /** The numbers on a run. Everything else about it is operational. */
-type RunSecrets = Pick<PayrollRun, 'employees' | 'totals' | 'proposalIds' | 'payout'>;
+type RunSecrets = Pick<PayrollRun, 'employees' | 'totals' | 'proposalIds' | 'payout' | 'skips'>;
 
 /**
  * **THE PEOPLE ONE LEG OF A RUN PAYS, THROUGH ONE FILTER.**
@@ -1845,19 +1950,85 @@ export class PayrollService {
     return e;
   }
 
-  /** Draws a run from the active roster rather than an ad hoc list. */
-  async createRunFromRoster(accountId: string, period: string, viewingKey: Hex, employeeIds?: string[]) {
+  /**
+   * Draws a run from the active roster rather than an ad hoc list.
+   *
+   * ── WHO A PENDING PERSON FREEZES, AND IT USED TO BE EVERYBODY ────────────
+   *
+   * **THE SKIP ALREADY EXISTED.** The roster below is built from
+   * `status === 'active'` only, so a pending person never reaches a payslip
+   * whatever happens here. **The pre-flight threw in front of that filter**, so
+   * the effect of one unaccepted invitation was that nobody in the company was
+   * paid — and the right question to ask about it is: why should an
+   * employee who has been sent an invite be able to freeze the entire payroll?
+   *
+   * **THE ARGUMENT THE OLD REFUSAL WAS BUILT ON IS HALF RIGHT AND IS KEPT.** Its
+   * own comment: *silently escrowing someone's salary data because they have not
+   * set up yet is worse than a delay.* **That failure mode is real** — the person
+   * who quietly does not appear on payday is the person nobody notices, and a
+   * missing salary discovered a month later is a month of somebody's rent.
+   * **What was wrong was the remedy: it chose REFUSE EVERYONE over TELL
+   * SOMEBODY.** So the block becomes a confirmation. It still refuses by
+   * default, it still names them, and it now says which of the two things is
+   * wrong with each — but an admin who has read that can proceed, and what they
+   * proceeded with is written down (`skips`, `run-skips.ts`).
+   *
+   * **AND THE PART THAT WAS A DEFECT RATHER THAN A BLUNT POLICY: the pending set
+   * was computed over EVERYBODY and computed BEFORE `employeeIds` was applied.**
+   * An admin naming five fully-admitted people was refused because a sixth,
+   * unrelated, unnamed person had an invitation open. That was a check standing
+   * in the wrong place, not a rule, and moving it is most of this change.
+   *
+   * **WHAT THIS DOES NOT DO.** It does not get a pending person paid, and it
+   * must not be read as having. Somebody who cannot complete acceptance stays
+   * unpaid; what changes is that their colleagues do not. The freeze was the
+   * amplifier and the front door is the defect.
+   */
+  async createRunFromRoster(
+    accountId: string,
+    period: string,
+    viewingKey: Hex,
+    employeeIds?: string[],
+    /**
+     * Absent means REFUSE, and absent is the default on every existing caller.
+     * Nobody is left out of a payroll run by a value nobody supplied.
+     */
+    skipPending?: SkipAcknowledgement,
+  ) {
     const all = this.listPeople(accountId, viewingKey);
 
-    // Pre-flight. Blocking is the right call: silently escrowing someone's
-    // salary data because they have not set up yet is worse than a delay.
+    /*
+     * **THE SUBSET FIRST, AND EVERY QUESTION AFTER THIS ONE IS ASKED ABOUT IT.**
+     *
+     * `employeeIds` is what an admin says when they mean *pay these five*. The
+     * pending set, the refusal, the names in it and the record of who was left
+     * out are all drawn from `asked` and never from `all` — because a run is
+     * only ever refused, or excused, over the people it was actually trying to
+     * pay. **One list, computed once**: the filter below reuses it rather than
+     * asking `all` a second time, so a subset the refusal was computed over and
+     * a subset the roster is drawn from cannot come apart.
+     */
+    const asked = all.filter(e => !employeeIds || employeeIds.includes(e.id));
+
+    // Pre-flight. Refusing by default is still the right call: silently
+    // escrowing someone's salary data because they have not set up yet is worse
+    // than a delay. What an admin gets now is a way to say they have read it.
     /*
      * TWO PENDING STATES, NAMED SEPARATELY. A-2, and it is B15's lesson applied
      * one step earlier: "outstanding" that covers two different situations is
      * how an operator stops looking. Somebody who has handed nothing over is
      * waiting on THEM; somebody whose drop box is full is waiting on US.
      */
-    const pending = all.filter(e => e.status === 'pending');
+    const pending = asked.filter(e => e.status === 'pending');
+    /*
+     * **THE PEOPLE, NOT THE INDEX.** The index is minted in `createRun`,
+     * because a register names the run it belongs to (`run-skips.ts`,
+     * `emptyRegister`) and the run has no id until it is built. **A stand-in id
+     * was considered and refused**: `registerFor` exists to refuse a register
+     * raised for a different run, and an id this method invented is a value
+     * that comparison could never be right about.
+     */
+    let leftOut: RunSkip[] | undefined;
     if (pending.length) {
       const waitingOnUs = pending.filter(e => this.store.getEmployee(e.id)?.inbox);
       const waitingOnThem = pending.filter(e => !this.store.getEmployee(e.id)?.inbox);
@@ -1872,13 +2043,78 @@ export class PayrollService {
           `${waitingOnUs.map(e => e.name).join(', ')} `
           + `${waitingOnUs.length === 1 ? 'is' : 'are'} waiting to be admitted by an admin`);
       }
-      throw new Error(`payroll cannot run: ${parts.join('; ')}.`);
+      const named = parts.join('; ');
+
+      /*
+       * **THE DEFAULT REFUSES. THAT IS THE PROPERTY, NOT THE ERGONOMICS.**
+       *
+       * Everything below this line — the acknowledgement, the name comparison,
+       * the record — exists so that an admin can proceed DELIBERATELY. Nothing
+       * exists so that a run can proceed by itself. A caller that passes
+       * nothing is refused, which is every caller that existed before this
+       * round and every caller that forgets.
+       */
+      if (!skipPending) {
+        throw new Error(
+          `payroll cannot run without leaving somebody out: ${named}. `
+          + 'Admit them and run again, or confirm this run goes ahead without them — '
+          + 'which needs their names, yours, and a reason, so that a month from now the '
+          + 'record says who was not paid and who decided that.');
+      }
+
+      /*
+       * **THE ACKNOWLEDGEMENT IS ABOUT THESE PEOPLE OR IT IS ABOUT NOBODY.**
+       *
+       * Both directions are refused and they are different failures. A pending
+       * person the admin did NOT name is somebody dropped without being read —
+       * the exact thing the old wall was there to stop, arriving through the
+       * way this change opens. A name the admin DID give who is not being
+       * skipped means the list they were shown has moved since they read it:
+       * somebody was admitted, withdrawn, or the run is over a different subset.
+       * **In that case their agreement is about a different payroll, and
+       * treating it as agreement to this one is putting words in their mouth.**
+       */
+      const acknowledged = new Set(skipPending.employeeIds);
+      const unnamed = pending.filter(e => !acknowledged.has(e.id));
+      const wouldSkip = new Set(pending.map(e => e.id));
+      const notSkipped = skipPending.employeeIds.filter(id => !wouldSkip.has(id));
+      if (unnamed.length) {
+        throw new Error(
+          `this run would also leave out ${unnamed.map(e => e.name).join(', ')}, `
+          + 'who is not in what was confirmed. Nobody a run is drawn over is left out of it '
+          + 'without being named, so read the list again and confirm the whole of it, or '
+          + 'admit them.');
+      }
+      if (notSkipped.length) {
+        throw new Error(
+          `${notSkipped.length === 1 ? 'one of the people' : 'some of the people'} confirmed as `
+          + 'being left out is not being left out by this run, so the list that was read is not '
+          + `the list this run would act on: ${named}. Take the confirmation again against `
+          + 'what this run actually skips.');
+      }
+
+      /*
+       * **WHICH HALF EACH PERSON IS IN, DECIDED ONCE, HERE.** The refusal
+       * sentence above and the record below are two renderings of this one
+       * partition. Asking `inbox` a second time to build the record would be a
+       * second split that could disagree with the first — and the way it would
+       * disagree is that somebody's report says an admin is holding them up
+       * when nobody is.
+       */
+      leftOut = pending.map((e): RunSkip => ({
+        employeeId: e.id,
+        name: e.name,
+        waiting: waitingOnUs.some(u => u.id === e.id) ? 'us' : 'them',
+      }));
     }
 
-    const roster = all
-      .filter(e => e.status === 'active')
-      .filter(e => !employeeIds || employeeIds.includes(e.id));
-    if (roster.length === 0) throw new Error('no active employees to pay');
+    const roster = asked.filter(e => e.status === 'active');
+    if (roster.length === 0) {
+      throw new Error(leftOut
+        ? 'there is nobody left to pay: everybody this run was drawn over is still pending, so '
+          + 'confirming that they are left out leaves the run empty. Admit somebody first.'
+        : 'no active employees to pay');
+    }
     /*
      * **A PAYROLL RUN IS ALWAYS PRIVATE, ASKED HERE AS WELL AS AT THE MONEY.**
      * `C250`, `movement.ts`.
@@ -1913,6 +2149,14 @@ export class PayrollService {
       roster.map(e => ({ name: e.name, asset: e.asset, amount: e.baseAmount })),
       viewingKey,
       roster,
+      /*
+       * **THE PEOPLE AND THE ACKNOWLEDGEMENT TRAVEL TOGETHER, OR NEITHER
+       * DOES.** `createRun` mints the index only when it has both, so there
+       * is no path on which a run carries a list of unpaid people with nobody's
+       * name against it. `skipPending` is non-null wherever `leftOut` is: the
+       * only branch that sets `leftOut` has already refused an absent one.
+       */
+      leftOut && skipPending ? { people: leftOut, ack: skipPending } : undefined,
     );
   }
 
@@ -2002,9 +2246,35 @@ export class PayrollService {
     specs: EmployeeSpec[],
     viewingKey: Hex,
     roster?: RosterEmployee[],
+    /**
+     * **WHO THIS RUN IS DELIBERATELY NOT PAYING, AND WHO SAID SO.**
+     *
+     * Drawn by `createRunFromRoster`, which is the only caller that can know:
+     * an ad hoc run has no roster to be pending on. The index is minted
+     * here rather than there because a register names the run it belongs to and
+     * the id is minted below.
+     */
+    leftOut?: { people: RunSkip[]; ack: SkipAcknowledgement },
   ): Promise<{ run: PayrollRun; secrets: EmployeeSecret[] }> {
     this.accounts.require(accountId);
     if (specs.length === 0) throw new Error('a payroll run needs at least one employee');
+    /*
+     * **`runId`, NOT `id`, AND THE NAME IS THE WHOLE REASON FOR THIS COMMENT.**
+     * The loop below binds its own `id` for the EMPLOYEE, and this function's
+     * own history is why that matters: reading the wrong variable in that loop
+     * (`roster?.[i]` as `roster?.[0]`) left 145 tests green while printing one
+     * person's address on every payslip. A run id in scope under the name `id`
+     * is the next round's version of that.
+     */
+    const runId = 'run_' + nanoid(12);
+    /*
+     * **BEFORE ANYTHING IS BUILT, BECAUSE `decide` CAN REFUSE.** An
+     * acknowledgement with nobody's name on it or no reason in it throws here,
+     * and the run that would have carried an unsigned skip is never created.
+     */
+    const skips = leftOut
+      ? recordSkips(runId, leftOut.people, leftOut.ack, new Date().toISOString())
+      : undefined;
 
     const employees: Employee[] = [];
     const secrets: EmployeeSecret[] = [];
@@ -2089,7 +2359,7 @@ export class PayrollService {
     });
 
     const run: PayrollRun = {
-      id: 'run_' + nanoid(12),
+      id: runId,
       accountId,
       period,
       employees,
@@ -2105,6 +2375,7 @@ export class PayrollService {
       totals: subtotals(employees.map(e => ({ asset: e.asset, amount: e.amount }))),
       proposalIds: {},
       status: 'draft',
+      ...(skips ? { skips } : {}),
     };
     this.putRun(run, viewingKey);
     return { run, secrets };
@@ -2584,7 +2855,7 @@ export class PayrollService {
   /* ---------------- sealing runs ---------------- */
 
   private putRun(run: PayrollRun, viewingKey: Hex): void {
-    const { employees, totals, proposalIds, payout, ...operational } = run;
+    const { employees, totals, proposalIds, payout, skips, ...operational } = run;
     /*
      * **A RUN'S MARKER IS ITS OWN AND IT IS NOT ITS COMPANY'S.**
      *
@@ -2612,7 +2883,7 @@ export class PayrollService {
       keyEpoch: this.accounts.keyEpochOf(run.accountId),
       sealed: sealRecord(
         'payroll', run.accountId,
-        { employees, totals, proposalIds, payout } satisfies RunSecrets, viewingKey,
+        { employees, totals, proposalIds, payout, skips } satisfies RunSecrets, viewingKey,
       ),
     });
   }

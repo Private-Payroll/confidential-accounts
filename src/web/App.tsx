@@ -1166,21 +1166,43 @@ function Dashboard({ state, runs, people, pending, onGo }: {
 /* ------------------------------------------------------------------ */
 
 function PayrollList({ runs, people, busy, session, onOpen, act }: {
-  runs: Array<PayrollRun & Marked>; people: RosterEmployee[]; busy: boolean; session: Session;
+  runs: Array<PayrollRun & Marked>; people: Roster[]; busy: boolean; session: Session;
   onOpen: (id: string) => void; act: Act;
 }) {
   const active = people.filter(p => p.status === 'active');
   const upcoming = nextPeriod(runs);
 
-  const create = () => act(async () => {
-    // The run is drawn from the sealed roster, so the server needs the key to
-    // read the salaries it is drawing from. No amount is sent: each person is
-    // paid what their own record says, in the asset their record names.
-    await api(`/api/accounts/${session.account.id}/runs`, {
-      method: 'POST',
-      body: JSON.stringify({ period: upcoming, viewingKey: session.viewingKey }),
+  /*
+   * **THE TWO PENDING STATES, SPLIT THE WAY THE SERVICE SPLITS THEM.**
+   * `A-2`. Somebody who has handed nothing over is waiting on THEM; somebody
+   * whose drop box is full is waiting on an admin HERE. The run refuses in two
+   * different sentences and this screen must not collapse what it refuses in
+   * two into one line, because the second group is the one somebody in this
+   * room can clear this afternoon.
+   */
+  const pendingThem = people.filter(p => p.status === 'pending' && !p.handedOver);
+  const pendingUs = people.filter(p => p.status === 'pending' && p.handedOver);
+  const skipped = [...pendingThem, ...pendingUs];
+
+  const [reason, setReason] = useState('');
+  const [read, setRead] = useState(false);
+
+  /*
+   * **NO `by` IN THIS BODY.** Whose decision it was comes from the signed-in caller on
+   * the server, not from anything this screen can put in a request. A name a
+   * client supplies is a claim, and the record this produces is permanent.
+   */
+  const create = (skipPending?: { employeeIds: string[]; reason: string }) =>
+    act(async () => {
+      // The run is drawn from the sealed roster, so the server needs the key to
+      // read the salaries it is drawing from. No amount is sent: each person is
+      // paid what their own record says, in the asset their record names.
+      await api(`/api/accounts/${session.account.id}/runs`, {
+        method: 'POST',
+        body: JSON.stringify({ period: upcoming, viewingKey: session.viewingKey, skipPending }),
+      });
+      setReason(''); setRead(false);
     });
-  });
 
   return (
     <div className="card">
@@ -1188,10 +1210,70 @@ function PayrollList({ runs, people, busy, session, onOpen, act }: {
         <h3>Payroll runs</h3>
         <span className="sub">{runs.length} total</span>
         <div className="spacer" />
-        <button className="btn pri" onClick={create} disabled={busy || !active.length}>
+        <button className="btn pri" onClick={() => create()} disabled={busy || !active.length}>
           Run {monthName(upcoming)}
         </button>
       </div>
+      {skipped.length > 0 && (
+        /*
+         * **THE CONFIRMATION, AND ITS DEFAULT IS REFUSE.**
+         *
+         * The button above sends NO acknowledgement, so pressing it while
+         * anybody is pending is refused by the service and the refusal names
+         * them. This panel is the second press, and everything it asks for is
+         * something the record needs afterwards: **the names, so nobody is
+         * dropped unread; a person, because a payroll decision with no name on
+         * it is nobody's; and a reason, because a blank one is the report saying
+         * "somebody decided something".**
+         *
+         * **THE NAMES ARE SENT, NOT A FLAG.** The service compares them against
+         * who it is actually about and refuses if the two lists differ — so a
+         * confirmation given before somebody else's invitation went out cannot
+         * quietly cover them too.
+         */
+        <div className="bd">
+          <div className="field">
+            <label>Not everyone will be paid this month</label>
+            <div className="hint">
+              A run pays the people who are set up.
+              {' '}{skipped.length === 1 ? 'One person is not' : `${skipped.length} people are not`},
+              {' '}so this run leaves {skipped.length === 1 ? 'that person' : 'them'} out — and
+              nobody is left out of a payroll run without somebody putting their name to it.
+            </div>
+          </div>
+          {pendingThem.length > 0 && (
+            <div className="hint">
+              <strong>Waiting on them:</strong> {pendingThem.map(p => p.name).join(', ')} —
+              {' '}{pendingThem.length === 1 ? 'has' : 'have'} not set up yet. Nothing here moves
+              this along; they hold the invitation.
+            </div>
+          )}
+          {pendingUs.length > 0 && (
+            <div className="hint">
+              <strong>Waiting on you:</strong> {pendingUs.map(p => p.name).join(', ')} —
+              {' '}{pendingUs.length === 1 ? 'has' : 'have'} handed over and
+              {' '}{pendingUs.length === 1 ? 'is' : 'are'} waiting to be admitted. Admitting them
+              on the People screen puts them on this run instead.
+            </div>
+          )}
+          <div className="field">
+            <label>Why are they being left out?</label>
+            <input value={reason} onChange={e => setReason(e.currentTarget.value)}
+              placeholder="Paying everyone else on time; these two join next month" />
+          </div>
+          <label className="hint" style={{ display: 'block' }}>
+            <input type="checkbox" checked={read}
+              onChange={e => setRead(e.currentTarget.checked)} />
+            {' '}I have read the names above and this run goes ahead without them.
+          </label>
+          <button className="btn" disabled={busy || !active.length || !read || !reason.trim()}
+            onClick={() => create({
+              employeeIds: skipped.map(p => p.id), reason: reason.trim(),
+            })}>
+            Run {monthName(upcoming)} without {skipped.length === 1 ? 'them' : `those ${skipped.length}`}
+          </button>
+        </div>
+      )}
       <div className="bd tight">
         {runs.length === 0
           ? <div className="empty"><b>No runs yet</b>Create one to pay your team.</div>
@@ -1813,7 +1895,16 @@ function People({ people, session, busy, act }: {
       {people.some(p => p.status === 'pending') && (
         <div className="card">
           <div className="hd"><h3>Waiting</h3>
-            <span className="sub">payroll is blocked until everyone here is admitted</span></div>
+            {/*
+              * **THIS SENTENCE WAS TRUE AND IS NOT ANY MORE.** One
+              * pending person used to refuse the whole run; now the run refuses
+              * once, names them, and goes ahead if somebody confirms it by name.
+              * Leaving the old sentence up would tell an admin the company is
+              * frozen when it is not, which is the same person deciding not to
+              * try.
+              */}
+            <span className="sub">nobody here is paid until they are admitted, and a run can
+              go ahead without them if somebody confirms it by name</span></div>
           <div className="bd">
             {/*
               * TWO STATES, NAMED SEPARATELY, because a run already refuses in two
@@ -1953,9 +2044,23 @@ function People({ people, session, busy, act }: {
               );
             })}
 
+            {/*
+              * **THE SECOND HALF OF THE SAME CORRECTION, AND IT IS THE ONE THAT
+              * TOLD AN ADMIN TO DESTROY SOMETHING.**
+              *
+              * It read *"A pending person blocks the whole run, not just their
+              * own line. Withdraw anyone who is stuck"* — and that was true and
+              * is not any more. Worse than stale: the remedy it recommended was
+              * to withdraw the invitation, which throws away the roster entry
+              * and the link, when the correct action is now two clicks away on
+              * the Payroll screen. **A false sentence whose call to action is
+              * destructive costs more than one that is merely wrong.**
+              */}
             <div className="hint">
-              A pending person blocks the whole run, not just their own line. Withdraw anyone who is
-              stuck — an invitation that can never be admitted has no other exit.
+              A pending person is not paid, but they no longer stop anybody else being paid: the
+              run says who it would leave out and goes ahead once somebody confirms it by name.
+              Withdrawing is for an invitation that can never be admitted at all — it throws away
+              the entry and the link, so it is not the way to get a payroll out.
             </div>
           </div>
         </div>

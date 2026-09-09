@@ -393,8 +393,28 @@ async function route(url: URL, init?: RequestInit): Promise<Response> {
     if (seg[3] === 'plugin-events' && method === 'GET') return ok(plugins.events(id));
     if (seg[3] === 'grant' && method === 'POST')
       return ok(await accounts.grantAccess(id, body.viewingKey, body.signerId));
-    if (seg[3] === 'runs' && method === 'POST')
-      return ok(await payroll.createRunFromRoster(id, body.period, body.viewingKey, body.employeeIds));
+    if (seg[3] === 'runs' && method === 'POST') {
+      /*
+       * `skipPending` carried through in the same shape as the served route:
+       * the names an admin confirmed being left out, and a reason. Absent means
+       * refuse, which is what a run with anybody pending on it does.
+       *
+       * **`by` COMES FROM THE SIGNED-IN CALLER HERE TOO AND IS NOT READ OFF THE BODY.**
+       * The sealed record's whole subject is who decided not to pay somebody,
+       * and a name the caller typed answers that with whatever they typed. The
+       * two builds are separate implementations of one API and this is exactly
+       * the field on which they must not drift, so the rule is written twice
+       * because the code cannot be.
+       */
+      const who = identity.user(await caller(init));
+      return ok(await payroll.createRunFromRoster(
+        id, body.period, body.viewingKey, body.employeeIds,
+        body.skipPending && {
+          employeeIds: body.skipPending.employeeIds,
+          reason: body.skipPending.reason,
+          by: who.name.trim() || who.id,
+        }));
+    }
     if (!seg[3]) return ok(accounts.require(id));
   }
 
