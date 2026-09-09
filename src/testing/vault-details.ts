@@ -1,6 +1,7 @@
 import {
   pureCircuits as vaultCircuits,
 } from '../../contracts/managed-vault/contract/index.js';
+import { detailsOfKind, type VaultDetailsCircuits } from '../midnight/vault-details.js';
 import type { DetailsOfKind } from '../midnight/payout-tree.js';
 
 /**
@@ -15,15 +16,17 @@ import type { DetailsOfKind } from '../midnight/payout-tree.js';
  * run first, naming nothing.
  *
  * **THE CIRCUITS ARE THE COMPILED CONTRACT'S OWN, NEVER REIMPLEMENTED.** That
- * is `DetailsOf`'s standing rule and `M-104`: the vault owns what turns a
- * payment into 32 opaque bytes, and a second derivation anywhere builds a tree
- * the chain rejects after the approvals are collected and the fees paid.
+ * is `DetailsOf`'s standing rule: the vault owns what turns a payment into 32
+ * opaque bytes, and a second derivation anywhere builds a tree the chain rejects
+ * after the approvals are collected and the fees paid.
  *
- * It is a fixture rather than production code because production has no single
- * place holding both — the client takes them as an argument, deliberately, so
- * nothing in `src/midnight/` imports the vault's generated module to get them.
+ * **THIS FILE NO LONGER HOLDS THE MAPPING AND THAT IS THE POINT.** It used to
+ * say that it was a fixture *because production has no single place holding
+ * both*. That stopped being true the day the product could raise a run: there
+ * is now one place, `src/midnight/vault-details.ts`, and this file calls it.
+ * What is left here is the STATIC import — a test wants the circuits without
+ * awaiting anything, and a test may have the vault's compiled contract in its
+ * module graph where a browser build may not.
  */
-export const vaultDetails: DetailsOfKind = Object.freeze({
-  shielded: vaultCircuits.payoutDetails,
-  unshielded: vaultCircuits.unshieldedPayoutDetails,
-});
+export const vaultDetails: DetailsOfKind =
+  detailsOfKind(vaultCircuits as unknown as VaultDetailsCircuits);

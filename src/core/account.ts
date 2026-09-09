@@ -8,7 +8,7 @@ import type {
   Account, SealedAccount, PendingSigner, PendingSignerPayload,
   Signer, Policy, Proposal, SealedProposal, ProposalKind, Role,
   ShieldedState, StateBlinding, ShieldedEntry, Invite,
-  ApprovalOutcome, ApprovalUnknown,
+  ApprovalOutcome, ApprovalUnknown, PayoutSeed,
 } from './types.js';
 import type { AssetId } from './assets.js';
 import { assets as defaultAssets, NO_ASSET, sumChangeAmount } from './assets.js';
@@ -2402,9 +2402,11 @@ export class AccountService {
    *   · `digest` is the RUN PAYLOAD rather than the application digest, so the
    *     invariant every other reader relies on — `chainId ==
    *     proposalId(digest, salt, vault)` — is true on both doors.
-   *   · `chainId` is the id the LEDGER RETURNS, not one computed here. The
-   *     ledger is the side that talks to the chain and post-checks that the
-   *     chain holds it (`src/midnight/ledger.ts:841-847`).
+   *   · `chainId` is derived here, from the run's own four values and the
+   *     vault, by the same private helper the rebuild check uses — and it is
+   *     then COMPARED against the id the ledger returned, which throws on a
+   *     disagreement. The ledger is the side that talks to the chain and
+   *     post-checks that the chain holds it.
    *   · `vault` is required and real. A run at `noVault()` is one no vault can
    *     present, and both ledgers refuse it.
    *   · **A BLOCKED RUN IS NOT RAISED AND IS NOT RECORDED AS OPEN**, exactly as
@@ -2460,8 +2462,7 @@ export class AccountService {
      * `payees` is a count. What the company can read stays in `sealedPayload`,
      * which the chain never sees and which no longer contributes to the id.
      */
-    const digest = this.commitments.runPayload(
-      args.run.root, args.run.payees, args.run.opensAt, args.run.closesAt);
+    const digest = this.runPayloadOf(args.run);
 
     /*
      * **THE ROOT IS 32 BYTES, CHECKED HERE, AND `C369` IS WHY.** `S47`, found
@@ -2486,10 +2487,61 @@ export class AccountService {
           'id no merkle path can ever satisfy, and nothing finds out until a vault tries to pay.',
       );
     }
+    /*
+     * **AND THE VAULT IS THIRTY-TWO BYTES, CHECKED HERE FOR THE ROOT'S OWN
+     * REASON.**
+     *
+     * The vault is folded into the proposal's identity, so a vault of the wrong
+     * width builds an id no vault can ever recompute — the same failure as a
+     * short root, at the argument next to it, and equally silent. **Neither
+     * ledger catches it:** both refuse only the sentinel, and the simulated
+     * scheme interpolates the value into a string and accepts any width at all.
+     * **It is checked HERE and not at the doors** so that every propose surface
+     * gets it from one place; a copy per route is a rule with no home.
+     */
+    if (!/^[0-9a-f]{64}$/.test(args.run.vault)) {
+      throw new Error(
+        `a vault address is 32 bytes as 64 lower-case hex characters; this one is ` +
+          `${args.run.vault.length} character(s). The vault is folded into the run's identity, ` +
+          'so one of the wrong width builds a round no vault can ever present.',
+      );
+    }
     if (args.run.vault === this.commitments.noVault()) {
       throw new Error(
         'a payroll run must name the vault that will pay it. Refused here rather than raised, ' +
           'approved and then presented at a vault that cannot recompute its id.',
+      );
+    }
+    /*
+     * **A WINDOW THAT HAS ALREADY CLOSED, REFUSED BEFORE ANYBODY SIGNS.**
+     *
+     * Neither ledger checks this and neither can be blamed for it: they mirror
+     * the contract, which compares the window against BLOCK time and has no
+     * opinion about when the run was raised. What they refuse is a window that
+     * is inside out and one written in milliseconds, and both of those are
+     * shapes rather than moments.
+     *
+     * **THE RUN THIS CATCHES CAN BE NEITHER PAID NOR WITHDRAWN.** Its window
+     * has closed, so no payment can fall inside it; and it has opened, so the
+     * contract refuses to cancel it. It collects approvals, costs a fee, and
+     * ends as an expired row somebody has to notice. The one-character version
+     * of that mistake — a year typed wrong, a stale draft raised a month later —
+     * is common enough to be worth a sentence here.
+     *
+     * **AGAINST OUR OWN CLOCK, WHICH IS THE HONEST LIMIT OF IT.** Block time is
+     * not this machine's time, so this is an approximation in the safe
+     * direction: a clock that runs fast refuses a run that would have been
+     * payable, which costs a retry with a later window and nothing else. It is
+     * deliberately not applied to `opensAt` — a window that has already opened
+     * is perfectly payable, it just cannot be withdrawn any more.
+     */
+    const nowInSeconds = BigInt(Math.floor(Date.now() / 1000));
+    if (args.run.closesAt <= nowInSeconds) {
+      throw new Error(
+        `this run's window closed at ${args.run.closesAt} and it is now ${nowInSeconds}, so no ` +
+          'payment could ever fall inside it — and a run whose window has opened can no longer ' +
+          'be withdrawn, so raising it would leave a round that can be neither paid nor ' +
+          'cancelled. Raise it with a window that ends in the future.',
       );
     }
 
@@ -2498,7 +2550,7 @@ export class AccountService {
       { state: 'unknown', why: 'not-yet-proposed' },
     );
 
-    const chainId = this.commitments.proposalId(digest, change.salt, args.run.vault);
+    const chainId = this.runChainIdOf(args.run, change.salt);
     const proposal: Proposal = {
       id: 'prp_' + nanoid(12),
       chainId,
@@ -2936,6 +2988,87 @@ export class AccountService {
    */
   keyEpochOf(accountId: string): number {
     return this.require(accountId).keyEpoch;
+  }
+
+  /**
+   * **THE ACCOUNT'S PAYOUT SEEDS, EVERY GENERATION OF THEM.**
+   *
+   * What a payroll run's per-payee secrets are derived from. They live in the
+   * account's sealed shielded state rather than under the viewing key itself,
+   * because the viewing key ROTATES when a signer is removed and a run's leaves
+   * are fixed the moment the signers approve them — derive from a key that
+   * rotates and removing a signer strands every approved, unpaid run.
+   *
+   * **EVERY GENERATION AND NOT THE CURRENT ONE, DELIBERATELY.** A run raised
+   * last month was raised under the seed in force last month, and rebuilding it
+   * needs that one by name. A method that answered with only the newest would be
+   * the silent fallback this list exists to prevent.
+   *
+   * **THE CALLER ALREADY HOLDS EVERYTHING THIS RETURNS.** It is reached with the
+   * account's viewing key, which opens the whole sealed state; the seeds are one
+   * field of it. So this is a narrowing rather than a new disclosure — but it is
+   * the first time they leave this class, so: nothing may put one in a response
+   * body, a log line or an error message.
+   */
+  async payoutSeedsOf(accountId: string, viewingKey: Hex): Promise<PayoutSeed[]> {
+    const { blinding } = await this.readSealed(
+      accountId, viewingKey, this.require(accountId).keyEpoch);
+    /* `?? []` guards DATA, not types: a record written before this field existed
+     * reads back without it, and the seed list is the one thing whose absence
+     * must produce a sentence rather than a crash inside a derivation. */
+    return blinding.payoutSeeds ?? [];
+  }
+
+  /**
+   * **THE PAYLOAD THE CHAIN COMMITS TO FOR A RUN.** One spelling, used by the
+   * door that raises a run and by the check that rebuilds its id afterwards, so
+   * the two cannot drift into disagreeing about what a run IS.
+   */
+  private runPayloadOf(run: Omit<RunProposal, 'vault'>): Hex {
+    return this.commitments.runPayload(run.root, run.payees, run.opensAt, run.closesAt);
+  }
+
+  /** The run's identity on chain: its payload, its salt and its vault, folded. */
+  private runChainIdOf(run: RunProposal, salt: Hex): Hex {
+    return this.commitments.proposalId(this.runPayloadOf(run), salt, run.vault);
+  }
+
+  /**
+   * **REBUILDS A RAISED RUN'S ID FROM MATERIAL SOMEBODY IS HOLDING.**
+   *
+   * What it is for: a payment view is built from a run's leaves, and the leaves
+   * are not on chain. So before such a view says anything about people, it
+   * rebuilds the root from the leaves in hand, recomputes the id the chain would
+   * have recorded for a run over THAT root, and requires it to equal the id the
+   * run is actually open under. A mismatch means the leaves belong to a
+   * different payroll — a stale run, an edited list, last month's file — and a
+   * report over them would be about the wrong people entirely.
+   *
+   * **THE SALT AND THE VAULT COME OFF THE PROPOSAL AND ARE NOT ARGUMENTS**, so a
+   * caller cannot supply the two values that would make a wrong id come out
+   * right. The salt is inside the proposal's own sealed payload, which is where it
+   * has always been and where nothing until now read it back.
+   *
+   * **AND IT IS THE SAME DERIVATION THE RAISE USED, NOT A SECOND ONE.** A second
+   * spelling of a run's identity is how a view comes to be confidently wrong
+   * about which run it is describing, which is the exact failure this exists to
+   * prevent.
+   */
+  runProposalIdFrom(
+    proposalId: string,
+    viewingKey: Hex,
+    material: { root: Hex; payees: bigint; opensAt: bigint; closesAt: bigint },
+  ): Hex {
+    const proposal = this.requireProposal(proposalId, viewingKey);
+    if (proposal.kind !== 'payroll') {
+      throw new Error('that round is not a payroll run, so it has no payout root to rebuild');
+    }
+    /* `parseCanonical` and not `JSON.parse`, matching the `canonical` this
+     * payload was written with: a plain parse hands back an object where the
+     * change's amount belongs. */
+    const { __change: change } = parseCanonical<{ __change: StateChange }>(
+      unseal(proposal.sealedPayload, viewingKey));
+    return this.runChainIdOf({ ...material, vault: proposal.vault }, change.salt);
   }
 
   /**

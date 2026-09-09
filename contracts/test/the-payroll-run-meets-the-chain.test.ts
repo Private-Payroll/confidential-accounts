@@ -41,7 +41,9 @@ import {
   SimulatedLedger, SimulatedProofSystem, type StateChange,
 } from '../../src/core/ledger.js';
 import { MidnightCommitments } from '../../src/midnight/commitments.js';
-import { buildPayoutTree, type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
+import { buildRun, rootOfLeaves } from '../../src/midnight/payout-tree.js';
+import { runMaterialFor } from '../../src/midnight/run-material.js';
+import { vaultDetails } from '../../src/testing/vault-details.js';
 import { FileStore } from '../../src/core/store-file.js';
 import { assetIdBytes } from '../../src/core/assets.js';
 import { fromHex, toHex, unseal, parseCanonical, type Hex } from '../../src/core/crypto.js';
@@ -59,17 +61,6 @@ const NOW = 1_800_000_000;
 const OPENS = BigInt(NOW - 3_600);
 const CLOSES = BigInt(NOW + 3_600);
 
-const bytes = (n: number): Uint8Array => Uint8Array.from({ length: 32 }, (_, i) => (i + n) & 0xff);
-
-/**
- * The payee leaves of a run. Opaque bytes on purpose: the account cannot tell a
- * payee from a hash and neither can this test — what the VAULT puts inside them
- * is the vault's business and is tested against the vault.
- */
-const payeesOf = (n: number): PayoutLeafInput[] =>
-  Array.from({ length: n }, (_, i) => ({
-    details: toHex(bytes(i + 1)), nonce: toHex(bytes(i + 101)),
-  }));
 
 /** The MIDNIGHT scheme, against a simulated ledger. `the-service-layer-meets-the-chain.test.ts:87`. */
 const services = () => {
@@ -81,15 +72,13 @@ const services = () => {
 };
 
 /**
- * **THE PRODUCT RAISES A ONE-PAYEE RUN THROUGH ITS OWN PUBLIC DOOR.**
+ * **A COMPANY WITH A PAYROLL ON IT, AND NOTHING RAISED YET.**
  *
- * Everything returned is the SERVICE's: the proposal record it wrote, and the
- * `StateChange` it sealed inside its own payload. The only things this file
- * chose are the payee's opaque leaf bytes, the window and the vault — the three
- * a caller supplies, and the three nothing in `src/` can supply yet, which is
- * this round's declared finding.
+ * The people are hired through the seeded onboarding, so each of them has a
+ * roster entry with an address of their own — which is what makes them payable
+ * and is the only source of a payee's address anywhere in this product.
  */
-async function aRunTheProductRaised(payees = 1) {
+async function aCompanyWithAPayroll(payees = 1) {
   const { accounts, payroll } = services();
   const created = await accounts.create('Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1);
   const viewingKey = created.viewingKey;
@@ -100,22 +89,69 @@ async function aRunTheProductRaised(payees = 1) {
     }, viewingKey);
   }
   const { run } = await payroll.createRunFromRoster(created.account.id, '2026-08', viewingKey);
+  return { accounts, payroll, created, viewingKey, run };
+}
 
-  const leaves = payeesOf(payees);
-  const tree = buildPayoutTree(leaves);
+/**
+ * **THE PRODUCT RAISES A RUN THROUGH ITS OWN PUBLIC DOOR, WITH MATERIAL IT
+ * BUILT ITSELF.**
+ *
+ * **NOT ONE VALUE UNDER TEST IS WRITTEN BY THIS FILE.** The payees come off the
+ * roster, their secrets are derived from the account's own payout seed, the
+ * leaves are the VAULT's own commitments over those payees, and the root is the
+ * runtime's own merkle tree over those leaves. What this file chooses is the
+ * window and the vault — the two facts about the world that are not derivable
+ * from anything the product holds — and the number of people.
+ *
+ * The proposal record and the `StateChange` sealed inside its payload come back
+ * off the service, and the contract is then asked whether it agrees.
+ */
+async function aRunTheProductRaised(payees = 1) {
+  const base = await aCompanyWithAPayroll(payees);
+  const { payroll, created, viewingKey, run } = base;
 
-  const proposal = await payroll.proposeRun(run.id, viewingKey, created.secrets[0]!.signerId, {
-    root: tree.root,
-    payees: tree.payees,
+  const inputs = await payroll.runMaterialInputs(run.id, viewingKey);
+  /* Defaulting `detailsOf`, so this drives the pairing the product ships with
+   * rather than the fixture. The rebuild below uses the fixture, so the two
+   * agreeing is itself under test. */
+  const material = await runMaterialFor({
+    accountId: inputs.accountId,
+    runId: inputs.runId,
+    seeds: inputs.seeds,
+    facts: inputs.facts,
     opensAt: OPENS,
     closesAt: CLOSES,
     vault: toHex(PAYROLL_VAULT),
   });
 
+  const proposal = await payroll.proposeRun(
+    run.id, viewingKey, created.secrets[0]!.signerId, material);
+
   const change = parseCanonical<{ __change: StateChange }>(
     unseal(proposal.sealedPayload, viewingKey)).__change;
 
-  return { accounts, payroll, created, viewingKey, run, tree, leaves, proposal, change };
+  return { ...base, material, proposal, change };
+}
+
+/**
+ * **THE RUN REBUILT FROM WHAT THE COMPANY WROTE DOWN, WHICH IS HOW IT GETS
+ * PAID.**
+ *
+ * A leaf is not enough to pay somebody: paying needs their merkle path, their
+ * blinding and their nonce, and none of those is stored anywhere. They are
+ * derived again, from the account's payout seed and the identity the run was
+ * raised under — on any signer's machine, with the machine that raised it at
+ * the bottom of a river.
+ *
+ * **THE GENERATION COMES OFF THE RECORD AND IS NOT ASKED FOR AFRESH.** That is
+ * the whole reason the record keeps it.
+ */
+async function rebuiltFromTheRecord(
+  payroll: PayrollService, runId: string, viewingKey: Hex, asset?: string,
+) {
+  const rebuild = await payroll.payoutRebuildOf(runId, viewingKey, asset);
+  if (!rebuild) throw new Error('this leg has no payout material on record');
+  return buildRun(rebuild.seeds, rebuild.identity, rebuild.facts, vaultDetails);
 }
 
 /**
@@ -148,7 +184,7 @@ describe('C375: a payroll run the PRODUCT raised is one a VAULT can pay', () => 
        * could not equal it for any input.
        */
       const payload = pureCircuits.runPayload(
-        fromHex(r.tree.root), r.tree.payees, OPENS, CLOSES);
+        fromHex(r.material.run.root), r.material.run.payees, OPENS, CLOSES);
       expect(r.proposal.digest).toBe(toHex(payload));
       expect(r.proposal.chainId)
         .toBe(toHex(pureCircuits.proposalIdOf(payload, PAYROLL_VAULT, fromHex(r.change.salt))));
@@ -162,7 +198,7 @@ describe('C375: a payroll run the PRODUCT raised is one a VAULT can pay', () => 
 
       /* The run branch of the merged `propose`, with the SERVICE's four parts. */
       await sim.as(device).proposeRun({
-        root: fromHex(r.tree.root), payees: r.tree.payees,
+        root: fromHex(r.material.run.root), payees: r.material.run.payees,
         from: OPENS, until: CLOSES, vault: PAYROLL_VAULT,
       });
 
@@ -193,22 +229,39 @@ describe('C375: a payroll run the PRODUCT raised is one a VAULT can pay', () => 
        * would have failed after every signature was collected and every fee
        * spent.
        */
+      /*
+       * **THE PAYMENT IS MADE FROM A REBUILD, NOT FROM THE OBJECT THAT RAISED
+       * THE RUN, AND THAT IS THE POINT OF THE WHOLE ARC.**
+       *
+       * A vault paying on payday does not have the tree the raise produced — it
+       * has the company's record, the account's seed, and the roster. If those
+       * three do not derive the same leaves and the same paths, every payment of
+       * an approved run is refused as *"that payee is not in the approved run"*,
+       * after the signatures are in and the fee is spent. So the arguments below
+       * come from a fresh derivation, and the root it produced is asserted equal
+       * to the one the signers approved before anything is presented.
+       */
+      const rebuilt = await rebuiltFromTheRecord(r.payroll, r.run.id, r.viewingKey);
+      expect(rebuilt.tree.root).toBe(r.material.run.root);
+      expect(rebuilt.tree.leaves).toEqual(r.material.leaves);
+
+      const args = rebuilt.payeeArgs(0);
       await sim.as(device).recordPayment({
         proposal: id,
         vault: PAYROLL_VAULT,
-        root: fromHex(r.tree.root),
-        payees: r.tree.payees,
+        root: fromHex(r.material.run.root),
+        payees: r.material.run.payees,
         from: OPENS,
         until: CLOSES,
         salt: fromHex(r.change.salt),
-        details: fromHex(r.leaves[0]!.details),
-        nonce: fromHex(r.leaves[0]!.nonce),
-        path: r.tree.pathFor(0),
+        details: fromHex(args.details),
+        nonce: fromHex(args.nonce),
+        path: args.path,
       });
 
       /* The chain MOVED, so the payment settled rather than merely not throwing. */
       expect(sim.ledger.movements.member(
-        pureCircuits.paidMovementOf(fromHex(r.tree.leaves[0]!)))).toBe(true);
+        pureCircuits.paidMovementOf(fromHex(r.material.leaves[0]!)))).toBe(true);
     });
 
   /**
@@ -222,11 +275,7 @@ describe('C375: a payroll run the PRODUCT raised is one a VAULT can pay', () => 
    * derives, and there is no window row anywhere.
    */
   it('the GOVERNANCE door raises an id no run derives and no window at all', async () => {
-    const { accounts, payroll } = services();
-    const created = await accounts.create('Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1);
-    payroll.hireDirect(created.account.id, {
-      name: 'Payee 0', email: 'p0@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
-    }, created.viewingKey);
+    const { accounts, payroll, created, run } = await aCompanyWithAPayroll(1);
 
     const proposal = await accounts.propose({
       accountId: created.account.id,
@@ -239,9 +288,14 @@ describe('C375: a payroll run the PRODUCT raised is one a VAULT can pay', () => 
     const change = parseCanonical<{ __change: StateChange }>(
       unseal(proposal.sealedPayload, created.viewingKey)).__change;
 
-    const tree = buildPayoutTree(payeesOf(1));
+    const inputs = await payroll.runMaterialInputs(run.id, created.viewingKey);
+    const material = await runMaterialFor({
+      accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds,
+      facts: inputs.facts, opensAt: OPENS, closesAt: CLOSES, vault: toHex(PAYROLL_VAULT),
+    });
     const asARun = toHex(pureCircuits.proposalIdOf(
-      pureCircuits.runPayload(fromHex(tree.root), tree.payees, OPENS, CLOSES),
+      pureCircuits.runPayload(
+        fromHex(material.run.root), material.run.payees, OPENS, CLOSES),
       PAYROLL_VAULT, fromHex(change.salt)));
 
     /* The two ids are computed over the same salt and cannot be made to meet. */
@@ -268,25 +322,19 @@ describe('C375: a payroll run the PRODUCT raised is one a VAULT can pay', () => 
   /**
    * **THE PRODUCT'S DOOR REFUSES RATHER THAN RAISING THE WRONG THING.**
    *
-   * Nothing in `src/` builds a payout root, a payment window or a vault today —
-   * measured: `buildRun` and `buildPayoutTree` have no caller in `src/` at all,
-   * and `PayrollRun` carries none of the three. So every product caller passes
-   * `null` and gets this. A door that raises an unpayable run costs an approval
+   * The product builds a run's material now, but a caller that has none — a
+   * seeder with no vault, a client that has not been changed yet — still has to
+   * say so out loud rather than have a default arrive in the field that decides
+   * where the money goes. A door that raises an unpayable run costs an approval
    * round from every signer and is discovered by the people who were meant to
    * be paid; a door that refuses costs a sentence.
    */
   it('refuses a run with no material instead of raising a governance round', async () => {
-    const { accounts, payroll } = services();
-    const created = await accounts.create('Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1);
-    payroll.hireDirect(created.account.id, {
-      name: 'Payee 0', email: 'p0@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
-    }, created.viewingKey);
-    const { run } = await payroll.createRunFromRoster(
-      created.account.id, '2026-08', created.viewingKey);
+    const { payroll, created, run } = await aCompanyWithAPayroll(1);
 
     await expect(payroll.proposeRun(
       run.id, created.viewingKey, created.secrets[0]!.signerId, null))
-      .rejects.toThrow(/no payout root, no payment window and no vault/);
+      .rejects.toThrow(/cannot be proposed without its payout material/);
   });
 
   /**
@@ -296,20 +344,20 @@ describe('C375: a payroll run the PRODUCT raised is one a VAULT can pay', () => 
    * is one of those two, and the door refuses before anybody signs.
    */
   it('refuses run material whose payee count disagrees with the leg', async () => {
-    const { accounts, payroll } = services();
-    const created = await accounts.create('Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1);
-    payroll.hireDirect(created.account.id, {
-      name: 'Payee 0', email: 'p0@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
-    }, created.viewingKey);
-    const { run } = await payroll.createRunFromRoster(
-      created.account.id, '2026-08', created.viewingKey);
-    const tree = buildPayoutTree(payeesOf(3));
+    const { payroll, created, run } = await aCompanyWithAPayroll(1);
+    const inputs = await payroll.runMaterialInputs(run.id, created.viewingKey);
+    /* A tree over three payees for a payroll that pays one. The three leaves are
+     * distinct even from one repeated fact, because each payee's nonce is
+     * derived from their INDEX. */
+    const material = await runMaterialFor({
+      accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds,
+      facts: [inputs.facts[0]!, inputs.facts[0]!, inputs.facts[0]!],
+      opensAt: OPENS, closesAt: CLOSES, vault: toHex(PAYROLL_VAULT),
+    });
 
     await expect(payroll.proposeRun(
-      run.id, created.viewingKey, created.secrets[0]!.signerId, {
-        root: tree.root, payees: tree.payees, opensAt: OPENS, closesAt: CLOSES,
-        vault: toHex(PAYROLL_VAULT),
-      })).rejects.toThrow(/pays 1 people in GBP and the run material names 3/);
+      run.id, created.viewingKey, created.secrets[0]!.signerId, material))
+      .rejects.toThrow(/pays 1 people in GBP and the run material names 3/);
   });
 
   /**
@@ -319,19 +367,16 @@ describe('C375: a payroll run the PRODUCT raised is one a VAULT can pay', () => 
    * failure shape one argument along, and refused before a fee.
    */
   it('refuses a run raised at the no-vault sentinel', async () => {
-    const { accounts, payroll } = services();
-    const created = await accounts.create('Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1);
-    payroll.hireDirect(created.account.id, {
-      name: 'Payee 0', email: 'p0@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
-    }, created.viewingKey);
-    const { run } = await payroll.createRunFromRoster(
-      created.account.id, '2026-08', created.viewingKey);
-    const tree = buildPayoutTree(payeesOf(1));
+    const { payroll, created, run } = await aCompanyWithAPayroll(1);
+    const inputs = await payroll.runMaterialInputs(run.id, created.viewingKey);
+    const material = await runMaterialFor({
+      accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds,
+      facts: inputs.facts, opensAt: OPENS, closesAt: CLOSES,
+      vault: MidnightCommitments.noVault(),
+    });
 
     await expect(payroll.proposeRun(
-      run.id, created.viewingKey, created.secrets[0]!.signerId, {
-        root: tree.root, payees: tree.payees, opensAt: OPENS, closesAt: CLOSES,
-        vault: MidnightCommitments.noVault(),
-      })).rejects.toThrow(/must name the vault that will pay it/);
+      run.id, created.viewingKey, created.secrets[0]!.signerId, material))
+      .rejects.toThrow(/must name the vault that will pay it/);
   });
 });

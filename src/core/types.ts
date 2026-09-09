@@ -1,6 +1,7 @@
 import type { Hex, Sealed } from './crypto.js';
 import type { PayoutSeed } from '../midnight/run-keys.js';
 import type { Payee } from '../midnight/payee-address.js';
+import type { PaymentFacts } from '../midnight/payout-tree.js';
 
 export type { PayoutSeed };
 import type { AssetId } from './assets.js';
@@ -1115,7 +1116,93 @@ export interface PayrollRun {
    * every run today; a run paying in dollars and pounds has two.
    */
   proposalIds: Record<AssetId, string>;
+  /**
+   * **WHAT EACH LEG OF THIS RUN WAS RAISED AGAINST, KEPT SO IT CAN BE PAID AND
+   * REPORTED ON.**
+   *
+   * Absent until a leg is proposed, and absent for ever on a run that was raised
+   * before the product could build any — which is why every reader handles the
+   * absence rather than assuming a shape.
+   *
+   * **PER SETTLEMENT ASSET, NOT PER RUN, AND THAT IS NOT A DETAIL.** A root, a
+   * leaf count, a window and a vault are properties of ONE APPROVAL, and a run
+   * that pays some people in pounds and some in dollars is two approvals over
+   * two trees. Held per run, the second leg would overwrite the first, and a
+   * payment view built from what survived would report every payee of that leg
+   * paid and call the run complete while nobody in the other leg had their
+   * money.
+   */
+  payout?: Record<AssetId, RunPayout>;
   settledAt?: string;
+}
+
+/**
+ * **ONE APPROVED LEG'S PAYOUT MATERIAL.**
+ *
+ * The first five fields are exactly what the chain was asked to open the run
+ * with, and they are kept because nothing can recover them: what the chain holds
+ * is a hash of them. The last three are what makes the leg payable again from
+ * another machine.
+ */
+export interface RunPayout {
+  /** The merkle root over this leg's payout leaves. What the signers approved. */
+  root: Hex;
+  /** How many leaves. Bound into the payload beside the root. */
+  payees: bigint;
+  /** Seconds since the Unix epoch, because block time is compared against it. */
+  opensAt: bigint;
+  closesAt: bigint;
+  /** The vault that will pay this leg. Folded into the proposal's identity. */
+  vault: Hex;
+  /**
+   * The leaves, in tree order.
+   *
+   * Inside the sealed envelope, and the reason is stronger than *they are not
+   * secret to the company*. The account's record of completed payments is public
+   * and append-only, and membership in it is a derivation of the leaf — so
+   * anybody holding this list can read off which of these people have been paid,
+   * and when, without any key of ours. Outside the envelope our own store would
+   * be handing that over.
+   */
+  leaves: Hex[];
+  /**
+   * **WHO THIS LEG PAYS, WHAT IN, AND HOW MUCH — AS IT WAS WHEN THE SIGNERS
+   * APPROVED IT.**
+   *
+   * A leaf proves membership; it does not say who to pay. The vault is handed
+   * the recipient, the token and the amount and re-derives the leaf from them,
+   * so paying an approved run needs these three per payee — and needs them
+   * UNCHANGED.
+   *
+   * **THEY ARE STORED RATHER THAN RE-READ OFF THE ROSTER, AND THE ROSTER IS WHY.**
+   * A roster is a live thing: somebody is marked a leaver, a salary is
+   * corrected, an address is re-registered. Any of those between the approval
+   * and the payment would derive different leaves for a root that is already
+   * signed — every payment refused, with nothing naming the cause — and marking
+   * one person a leaver would block the rebuild of the whole leg. What the
+   * signers approved does not change afterwards, so neither does this.
+   */
+  facts: PaymentFacts[];
+  /**
+   * The identifier this leg's per-payee secrets were derived from.
+   *
+   * **STORED RATHER THAN RECOMPUTED FROM THE RUN AND THE ASSET.** The rule that
+   * composes it can be changed by somebody who does not know that changing it
+   * strands every approved run that has not been paid yet; the value cannot.
+   */
+  runId: string;
+  /**
+   * Which generation of the account's payout seed this leg was raised under.
+   *
+   * **THE ONE FIELD WHOSE ABSENCE IS SILENT AND FATAL.** Seeds are appended, not
+   * replaced, when a signer is removed, so a rebuild that asks for *the current
+   * generation* instead of this one derives different secrets, different leaves
+   * and a different root — and every payment of an already-approved run is then
+   * refused as *"that payee is not in the approved run"*, with nothing naming the
+   * cause. Keeping this number is what lets a removal be immediate for future
+   * payrolls without reaching back and breaking an approved one.
+   */
+  epoch: number;
 }
 
 /** What an auditor receives. Proves a statement without carrying the underlying data. */

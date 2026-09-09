@@ -19,7 +19,9 @@ import { wiring, observerView } from '../wiring/selection.js';
 import { AccountService } from '../core/account.js';
 import { PayrollService, RecordingInviteDelivery } from '../core/payroll.js';
 import { runPayments } from '../midnight/run-status.js';
-import { bigintJsonReplacer } from '../core/crypto.js';
+import { rootOfLeaves } from '../midnight/payout-tree.js';
+import { runMaterialFor } from '../midnight/run-material.js';
+import { bigintJsonReplacer, type Hex } from '../core/crypto.js';
 
 /**
  * This build runs entirely in the browser with a simulated ledger, so its
@@ -410,12 +412,37 @@ async function route(url: URL, init?: RequestInit): Promise<Response> {
   // /api/runs/:id/...
   if (seg[1] === 'runs' && seg[2]) {
     const runId = seg[2];
-    if (seg[3] === 'propose' && method === 'POST')
-      /* `null` run material — the same refusal the hosted route gives, in the
-       * same turn, because a route the standalone answers and the hosted build
-       * refuses is `T-11`. */
+    if (seg[3] === 'propose' && method === 'POST') {
+      /*
+       * **THE SAME MATERIAL THE HOSTED ROUTE BUILDS, BUILT THE SAME WAY.** A
+       * route one build answers and the other refuses is the drift this file
+       * exists to prevent, and a run raised here has to be payable by the same
+       * vault at the same window as one raised there.
+       *
+       * The window's shape is checked here because there is no network in this
+       * build and therefore no schema layer, and `BigInt('')` throws a syntax
+       * error rather than saying what was wanted. **The vault's width is NOT
+       * checked here**: that rule lives in one place, beside the payout root's,
+       * so both builds and every other propose surface give the same answer.
+       */
+      if (!/^[0-9]+$/.test(String(body.opensAt ?? ''))
+          || !/^[0-9]+$/.test(String(body.closesAt ?? ''))) {
+        return bad('a run\'s window is two whole numbers of seconds since the Unix epoch — '
+          + 'seconds, because that is what block time is compared against.');
+      }
+      const inputs = await payroll.runMaterialInputs(runId, body.viewingKey, body.asset);
+      const material = await runMaterialFor({
+        accountId: inputs.accountId,
+        runId: inputs.runId,
+        seeds: inputs.seeds,
+        facts: inputs.facts,
+        opensAt: BigInt(String(body.opensAt)),
+        closesAt: BigInt(String(body.closesAt)),
+        vault: String(body.vault) as Hex,
+      });
       return ok(await payroll.proposeRun(
-        runId, body.viewingKey, body.proposedBy, null, body.asset));
+        runId, body.viewingKey, body.proposedBy, material, body.asset));
+    }
     // `settle` STOOD HERE. No balance, no `PayrollService.settle`.
     // Removed on both servers in the same turn — a route the hosted build
     // refuses and the standalone build answers is `T-11`.
@@ -426,7 +453,11 @@ async function route(url: URL, init?: RequestInit): Promise<Response> {
     if (seg[3] === 'payments' && method === 'POST') {
       const viewingKey = body.viewingKey ?? '';
       const run = payroll.requireRun(runId, viewingKey);
-      const material = payroll.payoutMaterialOf(runId, viewingKey);
+      /* Verified against the approved run, exactly as the hosted route is: the
+       * id is rebuilt from the leaves in hand and a list that belongs to
+       * another payroll is refused rather than reported on. */
+      const material = payroll.payoutMaterialOf(
+        runId, viewingKey, { asset: body.asset, rootOf: rootOfLeaves });
       const among = material ? await ledger.paidAmong(run.accountId, material.leaves) : null;
       return ok(runPayments(material, among));
     }

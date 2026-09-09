@@ -43,7 +43,7 @@ import type { Sealed, Hex } from '../core/crypto.js';
 
 /** One decision about one payee. Never edited; superseded by a later one. */
 export interface SkipDecision {
-  /** The payee's index in the run the register belongs to. */
+  /** The payee's index in the run this skip register belongs to. */
   index: number;
   /** True to stop paying them, false to put them back in. */
   skip: boolean;
@@ -72,6 +72,23 @@ export interface SkipRegister {
 export const emptyRegister = (proposalId: Hex, payees: number): SkipRegister => {
   if (!Number.isInteger(payees) || payees < 1) {
     throw new Error(`a run has at least one payee; got ${payees}`);
+  }
+  /*
+   * **A REGISTER WITH NO RUN ON IT CANNOT BE APPLIED TO ONE, SO IT IS NOT BUILT.**
+   *
+   * `registerFor` already refuses an identity this blank when a skip register is
+   * used, with the sentence a reader needs. This is the same refusal at the
+   * other end: without it, the only way in mints a value the only way out
+   * rejects, and the decisions somebody recorded against it — who is
+   * deliberately not being paid, and on whose say-so — are unusable at the
+   * moment somebody needs them. Refused where a skip register is CREATED, which is
+   * before anybody has recorded anything in it.
+   */
+  if (!proposalId?.trim()) {
+    throw new Error(
+      'a skip register belongs to one particular run and this one names none. Skips carried '
+      + 'from another run mark the wrong people as deliberately unpaid, and those are the '
+      + 'people nobody then looks at. Identify the run these payees belong to.');
   }
   return { proposalId, payees, decisions: [] };
 };

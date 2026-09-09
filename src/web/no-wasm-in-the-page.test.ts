@@ -147,6 +147,24 @@ describe('WebAssembly and the payroll page', () => {
       expect(standalone.wasmModules.length,
         'the positive control found no WebAssembly, so the case above proves nothing')
         .toBeGreaterThan(0);
-      expect(standalone.wasmAssets).toHaveLength(1);
+      /*
+       * **TWO, AND THE SECOND ONE ARRIVED THE DAY THIS BUILD COULD RAISE A
+       * PAYROLL RUN.**
+       *
+       * The first is the ledger's, reached through the payroll service because
+       * an address handed over by an employee has to be re-parsed against the
+       * network. The second is the on-chain runtime's, reached through the
+       * payout tree: a run's root is that runtime's own merkle hash, and a
+       * standalone build that could not compute it would be a build whose
+       * propose door refuses where the served one answers.
+       *
+       * **THE NUMBER IS EXACT ON PURPOSE.** A `greaterThan` here would let a
+       * third arrive unnoticed, and the whole subject of this file is that
+       * WebAssembly gets into a module graph without anybody deciding it
+       * should. **The case above is what protects the PAGE, and it is
+       * untouched: the page talks to a server and holds none of this.** If this
+       * number changes again, read what changed before changing the number.
+       */
+      expect(standalone.wasmAssets).toHaveLength(2);
     });
 });

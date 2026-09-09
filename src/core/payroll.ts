@@ -36,8 +36,10 @@ import {
 } from '../midnight/payee-address.js';
 import { payrollPayee } from './movement.js';
 import type { NetworkName } from '../midnight/network.js';
-import type { ShieldedPaymentFacts } from '../midnight/payout-tree.js';
+import type { ShieldedPaymentFacts, PaymentFacts } from '../midnight/payout-tree.js';
 import type { RunInputs } from '../midnight/run-status.js';
+import type { RunMaterial } from '../midnight/run-material.js';
+import type { PayoutSeed } from '../midnight/run-keys.js';
 
 /**
  * The private half of a roster entry — everything a salary slip is built from.
@@ -201,7 +203,87 @@ export class RecordingInviteDelivery implements InviteDelivery {
 }
 
 /** The numbers on a run. Everything else about it is operational. */
-type RunSecrets = Pick<PayrollRun, 'employees' | 'totals' | 'proposalIds'>;
+type RunSecrets = Pick<PayrollRun, 'employees' | 'totals' | 'proposalIds' | 'payout'>;
+
+/**
+ * **THE PEOPLE ONE LEG OF A RUN PAYS, THROUGH ONE FILTER.**
+ *
+ * A round moves one settlement asset, so everything about a leg — who is in it,
+ * how many there are, whose leaf sits where — is this list. **The ORDER is part
+ * of the run**: a payee's index is where their leaf sits and what their merkle
+ * path proves, so the same payroll filtered twice must produce the same
+ * sequence. Written once so that the count the signers approve and the tree the
+ * vault proves against cannot be drawn from two different lists.
+ */
+const legEmployees = (run: PayrollRun, leg: AssetId): Employee[] =>
+  run.employees.filter(e => e.asset === leg);
+
+/**
+ * **WHAT ONE LEG'S PAYEE SECRETS ARE DERIVED FROM, AND WHY IT IS NOT THE RUN'S
+ * OWN ID.**
+ *
+ * Every per-payee nonce and blinding on a run comes out of this identifier and
+ * the account's seed. Two legs of one payroll are two approvals over two
+ * separate trees, and if they shared an identifier they would derive the SAME
+ * secrets for position 0 of each — and a nonce is published by the payment that
+ * spends it, so paying the first leg would hand a watcher the second leg's.
+ * They are different runs by the only measure that matters here, so they get
+ * different identifiers.
+ *
+ * The value is stored with the leg rather than recomputed on demand, so that
+ * changing this rule cannot strand a run that is already approved.
+ */
+const runIdForLeg = (run: PayrollRun, leg: AssetId): string => `${run.id}:${leg}`;
+
+/**
+ * **WHICH LEG OF A RUN IS BEING ACTED ON, RESOLVED IN ONE PLACE.**
+ *
+ * A run that settles in one asset needs nobody to say which; a run that settles
+ * in two cannot be guessed at, because guessing would act on one set of people
+ * and report about another. Every door that works a leg at a time asks here, so
+ * a caller cannot get one answer at the raise and a different one at the read.
+ */
+/**
+ * **WHICH LEG A PAYMENT VIEW IS ABOUT, RESOLVED OVER THE LEGS THAT HAVE
+ * MATERIAL RATHER THAN OVER THE PAYROLL.**
+ *
+ * A run's payroll says which currencies it settles in; its payout record says
+ * which of those have actually been raised. A view is about the second, and the
+ * difference matters at both ends: a run with nothing raised has nothing to
+ * report and says so once, in the shape every reader already handles, rather
+ * than refusing for want of an argument that would not have helped; and a run
+ * with two legs raised cannot be reported on without being told which, because
+ * answering about one is how a screen comes to call a payroll complete while
+ * everybody in the other currency is still owed.
+ *
+ * `null` where there is nothing to report on at all.
+ */
+const raisedLegOf = (run: PayrollRun, asset: AssetId | undefined): AssetId | null => {
+  const raised = Object.keys(run.payout ?? {}).sort();
+  if (raised.length === 0) return null;
+  const leg = asset ?? (raised.length === 1 ? raised[0] : undefined);
+  if (!leg) {
+    throw new Error(
+      `this run has payout material for ${raised.length} assets (${raised.join(', ')}) and a ` +
+        'payment view is about one of them. Name which asset — each is its own approval round ' +
+        'over its own set of payees, and an answer about one says nothing about the other.',
+    );
+  }
+  return raised.includes(leg) ? leg : null;
+};
+
+const legOf = (run: PayrollRun, asset: AssetId | undefined): AssetId => {
+  const legs = Object.keys(run.totals).sort();
+  const leg = asset ?? (legs.length === 1 ? legs[0] : undefined);
+  if (!leg) {
+    throw new Error(
+      `this run settles in ${legs.length} assets (${legs.join(', ')}) and a round moves one. ` +
+        'Name which asset — each is its own approval round.',
+    );
+  }
+  if (!legs.includes(leg)) throw new Error(`this run pays nobody in ${leg}`);
+  return leg;
+};
 import type { AccountService } from './account.js';
 import type { ProofSystem, RunProposal } from './ledger.js';
 import type { DataStore } from './store.js';
@@ -1875,9 +1957,21 @@ export class PayrollService {
    * is asked about each of them; a run-level check would pass a mixed run whose
    * first payee happened to be private.
    */
-  paymentFactsFor(runId: string, viewingKey: Hex): ShieldedPaymentFacts[] {
+  paymentFactsFor(
+    runId: string, viewingKey: Hex,
+    /**
+     * **WHICH SETTLEMENT LEG, OR THE WHOLE RUN.**
+     *
+     * A run is approved and paid one asset at a time, so the facts that go into
+     * a tree are one leg's. Omitted, this answers for the whole run, which is
+     * what a caller checking that everybody on the payroll can be paid wants and
+     * is NOT what a caller building a run's material wants.
+     */
+    asset?: AssetId,
+  ): ShieldedPaymentFacts[] {
     const run = this.requireRun(runId, viewingKey);
-    return run.employees.map((e) => {
+    const people = asset === undefined ? run.employees : legEmployees(run, asset);
+    return people.map((e) => {
       const person = this.person(e.id, viewingKey);
       if (!person) {
         throw new Error(
@@ -2044,44 +2138,34 @@ export class PayrollService {
   async proposeRun(
     runId: string, viewingKey: Hex, proposedBy: string,
     /**
-     * **THE RUN, AS THE CHAIN IS ASKED TO OPEN ONE — OR `null` FROM A CALLER
-     * THAT HAS NONE.**
+     * **THIS LEG'S PAYOUT MATERIAL — OR `null` FROM A CALLER THAT HAS NONE.**
      *
      * **NULLABLE RATHER THAN OPTIONAL, so a call site that has no run material
      * has to say so out loud instead of forgetting** — the rule this file
-     * already applies to `invite`'s `createdBy`. Every existing caller had to be
-     * edited to pass `null`, which is the point: the change is visible at each
-     * door rather than absorbed by a default.
+     * already applies to `invite`'s `createdBy`. A caller that cannot name a
+     * vault, or that is seeding a company that has none, passes `null` and is
+     * refused; that is the correct answer and not a gap.
      *
-     * **WHAT IT COSTS TODAY, SAID PLAINLY: NOTHING IN `src/` CAN SUPPLY IT, SO
-     * EVERY PRODUCT CALLER REFUSES.** Measured — `buildRun` and
-     * `buildPayoutTree` (`src/midnight/payout-tree.ts`) have NO caller in
-     * `src/` at all, only tests and `scripts/`; `PayrollRun` (`types.ts:1078`)
-     * carries no root, no window and no vault; and `core/` may not import
-     * `src/midnight/`, which is the dependency rule that keeps the standalone
-     * build working. **That is a smaller change than it looks and a larger
-     * finding than it looks, and this round says so rather than inventing a
-     * root:** a run raised with a root nobody can produce payments against is
-     * exactly as unpayable as `C375`'s governance round, and rule 9 forbids
-     * writing a value no instrument read off anything.
+     * **BUILT ABOVE THIS LAYER AND HANDED DOWN, WHICH IS FORCED.** The root is a
+     * merkle tree hashed the way the chain hashes, and this layer may not reach
+     * the runtime that does it — that dependency rule is what keeps the browser
+     * page free of the chain's WebAssembly. So the material is built where the
+     * runtime is available and arrives here as a value.
+     *
+     * **AND IT CANNOT BE ASSEMBLED BY HAND.** Its type is obtainable only from
+     * the one function that reads the root, the payee count and the leaves off a
+     * single tree, because the agreement between those three is the thing this
+     * door most needs and least can check.
      */
-    payable: RunProposal | null,
+    payable: RunMaterial | null,
     asset?: AssetId) {
     const run = this.requireRun(runId, viewingKey);
     if (run.status !== 'draft' && run.status !== 'proposed') throw new Error(`run is ${run.status}`);
 
-    const legs = Object.keys(run.totals).sort();
-    const leg = asset ?? (legs.length === 1 ? legs[0] : undefined);
-    if (!leg) {
-      throw new Error(
-        `this run settles in ${legs.length} assets (${legs.join(', ')}) and a round moves one. ` +
-          'Name which asset to propose — each is its own approval round.',
-      );
-    }
-    if (!legs.includes(leg)) throw new Error(`this run pays nobody in ${leg}`);
+    const leg = legOf(run, asset);
     if (run.proposalIds[leg]) throw new Error(`the ${leg} leg of this run is already proposed`);
 
-    const paid = run.employees.filter(e => e.asset === leg);
+    const paid = legEmployees(run, leg);
     const entries: ShieldedEntry[] = paid.map(e => ({
       id: 'ent_' + nanoid(10),
       kind: 'payroll',
@@ -2120,23 +2204,124 @@ export class PayrollService {
      */
     if (!payable) {
       throw new Error(
-        `the ${leg} leg of run ${run.id} cannot be proposed: this run has no payout root, no ` +
-          'payment window and no vault, so there is nothing a vault could ever be presented ' +
-          'with. A payroll run is raised against a merkle root over blinded payee leaves ' +
-          '(src/midnight/payout-tree.ts), a window in seconds, and the vault that will pay it. ' +
-          'None of the three has a writer in this product yet — the vault path is not built ' +
-          '(C292) — so this refuses rather than raising a governance round that no vault can ' +
-          'ever match, which is what it did until C375.',
+        `the ${leg} leg of run ${run.id} cannot be proposed without its payout material: the ` +
+          'merkle root over this leg\'s blinded payee leaves, the window it may be paid in, ' +
+          'and the vault that will pay it. Those three are what a vault is presented with, and ' +
+          'a round raised without them is one no vault can ever match — approved, paid for, ' +
+          'and unpayable. Build the material for this leg first and raise the run with it.',
       );
     }
-    if (payable.payees !== BigInt(paid.length)) {
+    if (payable.run.payees !== BigInt(paid.length)) {
       throw new Error(
         `this run pays ${paid.length} people in ${leg} and the run material names ` +
-          `${payable.payees}. The payee count is bound into the payload the signers approve ` +
-          '(compact:2606-2609), so a run cannot be declared finished early or made never to ' +
-          'finish — and a count that disagrees with the roster is one of the two.',
+          `${payable.run.payees}. The payee count is bound into the payload the signers ` +
+          'approve, so a run cannot be declared finished early or made never to finish — and a ' +
+          'count that disagrees with the roster is one of the two.',
       );
     }
+    /*
+     * **THE LEAF LIST AND THE COUNT THE SIGNERS APPROVE ARE THE SAME NUMBER.**
+     *
+     * The root and the leaves are two views of one tree, and a leaf list that is
+     * short by one is a person whose payment nothing will ever report on.
+     */
+    if (payable.run.payees !== BigInt(payable.leaves.length)) {
+      throw new Error(
+        `this run material names ${payable.run.payees} payees and carries ` +
+          `${payable.leaves.length} payout leaves. They are two views of one tree and a run ` +
+          'whose leaves do not account for its own payees cannot be reported on.',
+      );
+    }
+    /*
+     * **AND THE ROOT THE SIGNERS WILL APPROVE IS THE ROOT OVER THESE LEAVES,
+     * CHECKED HERE AND NOT INFERRED FROM WHERE THE VALUE CAME FROM.**
+     *
+     * This is the strongest of the three agreements and it is the one that costs
+     * a whole payroll: a run approved against a root that does not describe its
+     * own payees is refused at every `recordPayment`, on payday, after the
+     * signatures are in and the fee is spent. **The material's TYPE cannot carry
+     * this** — the brand says the value was built rather than typed out, and a
+     * spread carries the brand across while replacing a field — so the
+     * derivation travels with the material and is called here on the values
+     * actually in front of the door.
+     *
+     * **IT IS THE TREE BUILDER'S OWN FUNCTION AND NEVER A SECOND ONE.** A root
+     * computed a second way here would build a check that agrees with itself and
+     * with nothing the chain will do.
+     */
+    if (payable.rootOf(payable.leaves) !== payable.run.root) {
+      throw new Error(
+        'this run material\'s payout root is not the root over its own leaves, so the run the ' +
+          'signers would approve is not the run these payees are in. Every payment against it ' +
+          'would be refused as a payee who is not in the approved run, on payday, after the ' +
+          'signatures were collected and the fee was spent.',
+      );
+    }
+    /*
+     * **THE MATERIAL WAS BUILT FOR THIS LEG OF THIS RUN, CHECKED AND NOT
+     * ASSUMED.** Every payee's secrets are derived from the identifier below, so
+     * material built under another one derives different leaves for the same
+     * people. Two legs of one payroll are two runs by this measure.
+     */
+    const legRunId = runIdForLeg(run, leg);
+    if (payable.identity.runId !== legRunId) {
+      throw new Error(
+        `this material was built for run ${payable.identity.runId} and is being raised for ` +
+          `${legRunId}. A run's payee secrets are derived from its identifier, so material ` +
+          'from another run describes other people.',
+      );
+    }
+    if (payable.identity.accountId !== run.accountId) {
+      throw new Error(
+        `this material was built for account ${payable.identity.accountId} and this run ` +
+          `belongs to ${run.accountId}.`,
+      );
+    }
+
+    /*
+     * **THE MATERIAL IS WRITTEN DOWN BEFORE THE ROUND IS RAISED, AND THE ORDER
+     * IS THE POINT.**
+     *
+     * Every field of it is computed before the call and none of it is a function
+     * of the answer, so there is nothing to wait for. What there is to lose is
+     * the SEED GENERATION: a lost write after a successful raise would leave a
+     * round on chain whose leaves nobody can rebuild once a signer has been
+     * removed, and that is the one part of a run that cannot be reconstructed
+     * from the payroll. The confirmation — which proposal this leg was raised
+     * under — is the half that CAN be recovered from the chain, so it is the
+     * half that is written afterwards.
+     */
+    /*
+     * **READ, CHANGE, WRITE — WITH NOTHING AWAITED IN BETWEEN, AND THAT IS THE
+     * WHOLE OF WHY THE RECORD IS RE-READ HERE.**
+     *
+     * `putRun` writes the run whole. The record opened at the top of this method
+     * was read before any of the checks above, and a second leg of the same
+     * payroll can be raised while this one is in flight — so writing that
+     * snapshot back would silently drop whatever the other leg had recorded in
+     * the meantime. Re-reading immediately before the change, and awaiting
+     * nothing between the read and the write, makes the two legs queue instead
+     * of overwrite.
+     *
+     * **AND THE ALREADY-PROPOSED GUARD IS ASKED AGAIN HERE**, against the record
+     * as it is now rather than as it was when this call started.
+     */
+    const beforeRaising = this.requireRun(runId, viewingKey);
+    if (beforeRaising.proposalIds[leg]) {
+      throw new Error(`the ${leg} leg of this run is already proposed`);
+    }
+    beforeRaising.payout = { ...(beforeRaising.payout ?? {}), [leg]: {
+      root: payable.run.root,
+      payees: payable.run.payees,
+      opensAt: payable.run.opensAt,
+      closesAt: payable.run.closesAt,
+      vault: payable.run.vault,
+      leaves: payable.leaves,
+      facts: payable.facts,
+      runId: payable.identity.runId,
+      epoch: payable.identity.epoch,
+    } };
+    this.putRun(beforeRaising, viewingKey);
 
     const proposal = await this.accounts.proposeRun({
       accountId: run.accountId,
@@ -2151,13 +2336,24 @@ export class PayrollService {
       summary: `Payroll ${run.period}, ${paid.length} recipients`,
       payload: { runId: run.id, entries },
       asset: leg,
-      run: payable,
+      run: payable.run,
       proposedBy,
     });
 
-    run.status = 'proposed';
-    run.proposalIds = { ...run.proposalIds, [leg]: proposal.id };
-    this.putRun(run, viewingKey);
+    /*
+     * **THE SAME READ-CHANGE-WRITE, FOR THE SAME REASON, AND THIS ONE IS THE
+     * ONE THAT WAS MEASURED GOING WRONG.** Two legs raised at once both awaited
+     * the chain and then wrote back the record each had read beforehand; the
+     * second write dropped the first leg's proposal id, and the guard that
+     * refuses a leg already proposed then read the field that had just been
+     * cleared — so the same payees were raised on chain a second time, under a
+     * fresh salt, with the approvals split across two rounds that neither reach
+     * threshold nor can be withdrawn.
+     */
+    const afterRaising = this.requireRun(runId, viewingKey);
+    afterRaising.status = 'proposed';
+    afterRaising.proposalIds = { ...afterRaising.proposalIds, [leg]: proposal.id };
+    this.putRun(afterRaising, viewingKey);
     return proposal;
   }
 
@@ -2375,7 +2571,7 @@ export class PayrollService {
   /* ---------------- sealing runs ---------------- */
 
   private putRun(run: PayrollRun, viewingKey: Hex): void {
-    const { employees, totals, proposalIds, ...operational } = run;
+    const { employees, totals, proposalIds, payout, ...operational } = run;
     this.store.putRun({
       ...operational,
       // Outside the envelope so a run can be found by its proposals; the map
@@ -2385,7 +2581,7 @@ export class PayrollService {
       keyEpoch: this.accounts.keyEpochOf(run.accountId),
       sealed: sealRecord(
         'payroll', run.accountId,
-        { employees, totals, proposalIds } satisfies RunSecrets, viewingKey,
+        { employees, totals, proposalIds, payout } satisfies RunSecrets, viewingKey,
       ),
     });
   }
@@ -2405,30 +2601,192 @@ export class PayrollService {
   }
 
   /**
-   * **WHAT A RUN WOULD HAVE TO CARRY FOR ANYBODY TO BE TOLD WHO WAS PAID — AND
-   * NO RUN CARRIES IT.**
+   * **EVERYTHING ONE LEG'S PAYOUT MATERIAL IS BUILT FROM, GATHERED IN ONE
+   * PLACE.**
+   *
+   * The material itself is built above this layer, because hashing a merkle tree
+   * the way the chain hashes it means reaching a runtime this layer may not
+   * reach. What this layer holds is the INPUTS — who is being paid on this leg,
+   * in what order, and the account's payout seeds — and gathering them here is
+   * what stops each caller assembling its own set.
+   *
+   * **THE LEG IS RESOLVED HERE AND TRAVELS WITH THE ANSWER.** The identifier
+   * returned is the leg's, not the run's, and it is what the payees'
+   * secrets will be derived from; a caller that composed its own would be
+   * writing the rule that decides whether two legs of one payroll share their
+   * secrets.
+   *
+   * **THE SEEDS ARE THE SECRET BEHIND EVERY NONCE ON THE RUN.** They are
+   * returned so that one call can build a run and no more; nothing may put one
+   * in a response, a log or an error.
+   */
+  async runMaterialInputs(
+    runId: string, viewingKey: Hex, asset?: AssetId,
+  ): Promise<{
+    accountId: string;
+    /** The identifier this leg's payee secrets are derived from. */
+    runId: string;
+    facts: ShieldedPaymentFacts[];
+    seeds: PayoutSeed[];
+  }> {
+    const run = this.requireRun(runId, viewingKey);
+    const leg = legOf(run, asset);
+    return {
+      accountId: run.accountId,
+      runId: runIdForLeg(run, leg),
+      facts: this.paymentFactsFor(run.id, viewingKey, leg),
+      seeds: await this.accounts.payoutSeedsOf(run.accountId, viewingKey),
+    };
+  }
+
+  /**
+   * **WHAT ONE LEG OF A RUN WAS RAISED AGAINST, READ BACK OFF THE RECORD.**
    *
    * A payment view is built against a run's payout LEAVES and the window its
-   * signers approved. **A run record here holds the people, the amounts, the
-   * payslips and the approval rounds, and holds no payout root, no window and
-   * no vault** — the same three the propose door refuses without, and for the
-   * same reason: nothing in this product writes any of them yet.
+   * signers approved. Neither is on chain — the tree travels as a root — so both
+   * live with the run here, written when the leg was raised.
    *
-   * **SO THIS ANSWERS `null`, AND IT IS ONE PLACE ANSWERING IT RATHER THAN
-   * EVERY READER WORKING IT OUT.** A reader that assembled an empty leaf list
-   * for itself would get a view in which no payee is outstanding and the run is
-   * therefore complete — "all 0 paid" over a payroll nobody has been paid from.
-   * The absence has to be stated somewhere, once, in the shape a reader is
-   * forced to handle; this is that shape and that place.
+   * **`null` MEANS THIS LEG HAS NO MATERIAL, AND EVERY READER MUST HANDLE IT.**
+   * A run raised before this product could build any carries none and never
+   * will; a run in draft carries none yet. A reader that assembled an empty leaf
+   * list for itself instead would get a view in which no payee is outstanding
+   * and the run is therefore complete — *"all 0 paid"* over a payroll nobody has
+   * been paid from. The absence is stated once, here, in a shape a reader is
+   * forced to handle.
    *
-   * **AND IT IS THE SEAM.** When a run is raised with its payout material, this
-   * is the line that reads it back off the record, and every reader downstream
-   * already handles what comes out.
+   * **PER LEG, AND IT REFUSES TO GUESS WHICH.** A run that settles in two assets
+   * has two approvals over two trees, and answering about one of them without
+   * being asked is how a screen comes to report a payroll complete while
+   * everybody in the other currency is still owed.
    */
-  payoutMaterialOf(runId: string, viewingKey: Hex): RunInputs | null {
+  /**
+   * **EVERYTHING NEEDED TO REBUILD ONE APPROVED LEG AND PAY IT, MONTHS LATER,
+   * ON ANOTHER MACHINE.**
+   *
+   * The leaves a run was approved against are stored, but a leaf is not enough
+   * to pay somebody: paying needs their merkle path, their blinding and their
+   * nonce, and needs the vault told who to pay, in what, and how much. None of
+   * the secrets is written down anywhere — they are DERIVED, from the account's
+   * payout seed and the identity the run was raised under, which is what makes a
+   * run belong to the account rather than to the laptop that raised it.
+   *
+   * **THE THREE THINGS THIS RETURNS ARE THE THREE THAT MUST NOT DRIFT.**
+   *
+   *   the identity   including which GENERATION of the payout seed. Seeds are
+   *                  appended when a signer is removed, so *the current one* is
+   *                  not the one an approved run was built from — ask for the
+   *                  wrong generation and every payment is refused, with nothing
+   *                  saying why
+   *   the facts      **off the run's own record and never off the roster.** A
+   *                  roster is live: somebody is marked a leaver, a salary is
+   *                  corrected, an address is re-registered. Reading it again
+   *                  would derive different leaves for a root that is already
+   *                  signed, and marking one person a leaver would block the
+   *                  rebuild of the whole leg
+   *   the seeds      every generation of them, so the identity can select
+   *
+   * `null` for a leg with no material, exactly as the leaves are.
+   */
+  async payoutRebuildOf(
+    runId: string, viewingKey: Hex, asset?: AssetId,
+  ): Promise<{
+    identity: { accountId: string; runId: string; epoch: number };
+    facts: PaymentFacts[];
+    seeds: PayoutSeed[];
+  } | null> {
+    const run = this.requireRun(runId, viewingKey);
+    const leg = raisedLegOf(run, asset);
+    const payout = leg ? run.payout?.[leg] : undefined;
+    if (!payout) return null;
+    return {
+      identity: { accountId: run.accountId, runId: payout.runId, epoch: payout.epoch },
+      facts: payout.facts,
+      seeds: await this.accounts.payoutSeedsOf(run.accountId, viewingKey),
+    };
+  }
+
+  /**
+   * **WHAT ONE LEG OF A RUN WAS RAISED AGAINST, READ BACK OFF THE RECORD.**
+   *
+   * A payment view is built against a run's payout LEAVES and the window its
+   * signers approved. Neither is on chain — the tree travels as a root — so both
+   * live with the run here, written when the leg was raised.
+   *
+   * **`null` MEANS THIS LEG HAS NO MATERIAL, AND EVERY READER MUST HANDLE IT.**
+   * A run raised before this product could build any carries none and never
+   * will; a run in draft carries none yet. A reader that assembled an empty leaf
+   * list for itself instead would get a view in which no payee is outstanding
+   * and the run is therefore complete — *"all 0 paid"* over a payroll nobody has
+   * been paid from. The absence is stated once, here, in a shape a reader is
+   * forced to handle.
+   *
+   * **PER LEG, AND IT REFUSES TO GUESS WHICH.** A run that settles in two assets
+   * has two approvals over two trees, and answering about one of them without
+   * being asked is how a screen comes to report a payroll complete while
+   * everybody in the other currency is still owed.
+   */
+  payoutMaterialOf(
+    runId: string, viewingKey: Hex,
+    opts: {
+      /** Which settlement leg. Required when the run settles in more than one. */
+      asset?: AssetId;
+      /**
+       * **THE PAYOUT TREE'S OWN ROOT FUNCTION, PASSED IN AND NEVER
+       * REIMPLEMENTED.**
+       *
+       * Supplying it is what turns the answer from a list of leaves into a list
+       * of leaves PROVED to be this run's: the id the run is open under is
+       * rebuilt from the leaves in hand, and a view whose leaves belong to some
+       * other payroll is refused instead of rendered. It is optional because a
+       * caller that cannot reach the runtime that hashes the tree can still have
+       * an unverified view, clearly marked as one — and it is passed in rather
+       * than imported because this layer must not reach that runtime at all.
+       */
+      rootOf?: (leaves: Hex[]) => Hex;
+    } = {},
+  ): RunInputs | null {
     /* Read for the refusal it carries: a run nobody may open is not a run whose
      * payments this caller may be told about. */
-    this.requireRun(runId, viewingKey);
-    return null;
+    const run = this.requireRun(runId, viewingKey);
+    const leg = raisedLegOf(run, opts.asset);
+    const payout = leg ? run.payout?.[leg] : undefined;
+    if (!payout || !leg) return null;
+
+    const window = { from: payout.opensAt, until: payout.closesAt };
+    const proposalId = run.proposalIds[leg];
+
+    /*
+     * **THE PROOF IS OFFERED ONLY FOR A LEG THE LEDGER ACTUALLY RAISED.**
+     *
+     * A round can be recorded here and never reach a chain — a policy block
+     * stops it before the call, and a failure after the call leaves the moment
+     * unset. Rebuilding an id for one of those would compare two values this
+     * process derived from one record and report the result as *proved against
+     * the approved run*, which is a claim about a round the chain never held.
+     *
+     * **WHAT IT DOES BUY, SAID EXACTLY.** It proves that these leaves are the
+     * ones this leg's approved root commits to — so a stale leaf list, a run
+     * mixed up with another in the store, or a leg's material overwritten by
+     * another leg's is refused rather than reported on. It does not prove that
+     * the chain still holds the round; nothing here asks the chain anything.
+     */
+    let proposal: RunInputs['proposal'];
+    if (opts.rootOf && proposalId) {
+      const raised = this.accounts.requireProposal(proposalId, viewingKey);
+      const rootOf = opts.rootOf;
+      if (raised.raisedAt) {
+        proposal = {
+          id: raised.chainId,
+          idFrom: (leaves, w) => this.accounts.runProposalIdFrom(proposalId, viewingKey, {
+            root: rootOf(leaves),
+            payees: BigInt(leaves.length),
+            opensAt: w.from,
+            closesAt: w.until,
+          }),
+        };
+      }
+    }
+
+    return { leaves: payout.leaves, window, proposal };
   }
 }
