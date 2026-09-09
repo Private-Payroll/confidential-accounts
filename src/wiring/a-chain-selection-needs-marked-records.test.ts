@@ -6,7 +6,7 @@ import { sign } from '../core/crypto.js';
 import { openRecord } from '../core/sealed-records.js';
 import type { Ledger } from '../core/ledger.js';
 import { PayrollService, RecordingInviteDelivery } from '../core/payroll.js';
-import { SimulatedProofSystem } from '../core/ledger.js';
+import { SimulatedLedger, SimulatedProofSystem, SimulatedCommitments } from '../core/ledger.js';
 import {
   countProvenance, decideList, provenanceOf, refuseSelectionOver,
 } from '../core/provenance.js';
@@ -35,15 +35,38 @@ import { wiring } from './selection.js';
  * assertion. **A sentence a person reads only when something else fails is not
  * a control.**
  *
- * ── HOW IT FAILS WHEN THE SELECTION MOVES, WHICH IS THE WHOLE DESIGN ─────
+ * ── WHAT CHANGED WHEN THE SELECTION ACTUALLY MOVED ──────────────────────
  *
- * Every case below drives the product's own write paths through whatever
- * `wiring()` returns, and asserts the records that come out carry the word
- * that ledger reports for itself. **So it does not have to detect a chain
- * selection to refuse one.** A selection whose ledger cannot write turns these
- * red at the write; a selection whose ledger writes without marking turns them
- * red at the assertion; and either way the file that goes red is the one whose
- * name says what is wrong, rather than a test about WebAssembly in a page.
+ * This file used to drive every case through whatever `wiring()` returned, on
+ * the reasoning that **a selection whose ledger cannot write turns these red at
+ * the write** - so it would refuse a chain selection without having to detect
+ * one. That was the right design while the selection was a rehearsal and moving
+ * it was the accident to guard against.
+ *
+ * **THE SELECTION HAS MOVED, DELIBERATELY, AND IT CANNOT WRITE.** The product
+ * runs against a chain, every write above that ledger refuses by name because
+ * no funded wallet is wired to this deployment, and a build that has resolved
+ * no deployment cannot even construct one. So the old design would leave this
+ * whole file permanently red - which is an alarm that has already gone off and
+ * is now just noise over the thing it was protecting.
+ *
+ * ── SO THE FILE SPLITS ALONG WHAT EACH CASE IS ACTUALLY ABOUT ───────────
+ *
+ * **CASES ABOUT WHAT THE PRODUCT WRITES NAME THEIR OWN LEDGER OUT LOUD.** They
+ * are about `AccountService` and `PayrollService` stamping a record from the
+ * ledger that wrote it, and exercising that needs a ledger that CAN write. The
+ * simulated one is the test double and this is what a test double is for; a
+ * test naming the implementation it drives is the opposite of a hidden second
+ * decision, and the check next door walks every non-test module to make sure
+ * nothing outside a test does the same.
+ *
+ * **CASES ABOUT THE SELECTION STILL ASK THE SELECTOR.** Which word is running,
+ * whether the selection would be refused over the records on disk, and whether
+ * a company would be shown a mixture - none of those needs anything written.
+ *
+ * **AND ONE NEW CASE HOLDS WHAT THE OLD DESIGN WAS REALLY BUYING:** that the
+ * running selection cannot produce an unmarked record, because it cannot
+ * produce a record at all. That was implicit in a red file. It is asserted now.
  */
 
 const NETWORK = 'undeployed' as const;
@@ -54,11 +77,20 @@ const SIGNERS = [
   { name: 'Cleo', role: 'approver' as const },
 ];
 
-/** The product, wired the way the product is wired. Nothing here names an implementation. */
+/**
+ * **THE PRODUCT'S OWN WRITE PATHS, DRIVEN OVER THE TEST DOUBLE.**
+ *
+ * `AccountService` and `PayrollService` are the real ones - they are the
+ * subject. The LEDGER is the double, named here rather than taken from the
+ * selector, because the running selection cannot write and these cases are
+ * about what a write records. **The pair is still built together**: the double's
+ * ledger and the double's scheme, never one of each, for the same reason the
+ * selector refuses to hand out one of three.
+ */
 const world = () => {
-  const chosen = wiring();
+  const chosen = { name: 'simulated' as const, commitments: SimulatedCommitments };
   const store = new MemoryStore();
-  const ledger = chosen.createLedger();
+  const ledger: Ledger = new SimulatedLedger(chosen.commitments);
   const accounts = new AccountService(store, ledger, chosen.commitments);
   const payroll = new PayrollService(
     store, accounts, new SimulatedProofSystem(), undefined, NETWORK,
@@ -102,7 +134,32 @@ describe('the selection and the ledger say the same word', () => {
      * product that marks records one way and judges them another.
      */
     const chosen = wiring();
-    expect(chosen.createLedger().wiring).toBe(chosen.name);
+    /*
+     * **THE RUNNING SELECTION CANNOT BUILD A LEDGER, SO THE PAIR IS CHECKED
+     * WHERE IT IS ASSEMBLED INSTEAD.** `product.test.ts` holds that: the set
+     * that reaches a chain is refused unless the word it stamps records with
+     * and the word this build is selected as are the same. What is asserted
+     * here is the half that is true wherever the selector is loaded.
+     */
+    expect(chosen.name).toBe('chain');
+    expect(() => chosen.createLedger()).toThrow(/has not resolved a deployment/);
+  });
+
+  /**
+   * **AND THE THING THE OLD DESIGN WAS BUYING, NOW SAID OUT LOUD.**
+   *
+   * This file used to guard the selection by going red at the write. It cannot
+   * any more - the selection has moved and its ledger refuses - so the property
+   * underneath is asserted directly: **the running product cannot produce an
+   * unmarked record, because it cannot produce a record.**
+   *
+   * RED WHEN: a selection is made that can write without a deployment. That is
+   * the state this whole file exists to refuse, and it is the state a rehearsal
+   * ledger put back on the product path would create.
+   */
+  it('THE RUNNING SELECTION CANNOT WRITE A RECORD AT ALL, MARKED OR NOT', () => {
+    expect(() => wiring().createLedger()).toThrow();
+    expect(() => wiring().createProofSystem()).toThrow();
   });
 
   it('the word is one of the two this product can write down', () => {
@@ -290,10 +347,10 @@ describe('the marker follows the ledger, not a literal in the write path', () =>
    * path stop asking. These can.
    */
   const worldClaiming = (word: 'simulated' | 'chain') => {
-    const chosen = wiring();
+    /* The double again, and the proxy changes the word it reports and nothing else. */
     const store = new MemoryStore();
-    const ledger = claiming(chosen.createLedger(), word);
-    const accounts = new AccountService(store, ledger, chosen.commitments);
+    const ledger = claiming(new SimulatedLedger(SimulatedCommitments), word);
+    const accounts = new AccountService(store, ledger, SimulatedCommitments);
     const payroll = new PayrollService(
       store, accounts, new SimulatedProofSystem(), undefined, NETWORK,
       new RecordingInviteDelivery(),

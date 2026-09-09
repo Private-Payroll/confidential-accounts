@@ -3,7 +3,9 @@ import cors from 'cors';
 import { z } from 'zod';
 import { join } from 'node:path';
 import { FileStore } from '../core/store-file.js';
-import { wiring, observerView } from '../wiring/selection.js';
+import { observerView } from '../wiring/selection.js';
+import { startProduct } from '../wiring/product.js';
+import { handedInWiring } from '../wiring/handed-in.js';
 import { AccountService } from '../core/account.js';
 import { PayrollService, RecordingInviteDelivery } from '../core/payroll.js';
 import { PluginService } from '../core/plugins.js';
@@ -118,7 +120,45 @@ const store = new FileStore(DATA);
  * behaves differently today — removing it, so that a mismatch is a compile error
  * instead of an unprovable leaf, is R3.
  */
-const chosen = wiring();
+/*
+ * **THE RUNNING SET, ASSEMBLED FROM THIS DEPLOYMENT'S OWN FACTS.**
+ *
+ * `src/wiring/selection.ts` says WHICH implementation runs and holds the
+ * commitment scheme; `src/wiring/product.ts` is what turns that into a ledger,
+ * and it needs a contract address, an indexer, a node and a proof server, none
+ * of which has a default.
+ *
+ * **AN ACCOUNT'S ADDRESS COMES OFF ITS OWN STORED RECORD AND FROM NOWHERE
+ * ELSE.** It is written the moment the account is opened, from what the ledger
+ * reported, precisely so that reading it later does not depend on a process
+ * remembering anything.
+ *
+ * **A REFUSAL DOES NOT STOP THIS MODULE LOADING**, and the reason is in
+ * `product.ts`: this file is imported by things that never serve, and a module
+ * that throws while being evaluated reports a failure about itself instead of
+ * about the missing configuration. What a refusal does is give every route a
+ * ledger that answers nothing and says why - and stop the process listening,
+ * below.
+ */
+const startup = startProduct(async id => store.getAccount(id)?.contractAddress ?? null);
+/*
+ * **AND THE ONE CASE WHERE THIS PROCESS DOES NOT RESOLVE ITS OWN SET: A TEST
+ * HANDED IT ONE BEFORE IMPORTING THIS FILE.**
+ *
+ * The routes below cannot be exercised against a deployment that has no wallet
+ * - every write refuses above the ledger, correctly - and those routes are
+ * where approval-signature verification, invitation sealing and payee
+ * disclosure live. A caller that has built a whole boundary implementation
+ * itself gets to drive them with it.
+ *
+ * **NO MODULE THE PRODUCT SHIPS REACHES THIS.** `handInWiring` is refused in
+ * every non-test `.ts` and `.tsx` file under `src/` by the walk beside the
+ * selector - which names its own edges where it is defined - so this is `null`
+ * here unless a test file said otherwise, and there is no name, environment
+ * variable or default that could make it anything else.
+ */
+const handed = handedInWiring();
+const chosen = handed ?? startup.wiring;
 /*
  * **THE LEDGER IS CHOSEN BEFORE ANYTHING IS SERVED, SO THE RECORDS IT WILL BE
  * SERVING ARE CHECKED HERE AND NOT ONE COMPANY AT A TIME.**
@@ -1711,6 +1751,22 @@ app.post('/api/plugin/propose', wrap(async (req, res) => {
  */
 app.get('/api/public', wrap(async (_req, res) => {
   /*
+   * **THIS ROUTE REFUSES WHOLE RATHER THAN SERVING THE HALF IT CAN ANSWER.**
+   *
+   * It is the evidence behind the claim that a public observer learns nothing,
+   * and the observer's own view of the ledger is the half that cannot be
+   * answered by reading a chain today - the shape it should return is an
+   * undecided design question, not a missing function. Serving the rounds
+   * without it would be a privacy-evidence route quietly showing less than it
+   * claims to, which is worse than one that stops. The refusal is spread into
+   * the reply below rather than raised here, so that the day it answers, this
+   * route answers WITH it.
+   *
+   * `src/wiring/selection.ts` holds the refusal and the question it leaves
+   * open, so the hosted build and the browser-only build cannot answer this
+   * differently.
+   */
+  /*
    * What an observer can see — and since S-8 that is genuinely all we can show,
    * not all we chose to show.
    *
@@ -1750,10 +1806,10 @@ app.get('/api/public', wrap(async (_req, res) => {
     provenance: p.provenance,
   }));
   /*
-   * `observerView` rather than `ledger.publicView()`: the method is not on the
-   * `Ledger` boundary and this call only ever compiled because this file held a
-   * `SimulatedLedger`. `src/wiring/selection.ts` carries the finding and the
-   * question it leaves open.
+   * **THE OBSERVER VIEW IS SPREAD AND NOT MERELY CALLED.** It refuses today, so
+   * this line is not reached - but the day it answers, this route answers with
+   * it rather than quietly without it. `src/wiring/selection.ts` says why that
+   * distinction is the whole point of this route.
    */
   res.json({
     ...observerView(ledger),
@@ -1789,6 +1845,25 @@ app.post('/api/demo/seed', authed, wrap(async (req, res) => {
 export { app };
 
 if (process.env.SERVE !== '0') {
+  /*
+   * **NOTHING IS SERVED BY A PROCESS THAT CANNOT SAY WHICH CONTRACT IT IS
+   * TALKING TO.**
+   *
+   * This is the last thing checked and the first thing printed, and it exits
+   * rather than listening. A process that came up and answered every question
+   * with a refusal would look, to whoever pointed a browser at it, exactly like
+   * a product that was broken - and to whoever deployed it, exactly like a
+   * product that had started. **Those are the two readings that cost money**,
+   * so the process does not exist to be read either way.
+   *
+   * The block below carries the cause whole and carries no stack: a stack trace
+   * is a description of this program's insides handed to somebody who is trying
+   * to configure it.
+   */
+  if (!startup.started) {
+    console.error(`\n${startup.refusal}\n`);
+    process.exit(1);
+  }
   const PORT = Number(process.env.PORT ?? 8787);
   app.listen(PORT, () => {
     console.log(`api        http://localhost:${PORT}`);

@@ -28,10 +28,12 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer } from 'node:net';
-import { mkdtempSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
+import { deploymentRecordPath } from '../wiring/deployment.js';
+import { networkOfThePair } from '../midnight/network.js';
 
 const REPO = fileURLToPath(new URL('../..', import.meta.url));
 const TSX = join(REPO, 'node_modules', '.bin', 'tsx');
@@ -113,6 +115,26 @@ type Running = { port: number; report: string; out: string };
 const start = async (overrides: Record<string, string>): Promise<Running> => {
   const dir = mkdtempSync(join(tmpdir(), 'mn-sink-'));
   writeFileSync(join(dir, '.env'), `DATABASE_URL=${NOWHERE}\n`);
+  /*
+   * **THIS FILE STARTS THE REAL ENTRY POINT, SO IT NEEDS A REAL DEPLOYMENT.**
+   *
+   * It takes no test double and must not: its subject is what a started
+   * PROCESS writes to a report on disk, and a process that refuses to start
+   * writes nothing. The product runs against a chain and will not come up
+   * without a contract address and a proof server, so the directory it is
+   * started in carries both.
+   *
+   * **NOTHING IS DIALLED.** The ledger's providers are built on first use, and
+   * the proof server address below is a closed port on loopback for the same
+   * reason the connection string is: if anything here ever starts actually
+   * connecting, it fails here rather than somewhere real.
+   */
+  const network = networkOfThePair(undefined);
+  mkdirSync(join(dir, '.midnight'), { recursive: true });
+  writeFileSync(
+    deploymentRecordPath(dir, network),
+    JSON.stringify({ network, contractAddress: '0200aabb' }),
+  );
   const port = await freePort();
   const report = join(dir, 'REPORT-WEB-CONSOLE.txt');
 
@@ -124,6 +146,8 @@ const start = async (overrides: Record<string, string>): Promise<Running> => {
       PORT: String(port),
       DATA_PATH: join(dir, 'db.json'),
       WEB_CONSOLE_LOG: report,
+      // not-a-secret: a port nothing listens on. Required with no default.
+      MIDNIGHT_PROVER_URL: 'http://127.0.0.1:1',
       ...overrides,
     },
     stdio: ['ignore', 'pipe', 'pipe'],

@@ -149,69 +149,95 @@ const built = async (root: string): Promise<Built> => {
 };
 
 describe('WebAssembly and the payroll page', () => {
-  it('WHAT THE PAGE LOADS TODAY: nothing in its graph is WebAssembly, because the scheme it '
-    + 'is handed is the simulated one', { timeout: 180_000 }, async () => {
+  /**
+   * **THIS CASE USED TO SAY THE PAGE CARRIES NO WEBASSEMBLY. THE PRODUCT
+   * SELECTS THE CHAIN, SO IT DOES, AND THE CASE SAYS WHAT INSTEAD.**
+   *
+   * Its own message predicted this moment: *if a chain wiring was just
+   * selected, this case is out of date and is rewritten to say what the page
+   * now carries.* That is what happened, and rewriting it rather than deleting
+   * it is the point - **the injury underneath was never *WebAssembly is
+   * present*.** It was a blank page: `@midnightntwrk/ledger-v9`'s wasm-bindgen
+   * glue threw while it was still being evaluated, reached from the WALLET SDK,
+   * and nothing rendered - no text, no background, no error.
+   *
+   * ── SO THE GUARD IS NOW ABOUT WHICH ROUTE, NOT WHETHER ───────────────────
+   *
+   * There are two ways WebAssembly reaches this page and they are not the same
+   * risk:
+   *
+   *     THE CONTRACT ROUTE   src/wiring/selection.ts -> src/midnight/commitments.ts
+   *                          -> the compiled contract -> @midnight-ntwrk/compact-runtime
+   *                          -> @midnightntwrk/onchain-runtime-v4
+   *
+   *     THE WALLET ROUTE     any import that reaches the wallet SDK
+   *                          -> @midnightntwrk/ledger-v9
+   *
+   * **THE CONTRACT ROUTE IS DELIBERATE AND IS WHAT A DEVICE DERIVES ITS OWN
+   * SEAT WITH.** A signing secret never leaves the device, the leaf built from
+   * it must be the one the contract computes, and that derivation IS the
+   * contract's circuit. There is no third option that does not restate the
+   * contract's hash in TypeScript, which is the most expensive mistake
+   * available here.
+   *
+   * **THE WALLET ROUTE IS THE ONE THAT BROKE THE PAGE FOR FOUR ROUNDS** and
+   * nothing in the page needs it. It stays banned, by name.
+   *
+   * ── THE COUNT IS EXACT ON PURPOSE ────────────────────────────────────────
+   *
+   * A `greaterThan` would let a fifth module arrive unnoticed, and the whole
+   * subject of this file is that WebAssembly gets into a module graph without
+   * anybody deciding it should. **If this number changes, read what changed
+   * before changing the number.**
+   */
+  it('WHAT THE PAGE LOADS TODAY: the contract\'s own runtime, and nothing from the wallet '
+    + 'SDK', { timeout: 180_000 }, async () => {
       const page = await built(join('src', 'web'));
+
+      expect(page.wasmModules.slice().sort(),
+        'the payroll page\'s WebAssembly is not the four modules of the contract runtime it '
+        + 'is supposed to carry. Read what arrived before changing this list')
+        .toEqual([
+          '@midnightntwrk/onchain-runtime-v4/midnight_onchain_runtime_wasm.js',
+          '@midnightntwrk/onchain-runtime-v4/midnight_onchain_runtime_wasm_bg.js',
+          '@midnightntwrk/onchain-runtime-v4/midnight_onchain_runtime_wasm_bg.wasm',
+          '@midnightntwrk/onchain-runtime-v4/midnight_onchain_runtime_wasm_bg.wasm?url',
+        ]);
+
       /*
-       * **THIS CASE IS A MEASUREMENT OF THE SELECTION, NOT A PROHIBITION ANY
-       * MORE, AND THE DIFFERENCE MATTERS TO WHOEVER SEES IT GO RED.**
-       *
-       * It used to mean *the page must never carry WebAssembly*. The page CAN
-       * carry it now — the build handles it, and the case at the foot of this
-       * file is what keeps that true. What this case says is narrower and still
-       * worth saying: the page is handed a scheme by one selector, that
-       * selector holds the simulated scheme, and therefore no circuit reaches
-       * the page. **If it goes red, one of two things happened, and they need
-       * opposite responses.** Either a chain wiring was deliberately selected —
-       * in which case this case is out of date and is rewritten to say what the
-       * page now carries — or something reached the contract's circuits from
-       * the page by accident, which is a 10 MB module in everybody's browser
-       * that nobody decided to send.
-       *
-       * **THIS MESSAGE USED TO CARRY A SECOND SENTENCE AND IT HAS BEEN
-       * REMOVED, BECAUSE IT NAMED A BLOCKER THAT NO LONGER EXISTS.** It said a
-       * chain wiring may not be selected until a stored record says which
-       * wiring wrote it. Records now say so, the lists refuse a mixture of
-       * them and the selection is refused over records that do not — all of
-       * it checked rather than written down here. A warning that stays after
-       * the thing it warned about is fixed is a warning that sends the next
-       * reader to do work already done.
+       * **THE BAN THAT SURVIVES, AND IT IS THE ORIGINAL INJURY.** `ledger-v9`
+       * is the wallet SDK's, it is what threw during evaluation, and nothing
+       * the page does needs it. Asserted separately from the list above so that
+       * whoever meets it is told which of the two routes opened.
        */
-      expect(page.wasmModules,
-        'the payroll page is loading WebAssembly. If a chain wiring was just selected, this '
-        + 'case is out of date and is rewritten to say what the page now carries. If no wiring '
-        + 'was selected, something reached the contract\'s circuits from the page by accident')
+      expect(page.wasmModules.filter(id => id.includes('ledger-v9')),
+        'the page has reached the WALLET SDK. That is the import that left this page blank '
+        + 'in every real browser for four rounds - it throws while it is still being '
+        + 'evaluated, so nothing renders and no error is shown')
         .toEqual([]);
-      expect(page.wasmAssets, 'the payroll build emitted a .wasm file').toEqual([]);
-      // A build that produced almost nothing would satisfy both of the above.
+
+      // A build that produced almost nothing would satisfy everything above.
       expect(page.moduleCount).toBeGreaterThan(40);
     });
 
-  it('and the standalone build through the same configuration does carry it, so the check '
-    + 'above can fail', { timeout: 180_000 }, async () => {
-      const standalone = await built(join('src', 'standalone'));
-      expect(standalone.wasmModules.length,
-        'the positive control found no WebAssembly, so the case above proves nothing')
-        .toBeGreaterThan(0);
-      /*
-       * **TWO, AND THE SECOND ONE ARRIVED THE DAY THIS BUILD COULD RAISE A
-       * PAYROLL RUN.**
-       *
-       * The first is the ledger's, reached through the payroll service because
-       * an address handed over by an employee has to be re-parsed against the
-       * network. The second is the on-chain runtime's, reached through the
-       * payout tree: a run's root is that runtime's own merkle hash, and a
-       * standalone build that could not compute it would be a build whose
-       * propose door refuses where the served one answers.
-       *
-       * **THE NUMBER IS EXACT ON PURPOSE.** A `greaterThan` here would let a
-       * third arrive unnoticed, and the whole subject of this file is that
-       * WebAssembly gets into a module graph without anybody deciding it
-       * should. If this number changes again, read what changed before changing
-       * the number.
-       */
-      expect(standalone.wasmAssets).toHaveLength(2);
-    });
+  /**
+   * **THE POSITIVE CONTROL FOR THE CASE ABOVE MOVED OUT OF THIS FILE, AND WHY
+   * THAT IS NOT A WEAKENING.**
+   *
+   * It built `src/standalone` through this same configuration and asserted that
+   * WebAssembly turned up - so that *the page carries none* could be shown to
+   * be a claim that could fail. **The case above no longer says *none*.** It
+   * names the four modules exactly, so it fails on its own if that list moves
+   * in either direction, and `moduleCount` catches a build that produced
+   * nothing.
+   *
+   * The measurement itself is kept, unchanged, in the test that travels with
+   * the browser-only build rather than with this set. **It moved because that
+   * build is no longer part of what this project publishes**, and a
+   * shipped test that builds an entry point a clone does not have is red in
+   * that clone before a single assertion runs - which is the failure this
+   * repository has already paid for once.
+   */
 
   it('THE ONE THAT KEEPS THE PAGE LOADABLE: the build handles WebAssembly at a target that '
     + 'can carry it, so the day the page is handed the contract\'s own scheme it is not a '

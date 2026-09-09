@@ -47,18 +47,43 @@ import { join, relative } from 'node:path';
  * last test in this file can assert on the OBJECT the product is handed rather
  * than on the text of the literal that built it.
  */
-import { SimulatedCommitments, SimulatedLedger } from '../core/ledger.js';
-import { wiring } from './selection.js';
+import { MidnightCommitments } from '../midnight/commitments.js';
+import { wiring, observerView } from './selection.js';
 
 const SRC = fileURLToPath(new URL('..', import.meta.url));
 
 const NAMES = /Simulated(Ledger|ProofSystem|Commitments)/;
 
 /**
+ * **THE SEAM A TEST USES TO DRIVE THE SERVER'S ROUTES OVER A DOUBLE, AND THE
+ * NAME NO SHIPPED MODULE MAY SPEAK.**
+ *
+ * The product cannot write to a chain without a wallet, so the routes where
+ * approval-signature verification, invitation sealing and payee disclosure live
+ * are exercised by handing the entry point a whole boundary implementation the
+ * test built itself. **That is a test naming its own world, which is what the
+ * walk below exists to distinguish from a second decision hidden in the
+ * product.**
+ *
+ * It is searched by exactly the same walk, with exactly the same exclusion of
+ * test files, and with one allowed mention: the file that defines it.
+ */
+const THE_SEAM = /handInWiring/;
+
+const SEAM_DEFINER = 'wiring/handed-in.ts';
+
+/**
  * The files allowed to name one, and why each is allowed.
  *
- * `core/ledger.ts` DEFINES them. `wiring/selection.ts` is the one place that
- * chooses them — the whole subject of this file.
+ * `core/ledger.ts` DEFINES them, and that is now the ONLY entry.
+ *
+ * **`wiring/selection.ts` WAS THE SECOND AND IS NOT ANY MORE, WHICH IS THE
+ * WHOLE OF WHAT CHANGED HERE.** It was allowed because it was the one place
+ * that CHOSE the simulated set. The product selects the chain, so it chooses
+ * nothing simulated, and an allow-list entry that no longer excuses anything is
+ * an entry that will one day excuse something. **The simulated implementations
+ * are a test double: they are still defined, still exercised by the files this
+ * walk excludes, and reached by no module the product runs.**
  *
  * **`core/account.ts` USED TO BE A THIRD, AND R3 DELETED THE ENTRY RATHER THAN
  * EMPTYING IT.** It was allowed because `commitments` was a DEFAULT parameter
@@ -71,7 +96,6 @@ const NAMES = /Simulated(Ledger|ProofSystem|Commitments)/;
  */
 const ALLOWED = new Set([
   'core/ledger.ts',
-  'wiring/selection.ts',
 ]);
 
 /**
@@ -158,11 +182,55 @@ describe('one wiring point', () => {
     expect(files.map(f => relative(SRC, f))).toContain('wiring/selection.ts');
   });
 
-  it('the selector still reaches all three, or the search below proves nothing', () => {
+  /**
+   * **THE POSITIVE CONTROL HAD TO BE REPLACED RATHER THAN DELETED, AND THE
+   * REASON IS THE POINT OF IT.**
+   *
+   * It used to assert that `wiring/selection.ts` names all three simulated
+   * implementations - which proved the search below could see something,
+   * because the one file exempt from that search was known to contain them.
+   * **The selector reaches none of them now**, so that control would assert the
+   * opposite of what is true, and simply removing it would leave the search
+   * below with nothing behind it: a check that finds no offenders in a tree
+   * that contains none is indistinguishable from a check that cannot read.
+   *
+   * So the control moves onto the DETECTOR instead of onto a file. Planted
+   * text, through the same `stripped` pass and the same pattern the walk uses,
+   * in every place a real one could appear.
+   */
+  it('the search can see a simulated implementation when there is one to see', () => {
+    const planted = [
+      "import { SimulatedLedger } from '../core/ledger.js';",
+      'const l = new SimulatedProofSystem();',
+      'export const scheme = SimulatedCommitments;',
+    ];
+    for (const line of planted) {
+      expect(NAMES.test(stripped(line)), `the walk cannot see: ${line}`).toBe(true);
+    }
+    /*
+     * **AND THE NEGATIVE HALF, WHICH IS WHERE A DETECTOR GOES WRONG QUIETLY.**
+     * A pattern that matched the word in prose would report offenders that are
+     * comments, and whoever met that would widen the allow-list to shut it up.
+     */
+    expect(NAMES.test(stripped('/* SimulatedLedger is the test double. */'))).toBe(false);
+    expect(NAMES.test(stripped("const why = 'SimulatedLedger';"))).toBe(false);
+  });
+
+  /**
+   * **AND THE FILE THAT USED TO BE THE EXEMPTION IS NOW HELD TO THE RULE.**
+   *
+   * This is not covered by the walk below as a special case - it is covered
+   * because it is no longer on the allow-list, and the walk includes it. This
+   * case says so out loud, so that whoever puts it back on the list meets a
+   * second red rather than a green suite. **Measured: with the entry restored
+   * AND a simulated import added, this case still fails.**
+   */
+  it('the selector names no simulated implementation at all', () => {
     const code = stripped(readFileSync(join(SRC, 'wiring/selection.ts'), 'utf8'));
-    expect(code).toMatch(/SimulatedLedger/);
-    expect(code).toMatch(/SimulatedProofSystem/);
-    expect(code).toMatch(/SimulatedCommitments/);
+    expect(NAMES.test(code),
+      'the selector reaches a simulated implementation again; the product selects the chain '
+      + 'and the simulated set is a test double')
+      .toBe(false);
   });
 
   /**
@@ -335,6 +403,41 @@ describe('one wiring point', () => {
     }
   });
 
+  /**
+   * **AND THE SEAM IS SEARCHED BY THE SAME WALK, WHICH IS THE WHOLE OF WHAT
+   * KEEPS IT OUT OF A SHIPPED BUILD.**
+   *
+   * A test hands the entry point a boundary implementation it built itself, so
+   * that the routes a wallet-less deployment cannot exercise are still
+   * exercised. **A shipped module doing the same thing would be the rehearsal
+   * coming back in through the door marked *for tests*** - and nothing about
+   * the shape of such a module would say so.
+   *
+   * So the name is refused everywhere the simulated implementations are
+   * refused, on the same terms, and the file that defines it is its only
+   * allowed mention.
+   */
+  it('no shipped module takes the seam that hands a test its own boundary', () => {
+    const offenders: string[] = [];
+    for (const file of files) {
+      const rel = relative(SRC, file).split('\\').join('/');
+      if (rel === SEAM_DEFINER) continue;
+      const code = stripped(readFileSync(file, 'utf8'));
+      code.split('\n').forEach((line, i) => {
+        if (THE_SEAM.test(line)) offenders.push(`${rel}:${i + 1}  ${line.trim()}`);
+      });
+    }
+    expect(offenders,
+      `these hand the entry point a boundary implementation from the product path, which is `
+      + `the rehearsal coming back through a door marked for tests:\n${offenders.join('\n')}`)
+      .toEqual([]);
+
+    /* The control: the walk can see the name when a module speaks it. */
+    expect(THE_SEAM.test(stripped("handInWiring(mySet);"))).toBe(true);
+    /* And the definer is in the walk, so the exemption above is doing work. */
+    expect(files.map(f => relative(SRC, f).split('\\').join('/'))).toContain(SEAM_DEFINER);
+  });
+
   it('no other file on the product path names a simulated implementation in code', () => {
     const offenders: string[] = [];
     for (const file of files) {
@@ -376,74 +479,142 @@ describe('one wiring point', () => {
    * `T-278` and is not claimed here. Rule 27: what enforces it today is that
    * nobody has written the code that would break it.
    */
-  it('the ledger takes its scheme from the SAME field the service is handed', () => {
-    const code = stripped(readFileSync(join(SRC, 'wiring/selection.ts'), 'utf8'));
-    expect(code).toMatch(/new SimulatedLedger\(\s*SIMULATED\.commitments\s*\)/);
+  /**
+   * **THE IMPORT LIST IS READ FROM THE SOURCE AND NOT FROM THE STRIPPED TEXT,
+   * AND THE FIRST VERSION OF THIS CASE GOT IT WRONG.**
+   *
+   * `stripped` blanks string literals - which is every import path - so a
+   * search for `'./chain.js'` in stripped text can never match anything, and
+   * the case was green for a reason that had nothing to do with what it
+   * claimed. **It was the control below that said so**, which is the only
+   * reason it was not shipped as a check that cannot fail.
+   *
+   * So this reads import SPECIFIERS out of the raw source. Raw text cannot be
+   * searched loosely either: the selector's own prose names `node:fs` while
+   * explaining why it must not import it, and a substring search over the raw
+   * source would report the sentence as the offence.
+   */
+  const specifiers = (text: string): string[] =>
+    [...text.matchAll(/^\s*(?:import|export)[\s\S]*?from\s*['"]([^'"]+)['"]/gm)]
+      .map(m => m[1]!);
+
+  it('the selector does not import these named modules, and the build is what covers the '
+    + 'rest', () => {
     /*
-     * And the field itself is still the one `AccountService` is given, which is
-     * what makes the line above mean anything: `commitments:` on the same
-     * object literal.
+     * **THIS IS THE CHEAP HALF OF A GUARD THAT ALREADY EXISTS AND COSTS THREE
+     * MINUTES.** `src/web/no-wasm-in-the-page.test.ts` builds the page and
+     * reports what went into it, which is the account of the graph worth
+     * having. It is also the slowest thing in this suite, and the mistake it
+     * catches is a one-line import.
+     *
+     * **THE FAILURE: `src/web/main.tsx` IMPORTS THIS MODULE.** Anything that
+     * builds a chain ledger reaches a sealed-state store on a filesystem, so an
+     * import of it here puts `node:fs` in a browser bundle - which does not
+     * build - and the contract's whole runtime into the page. A dynamic import
+     * does not help: measured, an entry reaching the chain set pulled the same
+     * 25 WebAssembly modules behind `await import()` as it did statically,
+     * because a bundler resolves both.
      */
-    expect(code).toMatch(/commitments:\s*SimulatedCommitments/);
     /*
-     * A second `new SimulatedLedger(` anywhere in the selector would be a
-     * second answer even though the file is on the allow-list above.
+     * **WHAT THIS MEASURES, WHICH IS NARROWER THAN WHAT IT PROTECTS.** It reads
+     * `import ... from '<x>'` and `export ... from '<x>'` specifiers and refuses
+     * four names. **It cannot see a side-effect import (`import './chain.js'`),
+     * a dynamic `await import()`, a re-export, or a reach into
+     * `../midnight/ledger.js` by some other path** - each of those puts a ledger
+     * in the page just as effectively.
+     *
+     * Those are covered, and covered better, by
+     * `src/web/no-wasm-in-the-page.test.ts`, which builds the page and asserts
+     * its WebAssembly list exactly - every route above reaches
+     * `@midnightntwrk/ledger-v9` and that case names it. **This one is the cheap
+     * end: it catches the mistake somebody actually makes, in milliseconds
+     * rather than in a build.**
      */
-    expect(code.match(/new SimulatedLedger\(/g) ?? []).toHaveLength(1);
+    const found = specifiers(readFileSync(join(SRC, 'wiring/selection.ts'), 'utf8'));
+    const banned = found.filter(spec =>
+      spec === './chain.js' || spec === './product.js' || spec === './deployment.js'
+      || spec.startsWith('node:'));
+    expect(banned,
+      `the module the page loads imports ${banned.join(', ')}, and anything that carries a `
+      + 'ledger puts a filesystem and the contract runtime into a browser bundle')
+      .toEqual([]);
+
+    /*
+     * **THE CONTROL, AND IT HAS ALREADY EARNED ITS PLACE.** It is what caught
+     * the first version of this case reading text in which no import path can
+     * appear.
+     */
+    expect(found,
+      'the selector no longer takes its scheme from the contract, so the check above is '
+      + 'reading a file whose imports it cannot see')
+      .toContain('../midnight/commitments.js');
+
+    /* And the pattern refuses a banned specifier when there is one to refuse. */
+    expect(specifiers("import { chainWiring } from './chain.js';\n")).toEqual(['./chain.js']);
   });
 
   /**
-   * **AND THE SAME CLAIM ABOUT THE OBJECT, NOT THE TEXT.** `T-209`, `S46`,
-   * **added after this round's own test-coverage pass broke the test above.**
+   * **AND THE SAME CLAIM ABOUT THE OBJECT, NOT THE TEXT.**
    *
-   * The three patterns above read `SIMULATED`'s object literal. The product
-   * does not get `SIMULATED` — it gets `SELECTED` (`selection.ts:144`), through
-   * `wiring()` (`:147-149`). The auditor demonstrated two one-line edits inside
-   * `selection.ts` that produce a mismatched pair on the product path and leave
-   * all three green: rebinding `SELECTED` to a spread of `SIMULATED` with a
-   * different `commitments`, and spreading one inside `wiring()`'s `return`.
-   * **Neither is the "caller who constructs the pair by hand" the comment above
-   * excludes. Both are this file's subject.** A text pattern over one literal
-   * cannot see a rebinding, so this reads the object.
+   * The checks above read source, because the claim they make is about **where
+   * a decision is taken**, which no built artefact can answer. This one reads
+   * the object the product is actually handed, because a text pattern over a
+   * literal cannot see a rebinding - two one-line edits inside the selector
+   * were once demonstrated that produce a mismatched pair on the product path
+   * and leave every text check green.
    *
-   * **IT PINS TODAY'S SELECTION DELIBERATELY.** `selection.ts:134-143` says the
-   * selection line is the whole of what changing the wiring means, so a second
-   * entry is a deliberate edit — and this line is one of the places that edit
-   * must pass through. That is the intent, not an oversight.
+   * **IT PINS TODAY'S SELECTION DELIBERATELY.** The selection line is the whole
+   * of what changing the wiring means, so a change of selection is a deliberate
+   * edit, and this is one of the places it must pass through. That is the
+   * intent, not an oversight.
    */
-  it('the OBJECT the product is handed carries the pair, not just the literal', () => {
+  it('the OBJECT the product is handed is the chain selection and the contract\'s scheme', () => {
     const chosen = wiring();
-    /* One object, not a fresh one per call — otherwise identity means nothing. */
+    /* One object, not a fresh one per call - otherwise identity means nothing. */
     expect(wiring()).toBe(chosen);
-    expect(chosen.commitments).toBe(SimulatedCommitments);
-    const built = chosen.createLedger();
-    expect(built).toBeInstanceOf(SimulatedLedger);
+    expect(chosen.name).toBe('chain');
     /*
-     * **AND THE LEDGER IS ASKED WHICH SCHEME IT HOLDS, WHICH IS THE HALF `S46`
-     * COULD NOT REACH.** `T-278`, closed by `S52` at `2y7f2b`.
-     *
-     * `S46`'s note here read *"a `createLedger` that built the right CLASS with
-     * the wrong SCHEME would pass this"* — and it did, because
-     * `SimulatedLedger` kept its scheme `private` and exposed it nowhere, so
-     * the requirement at `src/core/ledger.ts:1047-1055` lived in a comment and
-     * only in a comment. `S52` added the reader; this is the assertion that
-     * makes it worth having.
-     *
-     * **IDENTITY AND NOT EQUIVALENCE — `toBe`, not `toEqual`.** Two objects
+     * **IDENTITY AND NOT EQUIVALENCE - `toBe`, not `toEqual`.** Two objects
      * that answer the same today and diverge tomorrow are exactly the second
-     * definition decision 0004 exists to forbid, and a structural compare would
-     * call them the same.
+     * definition this product forbids, and a structural compare would call them
+     * the same. Measured: replacing the scheme with a spread copy of itself
+     * turns this red and turns nothing else red.
      */
-    expect((built as SimulatedLedger).scheme).toBe(chosen.commitments);
-    expect((built as SimulatedLedger).scheme).toBe(SimulatedCommitments);
-    /*
-     * **WHAT IS STILL NOT CLOSED, SAID SO THE ROW IS NOT READ AS FULLY SHUT.**
-     * The reader is on `SimulatedLedger` and not on the `Ledger` interface, so
-     * nothing type-level obliges `MidnightLedger` to answer the same question,
-     * and a caller that constructs the pair by hand — every test does — is
-     * still only checked where somebody writes the check. Rule 27: what
-     * enforces the product path is this test; what enforces a hand-built pair
-     * is nothing, and that is smaller than `T-278` was and is not zero.
-     */
+    expect(chosen.commitments).toBe(MidnightCommitments);
+  });
+
+  /**
+   * **A LEDGER IS NOT BUILT HERE, AND THE REFUSAL IS THE ASSERTION.**
+   *
+   * The module the page loads cannot hold a ledger - see the import check
+   * above - so asking it for one is asking a build that has resolved no
+   * deployment. **What comes back is a sentence naming the four facts that are
+   * missing, not a ledger that looks ready.**
+   *
+   * The message is asserted and not merely the throw. A refusal whose words do
+   * not name what is missing sends whoever reads it to look in the wrong place,
+   * and this one is read by somebody holding a browser console.
+   */
+  it('asking the selector for a ledger refuses, and names what is missing', () => {
+    const chosen = wiring();
+    expect(() => chosen.createLedger()).toThrow(/has not resolved a deployment/);
+    expect(() => chosen.createProofSystem()).toThrow(/has not resolved a deployment/);
+    for (const fact of ['contract', 'indexer', 'node', 'proof server']) {
+      expect(() => chosen.createLedger()).toThrow(new RegExp(fact));
+    }
+  });
+
+  /**
+   * **AND THE EVIDENCE ROUTE REFUSES RATHER THAN ANSWERING PARTLY.**
+   *
+   * A public observer view existed only on the simulated ledger. Under the
+   * chain selection there is nothing to answer it with, and the decision about
+   * what a chain SHOULD answer has not been taken. **The failure this pins is
+   * the route serving the half it can compute**, which would be a
+   * privacy-evidence route showing less than it claims to.
+   */
+  it('the public observer view refuses, and says the shape is undecided', () => {
+    expect(() => observerView(null as never)).toThrow(/public observer view/);
+    expect(() => observerView(null as never)).toThrow(/has not been decided/);
   });
 });

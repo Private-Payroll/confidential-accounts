@@ -34,10 +34,12 @@
  */
 import { describe, it, expect } from 'vitest';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
+import { deploymentRecordPath } from '../wiring/deployment.js';
+import { networkOfThePair } from '../midnight/network.js';
 
 const REPO = fileURLToPath(new URL('../..', import.meta.url));
 const TSX = join(REPO, 'node_modules', '.bin', 'tsx');
@@ -50,6 +52,41 @@ const ENTRY = join(REPO, 'src', 'server', 'index.ts');
  * actually connecting, it fails here rather than somewhere real.
  */
 const NOWHERE = 'postgres://u:p@127.0.0.1:1/nowhere';  // not-a-secret: a port nothing listens on
+
+/**
+ * **THE NETWORK THIS PAIR IS COMPILED FOR, READ RATHER THAN SPELLED OUT.**
+ * The record's filename carries it, and a literal here would be a second place
+ * that says which chain this deployment is on.
+ */
+const NETWORK = networkOfThePair(undefined);
+
+/** A proof server address that is well formed and reaches nothing, like `NOWHERE`. */
+const NO_PROVER = 'http://127.0.0.1:1';  // not-a-secret: a port nothing listens on
+
+/**
+ * **EVERY CASE THAT EXPECTS THE SERVER TO LISTEN NOW HAS TO GIVE IT A
+ * DEPLOYMENT, AND THAT IS THE CHANGE THIS FILE RECORDS.**
+ *
+ * The product runs against a chain. It has four facts with no defaults, and a
+ * process started without them refuses rather than serving - which is the case
+ * at the foot of this file. So the cases ABOVE it, which are about `.env`
+ * parsing and about sessions, have to supply those facts or they would all be
+ * measuring the new refusal instead of the thing they were written for.
+ *
+ * **NOTHING HERE IS DIALLED.** The ledger's providers are built on first use,
+ * so a deployment that cannot reach its indexer, node or proof server still
+ * starts and says so when something is asked of it. Both addresses point at a
+ * closed port on loopback for the same reason `NOWHERE` does: if anything in
+ * this file ever starts actually connecting, it fails here rather than
+ * somewhere real.
+ */
+function withADeployment(dir: string): void {
+  mkdirSync(join(dir, '.midnight'), { recursive: true });
+  writeFileSync(
+    deploymentRecordPath(dir, NETWORK),
+    JSON.stringify({ network: NETWORK, contractAddress: '0200aabb' }),
+  );
+}
 
 /** The line the server prints once it is listening. */
 const LISTENING = 'api        http://localhost:';
@@ -67,9 +104,11 @@ type Started = { out: string; code: number | null; listened: boolean };
 async function start(
   envFile: string | null,
   overrides: Record<string, string | undefined>,
+  deployment: 'configured' | 'none' = 'configured',
 ): Promise<Started> {
   const dir = mkdtempSync(join(tmpdir(), 'mn-start-'));
   if (envFile !== null) writeFileSync(join(dir, '.env'), envFile);
+  if (deployment === 'configured') withADeployment(dir);
 
   /*
    * BUILT, NOT INHERITED. Whatever ran this may itself have a `DATABASE_URL`,
@@ -83,6 +122,7 @@ async function start(
     PORT: '0',                                   // ephemeral: never seizes 8787
     DATA_PATH: join(dir, 'db.json'),
   };
+  if (deployment === 'configured') env.MIDNIGHT_PROVER_URL = NO_PROVER;
   for (const [k, v] of Object.entries(overrides)) {
     if (v === undefined) delete env[k]; else env[k] = v;
   }
@@ -172,5 +212,85 @@ describe('starting the payroll server', () => {
     expect(r.listened).toBe(false);
     expect(r.code).toBe(1);
     expect(r.out).toContain('ALLOW_MEMORY_SESSIONS=1 and a DATABASE_URL');
+  });
+
+  /**
+   * **THE CASE THIS FILE EXISTS FOR: A PROCESS STARTED WITH NO DEPLOYMENT.**
+   *
+   * The product runs against a chain and has no other mode. A deployment that
+   * has not been told which contract it is talking to must not answer questions
+   * about accounts, balances or rounds - and the three ways of getting that
+   * wrong are all visible from outside the process, which is why this case
+   * reads what it printed and what it exited with rather than importing
+   * anything.
+   *
+   * **IT MUST NOT PRINT A STACK.** Somebody configuring a deployment is not
+   * being asked to read this program's internals.
+   *
+   * **IT MUST NOT LISTEN.** A process that came up and refused every request
+   * reads to whoever pointed a browser at it as a broken product, and to
+   * whoever deployed it as a working one. Those are the two readings that cost
+   * money.
+   *
+   * **AND IT MUST NOT FALL BACK.** There is nothing to fall back to: the
+   * simulated set is a test double and no module the product runs reaches it.
+   * The assertion on the word is the cheap end of the check that walks the tree
+   * for the same thing.
+   */
+  it('THE CASE THIS FILE EXISTS FOR: no deployment, so it says what is missing and exits', async () => {
+    const r = await start(`DATABASE_URL=${NOWHERE}\n`, { DATABASE_URL: undefined }, 'none');
+
+    expect(r.listened, r.out).toBe(false);
+    expect(r.code).toBe(1);
+
+    /* What is wrong, and where it looked. */
+    expect(r.out).toContain('cannot start');
+    expect(r.out).toContain('nothing has been served');
+    expect(r.out).toContain(`${NETWORK}-contract.json`);
+
+    /* No stack, and no internals. */
+    expect(r.out).not.toMatch(/\n\s+at /);
+    expect(r.out).not.toContain('node_modules');
+
+    /* And no quiet fallback to the rehearsal that used to be here. */
+    expect(r.out.toLowerCase()).not.toContain('simulated');
+  });
+
+  /**
+   * **THE POSITIVE CONTROL FOR THE CASE ABOVE, AND IT IS NOT DECORATION.**
+   *
+   * Without it, "refuses when there is no deployment" would also be true of a
+   * server that refuses to start under every condition - which is what a
+   * mis-wired guard looks like, and every other case in this file supplies a
+   * deployment through a helper rather than by hand, so none of them would say
+   * so. This one changes exactly one thing: the record and the prover.
+   */
+  it('and the same start with the deployment in place does listen', async () => {
+    const r = await start(`DATABASE_URL=${NOWHERE}\n`, { DATABASE_URL: undefined }, 'configured');
+    expect(r.listened, r.out).toBe(true);
+    expect(r.out).not.toContain('cannot start');
+  });
+
+  /**
+   * **A RECORD IS NOT ENOUGH, AND THE REFUSAL HAS TO MOVE ON RATHER THAN
+   * REPEATING THE PROBLEM THAT WAS JUST FIXED.**
+   *
+   * The proof server is required with no default because a deployment that
+   * guesses one comes up looking healthy and fails at the first round somebody
+   * raises - after the money question has already been asked. This is the case
+   * that catches a refusal wired to the first missing fact only.
+   */
+  it('a deployment record without a proof server is still refused, by name', async () => {
+    const r = await start(
+      `DATABASE_URL=${NOWHERE}\n`,
+      { DATABASE_URL: undefined, MIDNIGHT_PROVER_URL: undefined },
+      'configured',
+    );
+    expect(r.listened, r.out).toBe(false);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('proof server');
+    expect(r.out,
+      'the refusal is still talking about the deployment record, which is present')
+      .not.toContain('nothing for the product to talk to');
   });
 });

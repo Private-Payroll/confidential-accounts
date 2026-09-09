@@ -39,6 +39,39 @@ process.env.APP_ORIGIN = 'https://payroll.example';
 process.env.DATA_PATH = join(mkdtempSync(join(tmpdir(), 'mn-approve-')), 'db.json');
 
 const ORIGIN = 'https://payroll.example';
+/**
+ * **THESE ROUTES ARE DRIVEN OVER A TEST DOUBLE, NOT OVER THE DEPLOYMENT, AND
+ * THAT IS SAID HERE SO NOBODY READS THESE CASES AS EVIDENCE ABOUT A CHAIN.**
+ *
+ * This file is about whether a signature on an approval is verified - who signed, for which round, and what is recorded when the answer is no. Every one of those cases has to APPROVE something, and the deployment this product runs on cannot: it reads a chain and has no wallet to pay a transaction with, so every write refuses above the ledger.
+ *
+ * **SO THIS FILE BUILDS ITS OWN BOUNDARY IMPLEMENTATION AND HANDS IT OVER
+ * BEFORE THE ENTRY POINT IS IMPORTED.** The services, the routes, the sign-in state
+ * handling and the checks below are the real ones - the LEDGER is a double, and
+ * it is named here, out loud, which is the difference between a test saying
+ * which implementation it exercises and a second decision hidden in the
+ * product. Nothing outside a test may do this: the walk beside the selector
+ * refuses `handInWiring` in every non-test module.
+ *
+ * **WHAT THESE CASES PROVE AND WHAT THEY DO NOT.** They prove exactly what they
+ * proved before the product selected a chain, and nothing more. **They are not
+ * evidence that this server works against a chain.** `server-starts.test.ts` is
+ * the file that exercises the real chain wiring, and it is deliberately the one
+ * file here that takes no double.
+ *
+ * The three come from one object because they may never be chosen apart: a leaf
+ * computed under one commitment scheme is meaningless to a ledger running under
+ * another.
+ */
+const { SimulatedLedger, SimulatedProofSystem, SimulatedCommitments } = await import('../core/ledger.js');
+const { handInWiring } = await import('../wiring/handed-in.js');
+handInWiring({
+  name: 'simulated',
+  commitments: SimulatedCommitments,
+  createLedger: () => new SimulatedLedger(SimulatedCommitments),
+  createProofSystem: () => new SimulatedProofSystem(),
+});
+
 const { app } = await import('./index.js');
 const { networkOfThePair } = await import('../midnight/network.js');
 const NETWORK = networkOfThePair(process.env.MIDNIGHT_NETWORK_ID);
