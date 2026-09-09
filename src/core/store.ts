@@ -2,6 +2,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
 import { utf8 } from './crypto.js';
 import type { SealedAccount, Proposal, SealedProposal, PayrollRun, SealedRun, Attestation, SealedEmployee, Invite, Installation, PluginEvent, User } from './types.js';
+import { provenanceOf, type Marked, type WiringName } from './provenance.js';
 
 export interface Shape {
   accounts: Record<string, SealedAccount>;
@@ -13,11 +14,33 @@ export interface Shape {
   installations: Record<string, Installation>;
   pluginEvents: Record<string, PluginEvent>;
   users: Record<string, User>;
+  /**
+   * **EVERY LEDGER OBSERVED WRITING HERE, IN THE ORDER IT WAS FIRST SEEN.**
+   *
+   * Appended to by every write below that carries a marker, including the
+   * rotation that writes several collections at once. Never removed, never
+   * inferred, and never a claim about the records themselves - those carry
+   * their own markers and are the authority.
+   *
+   * **WHAT THIS BUYS THAT COUNTING THE RECORDS CANNOT: IT REMEMBERS.** A count
+   * over what is in the store today answers what is there now; this answers
+   * whether a second ledger has ever written here, and it goes on answering
+   * after the records that proved it were deleted, cancelled or superseded. A
+   * store two ledgers have both written to is a store whose lists will be
+   * mixed, and that is worth knowing before anything is served rather than
+   * when the first company is refused.
+   *
+   * An EMPTY array is not a claim that nothing wrote here. It says no marked
+   * write has been observed, which is what a file written before records were
+   * marked looks like, and which is why the records in such a file read as not
+   * known rather than as this list's only entry.
+   */
+  writtenBy: WiringName[];
 }
 
 export const emptyShape = (): Shape =>
   ({ accounts: {}, proposals: {}, runs: {}, attestations: {}, employees: {}, invites: {},
-    installations: {}, pluginEvents: {}, users: {} });
+    installations: {}, pluginEvents: {}, users: {}, writtenBy: [] });
 
 /**
  * Note what is NOT stored here: viewing keys and signer secrets. Nothing that can
@@ -126,20 +149,35 @@ export class MemoryStore {
         || a.pendingSigners.some(p => p.userId === userId));
   }
 
-  putAccount(a: SealedAccount) { this.data.accounts[a.id] = a; this.flush(); }
+  /**
+   * **RECORDS WHAT A WRITE SAID ABOUT ITSELF. IT NEVER SUPPLIES AN ANSWER.**
+   *
+   * A record with no marker adds nothing here, because *this write did not say*
+   * is not evidence about which ledger was running - and writing down a guess
+   * is worse than the silence it replaces, since the next reader cannot tell it
+   * was a guess.
+   */
+  protected observe(record: Marked) {
+    const seen = provenanceOf(record);
+    if (seen === 'unknown') return;
+    if (this.data.writtenBy.includes(seen)) return;
+    this.data.writtenBy = [...this.data.writtenBy, seen];
+  }
+
+  putAccount(a: SealedAccount) { this.data.accounts[a.id] = a; this.observe(a); this.flush(); }
   getAccount(id: string) { return this.data.accounts[id] ?? null; }
   listAccounts() { return Object.values(this.data.accounts); }
 
   /* Proposals are stored SEALED. S-8: approvals[].signerId is the deanonymised
    * version of the nullifiers the chain deliberately blinds. */
-  putProposal(p: SealedProposal) { this.data.proposals[p.id] = p; this.flush(); }
+  putProposal(p: SealedProposal) { this.data.proposals[p.id] = p; this.observe(p); this.flush(); }
   getProposal(id: string) { return this.data.proposals[id] ?? null; }
   listProposals(accountId: string) {
     return Object.values(this.data.proposals).filter(p => p.accountId === accountId);
   }
 
   /* Runs are stored SEALED. S-9: the amounts live here as well as on the roster. */
-  putRun(r: SealedRun) { this.data.runs[r.id] = r; this.flush(); }
+  putRun(r: SealedRun) { this.data.runs[r.id] = r; this.observe(r); this.flush(); }
   getRun(id: string) { return this.data.runs[id] ?? null; }
   listRuns(accountId: string) {
     return Object.values(this.data.runs).filter(r => r.accountId === accountId);
@@ -263,6 +301,12 @@ export class MemoryStore {
     for (const e of set.employees) this.data.employees[e.id] = e;
     for (const r of set.runs) this.data.runs[r.id] = r;
     for (const p of set.proposals) this.data.proposals[p.id] = p;
+    /* This writes records without going through the three methods above, so it
+     * has to observe what it wrote itself - a write the envelope does not see
+     * is a ledger the envelope does not know has been here. */
+    this.observe(set.account);
+    for (const r of set.runs) this.observe(r);
+    for (const p of set.proposals) this.observe(p);
     this.flush();
   }
 }

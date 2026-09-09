@@ -2407,6 +2407,19 @@ export class PayrollService {
       period: run.period,
       status: run.status,
       settledAt: run.settledAt ?? null,
+      /*
+       * **THE STRONGEST BELIEF THIS PRODUCT CREATES IN ANYBODY IS FORMED HERE,
+       * AND IT IS FORMED FROM ONE RECORD.**
+       *
+       * The rule that protects a company works by refusing to show a run that
+       * never reached a chain beside one that did. **A payslip is a list of
+       * one, so that rule can never fire on it** - and the person reading it
+       * has no second record to compare against, no other channel, and no
+       * reason to doubt a date. So the word travels with the payslip rather
+       * than being withheld as company detail: *settled* and *settled on a
+       * chain* are different sentences to the person being paid.
+       */
+      wiring: run.wiring ?? null,
       payslip: decoded,
     };
   }
@@ -2572,8 +2585,26 @@ export class PayrollService {
 
   private putRun(run: PayrollRun, viewingKey: Hex): void {
     const { employees, totals, proposalIds, payout, ...operational } = run;
+    /*
+     * **A RUN'S MARKER IS ITS OWN AND IT IS NOT ITS COMPANY'S.**
+     *
+     * A company outlives a change of ledger; a run does not, because a run
+     * that was never raised against a chain cannot be re-raised against one
+     * without becoming a different run. So the run records what wrote IT, and
+     * reading a company's marker in its place would vouch for payslips on the
+     * strength of when the company was opened.
+     *
+     * Written on the write that creates the record and by nothing afterwards,
+     * for the reason a round's is: this method runs again when a run is raised
+     * and again when it settles, and the running ledger at those moments is
+     * not evidence about the moment the run was drawn up. **A run already on
+     * disk that says nothing keeps saying nothing** - stamping it on the next
+     * write would put a guess where the one irrecoverable fact should be.
+     */
+    const already = this.store.getRun(run.id);
     this.store.putRun({
       ...operational,
+      wiring: already ? already.wiring ?? null : this.accounts.wiring,
       // Outside the envelope so a run can be found by its proposals; the map
       // that says which asset each leg is in stays inside, so the store cannot
       // see that this company pays anyone in ether.

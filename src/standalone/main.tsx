@@ -34,6 +34,7 @@ const NETWORK = 'undeployed' as const;
 const invites = new RecordingInviteDelivery();
 import { PluginService } from '../core/plugins.js';
 import { seedDemo } from '../core/demo.js';
+import { decideList, type Marked } from '../core/provenance.js';
 import { assets as assetRegistry, parseAmount } from '../core/assets.js';
 import { IdentityService, StaleKeyBundle } from '../core/identity.js';
 import { MemoryChallengeStore } from '../core/challenges.js';
@@ -109,6 +110,28 @@ const ok = (body: unknown) =>
   });
 const bad = (message: string, status = 400) =>
   new Response(JSON.stringify({ error: message }), { status, headers: { 'content-type': 'application/json' } });
+
+/**
+ * **THE SAME LIST RULE THE HOSTED BUILD APPLIES, FROM THE SAME FUNCTION.**
+ *
+ * This build answers every route the hosted one does, in-process, with no
+ * server anywhere. That is the reason it exists and it is also its standing
+ * hazard: a guard added to one of the two is a guard the other does not have,
+ * and nothing about the shape of this file makes that visible.
+ *
+ * So the decision is imported rather than repeated. What is written twice is
+ * only how an answer is turned into a `Response`, which is the part that is
+ * genuinely different here.
+ */
+const listed = <T extends Marked>(rows: readonly T[]): Response => {
+  const verdict = decideList(chosen.name, rows);
+  return verdict.listed
+    ? ok(verdict.rows)
+    : new Response(
+      JSON.stringify({ error: verdict.message, code: verdict.refusal, counts: verdict.counts }),
+      { status: 409, headers: { 'content-type': 'application/json' } },
+    );
+};
 
 /**
  * There is no network here, so there is no address to count against. `ip: null`
@@ -212,18 +235,28 @@ async function route(url: URL, init?: RequestInit): Promise<Response> {
    * enough, because no device holds a copy of anything that opens the data. */
   if (p === '/api/me' && method === 'GET') {
     const u = identity.user((await caller(init)));
+    /* Held to the list rule, and refusing in the same words as the route
+     * below it - see the hosted build. Two answers to one question is how a
+     * refusal gets routed around. */
+    const mine = decideList(chosen.name, store.accountsForUser(u.id));
+    if (!mine.listed) {
+      return new Response(
+        JSON.stringify({ error: mine.message, code: mine.refusal, counts: mine.counts }),
+        { status: 409, headers: { 'content-type': 'application/json' } },
+      );
+    }
     return ok({
       user: { id: u.id, email: u.email, name: u.name },
       // Sealed, exactly as the server sends it. The name and the roster are
       // inside the envelope and this half of the app does not hold the key
       // either — the standalone build has no server, so "we cannot read it"
       // has to mean the same thing here.
-      accounts: store.accountsForUser(u.id),
+      accounts: mine.rows,
     });
   }
 
   if (p === '/api/accounts' && method === 'GET')
-    return ok(store.accountsForUser((await caller(init))));
+    return listed(store.accountsForUser((await caller(init))));
 
   if (p === '/api/accounts' && method === 'POST') {
     const uid = (await caller(init));
@@ -247,7 +280,14 @@ async function route(url: URL, init?: RequestInit): Promise<Response> {
     return ok(plugins.setStatus(seg[2], body.status));
 
   if (p === '/api/public') {
-    const proposals = store.listAccounts().flatMap(a => store.listProposals(a.id)).map(pr => ({
+    /* An observer is held to the same rule as a company, and the decision is
+     * taken per company rather than over the estate - see the hosted build. */
+    const withheld: string[] = [];
+    const proposals = store.listAccounts().flatMap(a => {
+      const seen = decideList(chosen.name, store.listProposals(a.id));
+      if (!seen.listed) { withheld.push(a.id); return []; }
+      return seen.rows;
+    }).map(pr => ({
       // Since S-8 this is all we CAN show, not all we chose to. The summary and
       // the per-signer approval list were the deanonymised version of what the
       // chain blinds on purpose.
@@ -255,9 +295,10 @@ async function route(url: URL, init?: RequestInit): Promise<Response> {
       approvalCount: pr.approvalCount,
       sealed: { iv: pr.sealed.iv, body: pr.sealed.body.slice(0, 48) + '...' },
       txRef: pr.txRef ?? null,
+      provenance: pr.provenance,
     }));
     /* Not on the `Ledger` boundary — see `src/wiring/selection.ts`. */
-    return ok({ ...observerView(ledger), proposals });
+    return ok({ ...observerView(ledger), proposals, withheldAccounts: withheld.length });
   }
 
   // /api/accounts/:id/...
@@ -270,8 +311,8 @@ async function route(url: URL, init?: RequestInit): Promise<Response> {
     // Method must be part of every match. A branch that ignores it will swallow
     // the POST that shares its path, which is exactly what happened here once.
     if (seg[3] === 'state' && method === 'GET') return ok(await accounts.readState(id, q.get('viewingKey') ?? ''));
-    if (seg[3] === 'proposals' && method === 'GET') return ok(store.listProposals(id));
-    if (seg[3] === 'runs' && method === 'GET') return ok(store.listRuns(id));
+    if (seg[3] === 'proposals' && method === 'GET') return listed(store.listProposals(id));
+    if (seg[3] === 'runs' && method === 'GET') return listed(store.listRuns(id));
     // `deposit` STOOD HERE. The account keeps no book, so there is
     // nothing to deposit into. Removed on both servers in the same turn — a
     // route the hosted build refuses and the standalone build answers is `T-11`.

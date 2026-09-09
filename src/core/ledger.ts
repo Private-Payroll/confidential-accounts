@@ -63,6 +63,7 @@
  *     one of the two unresolved questions and is deliberately not faked here.
  */
 import { hmac } from '@noble/hashes/hmac.js';
+import type { WiringName } from './provenance.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import type { Sealed, Hex } from './crypto.js';
 import { canonical, toHex, randomBytes, utf8, fromHex as fromHexKey } from './crypto.js';
@@ -902,6 +903,22 @@ export interface Ledger {
   fetch(accountId: string, keyEpoch: number): Promise<LedgerRecord | null>;
 
   describe(): string;
+
+  /**
+   * **WHICH IMPLEMENTATION OF THIS BOUNDARY IS ANSWERING, AS A WORD.**
+   *
+   * `describe()` above is prose for a person and it is free to change; this is
+   * the value that gets written onto a record and read back years later, so it
+   * is a closed set and nothing formats it.
+   *
+   * It is on the LEDGER rather than taken from whatever chose the ledger, and
+   * that is the whole point of it: a record must be marked by the thing that
+   * actually wrote it. A constant somewhere else describing what was meant to
+   * be running is a claim; this is an observation, and the address a company is
+   * identified by already carries its provenance the same way and for the same
+   * reason.
+   */
+  readonly wiring: WiringName;
 }
 
 export type Circuit = /* `T-217`: NONE of the three exists in either `.compact` — measured, zero occurrences in `ConfidentialAccount.compact` and `Vault.compact`; `MidnightProofSystem.prove` throws for all three, and `SimulatedProofSystem` is symmetric so its verifier must BE its prover. */ 'balance-at-least' | 'payroll-total' | 'payment-record';
@@ -1171,6 +1188,8 @@ interface SimAccount {
  * circuit will *prove* — only whether the sequence is legal.
  */
 export class SimulatedLedger implements Ledger {
+  /** Nothing this class writes has ever been near a chain, and it says so itself. */
+  readonly wiring = 'simulated' as const;
   private accounts = new Map<string, SimAccount>();
   /*
    * **`txs` STOOD HERE, AND `publicView().settlements` READ IT. `C313`.**

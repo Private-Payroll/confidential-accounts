@@ -6,6 +6,7 @@ import type { PaymentFacts } from '../midnight/payout-tree.js';
 export type { PayoutSeed };
 import type { AssetId } from './assets.js';
 import type { AddressSource } from './ledger.js';
+import type { WiringName } from './provenance.js';
 
 export type Role = 'admin' | 'approver' | 'initiator' | 'viewer';
 
@@ -307,6 +308,14 @@ export interface Account {
    * with no home on this type is written once and dropped by the next write.
    */
   addressSource?: AddressSource | null;
+  /**
+   * Carried across seal and open for the reason `addressSource` is: this record
+   * is rebuilt from an opened account on every write, so a readable field that
+   * is not copied here is written once and silently gone by the next roster
+   * edit. A marker that disappears reads as *not known*, which fails closed but
+   * loses a fact that cannot be recovered.
+   */
+  wiring?: WiringName | null;
 }
 
 /**
@@ -445,6 +454,16 @@ export interface SealedAccount {
    * make the guard pass for exactly the records it cannot vouch for.
    */
   addressSource?: AddressSource | null;
+  /**
+   * **WHICH LEDGER WROTE THIS RECORD.** Written once, when the record first
+   * appeared, by the ledger that wrote it - never afterwards, and never onto a
+   * record whose writing nothing observed.
+   *
+   * Absent means NOT KNOWN, exactly as it does for the company address, and
+   * not known is never read as a chain's. A list refuses to show records from
+   * more than one ledger together rather than guess which of them settled.
+   */
+  wiring?: WiringName | null;
 }
 
 /*
@@ -706,6 +725,16 @@ export interface SealedProposal {
   keyEpoch: number;
   /** kind, summary, sealedPayload, proposedBy, approvals[], blockedReason. */
   sealed: Sealed;
+  /**
+   * **WHICH LEDGER WROTE THIS RECORD.** Written once, when the record first
+   * appeared, by the ledger that wrote it - never afterwards, and never onto a
+   * record whose writing nothing observed.
+   *
+   * Absent means NOT KNOWN, exactly as it does for the company address, and
+   * not known is never read as a chain's. A list refuses to show records from
+   * more than one ledger together rather than guess which of them settled.
+   */
+  wiring?: WiringName | null;
 }
 
 export interface RosterEmployee {
@@ -1236,6 +1265,16 @@ export interface SealedRun {
   keyEpoch: number;
   /** employees[], totals and the per-asset proposal map. The numbers. */
   sealed: Sealed;
+  /**
+   * **WHICH LEDGER WROTE THIS RECORD.** Written once, when the record first
+   * appeared, by the ledger that wrote it - never afterwards, and never onto a
+   * record whose writing nothing observed.
+   *
+   * Absent means NOT KNOWN, exactly as it does for the company address, and
+   * not known is never read as a chain's. A list refuses to show records from
+   * more than one ledger together rather than guess which of them settled.
+   */
+  wiring?: WiringName | null;
 }
 
 export interface Attestation {

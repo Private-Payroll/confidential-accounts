@@ -18,6 +18,8 @@ import type {
 } from '../core/types.js';
 import * as keyring from './keyring.js';
 import { shownError } from './shown-error.js';
+import { LedgerMark } from './ledger-mark.js';
+import type { Marked } from '../core/provenance.js';
 import { AuthScreen, AccountPicker, WALLET_ORIGIN } from './Auth.js';
 import { WalletWaiting } from './wallet-waiting.js';
 import { JoinScreen, joinTokenFromLocation } from './Join.js';
@@ -151,9 +153,20 @@ type ProposalSecrets = Omit<Proposal,
  * sealed map — two copies of one list, one of them lossy, is the shape this
  * project keeps having to unpick.
  */
-const openRun = (rec: SealedRun, viewingKey: Hex): PayrollRun => {
+const openRun = (rec: SealedRun, viewingKey: Hex): PayrollRun & Marked => {
   const { sealed, keyEpoch, proposalIds: _flat, ...operational } = rec;
-  return { ...operational, ...openRecord<RunSecrets>('payroll', rec.accountId, sealed, viewingKey) };
+  return {
+    ...operational,
+    ...openRecord<RunSecrets>('payroll', rec.accountId, sealed, viewingKey),
+    /*
+     * **CARRIED DELIBERATELY AND NOT BY A SPREAD.** The marker rides in on
+     * `operational` today, which means it would survive until somebody
+     * destructured one more field out of the record and it would then vanish
+     * with no error anywhere - and a marker that vanishes reads as *not
+     * known*, which is the one answer this screen must never invent.
+     */
+    wiring: rec.wiring ?? null,
+  };
 };
 
 /**
@@ -161,9 +174,23 @@ const openRun = (rec: SealedRun, viewingKey: Hex): PayrollRun => {
  * per-signer approval list are inside the envelope — the chain records
  * approvals as nullifiers precisely so nobody can tell who approved what.
  */
-const openProposal = (rec: SealedProposal, viewingKey: Hex): Proposal => {
-  const { sealed, keyEpoch, approvalCount, ...open } = rec;
-  return { ...open, ...openRecord<ProposalSecrets>('proposals', rec.accountId, sealed, viewingKey) };
+const openProposal = (rec: SealedProposal, viewingKey: Hex): Proposal & Marked => {
+  const { sealed, keyEpoch, approvalCount, wiring: _outside, ...open } = rec;
+  return {
+    ...open,
+    ...openRecord<ProposalSecrets>('proposals', rec.accountId, sealed, viewingKey),
+    /*
+     * **TAKEN OFF THE RECORD AND PUT BACK LAST, SO THE ENVELOPE CANNOT WIN.**
+     *
+     * The sealed half is spread after the outer fields, so any copy of this
+     * that ever found its way inside would override the one the record carries
+     * in the clear - and the clear one is the only copy the decision about
+     * what to show can read, because that decision is taken before a key
+     * exists. One marker, on the outside, and this line is what keeps it the
+     * one that survives an open.
+     */
+    wiring: rec.wiring ?? null,
+  };
 };
 
 /**
@@ -251,7 +278,7 @@ export default function App({ commitments }: { commitments: CommitmentScheme }) 
   const [awaitingSetup, setAwaitingSetup] = useState<string | null>(null);
   const [myAccounts, setMyAccounts] = useState<Array<{
     id: string; name: string; signers: number; threshold: number;
-  }> | null>(null);
+  } & Marked> | null>(null);
   const [s, setS] = useState<Session | null>(null);
   const [page, setPage] = useState<Page>('dashboard');
   const [identity, setIdentity] = useState(0);       // index into secrets
@@ -259,9 +286,9 @@ export default function App({ commitments }: { commitments: CommitmentScheme }) 
   const [openRunId, setOpenRunId] = useState<string | null>(null);
 
   const [state, setState] = useState<ShieldedState | null>(null);
-  const [runs, setRuns] = useState<PayrollRun[]>([]);
+  const [runs, setRuns] = useState<Array<PayrollRun & Marked>>([]);
   const [people, setPeople] = useState<Roster[]>([]);
-  const [proposals, setProposals] = useState<Proposal[]>([]);
+  const [proposals, setProposals] = useState<Array<Proposal & Marked>>([]);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
   /* Null on every page that is not an invitation. */
@@ -309,6 +336,9 @@ export default function App({ commitments }: { commitments: CommitmentScheme }) 
         name: open?.name ?? 'Locked — your keys for this account are not on this device',
         signers: rec.signerCount,
         threshold: rec.threshold,
+        /* Which ledger opened this company. Absent means nothing recorded it,
+         * and the picker says so rather than leaving the row looking settled. */
+        wiring: rec.wiring ?? null,
       };
     }));
   }, []);
@@ -1136,7 +1166,7 @@ function Dashboard({ state, runs, people, pending, onGo }: {
 /* ------------------------------------------------------------------ */
 
 function PayrollList({ runs, people, busy, session, onOpen, act }: {
-  runs: PayrollRun[]; people: RosterEmployee[]; busy: boolean; session: Session;
+  runs: Array<PayrollRun & Marked>; people: RosterEmployee[]; busy: boolean; session: Session;
   onOpen: (id: string) => void; act: Act;
 }) {
   const active = people.filter(p => p.status === 'active');
@@ -1169,7 +1199,7 @@ function PayrollList({ runs, people, busy, session, onOpen, act }: {
               <thead><tr>
                 {/* "Totals", plural: a run has a subtotal per asset and never one figure. */}
                 <th>Period</th><th>Recipients</th><th className="num">Totals</th>
-                <th>Status</th><th>Settled</th>
+                <th>Status</th><th>Ledger</th><th>Settled</th>
               </tr></thead>
               <tbody>
                 {runs.map(r => (
@@ -1179,6 +1209,14 @@ function PayrollList({ runs, people, busy, session, onOpen, act }: {
                     <td className="num"><PerAsset amounts={r.totals} /></td>
                     <td><span className={'chip ' + (r.status === 'settled' ? 'ok' : r.status === 'proposed' ? 'pend' : 'off')}>
                       {r.status}</span></td>
+                    {/*
+                      * A settled run and a rehearsed one carry the same word in
+                      * the column to the left, which is exactly the confusion
+                      * this one removes: `settled` says the governance round reached its
+                      * threshold, and says nothing about whether a chain was
+                      * ever involved.
+                      */}
+                    <td><LedgerMark of={r} /></td>
                     <td className="sub2">{r.settledAt ? new Date(r.settledAt).toLocaleDateString('en-GB') : '—'}</td>
                   </tr>
                 ))}
@@ -1200,13 +1238,13 @@ function PayrollList({ runs, people, busy, session, onOpen, act }: {
  * therefore per leg, and the leg names its asset.
  */
 function RunDetail({ run, proposals, account, session, me, busy, onBack, act }: {
-  run: PayrollRun | undefined; proposals: Proposal[]; account: Account;
+  run: (PayrollRun & Marked) | undefined; proposals: Array<Proposal & Marked>; account: Account;
   session: Session; me: SignerSecrets; busy: boolean; onBack: () => void; act: Act;
 }) {
   if (!run) return null;
   const need = account.policy.threshold;
   const legs = Object.keys(run.totals).sort();
-  const proposalFor = (asset: AssetId): Proposal | undefined => {
+  const proposalFor = (asset: AssetId): (Proposal & Marked) | undefined => {
     const id = run.proposalIds[asset];
     return id ? proposals.find(p => p.id === id) : undefined;
   };
@@ -1262,6 +1300,14 @@ function RunDetail({ run, proposals, account, session, me, busy, onBack, act }: 
       <div className="inline">
         <button className="btn ghost sm" onClick={onBack}>← All runs</button>
         <div className="spacer" />
+        {/*
+          * **THE SCREEN THE DECISION IS TAKEN ON SAYS IT TOO, AND NOT ONLY THE
+          * LIST THAT LED HERE.** The list is where a company works out what
+          * exists; this is where somebody looks at *legs settled 1 of 1* and
+          * concludes people have been paid. A mark on the list and none here
+          * is a mark that has been scrolled past by the time it matters.
+          */}
+        <LedgerMark of={run} />
         <span className="sub">{legs.length === 1
           ? 'one settlement asset'
           : `${legs.length} settlement assets, ${legs.join(', ')}`}</span>
@@ -1992,8 +2038,8 @@ function People({ people, session, busy, act }: {
  * open proposal is the open proposal.
  */
 function Approvals({ pending, account, session, me, busy, runs, act }: {
-  pending: Proposal[]; account: Account; session: Session; me: SignerSecrets;
-  busy: boolean; runs: PayrollRun[]; act: Act;
+  pending: Array<Proposal & Marked>; account: Account; session: Session; me: SignerSecrets;
+  busy: boolean; runs: Array<PayrollRun & Marked>; act: Act;
 }) {
   /**
    * Which run leg a proposal settles, if it settles one at all.
@@ -2003,7 +2049,7 @@ function Approvals({ pending, account, session, me, busy, runs, act }: {
    * which of them is being executed. A proposal raised by a plug-in belongs to
    * no run and has no leg, which is why this returns null rather than throwing.
    */
-  const legOf = (p: Proposal): { run: PayrollRun; asset: AssetId } | null => {
+  const legOf = (p: Proposal & Marked): { run: PayrollRun & Marked; asset: AssetId } | null => {
     for (const run of runs) {
       const found = Object.entries(run.proposalIds).find(([, id]) => id === p.id);
       if (found) return { run, asset: found[0] };
@@ -2040,6 +2086,9 @@ function Approvals({ pending, account, session, me, busy, runs, act }: {
             <div className="hd">
               <h3>{p.summary}</h3>
               <span className={'chip ' + (ready ? 'ok' : 'pend')}>{p.status}</span>
+              {/* A signature is the money decision, so the governance round says which
+                  ledger raised it on the screen the signature is given on. */}
+              <LedgerMark of={p} />
               {/* Which leg this is. Two rounds on one run are told apart by asset
                   and by nothing else, so the summary alone is not enough. */}
               {leg && <span className="chip off">{leg.asset} leg of {monthName(leg.run.period)}</span>}

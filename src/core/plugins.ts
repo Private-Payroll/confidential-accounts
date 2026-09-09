@@ -1,4 +1,5 @@
 import { nanoid } from 'nanoid';
+import { decideList } from './provenance.js';
 import type { Hex } from './crypto.js';
 import type { AssetId } from './assets.js';
 import { assets as defaultAssets, formatAmount, sumAmounts } from './assets.js';
@@ -265,8 +266,21 @@ export class PluginService {
    */
   readRuns(token: string) {
     const install = this.authorise(token, 'runs:read', 'read runs');
-    return this.store.listRuns(install.accountId)
-      .map(r => ({ id: r.id, period: r.period, status: r.status }));
+    /*
+     * **A PLUG-IN'S LIST OF RUNS IS A LIST, AND IT IS HELD TO THE LIST RULE.**
+     *
+     * The company's bookkeeping reads this. `status` is the field that says a
+     * run settled, so a run that never reached a chain sitting here beside one
+     * that did is the same false belief the company's own screen refuses -
+     * arriving through a different door and into a system that will act on it
+     * without anybody looking.
+     */
+    const verdict = decideList(
+      this.accounts.wiring, this.store.listRuns(install.accountId));
+    if (!verdict.listed) throw new Error(verdict.message);
+    return verdict.rows.map(r => ({
+      id: r.id, period: r.period, status: r.status, provenance: r.provenance,
+    }));
   }
 
   /**

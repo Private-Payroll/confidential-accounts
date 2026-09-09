@@ -23,6 +23,10 @@ import {
   MemoryRateLimiter, PostgresRateLimiter, type RateLimiter,
 } from '../core/rate-limit.js';
 import { seedDemo } from '../core/demo.js';
+import {
+  countProvenance, decideList, refuseSelectionOver, refuseSelectionOverHistory,
+  type ListVerdict, type Marked,
+} from '../core/provenance.js';
 import { assets as assetRegistry, parseAmount } from '../core/assets.js';
 import { bigintJsonReplacer } from '../core/crypto.js';
 import type { Hex } from '../core/crypto.js';
@@ -115,6 +119,29 @@ const store = new FileStore(DATA);
  * instead of an unprovable leaf, is R3.
  */
 const chosen = wiring();
+/*
+ * **THE LEDGER IS CHOSEN BEFORE ANYTHING IS SERVED, SO THE RECORDS IT WILL BE
+ * SERVING ARE CHECKED HERE AND NOT ONE COMPANY AT A TIME.**
+ *
+ * A record that does not say which ledger wrote it cannot be shown beside one
+ * that a chain wrote, and nothing can work out afterwards which it was. The
+ * list routes refuse such a mixture per company, which protects each company;
+ * this refuses the process, which is what makes the situation visible to
+ * whoever pointed it here. It cannot fire while the product is rehearsing.
+ */
+{
+  const snapshot = chosen.name;
+  const seen = countProvenance([
+    ...store.listAccounts(),
+    ...store.listAccounts().flatMap(a => store.listProposals(a.id)),
+    ...store.listAccounts().flatMap(a => store.listRuns(a.id)),
+  ]);
+  const refusal = refuseSelectionOver(snapshot, seen)
+    /* And the half a count cannot see: what has written here before, including
+     * for records that are no longer in the store to be counted. */
+    ?? refuseSelectionOverHistory(store.snapshot().writtenBy);
+  if (refusal) throw new Error(refusal);
+}
 const ledger = chosen.createLedger();
 const proofs = chosen.createProofSystem();
 const accounts = new AccountService(store, ledger, chosen.commitments);
@@ -366,6 +393,28 @@ const wrap = (fn: express.RequestHandler): express.RequestHandler =>
       res.status(400).json({ error: reason });
     }
   };
+
+/* ------------------- which ledger wrote what ------------------- */
+
+/**
+ * **EVERY LIST OF ACCOUNTS, ROUNDS OR PAYROLL RUNS GOES THROUGH HERE.**
+ *
+ * A company works out what it has by reading a list, so this is where a record
+ * that never reached a chain has to be told apart from one that did. A check at
+ * the point of payment would be a check that runs after somebody has already
+ * decided, on a screen, that the money is there.
+ *
+ * The rule itself is not in this file. It is one function with no server in it,
+ * so it can be read, tested and reasoned about without starting anything - and
+ * so that the other build of this product, which answers these same routes
+ * in-process with no server at all, answers them by the same rule rather than
+ * by a second copy of it.
+ */
+const answerList = <T extends Marked>(res: express.Response, rows: readonly T[]): void => {
+  const verdict: ListVerdict<T> = decideList(chosen.name, rows);
+  if (verdict.listed) { res.json(verdict.rows); return; }
+  res.status(409).json({ error: verdict.message, code: verdict.refusal, counts: verdict.counts });
+};
 
 /* ------------------------- auth ------------------------- */
 
@@ -636,9 +685,23 @@ app.post('/api/me/sessions/:id/revoke', authed, wrap(async (req, res) => {
  */
 app.get('/api/me', authed, wrap(async (req, res) => {
   const u = identity.user(req.userId!);
+  /*
+   * **THE SIGN-IN ANSWER CARRIES A LIST, SO IT IS HELD TO THE LIST RULE.**
+   *
+   * This is the first thing a client asks for and the first place a company
+   * sees what it has, which makes it the earliest moment a wrong belief can
+   * form. It refuses the same way and with the same words as the list route
+   * next to it rather than quietly serving what that route would withhold -
+   * two answers to one question is how a refusal gets routed around.
+   */
+  const verdict = decideList(chosen.name, store.accountsForUser(u.id));
+  if (!verdict.listed) {
+    res.status(409).json({ error: verdict.message, code: verdict.refusal, counts: verdict.counts });
+    return;
+  }
   res.json({
     user: { id: u.id, email: u.email, name: u.name },
-    accounts: store.accountsForUser(u.id),
+    accounts: verdict.rows,
   });
 }));
 
@@ -772,7 +835,7 @@ app.post('/api/accounts', authed, wrap(async (req, res) => {
 
 // Scoped to the caller. This is the list endpoint, not a directory of the estate.
 app.get('/api/accounts', authed, wrap(async (req, res) => {
-  res.json(store.accountsForUser(req.userId!));
+  answerList(res, store.accountsForUser(req.userId!));
 }));
 
 app.get('/api/accounts/:id', authed, member, wrap(async (req, res) => {
@@ -797,7 +860,7 @@ app.get('/api/accounts/:id/state', authed, member, wrap(async (req, res) => {
  */
 
 app.get('/api/accounts/:id/proposals', authed, member, wrap(async (req, res) => {
-  res.json(store.listProposals(String(req.params.id)));
+  answerList(res, store.listProposals(String(req.params.id)));
 }));
 
 /*
@@ -961,7 +1024,7 @@ app.post('/api/accounts/:id/payroll', authed, member, wrap(async (req, res) => {
 }));
 
 app.get('/api/accounts/:id/runs', authed, member, wrap(async (req, res) => {
-  res.json(store.listRuns(String(req.params.id)));
+  answerList(res, store.listRuns(String(req.params.id)));
 }));
 
 app.post('/api/runs/:id/propose', authed, ownsRun, wrap(async (req, res) => {
@@ -1656,11 +1719,35 @@ app.get('/api/public', wrap(async (_req, res) => {
    * nullifiers the chain blinds on purpose: an endpoint built to demonstrate
    * privacy was publishing precisely what the privacy exists to hide.
    */
-  const proposals = store.listAccounts().flatMap(a => store.listProposals(a.id)).map(p => ({
+  /*
+   * **AN OBSERVER IS HELD TO THE SAME RULE AS A COMPANY, AND FOR A SHARPER
+   * REASON.** This route exists to be evidence. A page of rounds in which some
+   * reached a chain and some never did, with nothing saying which, is evidence
+   * of the wrong thing - and unlike a company's own list, whoever reads this
+   * has no other way to find out.
+   *
+   * **BUT THE DECISION IS TAKEN PER COMPANY AND NOT OVER THE ESTATE**, which
+   * is the one place that difference matters. A company's own list is one
+   * company's belief and refusing it whole is right. This is a flat page of
+   * everybody's rounds, so deciding over the whole of it would let a single
+   * company's mixture withhold the evidence route from every reader, for
+   * every other company, permanently - and the sentence they would be handed
+   * is addressed to somebody looking at their own payroll, which an observer
+   * is not. So each company is judged on its own records, the ones that can
+   * be shown are shown with their words on them, and the number withheld is
+   * stated rather than left as a silence.
+   */
+  const withheld: string[] = [];
+  const proposals = store.listAccounts().flatMap(a => {
+    const seen = decideList(chosen.name, store.listProposals(a.id));
+    if (!seen.listed) { withheld.push(a.id); return []; }
+    return seen.rows;
+  }).map(p => ({
     id: p.id, accountId: p.accountId, digest: p.digest, status: p.status,
     approvalCount: p.approvalCount,
     sealed: { iv: p.sealed.iv, body: p.sealed.body.slice(0, 48) + '...' },
     txRef: p.txRef ?? null,
+    provenance: p.provenance,
   }));
   /*
    * `observerView` rather than `ledger.publicView()`: the method is not on the
@@ -1668,7 +1755,13 @@ app.get('/api/public', wrap(async (_req, res) => {
    * `SimulatedLedger`. `src/wiring/selection.ts` carries the finding and the
    * question it leaves open.
    */
-  res.json({ ...observerView(ledger), proposals });
+  res.json({
+    ...observerView(ledger),
+    proposals,
+    /* Named rather than omitted: an observer counting rounds must be able to
+     * tell a company with none from a company being withheld. */
+    withheldAccounts: withheld.length,
+  });
 }));
 
 /* ------------------------- demo seed ------------------------- */

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { LedgerMark } from './ledger-mark.js';
 import * as keyring from './keyring.js';
 
 /**
@@ -136,7 +137,7 @@ export function AccountPicker({
                 <button key={a.id} className="acctrow" disabled={busy}
                   onClick={() => onUnlock(a.id)}>
                   <div>
-                    <b>A company you are a signer on</b>
+                    <b>A company you are a signer on <LedgerMark of={a} /></b>
                     <span>{a.signers} signers, {a.threshold} approvals required</span>
                   </div>
                   <span className="chev">{busy ? 'Waiting for your wallet' : 'Unlock'}</span>
@@ -214,7 +215,7 @@ export function AccountPicker({
             {accounts.map(a => (
               <button key={a.id} className="acctrow" onClick={() => onOpen(a.id)} disabled={busy}>
                 <div>
-                  <b>{a.name}</b>
+                  <b>{a.name} <LedgerMark of={a} /></b>
                   <span>{a.signers} signers, {a.threshold} approvals required</span>
                 </div>
                 <span className="chev">Open</span>

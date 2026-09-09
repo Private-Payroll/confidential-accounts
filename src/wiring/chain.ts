@@ -132,6 +132,16 @@ const NO_SPONSOR: FeeSponsor = {
  * of this file.
  */
 export class ChainLedger implements Ledger {
+  /**
+   * Taken from the ledger this wraps rather than restated.
+   *
+   * This class refuses every write today, so it never marks a record
+   * itself - but the day it stops refusing, the value a record is stamped
+   * with must be the one the ledger underneath would have used. Two
+   * literals here would be two things to keep in step, and the one that
+   * went stale would be the one nobody reads.
+   */
+  get wiring() { return this.inner.wiring; }
   constructor(private readonly inner: MidnightLedger, private readonly deployment: Deployment) {}
 
   /* ---- reads: the chain answers, and nothing here repairs the answer ---- */
