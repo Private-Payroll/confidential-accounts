@@ -1630,7 +1630,6 @@ describe('plug-ins', () => {
     });
     await expect(h.plugins.propose(ins.token, c.viewingKey, {
       summary: 'Deploy to lending', asset: 'GBP', amount: 10_00n, recipient: 'Pool',
-      proposedBy: c.secrets[0].signerId,
     })).rejects.toThrow(/no spending allowance/);
   });
 
@@ -1653,7 +1652,6 @@ describe('plug-ins', () => {
     });
     const go = (amount: bigint) => h.plugins.propose(ins.token, c.viewingKey, {
       summary: 'Deploy', asset: 'GBP', amount, recipient: 'Pool',
-      proposedBy: c.secrets[0].signerId,
     });
 
     await expect(go(9_000_00n)).rejects.toThrow(/per-proposal allowance/);
@@ -1681,7 +1679,6 @@ describe('plug-ins', () => {
     });
     await expect(h.plugins.propose(ins.token, c.viewingKey, {
       summary: 'Deploy', asset: 'USDC', amount: 1n, recipient: 'Pool',
-      proposedBy: c.secrets[0].signerId,
     })).rejects.toThrow(/no USDC allowance\. It may spend GBP and nothing else/);
 
     // Refused, and recorded — a refusal is the more interesting audit line.

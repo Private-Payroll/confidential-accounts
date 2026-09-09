@@ -2301,7 +2301,13 @@ function Apps({ session, me, busy, act }: {
               periodDays: 30,
             }
           : null,
-        installedBy: me.signerId,
+        /*
+         * **NO SEAT IN THIS BODY.** Which seat installed a plug-in decides
+         * which ceiling its rounds are judged against, so it comes from the
+         * signed-in caller on the server. The viewing key is what lets the
+         * server work out which seat that is.
+         */
+        viewingKey: session.viewingKey,
       }),
     });
     setInstalling(null); await refresh();
@@ -2340,7 +2346,15 @@ function Apps({ session, me, busy, act }: {
             // looked up BY it: an asset it was not granted has no ceiling to
             // reach and is refused outright.
             asset: asset.code, amount: decimal('3000', asset),
-            recipient: 'Counterparty', proposedBy: me.signerId,
+            /*
+             * **NO SEAT IN THIS BODY.** A plug-in's round is raised under the
+             * seat that installed the plug-in and granted its allowance, which
+             * the server looks up from the capability token. A seat this screen
+             * could put in a request would be a seat any caller could put in a
+             * request, and the seat selects the ceiling the approval is judged
+             * against.
+             */
+            recipient: 'Counterparty',
           }),
         });
         setDemoOut(`proposed ${r.id}, status ${r.status}. It cannot execute, only your signers can.`);
@@ -3067,7 +3081,12 @@ function Settings({ account, state, session, me, busy, act, commitments }: {
                         viewingKey: session.viewingKey,
                         vault: vaultForm.vault,
                         newThreshold: Number(vaultForm.threshold),
-                        proposedBy: me.signerId,
+                        /*
+                         * **NO SEAT IN THIS BODY EITHER.** Who is raising the
+                         * round comes from the signed-in caller on the server.
+                         * A seat a client supplies is a claim, and this approval
+                         * is judged against the ceiling of that seat's role.
+                         */
                       }),
                     });
                     await loadChain();

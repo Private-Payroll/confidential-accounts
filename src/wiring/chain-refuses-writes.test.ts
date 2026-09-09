@@ -19,8 +19,9 @@
  * and every write case asserts the recorder stayed empty.
  */
 import { describe, it, expect } from 'vitest';
-import { ChainLedger, agreedAddress } from './chain.js';
+import { ChainLedger } from './chain.js';
 import type { Deployment } from './deployment.js';
+import type { WriteCapability } from './write-capability.js';
 
 const DEPLOYMENT: Deployment = {
   network: 'stagenet',
@@ -34,8 +35,39 @@ const DEPLOYMENT: Deployment = {
   zkConfigPath: '/nowhere/contracts/managed',
 };
 
+/**
+ * A deployment that holds everything writing needs.
+ *
+ * Nothing here is real and nothing needs to be: what decides whether a write
+ * refuses or is delegated is whether this object exists and is whole, and that
+ * is deliberately the only question the boundary asks. A real one is a funded
+ * wallet, and a case that needed one would be a case nobody runs.
+ */
+const CAPABLE: WriteCapability = {
+  maintenanceAuthority: { kind: 'unmaintainable' },
+  compiled: { it: 'is here' },
+  /*
+   * **NOT `{}`, AND THAT IS THE POINT OF THESE SIX LINES.** Both members used
+   * to be empty objects here, and the rule accepted them - so the fixture was
+   * asserting that a deployment holding nothing where the wallet and the fee
+   * payer go could write. The members are the ones the write path actually
+   * calls; nothing behind them is real, and nothing needs to be.
+   */
+  customer: {
+    coinPublicKey: () => 'not-a-secret: a test literal',
+    encryptionPublicKey: () => 'not-a-secret: a test literal',
+    balanceOwnLegs: async (tx: unknown) => tx,
+  } as WriteCapability['customer'],
+  sponsor: {
+    addFeeAndFinalise: async (tx: unknown) => tx,
+    submit: async () => ({ ref: 'tx', at: '' }),
+    capacity: async () => ({ dust: 0n, night: 0n }),
+  } as WriteCapability['sponsor'],
+  storagePassword: async () => 'not-a-secret: a test literal',
+};
+
 /** Records every call, and answers reads. A write reaching it is the defect. */
-const recorder = () => {
+const recorder = (capability?: WriteCapability) => {
   const calls: string[] = [];
   const inner: any = new Proxy({}, {
     get: (_t, prop: string) => (...args: unknown[]) => {
@@ -48,7 +80,7 @@ const recorder = () => {
       return Promise.resolve({ txRef: 'SHOULD-NOT-HAPPEN', args });
     },
   });
-  return { calls, ledger: new ChainLedger(inner, DEPLOYMENT) };
+  return { calls, ledger: new ChainLedger(inner, DEPLOYMENT, capability) };
 };
 
 const WRITES: ReadonlyArray<[string, (l: ChainLedger) => Promise<unknown>]> = [
@@ -86,7 +118,15 @@ describe('the chain wiring refuses a write above the ledger', () => {
     const { ledger } = recorder();
     const message = await ledger.open('a', {} as never).then(
       () => 'it did not refuse', (e: Error) => e.message);
-    expect(message).toMatch(/no funded wallet is wired/);
+    /*
+     * It names the pieces this deployment has not got rather than the general
+     * fact that it has not got them - so an operator short of one thing is not
+     * handed the same paragraph as one short of five.
+     */
+    expect(message).toMatch(/no wallet is wired/);
+    expect(message).toMatch(/nothing is wired to pay the transaction fee/);
+    /* And it says what still works, so "broken" and "built to watch" come apart. */
+    expect(message).toMatch(/Reading an account, its balances and its open rounds works/);
     /* Names a state, not a thing to type. */
     expect(message).not.toMatch(/\.command|npm run|MIDNIGHT_/);
   });
@@ -133,34 +173,6 @@ describe('the chain wiring refuses a write above the ledger', () => {
   });
 
   /*
-   * **THE RECORDED CONTRACT ADDRESS IS LOAD-BEARING, NOT DECORATION.**
-   *
-   * RED WHEN: `chainLedger` goes back to passing `addressOf` straight through.
-   * Watched red that way on a copy outside this repository. Without the check
-   * the deployment record's address is validated on the way past and then never
-   * used, and every read resolves its contract from the product's own row
-   * instead — so the two can drift and nothing says so.
-   */
-  it('refuses an account recorded against a different contract', () => {
-    expect(() => agreedAddress('a', 'a-different-contract', DEPLOYMENT))
-      .toThrow(/recorded against contract a-different-contract.*built against bcb61fef/s);
-  });
-
-  it('allows the contract this deployment was built against', () => {
-    expect(agreedAddress('a', DEPLOYMENT.contractAddress, DEPLOYMENT))
-      .toBe(DEPLOYMENT.contractAddress);
-  });
-
-  /*
-   * An account with no address yet is not a disagreement - it is an account
-   * that has not been deployed. Refusing it would stop the product ever
-   * reporting that, which is the answer the caller needs.
-   */
-  it('lets a not-yet-deployed account through as null', () => {
-    expect(agreedAddress('a', null, DEPLOYMENT)).toBeNull();
-  });
-
-  /*
    * RED WHEN: `describe()` is delegated to the ledger underneath, whose own
    * sentence ends "fees sponsored" — a claim about a component this deployment
    * has not got.
@@ -170,5 +182,82 @@ describe('the chain wiring refuses a write above the ledger', () => {
     expect(ledger.describe()).toContain('read-only');
     expect(ledger.describe()).not.toContain('sponsored');
     expect(ledger.describe()).toContain('stagenet');
+  });
+
+  /*
+   * **AND THE SENTENCE MOVES WHEN THE DEPLOYMENT DOES.**
+   *
+   * RED WHEN: `describe()` says read-only whatever this deployment holds. That
+   * is the half a fixed string passes: an operator on a deployment that CAN
+   * write would be told it cannot, on the one line the health route prints.
+   */
+  it('a deployment that can write does not describe itself as read-only', async () => {
+    const { ledger } = recorder(CAPABLE);
+    expect(ledger.describe()).not.toContain('read-only');
+    expect(ledger.describe()).toContain('reading and writing');
+    expect(ledger.describe()).toContain('stagenet');
+  });
+});
+
+/**
+ * **THE POSITIVE CONTROL, AND IT IS THE HALF THAT WAS MISSING.**
+ *
+ * Every case above passes against a boundary that refuses every write for ever
+ * - which is what this one did. So each of them is paired here with the same
+ * call on a deployment that holds what writing needs, and the pair is what
+ * makes either assertion mean anything: **the refusal has to be caused by the
+ * absence, not by the method.**
+ */
+describe('and a deployment that can write is not stopped here', () => {
+  for (const [name, call] of WRITES) {
+    /*
+     * RED WHEN: a write method refuses whatever the deployment holds - which is
+     * the state this file pinned before there was anything to pin against, and
+     * the state a boundary falls back into the moment somebody re-adds an
+     * unconditional refusal "to be safe".
+     */
+    it(`${name} is delegated whole`, async () => {
+      const { calls, ledger } = recorder(CAPABLE);
+      await call(ledger);
+      expect(calls, `${name} did not reach the ledger`).toEqual([name]);
+    });
+  }
+
+  /*
+   * **AND THE ARGUMENTS ARRIVE UNCHANGED.**
+   *
+   * RED WHEN: a delegated write drops, reorders or invents an argument. A
+   * wrapper that forwards the call and not its arguments is green on every case
+   * above: the ledger is reached, so the refusal is gone, and the transaction
+   * is about something else.
+   */
+  it('a delegated write carries its arguments through untouched', async () => {
+    const seen: unknown[][] = [];
+    const inner: any = new Proxy({}, {
+      get: () => (...args: unknown[]) => { seen.push(args); return Promise.resolve({ ref: 'x' }); },
+    });
+    const ledger = new ChainLedger(inner, DEPLOYMENT, CAPABLE);
+    const by = { signerId: 'sgn_1', leaf: '0xleaf' } as never;
+
+    await ledger.approve('acc_1', '0xprop' as never, by);
+    expect(seen[0]).toEqual(['acc_1', '0xprop', by]);
+
+    await ledger.addSigner('acc_2', '0xnew' as never, '0xprop2' as never, by);
+    expect(seen[1]).toEqual(['acc_2', '0xnew', '0xprop2', by]);
+
+    await ledger.removeSigner('acc_3', '0xold' as never, '0xprop3' as never, by);
+    expect(seen[2]).toEqual(['acc_3', '0xold', '0xprop3', by]);
+
+    /*
+     * **`cancel` IS HERE BECAUSE IT IS THE ONE THAT CAN BE TRANSPOSED IN
+     * SILENCE.** An account id and a proposal id are both plain strings, so
+     * swapping them typechecks - and this was the only hand-written delegation
+     * whose two same-typed arguments nothing pinned. Measured: transposing them
+     * left every other case in this file green. `cancel` is what closes an open
+     * round, and an account may hold only one at a time, so a broken one is an
+     * account that cannot un-wedge itself.
+     */
+    await ledger.cancel('acc_4', '0xprop4' as never, by);
+    expect(seen[3]).toEqual(['acc_4', '0xprop4', by]);
   });
 });

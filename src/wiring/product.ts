@@ -33,6 +33,8 @@
 import { wiring, type Wiring } from './selection.js';
 import { chainWiring } from './chain.js';
 import { deployment, type Deployment } from './deployment.js';
+import type { ContractBook } from './account-contract.js';
+import type { WriteCapability } from './write-capability.js';
 import type { Ledger, ProofSystem } from '../core/ledger.js';
 
 /**
@@ -134,10 +136,11 @@ export function halvesDisagree(
  */
 export function assembleFor(
   d: Deployment,
-  addressOf: (accountId: string) => Promise<string | null>,
+  book: ContractBook,
+  capability?: WriteCapability,
 ): Wiring {
   const selected = wiring();
-  const chain = chainWiring(d, addressOf);
+  const chain = chainWiring(d, book, capability);
 
   const disagreement = halvesDisagree(
     { name: chain.name, commitments: chain.commitments },
@@ -264,18 +267,25 @@ export function unconfiguredWiring(refusal: string): Wiring {
 /**
  * Read the deployment, assemble the set, and report either.
  *
- * `addressOf` is the one input this module does not own: an account id becomes
- * an address by asking whatever recorded it, and that is the product's store
+ * `book` is the one input this module does not own: an account id becomes an
+ * address by asking whatever recorded it, and that is the product's store
  * rather than this file's business.
+ *
+ * **`capability` ABSENT IS THE ORDINARY CASE AND NOT A FAILURE.** A deployment
+ * built to watch a chain holds no wallet, and every write refuses by name and
+ * says which of the pieces it is short of. A deployment that was given one
+ * writes; nothing else about the set changes, which is the point of it being
+ * one parameter rather than a second assembly.
  */
 export function startProduct(
-  addressOf: (accountId: string) => Promise<string | null>,
+  book: ContractBook,
   root: string = process.cwd(),
   env: NodeJS.ProcessEnv = process.env,
+  capability?: WriteCapability,
 ): Startup {
   try {
     const d = deployment(root, env);
-    return { started: true, wiring: assembleFor(d, addressOf), deployment: d };
+    return { started: true, wiring: assembleFor(d, book, capability), deployment: d };
   } catch (e) {
     const refusal = startupRefusal(e);
     /*

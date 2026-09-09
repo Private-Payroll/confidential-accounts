@@ -300,8 +300,20 @@ async function route(url: URL, init?: RequestInit): Promise<Response> {
     return ok(await plugins.read(q.get('token') ?? '', q.get('viewingKey') ?? ''));
   if (p === '/api/plugin/people' && method === 'GET') return ok(plugins.readPeople(q.get('token') ?? ''));
   if (p === '/api/plugin/runs' && method === 'GET') return ok(plugins.readRuns(q.get('token') ?? ''));
+  /*
+   * **THE BODY IS NOT SPREAD IN.** It used to be, whole, which meant every
+   * field a plug-in cared to send reached the service - including the seat the
+   * round would be raised under, which selects the ceiling it is judged
+   * against. The four fields this route actually takes are named instead, so a
+   * fifth cannot arrive by being written down somewhere else.
+   */
   if (p === '/api/plugin/propose' && method === 'POST')
-    return ok(await plugins.propose(body.token, body.viewingKey, body));
+    return ok(await plugins.propose(body.token, body.viewingKey, {
+      summary: String(body.summary ?? ''),
+      asset: String(body.asset ?? ''),
+      amount: body.amount,
+      recipient: String(body.recipient ?? ''),
+    }));
 
   if (seg[1] === 'installations' && seg[3] === 'status' && method === 'POST')
     return ok(plugins.setStatus(seg[2], body.status));
@@ -388,8 +400,22 @@ async function route(url: URL, init?: RequestInit): Promise<Response> {
         ...rest, redeemed: Boolean(rest.acceptedAt),
       })));
     if (seg[3] === 'plugins' && method === 'GET') return ok(plugins.installed(id));
+    /*
+     * **THE BODY IS NOT SPREAD IN, AND THE SEAT COMES FROM THE SIGNED-IN
+     * CALLER.** Every round this plug-in later raises is attributed to that
+     * seat and judged against its ceiling, so a seat the caller could name here
+     * is the same hole one step earlier. The two builds are separate
+     * implementations of one API and this is a field on which they must not
+     * drift.
+     */
     if (seg[3] === 'plugins' && method === 'POST')
-      return ok(plugins.install({ accountId: id, ...body }));
+      return ok(plugins.install({
+        accountId: id,
+        pluginId: body.pluginId,
+        scopes: body.scopes,
+        allowance: body.allowance ?? null,
+        installedBy: accounts.seatOf(id, body.viewingKey as Hex, await caller(init)),
+      }));
     if (seg[3] === 'plugin-events' && method === 'GET') return ok(plugins.events(id));
     if (seg[3] === 'grant' && method === 'POST')
       return ok(await accounts.grantAccess(id, body.viewingKey, body.signerId));
@@ -544,8 +570,20 @@ async function route(url: URL, init?: RequestInit): Promise<Response> {
         closesAt: BigInt(String(body.closesAt)),
         vault: String(body.vault) as Hex,
       });
+      /*
+       * **THE SEAT COMES FROM THE SIGNED-IN CALLER HERE TOO, AND IS NOT READ
+       * OFF THE BODY.** A round is judged against the ceiling of the role that
+       * raised it, so a seat a caller can name is a ceiling a caller can
+       * choose. The two builds are separate implementations of one API and this
+       * is exactly the kind of field on which they must not drift, so the rule
+       * is written twice because the code cannot be.
+       *
+       * The account comes from the run, which is the only one in scope here.
+       */
       return ok(await payroll.proposeRun(
-        runId, body.viewingKey, body.proposedBy, material, body.asset));
+        runId, body.viewingKey,
+        accounts.seatOf(inputs.accountId, body.viewingKey as Hex, await caller(init)),
+        material, body.asset));
     }
     // `settle` STOOD HERE. No balance, no `PayrollService.settle`.
     // Removed on both servers in the same turn — a route the hosted build

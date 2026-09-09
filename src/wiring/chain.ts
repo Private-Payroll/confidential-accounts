@@ -54,58 +54,39 @@ import type {
 import type { Hex } from '../core/crypto.js';
 import type { Deployment } from './deployment.js';
 
-/**
- * Why a write cannot happen here. One sentence, one place, and it names the
- * state that would resolve it rather than a thing to run: an operator reading
- * it can tell the difference between "this is broken" and "this deployment was
- * built to watch."
- */
-const NO_WALLET =
-  'this deployment can read the chain and cannot write to it: no funded wallet is '
-  + 'wired to it, so there is nothing to pay the transaction with. Reading an account, '
-  + 'its balances and its open rounds works; raising, approving, cancelling and '
-  + 'changing signers or thresholds need a wallet this deployment does not have.';
+import { type ContractBook } from './account-contract.js';
+import { refusalForCapability, type WriteCapability } from './write-capability.js';
 
 /**
- * **A REJECTED PROMISE, NEVER A SYNCHRONOUS THROW.** Every method that uses
- * this is declared to return one, and a caller that writes `.catch(...)` on a
- * method that throws before it returns does not catch anything — the exception
- * comes out of the call rather than out of the promise. A refusal that escapes
- * the caller's error handling is a refusal the product cannot report.
+ * **THE SPEND-AUTHORITY SEAT, LEFT EMPTY UNLESS THIS DEPLOYMENT WAS GIVEN ONE,
+ * AND NEVER LEFT NULL.**
+ *
+ * A construction site that passes `null` works by accident and becomes a crash
+ * at the moment somebody gives the parameter a reader - which is the moment a
+ * transaction is already being paid for.
+ *
+ * This object is what goes in that seat instead when there is nobody to pay. It
+ * satisfies the interface and every member refuses, so the seat is filled by
+ * something that cannot silently do the wrong thing, and the day the parameter
+ * acquires a reader this deployment says so in words rather than dereferencing
+ * nothing.
  */
-const refuseWrite = (what: string): Promise<never> =>
-  Promise.reject(new Error(`${what} needs to write to the chain, and ${NO_WALLET}`));
+const noSponsor = (refusal: string): FeeSponsor => ({
+  addFeeAndFinalise: async () => Promise.reject(new Error(refusal)),
+  submit: async () => Promise.reject(new Error(refusal)),
+  capacity: async () => Promise.reject(new Error(
+    'the fee sponsor\'s remaining capacity is not available on this deployment: '
+    + 'nothing is wired to pay fees, so there is no balance to report')),
+});
 
 /**
  * For the things that are NOT writes and still cannot be done here. Kept apart
- * from `refuseWrite` because an operator whose private state store will not
+ * from a write refusal because an operator whose private state store will not
  * open should not be told the cause is a missing wallet: a refusal that names
  * the wrong cause sends somebody to fix the wrong thing.
  */
 const refuseUnwired = (what: string, why: string): Promise<never> =>
   Promise.reject(new Error(`${what} is not available on this deployment: ${why}`));
-
-/**
- * **THE SPEND-AUTHORITY SEAT, LEFT EMPTY ON PURPOSE AND NOT LEFT NULL.**
- *
- * The ledger takes a fee sponsor and, as this is written, never calls it —
- * sponsorship is assembled one layer down, among the providers. A construction
- * site that passes `null` therefore works by accident and would become a crash
- * at the moment somebody gives the parameter a reader, which is the moment a
- * transaction is already being paid for.
- *
- * This object is what goes in that seat instead. It satisfies the interface and
- * every member refuses, so the seat is filled by something that cannot silently
- * do the wrong thing, and the day the parameter acquires a reader this
- * deployment says so in words rather than dereferencing nothing.
- */
-const NO_SPONSOR: FeeSponsor = {
-  addFeeAndFinalise: async () => refuseWrite('paying a transaction fee'),
-  submit: async () => refuseWrite('submitting a transaction'),
-  capacity: async () => refuseUnwired(
-    'the fee sponsor\'s remaining capacity',
-    'no sponsor wallet is wired to this deployment, so there is no balance to report'),
-};
 
 /**
  * The chain ledger the product is handed.
@@ -124,25 +105,52 @@ const NO_SPONSOR: FeeSponsor = {
  * cannot separate them: it has no information the ledger has not got. **What it
  * can do, and does, is never turn an unanswered read into an answer** — a
  * repaired `null` becomes an empty status, and an empty status read as truth
- * lets a caller close a record the chain still holds. The one caller that
- * matters reads `null` as *could not ask* today; that is its safety, not this
- * one's, and it is why nothing here helpfully fills the gap.
+ * lets a caller close a record the chain still holds.
  *
- * Writes refuse above the ledger, never inside it, for the reason at the head
- * of this file.
+ * **WRITES REFUSE HERE, ABOVE THE LEDGER, WHENEVER THIS DEPLOYMENT WAS NOT
+ * GIVEN WHAT WRITING NEEDS** - and when it was, they are delegated whole, the
+ * same way reads are. The refusal is one sentence built in one place from what
+ * is actually missing, so a deployment short of one piece says which piece
+ * rather than reciting a general apology.
  */
 export class ChainLedger implements Ledger {
   /**
    * Taken from the ledger this wraps rather than restated.
    *
-   * This class refuses every write today, so it never marks a record
-   * itself - but the day it stops refusing, the value a record is stamped
-   * with must be the one the ledger underneath would have used. Two
-   * literals here would be two things to keep in step, and the one that
-   * went stale would be the one nobody reads.
+   * The value a record is stamped with must be the one the ledger underneath
+   * would have used. Two literals here would be two things to keep in step, and
+   * the one that went stale would be the one nobody reads.
    */
   get wiring() { return this.inner.wiring; }
-  constructor(private readonly inner: MidnightLedger, private readonly deployment: Deployment) {}
+
+  /**
+   * The sentence, computed once at construction rather than per call.
+   *
+   * **NULL MEANS THIS DEPLOYMENT CAN WRITE**, and it is the only thing any
+   * write method below consults. There is deliberately no second way to ask -
+   * a method that checked some other field could disagree with this one, and
+   * the disagreement would be a write that got through.
+   */
+  private readonly cannotWrite: string | null;
+
+  constructor(
+    private readonly inner: MidnightLedger,
+    private readonly deployment: Deployment,
+    capability?: WriteCapability,
+  ) {
+    this.cannotWrite = refusalForCapability(capability);
+  }
+
+  /**
+   * **A REJECTED PROMISE, NEVER A SYNCHRONOUS THROW.** Every method that uses
+   * this is declared to return one, and a caller that writes `.catch(...)` on a
+   * method that throws before it returns does not catch anything — the exception
+   * comes out of the call rather than out of the promise. A refusal that escapes
+   * the caller's error handling is a refusal the product cannot report.
+   */
+  private refuse(what: string): Promise<never> {
+    return Promise.reject(new Error(`${what} needs to write to the chain, and ${this.cannotWrite}`));
+  }
 
   /* ---- reads: the chain answers, and nothing here repairs the answer ---- */
 
@@ -176,77 +184,65 @@ export class ChainLedger implements Ledger {
 
   /**
    * **WHAT IS RUNNING, AND ONLY WHAT IS RUNNING.** The ledger underneath
-   * describes itself as sponsoring fees, which is a claim about a component
-   * this deployment has not got. This sentence is the one an operator reads on
-   * the health route and at boot, so it says the narrower true thing.
+   * describes itself as sponsoring fees, which on a deployment with nobody to
+   * pay is a claim about a component it has not got. This sentence is the one
+   * an operator reads on the health route and at boot, so it says the narrower
+   * true thing in both directions.
    */
   describe(): string {
-    return `Midnight ${this.deployment.network} via ${this.deployment.indexerUrl}, read-only `
-      + '(no wallet is wired, so nothing can be written to the chain)';
+    return `Midnight ${this.deployment.network} via ${this.deployment.indexerUrl}, `
+      + (this.cannotWrite === null
+        ? 'reading and writing (a wallet is wired, so this deployment can open companies '
+          + 'and raise rounds)'
+        : 'read-only (no wallet is wired, so nothing can be written to the chain)');
   }
 
-  /* ---- writes: refused here, above everything that stages anything ---- */
+  /* ---- writes: refused above everything that stages anything, or delegated whole ---- */
 
-  open(_accountId: string, _opening: AccountOpening): Promise<TxRef> {
-    return refuseWrite('opening an account');
+  open(accountId: string, opening: AccountOpening): Promise<TxRef> {
+    return this.cannotWrite ? this.refuse('opening an account')
+      : this.inner.open(accountId, opening);
   }
 
-  propose(
-    ..._args: Parameters<Ledger['propose']>
-  ): Promise<TxRef> {
-    return refuseWrite('raising a round');
+  propose(...args: Parameters<Ledger['propose']>): Promise<TxRef> {
+    return this.cannotWrite ? this.refuse('raising a round')
+      : this.inner.propose(...args);
   }
 
-  proposeRun(
-    ..._args: Parameters<Ledger['proposeRun']>
-  ): ReturnType<Ledger['proposeRun']> {
-    return refuseWrite('raising a payroll round');
+  proposeRun(...args: Parameters<Ledger['proposeRun']>): ReturnType<Ledger['proposeRun']> {
+    return this.cannotWrite ? this.refuse('raising a payroll round')
+      : this.inner.proposeRun(...args);
   }
 
-  approve(_accountId: string, _proposalId: Hex, _by: SignerRef): Promise<TxRef> {
-    return refuseWrite('approving a round');
+  approve(accountId: string, proposalId: Hex, by: SignerRef): Promise<TxRef> {
+    return this.cannotWrite ? this.refuse('approving a round')
+      : this.inner.approve(accountId, proposalId, by);
   }
 
-  cancel(_accountId: string, _proposalId: Hex, _by: SignerRef): Promise<TxRef> {
-    return refuseWrite('cancelling a round');
+  cancel(accountId: string, proposalId: Hex, by: SignerRef): Promise<TxRef> {
+    return this.cannotWrite ? this.refuse('cancelling a round')
+      : this.inner.cancel(accountId, proposalId, by);
   }
 
-  addSigner(
-    _accountId: string, _leaf: Hex, _proposalId: Hex | null, _by: SignerRef,
-  ): Promise<TxRef> {
-    return refuseWrite('adding a signer');
+  addSigner(accountId: string, leaf: Hex, proposalId: Hex | null, by: SignerRef): Promise<TxRef> {
+    return this.cannotWrite ? this.refuse('adding a signer')
+      : this.inner.addSigner(accountId, leaf, proposalId, by);
   }
 
-  removeSigner(
-    _accountId: string, _removedLeaf: Hex, _proposalId: Hex, _by: SignerRef,
-  ): Promise<TxRef> {
-    return refuseWrite('removing a signer');
+  removeSigner(accountId: string, removedLeaf: Hex, proposalId: Hex, by: SignerRef): Promise<TxRef> {
+    return this.cannotWrite ? this.refuse('removing a signer')
+      : this.inner.removeSigner(accountId, removedLeaf, proposalId, by);
   }
 
-  setThreshold(..._args: Parameters<Ledger['setThreshold']>): Promise<TxRef> {
-    return refuseWrite('changing the approval threshold');
+  setThreshold(...args: Parameters<Ledger['setThreshold']>): Promise<TxRef> {
+    return this.cannotWrite ? this.refuse('changing the approval threshold')
+      : this.inner.setThreshold(...args);
   }
 
-  setVaultThreshold(..._args: Parameters<Ledger['setVaultThreshold']>): Promise<TxRef> {
-    return refuseWrite('changing a vault\'s approval threshold');
+  setVaultThreshold(...args: Parameters<Ledger['setVaultThreshold']>): Promise<TxRef> {
+    return this.cannotWrite ? this.refuse('changing a vault\'s approval threshold')
+      : this.inner.setVaultThreshold(...args);
   }
-}
-
-/**
- * The rule by itself, so it can be pinned without a ledger, an indexer or a
- * network. Everything that can refuse here takes plain values.
- */
-export function agreedAddress(
-  accountId: string, answered: string | null, d: Deployment,
-): string | null {
-  if (answered !== null && answered !== d.contractAddress) {
-    throw new Error(
-      `account "${accountId}" is recorded against contract ${answered}, and this `
-      + `deployment was built against ${d.contractAddress} on ${d.network}. One of `
-      + 'the two is out of date, and reading either would answer about a contract '
-      + 'this deployment was not meant to be talking to.');
-  }
-  return answered;
 }
 
 /** The configuration the ledger takes, derived from the deployment and nowhere else. */
@@ -263,39 +259,35 @@ export const configFor = (d: Deployment): MidnightConfig => ({
 /**
  * Build the chain ledger.
  *
- * `addressOf` is the one input this module does not own: an account id becomes
- * an address by asking whatever recorded it, and that is the product's store
- * rather than this file's business. It is a parameter for the same reason the
+ * **`book` IS THE ONE INPUT THIS MODULE DOES NOT OWN.** An account id becomes an
+ * address by asking whatever recorded it, and that is the product's store rather
+ * than this file's business. It is a parameter for the same reason the
  * commitment scheme is not defaulted — the alternative is this file inventing a
  * second answer to a question the product already answers.
+ *
+ * **THE BOOK HAS TWO HALVES AND BOTH ARE NEEDED, WHICH IS THE DEFECT THIS
+ * SIGNATURE CLOSES.** It used to take the reading half alone. Opening an account
+ * assigns an address that exists nowhere until the deploy returns; the ledger
+ * hands it over the instant it has one, and the product then asks the ledger for
+ * the account's address, which asks the book. With no writing half the ledger had
+ * nowhere to hand it, so the account would be filed with no address — **the
+ * deploy would have succeeded and the company would have been unreadable ever
+ * after.**
  */
 export function chainLedger(
   d: Deployment,
-  addressOf: (accountId: string) => Promise<string | null>,
+  book: ContractBook,
+  capability?: WriteCapability,
 ): ChainLedger {
   const cfg = configFor(d);
-  /*
-   * **THE RECORDED ADDRESS IS CHECKED AGAINST THE ONE THE PRODUCT ANSWERS
-   * WITH, AND THIS IS THE WHOLE REASON THE RECORD IS READ AT ALL.**
-   *
-   * Without this the deployment record's address would be validated on the way
-   * past and then thrown away: every read would resolve its contract from the
-   * product's own row, and the record would be decoration. Two things write
-   * those rows at different times — a deploy, and whatever restored the store —
-   * so they can drift, and when they do nothing goes wrong loudly. The reads
-   * simply start answering about a different contract.
-   *
-   * A disagreement is refused rather than resolved in either direction,
-   * because there is no safe way to pick: one of the two is stale and this
-   * layer cannot know which.
-   */
-  const checkedAddressOf = async (accountId: string): Promise<string | null> =>
-    agreedAddress(accountId, await addressOf(accountId), d);
+  const refusal = refusalForCapability(capability);
+  const nobodyPays = noSponsor(
+    refusal ?? 'nothing is wired to pay fees on this deployment');
   const inner = new MidnightLedger(
     cfg,
-    NO_SPONSOR,
+    capability?.sponsor ?? nobodyPays,
     new FileSealedStateStore(d.sealedStateRoot),
-    checkedAddressOf,
+    book.lookUp,
     /*
      * A thunk, which is what the ledger asks for: the providers are built on
      * first use, so constructing this set needs no node, no indexer and no
@@ -311,9 +303,13 @@ export function chainLedger(
      */
     () => midnightProviders({
       config: cfg,
-      /* No customer wallet exists on a server. Only a write would use it. */
-      customer: undefined as never,
-      sponsor: NO_SPONSOR,
+      /*
+       * Only a write uses this. On a deployment built to watch there is nobody
+       * to be, and the cast says so rather than a stub pretending otherwise:
+       * every write refuses above this line, so nothing can reach it.
+       */
+      customer: capability?.customer ?? (undefined as never),
+      sponsor: capability?.sponsor ?? nobodyPays,
       artifactsPath: d.zkConfigPath,
       privateStateId: d.privateStateId,
       /*
@@ -322,29 +318,42 @@ export function chainLedger(
        * the wallet's, so that if it is ever reached from somewhere else the
        * sentence is still true.
        */
-      storagePassword: async () => refuseUnwired(
+      storagePassword: capability?.storagePassword ?? (async () => refuseUnwired(
         'the private state store',
-        'no key is wired to unlock it, and this deployment writes nothing that would need it'),
+        'no key is wired to unlock it, and this deployment writes nothing that would need it')),
     }),
     /*
-     * The compiled contract is what a WRITE proves against, and this set does
-     * not write. It is left absent rather than half-built: a partially
+     * The compiled contract is what a WRITE proves against. A deployment that
+     * cannot write leaves it absent rather than half-built: a partially
      * constructed compiled contract is a thing that looks ready.
      */
-    undefined,
+    capability?.compiled,
+    /*
+     * **THE DEPLOYMENT BAG, AND ITS ABSENCE WAS THE THIRD INDEPENDENT REASON
+     * NOTHING COULD BE OPENED HERE.** Even a fully funded deployment would have
+     * refused at the first line of opening an account, because this argument was
+     * not passed at all — and it carries the two things opening needs that no
+     * other operation does: somewhere to hand the assigned address, and the
+     * choice of who may maintain the contract afterwards.
+     */
+    capability && {
+      register: book.record,
+      maintenanceAuthority: capability.maintenanceAuthority,
+    },
   );
-  return new ChainLedger(inner, d);
+  return new ChainLedger(inner, d, capability);
 }
 
 /** The set, whole. Assembled only by the selector next door. */
 export function chainWiring(
   d: Deployment,
-  addressOf: (accountId: string) => Promise<string | null>,
+  book: ContractBook,
+  capability?: WriteCapability,
 ) {
   return {
     name: 'chain',
     commitments: MidnightCommitments,
-    createLedger: () => chainLedger(d, addressOf),
+    createLedger: () => chainLedger(d, book, capability),
     createProofSystem: () => new MidnightProofSystem(configFor(d)),
   };
 }
