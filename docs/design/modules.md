@@ -75,11 +75,11 @@ nothing.
 
 | | |
 |---|---|
-| modules walked | 310 |
-| module-to-module import sites | 1007 |
+| modules walked | 313 |
+| module-to-module import sites | 1015 |
 | modules that could not be read | 0 |
 | specifiers that resolved to nothing | 0 |
-| specifiers naming a real file outside the walked set | 76 |
+| specifiers naming a real file outside the walked set | 77 |
 | call sites carrying a literal circuit name | 458 |
 
 The last row counts a SITE once. A site whose text answers to more than one of the
@@ -137,32 +137,32 @@ through another contract, which is a fact about the design and not a dead circui
 
 | circuit | modules naming it | modules reaching it |
 |---|---|---|
-| `ConfidentialAccount.signerPublicKey` | `contracts/test/one-definition.test.ts` `contracts/test/simulator.ts` `contracts/test/what-a-signer-is.test.ts` `scripts/diagnose-state.ts` `scripts/governance-steps.ts` `scripts/mutate-authority.mjs` `scripts/prove-compare.ts` `scripts/run-preview.ts` `src/midnight/commitments.ts` | 78 |
-| `ConfidentialAccount.signerLeaf` | `contracts/test/commitments.test.ts` `contracts/test/one-definition.test.ts` `contracts/test/simulator.ts` `contracts/test/what-a-signer-is.test.ts` `scripts/diagnose-state.ts` `scripts/governance-steps.ts` `scripts/prove-compare.ts` `scripts/run-preview.ts` `src/midnight/commitments.ts` | 77 |
-| `ConfidentialAccount.assetKeyOf` | `contracts/test/commitments.test.ts` `contracts/test/one-definition.test.ts` `contracts/test/simulator.ts` `scripts/run-preview.ts` `src/midnight/commitments.ts` | 74 |
-| `ConfidentialAccount.changeCommitmentOf` | `contracts/test/commitments.test.ts` `contracts/test/one-definition.test.ts` `contracts/test/the-service-layer-meets-the-chain.test.ts` `src/midnight/commitments.ts` `src/midnight/ledger.ts` | 74 |
-| `ConfidentialAccount.proposalIdOf` | `contracts/test/commitments.test.ts` `contracts/test/one-definition.test.ts` `contracts/test/simulator.ts` `contracts/test/the-payroll-run-meets-the-chain.test.ts` `contracts/test/the-service-layer-meets-the-chain.test.ts` `scripts/governance-steps.ts` `scripts/run-preview.ts` `src/midnight/commitments.ts` | 75 |
-| `ConfidentialAccount.signerAddPayload` | `contracts/test/commitments.test.ts` `contracts/test/one-definition.test.ts` `contracts/test/payout-runs.test.ts` `contracts/test/signer-governance.test.ts` `contracts/test/simulator.ts` `contracts/test/vault-threshold-recovery.test.ts` `scripts/governance-steps.ts` `scripts/measure-call-cost.ts` `scripts/run-preview.ts` `src/midnight/commitments.ts` | 74 |
-| `ConfidentialAccount.removeSignerPayload` | `contracts/test/one-definition.test.ts` `contracts/test/signer-governance.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `scripts/governance-steps.ts` `scripts/measure-call-cost.ts` `src/midnight/commitments.ts` | 74 |
-| `ConfidentialAccount.setThresholdPayload` | `contracts/test/one-definition.test.ts` `contracts/test/payout-runs.test.ts` `contracts/test/signer-governance.test.ts` `contracts/test/simulator.ts` `contracts/test/the-service-layer-meets-the-chain.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `scripts/governance-steps.ts` `scripts/measure-call-cost.ts` `src/midnight/commitments.ts` | 73 |
-| `ConfidentialAccount.allVaults` | `contracts/test/one-definition.test.ts` `contracts/test/vault-scoping.test.ts` `scripts/diagnose-state.ts` `scripts/prove-compare.ts` `scripts/run-preview.ts` `scripts/sponsor-test.ts` `src/midnight/commitments.ts` | 57 |
-| `ConfidentialAccount.noVault` | `contracts/test/one-definition.test.ts` `contracts/test/payout-runs.test.ts` `contracts/test/vault-scoping.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `scripts/governance-steps.ts` `scripts/run-preview.ts` `src/midnight/commitments.ts` `src/midnight/ledger.test.ts` | 75 |
-| `ConfidentialAccount.paidMovementOf` | `contracts/test/one-definition.test.ts` `contracts/test/payout-runs.test.ts` `contracts/test/the-payroll-run-meets-the-chain.test.ts` `contracts/test/transcript.test.ts` `contracts/test/vault-client.test.ts` `contracts/test/vault-payout.test.ts` `contracts/test/vault-scoping.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `contracts/test/vault-unshielded.test.ts` `src/midnight/ledger.ts` | 64 |
-| `ConfidentialAccount.runPayload` | `contracts/test/approvals.test.ts` `contracts/test/one-definition.test.ts` `contracts/test/payout-runs.test.ts` `contracts/test/run-status.test.ts` `contracts/test/the-payroll-run-meets-the-chain.test.ts` `contracts/test/transcript.test.ts` `contracts/test/vault-client.test.ts` `contracts/test/vault-payout.test.ts` `contracts/test/vault-recovery.test.ts` `contracts/test/vault-registry.test.ts` `contracts/test/vault-scoping.test.ts` `contracts/test/vault-split.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `contracts/test/vault-unshielded.test.ts` `scripts/measure-call-cost.ts` `src/midnight/commitments.ts` | 74 |
+| `ConfidentialAccount.signerPublicKey` | `contracts/test/one-definition.test.ts` `contracts/test/simulator.ts` `contracts/test/what-a-signer-is.test.ts` `scripts/diagnose-state.ts` `scripts/governance-steps.ts` `scripts/mutate-authority.mjs` `scripts/prove-compare.ts` `scripts/run-preview.ts` `src/midnight/commitments.ts` | 79 |
+| `ConfidentialAccount.signerLeaf` | `contracts/test/commitments.test.ts` `contracts/test/one-definition.test.ts` `contracts/test/simulator.ts` `contracts/test/what-a-signer-is.test.ts` `scripts/diagnose-state.ts` `scripts/governance-steps.ts` `scripts/prove-compare.ts` `scripts/run-preview.ts` `src/midnight/commitments.ts` | 78 |
+| `ConfidentialAccount.assetKeyOf` | `contracts/test/commitments.test.ts` `contracts/test/one-definition.test.ts` `contracts/test/simulator.ts` `scripts/run-preview.ts` `src/midnight/commitments.ts` | 75 |
+| `ConfidentialAccount.changeCommitmentOf` | `contracts/test/commitments.test.ts` `contracts/test/one-definition.test.ts` `contracts/test/the-service-layer-meets-the-chain.test.ts` `src/midnight/commitments.ts` `src/midnight/ledger.ts` | 75 |
+| `ConfidentialAccount.proposalIdOf` | `contracts/test/commitments.test.ts` `contracts/test/one-definition.test.ts` `contracts/test/simulator.ts` `contracts/test/the-payroll-run-meets-the-chain.test.ts` `contracts/test/the-service-layer-meets-the-chain.test.ts` `scripts/governance-steps.ts` `scripts/run-preview.ts` `src/midnight/commitments.ts` | 76 |
+| `ConfidentialAccount.signerAddPayload` | `contracts/test/commitments.test.ts` `contracts/test/one-definition.test.ts` `contracts/test/payout-runs.test.ts` `contracts/test/signer-governance.test.ts` `contracts/test/simulator.ts` `contracts/test/vault-threshold-recovery.test.ts` `scripts/governance-steps.ts` `scripts/measure-call-cost.ts` `scripts/run-preview.ts` `src/midnight/commitments.ts` | 75 |
+| `ConfidentialAccount.removeSignerPayload` | `contracts/test/one-definition.test.ts` `contracts/test/signer-governance.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `scripts/governance-steps.ts` `scripts/measure-call-cost.ts` `src/midnight/commitments.ts` | 75 |
+| `ConfidentialAccount.setThresholdPayload` | `contracts/test/one-definition.test.ts` `contracts/test/payout-runs.test.ts` `contracts/test/signer-governance.test.ts` `contracts/test/simulator.ts` `contracts/test/the-service-layer-meets-the-chain.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `scripts/governance-steps.ts` `scripts/measure-call-cost.ts` `src/midnight/commitments.ts` | 74 |
+| `ConfidentialAccount.allVaults` | `contracts/test/one-definition.test.ts` `contracts/test/vault-scoping.test.ts` `scripts/diagnose-state.ts` `scripts/prove-compare.ts` `scripts/run-preview.ts` `scripts/sponsor-test.ts` `src/midnight/commitments.ts` | 58 |
+| `ConfidentialAccount.noVault` | `contracts/test/one-definition.test.ts` `contracts/test/payout-runs.test.ts` `contracts/test/vault-scoping.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `scripts/governance-steps.ts` `scripts/run-preview.ts` `src/midnight/commitments.ts` `src/midnight/ledger.test.ts` | 76 |
+| `ConfidentialAccount.paidMovementOf` | `contracts/test/one-definition.test.ts` `contracts/test/payout-runs.test.ts` `contracts/test/the-payroll-run-meets-the-chain.test.ts` `contracts/test/transcript.test.ts` `contracts/test/vault-client.test.ts` `contracts/test/vault-payout.test.ts` `contracts/test/vault-scoping.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `contracts/test/vault-unshielded.test.ts` `src/midnight/ledger.ts` | 65 |
+| `ConfidentialAccount.runPayload` | `contracts/test/approvals.test.ts` `contracts/test/one-definition.test.ts` `contracts/test/payout-runs.test.ts` `contracts/test/run-status.test.ts` `contracts/test/the-payroll-run-meets-the-chain.test.ts` `contracts/test/transcript.test.ts` `contracts/test/vault-client.test.ts` `contracts/test/vault-payout.test.ts` `contracts/test/vault-recovery.test.ts` `contracts/test/vault-registry.test.ts` `contracts/test/vault-scoping.test.ts` `contracts/test/vault-split.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `contracts/test/vault-unshielded.test.ts` `scripts/measure-call-cost.ts` `src/midnight/commitments.ts` | 75 |
 | `ConfidentialAccount.payoutLeaf` | `contracts/test/one-definition.test.ts` `contracts/test/payout-runs.test.ts` `contracts/test/vault-scoping.test.ts` `src/midnight/payout-tree.ts` | 97 |
-| `ConfidentialAccount.setVaultThresholdPayload` | `contracts/test/one-definition.test.ts` `contracts/test/vault-registry.test.ts` `contracts/test/vault-scoping.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `scripts/measure-call-cost.ts` `src/midnight/commitments.ts` | 72 |
-| `ConfidentialAccount.vacantSlot` | `contracts/test/one-definition.test.ts` `contracts/test/simulator.ts` `contracts/test/what-a-signer-is.test.ts` `scripts/governance-steps.ts` `src/midnight/ledger.test.ts` `src/midnight/ledger.ts` | 65 |
+| `ConfidentialAccount.setVaultThresholdPayload` | `contracts/test/one-definition.test.ts` `contracts/test/vault-registry.test.ts` `contracts/test/vault-scoping.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `scripts/measure-call-cost.ts` `src/midnight/commitments.ts` | 73 |
+| `ConfidentialAccount.vacantSlot` | `contracts/test/one-definition.test.ts` `contracts/test/simulator.ts` `contracts/test/what-a-signer-is.test.ts` `scripts/governance-steps.ts` `src/midnight/ledger.test.ts` `src/midnight/ledger.ts` | 66 |
 | `ConfidentialAccount.adoptVaultPayload` | `contracts/test/one-definition.test.ts` `contracts/test/vault-registry.test.ts` `scripts/measure-call-cost.ts` | 23 |
 | `ConfidentialAccount.retireVaultPayload` | `contracts/test/one-definition.test.ts` `contracts/test/vault-registry.test.ts` `scripts/measure-call-cost.ts` | 4 |
-| `ConfidentialAccount.slotOf` | `contracts/test/one-definition.test.ts` `contracts/test/signer-governance.test.ts` `contracts/test/simulator.ts` `scripts/governance-steps.ts` | 65 |
-| `ConfidentialAccount.amendSigner` | `contracts/test/simulator.ts` `scripts/governance-steps.ts` `scripts/measure-call-cost.ts` `scripts/prove-compare.ts` `scripts/run-preview.ts` `src/midnight/ledger.ts` | 64 |
-| `ConfidentialAccount.setThreshold` | `contracts/test/simulator.ts` `scripts/governance-steps.ts` `scripts/measure-call-cost.ts` `src/midnight/ledger.ts` | 63 |
-| `ConfidentialAccount.propose` | `contracts/test/simulator.ts` `scripts/cross-contract-spike.ts` `scripts/governance-steps.ts` `scripts/measure-call-cost.ts` `scripts/run-preview.ts` `src/midnight/ledger.ts` | 64 |
-| `ConfidentialAccount.approve` | `contracts/test/simulator.ts` `scripts/governance-steps.ts` `scripts/measure-call-cost.ts` `scripts/run-preview.ts` `src/midnight/job-runner.test.ts` `src/midnight/ledger.ts` | 64 |
-| `ConfidentialAccount.cancel` | `contracts/test/simulator.ts` `scripts/governance-steps.ts` `scripts/measure-call-cost.ts` `scripts/run-preview.ts` `src/midnight/ledger.ts` | 63 |
-| `ConfidentialAccount.closeExpiredRun` | `contracts/test/simulator.ts` `scripts/measure-call-cost.ts` `src/midnight/ledger.ts` | 62 |
+| `ConfidentialAccount.slotOf` | `contracts/test/one-definition.test.ts` `contracts/test/signer-governance.test.ts` `contracts/test/simulator.ts` `scripts/governance-steps.ts` | 66 |
+| `ConfidentialAccount.amendSigner` | `contracts/test/simulator.ts` `scripts/governance-steps.ts` `scripts/measure-call-cost.ts` `scripts/prove-compare.ts` `scripts/run-preview.ts` `src/midnight/ledger.ts` | 65 |
+| `ConfidentialAccount.setThreshold` | `contracts/test/simulator.ts` `scripts/governance-steps.ts` `scripts/measure-call-cost.ts` `src/midnight/ledger.ts` | 64 |
+| `ConfidentialAccount.propose` | `contracts/test/simulator.ts` `scripts/cross-contract-spike.ts` `scripts/governance-steps.ts` `scripts/measure-call-cost.ts` `scripts/run-preview.ts` `src/midnight/ledger.ts` | 65 |
+| `ConfidentialAccount.approve` | `contracts/test/simulator.ts` `scripts/governance-steps.ts` `scripts/measure-call-cost.ts` `scripts/run-preview.ts` `src/midnight/job-runner.test.ts` `src/midnight/ledger.ts` | 65 |
+| `ConfidentialAccount.cancel` | `contracts/test/simulator.ts` `scripts/governance-steps.ts` `scripts/measure-call-cost.ts` `scripts/run-preview.ts` `src/midnight/ledger.ts` | 64 |
+| `ConfidentialAccount.closeExpiredRun` | `contracts/test/simulator.ts` `scripts/measure-call-cost.ts` `src/midnight/ledger.ts` | 63 |
 | `ConfidentialAccount.recordPayment` | `contracts/test/simulator.ts` `scripts/measure-call-cost.ts` | 36 |
-| `ConfidentialAccount.setVaultThreshold` | `contracts/test/simulator.ts` `scripts/measure-call-cost.ts` `src/midnight/ledger.ts` | 62 |
+| `ConfidentialAccount.setVaultThreshold` | `contracts/test/simulator.ts` `scripts/measure-call-cost.ts` `src/midnight/ledger.ts` | 63 |
 | `ConfidentialAccount.adopt` | `contracts/test/simulator.ts` `scripts/measure-call-cost.ts` | 22 |
 | `ConfidentialAccount.retireVault` | **NONE** | 3 |
 | `Vault.payoutDetails` | `contracts/test/transcript.test.ts` `contracts/test/vault-client.test.ts` `contracts/test/vault-payout.test.ts` `contracts/test/vault-recovery.test.ts` `contracts/test/vault-registry.test.ts` `contracts/test/vault-split.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `scripts/measure-call-cost.ts` | 23 |
@@ -856,4 +856,4 @@ Tier 2 of the declared set.
 
 *No width here matches the shapes above.* A width this module works to may
 arrive in a variable, and this list sees only a number or a capitalised constant.
-<!-- GENERATED:END id="modules" body="b49834323ac6b777" -->
+<!-- GENERATED:END id="modules" body="800509cd749006b5" -->
