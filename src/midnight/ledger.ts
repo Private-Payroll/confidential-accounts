@@ -288,6 +288,8 @@ const missingPrivateState = (accountId: string, address: string): string =>
   'proving without it would prove against another contract\'s view.';
 
 export class MidnightLedger implements Ledger {
+  /** Everything this class writes goes to a chain, or it does not get written. */
+  readonly wiring = 'chain' as const;
   constructor(
     private cfg: MidnightConfig,
     private sponsor: FeeSponsor,

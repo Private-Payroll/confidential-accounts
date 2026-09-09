@@ -167,13 +167,20 @@ describe('WebAssembly and the payroll page', () => {
        * page now carries — or something reached the contract's circuits from
        * the page by accident, which is a 10 MB module in everybody's browser
        * that nobody decided to send.
+       *
+       * **THIS MESSAGE USED TO CARRY A SECOND SENTENCE AND IT HAS BEEN
+       * REMOVED, BECAUSE IT NAMED A BLOCKER THAT NO LONGER EXISTS.** It said a
+       * chain wiring may not be selected until a stored record says which
+       * wiring wrote it. Records now say so, the lists refuse a mixture of
+       * them and the selection is refused over records that do not — all of
+       * it checked rather than written down here. A warning that stays after
+       * the thing it warned about is fixed is a warning that sends the next
+       * reader to do work already done.
        */
       expect(page.wasmModules,
         'the payroll page is loading WebAssembly. If a chain wiring was just selected, this '
-        + 'case is out of date — but a chain wiring may not be selected until a stored record '
-        + 'says which wiring wrote it, or simulated runs are listed beside chain-backed ones '
-        + 'with no way to tell them apart. If no wiring was selected, something reached the '
-        + 'contract\'s circuits from the page by accident')
+        + 'case is out of date and is rewritten to say what the page now carries. If no wiring '
+        + 'was selected, something reached the contract\'s circuits from the page by accident')
         .toEqual([]);
       expect(page.wasmAssets, 'the payroll build emitted a .wasm file').toEqual([]);
       // A build that produced almost nothing would satisfy both of the above.

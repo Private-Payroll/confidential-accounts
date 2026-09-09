@@ -148,6 +148,7 @@ import {
   SimulatedLedger, SimulatedProofSystem, SimulatedCommitments,
   type Ledger, type ProofSystem, type CommitmentScheme,
 } from '../core/ledger.js';
+import type { WiringName } from '../core/provenance.js';
 
 /**
  * One implementation of the boundary, whole.
@@ -158,14 +159,24 @@ import {
  */
 export interface Wiring {
   /**
-   * What is running, as a word. Read today only by the refusal at the foot of
-   * this file. **It is deliberately not wired into `/api/health` or the boot
+   * What is running, as a word. Read by the refusal at the foot of this file
+   * and by every route that hands a company a list, which asks it in order to
+   * say which way round a mixture of ledgers is. **It is deliberately not wired into `/api/health` or the boot
    * banner**, both of which already print `ledger.describe()` and
    * `proofs.describe()` — two statements from the implementations themselves,
    * which is the better evidence. Naming a third place that says what is running
    * is how the three drift apart.
+   *
+   * **IT IS A CLOSED SET RATHER THAN A STRING, AND THAT IS NEW.** A record now
+   * carries the ledger that wrote it, and a marker is only worth reading if the
+   * words in it are fixed - a free string invites a fourth spelling of an
+   * existing ledger, which a reader would classify as *not known* for ever
+   * after. **The value written onto a record is taken from the LEDGER and not
+   * from here**, because a record must be marked by the thing that wrote it
+   * rather than by whatever was meant to be running; the check beside this file
+   * pins the two together so they cannot say different things.
    */
-  readonly name: string;
+  readonly name: WiringName;
   readonly commitments: CommitmentScheme;
   createLedger(): Ledger;
   createProofSystem(): ProofSystem;

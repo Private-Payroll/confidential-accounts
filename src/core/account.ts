@@ -528,6 +528,14 @@ export function sealAccount(
      * same lost afternoon as one that never was.
      */
     addressSource: account.addressSource ?? null,
+    /*
+     * **AND SO DOES THE LEDGER THAT WROTE IT, FOR THE SAME REASON AGAIN.**
+     *
+     * Dropped on write-back it reads as *not known*, which is safe but is a
+     * one-way loss: nothing can establish afterwards which ledger opened a
+     * company, so the fact is either carried here or gone for good.
+     */
+    wiring: account.wiring ?? null,
   };
 }
 
@@ -597,6 +605,8 @@ export function openAccount(rec: SealedAccount, viewingKey: Hex): Account {
     /* Public, never sealed, and carried so `sealAccount` can write it back. */
     contractAddress: rec.contractAddress ?? null,
     addressSource: rec.addressSource ?? null,
+    /* Public, never sealed, and carried so `sealAccount` can write it back. */
+    wiring: rec.wiring ?? null,
   };
 }
 
@@ -648,6 +658,16 @@ export class AccountService {
      */
     private assets = defaultAssets,
   ) {}
+
+  /**
+   * **WHICH LEDGER THIS SERVICE IS RUNNING AGAINST, AS THE LEDGER REPORTS IT.**
+   *
+   * Read by the payroll service so that a run is marked by the same
+   * observation an account and a round are, rather than by a second copy of
+   * the decision made somewhere else. Two places naming what is running is how
+   * the two drift apart, and the one that goes stale is the one nothing reads.
+   */
+  get wiring() { return this.ledger.wiring; }
 
   /* ---------------- creation ---------------- */
 
@@ -793,6 +813,15 @@ export class AccountService {
       ...account,
       contractAddress: assigned?.value ?? null,
       addressSource: assigned?.source ?? null,
+      /*
+       * **THE LEDGER THAT OPENED THIS COMPANY SAYS SO ITSELF.**
+       *
+       * Taken from the ledger this service was handed rather than from
+       * whatever chose it, so the value is an observation of what actually did
+       * the work. The address and its provenance on the two lines above come
+       * from the same call for the same reason.
+       */
+      wiring: this.ledger.wiring,
     };
 
     this.store.putAccount(sealAccount(onChain, viewingKey, []));
@@ -1985,12 +2014,25 @@ export class AccountService {
         ...opened,
         sealedPayload: seal(unseal(opened.sealedPayload, viewingKey), nextKey),
       };
-      const { id, accountId: aid, status, createdAt, executedAt, digest, txRef, chainId, ...secrets } = rewrapped;
+      const { id, accountId: aid, status, createdAt, executedAt, digest, txRef, chainId,
+        wiring: _notSealed, ...secrets } = rewrapped as Proposal & { wiring?: unknown };
       return {
         id, accountId: aid, status, createdAt, executedAt, digest, txRef, chainId,
         approvalCount: rewrapped.approvals.length,
         keyEpoch: nextEpoch,
         sealed: sealRecord('proposals', aid, secrets, nextKey),
+        /*
+         * **TAKEN FROM THE STORED RECORD, BECAUSE THIS ARM REBUILDS A RECORD
+         * FIELD BY FIELD AND A FIELD NOT NAMED HERE IS A FIELD DELETED.**
+         *
+         * The runs arm above spreads the whole record and keeps everything by
+         * default; this one lists what it keeps, so every readable field has
+         * to be listed. Which ledger wrote a round cannot be established
+         * afterwards, so losing it here would erase the provenance of every
+         * governance round a company has ever raised - and removing a signer
+         * is the ordinary operation that runs this.
+         */
+        wiring: p.wiring ?? null,
       };
     });
 
@@ -3106,16 +3148,56 @@ export class AccountService {
    */
   private putProposal(proposal: Proposal, viewingKey: Hex): void {
     const approvalCount = proposal.approvals.length;
-    const { id, accountId, status, createdAt, executedAt, digest, txRef, chainId, ...secrets } = proposal;
+    /*
+     * **`wiring` IS TAKEN OUT BEFORE THE REST IS SEALED, AND IT IS NAMED HERE
+     * RATHER THAN LEFT TO FALL INTO `secrets`.**
+     *
+     * The decision that reads it runs before any viewing key is supplied, so a
+     * copy inside the envelope is a copy that decision cannot open - and a
+     * second copy of one fact is a second answer the day the two disagree.
+     * There is one marker and it is on the outside of the record.
+     */
+    const { id, accountId, status, createdAt, executedAt, digest, txRef, chainId,
+      wiring: _notSealed, ...secrets } = proposal as Proposal & { wiring?: unknown };
+    /*
+     * **THE MARKER IS WRITTEN BY THE LEDGER THAT RAISED IT, ON THE
+     * WRITE THAT CREATES THE RECORD, AND BY NOTHING AFTERWARDS.**
+     *
+     * This method runs again on every approval, cancellation and settlement.
+     * Stamping the running ledger each time would relabel a governance round raised
+     * against no chain as a chain's the first time somebody approved it under
+     * a different build - a guess written into a durable store, and the reader
+     * afterwards has no way to tell it was one.
+     *
+     * **AND A RECORD THAT IS ALREADY THERE AND SAYS NOTHING KEEPS SAYING
+     * NOTHING.** That is the case this line existed to get right and got
+     * wrong: an absent marker is the state the whole path is built to
+     * preserve, so falling back to the running ledger for it would stamp a
+     * guess onto exactly the records that must not carry one - and it would do
+     * it through ordinary use, one approval at a time, until nothing anywhere
+     * was left unrecorded to refuse.
+     *
+     * So the three cases are kept apart deliberately: no record yet means this
+     * process is writing it and may say so; a record with a marker keeps it; a
+     * record without one stays without one, for ever.
+     *
+     * Raising is also the only moment that carries the fact worth recording: a
+     * round is identified to a contract when it is raised, so a round no chain
+     * ever saw raised cannot later become one it did.
+     */
+    const already = this.store.getProposal(id);
     this.store.putProposal({
       id, accountId, status, createdAt, executedAt, digest, txRef, chainId, approvalCount,
       keyEpoch: this.keyEpochOf(accountId),
       sealed: sealRecord('proposals', accountId, secrets, viewingKey),
+      wiring: already ? already.wiring ?? null : this.ledger.wiring,
     });
   }
 
   private openProposal(r: SealedProposal, viewingKey: Hex): Proposal {
-    const { sealed, keyEpoch, approvalCount, ...open } = r;
+    /* The marker stays on the stored record and does not travel on the opened
+     * one: everything that judges it reads the record, before any key. */
+    const { sealed, keyEpoch, approvalCount, wiring: _stored, ...open } = r;
     return { ...open, ...openRecord<Omit<Proposal,
       'id' | 'accountId' | 'status' | 'createdAt' | 'executedAt' | 'digest' | 'txRef' | 'chainId'>>(
         'proposals', r.accountId, sealed, viewingKey) };

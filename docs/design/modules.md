@@ -75,8 +75,8 @@ nothing.
 
 | | |
 |---|---|
-| modules walked | 303 |
-| module-to-module import sites | 949 |
+| modules walked | 307 |
+| module-to-module import sites | 971 |
 | modules that could not be read | 0 |
 | specifiers that resolved to nothing | 0 |
 | specifiers naming a real file outside the walked set | 76 |
@@ -112,7 +112,7 @@ What the import walk cannot see, named rather than implied complete:
 | `src/midnight/run-keys.ts` | 1 | 1 | 9 | 8 | 4 | 0 | 0 |
 | `src/midnight/commitments.ts` | 1 | 3 | 11 | 2 | 3 | 0 | 12 |
 | `src/core/signer-leaf.ts` | 1 | 2 | 7 | 9 | 2 | 1 | 0 |
-| `src/core/crypto.ts` | 1 | 0 | 100 | 28 | 2 | 7 | 0 |
+| `src/core/crypto.ts` | 1 | 0 | 101 | 28 | 2 | 7 | 0 |
 | `src/midnight/payee-address.ts` | 1 | 2 | 17 | 12 | 11 | 1 | 0 |
 | `src/core/payslip-key.ts` | 1 | 3 | 3 | 2 | 1 | 0 | 0 |
 | `src/core/payslip-key-derive.ts` | 1 | 1 | 3 | 1 | 1 | 3 | 0 |
@@ -149,7 +149,7 @@ through another contract, which is a fact about the design and not a dead circui
 | `ConfidentialAccount.noVault` | `contracts/test/one-definition.test.ts` `contracts/test/payout-runs.test.ts` `contracts/test/vault-scoping.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `scripts/governance-steps.ts` `scripts/run-preview.ts` `src/midnight/commitments.ts` `src/midnight/ledger.test.ts` | 56 |
 | `ConfidentialAccount.paidMovementOf` | `contracts/test/one-definition.test.ts` `contracts/test/payout-runs.test.ts` `contracts/test/the-payroll-run-meets-the-chain.test.ts` `contracts/test/transcript.test.ts` `contracts/test/vault-client.test.ts` `contracts/test/vault-payout.test.ts` `contracts/test/vault-scoping.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `contracts/test/vault-unshielded.test.ts` `src/midnight/ledger.ts` | 51 |
 | `ConfidentialAccount.runPayload` | `contracts/test/approvals.test.ts` `contracts/test/one-definition.test.ts` `contracts/test/payout-runs.test.ts` `contracts/test/run-status.test.ts` `contracts/test/the-payroll-run-meets-the-chain.test.ts` `contracts/test/transcript.test.ts` `contracts/test/vault-client.test.ts` `contracts/test/vault-payout.test.ts` `contracts/test/vault-recovery.test.ts` `contracts/test/vault-registry.test.ts` `contracts/test/vault-scoping.test.ts` `contracts/test/vault-split.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `contracts/test/vault-unshielded.test.ts` `scripts/measure-call-cost.ts` `src/midnight/commitments.ts` | 55 |
-| `ConfidentialAccount.payoutLeaf` | `contracts/test/one-definition.test.ts` `contracts/test/payout-runs.test.ts` `contracts/test/vault-scoping.test.ts` `src/midnight/payout-tree.ts` | 96 |
+| `ConfidentialAccount.payoutLeaf` | `contracts/test/one-definition.test.ts` `contracts/test/payout-runs.test.ts` `contracts/test/vault-scoping.test.ts` `src/midnight/payout-tree.ts` | 97 |
 | `ConfidentialAccount.setVaultThresholdPayload` | `contracts/test/one-definition.test.ts` `contracts/test/vault-registry.test.ts` `contracts/test/vault-scoping.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `scripts/measure-call-cost.ts` `src/midnight/commitments.ts` | 53 |
 | `ConfidentialAccount.vacantSlot` | `contracts/test/one-definition.test.ts` `contracts/test/simulator.ts` `contracts/test/what-a-signer-is.test.ts` `scripts/governance-steps.ts` `src/midnight/ledger.test.ts` `src/midnight/ledger.ts` | 52 |
 | `ConfidentialAccount.adoptVaultPayload` | `contracts/test/one-definition.test.ts` `contracts/test/vault-registry.test.ts` `scripts/measure-call-cost.ts` | 23 |
@@ -342,7 +342,7 @@ Tier 1 of the declared set.
 Tier 1 of the declared set.
 
 - **imports** — *nothing in these trees*
-- **imported by** — `contracts/test/a-run-carries-its-own-material.test.ts`, `contracts/test/approvals.test.ts`, `contracts/test/commitments.test.ts`, `contracts/test/one-definition.test.ts`, `contracts/test/payout-runs.test.ts`, `contracts/test/run-keys.test.ts`, `contracts/test/run-status.test.ts`, `contracts/test/the-payroll-run-meets-the-chain.test.ts`, `contracts/test/the-service-layer-meets-the-chain.test.ts`, `contracts/test/transcript.test.ts`, `contracts/test/vault-client.test.ts`, `contracts/test/vault-payout.test.ts`, `contracts/test/vault-recovery.test.ts`, `contracts/test/vault-registry.test.ts`, `contracts/test/vault-scoping.test.ts`, `contracts/test/vault-split.test.ts`, `contracts/test/vault-threshold-recovery.test.ts`, `contracts/test/vault-unshielded.test.ts`, `contracts/test/what-a-signer-is.test.ts`, `scripts/deploy-preview.ts`, `scripts/deposit-to-vault.ts`, `scripts/fund-vault.ts`, `scripts/measure-call-cost.ts`, `scripts/preview-signers.test.ts`, `scripts/preview-signers.ts`, `scripts/transfer-from-vault.test.ts`, `scripts/transfer-from-vault.ts`, `scripts/vault-pool-file.test.ts`, `src/core/a-payroll-run-is-always-private.test.ts`, `src/core/a-run-is-not-a-governance-round.test.ts`, `src/core/a-vault-s-own-threshold.test.ts`, `src/core/account.ts`, `src/core/challenges.ts`, `src/core/core.test.ts`, `src/core/create-company.test.ts`, `src/core/crypto.test.ts`, `src/core/demo.ts`, `src/core/identity.ts`, `src/core/invite-handover.ts`, `src/core/jobs.ts`, `src/core/ledger.ts`, `src/core/movement.ts`, `src/core/payroll.ts`, `src/core/payslip-key-derive.ts`, `src/core/payslip-key.test.ts`, `src/core/payslip-key.ts`, `src/core/plugins.ts`, `src/core/principal.test.ts`, `src/core/principal.ts`, `src/core/sealed-records.test.ts`, `src/core/sealed-records.ts`, `src/core/sessions.ts`, `src/core/signer-leaf.ts`, `src/core/store-file.test.ts`, `src/core/store-file.ts`, `src/core/store.ts`, `src/core/the-threshold-is-the-chain-s.test.ts`, `src/core/types.ts`, `src/core/wallet-identity.ts`, `src/core/wallet-unlock.test.ts`, `src/midnight/commitments.ts`, `src/midnight/job-runner.test.ts`, `src/midnight/job-runner.ts`, `src/midnight/ledger.test.ts`, `src/midnight/ledger.ts`, `src/midnight/payee-address.ts`, `src/midnight/payout-tree.ts`, `src/midnight/private-state-addressing.test.ts`, `src/midnight/run-keys.ts`, `src/midnight/run-material.ts`, `src/midnight/run-skips.ts`, `src/midnight/run-status.ts`, `src/midnight/sealed-store.test.ts`, `src/midnight/sealed-store.ts`, `src/midnight/vault-coins.test.ts`, `src/midnight/vault-coins.ts`, `src/midnight/vault-ledger.test.ts`, `src/midnight/vault-ledger.ts`, `src/midnight/vault-notes.test.ts`, `src/midnight/vault-notes.ts`, `src/midnight/vault-pool.test.ts`, `src/midnight/vault-pool.ts`, `src/midnight/vault-recovery.ts`, `src/server/approval-signature.test.ts`, `src/server/index.ts`, `src/server/invitations.test.ts`, `src/server/self-payee.test.ts`, `src/standalone/main.tsx`, `src/testing/payees.ts`, `src/web/App.tsx`, `src/web/Join.tsx`, `src/web/accept-seat.test.ts`, `src/web/accept-seat.ts`, `src/web/accepted-address.ts`, `src/web/connector-wallet.ts`, `src/web/keyring.ts`, `src/web/seat-repair.test.ts`, `src/web/seat-repair.ts`, `src/web/wallet-unlock.ts`, `src/wiring/chain.ts`
+- **imported by** — `contracts/test/a-run-carries-its-own-material.test.ts`, `contracts/test/approvals.test.ts`, `contracts/test/commitments.test.ts`, `contracts/test/one-definition.test.ts`, `contracts/test/payout-runs.test.ts`, `contracts/test/run-keys.test.ts`, `contracts/test/run-status.test.ts`, `contracts/test/the-payroll-run-meets-the-chain.test.ts`, `contracts/test/the-service-layer-meets-the-chain.test.ts`, `contracts/test/transcript.test.ts`, `contracts/test/vault-client.test.ts`, `contracts/test/vault-payout.test.ts`, `contracts/test/vault-recovery.test.ts`, `contracts/test/vault-registry.test.ts`, `contracts/test/vault-scoping.test.ts`, `contracts/test/vault-split.test.ts`, `contracts/test/vault-threshold-recovery.test.ts`, `contracts/test/vault-unshielded.test.ts`, `contracts/test/what-a-signer-is.test.ts`, `scripts/deploy-preview.ts`, `scripts/deposit-to-vault.ts`, `scripts/fund-vault.ts`, `scripts/measure-call-cost.ts`, `scripts/preview-signers.test.ts`, `scripts/preview-signers.ts`, `scripts/transfer-from-vault.test.ts`, `scripts/transfer-from-vault.ts`, `scripts/vault-pool-file.test.ts`, `src/core/a-payroll-run-is-always-private.test.ts`, `src/core/a-run-is-not-a-governance-round.test.ts`, `src/core/a-vault-s-own-threshold.test.ts`, `src/core/account.ts`, `src/core/challenges.ts`, `src/core/core.test.ts`, `src/core/create-company.test.ts`, `src/core/crypto.test.ts`, `src/core/demo.ts`, `src/core/identity.ts`, `src/core/invite-handover.ts`, `src/core/jobs.ts`, `src/core/ledger.ts`, `src/core/movement.ts`, `src/core/payroll.ts`, `src/core/payslip-key-derive.ts`, `src/core/payslip-key.test.ts`, `src/core/payslip-key.ts`, `src/core/plugins.ts`, `src/core/principal.test.ts`, `src/core/principal.ts`, `src/core/sealed-records.test.ts`, `src/core/sealed-records.ts`, `src/core/sessions.ts`, `src/core/signer-leaf.ts`, `src/core/store-file.test.ts`, `src/core/store-file.ts`, `src/core/store.ts`, `src/core/the-threshold-is-the-chain-s.test.ts`, `src/core/types.ts`, `src/core/wallet-identity.ts`, `src/core/wallet-unlock.test.ts`, `src/midnight/commitments.ts`, `src/midnight/job-runner.test.ts`, `src/midnight/job-runner.ts`, `src/midnight/ledger.test.ts`, `src/midnight/ledger.ts`, `src/midnight/payee-address.ts`, `src/midnight/payout-tree.ts`, `src/midnight/private-state-addressing.test.ts`, `src/midnight/run-keys.ts`, `src/midnight/run-material.ts`, `src/midnight/run-skips.ts`, `src/midnight/run-status.ts`, `src/midnight/sealed-store.test.ts`, `src/midnight/sealed-store.ts`, `src/midnight/vault-coins.test.ts`, `src/midnight/vault-coins.ts`, `src/midnight/vault-ledger.test.ts`, `src/midnight/vault-ledger.ts`, `src/midnight/vault-notes.test.ts`, `src/midnight/vault-notes.ts`, `src/midnight/vault-pool.test.ts`, `src/midnight/vault-pool.ts`, `src/midnight/vault-recovery.ts`, `src/server/approval-signature.test.ts`, `src/server/index.ts`, `src/server/invitations.test.ts`, `src/server/self-payee.test.ts`, `src/standalone/main.tsx`, `src/testing/payees.ts`, `src/web/App.tsx`, `src/web/Join.tsx`, `src/web/accept-seat.test.ts`, `src/web/accept-seat.ts`, `src/web/accepted-address.ts`, `src/web/connector-wallet.ts`, `src/web/keyring.ts`, `src/web/seat-repair.test.ts`, `src/web/seat-repair.ts`, `src/web/wallet-unlock.ts`, `src/wiring/a-chain-selection-needs-marked-records.test.ts`, `src/wiring/chain.ts`
 - **outside packages** — `@noble/ciphers`, `@noble/curves`, `@noble/hashes`
 - **platform modules** — *none*
 - **circuits named here** — *none*
@@ -532,104 +532,104 @@ Tier 2 of the declared set.
 | 227 | `SealedStateStore` | `export interface SealedStateStore` |
 | 255 | `privateStateKey` | `export const privateStateKey = (base: string, accountId: string): string =>` |
 | 290 | `MidnightLedger` | `export class MidnightLedger implements Ledger` |
-| 2115 | `UndecodedLedgerField` | `export class UndecodedLedgerField extends Error` |
-| 2209 | `MidnightProofSystem` | `export class MidnightProofSystem implements ProofSystem` |
-| 2386 | `AuthorityShape` | `export type AuthorityShape = 'anyone' \| 'no-one' \| 'one-key' \| 'committee';` |
-| 2392 | `OnChainAuthority` | `export interface OnChainAuthority` |
-| 2427 | `AuthorityRead` | `export type AuthorityRead` |
-| 2449 | `authorityShapeOf` | `export function authorityShapeOf(` |
-| 2469 | `authorityFromContractState` | `export function authorityFromContractState(` |
-| 2501 | `ContractStateReader` | `export type ContractStateReader = (address: string) => Promise<unknown>;` |
-| 2510 | `readContractAuthority` | `export async function readContractAuthority(` |
-| 2546 | `intendedAuthorityValue` | `export function intendedAuthorityValue(` |
-| 2600 | `AuthorityVerdict` | `export type AuthorityVerdict = 'agree' \| 'disagree' \| 'unknown';` |
-| 2602 | `AuthorityComparison` | `export interface AuthorityComparison` |
-| 2637 | `compareAuthority` | `export function compareAuthority(` |
-| 2822 | `MaintenanceRefusal` | `export interface MaintenanceRefusal` |
-| 2862 | `verifierKeyRefusals` | `export function verifierKeyRefusals(` |
-| 2922 | `authorityValueRefusals` | `export function authorityValueRefusals(` |
-| 3024 | `requireBuildableAuthority` | `export function requireBuildableAuthority(` |
-| 3047 | `MaintenancePlan` | `export type MaintenancePlan` |
-| 3084 | `planAuthorityReplacement` | `export function planAuthorityReplacement(` |
-| 3174 | `MaintenanceEndStateRecord` | `export interface MaintenanceEndStateRecord` |
-| 3211 | `EndStateVerdict` | `export type EndStateVerdict = 'settled' \| 'not-yet' \| 'unexplained' \| 'unknown';` |
-| 3213 | `EndStateCheck` | `export interface EndStateCheck` |
-| 3228 | `checkEndState` | `export function checkEndState(` |
-| 3269 | `MaintenanceSignature` | `export type MaintenanceSignature = AuthorityKey;` |
-| 3284 | `MaintenanceUpdateLike` | `export interface MaintenanceUpdateLike` |
-| 3291 | `MaintenancePrimitives` | `export interface MaintenancePrimitives` |
-| 3307 | `VerifierKeyWrite` | `export interface VerifierKeyWrite` |
-| 3334 | `BuiltMaintenanceInstruction` | `export interface BuiltMaintenanceInstruction` |
-| 3408 | `buildMaintenanceInstruction` | `export function buildMaintenanceInstruction(` |
-| 3507 | `attachMaintenanceSignature` | `export function attachMaintenanceSignature(` |
-| 3541 | `signatureProgress` | `export function signatureProgress(` |
-| 3594 | `OnChainOperation` | `export interface OnChainOperation` |
-| 3601 | `OperationsRead` | `export type OperationsRead` |
-| 3612 | `operationsFromContractState` | `export function operationsFromContractState(` |
-| 3662 | `VerifierKeyVerdict` | `export type VerifierKeyVerdict = 'agree' \| 'disagree' \| 'unknown';` |
-| 3664 | `VerifierKeyComparison` | `export interface VerifierKeyComparison` |
-| 3705 | `compareVerifierKeys` | `export function compareVerifierKeys(` |
+| 2117 | `UndecodedLedgerField` | `export class UndecodedLedgerField extends Error` |
+| 2211 | `MidnightProofSystem` | `export class MidnightProofSystem implements ProofSystem` |
+| 2388 | `AuthorityShape` | `export type AuthorityShape = 'anyone' \| 'no-one' \| 'one-key' \| 'committee';` |
+| 2394 | `OnChainAuthority` | `export interface OnChainAuthority` |
+| 2429 | `AuthorityRead` | `export type AuthorityRead` |
+| 2451 | `authorityShapeOf` | `export function authorityShapeOf(` |
+| 2471 | `authorityFromContractState` | `export function authorityFromContractState(` |
+| 2503 | `ContractStateReader` | `export type ContractStateReader = (address: string) => Promise<unknown>;` |
+| 2512 | `readContractAuthority` | `export async function readContractAuthority(` |
+| 2548 | `intendedAuthorityValue` | `export function intendedAuthorityValue(` |
+| 2602 | `AuthorityVerdict` | `export type AuthorityVerdict = 'agree' \| 'disagree' \| 'unknown';` |
+| 2604 | `AuthorityComparison` | `export interface AuthorityComparison` |
+| 2639 | `compareAuthority` | `export function compareAuthority(` |
+| 2824 | `MaintenanceRefusal` | `export interface MaintenanceRefusal` |
+| 2864 | `verifierKeyRefusals` | `export function verifierKeyRefusals(` |
+| 2924 | `authorityValueRefusals` | `export function authorityValueRefusals(` |
+| 3026 | `requireBuildableAuthority` | `export function requireBuildableAuthority(` |
+| 3049 | `MaintenancePlan` | `export type MaintenancePlan` |
+| 3086 | `planAuthorityReplacement` | `export function planAuthorityReplacement(` |
+| 3176 | `MaintenanceEndStateRecord` | `export interface MaintenanceEndStateRecord` |
+| 3213 | `EndStateVerdict` | `export type EndStateVerdict = 'settled' \| 'not-yet' \| 'unexplained' \| 'unknown';` |
+| 3215 | `EndStateCheck` | `export interface EndStateCheck` |
+| 3230 | `checkEndState` | `export function checkEndState(` |
+| 3271 | `MaintenanceSignature` | `export type MaintenanceSignature = AuthorityKey;` |
+| 3286 | `MaintenanceUpdateLike` | `export interface MaintenanceUpdateLike` |
+| 3293 | `MaintenancePrimitives` | `export interface MaintenancePrimitives` |
+| 3309 | `VerifierKeyWrite` | `export interface VerifierKeyWrite` |
+| 3336 | `BuiltMaintenanceInstruction` | `export interface BuiltMaintenanceInstruction` |
+| 3410 | `buildMaintenanceInstruction` | `export function buildMaintenanceInstruction(` |
+| 3509 | `attachMaintenanceSignature` | `export function attachMaintenanceSignature(` |
+| 3543 | `signatureProgress` | `export function signatureProgress(` |
+| 3596 | `OnChainOperation` | `export interface OnChainOperation` |
+| 3603 | `OperationsRead` | `export type OperationsRead` |
+| 3614 | `operationsFromContractState` | `export function operationsFromContractState(` |
+| 3664 | `VerifierKeyVerdict` | `export type VerifierKeyVerdict = 'agree' \| 'disagree' \| 'unknown';` |
+| 3666 | `VerifierKeyComparison` | `export interface VerifierKeyComparison` |
+| 3707 | `compareVerifierKeys` | `export function compareVerifierKeys(` |
 
 ### `src/midnight/ledger.ts` — what it refuses
 
 | line | kind | message |
 |---|---|---|
-| 378 | throw | cannot open "[value]": this MidnightLedger was built without deployment credentials. Deploying needs a maintenance authority and somewhere to record the address the chain assigns, and a client that only calls an existing account has no business holding either. |
-| 415 | throw | cannot open "[value]": the opening names no founding signer. The account's first seat is the leaf handed to the constructor, and an account deployed without one can never have a signer added — `amendSigner` requires an existing signer, so there would be nobody able to seat the first. |
-| 443 | throw | cannot open "[value]": the opening names [value] founding signers and this path can seat exactly one. The constructor creates the founder's seat; every seat after it is `amendSigner`, which requires an existing signer to call it AND, since the constructor stopped taking a threshold, an approved proposal behind it — so the rest are proposed, approved and seated by the founder from their own device, and there is no screen for that yet. Open with the founding signer alone. |
-| 498 | throw | cannot open "[value]": a threshold of [value] is not a rule. It is refused here because it would enter our own record of the account as its policy. The chain never sees it: since `C340` the constructor takes no threshold and founds every account at one, raised afterwards through the ordinary approval path. |
-| 777 | throw | movementsset |
-| 844 | throw | propose succeeded but the account state could not be read back, so it is unknown whether the proposal is open. Approvals gathered against it may be unusable.n looked for id: [value]n state read back: none |
-| 852 | throw | propose succeeded but the chain has no open proposal with this id. Approvals gathered against it would be unusable.n looked for id: [value]n ids on chain ([value]): none, |
-| 863 | throw | propose succeeded but the chain recorded a different change than the one supplied.n on chain: [value]n supplied: [value]nEvery approval gathered against this proposal would be unusable. |
-| 906 | throw | a payroll run must name the vault that will pay it: the vault is folded into the proposal id and recordPayment recomputes the id from the vault it is handed, so a run raised at the no-vault sentinel is one no vault can ever present. |
-| 922 | throw | proposeRun succeeded but the chain has no open proposal with this run's id. Approvals gathered against it would be unusable, and no payment could ever match it. |
-| 929 | throw | proposeRun succeeded but the chain recorded a different change than the one supplied.n on chain: [value]n supplied: [value]nEvery approval gathered against this run would be unusable. |
-| 1184 | throw | a governance round cannot name a vault |
-| 1213 | throw | a payroll run needs at least one payee |
-| 1216 | throw | this run's window closes at [value] and opens at [value], so no payment could ever fall inside it |
-| 1228 | throw | [value] is not a time in seconds — that is the year [value]. Block time is seconds since the Unix epoch, not milliseconds. |
-| 1281 | throw | the contract has no state on chain |
-| 1291 | throw | adding a signer to a live account needs an approved proposal. Propose the signer, reach the threshold, then add them. M-37. |
-| 1331 | throw | the contract has no state on chain |
-| 1344 | throw | the threshold must be at least one, and a whole number |
-| 1352 | throw | the threshold cannot exceed the [value] signers on this account, or one signer could seat their own. |
-| 1400 | throw | a vault threshold of zero would authorise anything |
-| 1412 | throw | the contract has no state on chain |
-| 1415 | throw | that would leave [value] signers against a threshold of [value], and the account could never approve anything again. |
-| 1483 | throw | [value] is thirty-two zero bytes. Supply a signer leaf that is neither thirty-two zero bytes nor the vacancy marker. The contract refuses this value — it answers "that is not a usable signer leaf", in its constructor for a founding leaf and in `amendSigner` for a leaf being seated — because thirty-two zero bytes is what an empty slot reads as, so a seat holding it is a seat nothing can ever prove. |
-| 1492 | throw | [value] is the vacancy marker itself. Supply a signer leaf that is neither thirty-two zero bytes nor the vacancy marker. The contract refuses this value — it answers "that is not a usable signer leaf", in its constructor for a founding leaf and in `amendSigner` for a leaf being seated — because the tree uses the marker to mean THIS SLOT IS EMPTY, so seating it makes a slot that is simultaneously taken and free. |
-| 1524 | throw | the contract has no state on chain |
-| 1527 | throw | cannot [value]: there is no open proposal [value] on this account. It has either settled, been cancelled, or was never raised here. |
-| 1546 | throw | cannot [value]: that proposal has [value] of [value] approvals. The contract would reject it. |
-| 1580 | throw | account not found on this ledger |
+| 380 | throw | cannot open "[value]": this MidnightLedger was built without deployment credentials. Deploying needs a maintenance authority and somewhere to record the address the chain assigns, and a client that only calls an existing account has no business holding either. |
+| 417 | throw | cannot open "[value]": the opening names no founding signer. The account's first seat is the leaf handed to the constructor, and an account deployed without one can never have a signer added — `amendSigner` requires an existing signer, so there would be nobody able to seat the first. |
+| 445 | throw | cannot open "[value]": the opening names [value] founding signers and this path can seat exactly one. The constructor creates the founder's seat; every seat after it is `amendSigner`, which requires an existing signer to call it AND, since the constructor stopped taking a threshold, an approved proposal behind it — so the rest are proposed, approved and seated by the founder from their own device, and there is no screen for that yet. Open with the founding signer alone. |
+| 500 | throw | cannot open "[value]": a threshold of [value] is not a rule. It is refused here because it would enter our own record of the account as its policy. The chain never sees it: since `C340` the constructor takes no threshold and founds every account at one, raised afterwards through the ordinary approval path. |
+| 779 | throw | movementsset |
+| 846 | throw | propose succeeded but the account state could not be read back, so it is unknown whether the proposal is open. Approvals gathered against it may be unusable.n looked for id: [value]n state read back: none |
+| 854 | throw | propose succeeded but the chain has no open proposal with this id. Approvals gathered against it would be unusable.n looked for id: [value]n ids on chain ([value]): none, |
+| 865 | throw | propose succeeded but the chain recorded a different change than the one supplied.n on chain: [value]n supplied: [value]nEvery approval gathered against this proposal would be unusable. |
+| 908 | throw | a payroll run must name the vault that will pay it: the vault is folded into the proposal id and recordPayment recomputes the id from the vault it is handed, so a run raised at the no-vault sentinel is one no vault can ever present. |
+| 924 | throw | proposeRun succeeded but the chain has no open proposal with this run's id. Approvals gathered against it would be unusable, and no payment could ever match it. |
+| 931 | throw | proposeRun succeeded but the chain recorded a different change than the one supplied.n on chain: [value]n supplied: [value]nEvery approval gathered against this run would be unusable. |
+| 1186 | throw | a governance round cannot name a vault |
+| 1215 | throw | a payroll run needs at least one payee |
+| 1218 | throw | this run's window closes at [value] and opens at [value], so no payment could ever fall inside it |
+| 1230 | throw | [value] is not a time in seconds — that is the year [value]. Block time is seconds since the Unix epoch, not milliseconds. |
+| 1283 | throw | the contract has no state on chain |
+| 1293 | throw | adding a signer to a live account needs an approved proposal. Propose the signer, reach the threshold, then add them. M-37. |
+| 1333 | throw | the contract has no state on chain |
+| 1346 | throw | the threshold must be at least one, and a whole number |
+| 1354 | throw | the threshold cannot exceed the [value] signers on this account, or one signer could seat their own. |
+| 1402 | throw | a vault threshold of zero would authorise anything |
+| 1414 | throw | the contract has no state on chain |
+| 1417 | throw | that would leave [value] signers against a threshold of [value], and the account could never approve anything again. |
+| 1485 | throw | [value] is thirty-two zero bytes. Supply a signer leaf that is neither thirty-two zero bytes nor the vacancy marker. The contract refuses this value — it answers "that is not a usable signer leaf", in its constructor for a founding leaf and in `amendSigner` for a leaf being seated — because thirty-two zero bytes is what an empty slot reads as, so a seat holding it is a seat nothing can ever prove. |
+| 1494 | throw | [value] is the vacancy marker itself. Supply a signer leaf that is neither thirty-two zero bytes nor the vacancy marker. The contract refuses this value — it answers "that is not a usable signer leaf", in its constructor for a founding leaf and in `amendSigner` for a leaf being seated — because the tree uses the marker to mean THIS SLOT IS EMPTY, so seating it makes a slot that is simultaneously taken and free. |
+| 1526 | throw | the contract has no state on chain |
+| 1529 | throw | cannot [value]: there is no open proposal [value] on this account. It has either settled, been cancelled, or was never raised here. |
+| 1548 | throw | cannot [value]: that proposal has [value] of [value] approvals. The contract would reject it. |
 | 1582 | throw | account not found on this ledger |
-| 1586 | throw | the state for "[value]" is already sealed at key epoch [value]. Re-sealing over an existing epoch would destroy the only copy under that key. |
-| 1605 | throw | committed state could not be retrieved for "[value]" at key epoch [value]. Either the blob is missing (M-73), or the account record and the state store disagree about which viewing key is current, which is what a half-finished rotation looks like (K-4). |
-| 1641 | throw | account "[value]" is not deployed on Midnight |
-| 1714 | throw | no asset blinding in the private state for "[value]" on this device. It is written when the account is opened and every signer needs the same one — without it this device cannot derive the account's asset key, and so cannot compute or check the change commitment a proposal carries. |
-| 1858 | throw | the deployed contract has no circuit "[value]" |
-| 2180 | throw | set |
-| 2214 | throw | no Compact circuit for "[value]" yet |
-| 2215 | throw | not implemented: requires the proof server at |
-| 2219 | throw | not implemented: verification happens on chain |
-| 2566 | throw | a maintenance authority at threshold [value] is not a committee. Set the threshold to at least one and no more than the number of keys in the committee. A threshold ABOVE the committee size is the unmaintainable state — say { kind: "unmaintainable" } deliberately if that is the intent, rather than reaching it by arithmetic. A threshold BELOW one is WORLD-WRITABLE, not unmaintainable: MEASURED on `@midnightntwrk/ledger-v9@1.0.0-rc.3`, a maintenance update carrying NO SIGNATURES AT ALL is well-formed against an authority at threshold zero, so anybody at all could replace this contract's verifier keys while holding nothing. Committee membership IS still checked — a signature at an out-of-range seat is refused, and so is a wrong signature at a valid seat — what is missing is any requirement to attach one. This refuses rather than comparing the value against the chain. |
-| 3031 | throw | this maintenance authority will not be built:n - [[value]] [value]n |
-| 3420 | throw | this plan carries no on-chain authority, so there is nothing to say who must sign the update it describes. A `build` plan always carries one; a plan that does not is a defect in this module rather than a fact about the contract, and building anyway would produce an instruction nobody can be told how to sign. |
-| 3434 | throw | these verifier-key writes will not be built:n - [[value]] [value]n |
-| 3514 | throw | seat [value] is not a seat on the committee that currently maintains [value]: it holds [value] seat(s), numbered 0 to [value]. The signatures on a maintenance update are checked against the CURRENT committee, not the one being installed. |
-| 3522 | throw | seat [value] has already signed this update. A second signature at the same index is refused by the chain as a malformed transaction, and attaching it here would waste a submission rather than add a vote. |
-| 3530 | throw | this signature does not verify against the key in seat [value] of [value]'s current committee. Either it was made by a different key, or it was made over different data — a signature is bound to (contract address, exact update list, counter), so one collected for another contract, or before the counter moved, is dead. |
+| 1584 | throw | account not found on this ledger |
+| 1588 | throw | the state for "[value]" is already sealed at key epoch [value]. Re-sealing over an existing epoch would destroy the only copy under that key. |
+| 1607 | throw | committed state could not be retrieved for "[value]" at key epoch [value]. Either the blob is missing (M-73), or the account record and the state store disagree about which viewing key is current, which is what a half-finished rotation looks like (K-4). |
+| 1643 | throw | account "[value]" is not deployed on Midnight |
+| 1716 | throw | no asset blinding in the private state for "[value]" on this device. It is written when the account is opened and every signer needs the same one — without it this device cannot derive the account's asset key, and so cannot compute or check the change commitment a proposal carries. |
+| 1860 | throw | the deployed contract has no circuit "[value]" |
+| 2182 | throw | set |
+| 2216 | throw | no Compact circuit for "[value]" yet |
+| 2217 | throw | not implemented: requires the proof server at |
+| 2221 | throw | not implemented: verification happens on chain |
+| 2568 | throw | a maintenance authority at threshold [value] is not a committee. Set the threshold to at least one and no more than the number of keys in the committee. A threshold ABOVE the committee size is the unmaintainable state — say { kind: "unmaintainable" } deliberately if that is the intent, rather than reaching it by arithmetic. A threshold BELOW one is WORLD-WRITABLE, not unmaintainable: MEASURED on `@midnightntwrk/ledger-v9@1.0.0-rc.3`, a maintenance update carrying NO SIGNATURES AT ALL is well-formed against an authority at threshold zero, so anybody at all could replace this contract's verifier keys while holding nothing. Committee membership IS still checked — a signature at an out-of-range seat is refused, and so is a wrong signature at a valid seat — what is missing is any requirement to attach one. This refuses rather than comparing the value against the chain. |
+| 3033 | throw | this maintenance authority will not be built:n - [[value]] [value]n |
+| 3422 | throw | this plan carries no on-chain authority, so there is nothing to say who must sign the update it describes. A `build` plan always carries one; a plan that does not is a defect in this module rather than a fact about the contract, and building anyway would produce an instruction nobody can be told how to sign. |
+| 3436 | throw | these verifier-key writes will not be built:n - [[value]] [value]n |
+| 3516 | throw | seat [value] is not a seat on the committee that currently maintains [value]: it holds [value] seat(s), numbered 0 to [value]. The signatures on a maintenance update are checked against the CURRENT committee, not the one being installed. |
+| 3524 | throw | seat [value] has already signed this update. A second signature at the same index is refused by the chain as a malformed transaction, and attaching it here would waste a submission rather than add a vote. |
+| 3532 | throw | this signature does not verify against the key in seat [value] of [value]'s current committee. Either it was made by a different key, or it was made over different data — a signature is bound to (contract address, exact update list, counter), so one collected for another contract, or before the counter moved, is dead. |
 
 ### `src/midnight/ledger.ts` — where a width is fixed
 
 | line | site | what fixes it |
 |---|---|---|
-| 539 | `randomBytes(32)` | a fixed-width random draw |
-| 1528 | `.slice(0, 12)` | a fixed-width slice |
-| 2457 | `.length === 1` | a width compared |
-| 3471 | `.slice(0, 8)` | a fixed-width slice |
-| 3717 | `.slice(0, 8)` | a fixed-width slice |
+| 541 | `randomBytes(32)` | a fixed-width random draw |
+| 1530 | `.slice(0, 12)` | a fixed-width slice |
+| 2459 | `.length === 1` | a width compared |
+| 3473 | `.slice(0, 8)` | a fixed-width slice |
+| 3719 | `.slice(0, 8)` | a fixed-width slice |
 
 ## `src/midnight/vault-ledger.ts`
 
@@ -856,4 +856,4 @@ Tier 2 of the declared set.
 
 *No width here matches the shapes above.* A width this module works to may
 arrive in a variable, and this list sees only a number or a capitalised constant.
-<!-- GENERATED:END id="modules" body="195f05edb2aae2b7" -->
+<!-- GENERATED:END id="modules" body="bc9b644bd35b33db" -->
