@@ -245,6 +245,19 @@ export function JoinScreen({ token }: { token: string }) {
           + 'them would open again. Ask whoever invited you to deploy the company first.');
       }
       dialog = openWalletDialog(window as never, WALLET_ORIGIN);
+      /*
+       * **AND THE WINDOW BELONGS TO THIS FUNCTION RATHER THAN TO EITHER ASK.**
+       *
+       * An ask closes the dialog when it settles, which is right everywhere
+       * else in this product because everywhere else one ask is the whole of
+       * what the window was opened for. **Here it is not, and that is what
+       * stopped an invited employee getting in:** the company-key ask
+       * succeeded, its success put the window away, and the address ask that
+       * follows was handed a window that no longer existed — so it reached
+       * nothing, waited out its deadline, and said the wallet had not answered.
+       * The `finally` below is what closes this one, on every outcome.
+       */
+      dialog.moreThanOneAsk();
 
       /*
        * ── ONE: THE COMPANY KEY, SO THE PAYSLIP KEY IS DERIVED AND NEVER
