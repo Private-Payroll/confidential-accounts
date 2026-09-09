@@ -43,7 +43,7 @@
  * ── WHAT THIS DOES NOT DO ────────────────────────────────────────────────
  *
  * **It does not change what runs.** The selection below is the simulated set,
- * which is what every one of those four sites already chose. This round makes the
+ * which is what every one of those four sites already chose. This change makes the
  * choice expressible in one place; it does not make a different choice.
  *
  * ── WHY IT IS NOT IN `core/` ─────────────────────────────────────────────
@@ -74,22 +74,75 @@
  *    typechecked. This matters more than a wrong sentence usually would: it was
  *    THE STATED REASON this file has one entry rather than two, so the reason
  *    was never true.
- * 2. **`MidnightProofSystem` is a shell** whose `prove` and `verify` both throw
- *    (`src/midnight/ledger.ts:1638`, `:1642`), so a `midnight` entry would be
- *    selectable before it is usable.
- * 3. **Neither constructs without configuration.** `MidnightProofSystem` takes a
- *    `MidnightConfig` (`src/midnight/ledger.ts:1632`); `MidnightLedger` takes
- *    that and a fee sponsor and a sealed-state store besides (`:249-252`). An
- *    entry needing configuration reads it inside this file. `wiring()` keeps
- *    taking no argument — or the mixing this file prevents comes straight back
- *    as a config argument threaded through four call sites again.
- * 4. **This module is imported by the browser entry points**, so a static import
- *    of `src/midnight/` here would pull the Midnight SDK's WebAssembly into the
- *    page's module graph — the defect `C149` cost four rounds and
- *    `src/web/no-wasm-in-the-page.test.ts` now guards. An entry that reaches
- *    `src/midnight/` must do so behind a dynamic import, which is also why the
- *    two implementations below are behind factory functions rather than
- *    constructed at module scope.
+ * 2. **`MidnightProofSystem` is a shell**, and the citation here was stale AND
+ *    wrong about the reason. `prove` and `verify` both throw
+ *    (`src/midnight/ledger.ts:2212`, `:2218`) — but `prove` never reaches the
+ *    sentence about the proof server it appears to throw. Its circuit table
+ *    maps all three circuits to `null` (`:2203-2207`), so every call takes the
+ *    line above and throws `no Compact circuit for "..." yet`. **The proof
+ *    server line is unreachable, and three descriptions of this class quote it
+ *    as if it ran.** The product's own attestation feature is the only caller,
+ *    and it is unreachable ahead of this for a separate reason, so a chain
+ *    entry is selectable before this is usable and nothing gets worse the day
+ *    it is.
+ * 3. **Neither constructs without configuration, and the configuration now has
+ *    a home.** `MidnightProofSystem` takes a `MidnightConfig`
+ *    (`src/midnight/ledger.ts:2210`); `MidnightLedger` takes that, a fee
+ *    sponsor, a sealed-state store, an address lookup, a providers thunk and a
+ *    compiled contract (`:291-337`). **This item used to say the entry reads
+ *    its configuration INSIDE THIS FILE. That is now the one thing it must not
+ *    do** — see item 4 — so the facts are resolved by `./deployment.ts`, which
+ *    is the single home for the address, the endpoints and the proof server,
+ *    and which refuses rather than defaulting any of them. `wiring()` still
+ *    takes no argument.
+ * 4. **THIS ITEM PRESCRIBED A FIX THAT DOES NOT WORK, AND THE ROUND THAT FIRST
+ *    TRIED TO ADD A SECOND ENTRY MEASURED IT.** It said: this module is
+ *    imported by the browser entry points, so a static import of
+ *    `src/midnight/` would pull the SDK's WebAssembly into the page's module
+ *    graph — true, and `src/web/no-wasm-in-the-page.test.ts` guards it — and
+ *    then it said **an entry that reaches `src/midnight/` must do so behind a
+ *    DYNAMIC import.** It must not, because that does not help.
+ *
+ *    A production build resolves and parses a dynamically imported module like
+ *    any other; the module graph is the same graph. Measured on this
+ *    repository's own build, from an entry outside it:
+ *
+ *        this file, as it stands             22 modules,  0 WebAssembly
+ *        an entry importing ./chain.ts       —           25 WebAssembly
+ *        the same, behind `await import()`   —           25 WebAssembly
+ *
+ *    Identical. **A dynamic import changes when the code runs, not whether the
+ *    bundler reads it**, and the guard asks the bundler.
+ *
+ *    **SO THE CHAIN SET IS IN `./chain.ts` AND THIS FILE DOES NOT IMPORT IT, BY
+ *    EITHER ROUTE.** That is why the second entry is not named below.
+ *
+ * ── AND THE THING THAT ACTUALLY BLOCKS THE SECOND ENTRY, WHICH IS NOT ────
+ * ── ANY OF THE FOUR ABOVE ───────────────────────────────────────────────
+ *
+ * **THE COMMITMENT SCHEME IS A VALUE ON THIS INTERFACE, THE PAGE READS IT, AND
+ * THE CHAIN'S IMPLEMENTATION OF IT CANNOT BE IN THE PAGE.** Measured the same
+ * way: `src/midnight/commitments.ts` alone pulls one WebAssembly module,
+ * because it is one line over the contract's generated circuits and that is the
+ * whole point of it — the hash is the contract's, restated nowhere.
+ *
+ * The page is not incidental here. It computes a device's own seat —
+ * `signerPublicKey` over a signing secret that must never leave the device, and
+ * the leaf built from it. Under the chain scheme that derivation IS the
+ * contract's circuit; under the simulated one it is deliberately something
+ * else, so the two never agree. **So the page must compute a leaf it cannot
+ * compute, and the three rules that meet here cannot all be satisfied:**
+ *
+ *     the secret never leaves the device      → the page derives the leaf
+ *     the leaf must be the contract's         → the derivation is the circuit
+ *     the page carries no WebAssembly         → the circuit is not in the page
+ *
+ * **THIS IS A PRODUCT DECISION AND NOT A WIRING ONE**, which is why the change
+ * that found it did not take it: the routes out are to derive the seat
+ * somewhere other than the page, or to restate the contract's hash in
+ * TypeScript — and this project's standing rule is that nothing restates it,
+ * because two definitions of one rule is the most expensive mistake made here.
+ * Either is somebody's work, and both change what the product is.
  */
 import {
   SimulatedLedger, SimulatedProofSystem, SimulatedCommitments,
@@ -123,7 +176,7 @@ const SIMULATED: Wiring = {
   commitments: SimulatedCommitments,
   /*
    * **THE LEDGER TAKES ITS SCHEME OFF THIS OBJECT'S OWN FIELD**, not a second
-   * mention of the name. After `S44` a mismatched pair raises
+   * mention of the name. Since the governance salt landed, a mismatched pair raises
    * rounds no ledger will execute, and `src/core/ledger.ts:1047-1055` says so in
    * a comment and only in a comment. `one-wiring-point.test.ts` pins this.
    */
@@ -138,8 +191,33 @@ const SIMULATED: Wiring = {
  * variable would make the running selection depend on how a process was
  * launched, and a page bundled under one selection talking to a server started
  * under another is the same mismatch this file exists to prevent, one level up.
- * When a second entry exists, how a deployment picks between them is that
- * round's decision to take out loud.
+ *
+ * ── THE DECISION, TAKEN ─────────────────────────────────────────────────
+ *
+ * **IT STAYS A COMPILE-TIME CONSTANT, AND THE ARGUMENT IS STRONGER NOW THAN
+ * WHEN IT WAS A GUESS.** A deployment picks by building; it does not pick by
+ * how a process was started. The three reasons, in the order they cost money:
+ *
+ *   1. **THE PAGE AND THE SERVER MUST AGREE, AND ONLY A BUILD CAN MAKE THEM.**
+ *      The page holds a commitment scheme, and a scheme disagreeing with the
+ *      one the ledger writes under produces leaves the contract cannot read —
+ *      silently, and the money behind them is unspendable by the signers it
+ *      belongs to. An environment variable is read by the server after the page
+ *      has already been built, which is exactly the window where they can
+ *      differ.
+ *   2. **THE SELECTION IS NOT A DEPLOYMENT FACT AND THE DEPLOYMENT FACTS ARE
+ *      NOT THE SELECTION.** Which network, which contract, which indexer, which
+ *      prover — those DO vary per deployment, they are configuration, and
+ *      `./deployment.ts` is their one home. WHICH IMPLEMENTATION OF THE
+ *      BOUNDARY RUNS is a property of the build. Keeping the two apart is what
+ *      stops a wrong environment variable turning a simulation into something
+ *      that looks like a chain.
+ *   3. **A CONSTANT CANNOT BE WRONG AT THREE IN THE MORNING.** An unset
+ *      variable has to mean something, and every available meaning is bad: a
+ *      simulation that looks live, or a chain nobody meant to touch.
+ *
+ * **WHAT THAT COSTS, STATED RATHER THAN DISCOVERED:** running against a
+ * different network is a rebuild, not a restart. That is the intended price.
  */
 const SELECTED: Wiring = SIMULATED;
 
@@ -159,7 +237,7 @@ export function wiring(): Wiring {
  * learns nothing, and both entry points answered it with `ledger.publicView()`.
  * **`publicView` is not on the `Ledger` interface.** It exists only on
  * `SimulatedLedger` (`src/core/ledger.ts:1299`; the citation here read
- * `:1067-1089` until `S29` and had been wrong since the file moved under it),
+ * `:1067-1089` until it was corrected, and had been wrong since the file moved under it),
  * and the calls typechecked
  * only because both files held the concrete class rather than the boundary type.
  * Routing them through this file turned the dependency into two compile errors,
@@ -168,13 +246,13 @@ export function wiring(): Wiring {
  * A search for the NAMES of the simulated implementations could never have found
  * this — the coupling is to a method, and neither call site mentions a simulated
  * anything. It is recorded here because it is the more interesting half of what
- * this round learned: the count of places that choose the simulation and the
+ * this change learned: the count of places that choose the simulation and the
  * count of places that DEPEND on it are different numbers.
  *
  * **WHAT IS DELIBERATELY NOT DECIDED HERE.** Whether `publicView` belongs on the
  * boundary — a real ledger would answer it by reading the chain, not from local
  * state, and the shape it should return is a design question — or whether the
- * route should say it cannot be answered. Either is somebody's round. What this
+ * route should say it cannot be answered. Either is somebody's work. What this
  * function does is stop the question being answered by accident: it refuses
  * loudly instead of serving a partial object, because a privacy-evidence route
  * that quietly shows less than it claims to is worse than one that stops.
