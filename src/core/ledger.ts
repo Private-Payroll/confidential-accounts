@@ -905,6 +905,20 @@ export interface Ledger {
   describe(): string;
 
   /**
+   * **THE WRITE THIS LEDGER IS WAITING ON, IF IT IS WAITING ON ONE.**
+   *
+   * Optional, because only an implementation that sends writes somewhere they
+   * can stall has anything to say. One that does not implement it is not
+   * claiming that nothing is in flight; it is saying nothing. `null` from one
+   * that does implement it means nothing is in flight now.
+   *
+   * It names the kind of write and how long it has been running, and never the
+   * company: whoever can read a health check is not thereby entitled to learn
+   * which companies are acting.
+   */
+  writeInFlight?(): WriteInFlight | null;
+
+  /**
    * **WHICH IMPLEMENTATION OF THIS BOUNDARY IS ANSWERING, AS A WORD.**
    *
    * `describe()` above is prose for a person and it is free to change; this is
@@ -919,6 +933,25 @@ export interface Ledger {
    * reason.
    */
   readonly wiring: WiringName;
+}
+
+/** A write that has started and not yet settled, as a person reading a health check sees it. */
+export interface WriteInFlight {
+  /** What the write is, in the product's words: `opening an account`. */
+  readonly what: string;
+  /** When it started, as an ISO 8601 instant. */
+  readonly since: string;
+  /** Whole seconds it has been running. */
+  readonly seconds: number;
+  /**
+   * **TRUE ONCE IT HAS RUN LONGER THAN A WRITE IS EXPECTED TO TAKE.** From then
+   * on every later write through the same fee payer is refused rather than
+   * queued behind it, and the write itself is left to finish: stopping it
+   * would not stop it reaching the chain.
+   */
+  readonly overdue: boolean;
+  /** Later writes queued behind it and not yet refused. */
+  readonly waiting: number;
 }
 
 export type Circuit = /* `T-217`: NONE of the three exists in either `.compact` — measured, zero occurrences in `ConfidentialAccount.compact` and `Vault.compact`; `MidnightProofSystem.prove` throws for all three, and `SimulatedProofSystem` is symmetric so its verifier must BE its prover. */ 'balance-at-least' | 'payroll-total' | 'payment-record';

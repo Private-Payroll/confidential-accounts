@@ -932,8 +932,27 @@ app.put('/api/me/keys', authed, wrap(async (req, res) => {
   }
 }));
 
+/*
+ * **A PRODUCT WAITING ON A WRITE THAT HAS NOT SETTLED SAYS SO HERE.**
+ *
+ * Writes through one fee payer run one at a time, so a write that never settles
+ * holds every later one. Without this the route said `ok` over a product that
+ * could not open a company, and the only symptom was a button that kept
+ * spinning. `writing` names the kind of write, when it started and how many are
+ * queued behind it - never the company, because this route answers anybody -
+ * and `ok` is false once that write is overdue. A ledger that does not track
+ * its writes gets no `writing` field at all rather than a `null` that would
+ * claim nothing is in flight.
+ */
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, ledger: ledger.describe(), proofs: proofs.describe() });
+  const tracked = typeof ledger.writeInFlight === 'function';
+  const writing = tracked ? ledger.writeInFlight!() : null;
+  res.json({
+    ok: !writing?.overdue,
+    ledger: ledger.describe(),
+    proofs: proofs.describe(),
+    ...(tracked ? { writing } : {}),
+  });
 });
 
 /*

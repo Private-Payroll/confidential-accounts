@@ -50,7 +50,7 @@ import { FileSealedStateStore } from '../midnight/sealed-store.js';
 import { midnightProviders } from '../midnight/providers.js';
 import type {
   Ledger, LedgerAddress, LedgerStatus, LedgerRecord, PaymentsAmong,
-  AccountOpening, SealedStateAt, TxRef, SignerRef,
+  AccountOpening, SealedStateAt, TxRef, SignerRef, WriteInFlight,
 } from '../core/ledger.js';
 import type { Hex } from '../core/crypto.js';
 import type { Deployment } from './deployment.js';
@@ -106,11 +106,136 @@ const noSponsor = (refusal: string): FeeSponsor => ({
 const refuseUnwired = (what: string, why: string): Promise<never> =>
   Promise.reject(new Error(`${what} is not available on this deployment: ${why}`));
 
+/* ---- how long a write may run before later ones stop waiting for it ---- */
+
 /**
- * The write each fee payer is busy with, so the next one waits for it.
- * `ChainLedger.write` says why. Weak, so a fee payer nobody holds is not kept.
+ * **THE SLOWEST SINGLE WRITE RECORDED THROUGH A PROOF SERVER ON STAGENET: 34.7
+ * SECONDS**, a company created through the product's own service, proved,
+ * balanced, submitted and settled. Every other write recorded through a proof
+ * server there - thirty governance steps, two deploys, a deposit, a mint and a
+ * sponsored call - took between 17.2 and 31.3 seconds. The time a wallet takes
+ * to come up is not in it and is not inside a write: a wallet is up before this
+ * ledger exists.
  */
-const lanes = new WeakMap<FeeSponsor, Promise<void>>();
+export const SLOWEST_RECORDED_WRITE_MS = 34_700;
+
+/**
+ * **HOW MANY TIMES OPENING AN ACCOUNT IS ATTEMPTED, AND HOW LONG IT WAITS
+ * BETWEEN ATTEMPTS IN ALL.** Opening is the one write retried underneath this
+ * ledger: four attempts, waiting five, ten and fifteen seconds between them.
+ * These are the retry's own defaults and this ledger passes no override; they
+ * are restated here so the deadline below can be read as arithmetic, and a
+ * test holds them to what the retry actually does.
+ */
+export const OPENING_ATTEMPTS = 4;
+export const OPENING_WAITS_MS = 5_000 + 10_000 + 15_000;
+
+/**
+ * **A WRITE STILL RUNNING AFTER THIS LONG IS OVERDUE: 168.8 SECONDS.** Every
+ * attempt of the one retried write taking as long as the slowest write ever
+ * recorded, plus every wait between them. **IT IS A THRESHOLD FOR SAYING SO, NOT
+ * A BOUND ON HOW LONG A WRITE CAN TAKE**: it rests on one slowest sample, and a
+ * submission that is never answered waits without limit. It over-counts in the
+ * safe direction, because that sample includes work done once per write rather
+ * than once per attempt.
+ *
+ * **WHAT IT DOES AND WHAT IT DOES NOT.** It does not stop the write, release its
+ * fee payer or let anything past it - the write may still reach the chain, and
+ * a second write started beside it would have its fee recorded against the
+ * wrong company. It changes two things: a later write through the same fee
+ * payer is refused by name instead of waiting for ever, and the health check
+ * says the product is not healthy. **So a deadline that is too long costs a
+ * person waiting longer to be told; one that is too short refuses a second
+ * press that would have gone through, and shows an unhealthy product to
+ * somebody who may stop the server while a slow write is about to land** - a
+ * company opened that way reaches the chain with no record here. The first is
+ * the cheaper mistake.
+ */
+export const WRITE_OVERDUE_AFTER_MS =
+  OPENING_ATTEMPTS * SLOWEST_RECORDED_WRITE_MS + OPENING_WAITS_MS;
+
+/**
+ * The clock a lane is judged by. Only a test passes anything else.
+ */
+export interface LaneClock {
+  readonly now: () => number;
+  readonly overdueAfterMs: number;
+}
+const REAL_CLOCK: LaneClock = { now: () => Date.now(), overdueAfterMs: WRITE_OVERDUE_AFTER_MS };
+
+/** The write a fee payer is busy with. */
+interface Running {
+  readonly what: string;
+  readonly startedAt: number;
+  readonly clock: LaneClock;
+  overdue: boolean;
+  timer: ReturnType<typeof setTimeout> | undefined;
+}
+
+/** A write waiting its turn, and how to turn it away. */
+interface Queued {
+  readonly what: string;
+  readonly refuse: (e: Error) => void;
+  gaveUp: boolean;
+}
+
+/**
+ * **ONE LANE PER FEE PAYER.** `tail` settles when everything queued so far has
+ * finished or been turned away; `running` is the write under way; `queued` are
+ * the ones behind it that have not started.
+ */
+interface Lane {
+  tail: Promise<void>;
+  running: Running | null;
+  readonly queued: Set<Queued>;
+}
+
+/**
+ * The lane each fee payer's writes go through. `ChainLedger.write` says why.
+ * Weak, so a fee payer nobody holds is not kept.
+ */
+const lanes = new WeakMap<FeeSponsor, Lane>();
+
+const laneOf = (payer: FeeSponsor): Lane => {
+  let lane = lanes.get(payer);
+  if (!lane) {
+    lane = { tail: Promise.resolve(), running: null, queued: new Set() };
+    lanes.set(payer, lane);
+  }
+  return lane;
+};
+
+const isOverdue = (r: Running): boolean =>
+  r.overdue || r.clock.now() - r.startedAt >= r.clock.overdueAfterMs;
+
+const secondsOf = (r: Running): number =>
+  Math.max(0, Math.floor((r.clock.now() - r.startedAt) / 1000));
+
+/**
+ * **THE SENTENCE A LATER WRITE IS REFUSED WITH.** It reaches whoever made the
+ * later write, who is often not whoever made the stuck one - so it says that
+ * their own request did nothing, when to try it again, and, for whoever runs the
+ * server, the one thing that would make it worse.
+ */
+const refusalBehindOverdueWrite = (what: string, r: Running): string =>
+  `${what} was not started, and nothing was spent on it: this deployment's fee payer is still `
+  + `busy with an earlier write (${r.what}, running since ${new Date(r.startedAt).toISOString()}, `
+  + `${secondsOf(r)} seconds), longer than a write is expected to take. Nothing else is sent `
+  + 'through that wallet until it finishes, so that no fee is recorded against the wrong '
+  + 'company. Try this again once the health check no longer shows a write in flight - but if '
+  + 'the earlier write was yours, find out first whether it reached the chain, because if it did, '
+  + 'trying again does it a second time. Stopping the server does not undo a write that has '
+  + 'already been sent, and a company being opened would then reach the chain with no record '
+  + 'here, so whoever runs the server should find out whether it landed before stopping it.';
+
+/** Turn away everything queued behind a write that has become overdue. */
+const refuseQueued = (lane: Lane, r: Running): void => {
+  for (const q of lane.queued) {
+    q.gaveUp = true;
+    q.refuse(new Error(refusalBehindOverdueWrite(q.what, r)));
+  }
+  lane.queued.clear();
+};
 
 /**
  * The chain ledger the product is handed.
@@ -171,6 +296,7 @@ export class ChainLedger implements Ledger {
     private readonly inner: MidnightLedger,
     private readonly deployment: Deployment,
     capability?: WriteCapability,
+    private readonly clock: LaneClock = REAL_CLOCK,
   ) {
     this.cannotWrite = refusalForCapability(capability);
     this.payer = capability?.sponsor;
@@ -232,6 +358,25 @@ export class ChainLedger implements Ledger {
         : 'read-only (no wallet is wired, so nothing can be written to the chain)');
   }
 
+  /**
+   * **THE WRITE THIS DEPLOYMENT'S FEE PAYER IS BUSY WITH, OR `null`.** Read from
+   * the same lane every write goes through, so it cannot disagree with what a
+   * write would be told. A deployment that cannot write has no lane and nothing
+   * in flight.
+   */
+  writeInFlight(): WriteInFlight | null {
+    if (this.cannotWrite || !this.payer) return null;
+    const r = lanes.get(this.payer)?.running;
+    if (!r) return null;
+    return {
+      what: r.what,
+      since: new Date(r.startedAt).toISOString(),
+      seconds: secondsOf(r),
+      overdue: isOverdue(r),
+      waiting: lanes.get(this.payer)?.queued.size ?? 0,
+    };
+  }
+
   /* ---- writes: refused above everything that stages anything, or delegated whole ---- */
 
   /**
@@ -268,17 +413,53 @@ export class ChainLedger implements Ledger {
      * **KEYED ON THE FEE PAYER, NOT ON THIS OBJECT**, because the fee payer is
      * the thing being shared: two ledgers built over one fee payer must queue
      * behind each other too. A write that fails lets the next one go.
+     *
+     * **AND A WRITE THAT NEVER SETTLES DOES NOT LET THE NEXT ONE GO.** Nothing
+     * here can tell a write that will never settle from one that is slow and
+     * will still land, so the lane is never released on a clock. What the clock
+     * decides is only whether the writes behind it keep waiting: once the
+     * running one is overdue, each of them - and each that arrives after - is
+     * refused by name, and the health check says so.
      */
-    const turn = (lanes.get(payer) ?? Promise.resolve()).then(() => {
-      /*
-       * Told before the work starts, because the fee payer reads it at the moment
-       * it records a payment, which is inside the call below.
-       */
-      payer.payingFor(accountId);
-      return go();
-    });
-    lanes.set(payer, turn.then(() => undefined, () => undefined));
-    return turn;
+    const lane = laneOf(payer);
+    if (lane.running && isOverdue(lane.running)) {
+      return Promise.reject(new Error(refusalBehindOverdueWrite(what, lane.running)));
+    }
+    let refuse!: (e: Error) => void;
+    const refused = new Promise<never>((_, reject) => { refuse = reject; });
+    const queued: Queued = { what, refuse, gaveUp: false };
+    lane.queued.add(queued);
+
+    const clock = this.clock;
+    const run = async (): Promise<T | undefined> => {
+      lane.queued.delete(queued);
+      /* Turned away while it waited; the caller has its refusal already. */
+      if (queued.gaveUp) return undefined;
+      const running: Running = {
+        what, startedAt: clock.now(), clock, overdue: false, timer: undefined,
+      };
+      lane.running = running;
+      running.timer = setTimeout(() => {
+        running.overdue = true;
+        if (lane.running === running) refuseQueued(lane, running);
+      }, clock.overdueAfterMs);
+      /* A process with nothing else to do is not kept alive by this clock. */
+      running.timer.unref?.();
+      try {
+        /*
+         * Told before the work starts, because the fee payer reads it at the
+         * moment it records a payment, which is inside the call below.
+         */
+        payer.payingFor(accountId);
+        return await go();
+      } finally {
+        clearTimeout(running.timer);
+        if (lane.running === running) lane.running = null;
+      }
+    };
+    const turn = lane.tail.then(run);
+    lane.tail = turn.then(() => undefined, () => undefined);
+    return Promise.race([turn, refused]) as Promise<T>;
   }
 
   open(accountId: string, opening: AccountOpening): Promise<TxRef> {
