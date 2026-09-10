@@ -26,7 +26,7 @@ import { payslipKeypairForWallet } from './payslip-key.js';
 const SEED_WALLET_ORIGIN = 'https://payroll.example';
 import type { AssetId } from './assets.js';
 import { assets as defaultAssets, subtotals, formatAmount, assetIdBytes } from './assets.js';
-import type { Account, Employee, PayrollRun, SealedRun, ShieldedEntry, Attestation, RosterEmployee, SealedEmployee, Invite, User, RunSkip, RunSkips } from './types.js';
+import type { Account, Employee, PayrollRun, SealedRun, ShieldedEntry, Attestation, RosterEmployee, SealedEmployee, Invite, User, RunSkip, RunSkips, RunRetry, RunRepeatRecord, RunPayout } from './types.js';
 import { sealRecord, openRecord, sealToInbox, openFromInbox } from './sealed-records.js';
 import {
   sealHandover, openHandover, type SealedHandover,
@@ -39,7 +39,7 @@ import type { NetworkName } from '../midnight/network.js';
 import type { ShieldedPaymentFacts, PaymentFacts } from '../midnight/payout-tree.js';
 import type { RunInputs } from '../midnight/run-status.js';
 import { emptyRegister, decide } from '../midnight/run-skips.js';
-import type { RunMaterial } from '../midnight/run-material.js';
+import type { RunMaterial, RetryMaterial } from '../midnight/run-material.js';
 import type { PayoutSeed } from '../midnight/run-keys.js';
 
 /**
@@ -308,7 +308,7 @@ export const recordSkips = (
 };
 
 /** The numbers on a run. Everything else about it is operational. */
-type RunSecrets = Pick<PayrollRun, 'employees' | 'totals' | 'proposalIds' | 'payout' | 'skips'>;
+type RunSecrets = Pick<PayrollRun, 'employees' | 'totals' | 'proposalIds' | 'payout' | 'skips' | 'repeats'>;
 
 /**
  * **THE PEOPLE ONE LEG OF A RUN PAYS, THROUGH ONE FILTER.**
@@ -389,7 +389,7 @@ const legOf = (run: PayrollRun, asset: AssetId | undefined): AssetId => {
   if (!legs.includes(leg)) throw new Error(`this run pays nobody in ${leg}`);
   return leg;
 };
-import type { AccountService } from './account.js';
+import type { AccountService, PayrollRound } from './account.js';
 import type { ProofSystem, RunProposal } from './ledger.js';
 import type { DataStore } from './store.js';
 
@@ -2136,6 +2136,14 @@ export class PayrollService {
       throw new Error(`a run for ${period} already exists`);
     }
     /*
+     * **AND A DRAFT IS NOT ALWAYS A DRAFT.** A run stays `draft` until its raise
+     * returns, and a raise can throw after the network has the transaction - so
+     * the run that failed, and that somebody is now pressing the button again
+     * about, may be on chain. The status alone cannot say; the proposal records
+     * can, because they are written before the chain is called.
+     */
+    this.refuseAPayrollThatMayBeOnChain(accountId, period, viewingKey);
+    /*
      * NO CROSS-RATE CHECK, because there is nothing to cross. Exchange rates
      * are ruled out entirely: everybody is paid in the currency assigned to
      * them, so a person has ONE asset and a run in mixed currencies is simply
@@ -2255,9 +2263,30 @@ export class PayrollService {
      * the id is minted below.
      */
     leftOut?: { people: RunSkip[]; ack: SkipAcknowledgement },
+    /**
+     * **WHICH EARLIER RUNS FOR THIS PERIOD THIS ONE KNOWINGLY REPEATS, AND WHO
+     * SAID SO.** Absent means a repeat is REFUSED, and absent is the default on
+     * every caller. See `RepeatAcknowledgement`.
+     */
+    repeats?: RepeatAcknowledgement,
   ): Promise<{ run: PayrollRun; secrets: EmployeeSecret[] }> {
     this.accounts.require(accountId);
     if (specs.length === 0) throw new Error('a payroll run needs at least one employee');
+    /*
+     * **BEFORE ANYTHING IS BUILT, BECAUSE A REPEAT NOBODY CONFIRMED IS REFUSED.**
+     * Asked about every run for the period, drafts included, because this is
+     * the one moment a person can say what they mean and have it written down.
+     *
+     * **NOT ASKED OF THE ROSTER'S OWN DRAW UNLESS IT BRINGS A CONFIRMATION.** The
+     * roster draws a period's payroll and cannot take one, and a second draft of
+     * it pays nobody: what stops two runs over the same people both being paid
+     * is asked when a run is RAISED, where only runs already raised count. A
+     * refusal here would only let a draft that can never be raised - an ad hoc
+     * run over the same names - shut the roster out of the period for good.
+     */
+    const repeated = roster && !repeats ? undefined : acknowledgedRepeats(
+      period, this.runsRepeating(accountId, period, contentOf(specs), viewingKey), repeats,
+      new Date().toISOString());
     /*
      * **`runId`, NOT `id`, AND THE NAME IS THE WHOLE REASON FOR THIS COMMENT.**
      * The loop below binds its own `id` for the EMPLOYEE, and this function's
@@ -2376,6 +2405,7 @@ export class PayrollService {
       proposalIds: {},
       status: 'draft',
       ...(skips ? { skips } : {}),
+      ...(repeated ? { repeats: repeated } : {}),
     };
     this.putRun(run, viewingKey);
     return { run, secrets };
@@ -2577,6 +2607,41 @@ export class PayrollService {
      * **AND THE ALREADY-PROPOSED GUARD IS ASKED AGAIN HERE**, against the record
      * as it is now rather than as it was when this call started.
      */
+    /*
+     * **A RUN IS NOT RAISED OVER PEOPLE ANOTHER RUN FOR THE PERIOD HAS ALREADY
+     * BEEN RAISED TO PAY, UNLESS ONE OF THE TWO SAYS IT MEANS TO.** Each run
+     * gives its people their own payment secrets, so nothing on chain connects
+     * the two. The confirmation is written when a run is drawn up; this is
+     * where it is read.
+     */
+    this.refuseRaisingOverAnotherRun(run, viewingKey);
+    /*
+     * **A LEG THAT WAS RAISED BEFORE AND NEVER HEARD BACK FROM IS RAISED AGAIN
+     * AS THE SAME ROUND, NOT AS A NEW ONE.** A new round is a new salt and a new
+     * id: if the first attempt landed there would be two open rounds over the
+     * same people. Asked here, before the material below is written, so a
+     * request describing a different round leaves the record of the earlier
+     * one exactly as it was.
+     */
+    const again = this.earlierRoundOfLeg(run, leg, viewingKey);
+    const earlierMaterial = run.payout?.[leg];
+    if (again !== undefined && earlierMaterial
+        && (payable.run.opensAt !== earlierMaterial.opensAt
+          || payable.run.closesAt !== earlierMaterial.closesAt
+          || payable.run.vault !== earlierMaterial.vault)) {
+      throw new Error(
+        `the ${leg} leg of run ${run.id} was raised before, may be on chain, and was raised with `
+        + `the window ${earlierMaterial.opensAt} to ${earlierMaterial.closesAt} at vault `
+        + `${earlierMaterial.vault}. Raising it again is raising that same round, so it takes `
+        + 'that window and that vault; a different one would be a second round over the same '
+        + 'people. To raise it with a different window or vault, withdraw that round first - '
+        + 'withdrawing asks the chain, and a round the chain holds can be withdrawn only until its '
+        + 'window opens - and raise it after.');
+    }
+    if (again !== undefined) {
+      this.accounts.refuseRaisingADifferentRound(run.accountId, again, viewingKey, payable.run, leg);
+    }
+
     const beforeRaising = this.requireRun(runId, viewingKey);
     if (beforeRaising.proposalIds[leg]) {
       throw new Error(`the ${leg} leg of this run is already proposed`);
@@ -2609,6 +2674,7 @@ export class PayrollService {
       asset: leg,
       run: payable.run,
       proposedBy,
+      ...(again !== undefined ? { again } : {}),
     });
 
     /*
@@ -2626,6 +2692,319 @@ export class PayrollService {
     afterRaising.proposalIds = { ...afterRaising.proposalIds, [leg]: proposal.id };
     this.putRun(afterRaising, viewingKey);
     return proposal;
+  }
+
+  /**
+   * **ANOTHER ATTEMPT AT SOME OF ONE LEG'S PEOPLE, RAISED ON THE LEG IT RETRIES.**
+   *
+   * A leg's approved round can end without reaching everybody: its window
+   * closes with people still owed, a vault runs dry part way, a device drops
+   * out half way through paying. Those people are paid by a second approval
+   * over a smaller tree - and the only thing that makes that safe is that each
+   * of them has the SAME leaf in the smaller tree as in the first. The account
+   * records a completed payment by its leaf, so whichever attempt pays a person
+   * first is the only one that can.
+   *
+   * **SO EVERY CHECK BELOW IS ABOUT THE LEAVES BEING THE LEG'S OWN.** The
+   * material must have been derived under the identity and the seed generation
+   * the leg was raised under, and each of its leaves must be byte-for-byte the
+   * leaf the leg already holds for that person. Material derived any other way
+   * gives the same people different leaves, which are different payments, which
+   * both settle.
+   *
+   * **THE RETRY IS WRITTEN ONTO THE LEG BEFORE IT IS RAISED**, for the reason a
+   * leg's own material is: what cannot be rebuilt goes down first, and which
+   * proposal it was raised as is written afterwards. A retry whose raise threw
+   * is raised again as the same round, exactly as a leg is.
+   *
+   * **IT DOES NOT ASK WHO HAS BEEN PAID, AND DOES NOT NEED TO.** Naming somebody
+   * the first round already paid costs a line in the tree and nothing else: the
+   * account refuses their leaf a second time.
+   */
+  async proposeRetry(
+    runId: string, viewingKey: Hex, proposedBy: string,
+    /**
+     * **THIS ATTEMPT'S PAYOUT MATERIAL, OR `null` FROM A CALLER THAT HAS NONE.**
+     * Built above this layer from the leg's own record, for the reason a leg's
+     * material is.
+     */
+    payable: RetryMaterial | null,
+    asset?: AssetId,
+  ) {
+    const run = this.requireRun(runId, viewingKey);
+    const leg = legOf(run, asset);
+    const recorded = run.payout?.[leg];
+    if (!recorded || !run.proposalIds[leg]) {
+      throw new Error(
+        `the ${leg} leg of run ${run.id} has not been raised, so there is nobody on it to retry: a `
+        + 'retry pays people an approved round did not reach, and this leg has no round yet. '
+        + 'Raise the leg first.');
+    }
+    /*
+     * **A LEG THAT NEVER REACHED THE CHAIN HAS NO ROUND TO RETRY.** A retry is
+     * judged against this company's ceiling like any round, and a payroll that
+     * policy stopped, split into smaller retries, would be a way round the rule
+     * that stopped it. A leg the chain held and that was later withdrawn may be
+     * retried, because its people keep their leaves - but only while no other run
+     * for the period has been raised over them since, which is asked below: the
+     * withdrawal is exactly what lets another run be raised over the same people.
+     */
+    const legRound = this.accounts.requireProposal(run.proposalIds[leg]!, viewingKey);
+    if (!legRound.raisedAt) {
+      throw new Error(
+        `the ${leg} leg of run ${run.id} ${legRound.status === 'blocked'
+          ? 'was stopped by this company\'s own policy'
+          : 'has no round the chain has been seen to hold'}, so there is no round on it to retry. A `
+        + 'retry is judged against the same rules as any round, and splitting a payroll that never '
+        + 'reached the chain into smaller ones is not a way round them.');
+    }
+    if (!payable) {
+      throw new Error(
+        `a retry on the ${leg} leg of run ${run.id} cannot be raised without its payout material: `
+        + 'the merkle root over the leaves of the people it pays, the window it may be paid in, '
+        + 'and the vault that will pay it.');
+    }
+    if (payable.identity.accountId !== run.accountId
+        || payable.identity.runId !== recorded.runId
+        || payable.identity.epoch !== recorded.epoch) {
+      throw new Error(
+        `this retry was built under run ${payable.identity.runId} at seed generation `
+        + `${payable.identity.epoch} for account ${payable.identity.accountId}, and the leg it `
+        + `retries was raised under ${recorded.runId} at generation ${recorded.epoch} for account `
+        + `${run.accountId}. A person on a retry is paid once only because their leaf is the leaf `
+        + 'they already had, and material derived under any other identity gives them a different '
+        + 'leaf: a second payment that nothing on chain would refuse.');
+    }
+    const indices = payable.originalIndices;
+    if (indices.length === 0) {
+      throw new Error('a retry pays at least one person, and this one names nobody');
+    }
+    const seen = new Set<number>();
+    for (const i of indices) {
+      if (!Number.isInteger(i) || i < 0 || i >= recorded.leaves.length) {
+        throw new Error(
+          `the ${leg} leg of run ${run.id} pays ${recorded.leaves.length} people; there is no `
+          + `person ${i} on it to retry`);
+      }
+      if (seen.has(i)) throw new Error(`person ${i} is named twice on this retry`);
+      seen.add(i);
+    }
+    if (payable.leaves.length !== indices.length
+        || payable.leaves.some((leaf, at) => leaf !== recorded.leaves[indices[at]!])) {
+      throw new Error(
+        'this retry\'s leaves are not the leaves the leg already holds for the people it names. '
+        + 'The leaf is the payment - the same leaf is refused a second time and a different one is '
+        + 'not - so a retry over different leaves would pay those people again.');
+    }
+    if (payable.run.payees !== BigInt(indices.length)) {
+      throw new Error(
+        `this retry names ${indices.length} people and its material binds ${payable.run.payees}. `
+        + 'The count is part of what the signers approve.');
+    }
+    if (payable.rootOf(payable.leaves) !== payable.run.root) {
+      throw new Error(
+        'this retry\'s payout root is not the root over its own leaves, so what the signers '
+        + 'would approve is not the proposal these people are in. Every payment against it would be '
+        + 'refused, after the signatures were collected and the fee was spent.');
+    }
+    /*
+     * **A RETRY IS A RAISE, AND IT IS NOT RAISED OVER PEOPLE ANOTHER RUN FOR THE
+     * PERIOD HAS BEEN RAISED TO PAY.** Their leaves in that other run are not
+     * these, so the account could pay them from both.
+     */
+    this.refuseRaisingOverAnotherRun(run, viewingKey);
+    const people = legEmployees(run, leg);
+    if (people.length !== recorded.leaves.length) {
+      throw new Error(
+        `the ${leg} leg of run ${run.id} lists ${people.length} people and was raised over `
+        + `${recorded.leaves.length} leaves, so which person each leaf belongs to cannot be said.`);
+    }
+
+    const at = new Date().toISOString();
+    const entries: ShieldedEntry[] = indices.map(i => {
+      const e = people[i]!;
+      return {
+        id: 'ent_' + nanoid(10),
+        kind: 'payroll',
+        asset: e.asset,
+        amount: e.amount,
+        counterparty: e.name,
+        memo: `${run.period} salary`,
+        at,
+        runId: run.id,
+        recipientId: e.id,
+      };
+    });
+
+    /*
+     * **A RETRY WHOSE RAISE THREW IS RAISED AGAIN AS ITSELF.** Found by the
+     * people it pays, among the rounds written down for this leg that no
+     * attempt on the leg has been confirmed as.
+     */
+    const confirmed = new Set((recorded.retries ?? []).map(r => r.proposalId).filter(Boolean));
+    const earlier = this.accounts.payrollRoundsOf(run.accountId, viewingKey).filter(r =>
+      r.runId === run.id && r.asset === leg && r.retry !== undefined && isLiveRound(r)
+      && !confirmed.has(r.id) && sameList(r.retry, indices));
+    if (earlier.length > 1) {
+      throw new Error(
+        `this retry on the ${leg} leg of run ${run.id} is written down as ${earlier.length} rounds `
+        + `that may be on chain (${earlier.map(r => r.id).join(', ')}). Cancel all but one of them `
+        + '(cancelling asks the chain first) before raising it again.');
+    }
+    const again = earlier[0]?.id;
+    if (again !== undefined) {
+      this.accounts.refuseRaisingADifferentRound(run.accountId, again, viewingKey, payable.run, leg);
+    }
+
+    const beforeRaising = this.requireRun(runId, viewingKey);
+    const leg0 = beforeRaising.payout?.[leg];
+    if (!leg0) throw new Error(`the ${leg} leg of run ${run.id} has lost its payout material`);
+    if (!(leg0.retries ?? []).some(r => r.proposalId === undefined && isThisRetry(r, payable))) {
+      const retry: RunRetry = {
+        originalIndices: [...indices],
+        root: payable.run.root,
+        payees: payable.run.payees,
+        opensAt: payable.run.opensAt,
+        closesAt: payable.run.closesAt,
+        vault: payable.run.vault,
+        proposedBy,
+        at,
+      };
+      leg0.retries = [...(leg0.retries ?? []), retry];
+      this.putRun(beforeRaising, viewingKey);
+    }
+
+    const proposal = await this.accounts.proposeRun({
+      accountId: run.accountId,
+      viewingKey,
+      /* Headcount and period, never amounts and never the asset - as a leg's own. */
+      summary: `Payroll ${run.period}, retry for ${indices.length} recipients`,
+      payload: { runId: run.id, entries, retry: [...indices] },
+      asset: leg,
+      run: payable.run,
+      proposedBy,
+      ...(again !== undefined ? { again } : {}),
+    });
+
+    const afterRaising = this.requireRun(runId, viewingKey);
+    const pending = afterRaising.payout?.[leg]?.retries
+      ?.find(r => r.proposalId === undefined && isThisRetry(r, payable));
+    if (pending) {
+      pending.proposalId = proposal.id;
+      this.putRun(afterRaising, viewingKey);
+    }
+    return proposal;
+  }
+
+  /**
+   * **EVERY RUN FOR THIS PERIOD THAT PAYS THE SAME PEOPLE THE SAME AMOUNTS,
+   * AND HOW FAR EACH ONE GOT.**
+   *
+   * The same people means the same names in the same currencies for the same
+   * amounts, in any order. Every run is counted, drafts and withdrawn ones
+   * included, because a draft can be raised at any moment and a withdrawn
+   * round's run can be raised again; what differs is the sentence a person
+   * reads about it.
+   */
+  private runsRepeating(
+    accountId: string, period: string, content: string, viewingKey: Hex, excluding?: string,
+  ): RepeatedRun[] {
+    const rounds = this.accounts.payrollRoundsOf(accountId, viewingKey);
+    return this.store.listRuns(accountId)
+      .filter(r => r.period === period && r.id !== excluding)
+      .map(r => this.openRun(r, viewingKey))
+      .filter(r => contentOf(r.employees) === content)
+      .map(r => {
+        const mine = rounds.filter(x => x.runId === r.id);
+        const live = mine.filter(isLiveRound);
+        const state: RepeatedRun['state'] = live.some(x => x.raisedAt) ? 'on chain'
+          : live.length ? 'raised, not confirmed by the chain'
+          : mine.some(x => x.status === 'cancelled') ? 'withdrawn'
+          : 'drawn up, not raised';
+        return { run: r, state };
+      });
+  }
+
+  /**
+   * **ANOTHER RUN FOR THIS PERIOD, ALREADY RAISED, THAT PAYS ANY OF THE SAME
+   * PEOPLE OR PAYS THE SAME PAYROLL.**
+   *
+   * The same people are the same roster entries; the same payroll is the same
+   * names, currencies and amounts, which is how an ad hoc run is recognised,
+   * since its people have no roster entries to compare. Only a run with a round
+   * that may be on chain counts: a draft pays nobody until it is raised, and
+   * whatever is raised second - a run's own leg, or a retry on a run - is what
+   * this refuses. A confirmation on either run naming the other lets the pair
+   * through.
+   */
+  private refuseRaisingOverAnotherRun(run: PayrollRun, viewingKey: Hex): void {
+    const live = new Set(this.accounts.payrollRoundsOf(run.accountId, viewingKey)
+      .filter(isLiveRound).map(r => r.runId));
+    const mine = new Set(run.employees.map(e => e.id));
+    const content = contentOf(run.employees);
+    const clashes = this.store.listRuns(run.accountId)
+      .filter(r => r.period === run.period && r.id !== run.id && live.has(r.id))
+      .map(r => this.openRun(r, viewingKey))
+      .filter(r => !(run.repeats?.of ?? []).includes(r.id) && !(r.repeats?.of ?? []).includes(run.id))
+      .filter(r => contentOf(r.employees) === content || r.employees.some(e => mine.has(e.id)));
+    if (clashes.length === 0) return;
+    const ids = clashes.map(r => r.id).join(', ');
+    throw new Error(
+      `${clashes.length === 1 ? `run ${ids} has` : `runs ${ids} have`} already been raised for `
+      + `${run.period} to pay some of the same people. The two runs give each of them different `
+      + 'payment secrets, so nothing on chain would connect them, both could be approved and '
+      + 'paid, and they would be paid twice. Pay them from the run already raised: raise it again '
+      + 'if its raise failed, or raise a retry on it for anybody it has not reached. A run that '
+      + 'means to pay them a second time has to carry a confirmation naming that run, and no door '
+      + 'in this product yet takes one for a run drawn from the roster.');
+  }
+
+  /**
+   * **A DRAFT RUN FOR THIS PERIOD THAT A RAISE HAS ALREADY BEEN ATTEMPTED FOR.**
+   * Refused at the roster door, which draws up one run per period, because
+   * drawing it up again gives everybody on it new payment secrets.
+   */
+  private refuseAPayrollThatMayBeOnChain(accountId: string, period: string, viewingKey: Hex): void {
+    const live = this.accounts.payrollRoundsOf(accountId, viewingKey).filter(isLiveRound);
+    const raised = this.store.listRuns(accountId)
+      .filter(r => r.period === period && live.some(x => x.runId === r.id));
+    if (raised.length === 0) return;
+    const seen = raised.some(r => live.some(x => x.runId === r.id && x.raisedAt));
+    throw new Error(
+      `a run for ${period} already exists and a round has been raised for it: `
+      + `${raised.map(r => r.id).join(', ')}. `
+      + (seen
+        ? 'The chain has been seen to hold that round. '
+        : 'The chain has not been seen to hold it, which is not the same as it not being there: a '
+          + 'raise can fail after the network already has it. ')
+      + 'Drawing this payroll up again as a new run would give everybody on it new payment '
+      + 'secrets, and both rounds could then be approved and paid, so everybody would be paid '
+      + 'twice. Raise that run again unchanged - it is asked of the chain first and cannot open a '
+      + 'second round - and if some people on it are not paid by the time its window closes, '
+      + 'raise a retry on it for them.');
+  }
+
+  /** A round seen on chain that is neither withdrawn nor stopped by policy. */
+  private roundMayPay(proposalId: string, viewingKey: Hex): boolean {
+    const p = this.accounts.requireProposal(proposalId, viewingKey);
+    return Boolean(p.raisedAt) && p.status !== 'cancelled' && p.status !== 'blocked';
+  }
+
+  /**
+   * **THE PROPOSAL THIS LEG HAS ALREADY BEEN RAISED AS, IF ANY, THAT MAY BE ON
+   * CHAIN AND THAT THE RUN WAS NEVER TOLD ABOUT.** More than one is refused
+   * rather than chosen between.
+   */
+  private earlierRoundOfLeg(run: PayrollRun, leg: AssetId, viewingKey: Hex): string | undefined {
+    const rounds = this.accounts.payrollRoundsOf(run.accountId, viewingKey).filter(r =>
+      r.runId === run.id && r.asset === leg && r.retry === undefined && isLiveRound(r));
+    if (rounds.length > 1) {
+      throw new Error(
+        `the ${leg} leg of run ${run.id} is written down as ${rounds.length} rounds that may be on `
+        + `chain (${rounds.map(r => r.id).join(', ')}), and a leg is raised as one. Cancel all but `
+        + 'one of them (cancelling asks the chain first) before raising this leg again.');
+    }
+    return rounds[0]?.id;
   }
 
   /*
@@ -2855,7 +3234,7 @@ export class PayrollService {
   /* ---------------- sealing runs ---------------- */
 
   private putRun(run: PayrollRun, viewingKey: Hex): void {
-    const { employees, totals, proposalIds, payout, skips, ...operational } = run;
+    const { employees, totals, proposalIds, payout, skips, repeats, ...operational } = run;
     /*
      * **A RUN'S MARKER IS ITS OWN AND IT IS NOT ITS COMPANY'S.**
      *
@@ -2879,11 +3258,11 @@ export class PayrollService {
       // Outside the envelope so a run can be found by its proposals; the map
       // that says which asset each leg is in stays inside, so the store cannot
       // see that this company pays anyone in ether.
-      proposalIds: Object.values(proposalIds).sort(),
+      proposalIds: [...Object.values(proposalIds), ...retryProposalIdsOf(payout)].sort(),
       keyEpoch: this.accounts.keyEpochOf(run.accountId),
       sealed: sealRecord(
         'payroll', run.accountId,
-        { employees, totals, proposalIds, payout, skips } satisfies RunSecrets, viewingKey,
+        { employees, totals, proposalIds, payout, skips, repeats } satisfies RunSecrets, viewingKey,
       ),
     });
   }
@@ -2930,9 +3309,46 @@ export class PayrollService {
     runId: string;
     facts: ShieldedPaymentFacts[];
     seeds: PayoutSeed[];
+    /**
+     * The seed generation the material must be built under, when it is not the
+     * current one: set only for a leg already raised once whose round may be on
+     * chain, so raising it again builds the same leaves. Absent means current.
+     */
+    epoch?: number;
   }> {
     const run = this.requireRun(runId, viewingKey);
     const leg = legOf(run, asset);
+    /*
+     * **A LEG ALREADY RAISED ONCE IS RAISED AGAIN FROM WHAT IT WAS RAISED OVER.**
+     * Its round may be on chain. The roster may have moved since - a salary
+     * corrected, a person marked a leaver, a signer removed and the seed moved
+     * on - and material built from the roster now would be a different round
+     * over different leaves, which is refused; so the only way to raise the same
+     * round again would be closed by the very change that makes it necessary.
+     */
+    const recorded = run.payout?.[leg];
+    const earlier = recorded && !run.proposalIds[leg]
+      ? this.earlierRoundOfLeg(run, leg, viewingKey) : undefined;
+    /*
+     * **ONLY WHEN THAT ROUND IS ON CHAIN, OR THE CHAIN CANNOT SAY.** A round the
+     * chain does not hold would be raised for the first time from the record,
+     * past whatever the roster has refused since - a person marked a leaver, say.
+     * So that case is built from the roster like any leg, and if the roster has
+     * moved the raise is refused as a different round and says to withdraw it.
+     */
+    if (recorded && earlier !== undefined
+        && await this.accounts.whereIsRound(earlier, viewingKey) !== 'absent') {
+      const people = legEmployees(run, leg);
+      return {
+        accountId: run.accountId,
+        runId: recorded.runId,
+        facts: recorded.facts.map((f, i) => ({
+          ...f, payee: payrollPayee(people[i]?.name ?? 'a person on this run', f.payee),
+        })),
+        seeds: await this.accounts.payoutSeedsOf(run.accountId, viewingKey),
+        epoch: recorded.epoch,
+      };
+    }
     return {
       accountId: run.accountId,
       runId: runIdForLeg(run, leg),
@@ -3089,6 +3505,124 @@ export class PayrollService {
       }
     }
 
-    return { leaves: payout.leaves, window, proposal };
+    /*
+     * **THE LEG'S OTHER ATTEMPTS, SO A PERSON ONE OF THEM CAN STILL PAY IS NOT
+     * REPORTED AS BEYOND REACH.** Only attempts seen on chain and neither
+     * withdrawn nor stopped by policy: counting any other would hide the people
+     * nothing can pay behind a round that cannot pay them.
+     */
+    const retries = (payout.retries ?? [])
+      .filter(r => r.proposalId !== undefined && this.roundMayPay(r.proposalId, viewingKey))
+      .map(r => ({ indices: [...r.originalIndices], window: { from: r.opensAt, until: r.closesAt } }));
+    return { leaves: payout.leaves, window, proposal, ...(retries.length ? { retries } : {}) };
   }
 }
+
+/**
+ * **WHAT AN ADMIN HAS TO SAY TO DRAW UP A RUN THAT REPEATS ANOTHER.**
+ *
+ * The shape the roster door uses for people left out of a run, applied to runs
+ * repeated: refused by default, the refusal names what it found, and a person
+ * proceeds only by naming that same set back, with a reason, under their own
+ * name. The names are compared in both directions. A repeated run the admin did
+ * not name is one they have not read about; a run they named that is not
+ * repeated means the list they read has moved, and their agreement is about a
+ * different payroll.
+ *
+ * **WHY A REPEAT IS REFUSED AT ALL.** Every run derives its own per-payee
+ * payment secrets from its own id, so two runs over the same people are, to the
+ * account, two unrelated sets of payments, and both can be paid. For a bonus or
+ * a second invoice that is exactly right. For somebody whose first run failed
+ * and who does not know whether it reached the chain, it is everybody paid
+ * twice - and the way to try again is not a new run at all.
+ */
+export interface RepeatAcknowledgement {
+  /** The same set as the runs this one repeats. Compared as a set. */
+  runIds: string[];
+  /**
+   * Who is accepting it. Where there is a signed-in caller the served routes
+   * take this from the signed-in caller and never from the request body.
+   */
+  by: string;
+  /** Why, in their words. A blank reason is refused. */
+  reason: string;
+}
+
+interface RepeatedRun {
+  run: PayrollRun;
+  state: 'on chain' | 'raised, not confirmed by the chain' | 'withdrawn' | 'drawn up, not raised';
+}
+
+/**
+ * **WHAT A RUN PAYS, AS ONE COMPARABLE VALUE.** Names, currencies and amounts,
+ * in any order: a run is a repeat of another by what it pays, not by how its
+ * list happens to be sorted.
+ */
+const contentOf = (people: Array<{ name: string; asset: AssetId; amount: bigint }>): string =>
+  JSON.stringify(people.map(p => [p.name, p.asset, String(p.amount)]).sort((a, b) =>
+    a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[1] < b[1] ? -1 : a[1] > b[1] ? 1
+      : a[2] < b[2] ? -1 : a[2] > b[2] ? 1 : 0));
+
+/** A round that is not withdrawn and was not stopped by this company's own policy may be on chain. */
+const isLiveRound = (r: PayrollRound): boolean => r.status !== 'cancelled' && r.status !== 'blocked';
+
+const sameList = (a: number[], b: number[]): boolean =>
+  a.length === b.length && a.every((x, i) => x === b[i]);
+
+const isThisRetry = (r: RunRetry, m: RetryMaterial): boolean =>
+  sameList(r.originalIndices, m.originalIndices) && r.root === m.run.root
+  && r.payees === m.run.payees && r.opensAt === m.run.opensAt && r.closesAt === m.run.closesAt
+  && r.vault === m.run.vault;
+
+/** Every proposal a leg's retries were raised as, so a run can be found by any of its rounds. */
+const retryProposalIdsOf = (payout: Record<AssetId, RunPayout> | undefined): string[] =>
+  Object.values(payout ?? {}).flatMap(p =>
+    (p.retries ?? []).map(r => r.proposalId).filter((id): id is string => id !== undefined));
+
+const repeatRefusal = (period: string, found: RepeatedRun[]): string =>
+  `this run pays the same people the same amounts for ${period} as `
+  + `${found.map(f => `run ${f.run.id} (${f.state})`).join(', ')}. Each run derives its own payment `
+  + 'secrets, so to the account two runs are two unrelated sets of payments and nothing on chain '
+  + 'stops both being paid: everybody on it would be paid twice. If an earlier run failed and it is '
+  + 'not known whether it reached the chain, do not draw it up again. Raise that run again unchanged '
+  + 'instead - it keeps its people\'s payment secrets, so nobody on it can be paid twice, and a '
+  + 'round of it that may already be on chain is asked about rather than opened again - or raise a '
+  + 'retry on it for the people it did not reach. '
+  + `If this really is a second payment, confirm it by naming ${found.map(f => f.run.id).join(', ')} `
+  + 'back with a reason.';
+
+/**
+ * **THE CONFIRMATION FOR A REPEATED RUN, CHECKED, OR THE REFUSAL.** Returns the
+ * record to keep on the run, or nothing when the run repeats nothing.
+ */
+const acknowledgedRepeats = (
+  period: string, found: RepeatedRun[], ack: RepeatAcknowledgement | undefined, at: string,
+): RunRepeatRecord | undefined => {
+  if (!ack) {
+    if (found.length) throw new Error(repeatRefusal(period, found));
+    return undefined;
+  }
+  const named = new Set(ack.runIds);
+  const unnamed = found.filter(f => !named.has(f.run.id));
+  if (unnamed.length) {
+    throw new Error(
+      `this run also repeats ${unnamed.map(f => `run ${f.run.id} (${f.state})`).join(', ')}, which `
+      + 'is not in what was confirmed. A repeat is confirmed by naming every run it repeats, so '
+      + 'read the list again and confirm the whole of it.');
+  }
+  const repeating = new Set(found.map(f => f.run.id));
+  const notRepeated = [...named].filter(id => !repeating.has(id));
+  if (notRepeated.length) {
+    throw new Error(
+      `${notRepeated.join(', ')} ${notRepeated.length === 1 ? 'was' : 'were'} confirmed as repeated `
+      + `and this run does not repeat ${notRepeated.length === 1 ? 'it' : 'them'}, so the list that was `
+      + 'read is not the list this run would act on. Take the confirmation again against what this '
+      + 'run actually repeats.');
+  }
+  if (found.length === 0) return undefined;
+  if (!ack.by.trim()) throw new Error('a repeated payroll has to be attributable to somebody');
+  if (!ack.reason.trim()) {
+    throw new Error('say why this run repeats another; a blank reason is not a record');
+  }
+  return { of: [...repeating].sort(), reason: ack.reason, by: ack.by, at };
+};

@@ -107,7 +107,8 @@ export interface RunStatus {
   /**
    * True when the window has closed with people still owed. **The one state an
    * operator must not miss:** those payees need a fresh proposal, because
-   * nothing can pay them from this run any more.
+   * nothing can pay them from this run any more - and no retry that is still
+   * open, or not yet open, covers them either.
    */
   stranded: PayeeStatus[];
 }
@@ -177,6 +178,18 @@ export interface RunInputs {
   skips?: SkipRegister;
   /** What our submissions did, per payee index. Absent for anyone never tried. */
   attempts?: Record<number, PayeeAttempts>;
+  /**
+   * **LATER ATTEMPTS AT SOME OF THESE SAME PAYEES, EACH WITH ITS OWN WINDOW.**
+   *
+   * A retry pays a subset of a run's people from a second approval, and it can
+   * do so only because each of them has the same leaf in it - so this view,
+   * which reads payment by leaf, already reports anybody a retry has paid. What
+   * it could not know without this is that a payee this run can no longer pay
+   * has another round that still can. `indices` are positions in `leaves`.
+   *
+   * **OURS, NOT THE CHAIN'S, AND NOT VERIFIED HERE.** Only `stranded` reads it.
+   */
+  retries?: Array<{ indices: number[]; window: RunWindow }>;
 }
 
 /**
@@ -270,7 +283,17 @@ export const runStatus = (
     failed,
     complete: outstanding.length === 0,
     phase,
-    stranded: phase === 'closed' ? outstanding : [],
+    /*
+     * **STRANDED MEANS NOTHING CAN PAY THEM ANY MORE, NOT MERELY THAT THIS
+     * ROUND CANNOT.** A payee this run's closed window has left owed, but whom a
+     * retry still open or not yet open covers, is still reachable - and telling
+     * an operator they need a fresh round is telling them to raise one they
+     * already have.
+     */
+    stranded: phase === 'closed'
+      ? outstanding.filter(p => !(inputs.retries ?? []).some(r =>
+        r.indices.includes(p.index) && t < r.window.until))
+      : [],
   };
 };
 

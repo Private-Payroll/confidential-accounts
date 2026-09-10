@@ -2512,10 +2512,13 @@ export class AccountService {
     /** The run, as the chain is asked to open one. Every part is required. */
     run: RunProposal;
     proposedBy: string;
+    /** A round already written down for this run that may be on chain: raised again AS ITSELF. See `raiseRunAgain`. */
+    again?: string;
   }): Promise<Proposal> {
     const account = this.open(args.accountId, args.viewingKey);
     const proposer = account.signers.find(s => s.id === args.proposedBy);
     if (!proposer) throw new Error('proposer is not a signer on this account');
+    if (args.again !== undefined) return this.raiseRunAgain(args, args.again, account);
 
     const entries = (args.payload.entries ?? []) as ShieldedEntry[];
     const asset = this.oneAssetOf(entries, args.asset ?? NO_ASSET);
@@ -2713,6 +2716,21 @@ export class AccountService {
     /* Ours, and it says so. `R4` — the chain has no ceiling and refused nothing. */
     if (proposal.status === 'blocked') {
       throw new Error(`this company's own policy stopped this proposal here: ${proposal.blockedReason}`);
+    }
+    /*
+     * **A WITHDRAWN ROUND COLLECTS NO APPROVALS, EVEN IF IT TURNS UP ON CHAIN.**
+     * A round is withdrawn here without a transaction when the chain did not
+     * hold it at the moment of asking - and a raise can still be in flight at
+     * that moment and land afterwards. Once withdrawn, whatever replaced it may
+     * already be raised over the same people; approving the late arrival would
+     * be approving both.
+     */
+    if (proposal.status === 'cancelled') {
+      throw new Error(
+        'this proposal was withdrawn, so it takes no approvals - including if it has since appeared '
+        + 'on chain, because what replaced it may pay the same people. Whatever it was for has to '
+        + 'be raised as a new round: for a payroll run, raise the run again, or a retry on it if '
+        + 'its round had reached the chain.');
     }
 
     const account = this.open(proposal.accountId, viewingKey);
@@ -3601,6 +3619,165 @@ export class AccountService {
       mismatch + replay + (replayOf ? ' and the attempt has been recorded here.' : ''),
     );
   }
+
+  /**
+   * **EVERY PAYROLL ROUND THIS ACCOUNT HAS WRITTEN DOWN, WITH THE RUN AND THE
+   * LEG EACH ONE IS FOR.**
+   *
+   * A run learns which proposal a leg was raised as only when the raise
+   * returns. A raise that threw after reaching the chain therefore leaves a
+   * round on record here, and possibly on chain, that the run itself has no
+   * pointer to - and a payroll screen that asks the run alone whether the
+   * period has been raised is told no. This is the other half of that
+   * question, answered from the proposal records, which are written before the
+   * chain is called and so exist for every attempt that could have landed.
+   *
+   * The run and the asset are read out of the sealed payload, which is why the
+   * viewing key is needed; nothing here asks the chain anything.
+   */
+  payrollRoundsOf(accountId: string, viewingKey: Hex): PayrollRound[] {
+    const rounds: PayrollRound[] = [];
+    for (const p of this.listProposals(accountId, viewingKey)) {
+      if (p.kind !== 'payroll') continue;
+      const payload = parseCanonical<{ runId?: unknown; retry?: unknown; __change: StateChange }>(
+        unseal(p.sealedPayload, viewingKey));
+      if (typeof payload.runId !== 'string') continue;
+      rounds.push({
+        id: p.id, runId: payload.runId, asset: payload.__change.asset, status: p.status,
+        ...(p.raisedAt ? { raisedAt: p.raisedAt } : {}), chainId: p.chainId,
+        ...(Array.isArray(payload.retry) ? { retry: payload.retry as number[] } : {}),
+      });
+    }
+    return rounds;
+  }
+
+  /**
+   * **ASKS THE CHAIN WHETHER A PAYROLL ROUND WRITTEN DOWN HERE IS THERE, AND
+   * RECORDS IT WHEN IT IS.** The question `approve` and `cancel` ask before
+   * acting, for a caller that must decide what to build before it raises
+   * anything. A round withdrawn or stopped by this company's own policy is
+   * answered `absent` without asking: neither is one this product will raise
+   * again as itself, whatever the chain holds.
+   */
+  async whereIsRound(proposalId: string, viewingKey: Hex): Promise<'present' | 'absent' | 'unknown'> {
+    const proposal = this.requireProposal(proposalId, viewingKey);
+    if (proposal.status === 'blocked' || proposal.status === 'cancelled') return 'absent';
+    return this.chainHolds(proposal, viewingKey);
+  }
+
+  /**
+   * **REFUSES TO RAISE A PAYROLL ROUND UNDER AN EARLIER RECORD WHEN IT IS NOT
+   * THE PROPOSAL THAT RECORD DESCRIBES.** Asked before anything is written about
+   * a raise, so a request that would be refused leaves no trace on the run.
+   *
+   * A round's id is a function of its root, its payee count, its window, its
+   * vault and its salt, so two requests are the same round exactly when the
+   * id rebuilt from the new values under the record's own salt is the record's
+   * id. The leg's asset is compared as well, because it is not in the id.
+   */
+  refuseRaisingADifferentRound(
+    accountId: string, earlierId: string, viewingKey: Hex, run: RunProposal, asset: AssetId,
+  ): void {
+    const earlier = this.requireProposal(earlierId, viewingKey);
+    if (earlier.kind !== 'payroll' || earlier.accountId !== accountId) {
+      throw new Error(`round ${earlierId} is not a payroll round on this account`);
+    }
+    if (earlier.status === 'cancelled' || earlier.status === 'blocked') {
+      throw new Error(
+        `round ${earlierId} is ${earlier.status}, so it is not a round that may be on chain. Only `
+        + 'a round that may be there is raised again as itself; this one is raised as a new round.');
+    }
+    const { __change: kept } = parseCanonical<{ __change: StateChange }>(
+      unseal(earlier.sealedPayload, viewingKey));
+    const sameRound = this.runChainIdOf(run, kept.salt) === earlier.chainId
+      && kept.asset === asset;
+    if (!sameRound) {
+      throw new Error(
+        (earlier.raisedAt
+          ? 'this payroll is already on chain as a round over a different payout root, window '
+            + 'or vault than the one handed in now. '
+          : 'an earlier attempt to raise this payroll is written down with no confirmation from '
+            + 'the chain, and it was over a different payout root, window or vault than the one '
+            + 'handed in now. It may still be on chain. ')
+        + 'Raising a second, different round over the same people is how the same people come '
+        + 'to be approved twice. Raise it again exactly as it was; or, if its window has not '
+        + 'opened yet, withdraw it first (withdrawing asks the chain) and raise a different one '
+        + 'after.');
+    }
+  }
+
+  /**
+   * **RAISES A PAYROLL ROUND THAT IS ALREADY WRITTEN DOWN, AS ITSELF - THE SAME
+   * CHANGE, THE SAME SALT, THE SAME RECORD - NEVER AS A NEW ONE.**
+   *
+   * A raise can throw after the node has the transaction. The record was
+   * written first, so it survives; what does not survive is any knowledge of
+   * whether that proposal landed. Raising the run again through the ordinary path
+   * mints a fresh salt, and a fresh salt is a different round id: if the first
+   * attempt did land there are now two open rounds over the same people, the
+   * approvals split between them so that neither may reach the threshold, and
+   * two fees are spent.
+   *
+   * **REUSING THE RECORD'S OWN CHANGE MAKES THE SECOND ATTEMPT THE SAME ROUND
+   * AS THE FIRST.** Its id is identical, so the chain refuses whichever of the
+   * two arrives second as a round that is already open, and there is never a
+   * second round to split anything across.
+   *
+   * **IT ASKS THE CHAIN FIRST, AND EACH ANSWER HAS ONE CONSEQUENCE:**
+   *
+   *   present   the earlier attempt landed. Nothing is raised and no fee is
+   *             spent; the record is confirmed and returned.
+   *   unknown   refused. Raising on a guess is the thing this exists to stop.
+   *   absent    the same round is raised again, under the same id.
+   *
+   * **AND THE RUN MUST BE THE SAME RUN.** The id is a function of the root,
+   * the payee count, the window, the vault and the salt, so a request that
+   * differs in any of them would be a different round under the old record's
+   * name. That is refused, and the sentence says what the earlier round is.
+   */
+  private async raiseRunAgain(
+    args: { accountId: string; viewingKey: Hex; run: RunProposal; asset?: AssetId; proposedBy: string },
+    earlierId: string,
+    account: Account,
+  ): Promise<Proposal> {
+    this.refuseRaisingADifferentRound(
+      args.accountId, earlierId, args.viewingKey, args.run, args.asset ?? NO_ASSET);
+    const earlier = this.requireProposal(earlierId, args.viewingKey);
+    const { __change: kept } = parseCanonical<{ __change: StateChange }>(
+      unseal(earlier.sealedPayload, args.viewingKey));
+
+    const held = earlier.raisedAt ? 'present' : await this.chainHolds(earlier, args.viewingKey);
+    if (held === 'unknown') {
+      throw new Error(
+        'an earlier attempt to raise this payroll is written down with no confirmation from the '
+        + 'chain, and the ledger did not answer when asked whether it is there. Raising it again '
+        + 'now would be a guess about a round that may already be open. Try again once the '
+        + 'ledger answers.');
+    }
+    if (held === 'present') return this.requireProposal(earlierId, args.viewingKey);
+
+    const nowInSeconds = BigInt(Math.floor(Date.now() / 1000));
+    if (args.run.closesAt <= nowInSeconds) {
+      throw new Error(
+        `this run's window closed at ${args.run.closesAt} and it is now ${nowInSeconds}, and the `
+        + 'earlier attempt to raise it is not on chain, so there is nothing to raise again: no '
+        + 'payment could fall inside that window. Withdraw that attempt (withdrawing asks the chain '
+        + 'first), then raise the run with a window that ends in the future.');
+    }
+    const fresh = this.requireProposal(earlierId, args.viewingKey);
+    await this.raise(fresh, args.viewingKey, async () => {
+      const raised = await this.ledger.proposeRun(
+        args.accountId, args.run, kept, this.refFor(account, args.proposedBy));
+      if (raised.proposalId !== fresh.chainId) {
+        throw new Error(
+          'the ledger raised this run under an id this service cannot derive, so no approval '
+          + `collected here would match it. the ledger's id: ${raised.proposalId}; this `
+          + `service's: ${fresh.chainId}.`);
+      }
+      return raised;
+    });
+    return fresh;
+  }
 }
 
 /**
@@ -3765,4 +3942,22 @@ export function governanceVault(named: Hex | undefined, noVault: Hex): Hex {
     );
   }
   return noVault;
+}
+
+/**
+ * **ONE PAYROLL ROUND AS THE PROPOSAL RECORDS DESCRIBE IT**, for a caller that
+ * needs to know what has been raised for a run without the run having been told.
+ */
+export interface PayrollRound {
+  id: string;
+  /** The run this proposal was raised for. */
+  runId: string;
+  /** The settlement asset of the leg it is for. */
+  asset: AssetId;
+  status: Proposal['status'];
+  /** Set once the chain has been seen to hold it. Absent is not confirmed, never not raised. */
+  raisedAt?: string;
+  chainId: Hex;
+  /** Present on a retry: the leg positions it pays. Absent on a leg's own round. */
+  retry?: number[];
 }

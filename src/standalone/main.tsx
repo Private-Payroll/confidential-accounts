@@ -20,7 +20,7 @@ import { AccountService } from '../core/account.js';
 import { PayrollService, RecordingInviteDelivery } from '../core/payroll.js';
 import { runPayments } from '../midnight/run-status.js';
 import { rootOfLeaves } from '../midnight/payout-tree.js';
-import { runMaterialFor } from '../midnight/run-material.js';
+import { runMaterialFor, retryMaterialFor } from '../midnight/run-material.js';
 import { bigintJsonReplacer, type Hex } from '../core/crypto.js';
 
 /**
@@ -569,6 +569,7 @@ async function route(url: URL, init?: RequestInit): Promise<Response> {
         opensAt: BigInt(String(body.opensAt)),
         closesAt: BigInt(String(body.closesAt)),
         vault: String(body.vault) as Hex,
+        epoch: inputs.epoch,
       });
       /*
        * **THE SEAT COMES FROM THE SIGNED-IN CALLER HERE TOO, AND IS NOT READ
@@ -583,6 +584,38 @@ async function route(url: URL, init?: RequestInit): Promise<Response> {
       return ok(await payroll.proposeRun(
         runId, body.viewingKey,
         accounts.seatOf(inputs.accountId, body.viewingKey as Hex, await caller(init)),
+        material, body.asset));
+    }
+    /* **THE SAME RETRY THE HOSTED BUILD RAISES, BUILT THE SAME WAY**: from the
+     * leg's own record, with no field through which a run identity could be
+     * supplied. The shapes a schema would check on the hosted build are checked
+     * here, because this build has none. */
+    if (seg[3] === 'retry' && method === 'POST') {
+      if (!/^[0-9]+$/.test(String(body.opensAt ?? ''))
+          || !/^[0-9]+$/.test(String(body.closesAt ?? ''))) {
+        return bad('a retry\'s window is two whole numbers of seconds since the Unix epoch - '
+          + 'seconds, because that is what block time is compared against.');
+      }
+      if (!Array.isArray(body.indices) || body.indices.length === 0
+          || !body.indices.every((i: unknown) => Number.isInteger(i) && (i as number) >= 0)) {
+        return bad('a retry names the people it pays as positions in the leg, and names at '
+          + 'least one.');
+      }
+      const rebuild = await payroll.payoutRebuildOf(runId, body.viewingKey, body.asset);
+      if (!rebuild) {
+        return bad('this leg of the run has not been raised, so there is nobody on it to retry. '
+          + 'Raise the leg first; a retry pays people an approved round did not reach.');
+      }
+      const material = await retryMaterialFor({
+        rebuild,
+        indices: body.indices as number[],
+        opensAt: BigInt(String(body.opensAt)),
+        closesAt: BigInt(String(body.closesAt)),
+        vault: String(body.vault) as Hex,
+      });
+      return ok(await payroll.proposeRetry(
+        runId, body.viewingKey,
+        accounts.seatOf(rebuild.identity.accountId, body.viewingKey as Hex, await caller(init)),
         material, body.asset));
     }
     // `settle` STOOD HERE. No balance, no `PayrollService.settle`.
