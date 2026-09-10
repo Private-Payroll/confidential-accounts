@@ -57,11 +57,13 @@ const CAPABLE: WriteCapability = {
     coinPublicKey: () => 'not-a-secret: a test literal',
     encryptionPublicKey: () => 'not-a-secret: a test literal',
     balanceOwnLegs: async (tx: unknown) => tx,
+    release: async () => {},
   } as WriteCapability['customer'],
   sponsor: {
     addFeeAndFinalise: async (tx: unknown) => tx,
     submit: async () => ({ ref: 'tx', at: '' }),
     release: async () => {},
+    payingFor: () => {},
     capacity: async () => ({ dust: 0n, night: 0n }),
   } as WriteCapability['sponsor'],
   storagePassword: async () => 'not-a-secret: a test literal',
@@ -223,6 +225,83 @@ describe('and a deployment that can write is not stopped here', () => {
       expect(calls, `${name} did not reach the ledger`).toEqual([name]);
     });
   }
+
+  /*
+   * **EVERY WRITE SAYS WHOSE TRANSACTION IT IS, AND THIS IS THE LAST LAYER
+   * THAT KNOWS.**
+   *
+   * What the fee payer is handed is a bound, shielded transaction. Whose it is
+   * cannot be read off it, off a receipt or off the chain, so the answer exists
+   * for exactly as long as this call frame does - and a fee payer that pays for
+   * whatever arrives has discarded it before anybody thinks to ask.
+   *
+   * RED WHEN: `payingFor` is dropped from `write`, or is called with anything
+   * but the account the write is about. Both go unnoticed everywhere else: no
+   * write changes, no refusal changes, and the only symptom is a record that
+   * cannot be billed, audited or explained a month later.
+   */
+  it('names the company to the fee payer, on every one of the nine writes', async () => {
+    for (const [name, call] of WRITES) {
+      const named: string[] = [];
+      const capability: WriteCapability = {
+        ...CAPABLE,
+        sponsor: { ...CAPABLE.sponsor, payingFor: (id: string) => { named.push(id); } },
+      };
+      const inner: any = new Proxy({}, {
+        get: () => () => Promise.resolve({ ref: 'x' }),
+      });
+      await call(new ChainLedger(inner, DEPLOYMENT, capability));
+      expect(named, `${name} paid for a company it never named`).toEqual(['a']);
+    }
+  });
+
+  /*
+   * **AND IT IS TOLD BEFORE THE WORK STARTS, NOT AFTER IT.**
+   *
+   * The fee payer reads the company at the moment it records a payment, which
+   * happens inside the call below. Told afterwards, every record carries the
+   * PREVIOUS company - which is worse than an empty one, because nothing
+   * distinguishes it from a right answer.
+   *
+   * RED WHEN: the `payingFor` call is moved below `go()`.
+   */
+  it('and it is told before the ledger is reached, not after', async () => {
+    const order: string[] = [];
+    const capability: WriteCapability = {
+      ...CAPABLE,
+      sponsor: { ...CAPABLE.sponsor, payingFor: () => { order.push('named'); } },
+    };
+    const inner: any = new Proxy({}, {
+      get: () => () => { order.push('reached the ledger'); return Promise.resolve({ ref: 'x' }); },
+    });
+    await new ChainLedger(inner, DEPLOYMENT, capability).open('a', {} as never);
+    expect(order).toEqual(['named', 'reached the ledger']);
+  });
+
+  /*
+   * **A REFUSED WRITE NAMES NOBODY.**
+   *
+   * A deployment that cannot write has nothing to attribute, and telling a fee
+   * payer it is about to pay for a company when no transaction will exist
+   * leaves a company name standing against whatever the NEXT deployment does
+   * pay for.
+   *
+   * RED WHEN: the `payingFor` call is moved above the `cannotWrite` check.
+   */
+  it('a write that is refused tells the fee payer nothing', async () => {
+    const named: string[] = [];
+    const capability = {
+      ...CAPABLE,
+      sponsor: { ...CAPABLE.sponsor, payingFor: (id: string) => { named.push(id); } },
+      // short of one piece, so every write refuses
+      compiled: undefined,
+    } as unknown as WriteCapability;
+    const inner: any = new Proxy({}, { get: () => () => Promise.resolve({ ref: 'x' }) });
+    await expect(new ChainLedger(inner, DEPLOYMENT, capability).open('a', {} as never))
+      .rejects.toThrow(/cannot write to it/);
+    expect(named, 'a deployment that cannot pay said whose transaction it was paying for')
+      .toEqual([]);
+  });
 
   /*
    * **AND THE ARGUMENTS ARRIVE UNCHANGED.**

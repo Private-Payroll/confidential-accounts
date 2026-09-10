@@ -12,6 +12,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { WalletFeeSponsor, CUSTOMER_BALANCES, SPONSOR_BALANCES, type SponsorWallet } from './sponsor.js';
+import { CUSTOMER_TOKEN_KINDS, SPONSOR_TOKEN_KINDS } from './wallet.js';
 
 interface Call { method: string; args: unknown[] }
 
@@ -34,6 +35,14 @@ function fakeWallet(overrides: Partial<SponsorWallet> = {}) {
     },
     async revert(booking) {
       calls.push({ method: 'revert', args: [booking] });
+    },
+    async estimateFee(tx, ttl) {
+      calls.push({ method: 'estimateFee', args: [tx, ttl] });
+      return 7n;
+    },
+    async paidFee(ref) {
+      calls.push({ method: 'paidFee', args: [ref] });
+      return 9n;
     },
     async balances() { return { dust: 5_000n, night: 100n }; },
     ...overrides,
@@ -67,6 +76,27 @@ describe('WalletFeeSponsor', () => {
       .toEqual(['dust', 'shielded', 'unshielded']);
   });
 
+  it('and the OTHER pair of the same two constants agrees with this one', () => {
+    /*
+     * **THERE ARE FOUR CONSTANTS FOR TWO SETS, IN TWO FILES, AND EACH PAIR'S
+     * OWN COMMENT SAYS IT EXISTS SO NOBODY EDITS ONE WITHOUT SEEING THE
+     * OTHER.** That is true within each file and false across them: the fee
+     * payer reads one pair and the company reads the other, and nothing made
+     * them agree. Two things that must agree and are written in two places is
+     * how this project describes most of what it has had to correct.
+     *
+     * The consequence of a divergence is loud rather than silent - a node
+     * refusing a double spend - which is why this is a case here rather than a
+     * collapse into one definition today. It is a case AT ALL because the pair
+     * that runs is not the pair a reader of either file would check.
+     *
+     * RED WHEN: either constant in either file is widened, narrowed or
+     * reordered without the other.
+     */
+    expect([...CUSTOMER_BALANCES]).toEqual([...CUSTOMER_TOKEN_KINDS]);
+    expect([...SPONSOR_BALANCES]).toEqual([...SPONSOR_TOKEN_KINDS]);
+  });
+
   it('proves and merges the balancing transaction rather than returning a recipe', async () => {
     /*
      * `balanceFinalizedTransaction` hands back a recipe whose
@@ -77,8 +107,127 @@ describe('WalletFeeSponsor', () => {
     const { wallet, calls } = fakeWallet();
     const out: any = await new WalletFeeSponsor(wallet).addFeeAndFinalise({ tx: 1 }, new Date());
 
-    expect(calls.map(c => c.method)).toEqual(['balanceFinalizedTransaction', 'finalizeRecipe']);
+    expect(calls.map(c => c.method))
+      .toEqual(['estimateFee', 'balanceFinalizedTransaction', 'finalizeRecipe']);
     expect(out.submittable).toBe(true);
+  });
+
+  it('reads what it is about to pay BEFORE it books anything', async () => {
+    /*
+     * **THE ORDER IS THE WHOLE OF IT.** The estimate is the only moment the
+     * expected cost exists: the balance below converges on a fee and then hands
+     * back a transaction rather than a price, so a reading taken afterwards is
+     * a reading of something else. It is also the only moment at which a
+     * decision could still be made, which is what a cap would one day need.
+     *
+     * RED WHEN: the `estimateFee` call is moved below the balance, or removed.
+     */
+    const { wallet, calls } = fakeWallet();
+    await new WalletFeeSponsor(wallet).addFeeAndFinalise({ tx: 1 }, new Date());
+    expect(calls[0].method,
+      'the fee was estimated after the coins were already booked, or not at all')
+      .toBe('estimateFee');
+  });
+
+  it('pays anyway when the estimate cannot be read, and records that it was not read', async () => {
+    /*
+     * **AN INSTRUMENT MUST NOT BE ABLE TO REFUSE A PAYMENT.** Nothing caps what
+     * a fee payer pays today and nothing here decides anything on this number;
+     * it is a record. A measurement that failed a transaction would be an
+     * outage caused by bookkeeping.
+     *
+     * RED WHEN: the `.catch(() => null)` around `estimateFee` is removed, so a
+     * failed reading throws out of the balance.
+     */
+    const recorded: Array<{ estimated: bigint | null }> = [];
+    const { wallet } = fakeWallet({
+      estimateFee: async () => { throw new Error('the indexer would not answer'); },
+    });
+    const sponsor = new WalletFeeSponsor(wallet, undefined, { record: (e) => recorded.push(e) });
+    await expect(sponsor.addFeeAndFinalise({ tx: 1 }, new Date())).resolves.toBeTruthy();
+    await sponsor.submit({ done: true });
+    expect(recorded[0].estimated,
+      'a reading nobody took was written down as a number').toBeNull();
+  });
+
+  it('records which company it paid for, and both numbers', async () => {
+    /*
+     * **THE COMPANY CANNOT BE RECOVERED AFTERWARDS AND THAT IS WHY IT IS
+     * RECORDED NOW.** What a fee payer is handed is a bound, shielded
+     * transaction; whose it is is not in it, is not on the chain, and is not in
+     * a receipt. The caller is the only thing that knows.
+     *
+     * RED WHEN: `payingFor` stops storing the id, or `submit` stops passing it
+     * to the record - in either case the record is written with `null` where a
+     * company was named, which is a record nobody can bill, audit or explain.
+     */
+    const recorded: Array<{ company: string | null; estimated: bigint | null; actual: bigint | null; ref: string }> = [];
+    const { wallet } = fakeWallet();
+    const sponsor = new WalletFeeSponsor(wallet, undefined, { record: (e) => recorded.push(e) });
+    sponsor.payingFor('acc_the_company');
+    await sponsor.addFeeAndFinalise({ tx: 1 }, new Date());
+    await sponsor.submit({ done: true });
+
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0].company).toBe('acc_the_company');
+    expect(recorded[0].estimated, 'the estimate was not the one taken before balancing').toBe(7n);
+    expect(recorded[0].actual, 'the charged fee was not read off the chain').toBe(9n);
+    expect(recorded[0].ref).toBe('tx_sponsored');
+  });
+
+  it('does not file one transaction\'s estimate against the next one', async () => {
+    /*
+     * **AN ESTIMATE BELONGS TO ONE TRANSACTION.** Left standing, the previous
+     * one is written against this one as though it had been measured for it -
+     * a number that looks measured and is not, which is worse than an absent
+     * one because nothing distinguishes it.
+     *
+     * RED WHEN: `payingFor` stops clearing the stored estimate.
+     */
+    const recorded: Array<{ company: string | null; estimated: bigint | null }> = [];
+    const { wallet } = fakeWallet();
+    const sponsor = new WalletFeeSponsor(wallet, undefined, { record: (e) => recorded.push(e) });
+    sponsor.payingFor('acc_one');
+    await sponsor.addFeeAndFinalise({ tx: 1 }, new Date());
+    await sponsor.submit({ done: true });
+    // the second company's transaction never reaches a balance, so nothing measured it
+    sponsor.payingFor('acc_two');
+    await sponsor.submit({ done: true });
+
+    expect(recorded[1].company).toBe('acc_two');
+    expect(recorded[1].estimated,
+      'the previous transaction\'s estimate was filed against this one').toBeNull();
+  });
+
+  it('a record that throws does not turn a payment that landed into a failure', async () => {
+    /*
+     * **EVERYTHING AFTER THE SUBMIT IS AFTER THE MONEY HAS MOVED.** A
+     * transaction that settled and then reported a failure is the worst answer
+     * available on this path: whoever reads it raises the same round again.
+     *
+     * RED WHEN: the `try` around the record is removed.
+     */
+    const { wallet } = fakeWallet();
+    const sponsor = new WalletFeeSponsor(wallet, undefined, {
+      record: () => { throw new Error('the disk is full'); },
+    });
+    await expect(sponsor.submit({ done: true })).resolves.toEqual(
+      expect.objectContaining({ ref: 'tx_sponsored' }));
+  });
+
+  it('and neither does a charged fee that never comes back', async () => {
+    /*
+     * RED WHEN: the `.catch(() => null)` around `paidFee` is removed. The chain
+     * read runs after the submission, so a throw from it would be reported as a
+     * failed payment for a payment that succeeded.
+     */
+    const recorded: Array<{ actual: bigint | null }> = [];
+    const { wallet } = fakeWallet({
+      paidFee: async () => { throw new Error('the indexer never answered'); },
+    });
+    const sponsor = new WalletFeeSponsor(wallet, undefined, { record: (e) => recorded.push(e) });
+    await expect(sponsor.submit({ done: true })).resolves.toBeTruthy();
+    expect(recorded[0].actual, 'a reading nobody took was written down as a number').toBeNull();
   });
 
   it('uses the SPONSOR\'s keys, not the customer\'s', async () => {
@@ -86,7 +235,8 @@ describe('WalletFeeSponsor', () => {
     // them to pay, which is the entire thing this component exists to avoid.
     const { wallet, calls } = fakeWallet();
     await new WalletFeeSponsor(wallet).addFeeAndFinalise({ tx: 1 }, new Date());
-    const keys = calls[0].args[1] as { dustSecretKey: string };
+    const balance = calls.find(c => c.method === 'balanceFinalizedTransaction')!;
+    const keys = balance.args[1] as { dustSecretKey: string };
     expect(keys.dustSecretKey).toBe('sponsor-dust');
   });
 
@@ -96,7 +246,12 @@ describe('WalletFeeSponsor', () => {
     const ttl = new Date('2026-01-01T00:00:00Z');
     const { wallet, calls } = fakeWallet();
     await new WalletFeeSponsor(wallet).addFeeAndFinalise({ tx: 1 }, ttl);
-    expect((calls[0].args[2] as { ttl: Date }).ttl).toBe(ttl);
+    const balance = calls.find(c => c.method === 'balanceFinalizedTransaction')!;
+    expect((balance.args[2] as { ttl: Date }).ttl).toBe(ttl);
+    /* And the estimate is measured against the same deadline, because a fee
+     * quoted for one expiry is not a fee for another. */
+    const estimate = calls.find(c => c.method === 'estimateFee')!;
+    expect(estimate.args[1]).toBe(ttl);
   });
 
   it('submits exactly once', async () => {
@@ -111,10 +266,18 @@ describe('WalletFeeSponsor', () => {
   it('reports remaining capacity after paying, so an operator can alarm', async () => {
     // This is the only component in the system that spends. An operator who
     // cannot watch it finds out DUST ran out when customers start failing.
-    const seen: Array<{ remaining?: bigint }> = [];
+    const seen: Array<{ fee?: bigint; remaining?: bigint }> = [];
     const { wallet } = fakeWallet();
     await new WalletFeeSponsor(wallet, (i) => seen.push(i)).submit({ done: true });
-    expect(seen).toEqual([{ remaining: 5_000n }]);
+    /*
+     * **THE FEE IS THE CHAIN'S CHARGED NUMBER, AND IT USED TO BE ABSENT
+     * ALWAYS** - the field existed on this callback and nothing ever filled it.
+     * What it is not is a difference of the balance below against a previous
+     * one: that figure lags its own spend, dust regenerates from held NIGHT
+     * while nothing is happening, and a second sponsored transaction in the
+     * window contaminates it.
+     */
+    expect(seen).toEqual([{ fee: 9n, remaining: 5_000n }]);
   });
 
   it('still submits if the balance lookup fails', async () => {
@@ -227,6 +390,26 @@ describe('a sponsor releases what it booked and did not spend', () => {
     });
     await expect(new WalletFeeSponsor(wallet).submit({ tx: 1 }))
       .rejects.toThrow(/the node closed the socket/);
+  });
+
+  it('and it survives on the OTHER failure path too, which nothing covered', async () => {
+    /*
+     * **TWO CALL SITES, ONE PROPERTY, AND ONLY ONE OF THEM WAS WATCHED.** The
+     * case above drives the submit path; the finalise path had the same guard
+     * and no case, so breaking it turned nothing red. That was invisible while
+     * the guard lived inside `release` and covered both by construction - and
+     * it became reachable the moment the guard moved to the call sites, which
+     * is exactly the kind of hole a move like that leaves.
+     *
+     * RED WHEN: the `try` around the release in `addFeeAndFinalise`'s catch is
+     * removed.
+     */
+    const { wallet } = fakeWallet({
+      async finalizeRecipe() { throw new Error('the prover refused'); },
+      async revert() { throw new Error('nothing to revert'); },
+    });
+    await expect(new WalletFeeSponsor(wallet).addFeeAndFinalise({ tx: 1 }, new Date()))
+      .rejects.toThrow(/the prover refused/);
   });
 
   /*

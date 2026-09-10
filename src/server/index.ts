@@ -7,6 +7,7 @@ import { observerView, wiring } from '../wiring/selection.js';
 import { startProduct } from '../wiring/product.js';
 import { ContractBook } from '../wiring/account-contract.js';
 import type { WriteCapability } from '../wiring/write-capability.js';
+import { deploymentWriteCapability } from '../wiring/write-capability-for-deployment.js';
 import { handedInWiring } from '../wiring/handed-in.js';
 import { AccountService } from '../core/account.js';
 import { PayrollService, RecordingInviteDelivery } from '../core/payroll.js';
@@ -172,17 +173,43 @@ const book = new ContractBook(
   wiring().name,
 );
 /*
- * **NOTHING IS WIRED TO WRITE HERE YET, AND THE ABSENCE IS THE ARGUMENT.**
+ * **WHAT THIS PROCESS CAN WRITE WITH, WHICH IS NOTHING, AND THE ARGUMENT IS THE
+ * LAST ARGUMENT ON THE LINE.**
  *
- * Writing needs a funded wallet, somebody to pay the fee, the compiled contract
- * this build proves against, a chosen maintenance authority and a key for the
- * private state store. A server acquires none of those by starting up, and one
- * that quietly acquired them would be a server that can spend. So this stays
- * absent until a deployment is deliberately given one, every write refuses by
- * name and says which pieces are missing, and the day a deployment has them the
- * writes are delegated whole without a single route changing.
+ * Writing needs five things: somebody to balance the legs the company owns,
+ * somebody to pay the fee, the compiled contract this build proves against, a
+ * recorded maintenance authority and a key for the private state store. Three
+ * of those are this deployment's own facts and the function below resolves them
+ * itself. **The other two are a funded wallet, and a server does not acquire one
+ * by starting up** - bringing one up means a seed, a proof server, a sync and a
+ * wait for DUST to accrue, none of which is a thing a web process should do to
+ * itself on boot, and one that quietly did would be a web process that can
+ * spend.
+ *
+ * So the pair is handed in, and here nothing hands one in. Every write goes on
+ * refusing by name and saying which pieces are missing; reading accounts,
+ * balances and rounds is unaffected, which is what a deployment built to watch
+ * a chain is for.
+ *
+ * **WHAT DOES HAND ONE IN TODAY IS THE DOOR THAT CREATES A COMPANY**, which
+ * brings up the wallet a person keeps, calls this same function with it, and
+ * starts this same product with what comes back. **There is one supplier and
+ * both callers use it.**
+ *
+ * **AND WHAT ELSE HAS TO CHANGE ON THE DAY THIS ARGUMENT DOES, BECAUSE THIS
+ * PARAGRAPH SAID *nothing else* AND THAT WAS FALSE.** A fee payer is told which
+ * company it is about to pay for, because that cannot be read off a bound,
+ * shielded transaction afterwards - and it is told on the object, since the
+ * SDK's callbacks carry nothing to tell one operation from another. Nothing
+ * here serialises writes: two requests handled at once would share one fee
+ * payer, and the second would overwrite the first's company before the first
+ * recorded what it paid. **So the day this process holds a wallet, writes have
+ * to be serialised where the wallet is held, or attribution has to travel with
+ * the transaction rather than on the object.** Neither exists, and the record
+ * would be wrong rather than absent, which is the worse of the two.
  */
-const writeCapability: WriteCapability | undefined = undefined;
+const writeCapability: WriteCapability | undefined =
+  await deploymentWriteCapability(process.cwd(), process.env, null);
 const startup = startProduct(book, process.cwd(), process.env, writeCapability);
 /*
  * **AND THE ONE CASE WHERE THIS PROCESS DOES NOT RESOLVE ITS OWN SET: A TEST

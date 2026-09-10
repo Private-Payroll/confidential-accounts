@@ -31,6 +31,15 @@
  * It is written from the published types and the Foundation's own README
  * example, and it has been executed only as far as this sandbox can reach,
  * which is not as far as a node. Treat the first real run as the test.
+ *
+ * THE CUSTOMER BALANCES AND RELEASES. `balanceOwnLegs` books coins at its first
+ * line and had two more awaits after it with no guard around either, and the
+ * interface it satisfies had no release member at all - so nothing above it
+ * could let go of what it booked. Both halves are closed: the method releases
+ * its own booking when signing or finalising throws, and the layer that owns
+ * both phases can release one that was abandoned after this method returned.
+ * These are a company's coins rather than our fee budget, which is why the
+ * member is required rather than optional.
  */
 import type { TxRef } from '../core/ledger.js';
 import type { CustomerWallet } from './providers.js';
@@ -71,6 +80,20 @@ export interface BalancingWallet {
   signRecipe(recipe: unknown, signSegment: (data: Uint8Array) => unknown): Promise<unknown>;
   finalizeRecipe(recipe: unknown): Promise<unknown>;
   submitTransaction(tx: unknown): Promise<string>;
+  /**
+   * Lets go of coins a balance marked in-flight.
+   *
+   * **REQUIRED, NOT OPTIONAL, AND FOR THE SAME REASON THE FEE PAYER'S SEAM
+   * MADE ITS OWN REQUIRED.** An optional member means a wallet can be wired in
+   * with no way to release, and every layer above carries on as though there
+   * were one. Balancing books; nothing releases by time; and a transaction that
+   * was balanced and never submitted never gets an answer from the chain for
+   * the vendor's own cleanup to act on.
+   *
+   * It takes the recipe or the transaction, because which is in hand depends on
+   * how far the attempt got.
+   */
+  revert(booking: unknown): Promise<void>;
 }
 
 /** The secret material a facade needs to balance. Opaque to us on purpose. */
@@ -112,14 +135,65 @@ export class SponsoredCustomerWallet implements CustomerWallet {
   /**
    * Phase 1. Balance the shielded and unshielded legs, sign them, and finalise
    * so the sponsor has something it can add dust to.
+   *
+   * **THIS METHOD BOOKS COINS AT ITS FIRST LINE AND THEN HAS TWO MORE AWAITS,
+   * AND UNTIL THIS GUARD EXISTED NEITHER OF THEM COULD LET GO.** Either can
+   * throw - a keystore that refuses to sign, a proof that will not build - and
+   * the booking stood afterwards for ever: nothing releases it by time, and the
+   * vendor's own cleanup only acts on transactions the chain answered for,
+   * which one that was never submitted never gets. **These are the COMPANY'S
+   * coins, on a device we do not operate**, so the repair is a resync somebody
+   * has to be asked to perform rather than anything this product can do.
+   *
+   * The shape is the fee payer's, line for line, and deliberately so: one
+   * window, one answer, and a reader who has understood one has understood
+   * both.
    */
   async balanceOwnLegs(tx: unknown, ttl: Date): Promise<unknown> {
     const recipe = await this.wallet.balanceUnboundTransaction(tx, this.secrets, {
       ttl,
       tokenKindsToBalance: [...CUSTOMER_TOKEN_KINDS],
     });
-    const signed = await this.wallet.signRecipe(recipe, this.sign);
-    return this.wallet.finalizeRecipe(signed);
+    /*
+     * **FROM THIS LINE THE COINS ARE BOOKED**, so every way out of the rest of
+     * this method has to release them.
+     *
+     * The booking named is the recipe the balance produced, which is what the
+     * vendor's release looks a booking up by. **On this path - the UNBOUND one
+     * - the balance also mutates the transaction it was handed**, so the recipe
+     * and the transaction are two views of one booking rather than two
+     * bookings; naming the recipe is naming the thing the balance returned,
+     * which is the only handle this method is given.
+     */
+    try {
+      const signed = await this.wallet.signRecipe(recipe, this.sign);
+      return await this.wallet.finalizeRecipe(signed);
+    } catch (e) {
+      /* Swallowed HERE rather than inside the release: `e` names what actually
+       * went wrong, and a complaint about tidying up in its place sends whoever
+       * reads it to the wrong layer. */
+      try { await this.release(recipe); } catch { /* see above */ }
+      throw e;
+    }
+  }
+
+  /**
+   * **IT REPORTS ITS OWN FAILURE, AND THE SWALLOW LIVES AT THE CALL SITES THAT
+   * HAVE AN ORIGINAL FAILURE TO PROTECT.**
+   *
+   * A release that fails must never replace the failure that caused it, which
+   * is a property of the path this is called on rather than of the release. So
+   * the guard above swallows, by name, and the layer that owns both phases
+   * swallows too - and a caller with nothing to protect is told the truth,
+   * because a release that cannot fail is a release nobody can assert on.
+   *
+   * **IT IS PUBLIC BECAUSE THE WINDOW IT GUARDS IS NOT ONLY INSIDE THIS
+   * CLASS.** The balance above is one of two calls the layer that owns both
+   * phases makes; what goes wrong between them goes wrong where this method is
+   * not running, so that layer has to be able to say *let that go*.
+   */
+  async release(booking: unknown): Promise<void> {
+    await this.wallet.revert(booking);
   }
 }
 

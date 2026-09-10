@@ -38,6 +38,7 @@ import { privateStateKey } from '../src/midnight/ledger.js';
 import { isDeployedCircuit } from '../src/midnight/deferral.js';
 import { assetIdBytes } from '../src/core/assets.js';
 import { WalletFeeSponsor, CUSTOMER_BALANCES, SPONSOR_BALANCES } from '../src/midnight/sponsor.js';
+import { sponsorWalletOver } from './funded-wallets.js';
 import { testEnvironmentFor } from './test-environment.js';
 import { explainNodeError } from './node-errors.js';
 import { sleep } from '../src/midnight/retry.js';
@@ -266,22 +267,29 @@ async function main() {
    * run-preview.ts and typed in node_modules.
    */
   const facade = sponsorWallet.wallet;
+  /*
+   * **THE ADAPTER IS SHARED WITH THE DOOR THAT CREATES A COMPANY, AND THAT IS
+   * THE POINT OF THE MOVE.** These twelve lines were written here first and
+   * were about to be written a second time next door. Every member of the seam
+   * is bound in one place now, so a member that is added to it - the fee
+   * estimate and the charged fee are the two most recent - cannot arrive in one
+   * copy and be forgotten in the other.
+   *
+   * **THE CHARGED FEE IS NOT READ ON THIS PATH.** Reading it needs the public
+   * data provider, which this script builds AFTER the fee payer, and this
+   * script's subject is whether the two-phase flow settles rather than what it
+   * cost. `null` is the honest answer for a reading nobody took.
+   */
   const sponsor = new WalletFeeSponsor(
-    {
-      shieldedSecretKeys: sponsorWallet.zswapSecretKeys,
-      dustSecretKey: sponsorWallet.dustSecretKey,
-      balanceFinalizedTransaction: facade.balanceFinalizedTransaction.bind(facade),
-      finalizeRecipe: facade.finalizeRecipe.bind(facade),
-      submitTransaction: (tx) => sponsorWallet.submitTx(tx as never),
-      /*
-       * Bound off the facade like the two above it. This is what releases coins
-       * the sponsor booked and did not spend: nothing else does, and a balance
-       * that is never released falls a little on every failure with nothing
-       * anywhere saying why.
-       */
-      revert: async (booking) => { await facade.revert(booking as never); },
-      balances: async () => ({ dust: sponsorLive.dust(), night: sponsorLive.night() }),
-    },
+    sponsorWalletOver(
+      {
+        provider: sponsorWallet,
+        facade,
+        dust: () => sponsorLive.dust(),
+        night: () => sponsorLive.night(),
+      },
+      async () => null,
+    ),
     /*
      * Read immediately after submitting, so it lags: the first run printed
      * "remaining: 0" while the sponsor held 4.1e17, because the wallet had not
