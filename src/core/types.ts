@@ -1506,3 +1506,94 @@ export interface Proposal {
    */
   proposerRole?: Role;
 }
+
+/**
+ * **ANOTHER ATTEMPT AT PAYING SOME OF A LEG'S PEOPLE, KEPT ON THE LEG IT RETRIES.**
+ *
+ * A leg is approved once, over a tree of every person it pays. When that
+ * attempt does not reach everybody - a window that closed with people still
+ * owed, a vault that ran dry part way - the people it missed are paid by a
+ * second approval over a smaller tree. **That second tree is built from the
+ * SAME per-payee secrets as the first, so each person's leaf in it is
+ * byte-for-byte the leaf they already had.** The account's record of completed
+ * payments is keyed on the leaf, so whichever of the two attempts pays a
+ * person first is the only one that can: the other is refused as a payment
+ * already made.
+ *
+ * **WHAT THIS RECORD DOES NOT CARRY IS THE POINT OF ITS SHAPE.** There is no
+ * identity here, no payment facts and no leaves. All three belong to the leg
+ * this attempt lives on and are read from it, so there is no field in which
+ * a retry could name a different run identity - and a different identity is
+ * different secrets, different leaves, and a payment the account has never
+ * seen and does not refuse. What a retry owns is only what genuinely differs:
+ * which of the leg's people it is for, and the root, window and vault of its
+ * own approval.
+ *
+ * **ON THE LEG AND NOT ON THE RUN, AND NOT AS A SECOND RUN.** A report asking
+ * whether this period's payroll was paid asks it about one run and one set of
+ * people. A retry recorded as a run of its own would be a second run for the
+ * period, carrying an identity its own id does not produce.
+ *
+ * Declared here, below everything, and merged onto the interfaces it extends,
+ * so that nothing above this line moves.
+ */
+export interface RunRetry {
+  /**
+   * Which of the leg's people this attempt pays: positions in the leg's own
+   * recorded leaves, in the order this attempt's tree was built.
+   */
+  originalIndices: number[];
+  /** The merkle root over those people's leaves. What the signers approve. */
+  root: Hex;
+  /** How many of them. Always the length of `originalIndices`. */
+  payees: bigint;
+  /** Seconds since the Unix epoch, because block time is compared against it. */
+  opensAt: bigint;
+  closesAt: bigint;
+  /** The vault that will pay this attempt. */
+  vault: Hex;
+  /**
+   * The proposal this attempt was raised as. Absent between the moment the
+   * attempt is written down and the moment the raise returns, which is the
+   * same order a leg's own material and its proposal are written in.
+   */
+  proposalId?: string;
+  proposedBy: string;
+  at: string;
+}
+
+export interface RunPayout {
+  /**
+   * **EVERY FURTHER ATTEMPT AT THIS LEG, OLDEST FIRST.** Absent until the
+   * first; never an empty list. Nothing is ever removed from it: an attempt
+   * that was raised stays on record whether or not it paid anybody.
+   */
+  retries?: RunRetry[];
+}
+
+/**
+ * **A RUN THAT WAS DRAWN UP KNOWING IT REPEATS ANOTHER, AND ON WHOSE SAY-SO.**
+ *
+ * Two runs for one period that pay the same people the same amounts are,
+ * to the account, two unrelated sets of payments: each run derives its own
+ * per-payee secrets, so nothing on chain ties one to the other and both can
+ * be paid. That is right for a deliberate second payment and it is a double
+ * payroll for somebody who only meant to try again. **So a repeat is refused
+ * unless somebody names the runs it repeats and says why, and this is what
+ * they said.** It is read again when the run is raised, so a repeat that was
+ * never confirmed cannot be raised by a different route.
+ *
+ * Inside the envelope, with the people it is about.
+ */
+export interface RunRepeatRecord {
+  /** The runs this one knowingly repeats, by id. */
+  of: string[];
+  reason: string;
+  by: string;
+  at: string;
+}
+
+export interface PayrollRun {
+  /** Absent on every run that repeats nothing. */
+  repeats?: RunRepeatRecord;
+}

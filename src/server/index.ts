@@ -39,7 +39,7 @@ import { payeeAddress } from '../midnight/payee-address.js';
 import { networkOfThePair } from '../midnight/network.js';
 import { runPayments } from '../midnight/run-status.js';
 import { rootOfLeaves } from '../midnight/payout-tree.js';
-import { runMaterialFor } from '../midnight/run-material.js';
+import { runMaterialFor, retryMaterialFor } from '../midnight/run-material.js';
 import { loadEnvFile } from '../db/connect.js';
 import { appendWebConsole, webConsoleLogPath } from './web-console-log.js';
 /* `C157` — every refusal this service makes, kept. See `wrap` below. */
@@ -1131,12 +1131,26 @@ app.post('/api/accounts/:id/payroll', authed, member, wrap(async (req, res) => {
       name: z.string().min(1), asset: assetCode, amount: z.string().min(1),
     })).min(1),
     viewingKey: z.string(),
+    /*
+     * **THE CONFIRMATION FOR A RUN THAT REPEATS ANOTHER: WHICH RUNS, AND WHY.**
+     * Absent means a repeat is refused, and the refusal names the runs to name
+     * back. Who is confirming it is not in this schema, for the reason it is not
+     * in the roster door's: it is taken from the signed-in caller.
+     */
+    repeats: z.object({
+      runIds: z.array(z.string()),
+      reason: z.string(),
+    }).optional(),
   }).parse(req.body);
+  const me = b.repeats ? identity.user(req.userId!) : undefined;
   res.json(await payroll.createRun(
     String(req.params.id),
     b.period,
     b.employees.map(e => ({ name: e.name, asset: e.asset, amount: money(e.asset, e.amount) })),
     b.viewingKey,
+    undefined,
+    undefined,
+    b.repeats && me && { ...b.repeats, by: me.name.trim() || me.id },
   ));
 }));
 
@@ -1200,6 +1214,7 @@ app.post('/api/runs/:id/propose', authed, ownsRun, wrap(async (req, res) => {
     opensAt: BigInt(b.opensAt),
     closesAt: BigInt(b.closesAt),
     vault: b.vault,
+    epoch: inputs.epoch,
   });
 
   /*
@@ -1210,6 +1225,47 @@ app.post('/api/runs/:id/propose', authed, ownsRun, wrap(async (req, res) => {
   res.json(await payroll.proposeRun(
     String(req.params.id), b.viewingKey,
     accounts.seatOf(inputs.accountId, b.viewingKey as Hex, req.userId!),
+    material, b.asset));
+}));
+
+/*
+ * **ANOTHER ATTEMPT AT SOME OF ONE LEG'S PEOPLE, ON THE RUN THAT FIRST TRIED
+ * TO PAY THEM.**
+ *
+ * The body names WHO - positions in the leg as it was raised, which is the
+ * order the payment view on this run reports them in - and WHEN and FROM
+ * WHICH VAULT, the two facts nothing here can derive. **It does not name a run
+ * identity, and there is no field through which one could be supplied**: the
+ * material is built from what the leg was raised under, read back off the run's
+ * own record, so each person's leaf in the retry is the leaf they already had and
+ * nobody can be paid by both rounds.
+ */
+app.post('/api/runs/:id/retry', authed, ownsRun, wrap(async (req, res) => {
+  const b = z.object({
+    viewingKey: z.string(),
+    asset: assetCode.optional(),
+    indices: z.array(z.number().int().min(0)).min(1),
+    vault: z.string(),
+    opensAt: z.string().regex(/^[0-9]+$/, 'a window bound is whole seconds since the Unix epoch'),
+    closesAt: z.string().regex(/^[0-9]+$/, 'a window bound is whole seconds since the Unix epoch'),
+  }).parse(req.body);
+
+  const rebuild = await payroll.payoutRebuildOf(String(req.params.id), b.viewingKey, b.asset);
+  if (!rebuild) {
+    throw new Error(
+      'this leg of the run has not been raised, so there is nobody on it to retry. Raise the leg '
+      + 'first; a retry pays people an approved round did not reach.');
+  }
+  const material = await retryMaterialFor({
+    rebuild,
+    indices: b.indices,
+    opensAt: BigInt(b.opensAt),
+    closesAt: BigInt(b.closesAt),
+    vault: b.vault,
+  });
+  res.json(await payroll.proposeRetry(
+    String(req.params.id), b.viewingKey,
+    accounts.seatOf(rebuild.identity.accountId, b.viewingKey as Hex, req.userId!),
     material, b.asset));
 }));
 

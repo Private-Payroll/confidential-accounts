@@ -47,7 +47,7 @@
  * downstream is handed the number and looks it up by name.
  */
 import {
-  buildRun, rootOfLeaves, type PaymentFacts, type DetailsOfKind,
+  buildRun, buildRetryRun, rootOfLeaves, type PaymentFacts, type DetailsOfKind,
 } from './payout-tree.js';
 import { currentPayoutSeed, type PayoutSeed, type RunIdentity } from './run-keys.js';
 import { vaultDetailsOf } from './vault-details.js';
@@ -139,6 +139,12 @@ export const runMaterialFor = async (args: {
   closesAt: bigint;
   vault: Hex;
   detailsOf?: DetailsOfKind;
+  /**
+   * Which seed generation to build under, for a leg being raised again exactly
+   * as it was raised before. Absent means the current one, which is every new
+   * leg; see the note on the generation below.
+   */
+  epoch?: number;
 }): Promise<RunMaterial> => {
   /*
    * Refused here as well as inside the tree builder. That one gives an attacker
@@ -165,7 +171,7 @@ export const runMaterialFor = async (args: {
   const identity: RunIdentity = {
     accountId: args.accountId,
     runId: args.runId,
-    epoch: currentPayoutSeed(args.seeds).epoch,
+    epoch: args.epoch ?? currentPayoutSeed(args.seeds).epoch,
   };
 
   const built = buildRun(
@@ -188,4 +194,85 @@ export const runMaterialFor = async (args: {
     identity,
     rootOf: rootOfLeaves,
   } as RunMaterial;
+};
+
+declare const retryMaterial: unique symbol;
+
+/**
+ * **ANOTHER ATTEMPT AT SOME OF A LEG'S PEOPLE, BUILT FROM WHAT THE LEG WAS
+ * RAISED UNDER AND FROM NOTHING ELSE.**
+ *
+ * A different brand from `RunMaterial`, so a retry cannot be handed to the door
+ * that raises a whole leg and a leg cannot be handed to the door that raises a
+ * retry. The agreement between its root and its leaves travels as a value, for
+ * the reason `RunMaterial` gives.
+ */
+export interface RetryMaterial {
+  readonly [retryMaterial]: true;
+  /** The five values the chain is asked to open this attempt with. */
+  readonly run: RunProposal;
+  /** This attempt's leaves, in its own tree order. Each is the leg's own leaf for that person. */
+  readonly leaves: Hex[];
+  /** Which of the leg's people each position is, as positions in the leg's recorded leaves. */
+  readonly originalIndices: number[];
+  /**
+   * The identity these leaves were derived under. Whatever the caller handed
+   * in; the door that raises a retry refuses any but the leg's own.
+   */
+  readonly identity: RunIdentity;
+  readonly rootOf: (leaves: Hex[]) => Hex;
+}
+
+/**
+ * Builds a retry for some of one leg's people.
+ *
+ * **IT TAKES NO RUN IDENTIFIER OF ITS OWN.** Every per-payee secret comes out
+ * of the identity and the seed generation handed in with the leg's record, and
+ * the product's routes read that record rather than composing one. What refuses
+ * an identity that is not the leg's is the door that raises the retry - because
+ * a different one derives different nonces, different leaves, and payments the
+ * account has never seen and would not refuse.
+ *
+ * **THE FACTS ARE THE RECORD'S AND NEVER THE ROSTER'S.** A salary corrected or a
+ * person marked a leaver since the leg was approved would derive a different
+ * leaf for that person, which is a different payment rather than the same one
+ * made again.
+ *
+ * @param rebuild   what the leg was raised under: its identity, its payment
+ *   facts, and every generation of the account's payout seed
+ * @param indices   which of the leg's people this attempt pays, as positions in
+ *   the leg's own recorded order
+ * @param opensAt   when this attempt may be paid, in SECONDS since the Unix epoch
+ * @param closesAt
+ * @param vault     the vault that will pay this attempt
+ */
+export const retryMaterialFor = async (args: {
+  rebuild: {
+    identity: RunIdentity;
+    facts: PaymentFacts[];
+    seeds: PayoutSeed[];
+  };
+  indices: number[];
+  opensAt: bigint;
+  closesAt: bigint;
+  vault: Hex;
+  detailsOf?: DetailsOfKind;
+}): Promise<RetryMaterial> => {
+  const whole = buildRun(
+    args.rebuild.seeds, args.rebuild.identity, args.rebuild.facts,
+    args.detailsOf ?? await vaultDetailsOf());
+  const retry = buildRetryRun(whole, args.indices);
+  return {
+    run: {
+      root: retry.tree.root,
+      payees: retry.tree.payees,
+      opensAt: args.opensAt,
+      closesAt: args.closesAt,
+      vault: args.vault,
+    },
+    leaves: retry.tree.leaves,
+    originalIndices: retry.originalIndices,
+    identity: retry.identity,
+    rootOf: rootOfLeaves,
+  } as RetryMaterial;
 };
