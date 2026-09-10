@@ -8,6 +8,7 @@
  */
 import type { CreatePreconditions } from './create-company-rules.js';
 import { refuseIncompleteSetup } from './create-company-rules.js';
+import { pageStartsFor } from './serve-rules.js';
 
 /** The one network this launcher serves. */
 export const SERVED_NETWORK = 'stagenet';
@@ -52,6 +53,17 @@ export function postureFrom(devScript: string): Record<string, string> {
 }
 
 /**
+ * **WHETHER TWO SEED FILES WOULD BRING UP ONE WALLET.** Compared after the
+ * differences that do not change which wallet a seed makes - surrounding space,
+ * letter case and a leading `0x` - so a copy that differs only in those is still
+ * caught. Two seeds that differ in any other way are two wallets.
+ */
+export function seedsAreOneParty(first: string, second: string): boolean {
+  const norm = (s: string) => s.trim().toLowerCase().replace(/^0x/, '');
+  return norm(first) === norm(second);
+}
+
+/**
  * Everything knowable before a wallet is brought up, refused at once.
  *
  * **EVERY MISSING PIECE IS NAMED, NOT THE FIRST.** A launcher that stops at the
@@ -62,6 +74,8 @@ export function refuseToServe(input: {
   readonly network: string;
   readonly present: CreatePreconditions;
   readonly posture: Record<string, string>;
+  /** True when both seed files are on this machine and would bring up one wallet. */
+  readonly oneSeedForBoth: boolean;
 }): string | null {
   const reasons: string[] = [];
   if (input.network !== SERVED_NETWORK) {
@@ -76,6 +90,21 @@ export function refuseToServe(input: {
       `the development script no longer declares ${missingPosture.join(', ')}. Without them `
       + 'the server refuses every wallet sign-in and the page has no wallet to open, so '
       + 'nobody could reach the button this launcher exists for');
+  }
+  if (missingPosture.length === 0) {
+    const plan = pageStartsFor(input.posture);
+    if ('refusals' in plan) {
+      reasons.push(
+        'the development script\'s origins cannot be started as they are: ' + plan.refusals.join('; '));
+    }
+  }
+  if (input.oneSeedForBoth) {
+    reasons.push(
+      'the wallet that pays and the company wallet have the same seed on this machine, so they '
+      + 'would be one wallet. They are meant to be two parties - one pays the fees, the other '
+      + 'balances and signs the company\'s own part of each transaction - and with one seed both '
+      + 'jobs fall to one wallet while everything else reports two. Give the company wallet a seed '
+      + 'of its own');
   }
   const setup = refuseIncompleteSetup(input.present);
   if (reasons.length === 0 && setup === null) return null;

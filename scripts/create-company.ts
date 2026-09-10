@@ -36,11 +36,10 @@ import { AccountService } from '../src/core/account.js';
 import { ContractBook } from '../src/wiring/account-contract.js';
 import { startProduct } from '../src/wiring/product.js';
 import { deploymentWriteCapability } from '../src/wiring/write-capability-for-deployment.js';
-import { WalletFeeSponsor } from '../src/midnight/sponsor.js';
 import { fileFeeSink } from '../src/midnight/sponsored-fees.js';
 import { applyNetworkId, networkFromEnv, ENDPOINTS } from '../src/midnight/network.js';
 import { bringUpWallet } from './wallet-bringup.js';
-import { customerWalletOver, paidFeeFrom, sponsorWalletOver } from './funded-wallets.js';
+import { fundedPartiesOver, paidFeeFrom } from './funded-wallets.js';
 import { testEnvironmentFor, startEnvironment } from './test-environment.js';
 import {
   CREATED, NOT_CREATED, PARTLY_CREATED, refuseIncompleteSetup, refuseUnprovenCompany,
@@ -181,27 +180,30 @@ async function main() {
   const publicData = indexerPublicDataProvider(E.indexerUrl, E.indexerWsUrl);
 
   mkdirSync(STATE_DIR, { recursive: true });
-  const sponsor = new WalletFeeSponsor(
-    sponsorWalletOver(
-      {
-        provider: payerLive.wallet,
-        facade: payerLive.wallet.wallet,
-        dust: () => payerLive.dust(),
-        night: () => payerLive.night(),
-      },
-      paidFeeFrom(publicData),
-    ),
+  /*
+   * **THE SAME CONSTRUCTION THE STAGENET LAUNCHER USES, AND NO SECOND ONE.** It
+   * requires somewhere to record each fee and builds the fee payer that balances
+   * dust and nothing else.
+   */
+  const { sponsor, customer } = fundedPartiesOver(
+    {
+      provider: payerLive.wallet,
+      facade: payerLive.wallet.wallet,
+      dust: () => payerLive.dust(),
+      night: () => payerLive.night(),
+    },
+    {
+      provider: companyLive.wallet,
+      facade: companyLive.wallet.wallet,
+      dust: () => companyLive.dust(),
+      night: () => companyLive.night(),
+    },
+    paidFeeFrom(publicData),
+    fileFeeSink(FEE_RECORD, (p, l) => appendFileSync(p, l)),
     ({ fee, remaining }) => good(
       `paid ${fee ?? 'an amount that was not read back'}; `
       + `${remaining} DUST reported after (it lags, and is not a capacity reading)`),
-    fileFeeSink(FEE_RECORD, (p, l) => appendFileSync(p, l)),
   );
-  const customer = customerWalletOver({
-    provider: companyLive.wallet,
-    facade: companyLive.wallet.wallet,
-    dust: () => companyLive.dust(),
-    night: () => companyLive.night(),
-  });
 
   const store = new FileStore(DATA);
   const book = new ContractBook(

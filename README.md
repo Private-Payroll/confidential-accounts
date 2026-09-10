@@ -132,9 +132,13 @@ docs/decisions/ why the architecture is the way it is
 
 ```bash
 npm install
-npm run dev          # server on :8787, client on :5173
+npm run dev          # the app on :5173, its server on :8787, the wallet on :5180
 npm run standalone   # one self-contained html file
 ```
+
+`npm run dev` is the one command that starts the product. The server it starts is read-only: it holds
+no wallet and cannot write to a chain. The wallet is started on an address of its own, never on the app's,
+because a wallet's keys are made for the address it is served from.
 
 `npm test` compiles the contracts first, so it needs the Compact compiler.
 

@@ -6,8 +6,8 @@
  *
  * It brings up the wallet that pays and the company wallet, turns them into
  * the pair the product is handed, hands that pair over, and only then starts
- * the server - the same server `npm run dev` starts, unmodified. Then it starts
- * the page and the wallet beside it. A person signs in with their wallet,
+ * the product - the same server, application and wallet `npm run dev` starts,
+ * through the same code, on the same origins. A person signs in with their wallet,
  * presses the button, and the company is deployed to stagenet through the
  * route the screen already calls.
  *
@@ -42,8 +42,6 @@
  */
 import { existsSync, readFileSync, mkdirSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
-import { spawn, type ChildProcess } from 'node:child_process';
 
 import { StaticProofServerContainer } from '@midnight-ntwrk/testkit-js';
 
@@ -53,7 +51,11 @@ import { handInFundedParties } from '../src/wiring/handed-in-wallets.js';
 import { bringUpWallet } from './wallet-bringup.js';
 import { fundedPartiesOver, paidFeeFrom } from './funded-wallets.js';
 import { testEnvironmentFor, startEnvironment } from './test-environment.js';
-import { POSTURE_NOT_CARRIED, postureFrom, refuseToServe } from './serve-with-wallets-rules.js';
+import {
+  POSTURE_NOT_CARRIED, postureFrom, refuseToServe, seedsAreOneParty,
+} from './serve-with-wallets-rules.js';
+import { pageStartsFor, refuseWhatTheServerSaid } from './serve-rules.js';
+import { startTheServer, startThePages, stopChildren, stopEverythingOnExit } from './serve-product.js';
 
 const ROOT = join(import.meta.dirname, '..');
 const STATE_DIR = join(ROOT, '.midnight');
@@ -76,12 +78,7 @@ const line = (s = '') => console.log(s);
 const step = (n: number, of: number, what: string) => line(`\n  [${n}/${of}] ${what}`);
 const good = (s: string) => line(`      ${s}`);
 
-const children: ChildProcess[] = [];
-const stopChildren = () => { for (const c of children) { try { c.kill('SIGTERM'); } catch { /* gone */ } } };
-process.on('exit', stopChildren);
-for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
-  process.on(sig, () => { stopChildren(); process.exit(130); });
-}
+stopEverythingOnExit();
 
 async function proofServerAnswers(port: number): Promise<boolean> {
   try {
@@ -103,9 +100,16 @@ async function main() {
   const devScript = String(
     (JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).scripts ?? {}).dev ?? '');
   const posture = postureFrom(devScript);
+  /*
+   * **COMPARED HERE AND NEVER PRINTED.** Two halves brought up from one seed are
+   * one wallet, and nothing after this point would say so.
+   */
+  const oneSeedForBoth = existsSync(SPONSOR_SEED_FILE) && existsSync(COMPANY_SEED_FILE)
+    && seedsAreOneParty(readFileSync(SPONSOR_SEED_FILE, 'utf8'), readFileSync(COMPANY_SEED_FILE, 'utf8'));
   const refusal = refuseToServe({
     network: NETWORK_RAW,
     posture,
+    oneSeedForBoth,
     present: {
       fundedSeed: existsSync(SPONSOR_SEED_FILE),
       companySeed: existsSync(COMPANY_SEED_FILE),
@@ -115,6 +119,9 @@ async function main() {
     },
   });
   if (refusal) throw new Error(refusal);
+  const plan = pageStartsFor(posture);
+  /* Already refused above when it cannot be started; this narrows the type. */
+  if ('refusals' in plan) throw new Error(plan.refusals.join('; '));
   const NETWORK: NetworkName = networkFromEnv(NETWORK_RAW, 'stagenet');
   good('the authority is recorded, the contract is compiled, the prover answers,');
   good('and both wallets have a seed on this machine');
@@ -178,49 +185,28 @@ async function main() {
   process.env.DATA_PATH = DATA;
   good(`companies are recorded in ${DATA}`);
   /*
-   * **IMPORTED FOR WHAT EVALUATING IT DOES, AND NOTHING IS TAKEN FROM IT.** The
-   * server builds its ledger and starts listening while it is being evaluated,
-   * which is why the pair was handed over above this line and not below it.
-   * Named by file so the scripts' typecheck, which is looser than the server's
-   * own, does not re-check the server under settings it was not written for.
+   * **THE SERVER READS THE PAIR ONCE, WHILE IT IS BEING LOADED**, which is why
+   * the pair was handed over above this line and not below it.
    */
-  await import(pathToFileURL(join(ROOT, 'src', 'server', 'index.ts')).href);
+  const { said, port } = await startTheServer(ROOT);
 
   /*
    * **THE SERVER IS ASKED WHAT IT CAN DO, AND ITS OWN WORDS DECIDE.** A server
    * that came up read-only would render every screen and fail at the button,
    * in front of whoever pressed it.
    */
-  const port = Number(process.env.PORT ?? 8787);
-  let said = '';
-  for (let i = 0; i < 30 && !said; i++) {
-    await new Promise(r => setTimeout(r, 500));
-    try {
-      const r = await fetch(`http://127.0.0.1:${port}/api/health`, { signal: AbortSignal.timeout(2000) });
-      said = String((await r.json())?.ledger ?? '');
-    } catch { /* not listening yet */ }
-  }
-  if (!said.includes('reading and writing')) {
-    throw new Error(
-      `the server did not say it can write. It said: "${said || 'nothing, on port ' + port}". `
-      + 'No company can be created from the screen in this state. Nothing has been spent.');
-  }
+  const cannot = refuseWhatTheServerSaid('can write', said, port);
+  if (cannot) throw new Error(cannot);
   good(`the server says: ${said}`);
 
   /* ---------------------------------------------------------------- 5 */
   step(5, 5, 'Starting the page and the wallet');
 
-  const withPosture = { ...process.env, ...posture };
   /*
    * **ON THIS MACHINE'S OWN LOOPBACK ONLY.** A page whose server can spend is
    * not offered to the rest of the network it happens to be on.
    */
-  children.push(spawn(join(ROOT, 'node_modules', '.bin', 'vite'), ['--host', 'localhost'], {
-    cwd: ROOT, env: withPosture, stdio: 'inherit',
-  }));
-  children.push(spawn('npm', ['run', 'wallet', '--', '--host', 'localhost'], {
-    cwd: ROOT, env: withPosture, stdio: 'inherit',
-  }));
+  startThePages(ROOT, plan.starts, { ...process.env, ...posture });
   line();
   line(`  READY. Open ${posture.APP_ORIGIN}, sign in with your wallet, and create a company.`);
   line('  Each company created spends a network fee from the wallet that pays.');

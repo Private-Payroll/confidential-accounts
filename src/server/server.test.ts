@@ -327,5 +327,11 @@ describe('the HTTP layer', () => {
     const r = await call('GET', '/api/health');
     expect(r.status).toBe(200);
     expect(JSON.stringify(r.body)).not.toMatch(/@|usr_/);
+    /*
+     * RED WHEN: a ledger that does not track its writes is reported as having
+     * none in flight - `writing: null` is a claim, and this ledger cannot make it.
+     */
+    expect(r.body).not.toHaveProperty('writing');
+    expect((r.body as any).ok).toBe(true);
   });
 });
