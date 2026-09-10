@@ -37,11 +37,13 @@ const capable = (): WriteCapability => ({
     coinPublicKey: () => 'not-a-secret: a test literal',
     encryptionPublicKey: () => 'not-a-secret: a test literal',
     balanceOwnLegs: async (tx: unknown) => tx,
+    release: async () => {},
   } as WriteCapability['customer'],
   sponsor: {
     addFeeAndFinalise: async (tx: unknown) => tx,
     submit: async () => ({ ref: 'tx', at: '' }),
     release: async () => {},
+    payingFor: () => {},
     capacity: async () => ({ dust: 0n, night: 0n }),
   } as WriteCapability['sponsor'],
   storagePassword: async () => 'not-a-secret: a test literal',
@@ -179,5 +181,63 @@ describe('a deployment is told which pieces of writing it has not got', () => {
     expect(refusalForCapability(halfWallet),
       'a wallet that cannot balance was accepted')
       .toContain('balance the parts of a transaction the company itself owns');
+  });
+
+  /*
+   * **A WALLET THAT CANNOT LET GO OF WHAT IT BOOKED IS NOT A WALLET THIS
+   * DEPLOYMENT MAY WRITE WITH, AND THE SAME IS TRUE OF THE FEE PAYER.**
+   *
+   * Balancing books coins; only submitting spends them; nothing releases them
+   * by time and the vendor's own cleanup never sees a transaction that was
+   * never submitted. So a party with no release is a party whose failures each
+   * take a little money out of circulation and say nothing - and on the
+   * company's side that money is not ours.
+   *
+   * RED WHEN: `'release'` is dropped from either member list in
+   * `refusalForCapability`. Nothing else in this file notices: both objects
+   * below satisfy every other member the write path calls.
+   */
+  it('a party that cannot release what it booked is refused', () => {
+    const noRelease = {
+      ...capable(),
+      customer: {
+        coinPublicKey: () => '', encryptionPublicKey: () => '', balanceOwnLegs: async () => ({}),
+      },
+    } as unknown as WriteCapability;
+    expect(refusalForCapability(noRelease),
+      'a company wallet with no way to release its own booking was accepted')
+      .toContain('balance the parts of a transaction the company itself owns');
+
+    const payerCannotRelease = {
+      ...capable(),
+      sponsor: {
+        addFeeAndFinalise: async () => ({}), submit: async () => ({ ref: '', at: '' }),
+        capacity: async () => ({ dust: 0n, night: 0n }), payingFor: () => {},
+      },
+    } as unknown as WriteCapability;
+    expect(refusalForCapability(payerCannotRelease),
+      'a fee payer with no way to release its own booking was accepted')
+      .toContain('pay the transaction fee');
+  });
+
+  /*
+   * **AND A FEE PAYER THAT CANNOT BE TOLD WHOSE TRANSACTION IT IS PAYING FOR.**
+   *
+   * Attribution cannot be extracted from a bound, shielded transaction after
+   * the fact, so a fee payer without this member is one whose records can never
+   * say who anything was for. It is a record rather than a control, which is
+   * exactly why nothing else would ever notice its absence.
+   *
+   * RED WHEN: `'payingFor'` is dropped from the fee payer's member list.
+   */
+  it('a fee payer that cannot be told whose transaction it is is refused', () => {
+    const anonymous = {
+      ...capable(),
+      sponsor: {
+        addFeeAndFinalise: async () => ({}), submit: async () => ({ ref: '', at: '' }),
+        release: async () => {}, capacity: async () => ({ dust: 0n, night: 0n }),
+      },
+    } as unknown as WriteCapability;
+    expect(refusalForCapability(anonymous)).toContain('pay the transaction fee');
   });
 });

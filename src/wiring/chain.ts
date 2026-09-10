@@ -84,6 +84,13 @@ const noSponsor = (refusal: string): FeeSponsor => ({
    * least useful.
    */
   release: async () => {},
+  /*
+   * **A NO-OP, AND FOR THE SAME REASON THE RELEASE ABOVE IS.** Being told which
+   * company a transaction belongs to is a record, not an action, and there is
+   * nothing here that will ever pay for one. Refusing would put a second error
+   * in front of a caller that is about to meet the real one.
+   */
+  payingFor: () => {},
   capacity: async () => Promise.reject(new Error(
     'the fee sponsor\'s remaining capacity is not available on this deployment: '
     + 'nothing is wired to pay fees, so there is no balance to report')),
@@ -143,12 +150,23 @@ export class ChainLedger implements Ledger {
    */
   private readonly cannotWrite: string | null;
 
+  /**
+   * Who pays, kept so that every write can say whose transaction it is.
+   *
+   * **ONLY EVER TOLD, NEVER ASKED.** Nothing here reads a balance, a capacity
+   * or a decision off this object - `cannotWrite` above is still the one field
+   * any write consults, and there is deliberately no second way to ask whether
+   * this deployment may write.
+   */
+  private readonly payer: FeeSponsor | undefined;
+
   constructor(
     private readonly inner: MidnightLedger,
     private readonly deployment: Deployment,
     capability?: WriteCapability,
   ) {
     this.cannotWrite = refusalForCapability(capability);
+    this.payer = capability?.sponsor;
   }
 
   /**
@@ -209,49 +227,75 @@ export class ChainLedger implements Ledger {
 
   /* ---- writes: refused above everything that stages anything, or delegated whole ---- */
 
+  /**
+   * **ONE GATE AND ONE PLACE THE COMPANY IS NAMED, FOR ALL NINE WRITES.**
+   *
+   * Every write below is the same two decisions - may this deployment write,
+   * and whose transaction is this - and they were nine copies of the first and
+   * nowhere at all for the second. Nine copies of a rule is nine chances for
+   * one of them to drift, and the one that drifts is a write that got through.
+   *
+   * **WHY THE COMPANY IS NAMED HERE AND NOT DEEPER.** A fee payer is handed a
+   * bound, shielded transaction; whose it is cannot be read off it, off a
+   * receipt or off the chain. This is the last layer that still knows, and
+   * after it the answer does not exist anywhere. **It is a record and nothing
+   * refuses on it** - a write is never stopped for want of an attribution.
+   *
+   * The delegation is a thunk rather than a promise so the inner call is not
+   * started before the refusal is decided.
+   */
+  private write<T>(accountId: string, what: string, go: () => T): T | Promise<never> {
+    if (this.cannotWrite) return this.refuse(what);
+    /*
+     * Told before the work starts, because the fee payer reads it at the moment
+     * it records a payment, which is inside the call below.
+     */
+    this.payer?.payingFor(accountId);
+    return go();
+  }
+
   open(accountId: string, opening: AccountOpening): Promise<TxRef> {
-    return this.cannotWrite ? this.refuse('opening an account')
-      : this.inner.open(accountId, opening);
+    return this.write(accountId, 'opening an account',
+      () => this.inner.open(accountId, opening));
   }
 
   propose(...args: Parameters<Ledger['propose']>): Promise<TxRef> {
-    return this.cannotWrite ? this.refuse('raising a round')
-      : this.inner.propose(...args);
+    return this.write(args[0], 'raising a round', () => this.inner.propose(...args));
   }
 
   proposeRun(...args: Parameters<Ledger['proposeRun']>): ReturnType<Ledger['proposeRun']> {
-    return this.cannotWrite ? this.refuse('raising a payroll round')
-      : this.inner.proposeRun(...args);
+    return this.write(args[0], 'raising a payroll round',
+      () => this.inner.proposeRun(...args)) as ReturnType<Ledger['proposeRun']>;
   }
 
   approve(accountId: string, proposalId: Hex, by: SignerRef): Promise<TxRef> {
-    return this.cannotWrite ? this.refuse('approving a round')
-      : this.inner.approve(accountId, proposalId, by);
+    return this.write(accountId, 'approving a round',
+      () => this.inner.approve(accountId, proposalId, by));
   }
 
   cancel(accountId: string, proposalId: Hex, by: SignerRef): Promise<TxRef> {
-    return this.cannotWrite ? this.refuse('cancelling a round')
-      : this.inner.cancel(accountId, proposalId, by);
+    return this.write(accountId, 'cancelling a round',
+      () => this.inner.cancel(accountId, proposalId, by));
   }
 
   addSigner(accountId: string, leaf: Hex, proposalId: Hex | null, by: SignerRef): Promise<TxRef> {
-    return this.cannotWrite ? this.refuse('adding a signer')
-      : this.inner.addSigner(accountId, leaf, proposalId, by);
+    return this.write(accountId, 'adding a signer',
+      () => this.inner.addSigner(accountId, leaf, proposalId, by));
   }
 
   removeSigner(accountId: string, removedLeaf: Hex, proposalId: Hex, by: SignerRef): Promise<TxRef> {
-    return this.cannotWrite ? this.refuse('removing a signer')
-      : this.inner.removeSigner(accountId, removedLeaf, proposalId, by);
+    return this.write(accountId, 'removing a signer',
+      () => this.inner.removeSigner(accountId, removedLeaf, proposalId, by));
   }
 
   setThreshold(...args: Parameters<Ledger['setThreshold']>): Promise<TxRef> {
-    return this.cannotWrite ? this.refuse('changing the approval threshold')
-      : this.inner.setThreshold(...args);
+    return this.write(args[0], 'changing the approval threshold',
+      () => this.inner.setThreshold(...args));
   }
 
   setVaultThreshold(...args: Parameters<Ledger['setVaultThreshold']>): Promise<TxRef> {
-    return this.cannotWrite ? this.refuse('changing a vault\'s approval threshold')
-      : this.inner.setVaultThreshold(...args);
+    return this.write(args[0], 'changing a vault\'s approval threshold',
+      () => this.inner.setVaultThreshold(...args));
   }
 }
 

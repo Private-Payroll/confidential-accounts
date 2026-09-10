@@ -33,6 +33,7 @@
  */
 import type { FeeSponsor } from './ledger.js';
 import type { TxRef } from '../core/ledger.js';
+import type { SponsoredFeeSink } from './sponsored-fees.js';
 
 /**
  * **WHAT A SPONSOR NEEDS FROM A FUNDED WALLET, AND NOTHING MORE. THIS IS THE
@@ -61,6 +62,14 @@ import type { TxRef } from '../core/ledger.js';
  *                                  not spend.** See below - it is the member
  *                                  this interface was missing, and its absence
  *                                  was not a gap in tidiness.
+ *   `estimateFee`                  what the transaction is about to cost,
+ *                                  read BEFORE anything is booked. It is the
+ *                                  vendor's own pre-spend control at this exact
+ *                                  call site, and it is the only moment the
+ *                                  expected cost exists at all.
+ *   `paidFee`                      what it actually cost, or `null` when that
+ *                                  cannot be said. Answers rather than throws:
+ *                                  it runs after the money has moved.
  *   `balances`                     what is left to pay with, so an operator
  *                                  learns the fee budget is running out before
  *                                  customers start failing.
@@ -80,14 +89,21 @@ import type { TxRef } from '../core/ledger.js';
  * **WHAT IS DELIBERATELY NOT HERE, SO THAT ADDING IT LATER IS A DECISION AND
  * NOT A DISCOVERY.** The vendor offers a sponsor two spend controls at exactly
  * this call site - checking that what it is about to pay for was actually
- * signed, and estimating the fee before committing to it - and neither is
- * called anywhere in this product. **Nothing caps what a sponsor pays**: the
- * fee follows the transaction's complexity, and the customer composes the
- * transaction. Those two belong here the day something uses them; a seam member
- * nobody implements is a member that gets stubbed, and a stub in the one
- * component with spend authority is worse than an absence. **A later change adds
- * them to this interface and to the class below, and to nothing else - which is
- * the whole reason the seam is one narrow interface in one file.**
+ * signed, and estimating the fee before committing to it. **The second of the
+ * two is now here and the first is not**, and the asymmetry is deliberate
+ * rather than half-finished: the estimate produces a NUMBER that cannot be
+ * recovered afterwards, so taking it late costs the number; the signature check
+ * produces a VERDICT, and a verdict is only worth taking when something refuses
+ * on it. Nothing refuses on anything here yet.
+ *
+ * **NOTHING CAPS WHAT A SPONSOR PAYS AND THIS SEAM STILL DOES NOT.** The fee
+ * follows the transaction's complexity and the customer composes the
+ * transaction, so the failure is a bill rather than an outage. The estimate
+ * below is what a cap would one day be compared against; it is recorded and it
+ * is not consulted. **A cap, and the signature check in front of it, belong
+ * here the day a policy exists to refuse against** - and they are a change to
+ * this interface and to the class below and to nothing else, which is the whole
+ * reason the seam is one narrow interface in one file.
  */
 export interface SponsorWallet {
   balanceFinalizedTransaction(
@@ -106,6 +122,47 @@ export interface SponsorWallet {
    * that cannot run at the point it is needed.
    */
   revert(booking: unknown): Promise<void>;
+  /**
+   * What this transaction is expected to cost, before anything is committed to.
+   *
+   * **IT IS THE VENDOR'S OWN PRE-SPEND CONTROL AT EXACTLY THIS CALL SITE**, and
+   * it is here now because the number it produces cannot be recovered
+   * afterwards: it is the fee the balance below is ABOUT to converge on, and
+   * the balancing call returns the transaction without it. Read after the fact
+   * you get what was charged; read here you get what could have been decided
+   * on.
+   *
+   * **IT ESTIMATES THE FEE INCLUDING THE BALANCING LEG.** The cheaper call
+   * next to it in the vendor's interface prices the transaction alone and says
+   * in its own docstring that it lacks the fees of the balancing transaction -
+   * which, for a fee payer that adds nothing but a fee leg, is the only leg it
+   * is paying for. **The cheap one is the wrong number, not a rough one.**
+   *
+   * **NOTHING CAPS IT AND THIS CHANGE DOES NOT ADD ONE.** A cap needs a
+   * policy and a per-company ceiling, neither of which exists, and a cap that
+   * refuses on a number nobody chose is an outage. What this does is make the
+   * number exist.
+   */
+  estimateFee(tx: unknown, ttl: Date): Promise<bigint>;
+  /**
+   * What a submitted transaction actually cost, or `null` when it cannot be
+   * said.
+   *
+   * **IT ANSWERS `null` RATHER THAN THROWING, AND `null` RATHER THAN
+   * GUESSING.** The charged fee is on the chain rather than in the wallet, so
+   * reading it is a question asked of something that may not answer in time,
+   * on a path where the money has already moved. A reading that did not come
+   * back is not a failure of the payment and must never be reported as one -
+   * and it is not a zero either.
+   *
+   * **THE OBVIOUS SUBSTITUTE IS REFUSED HERE RATHER THAN LEFT TO BE TRIED: a
+   * difference of wallet balances is not this number.** The balance lags the
+   * spend it is meant to show, dust regenerates continuously from held NIGHT so
+   * the figure moves for reasons that have nothing to do with this
+   * transaction, and any second sponsored transaction in the window
+   * contaminates it.
+   */
+  paidFee(ref: string): Promise<bigint | null>;
   shieldedSecretKeys: unknown;
   dustSecretKey: unknown;
   balances(): Promise<{ dust: bigint; night: bigint }>;
@@ -120,6 +177,25 @@ export const CUSTOMER_BALANCES = ['shielded', 'unshielded'] as const;
 export const SPONSOR_BALANCES = ['dust'] as const;
 
 export class WalletFeeSponsor implements FeeSponsor {
+  /**
+   * The company the transaction in flight belongs to, and the estimate taken
+   * for it.
+   *
+   * **TWO FIELDS ON AN OBJECT THAT PAYS FOR OTHER PEOPLE'S TRANSACTIONS, AND
+   * BOTH ARE THERE BECAUSE THE INFORMATION EXISTS NOWHERE ELSE BY THE TIME IT
+   * IS WANTED.** The company is told to this object and cannot be derived from
+   * what it is handed; the estimate is read before the balance and is gone
+   * once the balance has run. Neither is consulted by anything that decides
+   * whether to pay.
+   *
+   * **THEY REST ON ONE OPERATION AT A TIME**, which is the same property the
+   * provider bundle above this already rests on and states. Two operations
+   * through one fee payer at once would make the record wrong rather than
+   * absent, and the fix is a fee payer per operation.
+   */
+  private company: string | null = null;
+  private estimated: bigint | null = null;
+
   constructor(
     private wallet: SponsorWallet,
     /**
@@ -130,7 +206,29 @@ export class WalletFeeSponsor implements FeeSponsor {
      * out when customers start failing.
      */
     private onPay?: (info: { fee?: bigint; remaining?: bigint }) => void,
+    /**
+     * Where the record of this payment goes: which company, expected, actual.
+     *
+     * Optional only because a script driving this seam by hand has nowhere to
+     * put one. Every deployment supplies one, and the reason it is taken at all
+     * is that attribution cannot be extracted from a shielded transaction after
+     * the fact.
+     */
+    private fees?: SponsoredFeeSink,
   ) {}
+
+  /**
+   * Which company the next transaction is for.
+   *
+   * It clears the previous estimate at the same time, and that pairing is the
+   * point: an estimate belongs to one transaction, and an estimate left
+   * standing from the previous one would be filed against this one as though it
+   * had been measured for it.
+   */
+  payingFor(accountId: string): void {
+    this.company = accountId;
+    this.estimated = null;
+  }
 
   /**
    * Phase 2: balance the dust leg only, then prove and merge.
@@ -139,6 +237,19 @@ export class WalletFeeSponsor implements FeeSponsor {
    * fee and hands back something submittable.
    */
   async addFeeAndFinalise(customerFinalised: unknown, ttl: Date): Promise<unknown> {
+    /*
+     * **READ BEFORE ANYTHING IS BOOKED, AND A FAILURE HERE DOES NOT STOP THE
+     * PAYMENT.** This is the only moment the expected cost exists: it is the
+     * fee the balance below is about to converge on, and the balance hands back
+     * a transaction rather than a price.
+     *
+     * It is deliberately NOT a gate. Nothing caps what a fee payer pays today,
+     * a cap needs a policy nobody has chosen, and an estimate that refused a
+     * payment because a measurement did not come back would be an outage caused
+     * by an instrument. **What is not read is recorded as not read.**
+     */
+    this.estimated = await this.wallet.estimateFee(customerFinalised, ttl).catch(() => null);
+
     const recipe = await this.wallet.balanceFinalizedTransaction(
       customerFinalised,
       {
@@ -169,7 +280,10 @@ export class WalletFeeSponsor implements FeeSponsor {
     try {
       return await this.wallet.finalizeRecipe(recipe);
     } catch (e) {
-      await this.release(recipe);
+      /* Swallowed HERE and not inside the release: `e` is the error naming what
+       * actually happened, and a complaint about tidying up in its place sends
+       * whoever reads it to the wrong layer. */
+      try { await this.release(recipe); } catch { /* see above */ }
       throw e;
     }
   }
@@ -182,36 +296,79 @@ export class WalletFeeSponsor implements FeeSponsor {
    * the state machine above makes of that is the state machine's business. What
    * it must not do is leave the coins booked on the one path where the outcome
    * is unknown, because that is the path most likely to be tried again.
+   *
+   * **AND THE COMPANY'S SIDE OF THE SAME WINDOW DOES THE OPPOSITE, DELIBERATELY
+   * — SAID HERE SO THAT NEITHER HALF READS AS THE ONLY ANSWER.** The layer that
+   * links the two callbacks forgets the company's booking without releasing it,
+   * because the vendor's release on a transaction that DID land destroys the
+   * pending entry chain sync would have used to repair the local state. **These
+   * coins are ours and a resync is a thing we do; the company's wallet is on a
+   * device we do not operate**, so what is worth protecting there is the
+   * self-healing path rather than the booking. Both decisions are written down
+   * with what they cost.
    */
   async submit(finalisedTransaction: unknown): Promise<TxRef> {
     let ref: string;
     try {
       ref = await this.wallet.submitTransaction(finalisedTransaction);
     } catch (e) {
-      await this.release(finalisedTransaction);
+      /* Swallowed here, for the reason above. */
+      try { await this.release(finalisedTransaction); } catch { /* see above */ }
       throw e;
+    }
+    /*
+     * **EVERYTHING FROM HERE IS AFTER THE MONEY HAS MOVED, SO NOTHING FROM HERE
+     * MAY THROW.** A transaction that settled and then reported a failure is
+     * the worst answer available on this path: whoever reads it raises the same
+     * round again, which is how a payroll gets paid twice.
+     */
+    const at = new Date().toISOString();
+    const actual = await this.wallet.paidFee(String(ref)).catch(() => null);
+    if (this.fees) {
+      try {
+        this.fees.record({
+          at,
+          company: this.company,
+          estimated: this.estimated,
+          actual,
+          ref: String(ref),
+        });
+      } catch { /* a record must never turn a payment that landed into a failure */ }
     }
     if (this.onPay) {
       const { dust } = await this.wallet.balances().catch(() => ({ dust: undefined as any }));
-      this.onPay({ remaining: dust });
+      /*
+       * **THE FEE HERE IS THE ONE THE CHAIN CHARGED, OR ABSENT.** It used to be
+       * absent always - the field existed and nothing ever filled it. What it
+       * is NOT is a difference of the balance below against a previous one:
+       * that figure lags its own spend, dust regenerates from held NIGHT while
+       * nothing is happening, and a second sponsored transaction in the window
+       * contaminates it.
+       */
+      this.onPay({ fee: actual ?? undefined, remaining: dust });
     }
-    return { ref: String(ref), at: new Date().toISOString() };
+    return { ref: String(ref), at };
   }
 
   /**
-   * **A RELEASE THAT FAILS MUST NEVER REPLACE THE FAILURE THAT CAUSED IT.**
+   * **IT REPORTS ITS OWN FAILURE, AND UNTIL IT DID THE COUNT ABOVE THIS SEAM
+   * WAS A COUNT OF ATTEMPTS WEARING THE WORD *RELEASED*.**
    *
-   * Whether the vendor's release accepts a booking that has already been part
-   * consumed is not established, and this is a cleanup running on a path that
-   * has already gone wrong. If it throws, the caller still needs the original
-   * error: that is the one naming what actually happened, and swapping it for a
-   * complaint about tidying up sends whoever reads it to the wrong place.
+   * This method swallowed. Every caller therefore saw success whatever the
+   * vendor did, the layer that keeps the record of what is outstanding deleted
+   * bookings it had not released, and the number it answered - which exists so
+   * a caller can assert that coins were let go rather than assert the absence
+   * of a complaint - could not be wrong. **A release that cannot fail is
+   * exactly the instrument every open row in this area is *done when* somebody
+   * asserts on.**
    *
-   * So a failed release is swallowed here, and it is the one thing in this
-   * class that is. The cost is a booking that stays booked and says nothing,
-   * which is the state everything before this line exists to avoid — **so a
-   * release that cannot report its own failure is a gap this seam still has,
-   * and it is named here rather than left to be discovered.**
+   * **THE SWALLOW WAS RIGHT AND IT WAS IN THE WRONG PLACE.** A release that
+   * fails must never replace the failure that caused it: this runs on a path
+   * that has already gone wrong, and swapping the error naming what happened
+   * for a complaint about tidying up sends whoever reads it somewhere else
+   * entirely. That is a property of the two CALL SITES that have an original
+   * failure to protect, not of the release - so each of them swallows, by
+   * name, and a caller with nothing to protect gets the truth.
    *
    * **IT IS PUBLIC BECAUSE THE WINDOW IT GUARDS IS NOT INSIDE THIS CLASS.** The
    * two methods above are called by the SDK at two separate times, and what
@@ -220,11 +377,7 @@ export class WalletFeeSponsor implements FeeSponsor {
    * what the interface member this satisfies is for.
    */
   async release(booking: unknown): Promise<void> {
-    try {
-      await this.wallet.revert(booking);
-    } catch {
-      /* deliberately swallowed - see above */
-    }
+    await this.wallet.revert(booking);
   }
 
   /**

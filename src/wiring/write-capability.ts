@@ -59,7 +59,11 @@ export interface WriteCapability {
    * fatal for a writer.
    */
   readonly compiled: unknown;
-  /** Balances the legs the customer owns, and signs them. */
+  /**
+   * Balances the legs the customer owns, signs them, and lets go of what it
+   * booked when nothing was submitted. **The coins on this side are the
+   * company's, not our fee budget.**
+   */
   readonly customer: CustomerWallet;
   /** Balances the fee and submits. The only spend authority in the system. */
   readonly sponsor: FeeSponsor;
@@ -165,8 +169,9 @@ export function refusalForCapability(capability: WriteCapability | undefined): s
     maintenanceAuthority: !!capability.maintenanceAuthority,
     circuits: capability.compiled !== undefined && capability.compiled !== null,
     customerWallet: has(capability.customer,
-      'balanceOwnLegs', 'coinPublicKey', 'encryptionPublicKey'),
-    feePayer: has(capability.sponsor, 'addFeeAndFinalise', 'submit', 'capacity', 'release'),
+      'balanceOwnLegs', 'coinPublicKey', 'encryptionPublicKey', 'release'),
+    feePayer: has(capability.sponsor,
+      'addFeeAndFinalise', 'submit', 'capacity', 'release', 'payingFor'),
     privateStateKey: typeof capability.storagePassword === 'function',
   });
 }

@@ -234,6 +234,31 @@ export interface FeeSponsor {
    */
   release(booking: unknown): Promise<void>;
 
+  /**
+   * Which company the transaction about to be handed over belongs to.
+   *
+   * **IT IS TOLD RATHER THAN DERIVED, AND THAT IS A PROPERTY OF THE PRODUCT
+   * RATHER THAN AN OVERSIGHT.** What a fee payer is given is a bound, shielded
+   * transaction; the whole point of it is that it says nothing about whose it
+   * is. So attribution cannot be extracted afterwards, from the transaction, a
+   * receipt or the chain - and a fee payer that pays for whatever arrives has
+   * discarded it before anybody asks. The only place the answer exists is the
+   * caller, which is why it is a member here.
+   *
+   * **NOTHING BILLS, METERS, PRICES OR REFUSES ON THIS.** It is a record, taken
+   * while it is free to take, because it cannot be reconstructed later.
+   *
+   * **ONE OPERATION AT A TIME, STATED RATHER THAN ASSUMED**, and it is the same
+   * property the provider bundle above this already rests on: the SDK's two
+   * callbacks carry nothing to tell one operation from another, so there is no
+   * key to attach this to. The queue drives one job at a time, on purpose and
+   * for a different reason. If anything ever drives two operations through one
+   * fee payer at once, the second one's company overwrites the first's and the
+   * record is wrong rather than absent - and the fix is a fee payer per
+   * operation rather than a cleverer field here.
+   */
+  payingFor(accountId: string): void;
+
   /** Remaining DUST capacity, so we can alarm before customers start failing. */
   capacity(): Promise<{ dust: bigint; night: bigint }>;
 }

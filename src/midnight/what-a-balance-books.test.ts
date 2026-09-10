@@ -33,14 +33,32 @@
  */
 import { describe, it, expect } from 'vitest';
 import { sponsoredProviders } from './providers.js';
+import { SponsoredCustomerWallet } from './wallet.js';
+import { WalletFeeSponsor } from './sponsor.js';
 import { MidnightJobRunner, type JobRunnerDeps } from './job-runner.js';
 import type { FeeSponsor } from './ledger.js';
+import type { CustomerWallet } from './providers.js';
 import type { Job } from '../core/jobs.js';
 
-const customer = {
-  coinPublicKey: () => 'not-a-secret: a test literal',
-  encryptionPublicKey: () => 'not-a-secret: a test literal',
-  balanceOwnLegs: async (tx: unknown) => ({ customerLegs: tx }),
+/**
+ * The company's side, recording what it was asked to let go of.
+ *
+ * **A FUNCTION RATHER THAN A CONSTANT, WHICH IT WAS NOT BEFORE.** The company's
+ * bookings are now released against the company's own wallet, so a case has to
+ * be able to see this one's releases separately from the fee payer's - a shared
+ * object would pool them and the count would say nothing about which wallet let
+ * go of what.
+ */
+const customerWallet = (over: Partial<CustomerWallet> = {}) => {
+  const released: unknown[] = [];
+  const it: CustomerWallet = {
+    coinPublicKey: () => 'not-a-secret: a test literal',
+    encryptionPublicKey: () => 'not-a-secret: a test literal',
+    balanceOwnLegs: async (tx: unknown) => ({ customerLegs: tx }),
+    release: async (booking) => { released.push(booking); },
+    ...over,
+  };
+  return { it, released };
 };
 
 /** Records what it was asked to do, so a case can assert on the argument. */
@@ -51,6 +69,7 @@ const sponsor = (over: Partial<FeeSponsor> = {}) => {
     addFeeAndFinalise: async (tx) => ({ finalised: tx }),
     submit: async (tx) => { submitted.push(tx); return { ref: 'tx_1', at: '' }; },
     release: async (booking) => { released.push(booking); },
+    payingFor: () => {},
     capacity: async () => ({ dust: 0n, night: 0n }),
     ...over,
   };
@@ -69,15 +88,92 @@ describe('a balance that is never submitted is released', () => {
      * one of the two.**
      */
     const s = sponsor();
-    const p = sponsoredProviders(customer, s.it);
+    const c = customerWallet();
+    const p = sponsoredProviders(c.it, s.it);
 
     const finalised = await p.walletProvider.balanceTx({ the: 'transaction' } as any, new Date());
-    // and now the operation is abandoned, which is the case with no owner
-    expect(await p.releaseUnspent()).toBe(1);
+    /*
+     * and now the operation is abandoned, which is the case with no owner.
+     * **TWO, BECAUSE THERE ARE TWO WALLETS**: the company booked its own legs
+     * and the fee payer booked the fee, in two separate local states, and each
+     * has to be let go by the wallet that made it.
+     */
+    expect(await p.releaseUnspent()).toBe(2);
 
     expect(s.released).toHaveLength(1);
     expect(s.released[0], 'the release was handed something other than the booking')
       .toBe(finalised);
+  });
+
+  it('releases the COMPANY\'s booking too, against the company\'s own wallet', async () => {
+    /*
+     * RED WHEN: `ownBookings.add(ownLegsBalanced)` is deleted from `balanceTx`,
+     * or the release loop over it is removed from `releaseUnspent`. Either way
+     * the fee payer's coins come back and the company's stay booked - which is
+     * the state this whole file existed to describe on one side only.
+     *
+     * **AND IT ASSERTS THE OBJECT, NOT THE COUNT.** A release handed the merged
+     * transaction instead of what the company's own balance produced is a
+     * release the vendor looks up and finds nothing for: it frees nothing, and
+     * a count cannot tell that from a release that worked.
+     */
+    const s = sponsor();
+    const c = customerWallet();
+    const p = sponsoredProviders(c.it, s.it);
+
+    await p.walletProvider.balanceTx({ the: 'transaction' } as any, new Date());
+    await p.releaseUnspent();
+
+    expect(c.released, 'the company\'s own booking was never released').toHaveLength(1);
+    expect(c.released[0],
+      'the company\'s wallet was handed something other than what its own balance produced')
+      .toEqual({ customerLegs: { the: 'transaction' } });
+  });
+
+  it('releases the company\'s booking when the FEE PAYER\'s phase throws', async () => {
+    /*
+     * **THE WINDOW THIS CASE IS ABOUT IS BETWEEN THE TWO BALANCES, AND NOTHING
+     * COVERED IT.** The company books and signs; the fee payer is then handed
+     * the result and can refuse, expire, or fail to prove. The company's own
+     * method has already returned by then, so its guard cannot fire, and this
+     * layer had no record of the booking at all.
+     *
+     * RED WHEN: the `try` around `sponsor.addFeeAndFinalise` in `balanceTx` is
+     * removed, so the throw leaves the company's coins booked for ever.
+     */
+    const s = sponsor({
+      addFeeAndFinalise: async () => { throw new Error('the fee leg would not prove'); },
+    });
+    const c = customerWallet();
+    const p = sponsoredProviders(c.it, s.it);
+
+    await expect(p.walletProvider.balanceTx({ the: 'transaction' } as any, new Date()))
+      .rejects.toThrow(/would not prove/);
+
+    expect(c.released,
+      'the fee payer refused and the company\'s coins were left booked').toHaveLength(1);
+    expect(await p.releaseUnspent(),
+      'the booking was released AND left in the record, so a later sweep frees it twice')
+      .toBe(0);
+  });
+
+  it('and a company release that throws does not replace the failure that caused it', async () => {
+    /*
+     * RED WHEN: the `try` around `customer.release(...)` inside `balanceTx`'s
+     * catch is removed. The caller is then handed a complaint about tidying up
+     * in place of the error naming what actually went wrong, which sends
+     * whoever reads it to the wrong layer entirely.
+     */
+    const s = sponsor({
+      addFeeAndFinalise: async () => { throw new Error('the fee leg would not prove'); },
+    });
+    const c = customerWallet({
+      release: async () => { throw new Error('the cleanup also failed'); },
+    });
+    const p = sponsoredProviders(c.it, s.it);
+
+    await expect(p.walletProvider.balanceTx({ the: 'transaction' } as any, new Date()))
+      .rejects.toThrow(/would not prove/);
   });
 
   it('releases NOTHING once the transaction has gone out', async () => {
@@ -91,13 +187,25 @@ describe('a balance that is never submitted is released', () => {
      * `outstanding.delete(tx)` line - so the cleanup below finds it still there.
      */
     const s = sponsor();
-    const p = sponsoredProviders(customer, s.it);
+    const c = customerWallet();
+    const p = sponsoredProviders(c.it, s.it);
 
     const finalised = await p.walletProvider.balanceTx({ the: 'transaction' } as any, new Date());
     await p.midnightProvider.submitTx(finalised as any);
 
     expect(await p.releaseUnspent()).toBe(0);
     expect(s.released, 'a booking that was submitted was released as well').toEqual([]);
+    /*
+     * **AND THE COMPANY'S SIDE OF THE SAME CONTROL, WHICH IS THE MORE
+     * DANGEROUS OF THE TWO.** The merged transaction carries the company's
+     * legs, so a submission spends them. Releasing them afterwards marks spent
+     * coins available on a device we do not operate, and the next transaction
+     * from it selects coins that no longer exist.
+     *
+     * RED WHEN: `ownBookings.clear()` is removed from `submitTx`.
+     */
+    expect(c.released, 'the company\'s coins were released after they had been spent')
+      .toEqual([]);
   });
 
   it('and nothing double-releases when the submission itself throws', async () => {
@@ -112,13 +220,44 @@ describe('a balance that is never submitted is released', () => {
      * instead of before it is called.
      */
     const s = sponsor({ submit: async () => { throw new Error('the socket closed'); } });
-    const p = sponsoredProviders(customer, s.it);
+    const c = customerWallet();
+    const p = sponsoredProviders(c.it, s.it);
 
     const finalised = await p.walletProvider.balanceTx({ the: 'transaction' } as any, new Date());
     await expect(p.midnightProvider.submitTx(finalised as any)).rejects.toThrow(/socket closed/);
 
     expect(await p.releaseUnspent(), 'this layer released a booking the sponsor already owns')
       .toBe(0);
+    /*
+     * **THE COMPANY'S BOOKING IS FORGOTTEN HERE AND NOT RELEASED, WHICH IS THE
+     * OPPOSITE OF WHAT THE FEE PAYER DOES ON THIS SAME PATH. IT IS A DECISION
+     * AND NOT AN OVERSIGHT, AND IT IS RECORDED AS ONE.**
+     *
+     * A throw out of a submission is not proof the transaction did not land.
+     * Releasing after a landing does not merely fail to help: the vendor's
+     * release clears the pending entry chain sync would have used to repair the
+     * local state, and files a rejection that did not happen. The fee payer's
+     * wallet is one we operate, so that repair is a thing we do; the company's
+     * is on a device we do not, so the self-healing path is worth more there
+     * than the booking is.
+     *
+     * **WHAT IT COSTS: a company that meets a dropped socket has some of its
+     * own coins marked in flight until its wallet is resynced.** Nothing here
+     * can find them again.
+     *
+     * **WHAT THIS CASE CAN AND CANNOT SHOW, BECAUSE A FIRST DRAFT OF IT
+     * ASSERTED THE WRONG HALF AND WENT RED.** The fee payer here is a
+     * hand-written double whose `submit` simply throws, so nothing releases
+     * anything on its side and the pairing cannot be measured from this
+     * fixture. What is measured is that THIS LAYER releases neither party's
+     * booking once the handover has happened. The fee payer's own release on a
+     * thrown submission belongs to its own file.
+     *
+     * RED WHEN: `ownBookings.clear()` is replaced by a release.
+     */
+    expect(c.released,
+      'the company\'s coins were released against a transaction that may have landed')
+      .toEqual([]);
   });
 
   it('a release that fails keeps its booking, and does not take the others with it', async () => {
@@ -155,11 +294,17 @@ describe('a balance that is never submitted is released', () => {
         }
       },
     });
-    const p = sponsoredProviders(customer, s.it);
+    const c = customerWallet();
+    const p = sponsoredProviders(c.it, s.it);
     await p.walletProvider.balanceTx({ first: true } as any, new Date());
     await p.walletProvider.balanceTx({ second: true } as any, new Date());
 
-    expect(await p.releaseUnspent(), 'a release that was refused was counted as done').toBe(1);
+    /*
+     * Four bookings now, in two wallets: two the company made and two the fee
+     * payer made. The refusal above is aimed at ONE of the fee payer's, so the
+     * first sweep frees three of the four.
+     */
+    expect(await p.releaseUnspent(), 'a release that was refused was counted as done').toBe(3);
     expect(await p.releaseUnspent(),
       'the refused booking was dropped from the record, so nothing can ever release it again')
       .toBe(1);
@@ -170,12 +315,84 @@ describe('a balance that is never submitted is released', () => {
     // RED WHEN: the record holds one booking rather than a set - which is what
     // a single slot would do, silently dropping the first of two.
     const s = sponsor();
-    const p = sponsoredProviders(customer, s.it);
+    const c = customerWallet();
+    const p = sponsoredProviders(c.it, s.it);
     await p.walletProvider.balanceTx({ one: true } as any, new Date());
     await p.walletProvider.balanceTx({ two: true } as any, new Date());
 
-    expect(await p.releaseUnspent()).toBe(2);
+    // Two operations, two wallets, four bookings.
+    expect(await p.releaseUnspent()).toBe(4);
     expect(s.released).toHaveLength(2);
+    expect(c.released, 'the company kept one booking per operation, or none').toHaveLength(2);
+  });
+});
+
+/**
+ * **EVERY CASE ABOVE DRIVES A HAND-WRITTEN FEE PAYER, AND THAT IS THE SEAM USED
+ * AS DESIGNED. THESE TWO DRIVE THE CLASSES THIS PRODUCT ACTUALLY SHIPS, AND
+ * THAT IS A DIFFERENT QUESTION.**
+ *
+ * A property can be pinned perfectly against a double and be unreachable in the
+ * composition that runs: the double's release could fail, and both shipped ones
+ * swallowed - so the count of releases was a count of ATTEMPTS, and the case
+ * that pinned *a release that fails keeps its booking* could not fire through
+ * anything real. **An instrument that cannot report a failure is the instrument
+ * every open question in this area is answered with.**
+ */
+describe('and the same, through the classes that actually ship', () => {
+  const facade = (over: Record<string, unknown> = {}) => ({
+    balanceUnboundTransaction: async (tx: unknown) => ({ booked: tx }),
+    balanceFinalizedTransaction: async (tx: unknown) => ({ fee: tx }),
+    signRecipe: async (r: unknown) => r,
+    finalizeRecipe: async (r: unknown) => r,
+    submitTransaction: async () => 'tx_1',
+    revert: async () => {},
+    estimateFee: async () => 1n,
+    paidFee: async () => 1n,
+    shieldedSecretKeys: 'k', dustSecretKey: 'k',
+    balances: async () => ({ dust: 0n, night: 0n }),
+    ...over,
+  });
+
+  const shipped = (over: Record<string, unknown> = {}) => {
+    const f = facade(over);
+    return sponsoredProviders(
+      new SponsoredCustomerWallet(f as never, { shieldedSecretKeys: 'k', dustSecretKey: 'k' },
+        () => 'sig', { coinPublicKey: 'not-a-secret', encryptionPublicKey: 'not-a-secret' }),
+      new WalletFeeSponsor(f as never),
+    );
+  };
+
+  it('a refused release is NOT counted and the booking is kept', async () => {
+    /*
+     * **MEASURED THROUGH THE REAL OBJECTS.** With the release swallowing one
+     * layer down, this answered TWO while nothing had been let go, and emptied
+     * the record so a later attempt could never find either booking again.
+     *
+     * RED WHEN: either `release` goes back to swallowing the vendor's refusal
+     * inside itself, which is where the swallow was. Nothing above this
+     * `describe` notices - every case up there supplies a release that can
+     * fail, and no shipped one could.
+     */
+    let refuse = true;
+    const p = shipped({ revert: async () => { if (refuse) throw new Error('the vendor refused'); } });
+    await p.walletProvider.balanceTx({ the: 'transaction' } as never, new Date());
+
+    expect(await p.releaseUnspent(), 'coins nobody let go of were counted as released')
+      .toBe(0);
+    refuse = false;
+    expect(await p.releaseUnspent(),
+      'the bookings were dropped from the record, so nothing can ever release them')
+      .toBe(2);
+  });
+
+  it('and a release that works is counted once, by each wallet', async () => {
+    // The positive control: without it the case above passes on a composition
+    // in which nothing is ever booked at all.
+    const p = shipped();
+    await p.walletProvider.balanceTx({ the: 'transaction' } as never, new Date());
+    expect(await p.releaseUnspent()).toBe(2);
+    expect(await p.releaseUnspent()).toBe(0);
   });
 });
 

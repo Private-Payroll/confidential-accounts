@@ -486,12 +486,16 @@ deployment?: ConstructorParameters<typeof MidnightLedger>[6]) {
 
   const submits: unknown[] = [];
   const releases: unknown[] = [];
+  const paidFor: string[] = [];
   const sponsor: FeeSponsor = {
     addFeeAndFinalise: async (tx) => tx,
     submit: async (tx) => { submits.push(tx); return { ref: 'sponsor_submit', at: '' }; },
     // Recorded rather than ignored: a release on this path would be a booking
     // this ledger let go of, and a double that swallowed it would hide that.
     release: async (booking) => { releases.push(booking); },
+    // Recorded for the same reason: whose transaction the fee payer was told it
+    // was paying for is the one fact that cannot be recovered afterwards.
+    payingFor: (accountId) => { paidFor.push(accountId); },
     capacity: async () => ({ dust: 0n, night: 0n }),
   };
 
