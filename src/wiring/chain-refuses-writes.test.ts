@@ -61,6 +61,7 @@ const CAPABLE: WriteCapability = {
   sponsor: {
     addFeeAndFinalise: async (tx: unknown) => tx,
     submit: async () => ({ ref: 'tx', at: '' }),
+    release: async () => {},
     capacity: async () => ({ dust: 0n, night: 0n }),
   } as WriteCapability['sponsor'],
   storagePassword: async () => 'not-a-secret: a test literal',

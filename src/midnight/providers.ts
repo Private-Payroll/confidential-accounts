@@ -43,34 +43,151 @@ export interface CustomerWallet {
 }
 
 /**
- * Wallet provider implementing two-phase balancing.
+ * **THE TWO PROVIDERS BELOW ARE ONE THING, AND THIS IS WHY THEY ARE BUILT
+ * TOGETHER RATHER THAN SEPARATELY.**
  *
- * The SDK calls `balanceTx` and expects a finalised transaction back. What
- * happens in between is our business: the customer balances what they own, the
- * sponsor adds the fee, and the customer never learns that DUST exists.
+ * The SDK calls `balanceTx` and, some time later and from somewhere else,
+ * `submitTx`. They were written as two independent factories, which read
+ * naturally and was wrong in one specific way: **balancing books coins, and
+ * only submitting spends them.** Everything that can go wrong in between -
+ * proving, staging, an expiry, a caller giving up - ends the operation with the
+ * booking standing, and nothing afterwards lets go of it. The vendor's
+ * time-based sweep is a documented no-op, and its own cleanup only acts on
+ * transactions that got an answer from chain sync, which one that was never
+ * submitted never gets.
+ *
+ * So the two share one record of what is outstanding, and the operation's owner
+ * can say *let go of whatever was booked and not spent*. That is the only link
+ * between the two callbacks, it is deliberately the smallest one that works,
+ * and there was no link at all before.
+ *
+ * **ONE OPERATION AT A TIME, STATED RATHER THAN ASSUMED.** The SDK gives these
+ * callbacks nothing to tell one operation from another - no id, no context - so
+ * the record below cannot be keyed by operation and is a plain set. That is
+ * correct for the way this is driven today: the job queue runs one job at a
+ * time, on purpose and for a different reason (the prover is single-threaded).
+ * **If anything ever drives two operations through ONE bundle at once, the
+ * first one's cleanup would release the second one's booking**, and the fix is
+ * a bundle per operation rather than a cleverer record here. Written down
+ * because it is the kind of thing that is discovered rather than remembered.
+ */
+export interface SponsoredProviders {
+  walletProvider: WalletProvider;
+  midnightProvider: MidnightProvider;
+  /**
+   * Releases anything a balance booked that no submission took.
+   *
+   * Called by whoever owns both phases, in a `finally`. Answers how many
+   * bookings it let go of, so a caller can assert on it rather than on the
+   * absence of a complaint.
+   */
+  releaseUnspent(): Promise<number>;
+}
+
+export const sponsoredProviders = (
+  customer: CustomerWallet,
+  sponsor: FeeSponsor,
+  ttlMinutes = 20,
+): SponsoredProviders => {
+  /** What has been booked and not yet handed to a submission. */
+  const outstanding = new Set<unknown>();
+
+  return {
+    walletProvider: {
+      getCoinPublicKey: () => customer.coinPublicKey() as any,
+      getEncryptionPublicKey: () => customer.encryptionPublicKey() as any,
+
+      async balanceTx(tx: any, ttl?: Date) {
+        // Both parties must agree on a TTL, and it has to outlive the round trip
+        // to the sponsor. Too short and the transaction expires between phases,
+        // which presents as an intermittent failure under load.
+        const deadline = ttl ?? new Date(Date.now() + ttlMinutes * 60_000);
+
+        const ownLegsBalanced = await customer.balanceOwnLegs(tx, deadline);
+        const finalised = await sponsor.addFeeAndFinalise(ownLegsBalanced, deadline);
+        /*
+         * Recorded AFTER the call returns, because a throw inside it is already
+         * covered: the sponsor's own method books and releases within itself,
+         * and recording before would leave this layer trying to release a
+         * booking that has already been let go.
+         */
+        outstanding.add(finalised);
+        return finalised as any;
+      },
+    },
+
+    midnightProvider: {
+      async submitTx(tx: any) {
+        /*
+         * **THE HANDOVER, AND ITS ORDER IS THE POINT.** Forgotten here, BEFORE
+         * the submission rather than after it: from this line the sponsor's own
+         * `submit` owns what happens to this booking, including releasing it if
+         * the submission throws. Clearing it afterwards would leave both layers
+         * believing they had to release the same coins, and a second release
+         * against a transaction the node may already have accepted is the one
+         * mistake in this area that costs more than the booking did.
+         */
+        outstanding.delete(tx);
+        const ref = await sponsor.submit(tx);
+        return ref.ref as any;
+      },
+    },
+
+    async releaseUnspent() {
+      /*
+       * **EACH ONE ON ITS OWN, AND ONLY WHAT ACTUALLY WENT IS FORGOTTEN.** The
+       * first version cleared the whole record and then released in a loop, so
+       * a single refusal part way through dropped every remaining booking from
+       * the record for ever - and the caller swallows the throw, so nothing
+       * anywhere would have said so. What is left booked stays in the record,
+       * which is the only place a later attempt can find it.
+       *
+       * **THE ANSWER COUNTS WHAT WAS RELEASED, NOT WHAT WAS TRIED**, because a
+       * caller asserting on it is asserting that coins were let go, and a count
+       * of attempts is exactly the kind of number that looks like evidence and
+       * is not.
+       */
+      let released = 0;
+      for (const b of [...outstanding]) {
+        try {
+          await sponsor.release(b);
+          outstanding.delete(b);
+          released += 1;
+        } catch {
+          /*
+           * Kept, and deliberately not re-thrown. This runs on a path that has
+           * usually already gone wrong, and the original failure is the one
+           * naming what happened - but a booking that could not be released is
+           * still outstanding, and saying it was released would be worse than
+           * saying nothing.
+           */
+        }
+      }
+      return released;
+    },
+  };
+};
+
+/**
+ * The wallet half on its own.
+ *
+ * Kept because callers that only need the shape have it, and deliberately NOT
+ * the way anything that submits should build its providers: on its own it has
+ * no way to release what it booked, which is the whole subject of the comment
+ * above. Use `sponsoredProviders` wherever a submission follows.
  */
 export const sponsoredWalletProvider = (
   customer: CustomerWallet,
   sponsor: FeeSponsor,
   ttlMinutes = 20,
-): WalletProvider => ({
-  getCoinPublicKey: () => customer.coinPublicKey() as any,
-  getEncryptionPublicKey: () => customer.encryptionPublicKey() as any,
-
-  async balanceTx(tx: any, ttl?: Date) {
-    // Both parties must agree on a TTL, and it has to outlive the round trip
-    // to the sponsor. Too short and the transaction expires between phases,
-    // which presents as an intermittent failure under load.
-    const deadline = ttl ?? new Date(Date.now() + ttlMinutes * 60_000);
-
-    const ownLegsBalanced = await customer.balanceOwnLegs(tx, deadline);
-    return sponsor.addFeeAndFinalise(ownLegsBalanced, deadline) as any;
-  },
-});
+): WalletProvider => sponsoredProviders(customer, sponsor, ttlMinutes).walletProvider;
 
 /**
  * Submission. Separate from the wallet because whoever pays the fee is the one
  * who submits, and that is the sponsor rather than the customer.
+ *
+ * Same caveat as above: built alone, it shares no record with any balance, so
+ * nothing it is paired with can release an unspent booking.
  */
 export const sponsoredMidnightProvider = (sponsor: FeeSponsor): MidnightProvider => ({
   async submitTx(tx: any) {
@@ -132,6 +249,7 @@ export async function midnightProviders(b: ProviderBundle): Promise<MidnightProv
   await applyNetworkId(b.config.networkId);
 
   const zkConfigProvider = new NodeZkConfigProvider(b.artifactsPath);
+  const pair = sponsoredProviders(b.customer, b.sponsor);
 
   return {
     zkConfigProvider,
@@ -149,7 +267,14 @@ export async function midnightProviders(b: ProviderBundle): Promise<MidnightProv
       privateStoragePasswordProvider: b.storagePassword as any,
     }),
     publicDataProvider: indexerPublicDataProvider(b.config.indexerUrl, b.config.indexerWsUrl),
-    walletProvider: sponsoredWalletProvider(b.customer, b.sponsor),
-    midnightProvider: sponsoredMidnightProvider(b.sponsor),
+    /*
+     * Built as a pair, so the balance and the submission share the record of
+     * what is booked. `releaseUnspent` travels on the bundle because the SDK's
+     * provider shape has nowhere else to put it, and whoever drives an
+     * operation calls it in a `finally`.
+     */
+    walletProvider: pair.walletProvider,
+    midnightProvider: pair.midnightProvider,
+    releaseUnspent: pair.releaseUnspent,
   } as MidnightProviders;
 }

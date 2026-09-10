@@ -212,8 +212,14 @@ export class WalletFeeSponsor implements FeeSponsor {
    * which is the state everything before this line exists to avoid — **so a
    * release that cannot report its own failure is a gap this seam still has,
    * and it is named here rather than left to be discovered.**
+   *
+   * **IT IS PUBLIC BECAUSE THE WINDOW IT GUARDS IS NOT INSIDE THIS CLASS.** The
+   * two methods above are called by the SDK at two separate times, and what
+   * goes wrong between them goes wrong where neither of them is running. So
+   * whoever owns both phases has to be able to say *let that go*, and that is
+   * what the interface member this satisfies is for.
    */
-  private async release(booking: unknown): Promise<void> {
+  async release(booking: unknown): Promise<void> {
     try {
       await this.wallet.revert(booking);
     } catch {

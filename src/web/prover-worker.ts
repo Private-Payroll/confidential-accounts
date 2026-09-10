@@ -50,6 +50,24 @@ export const startJobWorker = (scope: any, runner: JobRunner, dbName?: string) =
     // optimistic UI and notifications both subscribe to, rather than being two
     // more mechanisms.
     onChange: changeReporter(port),
+    /*
+     * **THE TIMER THE QUEUE DELIBERATELY DOES NOT OWN.** `jobs.ts` has no
+     * timers of its own so that the same job model runs in a tab, in a Worker,
+     * on the desktop and phone clients and in the tests. This thread has one,
+     * so it supplies it, and the queue keeps its lease alive for as long as it
+     * is really working.
+     *
+     * **WHAT IT BUYS IS THE WAIT AFTER A TAB DIES.** Without renewal a lease
+     * has to be longer than the slowest possible proof - measured at 176.9
+     * seconds - and that length is then exactly how long a reopened page sits
+     * unable to work its own job, with the screen saying it is proving. With
+     * renewal the lease is forty-five seconds and a dead worker's job is free
+     * within one.
+     */
+    every: (fn, ms) => {
+      const id = scope.setInterval(fn, ms);
+      return () => scope.clearInterval(id);
+    },
   });
 
   serveJobs(queue, port);

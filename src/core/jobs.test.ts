@@ -236,14 +236,25 @@ describe('JobQueue', () => {
      * It throws rather than marking the job failed, because a store that is not
      * saving progress would not save that either.
      */
+    const stuck: Job = {
+      id: 'job_stuck', accountId: 'acc_1', kind: 'approve', signerId: 'sgn_1',
+      payload: {}, state: 'queued', attempts: 0, createdAt: 'x', updatedAt: 'x',
+    };
     const broken: JobStore = {
-      list: async () => [
-        {
-          id: 'job_stuck', accountId: 'acc_1', kind: 'approve', signerId: 'sgn_1',
-          payload: {}, state: 'queued', attempts: 0, createdAt: 'x', updatedAt: 'x',
-        },
-      ],
+      list: async () => [{ ...stuck }],
       put: async () => {},
+      // Grants the lease every time. The subject here is a store that does not
+      // SAVE, not one that refuses work, and a claim that answered `null` would
+      // end the drain quietly and hide the failure this case is about.
+      //
+      // A FRESH COPY EACH TIME, AND THAT IS THE WHOLE FIDELITY OF THIS FAKE:
+      // the queue mutates the job it is handed, so a shared object would let
+      // the mutation stand and this store would be saving after all - which is
+      // the one thing it is here not to do.
+      claim: async () => ({ ...stuck }),
+      // Accepted every time: the subject is a store that does not SAVE, and a
+      // write that refused would end the drain quietly instead of loudly.
+      writeHeld: async () => true,
     };
     const q = new JobQueue(runner(), { store: broken });
     await expect(q.drain()).rejects.toThrow(/not saving progress/);

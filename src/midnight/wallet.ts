@@ -33,7 +33,6 @@
  * which is not as far as a node. Treat the first real run as the test.
  */
 import type { TxRef } from '../core/ledger.js';
-import type { FeeSponsor } from './ledger.js';
 import type { CustomerWallet } from './providers.js';
 
 /* ------------------------------------------------------------------ *
@@ -129,13 +128,34 @@ export class SponsoredCustomerWallet implements CustomerWallet {
  * ------------------------------------------------------------------ */
 
 /**
- * The sponsor. Holds NIGHT, therefore generates DUST, therefore pays.
+ * **A SPONSOR THAT BOOKS COINS AND NEVER RELEASES THEM. IT IS NOT THE LIVE ONE
+ * AND IT MUST NEVER BE IMPORTED AS THOUGH IT WERE.**
  *
- * This is the only component in the system with spend authority, which is why
- * `FeeSponsor` is a narrow interface and why this implementation should stay
- * small enough to read in one sitting.
+ * The live fee sponsor is in `sponsor.ts`. It carries the release logic: every
+ * path that balances and does not submit lets the booking go, because balancing
+ * marks coins in-flight and nothing releases them by time.
+ *
+ * **THIS ONE DOES NOT, AND ITS TWO METHODS ARE WHY THIS RENAME HAPPENED.**
+ * `addFeeAndFinalise` books at its first line and has two awaits after it with
+ * no guard around either; `submit` has none. The class carried the SAME NAME as
+ * the live one and satisfied the same interface, so an import fixed to this
+ * module compiled, passed every boundary check there is, and silently deleted
+ * every release - in the one component in this system with spend authority.
+ *
+ * **IT NO LONGER DECLARES `FeeSponsor`, AND THAT IS THE SECOND HALF OF THE
+ * PROTECTION RATHER THAN AN OVERSIGHT.** A rename stops the wrong import being
+ * plausible; dropping the declaration stops it being possible, because this
+ * class can no longer be passed anywhere a fee payer is expected. Adding the
+ * missing member instead would have written a release nothing exercises, into
+ * the one class that spends - which is the failure this file already is.
+ *
+ * **WHY THE FILE IS STILL HERE AT ALL.** `SponsoredCustomerWallet` above is the
+ * only implementation of `CustomerWallet` in this repository, and the customer
+ * half is one of the pieces a deployment needs before anything can be balanced
+ * or submitted at all. The sponsor below is kept beside it, renamed, until the
+ * round that supplies that capability has said what it took from this file.
  */
-export class WalletFeeSponsor implements FeeSponsor {
+export class SponsorWithoutRelease {
   constructor(
     private wallet: BalancingWallet,
     private secrets: WalletSecrets,

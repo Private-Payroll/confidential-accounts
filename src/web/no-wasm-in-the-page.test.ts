@@ -67,7 +67,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { build, resolveConfig } from 'vite';
-import { mkdtempSync, readdirSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
@@ -102,6 +102,10 @@ interface Built {
   readonly wasmModules: readonly string[];
   readonly wasmAssets: readonly string[];
   readonly moduleCount: number;
+  /** Every emitted file name, so a separate worker bundle can be found. */
+  readonly emitted: readonly string[];
+  /** The entry chunk's text, for asking what the PAGE itself reaches. */
+  readonly entryText: string;
 }
 
 /**
@@ -137,7 +141,16 @@ const built = async (root: string): Promise<Built> => {
   }
 
   const assets = join(out, 'assets');
+  const emitted = readdirSync(assets);
+  /*
+   * The entry is the one chunk the document loads, and it is what decides what
+   * a person downloads before anything on screen happens. Found by name because
+   * that is what the built document links to.
+   */
+  const entry = emitted.find(name => name.startsWith('index-') && name.endsWith('.js'));
   return {
+    emitted,
+    entryText: entry === undefined ? '' : readFileSync(join(assets, entry), 'utf8'),
     // Names only. A failure that prints ten megabytes of application is a
     // failure nobody reads.
     wasmModules: [...modules]
@@ -239,6 +252,66 @@ describe('WebAssembly and the payroll page', () => {
    * repository has already paid for once.
    */
 
+  /**
+   * **THE WORKER IS A SECOND MODULE GRAPH AND NOTHING WAS LOOKING AT IT.**
+   *
+   * The case above asks the bundler what the PAGE loaded, through a plugin in
+   * the page's own plugin list. A worker is built separately, through
+   * `worker.plugins`, so its modules never reach that recording at all -
+   * measured: adding a worker that imports the wallet SDK moved neither the
+   * four-module list above nor the module count.
+   *
+   * **THAT IS THE RIGHT ANSWER AND IT LEAVES A HOLE.** Right, because the page
+   * genuinely does not carry the worker's WebAssembly: the entry chunk holds a
+   * URL and nothing else, so nobody downloads a prover to look at a dashboard.
+   * A hole, because the failure a worker has is worse than the page's - a
+   * module that throws while a Worker evaluates it leaves a thread that never
+   * answers, with nothing on screen and nothing in the console - and until this
+   * case existed, nothing in this repository would have noticed.
+   *
+   * So the two halves are asserted in opposite directions, which is the only
+   * way either is worth having: the page must NOT reach the prover, and the
+   * worker MUST.
+   */
+  it('THE SECOND GRAPH: the proving worker carries the prover and the page carries only its '
+    + 'address', { timeout: 180_000 }, async () => {
+      const page = await built(join('src', 'web'));
+
+      const workerChunk = page.emitted.filter(name => name.startsWith('proving-worker-entry'));
+      expect(workerChunk,
+        'the page no longer builds a proving worker. Approving anything would run the prover on '
+        + 'the thread that paints the page, which stops it dead for over two minutes')
+        .toHaveLength(1);
+
+      /*
+       * The page's own entry names the worker and nothing else of its graph. If
+       * this ever fails, somebody has imported the worker's modules into the
+       * page directly, and the cost is thirteen megabytes of WebAssembly
+       * downloaded before anything appears on screen.
+       */
+      expect(page.entryText.includes(workerChunk[0]),
+        'the page entry does not name the proving worker, so the worker is not being started '
+        + 'from the page at all')
+        .toBe(true);
+      expect(/midnight_ledger_wasm_v9|midnight_zkir_wasm/.test(page.entryText),
+        'the page entry itself now reaches the prover or the wallet SDK. Everything it needs is '
+        + 'supposed to be behind the worker, which nobody downloads until they approve something')
+        .toBe(false);
+
+      /*
+       * And the other direction. A worker built without WebAssembly handling
+       * compiles, emits, and then throws while the browser evaluates it - which
+       * presents as a strip that never appears rather than as an error anybody
+       * can see.
+       */
+      const workerText = readFileSync(
+        join(REPO, 'src', 'web', 'proving-worker-entry.ts'), 'utf8');
+      expect(workerText.includes('@midnightntwrk/ledger-v9'),
+        'the proving worker no longer reaches the transaction reader, so it cannot read the '
+        + 'thing it is being asked to prove')
+        .toBe(true);
+    });
+
   it('THE ONE THAT KEEPS THE PAGE LOADABLE: the build handles WebAssembly at a target that '
     + 'can carry it, so the day the page is handed the contract\'s own scheme it is not a '
     + 'blank screen', { timeout: 60_000 }, async () => {
@@ -293,5 +366,25 @@ describe('WebAssembly and the payroll page', () => {
         'the page build targets a browser that cannot carry the top-level await the '
         + 'WebAssembly glue is generated with')
         .toEqual(['chrome111', 'edge111', 'firefox114', 'safari16.4', 'ios16.4']);
+
+      /*
+       * **AND THE WORKER'S OWN LIST, WHICH IS A SEPARATE ONE.** The page's
+       * plugins do not reach a worker build. A worker without this handling
+       * emits and then throws while the browser evaluates it, and a Worker that
+       * throws during evaluation is invisible: the thread never answers, and
+       * there is nothing on screen and nothing in the console to read.
+       */
+      /*
+       * `worker.plugins` on a RESOLVED configuration is a function that
+       * resolves the worker's own configuration, not a list - measured, because
+       * reading it as a list is silently `undefined` and `?? []` would then
+       * make this case pass against a worker build with no handling at all,
+       * which is the exact shape of assertion this repository keeps paying for.
+       */
+      const workerConfig: any = await (resolved.worker.plugins as any)([]);
+      expect(workerConfig.plugins.map((plugin: any) => plugin.name),
+        'the proving worker build no longer handles WebAssembly, so the worker will throw while '
+        + 'the browser evaluates it and simply never answer')
+        .toContain('vite-plugin-wasm');
     });
 });

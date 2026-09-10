@@ -131,6 +131,17 @@ export interface JobRunnerDeps {
     proofProvider: { proveTx(tx: unknown, config?: unknown): Promise<unknown> };
     walletProvider: { balanceTx(tx: unknown, ttl?: Date): Promise<unknown> };
     midnightProvider: { submitTx(tx: unknown): Promise<string> };
+    /**
+     * Lets go of anything the balance below booked that the submission did not
+     * take.
+     *
+     * **REQUIRED, AND THAT IS THE POINT OF PUTTING IT HERE.** Balancing marks
+     * coins in-flight; nothing releases them by time and nothing releases them
+     * on failure. A bundle assembled without this is a bundle that leaks a coin
+     * set on every failed submission, and the balance falls quietly with each
+     * one. An optional member would let that bundle be assembled by accident.
+     */
+    releaseUnspent(): Promise<number>;
     [k: string]: unknown;
   };
   /** The compiled contract, as `findDeployedContract` takes it. */
@@ -222,11 +233,38 @@ export class MidnightJobRunner implements JobRunner {
     if (!work?.provenTx) throw new Error('nothing to submit: this job has no proof in hand');
 
     const ttl = new Date(this.now().getTime() + this.ttlMinutes * 60_000);
-    const finalised = await this.deps.providers.walletProvider.balanceTx(work.provenTx, ttl);
-    const txId = await this.deps.providers.midnightProvider.submitTx(finalised);
+    /*
+     * **EVERY WAY OUT OF THIS METHOD THAT BALANCED AND DID NOT SUBMIT RELEASES
+     * WHAT THE BALANCE BOOKED.**
+     *
+     * Balancing marks coins in-flight in the wallet's own state. Nothing
+     * releases them by time - the vendor's sweep for that is a documented
+     * no-op - and its own cleanup only ever acts on transactions that got an
+     * answer from the chain, which one that was never submitted never gets. So
+     * a booking abandoned here stands for ever, the next attempt balances onto
+     * a fresh coin set because the first is filtered out as pending, and the
+     * fee budget falls a little on every failure with nothing saying why.
+     *
+     * `releaseUnspent` releases only what has not been handed to a submission:
+     * the bundle forgets a booking at the moment `submitTx` is entered, because
+     * from there the sponsor's own method owns it. So this cannot double-release
+     * a transaction the node may already have accepted, which is the one
+     * mistake in this area that costs more than the leak does.
+     */
+    try {
+      const finalised = await this.deps.providers.walletProvider.balanceTx(work.provenTx, ttl);
+      const txId = await this.deps.providers.midnightProvider.submitTx(finalised);
 
-    if (!txId) throw new Error('the transaction was submitted but no transaction id came back');
-    return { txRef: String(txId) };
+      if (!txId) throw new Error('the transaction was submitted but no transaction id came back');
+      return { txRef: String(txId) };
+    } finally {
+      /*
+       * A release that fails must never replace the failure that caused it.
+       * This runs on a path that has already gone wrong as often as not, and
+       * the original error is the one naming what actually happened.
+       */
+      await this.deps.providers.releaseUnspent().catch(() => {});
+    }
   }
 
   /**

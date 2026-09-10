@@ -196,3 +196,39 @@ pre{background:#070b12;border:1px solid var(--line);border-radius:9px;padding:14
   padding: 0.35rem 0.8rem;
   cursor: pointer;
 }
+
+/* ---------- approvals in progress ---------- */
+/*
+ * The strip and its panel. Neither ever takes the page: proving runs on another
+ * thread for over two minutes, and blocking the application for that time is
+ * exactly what moving it there removed.
+ */
+.proofbar{display:flex;align-items:center;gap:11px;padding:8px 26px;
+  background:var(--surface2);border-bottom:1px solid var(--line);font-size:13px;color:var(--dim);}
+.proofwhat{font-weight:550;color:var(--ink);}
+.proofdot{width:8px;height:8px;border-radius:50%;background:var(--faint);flex:0 0 auto;}
+.proofdot.fetching,.proofdot.proving,.proofdot.submitting{background:var(--brand);
+  animation:proofpulse 1.6s ease-in-out infinite;}
+.proofdot.done{background:var(--good);}
+.proofdot.stopped{background:var(--bad);}
+@keyframes proofpulse{0%,100%{opacity:1;}50%{opacity:.35;}}
+/*
+ * The rail exists only where a real fraction does - the artefact download. The
+ * proof itself has no progress to report and none is drawn for it.
+ */
+.proofrail{display:inline-block;width:140px;height:5px;border-radius:3px;
+  background:var(--line2);overflow:hidden;flex:0 0 auto;}
+.proofrail.wide{display:block;width:100%;margin:9px 0 2px;}
+.prooffill{display:block;height:100%;background:var(--brand);transition:width .2s linear;}
+
+.proofpanel{position:fixed;top:0;right:0;bottom:0;width:380px;max-width:92vw;z-index:40;
+  background:var(--surface);border-left:1px solid var(--line);display:flex;flex-direction:column;
+  box-shadow:-18px 0 40px rgba(0,0,0,.34);}
+.proofpanel .hd{padding:14px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px;}
+.proofpanel .hd h3{font-size:14px;font-weight:650;}
+.proofpanel .bd{padding:16px 18px;overflow:auto;}
+.proofrow{border:1px solid var(--line);border-radius:9px;padding:12px 13px;margin-bottom:11px;}
+.proofrowtop{display:flex;align-items:center;gap:9px;}
+.proofrowwhat{font-size:13.5px;}
+.proofrowacts{display:flex;gap:8px;margin-top:11px;flex-wrap:wrap;}
+.proofnote{font-size:12.5px;color:var(--faint);line-height:1.6;margin-top:6px;}

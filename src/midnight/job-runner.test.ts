@@ -121,8 +121,19 @@ const status = (over: Partial<LedgerStatus> = {}): LedgerStatus => ({
   ...over,
 });
 
+/**
+ * How many times a bundle was asked to let go of an unspent booking.
+ *
+ * Counted rather than ignored: `submit` releases in a `finally`, so a double
+ * that swallowed the call would let the release be deleted without a single
+ * case noticing - which is the shape of defect this change is carrying rows for.
+ */
+let released = 0;
+beforeEach(() => { released = 0; });
+
 const deps = (over: Partial<JobRunnerDeps> = {}): JobRunnerDeps => ({
   providers: {
+    releaseUnspent: async () => { released += 1; return 0; },
     proofProvider: { proveTx: async () => 'PROVEN' },
     walletProvider: { balanceTx: async () => 'FINALISED' },
     midnightProvider: { submitTx: async () => 'tx_1' },
@@ -149,6 +160,7 @@ describe('submit', () => {
     const runner = new MidnightJobRunner(
       deps({
         providers: {
+          releaseUnspent: async () => { released += 1; return 0; },
           proofProvider: { proveTx: async () => 'PROVEN' },
           walletProvider: {
             balanceTx: async () => {
@@ -182,6 +194,7 @@ describe('submit', () => {
     const runner = new MidnightJobRunner(
       deps({
         providers: {
+          releaseUnspent: async () => { released += 1; return 0; },
           proofProvider: { proveTx: async () => 'PROVEN' },
           walletProvider: { balanceTx },
           midnightProvider: { submitTx: async () => 'tx_1' },
@@ -203,6 +216,7 @@ describe('submit', () => {
         now: () => new Date('2026-08-13T00:00:00.000Z'),
         ttlMinutes: 20,
         providers: {
+          releaseUnspent: async () => { released += 1; return 0; },
           proofProvider: { proveTx: async () => 'PROVEN' },
           walletProvider: {
             balanceTx: async (_tx, ttl) => {
@@ -229,6 +243,7 @@ describe('submit', () => {
     const runner = new MidnightJobRunner(
       deps({
         providers: {
+          releaseUnspent: async () => { released += 1; return 0; },
           proofProvider: { proveTx: async () => 'PROVEN' },
           walletProvider: { balanceTx: async () => 'FINALISED' },
           midnightProvider: { submitTx: async () => '' },
@@ -437,6 +452,7 @@ describe('the split the whole design rests on', () => {
     const runner = new MidnightJobRunner(
       deps({
         providers: {
+          releaseUnspent: async () => { released += 1; return 0; },
           proofProvider: { proveTx: async () => 'PROVEN' },
           walletProvider: { balanceTx },
           midnightProvider: { submitTx },
@@ -454,6 +470,7 @@ describe('the split the whole design rests on', () => {
     const runner = new MidnightJobRunner(
       deps({
         providers: {
+          releaseUnspent: async () => { released += 1; return 0; },
           proofProvider: { proveTx },
           walletProvider: { balanceTx: async () => 'F' },
           midnightProvider: { submitTx: async () => 't' },
@@ -495,6 +512,7 @@ describe('the split the whole design rests on', () => {
     const runner = new MidnightJobRunner(
       deps({
         providers: {
+          releaseUnspent: async () => { released += 1; return 0; },
           proofProvider: { proveTx },
           walletProvider: { balanceTx: async () => 'F' },
           midnightProvider: { submitTx: async () => 't' },
@@ -526,6 +544,7 @@ describe('the split the whole design rests on', () => {
           throw new Error('there is no open proposal on this account');
         },
         providers: {
+          releaseUnspent: async () => { released += 1; return 0; },
           proofProvider: { proveTx },
           walletProvider: { balanceTx: async () => 'F' },
           midnightProvider: { submitTx: async () => 't' },
