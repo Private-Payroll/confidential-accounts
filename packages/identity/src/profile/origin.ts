@@ -84,14 +84,16 @@ const MAX_ORIGIN = 255;
  * empty first source and the flag would be untestable, which is how a gate ends
  * up with no test that it ever closes.
  */
-const developmentBuild = (name: string): boolean => {
+export const buildSetting = (name: string): unknown => {
   const env = (import.meta as { env?: Record<string, unknown> }).env;
-  if (env && name in env) return env[name] === '1';
+  if (env && name in env) return env[name];
   const proc = (globalThis as {
     process?: { env?: Record<string, string | undefined> };
   }).process;
-  return proc?.env?.[name] === '1';
+  return proc?.env?.[name];
 };
+
+const developmentBuild = (name: string): boolean => buildSetting(name) === '1';
 
 /** The one name. Exported so a caller can say why it refused. */
 export const LOCALHOST_FLAG = 'VITE_ALLOW_LOCALHOST_ORIGIN';
@@ -135,7 +137,28 @@ function asOrigin(value: unknown): URL | null {
  * of one rule, agreeing until somebody edits one.
  */
 const isLoopback = (url: URL): boolean =>
-  url.protocol === 'http:' && LOOPBACK_HOSTS.has(url.hostname);
+  url.protocol === 'http:' && (LOOPBACK_HOSTS.has(url.hostname) || isLocalhostName(url.hostname));
+
+/**
+ * **A NAME BENEATH `localhost`, MATCHED ON THE WHOLE LAST LABEL.**
+ *
+ * `app.pp.localhost` and `identity.pp.localhost` are the only way to run the
+ * product's real shape - two surfaces under one shared name - on one machine
+ * without a certificate. `localhost` on its own cannot do it: a browser treats
+ * it as a public suffix, so two ports of it share no name a passkey or a cookie
+ * could belong to. One label deeper, `pp.localhost` is a name both surfaces
+ * share, and a browser that resolves `*.localhost` to this machine treats every
+ * such host as a secure context.
+ *
+ * **THE TEST IS THE LAST LABEL, AND `localhost.evil.com` IS STILL REFUSED**,
+ * because its last label is `com`. A check that asked whether a host
+ * *contains* `localhost` is the attack this file is written against; this asks
+ * whether the name ENDS in the label `localhost`, which a registered domain on
+ * the public internet cannot do. **And it is still a development build's
+ * exception only** - `usableOrigin` gates it exactly as it gates the other three.
+ */
+const isLocalhostName = (host: string): boolean =>
+  host.endsWith('.localhost') && host.length > '.localhost'.length;
 
 /**
  * **IS THIS ONE OF THE THREE LOOPBACK ORIGINS?** Independent of whether they
@@ -177,4 +200,142 @@ export function whyNotUsable(value: unknown): string {
   }
   return 'this wallet could not observe a secure origin for whoever is asking, so it cannot '
     + 'tell you who they are. Nothing has been shown to them.';
+}
+
+/* ======================================================================== *
+ * THE SITE TWO SURFACES SHARE
+ * ======================================================================== */
+
+/**
+ * **WHY A SITE IS REFUSED, IN WORDS A PERSON CAN ACT ON.**
+ *
+ * Thrown when two hosts share no name a browser would let a passkey or a cookie
+ * belong to. It is a configuration fault, never a runtime one: the two hosts
+ * are fixed when a surface is built or started, so this is said once, loudly,
+ * at start-up, rather than discovered by the first person who signs in.
+ */
+export class SiteRefusal extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SiteRefusal';
+  }
+}
+
+const isIpLiteral = (host: string): boolean =>
+  host.startsWith('[') || /^[0-9.]+$/.test(host);
+
+/**
+ * **THE NAME TWO HOSTS SHARE, WHICH IS WHAT A PASSKEY AND A COOKIE ARE SCOPED TO.**
+ *
+ * `app.privatepayroll.com` and `identity.privatepayroll.com` share
+ * `privatepayroll.com`. A passkey whose relying party is that name is offered
+ * on both hosts, and a cookie whose `Domain` is that name is sent to both. A
+ * passkey bound to `identity.privatepayroll.com` is refused on
+ * `app.privatepayroll.com` with `SecurityError` - that is the defect this
+ * function exists to end.
+ *
+ * **COMPUTED FROM THE TWO HOSTS RATHER THAN CONFIGURED BESIDE THEM**, so the
+ * relying party and the cookie cannot be set to a name neither host sits under.
+ *
+ * **WHAT IT REFUSES, AND WHY EACH IS A REFUSAL RATHER THAN A FALLBACK:**
+ *   - no name in common at all - there is no site;
+ *   - only a top-level name in common (`com`, `io`) - no browser lets a
+ *     passkey or a cookie belong to one, so the answer would fail later and
+ *     further from its cause;
+ *   - an address rather than a name - two addresses share no site, and one
+ *     address is only ever its own.
+ *
+ * **WHAT IT DOES NOT KNOW: the public suffix list.** A shared name such as
+ * `co.uk` passes here and is refused by the browser at the first ceremony,
+ * loudly. The hosts this is given are this product's own configuration, not
+ * input from a stranger.
+ */
+export function sharedSite(first: string, second: string): string {
+  const a = first.toLowerCase();
+  const b = second.toLowerCase();
+  if (a.length === 0 || b.length === 0) {
+    throw new SiteRefusal('a surface was configured with no host, so there is no site to share.');
+  }
+  if (a === b) return a;
+  if (isIpLiteral(a) || isIpLiteral(b)) {
+    throw new SiteRefusal(
+      `${a} and ${b} are not two names under one site - an address is only ever its own - `
+      + 'so a passkey or a sign-in made on one cannot be used on the other. Serve both surfaces '
+      + 'under one name.');
+  }
+  const x = a.split('.').reverse();
+  const y = b.split('.').reverse();
+  const common: string[] = [];
+  for (let i = 0; i < Math.min(x.length, y.length) && x[i] === y[i]; i += 1) common.push(x[i]!);
+  const site = common.reverse().join('.');
+  if (common.length === 0) {
+    throw new SiteRefusal(
+      `${a} and ${b} share no name, so a passkey or a sign-in made on one cannot be used on the `
+      + 'other. Serve both surfaces under one name.');
+  }
+  if (common.length === 1 && site !== 'localhost') {
+    throw new SiteRefusal(
+      `${a} and ${b} share only "${site}", which no browser lets a passkey or a sign-in belong `
+      + 'to. Serve both surfaces under one name you own.');
+  }
+  return site;
+}
+
+/**
+ * **THE ONE PAGE ALLOWED TO PUT THIS WALLET INSIDE ITSELF, OR NULL.**
+ *
+ * Read from a build's configuration. Absent means the wallet is standalone and
+ * is framed by nobody. Present, it must be an origin this wallet would accept
+ * a request from at all - the same `usableOrigin` rule, so a production build
+ * cannot be told to trust an `http` page.
+ */
+export function embedderFrom(value: unknown): string | null {
+  if (value === undefined || value === null || value === '') return null;
+  if (!usableOrigin(value)) {
+    throw new SiteRefusal(
+      `the page this wallet was built to sit inside, ${String(value)}, is not an address it can `
+      + `trust: ${whyNotUsable(value)}`);
+  }
+  return value as string;
+}
+
+/**
+ * **THE RELYING PARTY A PASSKEY IS MADE FOR.**
+ *
+ * With no embedder the wallet stands alone and its passkeys belong to its own
+ * host, exactly as before. **With one, they belong to the site the two share**,
+ * so the one passkey works on both. The host is never the answer when an
+ * embedder is configured - that is what `SecurityError` looked like.
+ */
+export function relyingPartyIdFor(ownHost: string, embedder: string | null): string {
+  if (embedder === null) return ownHost;
+  return sharedSite(ownHost, new URL(embedder).hostname);
+}
+
+/**
+ * **WHO MAY FRAME THIS WALLET, AS THE BROWSER ENFORCES IT.**
+ *
+ * `frame-ancestors` is honoured only as a response header - a `<meta>` policy
+ * ignores it - so this is the value whatever serves the wallet must send with
+ * every document. This repository's development and preview servers send it;
+ * a host that serves a build has to be configured to.
+ * No embedder is `'none'`: nothing may frame it, which is what a standalone
+ * wallet has always needed and never said.
+ */
+export function frameAncestorsFor(embedder: string | null): string {
+  return `frame-ancestors ${embedder ?? "'none'"}`;
+}
+
+/**
+ * **THE HEADERS EVERY DOCUMENT OF A SURFACE IS SERVED WITH, SO WHO MAY FRAME IT IS DECIDED IN ONE PLACE.**
+ *
+ * `X-Frame-Options: DENY` joins `'none'` for browsers that predate
+ * `frame-ancestors`. It is left off when an embedder is named, because it has
+ * no way to name one: a browser that reads both honours the policy, and one
+ * that reads only the older header would refuse the embedder too.
+ */
+export function framingHeadersFor(embedder: string | null): Readonly<Record<string, string>> {
+  return embedder === null
+    ? { 'Content-Security-Policy': frameAncestorsFor(null), 'X-Frame-Options': 'DENY' }
+    : { 'Content-Security-Policy': frameAncestorsFor(embedder) };
 }

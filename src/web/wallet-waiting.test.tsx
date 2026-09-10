@@ -34,8 +34,13 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { WalletWaiting } from './wallet-waiting.js';
+import { walletFrameShown, walletInThisPage } from './wallet-frame.js';
+import { openWalletDialog } from './wallet-sign-in.js';
+import { readFileSync } from 'node:fs';
 import * as keyring from './keyring.js';
 import type { Openable, WalletWindow } from './wallet-sign-in.js';
+import { askWallet } from './wallet-sign-in.js';
+import type { WalletClosed } from './wallet-sign-in.js';
 
 const WALLET = 'https://wallet.example';
 
@@ -66,11 +71,20 @@ const aView = () => {
 };
 
 describe('the page behind the wallet, rendered', () => {
-  it('THE ONE THAT PROVES THE ENVIRONMENT: it draws nothing when nothing is waiting', () => {
+  it('THE ONE THAT PROVES THE ENVIRONMENT: it shows nothing when nothing is waiting', () => {
     const { container } = render(<WalletWaiting />);
     // A banner on a page nobody is waiting on is a banner people learn to
-    // ignore. Empty is the correct screen, and it is now a rendered fact.
-    expect(container.innerHTML).toBe('');
+    // ignore. Nothing on screen is the correct screen, and it is a rendered fact.
+    //
+    // NOT AN EMPTY CONTAINER ANY MORE, AND THAT IS THE DESIGN RATHER THAN A
+    // LOOSENED ASSERTION: the wallet's frame is rendered once and kept, because
+    // moving or remounting a frame reloads the wallet inside it. So what is
+    // asserted is what a person can see - the sheet is hidden, the frame is
+    // empty, and nothing says it is waiting.
+    const sheet = container.querySelector<HTMLElement>('[data-wallet-sheet]');
+    expect(sheet?.hidden).toBe(true);
+    expect(container.querySelector('iframe')?.getAttribute('src') ?? '').toBe('');
+    expect(container.textContent).toBe('');
     expect(screen.queryByRole('status')).toBeNull();
   });
 
@@ -116,5 +130,83 @@ describe('the page behind the wallet, rendered', () => {
     expect(closedCount()).toBe(1);
     // And the banner goes with it, so nothing is left saying we are still waiting.
     expect(screen.queryByRole('status')).toBeNull();
+  });
+});
+
+/* ------------------------------------------------------------------------ */
+
+describe('the wallet shown inside the page', () => {
+  /** A page window: listeners and timers recorded, nothing fires. */
+  const aPage = () => {
+    const handlers: Array<(e: MessageEvent) => void> = [];
+    return {
+      addEventListener: (_t: 'message', h: (e: MessageEvent) => void) => { handlers.push(h); },
+      removeEventListener: () => {},
+      setTimeout: () => 0,
+      clearTimeout: () => {},
+    };
+  };
+
+  it('a wallet ask SHOWS the wallet in the page, in its frame, with the way out', async () => {
+    const { container } = render(<WalletWaiting />);
+    const frame = container.querySelector('iframe')!;
+    expect(frame.getAttribute('allow'), 'without delegation a passkey is refused inside a frame')
+      .toBe('publickey-credentials-get; publickey-credentials-create');
+
+    let journey!: Promise<string>;
+    act(() => {
+      journey = keyring.signInWithWallet(WALLET, undefined, walletInThisPage(aPage()))
+        .then(() => 'signed in', () => 'refused');
+    });
+
+    /* Opened in the press: the frame points at the wallet before anything is awaited. */
+    expect(frame.getAttribute('src')).toMatch(new RegExp(`^${WALLET}/\\?ask=\\d+#/approve$`));
+    expect(container.querySelector<HTMLElement>('[data-wallet-sheet]')!.hidden).toBe(false);
+    const status = screen.getByRole('status');
+    expect(status.textContent).toContain('Waiting for your wallet');
+    expect(status.textContent).toContain('Nothing is signed and nothing is released until you press a button inside it');
+
+    await act(async () => {
+      fireEvent.click(screen.getByText('Stop waiting'));
+      expect(await journey).toBe('refused');
+    });
+    /* PUT AWAY, NOT MERELY HIDDEN: an emptied frame holds no wallet document at all. */
+    expect(walletFrameShown()).toBe(false);
+    expect(container.querySelector<HTMLElement>('[data-wallet-sheet]')!.hidden).toBe(true);
+    expect(frame.getAttribute('src')).toBe('about:blank');
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+
+  it('HIDDEN MEANS NOT DRAWN: the stylesheet does not let the sheet\'s own `display` override `hidden`', () => {
+    /* jsdom applies no stylesheet, so the case above cannot see this. The sheet is
+     * a fixed full-screen layer with a `display` of its own, and an author rule
+     * beats the browser's `[hidden]` rule - without this line a hidden sheet is an
+     * invisible layer over the whole application, swallowing every click. */
+    const css = readFileSync('src/web/styles.css', 'utf8').replace(/\s+/g, ' ');
+    expect(css).toMatch(/\.walletsheet\[hidden\] \{ display: none; \}/);
+  });
+
+  it('a journey that opens its OWN dialog and announces it gets a Stop that refuses its ask', async () => {
+    render(<WalletWaiting />);
+    const host = walletInThisPage(aPage());
+    const dialog = openWalletDialog(host, WALLET);
+    let done!: () => void;
+    let asked!: Promise<string>;
+    act(() => {
+      done = keyring.showWaitingFor(dialog);
+      asked = askWallet(host, WALLET, { schema: 'an-ask' }, dialog).then(() => 'answered', (e: WalletClosed) => e.refusal.of);
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByText('Stop waiting'));
+      expect(await asked).toBe('gave-up');
+    });
+    act(() => done());
+    expect(walletFrameShown()).toBe(false);
+  });
+
+  it('with no frame on the page, an ask refuses by name instead of waiting for a wallet that is not there', async () => {
+    const outcome = await askWallet(walletInThisPage(aPage()), WALLET, { schema: 'an-ask' })
+      .then(() => 'answered', (e: WalletClosed) => e.refusal.of);
+    expect(outcome).toBe('no-wallet-tab');
   });
 });

@@ -96,6 +96,15 @@ export interface WalletWindow {
   focus?(): void;
   close?(): void;
   readonly closed?: boolean;
+  /**
+   * **THE WINDOW ITS MESSAGES ARRIVE FROM, WHEN THAT IS NOT THIS OBJECT.** A
+   * window this page opened is its own source. A wallet shown inside this page
+   * is reached through a frame, whose messages come from the frame's
+   * `contentWindow` - and closing it means hiding and emptying the frame, which
+   * no `contentWindow` can do for itself. So the frame's handle carries the
+   * window to compare against rather than being it.
+   */
+  readonly messageSource?: unknown;
 }
 
 export interface Openable {
@@ -469,7 +478,7 @@ export function askWallet(
        * is not the conversation this page opened.
        */
       if (event.origin !== walletOrigin) return;
-      if (event.source !== (wallet as unknown as MessageEventSource)) return;
+      if (event.source !== ((wallet.messageSource ?? wallet) as MessageEventSource)) return;
       const body = (event.data ?? null) as { schema?: unknown; reason?: unknown } | null;
       if (body === null || typeof body !== 'object') return;
 

@@ -120,7 +120,11 @@ describe('the payroll page renders', () => {
         + 'at createRoot and a person is shown nothing')
         .not.toBeNull();
 
-      await import('./main.js');
+      const { pageRoot } = await import('./main.js');
+      /* Unmounted after the case like every other root here. The page asks the
+       * server about its session once it has mounted, and a root left running
+       * does that work inside the NEXT case's one-turn wait. */
+      roots.push(pageRoot);
       await mounted();
 
       expect(root!.childElementCount,

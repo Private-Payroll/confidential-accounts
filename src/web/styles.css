@@ -197,6 +197,59 @@ pre{background:#070b12;border:1px solid var(--line);border-radius:9px;padding:14
   cursor: pointer;
 }
 
+/* The wallet shown inside this page. Centred and above everything, the proving
+   panel included, because it is the one place a person consents to anything.
+   The frame's own size is what the wallet measures before it lets a press
+   count, so nothing here may shrink it below what an approval needs to be read. */
+.walletsheet {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgb(8 9 12 / 62%);
+}
+.walletsheet[hidden] { display: none; }
+.walletsheet-card {
+  width: min(460px, 100%);
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: #14161a;
+  color: #e8eaee;
+  border: 1px solid #2a2f37;
+  border-radius: 12px;
+  box-shadow: 0 18px 60px rgb(0 0 0 / 45%);
+  overflow: hidden;
+}
+.walletsheet-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid #2a2f37;
+}
+.walletsheet-head p { margin: 0.25rem 0 0; font-size: 0.85rem; opacity: 0.85; }
+.walletsheet-head button {
+  margin-left: auto;
+  flex: 0 0 auto;
+  background: transparent;
+  color: inherit;
+  border: 1px solid #3a414c;
+  border-radius: 6px;
+  padding: 0.35rem 0.8rem;
+  cursor: pointer;
+}
+.walletsheet-frame {
+  display: block;
+  width: 100%;
+  height: min(720px, calc(100vh - 140px));
+  border: 0;
+  background: #ffffff;
+}
+
 /* ---------- approvals in progress ---------- */
 /*
  * The strip and its panel. Neither ever takes the page: proving runs on another

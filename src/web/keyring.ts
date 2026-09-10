@@ -9,14 +9,15 @@
  * What is in memory while signed in:
  *   encKey   RELEASED BY THE WALLET for one company, never transmitted
  *   keyring  signing and wrapping secrets, one entry per account
- *   token    a session token, which authorises but decrypts nothing
  *
- * What survives a page reload: the token only. **`encKey` used to be re-derived
- * from a password at sign in; it is asked of the wallet again instead**, which
- * is the same behaviour from the person's side and a better answer to where the
- * key came from. A reload therefore signs you out, which is the honest
- * behaviour: keeping `encKey` in storage would put it where any script on the
- * page can read it.
+ * **AND WHAT IS NOT IN THIS PAGE AT ALL: THE SIGN-IN ITSELF.** It is a cookie the
+ * server sets and this page's code cannot read, so no script here can copy it
+ * off the machine, and the browser sends it with every request to this site.
+ *
+ * What survives a page reload: the sign-in, and nothing else. A reload keeps
+ * you signed in and does not keep a company open: **`encKey` is asked of the
+ * wallet again**, because keeping it in storage would put it where any script
+ * on the page can read it.
  */
 import { seal, sign, toHex, unseal, unwrapKey, type Hex, type Sealed } from '../core/crypto.js';
 import {
@@ -26,6 +27,9 @@ import {
  * know which file below this one the wallet plumbing lives in. */
 export type { WalletDialog } from './wallet-sign-in.js';
 import { askWalletToUnlock } from './wallet-unlock.js';
+/* **THE WALLET IS SHOWN INSIDE THIS PAGE.** Every journey below defaults to it;
+ * a test hands in a window of its own and drives the same conversation. */
+import { walletInThisPage } from './wallet-frame.js';
 import { askWalletForPayeeAddress } from './wallet-payee.js';
 import { openAccount as openSealedAccount, approvalMessage } from '../core/account.js';
 import { clobberRefusal, seatToPromote } from './seat-repair.js';
@@ -154,7 +158,12 @@ export interface Keyring {
 
 export interface Me { id: string; email: string | null; name: string }
 
-let token: string | null = null;
+/**
+ * **WHETHER THIS TAB HAS A LIVE SESSION.** Not the sign-in: that is a cookie
+ * this code cannot read. Set by a sign-in or by `resumeSession`, and cleared by
+ * a sign-out or the first `401`.
+ */
+let sessionLive = false;
 let encKey: Hex | null = null;
 let keyring: Keyring = { accounts: {} };
 let me: Me | null = null;
@@ -212,7 +221,7 @@ export const signedInWallet = () => walletAddress;
  */
 export const companyKeyReleasedFor = (accountId: string): Hex | null =>
   releasedCompanyKey?.accountId === accountId ? releasedCompanyKey.key : null;
-export const isSignedIn = () => token !== null && (encKey !== null || walletAddress !== null);
+export const isSignedIn = () => sessionLive && me !== null;
 /**
  * **WHETHER THIS TAB CAN OPEN A COMPANY, WHICH IS NOT THE SAME QUESTION AS
  * WHETHER IT IS SIGNED IN.** `PI1`; **answered differently since `PI2a`.**
@@ -240,14 +249,24 @@ export class AuthError extends Error {}
 export const api = async (path: string, opts?: RequestInit) => {
   const r = await fetch(path, {
     ...opts,
+    /* The sign-in cookie rides on this, and only to this page's own origin. */
+    credentials: 'same-origin',
     headers: {
       'content-type': 'application/json',
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
+      /* **WHO THIS TAB WAS PREPARED FOR.** The sign-in is the browser's, so a
+       * sign-in in another tab changes it under this one; the server refuses a
+       * request whose session is somebody else, rather than letting this tab's
+       * keys be written under them. */
+      ...(me ? { 'x-signed-in-as': me.id } : {}),
       ...(opts?.headers ?? {}),
     },
   });
   const body = await r.json().catch(() => ({}));
   if (r.status === 401) { forgetLocally(); throw new AuthError(body?.error ?? 'not signed in'); }
+  if (r.status === 409 && body?.code === 'another-person') {
+    forgetLocally();
+    throw new AuthError(body.error);
+  }
   if (!r.ok) throw new Error(body?.error ?? `request failed: ${r.status}`);
   return body;
 };
@@ -321,6 +340,30 @@ function openTheWallet(
 const doneWaiting = (): void => { nowWaiting(null); };
 
 /**
+ * **A JOURNEY THAT OPENS ITS OWN DIALOG ANNOUNCES IT HERE.** Accepting an
+ * invitation drives two asks through one dialog it owns, so it does not come
+ * through `openTheWallet` - and a wallet shown with no dialog announced has a
+ * *Stop waiting* that can hide the wallet but cannot refuse the ask in flight.
+ * Returns the way to stop announcing; call it when the journey ends.
+ */
+export function showWaitingFor(dialog: WalletDialog): () => void {
+  nowWaiting(dialog);
+  return doneWaiting;
+}
+
+/**
+ * **A JOURNEY THAT FAILED PUTS ITS WALLET AWAY BEFORE IT STOPS SAYING IT IS WAITING.**
+ *
+ * Every wallet journey opens the wallet in the press and then talks to this
+ * server. When that talk fails the ask never ran, so nothing closed the wallet
+ * - and `doneWaiting` then removed the one control that could, leaving a wallet
+ * on screen with nothing able to put it away. `giveUp` is safe after anything:
+ * an ask that already ended has already closed it, and a second close is not a
+ * second event.
+ */
+const putAway = (dialog: WalletDialog): void => { dialog.giveUp(); };
+
+/**
  * **WHAT WE CALL OURSELVES TO A WALLET, AND THE WALLET BELIEVES NONE OF IT.**
  *
  * Untrusted words, rendered as text on the wallet's screen beside the origin it
@@ -353,7 +396,7 @@ export async function signInWithWallet(
   walletOrigin: string, inviteToken?: string,
   /* The window, injected so the whole conversation can be driven in a test
    * with no browser — the shape `unlockWithWallet` has always had. */
-  view: Openable = window as never,
+  view: Openable = walletInThisPage(window),
 ): Promise<Me> {
   /*
    * **OPENED HERE, IN THE CLICK, BEFORE ONE BYTE HAS BEEN AWAITED.**
@@ -373,6 +416,9 @@ export async function signInWithWallet(
       purpose: 'So this company knows it is you. Nothing else is asked for.',
     }, dialog);
     return await finishWalletSignIn(challenge, response, inviteToken);
+  } catch (e) {
+    putAway(dialog);
+    throw e;
   } finally {
     doneWaiting();
   }
@@ -392,7 +438,9 @@ async function finishWalletSignIn(
       ...(inviteToken ? { inviteToken } : {}),
     }),
   });
-  token = r.session.token;
+  /* NO TOKEN IS READ OFF THE ANSWER. A browser's sign-in answer does not carry
+   * one: the server set the sign-in as a cookie this page cannot read. */
+  sessionLive = true;
   walletAddress = r.address;
   /* A sign-in releases nothing. The unlock is what does. */
   releasedCompanyKey = null;
@@ -403,6 +451,30 @@ async function finishWalletSignIn(
   me = r.user;
   bundleVersion = 0;
   return r.user as Me;
+}
+
+/**
+ * **PICKING UP THE SIGN-IN THIS BROWSER ALREADY HAS, AFTER A RELOAD.**
+ *
+ * The page cannot see the cookie, so it asks the server who it is. An answer
+ * is a person still signed in and they are not sent back through their wallet;
+ * a `401` is nobody, and `api` has already forgotten everything on its way
+ * past. **It opens no company**: the key that does is the wallet's to release
+ * again, and nothing here pretends otherwise.
+ *
+ * Null for nobody. Any other failure is thrown, so a server that is down is not
+ * reported as a person who is signed out.
+ */
+export async function resumeSession(): Promise<Me | null> {
+  try {
+    const r = await api('/api/me');
+    sessionLive = true;
+    me = r.user as Me;
+    return me;
+  } catch (e) {
+    if (e instanceof AuthError) return null;
+    throw e;
+  }
 }
 
 /**
@@ -450,9 +522,9 @@ async function finishWalletSignIn(
  */
 export async function payeeDisclosureFromWallet(
   accountId: string, walletOrigin: string,
-  view: Openable = window as never,
+  view: Openable = walletInThisPage(window),
 ): Promise<{ handle: string; nonce: string; response: unknown }> {
-  if (!token) throw new Error('not signed in');
+  if (!sessionLive) throw new Error('not signed in');
   /* **OPENED IN THE CLICK.** `C154` — the same order as the other two, and for
    * the same reason: the challenge below is a round trip, and a permission
    * spent on it is gone by the time a window is wanted. */
@@ -468,6 +540,9 @@ export async function payeeDisclosureFromWallet(
       rdns: US_TO_A_WALLET.rdns,
     }, dialog);
     return { handle: challenge.handle, nonce: challenge.nonce, response };
+  } catch (e) {
+    putAway(dialog);
+    throw e;
   } finally {
     doneWaiting();
   }
@@ -477,13 +552,13 @@ export async function unlockWithWallet(
   accountId: string, walletOrigin: string,
   /* The window, and the page's own origin, injected so the whole conversation
    * can be driven in a test with no browser. */
-  view: Openable = window as never,
+  view: Openable = walletInThisPage(window),
   atOrigin: string = window.location.origin,
   /* The dialog a longer journey already opened in its own click. Creating a
    * company is the only caller that has one; everybody else opens here. */
   already?: WalletDialog,
 ): Promise<void> {
-  if (!token) throw new Error('not signed in');
+  if (!sessionLive) throw new Error('not signed in');
 
   /*
    * **OPENED HERE, IN THE CLICK, BEFORE THE COMPANY IS ASKED FOR.**
@@ -493,6 +568,10 @@ export async function unlockWithWallet(
   const dialog = openTheWallet(view, walletOrigin, already);
   try {
     await unlockOnceOpen(accountId, walletOrigin, view, atOrigin, dialog);
+  } catch (e) {
+    /* A dialog a longer journey opened is that journey's to put away. */
+    if (!already) putAway(dialog);
+    throw e;
   } finally {
     doneWaiting();
   }
@@ -502,7 +581,7 @@ async function unlockOnceOpen(
   accountId: string, walletOrigin: string, view: Openable, atOrigin: string,
   dialog: WalletDialog,
 ): Promise<void> {
-  /* THE COMPANY COMES FROM THE SESSION. This is a POST that sends no body:
+  /* THE COMPANY COMES FROM THE SIGN-IN. This is a POST that sends no body:
    * there is nothing this page could tell the server about which company it is
    * that the server should believe. */
   const { company } = await api(`/api/accounts/${accountId}/unlock`, { method: 'POST' });
@@ -565,7 +644,7 @@ async function unlockOnceOpen(
  * Use `signOut()` for the button.
  */
 export function forgetLocally() {
-  token = null; encKey = null; keyring = { accounts: {} }; me = null; walletAddress = null;
+  sessionLive = false; encKey = null; keyring = { accounts: {} }; me = null; walletAddress = null;
   releasedCompanyKey = null;
   /*
    * **AND THE FOUNDER'S UNSEALED SECRETS.**
@@ -596,7 +675,7 @@ export function forgetLocally() {
  */
 export async function signOut() {
   try {
-    if (token) await api('/api/auth/logout', { method: 'POST' });
+    if (sessionLive) await api('/api/auth/logout', { method: 'POST' });
   } catch {
     // Already dead, or unreachable. Either way, clear.
   } finally {
@@ -874,10 +953,10 @@ export async function createCompanyWithWallet(
   walletOrigin: string,
   /* The window and this page's own origin, injected so the whole journey can be
    * driven in a test with no browser — the same shape `unlockWithWallet` takes. */
-  view: Openable = window as never,
+  view: Openable = walletInThisPage(window),
   atOrigin: string = window.location.origin,
 ): Promise<{ accountId: string }> {
-  if (!token) throw new Error('not signed in');
+  if (!sessionLive) throw new Error('not signed in');
   if (encKey) {
     throw new Error(
       'this tab already holds the key that seals your keys, so it does not need to ask '
@@ -900,29 +979,35 @@ export async function createCompanyWithWallet(
    * was opened for. The page behind it says so the whole time.
    */
   const dialog = openTheWallet(view, walletOrigin);
+  try {
+    const created = await api('/api/accounts', {
+      method: 'POST',
+      body: JSON.stringify({ name: spec.name, signers: spec.signers, threshold: spec.threshold }),
+    });
 
-  const created = await api('/api/accounts', {
-    method: 'POST',
-    body: JSON.stringify({ name: spec.name, signers: spec.signers, threshold: spec.threshold }),
-  });
+    const accountId = String(created.account.id);
+    const mine = created.secrets[0];
+    pendingCompany = {
+      accountId,
+      keys: {
+        signerId: mine.signerId,
+        signingSecret: mine.signingSecret,
+        wrappingSecret: mine.wrappingSecret,
+        blinding: mine.blinding,
+        /* The scope the founder's own leaf was made under, carried from the
+         * response rather than defaulted here. */
+        scope: mine.scope,
+      },
+    };
 
-  const accountId = String(created.account.id);
-  const mine = created.secrets[0];
-  pendingCompany = {
-    accountId,
-    keys: {
-      signerId: mine.signerId,
-      signingSecret: mine.signingSecret,
-      wrappingSecret: mine.wrappingSecret,
-      blinding: mine.blinding,
-      /* The scope the founder's own leaf was made under, carried from the
-       * response rather than defaulted here. */
-      scope: mine.scope,
-    },
-  };
-
-  await finishCompanyCreation(walletOrigin, view, atOrigin, dialog);
-  return { accountId };
+    await finishCompanyCreation(walletOrigin, view, atOrigin, dialog);
+    return { accountId };
+  } catch (e) {
+    putAway(dialog);
+    throw e;
+  } finally {
+    doneWaiting();
+  }
 }
 
 /**
@@ -940,7 +1025,7 @@ export async function createCompanyWithWallet(
  */
 export async function finishCompanyCreation(
   walletOrigin: string,
-  view: Openable = window as never,
+  view: Openable = walletInThisPage(window),
   atOrigin: string = window.location.origin,
   /* Present when the creation press opened the window and this is the second
    * half of that journey; absent when a person is retrying from the screen,

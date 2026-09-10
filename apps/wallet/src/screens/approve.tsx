@@ -14,7 +14,7 @@ import type { Port } from 'midnight-identity/profile/store';
 import type { Opened } from 'midnight-identity/profile/seal';
 import { asked } from 'midnight-identity/profile/request';
 import type { Ask, Wanting } from 'midnight-identity/profile/request';
-import { listen } from 'midnight-identity/profile/channel';
+import { framingOf, listen } from 'midnight-identity/profile/channel';
 import type { Channel, ChannelState, ChannelWindow } from 'midnight-identity/profile/channel';
 import { mint } from 'midnight-identity/profile/disclosure';
 import { releaseFor } from 'midnight-identity/profile/unlock';
@@ -27,6 +27,23 @@ import { sealToInbox } from 'midnight-identity/profile/inbox';
  * screen is about to disclose, for the person to carry back to the page that
  * asked. The same file, the same width, the same argument. */
 import { addressFingerprint, companyFingerprint } from 'midnight-identity/profile/fingerprint';
+import { EMBEDDER } from '../config.js';
+import { useConsent } from '../framing.js';
+import type { Consent } from '../framing.js';
+
+/**
+ * **WHY A PRESS IS REFUSED, BESIDE THE BUTTON IT REFUSES.** A disabled button
+ * with no sentence is a page that looks broken; this names what would make the
+ * press possible. It renders nothing when the press is allowed.
+ */
+function ConsentRefused({ consent }: { readonly consent: Consent }): ReactNode {
+  if (consent.ok) return null;
+  return (
+    <p className="m-0 w-full text-sm text-muted" data-consent-refused>
+      {consent.says.charAt(0).toUpperCase() + consent.says.slice(1)}
+    </p>
+  );
+}
 import { unshieldedAddressFor } from '../chain/unshielded.js';
 import { ownedAddressFor } from '../accounts/owned-address.js';
 import type { OwnedAddress } from '../accounts/owned-address.js';
@@ -284,6 +301,7 @@ const rowsFor = (
 
 export function Approve({
   identity, secret, registry = REGISTRY, port = browserPort(), view, now = Date.now,
+  embedder = EMBEDDER,
 }: {
   readonly identity: Identity;
   readonly secret: Secret;
@@ -292,7 +310,21 @@ export function Approve({
   /** The window this listens on. Injected so a test can drive a real origin. */
   readonly view?: ChannelWindow;
   readonly now?: () => number;
+  /** The one page allowed to frame this wallet. Injected so a test can frame it. */
+  readonly embedder?: string | null;
 }): ReactNode {
+  /*
+   * **EVERY PRESS THAT SENDS SOMETHING IS GATED ON WHAT CAN BE SEEN.** In a
+   * window of its own this is always yes. In a frame it is the visibility guard:
+   * a press on a wallet shown too small, on a hidden tab, or on a request that
+   * has only just appeared is refused, on the button, with the reason beside it. What is measured is the
+   * frame's size, whether the tab is showing, and how long this request has been
+   * on screen; what is NOT measured is anything the page around draws over the
+   * frame, fades it with, or moves it by - `framing.ts` says why. A disabled
+   * button fires no press in React, by click or by key.
+   */
+  const framing = useMemo(
+    () => framingOf(view ?? (window as unknown as ChannelWindow), embedder), [view, embedder]);
   const [channelState, setChannelState] = useState<ChannelState>({ of: 'waiting' });
   const [channel, setChannel] = useState<Channel | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -325,10 +357,10 @@ export function Approve({
 
   useEffect(() => {
     const target = view ?? (window as unknown as ChannelWindow);
-    const opened2 = listen(target, now, setChannelState);
+    const opened2 = listen(target, now, setChannelState, embedder);
     setChannel(opened2);
     return () => opened2.stop();
-  }, [view, now]);
+  }, [view, now, embedder]);
 
   useEffect(() => {
     let alive = true;
@@ -341,6 +373,10 @@ export function Approve({
   }, [identity, port, now]);
 
   const request: Ask | null = channelState.of === 'request' ? channelState.request : null;
+  /* The dwell is timed from the moment THIS request is on screen, not from when
+   * the screen mounted: a page that holds its request back until the wait has
+   * run out would otherwise put a pressable button up the instant it arrives. */
+  const consent = useConsent(framing, request);
   /* A SIGN-IN HAS NO ROWS BECAUSE ITS TYPE HAS NO `wants`, not because this
    * filtered an empty list out of one. `request.ts` is where that is decided.
    *
@@ -676,8 +712,12 @@ export function Approve({
      * does not know: the origin is observed on the first message and not
      * before. A screen that named the requester here would be naming a guess.
      */
-    const opener = (view ?? (window as unknown as ChannelWindow)).opener;
-    if (opener) {
+    const here = view ?? (window as unknown as ChannelWindow);
+    /* **OR THE PAGE THIS WALLET WAS BUILT TO SIT INSIDE.** A frame has no
+     * `opener`, so without this a framed wallet said *Nothing is asking* under
+     * a live request. Only the ALLOWED embedder counts: a stranger's frame is
+     * refused before this screen renders at all. */
+    if (here.opener || framing.of === 'framed') {
       return (
         <>
           <h1 data-waiting-for-ask>Waiting for the request</h1>
@@ -1142,7 +1182,7 @@ export function Approve({
           {/* THE BUTTON IS THE HEADLINE'S RULE AGAIN. The rule names the button
             * as well as the `<h1>`: a person who skims reads those two and
             * nothing else, so neither may be written in the asker's own words. */}
-          <Button variant="primary" onClick={release} data-approve data-unlock>
+          <Button variant="primary" onClick={release} disabled={!consent.ok} data-approve data-unlock>
             {`Give ${request.requester.origin} the key`}
           </Button>
           <Button
@@ -1152,6 +1192,7 @@ export function Approve({
           >
             Do not give a key
           </Button>
+          <ConsentRefused consent={consent} />
         </div>
       </>
     );
@@ -1207,7 +1248,7 @@ export function Approve({
           {/* THE BUTTON IS THE QUESTION'S RULE AGAIN. The rule names the button
             * as well as the headline: a person who skims reads those and
             * nothing else, so neither may be written in the asker's own words. */}
-          <Button variant="primary" onClick={approve} data-approve data-sign-in>
+          <Button variant="primary" onClick={approve} disabled={!consent.ok} data-approve data-sign-in>
             {`Sign in to ${request.requester.origin}`}
           </Button>
           <Button
@@ -1217,6 +1258,7 @@ export function Approve({
           >
             Do not sign in
           </Button>
+          <ConsentRefused consent={consent} />
         </div>
       </>
     );
@@ -1651,6 +1693,7 @@ export function Approve({
         <Button
           variant="primary"
           onClick={approve}
+          disabled={!consent.ok}
           data-approve
           {...(join === null ? {} : { 'data-join': '' })}
         >
@@ -1665,6 +1708,7 @@ export function Approve({
         >
           {join === null ? 'Send nothing' : 'Do not accept'}
         </Button>
+        <ConsentRefused consent={consent} />
       </div>
     </>
   );

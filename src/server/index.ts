@@ -8,6 +8,7 @@ import { startProduct } from '../wiring/product.js';
 import { ContractBook } from '../wiring/account-contract.js';
 import type { WriteCapability } from '../wiring/write-capability.js';
 import { deploymentWriteCapability } from '../wiring/write-capability-for-deployment.js';
+import { handedInFundedParties } from '../wiring/handed-in-wallets.js';
 import { handedInWiring } from '../wiring/handed-in.js';
 import { AccountService } from '../core/account.js';
 import { PayrollService, RecordingInviteDelivery } from '../core/payroll.js';
@@ -34,6 +35,10 @@ import {
 } from '../core/provenance.js';
 import { assets as assetRegistry, parseAmount } from '../core/assets.js';
 import { bigintJsonReplacer } from '../core/crypto.js';
+import {
+  SIGNED_IN_AS_HEADER, anotherPersonRefusal, answerCarriesToken, clearedSessionCookie,
+  cookieScopeFor, credentialOf, crossSiteWriteRefusal, sessionCookie,
+} from './session-cookie.js';
 import type { Hex } from '../core/crypto.js';
 import { payeeAddress } from '../midnight/payee-address.js';
 import { networkOfThePair } from '../midnight/network.js';
@@ -186,30 +191,34 @@ const book = new ContractBook(
  * itself on boot, and one that quietly did would be a web process that can
  * spend.
  *
- * So the pair is handed in, and here nothing hands one in. Every write goes on
+ * So the pair is handed in, and nothing in this file can make one. It asks
+ * `handedInFundedParties`, which answers with a pair a launcher brought up and
+ * handed over before importing this file, or with `null` - and `null` is what
+ * every process started the ordinary way gets. Every write then goes on
  * refusing by name and saying which pieces are missing; reading accounts,
  * balances and rounds is unaffected, which is what a deployment built to watch
  * a chain is for.
  *
- * **WHAT DOES HAND ONE IN TODAY IS THE DOOR THAT CREATES A COMPANY**, which
- * brings up the wallet a person keeps, calls this same function with it, and
- * starts this same product with what comes back. **There is one supplier and
- * both callers use it.**
+ * **WHAT PUTS A WALLET BEHIND THIS LINE TODAY IS A PERSON, BY ONE OF TWO
+ * SCRIPTS.** The one that creates a company from this machine calls this same
+ * supplier in its own process and never starts this server. The launcher that
+ * serves the product on a chain brings the same two wallets up and hands them
+ * over before importing this file, and this line then calls the supplier with
+ * them. **There is one supplier and both paths reach it.**
  *
  * **AND WHAT ELSE HAS TO CHANGE ON THE DAY THIS ARGUMENT DOES, BECAUSE THIS
  * PARAGRAPH SAID *nothing else* AND THAT WAS FALSE.** A fee payer is told which
  * company it is about to pay for, because that cannot be read off a bound,
  * shielded transaction afterwards - and it is told on the object, since the
- * SDK's callbacks carry nothing to tell one operation from another. Nothing
- * here serialises writes: two requests handled at once would share one fee
- * payer, and the second would overwrite the first's company before the first
- * recorded what it paid. **So the day this process holds a wallet, writes have
- * to be serialised where the wallet is held, or attribution has to travel with
- * the transaction rather than on the object.** Neither exists, and the record
- * would be wrong rather than absent, which is the worse of the two.
+ * SDK's callbacks carry nothing to tell one operation from another. Two
+ * requests handled at once would share one fee payer, and the second would
+ * overwrite the first's company before the first recorded what it paid - a
+ * record wrong rather than absent. **So writes wait their turn per fee payer,
+ * inside the chain ledger's one write gate**, and the second request's write
+ * starts only when the first's has settled.
  */
 const writeCapability: WriteCapability | undefined =
-  await deploymentWriteCapability(process.cwd(), process.env, null);
+  await deploymentWriteCapability(process.cwd(), process.env, handedInFundedParties());
 const startup = startProduct(book, process.cwd(), process.env, writeCapability);
 /*
  * **AND THE ONE CASE WHERE THIS PROCESS DOES NOT RESOLVE ITS OWN SET: A TEST
@@ -394,6 +403,15 @@ try {
   console.warn(`\n  !! SIGNING IN WITH A WALLET IS OFF.\n     ${walletIdentityRefusal}\n`);
 }
 
+/*
+ * **WHERE THE SIGN-IN COOKIE BELONGS, DECIDED ONCE AT START-UP.** The site the
+ * application and the wallet share - `WALLET_ORIGIN` names the wallet - so one
+ * sign-in covers both surfaces. Two origins that share no site stop the server
+ * here with the reason: a sign-in scoped to the wrong name fails later, at a
+ * sign-in, in front of a person.
+ */
+const cookieScope = cookieScopeFor(process.env.APP_ORIGIN, process.env.WALLET_ORIGIN);
+
 const app = express();
 /*
  * EVERY AMOUNT LEAVES AS `{"$n":"…"}`, and without this line the server is
@@ -542,18 +560,46 @@ const context = (req: express.Request) => ({
   userAgent: String(req.headers['user-agent'] ?? '').slice(0, 200) || null,
 });
 
-/** The bearer token as sent, or ''. Needed by anything that revokes it. */
-const bearer = (req: express.Request) =>
-  String(req.headers.authorization ?? '').replace(/^Bearer /, '');
+/**
+ * The sign-in token as sent - the bearer header if there is one, otherwise the
+ * session cookie - or ''. Needed by anything that revokes it.
+ */
+const bearer = (req: express.Request) => credentialOf(req.headers).token;
 
-/** Resolves the session. Nothing below this reads a body before the token checks out. */
+/**
+ * Resolves the sign-in. Nothing below this reads a body before the token checks out.
+ *
+ * **A WRITE THAT ARRIVED ON THE COOKIE IS REFUSED UNLESS IT CAME FROM THIS
+ * APPLICATION'S OWN PAGE**, before the sign-in is even looked up - the cookie is
+ * sent by the browser on its own, so its presence says nothing about who asked.
+ */
 const authed: express.RequestHandler = async (req, res, next) => {
+  const credential = credentialOf(req.headers);
+  const refusal = crossSiteWriteRefusal({
+    method: req.method,
+    via: credential.via,
+    origin: req.headers.origin,
+    fetchSite: req.headers['sec-fetch-site'] as string | undefined,
+  }, process.env.APP_ORIGIN);
+  if (refusal !== null) {
+    res.status(403).json({ error: refusal });
+    return;
+  }
+  let userId: string;
   try {
-    req.userId = await identity.verify(bearer(req));
-    next();
+    userId = await identity.verify(credential.token);
   } catch (e: any) {
     res.status(401).json({ error: e?.message ?? 'not signed in' });
+    return;
   }
+  /* The sign-in is live; is it the person this tab was prepared for? */
+  const another = anotherPersonRefusal(req.headers[SIGNED_IN_AS_HEADER], userId);
+  if (another !== null) {
+    res.status(409).json({ error: another, code: 'another-person' });
+    return;
+  }
+  req.userId = userId;
+  next();
 };
 
 /**
@@ -701,9 +747,16 @@ app.post('/api/auth/wallet', wrap(async (req, res) => {
   }).parse(req.body);
   try {
     const r = await svc.signIn(b, context(req));
+    /*
+     * **A BROWSER GETS THE COOKIE AND NEVER THE TOKEN.** The cookie is
+     * `HttpOnly`, which is worth nothing if the same token is also handed to the
+     * page in this body. A client that is not a browser has no cookie jar and
+     * gets the token to send as a bearer header, exactly as before.
+     */
+    res.setHeader('Set-Cookie', sessionCookie(r.session.token, r.session.expiresAt, cookieScope));
     res.json({
       user: { id: r.user.id, email: r.user.email, name: r.user.name },
-      session: r.session,
+      session: answerCarriesToken(req.headers) ? r.session : { expiresAt: r.session.expiresAt },
       address: r.address,
       created: r.created,
     });
@@ -759,6 +812,9 @@ app.get('/api/me/sessions', authed, wrap(async (req, res) => {
 /** Sign out. The token is dead when this returns, which is the whole of S-3. */
 app.post('/api/auth/logout', authed, wrap(async (req, res) => {
   await identity.signOut(bearer(req));
+  /* The row is what makes the token dead; the cookie is cleared so the browser
+   * stops sending a dead one. */
+  res.setHeader('Set-Cookie', clearedSessionCookie(cookieScope));
   res.json({ ok: true });
 }));
 
@@ -2079,7 +2135,16 @@ if (process.env.SERVE !== '0') {
     process.exit(1);
   }
   const PORT = Number(process.env.PORT ?? 8787);
-  app.listen(PORT, () => {
+  /*
+   * **LOOPBACK, AND NOT EVERY INTERFACE.** Called with a port alone, this binds
+   * every address the machine has, so anything on the same network could reach
+   * it. That was merely untidy while nothing here could write. It is not untidy
+   * now: this process can be started holding a funded wallet, and an unbound
+   * listener would let a stranger on the same wireless network open companies
+   * and spend with it. An address that has to be reachable from elsewhere is a
+   * deployment's decision and belongs in front of this, not inside it.
+   */
+  app.listen(PORT, '127.0.0.1', () => {
     console.log(`api        http://localhost:${PORT}`);
     console.log(`ledger     ${ledger.describe()}`);
     console.log(`proofs     ${proofs.describe()}`);

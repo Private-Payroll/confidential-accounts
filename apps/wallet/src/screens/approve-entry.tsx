@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { listen } from 'midnight-identity/profile/channel';
+import { framingOf, listen } from 'midnight-identity/profile/channel';
+import { EMBEDDER } from '../config.js';
 import type { ChannelState, ChannelWindow } from 'midnight-identity/profile/channel';
 import { hrefOf } from '../routes.js';
 import { useSession } from '../session.js';
@@ -61,19 +62,21 @@ export interface ApproveEntryProps {
   /** The window this listens on. Injected so a test can drive a real origin. */
   readonly view?: ChannelWindow;
   readonly now?: () => number;
+  /** The one page allowed to frame this wallet. Injected so a test can frame it. */
+  readonly embedder?: string | null;
 }
 
 export function ApproveEntry({
-  phase, entry, view, now = Date.now,
+  phase, entry, view, now = Date.now, embedder = EMBEDDER,
 }: ApproveEntryProps): ReactNode {
   const { createAccount, busy, error } = useSession();
   const [channelState, setChannelState] = useState<ChannelState>({ of: 'waiting' });
 
   useEffect(() => {
     const target = view ?? (window as unknown as ChannelWindow);
-    const channel = listen(target, now, setChannelState);
+    const channel = listen(target, now, setChannelState, embedder);
     return () => channel.stop();
-  }, [view, now]);
+  }, [view, now, embedder]);
 
   /*
    * **THE ORIGIN, WHICH IS A FACT, AND NOT THE NAME, WHICH IS A CLAIM.**
@@ -88,6 +91,28 @@ export function ApproveEntry({
   const askedBy = channelState.of === 'request'
     ? channelState.request.requester.origin : null;
 
+  /*
+   * **A FRAMED WALLET SHOWS NO CONTROL UNTIL THE PAGE IT WAS BUILT FOR HAS
+   * SPOKEN.** The entry screens carry buttons that make a passkey, add a wallet
+   * or start again, and a page that framed this wallet without being allowed to
+   * could otherwise put them under somebody's pointer - in a browser that does
+   * not report a frame's ancestors, the first message is the first moment the
+   * asker's origin is observed at all. So until a request has been accepted from
+   * the allowed page, a framed entry is a waiting line and nothing else.
+   */
+  const framed = framingOf(view ?? (window as unknown as ChannelWindow), embedder).of === 'framed';
+  if (framed && channelState.of !== 'request') {
+    return (
+      <>
+        <h1 data-waiting-for-ask>Waiting for the request</h1>
+        <p className="lede">
+          The page around this wallet is still preparing what it wants to ask. Nothing has been
+          sent and nothing has been signed.
+        </p>
+      </>
+    );
+  }
+
   if (phase.name !== 'welcome') return entry;
 
   return (
@@ -98,13 +123,17 @@ export function ApproveEntry({
         <p className="lede" data-no-wallet-for-a-request>
           {askedBy === null
             ? 'The page that opened this window is asking you for something, and there is '
-            : `${askedBy} opened this window to ask you for something, and there is `}
+            : framed
+              ? `${askedBy} is asking you for something, and there is `
+              : `${askedBy} opened this window to ask you for something, and there is `}
           nothing in this browser to answer with. Make one here — it takes one touch — and
           the question is still waiting when you come back to it.
         </p>
         <p className="muted small">
-          Nothing has been sent and nothing has been agreed. The page that asked is still
-          open behind this window, exactly where you left it.
+          {framed
+            ? 'Nothing has been sent and nothing has been agreed.'
+            : 'Nothing has been sent and nothing has been agreed. The page that asked is still '
+              + 'open behind this window, exactly where you left it.'}
         </p>
         <div className="actions">
           <button

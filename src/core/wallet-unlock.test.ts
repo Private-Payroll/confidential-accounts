@@ -16,6 +16,16 @@ import { askWalletToUnlock, UnlockRefused } from '../web/wallet-unlock.js';
 import type { Openable } from '../web/wallet-sign-in.js';
 
 /**
+ * **THE WINDOW `inABrowser` INSTALLED, HANDED IN BY NAME.** The product now shows
+ * the wallet inside the page by default, and a journey with no frame on the page
+ * refuses to open one. These cases model a wallet at the other end of a window
+ * and install it as `window`, so they pass that window explicitly rather than
+ * relying on a default that no longer reaches it.
+ */
+const thisBrowsersWindow = () => (globalThis as { window?: unknown }).window as never;
+
+
+/**
  * **THE WALLET OPENS THE BOX THE PASSWORD USED TO.** `docs/NEXT.md` PI2a,
  * `docs/scope-payroll-identity.md` §9 and §9b.
  *
@@ -441,7 +451,7 @@ describe('§3 — AND THE SAME THING PROVED BY WATCHING, NOT BY READING', () => 
 
     try {
       const keyring = await import('../web/keyring.js');
-      await keyring.signInWithWallet(WALLET);
+      await keyring.signInWithWallet(WALLET, undefined, thisBrowsersWindow());
       expect(keyring.canOpenCompanies()).toBe(false);
 
       await keyring.unlockWithWallet('acc_1', WALLET, view, US);

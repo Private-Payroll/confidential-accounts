@@ -32,7 +32,9 @@
  * product's.
  */
 import { SponsoredCustomerWallet, type BalancingWallet } from '../src/midnight/wallet.js';
-import type { SponsorWallet } from '../src/midnight/sponsor.js';
+import { WalletFeeSponsor, type SponsorWallet } from '../src/midnight/sponsor.js';
+import type { SponsoredFeeSink } from '../src/midnight/sponsored-fees.js';
+import type { FundedParties } from '../src/wiring/write-capability-for-deployment.js';
 
 /**
  * What a bring-up hands over, in the terms this file needs.
@@ -160,4 +162,39 @@ export function customerWalletOver(w: LiveWalletParts): SponsoredCustomerWallet 
       encryptionPublicKey: w.provider.getEncryptionPublicKey(),
     },
   );
+}
+
+/**
+ * Two live wallets, turned into the pair the product is handed.
+ *
+ * **THE FEE RECORD IS REQUIRED HERE, AND THAT IS WHY THIS FUNCTION EXISTS.**
+ * The fee payer takes its record as an optional argument, because a script
+ * driving that seam by hand may have nowhere to put one. A process that hands a
+ * pair to the product is not that script: what each sponsored transaction cost,
+ * and which company it was for, cannot be read back off a shielded transaction
+ * afterwards, so a pair built without a record loses it for good. Taking the
+ * record as a required parameter makes that a compile error rather than a
+ * missing file noticed a month later.
+ *
+ * **THE FEE PAYER IS `WalletFeeSponsor` AND NOTHING ELSE**, whose balancing
+ * call names dust as the only kind it pays for. A hand-built fee payer here
+ * would be one argument away from paying the company's own legs out of ours.
+ */
+export function fundedPartiesOver(
+  payer: LiveWalletParts,
+  company: LiveWalletParts,
+  paidFee: (ref: string) => Promise<bigint | null>,
+  feeRecord: SponsoredFeeSink,
+  onPay: (info: { fee?: bigint; remaining?: bigint }) => void,
+): FundedParties {
+  if (!feeRecord || typeof feeRecord.record !== 'function') {
+    throw new Error(
+      'a fee payer was about to be built with nowhere to record what it pays. Which company '
+      + 'a sponsored transaction was for cannot be recovered from the transaction afterwards, '
+      + 'so nothing was built and nothing was spent.');
+  }
+  return {
+    sponsor: new WalletFeeSponsor(sponsorWalletOver(payer, paidFee), onPay, feeRecord),
+    customer: customerWalletOver(company),
+  };
 }
