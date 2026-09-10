@@ -52,10 +52,67 @@ export type ChannelState =
   | { readonly of: 'request'; readonly request: Ask }
   | { readonly of: 'refused'; readonly error: RequestError };
 
+interface Postable { postMessage(message: unknown, targetOrigin: string): void }
+
 export interface ChannelWindow {
-  readonly opener: { postMessage(message: unknown, targetOrigin: string): void } | null;
+  readonly opener: Postable | null;
+  /**
+   * **THE PAGE THIS DOCUMENT IS FRAMED BY, OR THIS WINDOW ITSELF WHEN IT IS NOT.**
+   * Optional so a view that only ever modelled a window opened by another page
+   * keeps meaning exactly that: no `parent` is a top-level window.
+   */
+  readonly parent?: Postable | null;
+  /** This window, so `parent === self` can say *not framed*. */
+  readonly self?: unknown;
+  /**
+   * The origins of every page this document sits inside, nearest first, where
+   * the browser reports them. Chromium and WebKit do; Firefox does not, and
+   * there the asker's observed origin is the whole of the check.
+   */
+  readonly location?: { readonly ancestorOrigins?: { readonly length: number; readonly [i: number]: string } };
   addEventListener(type: 'message', handler: (event: MessageEvent) => void): void;
   removeEventListener(type: 'message', handler: (event: MessageEvent) => void): void;
+}
+
+/**
+ * **WHERE THIS WALLET DOCUMENT SITS, DECIDED ONCE.**
+ *
+ *   - `top` - a window of its own. A page that opened it is `opener`; nothing
+ *     else can be the asker.
+ *   - `framed` - inside the ONE page it was built to sit inside. The asker is
+ *     that frame's parent, at exactly that origin, and nothing else.
+ *   - `refused` - inside a page it was not built for, or inside a page that is
+ *     itself inside another. **Nothing is answered and nothing is shown.**
+ */
+export type Framing =
+  | { readonly of: 'top' }
+  | { readonly of: 'framed'; readonly embedder: string }
+  | { readonly of: 'refused'; readonly why: string };
+
+export const NOT_BUILT_TO_BE_FRAMED =
+  'this wallet has been put inside another page and it was not built to be, so it shows nothing '
+  + 'and answers nothing here. Open your wallet in its own tab.';
+
+export const FRAMED_BY_A_STRANGER =
+  'this wallet has been put inside a page it does not know, so it shows nothing and answers '
+  + 'nothing here. Open your wallet in its own tab.';
+
+export function framingOf(view: ChannelWindow, embedder: string | null): Framing {
+  const parent = view.parent ?? null;
+  if (parent === null || parent === (view.self ?? view)) return { of: 'top' };
+  if (embedder === null) return { of: 'refused', why: NOT_BUILT_TO_BE_FRAMED };
+  /*
+   * EVERY ANCESTOR, NOT ONLY THE NEAREST. The page allowed to hold this wallet
+   * must itself be the top of the tab: the same page framed by a stranger is a
+   * stranger's page with ours inside it, and the person cannot see the join.
+   */
+  const ancestors = view.location?.ancestorOrigins;
+  if (ancestors !== undefined) {
+    for (let i = 0; i < ancestors.length; i += 1) {
+      if (ancestors[i] !== embedder) return { of: 'refused', why: FRAMED_BY_A_STRANGER };
+    }
+  }
+  return { of: 'framed', embedder };
 }
 
 /**
@@ -89,6 +146,45 @@ export interface Channel {
 }
 
 /**
+ * **WHO MAY ASK. THIS IS THE WHOLE ASKER CHECK, AND IT HAS TWO SHAPES.**
+ *
+ * **A window of its own answers only the page that opened it** - `opener`, which
+ * the browser fills in and no page can set on a window it did not open.
+ *
+ * **A framed wallet answers only its parent, and only at the one origin it was
+ * built to sit inside.** In a frame `opener` is `null`, so the first shape
+ * answers nobody - and replacing `opener` with `parent` alone would answer
+ * ANY page that frames it. So both halves are required: the message came from
+ * the window directly above this one, and the browser observed it coming from
+ * the allowed origin. A frame nested in a stranger's page, or a stranger's page
+ * framing this wallet directly, fails one or the other.
+ *
+ * **THIS IS NOT THE ONLY THING STANDING BEHIND A FRAME, AND IT MUST NOT BE.**
+ * A `frame-ancestors` header for the same origin stops a stranger's page loading
+ * the wallet at all - wherever the host serving it sends one, which is a
+ * property of the deployment and not of this file; and the approval screen holds
+ * a press until the frame is large enough, showing, and the request has been in
+ * front of the person for a moment. Each alone leaves a way in.
+ */
+export function askerIsAllowed(view: ChannelWindow, framing: Framing, event: MessageEvent): boolean {
+  /* `!= null` AND NOT `!== null`: a window with no opener reports `null`, and
+   * some environments report `undefined`. Either is no opener - and an
+   * `undefined` read as an opener would compare equal to a message whose
+   * source is missing. */
+  if (view.opener != null) {
+    /*
+     * ONLY FROM THE PAGE THAT OPENED THIS TAB. Anything else on this window —
+     * an extension, another frame, a `postMessage` from a page that merely has
+     * a handle — is not the conversation the person opened the wallet for.
+     */
+    return event.source === (view.opener as unknown as MessageEventSource);
+  }
+  if (framing.of !== 'framed') return false;
+  return event.source === (view.parent as unknown as MessageEventSource)
+    && event.origin === framing.embedder;
+}
+
+/**
  * LISTEN FOR ONE REQUEST, ANSWER IT ONCE.
  *
  * **ONE REQUEST, AND THE SECOND IS IGNORED.** Trouble is where the side
@@ -102,21 +198,20 @@ export function listen(
   view: ChannelWindow,
   now: () => number,
   onState: (state: ChannelState) => void,
+  /**
+   * The one page allowed to frame this wallet, from the build's configuration.
+   * `null` - the default - means no page may, and a framed wallet answers nobody.
+   */
+  embedder: string | null = null,
 ): Channel {
   let settled = false;
   let source: MessageEventSource | null = null;
   let origin: string | null = null;
+  const framing = framingOf(view, embedder);
 
   const handler = (event: MessageEvent): void => {
     if (settled) return;
-    /*
-     * ONLY FROM THE PAGE THAT OPENED THIS TAB. Anything else on this window —
-     * an extension, another frame, a `postMessage` from a page that merely has
-     * a handle — is not the conversation the person opened the wallet for.
-     */
-    if (view.opener === null || event.source !== (view.opener as unknown as MessageEventSource)) {
-      return;
-    }
+    if (!askerIsAllowed(view, framing, event)) return;
     const body = (event.data ?? null) as { schema?: unknown } | null;
     if (body === null || typeof body !== 'object') return;
     if (body.schema !== 'midnight-identity/disclosure-request/v1') return;
@@ -144,7 +239,17 @@ export function listen(
    * receives it learns that a wallet tab it opened is listening, which it
    * already knew because it opened it.
    */
-  view.opener?.postMessage({ schema: READY_PING }, '*');
+  if (view.opener != null) {
+    view.opener.postMessage({ schema: READY_PING }, '*');
+  } else if (framing.of === 'framed') {
+    /*
+     * **IN A FRAME THE PING IS ADDRESSED, NOT BROADCAST.** The origin allowed to
+     * hold this wallet is already known from the build, so there is nothing to
+     * learn by sending to `'*'` - and a page that framed it without being that
+     * origin is told nothing, not even that a wallet is listening.
+     */
+    (view.parent as Postable).postMessage({ schema: READY_PING }, framing.embedder);
+  }
 
   const send = (message: unknown): void => {
     if (source === null || origin === null) return;

@@ -4,6 +4,17 @@ import react from '@vitejs/plugin-react';
 import wasm from 'vite-plugin-wasm';
 import tailwind from '@tailwindcss/vite';
 import topLevelAwait from 'vite-plugin-top-level-await';
+import { embedderFrom, framingHeadersFor } from '../../packages/identity/src/profile/origin.js';
+
+/*
+ * **WHO MAY FRAME THIS WALLET, SENT WITH EVERY DOCUMENT THE DEV AND PREVIEW
+ * SERVERS HAND OUT.** `frame-ancestors` only works as a response header, so it
+ * cannot live in `index.html`. The value is the same `VITE_APP_ORIGIN` the
+ * wallet reads for itself, so the page that may frame it and the page it will
+ * answer inside cannot disagree. An embedder this wallet would not trust stops
+ * the server here rather than serving a policy nobody meant.
+ */
+const FRAMING_HEADERS = framingHeadersFor(embedderFrom(process.env['VITE_APP_ORIGIN']));
 
 /**
  * The standalone wallet, served for testing.
@@ -18,7 +29,17 @@ import topLevelAwait from 'vite-plugin-top-level-await';
  * a test account.
  */
 export default defineConfig({
-  root: '.',
+  /*
+   * **ABSOLUTE, AND DERIVED FROM THIS FILE RATHER THAN FROM THE WORKING
+   * DIRECTORY.** Vite resolves a relative `root` against the process's CWD, not
+   * against the config. This read `'.'`, which was correct while the wallet was
+   * its own repository and the CWD was this folder. The merge moved it under
+   * `apps/wallet/` and `npm run wallet` runs from the repository root, so `.`
+   * became the root of the whole tree - which holds no `index.html`, so the dev
+   * server answered 404 for every page it served. It had done so since the
+   * merge and nothing said why.
+   */
+  root: fileURLToPath(new URL('.', import.meta.url)),
   /*
    * `vite-plugin-top-level-await` resolves `rollup`, `esbuild` and `@swc/core`
    * at RUNTIME without declaring any of them, which is why all three are pinned
@@ -116,7 +137,8 @@ export default defineConfig({
       { find: 'midnight-identity', replacement: fileURLToPath(new URL('../../packages/identity/src', import.meta.url)) },
     ],
   },
-  server: { port: 5180, strictPort: true, host: true },
+  server: { port: 5180, strictPort: true, host: true, headers: { ...FRAMING_HEADERS } },
+  preview: { headers: { ...FRAMING_HEADERS } },
   /*
    * The dependency cache goes OUTSIDE node_modules. Vite's default is
    * `node_modules/.vite`, which creates a `node_modules` directory containing

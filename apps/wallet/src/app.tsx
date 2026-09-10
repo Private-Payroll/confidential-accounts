@@ -26,6 +26,34 @@ import { Unlock } from './screens/unlock.js';
 import { Unsupported } from './screens/unsupported.js';
 import { Welcome } from './screens/welcome.js';
 import { forgetInbox, openInbox } from './accounts/inbox-live.js';
+import { FRAMING } from './framing.js';
+import { ORIGIN } from './config.js';
+
+/**
+ * **INSIDE ANOTHER PAGE, THE WALLET IS AN APPROVAL AND NOTHING ELSE.**
+ *
+ * Every other screen - settings, recovery, starting a fresh wallet - is a
+ * control a page around this one could put under somebody's pointer. So a
+ * framed wallet renders this instead, and it offers the one thing that is safe
+ * from anywhere: opening the wallet in a tab of its own, where the address bar
+ * is back.
+ */
+/** Nothing to make yet, locked, or open: the only phases an approval passes through. */
+const FRAMED_PHASES: ReadonlySet<string> = new Set(['welcome', 'locked', 'unlocked']);
+
+const FRAMED_ELSEWHERE =
+  'only an approval opens inside another page. Everything else in your wallet opens in a tab of '
+  + 'its own, where you can see its address.';
+
+function FramedRefusal({ says }: { readonly says: string }): ReactNode {
+  return (
+    <>
+      <h1 data-framed-refusal>Open your wallet on its own</h1>
+      <p className="lede">{says.charAt(0).toUpperCase() + says.slice(1)}</p>
+      <p><a href={`${ORIGIN}/`} target="_blank" rel="noopener noreferrer">Open your wallet in a new tab</a></p>
+    </>
+  );
+}
 
 /**
  * One decision, made in one place: which screen this browser's state and the
@@ -129,6 +157,18 @@ export function App(): ReactNode {
    * It is UNLINKED. Nothing in the navigation points here and nothing ever
    * should; it is reached by typing the hash.
    */
+  /*
+   * **ABOVE EVERY OTHER GATE, THE GALLERY INCLUDED.** A frame the wallet was
+   * not built for shows nothing, and a frame it was built for shows the
+   * approval route only - in the three phases an approval needs, and never a
+   * phase whose screen offers to start again, re-enrol a passkey or repair the
+   * wallet, each of which stays a thing done in the wallet's own tab.
+   */
+  if (FRAMING.of === 'refused') return <Shell bare><FramedRefusal says={FRAMING.why} /></Shell>;
+  if (FRAMING.of === 'framed' && (route.name !== 'approve' || !FRAMED_PHASES.has(phase.name))) {
+    return <Shell bare><FramedRefusal says={FRAMED_ELSEWHERE} /></Shell>;
+  }
+
   if (route.name === 'kit') return <Shell widePage><Kit /></Shell>;
 
   if (phase.name === 'unsupported') return <Shell narrow><Unsupported /></Shell>;
@@ -293,7 +333,7 @@ export function App(): ReactNode {
     case 'approve': {
       if (phase.name === 'unlocked') {
         return (
-          <Shell>
+          <Shell bare={FRAMING.of === 'framed'}>
             <Approve identity={phase.identity} secret={phase.secret} />
           </Shell>
         );
@@ -315,7 +355,7 @@ export function App(): ReactNode {
        * the wrapper renders it unchanged for every phase but that one.
        */
       return (
-        <Shell narrow>
+        <Shell narrow bare={FRAMING.of === 'framed'}>
           <ApproveEntry phase={phase} entry={entryFor(phase)} />
         </Shell>
       );

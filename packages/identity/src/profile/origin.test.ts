@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  LOCALHOST_FLAG, isLoopbackOrigin, localhostOriginsAllowed, usableOrigin,
+  LOCALHOST_FLAG, SiteRefusal, embedderFrom, frameAncestorsFor, isLoopbackOrigin,
+  localhostOriginsAllowed, relyingPartyIdFor, sharedSite, usableOrigin,
 } from './origin.js';
 import { parseAsk } from './request.js';
 import { REQUEST_SCHEMA } from './request.js';
@@ -241,5 +242,75 @@ describe('§5 — AND ALL THREE KINDS GO THROUGH IT', () => {
     for (const kind of ['sign-in', 'disclosure', 'unlock']) {
       expect(() => parseAsk(ask(kind), 'http://localhost:5173', 0), kind).toThrow();
     }
+  });
+});
+
+describe('§6 - A NAME BENEATH `localhost` IS A DEVELOPMENT ORIGIN, AND `localhost.evil.com` IS STILL NOT', () => {
+  it('`http://app.pp.localhost:5173` IS ACCEPTED IN DEVELOPMENT and REFUSED IN PRODUCTION', () => {
+    for (const origin of ['http://app.pp.localhost:5173', 'http://identity.pp.localhost:5180']) {
+      expect(isLoopbackOrigin(origin), origin).toBe(true);
+      expect(usableOrigin(origin), `${origin} in production`).toBe(false);
+      inDevelopment();
+      expect(usableOrigin(origin), `${origin} in development`).toBe(true);
+      vi.stubEnv(LOCALHOST_FLAG, '');
+    }
+  });
+
+  it('the LAST LABEL decides: every lookalike stays refused, in development too', () => {
+    inDevelopment();
+    for (const origin of [
+      'http://localhost.evil.com', 'http://pp.localhost.evil.com', 'http://evil-localhost',
+      'http://xlocalhost', 'http://.localhost', 'http://app.localhostx',
+    ]) {
+      expect(usableOrigin(origin), origin).toBe(false);
+    }
+  });
+});
+
+describe('§7 - THE SITE TWO SURFACES SHARE IS WHAT A PASSKEY AND A SIGN-IN BELONG TO', () => {
+  it('two subdomains share their parent - the name the passkey must be made for', () => {
+    expect(sharedSite('identity.privatepayroll.com', 'app.privatepayroll.com')).toBe('privatepayroll.com');
+    expect(sharedSite('identity.pp.localhost', 'app.pp.localhost')).toBe('pp.localhost');
+  });
+
+  it('one host shares itself, which is every port of `localhost`', () => {
+    expect(sharedSite('localhost', 'localhost')).toBe('localhost');
+  });
+
+  it('REFUSES a top-level name, no name at all, and an address, by name', () => {
+    expect(() => sharedSite('app.example.com', 'identity.other.com')).toThrow(SiteRefusal);
+    expect(() => sharedSite('app.example.com', 'identity.other.com')).toThrow(/share only "com"/);
+    expect(() => sharedSite('app.example.com', 'identity.example.org')).toThrow(/share no name/);
+    expect(() => sharedSite('127.0.0.1', 'localhost')).toThrow(/an address is only ever its own/);
+    expect(() => sharedSite('', 'localhost')).toThrow(SiteRefusal);
+  });
+
+  it('the RELYING PARTY is the shared site whenever an embedder is configured - never the host', () => {
+    expect(relyingPartyIdFor('identity.privatepayroll.com', 'https://app.privatepayroll.com'))
+      .toBe('privatepayroll.com');
+    expect(relyingPartyIdFor('identity.pp.localhost', 'http://app.pp.localhost:5173')).toBe('pp.localhost');
+    expect(relyingPartyIdFor('localhost', 'http://localhost:5173')).toBe('localhost');
+  });
+
+  it('and a standalone wallet - no embedder - keeps its passkeys on its own host, exactly as before', () => {
+    expect(relyingPartyIdFor('wallet.example.com', null)).toBe('wallet.example.com');
+  });
+});
+
+describe('§8 - WHO MAY FRAME THE WALLET', () => {
+  it('no embedder is `none`; one embedder is that origin and nothing else', () => {
+    expect(frameAncestorsFor(null)).toBe("frame-ancestors 'none'");
+    expect(frameAncestorsFor('https://app.privatepayroll.com'))
+      .toBe('frame-ancestors https://app.privatepayroll.com');
+  });
+
+  it('an embedder must be an origin the wallet would accept a request from at all', () => {
+    expect(embedderFrom(undefined)).toBeNull();
+    expect(embedderFrom('')).toBeNull();
+    expect(embedderFrom('https://app.privatepayroll.com')).toBe('https://app.privatepayroll.com');
+    expect(() => embedderFrom('http://app.pp.localhost:5173')).toThrow(SiteRefusal);
+    inDevelopment();
+    expect(embedderFrom('http://app.pp.localhost:5173')).toBe('http://app.pp.localhost:5173');
+    expect(() => embedderFrom('https://app.privatepayroll.com/')).toThrow(SiteRefusal);
   });
 });

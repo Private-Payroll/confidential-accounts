@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import wasm from 'vite-plugin-wasm';
+import { framingHeadersFor } from './packages/identity/src/profile/origin.js';
 
 /**
  * The payroll interface.
@@ -69,6 +70,16 @@ export default defineConfig({
    * JSX in a graph that contains none is a plugin that can only cost.
    */
   worker: { format: 'es', plugins: () => [wasm()] },
-  server: { port: 5173, host: true, proxy: { '/api': 'http://localhost:8787' } },
+  /*
+   * **NOTHING MAY FRAME THIS APPLICATION.** It frames the person's wallet, and the
+   * wallet answers it because it is the top of the tab; this page inside a
+   * stranger's would put a stranger around both. `frame-ancestors` is honoured
+   * only as a response header, so it is sent with every document here.
+   */
+  server: {
+    port: 5173, host: true, proxy: { '/api': 'http://localhost:8787' },
+    headers: { ...framingHeadersFor(null) },
+  },
+  preview: { headers: { ...framingHeadersFor(null) } },
   build: { outDir: '../../dist/web', emptyOutDir: true },
 });

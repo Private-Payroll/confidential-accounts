@@ -9,7 +9,20 @@ import {
 } from 'midnight-identity';
 import type { ChallengeStore, Identity, PieceSet, RecoverySession, Secret } from 'midnight-identity';
 import { createPasskey, passkeysAvailable, usePasskey } from 'midnight-identity/browser';
-import { ORIGIN, RP_ID, RP_NAME } from './config.js';
+import { EMBEDDER, ORIGIN, RP_ID, RP_NAME } from './config.js';
+
+/**
+ * **THE ONE PAGE A PASSKEY CEREMONY MAY RUN INSIDE, AND ONLY FOR TWO CEREMONIES.**
+ *
+ * A ceremony in a frame reports the page around it, and the verifier refuses
+ * one whose surrounding page it was not told to accept. **Making a wallet and
+ * unlocking one are the two an approval inside the application needs**, so
+ * they accept the embedder. Adopting a passkey, starting again, finishing a
+ * recovery and receiving a wallet from another device do not: each replaces or
+ * rebuilds what this browser holds, and each stays a thing done in the wallet's
+ * own tab, where the address bar is.
+ */
+const FRAMED_BY: readonly string[] = EMBEDDER === null ? [] : [EMBEDDER];
 import {
   StorageError, allPasskeys, forgetAllPasskeys, forgetEverything, forgetSealingKey,
   forgetSecuredSetup, loadSecret, readKeyringRecord, resetPasskeyRecordTo,
@@ -543,7 +556,7 @@ export function SessionProvider({ children, challenges: injected }: {
         throw new Error('that took too long and the challenge expired. Try again.');
       }
       const verified = await verifyRegistration(registration, {
-        rpId: RP_ID, origin: ORIGIN, challenge,
+        rpId: RP_ID, origin: ORIGIN, challenge, allowFramedBy: FRAMED_BY,
       });
 
       /* ONE OF THE TWO PLACES A SECRET IS BORN, and the stamp goes on
@@ -632,7 +645,7 @@ export function SessionProvider({ children, challenges: injected }: {
           + 'that has it.');
       }
       const result = await verifyAssertion(assertion, owner.passkey, {
-        rpId: RP_ID, origin: ORIGIN, challenge,
+        rpId: RP_ID, origin: ORIGIN, challenge, allowFramedBy: FRAMED_BY,
       });
       /* The sign counter moved; not saving it would switch off the clone
        * detector, silently — `ports.ts`, PasskeyStore. The compartment is

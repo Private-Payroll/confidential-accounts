@@ -273,8 +273,55 @@ type Page = 'dashboard' | 'payroll' | 'people' | 'approvals' | 'vault' | 'apps'
  * Both entry points pass the scheme that came out of `src/wiring/selection.ts`
  * beside the ledger they built, which is what makes them the same one.
  */
+/**
+ * **THE APPLICATION, AND THE WALLET BESIDE IT RATHER THAN INSIDE ANY SCREEN.**
+ *
+ * The wallet is shown in a frame, and a frame that is moved or unmounted takes
+ * the wallet document with it. Every screen below is swapped by a gate - signing
+ * in, choosing a company, the company itself, an invitation - and an ask can
+ * outlive the screen that started it. So the frame is rendered here, once, where
+ * no gate reaches it.
+ */
 export default function App({ commitments }: { commitments: CommitmentScheme }) {
+  /*
+   * **THIS APPLICATION IS THE TOP OF THE TAB OR IT IS NOTHING.** It shows the
+   * person's wallet inside itself, and the wallet answers it because it is this
+   * origin - so this page inside somebody else's would put a stranger around
+   * both, able to draw over each. A `frame-ancestors` header says the same thing
+   * wherever the host sends one; this says it in every browser and on every
+   * host, because it is in the page.
+   */
+  if (typeof window !== 'undefined' && window.top !== window.self) {
+    return (
+      <div className="authwrap" data-framed-refusal>
+        <div className="authcard">
+          <div className="authmark">CA</div>
+          <h1>Open this page on its own</h1>
+          <p className="authsub">
+            This page has been put inside another page, so it shows nothing here. Open it in a
+            tab of its own.
+          </p>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <>
+      <Screens commitments={commitments} />
+      <WalletWaiting />
+    </>
+  );
+}
+
+function Screens({ commitments }: { commitments: CommitmentScheme }) {
   const [user, setUser] = useState<keyring.Me | null>(null);
+  /**
+   * **TRUE UNTIL THIS BROWSER'S SESSION HAS BEEN ASKED ABOUT.** A reload no longer
+   * signs anybody out, so the sign-in screen is not shown until the server has
+   * said there is nobody to pick up - otherwise a signed-in person watches a
+   * sign-in button flash past on every reload.
+   */
+  const [resuming, setResuming] = useState(true);
   /** A company created on this tab whose keys are not sealed yet. */
   const [awaitingSetup, setAwaitingSetup] = useState<string | null>(null);
   const [myAccounts, setMyAccounts] = useState<Array<{
@@ -349,6 +396,19 @@ export default function App({ commitments }: { commitments: CommitmentScheme }) 
     try { await refreshAccounts(); }
     catch (e: any) { setErr(shownError(e, 'signing in')); } finally { setBusy(false); }
   }, [refreshAccounts]);
+
+  /* The sign-in a reload left behind. Nobody, or a server that cannot be
+   * reached, ends in the sign-in screen; a sign-in against an unreachable
+   * server then says so in its own words. */
+  useEffect(() => {
+    if (joinToken) { setResuming(false); return undefined; }
+    let alive = true;
+    keyring.resumeSession()
+      .then((u) => { if (alive && u) void onAuthed(u); })
+      .catch((e: any) => { if (alive) setErr(shownError(e, 'picking up your session')); })
+      .finally(() => { if (alive) setResuming(false); });
+    return () => { alive = false; };
+  }, [joinToken, onAuthed]);
 
   /**
    * Opens an account the user is already on. The viewing key is derived here,
@@ -595,11 +655,20 @@ export default function App({ commitments }: { commitments: CommitmentScheme }) 
    * announces itself to this, whichever screen started it, so no screen has to
    * remember to draw a wait of its own.
    */
-  if (!user) return <><WalletWaiting /><AuthScreen onDone={onAuthed} /></>;
+  if (!user && resuming) {
+    return (
+      <div className="authwrap" data-resuming>
+        <div className="authcard">
+          <div className="authmark">CA</div>
+          <p className="authsub">Checking whether this browser is still signed in…</p>
+        </div>
+      </div>
+    );
+  }
+  if (!user) return <AuthScreen onDone={onAuthed} />;
 
   if (!s || !state) {
     return <>
-      <WalletWaiting />
       <AccountPicker
         user={user} accounts={myAccounts ?? []} busy={busy} err={err}
         onOpen={openAccount} onUnlock={unlockWithWallet}
@@ -646,7 +715,6 @@ export default function App({ commitments }: { commitments: CommitmentScheme }) 
 
   return (
     <div className="app">
-      <WalletWaiting />
       <aside className="side">
         <div className="brand">
           <div className="mark">N</div>

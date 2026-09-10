@@ -739,3 +739,105 @@ describe('§2 — TWO ASKS THROUGH ONE DIALOG', () => {
     expect(view.closed).toBe(1);
   });
 });
+
+/* ------------------------------------------------------------------------ */
+
+describe('§3 — A JOURNEY WHOSE SERVER CALL FAILS PUTS ITS WALLET AWAY', () => {
+  /**
+   * **EVERY WALLET JOURNEY OPENS THE WALLET IN THE PRESS AND THEN TALKS TO THIS
+   * SERVER.** When that talk fails, the ask never runs, so nothing the ask does
+   * on its way out closes the wallet - and the page's *waiting* line, which
+   * carries the only control that could, is taken down at the same moment. A
+   * wallet left on screen with nothing able to put it away is the shape a
+   * person presses. One case per journey, because each was its own site.
+   */
+  const realFetch = globalThis.fetch;
+  const realWindow = (globalThis as { window?: unknown }).window;
+
+  afterEach(async () => {
+    globalThis.fetch = realFetch;
+    (globalThis as { window?: unknown }).window = realWindow;
+    const keyring = await import('./keyring.js');
+    keyring.forgetLocally();
+  });
+
+  /** A server that answers everything, except the one path it falls over on. */
+  const aServerThatFails = (failsOn: (method: string, url: string) => boolean) =>
+    (async (url: string, init?: RequestInit) => {
+      const method = String(init?.method ?? 'GET');
+      if (failsOn(method, String(url))) {
+        return { ok: false, status: 500, json: async () => ({ error: 'the server fell over' }) } as Response;
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          nonce: 'n1', handle: 'h1', expiresAt: new Date(Date.now() + 600_000).toISOString(),
+          session: { expiresAt: new Date(Date.now() + 600_000).toISOString() },
+          address: 'mn_addr', created: true,
+          user: { id: 'usr_1', email: null, name: '' },
+          company: 'a1'.repeat(32),
+        }),
+      } as Response;
+    }) as typeof fetch;
+
+  const signedIn = async (view: ARecordingView) => {
+    (globalThis as { window?: unknown }).window = Object.assign(view, { location: { origin: US } });
+    view.answers = () => ({ schema: 'a-sign-in' });
+    globalThis.fetch = aServerThatFails(() => false);
+    const keyring = await import('./keyring.js');
+    await keyring.signInWithWallet(WALLET, undefined, view);
+    view.answers = null;
+    expect(view.stillOpen(), 'the sign-in left its own window open').toEqual([]);
+    return keyring;
+  };
+
+  it('WATCHED FAILING: SIGNING IN, WHEN THE CHALLENGE FAILS', async () => {
+    const view = new ARecordingView();
+    (globalThis as { window?: unknown }).window = Object.assign(view, { location: { origin: US } });
+    globalThis.fetch = aServerThatFails((_m, url) => url.endsWith('/challenge'));
+    const keyring = await import('./keyring.js');
+    await expect(keyring.signInWithWallet(WALLET, undefined, view)).rejects.toThrow('the server fell over');
+    expect(view.made).toHaveLength(1);
+    expect(view.stillOpen()).toEqual([]);
+  });
+
+  it('WATCHED FAILING: ASKING WHERE TO PAY THIS PERSON, WHEN THE CHALLENGE FAILS', async () => {
+    const view = new ARecordingView();
+    const keyring = await signedIn(view);
+    globalThis.fetch = aServerThatFails((_m, url) => url.endsWith('/payee-challenge'));
+    await expect(keyring.payeeDisclosureFromWallet('acc_1', WALLET, view)).rejects.toThrow('the server fell over');
+    expect(view.stillOpen()).toEqual([]);
+  });
+
+  it('WATCHED FAILING: UNLOCKING, WHEN THE COMPANY CANNOT BE ASKED FOR', async () => {
+    const view = new ARecordingView();
+    const keyring = await signedIn(view);
+    globalThis.fetch = aServerThatFails((_m, url) => url.endsWith('/unlock'));
+    await expect(keyring.unlockWithWallet('acc_1', WALLET, view, US)).rejects.toThrow('the server fell over');
+    expect(view.stillOpen()).toEqual([]);
+  });
+
+  it('WATCHED FAILING: CREATING A COMPANY, WHEN THE COMPANY CANNOT BE MADE', async () => {
+    const view = new ARecordingView();
+    const keyring = await signedIn(view);
+    globalThis.fetch = aServerThatFails((method, url) => method === 'POST' && url === '/api/accounts');
+    await expect(keyring.createCompanyWithWallet(
+      { name: 'Acme', signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 }, WALLET, view, US,
+    )).rejects.toThrow('the server fell over');
+    expect(view.stillOpen()).toEqual([]);
+  });
+
+  it('AND THE PAGE STOPS SAYING IT IS WAITING, in the same failure', async () => {
+    const view = new ARecordingView();
+    const keyring = await signedIn(view);
+    const said: Array<unknown> = [];
+    const stop = keyring.onWalletWaiting((d) => said.push(d === null ? 'done' : 'waiting'));
+    globalThis.fetch = aServerThatFails((method, url) => method === 'POST' && url === '/api/accounts');
+    await keyring.createCompanyWithWallet(
+      { name: 'Acme', signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 }, WALLET, view, US,
+    ).catch(() => {});
+    stop();
+    expect(said).toEqual(['waiting', 'done']);
+  });
+});

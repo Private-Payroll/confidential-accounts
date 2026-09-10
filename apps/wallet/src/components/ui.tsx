@@ -5,7 +5,7 @@ import type { Identity, Secret } from 'midnight-identity';
 import { hrefOf } from '../routes.js';
 import type { RouteName } from '../routes.js';
 import { useSession } from '../session.js';
-import { INDEXER_HOST, NETWORK } from '../config.js';
+import { INDEXER_HOST, NETWORK, ORIGIN } from '../config.js';
 import { AccountChip, FlowAccountChip } from '../shell/account.js';
 import { BottomBar, Rail } from '../shell/nav.js';
 import { SidebarProvider, SidebarTrigger } from '../kit/sidebar.js';
@@ -212,9 +212,16 @@ export interface FlowChrome {
  * `flow` and gets the static chip; a condition passes nothing and its markup
  * is byte-for-byte what it was before.
  */
-export function Shell({ children, narrow, widePage, place, flow }: {
+export function Shell({ children, narrow, widePage, place, flow, bare }: {
   readonly children: ReactNode;
   readonly narrow?: boolean;
+  /**
+   * **INSIDE THE PAGE THAT FRAMES IT: NO BAR, NO FOOTER, NO NAVIGATION.** The
+   * page around it draws the frame. What stays is one line naming this wallet's
+   * own address, because in a frame there is no address bar and this is the
+   * only place a person can read which site the screen came from.
+   */
+  readonly bare?: boolean;
   /** The gallery at `#/kit` and nothing else — a workshop surface, wider than
    * the reading column any real screen gets. */
   readonly widePage?: boolean;
@@ -227,6 +234,19 @@ export function Shell({ children, narrow, widePage, place, flow }: {
   const mainClass = narrow === true
     ? 'content narrow'
     : (widePage === true ? 'content wide-page' : 'content');
+
+  if (bare === true) {
+    return (
+      <div className="shell" data-framed>
+        <main className={mainClass} tabIndex={-1}>
+          <p className="m-0 text-xs text-muted" data-framed-origin>
+            Your wallet, served from <span className="font-mono">{ORIGIN}</span>
+          </p>
+          {children}
+        </main>
+      </div>
+    );
+  }
 
   if (!place) {
     return (

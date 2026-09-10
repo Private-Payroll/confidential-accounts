@@ -2,9 +2,12 @@
  * The standalone wallet's fixed choices, in one place.
  *
  * THE PORT IS 5180 AND MUST STAY 5180 (`vite.config.ts`). A passkey belongs to
- * an origin and an origin includes the port, so an account created on 5180 is
- * unreachable from 5181. Nothing here may be derived from "whatever is free".
+ * a relying party - a NAME, with no port - but what this wallet keeps in the
+ * browser belongs to an origin, and an origin includes the port: a wallet
+ * created on 5180 is not in the storage 5181 reads. Nothing here may be derived
+ * from "whatever is free".
  */
+import { buildSetting, embedderFrom, relyingPartyIdFor } from 'midnight-identity/profile/origin';
 
 /**
  * THE NETWORK IS STAGENET — §7.16, decided 19 Aug. **The constant
@@ -61,8 +64,27 @@ export const INDEXER_HOST = new URL(INDEXER_HTTP_URL).host;
  */
 export const INBOX_HOST: InboxHost | null = null;
 
-/** The domain passkeys are bound to. No scheme, no port — that is the spec. */
-export const RP_ID = window.location.hostname;
+/**
+ * **THE ONE PAGE ALLOWED TO HOLD THIS WALLET INSIDE ITSELF, OR NULL.**
+ *
+ * Set when the wallet is built for a product that frames it; absent for a
+ * wallet that stands alone. It decides three things together, which is why it
+ * is one value rather than three: who may frame this wallet, who a framed
+ * wallet answers, and which name its passkeys belong to. A value this wallet
+ * could not trust as an asker stops the page here, before any screen renders.
+ */
+export const EMBEDDER: string | null = embedderFrom(buildSetting('VITE_APP_ORIGIN'));
+
+/**
+ * **THE NAME PASSKEYS ARE MADE FOR. No scheme, no port - that is the spec.**
+ *
+ * **NOT THIS PAGE'S HOST WHEN THE WALLET HAS AN EMBEDDER.** A passkey made for
+ * `identity.<site>` is refused on `app.<site>` with `SecurityError`, so one
+ * passkey could never cover the two surfaces the product is laid out as. It is
+ * made for the site both share instead, which the browser offers on every host
+ * beneath it. A standalone wallet keeps its own host, as it always has.
+ */
+export const RP_ID = relyingPartyIdFor(window.location.hostname, EMBEDDER);
 
 export const ORIGIN = window.location.origin;
 

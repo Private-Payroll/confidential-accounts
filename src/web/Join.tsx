@@ -15,10 +15,10 @@ import type { AssetId } from '../core/assets.js';
 import * as keyring from './keyring.js';
 import { shownError } from './shown-error.js';
 import { AuthScreen, WALLET_ORIGIN } from './Auth.js';
-import { WalletWaiting } from './wallet-waiting.js';
 import { askWalletToUnlock } from './wallet-unlock.js';
 import { askWalletForPayeeAddress } from './wallet-payee.js';
 import { openWalletDialog } from './wallet-sign-in.js';
+import { walletInThisPage } from './wallet-frame.js';
 
 /**
  * **THE SCREEN AN INVITATION OPENS.** `docs/NEXT.md` `X11` §2 and §3,
@@ -159,6 +159,14 @@ export function JoinScreen({ token }: { token: string }) {
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
   const [signedIn, setSignedIn] = useState(keyring.isSignedIn());
+  /* **A PERSON WHO RELOADS THE INVITATION IS STILL SIGNED IN.** The sign-in is a
+   * cookie this page cannot see, so it asks; a failure here leaves the sign-in
+   * button, which is the state this screen was already in. */
+  useEffect(() => {
+    let alive = true;
+    keyring.resumeSession().then((u) => { if (alive && u) setSignedIn(true); }, () => {});
+    return () => { alive = false; };
+  }, []);
   const [accepted, setAccepted] = useState(false);
   /**
    * **X12 §2 — WHAT THE WALLET APPROVED, HELD ON THIS DEVICE BETWEEN TWO
@@ -221,6 +229,7 @@ export function JoinScreen({ token }: { token: string }) {
      * window with two things to approve rather than two windows.
      */
     let dialog;
+    let stopShowing: (() => void) | null = null;
     try {
       if (!WALLET_ORIGIN) {
         throw new Error(
@@ -244,7 +253,12 @@ export function JoinScreen({ token }: { token: string }) {
           + 'payslips to a number that changes the day the company is deployed, and none of '
           + 'them would open again. Ask whoever invited you to deploy the company first.');
       }
-      dialog = openWalletDialog(window as never, WALLET_ORIGIN);
+      /* The wallet is shown inside this page, and both asks below speak to it. */
+      const host = walletInThisPage(window);
+      dialog = openWalletDialog(host, WALLET_ORIGIN);
+      /* Announced, so the page's *Stop waiting* refuses this journey's asks
+       * rather than only hiding the wallet they are waiting on. */
+      stopShowing = keyring.showWaitingFor(dialog);
       /*
        * **AND THE WINDOW BELONGS TO THIS FUNCTION RATHER THAN TO EITHER ASK.**
        *
@@ -276,7 +290,7 @@ export function JoinScreen({ token }: { token: string }) {
        * is shut to an invitee by construction — they are not a member — and
        * `X11` §0 forbids inventing a second key path for them.
        */
-      const companyKey = await askWalletToUnlock(window as never, WALLET_ORIGIN, {
+      const companyKey = await askWalletToUnlock(host, WALLET_ORIGIN, {
         company: current.companyAddress,
         atOrigin: window.location.origin,
         name: US_TO_A_WALLET.name,
@@ -304,7 +318,7 @@ export function JoinScreen({ token }: { token: string }) {
        * be a number nothing could ever check, and the member-gated challenge
        * route is shut to an invitee anyway.
        */
-      const answer = await askWalletForPayeeAddress(window as never, WALLET_ORIGIN, {
+      const answer = await askWalletForPayeeAddress(host, WALLET_ORIGIN, {
         nonce: toHex(crypto.getRandomValues(new Uint8Array(16))),
         expiresAt: Date.now() + PAYEE_WINDOW_MS,
         name: US_TO_A_WALLET.name,
@@ -346,6 +360,7 @@ export function JoinScreen({ token }: { token: string }) {
           : 'accepting an invitation'));
     } finally {
       dialog?.giveUp();
+      stopShowing?.();
       setBusy(false);
     }
   };
@@ -461,7 +476,6 @@ export function JoinScreen({ token }: { token: string }) {
 
   return (
     <>
-      <WalletWaiting />
       <div className="authwrap">
         <div className="authcard">
           <div className="authmark">CA</div>

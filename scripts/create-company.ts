@@ -71,8 +71,20 @@ const COMPANY_NAME = process.env.COMPANY_NAME ?? 'The First Company';
  * ABOUT THE SAME THING.** Two copies of *one signer at threshold one* is a
  * guard that passes while the create does something else.
  */
+/*
+ * **THE FIRST SEAT MAY NAME A PERSON, AND UNTIL IT DID THE COMPANY THIS
+ * COMMAND CREATED COULD NOT BE OPENED BY ANYBODY.** `src/core/account.ts:504`
+ * builds `memberUserIds` from the signers that carry a `userId`, and
+ * `account.ts:952` refuses anyone who is not in that list - so a company
+ * created with `null` here exists on the chain and has no members at all.
+ * Measured on `acc_M_Cg_ZmQrDz_`, whose stored record reads
+ * `"memberUserIds":[]`.
+ *
+ * It stays optional. Unset, this behaves exactly as it did.
+ */
+const OWNER_USER_ID = process.env.COMPANY_OWNER_USER_ID?.trim() || null;
 const FOUNDING_SIGNERS = [
-  { name: 'Founder', role: 'admin' as const, userId: null },
+  { name: 'Founder', role: 'admin' as const, userId: OWNER_USER_ID },
 ];
 const THRESHOLD = 1;
 

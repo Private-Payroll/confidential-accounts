@@ -23,4 +23,11 @@ import './styles.css';
  * it — rather than being built with an answer of its own.
  */
 import { wiring } from '../wiring/selection.js';
-createRoot(document.getElementById('root')!).render(<App commitments={wiring().commitments} />);
+/*
+ * **THE ROOT IS EXPORTED SO WHATEVER MOUNTED THE PAGE CAN UNMOUNT IT.** The page
+ * does work after it mounts - it asks the server whether this browser is still
+ * signed in - and a root nobody can reach goes on doing that work after the
+ * document it was mounted into is gone.
+ */
+export const pageRoot = createRoot(document.getElementById('root')!);
+pageRoot.render(<App commitments={wiring().commitments} />);

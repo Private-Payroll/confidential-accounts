@@ -17,11 +17,12 @@
  *
  * ── WHAT THIS SET CAN AND CANNOT DO TODAY, STATED RATHER THAN DISCOVERED ─
  *
- * **IT READS THE CHAIN AND IT DOES NOT WRITE TO IT.** Reading needs an indexer.
- * Writing needs a wallet that holds funds, and this deployment has none: the
- * only wallets that exist in this repository belong to operator scripts, which
- * hold their own keys and are run by a person at a terminal. A server does not
- * have one and must not quietly acquire one.
+ * **IT READS THE CHAIN, AND IT WRITES ONLY WHEN IT WAS HANDED A FUNDED PAIR.**
+ * Reading needs an indexer. Writing needs a wallet that holds funds, and a
+ * deployment started the ordinary way has none: the only wallets in this
+ * repository are brought up by operator scripts a person runs, which hold their
+ * own keys and hand them over on purpose. A server does not have one of its own
+ * and must not quietly acquire one.
  *
  * **SO THE WRITES REFUSE, BY NAME, AND THEY REFUSE EARLY.** That is the whole
  * of `ChainLedger` below, and the reason it is a wrapper rather than a comment
@@ -104,6 +105,12 @@ const noSponsor = (refusal: string): FeeSponsor => ({
  */
 const refuseUnwired = (what: string, why: string): Promise<never> =>
   Promise.reject(new Error(`${what} is not available on this deployment: ${why}`));
+
+/**
+ * The write each fee payer is busy with, so the next one waits for it.
+ * `ChainLedger.write` says why. Weak, so a fee payer nobody holds is not kept.
+ */
+const lanes = new WeakMap<FeeSponsor, Promise<void>>();
 
 /**
  * The chain ledger the product is handed.
@@ -244,14 +251,34 @@ export class ChainLedger implements Ledger {
    * The delegation is a thunk rather than a promise so the inner call is not
    * started before the refusal is decided.
    */
-  private write<T>(accountId: string, what: string, go: () => T): T | Promise<never> {
+  private write<T>(accountId: string, what: string, go: () => Promise<T>): Promise<T> {
     if (this.cannotWrite) return this.refuse(what);
+    const payer = this.payer!;
     /*
-     * Told before the work starts, because the fee payer reads it at the moment
-     * it records a payment, which is inside the call below.
+     * **ONE WRITE AT A TIME PER FEE PAYER, WAITING ITS TURN BEHIND THE LAST.**
+     *
+     * The fee payer holds whose transaction it is paying for, and what it
+     * expected to pay, on itself - the vendor's callbacks carry nothing that
+     * tells one operation from another. Two writes running at once would share
+     * those two fields, and the second would overwrite the first's company
+     * before the first recorded what it paid: a fee record that is wrong rather
+     * than absent. Its wallet also books coins while it balances, and two
+     * balances racing for one wallet's coins is a failed payment for somebody.
+     *
+     * **KEYED ON THE FEE PAYER, NOT ON THIS OBJECT**, because the fee payer is
+     * the thing being shared: two ledgers built over one fee payer must queue
+     * behind each other too. A write that fails lets the next one go.
      */
-    this.payer?.payingFor(accountId);
-    return go();
+    const turn = (lanes.get(payer) ?? Promise.resolve()).then(() => {
+      /*
+       * Told before the work starts, because the fee payer reads it at the moment
+       * it records a payment, which is inside the call below.
+       */
+      payer.payingFor(accountId);
+      return go();
+    });
+    lanes.set(payer, turn.then(() => undefined, () => undefined));
+    return turn;
   }
 
   open(accountId: string, opening: AccountOpening): Promise<TxRef> {

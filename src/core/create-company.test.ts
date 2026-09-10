@@ -11,6 +11,16 @@ import type { Sealed } from './crypto.js';
 import { fromHex, toHex, unwrapKey, wrapKey } from './crypto.js';
 import { x25519 } from '@noble/curves/ed25519.js';
 
+/**
+ * **THE WINDOW `inABrowser` INSTALLED, HANDED IN BY NAME.** The product now shows
+ * the wallet inside the page by default, and a journey with no frame on the page
+ * refuses to open one. These cases model a wallet at the other end of a window
+ * and install it as `window`, so they pass that window explicitly rather than
+ * relying on a default that no longer reaches it.
+ */
+const thisBrowsersWindow = () => (globalThis as { window?: unknown }).window as never;
+
+
 /** The public half of a wrapping secret, as `newWrappingKeypair` computes it. */
 const x25519PublicOf = (secret: string) => toHex(x25519.getPublicKey(fromHex(secret)));
 
@@ -224,7 +234,7 @@ describe('§1 — CREATE, UNLOCK, SEAL — AND IN THAT ORDER', () => {
     inABrowser(view, server.fetchImpl);
 
     const keyring = await import('../web/keyring.js');
-    await keyring.signInWithWallet(WALLET);
+    await keyring.signInWithWallet(WALLET, undefined, thisBrowsersWindow());
     /* `C141` in one line: signed in, and able to open nothing. */
     expect(keyring.canOpenCompanies()).toBe(false);
 
@@ -252,7 +262,7 @@ describe('§1 — CREATE, UNLOCK, SEAL — AND IN THAT ORDER', () => {
       inABrowser(view, server.fetchImpl);
 
       const keyring = await import('../web/keyring.js');
-      await keyring.signInWithWallet(WALLET);
+      await keyring.signInWithWallet(WALLET, undefined, thisBrowsersWindow());
       await keyring.createCompanyWithWallet(
         { name: 'Northwind', signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 },
         WALLET, view, US);
@@ -281,7 +291,7 @@ describe('§1 — CREATE, UNLOCK, SEAL — AND IN THAT ORDER', () => {
       inABrowser(view, server.fetchImpl);
 
       const keyring = await import('../web/keyring.js');
-      await keyring.signInWithWallet(WALLET);
+      await keyring.signInWithWallet(WALLET, undefined, thisBrowsersWindow());
       await keyring.createCompanyWithWallet(
         { name: 'Northwind', signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 },
         WALLET, view, US);
@@ -318,7 +328,7 @@ describe('§2 — AN ADDRESS NO CHAIN ASSIGNED SEALS NOTHING', () => {
     inABrowser(view, server.fetchImpl);
 
     const keyring = await import('../web/keyring.js');
-    await keyring.signInWithWallet(WALLET);
+    await keyring.signInWithWallet(WALLET, undefined, thisBrowsersWindow());
 
     await expect(keyring.createCompanyWithWallet(
       { name: 'Northwind', signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 },
@@ -347,7 +357,7 @@ describe('§2 — AN ADDRESS NO CHAIN ASSIGNED SEALS NOTHING', () => {
       inABrowser(view, server.fetchImpl);
 
       const keyring = await import('../web/keyring.js');
-      await keyring.signInWithWallet(WALLET);
+      await keyring.signInWithWallet(WALLET, undefined, thisBrowsersWindow());
       await expect(keyring.createCompanyWithWallet(
         { name: 'Northwind', signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 },
         WALLET, view, US)).rejects.toThrow();
@@ -373,7 +383,7 @@ describe('§2 — AN ADDRESS NO CHAIN ASSIGNED SEALS NOTHING', () => {
     inABrowser(view, server.fetchImpl);
 
     const keyring = await import('../web/keyring.js');
-    await keyring.signInWithWallet(WALLET);
+    await keyring.signInWithWallet(WALLET, undefined, thisBrowsersWindow());
     await expect(keyring.createCompanyWithWallet(
       { name: 'N', signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 },
       WALLET, view, US)).rejects.toThrow();
@@ -404,7 +414,7 @@ describe('§3 — NO PASSWORD, ANYWHERE ON THIS JOURNEY', () => {
     inABrowser(view, server.fetchImpl);
 
     const keyring = await import('../web/keyring.js');
-    await keyring.signInWithWallet(WALLET);
+    await keyring.signInWithWallet(WALLET, undefined, thisBrowsersWindow());
     await keyring.createCompanyWithWallet(
       { name: 'Northwind', signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 },
       WALLET, view, US);
@@ -477,7 +487,7 @@ describe('§4 — THE FOUNDER\'S FIRST DEVICE IS NOT SPECIAL', () => {
     const deviceOne = new WalletAtTheOtherEnd(honestly(TEST_MNEMONIC), US);
     inABrowser(deviceOne, server.fetchImpl, US);
     const keyring = await import('../web/keyring.js');
-    await keyring.signInWithWallet(WALLET);
+    await keyring.signInWithWallet(WALLET, undefined, thisBrowsersWindow());
     await keyring.createCompanyWithWallet(
       { name: 'Northwind', signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 },
       WALLET, deviceOne, US);
@@ -491,7 +501,7 @@ describe('§4 — THE FOUNDER\'S FIRST DEVICE IS NOT SPECIAL', () => {
 
     const deviceTwo = new WalletAtTheOtherEnd(honestly(TEST_MNEMONIC), ELSEWHERE);
     inABrowser(deviceTwo, server.fetchImpl, ELSEWHERE);
-    await keyring.signInWithWallet(WALLET);
+    await keyring.signInWithWallet(WALLET, undefined, thisBrowsersWindow());
     await keyring.unlockWithWallet(ACCOUNT_ID, WALLET, deviceTwo, ELSEWHERE);
 
     expect(keyring.canOpenCompanies()).toBe(true);
@@ -516,7 +526,7 @@ describe('§4 — THE FOUNDER\'S FIRST DEVICE IS NOT SPECIAL', () => {
     const deviceOne = new WalletAtTheOtherEnd(honestly(TEST_MNEMONIC), US);
     inABrowser(deviceOne, server.fetchImpl, US);
     const keyring = await import('../web/keyring.js');
-    await keyring.signInWithWallet(WALLET);
+    await keyring.signInWithWallet(WALLET, undefined, thisBrowsersWindow());
     await keyring.createCompanyWithWallet(
       { name: 'Northwind', signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 },
       WALLET, deviceOne, US);
@@ -525,7 +535,7 @@ describe('§4 — THE FOUNDER\'S FIRST DEVICE IS NOT SPECIAL', () => {
 
     const somebodyElse = new WalletAtTheOtherEnd(honestly(newWords()), ELSEWHERE);
     inABrowser(somebodyElse, server.fetchImpl, ELSEWHERE);
-    await keyring.signInWithWallet(WALLET);
+    await keyring.signInWithWallet(WALLET, undefined, thisBrowsersWindow());
     await expect(keyring.unlockWithWallet(ACCOUNT_ID, WALLET, somebodyElse, ELSEWHERE))
       .rejects.toThrow(/could not be opened/);
     expect(keyring.canOpenCompanies()).toBe(false);
