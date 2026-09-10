@@ -102,7 +102,19 @@ export async function seal(key: CryptoKey, profile: Profile): Promise<SealedProf
 export type Opened =
   | { readonly of: 'none' }
   | { readonly of: 'profile'; readonly profile: Profile }
-  | { readonly of: 'unopenable'; readonly why: string };
+  | { readonly of: 'unopenable'; readonly why: string; readonly cause: UnopenableCause };
+
+/**
+ * **WHICH WAY IT FAILED, SO A SCREEN THAT KNOWS MORE CAN SAY MORE.**
+ *
+ * `another-key` is the one case with an innocent explanation this module
+ * cannot see: the bytes are well formed and do not authenticate under this
+ * account's key, which is what another account's blob looks like and also what
+ * an altered one looks like. A wallet that knows it keeps several accounts in
+ * one place can say which is likely; this module cannot, so it names the case
+ * rather than the explanation.
+ */
+export type UnopenableCause = 'not-sealed-by-this-wallet' | 'another-key' | 'unreadable' | 'not-a-profile';
 
 const looksLikeAProfile = (parsed: unknown): parsed is Profile => (
   typeof parsed === 'object' && parsed !== null
@@ -114,6 +126,7 @@ export async function open(key: CryptoKey, blob: SealedProfile): Promise<Opened>
   if (typeof blob?.iv !== 'string' || typeof blob?.sealed !== 'string' || blob?.v !== VERSION) {
     return {
       of: 'unopenable',
+      cause: 'not-sealed-by-this-wallet',
       why: 'something is stored here that this wallet did not seal, or sealed under a '
         + 'different version.',
     };
@@ -126,6 +139,7 @@ export async function open(key: CryptoKey, blob: SealedProfile): Promise<Opened>
   } catch {
     return {
       of: 'unopenable',
+      cause: 'another-key',
       why: 'the details stored here will not open with this account\'s key. They belong to '
         + 'another account, or they have been altered.',
     };
@@ -134,10 +148,13 @@ export async function open(key: CryptoKey, blob: SealedProfile): Promise<Opened>
   try {
     parsed = JSON.parse(new TextDecoder().decode(plain)) as unknown;
   } catch {
-    return { of: 'unopenable', why: 'the details stored here opened but are not readable.' };
+    return { of: 'unopenable', cause: 'unreadable', why: 'the details stored here opened but are not readable.' };
   }
   if (!looksLikeAProfile(parsed)) {
-    return { of: 'unopenable', why: 'the details stored here are not a profile this wallet knows.' };
+    return {
+      of: 'unopenable', cause: 'not-a-profile',
+      why: 'the details stored here are not a profile this wallet knows.',
+    };
   }
   return { of: 'profile', profile: parsed };
 }

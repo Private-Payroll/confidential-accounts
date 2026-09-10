@@ -255,3 +255,50 @@ describe('§2 — pressing a wallet in the list OPENS it, in one press', () => {
       expect(openWalletId()).not.toBe(founder.id);
     });
 });
+
+describe('§3 — a wallet pressed in the list is the only one the browser is asked about', () => {
+  /**
+   * The person answered *which wallet* by pressing it. The browser's chooser is
+   * the operating system's list of every passkey for this site, and showing it
+   * after that press asks the same question a second time, in names the person
+   * did not choose. So a press offers only the pressed wallet's passkeys, and
+   * the unlock button - where nobody has said which - still offers them all.
+   */
+  it('a row press offers ONLY that wallet\'s passkeys to the browser', async () => {
+    const founder = await putWallet('Founder', 'cred-founder');
+    await putWallet('Employee', 'cred-employee');
+    savePasskey(passkeyFixture('cred-founder-phone'), founder.id);
+    expect(openWalletId()).not.toBe(founder.id);
+
+    mockUsePasskey.mockResolvedValue(assertionFixture('cred-founder'));
+    mockVerifyAssertion.mockImplementation((_a: unknown, passkey: unknown) =>
+      Promise.resolve({ passkey }) as never);
+
+    mount();
+    fireEvent.click(within(list()).getByText('Founder'));
+    await waitFor(() => expect(mockUsePasskey).toHaveBeenCalledTimes(1));
+    const offered = mockUsePasskey.mock.calls[0]?.[0].allow;
+    expect(offered).toBeDefined();
+    expect([...(offered ?? [])].sort()).toEqual(['cred-founder', 'cred-founder-phone']);
+    expect(offered).not.toContain('cred-employee');
+    await waitFor(() => expect(phase()).toBe('unlocked'));
+    expect(screen.getByTestId('secret-fp').textContent)
+      .toBe(toBase64Url(fingerprintOf(founder.secret)));
+  });
+
+  it('the unlock button, where nobody has said which wallet, still offers every passkey', async () => {
+    await putWallet('Founder', 'cred-founder');
+    await putWallet('Employee', 'cred-employee');
+
+    mockUsePasskey.mockResolvedValue(assertionFixture('cred-employee'));
+    mockVerifyAssertion.mockImplementation((_a: unknown, passkey: unknown) =>
+      Promise.resolve({ passkey }) as never);
+
+    mount();
+    fireEvent.click(screen.getByText('Unlock with your passkey'));
+    await waitFor(() => expect(mockUsePasskey).toHaveBeenCalledTimes(1));
+    expect(mockUsePasskey.mock.calls).toHaveLength(1);
+    expect(mockUsePasskey.mock.calls[0]?.[0].allow).toBeUndefined();
+    await waitFor(() => expect(phase()).toBe('unlocked'));
+  });
+});

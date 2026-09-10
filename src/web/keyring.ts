@@ -208,6 +208,35 @@ let walletAddress: string | null = null;
  * same reason as `encKey`: a reload asks the wallet again.
  */
 let releasedCompanyKey: { accountId: string; key: Hex } | null = null;
+/**
+ * **WHAT THE SERVER HOLDS SAVED FOR THIS PERSON, AS LAST READ BY AN UNLOCK.**
+ *
+ * `none` is a person with no saved keys at all on this deployment; `some` is a
+ * saved bundle, which this tab has opened. Null until an unlock has read it.
+ *
+ * It is what lets a company this tab cannot open say something true. A person
+ * has ONE saved bundle and every device and every wallet release reaches the
+ * same one, so once it has been opened, a company missing from it is missing
+ * everywhere this deployment could offer it - not merely missing from this
+ * device.
+ */
+let savedKeys: 'none' | 'some' | null = null;
+/**
+ * **WHETHER THE SIGN-IN THAT MADE THIS TAB WAS THIS ADDRESS'S FIRST HERE.**
+ *
+ * The server says so on the sign-in answer. A reload does not carry it, so a
+ * resumed session answers false rather than guessing.
+ */
+let firstSignInHere = false;
+/**
+ * **WHY THIS TAB LAST FORGOT ITS SESSION, WHEN A SERVER ANSWER MADE IT.**
+ *
+ * A `401` means the server holds no session for this browser's cookie. A `409`
+ * means the cookie now belongs to somebody else, signed in from another tab.
+ * Signing out needs the difference: after the first there is nothing to end,
+ * and after the second a sign-out sent from here would end THEIR session.
+ */
+let forgotBecause: 'no-session' | 'another-person' | null = null;
 
 export const currentUser = () => me;
 export const signedInWallet = () => walletAddress;
@@ -240,11 +269,77 @@ export const isSignedIn = () => sessionLive && me !== null;
  * posture is exactly what it was, and where the key comes from is better.
  */
 export const canOpenCompanies = () => encKey !== null;
+/** True only straight after a sign-in the server reported as this address's first here. */
+export const signedInForTheFirstTimeHere = () => firstSignInHere;
+
+/**
+ * **WHY A COMPANY THIS PERSON IS ON CANNOT BE OPENED FROM THIS TAB**, in a few
+ * words for a list row. The full sentence, with what would change it, is
+ * `lockedCompanyRefusal`.
+ *
+ * Every sentence is about what THIS TAB READ, and says so. Another tab or
+ * device can save keys after this one looked, and a tab can be holding keys it
+ * has not managed to save, so nothing here claims what no device can do.
+ */
+export function lockedCompanyReason(accountId: string): string {
+  if (keysFor(accountId)) return 'it did not open with the keys saved for you';
+  if (savedKeys === 'none') return 'no keys were saved for you here when this tab last looked';
+  if (savedKeys === 'some') {
+    return 'the keys saved for you here, when this tab last looked, do not include this company';
+  }
+  return 'your wallet has not opened the keys saved for you in this tab yet';
+}
+
+export function lockedCompanyRefusal(accountId: string): string {
+  if (keysFor(accountId)) {
+    return `${lockedCompanyReason(accountId)}: you may not have been given access to it yet.`;
+  }
+  if (savedKeys === null) {
+    return 'your wallet has not opened the keys saved for you in this tab yet, so this company '
+      + 'cannot be opened until it has.';
+  }
+  return `${lockedCompanyReason(accountId)}. It opens here once keys for it have been saved for `
+    + 'you - by the tab that created it finishing setting it up, or by accepting an invitation to '
+    + 'it - and this tab has been unlocked again since.';
+}
+
+/**
+ * **WHY THIS TAB CANNOT START A COMPANY, OR NULL WHEN IT CAN TRY.**
+ *
+ * A tab that has unlocked a company holds that company's key, and anything it
+ * saves is sealed under it - including a new company's only copy of its keys.
+ * Those keys would then open only after unlocking the OTHER company, and a
+ * failed save would leave them in this tab alone. So such a tab does not start
+ * one. A person with nothing saved yet loses nothing by starting over in a tab
+ * that has not unlocked anything, and is told so; for anybody else there is no
+ * safe way from this tab yet, and that is what is said.
+ */
+export function whyNoCompanyCanStartHere(): string | null {
+  if (encKey === null) return null;
+  const why = 'a company cannot be started from this tab now: it has unlocked another company, '
+    + 'and a new company\'s keys would be saved under that company\'s key.';
+  /* A company this tab started and has not finished holds its only keys here,
+   * and signing out drops them - so that advice is never given while one does. */
+  if (pendingCompany !== null) {
+    return `${why} A company this tab started is not finished, and its keys are only in this tab: `
+      + 'do not sign out or close this tab while it is.';
+  }
+  if (savedKeys === 'none') {
+    return `${why} Sign out, sign in again, and start the company before unlocking one.`;
+  }
+  return `${why} Starting another company from a tab that has unlocked one is not available yet.`;
+}
 export const keysFor = (accountId: string): AccountKeys | null => keyring.accounts[accountId] ?? null;
 
 /* ---------------- transport ---------------- */
 
 export class AuthError extends Error {}
+/**
+ * The sign-in this tab sent belongs to somebody else. Still an `AuthError` to
+ * every caller that only asks whether the tab is signed in; told apart where it
+ * matters, which is signing out - that session is still live in this browser.
+ */
+export class AnotherPersonError extends AuthError {}
 
 export const api = async (path: string, opts?: RequestInit) => {
   const r = await fetch(path, {
@@ -262,10 +357,15 @@ export const api = async (path: string, opts?: RequestInit) => {
     },
   });
   const body = await r.json().catch(() => ({}));
-  if (r.status === 401) { forgetLocally(); throw new AuthError(body?.error ?? 'not signed in'); }
+  if (r.status === 401) {
+    forgetLocally();
+    forgotBecause = 'no-session';
+    throw new AuthError(body?.error ?? 'not signed in');
+  }
   if (r.status === 409 && body?.code === 'another-person') {
     forgetLocally();
-    throw new AuthError(body.error);
+    forgotBecause = 'another-person';
+    throw new AnotherPersonError(body.error);
   }
   if (!r.ok) throw new Error(body?.error ?? `request failed: ${r.status}`);
   return body;
@@ -442,6 +542,8 @@ async function finishWalletSignIn(
    * one: the server set the sign-in as a cookie this page cannot read. */
   sessionLive = true;
   walletAddress = r.address;
+  firstSignInHere = r.created === true;
+  savedKeys = null;
   /* A sign-in releases nothing. The unlock is what does. */
   releasedCompanyKey = null;
   /* NO KEYRING AND NO `encKey`. See `canOpenCompanies` — this is not an
@@ -469,6 +571,7 @@ export async function resumeSession(): Promise<Me | null> {
   try {
     const r = await api('/api/me');
     sessionLive = true;
+    firstSignInHere = false;
     me = r.user as Me;
     return me;
   } catch (e) {
@@ -629,6 +732,7 @@ async function unlockOnceOpen(
     }
   }
   encKey = ek;
+  savedKeys = r.keyBundle ? 'some' : 'none';
   /* **RECORDED WITH THE COMPANY IT BELONGS TO**, so a payslip key can only ever
    * be derived from the key this wallet released for THIS company. */
   releasedCompanyKey = { accountId, key: ek };
@@ -645,7 +749,7 @@ async function unlockOnceOpen(
  */
 export function forgetLocally() {
   sessionLive = false; encKey = null; keyring = { accounts: {} }; me = null; walletAddress = null;
-  releasedCompanyKey = null;
+  releasedCompanyKey = null; savedKeys = null; firstSignInHere = false;
   /*
    * **AND THE FOUNDER'S UNSEALED SECRETS.**
    *
@@ -673,14 +777,38 @@ export function forgetLocally() {
  * leave the keys sitting in this tab, and a session we failed to end is a
  * smaller problem than a keyring left open on somebody's screen.
  */
-export async function signOut() {
+export async function signOut(): Promise<{ ended: boolean; anotherPerson: boolean }> {
+  /*
+   * **AND IT SAYS WHETHER THE SERVER ENDED IT**, because this page cannot end it
+   * itself: the sign-in is an `HttpOnly` cookie, and a reload picks one up
+   * the server did not end. Ended is a confirmed sign-out, or a server saying
+   * there was no session to end. Not ended is a server that could not be
+   * reached or failed, or one that belongs to somebody else.
+   */
+  /*
+   * **A TAB THAT HAS ALREADY FORGOTTEN WHO IT WAS SENDS NOTHING.** Its request
+   * would carry no name, and the server would end whichever session the cookie
+   * holds - after a `409`, somebody else's, from another tab. So it answers from
+   * what made it forget: the server saying there was no sign-in is one
+   * ended; anything else is not.
+   */
+  if (me === null) {
+    const because = forgotBecause;
+    forgetLocally();
+    return { ended: because === 'no-session', anotherPerson: because === 'another-person' };
+  }
+  let ended = false;
+  let anotherPerson = false;
   try {
-    if (sessionLive) await api('/api/auth/logout', { method: 'POST' });
-  } catch {
-    // Already dead, or unreachable. Either way, clear.
+    await api('/api/auth/logout', { method: 'POST' });
+    ended = true;
+  } catch (e) {
+    anotherPerson = e instanceof AnotherPersonError;
+    ended = e instanceof AuthError && !anotherPerson;
   } finally {
     forgetLocally();
   }
+  return { ended, anotherPerson };
 }
 
 /** The signed-in devices. Never includes a token — see SessionStore.list. */
@@ -863,6 +991,7 @@ async function putBundle() {
       }),
     });
     bundleVersion = typeof r?.version === 'number' ? r.version : bundleVersion + 1;
+    savedKeys = 'some';
   } catch (e) {
     keyring = before;
     throw e;

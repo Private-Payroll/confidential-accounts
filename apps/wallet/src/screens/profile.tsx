@@ -17,6 +17,8 @@ import {
   Input, Label, Section, Separator,
 } from '../kit/index.js';
 import { hrefOf } from '../routes.js';
+import { heldWallets } from '../accounts/wallets-held.js';
+import { sayingForUnopenable } from '../lib/unopenable-details.js';
 
 /**
  * MY PROFILE — the plain screen.
@@ -555,15 +557,18 @@ export function ProfileScreen({ identity, registry = REGISTRY, port = browserPor
    * quietly starting a fresh, empty profile over the top of somebody's facts.
    */
   if (state.of === 'unopenable') {
+    const saying = sayingForUnopenable(state, heldWallets().length);
     return (
       <>
         <BackToWallet />
         <h1>My profile</h1>
-        <Alert tone="danger" title="There are details here that this account cannot open">
-          <p className="m-0">{state.why}</p>
+        <Alert tone={saying.tone} title={saying.title}>
+          <p className="m-0" data-unopenable-why>{saying.sentence}</p>
           <p className="m-0">
-            Nothing has been changed or deleted. If you have opened a different wallet in
-            this browser, the details belong to the other one and will open when it does.
+            Nothing has been changed or deleted.{!saying.anotherWalletHere && (
+              <> If you have opened a different wallet in this browser, the details belong to
+              the other one and will open when it does.</>
+            )}
           </p>
         </Alert>
         <p style={{ marginTop: '1.5rem' }}>

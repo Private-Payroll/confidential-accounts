@@ -35,7 +35,11 @@ import * as keyring from './keyring.js';
  */
 export const WALLET_ORIGIN = (import.meta.env.VITE_WALLET_ORIGIN ?? '').replace(/\/+$/, '');
 
-export function AuthScreen({ onDone }: { onDone: (u: keyring.Me) => void }) {
+export function AuthScreen({ onDone, notice = '' }: {
+  onDone: (u: keyring.Me) => void;
+  /** Something the screen before this one left true, such as a sign-out the server did not confirm. */
+  notice?: string;
+}) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
 
@@ -69,6 +73,7 @@ export function AuthScreen({ onDone }: { onDone: (u: keyring.Me) => void }) {
           Nothing else is asked for and no key leaves it.
         </p>
 
+        {notice && <div className="autherr" data-notice>{notice}</div>}
         {err && <div className="autherr">{err}</div>}
       </div>
     </div>
@@ -103,6 +108,7 @@ export function AccountPicker({
 }) {
   const [name, setName] = useState('');
   const wallet = keyring.signedInWallet();
+  const noCompanyHere = keyring.whyNoCompanyCanStartHere();
 
   /**
    * **A WALLET SIGN-IN OPENS NOTHING UNTIL THE WALLET IS ASKED FOR A KEY.**
@@ -146,6 +152,20 @@ export function AccountPicker({
             </div>
           )}
 
+          {/*
+            * **AN ADDRESS THIS DEPLOYMENT HAS NEVER SEEN.** A person here is one
+            * wallet address, so an address that is new here has nothing, even when
+            * the same wallet has companies under another of its addresses. Said
+            * only when the server reported this sign-in as the address's first.
+            */}
+          {accounts.length === 0 && !awaitingSetup && keyring.signedInForTheFirstTimeHere() && (
+            <p className="authsub" data-new-here>
+              This wallet address has not signed in here before. Each address is a separate
+              person here, so companies started with another address from the same wallet are
+              not listed.
+            </p>
+          )}
+
           {accounts.length === 0 && !awaitingSetup && (
             <p className="authsub">
               You are not a signer on any company here yet. Start one below, or ask a
@@ -153,26 +173,7 @@ export function AccountPicker({
             </p>
           )}
 
-          {/*
-            * **A COMPANY THAT EXISTS AND IS NOT FINISHED.** PI3.
-            *
-            * Its records are created and this tab is holding the only copy of
-            * the keys that open them, unsealed. Saying so plainly is the whole
-            * point: a person who declined the wallet needs to know that the
-            * company is real, that nothing is lost, and that closing this tab
-            * is the one thing that would lose it.
-            */}
-          {awaitingSetup && (
-            <div className="empty">
-              <b>Your company is created and not finished</b>
-              Your wallet has not yet given this page the key that seals your keys. Nothing
-              is lost — but do not close this tab until it has, because the keys are only
-              here.
-              <button className="primary" disabled={busy} onClick={onFinishSetup}>
-                {busy ? 'Waiting for your wallet' : 'Finish setting up'}
-              </button>
-            </div>
-          )}
+          {awaitingSetup && <AwaitingSetup busy={busy} onFinishSetup={onFinishSetup} />}
 
           {/*
             * **AND THIS IS `C141` CLOSED.** Until PI3 this screen told a person
@@ -208,7 +209,9 @@ export function AccountPicker({
     <div className="authwrap">
       <div className="authcard wide">
         <h1>Your accounts</h1>
-        <p className="authsub">Signed in as {user.email}</p>
+        {/* A wallet sign-in stores no email, so this line shows what there is and
+          * is left out when there is nothing, rather than ending in a blank. */}
+        {(wallet ?? user.email) && <p className="authsub">Signed in as {wallet ?? user.email}</p>}
 
         {accounts.length > 0 && (
           <div className="acctlist">
@@ -231,10 +234,28 @@ export function AccountPicker({
           </div>
         )}
 
-        <form className="acctnew" onSubmit={e => { e.preventDefault(); onCreate(name.trim()); }}>
-          <input value={name} onChange={e => setName(e.target.value)} placeholder="New company name" />
-          <button className="primary" disabled={busy || name.trim().length < 2}>Create</button>
+        {/* The same unfinished company as the other face offers to finish. A tab
+          * reaches this face with one after unlocking another company, and the
+          * keys are only here, so the way to finish it stays on screen. */}
+        {awaitingSetup && <AwaitingSetup busy={busy} onFinishSetup={onFinishSetup} />}
+
+        {/* Shown, disabled, with its reason: a company started from this face would
+          * have its only keys saved under another company's key. */}
+        <form className="acctnew" onSubmit={e => {
+          e.preventDefault();
+          if (!noCompanyHere) onCreate(name.trim());
+        }}>
+          <input value={name} onChange={e => setName(e.target.value)} placeholder="New company name"
+            disabled={noCompanyHere !== null} />
+          <button className="primary" disabled={busy || noCompanyHere !== null || name.trim().length < 2}>
+            Create
+          </button>
         </form>
+        {noCompanyHere && <p className="authsub" data-no-company-here>{noCompanyHere}</p>}
+
+        {/* Both faces of this screen report what failed. Without this line every
+          * refusal on this face - opening, creating - left the screen unchanged. */}
+        {err && <div className="autherr">{err}</div>}
 
         <div className="authswap">
           <a onClick={onDemo}>Load a demo company</a>
@@ -242,6 +263,28 @@ export function AccountPicker({
           <a onClick={onSignOut}>Sign out</a>
         </div>
       </div>
+    </div>
+  );
+}
+
+/*
+ * **A COMPANY THAT EXISTS AND IS NOT FINISHED.**
+ *
+ * Its records are created and this tab is holding the only copy of the keys
+ * that open them, unsealed. Saying so plainly is the whole point: a person who
+ * declined the wallet needs to know that the company is real, that nothing is
+ * lost, and that closing this tab is the one thing that would lose it.
+ */
+function AwaitingSetup({ busy, onFinishSetup }: { busy: boolean; onFinishSetup: () => void }) {
+  return (
+    <div className="empty" data-awaiting-setup>
+      <b>Your company is created and not finished</b>
+      Your wallet has not yet given this page the key that seals your keys. Nothing
+      is lost — but do not close this tab until it has, because the keys are only
+      here.
+      <button className="primary" disabled={busy} onClick={onFinishSetup}>
+        {busy ? 'Waiting for your wallet' : 'Finish setting up'}
+      </button>
     </div>
   );
 }

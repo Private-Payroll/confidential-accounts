@@ -71,18 +71,22 @@ export function WalletsHere(): ReactNode {
    * biometric prompt that cannot succeed, whose failure then writes a red line
    * onto a screen that has already been replaced underneath it.
    *
-   * **WHICH WALLET ACTUALLY OPENS IS STILL DECIDED BY THE CREDENTIAL**, not by
-   * the row. `session.tsx`'s `unlock` resolves `walletOfCredential(assertion
-   * .credentialId)` and calls `openWallet` with the answer, so a person who
-   * presses `Employee` and then picks the Founder passkey out of the chooser
-   * opens Founder. That is `session.test.tsx`'s pinned behaviour and this
-   * change does not touch it. The row is a request, and the passkey is the
-   * decision — which is the same sentence the screen above already tells the
-   * person: *"your passkey says which one opens."*
+   * **AND THE PRESS HAS ALREADY ANSWERED WHICH WALLET**, so the browser is not
+   * asked it again: the unlock offers only the passkeys of the wallet this
+   * window has just switched to. Without that, pressing one wallet brought up
+   * the operating system's list of every passkey for this site before the
+   * fingerprint - the same question twice, the second time in a list that
+   * names passkeys rather than wallets.
+   *
+   * **WHICH WALLET OPENS IS STILL RESOLVED FROM THE CREDENTIAL.** `session.tsx`'s
+   * `unlock` resolves `walletOfCredential(assertion.credentialId)` and opens the
+   * answer, unchanged; the offer narrows what a browser shows, it does not
+   * decide. The unlock button above still offers every passkey here, and the
+   * one picked there says which wallet opens.
    */
   const open = (walletId: string): void => {
     if (switchTo(walletId).name !== 'locked') return;
-    void unlock();
+    void unlock({ onlyTheOpenWallet: true });
   };
   return (
     <section className="card" data-wallets-here="">

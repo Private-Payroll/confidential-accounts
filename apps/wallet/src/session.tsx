@@ -86,7 +86,14 @@ export interface Session {
    * as this wallet did before names existed.
    */
   createAccount(walletName?: string): Promise<void>;
-  unlock(): Promise<void>;
+  /**
+   * @param options.onlyTheOpenWallet The person has already said which wallet:
+   * they pressed it in this browser's own list, and the window has switched to
+   * it. The browser is then offered that wallet's passkeys and no others, so
+   * its chooser does not ask the same question again. Absent, every passkey
+   * for this site is offered and the one picked decides which wallet opens.
+   */
+  unlock(options?: { onlyTheOpenWallet?: boolean }): Promise<void>;
   /**
    * account-no-passkey: register a fresh passkey and open the sealed account.
    *
@@ -611,12 +618,19 @@ export function SessionProvider({ children, challenges: injected }: {
     }
   }, [challenges]);
 
-  const unlock = useCallback(async () => {
+  const unlock = useCallback(async (options?: { onlyTheOpenWallet?: boolean }) => {
     setBusy('Waiting for your passkey…');
     setError(null);
     try {
+      /* Read before the first `await`, so the passkeys offered belong to the
+       * wallet the press switched to, not whichever one another window has
+       * turned to since. A damaged passkey record throws `StorageError` here,
+       * which lands on the broken screen below like every other read. */
+      const allow = options?.onlyTheOpenWallet
+        ? allPasskeys(openWalletId()).map((p) => p.credentialId)
+        : undefined;
       const challenge = await challenges.issue('sign-in');
-      const assertion = await usePasskey({ rpId: RP_ID, challenge });
+      const assertion = await usePasskey({ rpId: RP_ID, challenge, ...(allow ? { allow } : {}) });
       if (!(await challenges.take(challenge, 'sign-in'))) {
         throw new Error('that took too long and the challenge expired. Try again.');
       }
