@@ -139,3 +139,48 @@ describe('the profile key', () => {
     expect(typeof browserPort).toBe('function');
   });
 });
+
+describe('an unopenable read NAMES WHICH WAY IT FAILED', () => {
+  /*
+   * A wallet that keeps several accounts in one browser can explain a key
+   * failure that this module cannot. So the key failure is its own cause, and
+   * every other failure is told apart from it: a screen that softened a
+   * damaged envelope into *probably another wallet's* would be softening the
+   * one case with no innocent explanation.
+   */
+  it('another account\'s blob is `another-key`', async () => {
+    await save(port, identity, someone);
+    const state = await load(port, other);
+    expect(state.of === 'unopenable' && state.cause).toBe('another-key');
+  });
+
+  it('an altered body is `another-key` too - AES-GCM cannot tell the two apart, and says so by name', async () => {
+    await save(port, identity, someone);
+    const blob = sealedIn(port)!;
+    putSealed(port, { ...blob, sealed: `${blob.sealed.slice(0, -4)}AAAA` });
+    const state = await load(port, identity);
+    expect(state.of === 'unopenable' && state.cause).toBe('another-key');
+  });
+
+  it('an envelope this wallet did not write is NOT `another-key`', async () => {
+    await save(port, identity, someone);
+    putSealed(port, { ...sealedIn(port)!, v: 2 });
+    const state = await load(port, identity);
+    expect(state.of === 'unopenable' && state.cause).toBe('not-sealed-by-this-wallet');
+  });
+
+  it('bytes that open and are not JSON are `unreadable`; JSON that is not a profile is `not-a-profile`', async () => {
+    const key = await profileKey(identity);
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const sealWith = async (text: string) => {
+      const body = new Uint8Array(await crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv, additionalData: new TextEncoder().encode('midnight-identity/profile-seal/v1') as BufferSource },
+        key, new TextEncoder().encode(text) as BufferSource));
+      return { v: 1, iv: Buffer.from(iv).toString('base64url'), sealed: Buffer.from(body).toString('base64url') };
+    };
+    const unreadable = await open(key, await sealWith('{not json'));
+    expect(unreadable.of === 'unopenable' && unreadable.cause).toBe('unreadable');
+    const stranger = await open(key, await sealWith('{"schema":"something-else"}'));
+    expect(stranger.of === 'unopenable' && stranger.cause).toBe('not-a-profile');
+  });
+});

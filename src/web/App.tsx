@@ -282,6 +282,15 @@ type Page = 'dashboard' | 'payroll' | 'people' | 'approvals' | 'vault' | 'apps'
  * outlive the screen that started it. So the frame is rendered here, once, where
  * no gate reaches it.
  */
+/** What a sign-out that the server did not confirm leaves true, and what changes it. */
+export const SIGN_OUT_DID_NOT_END =
+  'signing out did not finish on the server, so this browser may still be signed in, and '
+  + 'reloading this page would pick that session up again. Reload, and sign out again from there.';
+/** The same, when the sign-in this browser now holds is somebody else's, from another tab. */
+export const SIGN_OUT_ANOTHER_PERSON =
+  'this browser is now signed in as somebody else, from another tab, so this tab did not sign '
+  + 'it out. Signing out from that tab does.';
+
 export default function App({ commitments }: { commitments: CommitmentScheme }) {
   /*
    * **THIS APPLICATION IS THE TOP OF THE TAB OR IT IS NOTHING.** It shows the
@@ -381,7 +390,7 @@ function Screens({ commitments }: { commitments: CommitmentScheme }) {
       const open = keyring.openAccount(rec);
       return {
         id: rec.id,
-        name: open?.name ?? 'Locked — your keys for this account are not on this device',
+        name: open?.name ?? `Locked - ${keyring.lockedCompanyReason(rec.id)}`,
         signers: rec.signerCount,
         threshold: rec.threshold,
         /* Which ledger opened this company. Absent means nothing recorded it,
@@ -430,7 +439,7 @@ function Screens({ commitments }: { commitments: CommitmentScheme }) {
        */
       await keyring.finishPendingSeat(id, sealed);
       const keys = keyring.keysFor(id);
-      if (!keys) throw new Error('your keys for this account are not on this device');
+      if (!keys) throw new Error(keyring.lockedCompanyRefusal(id));
       const viewingKey = keyring.viewingKeyFor(sealed);
       // Sealed on the way out of the server, opened here. The server holds the
       // ciphertext and never the key, which is the claim the product makes.
@@ -622,10 +631,14 @@ function Screens({ commitments }: { commitments: CommitmentScheme }) {
     setBusy(false);
   }, [refreshAccounts, openAccount]);
 
+  /* Set when a sign-out did not end the sign-in on the server, and shown on the
+   * sign-in screen that follows it. */
+  const [signOutNotice, setSignOutNotice] = useState('');
   const signOut = useCallback(async () => {
     // Awaited so the server has actually ended the session before the screen
     // says it has. S-3: this used to clear the tab and nothing else.
-    await keyring.signOut();
+    const { ended, anotherPerson } = await keyring.signOut();
+    setSignOutNotice(ended ? '' : anotherPerson ? SIGN_OUT_ANOTHER_PERSON : SIGN_OUT_DID_NOT_END);
     setUser(null); setMyAccounts(null); setS(null); setState(null); setPage('dashboard');
   }, []);
 
@@ -665,7 +678,9 @@ function Screens({ commitments }: { commitments: CommitmentScheme }) {
       </div>
     );
   }
-  if (!user) return <AuthScreen onDone={onAuthed} />;
+  if (!user) {
+    return <AuthScreen onDone={onAuthed} notice={signOutNotice} />;
+  }
 
   if (!s || !state) {
     return <>

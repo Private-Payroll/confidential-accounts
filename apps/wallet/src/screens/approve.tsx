@@ -64,6 +64,8 @@ import {
  * reads anything down a phone line in this design. */
 import { CopyButton } from '../components/ui.js';
 import { hrefOf } from '../routes.js';
+import { heldWallets } from '../accounts/wallets-held.js';
+import { sayingForUnopenable } from '../lib/unopenable-details.js';
 
 /**
  * THE APPROVAL SURFACE FOR A DISCLOSURE.
@@ -666,11 +668,17 @@ export function Approve({
    * So these three say the thing that is true in ALL of them and name no kind.
    */
   if (opened?.of === 'unopenable') {
+    const saying = sayingForUnopenable(opened, heldWallets().length);
     return (
       <>
         <h1>Nothing has been shared</h1>
-        <Alert tone="danger" title="There are details here that this account cannot open">
-          <p className="m-0">{opened.why}</p>
+        <Alert tone={saying.tone} title={saying.title}>
+          <p className="m-0" data-unopenable-why>{saying.sentence}</p>
+          {saying.anotherWalletHere && (
+            <p className="m-0" data-cannot-answer-here>
+              While they are here, this wallet cannot answer requests in this browser.
+            </p>
+          )}
           <p className="m-0">Nothing has been sent and nothing has been changed.</p>
         </Alert>
       </>
