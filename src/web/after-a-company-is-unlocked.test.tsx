@@ -34,7 +34,7 @@ import { parseAsk } from 'midnight-identity/profile/request';
 import type { Ask, UnlockRequest } from 'midnight-identity/profile/request';
 import { READY_PING } from 'midnight-identity/profile/channel';
 import { releaseFor } from 'midnight-identity/profile/unlock';
-import { seal, toHex } from '../core/crypto.js';
+import { seal, toHex, unseal } from '../core/crypto.js';
 import { unlockKeyFor } from 'midnight-identity/profile/unlock';
 import { unlockAsk, UNLOCK_PURPOSE } from '../core/wallet-unlock.js';
 import type { Openable } from './wallet-sign-in.js';
@@ -75,14 +75,22 @@ const releasedHex = () => {
   return toHex(unlockKeyFor(identity, ask as UnlockRequest));
 };
 
+/** Key material this person sealed for a seat before its leaf was published, and has not promoted. */
+const PENDING = {
+  accountId: 'acc_seated', signingPublicKey: '12'.repeat(32), signingSecret: '34'.repeat(32),
+  wrappingSecret: '56'.repeat(32), blinding: '78'.repeat(32), scope: '9a'.repeat(32),
+};
+
 /** A company record as the list and the single read serve it: sealed, and this person on it. */
 const LOCKED = { id: 'acc_1', signerCount: 1, threshold: 1, wrappedKeys: [], wiring: 'chain' };
 
 interface Deployment {
   /** What `GET /api/me/keys` answers: nothing saved, or a bundle that holds other companies. */
-  keyBundle: 'none' | 'another-company';
+  keyBundle: 'none' | 'another-company' | 'a-pending-seat';
   /** Whether saving the key bundle is refused, as it is when another tab or device wrote first. */
   bundleWriteRefused?: boolean;
+  /** Held until the test lets it through, so something can happen while a write is on its way. */
+  bundleWriteHeld?: Promise<void>;
   /** What the sign-in answer says about whether this address was new here. */
   created?: boolean;
 }
@@ -104,7 +112,8 @@ function aDeployment(d: Deployment) {
     : seal(JSON.stringify({ accounts: { acc_other: {
       signerId: 'sgn_x', signingSecret: 'aa'.repeat(32), wrappingSecret: 'bb'.repeat(32),
       blinding: 'cc'.repeat(32),
-    } } }), releasedHex());
+    } }, ...(d.keyBundle === 'a-pending-seat' ? { pendingSeats: { [PENDING.signingPublicKey]: PENDING } } : {}) }),
+    releasedHex());
   globalThis.fetch = (async (url: string, init?: RequestInit) => {
     const method = String(init?.method ?? 'GET');
     const body = init?.body === undefined ? undefined : JSON.parse(String(init.body));
@@ -122,6 +131,7 @@ function aDeployment(d: Deployment) {
       case 'POST /api/accounts/acc_1/unlock': return json(200, { company: ACME });
       case 'POST /api/accounts/acc_new/unlock': return json(200, { company: 'b2'.repeat(32) });
       case 'PUT /api/me/keys':
+        if (d.bundleWriteHeld) await d.bundleWriteHeld;
         return d.bundleWriteRefused
           ? json(409, { error: 'the keys changed on another device since this tab read them' })
           : json(200, { version: 1 });
@@ -304,8 +314,11 @@ describe('once a wallet has released a key, a company this tab cannot open', () 
     expect(said).not.toMatch(/on this device/);
     expect(said).not.toMatch(/another device can open/);
     expect(said).toMatch(/no keys were saved for you here when this tab last looked/);
-    expect(said).toMatch(/by the tab that created it finishing setting it up, or by accepting an invitation to it/);
+    expect(said).toMatch(/only if keys for it are saved for you - by the tab that created it finishing setting it up/);
     expect(said).toMatch(/this tab has been unlocked again since/);
+    /* The conditions are conditions: a company whose keys are never saved is said to be unopenable. */
+    expect(said).toMatch(/or the company was made by something that kept no keys for you, nothing can open it/);
+    expect(said).not.toMatch(/accepting an invitation/);
   });
 
   it('WITH OTHER COMPANIES SAVED: says the saved keys, as this tab read them, do not include this one', async () => {
@@ -328,6 +341,9 @@ describe('once a wallet has released a key, a company this tab cannot open', () 
     });
     expect(said).toMatch(/do not include this company/);
     expect(said).not.toMatch(/on this device/);
+    /* With keys saved under another company's key, no Finish or invitation can add this one's. */
+    expect(said).toMatch(/cannot be saved beside them yet, so nothing here can open this one/);
+    expect(said).not.toMatch(/finishing setting it up/);
   });
 });
 
@@ -344,5 +360,188 @@ describe('what the second face says when something it asks for fails', () => {
     expect(container.querySelector('.autherr')).toBeNull();
     fireEvent.click(row);
     await waitFor(() => expect(container.querySelector('.autherr')).not.toBeNull());
+  });
+});
+
+describe('A REFUSED KEY WRITE LEAVES THE KEY LIST EXACTLY AS IT WAS', () => {
+  /*
+   * Every writer of the key list used to put the new entry into the list this
+   * tab holds and THEN ask the server to save it, and the save kept a copy to
+   * put back on refusal - taken after the entry was already in. So a refused
+   * save left the tab holding, and offering, keys the server never took.
+   */
+  const NEW_KEYS = {
+    signerId: 'sgn_new', signingSecret: 'dd'.repeat(32), wrappingSecret: 'ee'.repeat(32), blinding: 'ff'.repeat(32),
+  };
+  /** Everything the keyring would give out about the list, taken as one value. */
+  const theList = () => JSON.stringify({
+    other: keyring.keysFor('acc_other'), added: keyring.keysFor('acc_new'),
+    seated: keyring.keysFor('acc_seated'), pending: keyring.pendingSeatsFor('acc_seated'),
+    fresh: keyring.pendingSeatsFor('acc_fresh'),
+  });
+
+  it('ADDING A COMPANY\'S KEYS: refused, and the tab does not hold them', async () => {
+    aDeployment({ keyBundle: 'another-company', bundleWriteRefused: true });
+    await signInAndUnlock();
+    const before = theList();
+    await expect(keyring.rememberAccount('acc_new', NEW_KEYS as never)).rejects.toThrow(/changed on another device/);
+    expect(keyring.keysFor('acc_new')).toBeNull();
+    expect(theList()).toBe(before);
+    expect(keyring.openAccount({ id: 'acc_new', wrappedKeys: [] } as never)).toBeNull();
+  });
+
+  it('SEALING A SEAT BEFORE ITS LEAF IS SENT: refused, and nothing is pending', async () => {
+    aDeployment({ keyBundle: 'another-company', bundleWriteRefused: true });
+    await signInAndUnlock();
+    const before = theList();
+    await expect(keyring.sealPendingSeat({ ...PENDING, accountId: 'acc_fresh', signingPublicKey: '13'.repeat(32) }))
+      .rejects.toThrow(/changed on another device/);
+    expect(keyring.pendingSeatsFor('acc_fresh')).toEqual([]);
+    expect(theList()).toBe(before);
+  });
+
+  it('PROMOTING A SEAT: refused, and the seat is still pending and not promoted', async () => {
+    aDeployment({ keyBundle: 'a-pending-seat', bundleWriteRefused: true });
+    await signInAndUnlock();
+    expect(keyring.pendingSeatsFor('acc_seated'), 'the pending seat was read').toHaveLength(1);
+    const before = theList();
+    await expect(keyring.promotePendingSeat(PENDING.signingPublicKey, 'sgn_seated')).rejects.toThrow(/changed on another device/);
+    expect(keyring.keysFor('acc_seated')).toBeNull();
+    expect(keyring.pendingSeatsFor('acc_seated')).toHaveLength(1);
+    expect(theList()).toBe(before);
+  });
+
+  it('and the NEXT write the tab makes does not carry what was refused', async () => {
+    const d: Deployment = { keyBundle: 'another-company', bundleWriteRefused: true };
+    const { posted } = aDeployment(d);
+    await signInAndUnlock();
+    await expect(keyring.rememberAccount('acc_new', NEW_KEYS as never)).rejects.toThrow();
+    d.bundleWriteRefused = false;
+    await keyring.rememberAccount('acc_later', { ...NEW_KEYS, signerId: 'sgn_later' } as never);
+    const writes = posted.filter((p) => p.url === 'PUT /api/me/keys');
+    const saved = JSON.parse(unseal(writes[writes.length - 1]!.body.keyBundle, releasedHex()));
+    expect(Object.keys(saved.accounts).sort()).toEqual(['acc_later', 'acc_other']);
+  });
+
+  it('a write that lands after the tab READ THE KEYS AGAIN is not put over what it read', async () => {
+    let letItThrough: () => void = () => {};
+    const bundleWriteHeld = new Promise<void>((resolve) => { letItThrough = resolve; });
+    aDeployment({ keyBundle: 'another-company', bundleWriteHeld });
+    await signInAndUnlock();
+    const writing = keyring.rememberAccount('acc_new', NEW_KEYS as never);
+    await Promise.resolve();
+    await keyring.unlockWithWallet('acc_1', WALLET, new WalletAtTheOtherEnd(), US);
+    letItThrough();
+    await writing;
+    expect(keyring.keysFor('acc_other'), 'what the unlock read is what this tab holds').not.toBeNull();
+    expect(keyring.keysFor('acc_new')).toBeNull();
+  });
+
+  it('a write that lands AFTER the tab has signed out does not bring the keys back', async () => {
+    let letItThrough: () => void = () => {};
+    const bundleWriteHeld = new Promise<void>((resolve) => { letItThrough = resolve; });
+    aDeployment({ keyBundle: 'another-company', bundleWriteHeld });
+    await signInAndUnlock();
+    const writing = keyring.rememberAccount('acc_new', NEW_KEYS as never);
+    await Promise.resolve();
+    keyring.forgetLocally();
+    letItThrough();
+    await writing;
+    expect(keyring.keysFor('acc_new')).toBeNull();
+    expect(keyring.keysFor('acc_other')).toBeNull();
+    expect(keyring.canOpenCompanies()).toBe(false);
+  });
+});
+
+describe('a company this tab started whose keys could not be saved', () => {
+  const picker = async () => {
+    const { AccountPicker } = await import('./Auth.js');
+    const { container } = render(
+      <AccountPicker
+        user={{ id: 'usr_1', email: null, name: '' }} accounts={[]} busy={false}
+        onOpen={() => {}} onUnlock={() => {}} onCreate={() => {}} onCreateWithWallet={() => {}}
+        onFinishSetup={() => {}} awaitingSetup={keyring.companyAwaitingSetup()} onDemo={() => {}} onSignOut={() => {}} />);
+    return container.querySelector('[data-awaiting-setup]')!;
+  };
+  /** From the `from`th read on, GET /api/me/keys answers keys sealed under another key. */
+  const keysSavedElsewhereFrom = (from: number) => {
+    const real = globalThis.fetch;
+    let reads = 0;
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      if (String(init?.method ?? 'GET') === 'GET' && url === '/api/me/keys' && (reads += 1) >= from) {
+        return { ok: true, status: 200, json: async () => ({ keyBundle: seal('{}', 'ab'.repeat(32)), version: 1 }) } as Response;
+      }
+      return real(url, init);
+    }) as typeof fetch;
+  };
+
+  it('WHEN A SAVE WAS REFUSED AND THE KEYS SAVED SINCE DO NOT OPEN: says it cannot be finished, with Finish disabled, and does not say nothing is lost', async () => {
+    aDeployment({ keyBundle: 'none', bundleWriteRefused: true });
+    await keyring.signInWithWallet(WALLET, undefined, new WalletAtTheOtherEnd());
+    keysSavedElsewhereFrom(3);
+    await expect(keyring.createCompanyWithWallet(
+      { name: 'Acme Ltd', signers: [{ name: 'You', role: 'admin' }], threshold: 1 },
+      WALLET, new WalletAtTheOtherEnd(), US)).rejects.toThrow(/changed on another device/);
+    const block = await picker();
+    expect(block.hasAttribute('data-cannot-finish')).toBe(true);
+    expect(block.textContent).toContain('cannot be finished');
+    expect(block.textContent).toContain('closing this tab or signing out loses this company for good');
+    expect(block.textContent).not.toMatch(/Nothing is lost/);
+    expect(block.textContent).not.toMatch(/until it has/);
+    expect((block.querySelector('button') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('WHEN AN UNLOCK FOUND KEYS THAT DID NOT OPEN: names both causes, and keeps Finish pressable', async () => {
+    aDeployment({ keyBundle: 'none' });
+    await keyring.signInWithWallet(WALLET, undefined, new WalletAtTheOtherEnd());
+    keysSavedElsewhereFrom(2);
+    await expect(keyring.createCompanyWithWallet(
+      { name: 'Acme Ltd', signers: [{ name: 'You', role: 'admin' }], threshold: 1 },
+      WALLET, new WalletAtTheOtherEnd(), US)).rejects.toThrow(/different company/);
+    const block = await picker();
+    expect(block.hasAttribute('data-may-not-finish')).toBe(true);
+    expect(block.textContent).toContain('it can never be finished');
+    expect(block.textContent).toContain('finishing with the wallet you signed in with can still work');
+    expect(block.textContent).not.toMatch(/Nothing is lost/);
+    expect((block.querySelector('button') as HTMLButtonElement).disabled).toBe(false);
+  });
+});
+
+describe('before any unlock, for a person who already has keys saved', () => {
+  it('STARTING A COMPANY IS SHOWN DISABLED WITH ITS REASON, and a submitted form sends nothing', async () => {
+    const { posted } = aDeployment({ keyBundle: 'another-company' });
+    await keyring.signInWithWallet(WALLET, undefined, new WalletAtTheOtherEnd());
+    const { container } = await thePage();
+    const reason = await waitFor(() => {
+      const found = container.querySelector('[data-no-company-here]');
+      expect(found).toBeTruthy();
+      return found!.textContent ?? '';
+    });
+    expect(reason).toContain('a company cannot be started with this wallet address yet');
+    expect(reason).toContain('could never be finished');
+    const form = container.querySelector('form.acctnew') as HTMLFormElement;
+    expect((form.querySelector('input') as HTMLInputElement).disabled).toBe(true);
+    fireEvent.change(form.querySelector('input')!, { target: { value: 'Acme Ltd' } });
+    expect((form.querySelector('button') as HTMLButtonElement).disabled).toBe(true);
+    const sentBefore = posted.length;
+    fireEvent.submit(form);
+    /* Nothing at all, read at once: a journey starts its first request before its first await,
+     * and reports what stopped it on the screen. */
+    expect(posted.length).toBe(sentBefore);
+    expect(container.querySelector('.autherr')).toBeNull();
+  });
+
+  it('and for a person with nothing saved, the form is there to use', async () => {
+    aDeployment({ keyBundle: 'none' });
+    await keyring.signInWithWallet(WALLET, undefined, new WalletAtTheOtherEnd());
+    const { container } = await thePage();
+    const form = await waitFor(() => {
+      const found = container.querySelector('form.acctnew');
+      expect(found).toBeTruthy();
+      return found as HTMLFormElement;
+    });
+    await waitFor(() => expect(container.textContent).toContain('A company you are a signer on'));
+    expect((form.querySelector('input') as HTMLInputElement).disabled).toBe(false);
+    expect(container.querySelector('[data-no-company-here]')).toBeNull();
   });
 });

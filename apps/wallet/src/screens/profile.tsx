@@ -10,15 +10,13 @@ import {
 } from 'midnight-identity/profile/model';
 import type { Disclosure, Held, Profile, Says, Stale } from 'midnight-identity/profile/model';
 import { browserPort, load, save } from 'midnight-identity/profile/store';
-import type { Port } from 'midnight-identity/profile/store';
-import type { Opened } from 'midnight-identity/profile/seal';
+import type { Loaded, Port } from 'midnight-identity/profile/store';
 import {
   Alert, Badge, Button, ButtonLink, Card, CardContent, CardHeader, CardTitle,
   Input, Label, Section, Separator,
 } from '../kit/index.js';
 import { hrefOf } from '../routes.js';
-import { heldWallets } from '../accounts/wallets-held.js';
-import { sayingForUnopenable } from '../lib/unopenable-details.js';
+import { OTHER_DETAILS_HERE, sayingForUnopenable } from '../lib/unopenable-details.js';
 
 /**
  * MY PROFILE — the plain screen.
@@ -516,7 +514,7 @@ export function ProfileScreen({ identity, registry = REGISTRY, port = browserPor
   readonly port?: Port;
 }): ReactNode {
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [state, setState] = useState<Opened | null>(null);
+  const [state, setState] = useState<Loaded | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
 
   useEffect(() => {
@@ -557,19 +555,14 @@ export function ProfileScreen({ identity, registry = REGISTRY, port = browserPor
    * quietly starting a fresh, empty profile over the top of somebody's facts.
    */
   if (state.of === 'unopenable') {
-    const saying = sayingForUnopenable(state, heldWallets().length);
+    const saying = sayingForUnopenable(state);
     return (
       <>
         <BackToWallet />
         <h1>My profile</h1>
         <Alert tone={saying.tone} title={saying.title}>
           <p className="m-0" data-unopenable-why>{saying.sentence}</p>
-          <p className="m-0">
-            Nothing has been changed or deleted.{!saying.anotherWalletHere && (
-              <> If you have opened a different wallet in this browser, the details belong to
-              the other one and will open when it does.</>
-            )}
-          </p>
+          <p className="m-0">Nothing has been changed or deleted.</p>
         </Alert>
         <p style={{ marginTop: '1.5rem' }}>
           <a href={hrefOf('home')}>← Back to your wallet</a>
@@ -589,6 +582,11 @@ export function ProfileScreen({ identity, registry = REGISTRY, port = browserPor
       </p>
 
       {problem !== null && <Alert tone="danger" title="Not saved">{problem}</Alert>}
+      {state.othersHere === true && (
+        <Alert tone="info" role={null} title="Other saved details in this browser">
+          <p className="m-0" data-other-details-here>{OTHER_DETAILS_HERE}</p>
+        </Alert>
+      )}
       <StaleList stale={stale} />
 
       {registry.all.map((definition) => {

@@ -3,13 +3,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { Buffer as PolyfillBuffer } from 'buffer/';
 import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
-import { identityFromSecret, identityFromWords, newSecret } from 'midnight-identity/keys/derivation';
+import { identityFromWords } from 'midnight-identity/keys/derivation';
 import { EMAIL, GIVEN_NAME, REGISTRY, registryOf } from 'midnight-identity/profile/attributes';
 import { define } from 'midnight-identity/profile/definition';
 import {
   editValue, emptyProfile, recordDisclosure, recordIssued, selfAssert,
 } from 'midnight-identity/profile/model';
-import { save } from 'midnight-identity/profile/store';
+import { recordNameFor, save } from 'midnight-identity/profile/store';
 import type { Port } from 'midnight-identity/profile/store';
 import { ProfileScreen } from './profile.js';
 
@@ -196,15 +196,18 @@ describe('the form reads the registry and refuses in the definition\'s own words
 
 describe('a record that will not open is SHOWN, never started again over', () => {
   it('the screen says so, offers no fresh start, and nothing is written', async () => {
-    await save(port, identityFromSecret(newSecret()),
+    /* A record only this wallet reads - under its own name - that no longer opens. */
+    await save(port, identity,
       selfAssert(emptyProfile(NOW), REGISTRY, GIVEN_NAME, 'Somebody', '', NOW));
-    const before = port.getItem('midnight-identity:profile');
+    const own = await recordNameFor(identity);
+    port.setItem(own, JSON.stringify({ ...JSON.parse(port.getItem(own)!), v: 2 }));
+    const before = port.getItem(own);
     render(<ProfileScreen identity={identity} port={port} />);
     await screen.findByText('There are details here that this account cannot open');
     expect(document.body.textContent).toContain('Nothing has been changed or deleted');
     /* No form at all — a form here would be the door to overwriting it. */
     expect(document.querySelector('[data-add]')).toBeNull();
-    expect(port.getItem('midnight-identity:profile')).toBe(before);
+    expect(port.getItem(own)).toBe(before);
   });
 });
 

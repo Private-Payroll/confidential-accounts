@@ -1,48 +1,38 @@
 import type { Opened } from 'midnight-identity/profile/seal';
 
 /**
- * **WHAT TO TELL A PERSON WHOSE WALLET CANNOT OPEN THE DETAILS KEPT HERE.**
+ * **WHAT TO TELL A PERSON WHOSE WALLET CANNOT OPEN ITS OWN SAVED DETAILS.**
  *
- * This browser keeps ONE set of saved details, sealed under the key of the
- * wallet that saved them, and it can hold several wallets. So in a browser
- * holding more than one, a wallet that did not save the details meets a blob
- * that will not open with its key - the ordinary case, every time a second
- * wallet is used here. Telling that person the details *belong to another
- * account, or they have been altered* raises tampering over something the
- * browser's own layout explains.
- *
- * The explanation is offered only when it is available: the failure is the key
- * one, and this browser holds more than one wallet. It is still worded as the
- * likely cause and not the certain one, because a blob that another wallet
- * sealed and a blob somebody altered fail in the same way. Every other failure
- * keeps the library's own sentence and its warning.
+ * Each wallet in a browser keeps its own record, so another wallet's details
+ * are never this wallet's state and never stop it answering. What reaches this
+ * is a record that is provably this wallet's - under its own name, or at the
+ * name every wallet once shared and authenticated by its key - and will not
+ * read. There is no innocent explanation left for that here, so it keeps its
+ * warning and the store's own sentence.
  */
 export interface UnopenableSaying {
   readonly title: string;
   readonly sentence: string;
-  readonly tone: 'info' | 'danger';
-  /** True when the sentence names another wallet in this browser as the likely cause. */
-  readonly anotherWalletHere: boolean;
+  readonly tone: 'danger';
 }
 
 export function sayingForUnopenable(
   opened: Extract<Opened, { of: 'unopenable' }>,
-  walletsInThisBrowser: number,
 ): UnopenableSaying {
-  if (opened.cause === 'another-key' && walletsInThisBrowser > 1) {
-    return {
-      title: 'The details kept in this browser are not this wallet\'s',
-      sentence: `This browser holds ${walletsInThisBrowser} wallets and keeps one set of saved `
-        + 'details for all of them. These will not open with this wallet\'s key, so they were most '
-        + 'likely saved by another wallet used in this browser.',
-      tone: 'info',
-      anotherWalletHere: true,
-    };
-  }
   return {
     title: 'There are details here that this account cannot open',
     sentence: opened.why,
     tone: 'danger',
-    anotherWalletHere: false,
   };
 }
+
+/**
+ * **THE RECORD A BROWSER KEPT BEFORE EACH WALLET HAD ITS OWN, WHEN IT IS NOT THIS WALLET'S.**
+ *
+ * It will not open with this wallet's key. Another wallet used here may have
+ * saved it, or it may be this wallet's own and changed since - the two fail the
+ * same way - so both are said, and nothing about it is acted on.
+ */
+export const OTHER_DETAILS_HERE = 'This browser also keeps saved details that this wallet cannot '
+  + 'open: another wallet used here saved them, or they were changed after they were saved. They '
+  + 'are left exactly as they are, and they do not stop this wallet saving its own.';

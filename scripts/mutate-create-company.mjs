@@ -57,12 +57,12 @@ const MUTATIONS = [
     file: 'src/web/keyring.ts',
     says: 'the creation path reads the address off the account record instead of going '
       + 'through the door that checks where it came from, so a refusal never reaches it',
-    from: '  await unlockWithWallet(waiting.accountId, walletOrigin, view, atOrigin);',
-    to: '  const rec = await api(`/api/accounts/${waiting.accountId}`);\n'
-      + '  encKey = toHex(await askWalletToUnlock(view, walletOrigin, {\n'
-      + '    company: String(rec.contractAddress), atOrigin,\n'
-      + '    name: US_TO_A_WALLET.name, rdns: US_TO_A_WALLET.rdns,\n'
-      + '  }));',
+    from: '    await unlockWithWallet(waiting.accountId, walletOrigin, view, atOrigin, already);',
+    to: '    const rec = await api(`/api/accounts/${waiting.accountId}`);\n'
+      + '    encKey = toHex(await askWalletToUnlock(view, walletOrigin, {\n'
+      + '      company: String(rec.contractAddress), atOrigin,\n'
+      + '      name: US_TO_A_WALLET.name, rdns: US_TO_A_WALLET.rdns,\n'
+      + '    }, already));',
     kills: ['CREATION IS REFUSED, AND NOT ONE BYTE IS SEALED'],
   },
   {
@@ -86,8 +86,8 @@ const MUTATIONS = [
     file: 'src/web/keyring.ts',
     says: 'the keyring is sealed under a key this tab minted rather than the one the '
       + 'wallet released, so nothing else can ever recompute it',
-    from: '        keyBundle: seal(JSON.stringify(keyring), key),',
-    to: "        keyBundle: seal(JSON.stringify(keyring), 'ab'.repeat(32)),",
+    from: '      keyBundle: seal(JSON.stringify(next), key),',
+    to: "      keyBundle: seal(JSON.stringify(next), 'ab'.repeat(32)),",
     kills: [
       'A SECOND DEVICE, FROM THE WORDS ALONE, OPENS WHAT THE FIRST DEVICE SEALED',
     ],
@@ -98,11 +98,61 @@ const MUTATIONS = [
     file: 'src/web/keyring.ts',
     says: 'the founder’s secrets are dropped before the bundle is written, so a refusal '
       + 'anywhere in step 2 loses the only copy of them in existence',
-    from: '  await unlockWithWallet(waiting.accountId, walletOrigin, view, atOrigin);',
-    to: '  pendingCompany = null;\n'
-      + '  await unlockWithWallet(waiting.accountId, walletOrigin, view, atOrigin);',
+    from: '    await unlockWithWallet(waiting.accountId, walletOrigin, view, atOrigin, already);',
+    to: '    pendingCompany = null;\n'
+      + '    await unlockWithWallet(waiting.accountId, walletOrigin, view, atOrigin, already);',
     kills: [
       'AND THE COMPANY IS NOT LOST — the secrets are still here and it can be finished',
+    ],
+  },
+  {
+    id: 6,
+    binding: 'A COMPANY THAT COULD NEVER BE FINISHED IS NOT STARTED',
+    file: 'src/web/keyring.ts',
+    says: 'a person whose keys are already saved, sealed under another company’s key, is let '
+      + 'through to create a company whose keys can never be saved - its only copy lives in '
+      + 'one tab behind a Finish that always fails',
+    from: '    if (keysSavedOnServer) throw new Error(SECOND_COMPANY_REFUSAL);',
+    to: '    void SECOND_COMPANY_REFUSAL;',
+    kills: [
+      'IS REFUSED BEFORE ANYTHING IS CREATED: no company, no wallet ask, no keys held in the tab',
+    ],
+  },
+  {
+    id: 7,
+    binding: 'A REFUSED KEY WRITE LEAVES THE KEY LIST AS IT WAS',
+    file: 'src/web/keyring.ts',
+    says: 'the list is changed before the server has taken the write, so a refused save leaves '
+      + 'the tab holding and offering keys the server never saved',
+    from: '  const base = keyring;\n  const r = await api(\'/api/me/keys\', {',
+    to: '  keyring = next;\n  const base = keyring;\n  const r = await api(\'/api/me/keys\', {',
+    kills: [
+      'A SAVE REFUSED BECAUSE KEYS WERE SAVED ELSEWHERE MEANWHILE: known at once, not on the next press, and Finish asks nothing',
+    ],
+  },
+  {
+    id: 8,
+    binding: 'A COMPANY THAT CAN NEVER BE FINISHED IS SAID TO BE, AT ONCE',
+    file: 'src/web/keyring.ts',
+    says: 'a save refused because another tab sealed the keys under another company’s key is '
+      + 'not noticed, and the screen goes on telling the person to keep the tab open for a '
+      + 'Finish that always fails',
+    from: "    catch { markSavingFailed(accountId, 'sealed-elsewhere'); }",
+    to: '    catch { /* not noticed */ }',
+    kills: [
+      'A SAVE REFUSED BECAUSE KEYS WERE SAVED ELSEWHERE MEANWHILE: known at once, not on the next press, and Finish asks nothing',
+    ],
+  },
+  {
+    id: 9,
+    binding: 'FINISH ASKS NOTHING THAT CANNOT HELP',
+    file: 'src/web/keyring.ts',
+    says: 'Finish on a company already known to be unfinishable opens the wallet and asks for a '
+      + 'key again, for an answer that can only fail',
+    from: "  if (waiting.savingFailed === 'sealed-elsewhere') throw new Error(cannotFinishSentence());",
+    to: '',
+    kills: [
+      'A SAVE REFUSED BECAUSE KEYS WERE SAVED ELSEWHERE MEANWHILE: known at once, not on the next press, and Finish asks nothing',
     ],
   },
 ];

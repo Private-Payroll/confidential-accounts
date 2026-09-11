@@ -386,6 +386,9 @@ function Screens({ commitments }: { commitments: CommitmentScheme }) {
    */
   const refreshAccounts = useCallback(async () => {
     const sealed = await api<SealedAccount[]>('/api/accounts');
+    /* Whether keys are saved at all decides whether a company started from the
+     * wallet's face could ever be finished, and the form says so before a press. */
+    if (!keyring.canOpenCompanies()) await keyring.readWhetherKeysAreSaved();
     setMyAccounts(sealed.map(rec => {
       const open = keyring.openAccount(rec);
       return {

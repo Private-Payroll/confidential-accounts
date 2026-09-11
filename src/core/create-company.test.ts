@@ -8,7 +8,7 @@ import { READY_PING } from 'midnight-identity/profile/channel';
 import { releaseFor } from 'midnight-identity/profile/unlock';
 import type { Openable } from '../web/wallet-sign-in.js';
 import type { Sealed } from './crypto.js';
-import { fromHex, toHex, unwrapKey, wrapKey } from './crypto.js';
+import { fromHex, seal, toHex, unwrapKey, wrapKey } from './crypto.js';
 import { x25519 } from '@noble/curves/ed25519.js';
 
 /**
@@ -539,5 +539,191 @@ describe('§4 — THE FOUNDER\'S FIRST DEVICE IS NOT SPECIAL', () => {
     await expect(keyring.unlockWithWallet(ACCOUNT_ID, WALLET, somebodyElse, ELSEWHERE))
       .rejects.toThrow(/could not be opened/);
     expect(keyring.canOpenCompanies()).toBe(false);
+  });
+});
+
+describe('§5 — A SECOND COMPANY FOR A PERSON WHO ALREADY HAS KEYS SAVED', () => {
+  /*
+   * **ONE BUNDLE, SEALED UNDER ONE COMPANY'S KEY.** A person's saved keys are a
+   * single bundle sealed under the key the wallet released for the company they
+   * were first saved with. A new company's key is a different key, so its unlock
+   * cannot open that bundle, and its keys can never be saved into it. Starting
+   * one anyway made a company whose only keys lived in the tab that started it,
+   * behind a Finish that always failed.
+   */
+  const aBundleSealedElsewhere = () => seal(JSON.stringify({ accounts: {} }), 'ab'.repeat(32));
+
+  /** The first company, made and finished the ordinary way, then a fresh tab. */
+  async function aPersonWithACompanyAlready() {
+    const server = aServer();
+    const view = new WalletAtTheOtherEnd(honestly(TEST_MNEMONIC));
+    inABrowser(view, server.fetchImpl);
+    const keyring = await import('../web/keyring.js');
+    await keyring.signInWithWallet(WALLET, undefined, thisBrowsersWindow());
+    await keyring.createCompanyWithWallet(
+      { name: 'Northwind', signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 }, WALLET, view, US);
+    expect(server.bundle().keyBundle, 'the first company\'s keys are saved').toBeTruthy();
+    keyring.forgetLocally();
+    await keyring.signInWithWallet(WALLET, undefined, thisBrowsersWindow());
+    return { server, view, keyring };
+  }
+
+  it('IS REFUSED BEFORE ANYTHING IS CREATED: no company, no wallet ask, no keys held in the tab', async () => {
+    const { server, view, keyring } = await aPersonWithACompanyAlready();
+    const createdBefore = server.createdCount();
+    const asksBefore = view.asked.length;
+    const bundleBefore = JSON.stringify(server.bundle());
+
+    await expect(keyring.createCompanyWithWallet(
+      { name: 'Second', signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 }, WALLET, view, US,
+    )).rejects.toThrow(/cannot be started with this wallet address yet/);
+
+    expect(server.createdCount(), 'no company was created').toBe(createdBefore);
+    expect(view.asked.length, 'the wallet was not asked for anything').toBe(asksBefore);
+    expect(keyring.companyAwaitingSetup()).toBeNull();
+    expect(JSON.stringify(server.bundle())).toBe(bundleBefore);
+    /* And the screen can say so before the next press - until the tab forgets what it read. */
+    expect(keyring.whyNoCompanyCanStartHere()).toMatch(/could never be finished/);
+    keyring.forgetLocally();
+    expect(keyring.whyNoCompanyCanStartHere()).toBeNull();
+  });
+
+  it('a person with NO keys saved is not stopped, and a fresh sign-in forgets what was read', async () => {
+    const server = aServer();
+    const view = new WalletAtTheOtherEnd(honestly(TEST_MNEMONIC));
+    inABrowser(view, server.fetchImpl);
+    const keyring = await import('../web/keyring.js');
+    await keyring.signInWithWallet(WALLET, undefined, thisBrowsersWindow());
+    await keyring.readWhetherKeysAreSaved();
+    expect(keyring.whyNoCompanyCanStartHere()).toBeNull();
+
+    const second = await aPersonWithACompanyAlready();
+    await second.keyring.readWhetherKeysAreSaved();
+    expect(second.keyring.whyNoCompanyCanStartHere()).toMatch(/could never be finished/);
+    await second.keyring.signInWithWallet(WALLET, undefined, thisBrowsersWindow());
+    expect(second.keyring.whyNoCompanyCanStartHere(), 'a new sign-in has read nothing').toBeNull();
+  });
+
+  it('KEYS THAT DO NOT OPEN AT THE UNLOCK: the company that was started says finishing failed, names both causes, and keeps Finish', async () => {
+    const server = aServer();
+    const view = new WalletAtTheOtherEnd(honestly(TEST_MNEMONIC));
+    let reads = 0;
+    const racing = (async (url: string, init?: RequestInit) => {
+      if (String(init?.method ?? 'GET') === 'GET' && url === '/api/me/keys') {
+        reads += 1;
+        /* The check sees nothing; by the unlock another tab has saved keys under another company's key. */
+        if (reads > 1) return { ok: true, status: 200, json: async () => ({ keyBundle: aBundleSealedElsewhere(), version: 1 }) } as Response;
+      }
+      return server.fetchImpl(url, init);
+    }) as typeof fetch;
+    inABrowser(view, racing);
+    const keyring = await import('../web/keyring.js');
+    await keyring.signInWithWallet(WALLET, undefined, thisBrowsersWindow());
+
+    await expect(keyring.createCompanyWithWallet(
+      { name: 'Raced', signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 }, WALLET, view, US,
+    )).rejects.toThrow(/sealed under the key for a different company you belong to - or the wallet that answered is not the one they were saved with/);
+
+    expect(keyring.companyAwaitingSetup(), 'the keys are still held, not dropped').toBe(ACCOUNT_ID);
+    const problem = keyring.companyAwaitingSetupProblem();
+    /* A key that does not open saved keys is another company's seal OR another wallet's key, so both are said and Finish stays. */
+    expect(problem?.canFinish).toBe(true);
+    expect(problem?.why).toMatch(/it can never be finished, and closing this tab or signing out loses it/);
+    expect(problem?.why).toMatch(/finishing with the wallet you signed in with can still work/);
+    /* The unlock read that keys are saved, so the wallet's face knows it too. */
+    expect(keyring.canOpenCompanies()).toBe(false);
+    expect(keyring.whyNoCompanyCanStartHere()).toMatch(/could never be finished/);
+
+    const asks = view.asked.length;
+    await expect(keyring.finishCompanyCreation(WALLET, view, US)).rejects.toThrow(/different company/);
+    expect(view.asked.length, 'Finish asked the wallet again').toBeGreaterThan(asks);
+    expect(server.wrote()).toHaveLength(0);
+  });
+
+  it('A SAVE REFUSED BECAUSE KEYS WERE SAVED ELSEWHERE MEANWHILE: known at once, not on the next press, and Finish asks nothing', async () => {
+    const server = aServer();
+    const view = new WalletAtTheOtherEnd(honestly(TEST_MNEMONIC));
+    let reads = 0;
+    const racing = (async (url: string, init?: RequestInit) => {
+      const method = String(init?.method ?? 'GET');
+      if (method === 'PUT' && url === '/api/me/keys') {
+        return { ok: false, status: 409, json: async () => ({ error: 'the keys changed on another device since this tab read them' }) } as Response;
+      }
+      if (method === 'GET' && url === '/api/me/keys') {
+        reads += 1;
+        if (reads > 2) return { ok: true, status: 200, json: async () => ({ keyBundle: aBundleSealedElsewhere(), version: 1 }) } as Response;
+      }
+      return server.fetchImpl(url, init);
+    }) as typeof fetch;
+    inABrowser(view, racing);
+    const keyring = await import('../web/keyring.js');
+    await keyring.signInWithWallet(WALLET, undefined, thisBrowsersWindow());
+
+    await expect(keyring.createCompanyWithWallet(
+      { name: 'Raced', signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 }, WALLET, view, US,
+    )).rejects.toThrow(/changed on another device/);
+    expect(keyring.companyAwaitingSetup()).toBe(ACCOUNT_ID);
+    expect(keyring.companyAwaitingSetupProblem()?.canFinish).toBe(false);
+    expect(keyring.companyAwaitingSetupProblem()?.why).toMatch(/Finishing it will keep failing/);
+    expect(keyring.companyAwaitingSetupProblem()?.why).toMatch(/closing this tab or signing out loses this company/);
+    /* This tab holds the new company's released key, so it is on the other face, which says the same. */
+    expect(keyring.canOpenCompanies()).toBe(true);
+    expect(keyring.whyNoCompanyCanStartHere()).toMatch(/keep failing/);
+    expect(keyring.whyNoCompanyCanStartHere()).not.toMatch(/do not sign out or close this tab while it is/);
+    /* And the refused write left no keys behind in the tab that believes them saved. */
+    expect(keyring.keysFor(ACCOUNT_ID)).toBeNull();
+    /* And Finish does not open the wallet for an ask that cannot help. */
+    const asks = view.asked.length;
+    await expect(keyring.finishCompanyCreation(WALLET, view, US)).rejects.toThrow(/keep failing/);
+    expect(view.asked.length).toBe(asks);
+  });
+
+  it('a save refused when the keys saved meanwhile DO open with this company\'s key is still offered as finishable', async () => {
+    const server = aServer();
+    const view = new WalletAtTheOtherEnd(honestly(TEST_MNEMONIC));
+    let reads = 0;
+    let keyring: typeof import('../web/keyring.js');
+    const racing = (async (url: string, init?: RequestInit) => {
+      const method = String(init?.method ?? 'GET');
+      if (method === 'PUT' && url === '/api/me/keys') {
+        return { ok: false, status: 409, json: async () => ({ error: 'the keys changed on another device since this tab read them' }) } as Response;
+      }
+      if (method === 'GET' && url === '/api/me/keys' && (reads += 1) > 2) {
+        const ours = keyring.companyKeyReleasedFor(ACCOUNT_ID)!;
+        return { ok: true, status: 200, json: async () => ({ keyBundle: seal(JSON.stringify({ accounts: {} }), ours), version: 1 }) } as Response;
+      }
+      return server.fetchImpl(url, init);
+    }) as typeof fetch;
+    inABrowser(view, racing);
+    keyring = await import('../web/keyring.js');
+    await keyring.signInWithWallet(WALLET, undefined, thisBrowsersWindow());
+    await expect(keyring.createCompanyWithWallet(
+      { name: 'Raced', signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 }, WALLET, view, US,
+    )).rejects.toThrow(/changed on another device/);
+    expect(reads, 'the keys were read again after the refusal').toBe(3);
+    expect(keyring.companyAwaitingSetupProblem()).toBeNull();
+  });
+
+  it('a save refused for any other reason is still offered as finishable', async () => {
+    const server = aServer();
+    const view = new WalletAtTheOtherEnd(honestly(TEST_MNEMONIC));
+    let refuse = true;
+    const once = (async (url: string, init?: RequestInit) => {
+      if (String(init?.method) === 'PUT' && url === '/api/me/keys' && refuse) {
+        refuse = false;
+        return { ok: false, status: 500, json: async () => ({ error: 'the server fell over' }) } as Response;
+      }
+      return server.fetchImpl(url, init);
+    }) as typeof fetch;
+    inABrowser(view, once);
+    const keyring = await import('../web/keyring.js');
+    await keyring.signInWithWallet(WALLET, undefined, thisBrowsersWindow());
+    await expect(keyring.createCompanyWithWallet(
+      { name: 'Wobbly', signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 }, WALLET, view, US,
+    )).rejects.toThrow(/fell over/);
+    expect(keyring.companyAwaitingSetupProblem()).toBeNull();
+    await keyring.finishCompanyCreation(WALLET, view, US);
+    expect(keyring.companyAwaitingSetup()).toBeNull();
+    expect(keyring.keysFor(ACCOUNT_ID)?.blinding).toBe(server.founderSecrets.blinding);
   });
 });
