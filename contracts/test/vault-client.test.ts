@@ -29,9 +29,19 @@ import { vaultDetails } from '../../src/testing/vault-details.js';
 import { recipientOf } from '../../src/midnight/payee-address.js';
 import type { PayoutSeed, RunIdentity } from '../../src/midnight/run-keys.js';
 import {
-  witnessesOver, afterDeposit, afterPayment, balanceOf,
+  witnessesOver, afterDeposit, afterPayment, balanceOf, withIndexRead,
   type VaultNotes,
 } from '../../src/midnight/vault-notes.js';
+import type { ChainReadIndex } from '../../src/midnight/note-index.js';
+
+/*
+ * **THE ONE PLACE THIS TEST STANDS IN FOR THE CHAIN.** The circuits here run
+ * in process, with no commitment tree and no transaction events, so there is
+ * no index to read. A spend still needs one, and `0n` is handed over through
+ * the same single door a chain-read index goes through, cast here and nowhere
+ * in the client.
+ */
+const noTreeHere = 0n as ChainReadIndex;
 import { changeCoinOf } from '../../src/midnight/vault-coins.js';
 import { toHex, fromHex } from '../../src/core/crypto.js';
 
@@ -142,9 +152,8 @@ describe('V-74: a vault driven by the client\'s own note pool', () => {
     const coin = { nonce: bytes(nonce), color: GBP, value };
     const r = await vault.impureCircuits.deposit(ctx('deposit'), coin);
     vaultState = r.context.callContext.currentQueryContext.state;
-    notes = afterDeposit(notes, {
-      nonce: toHex(coin.nonce), token: toHex(GBP), value, index: 0n,
-    });
+    notes = afterDeposit(notes, { nonce: toHex(coin.nonce), token: toHex(GBP), value });
+    notes = withIndexRead(notes, toHex(coin.nonce), noTreeHere);
   };
 
   const approvedRun = async (payroll: PaymentFacts[], c: Change, runId: string) => {
@@ -194,11 +203,12 @@ describe('V-74: a vault driven by the client\'s own note pool', () => {
      * the real compiled circuit, and a wrong coin is refused by
      * `notes.member(spent)` rather than noticed by an assertion here.
      *
-     * `0n` for the index is the same in-process stand-in the deposit above
-     * uses — there is no commitment tree in this test to assign one.
+     * `noTreeHere` for the index is the same in-process stand-in the deposit
+     * above uses: there is no commitment tree in this test to assign one.
      */
     const kept = changeCoinOf(r.context.callContext.currentZswapLocalState, toHex(vaultBytes()));
-    notes = afterPayment(notes, pending.spending!, a.amount, kept, 0n);
+    notes = afterPayment(notes, pending.spending!, a.amount, kept);
+    if (kept) notes = withIndexRead(notes, kept.nonce, noTreeHere);
     return r;
   };
 

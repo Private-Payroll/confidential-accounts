@@ -152,7 +152,7 @@ describe('THE CLIENT ITSELF, driven through the real scope with no seam overridd
     (ledger as any).connect = async () => contract;
 
     await expect(ledger.deposit(
-      'addr_vault', { nonce: '77'.repeat(32), token: 'aa'.repeat(32), value: 1n, index: 0n },
+      'addr_vault', { nonce: '77'.repeat(32), token: 'aa'.repeat(32), value: 1n },
       { id: 'kc' } as never,
     )).rejects.toThrow(/No calls were submitted/);
 

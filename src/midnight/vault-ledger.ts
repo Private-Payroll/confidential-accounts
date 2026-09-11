@@ -35,9 +35,11 @@ import type { MidnightConfig, FeeSponsor } from './ledger.js';
 import type { SignerRef, TxRef } from '../core/ledger.js';
 import {
   witnessesOver, witnessesWithoutAPool, afterDeposit, afterPayment, noteToSpend, paymentsFit,
+  withIndexRead,
   type VaultNotes, type Note,
 } from './vault-notes.js';
 import { changeCoinOf } from './vault-coins.js';
+import { indexForSpend, type ChainReadIndex, type NoteEvents } from './note-index.js';
 import { commitmentForNote } from './vault-recovery.js';
 
 /** One payment, exactly as `PayrollRun.payeeArgs` hands it over. */
@@ -452,8 +454,40 @@ export class VaultLedger {
      * inventing one.
      */
     encryptionKeys?: Record<string, Hex>,
+    /**
+     * The index of the note this call spends, read from the chain just before
+     * it. Applied to this call's copy of the pool and never saved: the next
+     * spend reads it again.
+     */
+    readIndex?: { note: Note; index: ChainReadIndex },
   ): Promise<{ result: any; notes: VaultNotes; spent?: Hex }> {
-    const notes = await this.pool.load(address);
+    const loaded = await this.pool.load(address);
+    if (readIndex) {
+      /*
+       * The index was read for one coin. If the pool now holds something else
+       * under that nonce, that index belongs to nothing here.
+       */
+      const now = loaded.notes.find((n) => n.nonce === readIndex.note.nonce);
+      if (!now || now.token !== readIndex.note.token || now.value !== readIndex.note.value
+        || now.createdIn !== readIndex.note.createdIn) {
+        throw new Error(
+          `the vault's note ${readIndex.note.nonce} changed or left the pool while its place in the `
+          + 'chain\x27s commitment tree was being read. Nothing is proved or paid. Pay again, and '
+          + 'the note will be chosen and read afresh.');
+      }
+    }
+    /*
+     * **ONE NOTE CARRIES AN INDEX FOR THIS CALL, AND IT IS THE ONE WHOSE INDEX
+     * WAS JUST READ.** Any index the pool holds for any other note is dropped
+     * from this copy, so if the pool changed after the note was chosen and the
+     * witness picks a different one, that note has no index and the witness
+     * refuses it by name rather than spending at a number nobody read.
+     */
+    const notes = readIndex
+      ? withIndexRead(
+        { ...loaded, notes: loaded.notes.map(({ index: _notReadHere, ...n }) => n) },
+        readIndex.note.nonce, readIndex.index)
+      : loaded;
     const pending: { spending?: Hex } = {};
 
     /*
@@ -602,6 +636,17 @@ export class VaultLedger {
    */
   private static zswapOf = (result: any): unknown => result?.private?.nextZswapLocalState;
 
+  /**
+   * The finalised transaction's hash, as the SDK reported it, or `undefined`
+   * when the result carries none in the shape a hash has. Never made up: a note
+   * with no recorded transaction is refused by name when it is spent, and a
+   * note recorded against a wrong transaction is refused when its index is read.
+   */
+  private static createdInOf = (result: any): Hex | undefined => {
+    const hash = result?.public?.txHash;
+    return typeof hash === 'string' && /^[0-9a-f]{64}$/i.test(hash) ? hash.toLowerCase() : undefined;
+  };
+
   private txRef(result: any, by: SignerRef): TxRef {
     /*
      * `by` IS NOT ON THE RETURNED REFERENCE, and that is `TxRef`'s shape rather
@@ -692,11 +737,10 @@ export class VaultLedger {
    * and a balance shown beside a refusal is the stale number `C198` exists to
    * end. It throws or it does not.
    *
-   * **IT DOES NOT CHECK INDICES**, and that is a real gap rather than an
-   * oversight: a note whose `mt_index` has never been read cannot be spent, and
-   * `witnessesOver` is what refuses it. Adding the check here would need the
-   * chain to have answered where the tree filed each commitment, which nothing
-   * in this repository yet reads (`S6f`, and the `changeIndex` finding).
+   * **IT DOES NOT CHECK INDICES**, and that is deliberate rather than an
+   * oversight: a note's index is read from the chain by the payment itself,
+   * just before it spends (`indexForSpend`), so an affordability check that
+   * read it too would be a second answer taken at a different moment.
    */
   async affordable(
     vaultAddress: string,
@@ -829,12 +873,13 @@ export class VaultLedger {
      * still unrecoverable by anybody but them**, because a commitment cannot be
      * inverted, and no route this client builds changes that.
      *
-     * `index` is where the chain filed the commitment and is **absent at this
-     * moment for every deposit**, because the commitment tree assigns it when
-     * the transaction is included. See `Note.index`: recorded as unknown, never
-     * invented.
+     * **THERE IS NO INDEX HERE, AND THAT IS A RULE RATHER THAN AN OMISSION.**
+     * Where the chain files the commitment is assigned when the transaction is
+     * included, so no caller can know it now. What is recorded instead is the
+     * transaction's hash, read off the finalised result, and the index is read
+     * from that transaction's events when the note is spent. See `Note.index`.
      */
-    coin: { nonce: Hex; token: Hex; value: bigint; index?: bigint },
+    coin: { nonce: Hex; token: Hex; value: bigint },
     by: SignerRef,
   ): Promise<TxRef> {
     if (coin.value <= 0n) throw new Error('a note of nothing is not a deposit');
@@ -876,8 +921,10 @@ export class VaultLedger {
      * `contracts/test/vault-recovery.test.ts` drives a vault to this exact
      * window, recovers, and SPENDS what comes back.
      */
+    const createdIn = VaultLedger.createdInOf(result);
     await this.pool.save(vaultAddress, afterDeposit(current, {
-      nonce: coin.nonce, token: coin.token, value: coin.value, index: coin.index,
+      nonce: coin.nonce, token: coin.token, value: coin.value,
+      ...(createdIn === undefined ? {} : { createdIn }),
     }));
     return this.txRef(result, by);
   }
@@ -975,55 +1022,27 @@ export class VaultLedger {
    * private methods, and they share nothing but this line — which is the
    * contract's separation, kept.
    *
-   * `changeIndex` is meaningful on the shielded path only. It is ignored for a
-   * public payment because a public payment produces no change note, and that
-   * is stated rather than left for a reader to infer from a `?`.
+   * `events` is where a private payment reads the spent note's place in the
+   * chain's commitment tree, just before it spends. A public payment spends no
+   * note and does not read it.
    */
   async payout(
     vaultAddress: string,
     p: VaultPayment,
     by: SignerRef,
     /**
-     * Where the chain filed the change note's commitment, IF THE CALLER KNOWS.
+     * **THE CHAIN'S EVENTS, WHICH IS WHERE A NOTE'S INDEX IS READ.**
      *
-     * **OPTIONAL SINCE `S6f`, AND `undefined` IS THE HONEST ORDINARY CASE.**
-     * This was a required `bigint` that no production caller ever supplied,
-     * with a comment saying the caller *"reads it back from the settled
-     * transaction"*. Establishing where that read actually is was this round's
-     * job, and the answer is: **nowhere this repository reaches.**
+     * A note's place in the commitment tree is assigned when the transaction
+     * that created it is applied, and the ledger records it in that
+     * transaction's events. `indexForSpend` reads it from there before every
+     * private payment, so the index spent against is the chain's answer at
+     * that moment and never a number written down earlier.
      *
-     *   · The index is assigned by the coin commitment tree when the
-     *     transaction is included. It is not in the note's commitment —
-     *     `Vault.compact`'s `noteBlindingOf` excludes it deliberately — so it
-     *     is not derivable from anything the owner holds.
-     *   · **The only surface in this stack that maps a commitment to an index
-     *     is `ZswapChainState.tryApply(offer)`**, which returns
-     *     `[ZswapChainState, Map<CoinCommitment, bigint>]` — *"a map on newly
-     *     inserted coin commitments to their inserted indices"*
-     *     (`@midnightntwrk/ledger-v9/ledger-v9.d.ts`). The vault's own
-     *     `ZswapChainState` is servable: `queryZSwapAndContractState` returns
-     *     it, and the SDK already reads it for every call.
-     *   · **But applying our own offer to the state the call was PINNED to is
-     *     a prediction, not a reading**, and the design makes it a wrong one
-     *     often rather than rarely: `V-60`/`V-61` exist so that a hundred
-     *     payments of one run can settle together, and every one of them
-     *     inserts a change commitment into this same vault's tree. Whichever
-     *     landed first moved the index of the rest.
-     *   · `ZswapChainState` has `firstFree` and `tryApply` and **no reverse
-     *     lookup from a commitment to its index**, so re-reading the settled
-     *     state does not answer it either.
-     *
-     * **WHAT HAPPENS WHEN IT CANNOT BE GOT: the note cannot be SPENT, and the
-     * money is not lost.** `witnessesOver` refuses to hand the contract a note
-     * with no index, by name, rather than substituting one — because
-     * `sendShielded` builds a Zswap input from the QUALIFIED coin and takes the
-     * merkle path from the chain state at `mt_index`
-     * (`ZswapInput.newContractOwned`), so a wrong index is a transaction the
-     * chain refuses with nothing a person can act on. Getting it wrong costs a
-     * rescan; **not having a rescan is what costs the downtime**, and that is
-     * this round's finding rather than its fix.
+     * **REQUIRED FOR A PRIVATE PAYMENT, AND ITS ABSENCE IS REFUSED BY NAME.**
+     * Not given, a private payment stops before anything is proved.
      */
-    changeIndex?: bigint,
+    events?: NoteEvents,
   ): Promise<VaultPaid> {
     /*
      * THE PAYEE'S ADDRESS AND THIS DEPLOYMENT MUST BE ON THE SAME NETWORK.
@@ -1051,7 +1070,7 @@ export class VaultLedger {
     if (payee.kind === 'unshielded') {
       return this.payPublicly(vaultAddress, p, payee.userAddress, by);
     }
-    return this.payPrivately(vaultAddress, p, payee, by, changeIndex);
+    return this.payPrivately(vaultAddress, p, payee, by, events);
   }
 
   /**
@@ -1116,14 +1135,28 @@ export class VaultLedger {
   /** A payment in private money — the path this client has always had. */
   private async payPrivately(
     vaultAddress: string, p: VaultPayment, payee: PayeeAddress, by: SignerRef,
-    changeIndex?: bigint,
+    events?: NoteEvents,
   ): Promise<VaultPaid> {
+    if (events === undefined) {
+      throw new Error(
+        'a private payment spends a note, and a note is spent by its place in the chain\x27s '
+        + 'commitment tree, which is read from the chain just before the payment. No source of '
+        + 'the chain\x27s events was given, so nothing is proved or paid. Pass the indexer\x27s '
+        + 'events to payout and pay again.');
+    }
     const current = await this.pool.load(vaultAddress);
     /* Throws with what the pool actually holds, and names merging if that is
      * the problem. See `noteToSpend`. */
-    noteToSpend(current.notes, p.token, p.amount);
+    const chosen = noteToSpend(current.notes, p.token, p.amount);
+    /*
+     * **THE INDEX IS READ FROM THE CHAIN NOW, FOR THIS CALL ONLY.** Before a
+     * fee and before a proof. A note with no recorded transaction, a chain that
+     * cannot be read, or an answer that does not show this note created for
+     * this vault, each stops the payment here with a sentence.
+     */
+    const index = await indexForSpend(vaultAddress as Hex, chosen, events);
 
-    const { result, spent } = await this.call(vaultAddress, 'payout', [
+    const { result, spent, notes: spentFrom } = await this.call(vaultAddress, 'payout', [
       fromHex(p.proposal), fromHex(p.root), p.payees, p.opensAt, p.closesAt, fromHex(p.salt),
       fromHex(payee.coinPublicKey), fromHex(p.token), p.amount,
       fromHex(p.blinding), fromHex(p.nonce), p.path,
@@ -1132,7 +1165,7 @@ export class VaultLedger {
        * pair one payee's coin key with another's reading key. That pairing was
        * the silent half of C7 and it no longer has anywhere to go wrong.
        */
-    ], { [payee.coinPublicKey]: payee.encryptionPublicKey });
+    ], { [payee.coinPublicKey]: payee.encryptionPublicKey }, { note: chosen, index });
 
     if (!spent) {
       /*
@@ -1198,7 +1231,7 @@ export class VaultLedger {
      * nobody has run does not exist.
      */
     await this.pool.save(
-      vaultAddress, afterPayment(current, spent, p.amount, kept, changeIndex));
+      vaultAddress, afterPayment(spentFrom, spent, p.amount, kept, VaultLedger.createdInOf(result)));
     return { ...this.txRef(result, by), kind: 'shielded', spentNote: spent };
   }
 

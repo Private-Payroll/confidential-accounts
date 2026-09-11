@@ -31,8 +31,9 @@
 import { describe, it, expect } from 'vitest';
 import {
   noteToSpend, afterPayment, afterDeposit, paymentsFit,
-  balanceOf, witnessesOver, type VaultNotes, type Note,
+  balanceOf, witnessesOver, withIndexRead, type VaultNotes, type Note,
 } from './vault-notes.js';
+import type { ChainReadIndex } from './note-index.js';
 import { changeNonceOf } from './vault-recovery.js';
 import { toHex, fromHex, type Hex } from '../core/crypto.js';
 
@@ -53,8 +54,15 @@ const changeOf = (spent: Note, amount: bigint, nonce = 'f0'.repeat(32)) =>
 const GBP = 'aa'.repeat(32);
 const USD = 'bb'.repeat(32);
 
-const note = (n: number, value: bigint, token = GBP, index = 0n): Note =>
-  ({ nonce: String(n).padStart(2, '0').repeat(32), token, value, index });
+const note = (n: number, value: bigint, token = GBP, index?: bigint): Note =>
+  ({ nonce: String(n).padStart(2, '0').repeat(32), token, value, ...(index === undefined ? {} : { index }) });
+
+/** Two transaction hashes, as a finalised result reports them. */
+const TX_A = 'a1'.repeat(32);
+const TX_B = 'b2'.repeat(32);
+
+/** An index as `noteIndexFrom` hands one over. Only a test may make one this way. */
+const readFromChain = (n: bigint) => n as ChainReadIndex;
 
 const pool = (notes: Note[]): VaultNotes => ({ notes });
 
@@ -104,14 +112,16 @@ describe('V-74: carrying the pool forward', () => {
      */
     const first = note(1, 1_000n);
     let s = pool([first]);
-    s = afterPayment(s, first.nonce, 250n, changeOf(first, 250n), 7n);
+    s = afterPayment(s, first.nonce, 250n, changeOf(first, 250n), TX_A);
     expect(balanceOf(s, GBP)).toBe(750n);
 
     const next = noteToSpend(s.notes, GBP, 200n);
     expect(next.value).toBe(750n);
-    expect(next.index).toBe(7n);
+    /* Where to read its index from, and no index: that is read when it is spent. */
+    expect(next.createdIn).toBe(TX_A);
+    expect(next.index).toBeUndefined();
 
-    s = afterPayment(s, next.nonce, 200n, changeOf(next, 200n, 'f1'.repeat(32)), 8n);
+    s = afterPayment(s, next.nonce, 200n, changeOf(next, 200n, 'f1'.repeat(32)), TX_B);
     expect(balanceOf(s, GBP)).toBe(550n);
   });
 
@@ -131,7 +141,7 @@ describe('V-74: carrying the pool forward', () => {
      */
     const spent = note(1, 1_000n);
     const read = changeOf(spent, 400n);
-    const s = afterPayment(pool([spent]), spent.nonce, 400n, read, 3n);
+    const s = afterPayment(pool([spent]), spent.nonce, 400n, read, TX_A);
     expect(s.notes[0].nonce).toBe(read.nonce);
     expect(s.notes[0].nonce).not.toBe(toHex(changeNonceOf(fromHex(spent.nonce))));
   });
@@ -169,6 +179,14 @@ describe('V-74: carrying the pool forward', () => {
     const spent = note(1, 1_000n);
     const s = afterPayment(pool([spent]), spent.nonce, 400n, changeOf(spent, 400n));
     expect(s.notes[0].index).toBeUndefined();
+    expect(s.notes[0]).not.toHaveProperty('createdIn');
+  });
+
+  it('records WHERE the change note\'s index is to be read, and never an index', () => {
+    const spent = note(1, 1_000n, GBP, 5n);
+    const s = afterPayment(pool([spent]), spent.nonce, 400n, changeOf(spent, 400n), TX_B);
+    expect(s.notes[0].createdIn).toBe(TX_B);
+    expect(s.notes[0]).not.toHaveProperty('index');
   });
 
   it('DROPS a zero change rather than keeping a note the chain does not have', () => {
@@ -178,7 +196,7 @@ describe('V-74: carrying the pool forward', () => {
      * divergence that makes a vault unspendable.
      */
     const spent = note(1, 500n);
-    const s = afterPayment(pool([spent]), spent.nonce, 500n, undefined, 3n);
+    const s = afterPayment(pool([spent]), spent.nonce, 500n, undefined, TX_A);
     expect(s.notes).toEqual([]);
     expect(balanceOf(s, GBP)).toBe(0n);
   });
@@ -200,6 +218,39 @@ describe('V-74: carrying the pool forward', () => {
     const s = afterDeposit(afterDeposit(pool([]), note(1, 100n, GBP)), note(2, 70n, USD));
     expect(balanceOf(s, GBP)).toBe(100n);
     expect(balanceOf(s, USD)).toBe(70n);
+  });
+
+  it('REFUSES a deposit that arrives already carrying an index, because a deposit cannot know one', () => {
+    expect(() => afterDeposit(pool([]), note(1, 100n, GBP, 616n)))
+      .toThrow(/was not read from the chain/);
+    expect(() => afterDeposit(pool([]), note(1, 100n, GBP, 0n)))
+      .toThrow(/was not read from the chain/);
+  });
+});
+
+describe('an index is set on one note of a copy, and only as the chain reported it', () => {
+  it('writes the index against that note and leaves every other note as it was', () => {
+    const a = { ...note(1, 100n), createdIn: TX_A };
+    const b = note(2, 70n);
+    const s = withIndexRead(pool([a, b]), a.nonce, readFromChain(616n));
+    expect(s.notes.find((n) => n.nonce === a.nonce)).toEqual({ ...a, index: 616n });
+    expect(s.notes.find((n) => n.nonce === b.nonce)).toEqual(b);
+  });
+
+  it('replaces an earlier index with the chain\'s current answer', () => {
+    const s = withIndexRead(pool([note(1, 100n, GBP, 3n)]), note(1, 0n).nonce, readFromChain(9n));
+    expect(s.notes[0].index).toBe(9n);
+  });
+
+  it('refuses a note the pool does not hold', () => {
+    expect(() => withIndexRead(pool([note(1, 100n)]), note(2, 1n).nonce, readFromChain(1n)))
+      .toThrow(/has no note/);
+  });
+
+  it('does not accept a plain number: the type is the pin', () => {
+    // @ts-expect-error a bigint that did not come from noteIndexFrom is not an index
+    const s = withIndexRead(pool([note(1, 100n)]), note(1, 0n).nonce, 616n);
+    expect(s.notes[0].index).toBe(616n);
   });
 });
 
@@ -236,7 +287,7 @@ describe('V-74: the witnesses the contract actually calls', () => {
     const unread = { nonce: '07'.repeat(32), token: GBP, value: 900n } as Note;
     const w = witnessesOver(() => pool([unread]), {});
     expect(() => w.noteToSpend({}, fromHex(GBP), 100n))
-      .toThrow(/never been read/);
+      .toThrow(/has not been read for this call/);
     expect(() => w.noteToSpend({}, fromHex(GBP), 100n))
       .toThrow(/NOTHING HERE MAY SUBSTITUTE A NUMBER/);
   });

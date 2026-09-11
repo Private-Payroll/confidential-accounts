@@ -36,12 +36,14 @@
  *
  * The note's **index** in the chain's commitment tree, which is what makes a
  * coin QUALIFIED and spendable. It is assigned by the chain and is not a
- * function of anything the owner holds, so it is read from the chain and cached
- * here. Losing it costs a rescan, not the money — which is the whole difference
- * between this and a stored blinding.
+ * function of anything the owner holds, so it is read from the chain: from the
+ * events of the transaction that created the note, which is why that
+ * transaction is recorded with the note. Losing it costs a read, not the money,
+ * which is the whole difference between this and a stored blinding.
  */
 import { toHex, fromHex, type Hex } from '../core/crypto.js';
 import type { VaultCoin } from './vault-coins.js';
+import type { ChainReadIndex } from './note-index.js';
 
 /**
  * One note the vault can spend.
@@ -57,13 +59,18 @@ export interface Note {
   /**
    * Where the chain filed its commitment. Read from the chain, never derived.
    *
-   * **OPTIONAL SINCE `S6f`, AND THE OPTIONALITY IS THE HONEST PART.** The
-   * commitment tree assigns this when the transaction is included; nothing the
-   * owner holds is a function of it, and **nothing in this repository reads it
-   * back** — `payout` took it as a parameter no production caller supplied, and
-   * a deposit had to invent one. A field that is always present and sometimes
-   * invented is worse than one that is sometimes absent, because only the
-   * second can be refused.
+   * **OPTIONAL, AND THE OPTIONALITY IS THE HONEST PART.** The commitment tree
+   * assigns this when the transaction is included; nothing the owner holds is a
+   * function of it. **This client never stores one.** A private payment reads
+   * it off the events of the transaction in `createdIn` (`indexForSpend` in
+   * `note-index.ts`) and sets it, through `withIndexRead`, on its own copy of
+   * the pool for that one call. Neither a deposit nor a payout takes one from
+   * its caller, and a deposit that arrives with one is refused. The field is
+   * still a plain number in the type, so a pool read from disk or rebuilt by
+   * `replayVault` can carry one; a payment neither uses nor compares it, drops
+   * it from its own copy, and reads the chain. A
+   * field that is always present and sometimes invented is worse than one that
+   * is sometimes absent, because only the second can be refused.
    *
    * `undefined` means NOT YET READ, never zero. It is not in the commitment —
    * `Vault.compact`'s `noteBlindingOf` deliberately excludes it — so a note
@@ -72,14 +79,27 @@ export interface Note {
    * a Zswap input from the QUALIFIED coin and the merkle path is taken from the
    * chain state at `mt_index`
    * (`ZswapInput.newContractOwned`, `midnight-js-contracts/dist/index.mjs`), so
-   * a wrong index is a transaction the chain refuses.
+   * a wrong index does not reliably produce a refusal anyone can act on.
    *
-   * **Losing an index costs a rescan; losing a nonce costs the money.** That
+   * **Losing an index costs a read; losing a nonce costs the money.** That
    * asymmetry is why one is stored and the other is never derived — and
-   * `witnessesOver` below is where the rescan is DEMANDED rather than
+   * `witnessesOver` below is where the read is DEMANDED rather than
    * substituted for.
    */
   index?: bigint;
+  /**
+   * **THE TRANSACTION THAT CREATED THIS NOTE, BY ITS HASH, AS THE CHAIN
+   * REPORTED IT WHEN THE TRANSACTION WAS FINALISED.**
+   *
+   * It is what makes the index readable at all: the chain's events for that
+   * transaction carry the note's place in the tree. A spend reads the index
+   * from them again every time rather than trusting a number written down here.
+   *
+   * Absent for a note recorded before this was kept, and for a finalised result
+   * that carried no hash. Such a note is still on chain and still the vault's;
+   * its transaction is recorded by naming it to `recordCreatingTransaction`.
+   */
+  createdIn?: Hex;
 }
 
 /**
@@ -217,13 +237,13 @@ export const afterPayment = (
    */
   change: VaultCoin | undefined,
   /**
-   * Where the chain filed the change note's commitment, if it is known yet.
+   * The hash of the payment's own transaction, which created the change note.
    *
-   * **`undefined` is the ordinary case at the moment of a payment**, and it is
-   * recorded rather than invented — see `Note.index`. The transaction has to be
-   * included before the commitment tree assigns one.
+   * **The change note's INDEX is never taken here.** The commitment tree
+   * assigns it when the transaction is applied, and it is read later from that
+   * transaction's events. What is recorded is where to read it from.
    */
-  changeIndex?: bigint,
+  createdIn?: Hex,
 ): VaultNotes => {
   const spent = state.notes.find((n) => n.nonce === spentNonce);
   if (!spent) {
@@ -285,7 +305,7 @@ export const afterPayment = (
       nonce: change.nonce,
       token: change.token,
       value: change.value,
-      index: changeIndex,
+      ...(createdIn === undefined ? {} : { createdIn }),
     }],
   };
 };
@@ -348,7 +368,38 @@ export const afterDeposit = (state: VaultNotes, note: Note): VaultNotes => {
     throw new Error(`this vault already holds a note ${note.nonce}`);
   }
   if (note.value <= 0n) throw new Error('a note of nothing is not a deposit');
+  /*
+   * A deposit cannot know where the chain will file its note: the index is
+   * assigned when the transaction is applied, after this is written. A note
+   * arriving here with one carries a number that was not read from the chain.
+   */
+  if (note.index !== undefined) {
+    throw new Error(
+      `note ${note.nonce} arrives at a deposit already carrying an index. A deposit cannot know `
+      + 'where the chain will file it, so that number was not read from the chain and is not '
+      + 'recorded. Record the deposit without it; the index is read from the transaction later.');
+  }
   return { ...state, notes: [...state.notes, note] };
+};
+
+/**
+ * **A COPY OF THE POOL WITH ONE NOTE'S INDEX, AS THE CHAIN REPORTED IT.**
+ *
+ * It takes only a `ChainReadIndex`, which only `noteIndexFrom` makes, so a
+ * plain number does not type-check here. A payment uses it on its own copy of
+ * the pool for one call; the index is not saved.
+ */
+export const withIndexRead = (state: VaultNotes, nonce: Hex, index: ChainReadIndex): VaultNotes => {
+  const note = state.notes.find((n) => n.nonce === nonce);
+  if (!note) {
+    throw new Error(
+      `this vault's pool has no note ${nonce}, so there is nothing to record an index against. `
+      + 'The pool may have moved on since the note was chosen; choose again.');
+  }
+  return {
+    ...state,
+    notes: state.notes.map((n) => (n.nonce === nonce ? { ...n, index } : n)),
+  };
 };
 
 /** What the vault holds of one token. Public knowledge to its owner only. */
@@ -398,14 +449,16 @@ export const witnessesOver = (get: () => VaultNotes, pending: { spending?: Hex }
     const note = noteToSpend(get().notes, toHex(token), amount);
     /*
      * **THE ONE PLACE AN UNREAD INDEX IS REFUSED, AND IT IS REFUSED RATHER
-     * THAN SUBSTITUTED FOR.** `S6f`, and see `Note.index`.
+     * THAN SUBSTITUTED FOR.** See `Note.index`.
      *
-     * The chain assigns `mt_index` when the transaction is included, and
-     * nothing in this repository reads it back — so a note recorded by a
-     * deposit or a payout carries `undefined` until somebody does. Handing the
-     * contract a zero, or the previous note's index, builds a transaction whose
-     * Zswap input carries a merkle path for a different leaf; the chain refuses
-     * it, and the refusal names nothing a person can act on.
+     * The chain assigns `mt_index` when the transaction is included, so a note
+     * recorded by a deposit or a payout carries `undefined` until its index is
+     * read from that transaction's events. A private payment reads it just
+     * before the call and hands it in for that call only. Handing the contract
+     * a zero, or the previous note's index, builds a transaction whose Zswap
+     * input carries a merkle path for a different leaf, and a wrong index can
+     * end in a WebAssembly trap inside the ledger rather than a refusal with
+     * anything a person can act on.
      *
      * **This is refused at SELECTION and not at selection's edges**, so the
      * message names the note and what has to happen to it. The money is not
@@ -416,10 +469,11 @@ export const witnessesOver = (get: () => VaultNotes, pending: { spending?: Hex }
     if (note.index === undefined) {
       throw new Error(
         `the vault's note ${note.nonce} is the one to spend for ${amount}, and its position in `
-        + 'the chain\x27s commitment tree has never been read. It cannot be spent until it is: '
-        + 'the transaction would carry a merkle path for a different leaf and the chain would '
-        + 'refuse it. The note is safe — an index is not part of a commitment — and reading it '
-        + 'costs a rescan of the vault\x27s Zswap state. NOTHING HERE MAY SUBSTITUTE A NUMBER.');
+        + 'the chain\x27s commitment tree has not been read for this call. It cannot be spent '
+        + 'until it is: the transaction would carry a merkle path for a different leaf. The note '
+        + 'is safe, because an index is not part of a commitment. Its index is read from the '
+        + 'events of the transaction that created it, which a private payment does before it '
+        + 'calls. NOTHING HERE MAY SUBSTITUTE A NUMBER.');
     }
     pending.spending = note.nonce;
     return [ctx, {

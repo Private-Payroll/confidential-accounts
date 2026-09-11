@@ -481,20 +481,17 @@ async function main(): Promise<MovementVerdict | 'not-read'> {
   /*
    * **WHAT THIS MONEY CANNOT DO ONCE IT IS IN, SAID BEFORE IT GOES IN.**
    *
-   * `S14` measured this and it is not a theory: the colour above is the
-   * ledger's `nativeToken().raw`, thirty-two zero bytes, and **the colour the
-   * client puts in a payout leaf is `assetIdBytes('NIGHT')`** — the ASCII
-   * "NIGHT" padded to thirty-two bytes, `4e49474854` followed by zeros. They
-   * are different values, and `payoutUnshielded` uses its `token` argument for
-   * both the balance question and the send.
+   * The colour above is the ledger's `nativeToken().raw`. A payment out of a
+   * vault commits to the token `transferFacts` names, which comes from
+   * `ledgerTokenOf` and is that same value for NIGHT paid publicly, so the
+   * payment and the vault agree on what money moves.
    *
-   * So a run built by this client asks a vault that holds one colour to pay
-   * out of another. The circuit's own assert refuses it, loudly, before a
-   * transaction exists. **Nothing is lost and nothing is at risk: the money
-   * stays where it is, on chain, in a balance anybody can read.** What it
-   * cannot do is leave, and `retire` refuses a vault that still holds a
-   * colour, so it cannot be wound up either. Both are downtime and both end
-   * the day the client maps an asset code to a ledger token type.
+   * **What it still cannot do is leave, because nothing in this client makes
+   * the payment.** A payment out is a proposal on the account, two approvals at
+   * the vault's threshold and a call to the vault, and no door does those
+   * three. **Nothing is lost and nothing is at risk: the money stays where it
+   * is, on chain, in a balance anybody can read.** And `retire` refuses a vault
+   * that still holds a colour, so it cannot be wound up either.
    *
    * **IT IS SAID AND NOT REFUSED HERE, DELIBERATELY.** This door exists to
    * establish whether a vault circuit can be proved and submitted at all,
@@ -504,12 +501,12 @@ async function main(): Promise<MovementVerdict | 'not-read'> {
    */
   say();
   say('  \x1b[33mWHAT THIS MONEY CANNOT DO ONCE IT IS IN\x1b[0m');
-  say('    It cannot be paid out by any run this client can build today, and the vault');
-  say('    cannot be retired while it holds it. The colour above is the ledger\'s own');
-  say('    token type; the colour this client writes into a payout leaf is the asset code');
-  say('    as bytes. They are different values and the circuit compares them.');
+  say('    It cannot be paid out yet: no door in this client makes the proposal, gathers');
+  say('    the two approvals and makes the payment. The vault cannot be retired while it');
+  say('    holds it either. A payment out would name the colour above, the ledger\'s own');
+  say('    token type, and the transfer checks that before any fee.');
   say('    NOTHING IS AT RISK BY THAT. The money stays on chain in a balance anybody can');
-  say('    read, and both refusals end when the client maps an asset code to a token type.');
+  say('    read.');
   say('    This is test NIGHT on a test network, and this run exists to establish whether a');
   say('    vault circuit proves at all. On a customer\'s money it would be a refusal.');
   say();
