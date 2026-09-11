@@ -41,6 +41,7 @@ import { buildRun, buildRetryRun } from '../../src/midnight/payout-tree.js';
 import { runMaterialFor, retryMaterialFor } from '../../src/midnight/run-material.js';
 import { runStatus } from '../../src/midnight/run-status.js';
 import { vaultDetails } from '../../src/testing/vault-details.js';
+import { registryWithTestPrivateForms, aVaultHolding } from '../../src/testing/assets.js';
 import { FileStore } from '../../src/core/store-file.js';
 import { assetIdBytes } from '../../src/core/assets.js';
 import { fromHex, toHex, unseal, parseCanonical, type Hex, type Sealed } from '../../src/core/crypto.js';
@@ -57,9 +58,10 @@ const RETRY_CLOSES = BigInt(NOW + 86_400);
 
 const services = () => {
   const store = new FileStore(join(mkdtempSync(join(tmpdir(), 'mn-retry-')), 'db.json'));
+  const registry = registryWithTestPrivateForms();
   const accounts = new AccountService(
-    store, new SimulatedLedger(MidnightCommitments), MidnightCommitments);
-  const payroll = new PayrollService(store, accounts, new SimulatedProofSystem());
+    store, new SimulatedLedger(MidnightCommitments), MidnightCommitments, registry, aVaultHolding());
+  const payroll = new PayrollService(store, accounts, new SimulatedProofSystem(), registry);
   return { store, accounts, payroll };
 };
 

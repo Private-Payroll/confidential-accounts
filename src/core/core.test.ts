@@ -24,6 +24,7 @@ import { MemoryChallengeStore } from './challenges.js';
 import { sign } from './crypto.js';
 import { redactHex } from '../testing/redact.js';
 import { privatePayee } from '../testing/payees.js';
+import { registryWithTestPrivateForms, aVaultHolding } from '../testing/assets.js';
 import { addressFingerprint } from 'midnight-identity/profile/fingerprint';
 import {
   sealHandover, HANDOVER_SCHEMA, type SealedHandover,
@@ -74,7 +75,8 @@ function harness() {
   const store = new FileStore(join(mkdtempSync(join(tmpdir(), 'mn-')), 'db.json'));
   const ledger = new SimulatedLedger(SimulatedCommitments);
   const proofs = new SimulatedProofSystem();
-  const accounts = new AccountService(store, ledger, SimulatedCommitments);
+  const registry = registryWithTestPrivateForms();
+  const accounts = new AccountService(store, ledger, SimulatedCommitments, registry, aVaultHolding());
   /*
    * The invite delivery, read by tests the way an employee reads their email.
    * `X11` §1 REVERSED `A-10`: `invite()` now hands the token back to whoever
@@ -84,7 +86,7 @@ function harness() {
    * what the reversal costs.
    */
   const invites = new RecordingInviteDelivery();
-  const payroll = new PayrollService(store, accounts, proofs, undefined, 'undeployed', invites);
+  const payroll = new PayrollService(store, accounts, proofs, registry, 'undeployed', invites);
   const plugins = new PluginService(store, accounts);
   // In-memory sessions: the same class the standalone build uses, so these
   // tests exercise a real implementation rather than a stub. The Postgres one

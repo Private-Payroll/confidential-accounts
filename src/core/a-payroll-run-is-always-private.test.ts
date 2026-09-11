@@ -16,6 +16,7 @@ import {
 } from './movement.js';
 import { payeeFor, unshieldedPayeeFor } from '../testing/payees.js';
 import { vaultDetails } from '../testing/vault-details.js';
+import { registryWithTestPrivateForms, aVaultHolding } from '../testing/assets.js';
 import { buildRun } from '../midnight/payout-tree.js';
 import type { PaymentFacts } from '../midnight/payout-tree.js';
 import { payeeOf, recipientOf, type Payee } from '../midnight/payee-address.js';
@@ -59,11 +60,12 @@ const OLD_SHIELDED = 'mn_shield-addr_undeployed15xs6rgdp5xs6rgdp5xs6rgdp5xs6rgdp
 
 const harness = () => {
   const store = new FileStore(join(mkdtempSync(join(tmpdir(), 'mn-s12-')), 'db.json'));
+  const registry = registryWithTestPrivateForms();
   const accounts = new AccountService(
-    store, new SimulatedLedger(SimulatedCommitments), SimulatedCommitments);
+    store, new SimulatedLedger(SimulatedCommitments), SimulatedCommitments, registry, aVaultHolding());
   const invites = new RecordingInviteDelivery();
   const payroll = new PayrollService(
-    store, accounts, new SimulatedProofSystem(), undefined, NETWORK, invites);
+    store, accounts, new SimulatedProofSystem(), registry, NETWORK, invites);
   return { store, accounts, payroll, invites };
 };
 

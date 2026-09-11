@@ -9,6 +9,7 @@ import { AccountService } from './account.js';
 import { PayrollService, RecordingInviteDelivery } from './payroll.js';
 import { payslipKeypairForWallet } from './payslip-key.js';
 import { payeeFor } from '../testing/payees.js';
+import { registryWithTestPrivateForms, aVaultHolding } from '../testing/assets.js';
 import type { User } from './types.js';
 
 /**
@@ -51,9 +52,10 @@ const ORIGIN = 'https://payroll.example';
 const harness = () => {
   const store = new FileStore(join(mkdtempSync(join(tmpdir(), 'mn-x7-')), 'db.json'));
   const ledger = new SimulatedLedger(SimulatedCommitments);
-  const accounts = new AccountService(store, ledger, SimulatedCommitments);
+  const registry = registryWithTestPrivateForms();
+  const accounts = new AccountService(store, ledger, SimulatedCommitments, registry, aVaultHolding());
   const payroll = new PayrollService(
-    store, accounts, new SimulatedProofSystem(), undefined, 'undeployed',
+    store, accounts, new SimulatedProofSystem(), registry, 'undeployed',
     new RecordingInviteDelivery());
   return { store, accounts, payroll };
 };

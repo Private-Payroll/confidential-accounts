@@ -24,6 +24,10 @@ import {
   thresholdFor,
 } from './ledger.js';
 import { storedSignerLeaf } from './signer-leaf.js';
+import {
+  noVaultHoldingsReader, refuseWhatTheVaultCannotPay,
+  type PaymentAsked, type VaultHoldings,
+} from './vault-holdings.js';
 import type { DataStore } from './store.js';
 import { inviteKeyOf } from './store.js';
 
@@ -35,6 +39,9 @@ import { inviteKeyOf } from './store.js';
  * the moment it is created.
  */
 export const GENESIS_KEY_EPOCH = 0;
+
+/** What a round that moves no money says when it is raised, so that saying nothing is not an option. */
+const MOVES_NO_MONEY = 'moves-no-money' as const;
 
 export interface SignerSpec { name: string; role: Role; userId?: string | null; }
 
@@ -657,6 +664,13 @@ export class AccountService {
      * for a module-level singleton cannot be handed the real one.
      */
     private assets = defaultAssets,
+    /**
+     * **WHAT A VAULT HOLDS, AS THE CHAIN ANSWERS IT.** Asked before any round
+     * that moves money is raised. Without one, every such round is refused,
+     * because a service that cannot see a vault cannot keep a round the vault
+     * cannot pay from being approved and paid for.
+     */
+    private holdings: VaultHoldings = noVaultHoldingsReader,
   ) {}
 
   /**
@@ -1200,7 +1214,7 @@ export class AccountService {
      * asset key on every proposal and a real asset code in that slot would be a
      * governance round claiming to move money.
      */
-    await this.raise(proposal, viewingKey, () => this.ledger.propose(
+    await this.raise(proposal, viewingKey, MOVES_NO_MONEY, () => this.ledger.propose(
       accountId, digest, change,
       this.refFor(account, proposedBy), this.commitments.noVault()));
     return proposal;
@@ -1303,7 +1317,7 @@ export class AccountService {
      * asset key on every proposal and a real asset code in that slot would be a
      * governance round claiming to move money.
      */
-    await this.raise(proposal, viewingKey, () => this.ledger.propose(
+    await this.raise(proposal, viewingKey, MOVES_NO_MONEY, () => this.ledger.propose(
       accountId, digest, change,
       this.refFor(account, proposedBy), this.commitments.noVault()));
     return proposal;
@@ -1491,7 +1505,7 @@ export class AccountService {
       createdAt: new Date().toISOString(),
     };
 
-    await this.raise(proposal, viewingKey, () => this.ledger.propose(
+    await this.raise(proposal, viewingKey, MOVES_NO_MONEY, () => this.ledger.propose(
       accountId, digest, change,
       this.refFor(account, proposedBy), this.commitments.noVault()));
     return proposal;
@@ -1706,7 +1720,7 @@ export class AccountService {
      * asset key on every proposal and a real asset code in that slot would be a
      * governance round claiming to move money.
      */
-    await this.raise(proposal, viewingKey, () => this.ledger.propose(
+    await this.raise(proposal, viewingKey, MOVES_NO_MONEY, () => this.ledger.propose(
       accountId, digest, change,
       this.refFor(account, proposedBy), this.commitments.noVault()));
     return proposal;
@@ -2439,7 +2453,8 @@ export class AccountService {
      * proposal rather than to the account in general.
      */
     if (!verdict.blocked) {
-      await this.raise(proposal, args.viewingKey, () => this.ledger.propose(
+      /* At no vault, which `governanceVault` enforces above, so no vault can ever pay it. */
+      await this.raise(proposal, args.viewingKey, MOVES_NO_MONEY, () => this.ledger.propose(
         args.accountId,
         proposal.digest,
         change,
@@ -2511,6 +2526,13 @@ export class AccountService {
     asset?: AssetId;
     /** The run, as the chain is asked to open one. Every part is required. */
     run: RunProposal;
+    /**
+     * **EVERY PAYMENT THE RUN WILL ASK ITS VAULT TO MAKE, IN TREE ORDER.** The
+     * payee, the token and the amount each leaf was built from. Checked against
+     * the asset's own row and against what the vault holds before anything is
+     * raised.
+     */
+    payments: ReadonlyArray<PaymentAsked>;
     proposedBy: string;
     /** A round already written down for this run that may be on chain: raised again AS ITSELF. See `raiseRunAgain`. */
     again?: string;
@@ -2652,7 +2674,10 @@ export class AccountService {
     /* **A SIXTH DOOR WITH `C378`'s SHAPE** — the row names five and `S47` added
      * this one after it. The id check runs INSIDE `raise`. */
     if (!verdict.blocked) {
-      await this.raise(proposal, args.viewingKey, async () => {
+      await this.raise(proposal, args.viewingKey, {
+        vault: args.run.vault, asset, total: change.amount, payees: args.run.payees,
+        payments: args.payments,
+      }, async () => {
         const raised = await this.ledger.proposeRun(
           args.accountId, args.run, change, this.refFor(account, args.proposedBy));
         if (raised.proposalId !== chainId) {
@@ -3450,8 +3475,34 @@ export class AccountService {
    * round's). `BACKLOG.md` `T-322`.
    */
   private async raise(
-    proposal: Proposal, viewingKey: Hex, call: () => Promise<{ ref: string; at: string }>,
+    proposal: Proposal, viewingKey: Hex,
+    pays: typeof MOVES_NO_MONEY | {
+      vault: Hex; asset: AssetId; total: bigint; payees: bigint;
+      payments: ReadonlyArray<PaymentAsked>;
+    },
+    call: () => Promise<{ ref: string; at: string }>,
   ): Promise<void> {
+    /*
+     * **AND BEFORE EITHER HALF, A ROUND THAT MOVES MONEY IS ASKED WHETHER ITS
+     * VAULT CAN PAY IT.** Every call has to say which it is: a round that moves
+     * no money says so, and a round that pays says who, in what and how much. A
+     * door that labels a paying round as moving no money is not caught here;
+     * what holds that today is that only a run names a vault. The payments are
+     * checked against the asset's own row, then the vault is read from the
+     * chain. A refusal writes nothing and spends nothing, because the record has
+     * not been written and the chain has not been called.
+     */
+    if (pays !== MOVES_NO_MONEY) {
+      if (pays.asset === NO_ASSET) {
+        throw new Error(
+          'a round that pays somebody has to name the asset it pays in, and this one names none. '
+          + 'Nothing was raised and no fee was spent.');
+      }
+      await refuseWhatTheVaultCannotPay(this.holdings, {
+        vault: pays.vault, asset: this.assets.require(pays.asset), total: pays.total,
+        payees: pays.payees, payments: pays.payments,
+      });
+    }
     this.putProposal(proposal, viewingKey);
     const tx = await call();
     proposal.txRef = tx.ref;
@@ -3736,7 +3787,10 @@ export class AccountService {
    * name. That is refused, and the sentence says what the earlier round is.
    */
   private async raiseRunAgain(
-    args: { accountId: string; viewingKey: Hex; run: RunProposal; asset?: AssetId; proposedBy: string },
+    args: {
+      accountId: string; viewingKey: Hex; run: RunProposal; asset?: AssetId; proposedBy: string;
+      payments: ReadonlyArray<PaymentAsked>;
+    },
     earlierId: string,
     account: Account,
   ): Promise<Proposal> {
@@ -3765,7 +3819,10 @@ export class AccountService {
         + 'first), then raise the run with a window that ends in the future.');
     }
     const fresh = this.requireProposal(earlierId, args.viewingKey);
-    await this.raise(fresh, args.viewingKey, async () => {
+    await this.raise(fresh, args.viewingKey, {
+      vault: args.run.vault, asset: kept.asset, total: kept.amount, payees: args.run.payees,
+      payments: args.payments,
+    }, async () => {
       const raised = await this.ledger.proposeRun(
         args.accountId, args.run, kept, this.refFor(account, args.proposedBy));
       if (raised.proposalId !== fresh.chainId) {

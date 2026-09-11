@@ -62,24 +62,37 @@ describe('the token a payment out of a vault moves', () => {
     expect(transferFacts(publicNightTransfer()).token).not.toBe(NIGHT_AS_ASCII);
   });
 
-  it('refuses private NIGHT by name and says what can be paid instead', () => {
-    expect(() => ledgerTokenOf('NIGHT', 'shielded')).toThrow(/no private NIGHT/);
-    expect(() => ledgerTokenOf('NIGHT', 'shielded')).toThrow(/public address/);
+  it('refuses private NIGHT by name and says how NIGHT can be paid instead', () => {
+    expect(() => ledgerTokenOf('NIGHT', 'shielded')).toThrow(/NIGHT has no private form on Midnight/);
+    expect(() => ledgerTokenOf('NIGHT', 'shielded')).toThrow(/It has a public form only\./);
+    expect(() => ledgerTokenOf('NIGHT', 'shielded')).toThrow(/No asset has a private form yet/);
   });
 
-  it('refuses every other asset in the registry, in both kinds, rather than inventing a token', () => {
-    const others = assets.all().map((a) => a.code).filter((c) => c !== 'NIGHT');
-    expect(others.length).toBeGreaterThan(0);
-    for (const code of others) {
-      for (const kind of ['shielded', 'unshielded'] as const) {
+  it('refuses every other asset in the product registry, in both forms, rather than inventing a token', () => {
+    /*
+     * Read off the rows rather than off a list of codes, so this goes on
+     * describing the registry the day a row gains a form: an asset with a token
+     * in a form must be given exactly that token, and one without must be refused.
+     */
+    for (const asset of assets.all()) {
+      for (const form of ['shielded', 'unshielded'] as const) {
+        const row = asset.ledger[form];
         let message = '';
         let value: string | undefined;
-        try { value = ledgerTokenOf(code, kind); } catch (e) { message = String((e as Error).message); }
-        expect(value, `${code} ${kind} must not be given a token`).toBeUndefined();
-        expect(message).toContain(code);
-        expect(message).toMatch(/NIGHT, paid to a public address/);
+        try { value = ledgerTokenOf(asset.code, form); } catch (e) { message = String((e as Error).message); }
+        if (row === null) {
+          expect(value, `${asset.code} ${form} must not be given a token`).toBeUndefined();
+          expect(message).toContain(asset.code);
+          expect(message).toMatch(form === 'shielded'
+            ? /No asset has a private form yet/
+            : /Assets that have a public form: NIGHT\./);
+        } else {
+          expect(value).toBe(row);
+        }
       }
     }
+    expect(assets.all().filter(a => a.code !== 'NIGHT').every(a =>
+      a.ledger.shielded === null && a.ledger.unshielded === null)).toBe(true);
   });
 
   it('a public transfer in an asset no vault can hold is refused when its payment is built', () => {
@@ -93,7 +106,7 @@ describe('the token a payment out of a vault moves', () => {
       createdBy: 'usr_founder',
       employees: [],
     });
-    expect(() => transferFacts(gbp)).toThrow(/GBP is not money any vault on Midnight can hold/);
+    expect(() => transferFacts(gbp)).toThrow(/GBP has no form on Midnight, private or public/);
   });
 
   it('the payee\'s own kind picks the token, so a record naming a private address gets none', () => {
@@ -103,7 +116,7 @@ describe('the token a payment out of a vault moves', () => {
      * refused here rather than handed the public token.
      */
     const record = { ...publicNightTransfer(), payee: payeeFor(new Uint8Array(32).fill(0x44), NETWORK) };
-    expect(() => transferFacts(record)).toThrow(/no private NIGHT/);
+    expect(() => transferFacts(record)).toThrow(/NIGHT has no private form on Midnight/);
   });
 
   it('a private address is still refused where the transfer is made, before any token is asked for', () => {
