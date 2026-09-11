@@ -109,6 +109,7 @@ export function AccountPicker({
   const [name, setName] = useState('');
   const wallet = keyring.signedInWallet();
   const noCompanyHere = keyring.whyNoCompanyCanStartHere();
+  const setupProblem = keyring.companyAwaitingSetupProblem();
 
   /**
    * **A WALLET SIGN-IN OPENS NOTHING UNTIL THE WALLET IS ASKED FOR A KEY.**
@@ -173,22 +174,31 @@ export function AccountPicker({
             </p>
           )}
 
-          {awaitingSetup && <AwaitingSetup busy={busy} onFinishSetup={onFinishSetup} />}
+          {awaitingSetup && (
+            <AwaitingSetup busy={busy} onFinishSetup={onFinishSetup} problem={setupProblem} />
+          )}
 
           {/*
             * **AND THIS IS `C141` CLOSED.** Until PI3 this screen told a person
             * with a wallet to go and be invited by somebody else, because
             * starting a company needed a password. It no longer does.
+            *
+            * Shown disabled with its reason for a person who already has keys
+            * saved: a company started then could never be finished.
             */}
           {!awaitingSetup && (
             <form className="acctnew"
-              onSubmit={e => { e.preventDefault(); onCreateWithWallet(name.trim()); }}>
+              onSubmit={e => { e.preventDefault(); if (!noCompanyHere) onCreateWithWallet(name.trim()); }}>
               <input value={name} onChange={e => setName(e.target.value)}
-                placeholder="Start your own company" />
-              <button className="primary" disabled={busy || name.trim().length < 2}>
+                placeholder="Start your own company" disabled={noCompanyHere !== null} />
+              <button className="primary"
+                disabled={busy || noCompanyHere !== null || name.trim().length < 2}>
                 {busy ? 'Waiting for your wallet' : 'Create'}
               </button>
             </form>
+          )}
+          {!awaitingSetup && noCompanyHere && (
+            <p className="authsub" data-no-company-here>{noCompanyHere}</p>
           )}
 
           <p className="authsub">
@@ -237,7 +247,9 @@ export function AccountPicker({
         {/* The same unfinished company as the other face offers to finish. A tab
           * reaches this face with one after unlocking another company, and the
           * keys are only here, so the way to finish it stays on screen. */}
-        {awaitingSetup && <AwaitingSetup busy={busy} onFinishSetup={onFinishSetup} />}
+        {awaitingSetup && (
+          <AwaitingSetup busy={busy} onFinishSetup={onFinishSetup} problem={setupProblem} />
+        )}
 
         {/* Shown, disabled, with its reason: a company started from this face would
           * have its only keys saved under another company's key. */}
@@ -274,8 +286,34 @@ export function AccountPicker({
  * that open them, unsealed. Saying so plainly is the whole point: a person who
  * declined the wallet needs to know that the company is real, that nothing is
  * lost, and that closing this tab is the one thing that would lose it.
+ *
+ * **AND WHEN IT CAN NEVER BE FINISHED, IT SAYS THAT INSTEAD.** Telling a person
+ * to keep a tab open for a Finish that always fails is the one thing this block
+ * must not do. Finish is shown disabled, with the reason.
  */
-function AwaitingSetup({ busy, onFinishSetup }: { busy: boolean; onFinishSetup: () => void }) {
+function AwaitingSetup({ busy, onFinishSetup, problem }: {
+  busy: boolean; onFinishSetup: () => void; problem: { canFinish: boolean; why: string } | null;
+}) {
+  if (problem && !problem.canFinish) {
+    return (
+      <div className="empty" data-awaiting-setup data-cannot-finish>
+        <b>Your company is created and cannot be finished</b>
+        <span data-setup-problem>{problem.why}</span>
+        <button className="primary" disabled>Finish setting up</button>
+      </div>
+    );
+  }
+  if (problem) {
+    return (
+      <div className="empty" data-awaiting-setup data-may-not-finish>
+        <b>Your company is created and finishing it failed</b>
+        <span data-setup-problem>{problem.why}</span>
+        <button className="primary" disabled={busy} onClick={onFinishSetup}>
+          {busy ? 'Waiting for your wallet' : 'Finish setting up'}
+        </button>
+      </div>
+    );
+  }
   return (
     <div className="empty" data-awaiting-setup>
       <b>Your company is created and not finished</b>

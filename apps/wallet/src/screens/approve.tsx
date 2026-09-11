@@ -64,8 +64,10 @@ import {
  * reads anything down a phone line in this design. */
 import { CopyButton } from '../components/ui.js';
 import { hrefOf } from '../routes.js';
-import { heldWallets } from '../accounts/wallets-held.js';
 import { sayingForUnopenable } from '../lib/unopenable-details.js';
+import { rememberSignIn, whyNotThisWallet } from '../lib/signed-in-here.js';
+import { fingerprintOf } from 'midnight-identity/recovery/pieces';
+import { toBase64Url } from 'midnight-identity/passkey/bytes';
 
 /**
  * THE APPROVAL SURFACE FOR A DISCLOSURE.
@@ -356,6 +358,8 @@ export function Approve({
   const [typed, setTyped] = useState<Record<string, string>>({});
   const [problem, setProblem] = useState<string | null>(null);
   const [sentAt, setSentAt] = useState<number | null>(null);
+  /** This wallet, by the fingerprint of the secret that is answering - not by the slot it sits in. */
+  const thisWallet = useMemo(() => toBase64Url(fingerprintOf(secret)), [secret]);
 
   useEffect(() => {
     const target = view ?? (window as unknown as ChannelWindow);
@@ -566,6 +570,13 @@ export function Approve({
       return;
     }
     channel.answer(outgoing);
+    /* THIS WALLET ANSWERED THAT PAGE'S SIGN-IN, so a company's key it asks for
+     * next is given by this wallet and by no other held here. The answer has gone
+     * whether or not this can be written, so a failure is said, not thrown. */
+    let noted = true;
+    if (request.kind === 'sign-in') {
+      try { rememberSignIn(port, request.requester.origin, thisWallet); } catch { noted = false; }
+    }
 
     const recipient: Recipient = {
       origin: request.requester.origin,
@@ -613,9 +624,15 @@ export function Approve({
     }, at);
     setProfile(next);
     setSentAt(at);
+    if (!noted) {
+      setProblem('It was sent, and this wallet could not note that it answered this sign-in. Until a '
+        + 'later sign-in to that page is noted, this browser\'s note of which wallet answered it may be '
+        + 'out of date: another wallet here may be let give that page a company\'s key, and this one '
+        + 'may be refused.');
+    }
     void save(port, identity, next).catch(
       () => setProblem('It was sent, and this wallet could not write down that it was.'));
-  }, [request, profile, channel, rows, picked, refused, subwallet, identity, port, now]);
+  }, [request, profile, channel, rows, picked, refused, subwallet, identity, port, now, thisWallet]);
 
   /**
    * **THE RELEASE. A SEPARATE FUNCTION, NOT A BRANCH INSIDE `approve`.**
@@ -667,18 +684,15 @@ export function Approve({
    *
    * So these three say the thing that is true in ALL of them and name no kind.
    */
+  /* **ONLY THIS WALLET'S OWN RECORD REACHES THIS.** Another wallet's details in
+   * this browser are kept under their own name and never stop this one answering. */
   if (opened?.of === 'unopenable') {
-    const saying = sayingForUnopenable(opened, heldWallets().length);
+    const saying = sayingForUnopenable(opened);
     return (
       <>
         <h1>Nothing has been shared</h1>
         <Alert tone={saying.tone} title={saying.title}>
           <p className="m-0" data-unopenable-why>{saying.sentence}</p>
-          {saying.anotherWalletHere && (
-            <p className="m-0" data-cannot-answer-here>
-              While they are here, this wallet cannot answer requests in this browser.
-            </p>
-          )}
           <p className="m-0">Nothing has been sent and nothing has been changed.</p>
         </Alert>
       </>
@@ -1030,6 +1044,8 @@ export function Approve({
      */
     const elsewhere = originsFor(profile ?? emptyProfile(now()), request.company)
       .filter((origin) => origin !== request.requester.origin);
+    /* Read at render, from this browser's own record of which wallet signed in to this page. */
+    const notThisWallet = whyNotThisWallet(port, request.requester.origin, thisWallet);
 
     return (
       <>
@@ -1164,8 +1180,8 @@ export function Approve({
           * which is also why a recovery gets the records back.
           */}
         <Section
-          title="It does not matter which wallet you are in, or which page asked"
-          description="The key belongs to the company, not to this website."
+          title="It does not matter which of this wallet's addresses you use, or which page asked"
+          description="The key belongs to the company and to this wallet, not to this website."
         >
           <p className="m-0 text-sm text-muted" data-not-per-wallet>
             This is one key, for this company and no other: no other company can be opened
@@ -1174,8 +1190,17 @@ export function Approve({
             wallet from your recovery pieces, and — this is the part that matters — the
             same key if you one day open these records somewhere that is not this website
             at all. That last one is what stops these records being ours rather than yours.
+            It is made from this wallet, though: another wallet held in this browser gives a
+            different key for the same company.
           </p>
         </Section>
+
+        {notThisWallet !== null && (
+          <Alert tone="danger" title="Another wallet answered this page's last sign-in">
+            <p className="m-0" data-not-this-wallet>{notThisWallet}</p>
+            <p className="m-0">No key has been given.</p>
+          </Alert>
+        )}
 
         {/* §6 — NO REVOCATION LANGUAGE, ANYWHERE. */}
         <Alert tone="warning" role={null} title="What is given, is given">
@@ -1190,7 +1215,10 @@ export function Approve({
           {/* THE BUTTON IS THE HEADLINE'S RULE AGAIN. The rule names the button
             * as well as the `<h1>`: a person who skims reads those two and
             * nothing else, so neither may be written in the asker's own words. */}
-          <Button variant="primary" onClick={release} disabled={!consent.ok} data-approve data-unlock>
+          {/* Disabled for a wallet that did not answer this page's last sign-in: a
+            * disabled button fires no press in React, by click or by key, so this is
+            * the gate and `release` has no second copy of it. */}
+          <Button variant="primary" onClick={release} disabled={!consent.ok || notThisWallet !== null} data-approve data-unlock>
             {`Give ${request.requester.origin} the key`}
           </Button>
           <Button

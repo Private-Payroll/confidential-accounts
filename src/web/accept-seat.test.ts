@@ -2,9 +2,8 @@
  * **THE ORDER IS THE DEFECT, SO THE ORDER IS WHAT IS TESTED.** `C329`, `C328`,
  *
  *
- * `acceptInvite` POSTed the leaf and THEN sealed the keyring. `putBundle` rolls
- * back and rethrows on a version conflict and the three secrets were only ever
- * in that closure, so a conflict at the wrong moment seated a signer whose key
+ * `acceptInvite` POSTed the leaf and THEN sealed the keyring. A refused bundle
+ * write rethrows, and the three secrets were only ever in that closure, so a conflict at the wrong moment seated a signer whose key
  * material never survived — a seat that counts towards N, can never approve,
  * and on an M-of-N account enough of them means nobody can move the money.
  * `S33` built the detector for that state; this path is one of its factories.
@@ -66,9 +65,9 @@ describe('C329 — a leaf cannot reach a roster before its key material is durab
   });
 
   it('PUBLISHES NOTHING when the seal refuses', async () => {
-    /* The version conflict `C329` is about. `putBundle` rolls the local edit
-     * back and rethrows, and the point of the new order is that at this moment
-     * no leaf exists anywhere. */
+    /* The version conflict `C329` is about. A refused write leaves the key list
+     * as it was and rethrows, and the point of the new order is that at this
+     * moment no leaf exists anywhere. */
     const d = doorsThat({ seal: async () => { throw new Error('bundle version conflict'); } });
     await expect(acceptSeatOnThisDevice(ACCOUNT, SimulatedCommitments, d.doors))
       .rejects.toThrow(/version conflict/);

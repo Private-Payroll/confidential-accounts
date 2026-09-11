@@ -270,7 +270,7 @@ export function requireOwnLeaf(reading: OwnLeafReading): void {
     throw new Error(
       'THE KEY MATERIAL THIS DEVICE HOLDS FOR THIS SEAT IS NOT A SIGNING SECRET AND A ' +
         'BLINDING.\n' +
-        'This is NOT \x27your keys for this account are not on this device\x27 — there is an ' +
+        'This is NOT the case of no keys being saved for this company — there is an ' +
         'entry here for this seat — and it is not a mismatch either, because nothing can be ' +
         'derived from what is here to mismatch with.\n' +
         `  ${reading.signerId}\n` +
@@ -290,7 +290,7 @@ export function requireOwnLeaf(reading: OwnLeafReading): void {
 
   throw new Error(
     'THIS DEVICE COMPUTES A DIFFERENT LEAF THAN THE ONE RECORDED FOR THIS SEAT.\n' +
-      'This is NOT \x27your keys for this account are not on this device\x27 and it is NOT ' +
+      'This is NOT the case of no keys being saved for this company and it is NOT ' +
       '\x27this seat has no leaf\x27. There is key material here, there is a leaf on the ' +
       'record, and they are two different values. The three have different remedies, which is ' +
       'why they are three sentences.\n' +

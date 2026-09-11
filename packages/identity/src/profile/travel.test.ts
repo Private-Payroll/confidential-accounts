@@ -6,7 +6,8 @@ import { identityFromSecret, newSecret } from '../keys/derivation.js';
 import { GIVEN_NAME, REGISTRY } from './attributes.js';
 import { emptyProfile, selfAssert } from './model.js';
 import { TravelError, pack, unpack } from './travel.js';
-import { load, save, sealedIn } from './store.js';
+import { load, putSealed, recordNameFor, save, sealedFor, sealedIn } from './store.js';
+import { open, profileKey, seal } from './seal.js';
 import type { Port } from './store.js';
 
 /**
@@ -27,7 +28,7 @@ const memory = (): Port => {
 };
 
 /** The four real steps, in order, on the real module. */
-const pairAndCarry = (secret: Uint8Array, oldDevice: Port) => {
+const pairAndCarry = async (secret: Uint8Array, oldDevice: Port) => {
   const asking = askToPair(NOW);                                  /* 1. NEW  */
   const offer = beginOffer(asking.code, NOW);                     /* 2. OLD  */
   const answered = answerCommitment(asking, offer.message, NOW);  /* 3. NEW  */
@@ -36,7 +37,7 @@ const pairAndCarry = (secret: Uint8Array, oldDevice: Port) => {
   return {
     /* What the OLD device puts on the screen: the sealed wallet AND the
      * sealed profile, in one payload. */
-    payload: pack(keys, sealedIn(oldDevice)),
+    payload: pack(keys, await sealedFor(oldDevice, identityFromSecret(secret))),
     reveal,
     request: answered.request,
   };
@@ -55,7 +56,7 @@ describe('a paired device opens the profile that crossed with the wallet', () =>
       profile = selfAssert(profile, REGISTRY, 'email', 'sarah@work.example', 'work', NOW);
       await save(oldDevice, identity, profile);
 
-      const { payload, reveal, request } = pairAndCarry(secret, oldDevice);
+      const { payload, reveal, request } = await pairAndCarry(secret, oldDevice);
 
       /* The new device reads ONE payload and separates the two halves. */
       const carried = unpack(payload);
@@ -72,9 +73,15 @@ describe('a paired device opens the profile that crossed with the wallet', () =>
 
       /* The profile half needs no key of its own: the identity built from the
        * secret that just arrived derives the same profile key. */
+      /* And it goes under the arriving wallet's OWN name: the old shared name may
+       * hold another wallet's record on the new device, and it must not be touched. */
       const newDevice = memory();
-      newDevice.setItem('midnight-identity:profile', JSON.stringify(carried.profile));
-      const state = await load(newDevice, identityFromSecret(accepted.secret));
+      const arriving = identityFromSecret(accepted.secret);
+      const somebodyElses = await seal(await profileKey(identityFromSecret(newSecret())), emptyProfile(NOW));
+      putSealed(newDevice, somebodyElses);
+      newDevice.setItem(await recordNameFor(arriving), JSON.stringify(carried.profile));
+      const state = await load(newDevice, arriving);
+      expect(sealedIn(newDevice)).toEqual(somebodyElses);
       expect(state.of).toBe('profile');
       expect(state.of === 'profile' && state.profile).toEqual(profile);
       expect(state.of === 'profile' && state.profile.held.map((h) => h.says))
@@ -84,10 +91,10 @@ describe('a paired device opens the profile that crossed with the wallet', () =>
         ]);
     });
 
-  it('THE WRONG DIGITS STOP THE WHOLE THING, profile included', () => {
+  it('THE WRONG DIGITS STOP THE WHOLE THING, profile included', async () => {
     const secret = newSecret();
     const oldDevice = memory();
-    const { payload, reveal, request } = pairAndCarry(secret, oldDevice);
+    const { payload, reveal, request } = await pairAndCarry(secret, oldDevice);
     const carried = unpack(payload);
     const wrong = reveal.digits === '00' ? '01' : '00';
     expect(() => acceptKeys(request, reveal.ephemeralPublic, carried.keys, wrong, NOW))
@@ -123,7 +130,8 @@ describe('the pairing payload is self-describing', () => {
     const identity = identityFromSecret(newSecret());
     const port = memory();
     await save(port, identity, selfAssert(emptyProfile(NOW), REGISTRY, GIVEN_NAME, 'Sarah', '', NOW));
-    const blob = sealedIn(port)!;
+    const blob = (await sealedFor(port, identity))!;
+    expect(blob).not.toBeNull();
     const carried = unpack(pack({ sealed: 'wallet-bytes' }, blob));
     expect(carried.of).toBe('keys-and-profile');
     expect(carried.of === 'keys-and-profile' && carried.profile).toEqual(blob);
@@ -142,17 +150,17 @@ describe('the ciphertext needs no second envelope — that is §4\'s whole argum
       await save(oldDevice, oldIdentity, profile);
 
       /* The blob crosses in the clear, beside the sealed wallet. */
-      const carried = unpack(pack({ sealed: 'x' }, sealedIn(oldDevice)));
+      const carried = unpack(pack({ sealed: 'x' }, await sealedFor(oldDevice, oldIdentity)));
       expect(carried.of).toBe('keys-and-profile');
 
       /* On the new device: the secret arrives, an identity is built from it,
        * and the SAME key falls out. Nothing was transported and nothing was
        * re-encrypted. */
       const newDevice = memory();
-      if (carried.of === 'keys-and-profile') {
-        newDevice.setItem('midnight-identity:profile', JSON.stringify(carried.profile));
-      }
       const newIdentity = identityFromSecret(secret);
+      if (carried.of === 'keys-and-profile') {
+        newDevice.setItem(await recordNameFor(newIdentity), JSON.stringify(carried.profile));
+      }
       const state = await load(newDevice, newIdentity);
       expect(state.of).toBe('profile');
       expect(state.of === 'profile' && state.profile).toEqual(profile);
@@ -163,11 +171,13 @@ describe('the ciphertext needs no second envelope — that is §4\'s whole argum
     const identity = identityFromSecret(newSecret());
     await save(oldDevice, identity,
       selfAssert(emptyProfile(NOW), REGISTRY, GIVEN_NAME, 'Sarah', '', NOW));
-    const carried = unpack(pack({ sealed: 'x' }, sealedIn(oldDevice)));
+    const carried = unpack(pack({ sealed: 'x' }, await sealedFor(oldDevice, identity)));
+    if (carried.of !== 'keys-and-profile') throw new Error('the profile did not travel');
     const newDevice = memory();
-    if (carried.of === 'keys-and-profile') {
-      newDevice.setItem('midnight-identity:profile', JSON.stringify(carried.profile));
-    }
-    expect((await load(newDevice, identityFromSecret(newSecret()))).of).toBe('unopenable');
+    const stranger = identityFromSecret(newSecret());
+    /* Put where a receiver built for the stranger would put it: under the stranger's own name. */
+    newDevice.setItem(await recordNameFor(stranger), JSON.stringify(carried.profile));
+    expect((await load(newDevice, stranger)).of).toBe('unopenable');
+    expect((await open(await profileKey(stranger), carried.profile)).of).toBe('unopenable');
   });
 });

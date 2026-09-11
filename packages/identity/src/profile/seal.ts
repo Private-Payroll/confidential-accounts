@@ -77,6 +77,34 @@ export async function profileKey(identity: Identity): Promise<CryptoKey> {
 
 const aad = (): BufferSource => new TextEncoder().encode(ENVELOPE) as BufferSource;
 
+/**
+ * **THE NAME THIS WALLET'S PROFILE IS KEPT UNDER, WHICH SAYS NOTHING ABOUT WHOSE IT IS.**
+ *
+ * A browser can hold several wallets, and each keeps its own profile. Keeping
+ * each under a name of its own is what lets a second wallet save without
+ * touching the first one's record. The name must not say which account it is,
+ * for the reason `store.ts` gives, so it is a digest: SHA-256 over a fixed
+ * label and the profile key's bytes, cut to 16 bytes. Anyone can read the name;
+ * nobody can work back from it to the key, and only a wallet holding the same
+ * secret arrives at the same name - so a paired device that puts the blob it was
+ * given under that name reads it there, and writes over no other wallet's.
+ *
+ * **THE LABEL CARRIES A VERSION FOR `ENVELOPE`'S REASON.** Changing it moves
+ * every profile saved under a name to a name nothing reads.
+ */
+const RECORD_NAME_LABEL = 'midnight-identity/profile-record-name/v1';
+const RECORD_NAME_BYTES = 16;
+
+export async function profileRecordTag(identity: Identity): Promise<string> {
+  const raw = identity.authority(Purposes.Profile, PROFILE_INDEX);
+  const label = new TextEncoder().encode(RECORD_NAME_LABEL);
+  const input = new Uint8Array(label.length + raw.length);
+  input.set(label, 0);
+  input.set(raw, label.length);
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', input as BufferSource));
+  return toBase64Url(digest.slice(0, RECORD_NAME_BYTES));
+}
+
 export async function seal(key: CryptoKey, profile: Profile): Promise<SealedProfile> {
   const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
   const body = new TextEncoder().encode(JSON.stringify(profile));

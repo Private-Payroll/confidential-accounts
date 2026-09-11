@@ -290,7 +290,7 @@ describe('the stored signer leaf, against the device that has to reproduce it', 
     let message = '';
     try { requireOwnLeaf(reading); } catch (e: any) { message = String(e.message); }
 
-    expect(message).toContain('your keys for this account are not on this device');
+    expect(message).toContain('NOT the case of no keys being saved for this company');
     expect(message).toContain('nothing can be derived from what is here to mismatch with');
     expect(message).not.toContain('COMPUTES A DIFFERENT LEAF');
   });
@@ -316,7 +316,7 @@ describe('the stored signer leaf, against the device that has to reproduce it', 
     expect(message).toMatch(new RegExp('device computes\\s+' + reading.derived!.slice(0, 16)));
     /* It denies them rather than being silent about them — `C320`'s rule that a
      * refusal which could be mistaken for its neighbour is the defect. */
-    expect(message).toContain('your keys for this account are not on this device');
+    expect(message).toContain('NOT the case of no keys being saved for this company');
     expect(message).toContain('this seat has no leaf');
     /* And it does not promise a door that does not exist. */
     expect(message).toMatch(/NO DOOR THAT REPAIRS A RECORDED LEAF IN PLACE/);
