@@ -90,3 +90,65 @@ export const UNLOCK_PURPOSE =
 
 /** How long an unlock ask is good for. The wallet refuses an expired one. */
 export const UNLOCK_WINDOW_MS = 5 * 60_000;
+
+/**
+ * **ASKING THE WALLET FOR THE KEY A PERSON'S SAVED KEYS HERE ARE SEALED UNDER.**
+ *
+ * A person keeps one sealed set of their own keys on this deployment - one entry
+ * per company they sit on - and it belongs to the PERSON, not to any one company:
+ * sealed under a company's key, it could never hold a second company's keys. So
+ * it is sealed under a key the wallet derives for this person here, and this is
+ * the ask for it.
+ *
+ *   · **`person`** is the id this deployment gave the signed-in person. It is an
+ *     ingredient of the key, and it comes from the sign-in - never from a caller.
+ *   · **`signedInAs`** is the wallet address this tab signed in as, taken from the
+ *     server's answer to that sign-in. It is NOT an ingredient: the wallet gives
+ *     the key only if one of its own accounts has exactly that address, so in a
+ *     browser holding several wallets it cannot come from one other than the
+ *     wallet the person signed in with. Null when this tab does not know it.
+ *   · **`company`**, when present, asks for that company's key in the same answer,
+ *     so the two are known to come from one wallet.
+ */
+export const KEYRING_KIND = 'keyring' as const;
+
+export interface KeyringAsk {
+  readonly schema: typeof REQUEST_SCHEMA;
+  readonly kind: typeof KEYRING_KIND;
+  readonly requester: { readonly name: string; readonly rdns: string };
+  readonly purpose: string;
+  readonly nonce: string;
+  readonly expiresAt: number;
+  readonly person: string;
+  readonly signedInAs?: string;
+  readonly company?: string;
+}
+
+export const keyringAsk = (parts: {
+  name: string; rdns: string; purpose: string; nonce: string; expiresAt: number;
+  person: string; signedInAs: string | null; company: string | null;
+}): KeyringAsk => Object.freeze({
+  schema: REQUEST_SCHEMA,
+  kind: KEYRING_KIND,
+  requester: Object.freeze({ name: parts.name, rdns: parts.rdns }),
+  purpose: parts.purpose,
+  nonce: parts.nonce,
+  expiresAt: parts.expiresAt,
+  person: parts.person,
+  /* Absent rather than null on the wire when unknown, so the wallet's screen can
+   * say that this page does not know which address it signed in as. */
+  ...(parts.signedInAs !== null ? { signedInAs: parts.signedInAs } : {}),
+  ...(parts.company !== null ? { company: parts.company } : {}),
+});
+
+/** What the person is being asked for, beside what the wallet itself says it gives. */
+export const KEYRING_PURPOSE =
+  'So this page can open the keys saved for you here - for every company you belong to on this '
+  + 'site - on this device. They are never sent to our servers, and the key is forgotten when you '
+  + 'close the tab.';
+
+/** And when a company's key is asked for in the same answer. */
+export const KEYRING_AND_COMPANY_PURPOSE =
+  'So this page can open the keys saved for you here and work out your payslip key for this '
+  + 'company, on this device. Neither is sent to our servers, and both are forgotten when you '
+  + 'close the tab.';

@@ -250,6 +250,32 @@ export const Purposes = {
    * changing one, and fails BY NAME on a purpose that has none.
    */
   Inbox: 'inbox',
+  /**
+   * THE ROOT OF THE KEY A PERSON'S OWN SAVED KEYS ARE SEALED UNDER, AT ONE SITE,
+   * AND IT IS ITSELF NEVER RELEASED.
+   *
+   * A person who belongs to several companies at one site keeps one sealed set
+   * of their own keys there - a signing secret, a wrapping secret and a
+   * blinding for every company they sit on. **That set belongs to the PERSON
+   * and not to any one company**, so the key it is sealed under cannot be a
+   * company's key: sealed under one company's key, it could never hold a
+   * second company's secrets beside the first. The released key is an HKDF
+   * expansion of this parent under the person's own identifier at that site
+   * (`profile/unlock.ts`, `keyringKeyFor`).
+   *
+   * WHY NOT `Purposes.Unlock` AT ANOTHER INDEX. That purpose's comment says it
+   * has exactly one job and one index, and a second index chosen by a caller
+   * is the selector that comment refuses. **A different thing gets a different
+   * parent**, so no company key and no keyring key can ever be the same bytes,
+   * whatever identifier either is expanded under.
+   *
+   * ADDITIVE, AND THAT IS THE ONLY REASON IT IS ALLOWED HERE -- the same
+   * sentence every purpose after the first four was added under. The seven
+   * purposes above are untouched, so every credential already in existence
+   * derives to the same bytes; `derivation.portability.test.ts` ADDS a vector
+   * rather than changing one, and fails BY NAME on a purpose that has none.
+   */
+  Keyring: 'keyring',
 } as const;
 
 export type Purpose = (typeof Purposes)[keyof typeof Purposes];

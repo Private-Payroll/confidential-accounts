@@ -39,35 +39,31 @@ const OUT = join(ROOT, 'logs', 'mutate-create-company');
 const MUTATIONS = [
   {
     id: 1,
-    binding: 'IT MAY NOT MINT AN IDENTIFIER ON THIS SIDE — C136, C140',
+    binding: 'THE KEY A PERSON\'S KEYS ARE SAVED UNDER IS ASKED FOR THIS PERSON',
     file: 'src/web/keyring.ts',
-    says: 'the company is worked out from the account id on this side instead of being '
-      + 'asked for, so the identifier this platform seals under is one it invented',
-    from: '  const { company } = await api(`/api/accounts/${accountId}/unlock`, '
-      + "{ method: 'POST' });",
-    to: "  const company = accountId.replace(/[^0-9a-f]/g, '').padEnd(64, '0').slice(0, 64);",
+    says: 'the wallet is asked for the keys of a person the session does not name, so what is '
+      + 'saved is sealed under a key for somebody else',
+    from: '    person: who.id,',
+    to: "    person: 'usr_somebody',",
     kills: [
-      'THE COMPANY HANDED TO THE WALLET IS THE ONE THE SERVER NAMED, NOT ONE MADE UP HERE',
-      'THE ORDER IS CREATE, THEN ASK WHICH COMPANY, THEN SEAL — and it cannot be another',
+      'THE WALLET IS ASKED ONCE, FOR THIS PERSON AND THE ADDRESS THEY SIGNED IN AS, BEFORE THE COMPANY IS CREATED',
     ],
   },
   {
     id: 2,
-    binding: 'IT MAY NOT SEAL UNDER AN ADDRESS WHOSE PROVENANCE IS NOT A CHAIN’S — C140',
+    binding: 'A SECOND COMPANY\'S KEYS ARE SAVED BESIDE THE FIRST\'S, NEVER OVER THEM',
     file: 'src/web/keyring.ts',
-    says: 'the creation path reads the address off the account record instead of going '
-      + 'through the door that checks where it came from, so a refusal never reaches it',
-    from: '    await unlockWithWallet(waiting.accountId, walletOrigin, view, atOrigin, already);',
-    to: '    const rec = await api(`/api/accounts/${waiting.accountId}`);\n'
-      + '    encKey = toHex(await askWalletToUnlock(view, walletOrigin, {\n'
-      + '      company: String(rec.contractAddress), atOrigin,\n'
-      + '      name: US_TO_A_WALLET.name, rdns: US_TO_A_WALLET.rdns,\n'
-      + '    }, already));',
-    kills: ['CREATION IS REFUSED, AND NOT ONE BYTE IS SEALED'],
+    says: 'saving a new company\'s keys writes only that company, so every key already saved '
+      + 'for the person, blindings included, is written over',
+    from: '  await putBundle({ ...keyring, accounts: { ...keyring.accounts, [accountId]: keys } });',
+    to: '  await putBundle({ ...keyring, accounts: { [accountId]: keys } });',
+    kills: [
+      "THE SAME TAB STARTS A SECOND COMPANY WITHOUT ASKING THE WALLET, AND BOTH COMPANIES' KEYS ARE SAVED TOGETHER",
+    ],
   },
   {
     id: 3,
-    binding: 'IT MAY NOT ASK FOR A PASSWORD — C129, and it is why this round exists',
+    binding: 'IT MAY NOT ASK FOR A PASSWORD',
     file: 'src/web/keyring.ts',
     says: 'the creation path carries auth material, which is what asking for a password '
       + 'looks like on the wire',
@@ -77,82 +73,101 @@ const MUTATIONS = [
       + "threshold: spec.threshold, authKey: 'aa'.repeat(32) }),",
     kills: [
       'NOT ONE REQUEST CARRIES AUTH MATERIAL',
-      'AND THE CREATION PATH HAS NOWHERE TO PUT ONE',
     ],
   },
   {
     id: 4,
-    binding: 'THE FOUNDER’S FIRST DEVICE IS NOT SPECIAL — the judged test',
+    binding: 'THE FOUNDER\'S FIRST DEVICE IS NOT SPECIAL',
     file: 'src/web/keyring.ts',
-    says: 'the keyring is sealed under a key this tab minted rather than the one the '
-      + 'wallet released, so nothing else can ever recompute it',
+    says: 'the keys are sealed under a key this tab minted rather than the one the wallet '
+      + 'gave, so nothing else can ever work it out again',
     from: '      keyBundle: seal(JSON.stringify(next), key),',
     to: "      keyBundle: seal(JSON.stringify(next), 'ab'.repeat(32)),",
     kills: [
-      'A SECOND DEVICE, FROM THE WORDS ALONE, OPENS WHAT THE FIRST DEVICE SEALED',
+      "A SECOND DEVICE, FROM THE WORDS ALONE, AT ANOTHER ADDRESS, OPENS BOTH COMPANIES' KEYS",
     ],
   },
   {
     id: 5,
-    binding: 'A DECLINED PRESS COSTS A RETRY, NOT THE COMPANY',
+    binding: 'SAVED KEYS THAT DO NOT OPEN ARE REFUSED, NEVER REPLACED',
     file: 'src/web/keyring.ts',
-    says: 'the founder’s secrets are dropped before the bundle is written, so a refusal '
-      + 'anywhere in step 2 loses the only copy of them in existence',
-    from: '    await unlockWithWallet(waiting.accountId, walletOrigin, view, atOrigin, already);',
-    to: '    pendingCompany = null;\n'
-      + '    await unlockWithWallet(waiting.accountId, walletOrigin, view, atOrigin, already);',
+    says: 'keys that do not open are taken as nothing saved, so the next save writes over keys '
+      + 'this tab could not open',
+    from: '        throw new SavedKeysDidNotOpen(DID_NOT_OPEN);\n      }\n    }\n    encKey = key;',
+    to: '        opened = { accounts: {} };\n      }\n    }\n    encKey = key;',
     kills: [
-      'AND THE COMPANY IS NOT LOST — the secrets are still here and it can be finished',
+      'SAVED KEYS THAT DO NOT OPEN ARE REFUSED BEFORE ANY COMPANY IS CREATED',
     ],
   },
   {
     id: 6,
-    binding: 'A COMPANY THAT COULD NEVER BE FINISHED IS NOT STARTED',
+    binding: 'A PERSON\'S FIRST KEYS ARE SAVED ONLY FROM THE TAB THAT SIGNED THEM IN',
     file: 'src/web/keyring.ts',
-    says: 'a person whose keys are already saved, sealed under another company’s key, is let '
-      + 'through to create a company whose keys can never be saved - its only copy lives in '
-      + 'one tab behind a Finish that always fails',
-    from: '    if (keysSavedOnServer) throw new Error(SECOND_COMPANY_REFUSAL);',
-    to: '    void SECOND_COMPANY_REFUSAL;',
+    says: 'a tab that cannot tell which wallet signed in starts a company, so its first keys '
+      + 'may be sealed under a wallet the person did not sign in with',
+    from: "    if (savedKeys !== 'some' && !keyCheckedAgainstSignIn) throw new Error(FIRST_KEYS_NEED_THE_SIGN_IN);\n\n",
+    to: '\n',
     kills: [
-      'IS REFUSED BEFORE ANYTHING IS CREATED: no company, no wallet ask, no keys held in the tab',
+      "A TAB THAT DID NOT SIGN IN MAY NOT SAVE A PERSON'S FIRST KEYS, AND SAYS SO BEFORE ANY COMPANY IS CREATED",
     ],
   },
   {
     id: 7,
-    binding: 'A REFUSED KEY WRITE LEAVES THE KEY LIST AS IT WAS',
+    binding: 'A REFUSED SAVE COSTS A RETRY, NOT THE COMPANY',
     file: 'src/web/keyring.ts',
-    says: 'the list is changed before the server has taken the write, so a refused save leaves '
-      + 'the tab holding and offering keys the server never saved',
-    from: '  const base = keyring;\n  const r = await api(\'/api/me/keys\', {',
-    to: '  keyring = next;\n  const base = keyring;\n  const r = await api(\'/api/me/keys\', {',
+    says: 'the founder\'s secrets are dropped when the save is refused, so the only copy of them '
+      + 'in existence is gone',
+    from: '  } catch (e) {\n    if (dialog !== null) putAway(dialog);',
+    to: '  } catch (e) {\n    pendingCompany = null;\n    if (dialog !== null) putAway(dialog);',
     kills: [
-      'A SAVE REFUSED BECAUSE KEYS WERE SAVED ELSEWHERE MEANWHILE: known at once, not on the next press, and Finish asks nothing',
+      'A SAVE REFUSED TWICE BECAUSE ANOTHER DEVICE KEPT SAVING KEEPS THE COMPANY, AND FINISH SAVES IT BESIDE WHAT WAS SAVED, WITHOUT THE WALLET',
     ],
   },
   {
     id: 8,
-    binding: 'A COMPANY THAT CAN NEVER BE FINISHED IS SAID TO BE, AT ONCE',
+    binding: 'A COMPANY THAT CAN NEVER BE SAVED IS SAID TO BE',
     file: 'src/web/keyring.ts',
-    says: 'a save refused because another tab sealed the keys under another company’s key is '
-      + 'not noticed, and the screen goes on telling the person to keep the tab open for a '
-      + 'Finish that always fails',
-    from: "    catch { markSavingFailed(accountId, 'sealed-elsewhere'); }",
-    to: '    catch { /* not noticed */ }',
+    says: 'a Finish that found keys it cannot open does not mark the company, and the screen goes '
+      + 'on offering a Finish that always fails',
+    from: "      pendingCompany = { ...pendingCompany, savingFailed: 'cannot-be-saved' };",
+    to: '      pendingCompany = { ...pendingCompany };',
     kills: [
-      'A SAVE REFUSED BECAUSE KEYS WERE SAVED ELSEWHERE MEANWHILE: known at once, not on the next press, and Finish asks nothing',
+      "WHEN WHAT WAS SAVED MEANWHILE DOES NOT OPEN WITH THIS TAB'S KEY, FINISH SAYS IT CANNOT BE SAVED AND WRITES NOTHING",
     ],
   },
   {
     id: 9,
-    binding: 'FINISH ASKS NOTHING THAT CANNOT HELP',
+    binding: 'A TAB WAITING TO FINISH A COMPANY DOES NOT START ANOTHER',
     file: 'src/web/keyring.ts',
-    says: 'Finish on a company already known to be unfinishable opens the wallet and asks for a '
-      + 'key again, for an answer that can only fail',
-    from: "  if (waiting.savingFailed === 'sealed-elsewhere') throw new Error(cannotFinishSentence());",
-    to: '',
+    says: 'a second company started in the same tab replaces the first one\'s unsaved secrets',
+    from: "  if (pendingCompany !== null) {\n    throw new Error('a company this tab started is not finished yet",
+    to: "  if (false) {\n    throw new Error('a company this tab started is not finished yet",
     kills: [
-      'A SAVE REFUSED BECAUSE KEYS WERE SAVED ELSEWHERE MEANWHILE: known at once, not on the next press, and Finish asks nothing',
+      'A TAB WAITING TO FINISH A COMPANY DOES NOT START ANOTHER',
+    ],
+  },
+  {
+    id: 10,
+    binding: 'A PAYSLIP KEY IS WORKED OUT FROM THIS COMPANY\'S OWN KEY',
+    file: 'src/web/keyring.ts',
+    says: 'the key handed to the payslip derivation is the key the saved keys open with, so '
+      + 'payslips are sealed to a key no company key can ever reproduce',
+    from: '    releasedCompanyKey = { accountId: company.accountId, key: toHex(released.companyKey) };',
+    to: '    releasedCompanyKey = { accountId: company.accountId, key: key };',
+    kills: [
+      "THE KEY HANDED BACK IS THE COMPANY'S OWN KEY FROM THIS WALLET, NOT THE KEY THE SAVED KEYS OPEN WITH",
+    ],
+  },
+  {
+    id: 11,
+    binding: 'A REFUSED SAVE IS READ AGAIN AND TRIED ONCE MORE, AT ONCE',
+    file: 'src/web/keyring.ts',
+    says: 'a save refused because another device saved at the same moment is left waiting for '
+      + 'a Finish, in a tab whose sign-in may end before anybody presses it',
+    from: '      return await finishCompanyCreation();',
+    to: '      throw refused;',
+    kills: [
+      "ONE PRESS: WHEN ANOTHER DEVICE SAVES A COMPANY'S KEYS BETWEEN THIS TAB'S READ AND ITS SAVE, BOTH ARE SAVED AND NOTHING IS LEFT WAITING",
     ],
   },
 ];

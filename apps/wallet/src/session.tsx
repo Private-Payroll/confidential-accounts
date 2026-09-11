@@ -9,6 +9,7 @@ import {
 } from 'midnight-identity';
 import type { ChallengeStore, Identity, PieceSet, RecoverySession, Secret } from 'midnight-identity';
 import { createPasskey, passkeysAvailable, usePasskey } from 'midnight-identity/browser';
+import { browserPort, forgetProfile } from 'midnight-identity/profile/store';
 import { EMBEDDER, ORIGIN, RP_ID, RP_NAME } from './config.js';
 
 /**
@@ -1097,10 +1098,23 @@ export function SessionProvider({ children, challenges: injected }: {
    */
   const removeWallet = useCallback((walletId: string) => {
     setError(null);
+    /*
+     * **AND THE DETAILS THIS WALLET SAVED ABOUT ITS OWNER.** They are kept under
+     * a name worked out from this wallet's keys, so only an open wallet can find
+     * its own - which the wallet this window has open is, and which is the only
+     * wallet anything here removes. Another wallet's details are not touched.
+     * Clearing them waits on nothing below, and a failure to is said.
+     */
+    if (phase.name === 'unlocked' && walletId === openWalletId()) {
+      void forgetProfile(browserPort(), phase.identity).catch(() => {
+        setError('This wallet was removed, and the details it saved about you in this browser '
+          + 'could not be cleared.');
+      });
+    }
     forgetEverything(walletId);
     forgetSealingKey(walletId);
     setPhase(derivePhase());
-  }, []);
+  }, [phase]);
 
   /**
    * FORGET THIS WALLET — the same act as `removeWallet`, on the wallet this

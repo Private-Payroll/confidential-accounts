@@ -83,10 +83,12 @@ describe('a join is one of the kinds this wallet answers', () => {
   it('THE KIND IS IN `ASK_KINDS`, AND IT IS APPENDED RATHER THAN INSERTED', () => {
     /* The order is read out onto a screen by `namedKinds`. Appending is what
      * keeps the sentence the other three kinds already produced unchanged. */
-    expect(ASK_KINDS).toEqual(['disclosure', 'sign-in', 'unlock', 'join']);
+    /* `keyring` was appended after it, so `join` is still fourth and the four
+     * before it are still where they were. */
+    expect(ASK_KINDS.slice(0, 4)).toEqual(['disclosure', 'sign-in', 'unlock', 'join']);
   });
 
-  it('THE SENTENCE THAT LISTS THE KINDS STILL READS CORRECTLY WITH FOUR', () => {
+  it('THE SENTENCE THAT LISTS THE KINDS STILL READS CORRECTLY WITH FIVE', () => {
     /*
      * **THE WHOLE SENTENCE, VERBATIM, AND NOT A `toContain` OF THE NEW NAME.**
      * `request.ts`'s `namedKinds` builds it, and it was written for two, fixed
@@ -97,9 +99,11 @@ describe('a join is one of the kinds this wallet answers', () => {
      * this function is not read again.
      */
     const said = refusal(join({ kind: 'approve' })).message;
+    /* **AND IT WENT RED WHEN THE FIFTH KIND WAS APPENDED**, which is what it is
+     * for: `namedKinds` was read again and produced the commas unchanged. */
     expect(said).toContain(
-      "this wallet answers 'disclosure', 'sign-in', 'unlock' and 'join', and that asks");
-    expect(said).not.toContain("'unlock' and 'join' and");
+      "this wallet answers 'disclosure', 'sign-in', 'unlock', 'join' and 'keyring', and that asks");
+    expect(said).not.toContain("'join' and 'keyring' and");
   });
 
   it('a well-formed invitation parses, and the key is folded to one spelling', () => {

@@ -66,26 +66,22 @@ const MUTATIONS = [
   },
   {
     id: 2,
-    binding: 'THE UNLOCK OPENS THE WINDOW IN THE CLICK — `C154`',
+    binding: 'A COMPANY\'S KEY FOR A PAYSLIP OPENS THE WINDOW IN THE CLICK',
     file: 'src/web/keyring.ts',
-    says: 'the open goes back behind the question of which company may be opened — the '
-      + 'second of the two paths that spent the permission before using it',
-    from: '  const dialog = openTheWallet(view, walletOrigin, already);\n'
-      + '  try {\n'
-      + '    await unlockOnceOpen(accountId, walletOrigin, view, atOrigin, dialog);',
-    to: '  const dialog = already;\n'
-      + '  try {\n'
-      + '    await unlockOnceOpen(accountId, walletOrigin, view, atOrigin, dialog);',
+    says: 'the open goes back behind the question of which company may be opened - the same '
+      + 'shape as the sign-in: the permission is spent on a round trip before it is used',
+    from: "  const dialog = openTheWallet(view, walletOrigin);\n  let companyKey = companyKeyReleasedFor(accountId);\n  /* **TWO ASKS, ONE WINDOW.** An ask that settles closes its window unless it was\n   * told another is coming, and the second would then meet a window that is gone.\n   * So the window is this journey's, and the journey closes it. */\n  const twoAsks = companyKey === null;\n  if (twoAsks) dialog.moreThanOneAsk();",
+    to: "  let dialog!: WalletDialog;\n  let companyKey = companyKeyReleasedFor(accountId);\n  /* **TWO ASKS, ONE WINDOW.** An ask that settles closes its window unless it was\n   * told another is coming, and the second would then meet a window that is gone.\n   * So the window is this journey's, and the journey closes it. */\n  const twoAsks = companyKey === null;\n",
     also: {
       file: 'src/web/keyring.ts',
-      from: '  dialog: WalletDialog,\n'
-        + '): Promise<void> {\n'
-        + '  /* THE COMPANY COMES FROM THE SESSION.',
-      to: '  dialog: WalletDialog | undefined,\n'
-        + '): Promise<void> {\n'
-        + '  /* THE COMPANY COMES FROM THE SESSION.',
+      from: "      const { company } = await api(`/api/accounts/${accountId}/unlock`, { method: 'POST' });\n"
+        + '      await openKeysOnceOpen(',
+      to: "      const { company } = await api(`/api/accounts/${accountId}/unlock`, { method: 'POST' });\n"
+        + '      dialog = openTheWallet(view, walletOrigin);\n'
+        + '      if (twoAsks) dialog.moreThanOneAsk();\n'
+        + '      await openKeysOnceOpen(',
     },
-    kills: ['WATCHED FAILING: UNLOCKING OPENS THE WALLET BEFORE IT ASKS WHICH COMPANY'],
+    kills: ["WATCHED FAILING: A COMPANY'S KEY OPENS THE WALLET BEFORE IT ASKS WHICH COMPANY"],
   },
   {
     id: 3,

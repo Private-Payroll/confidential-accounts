@@ -19,8 +19,10 @@ import type { UnlockRequest } from './request.js';
 import { listen } from './channel.js';
 import type { ChannelState, ChannelWindow } from './channel.js';
 import {
-  RELEASE_SCHEMA, UnlockError, readRelease, releaseFor, unlockKeyFor,
+  KEYRING_RELEASE_SCHEMA, RELEASE_SCHEMA, UnlockError, keyringKeyFor, keyringReleaseFor,
+  readKeyringRelease, readRelease, releaseFor, unlockKeyFor,
 } from './unlock.js';
+import type { KeyringRequest } from './request.js';
 import { emptyProfile, grantTo, originsFor, recordRelease, releasesOf } from './model.js';
 import { WALLET_ACCOUNTS } from '../../../../apps/wallet/src/accounts/subwallets.js';
 
@@ -835,5 +837,236 @@ describe('WHAT IS WRITTEN DOWN, AND WHAT MUST NOT BE', () => {
     delete old.releases;
     expect(releasesOf(old as Parameters<typeof releasesOf>[0])).toEqual([]);
     expect(originsFor(old as Parameters<typeof releasesOf>[0], CO_A)).toEqual([]);
+  });
+});
+
+/* ══════════════════════════ THE KEYRING KEY ══════════════════════════════ */
+
+const PERSON = 'usr_AbCdEf123456';
+const OTHER_PERSON = 'usr_ZyXwVu654321';
+const SIGNED_IN = 'mn_addr_stagenet1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq';
+const SOMEBODY_ELSES = 'mn_addr_stagenet1ppppppppppppppppppppppppppppppppppppppppppppppppppppppp';
+const KEYRING_SALT = new TextEncoder().encode('midnight-identity/keyring/v1');
+const independentKeyringKey = (person: string): Uint8Array => hkdf(
+  sha256, independentAuthority('keyring', 0), KEYRING_SALT, new TextEncoder().encode(person), 32);
+
+/** A keyring ask on the wire. No `origin`, no `wants`; a person, and the address signed in as. */
+const keyringWire = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+  schema: 'midnight-identity/disclosure-request/v1',
+  kind: 'keyring',
+  requester: { name: 'Payroll A', rdns: 'example.payroll-a' },
+  purpose: 'So this page can open the keys saved for you here.',
+  person: PERSON,
+  signedInAs: SIGNED_IN,
+  nonce: 'k1',
+  expiresAt: NOW + 60_000,
+  ...over,
+});
+const keyringAt = (origin: string, over: Record<string, unknown> = {}): KeyringRequest =>
+  parseAsk(keyringWire(over), origin, NOW) as KeyringRequest;
+const holdsSignedIn = (address: string): boolean => address === SIGNED_IN;
+
+describe('THE KEYRING ASK IS ITS OWN KIND, AND ITS FIELDS BELONG TO IT ALONE', () => {
+  it('parses: the person whole, the signed-in address whole, no company unless one is named', () => {
+    const ask = keyringAt(A);
+    expect(ask.kind).toBe('keyring');
+    expect(ask.requester.origin).toBe(A);
+    expect(ask.person).toBe(PERSON);
+    expect(ask.signedInAs).toBe(SIGNED_IN);
+    expect(ask.company).toBeNull();
+    expect(keyringAt(A, { signedInAs: undefined }).signedInAs).toBeNull();
+  });
+
+  it('A COMPANY IN ANY SPELLING IS FOLDED, AND A MALFORMED ONE IS REFUSED BY NAME', () => {
+    expect(keyringAt(A, { company: CO_A.toUpperCase() }).company).toBe(CO_A);
+    expect(codeOf(() => keyringAt(A, { company: `0x${CO_A.slice(2)}` }))).toBe('not-a-company-address');
+  });
+
+  it('a person the wallet cannot use, or an address that is not one, is refused by name', () => {
+    for (const person of [undefined, '', 'usr with space', 'x'.repeat(65), 12, 'usr_ab\ncd']) {
+      expect(codeOf(() => keyringAt(A, { person })), String(person)).toBe('not-a-person');
+    }
+    for (const signedInAs of ['', 'MN_ADDR_STAGENET1QQQQQQQQ', 'not an address', 7, 'mn_addr1b']) {
+      expect(codeOf(() => keyringAt(A, { signedInAs })), String(signedInAs))
+        .toBe('not-a-signed-in-address');
+    }
+  });
+
+  it('ATTRIBUTES OR AN INBOX KEY ON A KEYRING ASK ARE REFUSED, NOT IGNORED', () => {
+    expect(codeOf(() => keyringAt(A, { wants: [] }))).toBe('attributes-on-a-keyring');
+    expect(codeOf(() => keyringAt(A, { inboxPublicKey: 'ab'.repeat(32) })))
+      .toBe('inbox-key-on-a-keyring');
+  });
+
+  it('EVERY OTHER KIND REFUSES A PERSON OR A SIGNED-IN ADDRESS BY PRESENCE', () => {
+    expect(codeOf(() => parseAsk(unlock({ person: PERSON }), A, NOW)))
+      .toBe('keyring-fields-on-another-kind');
+    expect(codeOf(() => parseAsk(unlock({ signedInAs: SIGNED_IN }), A, NOW)))
+      .toBe('keyring-fields-on-another-kind');
+    expect(codeOf(() => parseAsk(disclosure({ person: PERSON }), A, NOW)))
+      .toBe('keyring-fields-on-another-kind');
+    expect(codeOf(() => parseAsk({ ...unlock(), kind: 'sign-in', company: undefined, person: PERSON }, A, NOW)))
+      .toBe('keyring-fields-on-another-kind');
+  });
+
+  it('STRIPPING `kind` OFF A KEYRING ASK IN FLIGHT REFUSES IT', () => {
+    const { kind: _gone, ...stripped } = keyringWire();
+    expect(codeOf(() => parseAsk(stripped, A, NOW))).toBe('keyring-fields-on-another-kind');
+  });
+});
+
+describe('THE KEYRING KEY IS THE PERSON\'S AT THE SITE, AND NEVER A COMPANY\'S', () => {
+  it('matches the independent walk and the recorded bytes for two people', () => {
+    expect(hex(keyringKeyFor(identity, keyringAt(A)))).toBe(hex(independentKeyringKey(PERSON)));
+    /* Recorded from a walk outside this repository's derivation, so a changed salt,
+     * parent or encoding cannot pass by moving both sides of this file together. */
+    expect(hex(keyringKeyFor(identity, keyringAt(A))))
+      .toBe('e6a594f1c3837597fbf9d8417c924d0aefd10083efc13ca2e9aa9a480beb37cc');
+    expect(hex(keyringKeyFor(identity, keyringAt(A, { person: OTHER_PERSON }))))
+      .toBe('8a0e2fc66cb70ec34eeb707135976e4ef1051751c3f5673fb3c8b572bb81f38b');
+  });
+
+  it('THE SAME PERSON FROM TWO HOSTS, AND WITH OR WITHOUT A SIGNED-IN ADDRESS, GETS THE SAME KEY', () => {
+    const here = hex(keyringKeyFor(identity, keyringAt(A)));
+    expect(hex(keyringKeyFor(identity, keyringAt(B)))).toBe(here);
+    expect(hex(keyringKeyFor(identity, keyringAt(A, { signedInAs: SOMEBODY_ELSES })))).toBe(here);
+    expect(hex(keyringKeyFor(identity, keyringAt(A, { signedInAs: undefined })))).toBe(here);
+    expect(hex(keyringKeyFor(identity, keyringAt(A, { company: CO_B })))).toBe(here);
+  });
+
+  it('two people, and two wallets, never get the same key; a rebuilt wallet does', () => {
+    expect(hex(keyringKeyFor(identity, keyringAt(A, { person: OTHER_PERSON }))))
+      .not.toBe(hex(keyringKeyFor(identity, keyringAt(A))));
+    const another = identityFromSecret(new Uint8Array(32).fill(7));
+    expect(hex(keyringKeyFor(another, keyringAt(A)))).not.toBe(hex(keyringKeyFor(identity, keyringAt(A))));
+    const rebuilt = identityFromSecret(secretFromWords(TEST_MNEMONIC));
+    expect(hex(keyringKeyFor(rebuilt, keyringAt(A)))).toBe(hex(keyringKeyFor(identity, keyringAt(A))));
+  });
+
+  it('IS NO COMPANY KEY, NO AUTHORITY KEY AND NO MONEY KEY', () => {
+    const key = hex(keyringKeyFor(identity, keyringAt(A)));
+    for (const company of [CO_A, CO_B]) expect(key).not.toBe(keyFor(company));
+    for (const purpose of Object.values(Purposes) as Purpose[]) {
+      for (const index of [0, 1]) expect(key).not.toBe(hex(identity.authority(purpose, index)));
+    }
+    for (const account of WALLET_ACCOUNTS) {
+      const money = identity.moneyAt(account);
+      for (const k of [money.zswap, money.dust, money.night]) expect(key).not.toBe(hex(k));
+    }
+  });
+
+  it('AND `unlock.ts` HAS ITS OWN DOORS FOR A HAND-BUILT ASK', () => {
+    const good = keyringAt(A);
+    const badOrigin = { ...good, requester: { ...good.requester, origin: 'http://payroll-a.example' } };
+    expect(codeOf(() => keyringKeyFor(identity, badOrigin))).toBe('origin-not-usable');
+    expect(codeOf(() => keyringKeyFor(identity, { ...good, person: 'has space' }))).toBe('person-not-usable');
+    expect(() => keyringKeyFor(identity, { ...good, person: 'has space' })).toThrow(UnlockError);
+  });
+
+  it('THE ORIGIN AND THE SIGNED-IN ADDRESS ARE IN NO PART OF THE DERIVATION - the source says so too', () => {
+    const source = readFileSync(
+      path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'unlock.ts'), 'utf8');
+    const body = source.slice(source.indexOf('export function keyringKeyFor'));
+    const code = body.slice(0, body.indexOf('\n}')).replace(/\/\*[\s\S]*?\*\//gu, '');
+    expect(code).toContain('originOf(ask);');
+    expect(code).toContain('Purposes.Keyring');
+    expect(code).not.toContain('signedInAs');
+    expect(code).not.toContain('const origin');
+    expect(keyringKeyFor).toHaveLength(2);
+  });
+});
+
+describe('THE KEYRING RELEASE: THE GATE IS INSIDE IT, AND THE READER TAKES ITS OWN VALUES', () => {
+  it('a wallet holding the signed-in address gives the keyring key and nothing else', () => {
+    const released = keyringReleaseFor(identity, keyringAt(A), NOW, holdsSignedIn);
+    expect(Object.keys(released).sort()).toEqual(
+      ['at', 'company', 'companyKey', 'key', 'nonce', 'origin', 'person', 'schema', 'signedInAs']);
+    expect(released.schema).toBe(KEYRING_RELEASE_SCHEMA);
+    expect(released.origin).toBe(A);
+    expect(hex(fromBase64Url(released.key))).toBe(hex(independentKeyringKey(PERSON)));
+    expect(released.companyKey).toBeNull();
+    expect('signature' in (released as unknown as Record<string, unknown>)).toBe(false);
+  });
+
+  it('A WALLET THAT DOES NOT HOLD THE SIGNED-IN ADDRESS BUILDS NOTHING', () => {
+    const asked: string[] = [];
+    const holdsNothing = (address: string): boolean => { asked.push(address); return false; };
+    expect(codeOf(() => keyringReleaseFor(identity, keyringAt(A), NOW, holdsNothing)))
+      .toBe('address-not-held');
+    /* It was asked about the address the page named, and about nothing else. */
+    expect(asked).toEqual([SIGNED_IN]);
+    expect(codeOf(() => keyringReleaseFor(
+      identity, keyringAt(A, { signedInAs: SOMEBODY_ELSES }), NOW, holdsSignedIn)))
+      .toBe('address-not-held');
+  });
+
+  it('with no signed-in address named there is nothing to gate on, and the key is given', () => {
+    const released = keyringReleaseFor(
+      identity, keyringAt(A, { signedInAs: undefined }), NOW, () => false);
+    expect(released.signedInAs).toBeNull();
+    expect(hex(fromBase64Url(released.key))).toBe(hex(independentKeyringKey(PERSON)));
+  });
+
+  it('WITH A COMPANY, THE ANSWER CARRIES THAT COMPANY\'S KEY, DERIVED EXACTLY AS AN UNLOCK DERIVES IT', () => {
+    const released = keyringReleaseFor(identity, keyringAt(A, { company: CO_B }), NOW, holdsSignedIn);
+    expect(released.company).toBe(CO_B);
+    expect(hex(fromBase64Url(released.companyKey!))).toBe(hex(independentUnlockKey(CO_B)));
+    expect(released.companyKey).toBe(releaseFor(identity, askAt(A, CO_B), NOW).key);
+    expect(released.companyKey).not.toBe(released.key);
+  });
+
+  it('THE READER REFUSES AN ANSWER TO ANY OTHER QUESTION', () => {
+    const expecting: {
+      atOrigin: string; expectingNonce: string; person: string;
+      signedInAs: string | null; forCompany: string | null;
+    } = {
+      atOrigin: A, expectingNonce: 'k1', person: PERSON, signedInAs: SIGNED_IN, forCompany: null,
+    };
+    const released = keyringReleaseFor(identity, keyringAt(A), NOW, holdsSignedIn);
+    const read = readKeyringRelease(released, expecting);
+    expect(read.ok).toBe(true);
+    if (read.ok) {
+      expect(hex(read.key)).toBe(hex(independentKeyringKey(PERSON)));
+      expect(read.companyKey).toBeNull();
+    }
+    const refused = (over: Record<string, unknown>, exp = expecting): string => {
+      const r = readKeyringRelease({ ...released, ...over }, exp);
+      return r.ok ? 'accepted' : r.code;
+    };
+    expect(refused({ schema: RELEASE_SCHEMA })).toBe('not-a-release');
+    expect(refused({ origin: B })).toBe('origin-mismatch');
+    expect(refused({ person: OTHER_PERSON })).toBe('person-mismatch');
+    expect(refused({ signedInAs: SOMEBODY_ELSES })).toBe('person-mismatch');
+    expect(refused({ signedInAs: null })).toBe('person-mismatch');
+    expect(refused({ nonce: 'k2' })).toBe('nonce-mismatch');
+    expect(refused({ key: toBase64Url(new Uint8Array(31)) })).toBe('unusable-key');
+    expect(refused({ company: CO_A, companyKey: released.key })).toBe('company-mismatch');
+    expect(refused({ companyKey: released.key })).toBe('company-mismatch');
+    expect(refused({ at: 1.5 })).toBe('not-a-release');
+    /* Asked about a company, answered without one, or with a different one. */
+    const withCompany = { ...expecting, forCompany: CO_A };
+    expect(refused({}, withCompany)).toBe('company-mismatch');
+    const forB = keyringReleaseFor(identity, keyringAt(A, { company: CO_B }), NOW, holdsSignedIn);
+    const r = readKeyringRelease(forB, withCompany);
+    expect(r.ok ? 'accepted' : r.code).toBe('company-mismatch');
+    const forA = keyringReleaseFor(identity, keyringAt(A, { company: CO_A.toUpperCase() }), NOW, holdsSignedIn);
+    const good = readKeyringRelease(forA, withCompany);
+    expect(good.ok).toBe(true);
+    if (good.ok) expect(hex(good.companyKey!)).toBe(hex(independentUnlockKey(CO_A)));
+    expect(refused({ company: CO_A, companyKey: toBase64Url(new Uint8Array(8)) }, withCompany))
+      .toBe('unusable-key');
+    /* A company key that is the keyring key itself has been put in the wrong place. */
+    expect(refused({ company: CO_A, companyKey: released.key }, withCompany)).toBe('unusable-key');
+  });
+
+  it('A COMPANY-KEY RELEASE IS NOT A KEYRING RELEASE, AND THE REVERSE', () => {
+    const company = releaseFor(identity, askAt(A), NOW);
+    const r = readKeyringRelease(company, {
+      atOrigin: A, expectingNonce: 'n1', person: PERSON, signedInAs: null, forCompany: null,
+    });
+    expect(r.ok ? 'accepted' : r.code).toBe('not-a-release');
+    const keyring = keyringReleaseFor(identity, keyringAt(A), NOW, holdsSignedIn);
+    const back = readRelease(keyring, { atOrigin: A, expectingNonce: 'k1', forCompany: CO_A });
+    expect(back.ok ? 'accepted' : back.code).toBe('not-a-release');
   });
 });

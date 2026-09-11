@@ -17,7 +17,7 @@ import type { Ask, Wanting } from 'midnight-identity/profile/request';
 import { framingOf, listen } from 'midnight-identity/profile/channel';
 import type { Channel, ChannelState, ChannelWindow } from 'midnight-identity/profile/channel';
 import { mint } from 'midnight-identity/profile/disclosure';
-import { releaseFor } from 'midnight-identity/profile/unlock';
+import { keyringReleaseFor, releaseFor } from 'midnight-identity/profile/unlock';
 /* The envelope an acceptance travels in, and the wire contract that
  * decides its shape. Nothing else in this app seals anything to a stranger. */
 import { sealToInbox } from 'midnight-identity/profile/inbox';
@@ -475,6 +475,9 @@ export function Approve({
      * which is the shape it is about, facing the other way.
      */
     if (request.kind === 'unlock') return;
+    /* **AND NEITHER DOES A KEYRING ASK**, for the same reason: it gives keys and
+     * signs nothing. `releaseKeyring` below is its only door. */
+    if (request.kind === 'keyring') return;
     const disclosed: Sent[] = [];
     const declined: AttributeName[] = [];
     for (const row of rows) {
@@ -672,6 +675,66 @@ export function Approve({
       () => setProblem('The key was given, and this wallet could not write down that it was.'));
   }, [request, profile, channel, identity, port, now]);
 
+  /**
+   * **WHICH OF THIS WALLET'S OWN ACCOUNTS HAS THE ADDRESS A KEYRING ASK SAYS THE
+   * PAGE SIGNED IN AS**, or null when none does or none is named. Worked out from
+   * this wallet's own keys, for every account it offers, and compared whole.
+   */
+  const addressesHeld = useMemo((): ReadonlyMap<string, number> => {
+    const held = new Map<string, number>();
+    if (request === null || request.kind !== 'keyring' || request.signedInAs === null) return held;
+    for (const account of WALLET_ACCOUNTS) {
+      try { held.set(unshieldedAddressFor(identity, account), account); } catch { /* not an address this wallet can show */ }
+    }
+    return held;
+  }, [request, identity]);
+
+  /**
+   * **THE KEYRING RELEASE. ITS OWN FUNCTION, FOR `release`'S REASON.**
+   *
+   * The gate is inside `keyringReleaseFor`: when the ask names the address the
+   * page signed in as and no account of this wallet has it, nothing is built
+   * and nothing is sent, whatever state the button is in.
+   */
+  const releaseKeyring = useCallback((): void => {
+    if (request === null || request.kind !== 'keyring' || profile === null
+      || channel === null) return;
+    const at = now();
+    /* With no address named, this browser's note of which wallet answered that
+     * page's last sign-in is the only gate there is, and it is checked here as
+     * well as on the button. */
+    if (request.signedInAs === null) {
+      const refused = whyNotThisWallet(port, request.requester.origin, thisWallet);
+      if (refused !== null) { setProblem(`${refused} No key has been given.`); return; }
+    }
+    let answer;
+    try {
+      answer = keyringReleaseFor(identity, request, at, (address) => addressesHeld.has(address));
+    } catch (e) {
+      setProblem(e instanceof Error ? e.message : 'Nothing has been given.');
+      return;
+    }
+    channel.answer(answer);
+    setSentAt(at);
+    /* A company's key given in the same answer is written down as any company's
+     * key is, so a later ask for it from a different host is shown as such. The
+     * keyring key has no company, and nothing about it is written down. */
+    if (request.company === null) return;
+    const next = recordRelease(profile, {
+      at,
+      nonce: request.nonce,
+      recipient: {
+        origin: request.requester.origin,
+        name: request.requester.name,
+        rdns: request.requester.rdns,
+      },
+      company: request.company,
+    }, at);
+    setProfile(next);
+    void save(port, identity, next).catch(
+      () => setProblem('The key was given, and this wallet could not write down that it was.'));
+  }, [request, profile, channel, identity, port, now, addressesHeld, thisWallet]);
+
   /*
    * ── THE THREE STATES THAT DO NOT KNOW WHICH KIND OF ASK THIS IS ──────────
    *
@@ -803,6 +866,31 @@ export function Approve({
             {`${request.requester.origin} can open those records from now on, and this `}
             wallet cannot see them doing it. You can refuse the next time they ask. Nothing
             takes back a key that has gone.
+          </p>
+        </Alert>
+        {problem !== null && <Alert tone="warning" title="One thing did not save">{problem}</Alert>}
+        <p style={{ marginTop: '1.5rem' }}><a href={hrefOf('profile')}>My profile</a></p>
+      </>
+    );
+  }
+
+  if (sentAt !== null && request.kind === 'keyring') {
+    return (
+      <>
+        <h1>They have the key</h1>
+        <div data-keyring-given>
+          <p className="lede m-0">
+            {`On ${dateOf(sentAt)} you gave `}
+            <span className="font-mono break-all">{request.requester.origin}</span>
+            {' the key to the keys this wallet saved under the account name it gave'}
+            {request.company !== null ? ', and the key to the records one company keeps for you.' : '.'}
+          </p>
+        </div>
+        <Alert tone="info" role={null} title="What they can do now">
+          <p className="m-0">
+            {`${request.requester.origin} can use the keys this wallet saved under that account name from now on - `}
+            for every company that account belongs to - and this wallet cannot see them doing
+            it. You can refuse the next time they ask. Nothing takes back a key that has gone.
           </p>
         </Alert>
         {problem !== null && <Alert tone="warning" title="One thing did not save">{problem}</Alert>}
@@ -1219,6 +1307,192 @@ export function Approve({
             * disabled button fires no press in React, by click or by key, so this is
             * the gate and `release` has no second copy of it. */}
           <Button variant="primary" onClick={release} disabled={!consent.ok || notThisWallet !== null} data-approve data-unlock>
+            {`Give ${request.requester.origin} the key`}
+          </Button>
+          <Button
+            variant="ghost"
+            data-decline
+            onClick={() => { channel?.refuse('declined'); setChannelState({ of: 'waiting' }); }}
+          >
+            Do not give a key
+          </Button>
+          <ConsentRefused consent={consent} />
+        </div>
+      </>
+    );
+  }
+
+  if (request.kind === 'keyring') {
+    const holder = request.signedInAs === null ? null : addressesHeld.get(request.signedInAs) ?? null;
+    const notHeld = request.signedInAs !== null && holder === null;
+    /* With no address named there is nothing to compare, and this browser's own
+     * note of which wallet answered that page's last sign-in is what is left. */
+    const notThisWallet = request.signedInAs === null
+      ? whyNotThisWallet(port, request.requester.origin, thisWallet) : null;
+    const elsewhere = request.company === null ? [] : originsFor(profile ?? emptyProfile(now()), request.company)
+      .filter((origin) => origin !== request.requester.origin);
+    return (
+      <>
+        {/* **THE HEADLINE IS BUILT FROM THE OBSERVED ORIGIN**, for the unlock's reason. */}
+        <h1 data-headline>{`Let ${request.requester.origin} use the keys saved under the account name it gives`}</h1>
+
+        <Section
+          title="Who is asking, and who they say you are"
+          description="One of these your browser saw for itself. The other is what the page says."
+        >
+          <p className="m-0 text-sm text-muted">This page really came from</p>
+          <p className={`m-0 font-mono break-all text-ink ${FACT_TEXT}`} data-observed-origin>
+            {request.requester.origin}
+          </p>
+          <p className="m-0 text-sm text-muted" style={{ marginTop: '0.75rem' }}>
+            The wallet address the page says you signed in to it with
+          </p>
+          {request.signedInAs !== null ? (
+            <>
+              <p className={`m-0 font-mono break-all text-ink ${FACT_TEXT}`} data-signed-in-as>
+                {request.signedInAs}
+              </p>
+              {holder !== null && (
+                <p className="m-0 text-sm text-muted" data-signed-in-holder>
+                  {`That is ${displayNameOf(holder, loadSubwallets(secret).names)}, in this wallet.`}
+                </p>
+              )}
+            </>
+          ) : (
+            <p className="m-0 text-sm text-muted" data-signed-in-unknown>
+              The page does not say. It may be a tab that did not sign you in itself, such as one
+              you reloaded. Keys that are already saved there only open with the wallet that saved
+              them; nothing new is saved from such a tab until it signs you in.
+            </p>
+          )}
+          <p className="m-0 text-sm text-muted" style={{ marginTop: '0.75rem' }}>
+            The account name the page gives you there
+          </p>
+          <p className={`m-0 font-mono break-all text-ink ${FACT_TEXT}`} data-keyring-person>
+            {request.person}
+          </p>
+          <p className="m-0 text-sm text-muted" data-keyring-person-unchecked>
+            The key is made from this wallet and that name. Any page can give any name, and this
+            wallet cannot check that it is yours - only show it to you.
+          </p>
+        </Section>
+
+        {request.company !== null && (
+          <Section
+            title="And the key to one company's records"
+            description="Asked for in the same answer, so the page knows both came from one wallet."
+          >
+            <p className={`m-0 font-mono tracking-wide text-ink ${FINGERPRINT_TEXT}`} data-company-fingerprint>
+              {companyFingerprint(request.company)}
+            </p>
+            <p className={`m-0 font-mono break-all text-ink ${FACT_TEXT}`} data-company>
+              {request.company}
+            </p>
+            <p className="m-0 text-sm text-muted">
+              That company&rsquo;s key is what your payslip key there is worked out from. This wallet
+              cannot check that the company belongs to that page; it can only show you both.
+            </p>
+          </Section>
+        )}
+
+        {whoIsAsking}
+
+        {elsewhere.length > 0 && request.company !== null && (
+          <Alert tone="warning" title="You have given this company’s key to a different page before">
+            <div data-seen-elsewhere>
+              <p className="m-0">The company is</p>
+              <p className="m-0 font-mono tracking-wide text-ink">{companyFingerprint(request.company)}</p>
+              <p className="m-0" style={{ marginTop: '0.5rem' }}>Before now, this company’s key has gone to</p>
+              {elsewhere.map((origin) => (
+                <p className="m-0 font-mono text-ink" key={origin}>{origin}</p>
+              ))}
+              <p className="m-0" style={{ marginTop: '0.5rem' }}>This page is</p>
+              <p className="m-0 font-mono text-ink">{request.requester.origin}</p>
+            </div>
+          </Alert>
+        )}
+
+        {/* **NOT "THE ABILITY TO READ".** The keys saved for a person hold the
+          * secrets they approve payments with, for every company they belong to
+          * on that site, and the screen says so. */}
+        <Section
+          title="What you are agreeing to"
+          description="This is more than reading. It is your vote on payments, for every company there."
+        >
+          <p className="m-0 text-base text-ink" data-keyring-question>
+            {`Do you want ${request.requester.origin} to be able to use the keys this wallet saved under that account name?`}
+          </p>
+          <p className="m-0 text-sm text-muted" data-keyring-power>
+            Those keys are how you open the records of, and approve payments for, every company you
+            belong to on that site - not only one. From the moment you press the button, whoever runs
+            that page can use them whenever it is open. This wallet cannot watch it happen and cannot
+            tell you afterwards what was done.
+          </p>
+        </Section>
+
+        <Section
+          title="How long they have it"
+          description="The honest answer, which is not “until you say stop”."
+        >
+          <p className="m-0 text-sm text-muted">
+            Their page holds the key while it is open, and this wallet never stores it. But nothing
+            stops them keeping their own copy, and nothing here could tell. Treat this as given for good.
+          </p>
+        </Section>
+
+        <Section
+          title="Which keys this opens"
+          description="Made from this wallet and the account name above, not from the web address."
+        >
+          <p className="m-0 text-sm text-muted" data-keyring-whose>
+            It opens whatever is saved under that account name by this wallet, wherever that is kept -
+            which is why the page asking matters as much as the name. It is the same key on every
+            device and again if you rebuild this wallet from its recovery pieces. Another wallet gives
+            a different key, which opens nothing this one saved.
+          </p>
+        </Section>
+
+        {notHeld && (
+          <Alert tone="danger" title="None of this wallet's addresses is the one that page signed in with">
+            <p className="m-0" data-not-signed-in-here>
+              {`The page at ${request.requester.origin} says you signed in to it as an address no account in `}
+              this wallet has, so this is not the wallet you signed in with. A key from this wallet would
+              not open what the wallet you signed in with saved there, and anything saved under it could
+              only ever be opened with this one. Open the wallet you signed in with.
+            </p>
+            <p className="m-0">No key has been given.</p>
+          </Alert>
+        )}
+
+        {notThisWallet !== null && (
+          <Alert tone="danger" title="Another wallet answered this page's last sign-in">
+            <p className="m-0" data-not-this-wallet>{notThisWallet}</p>
+            <p className="m-0">No key has been given.</p>
+          </Alert>
+        )}
+
+        {problem !== null && (
+          <Alert tone="danger" title="Nothing has been given">
+            <p className="m-0" data-keyring-problem>{problem}</p>
+          </Alert>
+        )}
+
+        <Alert tone="warning" role={null} title="What is given, is given">
+          <p className="m-0">
+            You can refuse the next time they ask. That is the whole of what stopping means: whoever is
+            behind that page keeps everything they have already opened and anything they copied while it
+            was open, and nothing can take back a key.
+          </p>
+        </Alert>
+
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="primary"
+            onClick={releaseKeyring}
+            disabled={!consent.ok || notHeld || notThisWallet !== null}
+            data-approve
+            data-keyring
+          >
             {`Give ${request.requester.origin} the key`}
           </Button>
           <Button

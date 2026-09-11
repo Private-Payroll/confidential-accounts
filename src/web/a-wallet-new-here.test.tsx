@@ -57,7 +57,7 @@ function aServer(created: boolean) {
 const picker = (accounts: unknown[] = []) => render(
   <AccountPicker
     user={{ id: 'usr_1', email: null, name: '' }} accounts={accounts} busy={false}
-    onOpen={() => {}} onUnlock={() => {}} onCreate={() => {}} onCreateWithWallet={() => {}}
+    onOpen={() => {}} onUnlock={() => {}} onCreateWithWallet={() => {}}
     onFinishSetup={() => {}} awaitingSetup={null} onDemo={() => {}} onSignOut={() => {}} />);
 
 const NEW_HERE = 'This wallet address has not signed in here before.';

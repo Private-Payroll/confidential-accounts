@@ -151,7 +151,9 @@ describe('§4 — A REQUEST DECLARES WHAT IT IS', () => {
      * kind — that it is APPENDED and not inserted, because `namedKinds` reads
      * this array out onto a screen a person is standing in front of.
      */
-    expect([...ASK_KINDS]).toEqual(['disclosure', 'sign-in', 'unlock', 'join']);
+    /* **AND AGAIN FOR `keyring`**, appended fifth, with a screen of its own in
+     * `screens/approve.tsx`. */
+    expect([...ASK_KINDS]).toEqual(['disclosure', 'sign-in', 'unlock', 'join', 'keyring']);
   });
 });
 

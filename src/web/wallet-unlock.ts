@@ -1,7 +1,9 @@
-import { readRelease } from 'midnight-identity/profile/unlock';
+import { readKeyringRelease, readRelease } from 'midnight-identity/profile/unlock';
 import type { ReleaseFailure } from 'midnight-identity/profile/unlock';
 import { toHex, randomBytes } from '../core/crypto.js';
-import { UNLOCK_PURPOSE, UNLOCK_WINDOW_MS, unlockAsk } from '../core/wallet-unlock.js';
+import {
+  KEYRING_AND_COMPANY_PURPOSE, KEYRING_PURPOSE, UNLOCK_PURPOSE, UNLOCK_WINDOW_MS, keyringAsk, unlockAsk,
+} from '../core/wallet-unlock.js';
 import { askWallet, type Openable, type WalletDialog } from './wallet-sign-in.js';
 
 /**
@@ -41,7 +43,7 @@ import { askWallet, type Openable, type WalletDialog } from './wallet-sign-in.js
  * to sit. A reload asks the wallet again.
  */
 
-export type UnlockFailure = ReleaseFailure | 'wallet-refused';
+export type UnlockFailure = ReleaseFailure | 'person-mismatch' | 'wallet-refused';
 
 export class UnlockRefused extends Error {
   readonly code: UnlockFailure;
@@ -104,4 +106,47 @@ export async function askWalletToUnlock(
   });
   if (!read.ok) throw new UnlockRefused(read.code, read.says);
   return read.key;
+}
+
+export interface KeyringAsked {
+  /** From this tab's own session: the id the server gave the signed-in person. */
+  readonly person: string;
+  /** From this tab's own sign-in answer, or null when this tab does not know it. */
+  readonly signedInAs: string | null;
+  /** From `POST /api/accounts/:id/unlock` when a company's key is wanted too, else null. */
+  readonly company: string | null;
+  readonly atOrigin: string;
+  readonly name: string;
+  readonly rdns: string;
+  readonly now?: () => number;
+  readonly nonce?: string;
+}
+
+/**
+ * **ASK ONCE FOR THE KEY THE KEYS SAVED FOR THIS PERSON ARE SEALED UNDER**, and
+ * a company's key with it when one is named. Every expectation the answer is
+ * checked against is this page's own - `readKeyringRelease` says what those
+ * comparisons prove and what they do not.
+ */
+export async function askWalletForKeys(
+  view: Openable, walletOrigin: string, ask: KeyringAsked, dialog?: WalletDialog,
+): Promise<{ key: Uint8Array; companyKey: Uint8Array | null }> {
+  const now = ask.now ?? (() => Date.now());
+  const nonce = ask.nonce ?? toHex(randomBytes(16));
+  const answer = await askWallet(view, walletOrigin, keyringAsk({
+    name: ask.name,
+    rdns: ask.rdns,
+    purpose: ask.company === null ? KEYRING_PURPOSE : KEYRING_AND_COMPANY_PURPOSE,
+    nonce,
+    expiresAt: now() + UNLOCK_WINDOW_MS,
+    person: ask.person,
+    signedInAs: ask.signedInAs,
+    company: ask.company,
+  }), dialog);
+  const { atOrigin, person, signedInAs, company } = ask;
+  const checked = readKeyringRelease(answer, {
+    atOrigin, expectingNonce: nonce, person, signedInAs, forCompany: company,
+  });
+  if (checked.ok) return { key: checked.key, companyKey: checked.companyKey };
+  throw new UnlockRefused(checked.code, checked.says);
 }

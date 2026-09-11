@@ -386,9 +386,6 @@ function Screens({ commitments }: { commitments: CommitmentScheme }) {
    */
   const refreshAccounts = useCallback(async () => {
     const sealed = await api<SealedAccount[]>('/api/accounts');
-    /* Whether keys are saved at all decides whether a company started from the
-     * wallet's face could ever be finished, and the form says so before a press. */
-    if (!keyring.canOpenCompanies()) await keyring.readWhetherKeysAreSaved();
     setMyAccounts(sealed.map(rec => {
       const open = keyring.openAccount(rec);
       return {
@@ -431,6 +428,10 @@ function Screens({ commitments }: { commitments: CommitmentScheme }) {
     setErr(''); setBusy(true);
     try {
       const sealed = await api<SealedAccount>(`/api/accounts/${id}`);
+      /* **KEYS SAVED SINCE THIS TAB OPENED THEM ARE READ BEFORE THIS COMPANY IS
+       * CALLED LOCKED.** Another tab or device may have saved this company's keys;
+       * the key they are saved under is already open here, so no wallet is asked. */
+      if (!keyring.keysFor(id) && keyring.canOpenCompanies()) await keyring.reopenSavedKeys();
       /*
        * **A SEAT THIS DEVICE PUBLISHED AND DID NOT FINISH SEALING IS FINISHED
        * HERE, BEFORE ANYTHING ASKS FOR ITS KEYS.**
@@ -494,12 +495,12 @@ function Screens({ commitments }: { commitments: CommitmentScheme }) {
   }, [load, commitments]);
 
   /**
-   * **ASKING THE WALLET TO OPEN A COMPANY.**
+   * **ASKING THE WALLET TO OPEN THE KEYS SAVED FOR YOU, THEN THE COMPANY.**
    *
-   * The other half of `PI1`'s sign-in. Nothing here decides anything: which
-   * company may be opened comes from the server, the key comes from the
-   * wallet after a person presses a button on the wallet's own screen, and
-   * `openAccount` below is the same path a password sign-in takes from there.
+   * Nothing here decides anything: the key comes from the wallet after a person
+   * presses a button on the wallet's own screen, and it opens the keys saved for
+   * them for every company they belong to here. `openAccount` below is the same
+   * path from there.
    *
    * `refreshAccounts` runs in between so the list is re-read with a keyring
    * that can now open it — before this, every name on that list said *locked*.
@@ -515,34 +516,19 @@ function Screens({ commitments }: { commitments: CommitmentScheme }) {
           'this build does not know where your wallet is served from, so it cannot open '
           + 'it. VITE_WALLET_ORIGIN has to be set when the site is built.');
       }
-      await keyring.unlockWithWallet(id, WALLET_ORIGIN);
+      await keyring.openKeysWithWallet(WALLET_ORIGIN);
       await refreshAccounts();
-    } catch (e: any) { setErr(shownError(e, 'unlocking a company with a wallet')); setBusy(false); return; }
+    } catch (e: any) { setErr(shownError(e, 'opening your saved keys with a wallet')); setBusy(false); return; }
     setBusy(false);
     await openAccount(id);
   }, [refreshAccounts, openAccount]);
 
-  const createAccount = useCallback(async (name: string) => {
-    setErr(''); setBusy(true);
-    try {
-      const created = await api<CreatedAccount>('/api/accounts', {
-        method: 'POST',
-        body: JSON.stringify({ name, signers: [{ name: user!.name, role: 'admin' }], threshold: 1 }),
-      });
-      // The secrets come back once and are never sent again. Sealing them into
-      // the keyring here is what makes the account usable from a second device.
-      const mine = created.secrets[0];
-      await keyring.rememberAccount(created.account.id, {
-        signerId: mine.signerId, signingSecret: mine.signingSecret,
-        wrappingSecret: mine.wrappingSecret, blinding: mine.blinding,
-        /* The scope this seat's leaf was made under, carried from the response
-         * rather than defaulted here. */
-        scope: mine.scope,
-      });
-      await refreshAccounts();
-      await openAccount(created.account.id);
-    } catch (e: any) { setErr(shownError(e, 'creating a company')); } finally { setBusy(false); }
-  }, [user, refreshAccounts, openAccount]);
+  /*
+   * **THERE IS NO SECOND WAY TO START A COMPANY FROM THIS SCREEN.** The one that
+   * was here posted a company and then saved its founder's keys with nothing
+   * holding them in between, so a refused save lost them. Every company starts
+   * through `createWithWallet` below, which holds them until they are saved.
+   */
 
   const loadDemo = useCallback(async () => {
     setErr(''); setBusy(true);
@@ -580,12 +566,10 @@ function Screens({ commitments }: { commitments: CommitmentScheme }) {
   /**
    * **STARTING A COMPANY FROM A WALLET SESSION.**
    *
-   * `createAccount` above cannot serve this and the difference is an ORDER,
-   * not a branch: it seals the founder's secrets into the keyring immediately,
-   * which needs a key, and on a wallet session there is none until the company
-   * exists and its address can be asked for. **Three steps, and the second
-   * cannot precede the first.** `keyring.createCompanyWithWallet` is where
-   * that order lives, so it is one call here and not three.
+   * Open the keys saved for this person, create the company, save its founder's
+   * keys beside them - `keyring.createCompanyWithWallet` is where that order
+   * lives, so it is one call here and not three. A tab whose saved keys are
+   * already open asks no wallet.
    *
    * The same origin refusal the two wallet buttons beside it make, for the same
    * reason: with none configured this would open `undefined/#/approve`, which
@@ -616,12 +600,11 @@ function Screens({ commitments }: { commitments: CommitmentScheme }) {
     setBusy(false);
   }, [user, refreshAccounts, openAccount]);
 
-  /** Steps 2 and 3 again, for a person who declined their wallet the first time. */
+  /** Saving a started company's keys again, after the server refused the first save. */
   const finishSetup = useCallback(async () => {
     setErr(''); setBusy(true);
     try {
-      if (!WALLET_ORIGIN) throw new Error('this build does not know where your wallet is.');
-      const { accountId } = await keyring.finishCompanyCreation(WALLET_ORIGIN);
+      const { accountId } = await keyring.finishCompanyCreation();
       setAwaitingSetup(keyring.companyAwaitingSetup());
       await refreshAccounts();
       setBusy(false);
@@ -690,7 +673,7 @@ function Screens({ commitments }: { commitments: CommitmentScheme }) {
       <AccountPicker
         user={user} accounts={myAccounts ?? []} busy={busy} err={err}
         onOpen={openAccount} onUnlock={unlockWithWallet}
-        onCreate={createAccount} onCreateWithWallet={createWithWallet}
+        onCreateWithWallet={createWithWallet}
         onFinishSetup={finishSetup} awaitingSetup={awaitingSetup}
         onDemo={loadDemo} onSignOut={signOut} />
     </>;
@@ -1841,9 +1824,9 @@ function People({ people, session, busy, act }: {
    *
    * So the secret is `payslipKeypairFrom(companyKey)`, exactly what the seed
    * derives for a seeded employee, and the company key is the one **this
-   * wallet released for THIS company** — `companyKeyReleasedFor` answers null
-   * for a password-derived key and for another company's, and this refuses by
-   * name rather than expanding whatever it was handed.
+   * wallet gave for THIS company**, in the same answer as a keyring key that
+   * matched the one this tab's saved keys are open with — so it came from the
+   * wallet those keys belong to. Nothing here expands anything else.
    *
    * ── THE ADDRESS COMES FROM THE WALLET, AND THE BOX IS GONE ──────────────
    *
@@ -1865,22 +1848,16 @@ function People({ people, session, busy, act }: {
    * than on one by construction: the value is produced by the payee's own keys.
    */
   const addSelf = () => act(async () => {
-    const companyKey = keyring.companyKeyReleasedFor(session.account.id);
-    if (!companyKey) {
-      throw new Error(
-        'your payslip key is worked out from the key your wallet releases for this company, '
-        + 'and this tab does not hold one — open the company with your wallet and try again. '
-        + 'Nothing here will invent a key instead: one that is invented is one nothing can '
-        + 'work out again, and your payslips would be sealed to it.');
-    }
+    /* The wallet opens once. It gives this company's key, checked against the
+     * keys this tab has open, unless this tab already holds it; then the person
+     * chooses which of their own wallets this company is about, and presses.
+     * Nothing is sent until they do. */
+    const { companyKey, disclosure } = await keyring.payslipKeyAndPayeeAddress(
+      session.account.id, WALLET_ORIGIN);
     /* Derived, not minted. The secret is never sent and never stored: only the
      * public half goes, and the secret is recomputed from the wallet whenever
      * a payslip is opened. */
     const wrapping = payslipKeypairFrom(fromHex(companyKey));
-    /* The wallet opens, the person chooses which of their own wallets this
-     * company is about, and presses. Nothing is sent until they do. */
-    const disclosure = await keyring.payeeDisclosureFromWallet(
-      session.account.id, WALLET_ORIGIN);
     await api(`/api/accounts/${session.account.id}/self-payee`, {
       method: 'POST',
       body: JSON.stringify({

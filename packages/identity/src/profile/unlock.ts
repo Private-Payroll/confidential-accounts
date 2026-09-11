@@ -3,7 +3,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { Purposes } from '../keys/derivation.js';
 import type { Identity } from '../keys/derivation.js';
 import { fromBase64Url, toBase64Url } from '../passkey/bytes.js';
-import type { UnlockRequest } from './request.js';
+import type { KeyringRequest, UnlockRequest } from './request.js';
 import { usableOrigin, whyNotUsable } from './origin.js';
 
 /**
@@ -204,7 +204,11 @@ export type UnlockFailure =
   /** The origin is not a plain ASCII `https://` serialisation. */
   | 'origin-not-usable'
   /** The company is not a plain, complete, correctly-shaped address. */
-  | 'company-not-usable';
+  | 'company-not-usable'
+  /** The person a keyring ask names is not an identifier this wallet can use. */
+  | 'person-not-usable'
+  /** The address the page signed in as is not an address of any account this wallet holds. */
+  | 'address-not-held';
 
 export class UnlockError extends Error {
   readonly code: UnlockFailure;
@@ -255,7 +259,7 @@ export class UnlockError extends Error {
  */
 const COMPANY_ADDRESS = /^[0-9a-fA-F]{64}$/u;
 
-const originOf = (ask: UnlockRequest): string => {
+const originOf = (ask: { readonly requester: { readonly origin: string } }): string => {
   const origin = ask.requester.origin;
   if (!usableOrigin(origin)) {
     throw new UnlockError(
@@ -433,4 +437,287 @@ export function readRelease(
     return { ok: false, code: 'not-a-release', says: 'that is not a released key.' };
   }
   return { ok: true, key, at: body.at };
+}
+
+/* ============================ the keyring key ============================ */
+
+/*
+ * **THE KEY A PERSON'S OWN SAVED KEYS AT ONE SITE ARE SEALED UNDER.**
+ *
+ * ── WHY A COMPANY'S KEY COULD NOT BE IT ────────────────────────────────────
+ *
+ * A person keeps ONE sealed set of their own keys at a site: for every company
+ * they sit on there, the signing secret, the wrapping secret and the blinding
+ * that exists nowhere else in the world. **Sealed under the key for one
+ * company, that set could never hold a second company's secrets**, because the
+ * key released for the second company is a different key and opens nothing the
+ * first sealed. One wallet address could belong to one company, however the
+ * screens were arranged. So the set is sealed under a key that belongs to the
+ * PERSON at that site, and each company's secrets live inside it: one door to
+ * your own keys, and many keys behind it. It is also what lets a person's keys
+ * be saved before a company has an address on any chain.
+ *
+ * ── WHAT IT IS DERIVED FROM, AND WHAT IT IS NOT ────────────────────────────
+ *
+ * **FROM THE SEED AND THE SITE'S OWN IDENTIFIER FOR THE PERSON, AND NOTHING
+ * ELSE.** A different parent (`Purposes.Keyring`) and a different salt from the
+ * company key, so no company key and no keyring key are ever the same bytes.
+ *
+ * **NOT FROM THE ORIGIN**, for the reason the company key gave up the origin:
+ * a hostname changes when a site moves or is self-hosted, and a set of keys
+ * sealed under a key derived from one could only ever be opened at one address.
+ * The origin gates, exactly as it does above.
+ *
+ * **NOT FROM THE ADDRESS THE PERSON SIGNED IN AS.** That address is text whose
+ * spelling belongs to the chain's tooling and to the network's name; if either
+ * ever spelled the same key differently, every set of keys sealed under a key
+ * derived from the spelling would stop opening, with nothing failing until the
+ * day somebody needed them. **The address gates instead**: the key is not given
+ * unless one of this wallet's own accounts has exactly that address.
+ *
+ * **WHAT THE IDENTIFIER COSTS, SAID OUT LOUD.** It is minted by the site, not by
+ * a chain, so it is only as durable as the site's own record of the person - and
+ * that record is where the sealed set is kept, so the two move together. A site
+ * that re-issued identifiers to the same people would strand every set of keys
+ * it holds. It is also the only thing separating one site's keys from another's
+ * for the same wallet, which is why it is an ingredient at all.
+ *
+ * ── WHAT IT OPENS, WHICH IS MORE THAN A COMPANY'S KEY DOES ─────────────────
+ *
+ * **The whole of the person's own keys at that site**: their vote on every
+ * company they approve payments for there, not only the ability to read. A
+ * company's key still opens that company's records and no other; this key is
+ * not a company's key, and the screen that gives it says what it gives.
+ */
+
+/* The domain this expansion lives in. The day it changes, every person's saved
+ * keys at every site stop opening, so it is a migration and never a patch. */
+const KEYRING_SALT = new TextEncoder().encode('midnight-identity/keyring/v1');
+
+/** One parent, one job. */
+const KEYRING_PARENT_INDEX = 0;
+
+/**
+ * **THE SITE'S IDENTIFIER FOR A PERSON**, the same shape `request.ts` checks at
+ * the parse, checked again here for the reason the origin is: a caller that
+ * assembled an ask by hand never went through the parser.
+ */
+const PERSON = /^[A-Za-z0-9_-]{1,64}$/u;
+
+declare const keyringBrand: unique symbol;
+
+/** 32 bytes that open ONE person's saved keys at one site. Never a company's key, never an address. */
+export type KeyringKey = Uint8Array & { readonly [keyringBrand]: true };
+
+export const KEYRING_RELEASE_SCHEMA = 'midnight-identity/keyring-release/v1';
+
+const personOf = (ask: KeyringRequest): string => {
+  const person = ask.person;
+  if (typeof person !== 'string' || !PERSON.test(person)) {
+    throw new UnlockError(
+      'person-not-usable',
+      'this asks for the key your saved keys at a site are sealed under, and does not name '
+      + 'you in a way this wallet can use. Nothing has been given.');
+  }
+  return person;
+};
+
+/**
+ * THE KEYRING KEY. A pure function of the person's seed and the site's own
+ * identifier for them. **The origin is checked and is not an ingredient; the
+ * signed-in address is not read here at all** - it gates in `keyringReleaseFor`.
+ */
+export function keyringKeyFor(identity: Identity, ask: KeyringRequest): KeyringKey {
+  originOf(ask);
+  const person = personOf(ask);
+  const parent = identity.authority(Purposes.Keyring, KEYRING_PARENT_INDEX);
+  return hkdf(sha256, parent, KEYRING_SALT, new TextEncoder().encode(person), KEY_BYTES) as KeyringKey;
+}
+
+/**
+ * WHAT CROSSES BACK FOR A KEYRING ASK.
+ *
+ * **`key` AND `companyKey` ARE SECRETS ON THE WIRE**, with the rules `key` has
+ * above: posted to the observed origin and nowhere else, never written to
+ * storage, a history entry, a URL or a log, and rendered by no screen.
+ */
+export interface KeyringRelease {
+  readonly schema: typeof KEYRING_RELEASE_SCHEMA;
+  /** OBSERVED. A convenience for the requester, never an authority. */
+  readonly origin: string;
+  /** Echoed back, never read as authority. */
+  readonly person: string;
+  readonly signedInAs: string | null;
+  readonly company: string | null;
+  readonly nonce: string;
+  readonly at: number;
+  /** Base64url of the 32-byte keyring key. **Do not log this. Do not store it.** */
+  readonly key: string;
+  /** Base64url of the 32-byte key for `company`, or null when no company was asked about. */
+  readonly companyKey: string | null;
+}
+
+/**
+ * **THE MESSAGE A PERSON'S PRESS PRODUCES FOR A KEYRING ASK, AND THE GATE IS
+ * INSIDE IT.** `holds` answers whether one of this wallet's own accounts has
+ * exactly the given address. When the ask names the address the page signed in
+ * as and this wallet holds no account with it, **nothing is built and nothing
+ * can be sent**: the screen's disabled button is not the only thing standing
+ * between a second wallet in the browser and a key the page would seal a
+ * person's first keys under.
+ */
+export function keyringReleaseFor(
+  identity: Identity, ask: KeyringRequest, at: number,
+  holds: (address: string) => boolean,
+): KeyringRelease {
+  const origin = originOf(ask);
+  if (ask.signedInAs !== null && !holds(ask.signedInAs)) {
+    throw new UnlockError(
+      'address-not-held',
+      `the page at ${origin} signed in as an address that none of this wallet's accounts has, `
+      + 'so this is not the wallet it signed in with. A key from this wallet would not open '
+      + 'anything saved there by the wallet that did, and anything saved under it could only '
+      + 'ever be opened with this one. Nothing has been given.');
+  }
+  const key = keyringKeyFor(identity, ask);
+  const companyKey = ask.company === null
+    ? null
+    : toBase64Url(unlockKeyFor(identity, {
+      schema: ask.schema,
+      kind: 'unlock',
+      requester: ask.requester,
+      purpose: ask.purpose,
+      nonce: ask.nonce,
+      expiresAt: ask.expiresAt,
+      company: ask.company,
+    }));
+  return Object.freeze({
+    schema: KEYRING_RELEASE_SCHEMA,
+    origin,
+    person: personOf(ask),
+    signedInAs: ask.signedInAs,
+    company: ask.company === null ? null : ask.company.toLowerCase(),
+    nonce: ask.nonce,
+    at,
+    key: toBase64Url(key),
+    companyKey,
+  });
+}
+
+export type KeyringRead =
+  | {
+    readonly ok: true;
+    readonly key: Uint8Array;
+    readonly companyKey: Uint8Array | null;
+    readonly at: number;
+  }
+  | { readonly ok: false; readonly code: ReleaseFailure | 'person-mismatch'; readonly says: string };
+
+const readKeyBytes = (value: unknown): Uint8Array | null => {
+  if (typeof value !== 'string') return null;
+  try {
+    const bytes = fromBase64Url(value);
+    return bytes.length === KEY_BYTES ? bytes : null;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * **THE REQUESTER'S SIDE OF A KEYRING RELEASE, AND IT READS NO EXPECTATION OUT
+ * OF THE MESSAGE.** The origin is the recipient's own, the nonce the one it
+ * issued, the person, the signed-in address and the company the ones it asked
+ * about.
+ *
+ * **WHAT THESE COMPARISONS DO NOT PROVE, SAID HERE SO NOBODY RELIES ON IT:** a
+ * wallet that echoed the address back without holding it would pass them. They
+ * catch a release answering a different question. What stops a wallet that does
+ * not hold the signed-in address is `keyringReleaseFor` on that wallet's side,
+ * and what the page can check for itself is whether the key opens what is
+ * already saved.
+ */
+export function readKeyringRelease(
+  message: unknown,
+  expecting: {
+    readonly atOrigin: string;
+    readonly expectingNonce: string;
+    readonly person: string;
+    readonly signedInAs: string | null;
+    readonly forCompany: string | null;
+  },
+): KeyringRead {
+  const body = message as KeyringRelease | null;
+  if (typeof body !== 'object' || body === null || body.schema !== KEYRING_RELEASE_SCHEMA) {
+    return { ok: false, code: 'not-a-release', says: 'that is not a released key.' };
+  }
+  if (body.origin !== expecting.atOrigin) {
+    return {
+      ok: false,
+      code: 'origin-mismatch',
+      says: `this key was released for ${String(body.origin)} and was received at `
+        + `${expecting.atOrigin}. It is refused.`,
+    };
+  }
+  if (body.person !== expecting.person || (body.signedInAs ?? null) !== expecting.signedInAs) {
+    return {
+      ok: false,
+      code: 'person-mismatch',
+      says: 'this key was released for a different person, or for a different signed-in address, '
+        + 'from the one that was asked about. It is refused rather than used.',
+    };
+  }
+  const wanted = expecting.forCompany === null ? null : expecting.forCompany.toLowerCase();
+  const given = body.company === null || body.company === undefined
+    ? null : String(body.company).toLowerCase();
+  if (given !== wanted) {
+    return {
+      ok: false,
+      code: 'company-mismatch',
+      says: 'this answer carries a key for a different company from the one that was asked about, '
+        + 'or for none. It is refused rather than used, because a key used against the wrong '
+        + 'company seals records nobody can open again.',
+    };
+  }
+  if (body.nonce !== expecting.expectingNonce) {
+    return {
+      ok: false,
+      code: 'nonce-mismatch',
+      says: 'this answers a different request from the one that was sent.',
+    };
+  }
+  const key = readKeyBytes(body.key);
+  if (key === null) {
+    return { ok: false, code: 'unusable-key', says: `a released key is ${KEY_BYTES} bytes and that one is not.` };
+  }
+  let companyKey: Uint8Array | null = null;
+  if (wanted !== null) {
+    companyKey = readKeyBytes(body.companyKey);
+    if (companyKey === null) {
+      return {
+        ok: false,
+        code: 'unusable-key',
+        says: `a released company key is ${KEY_BYTES} bytes and that one is not.`,
+      };
+    }
+    /* The two keys are different derivations and are never the same bytes; an
+     * answer that says they are has put one where the other belongs. */
+    if (companyKey.every((byte, i) => byte === key[i])) {
+      return {
+        ok: false,
+        code: 'unusable-key',
+        says: 'this answer gives the same key for the company as for your saved keys, and they are '
+          + 'never the same. It is refused rather than used.',
+      };
+    }
+  } else if (body.companyKey !== null && body.companyKey !== undefined) {
+    return {
+      ok: false,
+      code: 'company-mismatch',
+      says: 'this answer carries a company key nobody asked for. It is refused rather than used.',
+    };
+  }
+  if (typeof body.at !== 'number' || !Number.isSafeInteger(body.at)) {
+    return { ok: false, code: 'not-a-release', says: 'that is not a released key.' };
+  }
+  return { ok: true, key, companyKey, at: body.at };
 }

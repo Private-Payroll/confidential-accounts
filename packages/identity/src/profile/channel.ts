@@ -1,7 +1,7 @@
 import { parseAsk } from './request.js';
 import type { Ask, RequestError } from './request.js';
 import type { DisclosureResponse } from './disclosure.js';
-import type { UnlockRelease } from './unlock.js';
+import type { KeyringRelease, UnlockRelease } from './unlock.js';
 import type { SealedAcceptance } from './inbox.js';
 
 /**
@@ -135,7 +135,7 @@ export function framingOf(view: ChannelWindow, embedder: string | null): Framing
  * question, who may READ it, and that is answered in `inbox.ts` rather than by
  * a channel that would then have two rules to keep in step.
  */
-export type Answer = DisclosureResponse | UnlockRelease | SealedAcceptance;
+export type Answer = DisclosureResponse | UnlockRelease | KeyringRelease | SealedAcceptance;
 
 export interface Channel {
   /** Send the answer back — to the OBSERVED origin, and nowhere else. */

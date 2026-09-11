@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { Buffer as PolyfillBuffer } from 'buffer/';
 import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
 import { identityFromWords, secretFromWords } from 'midnight-identity/keys/derivation';
@@ -19,12 +19,14 @@ import type { WatchedPort } from '../testing/settled-store.js';
 import { afterTheAnswer, settled, watchedOpener } from '../testing/settled-channel.js';
 import type { Posted, WatchedOpener } from '../testing/settled-channel.js';
 import { parseAsk } from 'midnight-identity/profile/request';
-import type { UnlockRequest } from 'midnight-identity/profile/request';
+import type { KeyringRequest, UnlockRequest } from 'midnight-identity/profile/request';
 import type { ChannelWindow } from 'midnight-identity/profile/channel';
-import { readRelease, unlockKeyFor } from 'midnight-identity/profile/unlock';
+import { keyringKeyFor, readRelease, releaseFor, unlockKeyFor } from 'midnight-identity/profile/unlock';
 import { companyFingerprint } from 'midnight-identity/profile/fingerprint';
-import type { UnlockRelease } from 'midnight-identity/profile/unlock';
-import { fromBase64Url } from 'midnight-identity/passkey/bytes';
+import type { KeyringRelease, UnlockRelease } from 'midnight-identity/profile/unlock';
+import { fromBase64Url, toBase64Url } from 'midnight-identity/passkey/bytes';
+import { unshieldedAddressFor } from '../chain/unshielded.js';
+import { rememberSignIn, walletSignedInTo } from '../lib/signed-in-here.js';
 import { Approve } from './approve.js';
 
 /**
@@ -842,5 +844,257 @@ describe('§3 — WHAT IS RECORDED, AND WHAT MUST NOT BE', () => {
         expect(words).not.toContain(forbidden);
       }
     }
+  });
+});
+
+describe('THE KEYS SAVED FOR YOU AT A SITE - given only by the wallet that signed in there', () => {
+  /*
+   * A person's saved keys at a site are sealed under one key this wallet makes
+   * for that person there. Those saved keys are how they approve payments for
+   * every company they belong to on that site, so the screen says so, names the
+   * page by where the browser saw it come from, and gives the key only when this
+   * is the wallet the page signed in with.
+   */
+  const PERSON = 'usr_AbCdEf123456';
+  /* Well shaped, and not the address of any account this wallet has. */
+  const NOT_HELD = 'mn_addr_test1qqqqqqqqqqqqqqqqqqqq';
+  /* Subwallet 1 lives at account 2. */
+  const SLOT_ACCOUNT = 2;
+  const mine = (): string => unshieldedAddressFor(identity, SLOT_ACCOUNT);
+
+  /** A keyring ask on the wire: a person, and optionally the signed-in address and a company. */
+  const keyring = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+    schema: 'midnight-identity/disclosure-request/v1',
+    kind: 'keyring',
+    requester: { name: 'Payroll A', rdns: 'example.payroll-a' },
+    purpose: 'So the keys saved for you here can be opened.',
+    person: PERSON,
+    nonce: 'k1',
+    expiresAt: NOW + 600_000,
+    ...over,
+  });
+
+  const keyringKeyOf = (ask: Record<string, unknown>, origin = ORIGIN): string =>
+    toBase64Url(keyringKeyFor(identity, parseAsk(ask, origin, NOW) as KeyringRequest));
+
+  const giveButton = (): HTMLButtonElement => {
+    const button = document.querySelector('[data-approve][data-keyring]');
+    if (button === null) throw new Error('the keyring screen has no Give button');
+    return button as HTMLButtonElement;
+  };
+
+  /**
+   * Calls the Give button's own click handler, even while the button is
+   * disabled - a disabled button is the screen's refusal, and this checks the
+   * refusal that stands behind it.
+   */
+  const invokeHandlerAnyway = (element: Element): void => {
+    const name = Object.keys(element).find((k) => k.startsWith('__reactProps$'));
+    if (name === undefined) throw new Error('the button carries no rendered props to call');
+    const props = (element as unknown as Record<string, { onClick?: () => void }>)[name]!;
+    if (typeof props.onClick !== 'function') throw new Error('the button has no click handler');
+    act(() => { props.onClick!(); });
+  };
+
+  const everythingInLocalStorage = (): string => {
+    const all: string[] = [];
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const name = localStorage.key(i);
+      if (name !== null) all.push(name, localStorage.getItem(name) ?? '');
+    }
+    return all.join('\n');
+  };
+
+  it('names the page the browser saw, the address it says you signed in with, which of your wallets that is, and what the keys can do',
+    async () => {
+      await someone();
+      const address = mine();
+      /* Served from B and calling itself Payroll A: the wallet's own words say B. */
+      open(keyring({ signedInAs: address }), OTHER);
+      await saying('Who is asking');
+      await settle();
+
+      const headline = document.querySelector('h1[data-headline]')?.textContent ?? '';
+      expect(headline).toBe(`Let ${OTHER} use the keys saved under the account name it gives`);
+      /* Nothing on the screen places the keys at the page that is asking. */
+      expect(document.body.textContent).not.toContain('saved for you there');
+      expect(headline).not.toContain('Payroll A');
+      expect(document.querySelector('[data-observed-origin]')?.textContent).toBe(OTHER);
+
+      expect(document.querySelector('[data-signed-in-as]')?.textContent).toBe(address);
+      /* The account name the key is made from is shown, and said to be unchecked. */
+      expect(document.querySelector('[data-keyring-person]')?.textContent).toBe(PERSON);
+      expect(document.querySelector('[data-keyring-person-unchecked]')?.textContent ?? '')
+        .toContain('cannot check that it is yours');
+      expect(document.querySelector('[data-signed-in-holder]')?.textContent)
+        .toBe('That is Subwallet 1, in this wallet.');
+      expect(document.querySelector('[data-signed-in-unknown]')).toBeNull();
+      expect(document.querySelector('[data-not-signed-in-here]')).toBeNull();
+
+      const power = document.querySelector('[data-keyring-power]')?.textContent ?? '';
+      expect(power).toContain('approve payments for');
+      expect(power).toContain('every company you belong to on that site');
+      expect(document.body.textContent).not.toContain('It is the ability to read');
+
+      expect(giveButton().textContent).toBe(giveTo(OTHER));
+      expect(giveButton().disabled).toBe(false);
+    });
+
+  it('GIVE: one answer crosses, to the page the browser saw, carrying the key for this person and no company key - and nothing about it is stored',
+    async () => {
+      await someone();
+      const address = mine();
+      const ask = keyring({ signedInAs: address });
+      const channel = open(ask);
+      await press(channel);
+      await settle();
+
+      /* The ready ping, then exactly one answer. */
+      const answers = channel.sent.slice(1);
+      expect(answers).toHaveLength(1);
+      expect(answers[0]!.target).toBe(ORIGIN);
+      const release = answers[0]!.message as KeyringRelease;
+      expect(release.schema).toBe('midnight-identity/keyring-release/v1');
+      expect(release.origin).toBe(ORIGIN);
+      expect(release.key).toBe(keyringKeyOf(ask));
+      expect(release.companyKey).toBeNull();
+      expect(release.signedInAs).toBe(address);
+      expect(document.querySelector('[data-keyring-given]')).not.toBeNull();
+      /* And afterwards nothing places the keys at the page that asked, either. */
+      expect(document.body.textContent).not.toContain('saved for you there');
+
+      const raw = hex(fromBase64Url(release.key));
+      for (const [where, text] of [
+        ['localStorage', everythingInLocalStorage()],
+        ['the wallet store', port.all()],
+        ['the screen', document.body.outerHTML],
+      ] as const) {
+        expect(text.includes(release.key), `the key is in ${where}`).toBe(false);
+        expect(text.includes(raw), `the key's bytes are in ${where}`).toBe(false);
+      }
+    });
+
+  it('NOT THIS WALLET\'S ADDRESS: the danger is shown, Give is disabled, and no key leaves even when its handler runs',
+    async () => {
+      await someone();
+      const channel = open(keyring({ signedInAs: NOT_HELD }));
+      await saying('Who is asking');
+      await settle();
+
+      const danger = document.querySelector('[data-not-signed-in-here]')?.textContent ?? '';
+      expect(danger).toContain(ORIGIN);
+      expect(danger).toContain('no account in this wallet has');
+      expect(document.querySelector('[data-signed-in-holder]')).toBeNull();
+      expect(giveButton().disabled).toBe(true);
+
+      fireEvent.click(giveButton());
+      invokeHandlerAnyway(giveButton());
+      await settle();
+
+      /* Only the ready ping has crossed, and no message carries a key. */
+      expect(channel.sent).toHaveLength(1);
+      expect(channel.sent.some((m) => (m.message as { key?: unknown } | null)?.key !== undefined))
+        .toBe(false);
+      const problem = document.querySelector('[data-keyring-problem]')?.textContent ?? '';
+      expect(problem).toContain('none of this wallet\'s accounts has');
+      expect(problem).toContain('Nothing has been given.');
+    });
+
+  it('NO ADDRESS NAMED: the screen says the page does not say, and Give is offered and answers with no address',
+    async () => {
+      await someone();
+      const ask = keyring();
+      const channel = open(ask);
+      await saying('Who is asking');
+      await settle();
+
+      expect(document.querySelector('[data-signed-in-unknown]')).not.toBeNull();
+      expect(document.querySelector('[data-signed-in-as]')).toBeNull();
+      expect(document.querySelector('[data-not-this-wallet]')).toBeNull();
+      expect(giveButton().disabled).toBe(false);
+
+      await press(channel);
+      const release = channel.sent[1]!.message as KeyringRelease;
+      expect(release.signedInAs).toBeNull();
+      expect(release.key).toBe(keyringKeyOf(ask));
+    });
+
+  it('NO ADDRESS NAMED, AND ANOTHER WALLET HERE ANSWERED THAT PAGE\'S SIGN-IN: the reason is shown and Give is disabled',
+    async () => {
+      await someone();
+      rememberSignIn(port, ORIGIN, 'another-wallet-held-here');
+      const channel = open(keyring());
+      await saying('Who is asking');
+      await settle();
+
+      expect(document.querySelector('[data-not-this-wallet]')?.textContent)
+        .toContain('answered by another of the wallets held here');
+      expect(giveButton().disabled).toBe(true);
+      fireEvent.click(giveButton());
+      /* And the release itself refuses, behind the disabled button. */
+      invokeHandlerAnyway(giveButton());
+      await settle();
+      expect(channel.sent).toHaveLength(1);
+      expect(document.querySelector('[data-keyring-problem]')?.textContent ?? '')
+        .toContain('No key has been given.');
+    });
+
+  it('WITH A COMPANY: the company is shown, the answer carries the same company key an ordinary unlock gives, and the wallet remembers where it went',
+    async () => {
+      await someone();
+      const channel = open(keyring({ signedInAs: mine(), company: CO_A }));
+      await saying('Who is asking');
+      await settle();
+      expect(document.querySelector('[data-company-fingerprint]')?.textContent)
+        .toBe(companyFingerprint(CO_A));
+      expect(document.querySelector('[data-company]')?.textContent).toBe(CO_A);
+
+      const pressed = await press(channel);
+      const release = channel.sent[1]!.message as KeyringRelease;
+      expect(release.company).toBe(CO_A);
+      const ordinary = releaseFor(
+        identity, parseAsk(unlock({ company: CO_A, nonce: 'k1' }), ORIGIN, NOW) as UnlockRequest, NOW);
+      expect(release.companyKey).toBe(ordinary.key);
+      expect(release.companyKey).not.toBe(release.key);
+
+      await remembered(pressed);
+      const opened = await load(port, identity);
+      if (opened.of !== 'profile') throw new Error('the sealed profile did not open');
+      const releases = releasesOf(opened.profile);
+      expect(releases).toHaveLength(1);
+      expect(releases[0]!.company).toBe(CO_A);
+      expect(releases[0]!.recipient.origin).toBe(ORIGIN);
+      expect(releases[0]!.nonce).toBe('k1');
+      expect(originsFor(opened.profile, CO_A)).toEqual([ORIGIN]);
+    });
+
+  it('a keyring answer is never written down as a disclosure or a sign-in', async () => {
+    const ids = await someone();
+    expect(ids.length).toBeGreaterThan(0);
+
+    /* With a company, where something IS written - the positive control. */
+    const pressed = await press(open(keyring({ signedInAs: mine(), company: CO_A })));
+    await remembered(pressed);
+    const opened = await load(port, identity);
+    if (opened.of !== 'profile') throw new Error('the sealed profile did not open');
+    expect(releasesOf(opened.profile)).toHaveLength(1);
+    expect(opened.profile.grants).toEqual([]);
+    expect(opened.profile.grants.flatMap((g) => g.disclosures)).toEqual([]);
+    expect(walletSignedInTo(port, ORIGIN)).toBeNull();
+    cleanup();
+
+    /* With no company, nothing at all is written. */
+    const channel = open(keyring({ nonce: 'k2' }));
+    await saying('Who is asking');
+    await settle();
+    const writesBefore = port.writes();
+    await press(channel);
+    await settle();
+    expect(port.writes()).toBe(writesBefore);
+    const after = await load(port, identity);
+    if (after.of !== 'profile') throw new Error('the sealed profile did not open');
+    expect(after.profile.grants).toEqual([]);
+    expect(releasesOf(after.profile)).toHaveLength(1);
+    expect(walletSignedInTo(port, ORIGIN)).toBeNull();
   });
 });
