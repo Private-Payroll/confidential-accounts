@@ -24,24 +24,22 @@
  *
  * ------------------------------------------------------------------------
  * **WHAT THIS RUN DOES TODAY: EVERYTHING THAT NEEDS NOTHING BUT DISK, AND THEN
- * IT REFUSES.**
+ * IT STOPS.**
  *
  * It touches no network, starts no proof server, needs no wallet and spends
- * nothing. It builds the transfer, builds the one-payee run the chain would be
- * asked to authorise, and then stops at the first thing that is measured to be
- * missing — before a fee, rather than after five proofs.
+ * nothing. It builds the transfer, builds the payment the chain would be asked
+ * to authorise, and checks it before a fee rather than after five proofs.
  *
- * **THE FIRST THING IT STOPS AT IS `V-168`, AND IT IS MEASURED RATHER THAN
- * FEARED.** The colour a deposit puts into a vault is the ledger's
- * `nativeToken().raw`; the colour a payout leaf carries is
- * `assetIdBytes(assetCode)`. They are different values, and `payoutUnshielded`
- * uses its `token` argument for both `unshieldedBalanceGte` and
- * `sendUnshielded`. So a run built by this client asks a vault that holds one
- * colour to pay out of another, and the circuit's own assert refuses it.
+ * **THE CHECK THAT USED TO STOP IT IS THE COLOUR, AND IT IS KEPT.** The token a
+ * deposit puts into a vault is the ledger's `nativeToken().raw`; the token a
+ * payment commits to comes from `transferFacts`, which asks `ledgerTokenOf`.
+ * `payoutUnshielded` uses its `token` argument for both `unshieldedBalanceGte`
+ * and `sendUnshielded`, so if the two ever disagree again the vault refuses the
+ * payment after it has been proposed, approved twice and paid for. The two
+ * values are compared here, on this machine, every run, for that reason.
  *
- * **A DOOR THAT WALKED INTO THAT WOULD SPEND FIVE PROOFS TO DISCOVER A FACT
- * THAT IS ALREADY WRITTEN DOWN**, which is why the comparison is here and why
- * it is made on two values this file can compute without a chain.
+ * **A PASS HERE IS NOT A PAYMENT.** It says the payment this client would build
+ * names the money the vault holds. Nothing has been proposed, approved or paid.
  *
  * ------------------------------------------------------------------------
  * **AND THE CHAIN HALF IS NOT WRITTEN, WHICH IS A POSITION RATHER THAN AN
@@ -182,18 +180,19 @@ export function assertColoursAgree(leafToken: string, ledgerToken: string): void
     'THIS PAYMENT WOULD BE REFUSED BY THE VAULT, AND IT IS REFUSED HERE INSTEAD.\n\n' +
     'The two colours above are the same thing said by two parts of this system, and they do ' +
     'not agree. The colour a deposit puts into a vault is the ledger\'s own token type for ' +
-    'NIGHT. The colour this client writes into a payout leaf is the asset code as bytes. ' +
-    '`payoutUnshielded` uses that one argument for both the balance question and the send, so ' +
-    'it would ask a vault that holds one colour to pay out of another.\n\n' +
+    'NIGHT. The colour above it is the one this payment would commit to. `payoutUnshielded` ' +
+    'uses that one argument for both the balance question and the send, so it would ask a vault ' +
+    'that holds one colour to pay out of another.\n\n' +
     'NOTHING IS AT RISK AND NOTHING IS LOST. The vault\'s money is on chain in a balance ' +
     'anybody can read, and it becomes payable the moment the client and the ledger agree. The ' +
     'vault cannot be retired while it holds the colour either.\n\n' +
     'IT IS REFUSED BEFORE A FEE DELIBERATELY. The circuit\'s own assert would catch this after ' +
     'a proposal had been raised, approved twice and paid for.\n\n' +
-    'V-168 in BACKLOG.md carries the measurement and what closing it involves. It is a decision ' +
-    'about where an asset code becomes a ledger token type, not an edit: `assetIdBytes` is also ' +
-    'what the account\'s balance map is keyed by, and repointing it would move every balance to ' +
-    'a new key.');
+    'A transfer\'s asset code becomes a ledger token in `ledgerTokenOf` in ' +
+    'src/core/assets.ts, and `transferFacts` in src/core/movement.ts is what calls it. A ' +
+    'disagreement here means one of those two has changed. Do not fix it by changing ' +
+    '`assetIdBytes`: that is what the account\'s balance map is keyed by, and repointing it ' +
+    'would move every balance to a new key.');
 }
 
 /** The company's vaults on this network, or a refusal — never a guess. */

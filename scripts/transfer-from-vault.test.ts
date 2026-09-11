@@ -14,12 +14,10 @@
  *     vault's PUBLIC balance through `payoutUnshielded`. A shielded address is
  *     a different circuit and a different key space, and there is no private
  *     money in this project to pay with (`V-94`).
- *   · **the colour comparison.** `V-168`: the colour a deposit puts in and the
- *     colour a payout leaf carries are different values, so the vault would
- *     refuse the payment after it had been proposed, approved twice and paid
- *     for. **The test asserts the values disagree TODAY and would pass either
- *     way tomorrow** — see its own comment, because a test that pins a defect
- *     in place is worse than none.
+ *   · **the colour comparison.** The colour a deposit puts in and the colour
+ *     a payment commits to must be one value, or the vault refuses the payment
+ *     after it has been proposed, approved twice and paid for. The comparison
+ *     is driven with the payment this door actually builds, and it agrees.
  *   · **the unit.** Nothing converts, for `V-169`'s reason.
  *
  * ── AND THE IMPORT ITSELF IS PART OF THE TEST ────────────────────────────
@@ -39,6 +37,8 @@ import {
 } from '../src/midnight/payee-address.js';
 import { VAULT_CIRCUITS } from '../src/midnight/vault-contract.js';
 import { assetIdBytes } from '../src/core/assets.js';
+import { transferFacts, transferOf } from '../src/core/movement.js';
+import { nativeToken } from '@midnight-ntwrk/midnight-js-protocol/ledger';
 import { toHex } from '../src/core/crypto.js';
 import type { VaultEntry } from '../src/midnight/vault-record.js';
 
@@ -119,6 +119,27 @@ describe('a vault that cannot make a public payment', () => {
 });
 
 describe('V-168 — the colour a payment moves against the colour a vault holds', () => {
+  it('the payment this door builds for NIGHT names the colour a deposit puts in', () => {
+    /*
+     * Built the way `main()` builds it: `transferOf`, then `transferFacts`, then
+     * the ledger's own `nativeToken().raw`, then the door's own comparison.
+     */
+    const transfer = transferOf({
+      accountId: 'vault:payroll-test',
+      payee: PUBLIC_ADDRESS,
+      asset: 'NIGHT',
+      amount: 10n,
+      privacy: 'public',
+      reference: 'test-payment-1',
+      createdBy: 'the operator making the transfer',
+      employees: [],
+    });
+    const facts = transferFacts(transfer);
+    const held = (nativeToken() as unknown as { raw: string }).raw;
+    expect(facts.token).toBe(held);
+    expect(() => assertColoursAgree(facts.token, held)).not.toThrow();
+  });
+
   /*
    * **THE DOOR'S OWN COMPARISON IS DRIVEN HERE, NOT RE-IMPLEMENTED.** An
    * earlier version of this file recomputed both values and asserted they were
@@ -146,7 +167,9 @@ describe('V-168 — the colour a payment moves against the colour a vault holds'
     } catch (e: any) { message = String(e?.message); }
     expect(message).toMatch(/REFUSED BY THE VAULT/);
     expect(message).toMatch(/NOTHING IS AT RISK AND NOTHING IS LOST/);
-    expect(message).toMatch(/V-168/);
+    /* It must say where an asset code becomes a ledger token, and what not to change. */
+    expect(message).toMatch(/ledgerTokenOf/);
+    expect(message).toMatch(/Do not fix it by changing `assetIdBytes`/);
     /* It must say WHY it refuses early, or the next reader deletes the check. */
     expect(message).toMatch(/before a fee/i);
   });

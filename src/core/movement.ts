@@ -1,8 +1,7 @@
 import { nanoid } from 'nanoid';
 import type { Payee, PayeeAddress } from '../midnight/payee-address.js';
 import type { AssetId, AssetRegistry } from './assets.js';
-import { assetIdBytes, assets as defaultAssets, privateForm } from './assets.js';
-import { toHex } from './crypto.js';
+import { assets as defaultAssets, ledgerTokenOf, privateForm } from './assets.js';
 import type { PaymentFacts } from '../midnight/payout-tree.js';
 import type { EntryKind } from './types.js';
 
@@ -332,8 +331,19 @@ export function transferOf(spec: TransferSpec): Transfer {
  * new circuit, no contract change, no redeploy.
  *
  * **HERE RATHER THAN AT THE SCREEN**, so `S12b` has one call rather than three
- * fields to assemble — and so the token bytes come from `assetIdBytes`, which
- * is the one definition both halves of `assetKeyOf` depend on.
+ * fields to assemble.
+ *
+ * **AND THE TOKEN IS THE LEDGER'S, NOT THE ASSET CODE.** A vault holds money by
+ * the ledger's token type and pays out of the token it is handed, and this
+ * payment commits to that token. `ledgerTokenOf` is where a transfer's asset
+ * code becomes a ledger token, and it refuses any pairing no vault can pay
+ * rather than handing back a value that would be refused after the approvals.
+ * `assetIdBytes` is the account's name for an asset and is not used here.
+ *
+ * **A PAYROLL RUN'S PAYMENTS DO NOT COME FROM HERE.** `paymentFactsFor` in
+ * `payroll.ts` still writes the asset code as the token, and a payroll run is
+ * always private. No asset has a private form, so no vault holds a note that
+ * such a payment could be made from.
  *
  * **AND IT IS THE COUNTERPART OF `paymentFactsFor`, NOT A WIDENING OF IT.**
  * That one returns `ShieldedPaymentFacts` because a payroll run is always
@@ -343,6 +353,6 @@ export function transferOf(spec: TransferSpec): Transfer {
  */
 export const transferFacts = (t: Transfer): PaymentFacts => ({
   payee: t.payee,
-  token: toHex(assetIdBytes(t.asset)),
+  token: ledgerTokenOf(t.asset, t.payee.kind),
   amount: t.amount,
 });

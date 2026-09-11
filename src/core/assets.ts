@@ -232,6 +232,61 @@ export function assetIdBytes(code: AssetId): Uint8Array {
 }
 
 /* ------------------------------------------------------------------ *
+ * the token a payment moves on the ledger
+ * ------------------------------------------------------------------ */
+
+/**
+ * The ledger's own token type for NIGHT, as the hex string the ledger's
+ * `nativeToken().raw` returns.
+ *
+ * WRITTEN OUT RATHER THAN ASKED FOR, because this module is loaded by the page
+ * and must not load the ledger's WebAssembly to learn one value. It is not a
+ * second definition: `ledger-token.test.ts` reads `nativeToken().raw` from the
+ * ledger itself and fails the day the two differ.
+ */
+const NIGHT_UNSHIELDED_TOKEN = '0000000000000000000000000000000000000000000000000000000000000000';
+
+/**
+ * **THE TOKEN A PAYMENT MOVES, AS THE LEDGER NAMES IT, AND NOT AS THIS PRODUCT
+ * NAMES THE ASSET.**
+ *
+ * Two different values answer "which money is this", and they must never be
+ * mistaken for each other:
+ *
+ *   - `assetIdBytes` is how an ACCOUNT names an asset. The key its balance map
+ *     is derived from is built over those bytes, so they can never change, and
+ *     they are padded ASCII so that no two codes can collide.
+ *   - the ledger's token type is how a VAULT holds money. A deposit of NIGHT
+ *     arrives as the ledger's own NIGHT, because the wallet that funds it holds
+ *     the ledger's NIGHT and has no other kind.
+ *
+ * **A payment out of a vault is checked against the token type, not the code.**
+ * The vault's payout uses the one token it is given both to ask whether it
+ * holds enough and to send, and the approved payment commits to that same
+ * token. So a payment that named its money by the asset code would ask a vault
+ * to pay out of a balance it can never hold, and would be refused only after it
+ * had been proposed, approved and paid for.
+ *
+ * **ONE PAIRING EXISTS TODAY: NIGHT, PAID PUBLICLY.** Every other pairing is
+ * refused by name rather than given a stand-in value, because a stand-in is a
+ * payment no vault can make, discovered after the fees.
+ */
+export function ledgerTokenOf(code: AssetId, kind: 'shielded' | 'unshielded'): string {
+  if (code === 'NIGHT') {
+    if (kind === 'unshielded') return NIGHT_UNSHIELDED_TOKEN;
+    throw new Error(
+      'NIGHT is only ever held publicly on Midnight, so there is no private NIGHT to pay '
+        + 'with. Pay NIGHT to a public address, one that begins mn_addr_.',
+    );
+  }
+  throw new Error(
+    `${code} is not money any vault on Midnight can hold, so no payment in it can be made `
+      + 'out of a vault. NIGHT, paid to a public address, is the only payment a vault can make '
+      + 'today.',
+  );
+}
+
+/* ------------------------------------------------------------------ *
  * amounts
  * ------------------------------------------------------------------ */
 

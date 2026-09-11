@@ -695,40 +695,31 @@ async function main(): Promise<DepositVerdict> {
   /*
    * **WHAT THIS MONEY CANNOT DO ONCE IT IS IN, SAID BEFORE IT GOES IN.**
    *
-   * The same shape `fund-vault.ts` carries for the public path, measured
-   * separately and true for a different reason. `payout` asserts that the
-   * colour of the note it spends matches the token in the approved leaf, and
-   * this client writes an asset code into a leaf — `C269`. A probe-minted
-   * colour is not an asset code, so a run this client can build would be
-   * refused by the circuit.
+   * **FIRST: NO PAYMENT CAN NAME THIS MONEY.** A transfer's token comes from
+   * `ledgerTokenOf`, which gives a token only for NIGHT paid publicly, and a
+   * payroll run's token is an asset code. A probe-minted colour is neither, so
+   * no run this client can build pays it out, and `payout` compares the colour
+   * of the note it spends against the token in the approved leaf.
    *
-   * **AND THERE IS A SECOND REASON, WHICH IS NOT KNOWN TO BE DOWNTIME.** A note
-   * is spent through `noteToSpend`, and `witnessesOver` REFUSES a note with no
-   * index — the position the chain filed the commitment at. **No deposit knows
-   * it**: the tree assigns it on inclusion, `Note.index` is recorded as unknown
-   * rather than invented, and nothing in this repository reads one back
-   * (`V-93`). `C244` is the row, it is OPEN, and its own words are that if the
-   * index cannot be read back **this is loss** rather than downtime.
+   * **SECOND: ITS PLACE IN THE TREE IS READ, NOT KNOWN.** A note is spent at
+   * the index the chain filed its commitment at, which no deposit can know. The
+   * pool records the transaction this deposit was finalised in, and a private
+   * payment reads the note's index from that transaction's events just before
+   * it spends. A note that records no transaction has that transaction
+   * recorded by naming it to `recordCreatingTransaction`; no door does that yet.
    *
-   * **SO THE HONEST SENTENCE IS THAT THE NOTE CANNOT BE PAID OUT TODAY FOR TWO
-   * OPEN REASONS, ONE UNDERSTOOD AND ONE UNMEASURED**, and an earlier draft of
-   * this file said *"recorded with everything needed to spend it"*, which is
-   * not true while the index is missing. `C244` also says a deposit into a real
-   * vault is the whole of what its measurement is waiting for — so this door
-   * produces the thing that settles it, and must not be the door that tells the
-   * next reader it is already settled.
+   * **SO THE HONEST SENTENCE IS THAT THE NOTE CANNOT BE PAID OUT TODAY**, because
+   * nothing can name its colour and no door makes a private payment, and not
+   * because its place is unknowable.
    */
   say();
-  say('  \x1b[33mWHAT THIS MONEY CANNOT DO ONCE IT IS IN, AND IT IS TWO THINGS\x1b[0m');
-  say('    FIRST, AND UNDERSTOOD: no run this client can build will pay it out. `payout`');
-  say('    compares the colour of the note it spends against the token in the approved leaf,');
-  say('    and this client writes an asset code into that leaf while the vault holds the');
-  say('    colour above. Different values. That ends when a colour reaches a leaf (`C269`).');
-  say('    SECOND, AND NOT UNDERSTOOD: a note is spent through a witness that REFUSES without');
-  say('    the index the chain filed the commitment at. A deposit never knows it, nothing here');
-  say('    reads one back, and `C244` says in its own words that if the index cannot be read');
-  say('    back THIS IS LOSS rather than downtime. `C244` is open and this deposit is what its');
-  say('    measurement has been waiting for.');
+  say('  \x1b[33mWHAT THIS MONEY CANNOT DO ONCE IT IS IN\x1b[0m');
+  say('    FIRST: no payment can name this colour. This product names a ledger token only for');
+  say('    NIGHT paid publicly, and a probe-minted colour is not an asset it knows, so no run');
+  say('    this client can build pays this note out.');
+  say('    SECOND: a note is spent at the place the chain filed it, which a deposit cannot');
+  say('    know. The pool records the transaction this deposit lands in, and a private payment');
+  say('    reads the note\x27s place from that transaction\x27s events before it spends.');
   say('    THE NOTE IS RECORDED WITH ITS NONCE, COLOUR AND VALUE, which is what a recovery');
   say('    needs and is NOT the same as everything a payment needs. And the vault cannot be');
   say('    retired while it holds a note, so this is a decision that cannot be walked back');

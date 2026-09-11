@@ -23,6 +23,10 @@ import { readFileSync } from 'node:fs';
 import { balanceOf, type VaultNotes } from './vault-notes.js';
 import { toHex } from '../core/crypto.js';
 import { payeeFor, unshieldedPayeeFor } from '../testing/payees.js';
+import {
+  NoteIndexUnreadable, vaultNoteCommitment, type CreatingTransaction, type NoteEvents,
+  type ServedEvent,
+} from './note-index.js';
 
 /*
  * **THE VAULT'S GENERATED MODULE, FAKED DOWN TO ITS READER AND NOTHING ELSE.**
@@ -77,6 +81,28 @@ const PAYEE = payeeFor(new Uint8Array(32).fill(0x44), 'preview');   // the harne
  */
 const PUBLIC_PAYEE = unshieldedPayeeFor(new Uint8Array(32).fill(0x44), 'preview');
 const BY = { id: 'kc' } as never;
+
+/*
+ * **WHERE THE HARNESS'S NOTES CAME FROM, AND WHAT THE CHAIN SAYS ABOUT THEM.**
+ *
+ * Every seeded note records that `SEEDED_TX` created it and carries no index.
+ * The chain's events for that transaction file the seeded notes at 40, 43, 46,
+ * which is neither their position in the pool nor a count, so a client that
+ * spent against either would hand the contract the wrong number and the tests
+ * that read `mt_index` would say so. A deposit's finalised result carries
+ * `DEP_TX`; each payout's carries its own hash, from `payHash`.
+ */
+const SEEDED_TX = 'd0'.repeat(32);
+const DEP_TX = 'de'.repeat(32);
+const payHash = (k: number) => k.toString(16).padStart(64, 'c');
+const seededIndex = (i: number) => 40n + BigInt(i) * 3n;
+
+/*
+ * The events the harness in use serves, reached through one constant so every
+ * payout below passes the same source. Replaced each time a harness is built.
+ */
+let eventsInUse: NoteEvents = { eventsOf: async () => { throw new Error('no harness built'); } };
+const EVENTS: NoteEvents = { eventsOf: (tx) => eventsInUse.eventsOf(tx) };
 
 const payment = (amount: bigint): VaultPayment => ({
   proposal: '11'.repeat(32), root: '22'.repeat(32), payees: 3n,
@@ -140,10 +166,50 @@ function harness(opts: {
    */
   publicBalances?: 'no-provider' | 'unreadable' | 'read-throws' | 'not-a-list' | 'bad-row'
     | Array<[string, bigint]>;
+  /**
+   * What the chain's events say about the notes.
+   *
+   *   'unreadable'  the indexer cannot be asked
+   *   'moved'       every seeded note is filed one place later than the pool says
+   */
+  events?: 'unreadable' | 'moved';
+  /** Seeded notes that record no creating transaction, as notes written before it was kept. */
+  noCreatingTransaction?: boolean;
 } = {}) {
   let stored: VaultNotes = {
     notes: (opts.notes ?? [{ nonce: '01'.repeat(32), value: 1_000n }])
-      .map(n => ({ nonce: n.nonce, token: GBP, value: n.value, index: 0n })),
+      .map(n => ({
+        nonce: n.nonce, token: GBP, value: n.value,
+        ...(opts.noCreatingTransaction ? {} : { createdIn: SEEDED_TX }),
+      })),
+  };
+  const seeded = stored.notes.map((n, i) => ({ coin: n, hash: SEEDED_TX, index: seededIndex(i) }));
+  const produced: Array<{ coin: { nonce: string; token: string; value: bigint }; hash: string; index: bigint }> = [];
+  const eventReads: CreatingTransaction[] = [];
+  const spentCoins: any[] = [];
+  let payouts = 0;
+  eventsInUse = {
+    eventsOf: async (tx) => {
+      eventReads.push(tx);
+      if (opts.events === 'unreadable') throw new NoteIndexUnreadable('the indexer is not answering');
+      const hash = 'hash' in tx ? tx.hash : '';
+      const out: ServedEvent[] = [
+        /* Another output of the same transaction, owned by nobody, to be passed over. */
+        { transactionHash: hash, details: { tag: 'zswapOutput', commitment: 'ee'.repeat(32), mtIndex: 0n } },
+      ];
+      for (const o of [...seeded, ...produced].filter((x) => x.hash === hash)) {
+        out.push({
+          transactionHash: hash,
+          details: {
+            tag: 'zswapOutput',
+            commitment: await vaultNoteCommitment(o.coin, VAULT),
+            contract: VAULT,
+            mtIndex: opts.events === 'moved' ? o.index + 1n : o.index,
+          },
+        });
+      }
+      return out;
+    },
   };
   const saves: VaultNotes[] = [];
   const creates: VaultNotes[] = [];
@@ -253,8 +319,13 @@ function harness(opts: {
         },
       });
     }
+    payouts += 1;
+    const hash = payHash(payouts);
+    if (kept > 0n) {
+      produced.push({ coin: { nonce: 'ab'.repeat(32), token: GBP, value: kept }, hash, index: 90n + BigInt(payouts) });
+    }
     return {
-      public: { txId: 'tx_pay' },
+      public: { txId: 'tx_pay', txHash: hash },
       private: opts.reads === 'absent' ? {} : { nextZswapLocalState: { outputs } },
     };
   };
@@ -264,7 +335,7 @@ function harness(opts: {
       deposit: async (...raw: unknown[]) => {
         const args = dispatch('deposit', 1)(...raw);
         calls.push({ circuit: 'deposit', args, ctx: raw[0] });
-        return { public: { txId: 'tx_dep' } };
+        return { public: { txId: 'tx_dep', txHash: DEP_TX } };
       },
       /*
        * `depositUnshielded(token, amount)` — TWO arguments, and no coin. There
@@ -322,6 +393,7 @@ function harness(opts: {
            * reason V-82 survived.
            */
           const [, coin] = witnesses.noteToSpend({}, Buffer.from(GBP, 'hex'), args[8] as bigint);
+          spentCoins.push(coin);
           return payoutResult(coin, args[8] as bigint, toHex(args[6] as Uint8Array));
         }
         return { public: { txId: 'tx_pay' } };
@@ -431,7 +503,7 @@ function harness(opts: {
   };
 
   return {
-    ledger, calls, saves, creates, scopes,
+    ledger, calls, saves, creates, scopes, eventReads, spentCoins,
     current: () => stored, witnessesUsed: () => witnesses,
   };
 }
@@ -445,12 +517,14 @@ describe('V-74: the vault client', () => {
      * could carry a value nobody can reproduce is the whole of C124.
      */
     const { ledger, calls, current } = harness({ notes: [] });
-    await ledger.deposit(VAULT, { nonce: '77'.repeat(32), token: GBP, value: 500n, index: 4n }, BY);
+    await ledger.deposit(VAULT, { nonce: '77'.repeat(32), token: GBP, value: 500n }, BY);
 
     expect(calls[0].circuit).toBe('deposit');
     expect(calls[0].args).toHaveLength(1);
     expect(balanceOf(current(), GBP)).toBe(500n);
-    expect(current().notes[0].index).toBe(4n);
+    /* Where its index is to be read from, off the finalised result, and no index. */
+    expect(current().notes[0].createdIn).toBe(DEP_TX);
+    expect(current().notes[0]).not.toHaveProperty('index');
   });
 
   it('ADVANCES THE POOL BY THE NOTE THE CONTRACT ACTUALLY TOOK, not the one it assumed', async () => {
@@ -463,7 +537,7 @@ describe('V-74: the vault client', () => {
     const { ledger, current } = harness({
       notes: [{ nonce: '01'.repeat(32), value: 1_000n }, { nonce: '02'.repeat(32), value: 300n }],
     });
-    const r = await ledger.payout(VAULT, payment(200n), BY, 9n);
+    const r = await ledger.payout(VAULT, payment(200n), BY, EVENTS);
 
     /*
      * **THE KIND IS ESTABLISHED BEFORE THE NOTE IS READ.**
@@ -477,7 +551,8 @@ describe('V-74: the vault client', () => {
     // The smallest covering note, chosen by the witness and reported back.
     expect(r.spentNote).toBe('02'.repeat(32));
     expect(balanceOf(current(), GBP)).toBe(1_100n);
-    expect(current().notes.some(n => n.value === 100n && n.index === 9n)).toBe(true);
+    expect(current().notes.some(n => n.value === 100n && n.createdIn === payHash(1) && n.index === undefined))
+      .toBe(true);
   });
 
   /*
@@ -494,7 +569,7 @@ describe('V-74: the vault client', () => {
    */
   it('ENCRYPTS THE PAYMENT TO THE SAME PAYEE IT PAYS, from one value', async () => {
     const { ledger, calls } = harness();
-    await ledger.payout(VAULT, payment(200n), BY, 1n);
+    await ledger.payout(VAULT, payment(200n), BY, EVENTS);
 
     const call = calls.find(c => c.circuit === 'payout')!;
     /* 6 is the recipient — the coin key, the only half the circuit sees. */
@@ -544,7 +619,7 @@ describe('V-74: the vault client', () => {
      */
     const { ledger, calls } = harness();
     const elsewhere = { ...payment(100n), payee: payeeFor(new Uint8Array(32).fill(0x44), 'stagenet') };
-    await expect(ledger.payout(VAULT, elsewhere, BY, 0n))
+    await expect(ledger.payout(VAULT, elsewhere, BY, EVENTS))
       .rejects.toThrow(/for stagenet and this vault is on preview/);
     expect(calls).toHaveLength(0);
   });
@@ -568,7 +643,7 @@ describe('V-74: the vault client', () => {
     const { ledger, calls } = harness({
       notes: [{ nonce: '01'.repeat(32), value: 60n }, { nonce: '02'.repeat(32), value: 60n }],
     });
-    await expect(ledger.payout(VAULT, payment(100n), BY, 0n))
+    await expect(ledger.payout(VAULT, payment(100n), BY, EVENTS))
       .rejects.toThrow(/no single note covers 100/i);
     expect(calls).toEqual([]);
   });
@@ -580,7 +655,7 @@ describe('V-74: the vault client', () => {
      * until somebody replays it from the chain.
      */
     const { ledger, saves, current } = harness({ throws: 'node said no' });
-    await expect(ledger.payout(VAULT, payment(100n), BY, 0n)).rejects.toThrow(/node said no/);
+    await expect(ledger.payout(VAULT, payment(100n), BY, EVENTS)).rejects.toThrow(/node said no/);
     expect(saves).toEqual([]);
     expect(balanceOf(current(), GBP)).toBe(1_000n);
   });
@@ -593,7 +668,7 @@ describe('V-74: the vault client', () => {
      * quietly loses track of its own money.
      */
     const { ledger, saves } = harness({ asksForANote: false });
-    await expect(ledger.payout(VAULT, payment(100n), BY, 0n))
+    await expect(ledger.payout(VAULT, payment(100n), BY, EVENTS))
       .rejects.toThrow(/paid without asking for a note|rebuild it from the chain/i);
     expect(saves).toEqual([]);
   });
@@ -604,8 +679,8 @@ describe('V-74: the vault client', () => {
      * already appeared once in this repo, in the first vault test helper.
      */
     const { ledger, current } = harness();
-    await ledger.payout(VAULT, payment(100n), BY, 1n);
-    await ledger.payout(VAULT, payment(200n), BY, 2n);
+    await ledger.payout(VAULT, payment(100n), BY, EVENTS);
+    await ledger.payout(VAULT, payment(200n), BY, EVENTS);
     expect(balanceOf(current(), GBP)).toBe(700n);
     expect(current().notes).toHaveLength(1);
   });
@@ -924,15 +999,120 @@ describe('C242: an empty pool is created only for a vault the CHAIN says is empt
  * which cannot be had is a refusal rather than a payment recorded as keeping
  * nothing.
  */
+describe('a private payment spends against the index the chain reports at that moment', () => {
+  it('hands the contract the index read from the creating transaction, never a position or a count', async () => {
+    const { ledger, spentCoins, eventReads } = harness({
+      notes: [{ nonce: '01'.repeat(32), value: 60n }, { nonce: '02'.repeat(32), value: 1_000n }],
+    });
+    await ledger.payout(VAULT, payment(200n), BY, EVENTS);
+
+    /* The note of 1,000 is the second seeded note, filed by the chain at 43. */
+    expect(eventReads).toEqual([{ hash: SEEDED_TX }]);
+    expect(spentCoins).toHaveLength(1);
+    expect(spentCoins[0].value).toBe(1_000n);
+    expect(spentCoins[0].mt_index).toBe(seededIndex(1));
+  });
+
+  it('never writes that index into the pool: the next spend reads it again', async () => {
+    const { ledger, saves } = harness();
+    await ledger.payout(VAULT, payment(100n), BY, EVENTS);
+    for (const saved of saves) {
+      for (const n of saved.notes) expect(n).not.toHaveProperty('index');
+    }
+  });
+
+  it('spends the change of the last payment by reading ITS transaction', async () => {
+    const { ledger, spentCoins, eventReads } = harness();
+    await ledger.payout(VAULT, payment(100n), BY, EVENTS);
+    await ledger.payout(VAULT, payment(200n), BY, EVENTS);
+    expect(eventReads).toEqual([{ hash: SEEDED_TX }, { hash: payHash(1) }]);
+    expect(spentCoins[1].value).toBe(900n);
+    expect(spentCoins[1].mt_index).toBe(91n);
+  });
+
+  it('REFUSES before a fee when the chain cannot be read, and moves nothing', async () => {
+    const { ledger, calls, saves } = harness({ events: 'unreadable' });
+    await expect(ledger.payout(VAULT, payment(100n), BY, EVENTS)).rejects.toThrow(NoteIndexUnreadable);
+    expect(calls).toEqual([]);
+    expect(saves).toEqual([]);
+  });
+
+  it('spends at the index the chain gives now, whatever index the pool held', async () => {
+    const { ledger, spentCoins, current } = harness({ events: 'moved' });
+    current().notes[0] = { ...current().notes[0], index: seededIndex(0) };
+    await ledger.payout(VAULT, payment(100n), BY, EVENTS);
+    expect(spentCoins[0].mt_index).toBe(seededIndex(0) + 1n);
+  });
+
+  it('REFUSES when the chosen note\'s coin changes under the same nonce while its index is read', async () => {
+    const { ledger, calls, saves, spentCoins, current } = harness({ notes: [{ nonce: '01'.repeat(32), value: 1_000n }] });
+    const reading = eventsInUse;
+    eventsInUse = {
+      eventsOf: async (tx) => {
+        const answer = await reading.eventsOf(tx);
+        current().notes[0] = { ...current().notes[0], value: 1_200n };
+        return answer;
+      },
+    };
+    await expect(ledger.payout(VAULT, payment(200n), BY, EVENTS)).rejects.toThrow(/changed or left the pool/);
+    expect(calls).toEqual([]);
+    expect(spentCoins).toEqual([]);
+    expect(saves).toEqual([]);
+  });
+
+  it('REFUSES before a fee a note that does not record which transaction created it, and names the way out', async () => {
+    const { ledger, calls, saves } = harness({ noCreatingTransaction: true });
+    await expect(ledger.payout(VAULT, payment(100n), BY, EVENTS)).rejects.toThrow(/recordCreatingTransaction/);
+    expect(calls).toEqual([]);
+    expect(saves).toEqual([]);
+  });
+
+  it('never hands the contract an index the pool stored for a note other than the one just read', async () => {
+    /*
+     * The pool changes while the chosen note's index is being read: a smaller
+     * note that also covers the payment arrives, carrying a stored index. The
+     * witness picks it. It must be refused, not spent at the stored number.
+     */
+    const { ledger, saves, spentCoins, current } = harness({ notes: [{ nonce: '01'.repeat(32), value: 1_000n }] });
+    const reading = eventsInUse;
+    eventsInUse = {
+      eventsOf: async (tx) => {
+        current().notes.push({ nonce: '02'.repeat(32), token: GBP, value: 300n, index: 7n, createdIn: SEEDED_TX });
+        return reading.eventsOf(tx);
+      },
+    };
+    await expect(ledger.payout(VAULT, payment(200n), BY, EVENTS)).rejects.toThrow(/has not been read for this call/);
+    expect(spentCoins).toEqual([]);
+    expect(saves).toEqual([]);
+  });
+
+  it('saves no index for any note, including one the pool held before the payment', async () => {
+    const { ledger, saves, current } = harness({
+      notes: [{ nonce: '01'.repeat(32), value: 60n }, { nonce: '02'.repeat(32), value: 1_000n }],
+    });
+    current().notes[0] = { ...current().notes[0], index: 5n };
+    await ledger.payout(VAULT, payment(200n), BY, EVENTS);
+    expect(saves).toHaveLength(1);
+    for (const n of saves[0].notes) expect(n).not.toHaveProperty('index');
+  });
+
+  it('a public payment reads no events at all', async () => {
+    const { ledger, eventReads } = harness({ poolThrows: true });
+    await ledger.payout(VAULT, { ...payment(200n), payee: PUBLIC_PAYEE, token: NIGHT }, BY, EVENTS);
+    expect(eventReads).toEqual([]);
+  });
+});
+
 describe('C239: the pool advances by the coin the call reported', () => {
   it('records the change coin\'s OWN nonce, which no derivation here produced', async () => {
     const { ledger, current } = harness({ notes: [{ nonce: '01'.repeat(32), value: 1_000n }] });
-    await ledger.payout(VAULT, payment(250n), BY, 9n);
+    await ledger.payout(VAULT, payment(250n), BY, EVENTS);
 
     const change = current().notes.find(n => n.value === 750n)!;
     expect(change).toBeDefined();
     expect(change.nonce).toBe('ab'.repeat(32));   // what the fake's outputs carried
-    expect(change.index).toBe(9n);
+    expect(change.createdIn).toBe(payHash(1));
+    expect(change).not.toHaveProperty('index');
   });
 
   it('REFUSES when the call carries no readable Zswap state, rather than recording nothing kept',
@@ -946,7 +1126,7 @@ describe('C239: the pool advances by the coin the call reported', () => {
       const { ledger, saves } = harness({
         notes: [{ nonce: '01'.repeat(32), value: 1_000n }], reads: 'absent',
       });
-      await expect(ledger.payout(VAULT, payment(250n), BY, 9n))
+      await expect(ledger.payout(VAULT, payment(250n), BY, EVENTS))
         .rejects.toThrow(/no readable "outputs"/);
       expect(saves).toEqual([]);
     });
@@ -956,7 +1136,7 @@ describe('C239: the pool advances by the coin the call reported', () => {
       const { ledger, saves } = harness({
         notes: [{ nonce: '01'.repeat(32), value: 1_000n }], reads: 'none',
       });
-      await expect(ledger.payout(VAULT, payment(250n), BY, 9n))
+      await expect(ledger.payout(VAULT, payment(250n), BY, EVENTS))
         .rejects.toThrow(/no coin coming back to it/);
       expect(saves).toEqual([]);
     });
@@ -965,20 +1145,17 @@ describe('C239: the pool advances by the coin the call reported', () => {
     const { ledger, saves } = harness({
       notes: [{ nonce: '01'.repeat(32), value: 1_000n }], reads: 'wrong-value',
     });
-    await expect(ledger.payout(VAULT, payment(250n), BY, 9n))
+    await expect(ledger.payout(VAULT, payment(250n), BY, EVENTS))
       .rejects.toThrow(/two claims about the same money/);
     expect(saves).toEqual([]);
   });
 
-  it('records NO INDEX when the caller has none, rather than a zero', async () => {
-    /*
-     * The ordinary case, because nothing in this repository reads a
-     * commitment's place in the tree back. A zero would be a plausible wrong
-     * number and `witnessesOver` would spend against it.
-     */
-    const { ledger, current } = harness({ notes: [{ nonce: '01'.repeat(32), value: 1_000n }] });
-    await ledger.payout(VAULT, payment(250n), BY);
-    expect(current().notes.find(n => n.value === 750n)!.index).toBeUndefined();
+  it('REFUSES a private payment given nowhere to read the note\'s index, before anything is called', async () => {
+    const { ledger, calls, saves } = harness({ notes: [{ nonce: '01'.repeat(32), value: 1_000n }] });
+    await expect(ledger.payout(VAULT, payment(250n), BY))
+      .rejects.toThrow(/No source of the chain\x27s events was given/);
+    expect(calls).toEqual([]);
+    expect(saves).toEqual([]);
   });
 });
 
@@ -1150,7 +1327,7 @@ describe('S6k: public money needs no pool', () => {
 describe('C246: which door a payment leaves by', () => {
   it('a SHIELDED payee goes through `payout`, with the encryption mapping', async () => {
     const { ledger, calls, scopes } = harness();
-    const paid = await ledger.payout(VAULT, payment(200n), BY, 1n);
+    const paid = await ledger.payout(VAULT, payment(200n), BY, EVENTS);
 
     expect(paid.kind).toBe('shielded');
     expect(calls.map(c => c.circuit)).toEqual(['payout']);
@@ -1160,7 +1337,7 @@ describe('C246: which door a payment leaves by', () => {
   it('an UNSHIELDED payee goes through `payoutUnshielded`, with NO mapping', async () => {
     const { ledger, calls, scopes } = harness({ poolThrows: true });
     const paid = await ledger.payout(
-      VAULT, { ...payment(200n), payee: PUBLIC_PAYEE, token: NIGHT }, BY, 1n);
+      VAULT, { ...payment(200n), payee: PUBLIC_PAYEE, token: NIGHT }, BY, EVENTS);
 
     expect(paid.kind).toBe('unshielded');
     expect(calls.map(c => c.circuit)).toEqual(['payoutUnshielded']);
