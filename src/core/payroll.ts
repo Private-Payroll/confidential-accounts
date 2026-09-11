@@ -25,7 +25,7 @@ import { payslipKeypairForWallet } from './payslip-key.js';
  */
 const SEED_WALLET_ORIGIN = 'https://payroll.example';
 import type { AssetId } from './assets.js';
-import { assets as defaultAssets, subtotals, formatAmount, assetIdBytes } from './assets.js';
+import { assets as defaultAssets, subtotals, formatAmount, ledgerTokenOf } from './assets.js';
 import type { Account, Employee, PayrollRun, SealedRun, ShieldedEntry, Attestation, RosterEmployee, SealedEmployee, Invite, User, RunSkip, RunSkips, RunRetry, RunRepeatRecord, RunPayout } from './types.js';
 import { sealRecord, openRecord, sealToInbox, openFromInbox } from './sealed-records.js';
 import {
@@ -2240,9 +2240,18 @@ export class PayrollService {
           `${person.name} has no address. It has to come from their own device or wallet — `
           + 'there is nowhere for an operator to enter one for somebody else, on purpose.');
       }
+      /*
+       * **THE TOKEN IS THE LEDGER'S, IN THE FORM THIS PAYEE IS PAID IN, READ OFF
+       * THE ASSET'S ROW.** A vault pays out of the token a payment names, so a
+       * payment naming its money by the account's name for the asset would be
+       * approved, paid for, and refused at the vault. Where the asset has no
+       * private form this refuses now, before any material is built or any fee
+       * is spent, and says which assets can be paid privately.
+       */
+      const payee = payrollPayee(person.name, person.address);
       return {
-        payee: payrollPayee(person.name, person.address),
-        token: toHex(assetIdBytes(e.asset)),
+        payee,
+        token: ledgerTokenOf(e.asset, payee.kind, this.assets),
         amount: e.amount,
       };
     });
@@ -2673,6 +2682,7 @@ export class PayrollService {
       payload: { runId: run.id, entries },
       asset: leg,
       run: payable.run,
+      payments: payable.facts,
       proposedBy,
       ...(again !== undefined ? { again } : {}),
     });
@@ -2882,6 +2892,8 @@ export class PayrollService {
       payload: { runId: run.id, entries, retry: [...indices] },
       asset: leg,
       run: payable.run,
+      /* The leg's own payments for the people this retries, in the retry's tree order. */
+      payments: indices.map(i => recorded.facts[i]!),
       proposedBy,
       ...(again !== undefined ? { again } : {}),
     });

@@ -44,6 +44,7 @@ import { MidnightCommitments } from '../../src/midnight/commitments.js';
 import { buildRun, rootOfLeaves } from '../../src/midnight/payout-tree.js';
 import { runMaterialFor } from '../../src/midnight/run-material.js';
 import { vaultDetails } from '../../src/testing/vault-details.js';
+import { registryWithTestPrivateForms, aVaultHolding } from '../../src/testing/assets.js';
 import { FileStore } from '../../src/core/store-file.js';
 import { assetIdBytes } from '../../src/core/assets.js';
 import { fromHex, toHex, unseal, parseCanonical, type Hex } from '../../src/core/crypto.js';
@@ -65,9 +66,10 @@ const CLOSES = BigInt(NOW + 3_600);
 /** The MIDNIGHT scheme, against a simulated ledger. `the-service-layer-meets-the-chain.test.ts:87`. */
 const services = () => {
   const store = new FileStore(join(mkdtempSync(join(tmpdir(), 'mn-s47-')), 'db.json'));
+  const registry = registryWithTestPrivateForms();
   const accounts = new AccountService(
-    store, new SimulatedLedger(MidnightCommitments), MidnightCommitments);
-  const payroll = new PayrollService(store, accounts, new SimulatedProofSystem());
+    store, new SimulatedLedger(MidnightCommitments), MidnightCommitments, registry, aVaultHolding());
+  const payroll = new PayrollService(store, accounts, new SimulatedProofSystem(), registry);
   return { store, accounts, payroll };
 };
 

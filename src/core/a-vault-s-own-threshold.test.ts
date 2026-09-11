@@ -8,6 +8,7 @@ import type { Ledger } from './ledger.js';
 import { AccountService, openAccount, approvalMessage } from './account.js';
 import { sign } from './crypto.js';
 import type { Hex } from './crypto.js';
+import { registryWithTestPrivateForms, aVaultHolding, testPrivateToken } from '../testing/assets.js';
 
 /**
  * **R5 — A VAULT'S OWN THRESHOLD DECIDES ITS ROUNDS, ABSENCE INHERITS THE
@@ -69,7 +70,8 @@ const SLOW: Hex = 'b2'.repeat(32);
 function harness() {
   const store = new FileStore(join(mkdtempSync(join(tmpdir(), 'mn-r5-')), 'db.json'));
   const ledger: Ledger = new SimulatedLedger(SimulatedCommitments);
-  const accounts = new AccountService(store, ledger, SimulatedCommitments);
+  const accounts = new AccountService(
+    store, ledger, SimulatedCommitments, registryWithTestPrivateForms(), aVaultHolding());
   return { store, ledger, accounts };
 }
 
@@ -101,6 +103,11 @@ const entry = (amount: bigint) => ({
  * on an id, and `AccountService.proposeRun` requires 64 lower-case hex.
  */
 let runNonce = 0;
+
+/** The one payment such a run makes, in the token the test registry gives GBP paid privately. */
+const onePayment = (amount: bigint) =>
+  [{ payee: { kind: 'shielded' as const }, token: testPrivateToken('GBP'), amount }];
+
 const aRunAt = (vault: Hex) => ({
   root: ((runNonce = (runNonce % 254) + 1)).toString(16).padStart(2, '0').repeat(32),
   payees: 1n,
@@ -209,7 +216,7 @@ describe('R5: the bar is the vault\'s own, and absence inherits the account\'s',
     const p = await h.accounts.proposeRun({
       accountId: account.id, viewingKey,
       summary: 'out of the fast vault', payload: entry(25_00n),
-      run: aRunAt(FAST), proposedBy: secrets[0].signerId,
+      run: aRunAt(FAST), payments: onePayment(25_00n), proposedBy: secrets[0].signerId,
     });
 
     /*
@@ -258,7 +265,7 @@ describe('R5: the bar is the vault\'s own, and absence inherits the account\'s',
     const p = await h.accounts.proposeRun({
       accountId: account.id, viewingKey,
       summary: 'out of the ordinary vault', payload: entry(25_00n),
-      run: aRunAt(SLOW), proposedBy: secrets[0].signerId,
+      run: aRunAt(SLOW), payments: onePayment(25_00n), proposedBy: secrets[0].signerId,
     });
 
     const two = await approveAs(h, p, secrets, viewingKey, [0, 1]);

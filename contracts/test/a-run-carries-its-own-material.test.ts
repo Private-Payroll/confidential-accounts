@@ -29,6 +29,7 @@ import { runMaterialFor } from '../../src/midnight/run-material.js';
 import { currentPayoutSeed } from '../../src/midnight/run-keys.js';
 import { runPayments } from '../../src/midnight/run-status.js';
 import { vaultDetails } from '../../src/testing/vault-details.js';
+import { registryWithTestPrivateForms, aVaultHolding } from '../../src/testing/assets.js';
 import { FileStore } from '../../src/core/store-file.js';
 import { toHex, type Hex } from '../../src/core/crypto.js';
 
@@ -45,9 +46,10 @@ const CLOSES = BigInt(Math.floor(Date.now() / 1000) + 86_400);
 
 const services = () => {
   const store = new FileStore(join(mkdtempSync(join(tmpdir(), 'mn-run-material-')), 'db.json'));
+  const registry = registryWithTestPrivateForms();
   const accounts = new AccountService(
-    store, new SimulatedLedger(MidnightCommitments), MidnightCommitments);
-  const payroll = new PayrollService(store, accounts, new SimulatedProofSystem());
+    store, new SimulatedLedger(MidnightCommitments), MidnightCommitments, registry, aVaultHolding());
+  const payroll = new PayrollService(store, accounts, new SimulatedProofSystem(), registry);
   return { store, accounts, payroll };
 };
 

@@ -17,9 +17,9 @@
  *    pairing of an asset with an account, which is why the on-chain map is keyed
  *    by `assetKeyOf(assetId, accountBlinding)` and never by a code.
  *
- * The registry lives in code here and in a Postgres table from migration 0004.
- * `SEED_ASSETS` below is what seeds it, so there is one list rather than two —
- * this project's oldest failure is a shared rule written twice.
+ * The registry lives in code here, in `SEED_ASSETS` below. No database table
+ * holds it yet; one that is added is seeded from that list, so there stays one
+ * list rather than two, and it carries each row's ledger identity too.
  */
 
 /** An asset's code. `GBP`, `USDC`, `NIGHT`. Uppercase, ASCII, no spaces. */
@@ -41,6 +41,22 @@ export interface Asset {
   /** Null for fiat, which does not live on a chain. */
   chain: string | null;
   /**
+   * **WHAT THE LEDGER CALLS THIS ASSET, IN EACH FORM IT CAN TAKE ON MIDNIGHT.**
+   *
+   * Money on Midnight is held in one of two forms, privately in notes or
+   * publicly in a contract's balance, and each form names its money by a token
+   * type of its own. This is the one place an asset is paired with those token
+   * types. Every payment this product builds reads its token from here, and so
+   * does every question it asks about what a vault holds of an asset, so the two
+   * are the same spelling of the same money.
+   *
+   * `null` is a statement and not a gap: this asset has no such form, so no
+   * vault can hold it that way and no payment in it can be made that way. An
+   * asset may have both forms, one, or neither, and an asset gains a form by
+   * this row gaining a token, with no function anywhere learning its name.
+   */
+  ledger: LedgerIdentity;
+  /**
    * Off means the asset exists and cannot be used. It is a switch rather than a
    * deletion because rows are referenced by sealed records we cannot rewrite —
    * an asset that has ever been held must stay resolvable forever, or its
@@ -50,8 +66,36 @@ export interface Asset {
   sortOrder: number;
 }
 
+/** The two forms money takes on Midnight: private notes, or a public balance. */
+export type LedgerForm = 'shielded' | 'unshielded';
+
 /**
- * What migration 0004 inserts, and what a standalone build runs on.
+ * An asset's token type in each form, as the 64 lower-case hex characters the
+ * ledger's own token types carry, or `null` where the asset has no such form.
+ */
+export interface LedgerIdentity {
+  readonly shielded: string | null;
+  readonly unshielded: string | null;
+}
+
+/**
+ * **THE LEDGER'S OWN TOKEN TYPE FOR NIGHT, WHICH IS UNSHIELDED BY DEFINITION.**
+ *
+ * WRITTEN OUT RATHER THAN ASKED FOR, because this module is loaded by the page
+ * and must not load the ledger's WebAssembly to learn one value. It is not a
+ * second definition: `ledger-token.test.ts` reads `nativeToken().raw` from the
+ * ledger itself and fails the day the two differ.
+ */
+const NIGHT_ON_THE_LEDGER: LedgerIdentity = Object.freeze({
+  shielded: null,
+  unshielded: '0000000000000000000000000000000000000000000000000000000000000000',
+});
+
+/** No form on Midnight at all: money that lives on another chain, or on none. */
+const NOT_ON_MIDNIGHT: LedgerIdentity = Object.freeze({ shielded: null, unshielded: null });
+
+/**
+ * The registry every build runs on.
  *
  * ETH is present and DISABLED on purpose. It is the asset that proves the
  * integer decision was necessary rather than tidy — 18 decimals do not fit in a
@@ -59,12 +103,12 @@ export interface Asset {
  * first day, whether or not anybody is paid in it yet.
  */
 export const SEED_ASSETS: readonly Asset[] = Object.freeze([
-  { code: 'GBP', name: 'Pound Sterling', kind: 'fiat', decimals: 2, chain: null, enabled: true, sortOrder: 10 },
-  { code: 'USD', name: 'US Dollar', kind: 'fiat', decimals: 2, chain: null, enabled: true, sortOrder: 20 },
-  { code: 'EUR', name: 'Euro', kind: 'fiat', decimals: 2, chain: null, enabled: true, sortOrder: 30 },
-  { code: 'USDC', name: 'USD Coin', kind: 'token', decimals: 6, chain: 'ethereum', enabled: true, sortOrder: 40 },
-  { code: 'NIGHT', name: 'Night', kind: 'token', decimals: 6, chain: 'midnight', enabled: true, sortOrder: 50 },
-  { code: 'ETH', name: 'Ether', kind: 'token', decimals: 18, chain: 'ethereum', enabled: false, sortOrder: 60 },
+  { code: 'GBP', name: 'Pound Sterling', kind: 'fiat', decimals: 2, chain: null, ledger: NOT_ON_MIDNIGHT, enabled: true, sortOrder: 10 },
+  { code: 'USD', name: 'US Dollar', kind: 'fiat', decimals: 2, chain: null, ledger: NOT_ON_MIDNIGHT, enabled: true, sortOrder: 20 },
+  { code: 'EUR', name: 'Euro', kind: 'fiat', decimals: 2, chain: null, ledger: NOT_ON_MIDNIGHT, enabled: true, sortOrder: 30 },
+  { code: 'USDC', name: 'USD Coin', kind: 'token', decimals: 6, chain: 'ethereum', ledger: NOT_ON_MIDNIGHT, enabled: true, sortOrder: 40 },
+  { code: 'NIGHT', name: 'Night', kind: 'token', decimals: 6, chain: 'midnight', ledger: NIGHT_ON_THE_LEDGER, enabled: true, sortOrder: 50 },
+  { code: 'ETH', name: 'Ether', kind: 'token', decimals: 18, chain: 'ethereum', ledger: NOT_ON_MIDNIGHT, enabled: false, sortOrder: 60 },
 ] as const);
 
 /* ------------------------------------------------------------------ *
@@ -149,7 +193,8 @@ export class StaticAssetRegistry implements AssetRegistry {
   private byCode: Map<AssetId, Asset>;
 
   constructor(assets: readonly Asset[] = SEED_ASSETS) {
-    this.byCode = new Map(assets.map(a => [a.code, { ...a }]));
+    refuseAnAmbiguousLedgerIdentity(assets);
+    this.byCode = new Map(assets.map(a => [a.code, { ...a, ledger: Object.freeze({ ...a.ledger }) }]));
   }
 
   all(): Asset[] {
@@ -236,19 +281,54 @@ export function assetIdBytes(code: AssetId): Uint8Array {
  * ------------------------------------------------------------------ */
 
 /**
- * The ledger's own token type for NIGHT, as the hex string the ledger's
- * `nativeToken().raw` returns.
+ * **A REGISTRY IN WHICH TWO ASSETS SHARE A TOKEN, OR A TOKEN IS MISSPELT, IS
+ * REFUSED WHEN IT IS BUILT.**
  *
- * WRITTEN OUT RATHER THAN ASKED FOR, because this module is loaded by the page
- * and must not load the ledger's WebAssembly to learn one value. It is not a
- * second definition: `ledger-token.test.ts` reads `nativeToken().raw` from the
- * ledger itself and fails the day the two differ.
+ * Two assets naming one token in the same form would be two names for one
+ * balance: a vault holding that money would read as holding both, and a
+ * payment in either would draw on the other's. A token that is not 64
+ * lower-case hex characters is a spelling, and a vault asked about a spelling
+ * answers that it holds none. Both are mistakes in a row, and a row is where
+ * they are caught.
  */
-const NIGHT_UNSHIELDED_TOKEN = '0000000000000000000000000000000000000000000000000000000000000000';
+function refuseAnAmbiguousLedgerIdentity(rows: readonly Asset[]): void {
+  const seen = new Map<string, AssetId>();
+  for (const row of rows) {
+    const identity = (row as { ledger?: unknown }).ledger as Partial<LedgerIdentity> | undefined;
+    if (identity === null || typeof identity !== 'object') {
+      throw new Error(
+        `${row.code} does not say what the ledger calls it. Every asset states a token for each `
+        + 'form, or null where it has no such form, so that no payment has to guess.');
+    }
+    for (const form of ['shielded', 'unshielded'] as const) {
+      const token = identity[form];
+      if (token === null) continue;
+      if (typeof token !== 'string' || !/^[0-9a-f]{64}$/.test(token)) {
+        throw new Error(
+          `${row.code}'s ${formWord(form)} token is not 64 lower-case hex characters. A token is `
+          + 'compared byte for byte, so any other spelling of it is money nobody holds.');
+      }
+      const other = seen.get(`${form}:${token}`);
+      if (other !== undefined) {
+        throw new Error(
+          `${other} and ${row.code} name the same ${formWord(form)} token. They would be two `
+          + 'names for one balance, so a vault holding either would read as holding both.');
+      }
+      seen.set(`${form}:${token}`, row.code);
+    }
+  }
+}
+
+/*
+ * Function declarations rather than constants: the default registry below is
+ * built while this module loads, before a constant declared here would exist.
+ */
+function formWord(form: LedgerForm): string {
+  return form === 'shielded' ? 'private' : 'public';
+}
 
 /**
- * **THE TOKEN A PAYMENT MOVES, AS THE LEDGER NAMES IT, AND NOT AS THIS PRODUCT
- * NAMES THE ASSET.**
+ * **WHAT THE LEDGER CALLS AN ASSET IN ONE FORM, OR THAT IT HAS NO SUCH FORM.**
  *
  * Two different values answer "which money is this", and they must never be
  * mistaken for each other:
@@ -256,34 +336,61 @@ const NIGHT_UNSHIELDED_TOKEN = '000000000000000000000000000000000000000000000000
  *   - `assetIdBytes` is how an ACCOUNT names an asset. The key its balance map
  *     is derived from is built over those bytes, so they can never change, and
  *     they are padded ASCII so that no two codes can collide.
- *   - the ledger's token type is how a VAULT holds money. A deposit of NIGHT
- *     arrives as the ledger's own NIGHT, because the wallet that funds it holds
- *     the ledger's NIGHT and has no other kind.
+ *   - the ledger's token type is how a VAULT holds money, and it is what a
+ *     payment out of a vault names: the vault uses the one token a payment
+ *     gives it both to ask whether it holds enough and to send.
  *
- * **A payment out of a vault is checked against the token type, not the code.**
- * The vault's payout uses the one token it is given both to ask whether it
- * holds enough and to send, and the approved payment commits to that same
- * token. So a payment that named its money by the asset code would ask a vault
- * to pay out of a balance it can never hold, and would be refused only after it
- * had been proposed, approved and paid for.
- *
- * **ONE PAIRING EXISTS TODAY: NIGHT, PAID PUBLICLY.** Every other pairing is
- * refused by name rather than given a stand-in value, because a stand-in is a
- * payment no vault can make, discovered after the fees.
+ * **READ OFF THE ASSET'S OWN ROW.** No asset is named in this function, so a
+ * new asset, or a new form of an old one, is a change to a row and to nothing
+ * else.
  */
-export function ledgerTokenOf(code: AssetId, kind: 'shielded' | 'unshielded'): string {
-  if (code === 'NIGHT') {
-    if (kind === 'unshielded') return NIGHT_UNSHIELDED_TOKEN;
-    throw new Error(
-      'NIGHT is only ever held publicly on Midnight, so there is no private NIGHT to pay '
-        + 'with. Pay NIGHT to a public address, one that begins mn_addr_.',
-    );
+export type LedgerAnswer =
+  | { readonly of: 'token'; readonly token: string }
+  | { readonly of: 'no-such-form'; readonly why: string };
+
+export function ledgerFormOf(asset: Asset, form: LedgerForm): LedgerAnswer {
+  if (form !== 'shielded' && form !== 'unshielded') {
+    throw new Error(`"${String(form)}" is not a form money takes on Midnight; it is private or public.`);
   }
+  const identity = (asset as { ledger?: unknown }).ledger as Partial<LedgerIdentity> | undefined;
+  const token = identity?.[form];
+  if (typeof token === 'string') return { of: 'token', token };
+  if (token !== null) {
+    throw new Error(
+      `${asset.code} does not say whether it has a ${formWord(form)} form, so no payment in it `
+      + 'can name its money. Its row states a token or null for each form.');
+  }
+  const other: LedgerForm = form === 'shielded' ? 'unshielded' : 'shielded';
+  const why = typeof identity?.[other] === 'string'
+    ? `${asset.code} has no ${formWord(form)} form on Midnight, so no vault can hold it `
+      + `${formWord(form)}ly and no ${formWord(form)} payment in it can be made. It has a `
+      + `${formWord(other)} form only.`
+    : `${asset.code} has no form on Midnight, private or public, so no vault can hold it and no `
+      + 'payment in it can be made out of one.';
+  return { of: 'no-such-form', why };
+}
+
+/**
+ * **THE TOKEN A PAYMENT IN AN ASSET MOVES, IN THE FORM ITS PAYEE IS PAID IN.**
+ *
+ * Every producer of a payment's token calls this, and nothing else turns an
+ * asset into a ledger token. Where the asset has no such form it refuses,
+ * naming the assets that have one, rather than handing back a stand-in: a
+ * stand-in is a payment no vault can make, discovered after the approvals and
+ * the fees.
+ */
+export function ledgerTokenOf(
+  code: AssetId, form: LedgerForm, registry: AssetRegistry = assets,
+): string {
+  const answer = ledgerFormOf(registry.require(code), form);
+  if (answer.of === 'token') return answer.token;
+  const payable = registry.enabled()
+    .filter(a => ledgerFormOf(a, form).of === 'token')
+    .map(a => a.code);
   throw new Error(
-    `${code} is not money any vault on Midnight can hold, so no payment in it can be made `
-      + 'out of a vault. NIGHT, paid to a public address, is the only payment a vault can make '
-      + 'today.',
-  );
+    `${answer.why} ${payable.length === 0
+      ? `No asset has a ${formWord(form)} form yet.`
+      : `Assets that have a ${formWord(form)} form: ${payable.join(', ')}.`}`);
 }
 
 /* ------------------------------------------------------------------ *

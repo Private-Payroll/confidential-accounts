@@ -335,15 +335,14 @@ export function transferOf(spec: TransferSpec): Transfer {
  *
  * **AND THE TOKEN IS THE LEDGER'S, NOT THE ASSET CODE.** A vault holds money by
  * the ledger's token type and pays out of the token it is handed, and this
- * payment commits to that token. `ledgerTokenOf` is where a transfer's asset
- * code becomes a ledger token, and it refuses any pairing no vault can pay
+ * payment commits to that token. `ledgerTokenOf` reads it off the asset's own
+ * row, in the form the payee is paid in, and refuses an asset with no such form
  * rather than handing back a value that would be refused after the approvals.
  * `assetIdBytes` is the account's name for an asset and is not used here.
  *
- * **A PAYROLL RUN'S PAYMENTS DO NOT COME FROM HERE.** `paymentFactsFor` in
- * `payroll.ts` still writes the asset code as the token, and a payroll run is
- * always private. No asset has a private form, so no vault holds a note that
- * such a payment could be made from.
+ * **A PAYROLL RUN'S PAYMENTS DO NOT COME FROM HERE** but from `paymentFactsFor`
+ * in `payroll.ts`, which asks the same function for the private form, because a
+ * payroll run is always private.
  *
  * **AND IT IS THE COUNTERPART OF `paymentFactsFor`, NOT A WIDENING OF IT.**
  * That one returns `ShieldedPaymentFacts` because a payroll run is always
@@ -351,8 +350,8 @@ export function transferOf(spec: TransferSpec): Transfer {
  * kind the address is. Two functions, two return types, one refusal between
  * them — rather than one function with a flag deciding which rule applies.
  */
-export const transferFacts = (t: Transfer): PaymentFacts => ({
+export const transferFacts = (t: Transfer, registry: AssetRegistry = defaultAssets): PaymentFacts => ({
   payee: t.payee,
-  token: ledgerTokenOf(t.asset, t.payee.kind),
+  token: ledgerTokenOf(t.asset, t.payee.kind, registry),
   amount: t.amount,
 });

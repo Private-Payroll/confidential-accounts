@@ -36,6 +36,7 @@ import {
 import { MidnightCommitments } from '../../src/midnight/commitments.js';
 import { runMaterialFor, retryMaterialFor } from '../../src/midnight/run-material.js';
 import { vaultDetails } from '../../src/testing/vault-details.js';
+import { registryWithTestPrivateForms, aVaultHolding } from '../../src/testing/assets.js';
 import { FileStore } from '../../src/core/store-file.js';
 import { toHex, unseal, parseCanonical, sign, type Hex, type Sealed } from '../../src/core/crypto.js';
 import { approvalMessage } from '../../src/core/account.js';
@@ -70,8 +71,9 @@ const services = () => {
       return typeof value === 'function' ? value.bind(target) : value;
     },
   });
-  const accounts = new AccountService(store, ledger, MidnightCommitments);
-  const payroll = new PayrollService(store, accounts, new SimulatedProofSystem());
+  const registry = registryWithTestPrivateForms();
+  const accounts = new AccountService(store, ledger, MidnightCommitments, registry, aVaultHolding());
+  const payroll = new PayrollService(store, accounts, new SimulatedProofSystem(), registry);
   return { store, accounts, payroll, inner, control };
 };
 
@@ -305,7 +307,12 @@ describe('a raise that threw after the network had it', () => {
       r.control.fault = 'throw-before-sending';
       await r.accounts.proposeRun({
         accountId: r.account, viewingKey: r.viewingKey, summary: 'Payroll 2026-10, 1 recipients',
-        payload: { runId: r.run.id, entries: [] }, asset: 'GBP', run: material.run, proposedBy: r.by,
+        /* Entries that add up to the payments, or the raise is refused before anything is written down. */
+        payload: { runId: r.run.id, entries: material.facts.map((f, i) => ({
+          id: `ent_${i}`, kind: 'payroll', asset: 'GBP', amount: f.amount,
+          counterparty: `person ${i}`, memo: '', at: '',
+        })) }, asset: 'GBP', run: material.run,
+        payments: material.facts, proposedBy: r.by,
       }).catch(() => undefined);
     }
     expect(r.roundsOf(r.run.id)).toHaveLength(2);
