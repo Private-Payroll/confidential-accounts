@@ -82,22 +82,20 @@ export function AuthScreen({ onDone, notice = '' }: {
 
 /** Shown after sign in when the user is on zero or several accounts. */
 export function AccountPicker({
-  user, accounts, onOpen, onUnlock, onCreate, onCreateWithWallet, onFinishSetup,
+  user, accounts, onOpen, onUnlock, onCreateWithWallet, onFinishSetup,
   awaitingSetup, onDemo, onSignOut, busy, err,
 }: {
   user: keyring.Me;
   accounts: any[];
   onOpen: (id: string) => void;
-  /** `PI2a` — ask the wallet for this company's key, then open it. */
+  /** Ask the wallet for the key your saved keys here are sealed under, then open this company. */
   onUnlock: (id: string) => void;
-  onCreate: (name: string) => void;
   /**
-   * **PI3.** Create a company from a wallet session — three steps in
-   * an order the ordinary button cannot perform, because sealing needs a key
-   * that does not exist until the company does.
+   * Create a company from a wallet session: open the keys saved for you if this
+   * tab has not, create it, and save its keys beside them.
    */
   onCreateWithWallet: (name: string) => void;
-  /** Finish one that was created but whose keys were never sealed. */
+  /** Finish one that was created but whose keys were never saved. */
   onFinishSetup: () => void;
   /** The company this tab created and has not finished sealing, if any. */
   awaitingSetup: string | null;
@@ -108,7 +106,6 @@ export function AccountPicker({
 }) {
   const [name, setName] = useState('');
   const wallet = keyring.signedInWallet();
-  const noCompanyHere = keyring.whyNoCompanyCanStartHere();
   const setupProblem = keyring.companyAwaitingSetupProblem();
 
   /**
@@ -116,11 +113,11 @@ export function AccountPicker({
    * `PI1` wrote this screen to say the second half was not built; `PI2a` built
    * it, and this is what that screen says now.
    *
-   * The company's data is sealed under a key, and the key is made by the
-   * person's own wallet from their seed and this company's address on the
-   * chain. So there is a button per company, and pressing it opens the wallet:
-   * nothing here can produce the key on its own, which is the property being
-   * bought rather than a limitation.
+   * The keys that open every company this person belongs to here are saved
+   * sealed, under a key their own wallet makes for them on this site. So a row's
+   * button opens the wallet, and one press opens them all: nothing here can
+   * produce the key on its own, which is the property being bought rather than a
+   * limitation.
    *
    * **THE COMPANY IS NOT NAMED ON THIS SCREEN**, because its name is sealed
    * under the very key that has not been released yet. It is identified by what
@@ -179,32 +176,26 @@ export function AccountPicker({
           )}
 
           {/*
-            * **AND THIS IS `C141` CLOSED.** Until PI3 this screen told a person
-            * with a wallet to go and be invited by somebody else, because
-            * starting a company needed a password. It no longer does.
-            *
-            * Shown disabled with its reason for a person who already has keys
-            * saved: a company started then could never be finished.
+            * **A PERSON WITH A WALLET STARTS A COMPANY HERE, HOWEVER MANY THEY
+            * ALREADY BELONG TO.** Its keys are saved beside the keys already saved
+            * for them, under the same key.
             */}
           {!awaitingSetup && (
             <form className="acctnew"
-              onSubmit={e => { e.preventDefault(); if (!noCompanyHere) onCreateWithWallet(name.trim()); }}>
+              onSubmit={e => { e.preventDefault(); onCreateWithWallet(name.trim()); }}>
               <input value={name} onChange={e => setName(e.target.value)}
-                placeholder="Start your own company" disabled={noCompanyHere !== null} />
-              <button className="primary"
-                disabled={busy || noCompanyHere !== null || name.trim().length < 2}>
+                placeholder="Start your own company" />
+              <button className="primary" disabled={busy || name.trim().length < 2}>
                 {busy ? 'Waiting for your wallet' : 'Create'}
               </button>
             </form>
           )}
-          {!awaitingSetup && noCompanyHere && (
-            <p className="authsub" data-no-company-here>{noCompanyHere}</p>
-          )}
 
           <p className="authsub">
-            Your wallet will show you which company is being opened and the address of the
-            site asking. Check both before you approve. The key it gives back stays in this
-            tab, is never sent to us, and is forgotten when you close it.
+            Your wallet will show you the address of the site asking and the wallet address
+            you signed in with. Check both before you approve. The key it gives back opens the
+            keys saved for you here, stays in this tab, is never sent to us, and is forgotten
+            when you close it.
           </p>
 
           {err && <div className="autherr">{err}</div>}
@@ -244,26 +235,26 @@ export function AccountPicker({
           </div>
         )}
 
-        {/* The same unfinished company as the other face offers to finish. A tab
-          * reaches this face with one after unlocking another company, and the
-          * keys are only here, so the way to finish it stays on screen. */}
+        {/* A company started here whose keys the server refused to save. The keys
+          * are only here, so the way to finish it stays on screen. */}
         {awaitingSetup && (
           <AwaitingSetup busy={busy} onFinishSetup={onFinishSetup} problem={setupProblem} />
         )}
 
-        {/* Shown, disabled, with its reason: a company started from this face would
-          * have its only keys saved under another company's key. */}
-        <form className="acctnew" onSubmit={e => {
-          e.preventDefault();
-          if (!noCompanyHere) onCreate(name.trim());
-        }}>
-          <input value={name} onChange={e => setName(e.target.value)} placeholder="New company name"
-            disabled={noCompanyHere !== null} />
-          <button className="primary" disabled={busy || noCompanyHere !== null || name.trim().length < 2}>
-            Create
-          </button>
-        </form>
-        {noCompanyHere && <p className="authsub" data-no-company-here>{noCompanyHere}</p>}
+        {/* Your saved keys are open in this tab, so a new company's keys are saved
+          * beside them with no wallet asked. Not while a started company is waiting:
+          * its keys are only in this tab. */}
+        {!awaitingSetup && (
+          <form className="acctnew" onSubmit={e => {
+            e.preventDefault();
+            onCreateWithWallet(name.trim());
+          }}>
+            <input value={name} onChange={e => setName(e.target.value)} placeholder="New company name" />
+            <button className="primary" disabled={busy || name.trim().length < 2}>
+              Create
+            </button>
+          </form>
+        )}
 
         {/* Both faces of this screen report what failed. Without this line every
           * refusal on this face - opening, creating - left the screen unchanged. */}
@@ -283,9 +274,9 @@ export function AccountPicker({
  * **A COMPANY THAT EXISTS AND IS NOT FINISHED.**
  *
  * Its records are created and this tab is holding the only copy of the keys
- * that open them, unsealed. Saying so plainly is the whole point: a person who
- * declined the wallet needs to know that the company is real, that nothing is
- * lost, and that closing this tab is the one thing that would lose it.
+ * that open them, unsaved. Saying so plainly is the whole point: the person
+ * needs to know that the company is real, that nothing is lost yet, and that
+ * closing this tab or signing out is what would lose it.
  *
  * **AND WHEN IT CAN NEVER BE FINISHED, IT SAYS THAT INSTEAD.** Telling a person
  * to keep a tab open for a Finish that always fails is the one thing this block
@@ -303,25 +294,16 @@ function AwaitingSetup({ busy, onFinishSetup, problem }: {
       </div>
     );
   }
-  if (problem) {
-    return (
-      <div className="empty" data-awaiting-setup data-may-not-finish>
-        <b>Your company is created and finishing it failed</b>
-        <span data-setup-problem>{problem.why}</span>
-        <button className="primary" disabled={busy} onClick={onFinishSetup}>
-          {busy ? 'Waiting for your wallet' : 'Finish setting up'}
-        </button>
-      </div>
-    );
-  }
   return (
     <div className="empty" data-awaiting-setup>
       <b>Your company is created and not finished</b>
-      Your wallet has not yet given this page the key that seals your keys. Nothing
-      is lost — but do not close this tab until it has, because the keys are only
-      here.
+      Its keys are not saved yet: saving them was refused, and trying again straight away
+      was refused too. Finishing reads what is saved now and tries again to save this
+      company's keys beside it. Nothing is lost yet - but the keys are only in this tab, and they are
+      lost if this tab closes or its sign-in ends for any reason: signing out here or on
+      another device, another person signing in in this browser, or the sign-in running out.
       <button className="primary" disabled={busy} onClick={onFinishSetup}>
-        {busy ? 'Waiting for your wallet' : 'Finish setting up'}
+        Finish setting up
       </button>
     </div>
   );

@@ -35,6 +35,9 @@ import { newSecret } from 'midnight-identity/keys/derivation';
 import { fingerprintOf, splitSecret } from 'midnight-identity/recovery/pieces';
 import { toBase64Url } from 'midnight-identity/passkey/bytes';
 import { SessionProvider, useSession } from './session.js';
+import { identityFromSecret } from 'midnight-identity/keys/derivation';
+import { emptyProfile } from 'midnight-identity/profile/model';
+import { browserPort, recordNameFor, save } from 'midnight-identity/profile/store';
 import { ORIGINAL_SLOT, forgetOpenWallet, heldWallets, openWalletId } from './accounts/wallets-held.js';
 import {
   allPasskeys, loadSecret, savePasskey, saveSecret, saveSecuredSetup, saveWalletName,
@@ -909,4 +912,25 @@ describe('a browser that holds several wallets', () => {
       expect([...(await loadSecret(founderSlot))!]).toEqual([...founder]);
       expect(allPasskeys(founderSlot).map((k) => k.credentialId)).toEqual(['cred-founder']);
     });
+
+  it('REMOVING one clears the details it saved about its owner, and not the other wallet\'s', async () => {
+    mount();
+    const founder = await createOne('Founder', 'cred-founder');
+    fireEvent.click(screen.getByText('lock'));
+    await waitFor(() => expect(phase()).toBe('locked'));
+    const employee = await createOne('Employee', 'cred-employee');
+    const port = browserPort();
+    const founderIdentity = identityFromSecret(founder);
+    const employeeIdentity = identityFromSecret(employee);
+    await save(port, founderIdentity, emptyProfile(1));
+    await save(port, employeeIdentity, emptyProfile(1));
+    const founderRecord = await recordNameFor(founderIdentity);
+    const employeeRecord = await recordNameFor(employeeIdentity);
+    expect(localStorage.getItem(employeeRecord)).not.toBeNull();
+
+    /* The control removes the wallet THIS WINDOW HAS OPEN - Employee. */
+    fireEvent.click(screen.getByText('forget'));
+    await waitFor(() => expect(localStorage.getItem(employeeRecord)).toBeNull());
+    expect(localStorage.getItem(founderRecord)).not.toBeNull();
+  });
 });

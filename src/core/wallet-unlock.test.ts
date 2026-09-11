@@ -3,16 +3,18 @@ import { readFileSync } from 'node:fs';
 import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
 import { identityFromWords } from 'midnight-identity';
 import { parseAsk } from 'midnight-identity/profile/request';
-import type { Ask, UnlockRequest } from 'midnight-identity/profile/request';
+import type { Ask, KeyringRequest, UnlockRequest } from 'midnight-identity/profile/request';
 import { READY_PING } from 'midnight-identity/profile/channel';
-import { releaseFor, unlockKeyFor } from 'midnight-identity/profile/unlock';
+import {
+  keyringKeyFor, keyringReleaseFor, releaseFor, unlockKeyFor,
+} from 'midnight-identity/profile/unlock';
 import { seal, toHex, unseal } from './crypto.js';
 import { MemoryStore } from './store.js';
 import { SimulatedLedger, SimulatedCommitments } from './ledger.js';
 import { AccountService, openAccount, sealAccount } from './account.js';
 import { NoCompanyAddress, companyForSession } from './company-address.js';
-import { UNLOCK_PURPOSE, unlockAsk } from './wallet-unlock.js';
-import { askWalletToUnlock, UnlockRefused } from '../web/wallet-unlock.js';
+import { KEYRING_PURPOSE, UNLOCK_PURPOSE, keyringAsk, unlockAsk } from './wallet-unlock.js';
+import { askWalletForKeys, askWalletToUnlock, UnlockRefused } from '../web/wallet-unlock.js';
 import type { Openable } from '../web/wallet-sign-in.js';
 
 /**
@@ -58,6 +60,8 @@ const ACME = 'a1'.repeat(32);
 const OTHER = 'b2'.repeat(32);
 
 const NAME = 'Confidential Accounts';
+/** The address a sign-in answer names, in the shape the wallet's parser accepts. */
+const SIGNED_IN = 'mn_addr_test1qqqqqqqqqqqqqqqqqqqq';
 const RDNS = 'social.lemonade.confidential-accounts';
 const AT = 1_756_000_000_000;
 
@@ -413,14 +417,16 @@ describe('§3 — AND THE SAME THING PROVED BY WATCHING, NOT BY READING', () => 
    * journey did not send it, which is the claim the round actually makes.
    */
   it('THE SERVER IS NEVER HANDED THE RELEASED KEY, in any spelling', async () => {
-    const ask = parseAsk(unlockAsk({
-      name: NAME, rdns: RDNS, purpose: UNLOCK_PURPOSE,
-      nonce: 'n', expiresAt: AT + 60_000, company: ACME,
-    }), US, AT);
-    const releasedHex = toHex(unlockKeyFor(identity, asUnlock(ask)));
+    const ask = parseAsk(keyringAsk({
+      name: NAME, rdns: RDNS, purpose: KEYRING_PURPOSE,
+      nonce: 'n', expiresAt: AT + 60_000, person: 'usr_1', signedInAs: SIGNED_IN, company: null,
+    }), US, AT) as KeyringRequest;
+    const releasedHex = toHex(keyringKeyFor(identity, ask));
 
     const view = new WalletAtTheOtherEnd(
-      a => (a.kind === 'unlock' ? releaseFor(identity, asUnlock(a), AT) : { schema: 'a-sign-in' }));
+      a => (a.kind === 'keyring'
+        ? keyringReleaseFor(identity, a, AT, held => held === SIGNED_IN)
+        : { schema: 'a-sign-in' }));
 
     const seen: Array<{ url: string; method: string; body: string }> = [];
     const answers: Record<string, unknown> = {
@@ -428,10 +434,9 @@ describe('§3 — AND THE SAME THING PROVED BY WATCHING, NOT BY READING', () => 
         nonce: 'sign-in-nonce', handle: 'h', expiresAt: new Date(AT + 60_000).toISOString(),
       },
       'POST /api/auth/wallet': {
-        session: { token: 'tok' }, address: 'mn_shield-addr', created: true,
+        session: { token: 'tok' }, address: SIGNED_IN, created: true,
         user: { id: 'usr_1', email: null, name: '' },
       },
-      'POST /api/accounts/acc_1/unlock': { company: ACME },
       'GET /api/me/keys': { keyBundle: seal(A_KEYRING, releasedHex), version: 7 },
     };
 
@@ -454,7 +459,7 @@ describe('§3 — AND THE SAME THING PROVED BY WATCHING, NOT BY READING', () => 
       await keyring.signInWithWallet(WALLET, undefined, thisBrowsersWindow());
       expect(keyring.canOpenCompanies()).toBe(false);
 
-      await keyring.unlockWithWallet('acc_1', WALLET, view, US);
+      await keyring.openKeysWithWallet(WALLET, view, US);
 
       /* It opened, so the key really is the key. A test that proved only
        * absence would pass just as well if nothing had happened at all. */
@@ -465,12 +470,172 @@ describe('§3 — AND THE SAME THING PROVED BY WATCHING, NOT BY READING', () => 
       expect(everything).not.toContain(releasedHex);
       expect(everything).not.toContain(releasedHex.toUpperCase());
       expect(everything).not.toContain(Buffer.from(releasedHex, 'hex').toString('base64'));
-      /* And no request carried a body at all on the way to the company. */
-      expect(seen.find(r => r.url.endsWith('/unlock'))!.body).toBe('');
+      /* Opening the keys names no company to the server at all. */
+      expect(seen.some(r => r.url.endsWith('/unlock'))).toBe(false);
     } finally {
       globalThis.fetch = realFetch;
       if (realWindow === undefined) delete (globalThis as { window?: unknown }).window;
       else (globalThis as { window?: unknown }).window = realWindow;
     }
+  });
+});
+
+describe('§4 - THE KEYS SAVED FOR A PERSON OPEN WITH THE KEY THEIR WALLET GIVES FOR THEM', () => {
+  const keysFor = (who = identity, holds: (a: string) => boolean = a => a === SIGNED_IN) =>
+    (ask: Ask) => (ask.kind === 'keyring' ? keyringReleaseFor(who, ask, AT, holds) : { schema: 'x' });
+  const askForKeys = (
+    view: Openable,
+    opts: { person?: string; signedInAs?: string | null; company?: string | null; atOrigin?: string } = {},
+  ) => askWalletForKeys(view, WALLET, {
+    person: opts.person ?? 'usr_1',
+    signedInAs: opts.signedInAs === undefined ? SIGNED_IN : opts.signedInAs,
+    company: opts.company ?? null,
+    atOrigin: opts.atOrigin ?? US,
+    name: NAME, rdns: RDNS, now: () => AT, nonce: 'nonce-keys',
+  });
+
+  it('ONE KEY OPENS THE KEYS SAVED FOR EVERY COMPANY, AND IT IS NO COMPANY\'S KEY', async () => {
+    const { key, companyKey } = await askForKeys(new WalletAtTheOtherEnd(keysFor()));
+    expect(companyKey).toBeNull();
+    const both = JSON.stringify({ accounts: {
+      acc_1: JSON.parse(A_KEYRING).accounts.acc_1,
+      acc_2: { signerId: 'sgn_2', signingSecret: 'dd'.repeat(32), wrappingSecret: 'ee'.repeat(32), blinding: 'ff'.repeat(32) },
+    } });
+    const bundle = seal(both, toHex(key));
+    const opened = JSON.parse(unseal(bundle, toHex(key)));
+    expect(Object.keys(opened.accounts).sort()).toEqual(['acc_1', 'acc_2']);
+    const acme = await unlock(new WalletAtTheOtherEnd(honestly()));
+    expect(toHex(acme)).not.toBe(toHex(key));
+    expect(() => unseal(bundle, toHex(acme))).toThrow();
+  });
+
+  it('THE ASK NAMES THE PERSON AND THE SIGNED-IN ADDRESS, AND NO ORIGIN', async () => {
+    const view = new WalletAtTheOtherEnd(keysFor());
+    await askForKeys(view);
+    const sent = view.asked[0] as Record<string, unknown>;
+    expect(sent['kind']).toBe('keyring');
+    expect(sent['person']).toBe('usr_1');
+    expect(sent['signedInAs']).toBe(SIGNED_IN);
+    expect(sent['purpose']).toBe(KEYRING_PURPOSE);
+    expect(sent).not.toHaveProperty('company');
+    expect(sent).not.toHaveProperty('wants');
+    expect(sent['requester']).not.toHaveProperty('origin');
+    /* A tab that does not know its address says nothing rather than something empty. */
+    const unknown = new WalletAtTheOtherEnd(keysFor());
+    await askForKeys(unknown, { signedInAs: null });
+    expect(unknown.asked[0]).not.toHaveProperty('signedInAs');
+  });
+
+  it('A SECOND DEVICE AND ANOTHER HOST GET THE SAME KEY; ANOTHER PERSON DOES NOT', async () => {
+    const first = await askForKeys(new WalletAtTheOtherEnd(keysFor()));
+    const second = await askWalletForKeys(
+      new WalletAtTheOtherEnd(keysFor(identityFromWords(TEST_MNEMONIC)), ELSEWHERE), WALLET, {
+        person: 'usr_1', signedInAs: SIGNED_IN, company: null, atOrigin: ELSEWHERE,
+        name: NAME, rdns: RDNS, now: () => AT + 86_400_000, nonce: 'another',
+      });
+    expect(toHex(second.key)).toBe(toHex(first.key));
+    const other = await askForKeys(new WalletAtTheOtherEnd(keysFor()), { person: 'usr_2' });
+    expect(toHex(other.key)).not.toBe(toHex(first.key));
+  });
+
+  it('A WALLET THAT DOES NOT HOLD THE SIGNED-IN ADDRESS GIVES NOTHING', () => {
+    const ask = parseAsk(keyringAsk({
+      name: NAME, rdns: RDNS, purpose: KEYRING_PURPOSE, nonce: 'n', expiresAt: AT + 60_000,
+      person: 'usr_1', signedInAs: SIGNED_IN, company: null,
+    }), US, AT) as KeyringRequest;
+    expect(() => keyringReleaseFor(identity, ask, AT, () => false)).toThrow(/none of this wallet's accounts/u);
+  });
+
+  it('WITH A COMPANY, THE SAME ANSWER CARRIES THAT COMPANY\'S ORDINARY KEY', async () => {
+    const { key, companyKey } = await askForKeys(new WalletAtTheOtherEnd(keysFor()), { company: ACME });
+    const acme = await unlock(new WalletAtTheOtherEnd(honestly()));
+    expect(toHex(companyKey!)).toBe(toHex(acme));
+    expect(toHex(key)).not.toBe(toHex(acme));
+  });
+
+  it('AN ANSWER FOR ANOTHER PERSON, ADDRESS, COMPANY OR PAGE IS REFUSED RATHER THAN USED', async () => {
+    const tampered = (over: Record<string, unknown>) => new WalletAtTheOtherEnd(
+      ask => ({ ...(keysFor()(ask) as object), ...over }));
+    expect(await refusalOf(() => askForKeys(tampered({ person: 'usr_2' })))).toBe('person-mismatch');
+    expect(await refusalOf(() => askForKeys(tampered({ signedInAs: null })))).toBe('person-mismatch');
+    expect(await refusalOf(() => askForKeys(tampered({ nonce: 'old' })))).toBe('nonce-mismatch');
+    expect(await refusalOf(() => askForKeys(new WalletAtTheOtherEnd(keysFor(), THEM)))).toBe('origin-mismatch');
+    expect(await refusalOf(() => askForKeys(
+      new WalletAtTheOtherEnd(ask => ({ ...(keysFor()(ask) as object), company: OTHER })), { company: ACME })))
+      .toBe('company-mismatch');
+  });
+});
+
+describe('§5 - A PAYSLIP KEY IS WORKED OUT ONLY FROM THIS COMPANY\'S KEY, FROM THE WALLET WHOSE KEYS ARE OPEN', () => {
+  const realFetch = globalThis.fetch;
+  const realWindow = (globalThis as { window?: unknown }).window;
+  const other = identityFromWords(
+    'zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo vote');
+
+  const journey = async (keysAnsweredBy: typeof identity) => {
+    const personKey = toHex(keyringKeyFor(identity, parseAsk(keyringAsk({
+      name: NAME, rdns: RDNS, purpose: KEYRING_PURPOSE, nonce: 'n', expiresAt: AT + 60_000,
+      person: 'usr_1', signedInAs: SIGNED_IN, company: null,
+    }), US, AT) as KeyringRequest));
+    let keyringAsks = 0;
+    const view = new WalletAtTheOtherEnd((a) => {
+      if (a.kind === 'sign-in') return { schema: 'a-sign-in' };
+      if (a.kind === 'keyring') {
+        keyringAsks += 1;
+        /* The first answer opens the keys; the one asked with a company is the one under test. */
+        const who = a.company === null ? identity : keysAnsweredBy;
+        return keyringReleaseFor(who, a, AT, held => held === SIGNED_IN);
+      }
+      return { schema: 'a-payee-answer' };
+    });
+    const answers: Record<string, unknown> = {
+      'POST /api/auth/wallet/challenge': { nonce: 's', handle: 'h', expiresAt: new Date(AT + 60_000).toISOString() },
+      'POST /api/auth/wallet': { address: SIGNED_IN, created: true, user: { id: 'usr_1', email: null, name: '' } },
+      'GET /api/me/keys': { keyBundle: seal(A_KEYRING, personKey), version: 3 },
+      'POST /api/accounts/acc_1/unlock': { company: ACME },
+      'POST /api/accounts/acc_1/payee-challenge': { nonce: 'p', handle: 'ph', expiresAt: new Date(AT + 60_000).toISOString() },
+    };
+    (globalThis as { window?: unknown }).window = Object.assign(view, { location: { origin: US } });
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      const answer = answers[`${String(init?.method ?? 'GET')} ${url}`];
+      if (answer === undefined) throw new Error(`no stub for ${String(init?.method ?? 'GET')} ${url}`);
+      return { ok: true, status: 200, json: async () => answer } as Response;
+    }) as typeof fetch;
+    const keyring = await import('../web/keyring.js');
+    keyring.forgetLocally();
+    await keyring.signInWithWallet(WALLET, undefined, thisBrowsersWindow());
+    await keyring.openKeysWithWallet(WALLET, view, US);
+    return { keyring, view, personKey, asks: () => keyringAsks };
+  };
+
+  afterEach(async () => {
+    const keyring = await import('../web/keyring.js');
+    keyring.forgetLocally();
+    globalThis.fetch = realFetch;
+    if (realWindow === undefined) delete (globalThis as { window?: unknown }).window;
+    else (globalThis as { window?: unknown }).window = realWindow;
+  });
+
+  it('THE KEY HANDED BACK IS THE COMPANY\'S OWN KEY FROM THIS WALLET, NOT THE KEY THE SAVED KEYS OPEN WITH', async () => {
+    const { keyring, view, personKey, asks } = await journey(identity);
+    const { companyKey, disclosure } = await keyring.payslipKeyAndPayeeAddress('acc_1', WALLET, view, US);
+    const expected = toHex(unlockKeyFor(identity, asUnlock(parseAsk(unlockAsk({
+      name: NAME, rdns: RDNS, purpose: UNLOCK_PURPOSE, nonce: 'n', expiresAt: AT + 60_000, company: ACME,
+    }), US, AT))));
+    expect(companyKey).toBe(expected);
+    expect(companyKey).not.toBe(personKey);
+    expect(keyring.companyKeyReleasedFor('acc_1')).toBe(expected);
+    expect(disclosure.handle).toBe('ph');
+    /* And a second time asks the wallet for no key, only for where to pay. */
+    await keyring.payslipKeyAndPayeeAddress('acc_1', WALLET, view, US);
+    expect(asks()).toBe(2);
+  });
+
+  it('A DIFFERENT WALLET ANSWERING THE COMPANY\'S ASK IS REFUSED, AND NO COMPANY KEY IS KEPT', async () => {
+    const { keyring, view } = await journey(other);
+    await expect(keyring.payslipKeyAndPayeeAddress('acc_1', WALLET, view, US))
+      .rejects.toThrow('gave a different key from the one this tab opened your saved keys with');
+    expect(keyring.companyKeyReleasedFor('acc_1')).toBeNull();
+    expect(keyring.canOpenCompanies()).toBe(true);
   });
 });

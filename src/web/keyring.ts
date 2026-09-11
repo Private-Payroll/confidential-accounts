@@ -7,7 +7,7 @@
  * either honoured or quietly broken, so it is deliberately small.
  *
  * What is in memory while signed in:
- *   encKey   RELEASED BY THE WALLET for one company, never transmitted
+ *   encKey   RELEASED BY THE WALLET for this person on this site, never transmitted
  *   keyring  signing and wrapping secrets, one entry per account
  *
  * **AND WHAT IS NOT IN THIS PAGE AT ALL: THE SIGN-IN ITSELF.** It is a cookie the
@@ -26,7 +26,7 @@ import {
 /* The screen that draws the waiting needs the type, and it should not have to
  * know which file below this one the wallet plumbing lives in. */
 export type { WalletDialog } from './wallet-sign-in.js';
-import { askWalletToUnlock } from './wallet-unlock.js';
+import { askWalletForKeys } from './wallet-unlock.js';
 /* **THE WALLET IS SHOWN INSIDE THIS PAGE.** Every journey below defaults to it;
  * a test hands in a window of its own and drives the same conversation. */
 import { walletInThisPage } from './wallet-frame.js';
@@ -203,15 +203,15 @@ let walletAddress: string | null = null;
  * `companyKeyReleasedFor` answers null for every other state rather than
  * handing back something that would work.
  *
- * In memory only, dropped on sign-out and replaced on every unlock, for the
- * same reason as `encKey`: a reload asks the wallet again.
+ * In memory only, dropped on sign-out and replaced whenever the wallet gives a
+ * company's key, for the same reason as `encKey`: a reload asks the wallet again.
  */
 let releasedCompanyKey: { accountId: string; key: Hex } | null = null;
 /**
- * **WHAT THE SERVER HOLDS SAVED FOR THIS PERSON, AS LAST READ BY AN UNLOCK.**
+ * **WHAT THE SERVER HOLDS SAVED FOR THIS PERSON, AS LAST READ AND OPENED HERE.**
  *
  * `none` is a person with no saved keys at all on this deployment; `some` is a
- * saved bundle, which this tab has opened. Null until an unlock has read it.
+ * saved bundle, which this tab has opened. Null until this tab has opened them.
  *
  * It is what lets a company this tab cannot open say something true. A person
  * has ONE saved bundle and every device and every wallet release reaches the
@@ -221,16 +221,21 @@ let releasedCompanyKey: { accountId: string; key: Hex } | null = null;
  */
 let savedKeys: 'none' | 'some' | null = null;
 /**
- * **WHETHER THE SERVER HOLDS A SAVED KEY BUNDLE FOR THIS PERSON AT ALL, AS LAST READ.**
+ * **WHETHER THE KEY THIS TAB HOLDS WAS GIVEN BY THE WALLET THIS TAB SIGNED IN WITH.**
  *
- * Not `savedKeys`: that is what an unlock OPENED. This is only whether a bundle
- * exists, which a tab can learn without opening it - and it is the whole of
- * whether a new company can be finished. A bundle is sealed under the key the
- * wallet released for ONE company, and a new company's key is a different key,
- * so a new company's keys cannot be saved into a bundle that already exists.
- * Null until something has read it.
+ * True only when the wallet was asked for it naming the address this tab's own
+ * sign-in answer carried - and a wallet gives that key only when one of its own
+ * accounts has exactly that address. A tab that did not sign anybody in (a
+ * reload, a second tab) does not know the address and asks without it.
+ *
+ * **IT DECIDES ONE THING: WHETHER A PERSON'S FIRST KEYS MAY BE SAVED FROM HERE.**
+ * Once keys are saved, a key from any other wallet fails to open them and is
+ * refused, so what is saved is its own check. Before anything is saved there is
+ * nothing to check against, and the keys saved first are sealed under whichever
+ * wallet answered - so they are saved only under a key this tab asked for with
+ * the address it signed in as.
  */
-let keysSavedOnServer: boolean | null = null;
+let keyCheckedAgainstSignIn = false;
 /**
  * **WHETHER THE SIGN-IN THAT MADE THIS TAB WAS THIS ADDRESS'S FIRST HERE.**
  *
@@ -263,20 +268,19 @@ export const companyKeyReleasedFor = (accountId: string): Hex | null =>
 export const isSignedIn = () => sessionLive && me !== null;
 /**
  * **WHETHER THIS TAB CAN OPEN A COMPANY, WHICH IS NOT THE SAME QUESTION AS
- * WHETHER IT IS SIGNED IN.** `PI1`; **answered differently since `PI2a`.**
+ * WHETHER IT IS SIGNED IN.**
  *
  * Every company's viewing key is reached through the keyring, and the keyring
- * is sealed under `encKey`. `PI1` could only ever derive that from a password —
- * a wallet sign-in produces a signature, and *a signature is not a key* — so a
- * person could sign in with their wallet and open nothing. That was `C129`.
+ * is sealed under `encKey`. A wallet sign-in produces a signature, and *a
+ * signature is not a key*, so signing in opens nothing.
  *
- * **`encKey` NO LONGER MEANS "FROM A PASSWORD". IT MEANS "THE KEY THAT OPENS
- * THE BUNDLE, HOWEVER THIS TAB CAME BY IT."** `PI2a` made that true and `PI4b`
- * made it exact: `unlockWithWallet` is now the ONLY thing that sets it, for one
- * company, after a person pressed a button on the wallet's own screen.
- * Everything downstream — `viewingKeyFor`, `openAccount`, `putBundle` — is
- * unchanged and cannot tell the difference, which is the point: the day-one
- * posture is exactly what it was, and where the key comes from is better.
+ * **`encKey` IS THE KEY THE WALLET DERIVES FOR THIS PERSON ON THIS SITE**, set
+ * only by opening the saved keys, after a person pressed a button on the
+ * wallet's own screen. It is not any company's key: a person's keys for every
+ * company they belong to here are sealed under it together, which is what lets
+ * one wallet address belong to more than one company. Everything downstream -
+ * `viewingKeyFor`, `openAccount`, `putBundle` - reads the keyring and never
+ * asks which key opened it.
  */
 export const canOpenCompanies = () => encKey !== null;
 /** True only straight after a sign-in the server reported as this address's first here. */
@@ -314,92 +318,54 @@ export function lockedCompanyRefusal(accountId: string): string {
    * that closed before finishing, never has keys saved - and a refusal that
    * only said what would open it read as a promise that something would.
    */
-  if (savedKeys === 'some') {
-    return `${lockedCompanyReason(accountId)}. The keys saved for you are sealed under another `
-      + 'company\'s key, and a company\'s keys cannot be saved beside them yet, so nothing here can '
-      + 'open this one.';
-  }
-  return `${lockedCompanyReason(accountId)}. It opens here only if keys for it are saved for you - `
-    + 'by the tab that created it finishing setting it up - and this tab has been unlocked again '
-    + 'since. If that tab was closed first, or the company was made by something that kept no keys '
+  return `${lockedCompanyReason(accountId)}. It opens here only once keys for it are saved for you - `
+    + 'by the tab that created it finishing setting it up - and opening it reads what is saved '
+    + 'again. If that tab was closed first, or the company was made by something that kept no keys '
     + 'for you, nothing can open it.';
 }
 
 /**
- * **THE REFUSAL FOR A SECOND COMPANY, WHICH THE SCREEN SHOWS BEFORE ANYBODY PRESSES.**
+ * **WHY THE KEYS SAVED FOR YOU DID NOT OPEN, SAID WHEN THEY DO NOT.** Nothing is
+ * written over keys this tab cannot open, so both causes a person can do
+ * something about are named, and the one they cannot is named as that.
  */
-const SECOND_COMPANY_REFUSAL = 'a company cannot be started with this wallet address yet: keys are '
-  + 'already saved for you here, sealed under the key for a company you belong to, and a new '
-  + 'company\'s keys cannot be saved beside them. It would be created and could never be finished.';
+const DID_NOT_OPEN = 'the keys saved for you here did not open with the key your wallet gave, so '
+  + 'nothing has been opened, and nothing will be saved over them. Each wallet gives a different key: '
+  + 'if the wallet that answered is not the one your keys were saved with, answer with that one. If '
+  + 'it is, they were saved in a way this site no longer opens, and nothing here can open them.';
 
-const cannotFinishSentence = (): string => 'this company\'s keys cannot be saved: the keys saved for '
-  + 'you here are sealed under the key for another company you belong to, and a company\'s keys '
-  + 'cannot be saved beside them. Finishing it will keep failing. Its keys are only in this tab, so '
-  + 'closing this tab or signing out loses this company for good.';
+const WENT_BACK = 'what is saved for you here is older than what this tab already read, or is gone, '
+  + 'so it has not been taken in place of the keys this tab holds. Something has changed on the '
+  + 'server that this page cannot explain. Do not close or reload this tab or sign out: keys this '
+  + 'tab holds that are not saved anywhere else go with it.';
+
+/** A second key, in a tab that already opened your saved keys, that is not the same key. */
+const NOT_THE_SAME_WALLET = 'the wallet that answered gave a different key from the one this tab '
+  + 'opened your saved keys with, so it is not the wallet you opened them with. Nothing it gave has '
+  + 'been used. Answer with the wallet you signed in with.';
 
 /**
- * **WHETHER KEYS ARE SAVED FOR THIS PERSON AT ALL**, read without opening them,
- * so a screen that has not unlocked anything can say before a press that a new
- * company could not be finished. A failure to read learns nothing: the creation
- * journey asks again itself before it creates anything.
+ * **A PERSON'S FIRST KEYS ARE SAVED ONLY FROM A TAB THAT CAN TELL WHICH WALLET
+ * SIGNED IN.** `keyCheckedAgainstSignIn` says why.
  */
-export async function readWhetherKeysAreSaved(): Promise<void> {
-  if (!sessionLive) return;
-  try {
-    const r = await api('/api/me/keys');
-    keysSavedOnServer = Boolean(r?.keyBundle);
-  } catch { /* nothing learned */ }
-}
+const FIRST_KEYS_NEED_THE_SIGN_IN = 'nothing is saved for you here yet, and this tab did not sign you '
+  + 'in, so it cannot make sure that the wallet answering is the one you signed in with before your '
+  + 'first keys are saved under its key. Nothing has been created or saved. Sign in again in this tab, '
+  + 'with the same wallet address, and try again.';
 
-const mayNotFinishSentence = (): string => 'finishing this company failed: the keys saved for you '
-  + 'did not open with the key your wallet gave for it. If they are sealed under the key for another '
-  + 'company you belong to, it can never be finished, and closing this tab or signing out loses it for '
-  + 'good. If the wallet that answered is not the one you signed in with, finishing with the wallet '
-  + 'you signed in with can still work.';
+const cannotBeSavedSentence = (): string => 'this company\'s keys cannot be saved: the keys now '
+  + 'saved for you here do not open with the key this tab holds, and saving would mean writing over '
+  + 'keys this tab cannot open, which nothing here does. Its keys are only in this tab, so closing '
+  + 'this tab or signing out loses this company for good.';
 
 /**
- * **WHAT GOES WITH THE COMPANY THIS TAB IS WAITING TO FINISH, WHEN FINISHING HAS FAILED IN A WAY THAT MATTERS.**
- * Null is the ordinary case: nothing has shown that it cannot be finished.
- * `canFinish` false only when this tab has seen that it never can.
+ * **WHAT GOES WITH THE COMPANY THIS TAB IS WAITING TO FINISH, WHEN IT CAN NEVER BE FINISHED.**
+ * Null is the ordinary case: a save that was refused is tried again by Finish,
+ * after reading what is saved now.
  */
 export function companyAwaitingSetupProblem(): { canFinish: boolean; why: string } | null {
-  if (pendingCompany?.savingFailed === 'sealed-elsewhere') return { canFinish: false, why: cannotFinishSentence() };
-  if (pendingCompany?.savingFailed === 'did-not-open') return { canFinish: true, why: mayNotFinishSentence() };
+  if (pendingCompany?.savingFailed === 'cannot-be-saved') return { canFinish: false, why: cannotBeSavedSentence() };
   return null;
-}
-
-/**
- * **WHY THIS TAB CANNOT START A COMPANY, OR NULL WHEN IT CAN TRY.**
- *
- * A tab that has unlocked a company holds that company's key, and anything it
- * saves is sealed under it - including a new company's only copy of its keys.
- * Those keys would then open only after unlocking the OTHER company, and a
- * failed save would leave them in this tab alone. So such a tab does not start
- * one. A person with nothing saved yet loses nothing by starting over in a tab
- * that has not unlocked anything, and is told so; for anybody else there is no
- * safe way from this tab yet, and that is what is said.
- *
- * **AND A TAB THAT HAS UNLOCKED NOTHING, FOR A PERSON WHO ALREADY HAS KEYS
- * SAVED.** Those keys are sealed under another company's key, so a new
- * company's keys could not be saved beside them and it could never be
- * finished. Known only once something has read whether keys are saved.
- */
-export function whyNoCompanyCanStartHere(): string | null {
-  if (encKey === null) return keysSavedOnServer === true ? SECOND_COMPANY_REFUSAL : null;
-  const why = 'a company cannot be started from this tab now: it has unlocked another company, '
-    + 'and a new company\'s keys would be saved under that company\'s key.';
-  /* A company this tab started and has not finished holds its only keys here,
-   * and signing out drops them - so that advice is never given while one does. */
-  if (pendingCompany !== null) {
-    const problem = companyAwaitingSetupProblem();
-    if (problem) return `${why} The company this tab started is not finished, and ${problem.why}`;
-    return `${why} A company this tab started is not finished, and its keys are only in this tab: `
-      + 'do not sign out or close this tab while it is.';
-  }
-  if (savedKeys === 'none') {
-    return `${why} Sign out, sign in again, and start the company before unlocking one.`;
-  }
-  return `${why} Starting another company from a tab that has unlocked one is not available yet.`;
 }
 export const keysFor = (accountId: string): AccountKeys | null => keyring.accounts[accountId] ?? null;
 
@@ -413,11 +379,16 @@ export class AuthError extends Error {}
  */
 export class AnotherPersonError extends AuthError {}
 /**
- * The keys saved for this person did not open with the key released for the
- * company asked for, so they are sealed under another company's key. Told
- * apart because a company waiting to be finished can never be finished then.
+ * The keys saved for this person did not open with the key the wallet gave, or
+ * a second key the wallet gave is not the one this tab holds. Nothing was used
+ * and nothing was written.
  */
-export class KeysSealedForAnotherCompany extends Error {}
+export class SavedKeysDidNotOpen extends Error {}
+/**
+ * What is saved for this person is older than what this tab already read, or is
+ * gone. It is not taken in place of what this tab holds.
+ */
+export class SavedKeysWentBack extends Error {}
 
 export const api = async (path: string, opts?: RequestInit) => {
   const r = await fetch(path, {
@@ -461,7 +432,7 @@ export const api = async (path: string, opts?: RequestInit) => {
  * `KDF` and the argon2id import with them, so nothing in this module can
  * produce a key from a typed secret any more.
  *
- * **`signInWithWallet` BELOW IS THE ONLY WAY IN**, and `unlockWithWallet` is
+ * **`signInWithWallet` BELOW IS THE ONLY WAY IN**, and `openKeysWithWallet` is
  * what sets `encKey`. The comment on `canOpenCompanies` already said the
  * important half of this: `encKey` does not mean *from a password*, it means
  * *the key that opens the bundle, however this tab came by it* — and there is
@@ -573,7 +544,7 @@ const US_TO_A_WALLET = {
 export async function signInWithWallet(
   walletOrigin: string, inviteToken?: string,
   /* The window, injected so the whole conversation can be driven in a test
-   * with no browser — the shape `unlockWithWallet` has always had. */
+   * with no browser — the shape `openKeysWithWallet` has too. */
   view: Openable = walletInThisPage(window),
 ): Promise<Me> {
   /*
@@ -622,7 +593,7 @@ async function finishWalletSignIn(
   walletAddress = r.address;
   firstSignInHere = r.created === true;
   savedKeys = null;
-  keysSavedOnServer = null;
+  keyCheckedAgainstSignIn = false;
   /* A sign-in releases nothing. The unlock is what does. */
   releasedCompanyKey = null;
   /* NO KEYRING AND NO `encKey`. See `canOpenCompanies` — this is not an
@@ -660,36 +631,6 @@ export async function resumeSession(): Promise<Me | null> {
 }
 
 /**
- * **OPENING THE KEYRING WITH THE KEY THE WALLET RELEASED.** `docs/NEXT.md`
- * PI2a, `docs/scope-payroll-identity.md` §9b.
- *
- * The half `PI1` could not build. Three steps, and a password appears in none
- * of them:
- *
- *   1. **ask this server which company we may open** — the account comes from
- *      the path and the membership check that already exists, and the address
- *      comes from what the ledger assigned. **Nothing this page believes about
- *      which company it is decides anything**; `company-address.ts` is where
- *      that rule lives and it has nowhere to put a claim.
- *   2. **open the wallet and ask it to release that company's key**, checked on
- *      arrival against the origin we are running at, the nonce we generated and
- *      the company we were told — `wallet-unlock.ts`.
- *   3. **open the bundle with it**, exactly as `signIn` opens it with the
- *      password-derived key. Nothing below this line knows the difference.
- *
- * **THE KEY IS NEVER SENT ANYWHERE.** It is not put in a request body, not in a
- * URL, not in storage and not in a log: it is assigned to `encKey`, which lives
- * in this module for the life of the tab and is dropped by `forgetLocally`. A
- * reload asks the wallet again, which is the same behaviour a password has and
- * is the honest one — keeping it anywhere persistent would put it where any
- * script on the page can read it.
- *
- * **AND IT IS THE SAME KEY ON A SECOND DEVICE.** That is what a DERIVED key
- * buys and a stored one never did: the wallet recomputes it from the person's
- * own seed and this company's address, so a phone that has never seen this
- * laptop opens the same bundle. `wallet-unlock.test.ts` holds that.
- */
-/**
  * **ASKING THE WALLET WHERE TO PAY THIS PERSON.**
  *
  * It returns the three things `POST /api/accounts/:id/self-payee` needs and
@@ -701,16 +642,20 @@ export async function resumeSession(): Promise<Me | null> {
  *
  * **THE CHALLENGE IS ASKED FOR BEHIND THE MEMBERSHIP GATE**, on the company
  * this is about, because the row it leads to is on that company's roster.
+ *
+ * `already` is the dialog a longer journey opened in its own click, so the
+ * second ask in it does not open a second window.
  */
 export async function payeeDisclosureFromWallet(
   accountId: string, walletOrigin: string,
   view: Openable = walletInThisPage(window),
+  already?: WalletDialog,
 ): Promise<{ handle: string; nonce: string; response: unknown }> {
   if (!sessionLive) throw new Error('not signed in');
   /* **OPENED IN THE CLICK.** `C154` — the same order as the other two, and for
    * the same reason: the challenge below is a round trip, and a permission
    * spent on it is gone by the time a window is wanted. */
-  const dialog = openTheWallet(view, walletOrigin);
+  const dialog = openTheWallet(view, walletOrigin, already);
   try {
     const challenge = await api(
       `/api/accounts/${accountId}/payee-challenge`, { method: 'POST' });
@@ -723,33 +668,56 @@ export async function payeeDisclosureFromWallet(
     }, dialog);
     return { handle: challenge.handle, nonce: challenge.nonce, response };
   } catch (e) {
-    putAway(dialog);
+    if (!already) putAway(dialog);
     throw e;
   } finally {
     doneWaiting();
   }
 }
 
-export async function unlockWithWallet(
-  accountId: string, walletOrigin: string,
+/**
+ * **OPENING THE KEYS SAVED FOR THIS PERSON, WITH THE KEY THEIR WALLET GIVES FOR
+ * THEM ON THIS SITE.**
+ *
+ * One press on the wallet's own screen, and a password appears nowhere:
+ *
+ *   1. **ask the wallet for the keyring key**, naming the person this session
+ *      is and - when this tab signed them in - the address it signed in as. The
+ *      wallet derives the key from its seed and the person, and gives it only if
+ *      one of its own accounts has that address (`wallet-unlock.ts`);
+ *   2. **read the keys saved for this person and open them with it.** Keys that
+ *      do not open are refused out loud and left exactly as they are: nothing
+ *      is opened, nothing is written, and nothing here ever saves over them.
+ *
+ * **ONE KEY FOR EVERY COMPANY THIS PERSON BELONGS TO HERE.** A company's own
+ * key is not asked for by this; it is asked for, in the same kind of answer,
+ * only where a payslip key has to be worked out from it.
+ *
+ * **THE KEY IS NEVER SENT ANYWHERE.** It is assigned to `encKey`, which lives in
+ * this module for the life of the tab and is dropped by `forgetLocally`. A
+ * reload asks the wallet again. **And it is the same key on a second device and
+ * after a recovery**, because the wallet recomputes it from the person's own
+ * seed and this site's identifier for them.
+ */
+export async function openKeysWithWallet(
+  walletOrigin: string,
   /* The window, and the page's own origin, injected so the whole conversation
    * can be driven in a test with no browser. */
   view: Openable = walletInThisPage(window),
   atOrigin: string = window.location.origin,
-  /* The dialog a longer journey already opened in its own click. Creating a
-   * company is the only caller that has one; everybody else opens here. */
+  /* The dialog a longer journey already opened in its own click. */
   already?: WalletDialog,
 ): Promise<void> {
   if (!sessionLive) throw new Error('not signed in');
 
   /*
-   * **OPENED HERE, IN THE CLICK, BEFORE THE COMPANY IS ASKED FOR.**
-   * `scripts/mutate-wallet-dialog.mjs` 02 moves this line below that question
-   * and a test dies by name.
+   * **OPENED HERE, IN THE CLICK, BEFORE ANYTHING IS AWAITED.**
+   * `scripts/mutate-wallet-dialog.mjs` 02 moves this line below the ask and a
+   * test dies by name.
    */
   const dialog = openTheWallet(view, walletOrigin, already);
   try {
-    await unlockOnceOpen(accountId, walletOrigin, view, atOrigin, dialog);
+    await openKeysOnceOpen(walletOrigin, view, atOrigin, dialog, null);
   } catch (e) {
     /* A dialog a longer journey opened is that journey's to put away. */
     if (!already) putAway(dialog);
@@ -759,67 +727,151 @@ export async function unlockWithWallet(
   }
 }
 
-async function unlockOnceOpen(
-  accountId: string, walletOrigin: string, view: Openable, atOrigin: string,
+async function openKeysOnceOpen(
+  walletOrigin: string, view: Openable, atOrigin: string,
   dialog: WalletDialog,
+  company: { accountId: string; address: string } | null,
 ): Promise<void> {
-  /* THE COMPANY COMES FROM THE SIGN-IN. This is a POST that sends no body:
-   * there is nothing this page could tell the server about which company it is
-   * that the server should believe. */
-  const { company } = await api(`/api/accounts/${accountId}/unlock`, { method: 'POST' });
-
-  const key = await askWalletToUnlock(view, walletOrigin, {
-    company,
+  const who = me;
+  if (who === null) throw new Error('not signed in');
+  /* **THE ADDRESS THIS TAB SIGNED IN AS, FROM THE SERVER'S OWN ANSWER TO THAT
+   * SIGN-IN**, or null in a tab that did not sign anybody in. It gates and never
+   * derives: the wallet will not give the key without holding it. */
+  const signedInAs = walletAddress;
+  const released = await askWalletForKeys(view, walletOrigin, {
+    person: who.id,
+    signedInAs,
+    company: company?.address ?? null,
     atOrigin,
     name: US_TO_A_WALLET.name,
     rdns: US_TO_A_WALLET.rdns,
   }, dialog);
-  const ek = toHex(key);
+  /* A sign-out, or another person's sign-in, while the wallet was open: this
+   * tab is no longer the one that asked, and nothing it was given is used. */
+  if (me !== who) throw new AuthError('not signed in');
+  const key = toHex(released.key);
 
-  const r = await api('/api/me/keys');
-  /*
-   * **THE ENVELOPE REFUSAL THAT WAS HERE IS DELETED WITH THE ENVELOPE.**
-   * `PI4a`, `A-17`.
-   *
-   * It refused an account whose bundle was sealed under a bundle key rather
-   * than directly — *"a device envelope, which a wallet-released key does not
-   * open"* — because that would have failed as **wrong wallet** when it meant
-   * **wrong door**. It was right, and it now guards a state nothing can reach:
-   * the only thing that ever built an envelope is gone, and the server does not
-   * return a bundle key because there is no longer such a field.
-   *
-   * **A refusal for an unreachable state is a branch nobody can test**, which
-   * is how it becomes wrong without anybody noticing.
-   */
-
-  keysSavedOnServer = Boolean(r.keyBundle);
-  let opened: Keyring = { accounts: {} };
-  if (r.keyBundle) {
-    try { opened = JSON.parse(unseal(r.keyBundle as Sealed, ek)); }
-    catch {
-      /* The bundle is sealed under a DIFFERENT key. **The sentence that used to
-       * be here blamed a password, and `C158` records that it is wrong for a
-       * wallet-only person — who is now everybody, because `PI4b` deleted the
-       * password.** The remaining cause is the one `C158` is about: a person has
-       * ONE bundle and it is sealed under the key released for ONE company, so
-       * the second company they make cannot open it. **What the bundle is
-       * sealed under is NOT this round's to change** — that is `C158`, and it is
-       * decided with a measurement in its own round. What is fixed here is only
-       * that the message no longer names a thing that cannot exist. */
-      throw new KeysSealedForAnotherCompany(
-        'your keys could not be opened with the key your wallet released for this company. '
-        + 'They are sealed under the key for a different company you belong to - or the wallet '
-        + 'that answered is not the one they were saved with, since each wallet gives a different '
-        + 'key for the same company.');
+  if (encKey !== null) {
+    /*
+     * **THIS TAB ALREADY OPENED THE SAVED KEYS, SO THE WALLET THAT ANSWERS NOW
+     * MUST GIVE THE SAME KEY.** A different one is a different wallet - and it
+     * is refused before the company key it gave beside it is used for anything.
+     */
+    if (key !== encKey) throw new SavedKeysDidNotOpen(NOT_THE_SAME_WALLET);
+    if (signedInAs !== null) keyCheckedAgainstSignIn = true;
+    if (company !== null && released.companyKey !== null) {
+      /* **RECORDED WITH THE COMPANY IT BELONGS TO**, and only here: this answer's
+       * keyring key has just matched the one this tab's saved keys are open with,
+       * so its company key came from that same wallet. A payslip key can only
+       * ever be derived from it, for THIS company. */
+      releasedCompanyKey = { accountId: company.accountId, key: toHex(released.companyKey) };
     }
+  } else {
+    const r = await api('/api/me/keys');
+    let opened: Keyring = { accounts: {} };
+    if (r.keyBundle) {
+      try { opened = JSON.parse(unseal(r.keyBundle as Sealed, key)); }
+      catch {
+        /* **REFUSED OUT LOUD AND LEFT AS IT IS.** No key is kept, so nothing in
+         * this tab can write, and no fallback is tried: there is one way keys
+         * are sealed here, and keys that do not open with it are not guessed at. */
+        throw new SavedKeysDidNotOpen(DID_NOT_OPEN);
+      }
+    }
+    encKey = key;
+    keyCheckedAgainstSignIn = signedInAs !== null;
+    savedKeys = r.keyBundle ? 'some' : 'none';
+    keyring = opened;
+    bundleVersion = typeof r.version === 'number' ? r.version : 0;
+    /* A company key given beside keys opened for the first time here has
+     * nothing to be checked against, so it is not kept. */
   }
-  encKey = ek;
-  savedKeys = r.keyBundle ? 'some' : 'none';
-  /* **RECORDED WITH THE COMPANY IT BELONGS TO**, so a payslip key can only ever
-   * be derived from the key this wallet released for THIS company. */
-  releasedCompanyKey = { accountId, key: ek };
+}
+
+/**
+ * **THE KEY FOR ONE COMPANY, FROM THE WALLET WHOSE KEYS THIS TAB HAS OPEN, AND
+ * WHERE TO PAY THIS PERSON - IN ONE JOURNEY, IN ONE WALLET.**
+ *
+ * A founder's own payslip key is worked out from the key their wallet gives for
+ * this company, and nothing else will do: a key from anywhere else is a key
+ * nothing can work out again. That key is asked for together with the keyring
+ * key, so the answer is checked against the keyring key this tab already holds
+ * - two keys in one answer are two keys from one wallet, and a different wallet
+ * is refused before its company key is used. Then the wallet is asked where to
+ * pay them, through the same window.
+ *
+ * A tab that already holds this company's key from this wallet asks only the second question.
+ */
+export async function payslipKeyAndPayeeAddress(
+  accountId: string, walletOrigin: string,
+  view: Openable = walletInThisPage(window),
+  atOrigin: string = window.location.origin,
+): Promise<{ companyKey: Hex; disclosure: { handle: string; nonce: string; response: unknown } }> {
+  if (!sessionLive) throw new Error('not signed in');
+  /* OPENED IN THE CLICK, and carried through both asks. */
+  const dialog = openTheWallet(view, walletOrigin);
+  let companyKey = companyKeyReleasedFor(accountId);
+  /* **TWO ASKS, ONE WINDOW.** An ask that settles closes its window unless it was
+   * told another is coming, and the second would then meet a window that is gone.
+   * So the window is this journey's, and the journey closes it. */
+  const twoAsks = companyKey === null;
+  if (twoAsks) dialog.moreThanOneAsk();
+  try {
+    if (companyKey === null) {
+      if (encKey === null) {
+        throw new Error('your saved keys are not open in this tab, so the key for this company '
+          + 'cannot be checked against them. Open the company with your wallet and try again.');
+      }
+      /* THE COMPANY COMES FROM THE SIGN-IN. This is a POST that sends no body:
+       * there is nothing this page could tell the server about which company it is
+       * that the server should believe. */
+      const { company } = await api(`/api/accounts/${accountId}/unlock`, { method: 'POST' });
+      await openKeysOnceOpen(walletOrigin, view, atOrigin, dialog, { accountId, address: company });
+      companyKey = companyKeyReleasedFor(accountId);
+      if (companyKey === null) throw new Error('your wallet did not give a key for this company.');
+    }
+    const disclosure = await payeeDisclosureFromWallet(accountId, walletOrigin, view, dialog);
+    return { companyKey, disclosure };
+  } catch (e) {
+    putAway(dialog);
+    throw e;
+  } finally {
+    if (twoAsks) putAway(dialog);
+    doneWaiting();
+  }
+}
+
+/**
+ * **READING WHAT IS SAVED FOR THIS PERSON AGAIN, WITH THE KEY THIS TAB HOLDS.**
+ * No wallet is asked. Another tab or device may have saved a company's keys
+ * since this tab opened them; this is how this tab sees them. Keys that no
+ * longer open with this tab's key are refused out loud and left as they are.
+ */
+export async function reopenSavedKeys(): Promise<void> {
+  const key = encKey;
+  if (key === null) throw new Error('your saved keys are not open in this tab.');
+  const base = keyring;
+  const heldVersion = bundleVersion;
+  const heldSome = savedKeys === 'some';
+  const r = await api('/api/me/keys');
+  /* **A READ THAT HAS GONE BACKWARDS IS NOT TAKEN IN PLACE OF WHAT THIS TAB
+   * HOLDS.** Saved keys only ever grow, one accepted write at a time; an older
+   * version, or nothing where this tab has read something, is the server
+   * answering from before - and adopting it would let this tab's next save make
+   * the loss permanent. */
+  const readVersion = typeof r?.version === 'number' ? r.version : 0;
+  if (readVersion < heldVersion || (heldSome && !r?.keyBundle)) throw new SavedKeysWentBack(WENT_BACK);
+  let opened: Keyring = { accounts: {} };
+  if (r?.keyBundle) {
+    try { opened = JSON.parse(unseal(r.keyBundle as Sealed, key)); }
+    catch { throw new SavedKeysDidNotOpen(DID_NOT_OPEN); }
+  }
+  /* Only onto the list it was read for: a sign-out or another read while this
+   * one was on its way has already replaced it. */
+  if (keyring !== base || encKey !== key) return;
   keyring = opened;
-  bundleVersion = typeof r.version === 'number' ? r.version : 0;
+  savedKeys = r?.keyBundle ? 'some' : 'none';
+  bundleVersion = typeof r?.version === 'number' ? r.version : 0;
 }
 
 /**
@@ -831,7 +883,7 @@ async function unlockOnceOpen(
  */
 export function forgetLocally() {
   sessionLive = false; encKey = null; keyring = { accounts: {} }; me = null; walletAddress = null;
-  releasedCompanyKey = null; savedKeys = null; firstSignInHere = false; keysSavedOnServer = null;
+  releasedCompanyKey = null; savedKeys = null; firstSignInHere = false; keyCheckedAgainstSignIn = false;
   /*
    * **AND THE FOUNDER'S UNSEALED SECRETS.**
    *
@@ -1066,6 +1118,10 @@ export async function finishPendingSeat(
  */
 async function putBundle(next: Keyring) {
   if (!encKey) throw new Error('not signed in');
+  /* **A PERSON'S FIRST KEYS ARE SAVED ONLY UNDER A KEY THIS TAB ASKED FOR WITH THE
+   * ADDRESS IT SIGNED IN AS.** Every writer comes through here, so no writer can
+   * be the one that forgets. `keyCheckedAgainstSignIn` says why. */
+  if (savedKeys !== 'some' && !keyCheckedAgainstSignIn) throw new Error(FIRST_KEYS_NEED_THE_SIGN_IN);
   const key = encKey;
   const base = keyring;
   const r = await api('/api/me/keys', {
@@ -1089,99 +1145,61 @@ async function putBundle(next: Keyring) {
 /* ---------------- bringing a company into being ---------------- */
 
 /**
- * **A COMPANY THAT EXISTS AND WHOSE KEYS THIS TAB HAS NOT SEALED YET.**
+ * **A COMPANY THAT EXISTS AND WHOSE KEYS THIS TAB HAS NOT SAVED YET.**
  *
- * The window between step 1 and step 3 below is the only genuinely dangerous
- * moment in this round, and it is dangerous because of what `create` returns:
- * **the founder's signing secret, wrapping secret and blinding are handed back
- * ONCE and are written down nowhere.** The viewing key is wrapped to that
+ * `create` returns **the founder's signing secret, wrapping secret and blinding
+ * ONCE, and they are written down nowhere.** The viewing key is wrapped to that
  * wrapping key on the account record, so losing these secrets is losing the
- * company — intact, sealed, and unopenable. `C127` with the founder inside it.
+ * company - intact, sealed, and unopenable.
  *
- * That window is not new: the password path has always been create-then-seal.
- * **What is new is that a human press now sits inside it**, and a person can
- * decline it, close the wallet, or open the wrong one. A declined press must
- * cost a retry rather than the company.
- *
- * So the secrets stay here, in memory, for the life of the tab, and the screen
- * can offer to finish. **In memory and nowhere else**, for `encKey`'s reason:
- * anything persisted is somewhere a script on this page can read.
+ * Nothing sits between creating a company and saving its keys any more: the key
+ * they are saved under is this person's, and it is open before the company is
+ * made. **What can still come between them is the server refusing the save**,
+ * because another tab or device saved keys first. So the secrets stay here, in
+ * memory, for the life of the tab, and the screen offers to finish. **In memory
+ * and nowhere else**, for `encKey`'s reason: anything persisted is somewhere a
+ * script on this page can read.
  */
 let pendingCompany: {
   accountId: string;
   keys: AccountKeys;
   /**
-   * **WHAT THIS TAB HAS SEEN GO WRONG WITH SAVING THESE KEYS, IF ANYTHING.**
-   *
-   * `sealed-elsewhere`: a save was refused, and the keys saved for this person
-   * since then do not open with the key this tab's unlock was given for this
-   * company - another tab or device sealed them under another company's key.
-   * A bundle sealed under one company's key never opens with another's, and
-   * nothing re-seals one, so this does not change back and Finish stops.
-   *
-   * `did-not-open`: an unlock of this company found keys saved that did not open
-   * with the key the wallet gave. That is the same cause, or a wallet other than
-   * the one signed in answered - the two fail the same way here - so Finish stays
-   * and both are said.
+   * **`cannot-be-saved` WHEN THIS TAB HAS SEEN THAT IT NEVER CAN BE.** A save was
+   * refused and the keys saved since do not open with the key this tab holds, so
+   * saving would mean writing over keys this tab cannot open. Nothing here does
+   * that, so this does not change back, and Finish stops.
    */
-  savingFailed: 'sealed-elsewhere' | 'did-not-open' | null;
+  savingFailed: 'cannot-be-saved' | null;
 } | null = null;
 
-/** The company this tab created and has not finished sealing, if there is one. */
+/** The company this tab created and has not finished saving the keys of, if there is one. */
 export const companyAwaitingSetup = (): string | null => pendingCompany?.accountId ?? null;
 
 /**
- * **SOMEBODY WITH A WALLET STARTS A COMPANY.** `docs/NEXT.md` PI3, `C141`,
+ * **SOMEBODY WITH A WALLET STARTS A COMPANY.**
  *
+ * ── THE ORDER, WHICH IS THE WHOLE OF IT ───────────────────────────────────
  *
- * ── THE ORDERING PROBLEM, WHICH IS THE WHOLE ROUND ────────────────────────
+ *   1. **The keys saved for this person are opened**, with the key their wallet
+ *      gives for them on this site - unless this tab has them open already, in
+ *      which case the wallet is not asked at all. **Keys that do not open are
+ *      refused here, before anything is created**, so a company is never made
+ *      whose keys could not be saved beside them.
+ *   2. **The company is brought into being**, and the ledger assigns whatever it
+ *      assigns. Nothing about saving the founder's keys waits on it.
+ *   3. **The founder's own secrets are saved beside everything already saved**,
+ *      under the same key. From here a second device, or a recovery, opens them.
  *
- * Sealing the founder's keyring needs a key; the key is derived from the
- * company's address; **the company has no address until it exists.** Three
- * steps in an order nothing performed, which is why a wallet account could be
- * admitted to somebody else's company and could not start its own — and why the
- * password could not be deleted. `PI2a` declared it rather than working around
- * it, which is why this is a design and not a bug fix.
- *
- * **THE ORDER THAT WORKS IS CREATE, UNLOCK, SEAL**, and it is three steps
- * because the second cannot precede the first:
- *
- *   1. **The company is brought into being and the LEDGER assigns its address.**
- *      Nothing on this side invents one. The identifier is the chain's
- *      *because it is not ours to mint*, and `C140` records which it was.
- *   2. **The wallet is asked for that company's key** — through
- *      `unlockWithWallet`, so the company still comes from the authenticated
- *      session and never from this page. **A creation path is a new door and
- *      this is the round where it could have become the one that takes a
- *      company from a request body.** It has nowhere to put one: the account id
- *      goes in the path, and the address comes back from what the ledger
- *      assigned.
- *   3. **The founder's own secrets are sealed under that key.** From here a
- *      second device, or a recovery, recomputes the same key from the words and
- *      opens the same bundle.
- *
- * ── AND A PASSWORD APPEARS IN NONE OF THEM ────────────────────────────────
- *
- * There is no parameter for one, no fallback to one, and nothing on this path
- * derives auth material. **That was the point of `PI3` and it is what let
- * `PI4b` happen:** while creating a company was the one thing only a password
- * could do, the password could not be deleted and `C129` stayed open. It is
- * deleted now.
+ * **ANY NUMBER OF COMPANIES.** Nothing here looks at whether this person already
+ * belongs to one, because nothing about saving a new company's keys depends on it.
  *
  * ── WHAT IT REFUSES ───────────────────────────────────────────────────────
  *
- * **A PERSON WHO ALREADY HAS KEYS SAVED IS TURNED AWAY BEFORE ANYTHING IS
- * CREATED**, because those keys are sealed under another company's key and this
- * company's could never be saved beside them - see the first step below.
- *
- * A tab that can already open companies is turned away. **The reason has
- * changed under it and the refusal has not.** It used to be that `encKey` there
- * was a PASSWORD-derived key; there is no such key any more, so what such a tab
- * holds is the key the wallet released for ANOTHER company — and step 2 would
- * replace it, after which that person's bundle, sealed under the first, opens
- * with nothing. **That is `C158` and it is explicitly not this round's**, so
- * the behaviour is left exactly as it was. The ordinary creation path serves
- * them and this does not.
+ * - A tab already waiting to finish a company: starting another would replace
+ *   the only copy of the first one's keys.
+ * - Saved keys that do not open (step 1).
+ * - A person's FIRST keys from a tab that did not sign them in - see
+ *   `keyCheckedAgainstSignIn`. Refused before anything is created.
  */
 export async function createCompanyWithWallet(
   spec: {
@@ -1191,47 +1209,34 @@ export async function createCompanyWithWallet(
   },
   walletOrigin: string,
   /* The window and this page's own origin, injected so the whole journey can be
-   * driven in a test with no browser — the same shape `unlockWithWallet` takes. */
+   * driven in a test with no browser. */
   view: Openable = walletInThisPage(window),
   atOrigin: string = window.location.origin,
 ): Promise<{ accountId: string }> {
   if (!sessionLive) throw new Error('not signed in');
-  if (encKey) {
-    throw new Error(
-      'this tab already holds the key that seals your keys, so it does not need to ask '
-      + 'your wallet for a new one. Create the company the ordinary way.');
+  if (pendingCompany !== null) {
+    throw new Error('a company this tab started is not finished yet, and its keys are only in '
+      + 'this tab. Finish setting it up before starting another.');
   }
 
   /*
-   * **STEP 1 — AND THE ADDRESS IS NOT ASKED FOR HERE.** What comes back is
-   * used for one thing: the founder's own secrets, which exist in this response
-   * and nowhere else in the world. The company's address is fetched in step 2
-   * from the session, which is the rule `PI2a` built and this path must not
-   * become the exception to.
+   * **THE WINDOW OPENS IN THE PRESS**, when there is a wallet to ask. A tab that
+   * already holds this person's key asks nobody.
    */
-  /*
-   * **THE WINDOW OPENS IN THE PRESS, AND THE COMPANY IS MADE AFTER IT.**
-   *
-   * This journey is the one that cannot be repaired by reordering two lines:
-   * step 2 needs a company, and a company takes a round trip to make. So the
-   * dialog is opened first and carried down to the unlock, which is the ask it
-   * was opened for. The page behind it says so the whole time.
-   */
-  const dialog = openTheWallet(view, walletOrigin);
+  const dialog = encKey === null ? openTheWallet(view, walletOrigin) : null;
   try {
-    /*
-     * **A COMPANY THAT COULD NEVER BE FINISHED IS NOT STARTED.** Its keys have to
-     * be saved into this person's one bundle, sealed under the key the wallet
-     * releases for THIS company - and a bundle that already exists is sealed
-     * under another company's key and never opens with this one's. Creating it
-     * anyway made a company whose only keys lived in this tab, with a Finish
-     * that always failed. Asked before anything is created, so a refusal costs
-     * nothing.
-     */
-    const held = await api('/api/me/keys');
-    keysSavedOnServer = Boolean(held?.keyBundle);
-    if (keysSavedOnServer) throw new Error(SECOND_COMPANY_REFUSAL);
+    if (dialog !== null) await openKeysOnceOpen(walletOrigin, view, atOrigin, dialog, null);
+    /* **A TAB THAT ALREADY HOLDS THE KEY READS WHAT IS SAVED NOW**, so keys saved
+     * since - or keys that no longer open with this key - are known before a
+     * company exists rather than after. */
+    else await reopenSavedKeys();
+    /* Asked before anything is created, so a refusal costs nothing. */
+    if (savedKeys !== 'some' && !keyCheckedAgainstSignIn) throw new Error(FIRST_KEYS_NEED_THE_SIGN_IN);
 
+    /*
+     * **STEP 2.** What comes back is used for one thing: the founder's own
+     * secrets, which exist in this response and nowhere else in the world.
+     */
     const created = await api('/api/accounts', {
       method: 'POST',
       body: JSON.stringify({ name: spec.name, signers: spec.signers, threshold: spec.threshold }),
@@ -1253,98 +1258,56 @@ export async function createCompanyWithWallet(
       },
     };
 
-    await finishCompanyCreation(walletOrigin, view, atOrigin, dialog);
+    /* **STEP 3.** The slot is cleared only after the keys are written. */
+    try {
+      await rememberAccount(accountId, pendingCompany.keys);
+    } catch (refused) {
+      /*
+       * **A REFUSED SAVE IS READ AGAIN AND TRIED ONCE MORE, NOW.** The usual cause is
+       * another tab or device saving at the same moment, and what it saved opens
+       * with the same key - so this company's keys are saved beside it at once
+       * rather than left waiting in a tab whose sign-in may end before anybody
+       * presses Finish. A refusal about the sign-in itself is not retried.
+       */
+      if (refused instanceof AuthError) throw refused;
+      return await finishCompanyCreation();
+    }
+    pendingCompany = null;
     return { accountId };
   } catch (e) {
-    putAway(dialog);
+    if (dialog !== null) putAway(dialog);
     throw e;
   } finally {
-    doneWaiting();
+    if (dialog !== null) doneWaiting();
   }
 }
 
 /**
- * **STEPS 2 AND 3, SEPARATELY, SO A DECLINED PRESS COSTS A RETRY.**
+ * **SAVING THE KEYS OF A COMPANY THIS TAB STARTED, AGAIN, AFTER A SAVE WAS REFUSED.**
  *
- * Called by `createCompanyWithWallet` and by the screen when the person
- * pressed the wrong thing on their wallet the first time. It reads the secrets
- * this tab is holding and takes no company from anywhere else — **there is no
- * parameter for one**, which is the same rule the unlock has and for the same
- * reason.
- *
- * **THE SLOT IS CLEARED ONLY AFTER THE BUNDLE IS WRITTEN.** If the wallet is
- * declined or the server refuses, the secrets are still here and the person can
- * try again; clearing first would turn a declined press into a lost company.
+ * No wallet is asked: the key the keys are saved under is already open here.
+ * What is saved now is read again first, because the refusal means somebody
+ * saved something since - and this company's keys are saved beside it rather
+ * than over it. **The slot is cleared only after the keys are written.**
  */
-export async function finishCompanyCreation(
-  walletOrigin: string,
-  view: Openable = walletInThisPage(window),
-  atOrigin: string = window.location.origin,
-  /* Present when the creation press opened the window and this is the second
-   * half of that journey; absent when a person is retrying from the screen,
-   * where this call IS the click. */
-  already?: WalletDialog,
-): Promise<{ accountId: string }> {
+export async function finishCompanyCreation(): Promise<{ accountId: string }> {
   const waiting = pendingCompany;
   if (!waiting) {
     throw new Error('there is no company waiting to be set up in this tab.');
   }
-
-  /*
-   * **STEP 2.** Through the unlock, deliberately, rather than by handing the
-   * wallet the address the creation response happened to carry. Two things
-   * follow from going the long way round, and both are the round:
-   *
-   *   · the company comes from the authenticated session, so this new
-   *     door is not the one that takes a company from a caller; and
-   *   · `C140`'s guard is in the path, so **a company whose address no chain
-   *     assigned is refused here** — before anything is sealed under a key
-   *     derived from it. Outside `npm run dev` that is every company today,
-   *     which is a dependency on the chain and is written up as one.
-   */
-  if (waiting.savingFailed === 'sealed-elsewhere') throw new Error(cannotFinishSentence());
+  if (waiting.savingFailed === 'cannot-be-saved') throw new Error(cannotBeSavedSentence());
   try {
-    await unlockWithWallet(waiting.accountId, walletOrigin, view, atOrigin, already);
+    await reopenSavedKeys();
   } catch (e) {
-    if (e instanceof KeysSealedForAnotherCompany) markSavingFailed(waiting.accountId, 'did-not-open');
+    if (e instanceof SavedKeysDidNotOpen && pendingCompany?.accountId === waiting.accountId) {
+      pendingCompany = { ...pendingCompany, savingFailed: 'cannot-be-saved' };
+      throw new SavedKeysDidNotOpen(cannotBeSavedSentence());
+    }
     throw e;
   }
-
-  /* **STEP 3.** The same call the password path makes, unchanged. */
-  try {
-    await rememberAccount(waiting.accountId, waiting.keys);
-  } catch (e) {
-    await learnWhetherItCanStillBeFinished(waiting.accountId);
-    throw e;
-  }
-  pendingCompany = null;
+  await rememberAccount(waiting.accountId, waiting.keys);
+  if (pendingCompany?.accountId === waiting.accountId) pendingCompany = null;
   return { accountId: waiting.accountId };
-}
-
-const markSavingFailed = (
-  accountId: string, how: 'sealed-elsewhere' | 'did-not-open',
-): void => {
-  if (pendingCompany?.accountId === accountId) pendingCompany = { ...pendingCompany, savingFailed: how };
-};
-
-/**
- * **A REFUSED SAVE, READ AGAIN.** A save of a new company's keys is refused when
- * another tab or device wrote the keys first. Whether this company can still be
- * finished turns on what that write was sealed under, so the keys are read again
- * and opened with this company's own key: if they do not open, no Finish will
- * ever work and the screen must stop offering one. Anything that goes wrong
- * here learns nothing and changes nothing - the refusal the caller is already
- * carrying is what the person sees.
- */
-async function learnWhetherItCanStillBeFinished(accountId: string): Promise<void> {
-  const key = companyKeyReleasedFor(accountId);
-  if (key === null) return;
-  try {
-    const r = await api('/api/me/keys');
-    if (!r?.keyBundle) return;
-    try { unseal(r.keyBundle as Sealed, key); }
-    catch { markSavingFailed(accountId, 'sealed-elsewhere'); }
-  } catch { /* nothing learned */ }
 }
 
 /**

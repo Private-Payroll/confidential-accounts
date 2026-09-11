@@ -163,7 +163,7 @@ export const REQUEST_SCHEMA = 'midnight-identity/disclosure-request/v1';
  * than inserted, so the sentence a refusal already produced does not change
  * shape for the three kinds that were there before it.
  */
-export const ASK_KINDS = ['disclosure', 'sign-in', 'unlock', 'join'] as const;
+export const ASK_KINDS = ['disclosure', 'sign-in', 'unlock', 'join', 'keyring'] as const;
 export type AskKind = (typeof ASK_KINDS)[number];
 
 /** One thing an application is asking for. */
@@ -288,8 +288,45 @@ export interface JoinRequest extends Asking {
   readonly inboxPublicKey: string;
 }
 
+/**
+ * ASKING FOR THE KEY A PERSON'S OWN SAVED KEYS ARE SEALED UNDER AT THIS SITE.
+ *
+ * **A PERSON HAS ONE SET OF SAVED KEYS AT A SITE AND MAY BELONG TO MANY
+ * COMPANIES THERE**, so that set cannot be sealed under any one company's key:
+ * a second company's secrets could never be saved beside the first's. This asks
+ * for the key that set IS sealed under, which belongs to the person.
+ *
+ * **`person` IS CLAIMED AND REACHES THE KEY.** It is the identifier the site
+ * gave the person who signed in, and it is the only thing that separates one
+ * site's keys from another's for the same wallet. The origin still does not
+ * select the key, for the reason `unlock` gives: a hostname is a deployment
+ * detail, and keys sealed under one could only ever be opened at one address.
+ *
+ * **`signedInAs` IS CLAIMED AND NEVER REACHES THE KEY. IT GATES.** It is the
+ * wallet address the page says it signed in as. A wallet holding no account
+ * with exactly that address does not give the key at all -- so, in a browser
+ * holding several wallets, the key cannot come from one other than the wallet
+ * the person signed in with. Absent means the page does not know which address
+ * it signed in as, and the screen says so.
+ *
+ * **`company` IS OPTIONAL, AND WHEN IT IS PRESENT THE ANSWER CARRIES THAT
+ * COMPANY'S KEY TOO**, derived exactly as an `unlock` derives it. The page asks
+ * for both together when it needs a company's key and wants to know that it
+ * came from the same wallet whose keyring key it already holds: two keys in one
+ * answer are two keys from one wallet.
+ */
+export interface KeyringRequest extends Asking {
+  readonly kind: 'keyring';
+  /** The site's own identifier for the signed-in person. Checked for shape, used whole. */
+  readonly person: string;
+  /** The address the page signed in as, or null when it does not know. Never an ingredient. */
+  readonly signedInAs: string | null;
+  /** A company whose key is wanted in the same answer, canonical lower case, or null. */
+  readonly company: string | null;
+}
+
 /** What an application may open this wallet with. */
-export type Ask = DisclosureRequest | SignInRequest | UnlockRequest | JoinRequest;
+export type Ask = DisclosureRequest | SignInRequest | UnlockRequest | JoinRequest | KeyringRequest;
 
 /**
  * THE KINDS THAT CARRY A LIST OF THINGS ASKED FOR.
@@ -336,7 +373,16 @@ export type RequestFailure =
    * codes, because they are two places and a refusal that named the wrong one
    * would tell a requester something untrue about its own message. */
   | 'proposes-an-address'
-  | 'a-want-proposes-a-value';
+  | 'a-want-proposes-a-value'
+  /* The person a keyring ask names, the address it says it signed in as, and
+   * the two things a keyring ask may not carry. */
+  | 'not-a-person'
+  | 'not-a-signed-in-address'
+  | 'attributes-on-a-keyring'
+  | 'inbox-key-on-a-keyring'
+  /* A person or a signed-in address on any kind but a keyring ask. One code,
+   * and its sentence names the kind it arrived on. */
+  | 'keyring-fields-on-another-kind';
 
 export class RequestError extends Error {
   readonly code: RequestFailure;
@@ -388,6 +434,21 @@ const MAX_WANTS = 32;
  * them folding for itself and one of them one day forgetting to.
  */
 const COMPANY_ADDRESS = /^[0-9a-fA-F]{64}$/u;
+
+/**
+ * **THE SITE'S IDENTIFIER FOR A PERSON, AS A SITE MINTS ONE.** Letters, digits,
+ * `_` and `-`, at most sixty-four characters. It is used whole and never folded:
+ * two identifiers differing only in case are two people.
+ */
+const PERSON = /^[A-Za-z0-9_-]{1,64}$/u;
+
+/**
+ * **A WALLET ADDRESS IN ITS TEXT FORM**: a lower-case human-readable part, the
+ * separator `1`, and the bech32 data characters. It is compared whole against
+ * the addresses this wallet derives for its own accounts; the shape is only
+ * what lets a malformed one be refused by name first.
+ */
+const SIGNED_IN_ADDRESS = /^[a-z][a-z0-9_]{0,82}1[02-9ac-hj-np-z]{6,200}$/u;
 
 /**
  * **THE SHAPE OF AN X25519 PUBLIC KEY ON THIS WIRE.** Thirty-two bytes,
@@ -644,6 +705,74 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
       + 'rather than ignored. Nothing has been shown to them.');
   }
   const kind = kindOf(body);
+
+  /*
+   * **A PERSON AND A SIGNED-IN ADDRESS BELONG TO A KEYRING ASK AND TO NOTHING
+   * ELSE.** Refused by presence on every other kind: a requester that named
+   * one and was answered with something else would be entitled to believe the
+   * wallet had read it.
+   */
+  if (kind !== 'keyring' && ('person' in body || 'signedInAs' in body)) {
+    throw new RequestError(
+      'keyring-fields-on-another-kind',
+      `this is a '${kind}' and it names a person or the address a page signed in as. Those `
+      + 'belong only to an ask for the key your saved keys at a site are sealed under, so '
+      + 'they are refused rather than ignored. Nothing has been shown to them.');
+  }
+
+  if (kind === 'keyring') {
+    if ('wants' in body) {
+      throw new RequestError(
+        'attributes-on-a-keyring',
+        'this asks for the key your saved keys at this site are sealed under, and it also '
+        + 'carries a list of details to hand over. Those are two different powers and this '
+        + 'wallet will not approve them behind one press, so the whole request is refused. '
+        + 'Nothing has been shown to them and nothing has been released.');
+    }
+    if ('inboxPublicKey' in body) {
+      throw new RequestError(
+        'inbox-key-on-a-keyring',
+        'this asks for the key your saved keys at this site are sealed under, and it also '
+        + 'names a key to seal an answer to. A release is not sealed to anybody, so the '
+        + 'request is refused rather than half honoured. Nothing has been shown to them and '
+        + 'nothing has been released.');
+    }
+    const person = body['person'];
+    if (typeof person !== 'string' || !PERSON.test(person)) {
+      throw new RequestError(
+        'not-a-person',
+        'this asks for the key your saved keys at a site are sealed under and does not name '
+        + 'you in a way this wallet can use. Nothing has been shown to them and nothing has '
+        + 'been given.');
+    }
+    const signedInAs = body['signedInAs'];
+    if (signedInAs !== undefined && signedInAs !== null
+      && (typeof signedInAs !== 'string' || signedInAs.length > 300
+        || !SIGNED_IN_ADDRESS.test(signedInAs))) {
+      throw new RequestError(
+        'not-a-signed-in-address',
+        'this names the wallet address the page signed in as, and what it names is not an '
+        + 'address. Nothing has been shown to them and nothing has been given.');
+    }
+    const company = body['company'];
+    if (company !== undefined && company !== null
+      && (typeof company !== 'string' || !COMPANY_ADDRESS.test(company))) {
+      throw new RequestError(
+        'not-a-company-address',
+        'this also asks for the key to a company and does not name one this wallet can make '
+        + 'sense of. A company is named by its own address on the chain - sixty-four '
+        + 'characters, exactly as the chain writes it. Nothing has been shown to them and '
+        + 'nothing has been given.');
+    }
+    return Object.freeze({
+      ...asking,
+      kind,
+      person,
+      signedInAs: typeof signedInAs === 'string' ? signedInAs : null,
+      /* The canonical spelling, from here inward. */
+      company: typeof company === 'string' ? company.toLowerCase() : null,
+    });
+  }
 
   if (kind === 'sign-in') {
     /*

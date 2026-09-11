@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
+import { identityFromWords } from 'midnight-identity';
 import { READY_PING } from 'midnight-identity/profile/channel';
+import { parseAsk } from 'midnight-identity/profile/request';
+import type { KeyringRequest } from 'midnight-identity/profile/request';
+import { keyringReleaseFor } from 'midnight-identity/profile/unlock';
 import {
   WALLET_DIALOG_NAME, WALLET_DIALOG_SIZE, WalletClosed, askWallet, openWalletDialog,
 } from './wallet-sign-in.js';
@@ -37,6 +42,16 @@ import type { Openable, WalletWindow } from './wallet-sign-in.js';
 
 const WALLET = 'https://wallet.example';
 const US = 'https://payroll.example';
+/** The address the stub server says a sign-in was for, in a shape the wallet's parser accepts. */
+const SIGNED_IN = 'mn_addr_test1qqqqqqqqqqqqqqqqqqqq';
+const identity = identityFromWords(TEST_MNEMONIC);
+
+/** A wallet that holds the signed-in address and gives the keyring key for it. */
+const givesTheKeys = (ask: unknown): unknown => {
+  const parsed = parseAsk(ask, US, Date.now());
+  if (parsed.kind !== 'keyring') return { schema: 'a-sign-in' };
+  return keyringReleaseFor(identity, parsed as KeyringRequest, Date.now(), (a) => a === SIGNED_IN);
+};
 
 interface Opened { url: string; target: string; features: string }
 
@@ -236,7 +251,7 @@ describe('§1 — THE WINDOW IS OPENED IN THE CLICK, BEFORE ANYTHING IS AWAITED'
         status: 200,
         json: async () => ({
           nonce: 'n1', handle: 'h1', expiresAt: new Date(Date.now() + 600_000).toISOString(),
-          session: { token: 'tok' }, address: 'mn_addr', created: true,
+          session: { token: 'tok' }, address: SIGNED_IN, created: true,
           user: { id: 'usr_1', email: null, name: '' },
           company: 'a1'.repeat(32),
         }),
@@ -283,7 +298,7 @@ describe('§1 — THE WINDOW IS OPENED IN THE CLICK, BEFORE ANYTHING IS AWAITED'
       await journey;
     });
 
-  it('WATCHED FAILING: UNLOCKING OPENS THE WALLET BEFORE IT ASKS WHICH COMPANY',
+  it('WATCHED FAILING: A COMPANY\'S KEY OPENS THE WALLET BEFORE IT ASKS WHICH COMPANY',
     async () => {
       const happened: string[] = [];
       const view = new ARecordingView(happened);
@@ -295,13 +310,16 @@ describe('§1 — THE WINDOW IS OPENED IN THE CLICK, BEFORE ANYTHING IS AWAITED'
 
       const keyring = await import('./keyring.js');
       await keyring.signInWithWallet(WALLET, undefined, view);
+      view.answers = givesTheKeys;
+      await keyring.openKeysWithWallet(WALLET, view, US);
+      expect(keyring.canOpenCompanies()).toBe(true);
 
       happened.length = 0;
       /* Nothing answers this one: what is being watched is the first two
        * things it does, and both have happened by the time it returns. */
       view.answers = null;
-      const unlocking = keyring.unlockWithWallet('acc_1', WALLET, view, US);
-      unlocking.catch(() => { /* it never finishes; the order is the subject */ });
+      const asking = keyring.payslipKeyAndPayeeAddress('acc_1', WALLET, view, US);
+      asking.catch(() => { /* it never finishes; the order is the subject */ });
 
       expect(happened[0]).toBe(`open ${WALLET_DIALOG_NAME}`);
       expect(happened[1]).toBe('fetch POST /api/accounts/acc_1/unlock');
@@ -774,7 +792,7 @@ describe('§3 — A JOURNEY WHOSE SERVER CALL FAILS PUTS ITS WALLET AWAY', () =>
         json: async () => ({
           nonce: 'n1', handle: 'h1', expiresAt: new Date(Date.now() + 600_000).toISOString(),
           session: { expiresAt: new Date(Date.now() + 600_000).toISOString() },
-          address: 'mn_addr', created: true,
+          address: SIGNED_IN, created: true,
           user: { id: 'usr_1', email: null, name: '' },
           company: 'a1'.repeat(32),
         }),
@@ -810,17 +828,38 @@ describe('§3 — A JOURNEY WHOSE SERVER CALL FAILS PUTS ITS WALLET AWAY', () =>
     expect(view.stillOpen()).toEqual([]);
   });
 
-  it('WATCHED FAILING: UNLOCKING, WHEN THE COMPANY CANNOT BE ASKED FOR', async () => {
+  it('WATCHED FAILING: A COMPANY\'S KEY, WHEN THE COMPANY CANNOT BE ASKED FOR', async () => {
     const view = new ARecordingView();
     const keyring = await signedIn(view);
+    view.answers = givesTheKeys;
+    await keyring.openKeysWithWallet(WALLET, view, US);
+    view.answers = null;
     globalThis.fetch = aServerThatFails((_m, url) => url.endsWith('/unlock'));
-    await expect(keyring.unlockWithWallet('acc_1', WALLET, view, US)).rejects.toThrow('the server fell over');
+    await expect(keyring.payslipKeyAndPayeeAddress('acc_1', WALLET, view, US)).rejects.toThrow('the server fell over');
     expect(view.stillOpen()).toEqual([]);
   });
+
+  it('WATCHED FAILING: A COMPANY\'S KEY AND WHERE TO PAY GO THROUGH ONE WINDOW, WHICH IS PUT AWAY AFTER BOTH',
+    async () => {
+      const view = new ARecordingView();
+      const keyring = await signedIn(view);
+      view.answers = givesTheKeys;
+      await keyring.openKeysWithWallet(WALLET, view, US);
+      /* The keyring ask with a company is answered with both keys; the payee ask
+       * with anything, since this page judges none of it. */
+      view.answers = givesTheKeys;
+      const { companyKey, disclosure } = await keyring.payslipKeyAndPayeeAddress('acc_1', WALLET, view, US);
+      expect(companyKey).toMatch(/^[0-9a-f]{64}$/u);
+      expect(disclosure.handle).toBe('h1');
+      /* Both asks reached a window, and none is left on screen afterwards. */
+      expect(view.posted.length).toBeGreaterThanOrEqual(3);
+      expect(view.stillOpen()).toEqual([]);
+    });
 
   it('WATCHED FAILING: CREATING A COMPANY, WHEN THE COMPANY CANNOT BE MADE', async () => {
     const view = new ARecordingView();
     const keyring = await signedIn(view);
+    view.answers = givesTheKeys;
     globalThis.fetch = aServerThatFails((method, url) => method === 'POST' && url === '/api/accounts');
     await expect(keyring.createCompanyWithWallet(
       { name: 'Acme', signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 }, WALLET, view, US,
@@ -831,6 +870,7 @@ describe('§3 — A JOURNEY WHOSE SERVER CALL FAILS PUTS ITS WALLET AWAY', () =>
   it('AND THE PAGE STOPS SAYING IT IS WAITING, in the same failure', async () => {
     const view = new ARecordingView();
     const keyring = await signedIn(view);
+    view.answers = givesTheKeys;
     const said: Array<unknown> = [];
     const stop = keyring.onWalletWaiting((d) => said.push(d === null ? 'done' : 'waiting'));
     globalThis.fetch = aServerThatFails((method, url) => method === 'POST' && url === '/api/accounts');
