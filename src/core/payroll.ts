@@ -1995,6 +1995,15 @@ export class PayrollService {
      */
     skipPending?: SkipAcknowledgement,
   ) {
+    /*
+     * **THE PERIOD IS READ BEFORE ANYTHING IS ASKED ABOUT IT.** The two
+     * refusals below select the runs they compare against by period, and the
+     * run this draws is written down under one, so a period that reached them
+     * as typed would put a second payroll for the same month beside the first.
+     * Reassigned rather than bound beside it, so a line added here later cannot
+     * pick up the raw one.
+     */
+    period = canonicalPeriod(period);
     const all = this.listPeople(accountId, viewingKey);
 
     /*
@@ -2132,8 +2141,19 @@ export class PayrollService {
     for (const e of roster) {
       if (e.address) payrollPayee(e.name, e.address);
     }
-    if (this.store.listRuns(accountId).some(r => r.period === period && r.status !== 'draft')) {
-      throw new Error(`a run for ${period} already exists`);
+    if (this.store.listRuns(accountId)
+      .some(r => samePeriod(r.period, period) && r.status !== 'draft')) {
+      /*
+       * **AND IT NAMES WHAT TO DO INSTEAD, BECAUSE OF WHO READS IT.** This is
+       * the refusal a person meets when they type the month again after a raise
+       * they did not get an answer to, and the answer they need is that the run
+       * they are trying to recreate is the one to raise again.
+       */
+      throw new Error(
+        `a run for ${period} already exists. If that is the run you meant and its raise failed, `
+        + 'raise that run again unchanged rather than drawing this payroll up a second time: it '
+        + 'keeps its people\'s payment secrets, so raising it again cannot pay anybody twice. If '
+        + 'some of the people on it were not reached, raise a retry on it for them.');
     }
     /*
      * **AND A DRAFT IS NOT ALWAYS A DRAFT.** A run stays `draft` until its raise
@@ -2279,6 +2299,15 @@ export class PayrollService {
      */
     repeats?: RepeatAcknowledgement,
   ): Promise<{ run: PayrollRun; secrets: EmployeeSecret[] }> {
+    /*
+     * **EVERY RUN THIS PRODUCT DRAWS IS DRAWN HERE**, from a roster or ad hoc,
+     * from either build, and from anything written later. So this is where a
+     * period becomes a month rather than a typing: the value written onto the
+     * run, and the value every guard downstream compares, is the one this
+     * returns. Reassigned rather than bound beside it, for the reason the
+     * roster door reassigns it.
+     */
+    period = canonicalPeriod(period);
     this.accounts.require(accountId);
     if (specs.length === 0) throw new Error('a payroll run needs at least one employee');
     /*
@@ -2923,7 +2952,7 @@ export class PayrollService {
   ): RepeatedRun[] {
     const rounds = this.accounts.payrollRoundsOf(accountId, viewingKey);
     return this.store.listRuns(accountId)
-      .filter(r => r.period === period && r.id !== excluding)
+      .filter(r => samePeriod(r.period, period) && r.id !== excluding)
       .map(r => this.openRun(r, viewingKey))
       .filter(r => contentOf(r.employees) === content)
       .map(r => {
@@ -2948,6 +2977,22 @@ export class PayrollService {
    * whatever is raised second - a run's own leg, or a retry on a run - is what
    * this refuses. A confirmation on either run naming the other lets the pair
    * through.
+   *
+   * **FOR THIS PERIOD MEANS FOR THIS MONTH, NOT FOR THIS STRING.** This is the
+   * last refusal standing between a restart and a second set of payments, and
+   * it selected the runs it compares against by string equality on the period.
+   * A person whose raise failed restarts it by hand and retypes the month, and
+   * a month retyped with a trailing space or without its leading zero was a
+   * different period here: the people test below was never reached, and both
+   * runs settled. The comparison is on the month the two runs name.
+   *
+   * **AND THE MONTH IS WHAT SEPARATES THEM, WHICH IS WHY IT IS STILL ASKED.**
+   * The people test cannot stand on its own. A payroll pays the same roster the
+   * same amounts every month, so a run for next month and a second run for this
+   * one are the same people and the same content, and the month they are for is
+   * the only thing that tells them apart. A round of this account stays live
+   * from the moment it is raised, so comparing the people alone would refuse
+   * next month's payroll for everybody paid in this one.
    */
   private refuseRaisingOverAnotherRun(run: PayrollRun, viewingKey: Hex): void {
     const live = new Set(this.accounts.payrollRoundsOf(run.accountId, viewingKey)
@@ -2955,7 +3000,7 @@ export class PayrollService {
     const mine = new Set(run.employees.map(e => e.id));
     const content = contentOf(run.employees);
     const clashes = this.store.listRuns(run.accountId)
-      .filter(r => r.period === run.period && r.id !== run.id && live.has(r.id))
+      .filter(r => samePeriod(r.period, run.period) && r.id !== run.id && live.has(r.id))
       .map(r => this.openRun(r, viewingKey))
       .filter(r => !(run.repeats?.of ?? []).includes(r.id) && !(r.repeats?.of ?? []).includes(run.id))
       .filter(r => contentOf(r.employees) === content || r.employees.some(e => mine.has(e.id)));
@@ -2979,7 +3024,7 @@ export class PayrollService {
   private refuseAPayrollThatMayBeOnChain(accountId: string, period: string, viewingKey: Hex): void {
     const live = this.accounts.payrollRoundsOf(accountId, viewingKey).filter(isLiveRound);
     const raised = this.store.listRuns(accountId)
-      .filter(r => r.period === period && live.some(x => x.runId === r.id));
+      .filter(r => samePeriod(r.period, period) && live.some(x => x.runId === r.id));
     if (raised.length === 0) return;
     const seen = raised.some(r => live.some(x => x.runId === r.id && x.raisedAt));
     throw new Error(
@@ -3564,6 +3609,69 @@ interface RepeatedRun {
   run: PayrollRun;
   state: 'on chain' | 'raised, not confirmed by the chain' | 'withdrawn' | 'drawn up, not raised';
 }
+
+/**
+ * **A PAY PERIOD HAS ONE SPELLING, AND ANYTHING ELSE IS REFUSED HERE RATHER
+ * THAN COMPARED LATER.**
+ *
+ * Every guard in this file against paying somebody twice asks whether two runs
+ * are for the same period, and every one of them asked it by comparing the text
+ * a person typed. So `2026-08 ` with a trailing space, or `2026-8` without the
+ * zero, was a DIFFERENT period to all of them: a second payroll was drawn for
+ * it beside the first, raised beside it, and everybody on both was paid twice,
+ * each time under their own payment secrets so that nothing on chain connected
+ * the two. Neither spelling is an attack. Both are a retype, and the restart a
+ * person reaches for is exactly the moment they retype it.
+ *
+ * **SO A PERIOD STOPS BEING FREE TEXT AT THE POINT IT ENTERS.** A run is drawn
+ * for a month, written `YYYY-MM`, and a month is what this returns: anything
+ * that names August 2026 comes back as `2026-08` however it was typed, and a
+ * string that names no month is refused, with the form that is wanted. The
+ * guards then compare a value rather than a typing, and there is no longer such
+ * a thing as a spelling they have not seen.
+ *
+ * **IT IS IN THE SERVICE AND NOT ONLY ON THE WAY IN.** The routes in front of
+ * this are the doors the product happens to have today; a third one, a script,
+ * or a call path added later would each reach those guards with whatever it was
+ * handed. A refusal a caller cannot go around is the only kind that bounds
+ * anything.
+ */
+export const canonicalPeriod = (period: string): string => {
+  const written = period.trim();
+  const named = /^(\d{4})-(\d{1,2})$/.exec(written);
+  const month = named ? Number(named[2]) : 0;
+  if (!named || month < 1 || month > 12) {
+    throw new Error(
+      `"${period}" does not name a pay period. A run is drawn for one month, written as the `
+      + 'year, a hyphen and the month: 2026-08 is August 2026. Write the month that way and '
+      + 'draw the run again.');
+  }
+  return `${named[1]}-${String(month).padStart(2, '0')}`;
+};
+
+/**
+ * **TWO RUNS ARE FOR THE SAME PERIOD WHEN THEY NAME THE SAME MONTH**, whichever
+ * way either of them spells it.
+ *
+ * **BOTH SIDES ARE READ, NOT ONLY THE NEW ONE.** A run already in the store was
+ * written before a period had one spelling, and it is the run a new one has to
+ * be compared against; reading only the incoming period would leave exactly the
+ * pair this is here to catch. A period that names no month is compared as it
+ * stands, so a record that cannot be read still matches itself and is never
+ * quietly treated as a period of its own.
+ */
+const samePeriod = (a: string, b: string): boolean => {
+  if (a === b) return true;
+  let left: string;
+  let right: string;
+  try {
+    left = canonicalPeriod(a);
+    right = canonicalPeriod(b);
+  } catch {
+    return false;
+  }
+  return left === right;
+};
 
 /**
  * **WHAT A RUN PAYS, AS ONE COMPARABLE VALUE.** Names, currencies and amounts,
