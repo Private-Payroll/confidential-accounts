@@ -17,7 +17,7 @@ import '../web/styles.css';
 import { MemoryStore } from '../core/store.js';
 import { wiring, observerView } from '../wiring/selection.js';
 import { AccountService } from '../core/account.js';
-import { PayrollService, RecordingInviteDelivery } from '../core/payroll.js';
+import { PayrollService, RecordingInviteDelivery, canonicalPeriod } from '../core/payroll.js';
 import { runPayments } from '../midnight/run-status.js';
 import { rootOfLeaves } from '../midnight/payout-tree.js';
 import { runMaterialFor, retryMaterialFor } from '../midnight/run-material.js';
@@ -455,8 +455,21 @@ async function route(url: URL, init?: RequestInit): Promise<Response> {
        * because the code cannot be.
        */
       const who = identity.user(await caller(init));
+      /*
+       * **THE MONTH IS READ HERE TOO, BY THE SAME FUNCTION THE SERVED ROUTE
+       * USES AND THE SERVICE ENFORCES.** This build has no schema in front of
+       * it at all and passed whatever the body carried; the two builds are
+       * separate implementations of one API and a period is exactly the field
+       * on which they must not drift.
+       *
+       * **AND A BODY WITH NO PERIOD IN IT AT ALL GETS THE SAME SENTENCE.** The
+       * served route has a schema that refuses that before this rule is
+       * reached; this one has nothing in front of it, and reading a field that
+       * is not there would answer a missing month with a message about a
+       * property of undefined.
+       */
       return ok(await payroll.createRunFromRoster(
-        id, body.period, body.viewingKey, body.employeeIds,
+        id, canonicalPeriod(String(body.period ?? '')), body.viewingKey, body.employeeIds,
         body.skipPending && {
           employeeIds: body.skipPending.employeeIds,
           reason: body.skipPending.reason,

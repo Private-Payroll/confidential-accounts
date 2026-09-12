@@ -11,7 +11,7 @@ import { deploymentWriteCapability } from '../wiring/write-capability-for-deploy
 import { handedInFundedParties } from '../wiring/handed-in-wallets.js';
 import { handedInWiring } from '../wiring/handed-in.js';
 import { AccountService } from '../core/account.js';
-import { PayrollService, RecordingInviteDelivery } from '../core/payroll.js';
+import { PayrollService, RecordingInviteDelivery, canonicalPeriod } from '../core/payroll.js';
 import { PluginService } from '../core/plugins.js';
 import { IdentityService, TooManyAttempts, StaleKeyBundle } from '../core/identity.js';
 import {
@@ -1248,9 +1248,16 @@ app.post('/api/accounts/:id/payroll', authed, member, wrap(async (req, res) => {
     }).optional(),
   }).parse(req.body);
   const me = b.repeats ? identity.user(req.userId!) : undefined;
+  /*
+   * **THE MONTH IS READ AT THE DOOR AS WELL AS IN THE SERVICE, AND IT IS THE
+   * SAME FUNCTION RATHER THAN A SECOND COPY OF IT.** The service refuses a
+   * period it cannot read and that is what actually bounds this; asking here
+   * costs nothing and answers a retyped month as a refusal about the month,
+   * before a body of payees is turned into money.
+   */
   res.json(await payroll.createRun(
     String(req.params.id),
-    b.period,
+    canonicalPeriod(b.period),
     b.employees.map(e => ({ name: e.name, asset: e.asset, amount: money(e.asset, e.amount) })),
     b.viewingKey,
     undefined,
@@ -1567,8 +1574,9 @@ app.post('/api/accounts/:id/runs', authed, member, wrap(async (req, res) => {
     }).optional(),
   }).parse(req.body);
   const me = identity.user(req.userId!);
+  /* The month is read here too, by the same function the service uses. */
   res.json(await payroll.createRunFromRoster(
-    String(req.params.id), b.period, b.viewingKey, b.employeeIds,
+    String(req.params.id), canonicalPeriod(b.period), b.viewingKey, b.employeeIds,
     /*
      * `name` is never null on a `User`; `id` is the fallback for a record whose
      * name is blank, because an attribution nobody can resolve is what `decide`

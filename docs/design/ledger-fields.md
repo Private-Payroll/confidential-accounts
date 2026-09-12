@@ -76,7 +76,7 @@ writer of any record it is merged into.
 
 ## What the client-side scan does NOT know
 
-Scanned 396 files; 536 invocations carry a literal circuit name and 3 do not.
+Scanned 397 files; 536 invocations carry a literal circuit name and 3 do not.
 
 Five layers stand between a product call and a circuit, three of which rename:
 
@@ -91,4 +91,4 @@ Unresolved call sites, named rather than dropped:
 - `src/midnight/ledger.ts:2126` — callTx[<expr>]: the circuit is a runtime string; there is no name at this call site
 - `src/midnight/vault-ledger.ts:599` — callTx[<expr>]: the circuit is a runtime string; there is no name at this call site
 - `scripts/sponsor-test.ts:472` — callTx[<expr>]: the circuit is a runtime string; there is no name at this call site
-<!-- GENERATED:END id="ledger-fields" body="fad661a53e52b28c" -->
+<!-- GENERATED:END id="ledger-fields" body="cbdbfff6999bb0b8" -->
