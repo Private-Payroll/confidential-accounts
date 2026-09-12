@@ -49,6 +49,7 @@ const ledger = new ChainLedger(inner, {
   nodeUrl: 'https://rpc.example', proverUrl: 'http://prover.invalid:1',
   sealedStateRoot: '/nowhere/.midnight/sealed', privateStateId: 'confidential-accounts-stagenet',
   zkConfigPath: '/nowhere/contracts/managed',
+  vaultZkConfigPath: '/nowhere/contracts/managed-vault',
 }, capability, { now: () => Date.now(), overdueAfterMs: OVERDUE_MS });
 
 handInWiring({

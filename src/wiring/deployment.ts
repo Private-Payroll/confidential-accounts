@@ -75,6 +75,17 @@ export interface Deployment {
   readonly privateStateId: string;
   /** The compiled circuit assets the proof server is given. */
   readonly zkConfigPath: string;
+  /**
+   * **THE VAULT'S COMPILED ASSETS, WHICH ARE A DIFFERENT DIRECTORY FROM THE
+   * ACCOUNT'S AND HAVE TO BE, BECAUSE THEY ARE A DIFFERENT CONTRACT.**
+   *
+   * It is a field here rather than derived from `zkConfigPath` at the one place
+   * that needs it, for the reason every other endpoint is a field: a value
+   * spelled in two places is two values, and the one that goes stale is the one
+   * nobody reads. A client pointed at the wrong contract's assets is
+   * confidently wrong rather than absent, which is worse.
+   */
+  readonly vaultZkConfigPath: string;
 }
 
 /** What a deploy writes, of which this module reads two fields. */
@@ -100,6 +111,7 @@ export function resolveDeployment(input: {
   proverUrl: string | undefined;
   stateRoot: string;
   zkConfigPath: string;
+  vaultZkConfigPath: string;
 }): Deployment {
   const { network, record, recordPath, endpoints, proverUrl } = input;
 
@@ -161,6 +173,7 @@ export function resolveDeployment(input: {
     sealedStateRoot: join(input.stateRoot, '.midnight', 'sealed', network),
     privateStateId: `confidential-accounts-${network}`,
     zkConfigPath: input.zkConfigPath,
+    vaultZkConfigPath: input.vaultZkConfigPath,
   };
 }
 
@@ -195,5 +208,6 @@ export function deployment(root: string, env: NodeJS.ProcessEnv = process.env): 
     proverUrl: env.MIDNIGHT_PROVER_URL,
     stateRoot: root,
     zkConfigPath: join(root, 'contracts', 'managed'),
+    vaultZkConfigPath: join(root, 'contracts', 'managed-vault'),
   });
 }

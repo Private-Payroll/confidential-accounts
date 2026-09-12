@@ -36,6 +36,7 @@ import { PluginService } from '../core/plugins.js';
 import { seedDemo } from '../core/demo.js';
 import { decideList, type Marked } from '../core/provenance.js';
 import { assets as assetRegistry, parseAmount } from '../core/assets.js';
+import { noVaultHoldingsReader } from '../core/vault-holdings.js';
 import { IdentityService, StaleKeyBundle } from '../core/identity.js';
 import { MemoryChallengeStore } from '../core/challenges.js';
 import { MemorySessionStore } from '../core/sessions.js';
@@ -80,7 +81,28 @@ try {
 }
 const ledger = chosen.createLedger();
 const proofs = chosen.createProofSystem();
-const accounts = new AccountService(store, ledger, chosen.commitments);
+/*
+ * **THE READER THIS BUILD IS GIVEN IS THE ONE THAT ANSWERS NOTHING, AND IT IS
+ * PASSED BY NAME RATHER THAN LEFT AS A DEFAULT.**
+ *
+ * What a vault holds is a question only a process that can reach a chain can
+ * answer, and this build cannot: it has no filesystem and no environment to
+ * read an address, an indexer, a node or a proof server from, which is why
+ * `createLedger` refuses at the top of this module. A reader that guessed would
+ * be guessing about the money that pays a round.
+ *
+ * So every round that moves money is refused here, before it is raised, with a
+ * sentence saying this service cannot read what a vault holds. That is the
+ * truth about this build. **It is written at the construction site instead of
+ * being inherited** so that the next person reading this line sees a decision
+ * rather than an argument nobody supplied - and so that the day this build can
+ * reach a chain, the line that has to change is visible.
+ *
+ * The asset registry is named for the same reason it is named in the server:
+ * the reader is the argument after it.
+ */
+const accounts = new AccountService(
+  store, ledger, chosen.commitments, assetRegistry, noVaultHoldingsReader);
 const payroll = new PayrollService(store, accounts, proofs, undefined, NETWORK, invites);
 const plugins = new PluginService(store, accounts);
 // The same identity service the server runs. **There is no password in either

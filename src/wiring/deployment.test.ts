@@ -10,7 +10,10 @@
  * under that change before it was written down.
  */
 import { describe, it, expect } from 'vitest';
-import { resolveDeployment } from './deployment.js';
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { resolveDeployment, deployment } from './deployment.js';
 
 const ENDPOINTS = {
   indexerUrl: 'https://indexer.example/api/v4/graphql',
@@ -26,6 +29,7 @@ const good = {
   proverUrl: 'http://prover.invalid:1',
   stateRoot: '/somewhere',
   zkConfigPath: '/somewhere/contracts/managed',
+  vaultZkConfigPath: '/somewhere/contracts/managed-vault',
 };
 
 describe('a deployment resolves from one place or it refuses', () => {
@@ -51,6 +55,21 @@ describe('a deployment resolves from one place or it refuses', () => {
    * existing file alone. Two chains sharing a root means the second one's state
    * is silently never written and the first one's is read back in its place.
    */
+  /*
+   * **THE TWO ARTEFACT PATHS ARE TWO CONTRACTS, AND THIS IS WHAT SAYS SO.**
+   *
+   * RED WHEN: the vault's path is derived from, or set equal to, the account's.
+   * A vault client pointed at the account's compiled assets does not fail as
+   * absent — it checks arity and verifier keys against the wrong contract's
+   * ABI, which is confidently wrong, and the sentence it produces names
+   * circuits nobody called.
+   */
+  it('the account\'s compiled assets and the vault\'s are different directories', () => {
+    const d = resolveDeployment(good);
+    expect(d.zkConfigPath).toBe('/somewhere/contracts/managed');
+    expect(d.vaultZkConfigPath).toBe('/somewhere/contracts/managed-vault');
+  });
+
   it('the sealed root and the private state id both name the network', () => {
     const stagenet = resolveDeployment(good);
     const preview = resolveDeployment({
@@ -135,5 +154,36 @@ describe('a deployment resolves from one place or it refuses', () => {
     });
     expect(d.contractAddress).toBe('aaaa0000');
     expect(d.proverUrl).toBe('http://prover.elsewhere:7777');
+  });
+
+  /*
+   * **THE READER'S OWN PATHS, WHICH THE RULES ABOVE CANNOT SEE.**
+   *
+   * Everything else here hands `resolveDeployment` a value, so the two artefact
+   * paths the READER supplies were asserted nowhere: a reader that handed both
+   * arguments the same directory would pass every case above. This is the one
+   * check that needs a disk, and it needs only a file.
+   *
+   * RED WHEN: either path is changed, or the two are made equal.
+   *
+   * **BOTH SIDES ARE BUILT FROM THE SAME UNRESOLVED `root`**, so nothing here
+   * compares a resolved path against an unresolved one. On macOS `tmpdir()` is
+   * reached through a link and a comparison that resolved one side only would
+   * be true on Linux and false on a Mac.
+   */
+  it('the reader points at contracts/managed and contracts/managed-vault', () => {
+    const root = mkdtempSync(join(tmpdir(), 'mn-s116-deploy-'));
+    mkdirSync(join(root, '.midnight'), { recursive: true });
+    writeFileSync(
+      join(root, '.midnight', 'stagenet-contract.json'),
+      JSON.stringify({ network: 'stagenet', contractAddress: 'bcb61fef' }));
+
+    const d = deployment(root, {
+      MIDNIGHT_NETWORK_ID: 'stagenet',
+      MIDNIGHT_PROVER_URL: 'http://prover.invalid:1',
+    } as NodeJS.ProcessEnv);
+
+    expect(d.zkConfigPath).toBe(join(root, 'contracts', 'managed'));
+    expect(d.vaultZkConfigPath).toBe(join(root, 'contracts', 'managed-vault'));
   });
 });

@@ -57,6 +57,9 @@ import type { Deployment } from './deployment.js';
 
 import { type ContractBook } from './account-contract.js';
 import { refusalForCapability, type WriteCapability } from './write-capability.js';
+import { VaultLedger, type NotePool } from '../midnight/vault-ledger.js';
+import { chainVaultHoldings } from '../midnight/vault-holdings.js';
+import type { VaultHoldings } from '../core/vault-holdings.js';
 
 /**
  * **THE SPEND-AUTHORITY SEAT, LEFT EMPTY UNLESS THIS DEPLOYMENT WAS GIVEN ONE,
@@ -604,6 +607,153 @@ export function chainLedger(
     },
   );
   return new ChainLedger(inner, d, capability);
+}
+
+/**
+ * **WHAT A VAULT HOLDS PUBLICLY, AS THE CHAIN ANSWERS IT. IT ANSWERS PUBLIC
+ * MONEY AND NOTHING ELSE, AND THAT IS LESS THAN A PAYROLL RUN ASKS.**
+ *
+ * ── READ THIS FIRST: WHAT THIS DOES NOT CLOSE ────────────────────────────
+ *
+ * **EVERY PAYEE ON EVERY RUN THIS PRODUCT CAN RAISE IS PRIVATE.**
+ * `payrollPayee` (`src/core/movement.ts:140`) refuses a public address by name,
+ * and `paymentFactsFor` (`src/core/payroll.ts:2212`) puts every payee through
+ * it at `:2251` and returns the narrowed type. So the only payments a run can carry are
+ * ones this reader CANNOT answer, and a service holding it still refuses every
+ * payroll run it is asked to raise. **What changes is the refusal's class, not
+ * the outcome.** A one-off transfer to a public address is the shape this can
+ * answer, and that surface does not raise runs.
+ *
+ * It is here anyway, and it is not decoration: it is the public half of a
+ * reader a service has to have, wired where a service can reach it, with the
+ * private half named as what is missing rather than left to be discovered.
+ *
+ * **AND IT DOES WIDEN ONE THING, WHICH IS SAID PLAINLY BECAUSE IT IS THE ONLY
+ * NEW BEHAVIOUR HERE.** A reader that answers nothing refuses every round that
+ * moves money, whatever its payees are. This one refuses on what the chain
+ * says, so a round whose payees are ALL PUBLIC and whose total the vault's
+ * public balance covers is now raised where it was previously stopped. Nothing
+ * the payroll door can build has that shape; `AccountService.proposeRun` itself
+ * does not check, and what was holding that shut was the refusing reader rather
+ * than a rule. Naming it is not the same as pinning it, and it is not pinned.
+ *
+ * ── WHAT IT CAN ANSWER AND WHAT IT CANNOT ────────────────────────────────
+ *
+ * **PUBLIC MONEY: YES.** `unshieldedBalance` asks the indexer's own door for
+ * the balances a contract holds and needs nothing else. `affordable` walks the
+ * public payees through that same read.
+ *
+ * **PRIVATE MONEY: NO, AND IT REFUSES RATHER THAN ANSWERING.** A private
+ * balance is a reconciliation between a local note pool and the chain, and a
+ * server holds no vault note pool. The pool below refuses every use by name, so
+ * a proposal with a private payee is refused with a sentence about the pool
+ * instead of being answered from a pool that happened to be on disk. The
+ * refusal reaches the caller as *cannot pay*, which is the safe direction:
+ * `refuseWhatTheVaultCannotPay` treats every non-answer as a refusal to raise.
+ * **The sentence it produces is the generic one**, because the refusal arrives
+ * as an ordinary error rather than as one of the three the adapter knows. A
+ * permanent, structural inability reported in the words kept for the
+ * unexpected is a defect and it is recorded rather than hidden here.
+ *
+ * ── NOTHING THIS OBJECT HOLDS CAN WRITE, AND THAT IS ARRANGED ────────────
+ *
+ * A `VaultLedger` can pay out of a vault. This one is built to read, so it is
+ * given **no fee payer, no customer wallet and no compiled contract** — not as
+ * an omission but as the guard: a write reaches `connect`, which builds on the
+ * compiled contract, so every write on this object stops there. The reads do
+ * not go near it. **`nobodyPays` is still a truthy object**, so
+ * `VaultLedger.describe()` will say this client has a sponsor; that sentence is
+ * wrong about this object and is fixed where that sentence is written.
+ *
+ * **THE VAULT'S OWN ARTEFACT PATH IS PASSED** in all three places that take one
+ * - `vaultConfigFor` below covers the config and the provider bundle, and the
+ * constructor's last argument carries it directly - from the deployment and
+ * never derived from the account's, because a client pointed at the wrong
+ * contract's assets is confidently wrong rather than absent.
+ */
+export const vaultConfigFor = (d: Deployment): MidnightConfig =>
+  /*
+   * **THE VAULT CLIENT'S CONFIG IS THE ACCOUNT'S WITH ONE FIELD REPLACED.**
+   * `configFor` builds `zkConfigPath` from the ACCOUNT's artefacts, and a vault
+   * client carrying it is one reader away from checking a call against the
+   * wrong contract's ABI. Nothing reads the field on a vault client today;
+   * that is why it is corrected here rather than after something does, and why
+   * it is a named function rather than a spread at a call site - a correction
+   * applied in one of the two places it is needed is the half-applied kind that
+   * reads as done.
+   */
+  ({ ...configFor(d), zkConfigPath: d.vaultZkConfigPath });
+
+export function chainVaultHoldingsFor(d: Deployment): VaultHoldings {
+  const cfg = vaultConfigFor(d);
+  /*
+   * **IT TAKES NO WRITE CAPABILITY, AND THE ABSENT PARAMETER IS THE POINT.**
+   * There is no argument here through which a funded wallet could reach this
+   * object, so a later edit cannot hand it one by passing what it already has
+   * next door.
+   */
+  const nobodyPays = noSponsor(
+    'reading what a vault holds pays no fee, so this client was given nobody to pay one');
+
+  /*
+   * **MEMOISED ACROSS QUESTIONS, AND A FAILURE IS NOT.**
+   *
+   * The client asks for the bundle once per read and many times over the life
+   * of a service, so building it per read would open a provider set per
+   * question. **A REJECTION IS DROPPED RATHER THAN KEPT**: an indexer that was
+   * unreachable at the first read is a transient, and a cached rejected promise
+   * would turn it into a service that tells everybody the vault could not be
+   * established until somebody restarts it — a sentence inviting a retry for a
+   * failure that can never clear, which is a shape this product has met
+   * before.
+   */
+  let built: Promise<unknown> | null = null;
+  const providersOnce = () => (built ??= midnightProviders({
+    config: cfg,
+    /* Reads need neither, and a reader that held them would be a writer. */
+    customer: undefined as never,
+    sponsor: nobodyPays,
+    artifactsPath: d.vaultZkConfigPath,
+    privateStateId: d.privateStateId,
+    storagePassword: async () => refuseUnwired(
+      'the private state store',
+      'nothing here writes, and a read of what a vault holds needs no private state'),
+  }).catch((cause) => { built = null; throw cause; }));
+
+  /*
+   * **A POOL THAT REFUSES, SO THAT "THE BRANCH WAS NOT TAKEN" BECOMES "THERE IS
+   * NO BRANCH".** If any read ever loads, saves or creates a note here, it
+   * stops with a sentence naming the method rather than quietly answering from
+   * a pool this service has no business holding.
+   */
+  const refuse = (method: string) => (): never => {
+    throw new Error(
+      `reading what a vault holds asked the note pool to ${method}, and a service holds no `
+      + "vault note pool. A private balance is a reconciliation against this client's own "
+      + 'record of the vault\'s notes, and there is no such record on a server. What can be '
+      + 'answered here is public money, which is a ledger balance and reads no note.');
+  };
+  const noPool: NotePool = {
+    load: refuse('load') as NotePool['load'],
+    save: refuse('save') as NotePool['save'],
+    create: refuse('create') as NotePool['create'],
+  };
+
+  return chainVaultHoldings(new VaultLedger(
+    cfg,
+    /*
+     * **NO FEE PAYER AND NO COMPILED CONTRACT, DELIBERATELY, AND THEY ARE THE
+     * GUARD RATHER THAN AN OMISSION.** This object is handed to a service, and
+     * a `VaultLedger` can pay out of a vault. Given the deployment's real
+     * sponsor it would be a funded writer sitting inside a reader. It is given
+     * neither, so a write refuses before it can balance anything.
+     */
+    nobodyPays,
+    providersOnce,
+    undefined,
+    noPool,
+    d.vaultZkConfigPath,
+  ));
 }
 
 /** The set, whole. Assembled only by the selector next door. */
