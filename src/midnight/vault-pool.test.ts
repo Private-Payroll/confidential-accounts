@@ -18,6 +18,7 @@ import { redactHex } from '../testing/redact.js';
 import type { VaultNotes } from './vault-notes.js';
 import {
   sealPool, openPool, wrapFor, SealedNotePool, MemorySealedPoolStore, VaultPoolUnreadable,
+  VaultPoolAdvancedSinceRead,
   type PoolSigner,
 } from './vault-pool.js';
 
@@ -190,17 +191,18 @@ describe('the pool VaultLedger actually uses', () => {
 
   it('will not advance a pool that was never created', async () => {
     const { pool } = build();
-    await expect(pool.save(VAULT, POOL)).rejects.toThrow(/no pool to advance/i);
+    await expect(pool.save(VAULT, POOL, { vault: VAULT, version: 1 })).rejects.toThrow(/no pool to advance/i);
   });
 
   it('creates once, then round-trips through save', async () => {
     const { pool } = build();
     await pool.create(VAULT, POOL);
-    expect(await pool.load(VAULT)).toEqual(POOL);
+    const first = await pool.load(VAULT);
+    expect(first).toEqual({ ...POOL, readAt: { vault: VAULT, version: 1 } });
 
     const moved: VaultNotes = { notes: [POOL.notes[1]] };
-    await pool.save(VAULT, moved);
-    expect(await pool.load(VAULT)).toEqual(moved);
+    await pool.save(VAULT, moved, first.readAt);
+    expect(await pool.load(VAULT)).toEqual({ ...moved, readAt: { vault: VAULT, version: 2 } });
 
   });
 
@@ -208,10 +210,79 @@ describe('the pool VaultLedger actually uses', () => {
     const { pool, store, b } = build();
     await pool.create(VAULT, POOL);
     const moved: VaultNotes = { notes: [POOL.notes[0]] };
-    await pool.save(VAULT, moved);
+    await pool.save(VAULT, moved, (await pool.load(VAULT)).readAt);
 
     const rec = (await store.get(VAULT))!;
     expect(openPool(rec, 'sgn_b', b.secret)).toEqual(moved);
+  });
+
+  it('REFUSES A WRITE BUILT ON A READ THE POOL HAS SINCE MOVED PAST, and the newer write survives', async () => {
+    /*
+     * Two processes load version 1. The second writes first. The first then
+     * writes what it decided from version 1: that is the stale writer, and it
+     * would have erased the second's note. It is refused and nothing is written.
+     */
+    const { pool, store } = build();
+    await pool.create(VAULT, POOL);
+    const early = await pool.load(VAULT);
+    const late = await pool.load(VAULT);
+    const newer: VaultNotes = { notes: [POOL.notes[0]] };
+    await pool.save(VAULT, newer, late.readAt);
+
+    const stale = pool.save(VAULT, { notes: [POOL.notes[1]] }, early.readAt);
+    await expect(stale).rejects.toThrow(VaultPoolAdvancedSinceRead);
+    await expect(pool.save(VAULT, { notes: [] }, early.readAt)).rejects.toThrow(/Nothing has been written/);
+    expect((await pool.load(VAULT)).notes).toEqual(newer.notes);
+    expect((await store.get(VAULT))!.version).toBe(2);
+  });
+
+  it('REFUSES a write built on a version the store has never had, and writes nothing', async () => {
+    /* A read of another copy of the pool, or a store restored from an older file, names a version ahead of it. */
+    const { pool, store } = build();
+    await pool.create(VAULT, POOL);
+    await expect(pool.save(VAULT, { notes: [] }, { vault: VAULT, version: 5 })).rejects.toThrow(VaultPoolAdvancedSinceRead);
+    expect((await store.get(VAULT))!.version).toBe(1);
+    expect((await pool.load(VAULT)).notes).toEqual(POOL.notes);
+  });
+
+  it('writes the version after the one its write was built on', async () => {
+    const { pool, store } = build();
+    await pool.create(VAULT, POOL);
+    await pool.save(VAULT, POOL, (await pool.load(VAULT)).readAt);
+    await pool.save(VAULT, POOL, (await pool.load(VAULT)).readAt);
+    expect((await store.get(VAULT))!.version).toBe(3);
+  });
+
+  it('REFUSES a write built on a read of another vault\'s pool', async () => {
+    const { pool } = build();
+    await pool.create(VAULT, POOL);
+    await expect(pool.save(VAULT, POOL, { vault: 'b8'.repeat(32), version: 1 }))
+      .rejects.toThrow(/different vault/);
+  });
+
+  it('two writers built on the same read cannot both land, even when both pass the version check', async () => {
+    /*
+     * Both read version 1 and both check before either writes: the check alone
+     * lets both through. Each then writes version 2, and the store refuses the
+     * second because it does not advance. What landed is one of the two, whole.
+     */
+    const { pool, store } = build();
+    await pool.create(VAULT, POOL);
+    const { readAt } = await pool.load(VAULT);
+    const results = await Promise.allSettled([
+      pool.save(VAULT, { notes: [POOL.notes[0]] }, readAt),
+      pool.save(VAULT, { notes: [POOL.notes[1]] }, readAt),
+    ]);
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    expect((await store.get(VAULT))!.version).toBe(2);
+  });
+
+  it('seals the notes and nothing of the load that read them', async () => {
+    const { pool, store, a } = build();
+    await pool.create(VAULT, POOL);
+    const loaded = await pool.load(VAULT);
+    await pool.save(VAULT, loaded, loaded.readAt);
+    expect(openPool((await store.get(VAULT))!, 'sgn_a', a.secret)).toEqual(POOL);
   });
 
   it('will not create a second pool over the first', async () => {

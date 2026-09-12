@@ -348,6 +348,23 @@ export const paymentsFit = (
         `payment ${i + 1} of ${payments.length} cannot be made out of this vault: `
         + `${(cause as Error).message}`);
     }
+    /*
+     * **AND THE NOTE IT WOULD SPEND MUST BE ONE A PAYMENT CAN SPEND.** A payment
+     * reads the chosen note's place in the commitment tree from the transaction
+     * that created it, and refuses before proving a note that does not record
+     * one. Answering *fits* for such a note would let a proposal be raised and
+     * approved, with every fee paid, for a payment the vault client then
+     * refuses. The change this walk puts back is not asked: it does not exist
+     * yet, and the payment that makes it records its transaction.
+     */
+    if (chosen.createdIn === undefined && !String(chosen.nonce).startsWith('sim:')) {
+      throw new Error(
+        `payment ${i + 1} of ${payments.length} cannot be made out of this vault: the note it `
+        + `would spend, ${chosen.nonce}, does not record which transaction created it, and a `
+        + 'payment cannot spend a note without reading its place in the chain\'s commitment tree '
+        + 'from that transaction. The note is still on chain and still the vault\'s. Name the '
+        + 'transaction that paid it in to recordCreatingTransaction before raising this.');
+    }
     const rest = notes.filter((n) => n.nonce !== chosen.nonce);
     const kept = chosen.value - p.amount;
     notes = kept === 0n

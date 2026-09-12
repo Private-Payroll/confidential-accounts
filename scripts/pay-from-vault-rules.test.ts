@@ -1,0 +1,466 @@
+/**
+ * **THE RULES OF THE DOOR THAT PAYS OUT OF A VAULT, DRIVEN WITHOUT A CHAIN.**
+ *
+ * The door itself proves, submits and spends, so it is not run here. Everything
+ * it decides is in `pay-from-vault-rules.ts` and is driven here: the answers a
+ * person types, the record that lets a stopped payment be finished, the run and
+ * payment built from it, the question put to the vault's holdings before any
+ * fee, the next step read from the chain's answers, and what a balance read
+ * afterwards means.
+ */
+import { describe, expect, it } from 'vitest';
+
+import {
+  amountFromText, referenceFromText, assertPublicPayee, assertVaultCanPayPublicly, assertVaultIsMarriedTo,
+  windowAt, blockSecondsOf, newPayoutRecord, parsePayoutRecord, assertRecordIsThisPayment, runOf,
+  vaultPaymentOf, asksOf, batchDigestOf, approvalsNeeded, nextStep, nextApprover, publicMovementOf,
+  OPENS_BEFORE_NOW, STAYS_OPEN_FOR, drive, refusalBeforePayment, payoutRecordFromText, assertNotAlreadyPaid,
+  finishedRecordFile, finishedRecordPrefix, type ChainFacts, type DoorActions, type PaymentAsk, type PayoutRecord,
+} from './pay-from-vault-rules.js';
+import { assets, ledgerTokenOf } from '../src/core/assets.js';
+import { transferOf, transferFacts, privacyOf } from '../src/core/movement.js';
+import { refuseWhatTheVaultCannotPay, VaultCannotPayThisProposal } from '../src/core/vault-holdings.js';
+import { chainVaultHoldings } from '../src/midnight/vault-holdings.js';
+import { VaultLedger, VaultCannotAfford, type NotePool } from '../src/midnight/vault-ledger.js';
+import { vaultDetailsOf } from '../src/midnight/vault-details.js';
+import { payeeFor, unshieldedPayeeFor } from '../src/testing/payees.js';
+import { pureCircuits as vaultCircuits } from '../contracts/managed-vault/contract/index.js';
+import { fromHex, toHex, type Hex } from '../src/core/crypto.js';
+import type { VaultEntry } from '../src/midnight/vault-record.js';
+
+const VAULT: Hex = 'c4'.repeat(32);
+const ACCOUNT: Hex = 'a1'.repeat(32);
+const NIGHT = ledgerTokenOf('NIGHT', 'unshielded') as Hex;
+const NOW = 1_789_150_000n;
+const PAYEE = unshieldedPayeeFor('5e'.repeat(32), 'stagenet');
+const VAULT_ARTEFACTS = new URL('../contracts/managed-vault', import.meta.url).pathname;
+
+const entry = (over: Partial<VaultEntry> = {}): VaultEntry => ({
+  name: 'payroll-test-3', contractAddress: VAULT, accountAddress: ACCOUNT, deployedAt: '2026-09-09T02:19:06.000Z',
+  circuits: ['deposit', 'depositUnshielded', 'payout', 'payoutUnshielded', 'splitNote', 'retire', 'forgetUnshielded'],
+  maintenanceAuthority: {} as never, ...over,
+} as VaultEntry);
+
+const ask = (over: Partial<PaymentAsk> = {}): PaymentAsk => ({
+  network: 'stagenet', vault: 'payroll-test-3', payTo: PAYEE.bech32, amount: 10n, reference: 'first payout', ...over,
+});
+
+let counter = 0;
+const fresh = (): Hex => { counter += 1; return counter.toString(16).padStart(2, '0').repeat(32) as Hex; };
+const record = (over: Partial<PaymentAsk> = {}): PayoutRecord =>
+  newPayoutRecord(ask(over), fresh, NOW, '2026-09-11T12:00:00.000Z');
+
+const factsFor = (amount: bigint) => transferFacts(transferOf({
+  accountId: 'vault:payroll-test-3', payee: PAYEE, asset: 'NIGHT', amount,
+  privacy: privacyOf(PAYEE), reference: 'first payout', createdBy: 'a test', employees: [],
+}));
+
+describe('§1 what a person types', () => {
+  it('takes an amount as digits in the smallest unit, and refuses anything else by name', () => {
+    expect(amountFromText(' 1250 ')).toBe(1250n);
+    expect(() => amountFromText('')).toThrow(/no amount was given/);
+    expect(() => amountFromText('12.5')).toThrow(/Digits and nothing else/);
+    expect(() => amountFromText('-3')).toThrow(/Digits and nothing else/);
+    expect(() => amountFromText('1,000')).toThrow(/Digits and nothing else/);
+    expect(() => amountFromText('0')).toThrow(/positive amount/);
+  });
+
+  it('requires a reference', () => {
+    expect(referenceFromText(' rent ')).toBe('rent');
+    expect(() => referenceFromText('  ')).toThrow(/has no reference/);
+  });
+
+  it('REFUSES a private address, because this door pays out of the public balance', () => {
+    expect(assertPublicPayee(PAYEE)).toBe(PAYEE);
+    expect(() => assertPublicPayee(payeeFor('7a'.repeat(32), 'stagenet'))).toThrow(/that is a private address/);
+  });
+});
+
+describe('§2 the vault it pays from', () => {
+  it('REFUSES a vault that does not carry payoutUnshielded, and names what it does carry', () => {
+    expect(() => assertVaultCanPayPublicly(entry())).not.toThrow();
+    expect(() => assertVaultCanPayPublicly(entry({ circuits: ['deposit', 'payout'] })))
+      .toThrow(/does not list payoutUnshielded.*It lists: deposit, payout/);
+  });
+
+  it('REFUSES a vault married to an account that is not the deployed one, and prints neither address', () => {
+    expect(() => assertVaultIsMarriedTo(entry(), { contractAddress: ACCOUNT.toUpperCase() })).not.toThrow();
+    const other = () => assertVaultIsMarriedTo(entry(), { contractAddress: 'b2'.repeat(32) });
+    expect(other).toThrow(/married to an account that is not the one deployed/);
+    expect(() => assertVaultIsMarriedTo(entry(), null)).toThrow(/married to an account/);
+    expect(() => assertVaultIsMarriedTo(entry({ accountAddress: '' }), { contractAddress: '' })).toThrow(/married/);
+    try { other(); } catch (e) {
+      expect((e as Error).message).not.toContain(ACCOUNT);
+      expect((e as Error).message).not.toContain('b2'.repeat(32));
+    }
+  });
+});
+
+describe('§3 the window, in seconds', () => {
+  it('opens ten minutes before it is written and closes a day after', () => {
+    expect(windowAt(NOW)).toEqual({ opensAt: NOW - OPENS_BEFORE_NOW, closesAt: NOW + STAYS_OPEN_FOR });
+    expect(OPENS_BEFORE_NOW).toBe(600n);
+    expect(STAYS_OPEN_FOR).toBe(86_400n);
+  });
+
+  it('REFUSES a time in milliseconds, which would build a window that never closes', () => {
+    expect(() => windowAt(NOW * 1000n)).toThrow(/milliseconds, not seconds/);
+    expect(() => windowAt(5n)).toThrow(/not a time in seconds/);
+  });
+
+  it('reads block time as whole seconds from the indexer\'s milliseconds', () => {
+    expect(blockSecondsOf(1_789_150_000_999)).toBe(1_789_150_000n);
+    expect(() => blockSecondsOf(0)).toThrow(/not a time/);
+    expect(() => blockSecondsOf(Number.NaN)).toThrow(/not a time/);
+  });
+});
+
+describe('§4 the record written before the first fee', () => {
+  it('holds what was asked, a window, and two different random values, and reads back as itself', () => {
+    const r = record();
+    expect(r).toMatchObject({ format: 1, network: 'stagenet', vault: 'payroll-test-3', payTo: PAYEE.bech32, amount: '10', reference: 'first payout' });
+    expect(r.opensAt).toBe((NOW - 600n).toString());
+    expect(r.closesAt).toBe((NOW + 86_400n).toString());
+    expect(r.seed).not.toBe(r.salt);
+    expect(parsePayoutRecord(JSON.parse(JSON.stringify(r)), 'the record')).toEqual(r);
+  });
+
+  it('REFUSES to write a record from a random source that gave the same value twice', () => {
+    expect(() => newPayoutRecord(ask(), () => 'ab'.repeat(32) as Hex, NOW, 'now')).toThrow(/two different 32-byte values/);
+  });
+
+  it('REFUSES a record read back with any field it cannot finish from, naming the field', () => {
+    const r = record() as unknown as Record<string, unknown>;
+    const broken = (k: string, v: unknown) => () => parsePayoutRecord({ ...r, [k]: v }, 'the record');
+    expect(broken('format', 2)).toThrow(/format is 2/);
+    expect(broken('seed', 'ab')).toThrow(/its seed is not 32 bytes/);
+    expect(broken('salt', 'AB'.repeat(32))).toThrow(/its salt is not 32 bytes/);
+    expect(broken('amount', '1.5')).toThrow(/its amount is not digits/);
+    expect(broken('payTo', '')).toThrow(/it has no payTo/);
+    expect(broken('opensAt', r.closesAt)).toThrow(/closes before it opens/);
+    expect(() => parsePayoutRecord(null, 'the record')).toThrow(/not an object/);
+  });
+
+  it('finishes a record only with the answers it was written for, naming every difference', () => {
+    const r = record();
+    expect(() => assertRecordIsThisPayment(r, ask())).not.toThrow();
+    expect(() => assertRecordIsThisPayment(r, ask({ amount: 11n }))).toThrow(/amount \(recorded 10, asked 11\)/);
+    expect(() => assertRecordIsThisPayment(r, ask({ payTo: 'mn_addr_other' }))).toThrow(/the address paid/);
+    expect(() => assertRecordIsThisPayment(r, ask({ reference: 'x' }))).toThrow(/reference \(recorded "first payout", asked "x"\)/);
+    expect(() => assertRecordIsThisPayment(r, ask({ vault: 'payroll-test-4' }))).toThrow(/vault \(recorded "payroll-test-3"/);
+    expect(() => assertRecordIsThisPayment(r, ask({ network: 'preview' }))).toThrow(/network \(recorded stagenet, asked preview\)/);
+    expect(() => assertRecordIsThisPayment(r, ask({ amount: 11n }))).toThrow(/Nothing was proposed, approved or paid/);
+  });
+
+  it('digests a record to 32 bytes, the same way every time', () => {
+    const r = record();
+    expect(batchDigestOf(r)).toMatch(/^[0-9a-f]{64}$/);
+    expect(batchDigestOf(r)).toBe(batchDigestOf(JSON.parse(JSON.stringify(r))));
+    expect(batchDigestOf(r)).not.toBe(batchDigestOf({ ...r, amount: '11' }));
+  });
+});
+
+describe('§5 the run and the payment built from the record', () => {
+  it('builds the same root, leaf and secrets every time the same record is read', async () => {
+    const details = await vaultDetailsOf();
+    const r = record();
+    const a = runOf(r, factsFor(10n), details, 'default');
+    const b = runOf(JSON.parse(JSON.stringify(r)), factsFor(10n), details, 'default');
+    expect(a.run.tree.root).toBe(b.run.tree.root);
+    expect(a.args.leaf).toBe(b.args.leaf);
+    expect(a.args.blinding).toBe(b.args.blinding);
+    expect(a.args.nonce).toBe(b.args.nonce);
+    expect(a.run.tree.payees).toBe(1n);
+    const other = runOf({ ...r, seed: 'ee'.repeat(32) as Hex }, factsFor(10n), details, 'default');
+    expect(other.args.leaf).not.toBe(a.args.leaf);
+  });
+
+  it('commits the leaf to the PUBLIC payment: the recipient, NIGHT, the amount, under the vault\'s unshielded details', async () => {
+    const built = runOf(record(), factsFor(10n), await vaultDetailsOf(), 'default');
+    const expected = toHex(vaultCircuits.unshieldedPayoutDetails(
+      fromHex(PAYEE.userAddress), fromHex(NIGHT), 10n, fromHex(built.args.blinding)));
+    expect(built.args.details).toBe(expected);
+    expect(built.args.token).toBe(NIGHT);
+    expect(built.run.tree.leaves).toEqual([built.args.leaf]);
+  });
+
+  it('REFUSES to build a run whose payment disagrees with the record\'s amount', async () => {
+    expect(() => runOf(record(), factsFor(11n), {} as never, 'default')).toThrow(/pays 11 and the record says 10/);
+  });
+
+  it('hands the vault every argument from the run and the record, and none from anywhere else', async () => {
+    const r = record();
+    const built = runOf(r, factsFor(10n), await vaultDetailsOf(), 'default');
+    const p = vaultPaymentOf(r, built, 'd7'.repeat(32) as Hex);
+    expect(p.proposal).toBe('d7'.repeat(32));
+    expect(p.root).toBe(built.run.tree.root);
+    expect(p.payees).toBe(1n);
+    expect(p.opensAt).toBe(NOW - 600n);
+    expect(p.closesAt).toBe(NOW + 86_400n);
+    expect(p.salt).toBe(r.salt);
+    expect(p.payee).toBe(PAYEE);
+    expect(p.token).toBe(NIGHT);
+    expect(p.amount).toBe(10n);
+    expect(p.blinding).toBe(built.args.blinding);
+    expect(p.nonce).toBe(built.args.nonce);
+    expect(p.path).toBe(built.args.path);
+  });
+});
+
+describe('§6 the vault is asked whether it holds the money, before any fee, through the chain\'s reads', () => {
+  const refusingPool: NotePool = {
+    load: async () => { throw new Error('a public payment must not load the pool'); },
+    save: async () => { throw new Error('a public payment must not save the pool'); },
+    create: async () => { throw new Error('a public payment must not create a pool'); },
+  };
+  const vaultHolding = (rows: Array<[string, bigint]>) => new VaultLedger(
+    { networkId: 'stagenet' } as never, {} as never,
+    (async () => ({ publicDataProvider: { queryUnshieldedBalances: async () => rows.map(([tokenType, balance]) => ({ tokenType, balance })) } })) as never,
+    {}, refusingPool, VAULT_ARTEFACTS);
+
+  it('asks for one payment of the payment\'s own token and amount, as the account service asks', () => {
+    const asks = asksOf(VAULT, assets.require('NIGHT'), factsFor(10n));
+    expect(asks).toEqual({
+      vault: VAULT, asset: assets.require('NIGHT'), total: 10n, payees: 1n,
+      payments: [{ payee: { kind: 'unshielded' }, token: NIGHT, amount: 10n }],
+    });
+  });
+
+  it('PASSES when the chain says the vault holds the amount, reading the public balance and never the pool', async () => {
+    const asks = asksOf(VAULT, assets.require('NIGHT'), factsFor(10n));
+    await expect(refuseWhatTheVaultCannotPay(chainVaultHoldings(vaultHolding([[NIGHT, 10n]])), asks)).resolves.toBeUndefined();
+  });
+
+  it('REFUSES before any fee when the chain says the vault holds less', async () => {
+    const asks = asksOf(VAULT, assets.require('NIGHT'), factsFor(10n));
+    await expect(refuseWhatTheVaultCannotPay(chainVaultHoldings(vaultHolding([[NIGHT, 9n]])), asks))
+      .rejects.toThrow(VaultCannotPayThisProposal);
+    await expect(refuseWhatTheVaultCannotPay(chainVaultHoldings(vaultHolding([])), asks))
+      .rejects.toThrow(VaultCannotPayThisProposal);
+  });
+});
+
+describe('§7 what comes next is read from the chain', () => {
+  const at = (over: Partial<ChainFacts>): ChainFacts => ({
+    paid: false, proposalOpen: true, approvals: 1n, needed: 1n,
+    blockSeconds: NOW, opensAt: NOW - 600n, closesAt: NOW + 86_400n, ...over,
+  });
+
+  it('pays when the proposal is open, approved to the threshold, inside its window, and not yet paid', () => {
+    expect(nextStep(at({}))).toBe('pay');
+  });
+
+  it('proposes when no open proposal has this run\'s identity', () => {
+    expect(nextStep(at({ proposalOpen: false, approvals: 0n }))).toBe('propose');
+  });
+
+  it('approves while the chain counts fewer approvals than the vault needs', () => {
+    expect(nextStep(at({ approvals: 1n, needed: 2n }))).toBe('approve');
+    expect(nextStep(at({ approvals: 2n, needed: 2n }))).toBe('pay');
+  });
+
+  it('waits while the chain\'s clock is before the window, and pays at the moment it opens', () => {
+    expect(nextStep(at({ blockSeconds: NOW - 601n }))).toBe('window-not-open');
+    /* Proposing and approving do not wait for the window: only the payment does. */
+    expect(nextStep(at({ blockSeconds: NOW - 601n, proposalOpen: false, approvals: 0n }))).toBe('propose');
+    expect(nextStep(at({ blockSeconds: NOW - 601n, approvals: 0n }))).toBe('approve');
+    expect(nextStep(at({ blockSeconds: NOW - 600n }))).toBe('pay');
+  });
+
+  it('stops at a window that has closed, at the second it closes, whatever else is true', () => {
+    expect(nextStep(at({ blockSeconds: NOW + 86_400n }))).toBe('window-closed');
+    expect(nextStep(at({ blockSeconds: NOW + 86_399n }))).toBe('pay');
+    expect(nextStep(at({ blockSeconds: NOW + 86_400n, proposalOpen: false }))).toBe('window-closed');
+  });
+
+  it('NEVER PAYS TWICE: a leaf the chain has recorded is paid, whatever else is true', () => {
+    expect(nextStep(at({ paid: true }))).toBe('paid');
+    expect(nextStep(at({ paid: true, blockSeconds: NOW + 99_999n }))).toBe('paid');
+    expect(nextStep(at({ paid: true, proposalOpen: false }))).toBe('paid');
+  });
+
+  it('needs the vault\'s own threshold when the account has one, and the account\'s otherwise', () => {
+    expect(approvalsNeeded(1n, 3n)).toBe(3n);
+    expect(approvalsNeeded(2n, null)).toBe(2n);
+    expect(() => approvalsNeeded(0n, null)).toThrow(/no approval can meet/);
+  });
+
+  it('asks the signers in order, and refuses when the approval needed is one this machine has no signer for', () => {
+    const order = ['A', 'B', 'C'] as const;
+    expect(nextApprover(0n, order)).toBe('A');
+    expect(nextApprover(2n, order)).toBe('C');
+    expect(() => nextApprover(3n, order)).toThrow(/needs approval number 4 and this machine holds 3 signers/);
+  });
+});
+
+describe('§8 what the balance afterwards says', () => {
+  it('says the money left only when the balance fell by exactly the amount', () => {
+    expect(publicMovementOf(100n, 90n, 10n)).toBe('left-the-vault');
+    expect(publicMovementOf(100n, 100n, 10n)).toBe('did-not-move');
+    expect(publicMovementOf(100n, 80n, 10n)).toBe('moved-by-a-different-amount');
+    expect(publicMovementOf(100n, 105n, 10n)).toBe('moved-by-a-different-amount');
+    expect(publicMovementOf(null, 90n, 10n)).toBe('not-read');
+    expect(publicMovementOf(100n, null, 10n)).toBe('not-read');
+  });
+});
+
+describe('§9 the whole sequence, against a chain that answers slowly', () => {
+  /*
+   * A chain that applies each transaction only after `lag` further reads, the
+   * way an indexer answers with the state from before a transaction that has
+   * already landed. Every action is logged, so what the door did, in what order
+   * and how often, is what these assert.
+   */
+  const world = (o: { needed?: bigint; lag?: number; paid?: boolean; closed?: boolean; notOpenFor?: number; neverShows?: 'proposal' } = {}) => {
+    const chain = {
+      paid: o.paid ?? false, proposalOpen: false, approvals: 0n, needed: o.needed ?? 1n,
+      blockSeconds: o.closed ? NOW + 86_400n : NOW - (o.notOpenFor ? 700n : 0n),
+      opensAt: NOW - 600n, closesAt: NOW + 86_400n,
+    };
+    const log: string[] = [];
+    const queued: Array<{ after: number; apply: () => void }> = [];
+    const later = (apply: () => void) => queued.push({ after: o.lag ?? 0, apply });
+    const act: DoorActions<'A' | 'B' | 'C'> = {
+      readChain: async () => {
+        for (const q of queued) if (q.after-- <= 0) q.apply();
+        queued.splice(0, queued.length, ...queued.filter((q) => q.after >= 0));
+        return { ...chain } as ChainFacts;
+      },
+      holdsTheMoney: async () => { log.push('holds'); },
+      stillHoldsTheMoney: async () => { log.push('still-holds'); },
+      propose: async () => {
+        log.push('propose');
+        if (o.neverShows !== 'proposal') later(() => { chain.proposalOpen = true; });
+        return 'tx-propose';
+      },
+      approve: async (who) => { log.push(`approve ${who}`); later(() => { chain.approvals += 1n; }); return `tx-approve-${who}`; },
+      pay: async () => { log.push('pay'); later(() => { chain.paid = true; }); return 'tx-pay'; },
+      wait: async (ms) => { log.push(`wait ${ms}`); if (o.notOpenFor && ms === 7) chain.blockSeconds = NOW; },
+      say: () => {},
+    };
+    return { act, log, chain };
+  };
+  const LIMITS = { steps: 12, polls: 5, pollMs: 1, notOpenYetMs: 7 };
+  const actions = (log: string[]) => log.filter((l) => !l.startsWith('wait'));
+
+  it('asks the vault, proposes, approves to the threshold in order, asks again, and pays, each exactly once', async () => {
+    const w = world({ needed: 2n });
+    const r = await drive(w.act, ['A', 'B', 'C'], LIMITS);
+    expect(actions(w.log)).toEqual(['holds', 'propose', 'approve A', 'approve B', 'still-holds', 'pay']);
+    expect(r.paidIn).toBe('tx-pay');
+    expect(r.final.paid).toBe(true);
+  });
+
+  it('A SLOW INDEXER DOES NOT MAKE IT PROPOSE, APPROVE OR PAY TWICE', async () => {
+    const w = world({ needed: 2n, lag: 3 });
+    await drive(w.act, ['A', 'B', 'C'], LIMITS);
+    expect(actions(w.log)).toEqual(['holds', 'propose', 'approve A', 'approve B', 'still-holds', 'pay']);
+  });
+
+  it('REFUSES BEFORE ANY PROPOSAL when the vault does not hold the money', async () => {
+    const w = world();
+    w.act.holdsTheMoney = async () => { w.log.push('holds'); throw new Error('the vault holds 9'); };
+    await expect(drive(w.act, ['A'], LIMITS)).rejects.toThrow(/the vault holds 9/);
+    expect(w.log).toEqual(['holds']);
+  });
+
+  it('REFUSES BEFORE THE PAYMENT when the vault no longer holds it', async () => {
+    const w = world();
+    w.act.stillHoldsTheMoney = async () => { w.log.push('still-holds'); throw new Error('spent meanwhile'); };
+    await expect(drive(w.act, ['A'], LIMITS)).rejects.toThrow(/spent meanwhile/);
+    expect(actions(w.log)).toEqual(['holds', 'propose', 'approve A', 'still-holds']);
+  });
+
+  it('STOPS, with nothing further submitted, when the chain never shows a transaction it was sent', async () => {
+    const w = world({ neverShows: 'proposal' });
+    await expect(drive(w.act, ['A'], LIMITS)).rejects.toThrow(/the proposal was submitted and the chain has not shown it after 5 reads/);
+    expect(actions(w.log)).toEqual(['holds', 'propose']);
+  });
+
+  it('does nothing at all for a payment the account has already recorded', async () => {
+    const w = world({ paid: true });
+    const r = await drive(w.act, ['A'], LIMITS);
+    expect(w.log).toEqual([]);
+    expect(r.paidIn).toBeNull();
+  });
+
+  it('REFUSES a closed window before any action', async () => {
+    const w = world({ closed: true });
+    await expect(drive(w.act, ['A'], LIMITS)).rejects.toThrow(/window of the recorded run has closed/);
+    expect(w.log).toEqual([]);
+  });
+
+  it('waits for a window the chain\'s clock has not reached, then pays', async () => {
+    const w = world({ notOpenFor: 1 });
+    await drive(w.act, ['A'], LIMITS);
+    expect(w.log).toContain('wait 7');
+    expect(actions(w.log)).toEqual(['holds', 'propose', 'approve A', 'still-holds', 'pay']);
+  });
+
+  it('stops and says so when the steps run out', async () => {
+    const w = world({ needed: 3n });
+    await expect(drive(w.act, ['A', 'B', 'C'], { ...LIMITS, steps: 2 })).rejects.toThrow(/after 2 steps/);
+  });
+});
+
+describe('§10 what a person is told when the vault says no just before paying', () => {
+  it('says a chain that could not be read is NOT the vault holding too little, and not to deposit again', () => {
+    const e = refusalBeforePayment(new VaultCannotAfford(VAULT, 'chain-unreadable', 'the indexer did not answer')) as Error;
+    expect(e.message).toMatch(/could not be read just now, so nothing was paid/);
+    expect(e.message).toMatch(/do not deposit again/);
+    expect(e.message).not.toMatch(/no longer holds/);
+  });
+
+  it('says a short vault is short', () => {
+    const e = refusalBeforePayment(new VaultCannotAfford(VAULT, 'public-balance-short', 'holds 9')) as Error;
+    expect(e.message).toMatch(/the chain says the vault no longer holds this payment/);
+    expect(e.message).not.toMatch(/do not deposit again/);
+  });
+
+  it('passes on anything else unchanged', () => {
+    const other = new Error('the proof server is down');
+    expect(refusalBeforePayment(other)).toBe(other);
+  });
+});
+
+describe('§11 a record cut short, and a payment already made', () => {
+  it('REFUSES the text a write cut short leaves, by name, and reads a whole record as itself', () => {
+    const r = record();
+    const text = JSON.stringify(r, null, 2);
+    expect(payoutRecordFromText(text, 'the record')).toEqual(r);
+    expect(() => payoutRecordFromText(text.slice(0, 40), 'the record')).toThrow(/the record is not a payment record this door can finish: it is not whole JSON/);
+    expect(() => payoutRecordFromText('', 'the record')).toThrow(/not whole JSON/);
+  });
+
+  it('REFUSES to start again exactly the payment a finished record made while its window is open', () => {
+    const done = record();
+    expect(() => assertNotAlreadyPaid([done], ask(), NOW)).toThrow(/this exact payment .* was already paid .* give it a different reference/);
+  });
+
+  it('lets a payment through that differs in any of address, amount, reference or vault, or whose window has closed', () => {
+    const done = record();
+    expect(() => assertNotAlreadyPaid([done], ask({ reference: 'second payout' }), NOW)).not.toThrow();
+    expect(() => assertNotAlreadyPaid([done], ask({ amount: 11n }), NOW)).not.toThrow();
+    expect(() => assertNotAlreadyPaid([done], ask({ payTo: 'mn_addr_other' }), NOW)).not.toThrow();
+    expect(() => assertNotAlreadyPaid([done], ask({ vault: 'payroll-test-4' }), NOW)).not.toThrow();
+    expect(() => assertNotAlreadyPaid([done], ask(), NOW + 86_400n)).not.toThrow();
+    expect(() => assertNotAlreadyPaid([], ask(), NOW)).not.toThrow();
+  });
+});
+
+describe('§12 where a finished record goes, and that the check against paying it again finds it there', () => {
+  it('keeps it beside the live record under a name the finished-record check looks for', () => {
+    const r = record();
+    const live = '/x/.midnight/stagenet-vault-payout-payroll-test-3.json';
+    const kept = finishedRecordFile(live, r);
+    expect(kept).toBe('/x/.midnight/stagenet-vault-payout-payroll-test-3.paid-20260911T120000000Z.json');
+    const name = kept.slice(kept.lastIndexOf('/') + 1);
+    expect(name.startsWith(finishedRecordPrefix('stagenet-vault-payout-payroll-test-3.json'))).toBe(true);
+    expect(name.endsWith('.json')).toBe(true);
+    expect(name.startsWith(finishedRecordPrefix('stagenet-vault-payout-payroll-test-30.json'))).toBe(false);
+    /* RED WHEN one vault's finished records are read as another's, whose name it begins with. */
+    const otherVaults = finishedRecordFile('/x/.midnight/stagenet-vault-payout-payroll-test-30.json', r);
+    expect(otherVaults.slice(otherVaults.lastIndexOf('/') + 1)
+      .startsWith(finishedRecordPrefix('stagenet-vault-payout-payroll-test-3.json'))).toBe(false);
+  });
+});

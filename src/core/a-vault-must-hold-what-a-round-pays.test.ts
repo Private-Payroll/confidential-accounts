@@ -153,8 +153,10 @@ describe('§1 a vault that does not hold enough is refused at raise, before a fe
     const vault = aVault(async () => ({ of: 'unreadable', why: 'the indexer did not answer' }));
     const h = await harness({ reader: vault.reader });
     const failed = await refusal(h.raise('GBP', [{ kind: 'shielded', token: GBP_PRIVATE, amount: 5n }]));
-    expect(failed.message).toMatch(/the chain did not answer what the vault holds of GBP privately \(the indexer did not answer\)/);
-    expect(failed.message).toMatch(/Try again when the chain answers/);
+    expect(failed.message).toMatch(/what the vault holds of GBP privately could not be read from the chain \(the indexer did not answer\)/);
+    expect(failed.message).toMatch(/If the chain was slow to answer, try again/);
+    /* RED WHEN it tells a reader that retrying fixes a reader that cannot decode what it was given. */
+    expect(failed.message).toMatch(/If the same reason keeps coming back, read it.*none of those is a reason to deposit more/s);
     expect([failed.why, failed.held]).toEqual(['unreadable', null]);
     expect(h.raised.count).toBe(0);
     expect(h.recorded()).toHaveLength(0);
@@ -168,7 +170,7 @@ describe('§1 a vault that does not hold enough is refused at raise, before a fe
     expect(failed.why).toBe('contradicted');
     expect(failed.message).toMatch(/record of the vault's private notes disagrees with the chain \(1 of 2 notes are not on chain\)/);
     expect(failed.message).toMatch(/trying again does not change that: the record is rebuilt from the chain/);
-    expect(failed.message).not.toMatch(/Try again when/);
+    expect(failed.message).not.toMatch(/try again/i);
     expect(h.raised.count).toBe(0);
   });
 
@@ -181,7 +183,7 @@ describe('§1 a vault that does not hold enough is refused at raise, before a fe
       const h = await harness({ reader: aVault(holds).reader });
       const failed = await refusal(h.raise('GBP', [{ kind: 'shielded', token: GBP_PRIVATE, amount: 5n }]));
       expect(failed.why).toBe('failed');
-      expect(failed.message).not.toMatch(/Try again/);
+      expect(failed.message).not.toMatch(/try again/i);
       expect(h.raised.count).toBe(0);
     }
   });
@@ -222,7 +224,7 @@ describe('§1 a vault that does not hold enough is refused at raise, before a fe
     const failed = await refusal(h.raise('GBP', [{ kind: 'shielded', token: GBP_PRIVATE, amount: 5n }]));
     expect(failed.message).toMatch(/this service cannot read what a vault holds/);
     expect(failed.message).toMatch(/given the chain's reader of vault balances/);
-    expect(failed.message).not.toMatch(/Try again/);
+    expect(failed.message).not.toMatch(/try again/i);
     expect(h.raised.count).toBe(0);
     expect(h.recorded()).toHaveLength(0);
   });

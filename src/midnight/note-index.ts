@@ -235,9 +235,10 @@ export async function indexForSpend(
  * caller can show it.
  *
  * The events are read first and the pool is loaded again just before the
- * write, so the copy written is not the one held across the network read. This
- * does not protect against another process writing the pool between that load
- * and the save: the store takes its version at the save.
+ * write, so the copy written is not the one held across the network read. The
+ * write is built on the version that second load read, so another process
+ * writing the pool between that load and the save is refused at the save
+ * rather than overwritten.
  */
 export async function recordCreatingTransaction(
   pool: NotePool,
@@ -271,9 +272,8 @@ export async function recordCreatingTransaction(
       + 'commitment was checked. Nothing is recorded; read again.');
   }
   await pool.save(vault, {
-    ...now,
     notes: now.notes.map((n) => (n.nonce === nonce ? { ...n, createdIn } : n)),
-  });
+  }, now.readAt);
   return current.createdIn !== undefined && bare(current.createdIn) !== createdIn
     ? { index, createdIn, previously: current.createdIn }
     : { index, createdIn };

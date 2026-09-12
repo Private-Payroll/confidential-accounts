@@ -332,7 +332,9 @@ const NOT_AN_ASSET_BECOMING_A_TOKEN: Record<string, { count: number; why: string
 };
 
 /** Files that ask the ledger for its native token at run time, each to compare or deposit what it reads. */
-const READS_THE_LEDGERS_NATIVE_TOKEN = ['scripts/fund-vault.ts', 'scripts/transfer-from-vault.ts'];
+const READS_THE_LEDGERS_NATIVE_TOKEN = [
+  'scripts/fund-vault.ts', 'scripts/pay-from-vault.ts', 'scripts/transfer-from-vault.ts',
+];
 
 describe('§3 the census: no second place turns an asset into a ledger token', () => {
   const files = shippingSources();

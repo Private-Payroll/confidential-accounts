@@ -12,6 +12,7 @@ import {
   VaultCannotAfford, VaultAlreadyHoldsNotes,
   type NotePool, type VaultPayment,
 } from './vault-ledger.js';
+import { VaultPoolAdvancedSinceRead } from './vault-pool.js';
 /*
  * The VAULT's own pure circuits, imported for real. `C198`'s reconciliation
  * computes a note's commitment with these, and a fake chain that computed them
@@ -175,6 +176,12 @@ function harness(opts: {
   events?: 'unreadable' | 'moved';
   /** Seeded notes that record no creating transaction, as notes written before it was kept. */
   noCreatingTransaction?: boolean;
+  /**
+   * **ANOTHER PROCESS WRITES THE POOL WHILE THE CALL IS BEING PROVED**, adding
+   * this note. The circuit is where a real call spends its minute, so that is
+   * where the other write lands.
+   */
+  anotherWriterAddsDuringTheCall?: { nonce: string; value: bigint };
 } = {}) {
   let stored: VaultNotes = {
     notes: (opts.notes ?? [{ nonce: '01'.repeat(32), value: 1_000n }])
@@ -214,9 +221,19 @@ function harness(opts: {
   const saves: VaultNotes[] = [];
   const creates: VaultNotes[] = [];
   let exists = opts.poolExists ?? true;
+  /*
+   * **VERSIONED, AND IT REFUSES A WRITE BUILT ON AN OLDER READ**, which is
+   * `SealedNotePool.save`'s own refusal mirrored here for `create`'s reason
+   * below: a fake that accepted any write would let the client hand back a
+   * version it did not load and nothing here would object.
+   */
+  let version = 1;
   const pool: NotePool = {
-    load: async () => stored,
-    save: async (_a, n) => { stored = n; saves.push(n); },
+    load: async () => ({ notes: stored.notes, readAt: { vault: VAULT, version } }),
+    save: async (a, n, builtOn) => {
+      if (builtOn.version !== version) throw new VaultPoolAdvancedSinceRead(a, builtOn.version, version);
+      stored = n; version += 1; saves.push(n);
+    },
     /*
      * MIRRORS `SealedNotePool.create`'s own refusal rather than accepting
      * anything — `T-34`. A fake that would happily create a second pool is a
@@ -330,11 +347,20 @@ function harness(opts: {
     };
   };
 
+  /* A direct write to the store, as another process's `save` would land. */
+  const anotherWriter = (): void => {
+    const added = opts.anotherWriterAddsDuringTheCall;
+    if (!added) return;
+    stored = { notes: [...stored.notes, { nonce: added.nonce, token: GBP, value: added.value, createdIn: SEEDED_TX }] };
+    version += 1;
+  };
+
   const contract: any = {
     callTx: {
       deposit: async (...raw: unknown[]) => {
         const args = dispatch('deposit', 1)(...raw);
         calls.push({ circuit: 'deposit', args, ctx: raw[0] });
+        anotherWriter();
         return { public: { txId: 'tx_dep', txHash: DEP_TX } };
       },
       /*
@@ -370,6 +396,7 @@ function harness(opts: {
       payout: async (...raw: unknown[]) => {
         const args = dispatch('payout', 12)(...raw);
         calls.push({ circuit: 'payout', args, ctx: raw[0] });
+        anotherWriter();
         if (opts.throws) throw new Error(opts.throws);
         if (opts.asksForANote !== false) {
           /*
@@ -1103,6 +1130,46 @@ describe('a private payment spends against the index the chain reports at that m
   });
 });
 
+describe('a write to the pool is built on the version its own load read', () => {
+  /*
+   * A private payment loads the pool, proves for a minute or more, submits, and
+   * then writes the change note. A deposit does the same with its new note. A
+   * write that took its version at the moment of writing would erase whatever
+   * another process recorded in that minute, with no refusal.
+   */
+  const OTHER = { nonce: '0f'.repeat(32), value: 42n };
+
+  it('REFUSES the change of a payment when another process wrote the pool while it proved, and keeps what that process wrote', async () => {
+    const { ledger, current, saves } = harness({ anotherWriterAddsDuringTheCall: OTHER });
+    await expect(ledger.payout(VAULT, payment(200n), BY, EVENTS)).rejects.toThrow(VaultPoolAdvancedSinceRead);
+    expect(saves).toHaveLength(0);
+    expect(current().notes.map((n) => n.nonce)).toContain(OTHER.nonce);
+  });
+
+  it('REFUSES the note of a deposit when another process wrote the pool while it proved, and keeps what that process wrote', async () => {
+    const { ledger, current, saves } = harness({ notes: [], anotherWriterAddsDuringTheCall: OTHER });
+    await expect(ledger.deposit(VAULT, { nonce: '77'.repeat(32), token: GBP, value: 500n }, BY))
+      .rejects.toThrow(VaultPoolAdvancedSinceRead);
+    expect(saves).toHaveLength(0);
+    expect(current().notes.map((n) => n.nonce)).toEqual([OTHER.nonce]);
+  });
+
+  it('and with nobody else writing, both still advance the pool', async () => {
+    const paid = harness({});
+    await paid.ledger.payout(VAULT, payment(200n), BY, EVENTS);
+    expect(paid.saves).toHaveLength(1);
+    const deposited = harness({ notes: [] });
+    await deposited.ledger.deposit(VAULT, { nonce: '77'.repeat(32), token: GBP, value: 500n }, BY);
+    expect(deposited.saves).toHaveLength(1);
+  });
+
+  it('seals only the notes, never the version a load read', async () => {
+    const { ledger, saves } = harness({});
+    await ledger.payout(VAULT, payment(200n), BY, EVENTS);
+    expect(Object.keys(saves[0])).toEqual(['notes']);
+  });
+});
+
 describe('C239: the pool advances by the coin the call reported', () => {
   it('records the change coin\'s OWN nonce, which no derivation here produced', async () => {
     const { ledger, current } = harness({ notes: [{ nonce: '01'.repeat(32), value: 1_000n }] });
@@ -1194,6 +1261,21 @@ describe('T-38: an affordability check refuses on EITHER refusal', () => {
     expect((failed as VaultCannotAfford).cause).toBeInstanceOf(VaultChainUnreadable);
     /* And the sum it would have had appears nowhere. */
     expect(failed?.message).not.toContain('1000');
+  });
+
+  it('CANNOT AFFORD a run whose note records no creating transaction, which the payment would refuse', async () => {
+    /*
+     * The same note, the same reconciled pool, and the same payment that
+     * `payout` refuses before a fee (see "REFUSES before a fee a note that does
+     * not record which transaction created it"). The check before a proposal is
+     * raised must say the same, or the proposal is approved and paid for first.
+     */
+    const { ledger } = harness({ notes: [{ nonce: '01'.repeat(32), value: 1_000n }], noCreatingTransaction: true });
+    const failed = await ledger.affordable(VAULT, run(250n)).then(() => null, (e: Error) => e);
+    expect(failed).toBeInstanceOf(VaultCannotAfford);
+    expect((failed as VaultCannotAfford).why).toBe('notes-do-not-cover');
+    expect(failed?.message).toMatch(/does not record which transaction created it/);
+    await expect(ledger.payout(VAULT, payment(250n), BY, EVENTS)).rejects.toThrow(/does not record which transaction created it/);
   });
 
   it('CANNOT AFFORD when the pool and the chain disagree', async () => {

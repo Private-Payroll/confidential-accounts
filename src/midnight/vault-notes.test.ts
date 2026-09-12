@@ -305,6 +305,9 @@ describe('V-74: the witnesses the contract actually calls', () => {
 });
 
 describe('T-38: whether a run fits the pool, one payment at a time', () => {
+  /* A note a payment can spend: it records the transaction that created it. */
+  const spendable = (n: number, value: bigint, token = GBP): Note => ({ ...note(n, value, token), createdIn: TX_A });
+
   it('THE QUESTION A SUM ANSWERS WRONGLY: 120 across two notes cannot pay 100', () => {
     /*
      * `C203`'s mitigation is only worth having if it asks the right question.
@@ -313,7 +316,7 @@ describe('T-38: whether a run fits the pool, one payment at a time', () => {
      * affordability check built on `balance` alone passes a run that stops on
      * its first payee.
      */
-    const p = pool([note(1, 60n), note(2, 60n)]);
+    const p = pool([spendable(1, 60n), spendable(2, 60n)]);
     expect(() => paymentsFit(p, [{ token: GBP, amount: 100n }]))
       .toThrow(/payment 1 of 1 cannot be made/);
     expect(() => paymentsFit(p, [{ token: GBP, amount: 100n }]))
@@ -321,7 +324,7 @@ describe('T-38: whether a run fits the pool, one payment at a time', () => {
   });
 
   it('carries the change forward, so a run of many payments out of one note fits', () => {
-    const p = pool([note(1, 1_000n)]);
+    const p = pool([spendable(1, 1_000n)]);
     expect(() => paymentsFit(p, [
       { token: GBP, amount: 250n }, { token: GBP, amount: 250n }, { token: GBP, amount: 400n },
     ])).not.toThrow();
@@ -333,7 +336,7 @@ describe('T-38: whether a run fits the pool, one payment at a time', () => {
      * third does not. A check that answered "cannot afford" without saying
      * where would leave an operator guessing at a run they have not started.
      */
-    const p = pool([note(1, 1_000n)]);
+    const p = pool([spendable(1, 1_000n)]);
     expect(() => paymentsFit(p, [
       { token: GBP, amount: 400n }, { token: GBP, amount: 400n }, { token: GBP, amount: 400n },
     ])).toThrow(/payment 3 of 3/);
@@ -345,7 +348,7 @@ describe('T-38: whether a run fits the pool, one payment at a time', () => {
      * note the chain does not have. Here it would also let a later payment
      * appear to have a note to come out of.
      */
-    const p = pool([note(1, 300n)]);
+    const p = pool([spendable(1, 300n)]);
     /*
      * A zero note carried forward would answer "no single note covers 1: the
      * largest is 0". The note being GONE is what "holds no notes" says, and
@@ -356,7 +359,7 @@ describe('T-38: whether a run fits the pool, one payment at a time', () => {
   });
 
   it('keeps tokens apart, so a euro balance never pays a pound', () => {
-    const p = pool([note(1, 1_000n, USD)]);
+    const p = pool([spendable(1, 1_000n, USD)]);
     expect(() => paymentsFit(p, [{ token: GBP, amount: 10n }]))
       .toThrow(/holds no notes/);
   });
@@ -369,7 +372,35 @@ describe('T-38: whether a run fits the pool, one payment at a time', () => {
      * that also checked indices would need a read nothing in this repository
      * performs — which is `S6f`'s `changeIndex` finding, not this function's.
      */
-    const unread = { nonce: '07'.repeat(32), token: GBP, value: 900n } as Note;
+    const unread = { nonce: '07'.repeat(32), token: GBP, value: 900n, createdIn: TX_A } as Note;
     expect(() => paymentsFit(pool([unread]), [{ token: GBP, amount: 100n }])).not.toThrow();
+  });
+
+  it('REFUSES a run whose note a payment could not spend, because it records no creating transaction', () => {
+    /*
+     * A payment reads the note's place in the commitment tree from the
+     * transaction that created it, and refuses a note that does not say. A walk
+     * that answered "fits" for it would let a proposal be raised and approved,
+     * fees and all, for a payment the vault client refuses.
+     */
+    const legacy = note(1, 1_000n);
+    expect(() => paymentsFit(pool([legacy]), [{ token: GBP, amount: 100n }]))
+      .toThrow(/payment 1 of 1 cannot be made out of this vault: the note it would spend, 0101.*does not record which transaction created it/);
+    expect(() => paymentsFit(pool([legacy]), [{ token: GBP, amount: 100n }]))
+      .toThrow(/recordCreatingTransaction/);
+  });
+
+  it('asks it of the note a payment would choose, not of any note that could cover it', () => {
+    /* The smallest covering note is chosen. Here that is the one with no transaction recorded. */
+    const p = pool([spendable(1, 5_000n), note(2, 150n)]);
+    expect(() => paymentsFit(p, [{ token: GBP, amount: 100n }])).toThrow(/0202/);
+    /* And the other way round: the note chosen records one, so a larger note that does not is never asked. */
+    const q = pool([spendable(1, 150n), note(2, 5_000n)]);
+    expect(() => paymentsFit(q, [{ token: GBP, amount: 100n }])).not.toThrow();
+  });
+
+  it('does not ask it of the change the walk puts back, which the payment itself records', () => {
+    const p = pool([spendable(1, 1_000n)]);
+    expect(() => paymentsFit(p, [{ token: GBP, amount: 100n }, { token: GBP, amount: 100n }])).not.toThrow();
   });
 });

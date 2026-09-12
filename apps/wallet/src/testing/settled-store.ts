@@ -40,18 +40,40 @@ import type { Port } from 'midnight-identity/profile/store';
 export interface WatchedPort extends Port {
   /** How many writes this store has taken. Monotonic, never reset. */
   writes(): number;
+  /** How many of those wrote a sealed record. Monotonic, never reset. */
+  sealedWrites(): number;
   /** Everything in it, joined — for the tests that assert a secret is absent. */
   all(): string;
 }
 
+/**
+ * **WHETHER A WRITE PUT A SEALED RECORD IN THE STORE**, read off the value's
+ * shape: the three fields `seal` produces. Nothing about what it says.
+ */
+const isSealedRecord = (value: string): boolean => {
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown> | null;
+    return parsed !== null && typeof parsed === 'object'
+      && typeof parsed.v === 'number' && typeof parsed.iv === 'string' && typeof parsed.sealed === 'string';
+  } catch {
+    return false;
+  }
+};
+
 export const watchedStore = (): WatchedPort => {
   const map = new Map<string, string>();
   let writes = 0;
+  let sealedWrites = 0;
   return {
     getItem: (k) => map.get(k) ?? null,
-    setItem: (k, v) => { writes += 1; map.set(k, v); },
+    setItem: (k, v) => {
+      writes += 1;
+      if (isSealedRecord(v)) sealedWrites += 1;
+      map.set(k, v);
+    },
     removeItem: (k) => { writes += 1; map.delete(k); },
     writes: () => writes,
+    sealedWrites: () => sealedWrites,
     all: () => [...map.values()].join('\n'),
   };
 };
@@ -79,13 +101,29 @@ const tick = async (): Promise<void> => {
  * waits for a new write and then for that to stop.
  */
 export function afterWrites(port: WatchedPort): () => Promise<void> {
-  const before = port.writes();
+  /*
+   * **IT COUNTS SEALED RECORDS, NOT WRITES, AND A SIGN-IN IS WHY.**
+   *
+   * The press on a sign-in makes two writes. The note of which wallet answered
+   * is written at once, in the same turn as the answer. The history is written
+   * by `void save(...)`, and a save seals the profile with `crypto.subtle`,
+   * which resolves when the platform's crypto finishes rather than on the next
+   * turn of the loop. Counting every write, the first one satisfied the wait,
+   * two quiet turns passed while the seal was still running, and the test read
+   * the store before the history reached it. That is a race decided by how busy
+   * the machine is, and on an idle one it is usually won.
+   *
+   * Every press this helper is used for ends in exactly that save, so waiting
+   * for a sealed record is waiting for the write the test is about, and nothing
+   * shorter can satisfy it.
+   */
+  const before = port.sealedWrites();
   return async (): Promise<void> => {
     const deadline = Date.now() + LIMIT_MS;
-    while (port.writes() === before) {
+    while (port.sealedWrites() === before) {
       if (Date.now() > deadline) {
         throw new Error(
-          'nothing was written to the store after the press. Either the write never '
+          'no sealed record was written to the store after the press. Either the write never '
           + 'happened — which is the defect this is here to catch — or this was called '
           + 'after the press rather than before it.');
       }
