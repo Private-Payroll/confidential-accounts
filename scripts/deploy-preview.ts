@@ -50,6 +50,7 @@ import { toHex as toHexBytes, randomBytes } from '../src/core/crypto.js';
 import { assets, type AssetId } from '../src/core/assets.js';
 import { explainNodeError, NODE_ERROR_CODES } from './node-errors.js';
 import { installDustWallet, saveDustState, waitForDustCatchUp } from './dust-wallet.js';
+import { floorKnownAbsent } from './dust-fee-floor.js';
 import { testEnvironmentFor, startEnvironment } from './test-environment.js';
 import { readOrCreatePreviewSigners } from './preview-signers.js';
 import { storedSignerLeaf } from '../src/core/signer-leaf.js';
@@ -716,7 +717,30 @@ async function main() {
     const installed = await installDustWallet(wallet, cfg, masterSeed, NETWORK, ROOT);
     if (installed.how === 'restored') good(`dust wallet restored from the last run — ${installed.detail}`);
     else if (installed.how === 'fresh') note(`dust wallet rebuilt — ${installed.detail}`);
-    else note(`  using the SDK's own dust wallet: ${installed.detail}`);
+    else if (installed.how === 'unchanged'
+             || (installed.how === 'refused' && floorKnownAbsent(installed.reason ?? 'unreadable'))) {
+      /*
+       * NOT A NOTE. This branch used to print "using the SDK's own dust wallet"
+       * and carry on, which described the state correctly and understated it:
+       * that wallet's fee overhead is nothing, a fee of nothing selects no dust
+       * coin, and the transaction is refused as malformed. This door submits.
+       */
+      throw new Error(
+        `the fee floor is not in force: ${installed.detail}\n` +
+          '  The wallet left in place has no fee overhead, so a fee can come out at nothing and\n' +
+          '  the transaction would be refused as malformed. Nothing has been submitted.',
+      );
+    } else {
+      /*
+       * 'refused' with an UNREADABLE floor. Our wallet IS installed, so the old
+       * sentence here was also factually wrong about which wallet is in use.
+       * Whether the floor is in force is unknown, which is loud but not a
+       * reason to stop: the failure it risks is a refusal at submission with no
+       * fee taken, and stopping this door because a reading could not be taken
+       * is the worse failure.
+       */
+      note(`  \x1b[33mthe fee floor could not be verified on the installed wallet: ${installed.detail}\x1b[0m`);
+    }
   }
 
   await wallet.start(false); // start the wallet, skip the testkit's sync gate

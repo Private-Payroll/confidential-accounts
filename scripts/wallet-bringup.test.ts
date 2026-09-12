@@ -14,7 +14,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const removed: string[] = [];
 const installs: Array<{ how: string }> = [];
-let installHow: 'restored' | 'fresh' = 'fresh';
+let installHow: 'restored' | 'fresh' | 'unchanged' | 'refused' = 'fresh';
+/** The reason a 'refused' carries, which is what the gate switches on. */
+let installReason: 'not-a-floor' | 'disagrees' | 'not-applied' | 'unreadable' | undefined;
 
 vi.mock('node:fs', async (orig) => ({
   ...(await orig<typeof import('node:fs')>()),
@@ -24,7 +26,11 @@ vi.mock('node:fs', async (orig) => ({
 vi.mock('./dust-wallet.js', () => ({
   installDustWallet: async () => {
     installs.push({ how: installHow });
-    return { how: installHow, detail: 'stub' };
+    return {
+      how: installHow,
+      detail: 'stub',
+      ...(installReason ? { reason: installReason } : {}),
+    };
   },
   dustCachePath: () => '/tmp/stub-dust-cache.state',
 }));
@@ -81,6 +87,7 @@ const bring = (opts = {}) =>
 beforeEach(() => {
   trace = []; builds = 0; dustPerBuild = []; removed.length = 0;
   installs.length = 0; installHow = 'fresh'; shieldedCaught = true;
+  installReason = undefined;
 });
 
 describe('bringUpWallet', () => {
@@ -151,13 +158,84 @@ describe('bringUpWallet', () => {
     expect(live.dust()).toBe(9n);
   });
 
-  it('does not install dust a second time on the retry', async () => {
-    // The cache has just been deleted; re-running the installer would restore
-    // nothing and only cost time.
+  it('INSTALLS DUST AGAIN ON THE RETRY, because the retry builds a new wallet', async () => {
+    /*
+     * TURNS RED IF: the install is gated on the first attempt again.
+     *
+     * THIS TEST USED TO ASSERT THE OPPOSITE, on the reasoning that the cache
+     * had just been deleted so re-running the installer "would restore nothing
+     * and only cost time". Restoring the cache is half of what the installer
+     * does. The other half is the fee floor, and the retry builds a WHOLE NEW
+     * wallet — so skipping the install left the library's own dust wallet in
+     * place, with an overhead of nothing, and the run went on to submit with a
+     * fee that can come out at zero. That path fires precisely when the cache
+     * has already misbehaved, which is the worst time to lose the floor
+     * silently.
+     */
     installHow = 'restored';
     dustPerBuild = [0n, 9n];
     await bring();
-    expect(installs).toHaveLength(1);
+    expect(installs).toHaveLength(2);
+  });
+
+  /*
+   * THE FEE-FLOOR GATE.
+   *
+   * These five exist because the gate had none. It decides whether a money door
+   * runs, and before they were written it could have been deleted whole and
+   * every other test in this repository would still have passed.
+   */
+  it('STOPS the run when no wallet of ours was installed at all', async () => {
+    // TURNS RED IF: 'unchanged' stops stopping the run. It means the library's
+    // own dust wallet is in place, whose fee overhead is nothing — the floor's
+    // absence known with certainty. This used to pass silently.
+    installHow = 'unchanged';
+    dustPerBuild = [7n];
+    await expect(bring()).rejects.toThrow(/fee floor in force/i);
+  });
+
+  it('STOPS the run when the floor is KNOWN to disagree', async () => {
+    // TURNS RED IF: the gate stops switching on the reason. A floor that is
+    // wrong is a defect no re-run clears, and the door must not submit on it.
+    installHow = 'refused'; installReason = 'disagrees';
+    dustPerBuild = [7n];
+    await expect(bring()).rejects.toThrow(/fee floor in force/i);
+  });
+
+  it('STOPS the run when the floor is set to nothing', async () => {
+    // TURNS RED IF: 'not-a-floor' is left out of the known-absent set. A floor
+    // of zero is reachable from the environment and every other reading agrees
+    // with it, so only the reason distinguishes it.
+    installHow = 'refused'; installReason = 'not-a-floor';
+    dustPerBuild = [7n];
+    await expect(bring()).rejects.toThrow(/fee floor in force/i);
+  });
+
+  it('DOES NOT stop the run when the floor merely could not be read back', async () => {
+    /*
+     * TURNS RED IF: the unknown case is folded in with the known-bad ones.
+     *
+     * The failure a stop would prevent here is free and loud — a refusal at
+     * submission with no fee taken. The failure a stop would CREATE is every
+     * money door in this project, this one and the payout door alike, refusing
+     * to run because a library renamed a field. The unknown case must not stop
+     * anything.
+     */
+    installHow = 'refused'; installReason = 'unreadable';
+    dustPerBuild = [7n];
+    const live = await bring();
+    expect(live.dust()).toBe(7n);
+  });
+
+  it('treats a refusal carrying NO reason as unknown, not as known-bad', async () => {
+    // TURNS RED IF: the fallback is written so that a missing reason stops the
+    // run. `undefined !== null` is true, and the first version of this gate was
+    // written that way — which stopped the door on exactly the case the comment
+    // above it said must never stop it.
+    installHow = 'refused'; installReason = undefined;
+    dustPerBuild = [7n];
+    const live = await bring();
+    expect(live.dust()).toBe(7n);
   });
 
   it('throws when DUST never arrives and the caller said it must', async () => {

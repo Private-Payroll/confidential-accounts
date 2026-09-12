@@ -22,30 +22,68 @@
  * class `Transaction`; `R1a` established this and `MEASURE-PROVING` already
  * uses it for proof size.
  *
- * It is not merely *a* size, it is *the* size the limit is expressed in.
- * `midnight-ledger@crate-ledger-9.1.0.0-rc.3`, `ledger/src/structure.rs:2036`:
+ * **IT IS *A* SIZE AND IT IS NOT *THE* SIZE THE LIMIT IS EXPRESSED IN. THIS
+ * PARAGRAPH USED TO SAY THE OPPOSITE AND EVERY SIZE THIS PROJECT HAS QUOTED
+ * ABOUT A REFUSAL WAS THEREFORE THE WRONG NUMBER.**
+ *
+ * The limit is expressed in `block_usage`, and `block_usage` is `est_size()` —
+ * `midnight-ledger@crate-ledger-9.1.0.0-rc.3`, `ledger/src/structure.rs:1926`:
  *
  *     res.block_usage = self.est_size() as u64;
  *
- * and for a PROVEN transaction `est_size` is `tx.serialized_size()` —
- * `ledger/src/structure.rs:511-518`, the `ProofKind for ProofMarker` impl.
- * **So the serialised byte length of the proven transaction IS the
- * `block_usage` dimension the node normalises against the block limits.**
+ * `est_size()` (`:1937`) is `P::estimated_tx_size(self)`, which is per proof
+ * marker. For a PROVEN transaction it is `tx.serialized_size()` (`:492-499`).
+ * For an UNPROVEN one (`:584-614`) it is `serialized_size()` PLUS the proofs
+ * that are not there yet — a fixed size per call, per Zswap input, per Zswap
+ * output and per dust spend — so on an unproven transaction the two numbers are
+ * not even close.
+ *
+ * AND EVEN ON THE PROVEN MARKER THEY DIFFER, because `serialized_size()` is the
+ * ledger's own count and `serialize()` is what the WASM binding hands back.
+ * MEASURED, on transactions built for the purpose: `serialize().length` runs
+ * ABOVE `cost(params).blockUsage` by a small amount that is NOT the same on
+ * every shape — 73 bytes on eight transactions that each carried an intent, and
+ * 72 on an empty one, in one nine-row sweep that varied the number of
+ * unshielded outputs and the width of the amount.
+ *
+ * **SO THE DIFFERENCE IS NOT A CONVERSION AND MUST NOT BE USED AS ONE.** Across
+ * everything measured here it is small, it is far below any limit, and it moves
+ * with the shape of the transaction, so no constant turns one number into the
+ * other. Whether it is bounded in general is not established: three values were
+ * observed and three values are not a bound. Two runs of the funding door
+ * printed 7,153 and 7,156 while the node's own refusal said 7,085 and 7,088, a
+ * difference of 68 in both: a third value, consistent with a gap that moves
+ * with shape and needing no separate story. **The way to report the size the
+ * limit uses is to ask the ledger for it, which is what `ledgerBytes` below
+ * does.**
+ *
+ * The error runs in the direction that makes a transaction look CLOSER to the
+ * limit than it is.
  *
  * ── (b) WHAT THE LIMITS ARE ──────────────────────────────────────────────────
  *
- * `midnight-ledger@crate-ledger-9.1.0.0-rc.3`, `ledger/src/structure.rs:1272`:
+ * `midnight-ledger@crate-ledger-9.1.0.0-rc.3`, `ledger/src/structure.rs:1180`
+ * (this citation said `:1272`, which is now `overall_price`; the three
+ * citations in section (a) had rotted the same way and are corrected there):
  *
  *     pub const INITIAL_LIMITS: TransactionLimits = TransactionLimits {
- *         transaction_byte_limit: 1 << 20,          // :1273   1 MiB
+ *         transaction_byte_limit: 1 << 20,          // :1181   1 MiB
+ *         time_to_dismiss_per_byte: 2_000_000 ps,   // :1182
+ *         min_time_to_dismiss: 15 ms,               // :1183
  *         block_limits: SyntheticCost {
- *             read_time:     CostDuration::SECOND,  // :1277
- *             compute_time:  CostDuration::SECOND,  // :1278
- *             block_usage:   200_000,               // :1279   <-- BYTES
- *             bytes_written: 50_000,                // :1280
- *             bytes_churned: 1_000_000,             // :1281
+ *             read_time:     CostDuration::SECOND,  // :1185
+ *             compute_time:  CostDuration::SECOND,  // :1186
+ *             block_usage:   200_000,               // :1187   <-- BYTES
+ *             bytes_written: 50_000,                // :1188
+ *             bytes_churned: 1_000_000,             // :1189
  *         },
  *         ...
+ *
+ * The five inner line numbers said `:1277` to `:1281` and were about ninety
+ * lines adrift, the same rot as the three corrected in section (a). The two
+ * constants above the block limits are quoted because they are the ones a
+ * refusal for being too cheap relative to size turns on, and leaving them out
+ * of the excerpt is what made this file look like it was only about blocks.
  *
  * **THE BLOCKSPACE LIMIT IS 200,000 BYTES AND THE PER-TRANSACTION BYTE LIMIT IS
  * 1,048,576.** They are different limits and the smaller one binds: a
@@ -96,8 +134,19 @@
 export type TxMeasurement = {
   /** Where in the pipeline this was taken: 'unproven', 'proven', 'balanced', 'submitted'. */
   stage: string;
-  /** `Transaction.serialize().length`, or null if it could not be taken. */
+  /**
+   * `Transaction.serialize().length`, or null if it could not be taken.
+   *
+   * KEPT, BUT IT IS NOT THE NUMBER ANY LIMIT IS EXPRESSED IN — see the header.
+   * It is what the client can see of its own transaction, which is worth
+   * printing beside the real one, not instead of it.
+   */
   bytes: number | null;
+  /**
+   * The size the block limit is actually expressed in: `block_usage`, read off
+   * the ledger's own `cost()`. Null when the ledger would not answer.
+   */
+  ledgerBytes: number | null;
   /** Why it could not be taken, when it could not. */
   problem?: string;
   /** The parts, when the SDK exposes them. Never guessed. */
@@ -189,8 +238,22 @@ export function limitsFromLedger(LedgerParameters: any): BlockLimits {
  * eleven of thirteen deployed before S25 emptied the deferred list.
  */
 export function measureTransaction(tx: any, stage: string, LedgerParameters?: any): TxMeasurement {
-  const m: TxMeasurement = { stage, bytes: null, parts: [] };
-  if (LedgerParameters) m.cost = measureCost(tx, LedgerParameters);
+  const m: TxMeasurement = { stage, bytes: null, ledgerBytes: null, parts: [] };
+  if (LedgerParameters) {
+    m.cost = measureCost(tx, LedgerParameters);
+    /*
+     * READ WITHOUT ENFORCEMENT, DELIBERATELY.
+     *
+     * `measureCost` asks the ledger to ENFORCE as it costs, which is the right
+     * question for "would this be accepted" and the wrong one for "how big is
+     * it": the enforcing form refuses a transaction that is outside the
+     * time-to-dismiss window, and a refusal carries no size. That is exactly
+     * the transaction whose size someone is trying to read. A size is a
+     * property of the transaction and not a judgement on it, so it is taken
+     * with enforcement off and is therefore always available.
+     */
+    m.ledgerBytes = measureCost(tx, LedgerParameters, false).cost?.blockUsage ?? null;
+  }
   try {
     m.bytes = tx.serialize().length;
   } catch (e: any) {
@@ -355,8 +418,23 @@ const pct = (a: number, b: number) => `${((a / b) * 100).toFixed(1)}%`;
  */
 export function compareAgainstLimits(m: TxMeasurement, limits: BlockLimits): string[] {
   const out: string[] = [];
-  const b = m.bytes;
-  out.push(`transaction (${m.stage})   ${b === null ? '(not measured)' : `${b.toLocaleString()} bytes`}`);
+  /*
+   * THE COMPARISON IS AGAINST `ledgerBytes`, AND IT USED TO BE AGAINST `bytes`.
+   *
+   * This is where the correction at the top of this file actually bites. The
+   * limit here is `block_usage`, `block_usage` IS `est_size()`, and this
+   * function was judging `serialize().length` against it and printing OVER or
+   * UNDER from the result. Six doors call this, so the wrong number was the one
+   * every report compared against the limit — and the error runs in the
+   * direction that makes a transaction look closer to the limit than it is.
+   *
+   * `bytes` is still printed beside it, because what the client can see of its
+   * own transaction is worth a reader's attention; it is no longer what the
+   * verdict is computed from.
+   */
+  const b = m.ledgerBytes;
+  out.push(`transaction (${m.stage})   ${b === null ? '(not measured)' : `${b.toLocaleString()} bytes, the size the limit is expressed in`}`);
+  out.push(`  as the client serialises it   ${m.bytes === null ? '(not measured)' : `${m.bytes.toLocaleString()} bytes`}`);
   for (const p of m.parts) {
     out.push(`  ${p.name.padEnd(34)} ${p.bytes === null ? '(not available)' : p.bytes.toLocaleString().padStart(12)}${p.note ? `   ${p.note}` : ''}`);
   }
@@ -368,6 +446,9 @@ export function compareAgainstLimits(m: TxMeasurement, limits: BlockLimits): str
     out.push('');
     out.push('NO COMPARISON IS POSSIBLE FROM THIS RUN. One of the two numbers is missing,');
     out.push('and a comparison against a number that was not read is what C180 was.');
+    out.push('The size the limit uses comes from the ledger, so a run without a');
+    out.push('LedgerParameters cannot make this comparison at all — and must not make');
+    out.push('it from serialize().length, which is not the number this limit counts.');
     return out;
   }
 
