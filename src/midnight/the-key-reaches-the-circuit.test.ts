@@ -68,7 +68,7 @@
  * different questions and are not asked here.
  */
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -400,7 +400,32 @@ const because = async (run: () => Promise<unknown>): Promise<string> => {
   try { await run(); return 'it did not fail at all'; } catch (e: any) { return String(e?.message ?? e); }
 };
 
-describe('a governed call carries the private state key the product computed for it', () => {
+/*
+ * THESE ASSERTIONS READ A VERIFIER KEY, AND AN ORDINARY COMPILE DOES NOT BUILD
+ * ONE. `contracts/managed/` is not in the repository at all, so a checkout that
+ * has not run the proving backend has no keys - which is every machine but one
+ * that has, and the job in the checks that builds them on purpose.
+ *
+ * THE FIRST VERSION OF THIS FILE CARRIED NO GUARD AND WAS NOT IN THAT JOB, so
+ * it ran where there were no keys and failed six times on a checkout that was
+ * correct. `scripts/artifact-freshness.test.ts` derives the gated set from the
+ * two markers below and refuses a file that gates and is run by no step after
+ * the keys are built - so adding the guard is what puts this file on that list
+ * rather than what takes it off.
+ */
+// DERIVED FROM THIS FILE'S OWN LOCATION, NOT FROM THE WORKING DIRECTORY. Read
+// relatively, a run started from anywhere but the root answers "no keys" and
+// skips in silence, which is the failure this arrangement exists to prevent.
+const KEYS_ON_DISK = existsSync(new URL('../../contracts/managed/keys/adopt.verifier', import.meta.url));
+if (!KEYS_ON_DISK) {
+  console.log(
+    '  NOT CHECKED HERE: the verifier keys a governed call is built against are not on disk,'
+    + ' so the assertions that drive one into the compiled contract did not run.'
+    + ' `npm run compact` builds them.',
+  );
+}
+
+describe.skipIf(!KEYS_ON_DISK)('a governed call carries the private state key the product computed for it [needs contracts/managed/keys; `npm run compact` builds them]', () => {
   /**
    * **THE CIRCUIT RECEIVES THIS ACCOUNT'S OWN SIGNER'S RECORD.**
    *
@@ -508,7 +533,7 @@ describe('a governed call carries the private state key the product computed for
   }, 300_000);
 });
 
-describe('the sweep of an expired run is not given a private state it does not read', () => {
+describe.skipIf(!KEYS_ON_DISK)('the sweep of an expired run is not given a private state it does not read [needs contracts/managed/keys; `npm run compact` builds them]', () => {
   /**
    * **THE ONE GOVERNED CALL THAT WORKED BEFORE ANY OF THIS, AND MUST GO ON
    * WORKING FOR A CLIENT THAT HOLDS NOTHING.**

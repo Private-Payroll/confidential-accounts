@@ -528,7 +528,11 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
     const gated = gatedOnKeys();
     // The list is derived, so say what it found: a rule over an empty list is a
     // rule over nothing, and the refusal above says so rather than passing.
-    expect(gated).toEqual(['src/midnight/deferred-set.test.ts', 'src/midnight/ledger.test.ts']);
+    expect(gated).toEqual([
+      'src/midnight/deferred-set.test.ts',
+      'src/midnight/ledger.test.ts',
+      'src/midnight/the-key-reaches-the-circuit.test.ts',
+    ]);
     expect(keysCoverageProblem(WORKFLOW(), gated)).toBeNull();
   });
 
@@ -556,9 +560,14 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
       real.replace(/\n    name: keys\n/, '\n    name: keys\n    if: false\n'), /job is conditional/);
     refuses('the runner is replaced by something that only prints',
       real.replace(/- run: npx vitest run src\/midnight/, '- run: echo npx vitest run src/midnight'), /runs the suite after/);
-    refuses('one of the two files is dropped and named in a comment',
-      real.replace(/- run: npx vitest run (src\/midnight\/ledger\.test\.ts) (src\/midnight\/deferred-set\.test\.ts)\n/,
-        '- run: npx vitest run $1\n      # also $2\n'), /deferred-set\.test\.ts gates on the keys/);
+    // WRITTEN TO MATCH THE FILE WHEREVER IT SITS ON THE LINE, not to match a
+    // line with exactly two files on it. The first version anchored on the
+    // newline after the second name, so adding a THIRD file to that job stopped
+    // the mutation applying at all and this control quietly proved nothing -
+    // measured 13 Sep, when the third file was added.
+    refuses('one of the files is dropped from the run and named in a comment',
+      real.replace(/(- run: npx vitest run [^\n]*?) (src\/midnight\/deferred-set\.test\.ts)([^\n]*)\n/,
+        '$1$3\n      # also $2\n'), /deferred-set\.test\.ts gates on the keys/);
     refuses('the run passes when it collects nothing',
       real.replace(/- run: npx vitest run /, '- run: npx vitest run --passWithNoTests '), /collects nothing/);
     refuses('THE CHEAP ONE: the keys are built AFTER the tests that read them',
