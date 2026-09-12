@@ -125,7 +125,7 @@ jobs:
       - uses: ./.github/actions/build
       - name: build the proving and verifier keys
         run: npm run compact
-      - run: npx vitest run src/midnight/ledger.test.ts src/midnight/deferred-set.test.ts
+      - run: npx vitest run src/midnight/ledger.test.ts src/midnight/deferred-set.test.ts src/midnight/the-key-reaches-the-circuit.test.ts
 
   rules:
     # THE RULES THE JOB BELOW APPLIES, CHECKED BEFORE IT APPLIES THEM.

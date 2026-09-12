@@ -1052,14 +1052,14 @@ describe('M-38: buildCall arity, against the real wrapper shape', () => {
   it('rejects a call that omits an argument the contract declares', async () => {
     const { ledger } = harness({});
     await expect(
-      (ledger as any).buildCall('addr_1', 'approve', []),
+      (ledger as any).buildCall('addr_1', 'approve', [], 'a-key:acct'),
     ).rejects.toThrow(/takes 1 argument/);
   });
 
   it('accepts the correct arity', async () => {
     const { ledger } = harness({});
     await expect(
-      (ledger as any).buildCall('addr_1', 'approve', [fromHex(PROPOSAL_ID)]),
+      (ledger as any).buildCall('addr_1', 'approve', [fromHex(PROPOSAL_ID)], 'a-key:acct'),
     ).resolves.toBeDefined();
   });
 
@@ -1082,17 +1082,92 @@ describe('M-38: buildCall arity, against the real wrapper shape', () => {
     await expect((ledger as any).buildCall('addr_1', 'propose', [
       fromHex('00'.repeat(32)), fromHex('aa'.repeat(32)), 50n, 1_800_000_000n, 1_800_604_800n,
       true, fromHex('bb'.repeat(32)),
-    ])).resolves.toBeDefined();
+    ], 'a-key:acct')).resolves.toBeDefined();
     await expect((ledger as any).buildCall('addr_1', 'propose', [
       fromHex('aa'.repeat(32)), 50n, 1_800_000_000n, 1_800_604_800n, fromHex('bb'.repeat(32)),
-    ])).rejects.toThrow(/takes 7 argument/);
+    ], 'a-key:acct')).rejects.toThrow(/takes 7 argument/);
     // The sibling entry point is GONE from the contract, and a call to it
     // must fail BY NAME, not by a guess about its arguments.
     await expect((ledger as any).buildCall('addr_1', 'proposeRun', [
       fromHex('aa'.repeat(32)), 50n, 1_800_000_000n, 1_800_604_800n, fromHex('bb'.repeat(32)),
-    ])).rejects.toThrow(/no circuit "proposeRun"/);
-    await expect((ledger as any).buildCall('addr_1', 'closeExpiredRun', [fromHex(PROPOSAL_ID)]))
+    ], 'a-key:acct')).rejects.toThrow(/no circuit "proposeRun"/);
+    /* `null`, because that is what `prepare` hands this circuit: it reads no
+     * witness and must stay callable by a client holding no record. */
+    await expect((ledger as any).buildCall('addr_1', 'closeExpiredRun', [fromHex(PROPOSAL_ID)], null))
       .resolves.toBeDefined();
+  });
+});
+
+/**
+ * **A CALL BUILT WITHOUT SAYING WHERE ITS PRIVATE STATE IS FILED IS REFUSED BY
+ * NAME, RATHER THAN RUNNING AGAINST NONE.**
+ *
+ * The compiler holds this for every caller it can see. It cannot hold it for a
+ * caller reaching the method through `any`, and every call above this one in
+ * this file is such a caller - which is exactly the shape that would return
+ * this client to running circuits with no private state, silently, if the
+ * argument were ever dropped again.
+ *
+ * RED WHEN: the guard at the top of `buildCall` is removed - the call then
+ * resolves, because the harness's fake find ignores the argument entirely.
+ */
+describe('a call must say where its private state is filed', () => {
+  it('refuses a call built with no answer at all, and names the circuit', async () => {
+    const { ledger } = harness({});
+    await expect(
+      (ledger as any).buildCall('addr_1', 'approve', [fromHex(PROPOSAL_ID)]),
+    ).rejects.toThrow(/the "approve" call was built without saying where its private state/);
+  });
+
+  /* `null` is an ANSWER and must not be refused: it is what the one circuit
+   * that reads no witness is prepared with. RED WHEN: the guard is widened
+   * from `=== undefined` to a falsiness test. */
+  it('accepts null, which is what a circuit that reads no witness is given', async () => {
+    const { ledger } = harness({});
+    await expect(
+      (ledger as any).buildCall('addr_1', 'closeExpiredRun', [fromHex(PROPOSAL_ID)], null),
+    ).resolves.toBeDefined();
+  });
+
+  /*
+   * **AN EMPTY STRING IS A DROPPED ARGUMENT THAT GOT AS FAR AS A VARIABLE**,
+   * and the SDK treats it exactly as it treats a missing one. The key builder
+   * cannot produce one today; the guard covers it because what it promises is
+   * about a dropped argument rather than about one way of dropping it.
+   *
+   * RED WHEN: the guard narrows back to `=== undefined` alone.
+   */
+  it('refuses an empty key, which the SDK would treat as no key at all', async () => {
+    const { ledger } = harness({});
+    await expect(
+      (ledger as any).buildCall('addr_1', 'approve', [fromHex(PROPOSAL_ID)], ''),
+    ).rejects.toThrow(/the "approve" call was built without saying where its private state/);
+  });
+});
+
+/**
+ * **AND THE ANSWER IS CHECKED AGAINST THE CIRCUIT IT IS MADE ABOUT.**
+ *
+ * Saying "this call needs no private state" is a claim, and a claim about the
+ * wrong circuit puts the client back where it started: running a signer check
+ * against nothing, with the types satisfied and nothing red. So the claim is
+ * checked in both directions, at the one point every call this client builds
+ * passes through. The job runner builds its own call options and is not
+ * behind this guard.
+ */
+describe('a call that says it needs no private state is checked against its circuit', () => {
+  it('refuses null for a circuit that opens with a signer check', async () => {
+    const { ledger } = harness({});
+    await expect(
+      (ledger as any).buildCall('addr_1', 'approve', [fromHex(PROPOSAL_ID)], null),
+    ).rejects.toThrow(/reads one/);
+  });
+
+  it('refuses a key for the circuit that reads no witness at all', async () => {
+    const { ledger } = harness({});
+    await expect(
+      (ledger as any).buildCall('addr_1', 'closeExpiredRun', [fromHex(PROPOSAL_ID)], 'a-key:acct'),
+    ).rejects.toThrow(/reads no witness at all/);
   });
 });
 
