@@ -482,3 +482,6 @@ scripts/replacement-vocabulary-guard.mjs
 scripts/replacement-vocabulary-guard.test.ts
 scripts/sweep-measure.mjs
 scripts/sweep-measure.test.ts
+
+docs/BUILD-ORDER-WHY.md
+scripts/render-build-order.mjs
