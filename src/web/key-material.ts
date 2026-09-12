@@ -170,6 +170,33 @@ export interface HttpKeyMaterialOptions {
 }
 
 /**
+ * The three artefacts one key location names, separately addressable.
+ *
+ * The prover wants all three at once and asks by key location. Anything
+ * building a call wants ONE of them - the verifying key - and the proving key
+ * beside it is eighteen megabytes. So the kinds are named, and both callers go
+ * through the same fetch and the same cache rather than through two.
+ */
+export type ArtefactKind = 'prover' | 'verifier' | 'ir';
+
+/**
+ * A `KeyMaterialSource` that will also hand over one artefact on its own.
+ *
+ * **THE EXTRA METHOD EXISTS SO THAT THERE IS STILL ONE FETCHER.** Something
+ * that needs only a verifying key, asking through `lookupKey`, would download
+ * a proving key and a circuit to get it - which is a second download of the
+ * largest file in this system, arriving as a slow first approval rather than
+ * as an error.
+ */
+export interface ArtefactSource extends KeyMaterialSource {
+  /**
+   * One artefact, from the cache when it is there and over the network when it
+   * is not, filed under the same key `lookupKey` files it under.
+   */
+  artefact(kind: ArtefactKind, keyLocation: string): Promise<Uint8Array>;
+}
+
+/**
  * A `KeyMaterialSource` over HTTP.
  *
  * `wasm-proving.ts` takes its material as an interface for exactly one reason,
@@ -180,7 +207,7 @@ export interface HttpKeyMaterialOptions {
 export const httpKeyMaterialSource = (
   base: string,
   options: HttpKeyMaterialOptions = {},
-): KeyMaterialSource => {
+): ArtefactSource => {
   const doFetch = options.fetchImpl ?? fetch;
   const cache = options.cache;
 
@@ -199,9 +226,35 @@ export const httpKeyMaterialSource = (
     return { bytes, fetched: true };
   };
 
+  /**
+   * Where each artefact is served from, and what to call the wait for it.
+   *
+   * A table rather than three literals inside `lookupKey`, so that the method
+   * that fetches ONE artefact and the method that fetches all three cannot end
+   * up disagreeing about a URL or a cache key. Two spellings of the same path
+   * would be two cache entries for the same bytes, which is the second
+   * download this file exists to avoid.
+   */
+  const SERVED: Record<ArtefactKind, { url: (circuit: string) => string; what: string }> = {
+    prover: { url: (c) => `${base}/keys/${c}.prover`, what: 'fetching the proving key' },
+    verifier: { url: (c) => `${base}/keys/${c}.verifier`, what: 'fetching the verifying key' },
+    ir: { url: (c) => `${base}/zkir/${c}.bzkir`, what: 'fetching the circuit' },
+  };
+
+  const one = (kind: ArtefactKind, keyLocation: string, already: number) =>
+    cached(
+      cacheKeyFor(kind, keyLocation),
+      SERVED[kind].url(circuitOf(keyLocation)),
+      SERVED[kind].what,
+      already,
+    );
+
   return {
+    async artefact(kind: ArtefactKind, keyLocation: string): Promise<Uint8Array> {
+      return (await one(kind, keyLocation, 0)).bytes;
+    },
+
     async lookupKey(keyLocation: string): Promise<ProvingKeyMaterial | undefined> {
-      const circuit = circuitOf(keyLocation);
       /*
        * ONE AT A TIME, WHICH IS THE OPPOSITE OF WHAT THE PROBE DOES AND IS A
        * DELIBERATE TRADE. Three parallel fetches finish sooner and report
@@ -211,18 +264,9 @@ export const httpKeyMaterialSource = (
        * The proving key is by far the largest of the three, so most of the wait
        * is one artefact either way.
        */
-      const prover = await cached(
-        cacheKeyFor('prover', keyLocation), `${base}/keys/${circuit}.prover`,
-        'fetching the proving key', 0,
-      );
-      const verifier = await cached(
-        cacheKeyFor('verifier', keyLocation), `${base}/keys/${circuit}.verifier`,
-        'fetching the verifying key', prover.bytes.length,
-      );
-      const ir = await cached(
-        cacheKeyFor('ir', keyLocation), `${base}/zkir/${circuit}.bzkir`,
-        'fetching the circuit', prover.bytes.length + verifier.bytes.length,
-      );
+      const prover = await one('prover', keyLocation, 0);
+      const verifier = await one('verifier', keyLocation, prover.bytes.length);
+      const ir = await one('ir', keyLocation, prover.bytes.length + verifier.bytes.length);
 
       return { proverKey: prover.bytes, verifierKey: verifier.bytes, ir: ir.bytes };
     },
