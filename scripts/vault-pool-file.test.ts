@@ -113,9 +113,10 @@ describe('the pool is written whole or not at all', () => {
       storeIn(d), { signerId: 'ada', wrappingSecret: secret }, async () => s);
 
     await pool.create(VAULT, { notes: [] });
-    expect(await pool.load(VAULT)).toEqual({ notes: [] });
+    const created = await pool.load(VAULT);
+    expect(created.notes).toEqual([]);
 
-    await pool.save(VAULT, { notes: [{ nonce: '01'.repeat(32), token: '02'.repeat(32), value: 7n }] });
+    await pool.save(VAULT, { notes: [{ nonce: '01'.repeat(32), token: '02'.repeat(32), value: 7n }] }, created.readAt);
     const back = await pool.load(VAULT);
     /* `M-125`: a value is a bigint, and a plain JSON round trip makes it an object. */
     expect(back.notes[0]!.value).toBe(7n);
@@ -133,7 +134,8 @@ describe('the pool is written whole or not at all', () => {
     const pool = new SealedNotePool(
       storeIn(d), { signerId: 'ada', wrappingSecret: secret }, async () => s);
     await pool.create(VAULT, { notes: [] });
-    await pool.save(VAULT, { notes: [{ nonce: '01'.repeat(32), token: '02'.repeat(32), value: 7n }] });
+    await pool.save(
+      VAULT, { notes: [{ nonce: '01'.repeat(32), token: '02'.repeat(32), value: 7n }] }, (await pool.load(VAULT)).readAt);
     expect((await pool.load(VAULT)).notes[0]!.index).toBeUndefined();
   });
 

@@ -160,8 +160,11 @@ export async function refuseWhatTheVaultCannotPay(
     const a = answer as { of?: unknown; why?: unknown } | null;
     if (a?.of === 'unreadable') {
       return cannot(
-        `the chain did not answer what the vault holds ${what} (${String(a.why)}), and a proposal `
-        + 'is not raised on a guess about the money that pays it. Try again when the chain answers.',
+        `what the vault holds ${what} could not be read from the chain (${String(a.why)}), and a `
+        + 'proposal is not raised on a guess about the money that pays it. If the chain was slow to '
+        + 'answer, try again. If the same reason keeps coming back, read it: it says what is wrong (an '
+        + 'indexer that is down, a vault this network does not have, or an answer this service cannot '
+        + 'read), and none of those is a reason to deposit more.',
         'unreadable', form, null, asked);
     }
     if (a?.of === 'contradicted') {

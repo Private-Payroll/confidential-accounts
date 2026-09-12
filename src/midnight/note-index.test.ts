@@ -9,6 +9,7 @@ import {
   recordCreatingTransaction, vaultNoteCommitment, type NoteEvents, type ServedEvent,
 } from './note-index.js';
 import type { NotePool } from './vault-ledger.js';
+import { VaultPoolAdvancedSinceRead } from './vault-pool.js';
 import type { Note, VaultNotes } from './vault-notes.js';
 
 /**
@@ -261,11 +262,15 @@ const eventsFor = async (notes: Array<{ note: Note; index: bigint; hash: string;
 });
 
 const memoryPool = (initial: VaultNotes, duringRead?: (p: { notes: VaultNotes }) => void) => {
-  const box = { notes: initial };
+  /* Versioned, and a write built on an older version is refused, as the real pool's is. */
+  const box = { notes: initial, version: 1 };
   const saves: VaultNotes[] = [];
   const pool: NotePool = {
-    load: async () => box.notes,
-    save: async (_v, n) => { box.notes = n; saves.push(n); },
+    load: async () => ({ notes: box.notes.notes, readAt: { vault: VAULT, version: box.version } }),
+    save: async (v, n, builtOn) => {
+      if (builtOn.version !== box.version) throw new VaultPoolAdvancedSinceRead(v, builtOn.version, box.version);
+      box.notes = n; box.version += 1; saves.push(n);
+    },
     create: async () => { throw new Error('not here'); },
   };
   return { pool, box, saves, duringRead: () => duringRead?.(box) };
@@ -326,6 +331,7 @@ describe('§6 recording which transaction created a note, and never its index', 
     const events: NoteEvents = {
       eventsOf: async (tx) => {
         m.box.notes = { notes: [...m.box.notes.notes, arrived] };
+        m.box.version += 1;
         return inner.eventsOf(tx);
       },
     };

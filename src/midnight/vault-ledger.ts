@@ -109,6 +109,23 @@ export type VaultPaid =
   | (TxRef & { kind: 'unshielded' });
 
 /**
+ * **WHICH STORED VERSION OF WHICH VAULT'S POOL A LOAD READ.** Made by a pool's
+ * `load` and handed back to its `save`; nothing else has a reason to make one.
+ */
+export interface PoolVersion {
+  readonly vault: string;
+  readonly version: number;
+}
+
+/** A pool as loaded: its notes, and the version they were read at. */
+export interface LoadedNotes extends VaultNotes {
+  readonly readAt: PoolVersion;
+}
+
+/** Only the notes, so what is sealed is never the load's own bookkeeping. */
+const notesOf = (pool: VaultNotes): VaultNotes => ({ notes: pool.notes });
+
+/**
  * Where the vault's note pool lives between calls.
  *
  * An interface rather than a field because the pool is the money: it belongs in
@@ -126,8 +143,26 @@ export type VaultPaid =
  * the header of that file before adding a seventh `Purpose`.
  */
 export interface NotePool {
-  load(vaultAddress: string): Promise<VaultNotes>;
-  save(vaultAddress: string, notes: VaultNotes): Promise<void>;
+  /**
+   * The pool as it stands, and the version that was read. **The version is what
+   * a write built on this read must hand back**, so a write can never land on a
+   * pool that moved after the decision it records was made.
+   */
+  load(vaultAddress: string): Promise<LoadedNotes>;
+  /**
+   * **ADVANCES THE POOL FROM THE VERSION ITS WRITE WAS BUILT ON, AND FROM NO
+   * OTHER.**
+   *
+   * `builtOn` is the `readAt` of the load whose notes this write was decided
+   * from. A private payment loads, proves for a minute or more, submits, and
+   * then writes the change note; a deposit does the same. If another process
+   * advanced the pool in that minute, a version taken at the moment of writing
+   * would make the older copy win and erase the newer write with no trace, and
+   * a change note is the vault's own money coming back. So the implementation
+   * refuses unless the stored version is still `builtOn`, and nothing is
+   * written.
+   */
+  save(vaultAddress: string, notes: VaultNotes, builtOn: PoolVersion): Promise<void>;
   /**
    * The FIRST pool a vault ever has. `C242`, and it is on this interface rather
    * than only on the implementation because until `S6f` nothing could reach it.
@@ -460,7 +495,7 @@ export class VaultLedger {
      * spend reads it again.
      */
     readIndex?: { note: Note; index: ChainReadIndex },
-  ): Promise<{ result: any; notes: VaultNotes; spent?: Hex }> {
+  ): Promise<{ result: any; notes: VaultNotes; spent?: Hex; readAt: PoolVersion }> {
     const loaded = await this.pool.load(address);
     if (readIndex) {
       /*
@@ -500,7 +535,7 @@ export class VaultLedger {
       address, planCall(circuit, args, encryptionKeys),
       witnessesOver(() => notes, pending));
 
-    return { result, notes, spent: pending.spending };
+    return { result, notes, spent: pending.spending, readAt: loaded.readAt };
   }
 
   /**
@@ -922,10 +957,15 @@ export class VaultLedger {
      * window, recovers, and SPENDS what comes back.
      */
     const createdIn = VaultLedger.createdInOf(result);
-    await this.pool.save(vaultAddress, afterDeposit(current, {
+    /*
+     * FROM THE VERSION `current` WAS READ AT. A pool another process advanced
+     * while this deposit was proving is refused rather than overwritten, and the
+     * refusal says the deposit's note is on chain and not yet in the pool.
+     */
+    await this.pool.save(vaultAddress, notesOf(afterDeposit(current, {
       nonce: coin.nonce, token: coin.token, value: coin.value,
       ...(createdIn === undefined ? {} : { createdIn }),
-    }));
+    })), current.readAt);
     return this.txRef(result, by);
   }
 
@@ -1156,7 +1196,7 @@ export class VaultLedger {
      */
     const index = await indexForSpend(vaultAddress as Hex, chosen, events);
 
-    const { result, spent, notes: spentFrom } = await this.call(vaultAddress, 'payout', [
+    const { result, spent, notes: spentFrom, readAt } = await this.call(vaultAddress, 'payout', [
       fromHex(p.proposal), fromHex(p.root), p.payees, p.opensAt, p.closesAt, fromHex(p.salt),
       fromHex(payee.coinPublicKey), fromHex(p.token), p.amount,
       fromHex(p.blinding), fromHex(p.nonce), p.path,
@@ -1231,7 +1271,10 @@ export class VaultLedger {
      * nobody has run does not exist.
      */
     await this.pool.save(
-      vaultAddress, afterPayment(spentFrom, spent, p.amount, kept, VaultLedger.createdInOf(result)));
+      vaultAddress,
+      notesOf(afterPayment(spentFrom, spent, p.amount, kept, VaultLedger.createdInOf(result))),
+      /* The version `call()` loaded the spent note from, and not the store's now. */
+      readAt);
     return { ...this.txRef(result, by), kind: 'shielded', spentNote: spent };
   }
 

@@ -76,7 +76,7 @@ import {
   type Sealed, type Hex,
 } from '../core/crypto.js';
 import type { VaultNotes } from './vault-notes.js';
-import type { NotePool } from './vault-ledger.js';
+import type { LoadedNotes, NotePool, PoolVersion } from './vault-ledger.js';
 
 /** A signer, as this file needs them: an id and the public half they publish. */
 export interface PoolSigner {
@@ -136,6 +136,32 @@ export class VaultPoolUnreadable extends Error {
       'somebody pastes it into a wallet, C236. It is this error\'s `vault` property, and an ' +
       'instrument names the vault by the NAME it was deployed under.)');
     this.name = 'VaultPoolUnreadable';
+  }
+}
+
+/**
+ * **THE POOL MOVED AFTER THE READ THIS WRITE WAS BUILT ON, SO THE WRITE IS NOT
+ * MADE.**
+ *
+ * The write in hand was decided from an older copy. Writing it would erase
+ * whatever the other process recorded in between, silently, and that can be a
+ * change note: the vault's own money coming back from a payment. There is no
+ * correct merge of two beliefs about which notes exist, so nothing is merged
+ * and nothing is written.
+ */
+export class VaultPoolAdvancedSinceRead extends Error {
+  constructor(readonly vault: string, readonly builtOn: number, readonly found: number) {
+    super(
+      `this vault's note pool was at version ${builtOn} when the change being saved was read, and `
+      + `it is at version ${found} now: another process wrote it in between. **Nothing has been `
+      + 'written**, so what that process recorded is still there. If the change being saved '
+      + 'records money that has already moved on chain (a deposit\'s note, or a payment\'s '
+      + 'change), the chain holds it and this pool does not yet: rebuild the pool from the chain '
+      + 'and the history with replayVault before paying from this vault again. Otherwise read '
+      + 'the pool again and redo the change from what it holds now.'
+      + ' (the vault is not named here: its address is the one value that destroys money when '
+      + 'somebody pastes it into a wallet. It is this error\'s `vault` property.)');
+    this.name = 'VaultPoolAdvancedSinceRead';
   }
 }
 
@@ -297,7 +323,7 @@ export class SealedNotePool implements NotePool {
    * chain holds an unexplained one. A brand-new vault is initialised with
    * `create` below, which says so out loud.
    */
-  async load(vaultAddress: string): Promise<VaultNotes> {
+  async load(vaultAddress: string): Promise<LoadedNotes> {
     const rec = await this.store.get(vaultAddress);
     if (!rec) {
       throw new VaultPoolUnreadable(
@@ -306,17 +332,31 @@ export class SealedNotePool implements NotePool {
         'with create(); a vault that had one and now does not is the store having lost it, ' +
         'and those are not the same event');
     }
-    return openPool(rec, this.me.signerId, this.me.wrappingSecret);
+    const { notes } = openPool(rec, this.me.signerId, this.me.wrappingSecret);
+    return { notes, readAt: { vault: vaultAddress, version: rec.version } };
   }
 
   /**
-   * Writes the pool, sealed afresh, wrapped to every current signer.
+   * Writes the pool, sealed afresh, wrapped to every current signer, **as the
+   * version after the one its write was built on.**
    *
-   * The version is taken from what is there rather than counted here, so two
-   * processes that both read version 4 cannot both write version 5 — the store
-   * is what refuses, because the store is the only thing that sees both.
+   * The version used to be read here, at the moment of writing, and that is
+   * the defect this shape removes: a writer holding a copy loaded before a
+   * minute of proving would read whatever version was there by then, add one,
+   * and erase the write that came in between without any refusal. Now the
+   * version comes from the caller's own load. If the stored version is no
+   * longer that one, nothing is written and the refusal says so. If two writers
+   * built on the same version both get past this check, both write the same
+   * next version. `MemorySealedPoolStore` refuses the second, because its check
+   * and its write happen in one step. **A store whose check and write are two
+   * steps, such as a file read and then renamed over, does not close that window
+   * across two processes**, and the later write wins.
+
+   *
+   * Only the notes are sealed; the load's `readAt` is bookkeeping about this
+   * store, not part of what the vault holds.
    */
-  async save(vaultAddress: string, notes: VaultNotes): Promise<void> {
+  async save(vaultAddress: string, notes: VaultNotes, builtOn: PoolVersion): Promise<void> {
     const rec = await this.store.get(vaultAddress);
     if (!rec) {
       throw new VaultPoolUnreadable(
@@ -325,8 +365,18 @@ export class SealedNotePool implements NotePool {
         'single operation, and a pool that begins mid-history is a pool missing every note ' +
         'before it');
     }
+    if (builtOn.vault !== vaultAddress) {
+      throw new Error(
+        'this write was built on a read of a different vault\'s pool than the one it is being '
+        + 'saved to. Nothing has been written. Neither address is printed here, because a vault\'s '
+        + 'address pasted into a wallet destroys the money sent to it.');
+    }
+    if (builtOn.version !== rec.version) {
+      throw new VaultPoolAdvancedSinceRead(vaultAddress, builtOn.version, rec.version);
+    }
     await this.store.put(
-      vaultAddress, sealPool(vaultAddress, notes, await this.signers(), rec.version + 1));
+      vaultAddress,
+      sealPool(vaultAddress, { notes: notes.notes }, await this.signers(), builtOn.version + 1));
   }
 
   /**

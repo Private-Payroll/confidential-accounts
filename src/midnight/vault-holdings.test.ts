@@ -40,7 +40,10 @@ const NIGHT = ledgerTokenOf('NIGHT', 'unshielded');
 /* GBP's private token in the test registry, so a proposal in it can be raised against these notes. */
 const COLOUR = testPrivateToken('GBP') as Hex;
 
-const note = (nonce: string, value: bigint): Note => ({ nonce: nonce.repeat(32) as Hex, token: COLOUR, value });
+/* Each records the transaction that created it, which is what a payment reads its place in the tree from. */
+const note = (nonce: string, value: bigint): Note => ({
+  nonce: nonce.repeat(32) as Hex, token: COLOUR, value, createdIn: 'd0'.repeat(32) as Hex,
+});
 
 function vaultClient(opts: {
   publicRows?: Array<[string, bigint]> | 'unreadable';
@@ -49,7 +52,7 @@ function vaultClient(opts: {
 }) {
   const asked = { publicBalances: 0, contractState: 0 };
   const pool: NotePool = {
-    load: async () => ({ notes: opts.pool ?? [] }),
+    load: async () => ({ notes: opts.pool ?? [], readAt: { vault: 'unused', version: 1 } }),
     save: async () => { throw new Error('a read must not write the pool'); },
     create: async () => { throw new Error('a read must not create a pool'); },
   };
@@ -176,7 +179,7 @@ describe('§2 a proposal raised against the chain\'s answer, through the vault c
 
   it('REFUSES when the chain has published nothing for the vault, and says to try again', async () => {
     const h = harness({ publicRows: 'unreadable' }, productAssets);
-    await expect(raise(h, 'NIGHT', 'unshielded', NIGHT, [1n])).rejects.toThrow(/the chain did not answer what the vault holds of NIGHT publicly.*Try again when the chain answers/s);
+    await expect(raise(h, 'NIGHT', 'unshielded', NIGHT, [1n])).rejects.toThrow(/what the vault holds of NIGHT publicly could not be read from the chain.*If the chain was slow to answer, try again/s);
     expect(h.raised.count).toBe(0);
   });
 
@@ -199,7 +202,7 @@ describe('§2 a proposal raised against the chain\'s answer, through the vault c
     const h = harness({ pool: [note('01', 60n), note('02', 60n)], chainNotes: [note('01', 60n)] }, registryWithTestPrivateForms());
     const failed = await raise(h, 'GBP', 'shielded', COLOUR, [10n]).then(() => null, (e: unknown) => e as VaultCannotPayThisProposal);
     expect(failed!.why).toBe('contradicted');
-    expect(failed!.message).not.toMatch(/Try again when/);
+    expect(failed!.message).not.toMatch(/try again/i);
     expect(h.raised.count).toBe(0);
   });
 });
