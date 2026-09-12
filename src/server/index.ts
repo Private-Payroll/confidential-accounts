@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { join } from 'node:path';
 import { FileStore } from '../core/store-file.js';
 import { observerView, wiring } from '../wiring/selection.js';
-import { startProduct } from '../wiring/product.js';
+import { startProduct, holdingsFor } from '../wiring/product.js';
 import { ContractBook } from '../wiring/account-contract.js';
 import type { WriteCapability } from '../wiring/write-capability.js';
 import { deploymentWriteCapability } from '../wiring/write-capability-for-deployment.js';
@@ -263,7 +263,37 @@ const chosen = handed ?? startup.wiring;
 }
 const ledger = chosen.createLedger();
 const proofs = chosen.createProofSystem();
-const accounts = new AccountService(store, ledger, chosen.commitments);
+/*
+ * **WHAT A VAULT HOLDS, WIRED, SO THAT A ROUND THAT MOVES MONEY IS REFUSED FOR
+ * A REASON ABOUT THE MONEY RATHER THAN ABOUT THIS SERVICE.**
+ *
+ * Without it every such round is refused before it is raised, by a reader that
+ * answers nothing - which is the correct default for a service that might not
+ * be able to see a chain, and the wrong answer for one that can. This process
+ * resolved a deployment, so it can.
+ *
+ * **AND IT CHANGES NOTHING FOR A PAYROLL RUN TODAY, WHICH IS SAID HERE RATHER
+ * THAN DISCOVERED.** The reader answers public money. Every payee on every run
+ * this product can raise is private, so every such round is still refused - in
+ * different words. What this closes is the half a service can have, and what it
+ * leaves open is named where the reader is built.
+ *
+ * **WHAT IT WIDENS, EXACTLY.** A reader that answers nothing refuses every
+ * round that moves money. This one refuses on what the chain says, so a round
+ * whose payees are all PUBLIC and whose total the vault's public balance covers
+ * is now raised where it was previously stopped. That is the intended change
+ * and it is the only one. Every other answer - the chain unreadable, a record
+ * that disagrees with it, a read that failed, a private balance this service
+ * cannot see - is still a refusal to raise.
+ *
+ * The asset registry is named rather than skipped because the reader is the
+ * argument after it and there is no way to pass the fifth without the fourth.
+ * It is the same registry the constructor's default supplies, and it is the one
+ * this file already holds.
+ */
+const holdings = holdingsFor(startup);
+const accounts = new AccountService(
+  store, ledger, chosen.commitments, assetRegistry, holdings);
 /**
  * Where employee invites go. A-10.
  *

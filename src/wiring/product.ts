@@ -31,7 +31,8 @@
  * test double and no module the product runs reaches it.
  */
 import { wiring, type Wiring } from './selection.js';
-import { chainWiring } from './chain.js';
+import { chainWiring, chainVaultHoldingsFor } from './chain.js';
+import { noVaultHoldingsReader, type VaultHoldings } from '../core/vault-holdings.js';
 import { deployment, type Deployment } from './deployment.js';
 import type { ContractBook } from './account-contract.js';
 import type { WriteCapability } from './write-capability.js';
@@ -262,6 +263,30 @@ export function unconfiguredWiring(refusal: string): Wiring {
     createLedger: () => unconfiguredLedger(refusal, selected.name),
     createProofSystem: () => unconfiguredProofSystem(refusal),
   };
+}
+
+/**
+ * **WHAT A VAULT HOLDS, FOR WHATEVER THIS PROCESS TURNED OUT TO BE.**
+ *
+ * A service that cannot read a vault refuses every round that moves money
+ * before it is raised, and it refuses for a reason about the service rather
+ * than about the money. This is where the two answers are chosen between, and
+ * **it is a function rather than three lines at a construction site because a
+ * choice written at a construction site cannot be put to a test**: a service is
+ * built at module scope in a file that starts a server, so there is no object
+ * to inspect and nothing but the text to check. There is now.
+ *
+ * **A PROCESS WITH NO DEPLOYMENT GETS THE READER THAT ANSWERS NOTHING.** It has
+ * no indexer to ask, and a reader that guessed would be guessing about the
+ * money that pays a round.
+ *
+ * **WHAT THE CHAIN READER ANSWERS IS LESS THAN A RUN ASKS**, and the sentence
+ * saying so is where it is built, beside the code it is true of.
+ */
+export function holdingsFor(startup: Startup): VaultHoldings {
+  return startup.started
+    ? chainVaultHoldingsFor(startup.deployment)
+    : noVaultHoldingsReader;
 }
 
 /**

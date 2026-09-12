@@ -55,6 +55,7 @@ const FACTS: Deployment = {
   sealedStateRoot: join(tmpdir(), 'mn-s97-sealed'),
   privateStateId: 'confidential-accounts-test',
   zkConfigPath: join(tmpdir(), 'mn-s97-zk'),
+  vaultZkConfigPath: join(tmpdir(), 'mn-s97-zk-vault'),
 };
 
 /**

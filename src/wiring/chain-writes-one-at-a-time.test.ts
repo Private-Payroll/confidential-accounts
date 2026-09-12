@@ -23,6 +23,7 @@ const DEPLOYMENT: Deployment = {
   sealedStateRoot: '/nowhere/.midnight/sealed',
   privateStateId: 'confidential-accounts-stagenet',
   zkConfigPath: '/nowhere/contracts/managed',
+  vaultZkConfigPath: '/nowhere/contracts/managed-vault',
 };
 
 const capabilityWith = (sponsor: WriteCapability['sponsor']): WriteCapability => ({
