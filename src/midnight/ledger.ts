@@ -147,7 +147,25 @@ export type PreparedStep =
  */
 export interface PreparedCall {
   address: string;
-  privateStateId: string;
+  /**
+   * Where this call's private state is filed, or `null` for a circuit that
+   * reads none.
+   *
+   * **`null` IS A STATEMENT AND NOT AN ABSENCE, WHICH IS WHY IT IS NOT
+   * OPTIONAL.** Every caller must say which of the two it means, because the
+   * SDK cannot tell them apart and neither could a reader: it OMITS the field
+   * on a falsy value and then tests for its PRESENCE, so a key that is missing
+   * because nobody passed it selects the same branch as a key that is missing
+   * on purpose - and for the eight circuits that open with a signer check,
+   * that branch hands the executing circuit no private state at all.
+   *
+   * `closeExpiredRun` is the one circuit here that is `null`. It calls no
+   * witness, so it needs no record, and it is permissionless on chain by
+   * design: requiring a record would mean a client that had never staged one
+   * could not sweep a run whose window has closed, which is the property the
+   * contract argues for at length beside that circuit.
+   */
+  privateStateId: string | null;
   circuit: string;
   args: unknown[];
   expectCommitment?: Hex;
@@ -335,6 +353,28 @@ const missingPrivateState = (accountId: string, address: string): string =>
   'blinding factor for it — or the account\'s private state was written under a ' +
   'different contract address. Nothing is staged for THIS contract either way, and ' +
   'proving without it would prove against another contract\'s view.';
+
+/**
+ * **THE CIRCUITS THAT READ NO WITNESS, AND THEREFORE NEED NO PRIVATE STATE.**
+ *
+ * Taken from the contract and nowhere else: a circuit is on this list only if
+ * it, and everything it calls, reads none of the nine witnesses.
+ * `closeExpiredRun` is the only one of the seven circuits this client drives
+ * that qualifies - it opens no signer check, reads no salt and reads no asset,
+ * and it is permissionless on chain by design
+ * (`contracts/src/ConfidentialAccount.compact:2601`).
+ *
+ * **IT EXISTS BECAUSE `null` ON ITS OWN IS A CLAIM NOTHING HOLDS UP.** A
+ * `PreparedCall` may say it needs no private state, and that is the right
+ * shape - but a branch that says it wrongly produces exactly the defect this
+ * whole mechanism was added to remove: the circuit runs against nothing, the
+ * type checks, and no test anywhere goes red. So the claim is checked against
+ * the circuit it is made about, in both directions, at the one point every
+ * call THIS CLIENT BUILDS passes through - which is not the same as every
+ * governed call in this repository: the job runner assembles the SDK's call
+ * options itself and this guard is nowhere on that path.
+ */
+const CIRCUITS_THAT_READ_NO_WITNESS: ReadonlySet<string> = new Set(['closeExpiredRun']);
 
 export class MidnightLedger implements Ledger {
   /** Everything this class writes goes to a chain, or it does not get written. */
@@ -853,7 +893,7 @@ export class MidnightLedger implements Ledger {
     vault: Hex,
   ): Promise<TxRef> {
     const call = await this.prepare(accountId, { kind: 'propose', payloadHash, change, vault });
-    const result = await this.buildCall(call.address, call.circuit, call.args);
+    const result = await this.buildCall(call.address, call.circuit, call.args, call.privateStateId);
 
     const after = await this.readContractState(call.address);
     /*
@@ -961,7 +1001,7 @@ export class MidnightLedger implements Ledger {
       );
     }
     const call = await this.prepare(accountId, { kind: 'proposeRun', ...run, change });
-    const result = await this.buildCall(call.address, call.circuit, call.args);
+    const result = await this.buildCall(call.address, call.circuit, call.args, call.privateStateId);
 
     const payloadHash = MidnightCommitments.runPayload(
       run.root, run.payees, run.opensAt, run.closesAt);
@@ -1042,7 +1082,7 @@ export class MidnightLedger implements Ledger {
    */
   async closeExpiredRun(accountId: string, proposalId: Hex, by: SignerRef): Promise<TxRef> {
     const call = await this.prepare(accountId, { kind: 'closeExpiredRun', proposalId });
-    return this.txRef(await this.buildCall(call.address, call.circuit, call.args), by);
+    return this.txRef(await this.buildCall(call.address, call.circuit, call.args, call.privateStateId), by);
   }
 
   /**
@@ -1056,7 +1096,7 @@ export class MidnightLedger implements Ledger {
    */
   async approve(accountId: string, proposalId: Hex, by: SignerRef): Promise<TxRef> {
     const call = await this.prepare(accountId, { kind: 'approve', proposalId });
-    return this.txRef(await this.buildCall(call.address, call.circuit, call.args), by);
+    return this.txRef(await this.buildCall(call.address, call.circuit, call.args, call.privateStateId), by);
   }
 
   /*
@@ -1098,7 +1138,7 @@ export class MidnightLedger implements Ledger {
     accountId: string, leaf: Hex, proposalId: Hex | null, by: SignerRef,
   ): Promise<TxRef> {
     const call = await this.prepare(accountId, { kind: 'addSigner', leaf, proposalId });
-    return this.txRef(await this.buildCall(call.address, call.circuit, call.args), by);
+    return this.txRef(await this.buildCall(call.address, call.circuit, call.args, call.privateStateId), by);
   }
 
   /*
@@ -1121,7 +1161,7 @@ export class MidnightLedger implements Ledger {
   ): Promise<TxRef> {
     const call = await this.prepare(
       accountId, { kind: 'removeSigner', removedLeaf, proposalId });
-    return this.txRef(await this.buildCall(call.address, call.circuit, call.args), by);
+    return this.txRef(await this.buildCall(call.address, call.circuit, call.args, call.privateStateId), by);
   }
 
   async setThreshold(
@@ -1129,7 +1169,7 @@ export class MidnightLedger implements Ledger {
   ): Promise<TxRef> {
     const call = await this.prepare(
       accountId, { kind: 'setThreshold', newThreshold, proposalId });
-    return this.txRef(await this.buildCall(call.address, call.circuit, call.args), by);
+    return this.txRef(await this.buildCall(call.address, call.circuit, call.args, call.privateStateId), by);
   }
 
   /**
@@ -1146,12 +1186,12 @@ export class MidnightLedger implements Ledger {
   ): Promise<TxRef> {
     const call = await this.prepare(
       accountId, { kind: 'setVaultThreshold', vault, newThreshold, proposalId });
-    return this.txRef(await this.buildCall(call.address, call.circuit, call.args), by);
+    return this.txRef(await this.buildCall(call.address, call.circuit, call.args, call.privateStateId), by);
   }
 
   async cancel(accountId: string, proposalId: Hex, by: SignerRef): Promise<TxRef> {
     const call = await this.prepare(accountId, { kind: 'cancel', proposalId });
-    return this.txRef(await this.buildCall(call.address, call.circuit, call.args), by);
+    return this.txRef(await this.buildCall(call.address, call.circuit, call.args, call.privateStateId), by);
   }
 
   /*
@@ -1300,8 +1340,20 @@ export class MidnightLedger implements Ledger {
          * transaction, and refusing here would need a second opinion about the
          * block time that we do not have.
          */
+        /*
+         * **AND IT CARRIES NO PRIVATE-STATE KEY, WHICH IS THE ONE `null` IN
+         * THIS METHOD.** This circuit calls no witness - no signer check, no
+         * salt, no asset - so there is nothing for a record to answer. Asking
+         * for one would refuse a sweep from any client that has never staged
+         * a call against this account, and the contract's whole argument for
+         * leaving this operation open to anybody is that an account whose
+         * signers have all left must still be able to have its expired rows
+         * taken out. Passing a key it does not need would also put this call
+         * on the path where the SDK writes the record back after settlement,
+         * for a circuit that changed nothing in it.
+         */
         return {
-          address, privateStateId, circuit: 'closeExpiredRun',
+          address, privateStateId: null, circuit: 'closeExpiredRun',
           args: [fromHex(step.proposalId)],
         };
       }
@@ -1855,7 +1907,7 @@ export class MidnightLedger implements Ledger {
    * system change and our contract was deployed frozen, this is where it
    * surfaces, as a mismatch rather than a mystery. That is M-9.
    */
-  private async connect(address: string) {
+  private async connect(address: string, privateStateId: string | null) {
     /*
      * NOT `findDeployedContract`. S8c: against a partial deployment,
      * the SDK's find compares all FIFTEEN compiled verifier keys against the
@@ -1872,6 +1924,31 @@ export class MidnightLedger implements Ledger {
     return findDeployedPartialContract(providers as any, {
       compiledContract: this.compiled as any,
       contractAddress: address,
+      /*
+       * WITHOUT THIS, A CIRCUIT THAT READS A WITNESS RUNS WITH NO PRIVATE
+       * STATE AT ALL - so the two calls the whole product rests on, opening a
+       * round and approving one, were calls no signer could ever have made.
+       *
+       * The SDK omits the field entirely on a falsy value and then tests for
+       * it by PRESENCE, so a key that does not arrive is not a key that is
+       * undefined: it selects a different branch, the public-states one, and
+       * the executing circuit's `privateState` is literally `undefined`. The
+       * witnesses that answer for a signer's secret key, blinding factor and
+       * scope read off that object, so what a caller sees is a dereference of
+       * `undefined` from inside the circuit runtime, naming none of this.
+       *
+       * Passed, the same SDK refuses by name instead - "No private state found
+       * at private state ID" - which is a sentence a reader can act on.
+       *
+       * **SPREAD RATHER THAN ASSIGNED, AND THE REASON IS THE TYPE RATHER THAN
+       * THE SDK.** The find's option is `privateStateId?: string`, and `null`
+       * is not a string, so assigning it would need a cast. The SDK itself
+       * would treat the two the same - its gate here is truthiness, not
+       * presence - and a later reader should not be told otherwise, because a
+       * sentence that overstates what holds a line up is how the line comes to
+       * be simplified away.
+       */
+      ...(privateStateId === null ? {} : { privateStateId }),
     });
   }
 
@@ -1892,7 +1969,66 @@ export class MidnightLedger implements Ledger {
    * argument it did not take. The arity is checked below so that mistake
    * fails immediately, with the circuit named, rather than inside the SDK.
    */
-  private async buildCall(address: string, circuit: string, args: unknown[]) {
+  /*
+   * `privateStateId` IS NOT OPTIONAL AND MUST NOT BE GIVEN A DEFAULT. Every
+   * caller has an answer - `prepare` computes the key for the account the call
+   * is for, or says `null` for the one circuit that reads no witness - and the
+   * whole defect this parameter closes was a value that existed and was
+   * dropped. A default here would be this class inventing an answer to a
+   * question its caller already answered, which is how the two would come to
+   * disagree.
+   *
+   * **AND THE TYPE IS NOT THE WHOLE GUARD, WHICH IS WHY THERE IS ALSO A
+   * RUNTIME ONE.** The compiler holds this for callers it can see; a caller
+   * reaching this method through `any` gets `undefined`, and `undefined`
+   * behaves exactly like the defect - the SDK omits the field and the circuit
+   * runs with nothing. A dropped argument must be a refusal that names itself,
+   * not a silent return to the old behaviour.
+   */
+  private async buildCall(
+    address: string, circuit: string, args: unknown[], privateStateId: string | null,
+  ) {
+    /*
+     * **THE ANSWER MUST BE PRESENT, AND IT MUST MATCH THE CIRCUIT.**
+     *
+     * `undefined` is a dropped argument and an empty string is a dropped
+     * argument that got as far as a variable; the SDK treats both exactly as
+     * it treats the original defect, by omitting the field and running the
+     * circuit against nothing. `privateStateKey` cannot produce an empty
+     * string - it always carries its separator - and the check is here anyway,
+     * because the promise this guard makes is about a dropped argument rather
+     * than about one particular way of dropping it.
+     */
+    if (privateStateId === undefined || privateStateId === '') {
+      throw new Error(
+        `the "${circuit}" call was built without saying where its private state is filed. ` +
+          'Pass the key the call was prepared with, or null for a circuit that reads no ' +
+          'witness. Passing nothing runs the circuit against no private state at all.',
+      );
+    }
+    /*
+     * AND THE TWO DIRECTIONS ARE BOTH CHECKED, because only one of them fails
+     * loudly on its own. A circuit that reads no witness handed a key wastes a
+     * read and puts the call on the path where the SDK writes the record back
+     * after settlement. A circuit that READS one handed `null` runs against no
+     * private state at all, silently, and is the defect returning under a
+     * value that type-checks.
+     */
+    const readsNoWitness = CIRCUITS_THAT_READ_NO_WITNESS.has(circuit);
+    if (privateStateId === null && !readsNoWitness) {
+      throw new Error(
+        `the "${circuit}" call was built as though it reads no private state, and it reads ` +
+          'one. A circuit that opens with a signer check cannot run without the calling ' +
+          "device's own record; pass the key the call was prepared with.",
+      );
+    }
+    if (privateStateId !== null && readsNoWitness) {
+      throw new Error(
+        `the "${circuit}" call was given a private state key and reads no witness at all. ` +
+          'Pass null: asking for a record it will not read makes a device that holds none ' +
+          'unable to make a call the contract deliberately leaves open to anybody.',
+      );
+    }
     /*
      * BEFORE connecting: a deferred circuit fails here, naming the cause.
      * Left to run on, the failure would be the chain's
@@ -1903,7 +2039,7 @@ export class MidnightLedger implements Ledger {
     if (isDeferredCircuit(circuit)) {
       throw deferredCircuitError(circuit);
     }
-    const contract = await this.connect(address);
+    const contract = await this.connect(address, privateStateId);
     const call = (contract.callTx as any)[circuit];
     if (typeof call !== 'function') {
       throw new Error(`the deployed contract has no circuit "${circuit}"`);

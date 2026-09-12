@@ -44,7 +44,23 @@ export interface CallPlan {
   contractAddress: string;
   circuit: string;
   args: unknown[];
-  privateStateId: string;
+  /**
+   * Where this call's private state is filed, or `null` for a circuit that
+   * reads no witness.
+   *
+   * **THE SAME SHAPE THE PREPARED CALL USES, AND IT IS THE SAME SHAPE ON
+   * PURPOSE.** This is a second, independent construction of the SDK's call
+   * options: it goes to `createCallTxOptions` directly rather than through the
+   * client's own call builder, so nothing makes the two agree except that they
+   * are written to agree. A plan built from a prepared call whose answer is
+   * `null` would otherwise meet a type error here, and the cheapest way past a
+   * type error is a cast - which would hand a key to the one circuit that must
+   * not be given one.
+   *
+   * The SDK omits the field on a falsy value, so `null` reaches it as an
+   * absent key, which is what a circuit reading no witness needs.
+   */
+  privateStateId: string | null;
 }
 
 /**
