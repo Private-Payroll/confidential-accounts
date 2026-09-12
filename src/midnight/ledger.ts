@@ -374,7 +374,52 @@ const missingPrivateState = (accountId: string, address: string): string =>
  * governed call in this repository: the job runner assembles the SDK's call
  * options itself and this guard is nowhere on that path.
  */
-const CIRCUITS_THAT_READ_NO_WITNESS: ReadonlySet<string> = new Set(['closeExpiredRun']);
+export const CIRCUITS_THAT_READ_NO_WITNESS: ReadonlySet<string> = new Set(['closeExpiredRun']);
+
+/**
+ * **WHICH CIRCUIT EACH PREPARED STEP CALLS, AS ONE TABLE THE COMPILER KEEPS
+ * COMPLETE.**
+ *
+ * The names used to be written at the nine places a step is turned into a call.
+ * They are here instead for one reason: **the answer to whether a step needs
+ * the calling device's private state is not a property of the step, it is a
+ * property of the CIRCUIT the step calls** - and with the names spread across
+ * nine branches there was nowhere to compute that from, so it was written out a
+ * second time by hand as well.
+ *
+ * Two steps can name the same circuit and two circuits can be named by one
+ * step's neighbours, which is why this is a table and not a convention: a
+ * governance round and a payroll run are both `propose`, and adding a signer
+ * and removing one are both `amendSigner`.
+ *
+ * **A `Record` OVER THE STEP'S OWN UNION, SO A NEW STEP DOES NOT COMPILE UNTIL
+ * IT HAS AN ANSWER HERE.** A step added without one would otherwise reach the
+ * SDK either with a key for a circuit that reads nothing - which puts it on the
+ * path where the record is written back after settlement, for a call that
+ * changed nothing in it - or with no key for a circuit that reads one, which
+ * runs the circuit against no private state at all.
+ *
+ * **AND IT COVERS THE CALLS THIS CLASS BUILDS, WHICH IS NOT EVERY GOVERNED
+ * CALL IN THIS REPOSITORY.** The job runner assembles the SDK's call options
+ * itself, from a plan it is handed, and reaches neither this table nor the
+ * both-directions check further down. Anything that builds a call that way
+ * answers these two questions for itself, and nothing makes it answer them the
+ * same way. Said here rather than left to be discovered by whoever writes the
+ * second call builder.
+ */
+export const CIRCUIT_FOR_STEP: Record<PreparedStep['kind'], string> = {
+  propose: 'propose',
+  /* A payroll run is the same circuit on its other branch. */
+  proposeRun: 'propose',
+  approve: 'approve',
+  cancel: 'cancel',
+  /* Seating and unseating are one circuit, and have been since the rename. */
+  addSigner: 'amendSigner',
+  removeSigner: 'amendSigner',
+  setThreshold: 'setThreshold',
+  setVaultThreshold: 'setVaultThreshold',
+  closeExpiredRun: 'closeExpiredRun',
+};
 
 export class MidnightLedger implements Ledger {
   /** Everything this class writes goes to a chain, or it does not get written. */
@@ -1242,7 +1287,16 @@ export class MidnightLedger implements Ledger {
    */
   async prepare(accountId: string, step: PreparedStep): Promise<PreparedCall> {
     const address = await this.requireDeployed(accountId);
-    const privateStateId = privateStateKey(this.cfg.privateStateId, accountId);
+    /*
+     * **BOTH ANSWERS COME FROM THE ONE TABLE.** Which circuit this step calls,
+     * and therefore whether it reads anything out of the calling device at all.
+     * Derived rather than written per branch, so the two can never disagree and
+     * so a step added later cannot be given the wrong one by omission.
+     */
+    const circuit = CIRCUIT_FOR_STEP[step.kind];
+    const privateStateId = CIRCUITS_THAT_READ_NO_WITNESS.has(circuit)
+      ? null
+      : privateStateKey(this.cfg.privateStateId, accountId);
 
     switch (step.kind) {
       case 'propose': {
@@ -1280,7 +1334,7 @@ export class MidnightLedger implements Ledger {
          * as `addSigner`'s unused `proposal` is zeroes on the bootstrap path.
          */
         return {
-          address, privateStateId, circuit: 'propose',
+          address, privateStateId, circuit,
           args: [
             fromHex(step.payloadHash), fromHex(ZERO_32), 0n, 0n, 0n, false, fromHex(step.vault),
           ],
@@ -1324,7 +1378,7 @@ export class MidnightLedger implements Ledger {
         await this.stageChange(accountId, step.change);
         /* The MERGED `propose`: the run path. `isRun` true, opaque hash zero. */
         return {
-          address, privateStateId, circuit: 'propose',
+          address, privateStateId, circuit,
           args: [
             fromHex(ZERO_32), fromHex(step.root), step.payees, step.opensAt, step.closesAt, true,
             fromHex(step.vault),
@@ -1342,7 +1396,9 @@ export class MidnightLedger implements Ledger {
          */
         /*
          * **AND IT CARRIES NO PRIVATE-STATE KEY, WHICH IS THE ONE `null` IN
-         * THIS METHOD.** This circuit calls no witness - no signer check, no
+         * THIS METHOD - AND IT IS NOW DERIVED RATHER THAN WRITTEN HERE**, from
+         * the circuit this step names and the set of circuits that read no
+         * witness. This circuit calls no witness - no signer check, no
          * salt, no asset - so there is nothing for a record to answer. Asking
          * for one would refuse a sweep from any client that has never staged
          * a call against this account, and the contract's whole argument for
@@ -1353,7 +1409,7 @@ export class MidnightLedger implements Ledger {
          * for a circuit that changed nothing in it.
          */
         return {
-          address, privateStateId: null, circuit: 'closeExpiredRun',
+          address, privateStateId, circuit,
           args: [fromHex(step.proposalId)],
         };
       }
@@ -1368,14 +1424,14 @@ export class MidnightLedger implements Ledger {
          * about what we can know.
          */
         return {
-          address, privateStateId, circuit: 'approve', args: [fromHex(step.proposalId)],
+          address, privateStateId, circuit, args: [fromHex(step.proposalId)],
         };
       }
 
       case 'cancel': {
         await this.requireOpen(address, step.proposalId, 'cancel');
         return {
-          address, privateStateId, circuit: 'cancel', args: [fromHex(step.proposalId)],
+          address, privateStateId, circuit, args: [fromHex(step.proposalId)],
         };
       }
 
@@ -1419,7 +1475,7 @@ export class MidnightLedger implements Ledger {
         await this.refuseUnusableLeaf(step.leaf, 'the signer leaf being seated');
         /* The MERGED `amendSigner`, seating direction: `removing` false. */
         return {
-          address, privateStateId, circuit: 'amendSigner',
+          address, privateStateId, circuit,
           args: [
             fromHex(step.leaf),
             fromHex(step.proposalId ?? ZERO_32),
@@ -1458,7 +1514,7 @@ export class MidnightLedger implements Ledger {
           );
         }
         return {
-          address, privateStateId, circuit: 'setThreshold',
+          address, privateStateId, circuit,
           args: [BigInt(step.newThreshold), fromHex(step.proposalId)],
         };
       }
@@ -1503,7 +1559,7 @@ export class MidnightLedger implements Ledger {
           throw new Error('a vault threshold of zero would authorise anything');
         }
         return {
-          address, privateStateId, circuit: 'setVaultThreshold',
+          address, privateStateId, circuit,
           args: [
             fromHex(step.vault), BigInt(step.newThreshold), fromHex(step.proposalId),
           ],
@@ -1525,7 +1581,7 @@ export class MidnightLedger implements Ledger {
          * true; `intoVacatedSlot` is ignored on this path and passed false.
          */
         return {
-          address, privateStateId, circuit: 'amendSigner',
+          address, privateStateId, circuit,
           args: [fromHex(step.removedLeaf), fromHex(step.proposalId), false, true],
         };
       }
@@ -1968,6 +2024,33 @@ export class MidnightLedger implements Ledger {
    * `args` is `unknown[]`, which is how `execute` came to be called with an
    * argument it did not take. The arity is checked below so that mistake
    * fails immediately, with the circuit named, rather than inside the SDK.
+   */
+  /**
+   * **ONE CALL AT A TIME THROUGH ONE CLIENT, AND IT IS LOAD-BEARING HERE
+   * RATHER THAN MERELY TRUE.**
+   *
+   * The queue drives one job at a time. That was arranged so that the fee payer
+   * knows whose company it is paying for, and it is written down beside the fee
+   * payer for that reason - **but a second thing now rests on it, at this
+   * method, and nothing said so.**
+   *
+   * After a call settles entirely, the SDK writes the calling device's record
+   * back AS IT WAS WHEN THE CALL STARTED. Between those two moments is a proof
+   * that takes minutes. Anything written into that record inside the window is
+   * therefore silently reverted - and the writer that lives in that window is
+   * the staging a proposal does immediately before it is raised. The field it
+   * writes is the salt four governance circuits recompute a proposal's identity
+   * from.
+   *
+   * **A REVERTED SALT IS NOT A WRONG NUMBER. It is a round whose id nobody can
+   * reproduce, refusing about the wrong thing**, on an account where the money
+   * is fine and no screen can say why the approval will not apply.
+   *
+   * So: a second call must not be built through this client while one is in
+   * flight. If anything ever needs to drive two at once, the answer is a client
+   * per operation rather than a cleverer write here - and until then this
+   * sentence is what tells whoever adds the second caller what they are
+   * standing on.
    */
   /*
    * `privateStateId` IS NOT OPTIONAL AND MUST NOT BE GIVEN A DEFAULT. Every
