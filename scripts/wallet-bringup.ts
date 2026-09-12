@@ -29,6 +29,7 @@
  */
 import type { NetworkName } from '../src/midnight/network.js';
 import { installDustWallet, dustCachePath, waitForDustCatchUp, dustCaughtUp, dustProgressOf } from './dust-wallet.js';
+import { floorKnownAbsent } from './dust-fee-floor.js';
 import { waitForShieldedScan, type ShieldedWaitOutcome } from './shielded-wallet.js';
 import { rmSync } from 'node:fs';
 import { sleep } from '../src/midnight/retry.js';
@@ -170,10 +171,52 @@ export async function bringUpWallet(
     wallet = await MidnightWalletProvider.build(logger as any, cfg as any, seed);
 
     usedCache = false;
-    if (options.withDust !== false && attempt === 1) {
+    /*
+     * EVERY ATTEMPT, NOT ONLY THE FIRST.
+     *
+     * This read `attempt === 1`. The retry exists for a cache that misbehaved,
+     * and it builds a whole new wallet — so on attempt 2 the swap never
+     * happened, the fee floor was never installed, nothing said so, and the run
+     * went on to submit with the library's own wallet and its overhead of
+     * nothing. The path fired precisely when the cache had already proved
+     * untrustworthy. The cache is skipped on a retry; the floor is not.
+     */
+    if (options.withDust !== false) {
       const installed = await installDustWallet(wallet, cfg as any, seed, network, root);
       usedCache = installed.how === 'restored';
       note(`dust wallet ${installed.how} — ${installed.detail}`);
+      /*
+       * WHICH OUTCOMES STOP THE RUN, AND WHY IT IS NOT ALL OF THEM.
+       *
+       * 'refused' with a floor that disagrees, and 'unchanged', are the two
+       * states where the wallet in place is KNOWN not to carry the floor. Both
+       * stop. 'unchanged' is the more certain of the two and used to pass
+       * silently, which was backwards.
+       *
+       * A floor that merely could not be READ BACK is different and must not
+       * stop anything. The failure it points at is free and loud: a submission
+       * refused with no fee taken. The failure a throw creates is that every
+       * money door in this project stops working because a library renamed a
+       * field. So that case is said as loudly as a refusal and the run goes on.
+       */
+      const floorDefinitelyAbsent =
+        installed.how === 'unchanged'
+        || (installed.how === 'refused' && floorKnownAbsent(installed.reason ?? 'unreadable'));
+      if (floorDefinitelyAbsent) {
+        live.stop();
+        try { await wallet.stop?.(); } catch { /* nothing useful to do */ }
+        throw new Error(
+          `the dust wallet set-up did not complete with a fee floor in force: ${installed.detail}\n` +
+            '  A fee that can come out at nothing selects no dust coin, and a transaction carrying\n' +
+            '  no dust spend is refused by the node as malformed.\n' +
+            '  Nothing has been submitted and nothing is at risk. This is a defect in the wallet\n' +
+            '  set-up rather than a chain or funding problem, and re-running will not clear it.',
+        );
+      }
+      if (installed.how === 'refused') {
+        note('\x1b[33mthe fee floor could not be read back off the wallet, so nothing here can say');
+        note('whether it is in force. Going on: if this fails at submission, that is why.\x1b[0m');
+      }
     }
 
     // THE LINE THAT WAS MISSING for four runs. Without it nothing syncs, ever.

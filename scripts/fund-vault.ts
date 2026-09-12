@@ -80,6 +80,7 @@ import { explainNodeError, NODE_ERROR_CODES } from './node-errors.js';
 import { testEnvironmentFor, startEnvironment } from './test-environment.js';
 import { bringUpWallet } from './wallet-bringup.js';
 import { saveDustState } from './dust-wallet.js';
+import { budgetFrom, budgetVerdict, SPENDS_TO_ESCAPE_A_SIZE_REFUSAL } from './dust-spend-budget.js';
 import { collapseRepeatedLines, describeDropped, serialiseWholeDetailed } from './error-report.js';
 import {
   compareAgainstLimits, compareCost, limitsFromLedger, measuringProviders,
@@ -609,6 +610,37 @@ async function main(): Promise<MovementVerdict | 'not-read'> {
   if (cached) good(`dust wallet state cached (${(cached / 1024).toFixed(0)} KB)`);
 
   /*
+   * THE CEILING ON DUST SPENDS, SAID OUT LOUD BEFORE ANYTHING IS PROVED.
+   *
+   * A deposit can be refused at submission for being too cheap relative to its
+   * size, and the only known way past that is to make the transaction bigger by
+   * adding another dust spend. How many of those this wallet can emit is fixed
+   * by how many registered NIGHT outputs it holds, and a wallet that has been
+   * used tends towards holding one. The chain does not explain this: it answers
+   * with a code. So it is read and printed here, while it still costs nothing.
+   *
+   * IT IS MEASURED AGAINST THE ESCAPE, NOT AGAINST AN ORDINARY DEPOSIT, AND
+   * THAT IS THE WHOLE POINT. Every deposit carries one dust spend and every
+   * wallet can supply one, so a check asking for one passes on every wallet
+   * including the ones where this refusal cannot be escaped — which would print
+   * a reassurance nobody measured, immediately before the refusal. The number
+   * asked for is the module's own constant, derived from the mechanism.
+   *
+   * IT DOES NOT STOP THE RUN. A wallet at the ceiling is a reason to recognise
+   * the refusal if it comes, not a reason to refuse to try, and nothing is at
+   * risk in finding out: every refusal so far was at submission and no fee was
+   * taken.
+   */
+  const { nativeToken: nightToken } = await import('@midnight-ntwrk/midnight-js-protocol/ledger');
+  const budget = budgetVerdict(budgetFrom(
+    live.state()?.unshielded?.availableCoins,
+    String((nightToken() as any).raw),
+    SPENDS_TO_ESCAPE_A_SIZE_REFUSAL,
+  ));
+  note(budget.line);
+  if (!budget.ok && budget.remedy) note(`  ${budget.remedy}`);
+
+  /*
    * REFUSED IN WORDS BEFORE A PROOF, AND THE LEDGER REFUSES IT AGAIN ANYWAY.
    *
    * The duplication is the same one the contract's own asserts carry: the
@@ -646,7 +678,16 @@ async function main(): Promise<MovementVerdict | 'not-read'> {
 
   const measured = measuringProviders(providers, (m) => {
     txMeasurements.push(m);
-    note(`transaction size (${m.stage}) ${m.bytes === null ? `not measured: ${m.problem ?? 'unknown'}` : `${m.bytes.toLocaleString()} bytes`}`);
+    /*
+     * TWO SIZES, AND THE SECOND IS THE ONE ANY LIMIT IS EXPRESSED IN.
+     *
+     * This line used to print only what the client can see of its own
+     * transaction. The node judges a different number, and the two are not the
+     * same and do not differ by a constant, so a run that printed only the
+     * first was quoting a size against a limit it is not measured in.
+     */
+    note(`transaction size (${m.stage}) ${m.bytes === null ? `not measured: ${m.problem ?? 'unknown'}` : `${m.bytes.toLocaleString()} bytes as the client serialises it`}`);
+    note(`  the size the block limit is expressed in: ${m.ledgerBytes === null ? 'the ledger would not answer' : `${m.ledgerBytes.toLocaleString()} bytes`}`);
     const w = m.cost?.cost?.bytesWritten;
     if (typeof w === 'number' && blockLimits?.bytesWritten) {
       note(`  bytes written ${w.toLocaleString()} of ${blockLimits.bytesWritten.toLocaleString()} — ${((w / blockLimits.bytesWritten) * 100).toFixed(1)}% of a block`);

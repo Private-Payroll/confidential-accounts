@@ -38,6 +38,10 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import {
+  appliedOverhead, arrivedOverhead, feeFloorVerdict,
+  type FeeFloorReading, type FeeFloorReason,
+} from './dust-fee-floor.js';
 
 /**
  * Specks added to every fee so it can never be zero.
@@ -52,9 +56,30 @@ export const dustCachePath = (root: string, network: string, masterSeed: string)
   join(root, '.wallet-state', `dust-${network}-${masterSeed.slice(0, 16)}.state`);
 
 export type DustInstall = {
-  /** 'restored' saved the long sync; 'fresh' did not, but still has the fee floor. */
-  how: 'restored' | 'fresh' | 'unchanged';
+  /**
+   * 'restored' saved the long sync; 'fresh' did not, but still has the fee
+   * floor.
+   *
+   * **'unchanged' IS THE SEVERE ONE AND THIS COMMENT USED TO SAY IT WAS NOT.**
+   * It means no wallet of ours is installed, so the library's own is, and its
+   * fee overhead is nothing. That is the floor's absence known with certainty,
+   * and callers stop on it.
+   *
+   * 'refused' means our wallet IS installed but the floor did not check out.
+   * Whether a caller stops depends on `reason`: a floor known to be wrong
+   * stops a run, a floor that merely could not be read does not.
+   */
+  how: 'restored' | 'fresh' | 'unchanged' | 'refused';
   detail: string;
+  /** What was asked for, what the wallet carries, and what its arithmetic adds. */
+  feeFloor?: FeeFloorReading;
+  /**
+   * Why a 'refused' is refused. **A caller deciding whether to stop switches on
+   * this and never re-derives it from `feeFloor`** — the readings do not say on
+   * their own which check failed, and a caller that guesses gets it wrong.
+   * Absent on the outcomes that took no reading.
+   */
+  reason?: FeeFloorReason;
 };
 
 /**
@@ -62,9 +87,13 @@ export type DustInstall = {
  *
  * Call between `MidnightWalletProvider.build(...)` and `wallet.start(...)`.
  *
- * Never throws. Any failure leaves the SDK's own dust wallet in place, which is
- * exactly the behaviour that existed before this function did — the downside of
- * being wrong is the slow sync we were already paying, not a broken run.
+ * Never throws, but 'unchanged' is NOT a soft outcome and this comment used to
+ * say it was. Leaving the SDK's own dust wallet in place leaves a wallet whose
+ * fee overhead is nothing, and a fee that can come out at nothing produces a
+ * transaction carrying no dust spend, which the node refuses as malformed. The
+ * downside of being wrong is a run that fails at submission, not the slow sync
+ * this function also avoids. Callers treat 'unchanged' as seriously as
+ * 'refused': it is the same fact known with more certainty.
  */
 export async function installDustWallet(
   wallet: any,
@@ -78,9 +107,10 @@ export async function installDustWallet(
     const sdk: any = await import('@midnightntwrk/wallet-sdk');
     const { LedgerParameters } = await import('@midnight-ntwrk/midnight-js-protocol/ledger');
 
-    // The configuration the testkit derives from the environment. It is private
-    // on the builder and there is no accessor; building one by hand would be a
-    // second source of truth for the wallet config, which is how M-19a happened.
+
+    // The configuration the testkit derives from the environment, read off the
+    // builder's own public field. Building one by hand would be a second source
+    // of truth for the wallet config, which is how M-19a happened.
     const baseConfig = tk.FluentWalletBuilder.forEnvironment(cfg).config;
     if (!baseConfig) throw new Error('could not read the wallet configuration off the builder');
 
@@ -94,6 +124,73 @@ export async function installDustWallet(
       },
     };
     const Dust = sdk.DustWallet(dustConfig);
+
+    /*
+     * WHAT THE WALLET CARRIES, NOT WHAT WE ASKED FOR.
+     *
+     * Every path that leaves a dust wallet in place reports through here, and
+     * the number it reports is read back off that wallet after the swap, never
+     * from the constant above. A swap that silently did not take, or a wallet
+     * whose fee arithmetic ignores the floor, refuses the install instead of
+     * printing a floor that is not in force.
+     */
+    let staleNote = '';
+    /*
+     * LOADED IN ITS OWN GUARD, AND THAT IS NOT TIDINESS.
+     *
+     * Everything else in this function is wallet SET-UP: if it fails, no wallet
+     * of ours is installed, the outer guard answers 'unchanged', and callers
+     * stop. These two imports serve a READING. Inside the outer guard, a
+     * dependency bump that moved a subpath would answer 'unchanged' and stop
+     * every money door in this project because a number could not be measured.
+     * A measurement that cannot be taken must never be able to stop a payout,
+     * so it fails to null here and the verdict treats a missing applied reading
+     * as missing rather than as bad.
+     */
+    let measureWith: { dustV1: any; ledgerV9: any } | null = null;
+    try {
+      measureWith = {
+        dustV1: await import('@midnightntwrk/wallet-sdk/dust/v1'),
+        ledgerV9: await import('@midnightntwrk/ledger-v9'),
+      };
+    } catch { /* the reading is skipped; the install is not */ }
+
+    const settle = (how: 'restored' | 'fresh', detail: string): DustInstall => {
+      const arrived = arrivedOverhead(wallet?.wallet?.dust);
+      /*
+       * MEASURED ON THE WALLET'S OWN CONFIGURATION, NOT ON OURS.
+       *
+       * Handing this the local object would make the third number a second
+       * reading of the first, so there is no fallback to it: a wallet that will
+       * not say what it carries leaves this null, which the verdict treats as
+       * missing rather than as bad.
+       */
+      let applied: { value: bigint | null; problem?: string } = { value: null };
+      const installedParams =
+        (wallet?.wallet?.dust as any)?.constructor?.configuration?.costParameters;
+      if (measureWith && installedParams) {
+        applied = appliedOverhead(installedParams, {
+          makeTransacting: (c: any, g: any) =>
+            measureWith.dustV1.Transacting.makeDefaultTransactingCapability(c, g),
+          newTransaction: () =>
+            measureWith.ledgerV9.Transaction.fromParts(String(dustConfig.networkId ?? '')),
+          params: () => measureWith.ledgerV9.LedgerParameters.initialParameters(),
+        });
+      }
+      const reading: FeeFloorReading = {
+        passed: DUST_FEE_FLOOR,
+        arrived: arrived.value,
+        applied: applied.value,
+        ...(arrived.problem ? { problem: arrived.problem } : {}),
+      };
+      const verdict = feeFloorVerdict(reading);
+      return {
+        how: verdict.ok ? how : 'refused',
+        detail: detail ? `${verdict.line}, ${detail}` : verdict.line,
+        feeFloor: reading,
+        reason: verdict.reason,
+      };
+    };
 
     const cache = dustCachePath(root, network, masterSeed);
     if (existsSync(cache)) {
@@ -117,33 +214,44 @@ export async function installDustWallet(
        */
       const maxAgeMs = Number(process.env.MIDNIGHT_DUST_CACHE_MAX_AGE_MS || 3 * 60 * 60_000);
       const ageMs = Date.now() - statSync(cache).mtimeMs;
-      if (ageMs > maxAgeMs) {
+      /*
+       * A STALE CACHE COSTS THE CACHE, NOT THE FEE FLOOR.
+       *
+       * This branch used to RETURN here, which left the library's own dust
+       * sub-wallet in place — the one built from its defaults, where the
+       * overhead is nothing — while reporting the floor as though it had been
+       * installed. The floor is the reason this function exists: without it a
+       * fee can come out at zero, the balancer selects no dust coin, and the
+       * node refuses the transaction for carrying empty dust actions. So a
+       * cache too old to trust now falls through to the cold swap below, which
+       * is what the next comment already said the rule was.
+       */
+      const stale = ageMs > maxAgeMs;
+      if (stale) {
         const hours = (ageMs / 3_600_000).toFixed(1);
-        return {
-          how: 'fresh',
-          detail:
-            `fee floor ${DUST_FEE_FLOOR}; the cached state was ${hours}h old and was NOT used — ` +
-            'a stale dust view is rejected by the node as an invalid fee proof (error 170), ' +
-            'so this run resyncs from the chain and will take a few minutes longer',
-        };
-      }
-      const saved = readFileSync(cache, 'utf8');
-      if (saved.trim()) {
-        const restored = Dust.restore(saved);
-        if (restored) {
-          wallet.wallet.dust = restored;
-          const mins = (ageMs / 60_000).toFixed(0);
-          return { how: 'restored', detail: `fee floor ${DUST_FEE_FLOOR}, resumed from a state ${mins} min old` };
+        staleNote =
+          `the cached state was ${hours}h old and was NOT used — ` +
+          'a stale dust view is rejected by the node as an invalid fee proof (error 170), ' +
+          'so this run resyncs from the chain and will take a few minutes longer';
+      } else {
+        const saved = readFileSync(cache, 'utf8');
+        if (saved.trim()) {
+          const restored = Dust.restore(saved);
+          if (restored) {
+            wallet.wallet.dust = restored;
+            const mins = (ageMs / 60_000).toFixed(0);
+            return settle('restored', `resumed from a state ${mins} min old`);
+          }
         }
       }
     }
 
-    // No cache: still swap, because the fee floor matters more than the cache.
+    // No usable cache: still swap, because the fee floor matters more than the cache.
     const seeds = tk.WalletSeeds.fromMasterSeed(masterSeed);
     const fresh = Dust.startWithSeed(seeds.dust, LedgerParameters.initialParameters().dust);
     if (!fresh) throw new Error('startWithSeed returned nothing');
     wallet.wallet.dust = fresh;
-    return { how: 'fresh', detail: `fee floor ${DUST_FEE_FLOOR}, syncing from genesis (no cache yet)` };
+    return settle('fresh', staleNote || 'syncing from genesis (no cache yet)');
   } catch (e: any) {
     return { how: 'unchanged', detail: String(e?.message ?? e).slice(0, 160) };
   }
