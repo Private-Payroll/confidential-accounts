@@ -108,6 +108,32 @@ describe('what the indexer client brings with it', () => {
         + 'import of the package whose types it uses, and that is what keeps it loadable anywhere')
         .toEqual([]);
     });
+
+  /**
+   * **AND NEITHER DOES THE THIRD OF THE THREE, WHICH IS THE ONE HOLDING A
+   * SIGNER'S OWN MATERIAL.**
+   *
+   * The module that composes a call's private record has to be loadable
+   * wherever a call is assembled, and a module that pulled WebAssembly in with
+   * it would decide that place by accident rather than by the measurement
+   * above. It takes the contract's record as a TYPE, which erases, and the
+   * scheme's interface as a type as well - so what it costs to load is what
+   * this case says it costs.
+   *
+   * Measured through the same function as the two above, so the case that says
+   * "none" and the case that says "the ledger" differ in their subject and in
+   * nothing else.
+   */
+  it('and neither does the one that composes a signer\'s own record',
+    { timeout: 180_000 }, async () => {
+      const reached = await packagesReachedBy(join('src', 'web', 'private-state.ts'));
+
+      expect(reached,
+        'the module that composes a call\'s private record has started reaching WebAssembly. It '
+        + 'takes the contract\'s record as a type only, and that is what keeps it loadable on '
+        + 'whichever thread a call is assembled on')
+        .toEqual([]);
+    });
 });
 
 describe('the endpoints a wallet reports', () => {

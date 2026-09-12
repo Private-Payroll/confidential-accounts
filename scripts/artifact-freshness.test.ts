@@ -532,6 +532,7 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
       'src/midnight/deferred-set.test.ts',
       'src/midnight/ledger.test.ts',
       'src/midnight/the-key-reaches-the-circuit.test.ts',
+      'src/midnight/the-secret-comes-from-the-keyring.test.ts',
     ]);
     expect(keysCoverageProblem(WORKFLOW(), gated)).toBeNull();
   });
