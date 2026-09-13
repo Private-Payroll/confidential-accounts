@@ -39,6 +39,43 @@
  * caller refuses when any two of the three disagree, and says which.
  */
 
+/**
+ * THE FLOOR THE ENVIRONMENT ASKED FOR, AND WHY READING IT IS ITS OWN FUNCTION.
+ *
+ * The floor is overridable because the right value on a real network is a
+ * question for whoever operates it. It was read by handing the variable
+ * straight to `BigInt`, at the top level of a module, outside every guard.
+ *
+ * MEASURED: `abc`, `1e6` and `1_000_000` each throw `SyntaxError: Cannot
+ * convert ... to a BigInt` AT IMPORT TIME. Not inside a try, not inside a
+ * function, not at the point a door decides anything - at import. Every door
+ * that reaches a wallet imports this by one route or another, so a mistyped
+ * variable stops all of them at once, with a message naming neither the
+ * variable nor anything to do about it.
+ *
+ * AND THE WORST SPELLING IS THE ONE THE SOURCE ITSELF USES. The default in the
+ * code beside it is written `1_000_000`, because that is how a number is
+ * written in this language; typed into a shell it is the spelling that throws.
+ * The most natural thing to copy is the one that breaks everything.
+ *
+ * So the read happens here, it never throws, and a value it cannot use becomes
+ * a floor of nothing WITH A REASON ATTACHED. A floor of nothing is already
+ * refused below, so a bad override now stops a door the same way every other
+ * bad floor does - loudly, at the point of decision, naming what to fix.
+ */
+export function feeFloorFrom(raw: string | undefined, fallback: bigint): { value: bigint; problem?: string } {
+  if (raw === undefined || raw.trim() === '') return { value: fallback };
+  const text = raw.trim();
+  if (!/^-?[0-9]+$/.test(text)) {
+    return {
+      value: 0n,
+      problem: `the fee floor was set to "${text.slice(0, 40)}", which is not a whole number of specks. `
+        + 'Digits only, with no separators, no point and no exponent.',
+    };
+  }
+  return { value: BigInt(text) };
+}
+
 /** The three numbers, kept apart so a disagreement between them is visible. */
 export type FeeFloorReading = {
   /** The value this project asked for. */
@@ -124,7 +161,11 @@ export function feeFloorVerdict(r: FeeFloorReading): FeeFloorVerdict {
       line:
         `the fee floor is set to ${r.passed}, which is not a floor. A fee that can come out at ` +
         'nothing selects no dust coin, and a transaction carrying no dust spend is refused as ' +
-        'malformed. Set it to a positive number of specks, or leave it unset for the default.',
+        'malformed. Set it to a positive number of specks, or leave it unset for the default.' +
+        /* THE REASON TRAVELS WITH THE REFUSAL. A floor of nothing that came from an
+         * override nobody could read is a different thing to fix from one that was
+         * deliberately set to zero, and only one of the two is a typing mistake. */
+        (r.problem ? ` ${r.problem}` : ''),
     };
   }
   if (r.arrived === null) {

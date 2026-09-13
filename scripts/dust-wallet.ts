@@ -39,7 +39,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  appliedOverhead, arrivedOverhead, feeFloorVerdict,
+  appliedOverhead, arrivedOverhead, feeFloorFrom, feeFloorVerdict,
   type FeeFloorReading, type FeeFloorReason,
 } from './dust-fee-floor.js';
 
@@ -50,7 +50,17 @@ import {
  * actually quoted on preview have been single digits. Env-overridable because
  * the right value on a real network is a question for whoever operates it.
  */
-export const DUST_FEE_FLOOR = BigInt(process.env.MIDNIGHT_DUST_FEE_FLOOR || 1_000_000);
+const REQUESTED_FEE_FLOOR = feeFloorFrom(process.env.MIDNIGHT_DUST_FEE_FLOOR, 1_000_000n);
+
+export const DUST_FEE_FLOOR = REQUESTED_FEE_FLOOR.value;
+
+/**
+ * Why the floor is what it is, when the override could not be used.
+ *
+ * Carried into the reading so the refusal names the variable rather than
+ * leaving a person to work out why a door suddenly reports a floor of nothing.
+ */
+export const DUST_FEE_FLOOR_PROBLEM = REQUESTED_FEE_FLOOR.problem;
 
 export const dustCachePath = (root: string, network: string, masterSeed: string) =>
   join(root, '.wallet-state', `dust-${network}-${masterSeed.slice(0, 16)}.state`);
@@ -177,11 +187,12 @@ export async function installDustWallet(
           params: () => measureWith.ledgerV9.LedgerParameters.initialParameters(),
         });
       }
+      const problem = DUST_FEE_FLOOR_PROBLEM ?? arrived.problem;
       const reading: FeeFloorReading = {
         passed: DUST_FEE_FLOOR,
         arrived: arrived.value,
         applied: applied.value,
-        ...(arrived.problem ? { problem: arrived.problem } : {}),
+        ...(problem ? { problem } : {}),
       };
       const verdict = feeFloorVerdict(reading);
       return {
