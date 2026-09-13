@@ -25,12 +25,15 @@
  *   3. `noteIndexFrom`: the one event for that commitment, owned by that vault,
  *      and its `mtIndex`.
  *
- * **"COULD NOT READ" AND "THE CHAIN SAYS NO" ARE DIFFERENT ANSWERS**, and they
- * are different errors here. A transaction the node has finalised can still be
+ * **THERE ARE THREE ANSWERS AND THEY ARE THREE ERRORS**, because each one asks
+ * for a different act. A transaction the node has finalised can still be
  * missing from the indexer for a moment afterwards; that is
  * `NoteIndexUnreadable`, and reading again later is the answer to it. A
  * transaction the chain holds that did not create this note is
- * `NoteIndexRefused`, and reading again changes nothing.
+ * `NoteIndexRefused`, and reading again changes nothing. **And a question the
+ * indexer will not take at all is `NoteIndexUnaskable`** - not the chain being
+ * slow and not the chain saying no, but this client and that indexer out of
+ * step, which no amount of reading again repairs.
  */
 import type { Hex } from '../core/crypto.js';
 import type { NotePool } from './vault-ledger.js';
@@ -76,8 +79,9 @@ export interface NoteEvents {
   /**
    * Every zswap event the chain holds for one transaction.
    *
-   * Throws `NoteIndexUnreadable` when it cannot say, and never answers an empty
-   * list for a transaction it could not find.
+   * Throws `NoteIndexUnreadable` when it cannot say YET, `NoteIndexUnaskable`
+   * when the question itself will not be taken, and never answers an empty list
+   * for a transaction it could not find.
    */
   eventsOf(tx: CreatingTransaction): Promise<ReadonlyArray<ServedEvent>>;
 }
@@ -87,6 +91,26 @@ export class NoteIndexUnreadable extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options);
     this.name = 'NoteIndexUnreadable';
+  }
+}
+
+/**
+ * **THE QUESTION ITSELF COULD NOT BE PUT, AND PUTTING IT AGAIN WILL NOT HELP.**
+ *
+ * Not the chain being slow and not the chain saying no: the indexer and this
+ * client disagree about what may be ASKED. A field that has been renamed, a
+ * query this schema does not have, an argument it does not take. **Every one of
+ * those used to be reported as "read again shortly"**, so somebody reading it
+ * waits, and reads again, for ever.
+ *
+ * It is a third answer rather than either of the other two because it needs a
+ * different act: neither waiting nor accepting that the note has no index, but
+ * a client and an indexer brought back into step.
+ */
+export class NoteIndexUnaskable extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = 'NoteIndexUnaskable';
   }
 }
 
@@ -102,6 +126,83 @@ const bare = (hex: string): string => hex.trim().toLowerCase().replace(/^0x/, ''
 
 const named = (tx: CreatingTransaction): string =>
   'hash' in tx ? `transaction ${tx.hash}` : `transaction identifier ${tx.identifier}`;
+
+/* ------------------------------------------------------------------ *
+ * which kind of no a GraphQL error is
+ * ------------------------------------------------------------------ */
+
+/**
+ * **THE SHAPES THAT MEAN THE QUESTION IS WRONG RATHER THAN THE MOMENT.**
+ *
+ * GraphQL says nothing about which errors are permanent, so this is read off
+ * what servers actually send: a validation code in `extensions`, or one of the
+ * sentences a schema check produces. It is deliberately a list of ways to say
+ * PERMANENT and not a list of ways to say transient.
+ */
+const CANNOT_BE_ASKED_CODES = new Set([
+  'GRAPHQL_VALIDATION_FAILED', 'GRAPHQL_PARSE_FAILED', 'BAD_USER_INPUT',
+]);
+
+/*
+ * **`PERSISTED_QUERY_NOT_FOUND` IS NOT ON THAT LIST AND IT LOOKS LIKE IT
+ * SHOULD BE.** In the convention that sends it, it means *send the same
+ * question again with its full text* - so the act it asks for is one more
+ * request, which is the opposite of what this file would say about it. The
+ * question above is always sent with its full text, so nothing here should ever
+ * produce it; something in front of the indexer could.
+ */
+
+const CANNOT_BE_ASKED_SAYS = [
+  /cannot query field/i, /unknown field ["']/i, /unknown argument ["']/i, /unknown type ["']/i,
+  /^syntax error/i, /is not defined by type/i, /did not match expected type/i,
+  /must not have a selection/i, /of required type/i, /^validation error/i,
+];
+
+/**
+ * **WHETHER ASKING AGAIN COULD POSSIBLY ANSWER, AND THE DEFAULT IS THAT IT
+ * COULD.**
+ *
+ * Getting this wrong in one direction tells somebody to wait for an answer that
+ * will never come; **getting it wrong in the other tells them to stop waiting
+ * for one that would have**. The second is worse, because a note whose index is
+ * never read is money nobody reaches. So an error is permanent only when it
+ * SAYS it is, and everything unrecognised stays retryable.
+ */
+export function theQuestionCannotBeAsked(errors: readonly unknown[]): boolean {
+  return errors.some((e) => {
+    const err = e as { message?: unknown; extensions?: { code?: unknown } } | null;
+    const code = err?.extensions?.code;
+    if (typeof code === 'string' && CANNOT_BE_ASKED_CODES.has(code)) return true;
+    const said = typeof err?.message === 'string' ? err.message : '';
+    return CANNOT_BE_ASKED_SAYS.some((shape) => shape.test(said));
+  });
+}
+
+/**
+ * **EVERY ERROR, NOT THE FIRST.** A schema that has moved usually complains
+ * about several fields at once, and a reader shown one of them fixes one of
+ * them. Bounded, because an error list is somebody else's output.
+ */
+export function everyThingSaid(errors: readonly unknown[]): string {
+  /*
+   * **BOUNDED IN LENGTH AS WELL AS IN COUNT, AND STRIPPED OF CONTROL
+   * CHARACTERS.** This text is somebody else's output and it reaches a
+   * terminal. Five messages with no length limit are as unbounded as fifty;
+   * and an escape sequence in one of them moves the cursor over lines this
+   * door has already printed, including the line saying nothing was written.
+   */
+  const plain = (text: string): string =>
+    // eslint-disable-next-line no-control-regex
+    text.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').slice(0, 400);
+  const said = errors.slice(0, 5).map((e) => {
+    const err = e as { message?: unknown; extensions?: { code?: unknown } } | null;
+    const code = typeof err?.extensions?.code === 'string' ? plain(err.extensions.code as string) : '';
+    const text = typeof err?.message === 'string' && err.message ? plain(err.message) : 'no message';
+    return code ? `${text} [${code}]` : text;
+  });
+  const more = errors.length - said.length;
+  return said.join('; ') + (more > 0 ? ` (and ${more} more)` : '');
+}
 
 /**
  * **THE COMMITMENT THE CHAIN HOLDS FOR A NOTE THIS VAULT OWNS.**
@@ -320,9 +421,16 @@ export function indexerNoteEvents(
       }
 
       if (Array.isArray(body?.errors) && body.errors.length > 0) {
+        const said = everyThingSaid(body.errors);
+        if (theQuestionCannotBeAsked(body.errors)) {
+          throw new NoteIndexUnaskable(
+            `the indexer will not take this question about ${where}: ${said}. That is not the `
+            + 'chain being slow and it is not the chain saying no about the note - it is this '
+            + 'client asking for something the indexer does not have, so asking again changes '
+            + 'nothing. Nothing is recorded.');
+        }
         throw new NoteIndexUnreadable(
-          `the indexer refused the question about ${where}: `
-          + `${String(body.errors[0]?.message ?? 'no message')}. Nothing is recorded.`);
+          `the indexer refused the question about ${where}: ${said}. Nothing is recorded.`);
       }
       const txs = body?.data?.transactions;
       if (!Array.isArray(txs)) {

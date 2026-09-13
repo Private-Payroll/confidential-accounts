@@ -178,6 +178,21 @@ export interface PayoutRecord {
   readonly opensAt: string;
   readonly closesAt: string;
   readonly createdAt: string;
+  /**
+   * **WHICH ASSET, AND WHICH LEDGER TOKEN, THE APPROVALS WERE GATHERED FOR.**
+   *
+   * **ABSENT ON RECORDS WRITTEN BEFORE THEY WERE KEPT**, which is why they are
+   * optional and why a record without them resumes exactly as it used to.
+   *
+   * They are kept because a leaf commits to the TOKEN, so two runs of one
+   * record under two tokens are two different leaves and therefore two
+   * different proposals - and the account's guarantee is per leaf, so it does
+   * not refuse the second. A door whose asset is a literal cannot reach that;
+   * one that derives it from a registry can, the moment the registry's answer
+   * changes between two runs of the same record.
+   */
+  readonly asset?: string;
+  readonly token?: string;
 }
 
 export interface PaymentAsk {
@@ -186,6 +201,9 @@ export interface PaymentAsk {
   readonly payTo: string;
   readonly amount: bigint;
   readonly reference: string;
+  /** What this run would settle in. Recorded, and compared when a record carries it. */
+  readonly asset?: string;
+  readonly token?: string;
 }
 
 export function newPayoutRecord(
@@ -202,6 +220,8 @@ export function newPayoutRecord(
     amount: ask.amount.toString(), reference: ask.reference,
     seed, salt, runId: `payout:${nowIso}`, opensAt: opensAt.toString(), closesAt: closesAt.toString(),
     createdAt: nowIso,
+    ...(ask.asset === undefined ? {} : { asset: ask.asset }),
+    ...(ask.token === undefined ? {} : { token: ask.token }),
   };
 }
 
@@ -269,6 +289,12 @@ export function parsePayoutRecord(raw: unknown, where: string): PayoutRecord {
   for (const k of ['network', 'vault', 'payTo', 'reference', 'runId', 'createdAt'] as const) {
     if (typeof r![k] !== 'string' || !(r![k] as string)) bad(`it has no ${k}`);
   }
+  /* Optional, because records written before they were kept have neither. Present means usable. */
+  for (const k of ['asset', 'token'] as const) {
+    if (r![k] !== undefined && (typeof r![k] !== 'string' || !(r![k] as string))) {
+      bad(`its ${k} is present and is not a usable value`);
+    }
+  }
   for (const k of ['seed', 'salt'] as const) {
     if (typeof r![k] !== 'string' || !HEX32.test(r![k] as string)) bad(`its ${k} is not 32 bytes of lower-case hex`);
   }
@@ -287,18 +313,70 @@ export function parsePayoutRecord(raw: unknown, where: string): PayoutRecord {
  * pay what the signers approved while the person believed they had asked for
  * something else. So a difference is refused, naming every field that differs.
  */
-export function assertRecordIsThisPayment(record: PayoutRecord, ask: PaymentAsk): void {
+export function assertRecordIsThisPayment(
+  record: PayoutRecord,
+  ask: PaymentAsk,
+  /**
+   * **WHETHER A RECORD THAT NAMES NO ASSET MAY BE FINISHED AT ALL.**
+   *
+   * **DEFAULT YES, AND A DOOR THAT DERIVES ITS ASSET MUST SAY NO.** A leaf
+   * commits to the token, so a record finished under a different one builds a
+   * different leaf, a different proposal, and a second payable run the account
+   * has never seen. Records written before the token was kept name neither,
+   * so on a door whose asset can change between two runs there is nothing to
+   * compare and nothing to be sure of.
+   *
+   * A door whose asset is a literal and whose token is a constant cannot reach
+   * that, and refusing its old records would strand a payment that is perfectly
+   * safe to finish - with its proposal open and approved on chain, which is the
+   * expensive half already paid for. So it is per door, argued at each call
+   * site, and the answer that needs no argument is the strict one.
+   */
+  theAssetCanChangeBetweenRuns = true,
+): void {
   const differs: string[] = [];
   if (record.network !== ask.network) differs.push(`network (recorded ${record.network}, asked ${ask.network})`);
   if (record.vault !== ask.vault) differs.push(`vault (recorded "${record.vault}", asked "${ask.vault}")`);
   if (record.payTo !== ask.payTo) differs.push('the address paid');
   if (record.amount !== ask.amount.toString()) differs.push(`amount (recorded ${record.amount}, asked ${ask.amount})`);
   if (record.reference !== ask.reference) differs.push(`reference (recorded "${record.reference}", asked "${ask.reference}")`);
+  /*
+   * **THE ASSET AND THE TOKEN, WHEN THE RECORD CARRIES THEM.**
+   *
+   * A leaf commits to the token, so finishing a record under a different one
+   * builds a different leaf, a different proposal, and a run that proposes a
+   * SECOND time while the first proposal is open, approved and payable. The
+   * account records payments per leaf, so it does not refuse it.
+   *
+   * A record written before these were kept carries neither, and resumes as it
+   * always did: comparing an absent value against a present one would refuse
+   * every record that predates this.
+   */
+  if (record.asset !== undefined && ask.asset !== undefined && record.asset !== ask.asset) {
+    differs.push(`asset (recorded ${record.asset}, asked ${ask.asset})`);
+  }
+  if (record.token !== undefined && ask.token !== undefined && record.token !== ask.token) {
+    differs.push('the ledger token this settles in, which is what the approved leaf commits to');
+  }
+  /*
+   * **A RECORD THAT NAMES NEITHER CANNOT BE PROVED TO BE THIS PAYMENT.** It was
+   * written before the token was kept, and on a door that derives its asset the
+   * registry may have answered differently then. Comparing nothing against
+   * something is not a comparison, and the run that follows a passed comparison
+   * proposes.
+   */
+  if (theAssetCanChangeBetweenRuns && ask.token !== undefined && record.token === undefined) {
+    differs.push(
+      'the recorded payment names no asset and no ledger token, so it was written before those '
+      + 'were kept and there is nothing here that says it settles in the same money this run '
+      + 'would. A payment\x27s approved leaf commits to its token');
+  }
   if (differs.length === 0) return;
   throw new Error(
     `there is already an unfinished payment out of this vault, and it is not the one asked for now: `
     + `${differs.join('; ')}. Nothing was proposed, approved or paid by this run. Finish the `
-    + 'recorded payment by running the door again with its answers. DO NOT MOVE THE RECORD ASIDE TO '
+    + 'recorded payment by running the door again with its answers, or let its window close and '
+    + 'start again afterwards. DO NOT MOVE THE RECORD ASIDE TO '
     + 'START ANOTHER WHILE ITS WINDOW IS OPEN: if it was already approved, it stays payable until the '
     + 'window closes, and a new record is a new payment, so the same money could be paid twice. Once '
     + 'its window has closed, this door refuses the old record and says so.');

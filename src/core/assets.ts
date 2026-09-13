@@ -22,6 +22,8 @@
  * list rather than two, and it carries each row's ledger identity too.
  */
 
+import { NETWORK as THE_NETWORK_THIS_BUILD_IS_ON } from 'midnight-identity/network';
+
 /** An asset's code. `GBP`, `USDC`, `NIGHT`. Uppercase, ASCII, no spaces. */
 export type AssetId = string;
 
@@ -94,6 +96,107 @@ const NIGHT_ON_THE_LEDGER: LedgerIdentity = Object.freeze({
 /** No form on Midnight at all: money that lives on another chain, or on none. */
 const NOT_ON_MIDNIGHT: LedgerIdentity = Object.freeze({ shielded: null, unshielded: null });
 
+/* ------------------------------------------------------------------ *
+ * the test settlement asset, and the networks it may exist on
+ * ------------------------------------------------------------------ */
+
+/**
+ * **THE ONLY ASSET IN THIS REGISTRY THAT CAN BE PAID PRIVATELY, AND IT IS
+ * WORTHLESS ON PURPOSE.**
+ *
+ * A company denominates pay in a currency and settles in a stablecoin. NIGHT
+ * cannot be the settlement asset: `nativeToken()` is unshielded by definition,
+ * so there is no private NIGHT and there never will be. A private payment
+ * spends a shielded note, and a shielded note on Midnight is a MINTED token. So
+ * a test stablecoin is what the private path can be walked with until a real
+ * one is issued, and this row is it.
+ *
+ * **DECIMALS ARE NOT A CHAIN FACT.** On chain an amount is an integer; six
+ * decimal places is only how `parseAmount` and `formatAmount` read and print
+ * it. Six because that is what a dollar stablecoin uses, so the path this
+ * exercises is the path the real one will take.
+ *
+ * **IT HAS NO PUBLIC FORM AND THE ROW MUST NOT CLAIM ONE.** Nothing has ever
+ * minted an unshielded token of this asset and no circuit could send one, so
+ * `unshielded` is `null` - a statement, not a gap.
+ */
+export const TEST_SETTLEMENT_ASSET: AssetId = 'TESTUSD';
+
+/**
+ * **THE COLOUR, AND IT IS A REAL ONE ON A REAL CHAIN.**
+ *
+ * Sixty-four hex characters that a mint actually produced on stagenet and that
+ * a settled transaction has already moved: the shielded deposit of 30 Aug
+ * carries it, and the note it created is held by a vault on chain today.
+ * **This is not a number chosen to look like one.** A colour nothing ever
+ * minted is money no wallet can fund a deposit with, which is a payment that
+ * fails after the approvals and the fee.
+ *
+ * **IT IS THE ONE VALUE HERE THAT A PERSON MAY CHANGE, AND ONLY BY MINTING.**
+ * A fresh mint produces a fresh colour, and that colour is read off the mint's
+ * own answer rather than derived, so the way to change it is to mint and put
+ * the number the mint reports here. Changing it to anything else names money
+ * that does not exist.
+ */
+const TEST_SETTLEMENT_COLOUR = 'abda184485c6abbbe4440d65b99ef88e0f79f61ec19af52a5bb0d91b4a824679';  // not-a-secret: the colour a mint produced on a public test network, published by the chain itself and readable by anyone; this is the asset's own identity and there is no other way to name it
+
+/**
+ * **WHERE A WORTHLESS ASSET IS ALLOWED TO EXIST, AND IT IS A CLOSED LIST.**
+ *
+ * A test asset that reached a real network would let a payroll run pay real
+ * people in a token backed by nothing, approved by real signers, settled and
+ * unrecoverable. **So this is a list of networks it MAY exist on and not a list
+ * of networks it may not**: a network nobody has thought of yet is refused by
+ * default rather than admitted by default, and that is the whole difference.
+ *
+ * `mainnet` is named in the test beside this file for exactly one reason: so
+ * that adding it here turns a test red that says why.
+ */
+export const NETWORKS_A_TEST_ASSET_MAY_EXIST_ON: readonly string[] = Object.freeze(['stagenet']);
+
+/**
+ * **AND THE ANSWER IS COMPILED IN, NOT CONFIGURED.**
+ *
+ * `midnight-identity/network` exports one constant naming the network both
+ * products are built for. It is not read from `.env`, from `process.env`, from
+ * a build flag or from a hostname, and it CANNOT be: a Midnight address carries
+ * the network name inside the string, so a deployment able to disagree with
+ * that constant is a deployment writing addresses no wallet in the pair can
+ * read. That property is why the constant is where it is, and it is what makes
+ * it a safe thing to hang this refusal on.
+ *
+ * **THERE IS NO OVERRIDE AND NONE MAY BE ADDED.** Not an environment variable,
+ * not a flag, not an argument with a default. A test asset reaching mainnet is
+ * the worst thing in this file, and the way that happens is somebody adding a
+ * way to say "yes, really".
+ */
+export const aTestAssetMayExistOn = (network: string): boolean =>
+  NETWORKS_A_TEST_ASSET_MAY_EXIST_ON.includes(network);
+
+/** Whether a code names an asset that exists only so the private path can be walked. */
+export const isATestAsset = (code: AssetId): boolean => code === TEST_SETTLEMENT_ASSET;
+
+/**
+ * The test rows a given network gets, which is all of them or none of them.
+ *
+ * A function of the network name and nothing else, so every network this
+ * toolchain knows can be asked the question in a test - including the ones
+ * nobody runs.
+ */
+export function testAssetsFor(network: string): readonly Asset[] {
+  if (!aTestAssetMayExistOn(network)) return [];
+  return [{
+    code: TEST_SETTLEMENT_ASSET,
+    name: 'Test Dollar',
+    kind: 'token',
+    decimals: 6,
+    chain: 'midnight',
+    ledger: Object.freeze({ shielded: TEST_SETTLEMENT_COLOUR, unshielded: null }),
+    enabled: true,
+    sortOrder: 90,
+  }];
+}
+
 /**
  * The registry every build runs on.
  *
@@ -101,6 +204,11 @@ const NOT_ON_MIDNIGHT: LedgerIdentity = Object.freeze({ shielded: null, unshield
  * integer decision was necessary rather than tidy — 18 decimals do not fit in a
  * JavaScript number — so it belongs in the table and in the tests from the
  * first day, whether or not anybody is paid in it yet.
+ *
+ * **THE TEST SETTLEMENT ASSET IS APPENDED BY THE NETWORK AND NOT BY HAND.** On
+ * any network it may not exist on, `testAssetsFor` returns nothing and the code
+ * resolves to no asset at all - `require` refuses it exactly as it refuses a
+ * code nobody has ever written.
  */
 export const SEED_ASSETS: readonly Asset[] = Object.freeze([
   { code: 'GBP', name: 'Pound Sterling', kind: 'fiat', decimals: 2, chain: null, ledger: NOT_ON_MIDNIGHT, enabled: true, sortOrder: 10 },
@@ -109,6 +217,7 @@ export const SEED_ASSETS: readonly Asset[] = Object.freeze([
   { code: 'USDC', name: 'USD Coin', kind: 'token', decimals: 6, chain: 'ethereum', ledger: NOT_ON_MIDNIGHT, enabled: true, sortOrder: 40 },
   { code: 'NIGHT', name: 'Night', kind: 'token', decimals: 6, chain: 'midnight', ledger: NIGHT_ON_THE_LEDGER, enabled: true, sortOrder: 50 },
   { code: 'ETH', name: 'Ether', kind: 'token', decimals: 18, chain: 'ethereum', ledger: NOT_ON_MIDNIGHT, enabled: false, sortOrder: 60 },
+  ...testAssetsFor(THE_NETWORK_THIS_BUILD_IS_ON),
 ] as const);
 
 /* ------------------------------------------------------------------ *
@@ -132,24 +241,35 @@ export type PrivateForm =
   | { readonly of: 'not-yet'; readonly why: string };
 
 /**
- * **THE ANSWER IS NO FOR EVERY ASSET TODAY, AND THAT IS ESTABLISHED RATHER
- * THAN ASSUMED.**
+ * **THE ANSWER IS READ OFF THE ASSET'S OWN ROW, AND IT IS YES FOR EXACTLY THE
+ * ASSETS THAT HAVE A PRIVATE TOKEN.**
  *
  * Money is paid privately by sending a SHIELDED note, and a note has a colour.
- * **NIGHT is unshielded by definition** — `nativeToken(): UnshieldedTokenType` —
- * so there is no private NIGHT to send. Every other asset in this registry sits
- * on another chain or on none at all, so there is no note of it here either.
+ * An asset that states a private token has one to send; an asset that states
+ * `null` does not, and no amount of wanting produces one.
  *
- * **The converter is the one thing that changes this**, for all of them by the
- * same mechanism: it takes a public deposit and mints a wrapped shielded token
- * against it. **Nothing in `src/` reaches a converter today** and no converter
- * is deployed, which is why this answers the way it does rather than by a list
- * somebody has to remember to edit.
+ * **NIGHT IS STILL NO, AND IT ALWAYS WILL BE** — `nativeToken()` is an
+ * `UnshieldedTokenType`, so there is no private NIGHT and no converter changes
+ * that. The assets that sit on another chain or on none at all are no for the
+ * other reason: there is no note of them here at all.
  *
- * **TWO REASONS AND NOT SIX**, both read off `chain` rather than off a table of
- * asset codes. A per-code table is the hardcoded list this exists to replace.
+ * **THE CONVERTER IS STILL WHAT CHANGES THE REST**, for all of them by the same
+ * mechanism: it takes a public deposit and mints a wrapped shielded token
+ * against it. Nothing in `src/` reaches a converter and none is deployed.
+ *
+ * **THREE ANSWERS AND NOT SIX.** One is read off the row; the other two are
+ * read off `chain`. Neither is a table of asset codes, because a table is the
+ * hardcoded list this exists to replace and it would go on saying no for an
+ * asset that had gained a form.
  */
 export function privateForm(asset: Asset): PrivateForm {
+  /*
+   * **THE ROW FIRST, AND THIS IS THE WHOLE OF WHAT "AVAILABLE" MEANS.** The
+   * asset has a token in the private form, so a note of it can be sent. It says
+   * nothing about whether a particular vault holds any, which is a different
+   * question asked by a different reader at the moment of payment.
+   */
+  if (ledgerFormOf(asset, 'shielded').of === 'token') return { of: 'available' };
   /*
    * **`why` SAYS WHAT THE AVAILABLE SIDE COSTS, NOT ONLY THAT THE OTHER SIDE IS
    * SHUT.** product-copy pass.
@@ -194,6 +314,7 @@ export class StaticAssetRegistry implements AssetRegistry {
 
   constructor(assets: readonly Asset[] = SEED_ASSETS) {
     refuseAnAmbiguousLedgerIdentity(assets);
+    refuseATestAssetOffItsNetwork(assets, THE_NETWORK_THIS_BUILD_IS_ON);
     this.byCode = new Map(assets.map(a => [a.code, { ...a, ledger: Object.freeze({ ...a.ledger }) }]));
   }
 
@@ -317,6 +438,34 @@ function refuseAnAmbiguousLedgerIdentity(rows: readonly Asset[]): void {
       seen.set(`${form}:${token}`, row.code);
     }
   }
+}
+
+/**
+ * **A REGISTRY CARRYING A TEST ASSET ON A NETWORK THAT MAY NOT HAVE ONE DOES
+ * NOT BUILD.**
+ *
+ * `SEED_ASSETS` already leaves the row out off stagenet, so on the ordinary
+ * path this never fires. **It is here for the path that is not ordinary**: a
+ * registry assembled by hand, a list spread from somewhere else, a row copied
+ * into a fixture that then reaches a server. The seed is one way to get a row
+ * into a registry and this is the only way to get a registry.
+ *
+ * It throws rather than dropping the row. A registry quietly missing an asset
+ * is a payroll run that refuses for a reason nobody can find; a registry that
+ * refuses to exist is a process that does not start, which is what should
+ * happen when a worthless token is a network away from real people.
+ */
+export function refuseATestAssetOffItsNetwork(rows: readonly Asset[], network: string): void {
+  if (aTestAssetMayExistOn(network)) return;
+  const found = rows.filter(r => isATestAsset(r?.code)).map(r => r.code);
+  if (found.length === 0) return;
+  throw new Error(
+    `${found.join(', ')} ${found.length === 1 ? 'is a test asset' : 'are test assets'} and this `
+    + `build is on "${network}". A test asset is backed by nothing, so a payroll run settling in `
+    + 'one pays real people nothing at all, with real approvals behind it and no way back. It '
+    + `exists on ${NETWORKS_A_TEST_ASSET_MAY_EXIST_ON.join(', ')} and nowhere else. Remove the `
+    + 'row, or run this build on a network a test asset is allowed on; there is no setting that '
+    + 'permits it and none may be added.');
 }
 
 /*

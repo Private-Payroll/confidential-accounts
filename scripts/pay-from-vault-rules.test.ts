@@ -464,3 +464,87 @@ describe('§12 where a finished record goes, and that the check against paying i
       .startsWith(finishedRecordPrefix('stagenet-vault-payout-payroll-test-3.json'))).toBe(false);
   });
 });
+
+/* ------------------------------------------------------------------ *
+ * THE ASSET AND THE TOKEN A RECORD WAS APPROVED FOR
+ * ------------------------------------------------------------------ */
+
+describe('a record is finished in the money it was approved for, or not at all', () => {
+  const NIGHT = '00'.repeat(32);
+  const OTHER = 'ab'.repeat(32);
+  const askFor = (over: Record<string, unknown> = {}) => ({
+    network: 'stagenet', vault: 'payroll-test', payTo: 'mn_shield-addr_stagenet1qq', amount: 5n,
+    reference: 'september', asset: 'TESTUSD', token: OTHER, ...over,
+  });
+  const recordFor = (ask: ReturnType<typeof askFor>) =>
+    newPayoutRecord(ask, (() => { let n = 0; return () => (n++ === 0 ? '11' : '22').repeat(32) as Hex; })(),
+      1_800_000_000n, '2026-09-13T00:00:00.000Z');
+
+  it('WRITES the asset and the token into the record', () => {
+    const r = recordFor(askFor());
+    /* RED WHEN the record stops naming what it was approved for, which is what the comparison reads. */
+    expect(r.asset).toBe('TESTUSD');
+    expect(r.token).toBe(OTHER);
+  });
+
+  it('writes NEITHER when the ask names neither, so a caller that has none is unchanged', () => {
+    const r = recordFor(askFor({ asset: undefined, token: undefined }));
+    /* RED WHEN an absent asset is written as a placeholder, which a later comparison would trust. */
+    expect(r).not.toHaveProperty('asset');
+    expect(r).not.toHaveProperty('token');
+  });
+
+  it('REFUSES a record whose token is not the one this run would settle in', () => {
+    const record = recordFor(askFor());
+    /*
+     * RED WHEN the token is not compared. A leaf commits to the token, so
+     * finishing this record under another one builds a different leaf, a
+     * different proposal, and a SECOND payable run while the first is open,
+     * approved and inside its window. The account records payments per leaf and
+     * does not refuse it.
+     */
+    expect(() => assertRecordIsThisPayment(record, askFor({ token: NIGHT })))
+      .toThrow('the ledger token this settles in');
+    expect(() => assertRecordIsThisPayment(record, askFor({ asset: 'NIGHT', token: NIGHT })))
+      .toThrow('asset (recorded TESTUSD, asked NIGHT)');
+  });
+
+  it('REFUSES a record that names NEITHER on a door whose asset can change between runs', () => {
+    const legacy = recordFor(askFor({ asset: undefined, token: undefined }));
+    /*
+     * RED WHEN a record written before the token was kept is finished anyway on
+     * such a door. That is the same second-proposal hazard with nothing to
+     * compare: the record fixes the payee, the amount and the reference, and a
+     * leaf commits to the token.
+     */
+    expect(() => assertRecordIsThisPayment(legacy, askFor()))
+      .toThrow('names no asset and no ledger token');
+    expect(() => assertRecordIsThisPayment(legacy, askFor(), true))
+      .toThrow('names no asset and no ledger token');
+  });
+
+  it('FINISHES that same record on a door whose asset cannot change, which is not a hazard there', () => {
+    const legacy = recordFor(askFor({ asset: undefined, token: undefined }));
+    /*
+     * RED WHEN the strictness is applied where it strands money instead of
+     * saving it: a door whose asset is a literal and whose token is a constant
+     * cannot settle one record in two different moneys, and its old records
+     * have proposals already open and approved on chain.
+     */
+    expect(() => assertRecordIsThisPayment(legacy, askFor(), false)).not.toThrow();
+  });
+
+  it('takes a record and an ask that agree, on either kind of door', () => {
+    const record = recordFor(askFor());
+    /* RED WHEN a matching record is refused, which strands every resumed payment. */
+    for (const strict of [true, false]) {
+      expect(() => assertRecordIsThisPayment(record, askFor(), strict), String(strict)).not.toThrow();
+    }
+  });
+
+  it('REFUSES a record carrying a present-but-empty asset rather than reading past it', () => {
+    const record = { ...recordFor(askFor()), asset: '' };
+    /* RED WHEN an empty value is read as an absent one, which is a comparison that passes on nothing. */
+    expect(() => parsePayoutRecord(record, 'a record')).toThrow('its asset is present and is not a usable value');
+  });
+});

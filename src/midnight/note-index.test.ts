@@ -373,3 +373,116 @@ describe('§6 recording which transaction created a note, and never its index', 
     expect(saves).toEqual([]);
   });
 });
+
+/* ------------------------------------------------------------------ *
+ * WHICH KIND OF NO A GRAPHQL ERROR IS
+ * ------------------------------------------------------------------ */
+
+describe('a question the indexer will not take is not a question to ask again', () => {
+  it('names the permanent shapes as permanent, by code and by what they say', async () => {
+    const { theQuestionCannotBeAsked } = await import('./note-index.js');
+    const permanent = [
+      [{ message: 'x', extensions: { code: 'GRAPHQL_VALIDATION_FAILED' } }],
+      [{ message: 'x', extensions: { code: 'GRAPHQL_PARSE_FAILED' } }],
+      [{ message: 'x', extensions: { code: 'BAD_USER_INPUT' } }],
+      [{ message: 'Cannot query field "zswapLedgerEvents" on type "Transaction".' }],
+      [{ message: 'Unknown field "raw" on type "ZswapChainStateEvent".' }],
+      [{ message: 'Unknown argument "offset" on field "transactions".' }],
+      [{ message: 'Unknown type "TransactionOffset".' }],
+      [{ message: 'Syntax Error: Expected Name, found "}".' }],
+      [{ message: 'Field "raw" of required type "String!" was not provided.' }],
+      [{ message: 'Field "hash" is not defined by type "TransactionOffset".' }],
+      /* The permanent one second in the list, so a check that reads only the first goes red. */
+      [{ message: 'something else' }, { message: 'Cannot query field "raw".' }],
+    ];
+    for (const errors of permanent) {
+      /* RED WHEN a schema error is reported as "read again shortly", which is somebody waiting for ever. */
+      expect(theQuestionCannotBeAsked(errors), JSON.stringify(errors)).toBe(true);
+    }
+  });
+
+  it('LEAVES EVERYTHING IT DOES NOT RECOGNISE RETRYABLE, which is the safe direction', async () => {
+    const { theQuestionCannotBeAsked } = await import('./note-index.js');
+    const unknown: unknown[][] = [
+      [], [{ message: 'internal server error' }], [{ message: 'timeout' }],
+      [{ message: 'x', extensions: { code: 'INTERNAL_SERVER_ERROR' } }],
+      [{ message: 'too many requests' }], [{}], [null], [{ message: 42 }],
+      [{ message: 'x', extensions: { code: 42 } }],
+      /*
+       * The convention that sends this one means "send the same question again
+       * with its full text", so the act it asks for is one more request. RED
+       * WHEN it is added to the permanent codes.
+       */
+      [{ message: 'PersistedQueryNotFound', extensions: { code: 'PERSISTED_QUERY_NOT_FOUND' } }],
+      /* A server's own fault, worded like a schema complaint. Nothing a client changes fixes it. */
+      [{ message: 'ERROR: syntax error at or near ")" in the indexer\x27s own query' }],
+      [{ message: 'decoder met an unknown type tag while reading a block' }],
+    ];
+    for (const errors of unknown) {
+      /*
+       * RED WHEN an unrecognised error is called permanent. Telling somebody to
+       * stop waiting for an answer that would have come is worse than the
+       * defect this replaces: a note whose index is never read is money nobody
+       * reaches.
+       */
+      expect(theQuestionCannotBeAsked(errors), JSON.stringify(errors)).toBe(false);
+    }
+  });
+
+  it('carries EVERY error, with its code, not the first one only', async () => {
+    const { everyThingSaid } = await import('./note-index.js');
+    const said = everyThingSaid([
+      { message: 'first', extensions: { code: 'GRAPHQL_VALIDATION_FAILED' } },
+      { message: 'second' },
+      {},
+    ]);
+    /* RED WHEN errors after the first are dropped, which is how one of several fixes gets fixed. */
+    expect(said).toContain('first');
+    expect(said).toContain('second');
+    /* RED WHEN the code is dropped, which is the half a reader can look up. */
+    expect(said).toContain('[GRAPHQL_VALIDATION_FAILED]');
+    /* RED WHEN an error with no message prints as undefined. */
+    expect(said).toContain('no message');
+    /* RED WHEN somebody else's error list is printed without a bound. */
+    expect(everyThingSaid(Array.from({ length: 9 }, (_, i) => ({ message: `e${i}` }))))
+      .toContain('(and 4 more)');
+    /*
+     * RED WHEN a message is passed on at whatever length it arrives. Five
+     * messages with no length limit are as unbounded as fifty, and this text
+     * goes into a thrown error and on to a terminal.
+     */
+    expect(everyThingSaid([{ message: 'x'.repeat(5_000) }]).length).toBeLessThan(500);
+    /*
+     * RED WHEN control characters survive. An escape sequence in an indexer's
+     * error message moves the cursor back over lines this door has already
+     * printed, including the one saying nothing was written.
+     */
+    const nasty = everyThingSaid([{ message: 'before\u001b[1A\u001b[2Kafter\r\n' }]);
+    expect(nasty).toContain('before');
+    expect(nasty).toContain('after');
+    expect(/[\u0000-\u001f]/.test(nasty)).toBe(false);
+  });
+
+  it('THE READER THROWS THE THIRD ANSWER, and it is not either of the other two', async () => {
+    const { indexerNoteEvents, NoteIndexUnaskable, NoteIndexUnreadable } =
+      await import('./note-index.js');
+    const answering = (errors: unknown[]) => (async () => ({
+      ok: true, json: async () => ({ errors }),
+    })) as unknown as typeof fetch;
+
+    const schema = indexerNoteEvents('http://indexer.invalid',
+      answering([{ message: 'Cannot query field "raw" on type "ZswapChainStateEvent".' }]));
+    const failed = await schema.eventsOf({ hash: 'ab'.repeat(32) }).then(() => null, (e: Error) => e);
+    /* RED WHEN a permanent schema error is still reported as the chain not having caught up. */
+    expect(failed).toBeInstanceOf(NoteIndexUnaskable);
+    expect(failed).not.toBeInstanceOf(NoteIndexUnreadable);
+    expect((failed as Error).message).toMatch(/asking again changes\s+nothing/);
+    expect((failed as Error).message).toContain('Cannot query field');
+
+    const busy = indexerNoteEvents('http://indexer.invalid', answering([{ message: 'service unavailable' }]));
+    const later = await busy.eventsOf({ hash: 'ab'.repeat(32) }).then(() => null, (e: Error) => e);
+    /* RED WHEN an ordinary server error is reported as something reading again cannot fix. */
+    expect(later).toBeInstanceOf(NoteIndexUnreadable);
+    expect(later).not.toBeInstanceOf(NoteIndexUnaskable);
+  });
+});

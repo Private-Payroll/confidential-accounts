@@ -21,9 +21,25 @@ import type { Note } from './vault-notes.js';
  * hand the client the note set it would have decoded. The commitment circuits
  * are the compiled vault's own.
  */
+/**
+ * **AND THE CONTRACT STATES ITS OWN LEDGER SHAPE**, because every read of a
+ * deployed vault is now compared against it: a state with no shape is a state
+ * no vault has, and the client refuses it before it reads a field off it.
+ */
+const CANONICAL_SLOTS = ['cell', 'map', 'map', 'cell', 'map'] as const;
+const shapedLike = (slots: readonly string[]) => ({
+  state: { type: () => 'array', asArray: () => slots.map((k) => ({ type: () => k })) },
+});
+
 vi.doMock('../../contracts/managed-vault/contract/index.js', () => ({
   ledger: (d: any) => d,
   pureCircuits: vaultCircuits,
+  Contract: class {
+    constructor(_witnesses: unknown) { /* runs no circuit */ }
+    async initialState() {
+      return { currentContractState: { data: shapedLike(CANONICAL_SLOTS) } };
+    }
+  },
 }));
 
 /**
@@ -69,6 +85,7 @@ function vaultClient(opts: {
         const held = (opts.chainNotes ?? []).map(n => commitmentForNote(vaultCircuits as never, VAULT, n));
         return {
           data: {
+            ...shapedLike(CANONICAL_SLOTS),
             notes: {
               member: (c: Uint8Array) => held.includes(Buffer.from(c).toString('hex')),
               size: () => BigInt(held.length),

@@ -35,8 +35,52 @@
  * test already carries, and the fakes REFUSE providers that have none rather
  * than defaulting to some harness.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeAll } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { StateValue, ChargedState } from '@midnight-ntwrk/compact-runtime';
+
+/* ------------------------------------------------------------------ *
+ * a deployed vault's LEDGER, for a fake that has to be readable
+ * ------------------------------------------------------------------ */
+
+/**
+ * **THE SLOTS THIS BUILD'S OWN CONTRACT MAKES**, loaded once, from the contract
+ * itself rather than from a list somebody typed. The find now compares a
+ * deployed vault's ledger shape against this build's, so a fake whose state has
+ * no ledger is a fake no vault resembles.
+ *
+ * Nothing here proves, submits or reaches a network: a constructor runs no
+ * circuit, and the witnesses it is handed throw if anything calls one.
+ */
+let CANONICAL: unknown[] = [];
+const ALL_SLOTS: readonly number[] = [0, 1, 2, 3, 4];
+
+beforeAll(async () => {
+  const { Contract } = await import('../../contracts/managed-vault/contract/index.js');
+  const nothingCallsThese = new Proxy({}, {
+    get: () => () => { throw new Error('the vault find\x27s harness runs no circuit'); },
+  });
+  const built = await new (Contract as new (w: unknown) => {
+    initialState(c: unknown, a: { bytes: Uint8Array }): Promise<{
+      currentContractState: { data: { state: { asArray(): unknown[] } } };
+    }>;
+  })(nothingCallsThese).initialState(
+    { initialPrivateState: {}, initialZswapLocalState: { coinPublicKey: new Uint8Array(32) } },
+    { bytes: new Uint8Array(32) });
+  CANONICAL = built.currentContractState.data.state.asArray();
+});
+
+/** A contract state carrying exactly the named slots of this build's ledger. */
+const stateOfSlots = (take: readonly number[]) => {
+  if (CANONICAL.length === 0) {
+    throw new Error(
+      'this harness was asked for a vault state before the contract had stated its own ledger. '
+      + 'Defaulting to a state with no ledger is the shape that made every fake unreadable.');
+  }
+  let array = StateValue.newArray();
+  for (const at of take) array = array.arrayPush(CANONICAL[at] as never);
+  return new ChargedState(array);
+};
 
 /** The signing keys the fakes sample, so a test can tell "sampled" from "chosen". */
 const SAMPLED: Array<{ tag: string; value: string }> = [];
@@ -293,6 +337,16 @@ const world = (opts: {
   keys?: string[];
   /** A key the chain holds that differs from ours, to drive M-9's comparison. */
   corrupt?: string;
+  /**
+   * Which of this build's ledger slots the deployed vault actually carries.
+   *
+   * **DEFAULTS TO ALL OF THEM, WHICH IS WHAT A VAULT DEPLOYED FROM THIS BUILD
+   * HAS.** again: a state with no ledger on it could not fail the way a
+   * vault deployed from an older contract fails, so the fake carries a real
+   * one, assembled out of the slots this build's own contract constructor
+   * makes. Give a shorter list for a vault deployed before a field existed.
+   */
+  ledgerSlots?: readonly number[];
   nextAddress?: string;
   deployedOps?: string[];
 } = {}) => {
@@ -355,6 +409,12 @@ const world = (opts: {
           operation: (id: string) => ops.includes(id)
             ? { verifierKey: id === opts.corrupt ? new TextEncoder().encode('different') : KEY_OF(id) }
             : undefined,
+          /*
+           * A REAL LEDGER, NOT A PLACEHOLDER. It is built out of the slots this
+           * build's own contract constructor produces, so a vault this harness
+           * serves is readable exactly as far as a real one of that shape is.
+           */
+          data: stateOfSlots(opts.ledgerSlots ?? ALL_SLOTS),
         };
       },
     },
@@ -646,6 +706,47 @@ describe('the vault\'s find', () => {
     await expect(findDeployedVaultContract(
       providers, { compiledContract: {}, contractAddress: VAULT_A },
     )).rejects.toThrow(/Following operations: payout/);
+  });
+
+  /*
+   * **THE VAULT ON THIS PROJECT'S REGISTRY THAT PASSES EVERY OTHER CHECK.**
+   *
+   * A vault deployed on 29 Aug carries four ledger fields; the contract this
+   * build compiled declares five. Its circuits are the right seven and its
+   * verifier keys compare equal - measured against the live chain - so the two
+   * checks above pass it, and a client reading the fifth field off it reads
+   * past the end of its ledger. Here it is with the same circuits and the same
+   * keys as a good vault, refused on the one thing that differs.
+   */
+  it('refuses a vault whose LEDGER is a field short, with the same circuits and the same keys', async () => {
+    const { providers } = world({ ledgerSlots: [0, 1, 2, 3] });
+    const failure = await findDeployedVaultContract(
+      providers, { compiledContract: {}, contractAddress: VAULT_A },
+    ).then(() => null, (e: Error) => e);
+    /* RED WHEN the find resolves a vault this build cannot read, which is the defect this file is about. */
+    expect(failure).not.toBeNull();
+    expect(failure!.message).toMatch(/holds 4 ledger fields/);
+    expect(failure!.message).toMatch(/compiled has 5/);
+    /* RED WHEN a refusal on the money path does not say whether money moved. */
+    expect(failure!.message).toMatch(/Nothing was proved, submitted or spent\./);
+    /* RED WHEN the address is printed. */
+    expect(failure!.message).not.toContain(VAULT_A);
+  });
+
+  it('refuses BEFORE it hands back a call interface, so no circuit can be built on it', async () => {
+    const { providers } = world({ ledgerSlots: [0, 1, 3] });
+    await expect(findDeployedVaultContract(
+      providers, { compiledContract: {}, contractAddress: VAULT_A })).rejects.toThrow();
+    /* RED WHEN the refusal happens after the interface is made, which is a call away from a fee. */
+    expect(providers.__harness.interfaces).toEqual([]);
+  });
+
+  it('lets a vault of this build\x27s own ledger through, which every payment needs', async () => {
+    const { providers } = world();
+    /* RED WHEN the gate refuses the vault this build deploys. */
+    const found = await findDeployedVaultContract(
+      providers, { compiledContract: {}, contractAddress: VAULT_A });
+    expect(found.circuits).toEqual([...VAULT_CIRCUITS].sort());
   });
 
   it('a bare address with no contract is our ignorance, not an empty vault', async () => {

@@ -27,6 +27,7 @@ import type { ShieldedWaitOutcome } from './shielded-wallet.js';
 import {
   amountFromText, assertVaultTakesPrivateMoney, assertNoSignerIsDropped, depositVerdict,
   depositJournalFile, noColourRefusal, chooseOpener, openerVerdicts,
+  whatTheDepositLeftBehind,
 } from './deposit-to-vault.js';
 import { VAULT_CIRCUITS } from '../src/midnight/vault-contract.js';
 import type { VaultEntry } from '../src/midnight/vault-record.js';
@@ -451,5 +452,79 @@ describe('the opener is chosen by the key it holds, not by the id it is filed un
     expect(window).not.toMatch(/\.find\(/);
     expect(window).not.toMatch(/wrappingSecret\s*(\?\?|\]|\)|,)/);
     expect(window.match(/wrappingSecret/g) ?? []).toHaveLength(1); // chosen.wrappingSecret
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * WHAT THE DEPOSIT LEFT BEHIND, ON SCREEN
+ * ------------------------------------------------------------------ */
+
+describe('the two names one transaction has, and whether the note can be spent', () => {
+  const IDENTIFIER = `00${'de'.repeat(32)}`;
+  const HASH = 'de'.repeat(32);
+
+  it('prints BOTH names with their lengths, and says which one the note records', () => {
+    const lines = whatTheDepositLeftBehind({
+      ref: IDENTIFIER, createdIn: HASH, recordedFrom: 'the call' }).join('\n');
+
+    /*
+     * RED WHEN the door goes back to printing one name. The two are 33 and 32
+     * bytes off two different fields, and the one it used to print alone is the
+     * one the pool does not hold — so the number written down after a deposit
+     * was the number nothing was filed under.
+     */
+    expect(lines).toContain(IDENTIFIER);
+    expect(lines).toContain(HASH);
+    /* RED WHEN the lengths stop being printed, which is the only thing that tells the two apart on a screen. */
+    expect(lines).toContain('33 bytes');
+    expect(lines).toContain('32 bytes');
+    /*
+     * RED WHEN the screen stops saying which of the two the note actually
+     * records, OR stops saying what that one is FOR. A line that says "THIS is
+     * the one recorded" and no more leaves a reader with two numbers and no
+     * reason to keep the right one.
+     */
+    expect(lines).toMatch(/THIS is the one recorded[\s\S]*against the note, and the one a payment reads its place in the chain with/);
+    expect(lines).toMatch(/is NOT the name[\s\S]*the note records/);
+    /* RED WHEN a recorded note stops being reported as spendable. */
+    expect(lines).toContain('It can be spent.');
+    expect(lines).not.toMatch(/CANNOT BE SPENT/);
+  });
+
+  it('says where the hash came from, so a reader can tell a call from a chain read', () => {
+    for (const from of ['the call', 'the chain'] as const) {
+      /* RED WHEN the provenance of the recorded hash is dropped. */
+      expect(whatTheDepositLeftBehind({ ref: IDENTIFIER, createdIn: HASH, recordedFrom: from })
+        .join('\n'), from).toContain(`read from ${from}`);
+    }
+  });
+
+  it('SAYS THE NOTE CANNOT BE SPENT when nothing recorded its transaction, and why', () => {
+    const lines = whatTheDepositLeftBehind({
+      ref: IDENTIFIER, recordedFrom: 'nowhere',
+      stranded: 'the indexer could not be asked' }).join('\n');
+
+    /*
+     * RED WHEN a stranded note is reported like any other. This is the whole
+     * defect: the success line was printed either way, so a deposit that had
+     * just made money the vault cannot pay out looked exactly like one that
+     * had not.
+     */
+    expect(lines).toMatch(/CANNOT BE SPENT YET/);
+    expect(lines).not.toContain('It can be spent.');
+    /* RED WHEN the reason is dropped, leaving somebody to guess which failure it was. */
+    expect(lines).toContain('the indexer could not be asked');
+    /* RED WHEN the screen implies the money is gone. It is on chain and it is the vault's. */
+    expect(lines).toMatch(/Nothing is lost/);
+    /* RED WHEN it stops naming what resolves it, or the value that finds the transaction. */
+    expect(lines).toMatch(/Record that transaction against this note/);
+    expect(lines).toContain(IDENTIFIER);
+  });
+
+  it('never claims a hash it was not given', () => {
+    const lines = whatTheDepositLeftBehind({ ref: IDENTIFIER, recordedFrom: 'nowhere' }).join('\n');
+    /* RED WHEN a missing hash is filled in with a stand-in, which names money nothing filed. */
+    expect(lines).not.toContain('transaction hash');
+    expect(lines).toContain('no reason was given');
   });
 });
