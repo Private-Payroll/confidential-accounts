@@ -207,32 +207,35 @@ import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join, resolve } from 'node:path';
 import { createScreen } from './deploy-report.js';
-import { ENDPOINTS, type NetworkName } from '../src/midnight/network.js';
+import { theNetwork } from '../src/midnight/network.js';
+import { endpointsOf } from '../src/core/networks.js';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 
-const NETWORK = process.env.MIDNIGHT_NETWORK_ID || 'stagenet';
+const NETWORK = theNetwork();
 
 /**
  * **THE ENDPOINTS ARE NOT WRITTEN DOWN HERE.**
  *
- * `src/midnight/network.ts` is where they are declared and it is what every
- * client path already reads (`open-vault-pool.ts:289`). A URL typed into this
- * file would be a second copy of a value that has already moved under this
- * project once — and the read below is now the client's read, so it has to
- * point at the client's endpoints or it is measuring a different network.
+ * `src/core/networks.json` is where they are declared and it is what every
+ * client path already reads. A URL typed into this file would be a second copy
+ * of a value that has already moved under this project once - and the read
+ * below is now the client's read, so it has to point at the client's endpoints
+ * or it is measuring a different network.
+ *
+ * **THE STAGENET LITERALS THAT USED TO CLOSE THIS EXPRESSION ARE GONE.** They
+ * were a fallback for a network with no endpoints, so an unknown name reached
+ * stagenet instead of being refused - which is the one thing a permit-list
+ * exists to prevent, written as a convenience.
  *
  * `MIDNIGHT_INDEXER_URL` still overrides the query endpoint, because
  * `INDEXER-CHECK.command` and this instrument have always honoured it against a
  * local indexer. **The socket URL has no override and does not need one**: the
  * provider opens it only for subscriptions and nothing here subscribes.
  */
-const ENDPOINT = ENDPOINTS[NETWORK as NetworkName];
-const INDEXER = process.env.MIDNIGHT_INDEXER_URL
-  || ENDPOINT?.indexerUrl
-  || 'https://indexer.stagenet.shielded.tools/api/v4/graphql';
-const INDEXER_WS = ENDPOINT?.indexerWsUrl
-  || 'wss://indexer.stagenet.shielded.tools/api/v4/graphql/ws';
+const ENDPOINT = endpointsOf(NETWORK);
+const INDEXER = process.env.MIDNIGHT_INDEXER_URL || ENDPOINT.indexer;
+const INDEXER_WS = ENDPOINT.indexerWs;
 /**
  * **WHICH VAULT, AND THERE IS NO DEFAULT.**
  *

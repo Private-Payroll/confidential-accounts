@@ -42,8 +42,8 @@ handInWiring({
 
 const { app } = await import('./index.js');
 const { openRecord } = await import('../core/sealed-records.js');
-const { networkOfThePair } = await import('../midnight/network.js');
-const NETWORK = networkOfThePair(process.env.MIDNIGHT_NETWORK_ID);
+const { theNetwork } = await import('../midnight/network.js');
+const NETWORK = theNetwork();
 
 const identity = identityFromWords(TEST_MNEMONIC);
 const addressOf = (slot: number): string => addressOfVerifyingKey(

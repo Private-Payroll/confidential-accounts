@@ -14,11 +14,20 @@
  */
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { networkFromEnv, applyNetworkId } from '../src/midnight/network.js';
+import { theNetwork, applyNetworkId } from '../src/midnight/network.js';
+import { endpointsOf } from '../src/core/networks.js';
 
 const ROOT = process.cwd();
-const NETWORK = networkFromEnv(process.env.MIDNIGHT_NETWORK_ID, 'stagenet');
-const IDX = process.env.MIDNIGHT_INDEXER_URL || 'https://indexer.stagenet.shielded.tools/api/v4/graphql';
+const NETWORK = theNetwork();
+/*
+ * **THE ENDPOINTS COME FROM THE ONE RECORD AND ARE NOT WRITTEN OUT HERE.**
+ * A stagenet url typed into this file was a second copy of a value that has
+ * moved under this project once already, and it was a copy that could not be
+ * wrong in a way anything noticed: it was the fallback, so it answered
+ * whenever the real answer was missing.
+ */
+const THE = endpointsOf(theNetwork());
+const IDX = process.env.MIDNIGHT_INDEXER_URL || THE.indexer;
 const B = '\x1b[1m', D = '\x1b[2m', R = '\x1b[31m', G = '\x1b[32m', Y = '\x1b[33m', O = '\x1b[0m';
 
 async function gql(query: string, variables: Record<string, unknown> = {}): Promise<any> {
@@ -124,7 +133,11 @@ async function main() {
 
   /* ---------- the faucet ---------- */
   console.log(`${B}The faucet${O}`);
-  const base = 'https://faucet.stagenet.shielded.tools';
+  const base = THE.faucet;
+  if (base === null) {
+    console.log(`  ${D}this network gives no test money away, so there is no faucet to ask.${O}`);
+    return;
+  }
   for (const path of ['/api/health', '/api/drips', '/health', '/']) {
     try {
       const res = await fetch(base + path, { signal: AbortSignal.timeout(10000) });

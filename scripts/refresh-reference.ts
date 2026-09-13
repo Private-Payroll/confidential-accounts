@@ -24,6 +24,17 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
+import { theNetwork } from '../src/midnight/network.js';
+import { endpointsOf } from '../src/core/networks.js';
+
+/*
+ * **THE ENDPOINTS COME FROM THE ONE RECORD AND ARE NOT WRITTEN OUT HERE.**
+ * A stagenet url typed into this file was a second copy of a value that has
+ * moved under this project once already, and it was a copy that could not be
+ * wrong in a way anything noticed: it was the fallback, so it answered
+ * whenever the real answer was missing.
+ */
+const THE = endpointsOf(theNetwork());
 
 const ROOT = process.cwd();
 const BASELINE = join(ROOT, '.midnight', 'reference-baseline.json');
@@ -83,7 +94,7 @@ async function main() {
 
   /* ---------- the chain ---------- */
   try {
-    const rt = await get(process.env.MIDNIGHT_NODE_URL || 'https://rpc.stagenet.shielded.tools', {
+    const rt = await get(process.env.MIDNIGHT_NODE_URL || THE.node, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ id: 1, jsonrpc: '2.0', method: 'state_getRuntimeVersion', params: [] }),
     });
@@ -94,7 +105,7 @@ async function main() {
 
   /* ---------- the indexer's schema, hashed ---------- */
   try {
-    const idx = process.env.MIDNIGHT_INDEXER_URL || 'https://indexer.stagenet.shielded.tools/api/v4/graphql';
+    const idx = process.env.MIDNIGHT_INDEXER_URL || THE.indexer;
     // All THREE roots. Only introspecting queries is the mistake that cost us a
     // wrong conclusion about whether balances were readable at all.
     const q = `query { __schema {

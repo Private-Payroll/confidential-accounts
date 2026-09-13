@@ -78,7 +78,7 @@ import {
   parseVaultRegistry, addVault, updateVault, describeVaultForReport,
   type VaultEntry, type VaultRegistry,
 } from '../src/midnight/vault-record.js';
-import { applyNetworkId, networkFromEnv, ENDPOINTS } from '../src/midnight/network.js';
+import { applyNetworkId, theNetwork, ENDPOINTS } from '../src/midnight/network.js';
 import { explainNodeError, NODE_ERROR_CODES } from './node-errors.js';
 import { testEnvironmentFor, startEnvironment } from './test-environment.js';
 import { bringUpWallet } from './wallet-bringup.js';
@@ -97,7 +97,7 @@ import {
 const ROOT = process.cwd();
 const STATE_DIR = join(ROOT, '.midnight');
 const SEED_FILE = join(STATE_DIR, 'wallet.seed');
-const NETWORK = networkFromEnv(process.env.MIDNIGHT_NETWORK_ID, 'stagenet');
+const NETWORK = theNetwork();
 const VAULT_ARTEFACTS = join(ROOT, 'contracts', 'managed-vault');
 const ACCOUNT_RECORD = join(STATE_DIR, `${NETWORK}-contract.json`);
 
@@ -738,7 +738,9 @@ main().then(
  *   IT MUST EXPORT
  *     MIDNIGHT_PROOF_IMAGE   the image it verified, so the report can record
  *                            what the proof was built against
- *     MIDNIGHT_NETWORK_ID    the network, defaulting to stagenet
+ *     MIDNIGHT_NETWORK_ID   ACCEPTED AND NEVER DECIDING. The network is the one
+ *                           this build is compiled for; naming a different one
+ *                           here is refused, and naming none is the ordinary case.
  *     VAULT_NAME, VAULT_PURPOSE   passed straight through
  *
  *   IT MUST RUN            npx tsx scripts/deploy-vault.ts

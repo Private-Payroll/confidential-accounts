@@ -33,7 +33,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { deploymentRecordPath } from '../wiring/deployment.js';
-import { networkOfThePair } from '../midnight/network.js';
+import { theNetwork } from '../midnight/network.js';
 
 const REPO = fileURLToPath(new URL('../..', import.meta.url));
 const TSX = join(REPO, 'node_modules', '.bin', 'tsx');
@@ -129,7 +129,7 @@ const start = async (overrides: Record<string, string>): Promise<Running> => {
    * reason the connection string is: if anything here ever starts actually
    * connecting, it fails here rather than somewhere real.
    */
-  const network = networkOfThePair(undefined);
+  const network = theNetwork({});
   mkdirSync(join(dir, '.midnight'), { recursive: true });
   writeFileSync(
     deploymentRecordPath(dir, network),

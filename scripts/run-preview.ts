@@ -77,7 +77,7 @@ import { indexerPublicDataProvider } from '@midnight-ntwrk/midnight-js-indexer-p
 import { Contract, ledger as readLedger, pureCircuits } from '../contracts/managed/contract/index.js';
 import { witnesses, type AccountPrivateState } from '../contracts/src/witnesses.js';
 import { privateStateKey } from '../src/midnight/ledger.js';
-import { applyNetworkId, networkFromEnv } from '../src/midnight/network.js';
+import { applyNetworkId, theNetwork } from '../src/midnight/network.js';
 import {
   assets as assetRegistry, assetIdBytes, formatAmount, NO_ASSET,
   type Asset, type AssetId,
@@ -106,7 +106,7 @@ const STATE_DIR = join(ROOT, '.midnight');
  * network — so it deliberately keeps one name.
  */
 const SEED_FILE = join(STATE_DIR, 'wallet.seed');
-const NETWORK = networkFromEnv(process.env.MIDNIGHT_NETWORK_ID, 'stagenet');
+const NETWORK = theNetwork();
 
 const CONTRACT_FILE = join(STATE_DIR, `${NETWORK}-contract.json`);
 const ARTIFACTS = join(ROOT, 'contracts', 'managed');

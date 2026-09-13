@@ -46,7 +46,7 @@ import { join } from 'node:path';
 import { StaticProofServerContainer } from '@midnight-ntwrk/testkit-js';
 
 import { fileFeeSink } from '../src/midnight/sponsored-fees.js';
-import { applyNetworkId, networkFromEnv, ENDPOINTS, type NetworkName } from '../src/midnight/network.js';
+import { applyNetworkId, theNetwork, ENDPOINTS, type NetworkName } from '../src/midnight/network.js';
 import { handInFundedParties } from '../src/wiring/handed-in-wallets.js';
 import { bringUpWallet } from './wallet-bringup.js';
 import { fundedPartiesOver, paidFeeFrom } from './funded-wallets.js';
@@ -59,10 +59,16 @@ import { startTheServer, startThePages, stopChildren, stopEverythingOnExit } fro
 
 const ROOT = join(import.meta.dirname, '..');
 const STATE_DIR = join(ROOT, '.midnight');
-const NETWORK_RAW = process.env.MIDNIGHT_NETWORK_ID ?? 'stagenet';
+/*
+ * **RESOLVED ONCE, HERE, AND NOT READ AGAIN.** This door used to take the raw
+ * value, name a seed file with it and print it, and only validate it four
+ * hundred lines later - so an unusable name reached a filename and a screen
+ * before anything refused it.
+ */
+const NETWORK: NetworkName = theNetwork();
 const PROVER_PORT = Number(process.env.MIDNIGHT_PROVER_PORT ?? 6301);
 const SPONSOR_SEED_FILE = join(STATE_DIR, 'wallet.seed');
-const COMPANY_SEED_FILE = join(STATE_DIR, `${NETWORK_RAW}-company.seed`);
+const COMPANY_SEED_FILE = join(STATE_DIR, `${NETWORK}-company.seed`);
 const ARTIFACTS = join(ROOT, 'contracts', 'managed');
 const FEE_RECORD = join(STATE_DIR, 'sponsored-fees.jsonl');
 /*
@@ -91,7 +97,7 @@ async function proofServerAnswers(port: number): Promise<boolean> {
 
 async function main() {
   line('  ------------------------------------------------------------');
-  line(`  Serving the product on ${NETWORK_RAW}, able to create a company`);
+  line(`  Serving the product on ${NETWORK}, able to create a company`);
   line('  ------------------------------------------------------------');
 
   /* ---------------------------------------------------------------- 1 */
@@ -107,7 +113,7 @@ async function main() {
   const oneSeedForBoth = existsSync(SPONSOR_SEED_FILE) && existsSync(COMPANY_SEED_FILE)
     && seedsAreOneParty(readFileSync(SPONSOR_SEED_FILE, 'utf8'), readFileSync(COMPANY_SEED_FILE, 'utf8'));
   const refusal = refuseToServe({
-    network: NETWORK_RAW,
+    network: NETWORK,
     posture,
     oneSeedForBoth,
     present: {
@@ -122,7 +128,6 @@ async function main() {
   const plan = pageStartsFor(posture);
   /* Already refused above when it cannot be started; this narrows the type. */
   if ('refusals' in plan) throw new Error(plan.refusals.join('; '));
-  const NETWORK: NetworkName = networkFromEnv(NETWORK_RAW, 'stagenet');
   good('the authority is recorded, the contract is compiled, the prover answers,');
   good('and both wallets have a seed on this machine');
 

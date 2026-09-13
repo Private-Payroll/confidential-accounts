@@ -142,7 +142,7 @@ import {
 import {
   assertVaultName, vaultRegistryFile, parseVaultRegistry, type VaultEntry,
 } from '../src/midnight/vault-record.js';
-import { applyNetworkId, networkFromEnv } from '../src/midnight/network.js';
+import { applyNetworkId, theNetwork } from '../src/midnight/network.js';
 import { indexerNoteEvents } from '../src/midnight/note-index.js';
 import type { Hex } from '../src/core/crypto.js';
 import type { SignerRef } from '../src/core/ledger.js';
@@ -171,7 +171,7 @@ const ROOT = process.cwd();
 const STATE_DIR = join(ROOT, '.midnight');
 const SEED_FILE = join(STATE_DIR, 'wallet.seed');
 const SIGNER_SECRETS = join(STATE_DIR, 'test-signer-keys.json');
-const NETWORK = networkFromEnv(process.env.MIDNIGHT_NETWORK_ID, 'stagenet');
+const NETWORK = theNetwork();
 const VAULT_ARTEFACTS = join(ROOT, 'contracts', 'managed-vault');
 
 /* 6301, NOT 6300 — `M-144`. */
@@ -543,6 +543,8 @@ export interface WhatADepositReported {
   readonly createdIn?: string;
   readonly recordedFrom: 'the call' | 'the chain' | 'nowhere';
   readonly stranded?: string;
+  /** True when reading again cannot answer. Absent means it can, which is the safe default. */
+  readonly permanent?: boolean;
 }
 
 /**
@@ -565,11 +567,19 @@ export interface WhatADepositReported {
  * part that can be wrong, so they are the part that is pinned.
  */
 export function whatTheDepositLeftBehind(tx: WhatADepositReported): string[] {
-  const lines: string[] = [
-    `  transaction identifier  ${tx.ref}`,
-    `    ${tx.ref.length / 2} bytes. This is the name an explorer takes, and it is NOT the name`,
-    '    the note records.',
-  ];
+  /*
+   * **A CALL CAN REPORT NO IDENTIFIER AT ALL**, and this used to print the
+   * heading with nothing after it, call it zero bytes, and close by saying the
+   * identifier above was enough to find the transaction by.
+   */
+  const named = tx.ref.length > 0;
+  const lines: string[] = named
+    ? [
+      `  transaction identifier  ${tx.ref}`,
+      `    ${tx.ref.length / 2} bytes. This is the name an explorer takes, and it is NOT the name`,
+      '    the note records.',
+    ]
+    : ['  transaction identifier  none. The call reported no name for its own transaction.'];
   if (tx.createdIn !== undefined) {
     lines.push(
       `  transaction hash        ${tx.createdIn}`,
@@ -580,16 +590,43 @@ export function whatTheDepositLeftBehind(tx: WhatADepositReported): string[] {
       '    wrapped to every signer above. It can be spent.');
     return lines;
   }
+  /*
+   * **TWO REASONS A NOTE IS STRANDED, AND THEY NEED TWO DIFFERENT ACTS.**
+   *
+   * An indexer a moment behind the node answers in a minute, and the note is
+   * repaired by asking again. An indexer this client can no longer ask - a
+   * schema that has moved, a question it will not take - never answers, and
+   * asking again is what somebody does for ever instead of bringing the two
+   * back into step. **Both used to print this frame**, whose word is YET and
+   * whose advice is that the identifier is enough to find it by.
+   */
   lines.push(
     '',
-    '  \x1b[31m!\x1b[0m THE NOTE IS IN THE POOL AND IT CANNOT BE SPENT YET.',
+    tx.permanent === true
+      ? '  \x1b[31m!\x1b[0m THE NOTE IS IN THE POOL AND IT CANNOT BE SPENT. READING AGAIN WILL NOT ANSWER.'
+      : '  \x1b[31m!\x1b[0m THE NOTE IS IN THE POOL AND IT CANNOT BE SPENT YET.',
     `    ${tx.stranded ?? 'no reason was given'}.`,
     '    The money is on chain and it is this vault\x27s. Nothing is lost and nothing has to be',
     '    guessed: a note is spent at the place the chain filed it, that place is read from the',
     '    transaction that created it, and a note recording no transaction is refused before any',
-    '    fee rather than after one.',
-    '    Record that transaction against this note before anything pays out of this vault. The',
-    '    identifier above is enough to find it by.');
+    '    fee rather than after one.');
+  if (tx.permanent === true) {
+    lines.push(
+      '    This client and the indexer are not in step, so reading again will not repair it. Bring',
+      '    them back into step first, then record the transaction against this note. Nothing pays',
+      '    out of this vault until it is recorded.');
+  } else {
+    lines.push(
+      '    Record that transaction against this note before anything pays out of this vault.');
+  }
+  /*
+   * The identifier is what finds the transaction, and it is only advice when
+   * there is one. On the path where the call named its transaction neither
+   * way, saying it is enough to find it by points at an empty line.
+   */
+  lines.push(named
+    ? '    The identifier above is enough to find it by.'
+    : '    The transaction has to be found another way: this run was not told its name.');
   return lines;
 }
 
@@ -1324,7 +1361,9 @@ if (RUN_DIRECTLY) {
  *
  * WHAT IT PASSES:
  *
- *     MIDNIGHT_NETWORK_ID   the network the vault was deployed on.
+ *     MIDNIGHT_NETWORK_ID   ACCEPTED AND NEVER DECIDING. The network is the one
+ *                           this build is compiled for; naming a different one
+ *                           here is refused, and naming none is the ordinary case.
  *     VAULT_NAME            the vault, by name. NO DEFAULT.
  *     DEPOSIT_AMOUNT        how much, digits only. NO DEFAULT.
  *     MIDNIGHT_PROOF_IMAGE  the pinned image.

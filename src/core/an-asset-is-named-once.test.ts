@@ -105,14 +105,21 @@ describe('§1 every shape an asset can have is answered from its row', () => {
   });
 
   it('THE ONLY ASSET WITH A PRIVATE FORM IS A TEST ONE, and it is refused off its network', async () => {
-    const { NETWORKS_A_TEST_ASSET_MAY_EXIST_ON, testAssetsFor, isATestAsset } =
+    const { TEST_SETTLEMENT_MINTED_ON, testAssetsFor, isATestAsset } =
       await import('./assets.js');
+    const { NETWORK_IDS, networkRecord } = await import('./networks.js');
     const privately = productAssets.all().filter(a => a.ledger.shielded !== null).map(a => a.code);
     /* RED WHEN a real asset gains a private form without the row being argued for. */
     expect(privately.every(isATestAsset)).toBe(true);
-    /* RED WHEN a test asset is admitted on a network it has no business being on. */
-    expect(testAssetsFor('mainnet')).toEqual([]);
-    expect(NETWORKS_A_TEST_ASSET_MAY_EXIST_ON).not.toContain('mainnet');
+    /* RED WHEN a test asset is admitted on a network whose own record says real
+     * money settles there. Asked of every such network rather than of the one
+     * name somebody thought to write down. */
+    const real = NETWORK_IDS.filter(id => networkRecord(id).kind === 'real');
+    expect(real.length).toBeGreaterThan(0);
+    for (const id of real) {
+      expect(testAssetsFor(id), id).toEqual([]);
+      expect(TEST_SETTLEMENT_MINTED_ON, id).not.toContain(id);
+    }
   });
 });
 

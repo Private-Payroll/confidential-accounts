@@ -39,10 +39,10 @@ import {
 import { ContractBook } from './account-contract.js';
 import { wiring } from './selection.js';
 import { deploymentRecordPath, type Deployment } from './deployment.js';
-import { networkOfThePair } from '../midnight/network.js';
+import { theNetwork } from '../midnight/network.js';
 
 /** The network this pair is compiled for. Read, never spelled out here. */
-const NETWORK = networkOfThePair(undefined);
+const NETWORK = theNetwork({});
 
 /** A deployment that is complete and points at nothing reachable. */
 const FACTS: Deployment = {

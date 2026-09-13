@@ -39,8 +39,8 @@ const DATA_PATH = join(mkdtempSync(join(tmpdir(), 'mn-invitations-')), 'db.json'
 process.env.DATA_PATH = DATA_PATH;
 
 const ORIGIN = 'https://payroll.example';
-const { networkOfThePair } = await import('../midnight/network.js');
-const NETWORK = networkOfThePair(process.env.MIDNIGHT_NETWORK_ID);
+const { theNetwork } = await import('../midnight/network.js');
+const NETWORK = theNetwork();
 
 /**
  * **WHY THESE PEOPLE ARE SEEDED WITH AN EMAIL, AND WHY IT NO LONGER DECIDES

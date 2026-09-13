@@ -31,8 +31,19 @@ export {};   // makes this file a MODULE rather than a global script.
 // which is a minute wasted every time somebody writes a small standalone
 // script here.
 
-const NODE = process.env.MIDNIGHT_NODE_URL || 'https://rpc.stagenet.shielded.tools';
-const INDEXER = process.env.MIDNIGHT_INDEXER_URL || 'https://indexer.stagenet.shielded.tools/api/v4/graphql';
+import { theNetwork } from '../src/midnight/network.js';
+import { endpointsOf, websocketNodeOf } from '../src/core/networks.js';
+
+/*
+ * **THE ENDPOINTS COME FROM THE ONE RECORD AND ARE NOT WRITTEN OUT HERE.**
+ * A stagenet url typed into this file was a second copy of a value that has
+ * moved under this project once already, and it was a copy that could not be
+ * wrong in a way anything noticed: it was the fallback, so it answered
+ * whenever the real answer was missing.
+ */
+const THE = endpointsOf(theNetwork());
+const NODE = process.env.MIDNIGHT_NODE_URL || THE.node;
+const INDEXER = process.env.MIDNIGHT_INDEXER_URL || THE.indexer;
 
 const B = '\x1b[1m', D = '\x1b[2m', R = '\x1b[31m', G = '\x1b[32m', Y = '\x1b[33m', O = '\x1b[0m';
 

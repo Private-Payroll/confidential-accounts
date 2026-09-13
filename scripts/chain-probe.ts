@@ -95,7 +95,7 @@ async function loadProbeContract(): Promise<void> {
   }
   ({ Contract, ledger: readLedger, pureCircuits } = mod);
 }
-import { applyNetworkId, networkFromEnv } from '../src/midnight/network.js';
+import { applyNetworkId, theNetwork } from '../src/midnight/network.js';
 import { explainNodeError } from './node-errors.js';
 import {
   saveDustState, waitForDustCatchUp, dustCaughtUp, dustProgressOf, dustProgressKnown,
@@ -118,7 +118,7 @@ const LOG_DIR = join(ROOT, 'logs');
  * a second five-minute dust sync for no gain.
  */
 const SEED_FILE = join(STATE_DIR, 'wallet.seed');
-const NETWORK = networkFromEnv(process.env.MIDNIGHT_NETWORK_ID, 'stagenet');
+const NETWORK = theNetwork();
 
 /**
  * Where this probe's deployment is recorded — per network, like every other

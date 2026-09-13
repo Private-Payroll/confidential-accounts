@@ -227,6 +227,49 @@ export async function vaultNoteCommitment(coin: NoteCoin, vault: Hex): Promise<s
 }
 
 /**
+ * **WHICH TRANSACTION THESE EVENTS ARE FROM, AS SIXTY-FOUR HEX CHARACTERS OR
+ * NOT AT ALL.**
+ *
+ * When the transaction was named by HASH, that is the caller's own value and
+ * every event is compared against it. When it was named by the 33-byte
+ * IDENTIFIER, the hash is not something the caller has: it is read off the
+ * first event, and the comparison that follows is then against a value taken
+ * from the answer itself.
+ *
+ * **SO ON THAT BRANCH THE COMPARISON CANNOT REFUSE THE VALUE IT IS BUILT FROM**,
+ * and an event carrying an empty hash, `0x`, or forty hex characters passed
+ * every check and was written into the pool as the note's `createdIn`. A note
+ * recording a hash nothing created reads as a HEALTHY note everywhere
+ * afterwards - in the pool, on the screen, in the pre-flight a payment makes -
+ * and is refused only at the spend, after a proposal and its approvals have
+ * been paid for.
+ *
+ * The shape is the one the deposit path already applies to the same value: a
+ * transaction hash is thirty-two bytes written as sixty-four lower-case hex
+ * characters, and anything else is not one.
+ */
+export function theTransactionTheseEventsAreFrom(
+  events: ReadonlyArray<ServedEvent>,
+  transaction: CreatingTransaction,
+): Hex {
+  const fromTheCaller = 'hash' in transaction;
+  const value = fromTheCaller ? bare(transaction.hash) : bare(events[0]!.transactionHash);
+  if (!/^[0-9a-f]{64}$/.test(value)) {
+    throw new NoteIndexRefused(
+      fromTheCaller
+        ? `"${transaction.hash}" is not a transaction hash. One is thirty-two bytes written as `
+          + 'sixty-four hex characters. Nothing is recorded against a name no spend could read '
+          + 'the note\x27s place from.'
+        : `the chain answered about ${named(transaction)} without naming its hash: it gave `
+          + `"${events[0]!.transactionHash}", and a transaction hash is thirty-two bytes written `
+          + 'as sixty-four hex characters. Nothing is recorded, because a note recording a hash '
+          + 'no spend can use reads as a healthy note until the moment it is spent. Read again '
+          + 'once the transaction shows on the indexer, or name it by its hash.');
+  }
+  return value as Hex;
+}
+
+/**
  * **THE INDEX OF ONE NOTE, OUT OF THE EVENTS OF THE TRANSACTION THAT CREATED
  * IT.**
  *
@@ -248,8 +291,7 @@ export function noteIndexFrom(
       + 'moment. Read the index again once the transaction shows on the indexer.');
   }
 
-  const asked = 'hash' in want.transaction
-    ? bare(want.transaction.hash) : bare(events[0].transactionHash);
+  const asked = theTransactionTheseEventsAreFrom(events, want.transaction);
   const other = events.find((e) => bare(e.transactionHash) !== asked);
   if (other) {
     throw new NoteIndexRefused(
@@ -357,8 +399,13 @@ export async function recordCreatingTransaction(
   const commitment = await vaultNoteCommitment(before, vault);
   const served = await events.eventsOf(tx);
   const index = noteIndexFrom(served, { vault, commitment, transaction: tx });
-  /* Every event carries the same hash, which `noteIndexFrom` has just checked. */
-  const createdIn = bare(served[0].transactionHash);
+  /*
+   * The same value `noteIndexFrom` compared every event against, derived the
+   * same way and shaped by the same guard rather than read off the array a
+   * second time. It used to be taken straight from `served[0]`, which is the
+   * one value on this path that nothing had checked.
+   */
+  const createdIn = theTransactionTheseEventsAreFrom(served, tx);
 
   const now = await pool.load(vault);
   const current = now.notes.find((n) => n.nonce === nonce);

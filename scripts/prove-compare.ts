@@ -45,7 +45,7 @@ import { ZswapChainState, LedgerParameters } from '@midnight-ntwrk/midnight-js-p
 
 import { Contract, pureCircuits } from '../contracts/managed/contract/index.js';
 import { witnesses, type AccountPrivateState } from '../contracts/src/witnesses.js';
-import { applyNetworkId, networkFromEnv, ENDPOINTS } from '../src/midnight/network.js';
+import { applyNetworkId, theNetwork, ENDPOINTS } from '../src/midnight/network.js';
 import { assetIdBytes } from '../src/core/assets.js';
 import { isDeployedCircuit } from '../src/midnight/deferral.js';
 import {
@@ -54,7 +54,7 @@ import {
 
 const ROOT = process.cwd();
 const ARTIFACTS = join(ROOT, 'contracts', 'managed');
-const NETWORK = networkFromEnv(process.env.MIDNIGHT_NETWORK_ID, 'stagenet');
+const NETWORK = theNetwork();
 
 const CONTRACT_FILE = join(ROOT, '.midnight', `${NETWORK}-contract.json`);
 const PROVER = `http://localhost:${process.env.MIDNIGHT_PROVER_PORT || 6301}`;

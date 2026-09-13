@@ -26,11 +26,11 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
 
-import { ENDPOINTS as ENDPOINTS_BY_NAME, networkFromEnv } from '../src/midnight/network.js';
+import { ENDPOINTS as ENDPOINTS_BY_NAME, theNetwork } from '../src/midnight/network.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-const NET = networkFromEnv(process.env.MIDNIGHT_NETWORK_ID, 'stagenet');
+const NET = theNetwork();
 const E = ENDPOINTS_BY_NAME[NET];
 const ENDPOINTS = E && { indexer: E.indexerUrl, node: E.nodeUrl, faucet: E.faucetUrl };
 

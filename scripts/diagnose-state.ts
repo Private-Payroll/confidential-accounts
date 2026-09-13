@@ -31,13 +31,13 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { indexerPublicDataProvider } from '@midnight-ntwrk/midnight-js-indexer-public-data-provider';
 import { ledger as readLedger, pureCircuits } from '../contracts/managed/contract/index.js';
-import { applyNetworkId, networkFromEnv, ENDPOINTS } from '../src/midnight/network.js';
+import { applyNetworkId, theNetwork, ENDPOINTS } from '../src/midnight/network.js';
 import {
   previewSignersFile, readOrCreatePreviewSigners, signerBytes,
 } from './preview-signers.js';
 
 const ROOT = process.cwd();
-const NETWORK = networkFromEnv(process.env.MIDNIGHT_NETWORK_ID, 'stagenet');
+const NETWORK = theNetwork();
 
 const CONTRACT_FILE = join(ROOT, '.midnight', `${NETWORK}-contract.json`);
 const STATE_DIR = join(ROOT, '.midnight');

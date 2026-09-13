@@ -39,7 +39,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { deploymentRecordPath } from '../wiring/deployment.js';
-import { networkOfThePair } from '../midnight/network.js';
+import { theNetwork } from '../midnight/network.js';
 
 const REPO = fileURLToPath(new URL('../..', import.meta.url));
 const TSX = join(REPO, 'node_modules', '.bin', 'tsx');
@@ -58,7 +58,7 @@ const NOWHERE = 'postgres://u:p@127.0.0.1:1/nowhere';  // not-a-secret: a port n
  * The record's filename carries it, and a literal here would be a second place
  * that says which chain this deployment is on.
  */
-const NETWORK = networkOfThePair(undefined);
+const NETWORK = theNetwork({});
 
 /** A proof server address that is well formed and reaches nothing, like `NOWHERE`. */
 const NO_PROVER = 'http://127.0.0.1:1';  // not-a-secret: a port nothing listens on

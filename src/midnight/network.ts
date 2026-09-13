@@ -1,4 +1,8 @@
-import { NETWORK as WALLET_NETWORK } from 'midnight-identity/network';
+import { NETWORK as WALLET_NETWORK, NETWORKS as WALLET_NETWORKS, type NetworkName as WalletNetworkName } from 'midnight-identity/network';
+import {
+  NETWORK_IDS, endpointsOf, isNetworkId, networkRecord, websocketNodeOf,
+  type NetworkRecord,
+} from '../core/networks.js';
 
 /**
  * Which network we are on, and how to say so to the SDK.
@@ -18,10 +22,10 @@ import { NETWORK as WALLET_NETWORK } from 'midnight-identity/network';
  *
  * Consequences, both executed and observed rather than reasoned about:
  *
- *   - With MIDNIGHT_NETWORK_ID=testnet, every deploy and every call throws
+ *   - With the network named `testnet`, every deploy and every call throws
  *     "Expected 2 address, got testnet one" from parseCoinPublicKeyToHex,
  *     which midnight-js-contracts calls on every single transaction.
- *   - With MIDNIGHT_NETWORK_ID=undeployed the enum is 0, and bech32m refuses
+ *   - With the network named `undeployed` the enum is 0, and bech32m refuses
  *     the character outright: "Segment network: 0 contains disallowed
  *     characters".
  *
@@ -42,22 +46,23 @@ import { NETWORK as WALLET_NETWORK } from 'midnight-identity/network';
  */
 
 /**
- * The networks the toolchain knows about.
+ * **THE NAMES THE TOOLCHAIN WILL TAKE, AND THERE IS ONLY ONE LIST OF THEM.**
  *
- * `stagenet` used to be rejected here, on the reasoning that testkit-js@4.1.1
- * ships configs only for preview, preprod and qanet, so the name must be a
- * loose way of saying "a staging network". That was a correct reading of the
- * wrong source. Stagenet is a real, separate chain with its own genesis at
- * `stagenet.shielded.tools`, and the Foundation's guidance is to build on it.
+ * This used to be a second array written out here beside the wallet's. The two
+ * agreed, and two lists that agree are one list that has not drifted yet. It is
+ * re-exported from the one place it is stated so that adding a name is one
+ * edit rather than two edits and a hope.
  *
- *
- * It is still not a network testkit has a class for — see `STAGENET_ONLY_VIA_ENV`
- * below — but it is a perfectly good network id, and the id is what goes into
- * every address.
+ * **IT IS NOT THE SAME QUESTION AS WHETHER WE HAVE A RECORD FOR A NETWORK.**
+ * This list is vocabulary: the names the platform's address codec will encode
+ * without complaint. `networks.json` is the set of networks this application
+ * has decided something about - where to reach them, and whether real money
+ * settles on them. A name can be in the first and absent from the second, and
+ * that is a network we can spell and have not written down, which is refused.
  */
-export const NETWORKS = ['undeployed', 'devnet', 'preview', 'preprod', 'qanet', 'stagenet', 'testnet', 'mainnet'] as const;
+export const NETWORKS = WALLET_NETWORKS;
 
-export type NetworkName = (typeof NETWORKS)[number];
+export type NetworkName = WalletNetworkName;
 
 export const isNetworkName = (s: string): s is NetworkName =>
   (NETWORKS as readonly string[]).includes(s);
@@ -66,70 +71,53 @@ export interface NetworkEndpoints {
   indexerUrl: string;
   indexerWsUrl: string;
   nodeUrl: string;
-  /** Only where it differs from `nodeUrl` with the scheme swapped. */
-  nodeWsUrl?: string;
+  nodeWsUrl: string;
   /** Where to ask for test NIGHT. Absent on networks that have no faucet. */
   faucetUrl?: string;
 }
 
 /**
- * Endpoints, copied from testkit-js@4.1.1 in node_modules rather than from the
- * docs site or the GitHub repo, both of which are ahead of what npm publishes.
+ * **THE ENDPOINTS TABLE IS DERIVED FROM THE RECORDS AND IS NOT WRITTEN OUT
+ * AGAIN.**
  *
- * Note the indexer path is /api/v4/graphql. Our .env.example said v1, which is
- * a version that no longer answers.
+ * It used to be a literal here, and that literal was the second place a
+ * network was described. A network's endpoints and a network's identity are
+ * one fact about one thing, and keeping them in two files is how a network
+ * ends up admitted by one of them and unreachable through the other.
+ *
+ * A network whose record carries no endpoints is absent from this table, which
+ * is the same shape the table has always had: `ENDPOINTS[name]` is undefined
+ * for a network we cannot reach. What has changed is that the record still
+ * exists, still says whether real money settles there, and still refuses a
+ * test asset - so being unreachable is no longer what keeps an asset off a
+ * chain.
  */
-export const ENDPOINTS: Partial<Record<NetworkName, NetworkEndpoints>> = {
-  preview: {
-    indexerUrl: 'https://indexer.preview.midnight.network/api/v4/graphql',
-    indexerWsUrl: 'wss://indexer.preview.midnight.network/api/v4/graphql/ws',
-    nodeUrl: 'https://rpc.preview.midnight.network',
-    faucetUrl: 'https://faucet.preview.midnight.network/api/drips',
-  },
-  preprod: {
-    indexerUrl: 'https://indexer.preprod.midnight.network/api/v4/graphql',
-    indexerWsUrl: 'wss://indexer.preprod.midnight.network/api/v4/graphql/ws',
-    nodeUrl: 'https://rpc.preprod.midnight.network',
-    faucetUrl: 'https://faucet.preprod.midnight.network/api/drips',
-  },
-  qanet: {
-    indexerUrl: 'https://indexer.qanet.midnight.network/api/v4/graphql',
-    indexerWsUrl: 'wss://indexer.qanet.midnight.network/api/v4/graphql/ws',
-    nodeUrl: 'https://rpc.qanet.midnight.network',
-    faucetUrl: 'https://faucet.qanet.midnight.network/api/drips',
-  },
-  /*
-   * Stagenet. Not from testkit — it has no config for this network — but from
-   * the Foundation's Q2 2026 beta delivery document, which is the only place
-   * these are published.
-   *
-   * Note the domain: shielded.tools, not midnight.network.
-   */
-  stagenet: {
-    indexerUrl: 'https://indexer.stagenet.shielded.tools/api/v4/graphql',
-    indexerWsUrl: 'wss://indexer.stagenet.shielded.tools/api/v4/graphql/ws',
-    nodeUrl: 'https://rpc.stagenet.shielded.tools',
-    nodeWsUrl: 'wss://rpc.stagenet.shielded.tools',
-    faucetUrl: 'https://faucet.stagenet.shielded.tools',
-  },
-  undeployed: {
-    indexerUrl: 'http://localhost:8088/api/v4/graphql',
-    indexerWsUrl: 'ws://localhost:8088/api/v4/graphql/ws',
-    nodeUrl: 'http://localhost:9944',
-  },
-};
+export const ENDPOINTS: Partial<Record<string, NetworkEndpoints>> = Object.freeze(
+  Object.fromEntries(
+    NETWORK_IDS
+      .map((id) => [id, networkRecord(id).endpoints] as const)
+      .filter((pair): pair is readonly [string, NonNullable<NetworkRecord['endpoints']>] => pair[1] !== null)
+      .map(([id, e]) => [id, Object.freeze({
+        indexerUrl: e.indexer,
+        indexerWsUrl: e.indexerWs,
+        nodeUrl: e.node,
+        nodeWsUrl: websocketNodeOf(e),
+        ...(e.faucet === null ? {} : { faucetUrl: e.faucet }),
+      })]),
+  ),
+);
 
 /**
  * Networks testkit-js ships a TestEnvironment class for.
  *
  * Checked against testkit-js@5.0.0-beta.4 by listing its exports: Preview,
- * Preprod, Qanet, Local and EnvVar. There is no Stagenet class, in 4.1.1 or in
+ * Preprod, Qanet, Local and EnvVar. There is no Stagenet, in 4.1.1 or in
  * 5.0. Anything not in this list has to go through the environment-variable
  * route, which is a supported path rather than a workaround.
  */
 export const TESTKIT_ENVIRONMENTS = ['preview', 'preprod', 'qanet'] as const;
 
-export const hasTestkitEnvironment = (name: NetworkName): boolean =>
+export const hasTestkitEnvironment = (name: string): boolean =>
   (TESTKIT_ENVIRONMENTS as readonly string[]).includes(name);
 
 /**
@@ -143,18 +131,17 @@ export const hasTestkitEnvironment = (name: NetworkName): boolean =>
  * Returns what it set, so a script can print it. Silence about which endpoints
  * a run is actually talking to is how an afternoon disappears.
  */
-export function exportTestkitEnv(name: NetworkName): Record<string, string> {
-  const e = ENDPOINTS[name];
-  if (!e) throw new Error(`no endpoints known for "${name}"`);
+export function exportTestkitEnv(name: string): Record<string, string> {
+  const e = endpointsOf(name);
   const vars: Record<string, string> = {
     MN_TEST_NETWORK_ID: name,
     MN_TEST_WALLET_NETWORK_ID: name,
-    MN_TEST_INDEXER: e.indexerUrl,
-    MN_TEST_INDEXER_WS: e.indexerWsUrl,
-    MN_TEST_NODE: e.nodeUrl,
-    MN_TEST_NODE_WS: e.nodeWsUrl ?? e.nodeUrl.replace(/^http/, 'ws'),
+    MN_TEST_INDEXER: e.indexer,
+    MN_TEST_INDEXER_WS: e.indexerWs,
+    MN_TEST_NODE: e.node,
+    MN_TEST_NODE_WS: websocketNodeOf(e),
   };
-  if (e.faucetUrl) vars.MN_TEST_FAUCET = e.faucetUrl;
+  if (e.faucet !== null) vars.MN_TEST_FAUCET = e.faucet;
   for (const [k, v] of Object.entries(vars)) process.env[k] = v;
   return vars;
 }
@@ -166,29 +153,15 @@ export function exportTestkitEnv(name: NetworkName): Record<string, string> {
  * operation throws until it has been called, and every one of them produces a
  * wrong or rejected address if it was called with the wrong shape.
  */
-export async function applyNetworkId(name: NetworkName): Promise<void> {
+export async function applyNetworkId(name: string): Promise<void> {
   const { setNetworkId } = await import('@midnight-ntwrk/midnight-js-network-id');
   setNetworkId(name);
-}
-
-/** Reads and validates the network name from the environment. */
-export function networkFromEnv(raw: string | undefined, fallback: NetworkName = 'preview'): NetworkName {
-  if (raw === undefined || raw === '') return fallback;
-  const lowered = raw.toLowerCase();
-  if (!isNetworkName(lowered)) {
-    throw new Error(
-      `MIDNIGHT_NETWORK_ID="${raw}" is not a network this toolchain knows. ` +
-        `Expected one of: ${NETWORKS.join(', ')}.`,
-    );
-  }
-  return lowered;
 }
 
 /* ------------------- the network the two products share ------------------ */
 
 /**
  * **THE NETWORK THIS DEPLOYMENT IS ON, AND IT IS NOT READ FROM `.env`.**
- * `docs/how-money-can-be-lost.md` `C151`.
  *
  * A person signs in with an address their wallet wrote, and this deployment
  * re-derives that address from the key that signed it. **A Midnight address is
@@ -197,45 +170,78 @@ export function networkFromEnv(raw: string | undefined, fallback: NetworkName = 
  * side was `preview`, so the comparison failed and the refusal told a person
  * their key was wrong. Nothing was wrong with the key.
  *
- * ── WHY `.env` IS THE WRONG HOME, AND IT IS `X3`'s ARGUMENT AGAIN ─────────
+ * ── WHY `.env` IS THE WRONG HOME ──────────────────────────────────────────
  *
- * `X3` gave the two origins to the development script rather than to `.env`,
- * on the reasoning that **`.env` is deployment configuration, and a file whose
- * whole purpose is to be different on every server is the wrong home for a
- * value that must be the same everywhere.** This value is stronger than that:
- * it must equal a constant COMPILED INTO ANOTHER REPOSITORY. A deployment
- * cannot be given the ability to disagree with it, because disagreeing with it
- * is the defect.
+ * **`.env` is deployment configuration, and a file whose whole purpose is to be
+ * different on every server is the wrong home for a value that must be the same
+ * everywhere.** This value is stronger than that: it must equal a constant
+ * COMPILED INTO ANOTHER REPOSITORY. A deployment cannot be given the ability to
+ * disagree with it, because disagreeing with it is the defect.
  *
- * So the value is imported from the wallet's own package — one constant, read
+ * So the value is imported from the wallet's own package - one constant, read
  * by both products, and `midnight-identity/network` is a leaf module that
  * pulls in no WebAssembly. **There is no second constant to drift.**
- *
- * The two lists of network names ARE still two — this file has one and the
- * wallet has another — and the assignment below is what checks them: if the
- * wallet ever learned a name this toolchain does not know, this line stops
- * compiling. That is a typecheck rather than a test, which is why the test
- * exists as well.
  */
 export const PAIR_NETWORK: NetworkName = WALLET_NETWORK;
 
 /**
- * What the server calls to learn its network, and **the thing that fails when
- * the two sides disagree.**
+ * **THE ONE PLACE IN THIS APPLICATION THAT READS THE ENVIRONMENT FOR A
+ * NETWORK.** Nothing else may, and a test refuses the day something does.
  *
- * `MIDNIGHT_NETWORK_ID` still exists, because the probes and the scripts under
- * `scripts/` read it and point at real chains. What it may no longer do is
- * DECIDE. If it names a different network from the one the wallet is compiled
- * for, this throws at boot with both values and both homes in the sentence —
- * because the alternative is a server that quietly writes every payee address
- * for a chain no wallet in this pair can read.
+ * A door that reads the variable for itself is a second answer to a question
+ * that must have one. Seven of them, each defaulting for itself, is seven
+ * answers that happen to agree - and they agreed right up until an asset gate
+ * asked a different one of them from the doors.
  *
- * Unset is not a disagreement. It is the ordinary case, and it gets the pair's
- * network.
+ * ── THE FOUR ANSWERS, IN ORDER ────────────────────────────────────────────
+ *
+ * 1. The build's own network must have a record. It cannot be reached without
+ *    one, and a build compiled for a network nobody has written down is a
+ *    build that cannot say whether real money settles where it is pointed.
+ * 2. Nothing named: the build's own network. This is the ordinary case and it
+ *    is not a default - it is the answer, taken from the one constant both
+ *    products are compiled against.
+ * 3. A name with no record: **REFUSED, LOUDLY, WITH THE NAMES THAT DO HAVE
+ *    ONE.** There is no fallback. A network nobody has thought of is refused
+ *    by default rather than admitted by default, and that is the whole
+ *    difference between this and a list of networks that are forbidden.
+ * 4. A name that has a record but is not the build's own: **REFUSED**, with
+ *    both values and both homes in the sentence, because the alternative is a
+ *    deployment quietly writing every payee address for a chain no wallet in
+ *    this pair can read.
  */
-export function networkOfThePair(raw: string | undefined): NetworkName {
+export function theNetwork(env: { MIDNIGHT_NETWORK_ID?: string | undefined } = process.env): NetworkName {
+  return theNetworkNamed(env.MIDNIGHT_NETWORK_ID, PAIR_NETWORK);
+}
+
+/**
+ * The four answers above, as a function of the two values they are about.
+ *
+ * **THE ENVIRONMENT IS READ IN EXACTLY ONE PLACE AND THE RULES ARE DECIDED IN
+ * ANOTHER**, so every one of these refusals can be DRIVEN. The first of them -
+ * a build compiled for a network with no record - cannot otherwise be watched
+ * refusing at all: the constant it is about is compiled into another package on
+ * purpose, and a way to vary it would be the override this whole design exists
+ * to remove.
+ */
+export function theNetworkNamed(raw: string | undefined, pair: string): NetworkName {
+  const PAIR_NETWORK = pair as NetworkName;
+  if (!isNetworkId(PAIR_NETWORK)) {
+    throw new Error(
+      `this build is compiled for "${PAIR_NETWORK}" and there is no record for that network. The `
+      + `networks with records are: ${NETWORK_IDS.join(', ')}. Add the record, or build for a `
+      + 'network that has one; nothing here will proceed without knowing whether real money '
+      + 'settles where it is pointed.');
+  }
   if (raw === undefined || raw.trim() === '') return PAIR_NETWORK;
-  const asked = networkFromEnv(raw, PAIR_NETWORK);
+  const asked = raw.trim();
+  if (!isNetworkId(asked)) {
+    throw new Error(
+      `MIDNIGHT_NETWORK_ID="${raw}" names no network this application has a record for. The `
+      + `networks it has records for are: ${NETWORK_IDS.join(', ')}. There is no default and no `
+      + 'fallback: a name nobody has written a record for is refused rather than guessed at, '
+      + 'because a guess is a deployment silently on a network nobody asked for.');
+  }
   if (asked !== PAIR_NETWORK) {
     throw new Error(
       `MIDNIGHT_NETWORK_ID="${raw}" disagrees with the wallet this deployment signs people `
@@ -247,3 +253,8 @@ export function networkOfThePair(raw: string | undefined): NetworkName {
   }
   return PAIR_NETWORK;
 }
+
+/** The whole record for the network this run is on, resolved the one way there is. */
+export const theNetworkRecord = (
+  env?: { MIDNIGHT_NETWORK_ID?: string | undefined },
+): NetworkRecord => networkRecord(theNetwork(env));

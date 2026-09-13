@@ -37,7 +37,7 @@ import { ContractBook } from '../src/wiring/account-contract.js';
 import { startProduct } from '../src/wiring/product.js';
 import { deploymentWriteCapability } from '../src/wiring/write-capability-for-deployment.js';
 import { fileFeeSink } from '../src/midnight/sponsored-fees.js';
-import { applyNetworkId, networkFromEnv, ENDPOINTS } from '../src/midnight/network.js';
+import { applyNetworkId, theNetwork, ENDPOINTS } from '../src/midnight/network.js';
 import { bringUpWallet } from './wallet-bringup.js';
 import { fundedPartiesOver, paidFeeFrom } from './funded-wallets.js';
 import { testEnvironmentFor, startEnvironment } from './test-environment.js';
@@ -48,7 +48,7 @@ import {
 
 const ROOT = join(import.meta.dirname, '..');
 const STATE_DIR = join(ROOT, '.midnight');
-const NETWORK = networkFromEnv(process.env.MIDNIGHT_NETWORK_ID, 'stagenet');
+const NETWORK = theNetwork();
 const PROVER_PORT = Number(process.env.MIDNIGHT_PROVER_PORT ?? 6301);
 const SPONSOR_SEED_FILE = join(STATE_DIR, 'wallet.seed');
 const COMPANY_SEED_FILE = join(STATE_DIR, `${NETWORK}-company.seed`);

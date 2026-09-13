@@ -50,7 +50,8 @@ import { join } from 'node:path';
 
 import { DustAddress, UnshieldedAddress } from '@midnightntwrk/wallet-sdk-address-format';
 
-import { networkFromEnv, applyNetworkId } from '../src/midnight/network.js';
+import { theNetwork, applyNetworkId } from '../src/midnight/network.js';
+import { endpointsOf } from '../src/core/networks.js';
 import { bringUpWallet } from './wallet-bringup.js';
 import { testEnvironmentFor, startEnvironment } from './test-environment.js';
 import { readHolding, describeHolding } from './chain-registered-night.js';
@@ -65,10 +66,17 @@ import {
 } from './fee-payer-funding-rules.js';
 
 const ROOT = process.cwd();
-const NETWORK = networkFromEnv(process.env.MIDNIGHT_NETWORK_ID, 'stagenet');
-const NODE = process.env.MIDNIGHT_NODE_URL || 'https://rpc.stagenet.shielded.tools';
-const INDEXER_WS = process.env.MIDNIGHT_INDEXER_WS_URL
-  || (process.env.MIDNIGHT_INDEXER_URL || 'https://indexer.stagenet.shielded.tools/api/v4/graphql').replace(/^http/, 'ws') + '/ws';
+const NETWORK = theNetwork();
+/*
+ * **THE ENDPOINTS COME FROM THE ONE RECORD AND ARE NOT WRITTEN OUT HERE.**
+ * A stagenet url typed into this file was a second copy of a value that has
+ * moved under this project once already, and it was a copy that could not be
+ * wrong in a way anything noticed: it was the fallback, so it answered
+ * whenever the real answer was missing.
+ */
+const THE = endpointsOf(theNetwork());
+const NODE = process.env.MIDNIGHT_NODE_URL || THE.node;
+const INDEXER_WS = process.env.MIDNIGHT_INDEXER_WS_URL || THE.indexerWs;
 const PROVER_PORT = Number(process.env.MIDNIGHT_PROVER_PORT || 6301);
 const OLD_SEED = join(ROOT, '.midnight', 'wallet.seed');
 const NEW_SEED = join(ROOT, '.midnight', 'fee-payer.seed');

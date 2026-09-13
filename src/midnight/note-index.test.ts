@@ -363,6 +363,66 @@ describe('§6 recording which transaction created a note, and never its index', 
     expect(m.saves).toEqual([]);
   });
 
+  /**
+   * **THE ONE VALUE ON THIS PATH THAT NOTHING CHECKED.**
+   *
+   * When a transaction is named by its 33-byte identifier, the hash is not
+   * something the caller holds: it is read off the first event, and every
+   * other event is then compared against it. **So the comparison is against a
+   * value taken out of the answer, and cannot refuse it.**
+   *
+   * A note written with a hash no spend can read reads as a HEALTHY note in
+   * the pool, on the screen and in the pre-flight a payment makes, and is
+   * refused only at the spend - after a proposal and its approvals have been
+   * paid for.
+   */
+  const eventsSaying = (hash: string, note: Note = LEGACY): NoteEvents => ({
+    eventsOf: async () => [output(await vaultNoteCommitment(note, VAULT), 616n, VAULT, hash)],
+  });
+
+  it('REFUSES A HASH THE CHAIN DID NOT NAME, AND WRITES NOTHING', async () => {
+    for (const answered of ['', '0x', 'c9'.repeat(20), `${TX}ab`, 'ab'.repeat(32).toUpperCase() + 'zz',
+      'not-a-hash', '0x' + 'c9'.repeat(31)]) {
+      const m = memoryPool({ notes: [LEGACY] });
+      /*
+       * RED WHEN the hash read off the answer is written without being shaped.
+       * Every value here passed every check this function made before, because
+       * the only comparison on this branch was against this same value.
+       */
+      await expect(
+        recordCreatingTransaction(m.pool, VAULT, LEGACY.nonce, eventsSaying(answered), { identifier: '00'.repeat(33) }),
+        JSON.stringify(answered),
+      ).rejects.toThrow(/without naming its hash|sixty-four hex characters/);
+      /* RED WHEN it refuses after writing, which strands the note it was
+       * called to repair. */
+      expect(m.saves, JSON.stringify(answered)).toEqual([]);
+    }
+  });
+
+  it('and a well-formed hash on the same path is still recorded, so the guard is not a wall', async () => {
+    const m = memoryPool({ notes: [LEGACY] });
+    /* RED WHEN the guard refuses the ordinary answer, which would make the
+     * repair door useless and the assertions above vacuous. */
+    expect(await recordCreatingTransaction(m.pool, VAULT, LEGACY.nonce, eventsSaying(TX), { identifier: '00'.repeat(33) }))
+      .toEqual({ index: 616n, createdIn: TX });
+    expect(m.box.notes.notes[0].createdIn).toBe(TX);
+    /* An upper-case or 0x-prefixed answer is the same hash and is normalised,
+     * not refused: the shape rule is about what the value IS. */
+    const upper = memoryPool({ notes: [LEGACY] });
+    expect(await recordCreatingTransaction(upper.pool, VAULT, LEGACY.nonce, eventsSaying(`0x${TX.toUpperCase()}`), { identifier: '00'.repeat(33) }))
+      .toEqual({ index: 616n, createdIn: TX });
+  });
+
+  it('REFUSES a hash the CALLER named that is not a hash, before any chain read is trusted', async () => {
+    const m = memoryPool({ notes: [LEGACY] });
+    /* RED WHEN a caller's own malformed hash is compared against the events
+     * and written. It is a different branch from the one above and it had the
+     * same ending. */
+    await expect(recordCreatingTransaction(m.pool, VAULT, LEGACY.nonce, eventsSaying(TX), { hash: 'c9'.repeat(20) }))
+      .rejects.toThrow(/is not a transaction hash/);
+    expect(m.saves).toEqual([]);
+  });
+
   it('writes nothing for a transaction that did not create the note, or a note the pool does not hold', async () => {
     const { pool, saves } = memoryPool({ notes: [LEGACY] });
     const events = await eventsFor([{ note: NOTE, index: 616n, hash: TX }]);

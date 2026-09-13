@@ -81,14 +81,14 @@ import {
 
 import { Contract as VaultContract } from '../contracts/managed-vault/contract/index.js';
 import { AccountSimulator, privateStateFor } from '../contracts/test/simulator.js';
-import { applyNetworkId, networkFromEnv } from '../src/midnight/network.js';
+import { applyNetworkId, theNetwork } from '../src/midnight/network.js';
 import { classCeiling, extrinsicCeiling, printDerivation } from './dispatch-ceiling.js';
 import { limitsFromLedger, measureCost } from './tx-size.js';
 
 const ROOT = process.cwd();
 const ACCOUNT_ARTEFACTS = join(ROOT, 'contracts', 'managed');
 const VAULT_ARTEFACTS = join(ROOT, 'contracts', 'managed-vault');
-const NETWORK = networkFromEnv(process.env.MIDNIGHT_NETWORK_ID, 'stagenet');
+const NETWORK = theNetwork();
 
 const line = (s = '') => console.log(s);
 const bold = (s: string) => `\x1b[1m${s}\x1b[0m`;

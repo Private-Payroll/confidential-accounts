@@ -33,7 +33,7 @@ import {
 } from '../src/midnight/note-index.js';
 import { SealedNotePool, type PoolSigner } from '../src/midnight/vault-pool.js';
 import { assertVaultName, vaultRegistryFile, parseVaultRegistry } from '../src/midnight/vault-record.js';
-import { networkFromEnv, ENDPOINTS } from '../src/midnight/network.js';
+import { theNetwork, ENDPOINTS } from '../src/midnight/network.js';
 import { indexerPublicDataProvider } from '@midnight-ntwrk/midnight-js-indexer-public-data-provider';
 import type { Hex } from '../src/core/crypto.js';
 import { FileSealedPoolStore, vaultPoolFile } from './vault-pool-file.js';
@@ -72,7 +72,7 @@ const ask = async (prompt: string): Promise<string> => {
 const shorten = (h: string): string => `${h.slice(0, 16)}…`;
 
 async function main(): Promise<number> {
-  const network = networkFromEnv(process.env.MIDNIGHT_NETWORK_ID, 'stagenet');
+  const network = theNetwork();
 
   step('1 of 4  Which vault');
   const vaultName = (process.env.VAULT_NAME ?? await ask('  vault name: ')).trim();

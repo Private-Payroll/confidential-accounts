@@ -73,7 +73,18 @@ export {};   // makes this file a MODULE rather than a global script.
 // which is a minute wasted every time somebody writes a small standalone
 // script here.
 
-const IDX = process.env.MIDNIGHT_INDEXER_URL || 'https://indexer.stagenet.shielded.tools/api/v4/graphql';
+import { theNetwork } from '../src/midnight/network.js';
+import { endpointsOf, websocketNodeOf } from '../src/core/networks.js';
+
+/*
+ * **THE ENDPOINTS COME FROM THE ONE RECORD AND ARE NOT WRITTEN OUT HERE.**
+ * A stagenet url typed into this file was a second copy of a value that has
+ * moved under this project once already, and it was a copy that could not be
+ * wrong in a way anything noticed: it was the fallback, so it answered
+ * whenever the real answer was missing.
+ */
+const THE = endpointsOf(theNetwork());
+const IDX = process.env.MIDNIGHT_INDEXER_URL || THE.indexer;
 
 /**
  * The two addresses the per-address comparison uses.
@@ -132,8 +143,14 @@ const ago = (ms: number) => {
  * the comparison below is what keeps that from being forgotten again.
  */
 const counterFor = (address: string): Promise<number | null> => new Promise(resolve => {
-  const ws = new WebSocket((process.env.MIDNIGHT_INDEXER_WS_URL
-    || IDX.replace(/^http/, 'ws') + '/ws'), 'graphql-transport-ws');
+  /*
+   * The socket the record names, not the query url with its scheme swapped.
+   * The two agree today and the record's shape does not require them to: a
+   * network may publish a socket somewhere else entirely, and a derivation
+   * here would go on answering with the wrong one.
+   */
+  const ws = new WebSocket((process.env.MIDNIGHT_INDEXER_WS_URL || THE.indexerWs),
+    'graphql-transport-ws');
   let done = false;
   const finish = (v: number | null) => { if (!done) { done = true; try { ws.close(); } catch {} resolve(v); } };
   const timer = setTimeout(() => finish(null), 25000);

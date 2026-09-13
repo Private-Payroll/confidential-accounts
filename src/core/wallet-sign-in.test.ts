@@ -15,7 +15,7 @@ import { AccountService } from './account.js';
 import {
   WalletIdentityService, WalletSignInError, signInAsk, walletSignInOrigin,
 } from './wallet-identity.js';
-import { PAIR_NETWORK, networkOfThePair } from '../midnight/network.js';
+import { PAIR_NETWORK, theNetwork } from '../midnight/network.js';
 import type { NetworkName } from '../midnight/network.js';
 import { NETWORK as WALLET_NETWORK } from 'midnight-identity/network';
 
@@ -399,8 +399,11 @@ describe('C151 — ONE NETWORK, AND SOMETHING FAILS IF THE TWO EVER DISAGREE', (
   it('WATCHED FAILING: a deployment that names a DIFFERENT network is refused at boot,'
     + ' and the sentence carries both values', () => {
     let said = '';
-    try { networkOfThePair('preview'); } catch (e) { said = (e as Error).message; }
+    try { theNetwork({ MIDNIGHT_NETWORK_ID: 'preview' }); } catch (e) { said = (e as Error).message; }
 
+    /* RED WHEN the refusal stops naming what was asked for, what this pair is
+     * compiled for, or where the second value lives - each of which is the
+     * thing a person needs to act on it. */
     expect(said).toContain('preview');
     expect(said).toContain(PAIR_NETWORK);
     expect(said).toContain('MIDNIGHT_NETWORK_ID');
@@ -408,9 +411,11 @@ describe('C151 — ONE NETWORK, AND SOMETHING FAILS IF THE TWO EVER DISAGREE', (
   });
 
   it('and naming the pair’s own network, or naming nothing, is the ordinary case', () => {
-    expect(networkOfThePair(PAIR_NETWORK)).toBe(PAIR_NETWORK);
-    expect(networkOfThePair(undefined)).toBe(PAIR_NETWORK);
-    expect(networkOfThePair('')).toBe(PAIR_NETWORK);
+    /* RED WHEN the environment stops being able to agree, which would make
+     * every door that exports the variable refuse. */
+    expect(theNetwork({ MIDNIGHT_NETWORK_ID: PAIR_NETWORK })).toBe(PAIR_NETWORK);
+    expect(theNetwork({})).toBe(PAIR_NETWORK);
+    expect(theNetwork({ MIDNIGHT_NETWORK_ID: '' })).toBe(PAIR_NETWORK);
   });
 });
 

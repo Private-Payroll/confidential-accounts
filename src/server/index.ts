@@ -41,7 +41,7 @@ import {
 } from './session-cookie.js';
 import type { Hex } from '../core/crypto.js';
 import { payeeAddress } from '../midnight/payee-address.js';
-import { networkOfThePair } from '../midnight/network.js';
+import { theNetwork } from '../midnight/network.js';
 import { runPayments } from '../midnight/run-status.js';
 import { rootOfLeaves } from '../midnight/payout-tree.js';
 import { runMaterialFor, retryMaterialFor } from '../midnight/run-material.js';
@@ -87,9 +87,9 @@ loadEnvFile();
  * inside both strings — so these cannot be two decisions. `MIDNIGHT_NETWORK_ID`
  * is now checked rather than obeyed, and a deployment that names a different
  * network stops here, loudly, instead of writing addresses no wallet in this
- * pair can read. `networkOfThePair` carries the whole argument.
+ * pair can read. `theNetwork` carries the whole argument.
  */
-const NETWORK = networkOfThePair(process.env.MIDNIGHT_NETWORK_ID);
+const NETWORK = theNetwork();
 
 /**
  * How an amount crosses the HTTP boundary.

@@ -17,8 +17,9 @@ import { payeeFor, unshieldedPayeeFor } from '../testing/payees.js';
  * vault never holds a balance under it.
  *
  * Every expected value below is read from somewhere other than the code under
- * test: the ledger's token type from the ledger itself, and the account's name
- * for NIGHT from the characters of the word.
+ * test: the ledger's token type from the ledger itself, the account's name for
+ * NIGHT from the characters of the word, and the test settlement asset's colour
+ * from a mint that produced it on a public test network, written down here.
  */
 
 const NETWORK = 'undeployed' as const;
@@ -26,6 +27,26 @@ const LEDGER_NIGHT = (nativeToken() as unknown as { raw: string }).raw;
 
 /** `NIGHT` as ASCII, zero padded to 32 bytes, computed without `assetIdBytes`. */
 const NIGHT_AS_ASCII = Buffer.from('NIGHT', 'ascii').toString('hex').padEnd(64, '0');
+
+/**
+ * **WHAT THE LEDGER CALLS EVERY ASSET THAT HAS A FORM, FROM SOMEWHERE OTHER
+ * THAN THE FUNCTION UNDER TEST.**
+ *
+ * The loop below used to compare `ledgerTokenOf(code, form)` against
+ * `asset.ledger[form]` - which is the value that function reads its answer out
+ * of. **Two live computations of one value: it stayed green whatever either
+ * side became**, including a registry row edited to name money nobody minted.
+ *
+ * NIGHT's token comes from the ledger itself, above. The test settlement
+ * asset's comes from the chain: a mint on stagenet produced it and a settled
+ * deposit has moved it, and it is written down here as a second copy on
+ * purpose. A row that changes without that mint having happened is a row
+ * naming money that does not exist, and this is what says so.
+ */
+const WHAT_THE_LEDGER_CALLS_IT: Readonly<Record<string, string>> = Object.freeze({
+  'NIGHT unshielded': LEDGER_NIGHT,
+  'TESTUSD shielded': 'abda184485c6abbbe4440d65b99ef88e0f79f61ec19af52a5bb0d91b4a824679',  // not-a-secret: the colour a mint produced on a public test network, published by the chain itself and readable by anyone
+});
 
 const publicNightTransfer = (amount = 10n) => transferOf({
   accountId: 'acct_1',
@@ -94,7 +115,17 @@ describe('the token a payment out of a vault moves', () => {
             ? /Assets that have a private form: TESTUSD\./
             : /Assets that have a public form: NIGHT\./);
         } else {
-          expect(value).toBe(row);
+          const key = `${asset.code} ${form}`;
+          /*
+           * RED WHEN a row gains a token nothing outside this file has
+           * accounted for. The table is the second copy; a row with no entry in
+           * it is a token nobody has said where it came from.
+           */
+          expect(WHAT_THE_LEDGER_CALLS_IT, key).toHaveProperty(key);
+          /* RED WHEN the registry's row is edited to a value no mint produced,
+           * which the old form of this assertion followed in silence. */
+          expect(value, key).toBe(WHAT_THE_LEDGER_CALLS_IT[key]);
+          expect(row, key).toBe(WHAT_THE_LEDGER_CALLS_IT[key]);
         }
       }
     }

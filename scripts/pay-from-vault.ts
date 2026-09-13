@@ -57,7 +57,7 @@ import { chainVaultHoldings } from '../src/midnight/vault-holdings.js';
 import { vaultDetailsOf } from '../src/midnight/vault-details.js';
 import { refuseWhatTheVaultCannotPay } from '../src/core/vault-holdings.js';
 import { assertVaultName, vaultRegistryFile, parseVaultRegistry, type VaultEntry } from '../src/midnight/vault-record.js';
-import { applyNetworkId, networkFromEnv } from '../src/midnight/network.js';
+import { applyNetworkId, theNetwork } from '../src/midnight/network.js';
 import { payeeOf, shortPayee } from '../src/midnight/payee-address.js';
 import { privateStateKey } from '../src/midnight/ledger.js';
 import { transferOf, transferFacts, privacyOf } from '../src/core/movement.js';
@@ -85,7 +85,7 @@ import {
 const ROOT = process.cwd();
 const STATE_DIR = join(ROOT, '.midnight');
 const SEED_FILE = join(STATE_DIR, 'wallet.seed');
-const NETWORK = networkFromEnv(process.env.MIDNIGHT_NETWORK_ID, 'stagenet');
+const NETWORK = theNetwork();
 const ACCOUNT_RECORD = join(STATE_DIR, `${NETWORK}-contract.json`);
 const VIEW_FILE = join(STATE_DIR, `${NETWORK}-view.json`);
 const ACCOUNT_ARTEFACTS = join(ROOT, 'contracts', 'managed');

@@ -5,11 +5,13 @@ import { NETWORKS, NETWORK as THE_NETWORK_THIS_BUILD_IS_ON } from 'midnight-iden
 
 import {
   SEED_ASSETS, StaticAssetRegistry, assets as productAssets,
-  TEST_SETTLEMENT_ASSET, NETWORKS_A_TEST_ASSET_MAY_EXIST_ON,
-  aTestAssetMayExistOn, testAssetsFor, isATestAsset, refuseATestAssetOffItsNetwork,
+  TEST_SETTLEMENT_ASSET, TEST_SETTLEMENT_MINTED_ON,
+  aTestAssetMayExistOn, aTestAssetMayExistOnAKindOf, testAssetsFor, isATestAsset,
+  refuseATestAssetOffItsNetwork,
   ledgerFormOf, ledgerTokenOf, privateForm,
   type Asset,
 } from './assets.js';
+import { NETWORK_IDS, networkRecord } from './networks.js';
 
 /**
  * **A TEST ASSET IS BACKED BY NOTHING, AND THE ONLY THING STANDING BETWEEN IT
@@ -25,7 +27,16 @@ import {
  * way to answer it differently without editing source.
  */
 
-const REAL_NETWORKS = ['mainnet'] as const;
+/**
+ * **THE NETWORKS WHERE REAL MONEY SETTLES, ASKED OF THE RECORDS RATHER THAN
+ * WRITTEN DOWN HERE.**
+ *
+ * This used to be the literal `['mainnet']`, which asked the question only of
+ * the network somebody had thought of. A second real network added to the
+ * records would have been tested by nothing at all; now it is tested by
+ * existing.
+ */
+const REAL_NETWORKS: readonly string[] = NETWORK_IDS.filter(id => networkRecord(id).kind === 'real');
 
 /** The registry's own source, and the same source with every comment blanked. */
 const registrySource = readFileSync(
@@ -53,12 +64,58 @@ const codeOnly = ((src: string): string => {
 })(registrySource);
 
 describe('§1 which networks a test asset may exist on, asked for every one of them', () => {
-  it('mainnet gets no test asset, and it is named here so that admitting it turns this red', () => {
+  it('EVERY network whose record says real money settles there gets no test asset', () => {
+    /*
+     * RED WHEN this list empties, which would make every assertion in the loop
+     * below vacuous rather than satisfied.
+     */
+    expect(REAL_NETWORKS.length).toBeGreaterThan(0);
     for (const real of REAL_NETWORKS) {
-      /* RED WHEN a real network is added to the permitted list. */
+      /* RED WHEN a network whose own record says real money settles there is
+       * admitted - by having its name added to the asset's list, or by its
+       * record's `kind` being changed, which are now two separate edits and
+       * BOTH are needed. */
       expect(aTestAssetMayExistOn(real), real).toBe(false);
       expect(testAssetsFor(real), real).toEqual([]);
-      expect(NETWORKS_A_TEST_ASSET_MAY_EXIST_ON).not.toContain(real);
+      expect(TEST_SETTLEMENT_MINTED_ON).not.toContain(real);
+    }
+  });
+
+  it('AND THE KIND ALONE REFUSES IT, with the name list saying yes', () => {
+    /*
+     * **THE CONTROL FOR THE CONDITION THAT MATTERS.** The two conditions could
+     * hide each other: with the colour's own list refusing every real network,
+     * a broken `kind` check would never show. So this drives `kind` on its own,
+     * against a network the colour list DOES admit.
+     *
+     * RED WHEN the kind stops being consulted - at which point a real network
+     * that somebody had also listed as a home for the colour would be admitted,
+     * and a name would be the only thing standing between a worthless token and
+     * somebody's pay.
+     */
+    const listed = TEST_SETTLEMENT_MINTED_ON[0]!;
+    expect(networkRecord(listed).kind).toBe('test');
+    expect(aTestAssetMayExistOn(listed)).toBe(true);
+    /*
+     * RED WHEN the kind stops being consulted. The colour's own list says yes
+     * to this network; the only thing refusing here is the record's `kind`, so
+     * this is the assertion that dies the day a name is all that stands between
+     * a worthless token and somebody's pay.
+     */
+    expect(aTestAssetMayExistOnAKindOf('real', listed)).toBe(false);
+    expect(aTestAssetMayExistOnAKindOf('test', listed)).toBe(true);
+    /* RED WHEN the colour's own home stops being consulted: a test network the
+     * colour was never minted on would get a row naming money nobody minted. */
+    for (const id of NETWORK_IDS.filter(n => !TEST_SETTLEMENT_MINTED_ON.includes(n))) {
+      expect(aTestAssetMayExistOnAKindOf('test', id), id).toBe(false);
+    }
+    /*
+     * `expect(networkRecord(real).kind).toBe('real')` stood here and could not
+     * fail: `REAL_NETWORKS` is DEFINED as the ids whose kind is `real`, so it
+     * restated the filter that built the list.
+     */
+    for (const real of REAL_NETWORKS) {
+      expect(TEST_SETTLEMENT_MINTED_ON.includes(real), real).toBe(false);
     }
   });
 
@@ -76,7 +133,7 @@ describe('§1 which networks a test asset may exist on, asked for every one of t
 
   it('a network nobody has thought of is refused by DEFAULT, not admitted by default', () => {
     for (const invented of ['', ' ', 'STAGENET', 'stagenet2', 'mainnet-2', 'prod', 'production',
-      'stagenet ', 'main', 'localhost', 'undefined', 'null']) {
+      'stagenet ', 'main', 'localhost', 'undefined', 'null', 'devnet', 'testnet']) {
       /*
        * RED WHEN the rule is written as a list of networks a test asset may NOT
        * exist on. A deny-list answers "yes" for every name nobody wrote down,
@@ -162,7 +219,7 @@ describe('§3 there is no way to answer the question differently without editing
   it('reads the source it is meant to read', () => {
     /* RED WHEN this stops reading the registry, which would make §3 assert nothing. */
     expect(registrySource).toContain('export const SEED_ASSETS');
-    expect(codeOnly).toContain('NETWORKS_A_TEST_ASSET_MAY_EXIST_ON');
+    expect(codeOnly).toContain('TEST_SETTLEMENT_MINTED_ON');
   });
 
   it('THE REGISTRY READS NO ENVIRONMENT, NO BUILD FLAG AND NO HOSTNAME', () => {
@@ -186,10 +243,47 @@ describe('§3 there is no way to answer the question differently without editing
      * a safe thing to hang this on and why a second source is not.
      */
     const imports = [...codeOnly.matchAll(/from '([^']+)'/g)].map(m => m[1]);
-    expect(imports).toEqual(['midnight-identity/network']);
+    /*
+     * **TWO IMPORTS AND THE SECOND ONE IS THE POINT.** The registry asks the
+     * network's own record what KIND of network it is, and `./networks.js`
+     * reads no environment, no argument vector and no file at run time - the
+     * record is imported, so it is part of the build exactly as the constant
+     * is. A third entry here is a third thing this gate's answer can depend on.
+     */
+    expect(imports).toEqual(['midnight-identity/network', './networks.js']);
     expect(codeOnly).toContain("import { NETWORK as THE_NETWORK_THIS_BUILD_IS_ON } from 'midnight-identity/network'");
+    expect(codeOnly).toContain("import { isNetworkId, networkRecord, type NetworkKind } from './networks.js'");
     /* RED WHEN the permitted-network answer takes an argument with a default, which is an override. */
     expect(codeOnly).toContain('export const aTestAssetMayExistOn = (network: string): boolean =>');
+    /*
+     * RED WHEN the registry's own question stops going through the records.
+     * The pure rule beside it may be handed a kind, which is how the condition
+     * that matters is watched refusing; what must not change is that the
+     * REGISTRY asks the record rather than being told an answer.
+     */
+    expect(codeOnly).toContain('aTestAssetMayExistOnAKindOf(networkRecord(network).kind, network)');
+    /*
+     * **THE SEED IS BUILT WITH THE CONSTANT AND NOT WITH A NAME.**
+     *
+     * RED WHEN a literal is written there instead. With this build on the same
+     * network the two behave identically and no behavioural test can tell them
+     * apart - so it is asked of the text. The day the pair moves, a literal
+     * would ship the row onto a network that is no longer this one, and the
+     * only thing that would notice is this line.
+     */
+    expect(codeOnly).toContain('...testAssetsFor(THE_NETWORK_THIS_BUILD_IS_ON),');
+    expect(codeOnly).not.toMatch(/testAssetsFor\(['"`]/);
+    /* RED WHEN the constructor is told an answer rather than asking. */
+    expect(codeOnly).not.toMatch(/refuseATestAssetOffItsNetwork\(assets, ['"`]/);
+    /*
+     * **THE ONLY NETWORK NAME THIS FILE MAY WRITE DOWN IS THE COLOUR'S OWN
+     * HOME.** RED WHEN a second one appears - in a comparison, in a default, in
+     * a list beside the first. The record says what kind of network each is;
+     * this file has no business knowing their names.
+     */
+    const names = [...codeOnly.matchAll(/['"`](undeployed|preview|preprod|qanet|stagenet|mainnet|devnet|testnet)['"`]/g)]
+      .map(m => m[0]);
+    expect(names).toEqual(["'stagenet'"]);
   });
 
   it('and this build is on a network the row is allowed on, which is why the row is here', () => {
@@ -234,29 +328,51 @@ describe('§4 what the row says about itself, and what it must not say', () => {
     expect(ledgerTokenOf(TEST_SETTLEMENT_ASSET, 'shielded')).toBe(MEASURED_ON_STAGENET);
   });
 
-  it('THE NETWORK CONSTANT THE GATE HANGS ON IS THE BUILT ONE, AND IT MATCHES ITS SOURCE', async () => {
+  it('THE VALUE THE GATE ACTUALLY GOT EQUALS WHAT THE SOURCE SAYS', async () => {
     /*
-     * **THE GATE ASKS A BUILD OUTPUT.** `midnight-identity/network` resolves
-     * through the package's own `exports` map to `lib/wallet/network.js`, which
-     * is compiled from `src/wallet/network.ts`. Everything in this file rests on
-     * that one constant, so a build output that had drifted from its source
-     * would be a gate answering a question nobody had asked recently.
+     * **THIS COMPARISON READS SOURCE, AND IT USED TO READ A BUILD OUTPUT.**
      *
-     * RED WHEN the two disagree, whichever of them moved.
+     * Everything in this file rests on one constant, which reaches the registry
+     * through the package's own `exports` map - that is, through whatever was
+     * last compiled. So the question worth asking is whether the value that
+     * ARRIVED is the value the source states.
+     *
+     * It used to be asked by opening `lib/wallet/network.js` and comparing its
+     * text against `src/wallet/network.ts`. That file is a build output and is
+     * not committed, **so in a clone of the published repository there is no
+     * built copy and the comparison could not run at all** - it would fail on a
+     * missing file and say nothing about drift. Worse, it made a gate's own
+     * test depend on a path that only exists after somebody has built.
+     *
+     * So: the value in use against the source text. It needs no artefact, it
+     * runs in a fresh clone, and it catches exactly what the old form was for -
+     * a built copy that has drifted - because a drifted build is a value that
+     * no longer equals what the source says. **The build is verified by
+     * building it, which the package's own install step does; a text comparison
+     * in a test was never what made the build correct.**
+     *
+     * RED WHEN the source constant moves and the build does not, or the build
+     * moves and the source does not - whichever of them moved.
      */
     const { readFileSync: read } = await import('node:fs');
-    const at = (rel: string) => fileURLToPath(new URL(`../../packages/identity/${rel}`, import.meta.url));
+    const source = read(
+      fileURLToPath(new URL('../../packages/identity/src/wallet/network.ts', import.meta.url)), 'utf8');
     /*
      * Anchored on the constant's own name, with only a type annotation allowed
      * between it and the `=`. An unanchored pattern would happily pin a
      * `NETWORK_DEFAULT` somebody added above the real one.
      */
-    const of = (text: string) => /export const NETWORK(?:\s*:\s*[A-Za-z]+)?\s*=\s*'([a-z]+)'/.exec(text)?.[1];
-    const source = of(read(at('src/wallet/network.ts'), 'utf8'));
-    const built = of(read(at('lib/wallet/network.js'), 'utf8'));
-    expect(source, 'the source states no network constant this can read').toBeTruthy();
-    expect(built).toBe(source);
-    expect(built).toBe(THE_NETWORK_THIS_BUILD_IS_ON);
+    const stated = /export const NETWORK(?:\s*:\s*[A-Za-z]+)?\s*=\s*'([a-z]+)'/.exec(source)?.[1];
+    expect(stated, 'the source states no network constant this can read').toBeTruthy();
+    expect(THE_NETWORK_THIS_BUILD_IS_ON).toBe(stated);
+    /*
+     * RED WHEN this test starts needing a build artefact again, which is what
+     * made it unrunnable in a published clone.
+     */
+    const own = read(fileURLToPath(import.meta.url), 'utf8');
+    /* Assembled rather than written, so this file does not contain the string
+     * it is checking for and defeat its own scan. */
+    expect(own).not.toContain(['packages', 'identity', 'lib'].join('/'));
   });
 
   it('is six decimals, a token, and on midnight, which is the path a real one will take', () => {

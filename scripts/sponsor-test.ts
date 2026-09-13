@@ -33,7 +33,7 @@ import { indexerPublicDataProvider } from '@midnight-ntwrk/midnight-js-indexer-p
 
 import { Contract, ledger as readLedger, pureCircuits } from '../contracts/managed/contract/index.js';
 import { witnesses, type AccountPrivateState } from '../contracts/src/witnesses.js';
-import { applyNetworkId, networkFromEnv, ENDPOINTS } from '../src/midnight/network.js';
+import { applyNetworkId, theNetwork, ENDPOINTS } from '../src/midnight/network.js';
 import { privateStateKey } from '../src/midnight/ledger.js';
 import { isDeployedCircuit } from '../src/midnight/deferral.js';
 import { assetIdBytes } from '../src/core/assets.js';
@@ -54,7 +54,7 @@ const begin = (n: number, of: number, t: string) => console.log(`\n${BOLD}${n} o
 
 const ROOT = process.cwd();
 const STATE_DIR = join(ROOT, '.midnight');
-const NETWORK = networkFromEnv(process.env.MIDNIGHT_NETWORK_ID, 'stagenet');
+const NETWORK = theNetwork();
 const SPONSOR_SEED_FILE = join(STATE_DIR, 'wallet.seed');
 const CUSTOMER_SEED_FILE = join(STATE_DIR, `${NETWORK}-customer.seed`);
 const CONTRACT_FILE = join(STATE_DIR, `${NETWORK}-contract.json`);

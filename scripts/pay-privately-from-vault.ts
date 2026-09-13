@@ -87,7 +87,7 @@ import { vaultDetailsOf } from '../src/midnight/vault-details.js';
 import { indexerNoteEvents } from '../src/midnight/note-index.js';
 import { refuseWhatTheVaultCannotPay } from '../src/core/vault-holdings.js';
 import { assertVaultName, vaultRegistryFile, parseVaultRegistry, type VaultEntry } from '../src/midnight/vault-record.js';
-import { applyNetworkId, networkOfThePair } from '../src/midnight/network.js';
+import { applyNetworkId, theNetwork } from '../src/midnight/network.js';
 import { payeeOf, shortPayee } from '../src/midnight/payee-address.js';
 import { privateStateKey } from '../src/midnight/ledger.js';
 import { transferOf, transferFacts, privacyOf } from '../src/core/movement.js';
@@ -124,7 +124,7 @@ const SEED_FILE = join(STATE_DIR, 'wallet.seed');
 /**
  * **WHICH NETWORK, AND IT IS NOT THE ENVIRONMENT'S TO DECIDE.**
  *
- * `networkOfThePair` throws when `MIDNIGHT_NETWORK_ID` names a network other
+ * `theNetwork` throws when the environment names a network other
  * than the one this build is compiled for. **That matters more here than
  * anywhere else in this repository**: the asset this door settles in exists
  * only on networks a test asset is allowed on, and that gate is keyed on the
@@ -133,7 +133,7 @@ const SEED_FILE = join(STATE_DIR, 'wallet.seed');
  * the registry still holding it because the registry was asked a different
  * question. Unset is not a disagreement; it is the ordinary case.
  */
-const NETWORK = networkOfThePair(process.env.MIDNIGHT_NETWORK_ID);
+const NETWORK = theNetwork();
 const ACCOUNT_RECORD = join(STATE_DIR, `${NETWORK}-contract.json`);
 const VIEW_FILE = join(STATE_DIR, `${NETWORK}-view.json`);
 const SIGNER_SECRETS = join(STATE_DIR, 'vault-pool-secrets.json');
@@ -271,7 +271,7 @@ async function main(): Promise<number> {
    * **THIS IS DEFENCE IN DEPTH AND NOT THE THING THAT HOLDS THE PROPERTY, AND
    * SAYING SO IS THE POINT.**
    *
-   * What holds it is `networkOfThePair` above: the registry and this door read
+   * What holds it is `theNetwork` above: the registry and this door read
    * the same compiled constant, so as the two are wired today this call cannot
    * fail. **It is here for the day one of them stops reading that constant** -
    * a door given its network another way, a registry taught to take one - which
