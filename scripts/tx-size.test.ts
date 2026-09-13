@@ -16,7 +16,8 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { compareAgainstLimits, measureTransaction, type BlockLimits } from './tx-size.js';
+import { compareAgainstLimits, measureCost, measureCostAt, measureTransaction, readDismissRefusal,
+         type BlockLimits } from './tx-size.js';
 
 const L: any = await import('@midnightntwrk/ledger-v9');
 const { LedgerParameters, Transaction, Intent, UnshieldedOffer, nativeToken,
@@ -150,5 +151,74 @@ describe('THE COMPARISON SIX DOORS PRINT', () => {
     const m = measureTransaction(txWith(1), 'probe');
     const lines = compareAgainstLimits(m, limits).join('\n');
     expect(lines).toContain('NO COMPARISON IS POSSIBLE');
+  });
+});
+
+describe('THE NUMBERS IN A REFUSAL, WHICH USED TO BE THROWN AWAY', () => {
+  /** The refusal the ledger formats, word for word from its own source. */
+  const REFUSAL =
+    'exceeded the maximum time to dismiss for transaction size; this transaction would take '
+    + '15.038ms to dismiss, but given its size of 7088 bytes, it may take at most 15.000ms';
+
+  it('reads the time, the size and the allowance out of the refusal', () => {
+    // TURNS RED IF: any of the three patterns stops matching the wording the
+    // ledger writes. This is the only branch where the numbers matter: a
+    // transaction that fits needs no explanation and one that does not is acted
+    // on by how far over it is.
+    expect(readDismissRefusal(REFUSAL)).toEqual({
+      timePs: 15_038_000_000, sizeBytes: 7088, allowancePs: 15_000_000_000,
+    });
+  });
+
+  it('reads a microsecond figure, which is written with the Greek letter', () => {
+    // TURNS RED IF: the micro sign becomes the letter u, which silently reads
+    // every microsecond figure as unmatched.
+    expect(readDismissRefusal('would take 900.000\u03bcs to dismiss')!.timePs).toBe(900_000_000);
+  });
+
+  it('says nothing rather than inventing numbers for an unrelated failure', () => {
+    // TURNS RED IF: a message that is not a dismiss refusal is given zeros,
+    // which would read as a transaction costing nothing to dismiss.
+    expect(readDismissRefusal('the wallet is not connected')).toBeUndefined();
+  });
+
+  it('KEEPS THE NUMBERS when the ledger refuses the real transaction', () => {
+    /*
+     * TURNS RED IF: the throw branch goes back to keeping only the message.
+     *
+     * Measured against the ledger rather than against a string: a transaction
+     * of a shape the enforcing cost call refuses, costed with enforcement on.
+     */
+    const many = txWith(400);
+    const reading = measureCost(many, LedgerParameters);
+    expect(reading.problem).toBeTruthy();
+    expect(reading.dismiss).toBeTruthy();
+    expect(reading.dismiss!.timePs).toBeGreaterThan(0);
+    expect(reading.dismiss!.allowancePs).toBeGreaterThan(0);
+    expect(reading.dismiss!.timePs!).toBeGreaterThan(reading.dismiss!.allowancePs!);
+  });
+
+  it('records which parameters a cost was taken at, because it only means anything against those', () => {
+    /*
+     * TURNS RED IF: the label is dropped, or the two routes start reporting the
+     * same source.
+     *
+     * The library's starting values are what a chain begins with and not what
+     * one is running. Every cost this project has recorded was taken at them
+     * and none of them said so.
+     */
+    expect(measureCost(txWith(1), LedgerParameters).parametersSource).toBe("the library's starting values");
+    expect(measureCostAt(txWith(1), LedgerParameters.initialParameters()).parametersSource).toBe('supplied');
+  });
+
+  it('costs against parameters it is handed rather than fetching its own', () => {
+    // TURNS RED IF: the supplied-parameters route quietly reads the library's
+    // constant anyway, which would make a live reading decorative.
+    let asked = 0;
+    const params = LedgerParameters.initialParameters();
+    const spy = { cost: (p: any, e: boolean) => { asked++; expect(p).toBe(params); return txWith(1).cost(p, e); } };
+    const reading = measureCostAt(spy as any, params, false);
+    expect(asked).toBe(1);
+    expect(reading.cost).toBeTruthy();
   });
 });

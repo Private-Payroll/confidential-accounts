@@ -17,6 +17,7 @@ import { describe, expect, it } from 'vitest';
 import {
   appliedOverhead,
   arrivedOverhead,
+  feeFloorFrom,
   feeFloorVerdict,
   floorKnownAbsent,
 } from './dust-fee-floor.js';
@@ -187,5 +188,68 @@ describe('KNOWN ABSENT vs MERELY UNVERIFIED — what decides whether a door stop
     expect(feeFloorVerdict({ passed: 1n, arrived: 2n, applied: null }).reason).toBe('disagrees');
     expect(feeFloorVerdict({ passed: 1n, arrived: 1n, applied: 0n }).reason).toBe('not-applied');
     expect(feeFloorVerdict({ passed: 1n, arrived: 1n, applied: 1n }).reason).toBe('ok');
+  });
+});
+
+describe('READING THE FLOOR OFF THE ENVIRONMENT, WHICH USED TO BE ABLE TO THROW', () => {
+  it('takes a plain number of specks', () => {
+    // TURNS RED IF: a well-formed override stops being honoured, which would
+    // make the setting decorative.
+    expect(feeFloorFrom('2000000', 1_000_000n)).toEqual({ value: 2_000_000n });
+    expect(feeFloorFrom('  2000000  ', 1_000_000n)).toEqual({ value: 2_000_000n });
+  });
+
+  it('falls back to the default when nothing is set', () => {
+    // TURNS RED IF: an unset variable stops meaning the default, which would
+    // take the floor away from everybody who never set one.
+    expect(feeFloorFrom(undefined, 1_000_000n)).toEqual({ value: 1_000_000n });
+    expect(feeFloorFrom('', 1_000_000n)).toEqual({ value: 1_000_000n });
+    expect(feeFloorFrom('   ', 1_000_000n)).toEqual({ value: 1_000_000n });
+  });
+
+  it('NEVER THROWS on a value it cannot use, and says what is wrong with it', () => {
+    /*
+     * TURNS RED IF: the value is handed to the number conversion without being
+     * checked first.
+     *
+     * MEASURED: `abc`, `1e6` and `1_000_000` each throw at IMPORT TIME when
+     * converted directly - not inside a guard, not at the point of a decision.
+     * Every door reaching a wallet imports this by some route, so one mistyped
+     * variable stopped all of them at once with a message naming neither the
+     * variable nor anything to do.
+     *
+     * `1_000_000` is the spelling in the source line beside it, so the most
+     * natural thing for somebody to copy was the one that broke everything.
+     */
+    for (const bad of ['abc', '1e6', '1_000_000', '1.5', '0x10', '1,000']) {
+      const r = feeFloorFrom(bad, 1_000_000n);
+      expect(r.value).toBe(0n);
+      expect(r.problem).toContain('not a whole number of specks');
+      expect(r.problem).toContain(bad);
+    }
+  });
+
+  it('turns an unusable override into a refusal that names it', () => {
+    /*
+     * TURNS RED IF: the reason is dropped between the reading and the refusal.
+     *
+     * A floor of nothing that came from a typing mistake and one that was set
+     * to zero on purpose need different things done about them, and the
+     * refusal is the only place a person finds out which this is.
+     */
+    const r = feeFloorFrom('1e6', 1_000_000n);
+    const v = feeFloorVerdict({ passed: r.value, arrived: r.value, applied: r.value, ...(r.problem ? { problem: r.problem } : {}) });
+    expect(v.ok).toBe(false);
+    expect(v.reason).toBe('not-a-floor');
+    expect(v.line).toContain('1e6');
+  });
+
+  it('still refuses a deliberate zero, with no reason to add', () => {
+    // TURNS RED IF: the reason becomes required, so a plain zero stops being
+    // refused or starts printing an empty explanation.
+    const v = feeFloorVerdict({ passed: 0n, arrived: 0n, applied: 0n });
+    expect(v.ok).toBe(false);
+    expect(v.line).toContain('is not a floor');
+    expect(v.line).not.toContain('undefined');
   });
 });

@@ -345,15 +345,88 @@ export type CostReading = {
   normalized: Record<string, number | null> | null;
   /** Set when `normalizeFullness` refused, which means a limit IS exceeded. */
   exceeded?: string;
+  /**
+   * THE THREE NUMBERS OUT OF A REFUSAL, ON THE ONE BRANCH WHERE THEY MATTER.
+   *
+   * Asking the ledger to cost a transaction AND enforce as it costs is how the
+   * sixth limit is answered locally, and the ledger answers a failure by
+   * throwing. Everything about that failure is in the message: how long the
+   * transaction would take to dismiss, the size the allowance was computed
+   * from, and the allowance itself.
+   *
+   * This field used not to exist, and the throw branch below kept the message
+   * and dropped the reading. That is precisely backwards: a transaction that
+   * fits needs no numbers, and one that does not is acted on by HOW FAR over it
+   * is. A reader who cannot see the margin cannot tell a shape that will never
+   * fit from one that is over by a rounding error.
+   *
+   * Null when the message is not a dismiss refusal, or is worded differently
+   * from the wording this parses. Nothing is invented to fill it.
+   */
+  dismiss?: { timePs: number | null; sizeBytes: number | null; allowancePs: number | null };
+  /** Which parameters this was costed at. A cost is only meaningful against the ones in force. */
+  parametersSource?: 'the library\'s starting values' | 'supplied';
   problem?: string;
 };
 
 const DIMENSIONS = ['readTime', 'computeTime', 'blockUsage', 'bytesWritten', 'bytesChurned'] as const;
 
+/**
+ * The three numbers the ledger puts in a dismiss refusal, out of its own words.
+ *
+ * The wording is the ledger's, written once, and the units it prints are
+ * picoseconds, nanoseconds, microseconds, milliseconds and seconds. The micro
+ * sign is the Greek letter, so a pattern written for `us` matches nothing.
+ *
+ * Returns nulls rather than guesses when the wording does not match. A number
+ * invented here would be read as a measurement.
+ */
+const DISMISS_UNITS: Record<string, number> = { ps: 1, ns: 1e3, '\u03bcs': 1e6, ms: 1e9, s: 1e12 };
+
+export function readDismissRefusal(message: string): CostReading['dismiss'] {
+  const scale = (v: string, unit: string): number | null => {
+    const f = DISMISS_UNITS[unit];
+    return f === undefined ? null : Math.round(Number(v) * f);
+  };
+  const took = /would take ([0-9.]+)(ps|ns|\u03bcs|ms|s) to dismiss/.exec(message);
+  const size = /size of ([0-9]+) bytes/.exec(message);
+  const most = /at most ([0-9.]+)(ps|ns|\u03bcs|ms|s)/.exec(message);
+  if (!took && !size && !most) return undefined;
+  return {
+    timePs: took ? scale(took[1]!, took[2]!) : null,
+    sizeBytes: size ? Number(size[1]) : null,
+    allowancePs: most ? scale(most[1]!, most[2]!) : null,
+  };
+}
+
+/**
+ * The cost, AT PARAMETERS THE CALLER CHOOSES.
+ *
+ * `measureCost` below reads the library's own starting values, which is what
+ * every door here has always done and is wrong in a way nothing said out loud:
+ * those are the values a chain STARTS with, not the ones it is running. A
+ * caller that has read the chain's own parameters passes them here instead, and
+ * the reading records which it was.
+ */
+export function measureCostAt(tx: any, params: any, enforceTimeToDismiss = true): CostReading {
+  const out: CostReading = { cost: null, normalized: null, parametersSource: 'supplied' };
+  return costInto(out, tx, params, enforceTimeToDismiss);
+}
+
 export function measureCost(tx: any, LedgerParameters: any, enforceTimeToDismiss = true): CostReading {
-  const out: CostReading = { cost: null, normalized: null };
+  const out: CostReading = { cost: null, normalized: null, parametersSource: 'the library\'s starting values' };
   try {
     const params = LedgerParameters.initialParameters();
+    return costInto(out, tx, params, enforceTimeToDismiss);
+  } catch (e: any) {
+    out.problem = String(e?.message ?? e);
+    out.dismiss = readDismissRefusal(out.problem);
+    return out;
+  }
+}
+
+function costInto(out: CostReading, tx: any, params: any, enforceTimeToDismiss: boolean): CostReading {
+  try {
     const raw: any = tx.cost(params, enforceTimeToDismiss);
     out.cost = {};
     for (const d of DIMENSIONS) out.cost[d] = num(raw?.[d]);
@@ -370,6 +443,13 @@ export function measureCost(tx: any, LedgerParameters: any, enforceTimeToDismiss
     }
   } catch (e: any) {
     out.problem = String(e?.message ?? e);
+    /*
+     * THE REFUSAL IS THE ANSWER AND ITS NUMBERS ARE THE USEFUL PART.
+     *
+     * This branch used to keep the message and nothing else. It is the one
+     * branch a caller acts on, and what it acts on is the margin.
+     */
+    out.dismiss = readDismissRefusal(out.problem);
   }
   return out;
 }
