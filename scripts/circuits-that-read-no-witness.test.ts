@@ -31,15 +31,23 @@
  * contract would report that almost nothing reads a witness and would agree
  * enthusiastically with an empty list.**
  *
- * What is asserted is the artefact-derived set, narrowed to the circuits this
- * client actually drives, against the set the client checks with. Neither side
- * is written out here.
+ * What is asserted is the artefact-derived set, narrowed to the circuits a CALL
+ * INTERFACE CARRIES, against the set the client checks with. Neither side is
+ * written out here.
+ *
+ * **AND THE NARROWING USED TO BE TO THE CIRCUITS THIS CLIENT DRIVES, WHICH WAS
+ * RIGHT WHILE THE SET WAS ONLY EVER CONSULTED BY THE CALL BUILDER.** The set is
+ * now also asked at the call interface, and an interface carries every circuit
+ * the contract deploys - so a comparison scoped to the driven ones would leave
+ * the circuits nobody drives judged by a rule that was never written about
+ * them, with nothing here able to see it.
  */
 import { describe, expect, it } from 'vitest';
 import { fileURLToPath } from 'node:url';
 
 import { ARTIFACTS, readContract } from './artifact-scan.js';
 import { CIRCUITS_THAT_READ_NO_WITNESS, CIRCUIT_FOR_STEP } from '../src/midnight/ledger.js';
+import { DEPLOYED_CIRCUITS } from '../src/midnight/deferral.js';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 
@@ -67,13 +75,19 @@ export const disagreement = (
 describe('the circuits that read no witness', () => {
   const account = () => readContract(ROOT, ARTIFACTS[0]);
   const driven = () => [...new Set(Object.values(CIRCUIT_FOR_STEP))];
+  /*
+   * WHAT THE RULE IS ASKED ABOUT: every circuit a call interface carries, which
+   * is every circuit the deployment has - not the subset this client's own call
+   * builder can reach.
+   */
+  const judged = () => [...DEPLOYED_CIRCUITS];
 
   it('is DERIVED from the compiled contract and agrees with the set the client checks with',
     async () => {
       const model = await account();
       const readsNone = model.circuits.filter((c) => c.witnesses.length === 0).map((c) => c.name);
 
-      expect(disagreement(readsNone, driven(), CIRCUITS_THAT_READ_NO_WITNESS),
+      expect(disagreement(readsNone, judged(), CIRCUITS_THAT_READ_NO_WITNESS),
         'the contract and the set this client checks calls against no longer agree. A circuit '
         + 'under "treatedAsNeedingState" reads nothing and is being handed the calling device\'s '
         + 'record anyway, which succeeds and then has that record written back after the call '
@@ -158,36 +172,58 @@ describe('the circuits that read no witness', () => {
    * Both of the circuits named here are real ones on this contract that read no
    * witness today, which is why they are the example.
    */
-  it.each(['recordPayment', 'retireVault'])(
-    'reports it when a step is added for %s, which reads nothing and would be handed a key',
-    async (extra) => {
+  it.each(['recordPayment', 'retireVault', 'closeExpiredRun'])(
+    'reports it when %s falls off the client\'s set while still reading nothing',
+    async (dropped) => {
       const model = await account();
       const readsNone = model.circuits.filter((c) => c.witnesses.length === 0).map((c) => c.name);
 
-      expect(readsNone, `${extra} no longer reads no witness, so this control is about the wrong `
-        + 'circuit').toContain(extra);
+      expect(readsNone, `${dropped} no longer reads no witness, so this control is about the wrong `
+        + 'circuit').toContain(dropped);
 
-      expect(disagreement(readsNone, [...driven(), extra], CIRCUITS_THAT_READ_NO_WITNESS))
-        .toEqual({ treatedAsNeedingState: [extra], treatedAsNeedingNone: [] });
+      const narrowed = new Set([...CIRCUITS_THAT_READ_NO_WITNESS].filter((n) => n !== dropped));
+      expect(disagreement(readsNone, judged(), narrowed))
+        .toEqual({ treatedAsNeedingState: [dropped], treatedAsNeedingNone: [] });
     },
   );
+
+  /**
+   * **AND THE SCOPE ITSELF, WATCHED.** This is the case that was missing while
+   * the comparison narrowed to the driven circuits: two of the contract's
+   * circuits are outside that narrowing, so a set that forgot them agreed with
+   * the contract anyway. Narrowed to `driven()` this returns nothing; widened
+   * to what an interface carries it reports both.
+   */
+  it('a comparison scoped to the driven circuits cannot see the two nobody drives', async () => {
+    const model = await account();
+    const readsNone = model.circuits.filter((c) => c.witnesses.length === 0).map((c) => c.name);
+    const asItWasBefore = new Set(['closeExpiredRun']);
+
+    expect(disagreement(readsNone, driven(), asItWasBefore))
+      .toEqual({ treatedAsNeedingState: [], treatedAsNeedingNone: [] });
+    expect(disagreement(readsNone, judged(), asItWasBefore))
+      .toEqual({ treatedAsNeedingState: ['recordPayment', 'retireVault'], treatedAsNeedingNone: [] });
+  });
 
   /** **THE LOUD DIRECTION, WATCHED.** A circuit that reads a witness on the list. */
   it('reports it when a circuit that reads a witness is listed as reading none', async () => {
     const model = await account();
     const readsNone = model.circuits.filter((c) => c.witnesses.length === 0).map((c) => c.name);
 
-    expect(disagreement(readsNone, driven(), new Set([...CIRCUITS_THAT_READ_NO_WITNESS, 'approve'])))
+    expect(disagreement(readsNone, judged(), new Set([...CIRCUITS_THAT_READ_NO_WITNESS, 'approve'])))
       .toEqual({ treatedAsNeedingState: [], treatedAsNeedingNone: ['approve'] });
   });
 
-  /** And a circuit dropped OFF the list while still reading nothing. */
-  it('reports it when the sweep is dropped from the list it belongs on', async () => {
+  /** And an EMPTY list, with every circuit that reads nothing reported. */
+  it('reports every one of them when the list is emptied', async () => {
     const model = await account();
     const readsNone = model.circuits.filter((c) => c.witnesses.length === 0).map((c) => c.name);
 
-    expect(disagreement(readsNone, driven(), new Set()))
-      .toEqual({ treatedAsNeedingState: ['closeExpiredRun'], treatedAsNeedingNone: [] });
+    expect(disagreement(readsNone, judged(), new Set()))
+      .toEqual({
+        treatedAsNeedingState: ['closeExpiredRun', 'recordPayment', 'retireVault'],
+        treatedAsNeedingNone: [],
+      });
   });
 
   /**
@@ -201,7 +237,7 @@ describe('the circuits that read no witness', () => {
       .filter((c) => c.witnesses.length === 0 && c.name !== 'closeExpiredRun')
       .map((c) => c.name);
 
-    expect(disagreement(readsNone, driven(), CIRCUITS_THAT_READ_NO_WITNESS))
+    expect(disagreement(readsNone, judged(), CIRCUITS_THAT_READ_NO_WITNESS))
       .toEqual({ treatedAsNeedingState: [], treatedAsNeedingNone: ['closeExpiredRun'] });
   });
 });

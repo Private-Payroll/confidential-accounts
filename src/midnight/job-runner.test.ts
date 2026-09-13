@@ -16,6 +16,7 @@ import type { Job } from '../core/jobs.js';
 import type { LedgerStatus } from '../core/ledger.js';
 import { viewDigestOf } from '../core/ledger.js';
 import type { Hex } from '../core/crypto.js';
+import { CIRCUITS_THAT_READ_NO_WITNESS } from './governed-call.js';
 
 /*
  * The SDK is mocked, because the real `createCallTxOptions` rejects a fake
@@ -139,6 +140,8 @@ const deps = (over: Partial<JobRunnerDeps> = {}): JobRunnerDeps => ({
     midnightProvider: { submitTx: async () => 'tx_1' },
   },
   compiled: {},
+  /* The account's, which is the contract every case here stands in for. */
+  circuitsThatReadNoWitness: CIRCUITS_THAT_READ_NO_WITNESS,
   plan: async () => ({
     contractAddress: '0xcontract',
     // `'execute'` stood here and went with the circuit. What is
@@ -152,6 +155,94 @@ const deps = (over: Partial<JobRunnerDeps> = {}): JobRunnerDeps => ({
   status: async () => status(),
   expectation: async () => ({ viewDigest: null, proposalId: null, duplicateRejectedOnChain: true }),
   ...over,
+});
+
+describe('a plan that drops its private state is refused before anything is proved', () => {
+  /*
+   * WHY THIS RUNNER NEEDS ITS OWN CASES. It builds the scheme's call options
+   * itself - through neither the account client's call builder nor the find -
+   * so neither of their refusals is anywhere on this path. Until these cases
+   * were written nothing on it asked the question at all, and the type was the
+   * whole answer.
+   *
+   * AND WHY "BEFORE ANYTHING IS PROVED" IS THE ASSERTION RATHER THAN "IT
+   * THROWS". A proof costs real money and eighty seconds. A guard that fired
+   * after the prover had run would refuse the right call and still have paid
+   * for it, which is a worse failure than the one it is stopping because it
+   * looks like the guard working.
+   */
+  const runnerThatCounts = (over: Partial<JobRunnerDeps>) => {
+    let proofsAsked = 0;
+    const runner = new MidnightJobRunner(deps({
+      providers: {
+        releaseUnspent: async () => { released += 1; return 0; },
+        proofProvider: { proveTx: async () => { proofsAsked += 1; return 'PROVEN'; } },
+        walletProvider: { balanceTx: async () => 'FINALISED' },
+        midnightProvider: { submitTx: async () => 'tx_1' },
+      },
+      ...over,
+    }));
+    return { runner, proofsAsked: () => proofsAsked };
+  };
+
+  /*
+   * RED WHEN: the refusal at the top of `prove` is removed. Watched: with that
+   * line deleted the call runs on and fails inside the scheme instead, and the
+   * message names nothing about private state.
+   */
+  it('refuses a witness-reading circuit planned with null', async () => {
+    const r = runnerThatCounts({
+      plan: async () => ({
+        contractAddress: '0xcontract', circuit: 'approve', args: [], privateStateId: null,
+      }),
+    });
+    await expect(r.runner.prove(job())).rejects
+      .toThrow(/built as though it reads no private state/);
+    expect(r.proofsAsked()).toBe(0);
+  });
+
+  /*
+   * The same defect arriving through a cast, which is the route the type cannot
+   * close. RED WHEN: the refusal is replaced by anything that trusts the type.
+   */
+  it('refuses a plan whose answer was dropped entirely', async () => {
+    const r = runnerThatCounts({
+      plan: async () => ({
+        contractAddress: '0xcontract', circuit: 'approve', args: [],
+      }) as any,
+    });
+    await expect(r.runner.prove(job())).rejects
+      .toThrow(/without saying where its private state is filed/);
+    expect(r.proofsAsked()).toBe(0);
+  });
+
+  /*
+   * RED WHEN: the runner stops taking the set beside the contract and reaches
+   * for the account's by name. It would then be right about this contract and
+   * wrong about every other one, silently.
+   */
+  it('judges against the set the bundle was assembled with', async () => {
+    const r = runnerThatCounts({
+      circuitsThatReadNoWitness: new Set(['approve']),
+      plan: async () => ({
+        contractAddress: '0xcontract', circuit: 'approve', args: [], privateStateId: 'ps_acc_1',
+      }),
+    });
+    await expect(r.runner.prove(job())).rejects.toThrow(/reads no witness at all/);
+    expect(r.proofsAsked()).toBe(0);
+  });
+
+  /*
+   * THE CONTROL. RED WHEN: the refusal starts firing on a sound plan - which
+   * every case above would still pass, while no job in the product could ever
+   * be proved again.
+   */
+  it('proves a sound plan, and the prover is reached', async () => {
+    const r = runnerThatCounts({});
+    const { proof } = await r.runner.prove(job());
+    expect((proof as { provenTx: unknown }).provenTx).toBe('PROVEN');
+    expect(r.proofsAsked()).toBe(1);
+  });
 });
 
 describe('submit', () => {

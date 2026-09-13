@@ -40,6 +40,7 @@
  * rule: a stub without the semantics could not fail the way the product would.
  */
 import { describe, it, expect, vi } from 'vitest';
+import type { PrivateStateAnswer } from './governed-call.js';
 import { existsSync, readdirSync } from 'node:fs';
 
 import {
@@ -109,12 +110,13 @@ vi.doMock('@midnight-ntwrk/midnight-js-contracts', () => ({
   createCircuitCallTxInterface: () => ({ __callTx: true }),
 }));
 
-const find = async (state: unknown) => {
+const find = async (state: unknown, privateStateId: PrivateStateAnswer = 'a-key:acct') => {
   const { findDeployedPartialContract } = await import('./partial-contract.js');
   const { providers, getVerifierKeys } = providersFor(state);
   const call = findDeployedPartialContract(providers as any, {
     compiledContract: {},
     contractAddress: 'addr_under_test',
+    privateStateId,
   });
   return { call, getVerifierKeys };
 };

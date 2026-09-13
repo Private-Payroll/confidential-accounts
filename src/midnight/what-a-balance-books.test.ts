@@ -39,6 +39,7 @@ import { MidnightJobRunner, type JobRunnerDeps } from './job-runner.js';
 import type { FeeSponsor } from './ledger.js';
 import type { CustomerWallet } from './providers.js';
 import type { Job } from '../core/jobs.js';
+import { CIRCUITS_THAT_READ_NO_WITNESS } from './governed-call.js';
 
 /**
  * The company's side, recording what it was asked to let go of.
@@ -413,6 +414,7 @@ describe('the job runner lets go of what it did not spend', () => {
         ...over,
       },
       compiled: {},
+      circuitsThatReadNoWitness: CIRCUITS_THAT_READ_NO_WITNESS,
       plan: async () => ({
         contractAddress: '0xcontract', circuit: 'approve', args: [], privateStateId: 'ps_acc_1',
       }),

@@ -31,6 +31,7 @@ import type { Job, JobRunner } from '../core/jobs.js';
 import type { LedgerStatus } from '../core/ledger.js';
 import { viewDigestOf } from '../core/ledger.js';
 import type { Hex } from '../core/crypto.js';
+import { refuseACallWithoutItsPrivateState } from './governed-call.js';
 
 /**
  * What a job means in contract terms.
@@ -163,6 +164,23 @@ export interface JobRunnerDeps {
   /** The compiled contract, as `findDeployedContract` takes it. */
   compiled: unknown;
   /**
+   * **WHICH OF THAT CONTRACT'S CIRCUITS READ NO WITNESS, AND IT IS REQUIRED FOR
+   * THE SAME REASON `releaseUnspent` IS.**
+   *
+   * This runner builds the scheme's call options itself - it goes through
+   * neither the account client's call builder nor the find, so neither of their
+   * refusals is anywhere on this path. What it needs in order to refuse a plan
+   * that drops its private state is the one thing it cannot derive: which
+   * circuits legitimately have none, which is a property of the contract in
+   * `compiled` and not of this runner.
+   *
+   * An optional member would let a bundle be assembled without it, and a bundle
+   * assembled without it is one that proves a signer check against no signer -
+   * paying for a proof in order to do it. So it is asked for beside the
+   * contract it describes.
+   */
+  circuitsThatReadNoWitness: ReadonlySet<string>;
+  /**
    * Turns a job into a circuit call, staging whatever private state the
    * witnesses read. Called at the start of proving, so a job that cannot be
    * built fails in a second rather than after eighty of them.
@@ -205,6 +223,22 @@ export class MidnightJobRunner implements JobRunner {
    */
   async prove(job: Job): Promise<{ proof: unknown }> {
     const plan = await this.deps.plan(job);
+
+    /*
+     * **BEFORE ANYTHING IS BUILT, AND CERTAINLY BEFORE ANYTHING IS PROVED.**
+     *
+     * The options assembled below take the plan's answer straight to the
+     * scheme, which omits the field on a falsy value and runs the circuit
+     * against no private state at all. Nothing downstream of here complains
+     * about that: the proof succeeds, it costs what a proof costs, and what it
+     * proves is a circuit whose signer check read nothing.
+     *
+     * The plan's type says `string | null`, and that is the compiler's half of
+     * the answer. This is the other half, and it is the half that holds when a
+     * plan arrives through a cast or from a caller the compiler never saw.
+     */
+    refuseACallWithoutItsPrivateState(
+      plan.circuit, plan.privateStateId, this.deps.circuitsThatReadNoWitness);
 
     const [{ createUnprovenCallTx, createCallTxOptions }] = await Promise.all([
       import('@midnight-ntwrk/midnight-js-contracts'),

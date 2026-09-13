@@ -172,6 +172,9 @@ const good = (s: string) => console.log(`  \x1b[32m✓\x1b[0m ${s}`);
 import { JobQueue } from '../src/core/jobs.js';
 import { KeyValueJobStore, MemoryKeyValue } from '../src/core/jobs-store.js';
 import { MidnightJobRunner, expectationFor } from '../src/midnight/job-runner.js';
+import {
+  CIRCUITS_THAT_READ_NO_WITNESS, refuseACallWithoutItsPrivateState,
+} from '../src/midnight/governed-call.js';
 import type { Job } from '../src/core/jobs.js';
 
 const hex = (u: Uint8Array) => Buffer.from(u).toString('hex');
@@ -1879,6 +1882,16 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
     await callCircuit('amendSigner (seat B, approved)', async () => {
       const { createUnprovenCallTx, submitTx } = await import('@midnight-ntwrk/midnight-js-contracts');
 
+      /*
+       * THE FOURTH PLACE A CALL IS BUILT, AND THE ONLY ONE THAT IS A DOOR
+       * RATHER THAN THE PRODUCT. It reaches neither the client's call builder
+       * nor the find nor the queue, so neither of their refusals is on this
+       * path - and the whole argument object below is behind a cast, which is
+       * exactly the shape that let a dropped answer through everywhere else.
+       */
+      refuseACallWithoutItsPrivateState(
+        'amendSigner', PRIVATE_STATE_KEY, CIRCUITS_THAT_READ_NO_WITNESS);
+
       setAmbient(PH.build);
       const t1 = Date.now();
       const unproven: any = await createUnprovenCallTx(providers, {
@@ -2377,6 +2390,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
     new MidnightJobRunner({
       providers,
       compiled,
+      circuitsThatReadNoWitness: CIRCUITS_THAT_READ_NO_WITNESS,
       /*
        * Staging is MOST of `plan` here — the witnesses are read from this
        * device's private state — but no longer all of it: `approve` takes the
@@ -2471,6 +2485,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
    */
   const runner = new MidnightJobRunner({
     providers, compiled,
+    circuitsThatReadNoWitness: CIRCUITS_THAT_READ_NO_WITNESS,
     /*
      * NEVER REACHED — `recover` plans nothing, it reads the account. It names
      * `approve` because a plan naming a circuit the contract does not have is a
