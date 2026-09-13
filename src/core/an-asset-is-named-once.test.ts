@@ -329,6 +329,7 @@ const NOT_AN_ASSET_BECOMING_A_TOKEN: Record<string, { count: number; why: string
   'scripts/deposit-to-vault.ts colour': { count: 2, why: 'the colour read off the coin that arrived in the wallet' },
   'scripts/fund-vault.ts colour': { count: 1, why: 'the ledger\'s own native token, read from the ledger at run time' },
   'scripts/measure-call-cost.ts toHex(GBP)': { count: 1, why: 'a colour a measurement mints for itself, never a payment' },
+  'scripts/record-a-notes-transaction.ts target.token as Hex': { count: 1, why: 'the token of the note already in the pool, put back into the commitment so it can be compared with the one the chain holds' },
 };
 
 /** Files that ask the ledger for its native token at run time, each to compare or deposit what it reads. */
