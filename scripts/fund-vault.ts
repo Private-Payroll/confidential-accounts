@@ -73,7 +73,7 @@ import { VAULT_CIRCUITS } from '../src/midnight/vault-contract.js';
 import {
   assertVaultName, vaultRegistryFile, parseVaultRegistry, type VaultEntry,
 } from '../src/midnight/vault-record.js';
-import { applyNetworkId, networkFromEnv } from '../src/midnight/network.js';
+import { applyNetworkId, theNetwork } from '../src/midnight/network.js';
 import type { Hex } from '../src/core/crypto.js';
 import type { SignerRef } from '../src/core/ledger.js';
 import { explainNodeError, NODE_ERROR_CODES } from './node-errors.js';
@@ -95,7 +95,7 @@ import {
 const ROOT = process.cwd();
 const STATE_DIR = join(ROOT, '.midnight');
 const SEED_FILE = join(STATE_DIR, 'wallet.seed');
-const NETWORK = networkFromEnv(process.env.MIDNIGHT_NETWORK_ID, 'stagenet');
+const NETWORK = theNetwork();
 const VAULT_ARTEFACTS = join(ROOT, 'contracts', 'managed-vault');
 const ACCOUNT_RECORD = join(STATE_DIR, `${NETWORK}-contract.json`);
 
@@ -990,7 +990,9 @@ if (RUN_DIRECTLY) {
  * WHAT IT PASSES — exported, because this file reads the environment and
  * nothing else:
  *
- *     MIDNIGHT_NETWORK_ID   the network the vault was deployed on.
+ *     MIDNIGHT_NETWORK_ID   ACCEPTED AND NEVER DECIDING. The network is the one
+ *                           this build is compiled for; naming a different one
+ *                           here is refused, and naming none is the ordinary case.
  *     VAULT_NAME            the vault, by the name it was deployed under. NO
  *                           DEFAULT: this file refuses without it.
  *     FUND_AMOUNT           how much, in NIGHT's smallest unit, digits only.

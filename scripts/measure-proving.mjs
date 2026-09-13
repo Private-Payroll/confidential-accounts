@@ -241,8 +241,17 @@ const STALL_MS = Number(process.env.MIDNIGHT_STALL_MS || 5_000);
 const line = (s = '') => console.log(s);
 const fail = (msg, code = 1) => { console.error(`\nSTOPPED: ${msg}`); process.exit(code); };
 
-/** The network whose deployment supplies the verifier keys. */
-const NETWORK = process.env.MIDNIGHT_NETWORK_ID || 'stagenet';
+/**
+ * The network whose deployment supplies the verifier keys, resolved the one way
+ * there is.
+ *
+ * It used to be read here with a default of its own, which made this instrument
+ * a second answer to a question the client already answers - and an unvalidated
+ * one, handed straight to `setNetworkId` below, which is the one place a wrong
+ * network name does silent damage.
+ */
+const { theNetwork } = await import('../src/midnight/network.js');
+const NETWORK = theNetwork();
 const STATE_DIR = join(ROOT, '.midnight');
 const CONTRACT_FILE = join(STATE_DIR, `${NETWORK}-contract.json`);
 
@@ -344,7 +353,7 @@ try {
     refuseOnPreconditions(
       `${CONTRACT_FILE.replace(ROOT + '/', '')} describes ${raw.network}, not ${NETWORK}.`,
       'The keys on one network say nothing about a contract on another. Deploy to\n'
-      + `${NETWORK}, or set MIDNIGHT_NETWORK_ID to the network that file describes.`,
+      + `${NETWORK}, or build for the network that file describes.`,
     );
   }
 } catch (e) {
@@ -355,9 +364,9 @@ try {
 }
 line(`  contract ${deployedAddress}`);
 
-const { ENDPOINTS } = await import('../src/midnight/network.js');
-const endpoints = ENDPOINTS[NETWORK];
-if (!endpoints) fail(`no endpoints are configured for network "${NETWORK}"`, 1);
+const { endpointsOf } = await import('../src/core/networks.js');
+let endpoints;
+try { endpoints = endpointsOf(NETWORK); } catch (e) { fail(String(e?.message ?? e), 1); }
 
 /*
  * THE NETWORK ID IS SET TWICE, IN THIS ORDER, AND THE ORDER IS DELIBERATE.
@@ -377,12 +386,12 @@ const { indexerPublicDataProvider } = await import('@midnight-ntwrk/midnight-js-
 
 let chainState;
 try {
-  const publicData = indexerPublicDataProvider(endpoints.indexerUrl, endpoints.indexerWsUrl);
+  const publicData = indexerPublicDataProvider(endpoints.indexer, endpoints.indexerWs);
   chainState = await publicData.queryContractState(deployedAddress);
 } catch (e) {
   refuseOnPreconditions(
     `The indexer could not be asked about ${deployedAddress}.`,
-    `${endpoints.indexerUrl}\n${String(e?.message ?? e)}\n\n`
+    `${endpoints.indexer}\n${String(e?.message ?? e)}\n\n`
     + 'This is a network failure, not a missing prerequisite — but it stops the\n'
     + 'measurement in the same place, and the same deploy has to be on chain\n'
     + 'either way.',

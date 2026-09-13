@@ -27,12 +27,12 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createDefaultTestLogger, StaticProofServerContainer } from '@midnight-ntwrk/testkit-js';
-import { applyNetworkId, networkFromEnv } from '../src/midnight/network.js';
+import { applyNetworkId, theNetwork } from '../src/midnight/network.js';
 import { bringUpWallet } from './wallet-bringup.js';
 import { testEnvironmentFor, startEnvironment } from './test-environment.js';
 
 const ROOT = process.cwd();
-const NETWORK = networkFromEnv(process.env.MIDNIGHT_NETWORK_ID, 'stagenet');
+const NETWORK = theNetwork();
 /*
  * 6301, NOT 6300.
  *

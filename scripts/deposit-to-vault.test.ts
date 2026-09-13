@@ -521,10 +521,74 @@ describe('the two names one transaction has, and whether the note can be spent',
     expect(lines).toContain(IDENTIFIER);
   });
 
+  /**
+   * **A NOTE THAT CAN BE REPAIRED BY WAITING AND ONE THAT CANNOT ARE TWO
+   * SITUATIONS, AND THEY READ THE SAME.**
+   *
+   * An indexer a moment behind the node answers in a minute. An indexer this
+   * client can no longer ask never answers, and the frame above tells somebody
+   * the note cannot be spent YET and that the identifier is enough to find the
+   * transaction by - so they ask again, and again.
+   */
+  it('SAYS SO WHEN READING AGAIN CANNOT ANSWER, and does not say YET', () => {
+    const permanent = whatTheDepositLeftBehind({
+      ref: IDENTIFIER, recordedFrom: 'nowhere', permanent: true,
+      stranded: 'the indexer will not take this question' }).join('\n');
+
+    /* RED WHEN a permanent failure is reported as a slow one, which is what
+     * sends somebody to wait for an answer that will never come. */
+    expect(permanent).toMatch(/READING AGAIN WILL NOT ANSWER/);
+    expect(permanent).not.toMatch(/CANNOT BE SPENT YET/);
+    /* RED WHEN it gives the advice for the other case, which is to read again. */
+    expect(permanent).not.toMatch(/Record that transaction against this note before/);
+    expect(permanent).toMatch(/reading again will not repair it/);
+    expect(permanent).toMatch(/Bring\s*\n?\s*them back into step first/);
+    /* RED WHEN the permanent frame drops the one line telling somebody not to
+     * try to pay out of this vault meanwhile. */
+    expect(permanent).toMatch(/Nothing pays\s*\n?\s*out of this vault until it is recorded/);
+    /* RED WHEN it stops saying the money is safe, which is still true. */
+    expect(permanent).toMatch(/Nothing is lost/);
+    expect(permanent).toContain('the indexer will not take this question');
+    expect(permanent).toContain(IDENTIFIER);
+
+    /* RED WHEN the flag is ignored and both cases print one frame - which is
+     * the defect, and is what this pair of assertions is here to separate. */
+    const slow = whatTheDepositLeftBehind({
+      ref: IDENTIFIER, recordedFrom: 'nowhere',
+      stranded: 'the indexer could not be asked' }).join('\n');
+    expect(slow).toMatch(/CANNOT BE SPENT YET/);
+    expect(slow).not.toMatch(/READING AGAIN WILL NOT ANSWER/);
+    expect(slow).toMatch(/Record that transaction against this note/);
+  });
+
   it('never claims a hash it was not given', () => {
     const lines = whatTheDepositLeftBehind({ ref: IDENTIFIER, recordedFrom: 'nowhere' }).join('\n');
     /* RED WHEN a missing hash is filled in with a stand-in, which names money nothing filed. */
     expect(lines).not.toContain('transaction hash');
     expect(lines).toContain('no reason was given');
+  });
+
+  it('NEVER CLAIMS AN IDENTIFIER IT WAS NOT GIVEN EITHER', () => {
+    /*
+     * A call can report no name for its own transaction at all. This used to
+     * print the heading with nothing after it, call it zero bytes, and close by
+     * saying the identifier above was enough to find the transaction by.
+     *
+     * RED WHEN an empty name is printed as though it were a name, or the advice
+     * that depends on having one is given when there is none.
+     */
+    const lines = whatTheDepositLeftBehind({
+      ref: '', recordedFrom: 'nowhere',
+      stranded: 'the call reported neither a transaction hash nor an identifier' }).join('\n');
+    expect(lines).not.toMatch(/0 bytes/);
+    expect(lines).toMatch(/none\. The call reported no name for its own transaction/);
+    expect(lines).not.toMatch(/identifier above is enough to find it by/);
+    expect(lines).toMatch(/has to be found another way/);
+    /* And a run that DOES have one still says so, or the assertions above are
+     * about a frame nobody ever sees. */
+    const named = whatTheDepositLeftBehind({
+      ref: IDENTIFIER, recordedFrom: 'nowhere', stranded: 'the indexer could not be asked' }).join('\n');
+    expect(named).toMatch(/identifier above is enough to find it by/);
+    expect(named).toContain(IDENTIFIER);
   });
 });

@@ -23,6 +23,7 @@
  */
 
 import { NETWORK as THE_NETWORK_THIS_BUILD_IS_ON } from 'midnight-identity/network';
+import { isNetworkId, networkRecord, type NetworkKind } from './networks.js';
 
 /** An asset's code. `GBP`, `USDC`, `NIGHT`. Uppercase, ASCII, no spaces. */
 export type AssetId = string;
@@ -141,37 +142,76 @@ export const TEST_SETTLEMENT_ASSET: AssetId = 'TESTUSD';
 const TEST_SETTLEMENT_COLOUR = 'abda184485c6abbbe4440d65b99ef88e0f79f61ec19af52a5bb0d91b4a824679';  // not-a-secret: the colour a mint produced on a public test network, published by the chain itself and readable by anyone; this is the asset's own identity and there is no other way to name it
 
 /**
- * **WHERE A WORTHLESS ASSET IS ALLOWED TO EXIST, AND IT IS A CLOSED LIST.**
+ * **WHERE THE MONEY THIS COLOUR NAMES ACTUALLY IS, AND IT IS A CLOSED LIST.**
  *
- * A test asset that reached a real network would let a payroll run pay real
- * people in a token backed by nothing, approved by real signers, settled and
- * unrecoverable. **So this is a list of networks it MAY exist on and not a list
- * of networks it may not**: a network nobody has thought of yet is refused by
- * default rather than admitted by default, and that is the whole difference.
+ * A colour is produced by one mint on one chain, so this is a fact about the
+ * ASSET rather than about any network: on any other chain this colour names
+ * money that was never minted, and a payment in it fails after the approvals
+ * and the fees have been paid for.
  *
- * `mainnet` is named in the test beside this file for exactly one reason: so
- * that adding it here turns a test red that says why.
+ * **IT IS A LIST OF CHAINS THE MONEY IS ON AND NOT A LIST OF CHAINS IT IS NOT**:
+ * a network nobody has thought of yet is refused by default rather than
+ * admitted by default, and that is the whole difference.
+ *
+ * **IT IS NOT WHAT KEEPS THE ROW OFF A REAL CHAIN.** That is the network's own
+ * `kind`, one function down. Two conditions, and the one that matters for
+ * somebody's pay does not depend on anybody having remembered to write a name
+ * down here.
  */
-export const NETWORKS_A_TEST_ASSET_MAY_EXIST_ON: readonly string[] = Object.freeze(['stagenet']);
+export const TEST_SETTLEMENT_MINTED_ON: readonly string[] = Object.freeze(['stagenet']);
 
 /**
- * **AND THE ANSWER IS COMPILED IN, NOT CONFIGURED.**
+ * **A TEST ASSET MAY ONLY EXIST WHERE THE NETWORK'S OWN RECORD SAYS NO REAL
+ * MONEY SETTLES, AND A NAME NEVER DECIDES THAT.**
  *
- * `midnight-identity/network` exports one constant naming the network both
- * products are built for. It is not read from `.env`, from `process.env`, from
- * a build flag or from a hostname, and it CANNOT be: a Midnight address carries
+ * Three conditions, in the order they matter:
+ *
+ * 1. **The network must have a record at all.** A network nobody has written
+ *    down is a network nobody has decided whether real pay settles on, so it
+ *    gets the answer that cannot hurt anybody.
+ * 2. **Its `kind` must be `test`.** This is the condition that stands between
+ *    a worthless token and somebody's real pay, and it is read off the one
+ *    record every part of this application reads. It used to be a list of names
+ *    kept here - so a network that was real and was not on the list was
+ *    admitted, and a network that was real and WAS spelled slightly differently
+ *    was admitted too.
+ * 3. **The colour must have been minted there.** A fact about the asset rather
+ *    than the network, and the reason a test chain nobody has minted on gets
+ *    nothing.
+ *
+ * **THE ANSWER IS COMPILED IN, NOT CONFIGURED.** The network reaches this
+ * function from `midnight-identity/network` - one constant naming the network
+ * both products are built for, not read from `.env`, from `process.env`, from a
+ * build flag or from a hostname, and it CANNOT be: a Midnight address carries
  * the network name inside the string, so a deployment able to disagree with
  * that constant is a deployment writing addresses no wallet in the pair can
- * read. That property is why the constant is where it is, and it is what makes
- * it a safe thing to hang this refusal on.
+ * read.
  *
  * **THERE IS NO OVERRIDE AND NONE MAY BE ADDED.** Not an environment variable,
- * not a flag, not an argument with a default. A test asset reaching mainnet is
- * the worst thing in this file, and the way that happens is somebody adding a
- * way to say "yes, really".
+ * not a flag, not an argument with a default. A test asset reaching a real
+ * chain is the worst thing in this file, and the way that happens is somebody
+ * adding a way to say "yes, really".
  */
 export const aTestAssetMayExistOn = (network: string): boolean =>
-  NETWORKS_A_TEST_ASSET_MAY_EXIST_ON.includes(network);
+  isNetworkId(network)
+  && aTestAssetMayExistOnAKindOf(networkRecord(network).kind, network);
+
+/**
+ * The two conditions, as a function of the two values they are about.
+ *
+ * **IT IS SEPARATE SO THE ONE THAT MATTERS CAN BE WATCHED REFUSING ON ITS
+ * OWN.** With the real records the two hide each other: every network whose
+ * record says real money settles there is also a network this colour was never
+ * minted on, so a `kind` check that had stopped working would refuse anyway and
+ * nothing would say. Handed a kind directly, it can be asked the question that
+ * actually stands between a worthless token and somebody's pay.
+ *
+ * **IT IS NOT A WAY IN.** It answers about the values it is given and changes
+ * nothing about what the registry asks: the registry passes the network this
+ * build is compiled for, and the test beside this file pins that call.
+ */
+export const aTestAssetMayExistOnAKindOf = (kind: NetworkKind, network: string): boolean =>
+  kind === 'test' && TEST_SETTLEMENT_MINTED_ON.includes(network);
 
 /** Whether a code names an asset that exists only so the private path can be walked. */
 export const isATestAsset = (code: AssetId): boolean => code === TEST_SETTLEMENT_ASSET;
@@ -463,9 +503,10 @@ export function refuseATestAssetOffItsNetwork(rows: readonly Asset[], network: s
     `${found.join(', ')} ${found.length === 1 ? 'is a test asset' : 'are test assets'} and this `
     + `build is on "${network}". A test asset is backed by nothing, so a payroll run settling in `
     + 'one pays real people nothing at all, with real approvals behind it and no way back. It '
-    + `exists on ${NETWORKS_A_TEST_ASSET_MAY_EXIST_ON.join(', ')} and nowhere else. Remove the `
-    + 'row, or run this build on a network a test asset is allowed on; there is no setting that '
-    + 'permits it and none may be added.');
+    + `exists on ${TEST_SETTLEMENT_MINTED_ON.join(', ')} and nowhere else, and it may exist only `
+    + 'on a network whose own record says no real money settles there. Remove the row, or run '
+    + 'this build on a network a test asset is allowed on; there is no setting that permits it '
+    + 'and none may be added.');
 }
 
 /*

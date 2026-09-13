@@ -60,12 +60,22 @@
 import { writeFileSync, readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { theNetwork } from '../src/midnight/network.js';
+import { endpointsOf, websocketNodeOf } from '../src/core/networks.js';
 
 const ROOT = process.cwd();
 const B = '\x1b[1m', D = '\x1b[2m', R = '\x1b[31m', G = '\x1b[32m', Y = '\x1b[33m', O = '\x1b[0m';
 
-const NODE = process.env.MIDNIGHT_NODE_URL || 'https://rpc.stagenet.shielded.tools';
-const INDEXER = process.env.MIDNIGHT_INDEXER_URL || 'https://indexer.stagenet.shielded.tools/api/v4/graphql';
+/*
+ * **THE ENDPOINTS COME FROM THE ONE RECORD AND ARE NOT WRITTEN OUT HERE.**
+ * A stagenet url typed into this file was a second copy of a value that has
+ * moved under this project once already, and it was a copy that could not be
+ * wrong in a way anything noticed: it was the fallback, so it answered
+ * whenever the real answer was missing.
+ */
+const THE = endpointsOf(theNetwork());
+const NODE = process.env.MIDNIGHT_NODE_URL || THE.node;
+const INDEXER = process.env.MIDNIGHT_INDEXER_URL || THE.indexer;
 /** 6301, not 6300. M-144, and `scripts/chain-probe.ts:116-119` has the reason. */
 const PROVER_PORT = Number(process.env.MIDNIGHT_PROVER_PORT || 6301);
 const PROVER = process.env.MIDNIGHT_PROVER_URL || `http://localhost:${PROVER_PORT}`;

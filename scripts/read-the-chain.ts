@@ -67,7 +67,7 @@ import { fileURLToPath } from 'node:url';
 import { join, resolve } from 'node:path';
 import { createScreen, phaseClock } from './deploy-report.js';
 import { loadEnvFile } from '../src/db/connect.js';
-import { networkOfThePair } from '../src/midnight/network.js';
+import { theNetwork } from '../src/midnight/network.js';
 import { deployment, deploymentRecordPath, type Deployment } from '../src/wiring/deployment.js';
 import { startProduct, type Startup } from '../src/wiring/product.js';
 import { ContractBook, type RecordedContract } from '../src/wiring/account-contract.js';
@@ -199,7 +199,7 @@ async function main(): Promise<number> {
 
   let network: string;
   try {
-    network = networkOfThePair(process.env.MIDNIGHT_NETWORK_ID);
+    network = theNetwork();
   } catch (e) {
     say(`  ${R}✗${O} the network could not be settled: ${scrubbed(e)}`);
     say();
@@ -237,7 +237,7 @@ async function main(): Promise<number> {
    */
   const storePath = process.env.DATA_PATH ?? join(process.cwd(), '.data', 'beta.json');
   const storeExists = existsSync(storePath);
-  say(`  ${D}store  ${process.env.DATA_PATH ?? '.data/beta.json'}${O}`);
+  say(`  ${D}store  ${process.env.DATA_PATH ?? storePath}${O}`);
 
   const stored = new Map<string, RecordedContract>();
   if (!storeExists) {

@@ -75,11 +75,11 @@ nothing.
 
 | | |
 |---|---|
-| modules walked | 424 |
-| module-to-module import sites | 1490 |
+| modules walked | 427 |
+| module-to-module import sites | 1514 |
 | modules that could not be read | 0 |
 | specifiers that resolved to nothing | 0 |
-| specifiers naming a real file outside the walked set | 105 |
+| specifiers naming a real file outside the walked set | 106 |
 | call sites carrying a literal circuit name | 469 |
 
 The last row counts a SITE once. A site whose text answers to more than one of the
@@ -648,50 +648,50 @@ Tier 2 of the declared set.
 
 | line | name | as written |
 |---|---|---|
-| 50 | `VaultPayment` | `export interface VaultPayment` |
-| 111 | `VaultPaid` | `export type VaultPaid` |
-| 129 | `VaultDeposited` | `export interface VaultDeposited extends TxRef` |
-| 142 | `PoolVersion` | `export interface PoolVersion` |
-| 148 | `LoadedNotes` | `export interface LoadedNotes extends VaultNotes` |
-| 172 | `NotePool` | `export interface NotePool` |
-| 219 | `CallPlan` | `export interface CallPlan` |
-| 241 | `planCall` | `export const planCall = (` |
-| 287 | `VaultChainUnreadable` | `export class VaultChainUnreadable extends Error` |
-| 330 | `VaultPoolDisagreesWithChain` | `export class VaultPoolDisagreesWithChain extends Error` |
-| 353 | `VaultCannotAfford` | `export class VaultCannotAfford extends Error` |
-| 394 | `VaultAlreadyHoldsNotes` | `export class VaultAlreadyHoldsNotes extends Error` |
-| 408 | `VaultLedger` | `export class VaultLedger` |
-| 1780 | `toNote` | `export const toNote = (` |
-| 1784 | `toHex` | `export { toHex }` |
+| 51 | `VaultPayment` | `export interface VaultPayment` |
+| 112 | `VaultPaid` | `export type VaultPaid` |
+| 130 | `VaultDeposited` | `export interface VaultDeposited extends TxRef` |
+| 158 | `PoolVersion` | `export interface PoolVersion` |
+| 164 | `LoadedNotes` | `export interface LoadedNotes extends VaultNotes` |
+| 188 | `NotePool` | `export interface NotePool` |
+| 235 | `CallPlan` | `export interface CallPlan` |
+| 257 | `planCall` | `export const planCall = (` |
+| 303 | `VaultChainUnreadable` | `export class VaultChainUnreadable extends Error` |
+| 346 | `VaultPoolDisagreesWithChain` | `export class VaultPoolDisagreesWithChain extends Error` |
+| 369 | `VaultCannotAfford` | `export class VaultCannotAfford extends Error` |
+| 410 | `VaultAlreadyHoldsNotes` | `export class VaultAlreadyHoldsNotes extends Error` |
+| 424 | `VaultLedger` | `export class VaultLedger` |
+| 1827 | `toNote` | `export const toNote = (` |
+| 1831 | `toHex` | `export { toHex }` |
 
 ### `src/midnight/vault-ledger.ts` — what it refuses
 
 | line | kind | message |
 |---|---|---|
-| 535 | throw | the vault's note [value] changed or left the pool while its place in the chainx27s commitment tree was being read. Nothing is proved or paid. Pay again, and the note will be chosen and read afresh. |
-| 628 | throw | the deployed vault has no circuit "[value]" |
-| 835 | throw | a run with no payments is not a run |
-| 862 | throw | chain-unreadablethe chain could not be read, so nothing has confirmed what this vault holds. THIS IS NOT THE CHAIN SAYING NO and it is still not a reason to pay: an unconfirmed balance is one a run would be sized against |
-| 870 | throw | pool-disagreesthe pool and the chain disagree, so this vault has no balance. [value] |
-| 882 | throw | notes-do-not-cover |
-| 899 | throw | chain-unreadablethe chain could not be read, so nothing has confirmed what this vault holds in public money. THIS IS NOT THE CHAIN SAYING NO, and it is still not a reason to start paying people |
-| 916 | throw | public-balance-shortthis run pays [value] of a public token the chain says this vault holds [value] of. A public balance is one number the ledger subtracts from, so the payees before the shortfall settle and the ones after do not |
-| 971 | throw | a note of nothing is not a deposit |
-| 1179 | throw | a deposit of nothing is not a deposit. It moves no money and would seat a colour in this vault's unshielded token set, which retire then refuses to pass — a way to jam a vault's retirement for free, by anybody, since a deposit needs no approval. |
-| 1256 | throw | this payee's address is for [value] and this vault is on [value]. The [value] would be accepted either way, so nothing further down would notice. |
-| 1333 | throw | a private payment spends a note, and a note is spent by its place in the chainx27s commitment tree, which is read from the chain just before the payment. No source of the chainx27s events was given, so nothing is proved or paid. Pass the indexerx27s events to payout and pay again. |
-| 1368 | throw | the vault paid without asking for a note. The pool cannot be advanced safely; rebuild it from the chain with replayVault before paying again. |
-| 1562 | throw | this provider bundle has no queryUnshieldedBalances, so nothing here can say what the chain published for this contractpublic-balance |
-| 1573 | throw | the read itself failed: [value]public-balance |
-| 1579 | throw | the indexer has no contract action for this address, so it has not published a balance for it yet. That is not a vault holding nothingpublic-balance |
-| 1586 | throw | the indexer answered with [value] rather than a list of balances. A shape this client cannot read is our ignorance, not an empty treasurypublic-balance |
-| 1604 | throw | one of the indexer's balance rows is not { tokenType: string, balance: bigint }. Skipping it would understate a treasury, so nothing is returnedpublic-balance |
-| 1658 | throw | [value] of [value] note(s) in this pool are NOT in the vault's on-chain set, worth [value] between them. The pool claims MORE than the chain will honour, and every one of those notes would be refused at payment time. Unknown to the chain: [value] |
-| 1674 | throw | the chain holds [value] note(s) and this pool holds [value]. Every note the pool knows about IS on chain, so the pool claims LESS than the vault holds — a note reached the vault and was never recorded, which is what a crash between a call and the pool write leaves behind. The amount cannot be stated from here, because a commitment discloses nothing. Rebuild the pool from the chain with replayVault. |
-| 1697 | throw | the read itself failed: [value] |
-| 1707 | throw | the indexer returned no state for this address |
-| 1729 | throw | the state did not decode: [value] |
-| 1742 | throw | the decoded state has no readable "notes" set. That is not an empty vault — an empty set is a true statement about the vault and a missing one is our ignorance |
+| 551 | throw | the vault's note [value] changed or left the pool while its place in the chainx27s commitment tree was being read. Nothing is proved or paid. Pay again, and the note will be chosen and read afresh. |
+| 644 | throw | the deployed vault has no circuit "[value]" |
+| 851 | throw | a run with no payments is not a run |
+| 878 | throw | chain-unreadablethe chain could not be read, so nothing has confirmed what this vault holds. THIS IS NOT THE CHAIN SAYING NO and it is still not a reason to pay: an unconfirmed balance is one a run would be sized against |
+| 886 | throw | pool-disagreesthe pool and the chain disagree, so this vault has no balance. [value] |
+| 898 | throw | notes-do-not-cover |
+| 915 | throw | chain-unreadablethe chain could not be read, so nothing has confirmed what this vault holds in public money. THIS IS NOT THE CHAIN SAYING NO, and it is still not a reason to start paying people |
+| 932 | throw | public-balance-shortthis run pays [value] of a public token the chain says this vault holds [value] of. A public balance is one number the ledger subtracts from, so the payees before the shortfall settle and the ones after do not |
+| 987 | throw | a note of nothing is not a deposit |
+| 1226 | throw | a deposit of nothing is not a deposit. It moves no money and would seat a colour in this vault's unshielded token set, which retire then refuses to pass — a way to jam a vault's retirement for free, by anybody, since a deposit needs no approval. |
+| 1303 | throw | this payee's address is for [value] and this vault is on [value]. The [value] would be accepted either way, so nothing further down would notice. |
+| 1380 | throw | a private payment spends a note, and a note is spent by its place in the chainx27s commitment tree, which is read from the chain just before the payment. No source of the chainx27s events was given, so nothing is proved or paid. Pass the indexerx27s events to payout and pay again. |
+| 1415 | throw | the vault paid without asking for a note. The pool cannot be advanced safely; rebuild it from the chain with replayVault before paying again. |
+| 1609 | throw | this provider bundle has no queryUnshieldedBalances, so nothing here can say what the chain published for this contractpublic-balance |
+| 1620 | throw | the read itself failed: [value]public-balance |
+| 1626 | throw | the indexer has no contract action for this address, so it has not published a balance for it yet. That is not a vault holding nothingpublic-balance |
+| 1633 | throw | the indexer answered with [value] rather than a list of balances. A shape this client cannot read is our ignorance, not an empty treasurypublic-balance |
+| 1651 | throw | one of the indexer's balance rows is not { tokenType: string, balance: bigint }. Skipping it would understate a treasury, so nothing is returnedpublic-balance |
+| 1705 | throw | [value] of [value] note(s) in this pool are NOT in the vault's on-chain set, worth [value] between them. The pool claims MORE than the chain will honour, and every one of those notes would be refused at payment time. Unknown to the chain: [value] |
+| 1721 | throw | the chain holds [value] note(s) and this pool holds [value]. Every note the pool knows about IS on chain, so the pool claims LESS than the vault holds — a note reached the vault and was never recorded, which is what a crash between a call and the pool write leaves behind. The amount cannot be stated from here, because a commitment discloses nothing. Rebuild the pool from the chain with replayVault. |
+| 1744 | throw | the read itself failed: [value] |
+| 1754 | throw | the indexer returned no state for this address |
+| 1776 | throw | the state did not decode: [value] |
+| 1789 | throw | the decoded state has no readable "notes" set. That is not an empty vault — an empty set is a true statement about the vault and a missing one is our ignorance |
 
 ### `src/midnight/vault-ledger.ts` — where a width is fixed
 
@@ -867,4 +867,4 @@ Tier 2 of the declared set.
 
 *No width here matches the shapes above.* A width this module works to may
 arrive in a variable, and this list sees only a number or a capitalised constant.
-<!-- GENERATED:END id="modules" body="731bf821fc326447" -->
+<!-- GENERATED:END id="modules" body="6d11695df24a39fd" -->

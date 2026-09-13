@@ -25,7 +25,7 @@ import { balanceOf, type VaultNotes } from './vault-notes.js';
 import { toHex } from '../core/crypto.js';
 import { payeeFor, unshieldedPayeeFor } from '../testing/payees.js';
 import {
-  NoteIndexUnreadable, vaultNoteCommitment, indexForSpend,
+  NoteIndexUnaskable, NoteIndexUnreadable, vaultNoteCommitment, indexForSpend,
   type CreatingTransaction, type NoteEvents, type ServedEvent,
 } from './note-index.js';
 
@@ -198,8 +198,13 @@ function harness(opts: {
    *
    *   'unreadable'  the indexer cannot be asked
    *   'moved'       every seeded note is filed one place later than the pool says
+   *   'unaskable'   the indexer will not take the question at all, and reading
+   *                 again will never answer - a schema that has moved rather
+   *                 than a node the indexer is a moment behind
+   *   'no-hash-named'  the chain answers about this note and names its
+   *                 transaction with something that is not a transaction hash
    */
-  events?: 'unreadable' | 'moved';
+  events?: 'unreadable' | 'moved' | 'unaskable' | 'no-hash-named';
   /** Seeded notes that record no creating transaction, as notes written before it was kept. */
   noCreatingTransaction?: boolean;
   /**
@@ -245,18 +250,27 @@ function harness(opts: {
     eventsOf: async (tx) => {
       eventReads.push(tx);
       if (opts.events === 'unreadable') throw new NoteIndexUnreadable('the indexer is not answering');
+      if (opts.events === 'unaskable') throw new NoteIndexUnaskable('the indexer will not take this question');
       /*
        * **BY EITHER NAME**, because a deposit whose result carried no hash can
        * only ask by the identifier it did report, and the chain answers with
        * the hash. The real indexer takes both offsets; a fake that took only
        * one could not fail the way the product does.
        */
-      const hash = 'hash' in tx ? tx.hash : (tx.identifier === DEP_ID ? DEP_TX : '');
+      const named = 'hash' in tx ? tx.hash : (tx.identifier === DEP_ID ? DEP_TX : '');
+      /*
+       * **WHAT THE CHAIN PUTS ON AN EVENT IS NOT ALWAYS A TRANSACTION HASH**,
+       * and the events still describe this note. This is the answer nothing
+       * checked: every event agrees with every other, the commitment matches,
+       * the output is the vault's - and the value written into the pool as the
+       * note's creating transaction is `0x`.
+       */
+      const hash = opts.events === 'no-hash-named' ? '0x' : named;
       const out: ServedEvent[] = [
         /* Another output of the same transaction, owned by nobody, to be passed over. */
         { transactionHash: hash, details: { tag: 'zswapOutput', commitment: 'ee'.repeat(32), mtIndex: 0n } },
       ];
-      for (const o of [...seeded, ...produced].filter((x) => x.hash === hash)) {
+      for (const o of [...seeded, ...produced].filter((x) => x.hash === named)) {
         out.push({
           transactionHash: hash,
           details: {
@@ -741,6 +755,113 @@ describe('V-74: the vault client', () => {
     /* RED WHEN the reason stops saying it was the chain's answer that did not match. */
     expect(out.stranded).toMatch(/did not create this note|not for a contract|different contract/);
     /* RED WHEN the note is lost because the check threw instead of answering. */
+    expect(saves).toHaveLength(1);
+    expect(current().notes[0].value).toBe(500n);
+  });
+
+  /**
+   * **WHETHER READING AGAIN COULD ANSWER IS PART OF WHAT A STRANDED NOTE
+   * REPORTS**, because it is the whole of what the person holding it does next.
+   *
+   * An indexer a moment behind a node answers in a minute and the note is
+   * repaired by asking again. An indexer this client can no longer ask never
+   * answers, and somebody told to ask again asks again for ever.
+   */
+  it('SAYS A SLOW INDEXER IS RETRYABLE, and does not call it final', async () => {
+    const { ledger, current, saves } = harness({
+      notes: [], depositResult: 'no-hash', events: 'unreadable' });
+    const out = await ledger.deposit(
+      VAULT, { nonce: '77'.repeat(32), token: GBP, value: 500n }, BY, eventsInUse);
+
+    /*
+     * RED WHEN a read that could succeed in a minute is reported as the chain's
+     * final word. Telling somebody to stop waiting for an answer that would
+     * have come is the worse of the two mistakes: a note whose place is never
+     * read is money nobody reaches.
+     */
+    expect(out.recordedFrom).toBe('nowhere');
+    expect(out.permanent).toBeUndefined();
+    expect(out.stranded).toContain('the chain could not say which transaction this was');
+    expect(saves).toHaveLength(1);
+    expect(current().notes[0]).not.toHaveProperty('createdIn');
+  });
+
+  it('AND A REFUSAL IS NOT FINAL: only a question the indexer will not take is', async () => {
+    /*
+     * **THE ASYMMETRY, DRIVEN ON BOTH SIDES.** Every refusal but one names
+     * reading again as what resolves it, so only the one that does not may be
+     * reported as final. This is the pair that keeps the classification from
+     * quietly widening back.
+     */
+    const refused = harness({ notes: [], depositResult: 'no-hash', chainDoesNotFileTheNote: true });
+    const a = await refused.ledger.deposit(
+      VAULT, { nonce: '77'.repeat(32), token: GBP, value: 500n }, BY, eventsInUse);
+    /* RED WHEN a refusal the chain can answer differently tomorrow is called
+     * final. Its own sentence tells the reader to read again. */
+    expect(a.recordedFrom).toBe('nowhere');
+    expect(a.permanent).toBeUndefined();
+
+    const unaskable = harness({ notes: [], depositResult: 'no-hash', events: 'unaskable' });
+    const b = await unaskable.ledger.deposit(
+      VAULT, { nonce: '77'.repeat(32), token: GBP, value: 500n }, BY, eventsInUse);
+    /* RED WHEN the one error that IS final stops being reported as final,
+     * which leaves somebody reading again for ever. */
+    expect(b.permanent).toBe(true);
+  });
+
+  it('SAYS A QUESTION THE INDEXER WILL NOT TAKE IS FINAL, and does not say try again', async () => {
+    const { ledger, current, saves } = harness({
+      notes: [], depositResult: 'no-hash', events: 'unaskable' });
+    const out = await ledger.deposit(
+      VAULT, { nonce: '77'.repeat(32), token: GBP, value: 500n }, BY, eventsInUse);
+
+    /*
+     * RED WHEN the two are not told apart. They used to produce the identical
+     * result, so the screen printed the identical frame, whose word is YET.
+     */
+    expect(out.recordedFrom).toBe('nowhere');
+    expect(out.permanent).toBe(true);
+    /* RED WHEN the refusal's own words are wrapped in the sentence for a read
+     * that merely failed, which says the chain could not say - it said. */
+    expect(out.stranded).toBe('the indexer will not take this question');
+    /* RED WHEN a final answer loses the note, which is what throwing here does. */
+    expect(saves).toHaveLength(1);
+    expect(current().notes[0].value).toBe(500n);
+    expect(current().notes[0]).not.toHaveProperty('createdIn');
+  });
+
+  it('WILL NOT RECORD A HASH THE CHAIN DID NOT NAME, even when the events are this note\x27s', async () => {
+    const { ledger, current, saves } = harness({
+      notes: [], depositResult: 'no-hash', events: 'no-hash-named' });
+    const out = await ledger.deposit(
+      VAULT, { nonce: '77'.repeat(32), token: GBP, value: 500n }, BY, eventsInUse);
+
+    /*
+     * **THE ONE VALUE ON THIS PATH THAT NOTHING CHECKED.** Every event agrees
+     * with every other, the commitment matches and the output is this vault's -
+     * so every question the client asked was answered yes, and the value
+     * written into the pool as the note's creating transaction was `0x`.
+     *
+     * RED WHEN a value that is not a transaction hash is recorded. A note
+     * carrying one reads as HEALTHY in the pool, on the screen and in the
+     * check a payment makes before it proposes, and is refused only at the
+     * spend - after a proposal and its approvals have been proved and paid for.
+     */
+    expect(out.recordedFrom).toBe('nowhere');
+    expect(out.createdIn).toBeUndefined();
+    expect(current().notes[0]).not.toHaveProperty('createdIn');
+    expect(out.stranded).toMatch(/without naming its hash|sixty-four hex characters/);
+    /*
+     * **AND IT IS NOT FINAL.** An event whose transaction hash is not a hash
+     * is an indexer that has not caught up with the node, and the refusal's own
+     * sentence says to read again once the transaction shows on it.
+     *
+     * RED WHEN it is reported as the chain's last word - which puts "reading
+     * again will not answer" above a reason that says to read again, and stops
+     * the one act that repairs the note.
+     */
+    expect(out.permanent).toBeUndefined();
+    /* RED WHEN the note is lost because the refusal threw instead of answering. */
     expect(saves).toHaveLength(1);
     expect(current().notes[0].value).toBe(500n);
   });

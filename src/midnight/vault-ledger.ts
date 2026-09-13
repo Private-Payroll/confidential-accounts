@@ -40,7 +40,8 @@ import {
 } from './vault-notes.js';
 import { changeCoinOf } from './vault-coins.js';
 import {
-  indexForSpend, noteIndexFrom, vaultNoteCommitment,
+  NoteIndexUnaskable, indexForSpend, noteIndexFrom,
+  theTransactionTheseEventsAreFrom, vaultNoteCommitment,
   type ChainReadIndex, type NoteEvents,
 } from './note-index.js';
 import { assertVaultLedgerIsThisBuilds } from './vault-ledger-shape.js';
@@ -133,6 +134,21 @@ export interface VaultDeposited extends TxRef {
   readonly recordedFrom: 'the call' | 'the chain' | 'nowhere';
   /** Why nothing could be recorded. Present exactly when `recordedFrom` is `'nowhere'`. */
   readonly stranded?: string;
+  /**
+   * **WHETHER READING AGAIN COULD ANSWER, WHICH DECIDES WHAT A PERSON DOES
+   * NEXT.**
+   *
+   * An indexer a moment behind a node and an indexer this client can no longer
+   * ask are two different situations with two different acts: wait and repair
+   * the note when it catches up, or bring the client and the indexer back into
+   * step first. They used to read the same on screen, so somebody told to wait
+   * for an answer that would never come waited.
+   *
+   * Absent means retryable, which is the safe default: telling somebody to stop
+   * waiting for an answer that WOULD have come is worse than the other way
+   * round, because a note whose place is never read is money nobody reaches.
+   */
+  readonly permanent?: boolean;
 }
 
 /**
@@ -1068,7 +1084,12 @@ export class VaultLedger {
     events: NoteEvents | undefined,
     coin: { nonce: Hex; token: Hex; value: bigint },
     vaultAddress: string,
-  ): Promise<{ createdIn?: Hex; recordedFrom: 'the call' | 'the chain' | 'nowhere'; stranded?: string }> {
+  ): Promise<{
+    createdIn?: Hex;
+    recordedFrom: 'the call' | 'the chain' | 'nowhere';
+    stranded?: string;
+    permanent?: boolean;
+  }> {
     const fromTheCall = VaultLedger.createdInOf(result);
     if (fromTheCall !== undefined) return { createdIn: fromTheCall, recordedFrom: 'the call' };
 
@@ -1103,20 +1124,46 @@ export class VaultLedger {
        */
       const commitment = await vaultNoteCommitment(coin, vaultAddress as Hex);
       noteIndexFrom(served, { vault: vaultAddress as Hex, commitment, transaction: { identifier } });
-      const hash = String(served[0]?.transactionHash ?? '').trim().toLowerCase().replace(/^0x/, '');
-      if (!/^[0-9a-f]{64}$/.test(hash)) {
-        return {
-          recordedFrom: 'nowhere',
-          stranded: 'the chain answered about this transaction without naming its hash, so there '
-            + 'is nothing to record that a spend could read the note\x27s place from',
-        };
-      }
-      return { createdIn: hash as Hex, recordedFrom: 'the chain' };
+      /*
+       * **THE SHAPE OF A TRANSACTION HASH IS STATED ONCE.** This used to
+       * re-derive and re-check the same value inline, three lines below the
+       * call that had just checked it - two statements of one money rule,
+       * agreeing until one of them was edited.
+       */
+      return {
+        createdIn: theTransactionTheseEventsAreFrom(served, { identifier }),
+        recordedFrom: 'the chain',
+      };
     } catch (cause) {
+      /*
+       * **WHETHER READING AGAIN COULD ANSWER, AND ONLY ONE ERROR SAYS NO.**
+       *
+       * `NoteIndexUnaskable` means this client and that indexer are not in
+       * step - a schema that has moved, a question it will not take - and no
+       * amount of reading again brings them back.
+       *
+       * **`NoteIndexRefused` IS NOT THAT, AND TREATING IT AS THAT WAS A
+       * MISTAKE WORTH WRITING DOWN.** Five of its six shapes name reading
+       * again as the very thing that resolves them: a transaction that has not
+       * reached the indexer yet, an answer about more than one transaction, an
+       * answer that does not carry this note. Reporting those as final puts
+       * "reading again will not answer" directly above a sentence that says to
+       * read again - and somebody who believes the headline stops, leaving
+       * money in the vault that the vault cannot pay out.
+       *
+       * So the asymmetry is the same one the classification one layer down
+       * uses: final only on a positive match, and everything else stays
+       * retryable, because telling somebody to stop waiting for an answer that
+       * would have come is the worse of the two mistakes.
+       */
+      const finalWord = cause instanceof NoteIndexUnaskable;
       return {
         recordedFrom: 'nowhere',
-        stranded: `the chain could not say which transaction this was: `
-          + `${(cause as Error)?.message ?? String(cause)}`,
+        ...(finalWord ? { permanent: true } : {}),
+        stranded: finalWord
+          ? `${(cause as Error)?.message ?? String(cause)}`
+          : `the chain could not say which transaction this was: `
+            + `${(cause as Error)?.message ?? String(cause)}`,
       };
     }
   }

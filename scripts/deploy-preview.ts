@@ -44,7 +44,7 @@ import { indexerPublicDataProvider } from '@midnight-ntwrk/midnight-js-indexer-p
 
 import { Contract, ledger as readLedger } from '../contracts/managed/contract/index.js';
 import { witnesses, type AccountPrivateState } from '../contracts/src/witnesses.js';
-import { applyNetworkId, networkFromEnv, ENDPOINTS } from '../src/midnight/network.js';
+import { applyNetworkId, theNetwork, ENDPOINTS } from '../src/midnight/network.js';
 import type { AccountOpening } from '../src/core/ledger.js';
 import { toHex as toHexBytes, randomBytes } from '../src/core/crypto.js';
 import { assets, type AssetId } from '../src/core/assets.js';
@@ -83,7 +83,7 @@ const SEED_FILE = join(STATE_DIR, 'wallet.seed');
  * directory rather than anywhere the repo carries.
  */
 const AUTHORITY_FILE = join(STATE_DIR, 'maintenance-authority.json');
-const NETWORK = networkFromEnv(process.env.MIDNIGHT_NETWORK_ID, 'stagenet');
+const NETWORK = theNetwork();
 
 const OUT_FILE = join(STATE_DIR, `${NETWORK}-contract.json`);
 const ARTIFACTS = join(ROOT, 'contracts', 'managed');

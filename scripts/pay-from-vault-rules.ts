@@ -244,20 +244,60 @@ export function payoutRecordFromText(text: string, where: string): PayoutRecord 
  * **THE SAME PAYMENT, ALREADY MADE, IS NOT STARTED AGAIN BY ACCIDENT.**
  *
  * A finished record is kept beside the live one. If a person asks for exactly the
- * payment a finished record made (the same vault, address, amount and reference)
- * while that record's window is still open, the likeliest reason is a second copy
- * of the door that stopped after the first had paid, and a person following its
- * advice to run again. Refused, naming what makes a deliberate second payment
- * possible: a different reference.
+ * payment a finished record made (the same vault, address, amount, asset and
+ * reference) while that record's window is still open, the likeliest reason is a
+ * second copy of the door that stopped after the first had paid, and a person
+ * following its advice to run again. Refused, naming what makes a deliberate
+ * second payment possible: a different reference.
+ *
+ * **THE ASSET IS ONE OF THE FIELDS, AND IT WAS NOT.** Five fields were compared
+ * and the asset was not among them, so a hundred units of one asset counted as a
+ * repeat of a hundred units of ANOTHER, to the same address under the same
+ * reference. The record it named settled different money, and the advice it gave
+ * - change the reference - asked somebody to alter a payroll reference to make a
+ * payment the door was wrong about.
+ *
+ * **A RECORD THAT NAMES NO ASSET STILL MATCHES**, on the same rule
+ * `assertRecordIsThisPayment` uses: a record written before the asset was kept
+ * carries none, and comparing an absent value against a present one would stop
+ * this refusing for exactly the records it was written for. Refusing too often
+ * here costs a changed reference; refusing too rarely pays somebody twice.
+ *
+ * **AND THE LEDGER TOKEN IS DELIBERATELY NOT ONE OF THE FIELDS.** It belongs in
+ * `assertRecordIsThisPayment`, which asks whether a record may be RESUMED - the
+ * approved leaf commits to the token, so finishing under another one builds a
+ * second payable proposal. This function asks a different question: has this
+ * payment already been made. **A colour is the one value in the registry a
+ * person may change, and they change it by minting** - so a payment made in the
+ * old colour and asked again in the new one is the same payment to the same
+ * person for the same amount under the same reference, and comparing tokens
+ * here would wave it through. The asset CODE is what says two payments are the
+ * same payment; the token is what says a proposal may be finished.
  */
 export function assertNotAlreadyPaid(finished: readonly PayoutRecord[], ask: PaymentAsk, nowSeconds: bigint): void {
+  const agrees = (recorded: string | undefined, asked: string | undefined): boolean =>
+    recorded === undefined || asked === undefined || recorded === asked;
   const same = finished.find((r) => r.network === ask.network && r.vault === ask.vault && r.payTo === ask.payTo
-    && r.amount === ask.amount.toString() && r.reference === ask.reference && BigInt(r.closesAt) > nowSeconds);
+    && r.amount === ask.amount.toString() && r.reference === ask.reference
+    && agrees(r.asset, ask.asset)
+    && BigInt(r.closesAt) > nowSeconds);
   if (!same) return;
+  /*
+   * **THE SENTENCE SAYS WHAT WAS ACTUALLY COMPARED.** A record written before
+   * the asset was kept carries none, so the asset was not compared - and
+   * naming it as one of the matching fields would tell somebody two payments
+   * in different assets were shown to be the same payment. The advice this
+   * refusal gives is to change a payroll reference; it has to be honest about
+   * what it is advising them round.
+   */
+  const theAssetWasCompared = same.asset !== undefined && ask.asset !== undefined;
   throw new Error(
-    `this exact payment (the same address, amount and reference out of this vault) was already paid by a run `
-    + `recorded ${same.createdAt}, and nothing was proposed, approved or paid by this run. If it is meant to be `
-    + 'paid a second time, give it a different reference.');
+    `this exact payment (the same address, amount${theAssetWasCompared ? ', asset' : ''} and reference `
+    + `out of this vault) was already paid by a run recorded ${same.createdAt}, and nothing was proposed, `
+    + `approved or paid by this run. `
+    + (theAssetWasCompared ? '' : 'That record was written before the asset was kept with it, so which '
+      + 'asset it settled in is not recorded and has not been compared. ')
+    + 'If it is meant to be paid a second time, give it a different reference.');
 }
 
 /**

@@ -20,7 +20,7 @@
  *
  * So every fact below has exactly one home and this module is it:
  *
- *     network           the pair's network, through `networkOfThePair`, which
+ *     network           the pair's network, through `theNetwork`, which
  *                       already refuses when the wallet and the server disagree.
  *                       NOT re-read from the deployment record, which is
  *                       CHECKED against it instead.
@@ -43,7 +43,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { ENDPOINTS, networkOfThePair, type NetworkName } from '../midnight/network.js';
+import { ENDPOINTS, theNetwork, type NetworkName } from '../midnight/network.js';
 
 /**
  * The facts, resolved. Every field is present or this object does not exist —
@@ -179,7 +179,7 @@ export function resolveDeployment(input: {
 
 /** The reader. I/O, then the rules above. */
 export function deployment(root: string, env: NodeJS.ProcessEnv = process.env): Deployment {
-  const network = networkOfThePair(env.MIDNIGHT_NETWORK_ID);
+  const network = theNetwork(env);
   const recordPath = deploymentRecordPath(root, network);
 
   let record: DeploymentRecord | null = null;

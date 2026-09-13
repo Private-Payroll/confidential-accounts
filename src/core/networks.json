@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "networks": {
+    "undeployed": {
+      "id": "undeployed",
+      "kind": "test",
+      "label": "A node on this machine",
+      "endpoints": {
+        "node": "http://localhost:9944",
+        "nodeWs": null,
+        "indexer": "http://localhost:8088/api/v4/graphql",
+        "indexerWs": "ws://localhost:8088/api/v4/graphql/ws",
+        "faucet": null
+      }
+    },
+    "preview": {
+      "id": "preview",
+      "kind": "test",
+      "label": "Midnight Preview",
+      "endpoints": {
+        "node": "https://rpc.preview.midnight.network",
+        "nodeWs": null,
+        "indexer": "https://indexer.preview.midnight.network/api/v4/graphql",
+        "indexerWs": "wss://indexer.preview.midnight.network/api/v4/graphql/ws",
+        "faucet": "https://faucet.preview.midnight.network/api/drips"
+      }
+    },
+    "preprod": {
+      "id": "preprod",
+      "kind": "test",
+      "label": "Midnight Preprod",
+      "endpoints": {
+        "node": "https://rpc.preprod.midnight.network",
+        "nodeWs": null,
+        "indexer": "https://indexer.preprod.midnight.network/api/v4/graphql",
+        "indexerWs": "wss://indexer.preprod.midnight.network/api/v4/graphql/ws",
+        "faucet": "https://faucet.preprod.midnight.network/api/drips"
+      }
+    },
+    "qanet": {
+      "id": "qanet",
+      "kind": "test",
+      "label": "Midnight QAnet",
+      "endpoints": {
+        "node": "https://rpc.qanet.midnight.network",
+        "nodeWs": null,
+        "indexer": "https://indexer.qanet.midnight.network/api/v4/graphql",
+        "indexerWs": "wss://indexer.qanet.midnight.network/api/v4/graphql/ws",
+        "faucet": "https://faucet.qanet.midnight.network/api/drips"
+      }
+    },
+    "stagenet": {
+      "id": "stagenet",
+      "kind": "test",
+      "label": "Midnight Stagenet",
+      "endpoints": {
+        "node": "https://rpc.stagenet.shielded.tools",
+        "nodeWs": "wss://rpc.stagenet.shielded.tools",
+        "indexer": "https://indexer.stagenet.shielded.tools/api/v4/graphql",
+        "indexerWs": "wss://indexer.stagenet.shielded.tools/api/v4/graphql/ws",
+        "faucet": "https://faucet.stagenet.shielded.tools"
+      }
+    },
+    "mainnet": {
+      "id": "mainnet",
+      "kind": "real",
+      "label": "Midnight",
+      "endpoints": null
+    }
+  }
+}

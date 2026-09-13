@@ -59,13 +59,13 @@ import * as contracts from '@midnight-ntwrk/midnight-js-contracts';
 
 import { Contract } from '../contracts/managed/contract/index.js';
 import { witnesses } from '../contracts/src/witnesses.js';
-import { applyNetworkId, networkFromEnv } from '../src/midnight/network.js';
+import { applyNetworkId, theNetwork } from '../src/midnight/network.js';
 import { assetIdBytes, NO_ASSET } from '../src/core/assets.js';
 import { compareAgainstLimits, compareCost, limitsFromLedger, measureCost, measureTransaction } from './tx-size.js';
 
 const ROOT = process.cwd();
 const ARTIFACTS = join(ROOT, 'contracts', 'managed');
-const NETWORK = networkFromEnv(process.env.MIDNIGHT_NETWORK_ID, 'stagenet');
+const NETWORK = theNetwork();
 const THRESHOLD = 2;
 
 const line = (s = '') => console.log(s);

@@ -64,7 +64,7 @@ import { fileURLToPath } from 'node:url';
 import {
   assertVaultName, vaultRegistryFile, parseVaultRegistry, type VaultEntry,
 } from '../src/midnight/vault-record.js';
-import { networkFromEnv } from '../src/midnight/network.js';
+import { theNetwork } from '../src/midnight/network.js';
 import { payeeOf, shortPayee, type Payee } from '../src/midnight/payee-address.js';
 import { transferOf, transferFacts, entryKindOf, privacyOf } from '../src/core/movement.js';
 import type { Hex } from '../src/core/crypto.js';
@@ -76,7 +76,7 @@ import { createScreen, phaseClock, describeError } from './deploy-report.js';
 
 const ROOT = process.cwd();
 const STATE_DIR = join(ROOT, '.midnight');
-const NETWORK = networkFromEnv(process.env.MIDNIGHT_NETWORK_ID, 'stagenet');
+const NETWORK = theNetwork();
 const ACCOUNT_RECORD = join(STATE_DIR, `${NETWORK}-contract.json`);
 
 const VAULT_NAME = (process.env.VAULT_NAME ?? '').trim();
@@ -434,7 +434,9 @@ if (RUN_DIRECTLY) main().then(() => process.exit(0), fail);
  *
  * WHAT IT PASSES:
  *
- *     MIDNIGHT_NETWORK_ID   the network the vault was deployed on.
+ *     MIDNIGHT_NETWORK_ID   ACCEPTED AND NEVER DECIDING. The network is the one
+ *                           this build is compiled for; naming a different one
+ *                           here is refused, and naming none is the ordinary case.
  *     VAULT_NAME            the vault, by name. NO DEFAULT.
  *     TRANSFER_TO           the public address the company owns. NO DEFAULT.
  *     TRANSFER_AMOUNT       digits, in the asset's smallest unit. NO DEFAULT.

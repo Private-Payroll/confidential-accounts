@@ -7,13 +7,16 @@
  * because they are about a specific extension on a specific machine:
  *
  *   1. is a Midnight wallet injected at all, and which one
- *   2. what network does it think it is on — Stagenet is not a given
+ *   2. what network does it think it is on — the one this build is on is not
+ *      a given
  *   3. does it implement `getProvingProvider`, i.e. can it prove for us
  *   4. does it advertise a proof server, which we will refuse either way
  *
  * The answers are POSTed back to the dev server so they land in a report file
  * rather than needing to be copied out of a console by hand.
  */
+import { NETWORK } from 'midnight-identity/network';
+
 const out = document.getElementById('out')!;
 const lines: string[] = [];
 const say = (s: string) => { lines.push(s); out.textContent = lines.join('\n'); };
@@ -72,10 +75,14 @@ async function main() {
   try {
     /*
      * The network id is passed to `connect`, and a wallet may simply not have
-     * Stagenet. That is a real possible outcome rather than an error in our
+     * this network. That is a real possible outcome rather than an error in our
      * code, so it is caught and reported as an answer.
+     *
+     * The name comes from the one reader rather than being typed here. A probe
+     * that asked a wallet for a different network from the one this build is on
+     * would report on a connection nothing else in this pair could use.
      */
-    api = await w.connect('stagenet');
+    api = await w.connect(NETWORK);
     result.connected = true;
     say('');
     say('Connected.');

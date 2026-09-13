@@ -105,7 +105,7 @@ import {
   AccountSimulator, privateStateFor, change, GBP, ZERO_32,
 } from '../contracts/test/simulator.js';
 import { buildPayoutTree, type PayoutLeafInput } from '../src/midnight/payout-tree.js';
-import { applyNetworkId, networkFromEnv } from '../src/midnight/network.js';
+import { applyNetworkId, theNetwork } from '../src/midnight/network.js';
 import { toHex, fromHex } from '../src/core/crypto.js';
 import {
   classCeiling, extrinsicCeiling, extrinsicFraction, printDerivation,
@@ -117,7 +117,7 @@ import {
 const ROOT = process.cwd();
 const ACCOUNT_ARTEFACTS = join(ROOT, 'contracts', 'managed');
 const VAULT_ARTEFACTS = join(ROOT, 'contracts', 'managed-vault');
-const NETWORK = networkFromEnv(process.env.MIDNIGHT_NETWORK_ID, 'stagenet');
+const NETWORK = theNetwork();
 
 /**
  * What a NORMAL extrinsic may take of one dimension — DERIVED, never a

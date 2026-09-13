@@ -79,7 +79,7 @@ import { SealedNotePool, type PoolSigner } from '../src/midnight/vault-pool.js';
 import {
   assertVaultName, vaultRegistryFile, parseVaultRegistry, type VaultEntry,
 } from '../src/midnight/vault-record.js';
-import { applyNetworkId, networkFromEnv, ENDPOINTS } from '../src/midnight/network.js';
+import { applyNetworkId, theNetwork, ENDPOINTS } from '../src/midnight/network.js';
 import { explainNodeError } from './node-errors.js';
 import { serialiseWholeDetailed, describeDropped } from './error-report.js';
 import { createScreen, phaseClock, describeError } from './deploy-report.js';
@@ -89,7 +89,7 @@ import { FileSealedPoolStore, vaultPoolFile } from './vault-pool-file.js';
 
 const ROOT = process.cwd();
 const STATE_DIR = join(ROOT, '.midnight');
-const NETWORK = networkFromEnv(process.env.MIDNIGHT_NETWORK_ID, 'stagenet');
+const NETWORK = theNetwork();
 const VAULT_ARTEFACTS = join(ROOT, 'contracts', 'managed-vault');
 
 /**
@@ -435,10 +435,9 @@ main().then(
  * WHAT IT MUST PASS — exported, because this file reads the environment and
  * nothing else:
  *
- *     MIDNIGHT_NETWORK_ID   the network the vault was deployed on. Same value
- *                           DEPLOY-VAULT.command exports; a pool opened against
- *                           the wrong network reads the wrong registry and
- *                           refuses, which is the right failure but a late one.
+ *     MIDNIGHT_NETWORK_ID   ACCEPTED AND NEVER DECIDING. The network is the one
+ *                           this build is compiled for; naming a different one
+ *                           here is refused, and naming none is the ordinary case.
  *     VAULT_NAME            the vault, by the name it was deployed under. NO
  *                           DEFAULT — the script refuses without it, and the
  *                           door must not invent one.

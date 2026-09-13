@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { StateValue, ChargedState } from '@midnight-ntwrk/compact-runtime';
 
 import {
@@ -228,6 +228,99 @@ describe('§3 the gate every deposit and every payout passes through', () => {
     /* RED WHEN a two-fields-short vault is let through. */
     await expect(assertVaultLedgerIsThisBuilds(stateOfSlots(canonical, SLOTS_OF.deployedAug28)))
       .rejects.toThrow('holds 3 ledger fields');
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * §4 THE MEMO, AND THE ONE THING IT MUST NOT REMEMBER
+ * ------------------------------------------------------------------ */
+
+/**
+ * **A FAILURE THAT IS REMEMBERED REFUSES EVERY DEPOSIT AND EVERY PAYOUT FOR THE
+ * LIFE OF THE PROCESS, WITH THE REASON LONG GONE.**
+ *
+ * The canonical shape is worked out once because the answer is the same every
+ * time. But a rejected promise is an answer too, and a memo that kept one would
+ * turn a module that failed to load once into a client that refuses to touch a
+ * vault until somebody restarts it - and refuses with a message about an import
+ * that happened minutes ago.
+ *
+ * **THE LINE THAT PREVENTS IT HAD NO CONTROL.** It was written on an argument
+ * and nothing drove its failure path, so the mutation that deletes it stayed
+ * green: every test in this file asks for the shape on the happy path, where a
+ * remembered rejection never shows.
+ *
+ * These two run in their own module registry - the memo is module state, and a
+ * test that exercised it would otherwise leave a poisoned or a warmed memo
+ * behind for every test after it.
+ */
+describe('\u00a74 the compiled-shape memo does not remember a rejection', () => {
+  const THE_CONTRACT = '../../contracts/managed-vault/contract/index.js';
+
+  it('RETRIES AFTER A FAILURE, so one bad moment does not close the client for good', async () => {
+    vi.resetModules();
+    let builds = 0;
+    vi.doMock(THE_CONTRACT, async () => {
+      const real = await vi.importActual<{ Contract: unknown; ledger: unknown }>(THE_CONTRACT);
+      const Real = real.Contract as new (w: unknown) => unknown;
+      /*
+       * The real contract, except that constructing it throws the first time.
+       * The failure is put where a transient one would really be - in the
+       * constructor this module calls - rather than in the import machinery,
+       * so what is driven is the module's own failure path.
+       */
+      class OnceUnbuildable {
+        constructor(witnesses: unknown) {
+          builds += 1;
+          if (builds === 1) throw new Error('the contract would not build, this once');
+          return new Real(witnesses) as OnceUnbuildable;
+        }
+      }
+      return { ...real, Contract: OnceUnbuildable };
+    });
+    try {
+      const fresh = await import('./vault-ledger-shape.js');
+      /* RED WHEN the first failure stops being a failure, which would make the
+       * second half of this test assert nothing. */
+      await expect(fresh.compiledVaultLedgerShape()).rejects.toThrow(/would not build, this once/);
+      /*
+       * RED WHEN the rejection is remembered. This is the assertion the line
+       * `compiledShape = null` exists for, and the one nothing had.
+       */
+      const second = await fresh.compiledVaultLedgerShape();
+      expect(second.fields).toEqual(['account', 'notes', 'unshieldedTokens', 'payments', 'spendingCaps']);
+      expect(builds).toBe(2);
+    } finally {
+      vi.doUnmock(THE_CONTRACT);
+      vi.resetModules();
+    }
+  });
+
+  it('AND A SUCCESS IS REMEMBERED, so the memo is still a memo', async () => {
+    vi.resetModules();
+    let builds = 0;
+    vi.doMock(THE_CONTRACT, async () => {
+      const real = await vi.importActual<{ Contract: unknown }>(THE_CONTRACT);
+      const Real = real.Contract as new (w: unknown) => unknown;
+      class Counted { constructor(w: unknown) { builds += 1; return new Real(w) as Counted; } }
+      return { ...real, Contract: Counted };
+    });
+    try {
+      const fresh = await import('./vault-ledger-shape.js');
+      const first = await fresh.compiledVaultLedgerShape();
+      const again = await fresh.compiledVaultLedgerShape();
+      /*
+       * RED WHEN the memo is dropped on success too. The constructor would then
+       * run on every deposit and every payout, which is the cost this line was
+       * written to avoid - and removing the memo is the other way to make the
+       * test above pass.
+       */
+      expect(builds).toBe(1);
+      expect(again).toBe(first);
+    } finally {
+      vi.doUnmock(THE_CONTRACT);
+      vi.resetModules();
+    }
   });
 });
 

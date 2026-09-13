@@ -82,8 +82,8 @@ handInWiring({
 const { app } = await import('./index.js');
 /* The one the SERVER is running, worked out the same way it works it out —
  * `C151` is what a network name disagreeing across two applications costs. */
-const { networkOfThePair } = await import('../midnight/network.js');
-const NETWORK = networkOfThePair(process.env.MIDNIGHT_NETWORK_ID);
+const { theNetwork } = await import('../midnight/network.js');
+const NETWORK = theNetwork();
 
 const identity = identityFromWords(TEST_MNEMONIC);
 const SLOT = 2;

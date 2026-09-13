@@ -446,6 +446,90 @@ describe('§11 a record cut short, and a payment already made', () => {
     expect(() => assertNotAlreadyPaid([done], ask(), NOW + 86_400n)).not.toThrow();
     expect(() => assertNotAlreadyPaid([], ask(), NOW)).not.toThrow();
   });
+
+  /**
+   * **THE ASSET WAS NOT ONE OF THE FIELDS, AND A PAYMENT IS AN AMOUNT OF
+   * SOMETHING.**
+   *
+   * Five fields were compared - network, vault, address, amount, reference -
+   * and the asset was not among them. So a hundred units of one asset read as a
+   * repeat of a hundred units of another, and the record the refusal named had
+   * settled different money. The advice it gave was to change the reference,
+   * which is asking somebody to alter a payroll reference to get round a door
+   * that was wrong.
+   */
+  it('A DIFFERENT ASSET IS A DIFFERENT PAYMENT, not a repeat of the last one', () => {
+    const TESTUSD_TOKEN = 'ab'.repeat(32);
+    const done = record({ asset: 'TESTUSD', token: TESTUSD_TOKEN });
+    /* RED WHEN the asset is not compared: the same address, amount and
+     * reference in a DIFFERENT asset is refused as already paid. */
+    expect(() => assertNotAlreadyPaid([done], ask({ asset: 'NIGHT', token: 'cd'.repeat(32) }), NOW))
+      .not.toThrow();
+    /*
+     * **AND THE LEDGER TOKEN IS DELIBERATELY NOT COMPARED HERE.**
+     *
+     * RED WHEN it is. A colour is the one value in the registry a person may
+     * change and they change it by minting, so the same payment to the same
+     * person for the same amount under the same reference, asked again after a
+     * re-mint, would carry a different token - and comparing tokens here would
+     * find no match, raise a second proposal and pay them twice. The token is
+     * what decides whether a record may be RESUMED, which is
+     * `assertRecordIsThisPayment`'s question and not this one.
+     */
+    expect(() => assertNotAlreadyPaid([done], ask({ asset: 'TESTUSD', token: 'cd'.repeat(32) }), NOW))
+      .toThrow(/already paid/);
+    /* RED WHEN the same asset stops being caught, which is what this refusal is
+     * for: the second copy of a door that stopped after the first had paid. */
+    expect(() => assertNotAlreadyPaid([done], ask({ asset: 'TESTUSD', token: TESTUSD_TOKEN }), NOW))
+      .toThrow(/already paid/);
+    expect(() => assertNotAlreadyPaid([done], ask({ asset: 'TESTUSD', token: TESTUSD_TOKEN }), NOW))
+      .toThrow(/the same address, amount, asset and reference/);
+  });
+
+  it('AND A RECORD WRITTEN BEFORE THE ASSET WAS KEPT IS STILL CAUGHT', () => {
+    /*
+     * RED WHEN an absent value is compared against a present one. Every record
+     * written before the asset was kept names none, so comparing them strictly
+     * would stop this refusing for exactly the records it exists for - and the
+     * cost of refusing too often here is a changed reference, while the cost of
+     * refusing too rarely is somebody paid twice.
+     */
+    const old = record();
+    expect(() => assertNotAlreadyPaid([old], ask({ asset: 'TESTUSD', token: 'ab'.repeat(32) }), NOW))
+      .toThrow(/already paid/);
+    const now = record({ asset: 'TESTUSD', token: 'ab'.repeat(32) });
+    expect(() => assertNotAlreadyPaid([now], ask(), NOW)).toThrow(/already paid/);
+    /* RED WHEN a record naming one asset matches an ask naming another, which
+     * is the defect this widening was for. */
+    expect(() => assertNotAlreadyPaid([now], ask({ asset: 'NIGHT' }), NOW)).not.toThrow();
+  });
+
+  it('AND THE REFUSAL NAMES ONLY THE FIELDS IT ACTUALLY COMPARED', () => {
+    /*
+     * **THE ADVICE THIS REFUSAL GIVES IS TO CHANGE A PAYROLL REFERENCE**, so
+     * it has to be honest about what it is advising somebody round. For a
+     * record written before the asset was kept, the asset was not compared -
+     * and saying it was would tell somebody two payments in different assets
+     * had been shown to be the same payment.
+     */
+    const legacy = record();
+    let said = '';
+    try { assertNotAlreadyPaid([legacy], ask({ asset: 'TESTUSD' }), NOW); } catch (e) { said = String((e as Error).message); }
+    /* RED WHEN it claims the asset matched a record that names none. */
+    expect(said).not.toContain('amount, asset and reference');
+    expect(said).toContain('amount and reference');
+    /* RED WHEN it stops saying WHY the asset was not compared, which is the
+     * part that lets somebody judge the refusal rather than obey it. */
+    expect(said).toMatch(/written before the asset was kept with it/);
+
+    let both = '';
+    const known = record({ asset: 'TESTUSD', token: 'ab'.repeat(32) });
+    try { assertNotAlreadyPaid([known], ask({ asset: 'TESTUSD' }), NOW); } catch (e) { both = String((e as Error).message); }
+    /* RED WHEN a comparison that DID happen is not named, which is the other
+     * half: the sentence has to track what was done. */
+    expect(both).toContain('amount, asset and reference');
+    expect(both).not.toMatch(/written before the asset was kept with it/);
+  });
 });
 
 describe('§12 where a finished record goes, and that the check against paying it again finds it there', () => {

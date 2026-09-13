@@ -9,9 +9,18 @@
 import type { CreatePreconditions } from './create-company-rules.js';
 import { refuseIncompleteSetup } from './create-company-rules.js';
 import { pageStartsFor } from './serve-rules.js';
+import { PAIR_NETWORK } from '../src/midnight/network.js';
 
-/** The one network this launcher serves. */
-export const SERVED_NETWORK = 'stagenet';
+/**
+ * The one network this launcher serves, which is the one both products are
+ * compiled for.
+ *
+ * **IT IS NOT A SECOND NAME.** It used to be a string literal here, and a
+ * literal that happens to match the constant is a literal that stops matching
+ * the day the pair moves - leaving a launcher that refuses the only network its
+ * own wallet can sign on.
+ */
+export const SERVED_NETWORK: string = PAIR_NETWORK;
 
 /**
  * Settings the development script declares that this launcher does NOT carry.

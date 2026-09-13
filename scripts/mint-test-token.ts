@@ -181,7 +181,7 @@ async function loadMinterContract(): Promise<any> {
     );
   }
 }
-import { applyNetworkId, networkFromEnv } from '../src/midnight/network.js';
+import { applyNetworkId, theNetwork } from '../src/midnight/network.js';
 import { sleep } from '../src/midnight/retry.js';
 import { explainNodeError, NODE_ERROR_CODES } from './node-errors.js';
 import { testEnvironmentFor, startEnvironment } from './test-environment.js';
@@ -200,7 +200,7 @@ import { phaseClock, withTimeout, describeError, captureNodeLines } from './depl
 const ROOT = process.cwd();
 const STATE_DIR = join(ROOT, '.midnight');
 const SEED_FILE = join(STATE_DIR, 'wallet.seed');
-const NETWORK = networkFromEnv(process.env.MIDNIGHT_NETWORK_ID, 'stagenet');
+const NETWORK = theNetwork();
 const MINTER_ARTEFACTS = join(ROOT, 'contracts', 'probe-out4', 'mint-64');
 
 /* 6301, NOT 6300 — `M-144`. Port 6300 has an 8.1.0 server on it and a proof it
@@ -882,7 +882,9 @@ if (RUN_DIRECTLY) {
  * WHAT IT PASSES — exported, because this file reads the environment and
  * nothing else:
  *
- *     MIDNIGHT_NETWORK_ID   the network to mint on.
+ *     MIDNIGHT_NETWORK_ID   ACCEPTED AND NEVER DECIDING. The network is the one
+ *                           this build is compiled for; naming a different one
+ *                           here is refused, and naming none is the ordinary case.
  *     MINT_AMOUNT           how much, digits only. NO DEFAULT.
  *     MIDNIGHT_PROOF_IMAGE  the pinned image, so the report records what the
  *                           proof was built against rather than what was meant

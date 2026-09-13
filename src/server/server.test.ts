@@ -101,8 +101,8 @@ handInWiring({
 });
 
 const { app } = await import('./index.js');
-const { networkOfThePair } = await import('../midnight/network.js');
-const NETWORK = networkOfThePair(process.env.MIDNIGHT_NETWORK_ID);
+const { theNetwork } = await import('../midnight/network.js');
+const NETWORK = theNetwork();
 
 let server: Server;
 let base: string;
