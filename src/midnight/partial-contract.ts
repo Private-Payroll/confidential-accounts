@@ -88,6 +88,14 @@ import {
   assertKnownCircuitSet,
 } from './deferral.js';
 
+/** The circuit names a call interface for this deployment carries. */
+const DEPLOYED: ReadonlySet<string> = new Set<string>(DEPLOYED_CIRCUITS);
+import type { PrivateStateAnswer } from './governed-call.js';
+import {
+  CIRCUITS_THAT_READ_NO_WITNESS,
+  aCallInterfaceThatRefuses,
+} from './governed-call.js';
+
 /* ------------------------------------------------------------------ *
  * the maintenance authority, chosen deliberately or not at all
  * ------------------------------------------------------------------ */
@@ -400,7 +408,25 @@ export async function submitPartialDeployTx(
  */
 export async function findDeployedPartialContract(
   providers: any,
-  options: { compiledContract: unknown; contractAddress: string; privateStateId?: string },
+  options: {
+    compiledContract: unknown;
+    contractAddress: string;
+    /**
+     * **WHERE THIS CONTRACT'S PRIVATE STATE IS FILED, AND IT IS REQUIRED.**
+     *
+     * It was optional, and the interface this function hands back is the one
+     * every governed call on the account is eventually made through - so an
+     * omitted answer here was a whole call interface whose every circuit ran
+     * with no private state and therefore no signer behind it, silently,
+     * because the scheme omits the field on a falsy value and then tests for
+     * it by presence.
+     *
+     * `null` is the answer for a read that calls no circuit, and for the
+     * circuits the contract leaves open to anybody. It is a claim rather than
+     * a shrug, and it is checked against the circuit when one is named.
+     */
+    privateStateId: PrivateStateAnswer;
+  },
 ): Promise<{ callTx: any }> {
   const { verifyContractState, createCircuitCallTxInterface } =
     await import('@midnight-ntwrk/midnight-js-contracts');
@@ -430,9 +456,28 @@ export async function findDeployedPartialContract(
    * `createCircuitCallTxInterface` sets the provider's contract address
    * itself (`index.mjs:1876` does the same in `findDeployedContract`), so
    * every call built from this interface stages against this address.
+   *
+   * **AND THE INTERFACE CARRIES THE ANSWER IT WAS GIVEN, SO THAT NAMING A
+   * CIRCUIT THE ANSWER DOES NOT SUIT IS A REFUSAL RATHER THAN A CALL.** The
+   * check cannot be made here: this function is handed one answer for every
+   * circuit and does not know which one anybody will name. Made at the moment a
+   * circuit IS named, it reaches callers that go nowhere near the account
+   * client - which is where the gap was, and is where the next one would be.
    */
   return {
-    callTx: createCircuitCallTxInterface(
-      providers, compiledContract as any, contractAddress as any, options.privateStateId as any),
+    callTx: aCallInterfaceThatRefuses(
+      createCircuitCallTxInterface(
+        providers, compiledContract as any, contractAddress as any,
+        options.privateStateId as any) as object,
+      options.privateStateId,
+      CIRCUITS_THAT_READ_NO_WITNESS,
+      /*
+       * The names this interface carries, from the same list the verifier-key
+       * comparison above is made against - so the guard is switched on by this
+       * client's own decision about the deployment rather than by the shape of
+       * the object the scheme happened to build.
+       */
+      DEPLOYED,
+    ),
   };
 }

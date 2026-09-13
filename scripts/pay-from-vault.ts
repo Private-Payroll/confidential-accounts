@@ -410,18 +410,49 @@ async function main(): Promise<number> {
       closesAt: built.closesAt,
     };
   }
-  const publicRows = async (): Promise<Array<{ tokenType: string; balance: bigint }>> => {
+  /*
+   * **AN ANSWER OF THREE KINDS, NOT A LIST.**
+   *
+   * This used to turn anything that was not an array into an empty one, and
+   * print `(nothing)` for both. The two are opposite claims about a treasury:
+   * an empty list is the chain saying this contract holds no public money, and
+   * a null is the indexer having no contract action for the address at all -
+   * which is what it also answers for an address nothing was ever deployed at.
+   * Printed as the same line, a vault the reader cannot see reads as a vault
+   * that is empty, and the person reading it deposits again.
+   */
+  const publicRows = async (): Promise<
+    { of: 'listed'; rows: Array<{ tokenType: string; balance: bigint }> }
+    | { of: 'unreadable'; why: string }
+  > => {
     const rows = await publicDataProvider.queryUnshieldedBalances(vaultAddress);
-    return Array.isArray(rows) ? rows : [];
+    if (rows == null) {
+      return {
+        of: 'unreadable',
+        why: 'the indexer has no contract action for this address, so it has not published a '
+          + 'balance for it at all. That is not a vault holding nothing',
+      };
+    }
+    if (!Array.isArray(rows)) {
+      return { of: 'unreadable', why: `the indexer answered with ${typeof rows} rather than a list` };
+    }
+    return { of: 'listed', rows };
   };
   const printRows = async (when: string) => {
     try {
-      const rows = await publicRows();
+      const answer = await publicRows();
+      if (answer.of === 'unreadable') {
+        warn(`what this vault holds publicly COULD NOT BE READ ${when}: ${answer.why}`);
+        return;
+      }
       note(`what the indexer lists for this vault ${when}, every token:`);
-      if (rows.length === 0) note('  (nothing)');
-      for (const r of rows) note(`  ${String(r.tokenType)}  ${String(r.balance)}`);
+      if (answer.rows.length === 0) {
+        note('  the chain published a balance list for this contract and it is EMPTY,');
+        note('  which is the chain saying this vault holds no public money');
+      }
+      for (const r of answer.rows) note(`  ${String(r.tokenType)}  ${String(r.balance)}`);
     } catch (e: any) {
-      note(`the vault's public balances could not be listed ${when}: ${String(e?.message ?? e).split('\n')[0]}`);
+      warn(`what this vault holds publicly COULD NOT BE READ ${when}: ${String(e?.message ?? e).split('\n')[0]}`);
     }
   };
 

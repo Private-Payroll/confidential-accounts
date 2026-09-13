@@ -85,6 +85,7 @@ import type { NetworkName } from './network.js';
 import { arityFrom, assertArity } from './circuit-arity.js';
 import { withRetry, sleep, type RetryOptions } from './retry.js';
 import { isDeferredCircuit, deferredCircuitError } from './deferral.js';
+import { refuseACallWithoutItsPrivateState } from './governed-call.js';
 import type { MaintenanceAuthorityChoice } from './partial-contract.js';
 
 /* ------------------------------------------------------------------ *
@@ -374,7 +375,8 @@ const missingPrivateState = (accountId: string, address: string): string =>
  * governed call in this repository: the job runner assembles the SDK's call
  * options itself and this guard is nowhere on that path.
  */
-export const CIRCUITS_THAT_READ_NO_WITNESS: ReadonlySet<string> = new Set(['closeExpiredRun']);
+export { CIRCUITS_THAT_READ_NO_WITNESS } from './governed-call.js';
+import { CIRCUITS_THAT_READ_NO_WITNESS } from './governed-call.js';
 
 /**
  * **WHICH CIRCUIT EACH PREPARED STEP CALLS, AS ONE TABLE THE COMPILER KEEPS
@@ -790,6 +792,12 @@ export class MidnightLedger implements Ledger {
     await findDeployedPartialContract(providers as any, {
       compiledContract: this.compiled as any,
       contractAddress: address,
+      /*
+       * This read verifies the deployment and calls no circuit at all, so it
+       * needs no private state - and it says so rather than omitting the
+       * answer, because an omitted answer is the one thing the find refuses.
+       */
+      privateStateId: null,
     });
 
     /*
@@ -1996,15 +2004,19 @@ export class MidnightLedger implements Ledger {
        * Passed, the same SDK refuses by name instead - "No private state found
        * at private state ID" - which is a sentence a reader can act on.
        *
-       * **SPREAD RATHER THAN ASSIGNED, AND THE REASON IS THE TYPE RATHER THAN
-       * THE SDK.** The find's option is `privateStateId?: string`, and `null`
-       * is not a string, so assigning it would need a cast. The SDK itself
-       * would treat the two the same - its gate here is truthiness, not
-       * presence - and a later reader should not be told otherwise, because a
-       * sentence that overstates what holds a line up is how the line comes to
-       * be simplified away.
+       * **PASSED RATHER THAN SPREAD, AND THE REASON IS THE FIND RATHER THAN
+       * THE SDK.** This line used to spread the field in and leave it out on
+       * `null`, because the find's option was an optional string and `null` is
+       * not a string. The find now takes the answer as `string | null` and
+       * REQUIRES it, so leaving it out is a compile error there and an omitted
+       * answer is refused at run time - which is the whole point of the change
+       * and is worth more here than a line that cannot say `null` out loud.
+       * The SDK's own gate is truthiness rather than presence, so it treats an
+       * absent field and a `null` one the same; a later reader should not be
+       * told otherwise, because a sentence that overstates what holds a line up
+       * is how the line comes to be simplified away.
        */
-      ...(privateStateId === null ? {} : { privateStateId }),
+      privateStateId,
     });
   }
 
@@ -2072,46 +2084,17 @@ export class MidnightLedger implements Ledger {
     address: string, circuit: string, args: unknown[], privateStateId: string | null,
   ) {
     /*
-     * **THE ANSWER MUST BE PRESENT, AND IT MUST MATCH THE CIRCUIT.**
+     * **THE ANSWER MUST BE PRESENT, AND IT MUST MATCH THE CIRCUIT, AND THE RULE
+     * THAT SAYS SO IS NOT WRITTEN HERE.**
      *
-     * `undefined` is a dropped argument and an empty string is a dropped
-     * argument that got as far as a variable; the SDK treats both exactly as
-     * it treats the original defect, by omitting the field and running the
-     * circuit against nothing. `privateStateKey` cannot produce an empty
-     * string - it always carries its separator - and the check is here anyway,
-     * because the promise this guard makes is about a dropped argument rather
-     * than about one particular way of dropping it.
+     * It is in `governed-call.js`, which names all four places a call is built
+     * in this repository. This was for a while the only one of them that
+     * asked. Asking here as well as at the find below is deliberate rather than
+     * redundant: this refusal costs nothing and happens before any network
+     * read, so a caller of this client learns what it did wrong without waiting
+     * for a contract state to come back.
      */
-    if (privateStateId === undefined || privateStateId === '') {
-      throw new Error(
-        `the "${circuit}" call was built without saying where its private state is filed. ` +
-          'Pass the key the call was prepared with, or null for a circuit that reads no ' +
-          'witness. Passing nothing runs the circuit against no private state at all.',
-      );
-    }
-    /*
-     * AND THE TWO DIRECTIONS ARE BOTH CHECKED, because only one of them fails
-     * loudly on its own. A circuit that reads no witness handed a key wastes a
-     * read and puts the call on the path where the SDK writes the record back
-     * after settlement. A circuit that READS one handed `null` runs against no
-     * private state at all, silently, and is the defect returning under a
-     * value that type-checks.
-     */
-    const readsNoWitness = CIRCUITS_THAT_READ_NO_WITNESS.has(circuit);
-    if (privateStateId === null && !readsNoWitness) {
-      throw new Error(
-        `the "${circuit}" call was built as though it reads no private state, and it reads ` +
-          'one. A circuit that opens with a signer check cannot run without the calling ' +
-          "device's own record; pass the key the call was prepared with.",
-      );
-    }
-    if (privateStateId !== null && readsNoWitness) {
-      throw new Error(
-        `the "${circuit}" call was given a private state key and reads no witness at all. ` +
-          'Pass null: asking for a record it will not read makes a device that holds none ' +
-          'unable to make a call the contract deliberately leaves open to anybody.',
-      );
-    }
+    refuseACallWithoutItsPrivateState(circuit, privateStateId, CIRCUITS_THAT_READ_NO_WITNESS);
     /*
      * BEFORE connecting: a deferred circuit fails here, naming the cause.
      * Left to run on, the failure would be the chain's
