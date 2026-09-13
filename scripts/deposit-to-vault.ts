@@ -143,6 +143,7 @@ import {
   assertVaultName, vaultRegistryFile, parseVaultRegistry, type VaultEntry,
 } from '../src/midnight/vault-record.js';
 import { applyNetworkId, networkFromEnv } from '../src/midnight/network.js';
+import { indexerNoteEvents } from '../src/midnight/note-index.js';
 import type { Hex } from '../src/core/crypto.js';
 import type { SignerRef } from '../src/core/ledger.js';
 import { FileSealedPoolStore, vaultPoolFile } from './vault-pool-file.js';
@@ -531,6 +532,66 @@ export const depositJournalFile = (stateDir: string, network: string, name: stri
  * Exported and pure so the test can drive every outcome.
  */
 export type DepositVerdict = 'confirmed-by-the-chain' | 'not-confirmed';
+
+/* ------------------------------------------------------------------ *
+ * WHAT THE DEPOSIT LEFT BEHIND, AS LINES - pure, so it can be pinned
+ * ------------------------------------------------------------------ */
+
+/** What a finished deposit says about itself. The shape `VaultLedger.deposit` returns. */
+export interface WhatADepositReported {
+  readonly ref: string;
+  readonly createdIn?: string;
+  readonly recordedFrom: 'the call' | 'the chain' | 'nowhere';
+  readonly stranded?: string;
+}
+
+/**
+ * **THE TWO NAMES, AND WHETHER THE NOTE CAN BE SPENT.**
+ *
+ * **ONE TRANSACTION HAS TWO NAMES OF TWO DIFFERENT LENGTHS**, off two different
+ * fields of the same result: a 33-byte identifier and a 32-byte hash. This door
+ * used to print the identifier alone, so the number an operator wrote down was
+ * the one the pool does not hold - and every later question about the note was
+ * then asked with a value nothing was filed under. Both are printed, labelled,
+ * with their lengths and with which one the note records.
+ *
+ * **AND WHETHER THE NOTE CAN BE SPENT AT ALL.** A note is spent by proving
+ * where the chain filed it, and that is read from the transaction that created
+ * it. A note recording none is money the vault owns and cannot pay out. The
+ * success line used to be printed either way, so a deposit that had just
+ * stranded its own note looked exactly like one that had not.
+ *
+ * Pure and exported because the door itself is not run here: the lines are the
+ * part that can be wrong, so they are the part that is pinned.
+ */
+export function whatTheDepositLeftBehind(tx: WhatADepositReported): string[] {
+  const lines: string[] = [
+    `  transaction identifier  ${tx.ref}`,
+    `    ${tx.ref.length / 2} bytes. This is the name an explorer takes, and it is NOT the name`,
+    '    the note records.',
+  ];
+  if (tx.createdIn !== undefined) {
+    lines.push(
+      `  transaction hash        ${tx.createdIn}`,
+      `    ${tx.createdIn.length / 2} bytes, read from ${tx.recordedFrom}. THIS is the one recorded`,
+      '    against the note, and the one a payment reads its place in the chain with.',
+      '',
+      '  \x1b[32m✓\x1b[0m the note is in the pool with the transaction that created it, sealed and',
+      '    wrapped to every signer above. It can be spent.');
+    return lines;
+  }
+  lines.push(
+    '',
+    '  \x1b[31m!\x1b[0m THE NOTE IS IN THE POOL AND IT CANNOT BE SPENT YET.',
+    `    ${tx.stranded ?? 'no reason was given'}.`,
+    '    The money is on chain and it is this vault\x27s. Nothing is lost and nothing has to be',
+    '    guessed: a note is spent at the place the chain filed it, that place is read from the',
+    '    transaction that created it, and a note recording no transaction is refused before any',
+    '    fee rather than after one.',
+    '    Record that transaction against this note before anything pays out of this vault. The',
+    '    identifier above is enough to find it by.');
+  return lines;
+}
 
 export function depositVerdict(
   before: bigint | null, after: bigint, deposited: bigint,
@@ -1091,10 +1152,13 @@ async function main(): Promise<DepositVerdict> {
 
   const startedAt = Date.now();
   const tx = await ledger.deposit(
-    entry.contractAddress, { nonce, token: colour, value: amount }, DEPOSITOR);
+    entry.contractAddress, { nonce, token: colour, value: amount }, DEPOSITOR,
+    indexerNoteEvents(cfg.indexer));
   provingSeconds = (Date.now() - startedAt) / 1000;
-  good(`submitted in ${provingSeconds.toFixed(1)}s — transaction ${tx.ref}`);
-  good('the note is recorded in the pool, sealed and wrapped to every signer above');
+  good(`submitted in ${provingSeconds.toFixed(1)}s`);
+
+  say();
+  for (const line of whatTheDepositLeftBehind(tx)) say(line);
 
   printProving();
   printTxSize();

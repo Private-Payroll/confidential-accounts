@@ -362,20 +362,29 @@ describe('S12 — the door, the refusal, and the record', () => {
   it('§3 WHETHER AN ASSET HAS A PRIVATE FORM IS A FUNCTION, AND IT ANSWERS FOR EVERY ASSET', () => {
     /*
      * A function rather than a list at a call site, because the answer changes
-     * for every asset at once on the day the converter is deployed. **Today it
-     * is no for all of them**, established rather than assumed: NIGHT is
-     * unshielded by definition and nothing else in the registry is held on this
-     * network at all.
+     * for every asset at once on the day the converter is deployed. **It is
+     * read off the row**, established rather than assumed: an asset with a
+     * private token has one to send and an asset without has not. NIGHT is
+     * unshielded by definition and is no for ever; the rest are held on another
+     * chain or on none, and are no until a converter exists.
      */
     for (const asset of assets.all()) {
       const form = privateForm(asset);
-      expect(form.of).toBe('not-yet');
+      /* RED WHEN the answer stops following the row it is read off. */
+      expect(form.of, asset.code).toBe(asset.ledger.shielded === null ? 'not-yet' : 'available');
       if (form.of === 'not-yet') {
         expect(form.why).toContain(asset.code);
         expect(form.why).not.toContain('—');
         expect(form.why).not.toMatch(/shielded|unshielded|token|wrap/i);
       }
     }
+    /*
+     * **EXACTLY ONE ASSET ANSWERS YES AND IT IS A TEST ONE.** RED WHEN a real
+     * asset starts answering `available`, which is a screen offering a private
+     * payment the settlement cannot make - the thing the privacy rule is about.
+     */
+    expect(assets.all().filter(a => privateForm(a).of === 'available').map(a => a.code))
+      .toEqual(['TESTUSD']);
     expect(privateForm(assets.require('NIGHT'))).toEqual({
       of: 'not-yet',
       why: "NIGHT can only be sent publicly today, which puts the recipient's address and "

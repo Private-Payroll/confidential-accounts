@@ -27,7 +27,10 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 
-import { indexerNoteEvents, recordCreatingTransaction, NoteIndexUnreadable, NoteIndexRefused } from '../src/midnight/note-index.js';
+import {
+  indexerNoteEvents, recordCreatingTransaction,
+  NoteIndexUnreadable, NoteIndexRefused, NoteIndexUnaskable,
+} from '../src/midnight/note-index.js';
 import { SealedNotePool, type PoolSigner } from '../src/midnight/vault-pool.js';
 import { assertVaultName, vaultRegistryFile, parseVaultRegistry } from '../src/midnight/vault-record.js';
 import { networkFromEnv, ENDPOINTS } from '../src/midnight/network.js';
@@ -258,7 +261,8 @@ async function main(): Promise<number> {
 
 main().then((c) => process.exit(c)).catch((e: unknown) => {
   say();
-  if (e instanceof NotUsable || e instanceof NoteIndexRefused || e instanceof NoteIndexUnreadable) {
+  if (e instanceof NotUsable || e instanceof NoteIndexRefused || e instanceof NoteIndexUnreadable
+    || e instanceof NoteIndexUnaskable) {
     say(`  ${RED}${BOLD}Nothing was written.${OFF}`);
     say();
     say(`  ${(e as Error).message}`);
@@ -266,6 +270,13 @@ main().then((c) => process.exit(c)).catch((e: unknown) => {
       say();
       note('This is the chain not answering, which is not the chain saying no. Reading again');
       note('later may answer. Nothing about the note has been decided.');
+    }
+    if (e instanceof NoteIndexUnaskable) {
+      say();
+      note('This is not the chain being slow and it is not the chain saying no. This machine');
+      note('asked the indexer for something it does not have, so READING AGAIN WILL NOT ANSWER:');
+      note('it is the two of them out of step, and one of them has to move. Nothing about the');
+      note('note has been decided, and the note is exactly where it was.');
     }
     process.exit(1);
   }

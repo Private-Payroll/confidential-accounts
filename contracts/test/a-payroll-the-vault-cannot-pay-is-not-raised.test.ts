@@ -97,7 +97,7 @@ async function aDraftedRun(people: number, asset = 'GBP', opts: { registry?: Ass
 
 describe('the product\'s own registry', () => {
   it('REFUSES to build a payroll in an asset with no private form, before any material or fee', async () => {
-    /* The product's registry, where no asset has a private form. */
+    /* The product's registry, where only a test asset has a private form. */
     const s = services({ registry: productAssets });
     const created = await s.accounts.create('Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1);
     for (const asset of ['GBP', 'NIGHT']) {
@@ -108,7 +108,20 @@ describe('the product\'s own registry', () => {
     const { run } = await s.payroll.createRunFromRoster(created.account.id, '2026-10', created.viewingKey);
     /* RED WHEN a payroll payment's token is anything but the asset's own private form. */
     await expect(s.payroll.runMaterialInputs(run.id, created.viewingKey, 'GBP'))
-      .rejects.toThrow(/GBP has no form on Midnight, private or public.*No asset has a private form yet\./s);
+      .rejects.toThrow(/GBP has no form on Midnight, private or public,/);
+    /*
+     * RED WHEN the refusal stops naming a way through. Until a test settlement
+     * asset existed there was none to name and this read "No asset has a
+     * private form yet"; a refusal still saying that would be sending somebody
+     * away from a payment they can in fact make.
+     */
+    await expect(s.payroll.runMaterialInputs(run.id, created.viewingKey, 'GBP'))
+      .rejects.toThrow(/Assets that have a private form: TESTUSD\./);
+    /*
+     * RED WHEN NIGHT is given a private form. `nativeToken()` is unshielded by
+     * definition, so there is no private NIGHT on this platform and no test
+     * asset changes that.
+     */
     await expect(s.payroll.runMaterialInputs(run.id, created.viewingKey, 'NIGHT'))
       .rejects.toThrow(/NIGHT has no private form on Midnight/);
     expect(s.control.raises).toBe(0);

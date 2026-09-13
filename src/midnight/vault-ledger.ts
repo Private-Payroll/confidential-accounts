@@ -39,7 +39,11 @@ import {
   type VaultNotes, type Note,
 } from './vault-notes.js';
 import { changeCoinOf } from './vault-coins.js';
-import { indexForSpend, type ChainReadIndex, type NoteEvents } from './note-index.js';
+import {
+  indexForSpend, noteIndexFrom, vaultNoteCommitment,
+  type ChainReadIndex, type NoteEvents,
+} from './note-index.js';
+import { assertVaultLedgerIsThisBuilds } from './vault-ledger-shape.js';
 import { commitmentForNote } from './vault-recovery.js';
 
 /** One payment, exactly as `PayrollRun.payeeArgs` hands it over. */
@@ -107,6 +111,29 @@ export interface VaultPayment {
 export type VaultPaid =
   | (TxRef & { kind: 'shielded'; spentNote: Hex })
   | (TxRef & { kind: 'unshielded' });
+
+/**
+ * **WHAT A DEPOSIT LEAVES BEHIND, INCLUDING WHETHER THE NOTE IT MADE CAN BE
+ * SPENT.**
+ *
+ * A note is spent by proving where the chain filed it, which is read from the
+ * transaction that created it. **A note whose pool entry records no transaction
+ * is money the vault owns and cannot pay out** - repairable, and not by
+ * anything that happens automatically. So a deposit says which transaction it
+ * recorded, where that came from, and, when it recorded none, why.
+ *
+ * `recordedFrom` is not decoration. `'nowhere'` is the one outcome a person has
+ * to act on, and before this it was indistinguishable on screen from the other
+ * two.
+ */
+export interface VaultDeposited extends TxRef {
+  /** The transaction the note records, by its 32-byte hash. Absent when none could be. */
+  readonly createdIn?: Hex;
+  /** Where it came from: the call's own answer, the chain, or nothing did. */
+  readonly recordedFrom: 'the call' | 'the chain' | 'nowhere';
+  /** Why nothing could be recorded. Present exactly when `recordedFrom` is `'nowhere'`. */
+  readonly stranded?: string;
+}
 
 /**
  * **WHICH STORED VERSION OF WHICH VAULT'S POOL A LOAD READ.** Made by a pool's
@@ -682,6 +709,20 @@ export class VaultLedger {
     return typeof hash === 'string' && /^[0-9a-f]{64}$/i.test(hash) ? hash.toLowerCase() : undefined;
   };
 
+  /**
+   * **THE OTHER NAME THE SAME TRANSACTION HAS, AND IT IS A DIFFERENT LENGTH.**
+   *
+   * `txId` is 33 bytes and `txHash` is 32, off the same finalised result, from
+   * two different fields. The pool records the hash; the identifier is what a
+   * screen reports, and it is the only name available when the result carries
+   * no hash. Thirty-three bytes exactly - a value that is some other length is
+   * not this name and nothing is guessed from a prefix.
+   */
+  private static identifierOf = (result: any): Hex | undefined => {
+    const id = result?.public?.txId;
+    return typeof id === 'string' && /^[0-9a-f]{66}$/i.test(id) ? (id.toLowerCase() as Hex) : undefined;
+  };
+
   private txRef(result: any, by: SignerRef): TxRef {
     /*
      * `by` IS NOT ON THE RETURNED REFERENCE, and that is `TxRef`'s shape rather
@@ -916,13 +957,47 @@ export class VaultLedger {
      */
     coin: { nonce: Hex; token: Hex; value: bigint },
     by: SignerRef,
-  ): Promise<TxRef> {
+    /**
+     * **WHERE TO READ THE CREATING TRANSACTION FROM WHEN THE CALL DOES NOT
+     * CARRY IT.**
+     *
+     * Optional, and the ordinary case never reaches it: a finalised call
+     * reports its own transaction hash and that is what the note records. It is
+     * here for the case where it does not - and that case used to leave a note
+     * the vault owns and nothing can spend, written with no word said.
+     */
+    events?: NoteEvents,
+  ): Promise<VaultDeposited> {
     if (coin.value <= 0n) throw new Error('a note of nothing is not a deposit');
     const current = await this.pool.load(vaultAddress);
 
     const { result } = await this.call(vaultAddress, 'deposit', [
       { nonce: fromHex(coin.nonce), color: fromHex(coin.token), value: coin.value },
     ]);
+
+    /*
+     * **THE CREATING TRANSACTION IS SETTLED HERE, BEFORE THE ONE POOL WRITE,
+     * AND THAT IS THE WHOLE POINT OF DOING IT HERE.**
+     *
+     * A note is spent by proving where the chain filed it, and that is read
+     * from the transaction that created it. **A note whose pool entry does not
+     * record that transaction cannot be spent**: the money is on chain, it is
+     * the vault's, and every payment that would reach it is refused. Recording
+     * it used to be a separate act somebody had to remember, and a step nobody
+     * is forced to take is a step that will be missed.
+     *
+     * So it happens in the same action, and in the SAME WRITE. Not a second
+     * `pool.save` afterwards: three writers already write this pool with no
+     * lock between them, and a fourth would be a fourth.
+     *
+     * **IT DOES LENGTHEN THE WINDOW THE NEXT COMMENT IS ABOUT**, in the one
+     * branch where the call reported no hash and the chain has to be asked. The
+     * save is checked against the version the pool was read at, so a pool
+     * another writer advanced meanwhile is refused rather than overwritten -
+     * and a refusal there leaves exactly the state the next comment describes,
+     * which is the recoverable one.
+     */
+    const recorded = await this.creatingTransactionOf(result, events, coin, vaultAddress);
 
     /*
      * **THE POOL IS WRITTEN AFTER THE TRANSACTION, DELIBERATELY, AND
@@ -956,7 +1031,6 @@ export class VaultLedger {
      * `contracts/test/vault-recovery.test.ts` drives a vault to this exact
      * window, recovers, and SPENDS what comes back.
      */
-    const createdIn = VaultLedger.createdInOf(result);
     /*
      * FROM THE VERSION `current` WAS READ AT. A pool another process advanced
      * while this deposit was proving is refused rather than overwritten, and the
@@ -964,9 +1038,87 @@ export class VaultLedger {
      */
     await this.pool.save(vaultAddress, notesOf(afterDeposit(current, {
       nonce: coin.nonce, token: coin.token, value: coin.value,
-      ...(createdIn === undefined ? {} : { createdIn }),
+      ...(recorded.createdIn === undefined ? {} : { createdIn: recorded.createdIn }),
     })), current.readAt);
-    return this.txRef(result, by);
+    return { ...this.txRef(result, by), ...recorded };
+  }
+
+  /**
+   * **WHICH TRANSACTION CREATED THE NOTE, FROM THE CALL OR FROM THE CHAIN, AND
+   * IT NEVER THROWS.**
+   *
+   * By the time this runs the transaction has settled and the money is on
+   * chain. **Throwing here would lose the note from the pool entirely** - a
+   * vault holding money it has no record of - which is strictly worse than a
+   * note recorded without its transaction, because the second is repairable
+   * from the pool and the first needs the whole history replayed. So every
+   * failure below becomes `recordedFrom: 'nowhere'` WITH ITS REASON, and the
+   * caller says so on screen.
+   *
+   * **THE TWO NAMES ARE DIFFERENT LENGTHS AND THE POOL HOLDS ONLY ONE.** A
+   * finalised call reports a 33-byte identifier and a 32-byte hash, from two
+   * different fields. The pool records the hash, because that is what a spend
+   * names the transaction by. Where the hash is missing the identifier is the
+   * only name there is, so the chain is asked by identifier and the hash it
+   * answers with is what goes in - which is the same value, arrived at the
+   * long way round.
+   */
+  private async creatingTransactionOf(
+    result: unknown,
+    events: NoteEvents | undefined,
+    coin: { nonce: Hex; token: Hex; value: bigint },
+    vaultAddress: string,
+  ): Promise<{ createdIn?: Hex; recordedFrom: 'the call' | 'the chain' | 'nowhere'; stranded?: string }> {
+    const fromTheCall = VaultLedger.createdInOf(result);
+    if (fromTheCall !== undefined) return { createdIn: fromTheCall, recordedFrom: 'the call' };
+
+    const identifier = VaultLedger.identifierOf(result);
+    if (identifier === undefined) {
+      return {
+        recordedFrom: 'nowhere',
+        stranded: 'the call reported neither a transaction hash nor an identifier, so there is '
+          + 'no name to record and none to look one up by',
+      };
+    }
+    if (events === undefined) {
+      return {
+        recordedFrom: 'nowhere',
+        stranded: 'the call reported no transaction hash, and no source of the chain\x27s events '
+          + 'was given to read one from the identifier it did report',
+      };
+    }
+    try {
+      const served = await events.eventsOf({ identifier });
+      /*
+       * **THE EVENTS MUST BE THIS NOTE'S, AND THAT IS CHECKED RATHER THAN
+       * ASSUMED.**
+       *
+       * Taking the first event's transaction would record a hash nothing had
+       * established created this note. The note would then read as healthy
+       * everywhere - the pool, the screen, the pre-flight a payment makes - and
+       * be refused at the spend, after a proposal and its approvals had been
+       * paid for. So the same three questions the repair door goes through are
+       * asked here: exactly one event carries this note's commitment, that
+       * output is owned by this vault, and the events are all one transaction's.
+       */
+      const commitment = await vaultNoteCommitment(coin, vaultAddress as Hex);
+      noteIndexFrom(served, { vault: vaultAddress as Hex, commitment, transaction: { identifier } });
+      const hash = String(served[0]?.transactionHash ?? '').trim().toLowerCase().replace(/^0x/, '');
+      if (!/^[0-9a-f]{64}$/.test(hash)) {
+        return {
+          recordedFrom: 'nowhere',
+          stranded: 'the chain answered about this transaction without naming its hash, so there '
+            + 'is nothing to record that a spend could read the note\x27s place from',
+        };
+      }
+      return { createdIn: hash as Hex, recordedFrom: 'the chain' };
+    } catch (cause) {
+      return {
+        recordedFrom: 'nowhere',
+        stranded: `the chain could not say which transaction this was: `
+          + `${(cause as Error)?.message ?? String(cause)}`,
+      };
+    }
   }
 
   /**
@@ -1555,6 +1707,19 @@ export class VaultLedger {
       throw new VaultChainUnreadable(
         vaultAddress, 'the indexer returned no state for this address');
     }
+
+    /*
+     * **THE SHAPE, BEFORE A SINGLE FIELD IS READ OFF THIS VAULT.**
+     *
+     * This read is not on the payment path - it is what answers `balance`,
+     * `affordable` and `reconcile`, which is to say it is what decides whether a
+     * run is raised at all. **A field is addressed by its position**, so a vault
+     * deployed from another build answers the question about `notes` out of
+     * whichever field is in that slot, and answers it silently when the two are
+     * stored the same way. A number reached that way is not a wrong number about
+     * this vault's money; it is a number about something else entirely.
+     */
+    await assertVaultLedgerIsThisBuilds(state);
 
     let parsed: any;
     try {

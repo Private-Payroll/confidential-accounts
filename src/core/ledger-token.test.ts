@@ -62,10 +62,17 @@ describe('the token a payment out of a vault moves', () => {
     expect(transferFacts(publicNightTransfer()).token).not.toBe(NIGHT_AS_ASCII);
   });
 
-  it('refuses private NIGHT by name and says how NIGHT can be paid instead', () => {
+  it('refuses private NIGHT by name and says which asset CAN be paid privately instead', () => {
     expect(() => ledgerTokenOf('NIGHT', 'shielded')).toThrow(/NIGHT has no private form on Midnight/);
     expect(() => ledgerTokenOf('NIGHT', 'shielded')).toThrow(/It has a public form only\./);
-    expect(() => ledgerTokenOf('NIGHT', 'shielded')).toThrow(/No asset has a private form yet/);
+    /*
+     * RED WHEN the refusal stops naming a way through. Until a test settlement
+     * asset existed there was none to name and the sentence was "No asset has a
+     * private form yet"; there is one now, and a refusal that still said the
+     * old sentence would be sending somebody away from a payment they can make.
+     */
+    expect(() => ledgerTokenOf('NIGHT', 'shielded'))
+      .toThrow(/Assets that have a private form: TESTUSD\./);
   });
 
   it('refuses every other asset in the product registry, in both forms, rather than inventing a token', () => {
@@ -84,15 +91,21 @@ describe('the token a payment out of a vault moves', () => {
           expect(value, `${asset.code} ${form} must not be given a token`).toBeUndefined();
           expect(message).toContain(asset.code);
           expect(message).toMatch(form === 'shielded'
-            ? /No asset has a private form yet/
+            ? /Assets that have a private form: TESTUSD\./
             : /Assets that have a public form: NIGHT\./);
         } else {
           expect(value).toBe(row);
         }
       }
     }
-    expect(assets.all().filter(a => a.code !== 'NIGHT').every(a =>
+    /*
+     * RED WHEN a third row gains a ledger form. Exactly two rows in this
+     * registry state a token: NIGHT publicly, and the test settlement asset
+     * privately. Everything else states null in both forms.
+     */
+    expect(assets.all().filter(a => a.code !== 'NIGHT' && a.code !== 'TESTUSD').every(a =>
       a.ledger.shielded === null && a.ledger.unshielded === null)).toBe(true);
+    expect(assets.require('TESTUSD').ledger.unshielded).toBeNull();
   });
 
   it('a public transfer in an asset no vault can hold is refused when its payment is built', () => {

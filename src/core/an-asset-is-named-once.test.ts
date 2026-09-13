@@ -81,10 +81,38 @@ describe('§1 every shape an asset can have is answered from its row', () => {
       .toThrow(`Assets that have a private form: ${payablePrivately.join(', ')}.`);
   });
 
-  it('the product registry says only what it knows: NIGHT publicly, and no asset privately', () => {
+  it('the product registry says only what it knows: NIGHT publicly, one test asset privately', () => {
     const withAForm = productAssets.all().flatMap(a => FORMS
       .filter(f => ledgerFormOf(a, f).of === 'token').map(f => `${a.code} ${f}`));
-    expect(withAForm).toEqual(['NIGHT unshielded']);
+    /*
+     * RED WHEN a row gains a form it has not got, or loses one it has. Two rows
+     * in this registry state a token and the rest state null in both forms.
+     */
+    expect(withAForm).toEqual(['NIGHT unshielded', 'TESTUSD shielded']);
+  });
+
+  it('NIGHT STILL HAS NO PRIVATE FORM, and nothing about a test asset changes that', () => {
+    /*
+     * RED WHEN somebody gives NIGHT a private token. `nativeToken()` is an
+     * `UnshieldedTokenType`: there is no private NIGHT on this platform, so a
+     * row claiming one is money no mint ever made. It is asserted separately
+     * from the list above because the list is about what the registry says and
+     * this is about what the platform is.
+     */
+    expect(productAssets.require('NIGHT').ledger.shielded).toBeNull();
+    expect(() => ledgerTokenOf('NIGHT', 'shielded'))
+      .toThrow('NIGHT has no private form on Midnight');
+  });
+
+  it('THE ONLY ASSET WITH A PRIVATE FORM IS A TEST ONE, and it is refused off its network', async () => {
+    const { NETWORKS_A_TEST_ASSET_MAY_EXIST_ON, testAssetsFor, isATestAsset } =
+      await import('./assets.js');
+    const privately = productAssets.all().filter(a => a.ledger.shielded !== null).map(a => a.code);
+    /* RED WHEN a real asset gains a private form without the row being argued for. */
+    expect(privately.every(isATestAsset)).toBe(true);
+    /* RED WHEN a test asset is admitted on a network it has no business being on. */
+    expect(testAssetsFor('mainnet')).toEqual([]);
+    expect(NETWORKS_A_TEST_ASSET_MAY_EXIST_ON).not.toContain('mainnet');
   });
 });
 

@@ -25,8 +25,8 @@ import { balanceOf, type VaultNotes } from './vault-notes.js';
 import { toHex } from '../core/crypto.js';
 import { payeeFor, unshieldedPayeeFor } from '../testing/payees.js';
 import {
-  NoteIndexUnreadable, vaultNoteCommitment, type CreatingTransaction, type NoteEvents,
-  type ServedEvent,
+  NoteIndexUnreadable, vaultNoteCommitment, indexForSpend,
+  type CreatingTransaction, type NoteEvents, type ServedEvent,
 } from './note-index.js';
 
 /*
@@ -44,9 +44,29 @@ import {
  * most recently constructed harness wins, and the failure only shows up when
  * two exist.
  */
+/**
+ * **THE SHAPE THIS BUILD'S CONTRACT MAKES, AS THE FAKE STATES IT.**
+ *
+ * The real vault's ledger is five fields, stored `cell, map, map, cell, map` -
+ * measured off the contract's own constructor. Every read of a deployed vault
+ * now compares against it, so a fake whose state has no shape is a fake no
+ * vault resembles.
+ */
+const CANONICAL_SLOTS = ['cell', 'map', 'map', 'cell', 'map'] as const;
+const shapedLike = (slots: readonly string[]) => ({
+  state: { type: () => 'array', asArray: () => slots.map((k) => ({ type: () => k })) },
+});
+
 vi.doMock('../../contracts/managed-vault/contract/index.js', () => ({
   ledger: (d: any) => d,
   pureCircuits: vaultCircuits,
+  /* The constructor, faked down to the one thing the shape reader asks it. */
+  Contract: class {
+    constructor(_witnesses: unknown) { /* runs no circuit */ }
+    async initialState() {
+      return { currentContractState: { data: shapedLike(CANONICAL_SLOTS) } };
+    }
+  },
 }));
 
 const GBP = 'aa'.repeat(32);
@@ -95,6 +115,12 @@ const BY = { id: 'kc' } as never;
  */
 const SEEDED_TX = 'd0'.repeat(32);
 const DEP_TX = 'de'.repeat(32);
+/**
+ * The other name the same transaction has: 33 bytes, not 32, and a different
+ * field of the same result. A real one begins `00`, and the length is what
+ * tells the two names apart.
+ */
+const DEP_ID = `00${'de'.repeat(32)}`;
 const payHash = (k: number) => k.toString(16).padStart(64, 'c');
 const seededIndex = (i: number) => 40n + BigInt(i) * 3n;
 
@@ -182,6 +208,26 @@ function harness(opts: {
    * where the other write lands.
    */
   anotherWriterAddsDuringTheCall?: { nonce: string; value: bigint };
+  /**
+   * **WHAT THE FINALISED DEPOSIT CALL REPORTS ABOUT ITS OWN TRANSACTION.**
+   *
+   * A real result carries two names for it, off two different fields and of two
+   * different lengths: a 32-byte `txHash` and a 33-byte `txId`. The pool
+   * records the hash, because that is what a spend names the transaction by.
+   *
+   *   omitted              both, which is the ordinary case
+   *   'no-hash'            only the identifier, so the hash has to be read from the chain
+   *   'nothing-to-go-on'   neither, so there is no name at all
+   */
+  depositResult?: 'no-hash' | 'nothing-to-go-on' | 'hash-shaped-identifier';
+  /**
+   * **THE CHAIN'S EVENTS DO NOT CARRY THIS DEPOSIT'S NOTE.** What a wrong
+   * identifier, or an identifier belonging to somebody else's transaction,
+   * looks like from here: events that exist and say nothing about this note.
+   */
+  chainDoesNotFileTheNote?: boolean;
+  /** How the DEPLOYED vault's ledger is shaped. Defaults to what this build makes. */
+  ledgerSlots?: readonly string[];
 } = {}) {
   let stored: VaultNotes = {
     notes: (opts.notes ?? [{ nonce: '01'.repeat(32), value: 1_000n }])
@@ -199,7 +245,13 @@ function harness(opts: {
     eventsOf: async (tx) => {
       eventReads.push(tx);
       if (opts.events === 'unreadable') throw new NoteIndexUnreadable('the indexer is not answering');
-      const hash = 'hash' in tx ? tx.hash : '';
+      /*
+       * **BY EITHER NAME**, because a deposit whose result carried no hash can
+       * only ask by the identifier it did report, and the chain answers with
+       * the hash. The real indexer takes both offsets; a fake that took only
+       * one could not fail the way the product does.
+       */
+      const hash = 'hash' in tx ? tx.hash : (tx.identifier === DEP_ID ? DEP_TX : '');
       const out: ServedEvent[] = [
         /* Another output of the same transaction, owned by nobody, to be passed over. */
         { transactionHash: hash, details: { tag: 'zswapOutput', commitment: 'ee'.repeat(32), mtIndex: 0n } },
@@ -361,7 +413,23 @@ function harness(opts: {
         const args = dispatch('deposit', 1)(...raw);
         calls.push({ circuit: 'deposit', args, ctx: raw[0] });
         anotherWriter();
-        return { public: { txId: 'tx_dep', txHash: DEP_TX } };
+        /*
+         * THE CHAIN FILES THE NOTE THIS DEPOSIT MADE. Without it the events a
+         * deposit reads back would carry no output for its own commitment, and
+         * the check that the events really are this note's would refuse - which
+         * is a fake that cannot fail the way the product does.
+         */
+        const made: any = args[0];
+        if (!opts.chainDoesNotFileTheNote) {
+          produced.push({
+            coin: { nonce: toHex(made.nonce), token: toHex(made.color), value: made.value },
+            hash: DEP_TX, index: 777n,
+          });
+        }
+        if (opts.depositResult === 'nothing-to-go-on') return { public: {} };
+        if (opts.depositResult === 'hash-shaped-identifier') return { public: { txId: DEP_TX } };
+        if (opts.depositResult === 'no-hash') return { public: { txId: DEP_ID } };
+        return { public: { txId: DEP_ID, txHash: DEP_TX } };
       },
       /*
        * `depositUnshielded(token, amount)` — TWO arguments, and no coin. There
@@ -493,10 +561,20 @@ function harness(opts: {
       queryContractState: async () => {
         if (opts.chain === 'read-throws') throw new Error('indexer said no');
         if (opts.chain === 'unreadable') return null;
-        if (opts.chain === 'no-notes-field') return { data: { account: { bytes: new Uint8Array(32) } } };
+        if (opts.chain === 'no-notes-field') {
+          /*
+           * A STATE OF THE RIGHT SHAPE WHOSE DECODED FORM HAS NO NOTES SET.
+           * The shape is what it should be, so this stays a test of the reader
+           * refusing rather than of the shape gate refusing first - the two are
+           * different failures and want different answers.
+           */
+          return { data: { ...shapedLike(CANONICAL_SLOTS), account: { bytes: new Uint8Array(32) } } };
+        }
         const held = chainNotesOf().map(toHex);
         return {
           data: {
+            /* What the shape reader asks the state, before any field is read off it. */
+            ...shapedLike(opts.ledgerSlots ?? CANONICAL_SLOTS),
             account: { bytes: Uint8Array.from(Buffer.from(VAULT, 'hex')) },
             notes: {
               member: (c: Uint8Array) => held.includes(toHex(c)),
@@ -552,6 +630,160 @@ describe('V-74: the vault client', () => {
     /* Where its index is to be read from, off the finalised result, and no index. */
     expect(current().notes[0].createdIn).toBe(DEP_TX);
     expect(current().notes[0]).not.toHaveProperty('index');
+  });
+
+  /* ------------------------------------------------------------------ *
+   * A DEPOSIT RECORDS THE TRANSACTION THAT CREATED ITS NOTE, IN THE SAME
+   * ACTION - because a note that records none is money the vault owns and
+   * cannot spend, and the repair was a second command somebody had to remember.
+   * ------------------------------------------------------------------ */
+
+  it('records the creating transaction off the call, and does not ask the chain when it does not have to', async () => {
+    const { ledger, current, eventReads, saves } = harness({ notes: [] });
+    const out = await ledger.deposit(
+      VAULT, { nonce: '77'.repeat(32), token: GBP, value: 500n }, BY, eventsInUse);
+
+    /* RED WHEN the ordinary path stops recording the transaction the call reported. */
+    expect(out.recordedFrom).toBe('the call');
+    expect(out.createdIn).toBe(DEP_TX);
+    expect(current().notes[0].createdIn).toBe(DEP_TX);
+    /* RED WHEN a deposit reads the chain it did not need to read, which is a network call per deposit. */
+    expect(eventReads).toEqual([]);
+    /* RED WHEN the note is written by more than one save, which would be a fourth writer of this pool. */
+    expect(saves).toHaveLength(1);
+  });
+
+  it('READS IT FROM THE CHAIN when the call reports only the identifier, still in ONE write', async () => {
+    const { ledger, current, eventReads, saves } = harness({ notes: [], depositResult: 'no-hash' });
+    const out = await ledger.deposit(
+      VAULT, { nonce: '77'.repeat(32), token: GBP, value: 500n }, BY, eventsInUse);
+
+    /*
+     * RED WHEN a result carrying no hash strands the note. This is the branch
+     * that used to write a note with no creating transaction and say nothing.
+     */
+    expect(out.recordedFrom).toBe('the chain');
+    expect(out.createdIn).toBe(DEP_TX);
+    expect(current().notes[0].createdIn).toBe(DEP_TX);
+    /* RED WHEN the chain is asked by a name it was never given: the pool holds the hash, the call reported the identifier. */
+    expect(eventReads).toEqual([{ identifier: DEP_ID }]);
+    /* RED WHEN the repair becomes a second write, which is what makes it a fourth writer of an unlocked pool. */
+    expect(saves).toHaveLength(1);
+  });
+
+  it('STILL WRITES THE NOTE when nothing can be recorded, and SAYS the note is stranded', async () => {
+    const { ledger, current, saves } = harness({ notes: [], depositResult: 'no-hash' });
+    /* No events source at all: the money has landed and there is nothing to read the hash from. */
+    const out = await ledger.deposit(VAULT, { nonce: '77'.repeat(32), token: GBP, value: 500n }, BY);
+
+    /*
+     * RED WHEN the deposit throws here. The transaction has settled: throwing
+     * loses the note from the pool entirely, and a vault holding money it has
+     * no record of needs its whole history replayed, which is strictly worse
+     * than a note that records no transaction.
+     */
+    expect(out.recordedFrom).toBe('nowhere');
+    expect(saves).toHaveLength(1);
+    expect(current().notes[0].value).toBe(500n);
+    /* RED WHEN a note is written with no creating transaction and nothing says so. */
+    expect(out.stranded).toContain('no source of the chain');
+    expect(current().notes[0]).not.toHaveProperty('createdIn');
+  });
+
+  it('says WHY when the chain refuses the question, rather than only that it failed', async () => {
+    const { ledger, current, saves } = harness({
+      notes: [], depositResult: 'no-hash', events: 'unreadable' });
+    const out = await ledger.deposit(
+      VAULT, { nonce: '77'.repeat(32), token: GBP, value: 500n }, BY, eventsInUse);
+
+    /* RED WHEN a chain read that throws takes the deposit down with it. */
+    expect(out.recordedFrom).toBe('nowhere');
+    expect(saves).toHaveLength(1);
+    /* RED WHEN the reason is swallowed, leaving somebody to guess which of the three failures it was. */
+    expect(out.stranded).toContain('the indexer is not answering');
+    expect(current().notes[0]).not.toHaveProperty('createdIn');
+  });
+
+  it('WILL NOT TAKE A 32-BYTE VALUE AS THE 33-BYTE NAME, and asks the chain nothing', async () => {
+    const { ledger, eventReads } = harness({
+      notes: [], depositResult: 'hash-shaped-identifier' });
+    const out = await ledger.deposit(
+      VAULT, { nonce: '77'.repeat(32), token: GBP, value: 500n }, BY, eventsInUse);
+
+    /*
+     * RED WHEN the length check on the identifier widens. The two names are 32
+     * and 33 bytes and the chain is asked by one or the other; a hash handed
+     * over as an identifier is a question about a transaction nothing is filed
+     * under, and the answer to it would be recorded against this note.
+     */
+    expect(out.recordedFrom).toBe('nowhere');
+    expect(out.stranded).toContain('neither a transaction hash nor an identifier');
+    /* RED WHEN the chain is asked anyway, with a name it cannot use. */
+    expect(eventReads).toEqual([]);
+  });
+
+  it('WILL NOT RECORD A TRANSACTION THAT DID NOT CREATE THIS NOTE, even though one answered', async () => {
+    const { ledger, current, saves } = harness({
+      notes: [], depositResult: 'no-hash', chainDoesNotFileTheNote: true });
+    const out = await ledger.deposit(
+      VAULT, { nonce: '77'.repeat(32), token: GBP, value: 500n }, BY, eventsInUse);
+
+    /*
+     * RED WHEN the hash is taken off the first event the chain returns. A hash
+     * nothing established created this note reads as a HEALTHY note everywhere
+     * afterwards - in the pool, on the screen, and in the check a payment makes
+     * before it proposes - and is refused only at the spend, after a proposal
+     * and its approvals have been proved and paid for.
+     */
+    expect(out.recordedFrom).toBe('nowhere');
+    expect(out.createdIn).toBeUndefined();
+    expect(current().notes[0]).not.toHaveProperty('createdIn');
+    /* RED WHEN the reason stops saying it was the chain's answer that did not match. */
+    expect(out.stranded).toMatch(/did not create this note|not for a contract|different contract/);
+    /* RED WHEN the note is lost because the check threw instead of answering. */
+    expect(saves).toHaveLength(1);
+    expect(current().notes[0].value).toBe(500n);
+  });
+
+  it('says so when the call names the transaction NEITHER way', async () => {
+    const { ledger, current } = harness({ notes: [], depositResult: 'nothing-to-go-on' });
+    const out = await ledger.deposit(
+      VAULT, { nonce: '77'.repeat(32), token: GBP, value: 500n }, BY, eventsInUse);
+
+    /* RED WHEN a result with no name at all is reported as some other failure. */
+    expect(out.recordedFrom).toBe('nowhere');
+    expect(out.stranded).toContain('neither a transaction hash nor an identifier');
+    expect(current().notes[0]).not.toHaveProperty('createdIn');
+  });
+
+  it('REFUSES TO READ A VAULT OF ANOTHER BUILD\x27S SHAPE, before a field is read off it', async () => {
+    /*
+     * RED WHEN this read is left outside the shape gate. It is not on the
+     * payment path: it is what answers `balance` and `affordable`, which is
+     * what decides whether a run is raised. A field is addressed by position,
+     * so on a vault of another shape the answer about notes comes out of
+     * whichever field is in that slot - silently, where the two are stored the
+     * same way.
+     */
+    const { ledger } = harness({ ledgerSlots: ['cell', 'map', 'map', 'cell'] });
+    const failed = await ledger.balance(VAULT, GBP).then(() => null, (e: Error) => e);
+    expect(failed?.name).toBe('VaultLedgerShapeMismatch');
+    expect(failed?.message).toMatch(/holds 4 ledger fields/);
+  });
+
+  it('AND A STRANDED NOTE IS EXACTLY THE ONE A PAYMENT REFUSES, which is why it is worth saying', async () => {
+    const { ledger, current } = harness({ notes: [], depositResult: 'no-hash' });
+    await ledger.deposit(VAULT, { nonce: '77'.repeat(32), token: GBP, value: 500n }, BY);
+
+    /*
+     * RED WHEN a note with no recorded transaction becomes spendable, or stops
+     * being refused by name. The claim "this note cannot be paid out" is
+     * measured here against the product's own refusal rather than asserted in
+     * a comment.
+     */
+    const stranded = current().notes[0];
+    await expect(indexForSpend(VAULT as `${string}`, stranded, eventsInUse)).rejects
+      .toThrow(/does not record which transaction created it/);
   });
 
   it('ADVANCES THE POOL BY THE NOTE THE CONTRACT ACTUALLY TOOK, not the one it assumed', async () => {

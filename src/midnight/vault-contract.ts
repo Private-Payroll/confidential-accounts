@@ -104,6 +104,7 @@ import {
   type MaintenanceAuthorityChoice, type MaintenanceAuthorityDescription,
   type TaggedKey,
 } from './partial-contract.js';
+import { assertVaultLedgerIsThisBuilds } from './vault-ledger-shape.js';
 
 export type {
   MaintenanceAuthorityChoice, MaintenanceAuthorityDescription,
@@ -503,6 +504,26 @@ export async function findDeployedVaultContract(
 
   const verifierKeys = await providers.zkConfigProvider.getVerifierKeys([...VAULT_CIRCUITS]);
   verifyContractState(verifierKeys as any, state);
+
+  /*
+   * **THE LEDGER'S SHAPE, AND IT IS THE CHECK NEITHER OF THE TWO ABOVE MAKES.**
+   *
+   * The operations map names circuits. The verifier keys compare those circuits
+   * byte for byte. **Neither of them opens the ledger**, and a ledger field
+   * that no circuit reads yet is invisible to both: one vault on this project's
+   * own registry passes the verifier-key comparison above while holding a field
+   * fewer than this build's contract declares. Measured, that vault and the one
+   * deployed from this build, in the same afternoon. A field no circuit reads
+   * yet is one edit from being a field that does, and by then the vault holds
+   * money.
+   *
+   * **IT GOES HERE BECAUSE EVERYTHING GOES HERE.** Every deposit into a vault
+   * and every payout out of one resolves the deployed contract through this
+   * function before it builds a call, so a vault this build cannot read
+   * correctly is refused once, in front of the fee and the proof, rather than
+   * in each door that might remember to ask.
+   */
+  await assertVaultLedgerIsThisBuilds(state);
 
   /*
    * `createCircuitCallTxInterface` sets the provider's contract address itself
