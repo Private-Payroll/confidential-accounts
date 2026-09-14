@@ -208,6 +208,9 @@ import { fileURLToPath } from 'node:url';
 import { join, resolve } from 'node:path';
 import { createScreen } from './deploy-report.js';
 import { theNetwork } from '../src/midnight/network.js';
+import {
+  parseVaultRegistry, theVault, type VaultEntry,
+} from '../src/midnight/vault-record.js';
 import { endpointsOf } from '../src/core/networks.js';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
@@ -574,39 +577,43 @@ async function stageTwo(): Promise<VaultSubject | undefined> {
     return undefined;
   }
 
-  let record: any;
+  /*
+   * **THE NAME BECOMES A VAULT THROUGH THE RECORD'S OWN LOOKUP, AND THIS FILE
+   * USED TO DO IT BY HAND.** It indexed the parsed map of vaults itself, which
+   * is how it stayed outside every rule the record enforces -- including the one
+   * that refuses a vault marked as disposed of.
+   *
+   * **AND THIS INSTRUMENT TAKES NO POST-MORTEM ALLOWANCE, UNLIKE THE ONE
+   * READ-ONLY DOOR THAT DOES.** What it produces is NUMBERS, and a number read
+   * off a vault whose ledger this build cannot read correctly is not a wrong
+   * number about that vault, it is a number about something else -- which would
+   * then be written down as a measurement of whether a note's index can be read
+   * back at all.
+   */
+  let record: VaultEntry;
   try {
-    record = JSON.parse(readFileSync(vaultsFile, 'utf8'))?.vaults?.[VAULT_NAME];
+    record = theVault(
+      parseVaultRegistry(JSON.parse(readFileSync(vaultsFile, 'utf8')), NETWORK), VAULT_NAME);
   } catch (e: any) {
-    refuse('the vault', `${NETWORK}-vaults.json did not parse: ${String(e?.message ?? e)}`);
-    return undefined;
-  }
-  if (!record?.contractAddress) {
-    /*
-     * **THE NAME IS TYPED AT A PROMPT NOW, SO THIS REFUSAL LISTS THE ONES THAT
-     * EXIST.** A misspelling and an undeployed vault are the same refusal from
-     * here, and the difference is the whole of what the person needs; the
-     * registry is the only place a name and an address are tied together, and
-     * the addresses are never printed.
-     */
-    let known: string[] = [];
-    try {
-      known = Object.keys(JSON.parse(readFileSync(vaultsFile, 'utf8'))?.vaults ?? {});
-    } catch { /* the parse refusal above already covers a file that will not read */ }
-    refuse('the vault',
-      `no vault named "${VAULT_NAME}" in ${NETWORK}-vaults.json. `
-      + (known.length
-        ? `The vaults on ${NETWORK} are: ${known.join(', ')}. `
-        : `There are no vaults at all on ${NETWORK}; DEPLOY-VAULT.command creates one. `)
+    refuse('the vault', `${String(e?.message ?? e)}\n`
       + 'This measurement is against a REAL settled vault and there is no substitute for one.');
     return undefined;
   }
 
+  /*
+   * **THE DEPLOY HEIGHT IS A NUMBER OR IT IS NOTHING.** The record types the
+   * deploy transaction's facts as unknown values on purpose -- they are whatever
+   * the chain said -- so this reads one out rather than asserting it is a number,
+   * and a height that is not one is treated as absent instead of printed.
+   */
+  const deployHeight = typeof record.deployTx?.blockHeight === 'number'
+    ? record.deployTx.blockHeight : undefined;
+
   /* C236, before this function prints anything else. */
   secret.push({ what: "the vault's contract address", value: String(record.contractAddress) });
   say(`  ${G}✓${O} vault "${VAULT_NAME}", deployed ${record.deployedAt ?? 'at an unrecorded time'}`);
-  if (record.deployTx?.blockHeight) {
-    say(`  ${G}✓${O} its deploy settled in block ${record.deployTx.blockHeight}`);
+  if (deployHeight !== undefined) {
+    say(`  ${G}✓${O} its deploy settled in block ${deployHeight}`);
   }
 
   /*
@@ -735,7 +742,7 @@ async function stageTwo(): Promise<VaultSubject | undefined> {
   return {
     address: record.contractAddress,
     commitments,
-    deployBlockHeight: record.deployTx?.blockHeight,
+    deployBlockHeight: deployHeight,
   };
 }
 

@@ -42,7 +42,9 @@ import { createInterface } from 'node:readline/promises';
 
 import { SealedNotePool, type PoolSigner } from '../src/midnight/vault-pool.js';
 import { openPool } from '../src/midnight/vault-pool.js';
-import { assertVaultName, vaultRegistryFile, parseVaultRegistry } from '../src/midnight/vault-record.js';
+import {
+  vaultRegistryFile, parseVaultRegistry, theVault, theVaultNameMeant,
+} from '../src/midnight/vault-record.js';
 import { assertVaultLedgerIsThisBuilds } from '../src/midnight/vault-ledger-shape.js';
 import { theNetwork, ENDPOINTS } from '../src/midnight/network.js';
 import { indexerPublicDataProvider } from '@midnight-ntwrk/midnight-js-indexer-public-data-provider';
@@ -53,7 +55,7 @@ import { chooseOpener } from './deposit-to-vault.js';
 import { createScreen } from './deploy-report.js';
 import { NotUsable } from './note-transaction-rules.js';
 import {
-  decideWhetherToWrite, assertNoSignerWouldLoseAccess, assertTheVaultIsNotDisposed,
+  decideWhetherToWrite, assertNoSignerWouldLoseAccess,
   assertThePoolHasNotMovedSinceTheRebuild, linesForAnOperator,
 } from './reconcile-vault-pool-rules.js';
 
@@ -93,24 +95,26 @@ async function main(): Promise<number> {
       + `vaults on ${network}.`);
   }
   const registry = parseVaultRegistry(JSON.parse(readFileSync(registryFile, 'utf8')), network);
-  const asked = (process.env.VAULT_NAME ?? await ask(
+  const asked = ((process.env.VAULT_NAME ?? '').trim() || await ask(
     registry.current === undefined
       ? '  vault name: '
       : `  vault name (blank for "${registry.current}", the live one): `)).trim();
-  const vaultName = asked === '' && registry.current !== undefined ? registry.current : asked;
-  assertVaultName(vaultName);
-  const entry = registry.vaults[vaultName];
-  if (!entry) {
-    throw new NotUsable(
-      `there is no vault called "${vaultName}" on ${network}. This machine knows: `
-      + `${Object.keys(registry.vaults).join(', ') || '(none)'}.`);
-  }
+  const vaultName = theVaultNameMeant(registry, asked);
   /*
-   * **A DISPOSED VAULT IS REFUSED BEFORE THE CHAIN IS ASKED**, and the rule is in
-   * `reconcile-vault-pool-rules.ts` rather than here, because a rule inside a door
-   * is a rule nothing can measure and this door may not be run by a session.
+   * **A DISPOSED VAULT IS REFUSED BEFORE THE CHAIN IS ASKED**, and the refusal is
+   * not written here or in this door's rules file: it is inside the lookup that
+   * turns a name into an entry, which is the one act this door has in common with
+   * every other door that touches a vault.
+   *
+   * **THIS DOOR IS THE ONE THAT WOULD DO THE MOST DAMAGE WITH THE WRONG ANSWER,
+   * WHICH IS WHY IT REFUSED FIRST AND ALONE FOR A WHILE.** A vault read off the
+   * wrong field hands back a note set that is not its note set -- against which
+   * every note this pool holds is STALE and every commitment UNEXPLAINED -- and
+   * this door's whole purpose is to write the pool that follows from that
+   * comparison. It would offer to write an emptier pool than it started from,
+   * about a vault it was reading wrongly.
    */
-  assertTheVaultIsNotDisposed(vaultName, entry, registry.current);
+  const entry = theVault(registry, vaultName);
   forbidden.push({ what: "the vault's address", value: entry.contractAddress });
   good(`vault "${vaultName}", deployed ${entry.deployedAt}. Its address is not printed.`);
   if (registry.current !== undefined && registry.current !== vaultName) {

@@ -140,8 +140,7 @@ import {
   SealedNotePool, VaultPoolUnreadable, sealPool, openPool, type PoolSigner,
 } from '../src/midnight/vault-pool.js';
 import {
-  assertVaultName, vaultRegistryFile, parseVaultRegistry, type VaultEntry,
-} from '../src/midnight/vault-record.js';
+  assertVaultName, vaultRegistryFile, parseVaultRegistry, type VaultEntry, theVault,} from '../src/midnight/vault-record.js';
 import { applyNetworkId, theNetwork } from '../src/midnight/network.js';
 import { indexerNoteEvents } from '../src/midnight/note-index.js';
 import type { Hex } from '../src/core/crypto.js';
@@ -646,18 +645,13 @@ function vaultFromRegistry(name: string): VaultEntry {
       'exist. DEPLOY-VAULT.command is what creates one.');
   }
   const registry = parseVaultRegistry(JSON.parse(readFileSync(file, 'utf8')), NETWORK);
-  const entry = registry.vaults[name];
-  if (!entry) {
-    const known = Object.keys(registry.vaults);
-    throw new Error(
-      `this company has no vault called "${name}" on ${NETWORK}.\n` +
-      (known.length
-        ? `The vaults it does have are: ${known.join(', ')}.`
-        : 'It has none at all on this network.') +
-      '\nA vault is named rather than addressed because a vault\x27s address must never reach ' +
-      'a screen (C236).');
-  }
-  return entry;
+  /*
+   * **THE NAME BECOMES A VAULT IN ONE PLACE, AND A RETIRED VAULT IS REFUSED
+   * THERE.** Every door needs an address and the record is the only place an
+   * address is, so the lookup is the thing every path has in common -- which is
+   * why the refusal lives inside it rather than being remembered here.
+   */
+  return theVault(registry, name);
 }
 
 /**

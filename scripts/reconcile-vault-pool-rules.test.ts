@@ -9,7 +9,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-  decideWhetherToWrite, assertNoSignerWouldLoseAccess, assertTheVaultIsNotDisposed,
+  decideWhetherToWrite, assertNoSignerWouldLoseAccess,
   assertThePoolHasNotMovedSinceTheRebuild, linesForAnOperator,
 } from './reconcile-vault-pool-rules.js';
 import type { PoolRecovery } from '../src/midnight/vault-recovery.js';
@@ -220,52 +220,11 @@ describe('a rebuild never takes away a signer\'s access, and never lands on a po
   });
 });
 
-describe('a vault recorded as disposed of is refused before the chain is asked', () => {
-  /**
-   * **THE FOUNDER HAD SAID WHICH VAULTS WERE DEAD AND IT WAS NOWHERE ON DISK.**
-   * This round measured a rebuild against one of them before learning so. A fact
-   * that decides whether a door may touch money belongs in the record the door
-   * reads, and then something has to read it.
-   */
-  it('REFUSES a disposed vault, names why, and names the live one', () => {
-    const why = (() => {
-      try {
-        assertTheVaultIsNotDisposed('payroll-test-2',
-          { disposed: true, disposed_why: 'deployed before spendingCaps existed' }, 'payroll-test-3');
-        return '';
-      } catch (e) { return (e as Error).message; }
-    })();
-    expect(
-      why,
-      'RED WHEN: a vault recorded as disposed of is worked against anyway -- its ledger is a field short of what this build compiles, so the note set a read hands back is not its note set, and this door would offer to write an emptier pool than it started from',
-    ).toMatch(/DISPOSED OF/);
-    expect(why, 'RED WHEN: the refusal stops saying why, so it reads as bureaucracy and somebody works around it')
-      .toMatch(/spendingCaps/);
-    expect(why, 'RED WHEN: the refusal stops naming the live vault, which is the only thing the reader can act on')
-      .toMatch(/"payroll-test-3"/);
-    expect(why, 'RED WHEN: it stops saying what reading the wrong field DOES, which is the reason this is a refusal rather than a warning')
-      .toMatch(/counting fields/);
-  });
-
-  it('allows a vault that is not disposed, and one whose record says nothing either way', () => {
-    expect(() => assertTheVaultIsNotDisposed('payroll-test-3', { disposed: false }, 'payroll-test-3')).not.toThrow();
-    /*
-     * RED WHEN: an absent flag is treated as disposed. Every registry written
-     * before this was recorded has no flag at all, and refusing those would refuse
-     * every vault on every machine that has not been rewritten.
-     */
-    expect(() => assertTheVaultIsNotDisposed('older', {}, undefined)).not.toThrow();
-  });
-
-  it('still refuses when the registry records no live vault, rather than saying nothing useful', () => {
-    const why = (() => {
-      try { assertTheVaultIsNotDisposed('dead', { disposed: true }, undefined); return ''; }
-      catch (e) { return (e as Error).message; }
-    })();
-    expect(why, 'RED WHEN: the refusal depends on a live vault being recorded, so a registry without one refuses with no remedy at all')
-      .toMatch(/Name it/);
-  });
-});
+/*
+ * **THE REFUSAL OF A RETIRED VAULT WAS TESTED HERE AND IS NOW TESTED WHERE IT
+ * LIVES**, in `src/midnight/vault-record.test.ts`. It moved because it was a
+ * rule this one door remembered and nine others did not.
+ */
 
 describe('what the operator is shown', () => {
   it('names unexplained money loudest, and never prints the vault\'s address', () => {
