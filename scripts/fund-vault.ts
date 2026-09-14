@@ -71,8 +71,7 @@ import { Contract as VaultContract } from '../contracts/managed-vault/contract/i
 import { VaultLedger, VaultChainUnreadable, type NotePool } from '../src/midnight/vault-ledger.js';
 import { VAULT_CIRCUITS } from '../src/midnight/vault-contract.js';
 import {
-  assertVaultName, vaultRegistryFile, parseVaultRegistry, type VaultEntry,
-} from '../src/midnight/vault-record.js';
+  assertVaultName, vaultRegistryFile, parseVaultRegistry, type VaultEntry, theVault,} from '../src/midnight/vault-record.js';
 import { applyNetworkId, theNetwork } from '../src/midnight/network.js';
 import type { Hex } from '../src/core/crypto.js';
 import type { SignerRef } from '../src/core/ledger.js';
@@ -258,18 +257,13 @@ function vaultFromRegistry(name: string): VaultEntry {
       'exist, so there is nothing to fund. DEPLOY-VAULT.command is what creates one.');
   }
   const registry = parseVaultRegistry(JSON.parse(readFileSync(file, 'utf8')), NETWORK);
-  const entry = registry.vaults[name];
-  if (!entry) {
-    const known = Object.keys(registry.vaults);
-    throw new Error(
-      `this company has no vault called "${name}" on ${NETWORK}.\n` +
-      (known.length
-        ? `The vaults it does have are: ${known.join(', ')}.`
-        : 'It has none at all on this network.') +
-      '\nA vault is named rather than addressed because a vault\'s address must never reach a ' +
-      'screen (C236), and the registry is the only place the two are tied together.');
-  }
-  return entry;
+  /*
+   * **THE NAME BECOMES A VAULT IN ONE PLACE, AND A RETIRED VAULT IS REFUSED
+   * THERE.** Every door needs an address and the record is the only place an
+   * address is, so the lookup is the thing every path has in common -- which is
+   * why the refusal lives inside it rather than being remembered here.
+   */
+  return theVault(registry, name);
 }
 
 /**

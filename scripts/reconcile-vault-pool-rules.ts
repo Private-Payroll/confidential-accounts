@@ -144,47 +144,21 @@ export const decideWhetherToWrite = (input: {
   };
 };
 
-/**
- * **A VAULT RECORDED AS DISPOSED OF IS REFUSED BEFORE THE CHAIN IS ASKED.**
+/*
+ * **THE REFUSAL OF A RETIRED VAULT USED TO LIVE HERE, AND IT HAD TO MOVE.**
  *
- * A vault deployed before a ledger field was added has an on-chain ledger a field
- * SHORT of what this build compiles, and a client reads a vault's fields by
- * COUNTING -- so the "note set" a read hands back is not its note set. `C465` is
- * that, measured on a live vault.
+ * It was written for this door and only this door called it, while nine other
+ * doors turned a name into the same kind of vault and asked nothing. A rule that
+ * one caller remembers is a rule the next caller will not.
  *
- * **THIS DOOR IS THE ONE THAT MUST REFUSE HARDEST, BECAUSE OF WHAT IT WOULD DO
- * WITH THE WRONG ANSWER.** Reading the wrong field gives an empty or nonsense note
- * set, against which every note the pool holds is STALE and every commitment
- * UNEXPLAINED -- and the door's whole purpose is to write the pool that follows
- * from that comparison. It would offer to write an emptier pool than the one it
- * started from, about a vault it was reading wrongly.
- *
- * **IT IS A REFUSAL AND NOT A WARNING.** This door is reached by somebody already
- * worried about their money, and a warning is what that person scrolls past.
- *
- * `assertVaultLedgerIsThisBuilds` is the mechanism and holds for a vault nobody
- * has got round to marking; this is the record somebody wrote, and it costs no
- * chain read. Both, because the flag is cheap and the mechanism is certain.
+ * It is now `theVault` in `src/midnight/vault-record.ts`, inside the lookup that
+ * turns a name into an entry -- the one act every door performs, because an
+ * address exists in the record and nowhere else. **This door's own reason for
+ * refusing hardest is at its call site**, where it belongs: reading the wrong
+ * field gives a note set against which every note held is stale and every
+ * commitment unexplained, and this door's whole purpose is to write the pool
+ * that follows from that comparison.
  */
-export const assertTheVaultIsNotDisposed = (
-  named: string,
-  entry: { disposed?: boolean; disposed_why?: string },
-  /** The vault the registry records as live, if it records one. */
-  current: string | undefined,
-): void => {
-  if (entry.disposed !== true) return;
-  throw new Error(
-    `the vault "${named}" is recorded as DISPOSED OF, so nothing here works against it`
-    + `${entry.disposed_why === undefined ? '' : `: ${entry.disposed_why}`}.\n`
-    + 'A vault whose on-chain ledger is a field short of what this build compiles is read by '
-    + 'counting fields, so the note set a read hands back is NOT its note set -- every note would '
-    + 'come back as spent and every commitment as unexplained, and this door would offer to write '
-    + 'an emptier pool than the one it started from.\n'
-    + (current === undefined
-      ? 'No vault is recorded as the live one, so this cannot say which one you meant. Name it.'
-      : `The live vault is "${current}". Run this again and name that one, or press return when it `
-        + 'asks.'));
-};
 
 /**
  * **REMOVING A SIGNER'S ACCESS BY WRITING THE POOL, WHICH IS WHAT THIS DOOR

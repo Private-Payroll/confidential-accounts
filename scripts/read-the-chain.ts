@@ -68,6 +68,7 @@ import { join, resolve } from 'node:path';
 import { createScreen, phaseClock } from './deploy-report.js';
 import { loadEnvFile } from '../src/db/connect.js';
 import { theNetwork } from '../src/midnight/network.js';
+import { parseVaultRegistry, theVault } from '../src/midnight/vault-record.js';
 import { deployment, deploymentRecordPath, type Deployment } from '../src/wiring/deployment.js';
 import { startProduct, type Startup } from '../src/wiring/product.js';
 import { ContractBook, type RecordedContract } from '../src/wiring/account-contract.js';
@@ -504,21 +505,33 @@ async function readVault(d: Deployment, network: string): Promise<void> {
     return;
   }
 
-  let name: string | undefined; let address: string | undefined;
+  /*
+   * **THE ONE PLACE A RETIRED VAULT MAY STILL BE LOOKED AT, AND IT IS ASKED FOR
+   * BY NAME.**
+   *
+   * Every other door refuses a vault the record marks as disposed of, inside the
+   * lookup that turns a name into an entry. **Refusing here too would leave no
+   * way at all to see what a retired vault holds** -- and a vault is retired
+   * while its money is still on chain, so somebody eventually has to look.
+   *
+   * This instrument builds nothing, proves nothing and spends nothing; it asks
+   * the indexer and prints what came back. So it is the one caller that passes
+   * the post-mortem allowance, and only when a person has said so in the same
+   * breath as running it. **It says on screen that it is doing it**, because
+   * numbers read off a vault whose ledger this build cannot read correctly are
+   * not wrong numbers about that vault -- they are numbers about something else.
+   */
+  const aPostMortem = (process.env.VAULT_DISPOSED_OK ?? '').trim() === 'yes';
+  let name: string | undefined; let address: string | undefined; let retired = false;
   try {
-    const vaults: any = JSON.parse(readFileSync(vaultsFile, 'utf8'))?.vaults ?? {};
-    name = vaults[named] ? named : undefined;
-    address = name ? vaults[name]?.contractAddress : undefined;
-    if (!name) {
-      const known = Object.keys(vaults);
-      refuse('a vault reading', known.length > 0
-        ? `no vault of that name is recorded on ${network}; the recorded names are `
-          + known.join(', ')
-        : `no vault at all is recorded on ${network}`);
-      return;
-    }
+    const registry = parseVaultRegistry(
+      JSON.parse(readFileSync(vaultsFile, 'utf8')), network);
+    const entry = theVault(registry, named, { aReadOnlyPostMortem: aPostMortem });
+    name = entry.name || named;
+    address = entry.contractAddress;
+    retired = entry.disposed === true;
   } catch (e) {
-    refuse('a vault reading', `the record of deployed vaults could not be read: ${scrubbed(e)}`);
+    refuse('a vault reading', scrubbed(e));
     return;
   }
   if (!name || typeof address !== 'string') {
@@ -527,6 +540,11 @@ async function readVault(d: Deployment, network: string): Promise<void> {
   }
   secret.push({ what: "the vault's contract address", value: address });
   say(`  ${G}✓${O} vault ${B}${name}${O}`);
+  if (retired) {
+    say(`  ${Y}!${O} this vault is recorded as DISPOSED OF, and it is being read anyway because `
+      + 'VAULT_DISPOSED_OK=yes was set. Every number below is read off a ledger this build may '
+      + 'not be able to read correctly, so treat each one as a question rather than an answer.');
+  }
 
   const started = Date.now();
   let state: any;

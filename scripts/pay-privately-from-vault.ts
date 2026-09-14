@@ -86,7 +86,7 @@ import { chainVaultHoldings } from '../src/midnight/vault-holdings.js';
 import { vaultDetailsOf } from '../src/midnight/vault-details.js';
 import { indexerNoteEvents } from '../src/midnight/note-index.js';
 import { refuseWhatTheVaultCannotPay } from '../src/core/vault-holdings.js';
-import { assertVaultName, vaultRegistryFile, parseVaultRegistry, type VaultEntry } from '../src/midnight/vault-record.js';
+import { assertVaultName, vaultRegistryFile, parseVaultRegistry, type VaultEntry, theVault,} from '../src/midnight/vault-record.js';
 import { applyNetworkId, theNetwork } from '../src/midnight/network.js';
 import { payeeOf, shortPayee } from '../src/midnight/payee-address.js';
 import { privateStateKey } from '../src/midnight/ledger.js';
@@ -186,14 +186,13 @@ function vaultFromRegistry(name: string): VaultEntry {
     throw new Error(`no vault has ever been deployed on ${NETWORK} from this machine, so there is nothing to pay out of.`);
   }
   const registry = parseVaultRegistry(JSON.parse(readFileSync(file, 'utf8')), NETWORK);
-  const entry = registry.vaults[name];
-  if (!entry) {
-    const known = Object.keys(registry.vaults);
-    throw new Error(
-      `this company has no vault called "${name}" on ${NETWORK}. `
-      + (known.length ? `The vaults it has are: ${known.join(', ')}.` : 'It has none on this network.'));
-  }
-  return entry;
+  /*
+   * **THE NAME BECOMES A VAULT IN ONE PLACE, AND A RETIRED VAULT IS REFUSED
+   * THERE.** Every door needs an address and the record is the only place an
+   * address is, so the lookup is the thing every path has in common -- which is
+   * why the refusal lives inside it rather than being remembered here.
+   */
+  return theVault(registry, name);
 }
 
 const readJson = (file: string, what: string, door: string): any => {

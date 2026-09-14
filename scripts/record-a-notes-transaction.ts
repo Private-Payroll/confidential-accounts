@@ -32,7 +32,9 @@ import {
   NoteIndexUnreadable, NoteIndexRefused, NoteIndexUnaskable,
 } from '../src/midnight/note-index.js';
 import { SealedNotePool, type PoolSigner } from '../src/midnight/vault-pool.js';
-import { assertVaultName, vaultRegistryFile, parseVaultRegistry } from '../src/midnight/vault-record.js';
+import {
+  vaultRegistryFile, parseVaultRegistry, theVault, theVaultNameMeant,
+} from '../src/midnight/vault-record.js';
 import { theNetwork, ENDPOINTS } from '../src/midnight/network.js';
 import { indexerPublicDataProvider } from '@midnight-ntwrk/midnight-js-indexer-public-data-provider';
 import type { Hex } from '../src/core/crypto.js';
@@ -75,8 +77,6 @@ async function main(): Promise<number> {
   const network = theNetwork();
 
   step('1 of 4  Which vault');
-  const vaultName = (process.env.VAULT_NAME ?? await ask('  vault name: ')).trim();
-  assertVaultName(vaultName);
   const registryFile = vaultRegistryFile(STATE_DIR, network);
   if (!existsSync(registryFile)) {
     throw new NotUsable(
@@ -84,12 +84,17 @@ async function main(): Promise<number> {
       + `vaults on ${network}.`);
   }
   const registry = parseVaultRegistry(JSON.parse(readFileSync(registryFile, 'utf8')), network);
-  const entry = registry.vaults[vaultName];
-  if (!entry) {
-    throw new NotUsable(
-      `there is no vault called "${vaultName}" on ${network}. This machine knows: `
-      + `${Object.keys(registry.vaults).join(', ') || '(none)'}.`);
-  }
+  /*
+   * **THE LIVE VAULT IS WHAT PRESSING RETURN MEANS HERE**, because this door
+   * writes a record about a vault and moves no money: choosing the wrong one
+   * costs a rerun. The doors that move money keep their deliberate absence of a
+   * default, and the reason is at `theVaultNameMeant`.
+   */
+  const vaultName = theVaultNameMeant(registry, (process.env.VAULT_NAME ?? '').trim() || await ask(
+    registry.current === undefined
+      ? '  vault name: '
+      : `  vault name (blank for "${registry.current}", the live one): `));
+  const entry = theVault(registry, vaultName);
   forbidden.push({ what: "the vault's address", value: entry.contractAddress });
   good(`vault "${vaultName}", deployed ${entry.deployedAt}. Its address is not printed.`);
 

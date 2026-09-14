@@ -75,7 +75,8 @@ import {
 } from '../src/midnight/vault-contract.js';
 import {
   assertVaultName, vaultAuthorityFile, vaultRegistryFile, emptyVaultRegistry,
-  parseVaultRegistry, addVault, updateVault, describeVaultForReport,
+  parseVaultRegistry, addVault, updateVault, describeVaultForReport, whenThisNameWasTaken,
+  vaultRegistryForDisk,
   type VaultEntry, type VaultRegistry,
 } from '../src/midnight/vault-record.js';
 import { applyNetworkId, theNetwork, ENDPOINTS } from '../src/midnight/network.js';
@@ -322,10 +323,11 @@ async function main() {
    * nowhere to be recorded. Anything knowable up front belongs up front.
    */
   const registry = loadRegistry();
-  if (registry.vaults[VAULT_NAME]) {
+  const taken = whenThisNameWasTaken(registry, VAULT_NAME);
+  if (taken) {
     throw new Error(
       `this company already has a vault called "${VAULT_NAME}" on ${NETWORK}, deployed ` +
-      `${registry.vaults[VAULT_NAME]!.deployedAt}.\n` +
+      `${taken.deployedAt}.\n` +
       'Deploying another would create a SECOND contract at a different address, and writing it ' +
       'over the first would lose the first\'s address — which exists in that record and nowhere ' +
       'else. Two vaults for the same purpose are two vaults: give this one its own name.');
@@ -530,7 +532,8 @@ async function main() {
     deployTx: null,
   };
   const registryFile = vaultRegistryFile(STATE_DIR, NETWORK);
-  writeFileSync(registryFile, JSON.stringify(addVault(registry, entry), null, 2), { mode: 0o600 });
+  writeFileSync(registryFile,
+    JSON.stringify(vaultRegistryForDisk(addVault(registry, entry)), null, 2), { mode: 0o600 });
   good(`recorded in ${registryFile.replace(ROOT + '/', '')} under the name "${VAULT_NAME}"`);
 
   /*
@@ -568,7 +571,8 @@ async function main() {
      */
     writeFileSync(
       registryFile,
-      JSON.stringify(updateVault(loadRegistry(), entry), null, 2), { mode: 0o600 });
+      JSON.stringify(vaultRegistryForDisk(updateVault(loadRegistry(), entry)), null, 2),
+      { mode: 0o600 });
     say();
     say('  \x1b[1mWhat the chain charged, and where it landed\x1b[0m');
     say(`    fee paid          ${deployTx.paidFees}`);

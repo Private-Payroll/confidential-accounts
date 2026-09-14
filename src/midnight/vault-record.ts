@@ -261,6 +261,11 @@ export interface VaultRegistry {
    * first. Absent for a registry written before this was recorded.
    */
   current?: string;
+  /**
+   * The note beside `current`, for a person: why a live vault is recorded at
+   * all. Carried so that writing the record back does not delete it.
+   */
+  currentWhy?: string;
   vaults: Record<string, VaultEntry>;
 }
 
@@ -303,7 +308,32 @@ export function parseVaultRegistry(raw: unknown, network: string): VaultRegistry
      * the answer being whichever key a JSON object happened to list first.
      */
     ...(typeof r._current === 'string' && r._current.length > 0 ? { current: r._current } : {}),
+    ...(typeof r._why === 'string' && r._why.length > 0 ? { currentWhy: r._why } : {}),
     vaults: r.vaults as Record<string, VaultEntry>,
+  };
+}
+
+/**
+ * **THE RECORD, SPELLED THE WAY THE FILE SPELLS IT, AND THIS IS NOT TIDINESS.**
+ *
+ * `parseVaultRegistry` reads `_current` and `_why` into `current` and
+ * `currentWhy`, because a leading underscore is how the file marks the keys that
+ * are not vaults. **Handing the parsed shape straight to `JSON.stringify` writes
+ * `current` instead and the file loses `_current` entirely** -- so the next read
+ * finds no live vault, every door stops offering one, and every refusal of a
+ * retired vault loses the sentence naming the vault to use instead. The note
+ * saying why any of that is recorded goes with it.
+ *
+ * **THAT IS A WRITER SILENTLY DELETING THE THING THIS RECORD WAS EXTENDED TO
+ * CARRY**, one deploy after it was written down. Everything that writes this
+ * file goes through here.
+ */
+export function vaultRegistryForDisk(registry: VaultRegistry): Record<string, unknown> {
+  const { current, currentWhy, ...rest } = registry;
+  return {
+    ...(current === undefined ? {} : { _current: current }),
+    ...(currentWhy === undefined ? {} : { _why: currentWhy }),
+    ...rest,
   };
 }
 
@@ -422,4 +452,214 @@ export function describeVaultForReport(entry: VaultEntry): string[] {
     '                      address is money on chain that nobody can spend, permanently, and',
     '                      no contract can refuse it. Funding a vault is a deposit CALL.',
   ];
+}
+
+/* ------------------------------------------------------------------ *
+ * TURNING A NAME INTO A VAULT, WHICH IS THE ONE THING EVERY PATH DOES
+ * ------------------------------------------------------------------ */
+
+/**
+ * **A VAULT RECORDED AS DISPOSED OF IS REFUSED, AND THIS IS WHERE.**
+ *
+ * A vault can be retired for a reason that is not a shape. The two that are
+ * retired today were deployed before a ledger field existed, so their on-chain
+ * ledger is a field SHORT of what this build compiles and **a client reads a
+ * vault's fields by counting** — every read of one answers about the wrong
+ * slot. That particular fault has a mechanism behind it,
+ * `assertVaultLedgerIsThisBuilds`, which holds for a vault nobody has got round
+ * to marking. **This refusal is for the rest**: a vault emptied and closed, a
+ * vault whose authority is gone, a vault superseded by another — none of which
+ * a chain read can tell from a healthy one, and all of which are a place to put
+ * money that nobody will look at again.
+ *
+ * **IT IS A REFUSAL AND NOT A WARNING.** Nothing downstream can undo a deposit
+ * into a retired vault, and a warning is the thing a person clicks past on the
+ * way to the amount.
+ */
+export function assertTheVaultIsNotDisposed(
+  named: string,
+  entry: { disposed?: unknown; disposed_why?: unknown },
+  /** The vault the record says is live AND still holds, if there is one. */
+  current: string | undefined,
+): void {
+  /*
+   * **THE FLAG IS HAND-WRITTEN AND NOTHING IN THIS PRODUCT WRITES IT**, so the
+   * ways of getting it slightly wrong are the ways it will be got wrong -- and
+   * every one of them slips past a bare `!== true`:
+   *
+   *   · `"disposed": "true"`, a string, copied out of somewhere that quotes it;
+   *   · `disposed_why` written out in full with the flag itself forgotten,
+   *     which is the likeliest of all: the two are independent fields and the
+   *     reason is the part a person actually wants to write down.
+   *
+   * **AN ENTRY WE CANNOT READ ON THIS QUESTION IS NOT AN ENTRY THAT SAID
+   * ALIVE.** Both refuse, and they say which shape to fix, because the
+   * alternative is a record that carries a written reason for being dead and a
+   * door that takes a deposit into it anyway.
+   */
+  if (entry.disposed !== undefined && typeof entry.disposed !== 'boolean') {
+    throw new Error(
+      `the record of the vault "${named}" says "disposed": ${JSON.stringify(entry.disposed)}, `
+      + 'which is not true or false, so this cannot tell whether the vault is retired.\n'
+      + 'An unreadable answer to that question is not an answer of "alive". Write it as the '
+      + 'bare word true or false, unquoted, and run this again.');
+  }
+  if (entry.disposed !== true
+      && typeof entry.disposed_why === 'string' && entry.disposed_why.trim() !== '') {
+    throw new Error(
+      `the record of the vault "${named}" carries a reason for being disposed of `
+      + `(${entry.disposed_why.trim()}) and does NOT carry "disposed": true.\n`
+      + 'A vault with a written reason for being dead is being treated as alive by every door, '
+      + 'and a deposit into it is money nowhere anybody will look again. Add "disposed": true '
+      + 'beside that reason, or remove the reason if the vault is in fact live.');
+  }
+  if (entry.disposed !== true) return;
+  throw new Error(
+    `the vault "${named}" is recorded as DISPOSED OF, so no door works against it`
+    /*
+     * **THE REASON IS PUNCTUATED HERE RATHER THAN IN THE RECORD.** Somebody
+     * writing `disposed_why` will end it with a full stop about half the time,
+     * and a refusal that reads "...off it.." is a refusal somebody trusts
+     * slightly less than the one before it.
+     */
+    + `${typeof entry.disposed_why === 'string' && entry.disposed_why.trim() !== ''
+      ? `: ${entry.disposed_why.trim().replace(/\.\s*$/, '')}.` : '.'}\n`
+    + 'A retired vault still exists on chain and still accepts money, and nothing downstream '
+    + 'can give back a deposit made into one. This record is what says it is retired, and this '
+    + 'is the record being read.\n'
+    + (current === undefined
+      ? 'No vault is recorded as the live one, so this cannot say which one you meant. Name it.'
+      : `The live vault is "${current}". Run this again and name that one.`));
+}
+
+/**
+ * **THE ONE PLACE A VAULT NAME BECOMES A VAULT, AND THEREFORE THE ONE PLACE A
+ * RETIRED VAULT CAN BE REFUSED FOR EVERY DOOR AT ONCE.**
+ *
+ * ------------------------------------------------------------------------
+ * WHY HERE, AND NOT AT THE SEAM IN FRONT OF THE CALL
+ *
+ * The obvious place is the function every deposit and every payout resolves the
+ * deployed contract through before it builds a call. It is the right place for
+ * a fault a chain read can see, and it already refuses one. **It is the wrong
+ * place for a fact that exists only in the record**, for two reasons that are
+ * not matters of taste:
+ *
+ *   · **IT IS HANDED AN ADDRESS AND THE RECORD IS KEYED BY NAME.** To refuse
+ *     there it would have to go and find the record itself — and a record it
+ *     cannot find is a check that PASSES. A guard whose failure mode is silence
+ *     leaves everything as it is while everybody believes otherwise, which is
+ *     worse than the known gap it replaced.
+ *   · **NOT EVERY PATH BUILDS A CALL.** A door that rebuilds a note pool, one
+ *     that records where a note came from, and two read-only instruments all
+ *     work against a vault and none of them resolves a contract to call it. A
+ *     refusal in front of the call does not cover them.
+ *
+ * **WHAT EVERY PATH DOES DO IS THIS.** A vault's address exists in the record
+ * and nowhere else (see §2 above, which is why it is never printed), so
+ * every door — the ones that call, the ones that only write a pool, and the
+ * instruments — begins by turning a name into an entry. **A check placed here
+ * cannot fail open the way one at the seam can: if the record did not load
+ * there is no entry, so there is no address, so there is no path.** The absence
+ * that would silence the check is the same absence that stops the work.
+ *
+ * This function is pure, like the rest of this module: the caller opens the
+ * file, because the message for a record that is not there differs per door and
+ * is worth keeping.
+ */
+export function theVault(
+  registry: VaultRegistry,
+  name: string,
+  /**
+   * **A READ-ONLY POST-MORTEM ON A RETIRED VAULT, WHICH IS A REAL THING TO
+   * WANT.** An instrument that asks what a dead vault holds is how anybody ever
+   * finds out, and refusing it leaves no way to look.
+   *
+   * **IT IS A PARAMETER AND NOT AN ENVIRONMENT VARIABLE ON PURPOSE.** A flag
+   * read in here would let any door be talked past its own guard by whoever set
+   * it. A caller that does not pass this cannot be opted out of the refusal by
+   * anything a person types — and `vault-record.test.ts` pins which files pass
+   * it, so a door that starts passing it is a test failure rather than a
+   * decision nobody saw.
+   */
+  allowances?: { aReadOnlyPostMortem?: boolean },
+): VaultEntry {
+  assertVaultName(name);
+  const entry = registry.vaults[name];
+  if (!entry) {
+    const known = Object.keys(registry.vaults);
+    throw new Error(
+      `this company has no vault called "${name}" on ${registry.network}.\n`
+      + (known.length
+        ? `The vaults it does have are: ${known.join(', ')}.`
+        : 'It has none at all on this network.')
+      + '\nA vault is named rather than addressed because a vault\x27s address must never reach '
+      + 'a screen, and the record is the only place the two are tied together.');
+  }
+  if (allowances?.aReadOnlyPostMortem !== true) {
+    /*
+     * **A REFUSAL WHOSE REMEDY IS ALSO REFUSED IS NOT A REMEDY.** The live
+     * pointer and the disposal flags are two independent hand edits, so the
+     * record can name a vault that this same function would turn away. When it
+     * does, the refusal says there is nothing to fall back to rather than
+     * sending somebody round the loop a second time.
+     */
+    const live = registry.current;
+    const liveIsUsable = live !== undefined
+      && registry.vaults[live] !== undefined
+      && registry.vaults[live]!.disposed !== true;
+    assertTheVaultIsNotDisposed(name, entry, liveIsUsable ? live : undefined);
+  }
+  return entry;
+}
+
+/**
+ * **WHICH VAULT SOMEBODY MEANT WHEN THEY PRESSED RETURN.**
+ *
+ * Using the right vault should be what happens when a person answers nothing,
+ * rather than what happens when they remember the name. The record already says
+ * which one is live; until now nothing read it.
+ *
+ * **WHERE THIS IS AND IS NOT USED, AND THE LINE IS DRAWN AT THE MONEY.** A door
+ * that moves money keeps its deliberate absence of a default: putting
+ * money into the wrong vault is not a mistake anything downstream can detect,
+ * so that answer is typed out every time. A door that reads, or that writes a
+ * record about a vault, has no such cost and gets the default.
+ *
+ * A blank answer with no live vault recorded is a refusal naming what fixes it,
+ * never a guess: picking for ourselves is how a door ends up working against
+ * whichever key a JSON object happened to list first.
+ */
+export function theVaultNameMeant(registry: VaultRegistry, asked: string): string {
+  const trimmed = asked.trim();
+  if (trimmed !== '') return trimmed;
+  if (registry.current !== undefined) return registry.current;
+  throw new Error(
+    `no vault name was given, and the record of ${registry.network} vaults does not say which `
+    + 'one is live, so there is nothing to fall back to and this will not pick one for you.\n'
+    + (Object.keys(registry.vaults).length
+      ? `The vaults it knows are: ${Object.keys(registry.vaults).join(', ')}. Name one.`
+      : 'It knows of none at all on this network.'));
+}
+
+/**
+ * **IS THIS NAME ALREADY A VAULT?** Asked before a deploy spends anything, and
+ * it is a different question from `theVault`: the answer that matters is YES or
+ * NO, and a caller asking it has no business with an address.
+ *
+ * **SO IT HANDS BACK NO ADDRESS**, only when the existing vault was deployed,
+ * which is the one fact the refusal needs to be believable. `addVault` refuses a
+ * taken name after the deploy as well, and that is the net that matters --
+ * discovering it there means a deployed contract with nowhere to be recorded, so
+ * anything knowable up front is asked up front.
+ *
+ * **AND IT EXISTS SO THAT NOTHING OUTSIDE THIS MODULE HAS A REASON TO INDEX THE
+ * MAP OF VAULTS ITSELF**, which is the habit that let two doors drift outside
+ * every rule this record enforces.
+ */
+export function whenThisNameWasTaken(
+  registry: VaultRegistry, name: string,
+): { deployedAt: string } | undefined {
+  const existing = registry.vaults[assertVaultName(name)];
+  return existing === undefined ? undefined : { deployedAt: existing.deployedAt };
 }
