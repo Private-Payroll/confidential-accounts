@@ -12,7 +12,7 @@ import {
   VaultCannotAfford, VaultAlreadyHoldsNotes,
   type NotePool, type VaultPayment,
 } from './vault-ledger.js';
-import { VaultPoolAdvancedSinceRead } from './vault-pool.js';
+import { VaultPoolAdvancedSinceRead, VaultPoolVersionAlreadyFiled } from './vault-pool.js';
 /*
  * The VAULT's own pure circuits, imported for real. `C198`'s reconciliation
  * computes a note's commitment with these, and a fake chain that computed them
@@ -214,6 +214,49 @@ function harness(opts: {
    */
   anotherWriterAddsDuringTheCall?: { nonce: string; value: bigint };
   /**
+   * **ANOTHER WRITER FILES THE NEXT VERSION BETWEEN THE WRITE'S OWN LOAD AND ITS
+   * SAVE**, this many times running, and then stops.
+   *
+   * The window `anotherWriterAddsDuringTheCall` opens is the CALL -- minutes of
+   * proving -- and a write that re-reads the pool afterwards is past it. This is
+   * the window that is left: the microseconds between the load a write is built
+   * on and the filing of it, which no re-read can remove and which two processes
+   * were watched walking through together. It is the only thing that exercises
+   * the retry, and without it the retry could be deleted with every test green.
+   */
+  poolRaceLostTimes?: number;
+  /**
+   * **ANOTHER WRITER LANDS WHILE THE DEPOSIT IS ASKING THE CHAIN**, which is the
+   * window this is about and the one `anotherWriterAddsDuringTheCall` cannot
+   * reach: that one fires inside the circuit, and the chain read happens after
+   * the circuit returns.
+   *
+   * **IT REPLACES `stored` RATHER THAN PUSHING INTO IT, AND THAT IS NOT A
+   * STYLE CHOICE.** `load` hands back `stored.notes` itself, so a writer that
+   * pushed into that array would also be mutating every copy already loaded from
+   * it -- and a test built on a copy being STALE would then be comparing a thing
+   * to itself. The first version of this test did exactly that and stayed green
+   * over the defect it was written to catch.
+   */
+  anotherWriterAddsDuringTheChainRead?: { nonce: string; value: bigint };
+  /**
+   * **ANOTHER WRITER REPLACES THE POOL WHILE THE CALL IS BEING PROVED**, with
+   * exactly these notes, and advances the version.
+   *
+   * It fires in the CIRCUIT, where a real call spends its minute, because that is
+   * the only window that reaches `advancePool` with a pool the change cannot be
+   * applied to. Replacing it during the chain READ is caught a step earlier, by
+   * `call`'s own index guard, before any money moves -- which is correct, and is
+   * not what this option is for.
+   *
+   * REPLACES, not mutates. `load` hands back `stored.notes` itself, so a test that
+   * pushed into that array would be rewriting the copy the payment already loaded
+   * -- comparing a thing to itself. A second reading found the first version of the
+   * refusal test below doing precisely that, and it reached the right refusal by a
+   * route no real writer can take.
+   */
+  poolBecomesDuringTheCall?: Array<{ nonce: string; value: bigint }>;
+  /**
    * **WHAT THE FINALISED DEPOSIT CALL REPORTS ABOUT ITS OWN TRANSACTION.**
    *
    * A real result carries two names for it, off two different fields and of two
@@ -249,6 +292,11 @@ function harness(opts: {
   eventsInUse = {
     eventsOf: async (tx) => {
       eventReads.push(tx);
+      const during = opts.anotherWriterAddsDuringTheChainRead;
+      if (during) {
+        stored = { notes: [...stored.notes, { nonce: during.nonce, token: GBP, value: during.value, createdIn: SEEDED_TX }] };
+        version += 1;
+      }
       if (opts.events === 'unreadable') throw new NoteIndexUnreadable('the indexer is not answering');
       if (opts.events === 'unaskable') throw new NoteIndexUnaskable('the indexer will not take this question');
       /*
@@ -294,10 +342,23 @@ function harness(opts: {
    * version it did not load and nothing here would object.
    */
   let version = 1;
+  let racesLeftToLose = opts.poolRaceLostTimes ?? 0;
   const pool: NotePool = {
     load: async () => ({ notes: stored.notes, readAt: { vault: VAULT, version } }),
     save: async (a, n, builtOn) => {
       if (builtOn.version !== version) throw new VaultPoolAdvancedSinceRead(a, builtOn.version, version);
+      /*
+       * **THE RACE THE VERSION CHECK ABOVE CANNOT CATCH**, mirrored from the
+       * shipped store: two writers whose copies were both current, both filing
+       * the version after it. The store settles it by CLAIMING the number, and
+       * the loser is told by this class. Counted down rather than latched, so a
+       * test can say how many attempts are lost.
+       */
+      if (racesLeftToLose > 0) {
+        racesLeftToLose -= 1;
+        version += 1;              // the other writer's version is now filed
+        throw new VaultPoolVersionAlreadyFiled(a, builtOn.version + 1);
+      }
       stored = n; version += 1; saves.push(n);
     },
     /*
@@ -415,6 +476,11 @@ function harness(opts: {
 
   /* A direct write to the store, as another process's `save` would land. */
   const anotherWriter = (): void => {
+    const becomes = opts.poolBecomesDuringTheCall;
+    if (becomes) {
+      stored = { notes: becomes.map((n) => ({ nonce: n.nonce, token: GBP, value: n.value, createdIn: SEEDED_TX })) };
+      version += 1;
+    }
     const added = opts.anotherWriterAddsDuringTheCall;
     if (!added) return;
     stored = { notes: [...stored.notes, { nonce: added.nonce, token: GBP, value: added.value, createdIn: SEEDED_TX }] };
@@ -1238,8 +1304,31 @@ describe('both pool-write sites name the recovery they depend on', () => {
      * **EACH ASSERTION NAMES THE CHANGE THAT TURNS IT RED, and all four were
      * watched doing it** against a copy of the source outside this tree.
      */
-    const saves = [...source.matchAll(/await this\.pool\.save\(/g)].map(m => m.index!);
-    expect(saves).toHaveLength(2);
+    /*
+     * **THE SITES ARE FOUND BY `advancePool` NOW, AND THE OLD SPELLING IS PINNED
+     * AS WELL.** both writes go through one method that re-reads the
+     * pool, re-applies the change and files the next version, so the two places
+     * that DECIDE a write are its two call sites.
+     *
+     * The second assertion is the one worth having: **exactly one `pool.save` in
+     * the whole file, and it is inside `advancePool`.** A later change adding a
+     * bare `this.pool.save(...)` beside a call would get no retry, no re-read and
+     * none of this comment -- and without this line the suite would not notice,
+     * because the four checks below would still find their two good sites.
+     */
+    const saves = [...source.matchAll(/this\s*\.\s*advancePool\s*\(/g)].map(m => m.index!);
+    /*
+     * **WHITESPACE-INSENSITIVE, AND `await` IS NOT REQUIRED.** A second reading pointed
+     * out that a third site written `return this.advancePool(…)` or
+     * `void this.advancePool(…)` kept the count at 2 and carried no comment, and
+     * that `this.pool\n.save(` slipped past the second check.
+     */
+    const sites = [...source.matchAll(/this\s*\.\s*advancePool\s*\(/g)];
+    expect(sites, 'RED WHEN: a pool-write site is added or removed without carrying the four-part claim below, however it is spelled').toHaveLength(2);
+    expect(
+      [...source.matchAll(/this\s*\.\s*pool\s*\.\s*save\s*\(/g)],
+      'RED WHEN: a write goes straight to the pool instead of through advancePool, which skips the re-read, the re-apply and the retry -- the three things that stop a payment losing its change note',
+    ).toHaveLength(1);
     for (const at of saves) {
       /*
        * Flattened, for the reason the assertion below gives about itself: a
@@ -1483,28 +1572,279 @@ describe('a private payment spends against the index the chain reports at that m
   });
 });
 
-describe('a write to the pool is built on the version its own load read', () => {
+describe('a write to the pool is applied to what the pool holds NOW', () => {
   /*
+   * **THIS BLOCK USED TO ASSERT THE OPPOSITE, AND THAT IS THE POINT OF IT.**
+   *
    * A private payment loads the pool, proves for a minute or more, submits, and
-   * then writes the change note. A deposit does the same with its new note. A
-   * write that took its version at the moment of writing would erase whatever
-   * another process recorded in that minute, with no refusal.
+   * then writes the change note. A deposit does the same with its new note. The
+   * write must not erase whatever another process recorded in that minute -- and
+   * before this change the way it did not erase it was to REFUSE, which these two
+   * tests pinned by name.
+   *
+   * **A REFUSAL AFTER THE MONEY HAS MOVED IS A REPORT OF LOSS, NOT A PREVENTION
+   * OF IT.** The chain holds the change note, the pool is the only thing that
+   * can say what that note IS -- a commitment discloses nothing and cannot be
+   * inverted -- so a refused write leaves money in the vault that this machine
+   * cannot name and no payment can reach.
+   *
+   * So the write is now a DIFFERENCE applied to the pool as it stands: the other
+   * writer's note survives AND this one is recorded. Both halves are asserted,
+   * because keeping one without the other is a way to pass this block while
+   * losing either the other process's money or this one's.
    */
   const OTHER = { nonce: '0f'.repeat(32), value: 42n };
+  const DEPOSITED = '77'.repeat(32);
 
-  it('REFUSES the change of a payment when another process wrote the pool while it proved, and keeps what that process wrote', async () => {
+  it('RECORDS the change of a payment when another process wrote the pool while it proved, and keeps what that process wrote', async () => {
     const { ledger, current, saves } = harness({ anotherWriterAddsDuringTheCall: OTHER });
-    await expect(ledger.payout(VAULT, payment(200n), BY, EVENTS)).rejects.toThrow(VaultPoolAdvancedSinceRead);
-    expect(saves).toHaveLength(0);
-    expect(current().notes.map((n) => n.nonce)).toContain(OTHER.nonce);
+    await ledger.payout(VAULT, payment(200n), BY, EVENTS);
+
+    /*
+     * RED WHEN: `advancePool` stops retrying, or stops re-reading the pool
+     * before it re-applies -- either of which puts this back to a refusal after
+     * the money has moved, which is the whole defect.
+     */
+    expect(saves, 'RED WHEN: the payment gives up instead of applying its change to the pool as it stands, which leaves the chain holding a change note the pool cannot name').toHaveLength(1);
+
+    const after = current().notes.map((n) => n.nonce);
+    /*
+     * RED WHEN: the re-applied write is built from the copy the call was made
+     * from rather than from a fresh load -- which erases the other writer
+     * silently, the failure the version check was added for.
+     */
+    expect(after, 'RED WHEN: the other process\'s note is erased by this write, which is the silent overwrite the version check exists to prevent').toContain(OTHER.nonce);
+    /*
+     * RED WHEN: the change note is dropped. `payment(200n)` spends a 1,000 note,
+     * so the change is the vault's own 800 coming back, and the fake's outputs
+     * carry it under its own nonce.
+     */
+    expect(after, 'RED WHEN: the payment\'s change note is not recorded, so the vault holds 800 on chain that nothing can spend').toContain('ab'.repeat(32));
+    /*
+     * RED WHEN: the spent note is left in the pool. It is nullified on chain, so
+     * a pool still offering it makes every later payment die inside the circuit
+     * after two fees.
+     */
+    expect(after, 'RED WHEN: the note that was spent stays in the pool, which offers the next payment a note the chain no longer holds').not.toContain('01'.repeat(32));
   });
 
-  it('REFUSES the note of a deposit when another process wrote the pool while it proved, and keeps what that process wrote', async () => {
+  it('RECORDS the note of a deposit when another process wrote the pool while it proved, and keeps what that process wrote', async () => {
     const { ledger, current, saves } = harness({ notes: [], anotherWriterAddsDuringTheCall: OTHER });
-    await expect(ledger.deposit(VAULT, { nonce: '77'.repeat(32), token: GBP, value: 500n }, BY))
-      .rejects.toThrow(VaultPoolAdvancedSinceRead);
-    expect(saves).toHaveLength(0);
-    expect(current().notes.map((n) => n.nonce)).toEqual([OTHER.nonce]);
+    await ledger.deposit(VAULT, { nonce: DEPOSITED, token: GBP, value: 500n }, BY);
+
+    expect(saves, 'RED WHEN: the deposit gives up instead of adding its note to the pool as it stands, which leaves money on chain the pool has never heard of').toHaveLength(1);
+    const after = current().notes.map((n) => n.nonce);
+    expect(after, 'RED WHEN: the other process\'s note is erased by the deposit\'s write').toContain(OTHER.nonce);
+    expect(after, 'RED WHEN: the deposit\'s own note is not recorded, which is the money it just moved').toContain(DEPOSITED);
+  });
+
+  /**
+   * **THE RACE NO RE-READ CAN REMOVE, AND THE ONLY THING THAT EXERCISES THE
+   * RETRY.**
+   *
+   * Re-reading the pool after the money has moved closes the window that is
+   * MINUTES wide -- the proof. What is left is the microseconds between that read
+   * and the filing of the next version, and two processes were watched walking
+   * through it together: both passed the version check, both filed, and one
+   * note was lost with nothing refused.
+   *
+   * **WITHOUT THESE TESTS THE WHOLE RETRY COULD BE DELETED WITH EVERY OTHER TEST
+   * GREEN**, which is how it was found: two mutations -- one attempt only, and
+   * re-throwing instead of retrying -- left all 88 assertions passing.
+   */
+  it('FILES THE CHANGE ANYWAY when another writer wins the race, by applying it again to what the pool then holds', async () => {
+    const { ledger, current, saves } = harness({ poolRaceLostTimes: 2 });
+    /*
+     * **THE PREMISE IS STATED AS AN ASSERTION AND NOT AS A BARE `await`.** A bare
+     * await makes a failure an unhandled rejection, which a mutation harness cannot
+     * tell from the code blowing up on an unrelated path -- so the mutation that
+     * deletes the retry was reported as "broke the code" rather than as caught. An
+     * second reading made the general point; this is the specific fix.
+     */
+    await expect(
+      ledger.payout(VAULT, payment(200n), BY, EVENTS),
+      'RED WHEN: the payment does not survive a lost race at all, which is the whole of it: the money has moved and the pool does not record it',
+    ).resolves.toMatchObject({ kind: 'shielded' });
+    expect(
+      saves,
+      'RED WHEN: the write stops being re-derived after a lost race, which leaves the chain holding a change note the pool cannot name -- a refusal after the money has moved is a report of loss, not a prevention of it',
+    ).toHaveLength(1);
+    expect(current().notes.map((n) => n.nonce), 'RED WHEN: the change note is not recorded')
+      .toContain('ab'.repeat(32));
+  });
+
+  it('and it STOPS after a fixed number of attempts, saying the money has moved and the pool does not record it', async () => {
+    const { ledger, saves } = harness({ poolRaceLostTimes: 99 });
+    /*
+     * RED WHEN: the retry becomes unbounded. A write that cannot land must end in
+     * a sentence somebody can act on, not in a loop -- the one state left where
+     * the money is on chain and no record names it, and the operator has to know
+     * they are in it.
+     */
+    await expect(ledger.payout(VAULT, payment(200n), BY, EVENTS))
+      .rejects.toThrow(/the money has already moved on chain/);
+    expect(saves, 'RED WHEN: a write reports failure and lands anyway').toHaveLength(0);
+  });
+
+  it('names the recovery, and names nothing a public reader cannot open', async () => {
+    const { ledger } = harness({ poolRaceLostTimes: 99 });
+    const why = await ledger.payout(VAULT, payment(200n), BY, EVENTS).catch((e: Error) => e.message);
+    /*
+     * **`reconcileVaultPool` AND NOT AN ALTERNATION.** A second reading pointed out that
+     * `/reconcileVaultPool|replayVault/` would accept `replayVault`, which needs a
+     * history of the vault's events that nothing in this repository produces -- so
+     * the refusal would name a remedy nobody can carry out, which is the defect
+     * this whole round started from.
+     */
+    expect(why, 'RED WHEN: the refusal names replayVault, or nothing -- replayVault needs a history no tool here produces, so naming it is naming something a person cannot do')
+      .toMatch(/reconcileVaultPool/);
+    /*
+     * RED WHEN: a `.command` name is put back into this message. None of them
+     * ship, so a public reader meets an instruction naming a file that is not in
+     * the repository -- the failure the citation rule was written for.
+     */
+    expect(why, 'RED WHEN: shipping code names an instrument that is not in the shipping set')
+      .not.toMatch(/\.command/);
+  });
+
+  /**
+   * **THE PAYMENT'S HALF OF WHAT MAKES RE-APPLYING SAFE, PINNED AT THE RETRY SITE.**
+   *
+   * The whole retry rests on the change functions refusing when the pool they are
+   * handed cannot be the one the change belongs to. That is asserted twice for a
+   * deposit and, until it was read again, **nowhere for a payment** --
+   * the only pin was a unit test of `afterPayment` itself, which says nothing
+   * about whether the retry swallows it.
+   *
+   * The state: the pool no longer holds the note this payment spent. Two payments
+   * cannot spend one note -- the contract nullifies the commitment -- so a pool
+   * without it is not the pool this payment belongs to, and guessing would drop a
+   * note the chain still holds and add a change note against nothing.
+   */
+  it('REFUSES rather than retrying when the pool no longer holds the note the payment spent', async () => {
+    const { ledger, current, saves } = harness({
+      notes: [{ nonce: '01'.repeat(32), value: 1_000n }],
+      /*
+       * The pool becomes one that does not hold the note this payment spent, while
+       * the call is being proved -- so the money moves and only then does the write
+       * meet a pool its change cannot be applied to.
+       */
+      poolBecomesDuringTheCall: [{ nonce: '0f'.repeat(32), value: 42n }],
+    });
+    const why = await ledger.payout(VAULT, payment(200n), BY, EVENTS)
+      .then(() => 'IT DID NOT REFUSE', (e: Error) => e.message);
+
+    /*
+     * **THE MESSAGE, NOT MERELY A THROW.** A bare `.rejects.toThrow()` here was
+     * satisfied by the exhaustion error -- so deleting `if (!isALostPoolRace(cause))
+     * throw cause;` left this green, which is the one mutation it exists to catch.
+     * A second reading proved it.
+     */
+    expect(
+      why,
+      'RED WHEN: the retry treats "this is not the pool my change belongs to" as contention, attempts it five times, and reports it as contention -- which is a guess about which notes exist',
+    ).toMatch(/no note .* to spend|does not hold/i);
+    expect(
+      why,
+      'RED WHEN: the refusal arrives as the retry giving up, which tells the operator another writer is busy when what actually happened is that this is not the pool this payment belongs to',
+    ).not.toMatch(/all 5 attempts|another writer filed the next version first/);
+    expect(saves, 'RED WHEN: a change note is written against a pool that does not hold the note it came from').toHaveLength(0);
+    expect(
+      current().notes.map((n) => n.nonce),
+      'RED WHEN: the other writer\'s note is erased by a payment that could not be applied',
+    ).toEqual(['0f'.repeat(32)]);
+  });
+
+  /**
+   * **THE DEPOSIT'S CHAIN READ IS OUTSIDE THE WINDOW, AND THIS IS THE
+   * ASSERTION THAT SAYS SO.**
+   *
+   * A deposit whose call reports only the 33-byte identifier has to ask the chain
+   * for the transaction hash, because that is what a spend names the creating
+   * transaction by. That read used to sit BETWEEN the load the write was built on
+   * and the write itself, which made the window a network round trip wide rather
+   * than an instant -- and in that branch a refusal lost the note from the pool
+   * entirely.
+   *
+   * **SO THE OTHER WRITER LANDS INSIDE THE CHAIN READ**, which is the one place
+   * `anotherWriterAddsDuringTheCall` cannot reach: it fires in the circuit, and
+   * the chain read happens after the circuit returns. Same hook the
+   * index-read test above uses, for the same reason -- the window has to be
+   * entered from inside to be measured.
+   */
+  it('records the deposit\'s note when another writer lands inside the CHAIN READ, and keeps what that writer wrote', async () => {
+    const { ledger, current, saves, eventReads } = harness({
+      notes: [], depositResult: 'no-hash',
+      anotherWriterAddsDuringTheChainRead: OTHER,
+    });
+
+    await ledger.deposit(VAULT, { nonce: DEPOSITED, token: GBP, value: 500n }, BY, eventsInUse);
+
+    expect(eventReads, 'RED WHEN: the chain is not asked at all, so this test is not in the branch it is about').not.toEqual([]);
+    /*
+     * RED WHEN: the pool is read before the chain read rather than after -- then
+     * this write is built on a copy that predates the other writer, the version
+     * check refuses it, and the deposit's own note is lost from the pool while its
+     * money sits on chain. That is the defect exactly, and it is the branch the earlier change
+     * measured as the one where a refusal loses the note entirely.
+     */
+    /*
+     * **ONE SAVE, ON THE FIRST ATTEMPT.** The first version of this said the write
+     * would be *refused* if the chain read went back inside the window -- and an
+     * second reading pointed out the retry absorbs exactly that, so the message named a
+     * failure that can no longer happen and would have sent the next reader
+     * somewhere wrong. What the ordering actually buys is that the write lands
+     * without contending at all.
+     */
+    expect(saves, 'RED WHEN: the deposit writes more than once, or not at all -- either means its chain read is back inside the window between the load and the write, where it has to contend with whoever wrote during it').toHaveLength(1);
+    const after = current().notes.map((n) => n.nonce);
+    expect(after, 'RED WHEN: the writer that landed during the chain read is erased').toContain(OTHER.nonce);
+    expect(after, 'RED WHEN: the deposit\'s own note is lost, which is money on chain that nothing names').toContain(DEPOSITED);
+  });
+
+  /**
+   * **THE HALF THAT MUST STILL REFUSE, AND IT IS WHY RE-APPLYING IS SAFE AT ALL.**
+   *
+   * `advancePool` retries by calling the change again against a fresh pool. That
+   * is only safe because the change REFUSES when the pool it is handed cannot be
+   * the one the change belongs to -- so a retry cannot write the same note twice
+   * and cannot invent one. A deposit of a nonce the pool already holds is that
+   * case, and the refusal is thrown out of the retry rather than swallowed by it.
+   */
+  it('still REFUSES a deposit of a note the pool already holds, and the retry does not swallow it', async () => {
+    /*
+     * **THE DUPLICATE ARRIVES DURING THE CALL, WHICH IS THE ONLY WAY TO REACH THE
+     * RETRY WITH IT.** The first version of this test started from a pool that
+     * already held the nonce -- so the deposit's own pre-flight refused it before
+     * any call was made, `advancePool` was never entered, and the title's claim
+     * about the retry was unexercised. A second reading found that.
+     */
+    const { ledger, saves } = harness({
+      notes: [],
+      anotherWriterAddsDuringTheCall: { nonce: DEPOSITED, value: 1n },
+    });
+    await expect(
+      ledger.deposit(VAULT, { nonce: DEPOSITED, token: GBP, value: 500n }, BY),
+      'RED WHEN: the retry catches everything rather than only a lost race, so a change that cannot be true is attempted five times and then reported as contention',
+    ).rejects.toThrow(/already holds a note/);
+    expect(saves, 'RED WHEN: a refused change is written anyway').toHaveLength(0);
+  });
+
+  /**
+   * **AND IT REFUSES BEFORE THE MONEY MOVES, WHICH IS THE OTHER HALF.**
+   *
+   * The same refusal, reached with no call made at all: the deposit tries its own
+   * write against the pool before it proves anything, so a deposit that cannot be
+   * recorded costs nothing rather than a fee and a note on chain nobody can name.
+   */
+  it('refuses that deposit BEFORE the call, so no money moves', async () => {
+    const { ledger, calls } = harness({ notes: [{ nonce: DEPOSITED, value: 1_000n }] });
+    await expect(ledger.deposit(VAULT, { nonce: DEPOSITED, token: GBP, value: 500n }, BY))
+      .rejects.toThrow(/already holds a note/);
+    expect(
+      calls.filter((c) => c.circuit === 'deposit'),
+      'RED WHEN: the pre-flight write moves below the call, so the vault pays a fee to deposit a note that cannot be recorded',
+    ).toEqual([]);
   });
 
   it('and with nobody else writing, both still advance the pool', async () => {

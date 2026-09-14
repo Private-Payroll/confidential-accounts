@@ -46,6 +46,7 @@ import {
 } from './note-index.js';
 import { assertVaultLedgerIsThisBuilds } from './vault-ledger-shape.js';
 import { commitmentForNote } from './vault-recovery.js';
+import { isALostPoolRace } from './vault-pool.js';
 
 /** One payment, exactly as `PayrollRun.payeeArgs` hands it over. */
 export interface VaultPayment {
@@ -503,6 +504,93 @@ export class VaultLedger {
       compiledContract: withWitnesses as any,
       contractAddress: address,
     });
+  }
+
+  /**
+   * **HOW MANY TIMES A WRITE THAT LOST A RACE IS RE-DERIVED AND FILED AGAIN.**
+   *
+   * Attempts rather than a deadline, because each one is a local read, a seal and
+   * a filing — no network and no proof — so a wall-clock budget would be
+   * measuring the wrong thing. Five, and losing five in a row is not contention
+   * between three writers; it is something wrong that another attempt will not
+   * mend, so the fifth failure is reported rather than hidden behind a sixth.
+   */
+  private static readonly POOL_WRITE_ATTEMPTS = 5;
+
+  /**
+   * **ADVANCES THE POOL BY A CHANGE, APPLIED TO WHAT THE POOL HOLDS NOW.**
+   *
+   * Every writer here records a DIFFERENCE: a deposit adds one note, a payment
+   * takes one away and puts its change back. **A difference can be applied to a
+   * pool that has moved; a whole pool cannot.** That is the entire reason this
+   * exists, and it is what turns losing a race from a report of lost money into
+   * a second attempt that costs a millisecond.
+   *
+   * ------------------------------------------------------------------------
+   * **THIS IS NOT THE DEFECT `save` WAS SHAPED TO REMOVE, AND THE DIFFERENCE IS
+   * THE WHOLE POINT.** `vault-pool.ts` says the version used to be read at the
+   * moment of writing, so a writer holding a copy from before a minute of proving
+   * would read whatever version was there by then, add one, and erase the write
+   * that came in between. **That defect was re-reading the VERSION while writing
+   * STALE NOTES.** Here the notes are re-read with the version and the change is
+   * applied to them, so the other writer's note is carried forward rather than
+   * erased. `save`'s refusal is untouched and just as strict: it still takes the
+   * version of the load its change was built on, and that load is now the one
+   * immediately before the write.
+   *
+   * **WHAT MAKES RE-APPLYING SAFE IS THAT THE CHANGE REFUSES WHEN IT CANNOT BE
+   * TRUE.** `afterDeposit` refuses a nonce the pool already holds; `afterPayment`
+   * refuses a spent nonce the pool does not hold. So a change that has already
+   * been applied, or that describes a pool this is not, throws out of `change`
+   * rather than being written twice — and that throw is not caught here.
+   *
+   * **AND WHAT IS RETRIED IS DELIBERATELY NARROW.** Only the two refusals that
+   * mean *nothing was written and the other writer's record is intact*
+   * (`isALostPoolRace`). A damaged record or a store that cannot be reached says
+   * nothing of the kind, and retrying a write into one of those is how a pool
+   * gets written twice.
+   */
+  private async advancePool(
+    vaultAddress: string,
+    /** What is being recorded, in the product's own words, for the refusal below. */
+    what: string,
+    /**
+     * The change, as a function of the pool as it stands. Called again on each
+     * attempt, against a fresh load, and it must refuse rather than guess when
+     * the pool it is handed cannot be the one the change belongs to.
+     */
+    change: (now: LoadedNotes) => VaultNotes,
+  ): Promise<void> {
+    let lost: unknown;
+    for (let attempt = 1; attempt <= VaultLedger.POOL_WRITE_ATTEMPTS; attempt += 1) {
+      const now = await this.pool.load(vaultAddress);
+      try {
+        await this.pool.save(vaultAddress, notesOf(change(now)), now.readAt);
+        return;
+      } catch (cause) {
+        if (!isALostPoolRace(cause)) throw cause;
+        lost = cause;
+      }
+    }
+    /*
+     * **THE MONEY HAS MOVED AND THE POOL DOES NOT RECORD IT.** Said in those
+     * words, because that is the state, and every earlier draft of this sentence
+     * described the retry instead of the consequence.
+     */
+    throw new Error(
+      `${what} could not be recorded in this vault's note pool: another writer filed the next `
+      + `version first on all ${VaultLedger.POOL_WRITE_ATTEMPTS} attempts, each of which read the `
+      + 'pool again and applied this change to what it held. **Nothing has been written and '
+      + 'nothing has been erased.**\n'
+      + 'This matters because the money has already moved on chain and the pool is the only '
+      + 'record of what a note IS — the chain publishes commitments, which disclose nothing. So '
+      + 'the vault now holds money this machine cannot name, and a payment that would reach it is '
+      + 'refused.\n'
+      + 'Stop writing this pool from anywhere else, then rebuild it from the chain and the '
+      + 'versions this pool has been written at: reconcileVaultPool in '
+      + 'src/midnight/vault-recovery.ts. Losing this race five times running is not three writers '
+      + 'being busy, so find what else is writing before running anything that spends.',
+      { cause: lost });
   }
 
   /**
@@ -985,7 +1073,21 @@ export class VaultLedger {
     events?: NoteEvents,
   ): Promise<VaultDeposited> {
     if (coin.value <= 0n) throw new Error('a note of nothing is not a deposit');
-    const current = await this.pool.load(vaultAddress);
+    const note: Note = { nonce: coin.nonce, token: coin.token, value: coin.value };
+    /*
+     * **THE WRITE IS TRIED AGAINST THE POOL BEFORE THE MONEY MOVES, AND THE
+     * ANSWER IS THROWN AWAY.**
+     *
+     * This load used to be the one the write was built on, which is why the
+     * write was built on a copy taken before a proof and a network read. It is
+     * now a pre-flight and nothing else: `afterDeposit` is the same function
+     * that will make the write, so a deposit it would refuse — a nonce this
+     * vault already holds, a value of nothing, an index nobody read — refuses
+     * HERE, before a fee, rather than after the money has moved. The pool the
+     * write is actually built on is read below, after everything that can be
+     * settled has been.
+     */
+    afterDeposit(await this.pool.load(vaultAddress), note);
 
     const { result } = await this.call(vaultAddress, 'deposit', [
       { nonce: fromHex(coin.nonce), color: fromHex(coin.token), value: coin.value },
@@ -1006,12 +1108,12 @@ export class VaultLedger {
      * `pool.save` afterwards: three writers already write this pool with no
      * lock between them, and a fourth would be a fourth.
      *
-     * **IT DOES LENGTHEN THE WINDOW THE NEXT COMMENT IS ABOUT**, in the one
-     * branch where the call reported no hash and the chain has to be asked. The
-     * save is checked against the version the pool was read at, so a pool
-     * another writer advanced meanwhile is refused rather than overwritten -
-     * and a refusal there leaves exactly the state the next comment describes,
-     * which is the recoverable one.
+     * **IT NO LONGER LENGTHENS THE WINDOW THE NEXT COMMENT IS ABOUT, AND THAT
+     * IS THE DEFECT.** It used to sit between the load the write was built on and
+     * the write itself, so in the branch where the call reported no hash the
+     * window was a network round trip wide rather than an instant. The pool is
+     * now read AFTER this line, so everything between that read and the write is
+     * local: nothing in the window waits on a chain, an indexer or a prover.
      */
     const recorded = await this.creatingTransactionOf(result, events, coin, vaultAddress);
 
@@ -1048,14 +1150,29 @@ export class VaultLedger {
      * window, recovers, and SPENDS what comes back.
      */
     /*
-     * FROM THE VERSION `current` WAS READ AT. A pool another process advanced
-     * while this deposit was proving is refused rather than overwritten, and the
-     * refusal says the deposit's note is on chain and not yet in the pool.
+     * **READ NOW AND WRITTEN NOW, WITH THE NOTE ADDED TO WHATEVER THE POOL
+     * HOLDS.**
+     *
+     * The note is a DIFFERENCE, so it can be added to a pool another writer
+     * advanced while this deposit was proving — that writer's note is carried
+     * forward rather than erased, and this deposit's note is recorded rather
+     * than refused after its money has moved. `afterDeposit` still refuses a
+     * nonce the pool already holds, so a note written twice is impossible and
+     * the second attempt throws rather than duplicating.     *
+     * **AND THE RECOVERY IS STILL LOAD-BEARING, MORE SO RATHER THAN LESS.** The
+     * pool is still written AFTER the money moves, so a crash BETWEEN the call
+     * above and this write still leaves the chain holding a note the pool has
+     * never heard of. Re-applying the change removes the case where another
+     * writer caused that; it cannot remove the case where this process stops.
+     * What rebuilds the pool from the chain and this vault's own history is
+     * `replayVault` in `src/midnight/vault-recovery.ts`, and a round that deletes
+     * it as unused makes this ordering the unrecoverable one without touching a
+     * line of it.
      */
-    await this.pool.save(vaultAddress, notesOf(afterDeposit(current, {
-      nonce: coin.nonce, token: coin.token, value: coin.value,
+    await this.advancePool(vaultAddress, 'the deposit\'s note', (now) => afterDeposit(now, {
+      ...note,
       ...(recorded.createdIn === undefined ? {} : { createdIn: recorded.createdIn }),
-    })), current.readAt);
+    }));
     return { ...this.txRef(result, by), ...recorded };
   }
 
@@ -1469,11 +1586,44 @@ export class VaultLedger {
      * this window, recovers, and SPENDS the note it gets back. A recovery path
      * nobody has run does not exist.
      */
-    await this.pool.save(
-      vaultAddress,
-      notesOf(afterPayment(spentFrom, spent, p.amount, kept, VaultLedger.createdInOf(result))),
-      /* The version `call()` loaded the spent note from, and not the store's now. */
-      readAt);
+    /*
+     * **THE CHANGE IS APPLIED TO WHAT THE POOL HOLDS NOW, NOT TO THE COPY THE
+     * CALL WAS MADE FROM.**
+     *
+     * A payment's change note was the one place left on this path where money
+     * moved and the pool then failed to record it: the copy this write was built
+     * on was read before a minute of proving, so a deposit or a repair landing in
+     * that minute made this write a refusal — correct, and a refusal AFTER the
+     * money has moved is a report of loss rather than a prevention of it.
+     *
+     * A payment is a difference: this note leaves, its change arrives. So it is
+     * applied to the pool as it stands, and the other writer's note survives.
+     * `afterPayment` refuses when the pool it is handed does not hold the note
+     * that was spent, which is the case that must never be guessed at — two
+     * payments cannot spend one note, because the contract nullifies the
+     * commitment, so a pool without it means this is not the pool this payment
+     * belongs to.
+     *
+     * **THE INDEX IS STRIPPED, WHICH IS WHAT `call` ALREADY DID.** A spend reads
+     * a note's place in the commitment tree from the chain at the moment it
+     * spends (`indexForSpend`), never from the pool, so a number stored here has
+     * no reader that should trust it and is one a later change could hand over by
+     * mistake. `spentFrom` carried no indexes because `call` dropped them; a
+     * fresh load may hold some from an older write, so they are dropped here for
+     * the same reason and the written shape is unchanged.     *
+     * **AND THE RECOVERY IS STILL LOAD-BEARING, MORE SO RATHER THAN LESS.** The
+     * pool is still written AFTER the money moves, so a crash BETWEEN the call
+     * above and this write still leaves the chain holding a note the pool has
+     * never heard of. Re-applying the change removes the case where another
+     * writer caused that; it cannot remove the case where this process stops.
+     * What rebuilds the pool from the chain and this vault's own history is
+     * `replayVault` in `src/midnight/vault-recovery.ts`, and a round that deletes
+     * it as unused makes this ordering the unrecoverable one without touching a
+     * line of it.
+     */
+    await this.advancePool(vaultAddress, 'the payment\'s change note', (now) => afterPayment(
+      { notes: now.notes.map(({ index: _readAtTheSpend, ...note }) => note) },
+      spent, p.amount, kept, VaultLedger.createdInOf(result)));
     return { ...this.txRef(result, by), kind: 'shielded', spentNote: spent };
   }
 

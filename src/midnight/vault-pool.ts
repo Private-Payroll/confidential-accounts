@@ -166,6 +166,72 @@ export class VaultPoolAdvancedSinceRead extends Error {
 }
 
 /**
+ * **THIS VERSION OF THE POOL WAS ALREADY FILED BY ANOTHER WRITER, AND NOTHING
+ * WAS WRITTEN HERE.**
+ *
+ * Distinct from `VaultPoolAdvancedSinceRead`, and the difference is WHEN each
+ * one is possible. That one is a writer noticing it holds a stale copy: the
+ * stored version is not the one its change was built on, and the check that says
+ * so runs before any bytes are written. **This one is the race that check cannot
+ * catch** — two writers whose copies were both current, both passing that check,
+ * both filing the version after it. A store that compares a number and then
+ * writes lets them both through; a store that CLAIMS the number lets exactly one
+ * through and raises this at the other.
+ *
+ * **BOTH MEAN NOTHING WAS WRITTEN AND THE OTHER WRITER'S RECORD IS INTACT**,
+ * which is why `isALostPoolRace` treats them together. A caller whose change is
+ * a DIFFERENCE — one note added, one note spent and its change kept — loses
+ * nothing by losing the race: it reads the pool again, applies that difference
+ * to what the pool now holds, and files the next version. That is the whole
+ * reason this is a named class rather than a message.
+ */
+export class VaultPoolVersionAlreadyFiled extends Error {
+  constructor(readonly vault: string, readonly version: number) {
+    super(
+      `version ${version} of this vault's note pool has already been filed by another writer, so `
+      + '**nothing has been written here** and what that writer recorded is intact. This is two '
+      + 'writers having read the same version, not a damaged record and not a stale copy. Read the '
+      + 'pool again and apply this change to what it holds NOW. If the change records money that '
+      + 'has already moved on chain — a deposit\'s note, or a payment\'s change — it has to be '
+      + 'applied to the pool as it stands rather than abandoned, because the chain holds that '
+      + 'money and this pool does not yet. '
+      + '**A WRITE THAT IS A WHOLE POOL RATHER THAN A CHANGE CANNOT BE RE-APPLIED**, and there is '
+      + 'no correct merge of two disagreeing records of which notes exist — the union invents '
+      + 'notes the chain never had and the intersection drops ones it does. Reconcile against the '
+      + 'chain with replayVault and write once.'
+      + ' (the vault is not named here: its address is the one value that destroys money when '
+      + 'somebody pastes it into a wallet. It is this error\'s `vault` property.)');
+    this.name = 'VaultPoolVersionAlreadyFiled';
+  }
+}
+
+/**
+ * **DID THIS WRITE LOSE A RACE, LEAVING THE POOL EXACTLY AS IT WAS?**
+ *
+ * The two refusals above and nothing else. Both are *"another writer got there,
+ * nothing of yours was written, what they recorded is still there"*, and a
+ * caller holding a change it can re-derive can act on that: read again, apply
+ * the change to what the pool holds now, file the next version.
+ *
+ * **IT IS DELIBERATELY NOT A CATCH-ALL, AND THAT IS THE SAFETY.** A damaged
+ * record, a key that will not unwrap, a store that cannot be reached — none of
+ * those say the pool is unchanged, and retrying a write into one of them is how
+ * a pool gets written twice or written wrong. Anything this does not recognise
+ * is re-thrown by whoever asked.
+ *
+ * **MATCHED BY NAME, NOT BY `instanceof`, AND THE REASON IS THE STORE.** The
+ * store that runs the instruments lives outside this module because it opens
+ * files, and a bundler that gives the app its own copy of this module would make
+ * `instanceof` answer false for the very error the file store just threw — a
+ * retry that silently stops happening, on the money path, with no failure to
+ * read. A name crosses that boundary.
+ */
+export const isALostPoolRace = (cause: unknown): boolean =>
+  cause instanceof Error
+  && (cause.name === 'VaultPoolAdvancedSinceRead'
+    || cause.name === 'VaultPoolVersionAlreadyFiled');
+
+/**
  * Seals a pool for a set of signers, under a key made here and kept by nobody.
  *
  * **A FRESH KEY ON EVERY WRITE, not a long-lived pool key.** A pool changes on
@@ -414,12 +480,16 @@ export class MemorySealedPoolStore implements SealedPoolStore {
        * have no correct combination: the union invents notes the chain never
        * had and the intersection drops ones it does. The recoverable answer is
        * to stop and reconcile against the chain.
+       *
+       * **AND IT IS THE SAME NAMED REFUSAL THE FILE STORE RAISES, WHICH IS NOT
+       * TIDINESS.** This store is what every test of `SealedNotePool` runs
+       * against and the file store is what the instruments run against, so a
+       * refusal only one of them raises by name is a behaviour the tests cannot
+       * see. `advancePool` retries on this name; if this store threw a plain
+       * `Error` here, every test of that retry would be a test of a path the
+       * product does not take.
        */
-      throw new Error(
-        `refusing to write version ${rec.version} of ${vault}'s pool over version ` +
-        `${existing.version}. Another process has advanced this pool since it was read, and ` +
-        'there is no correct merge of two disagreeing records of which notes exist — ' +
-        'reconcile against the chain with replayVault and write once');
+      throw new VaultPoolVersionAlreadyFiled(vault, rec.version);
     }
     this.byVault.set(vault, rec);
   }

@@ -42,7 +42,7 @@ import { AccountSimulator, privateStateFor, change, type Change } from './simula
 import { buildPayoutTree, type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
 import { changeCoinOf, paidCoinTo } from '../../src/midnight/vault-coins.js';
 import {
-  replayVault, commitmentForNote, paidCoinOf, type VaultEvent,
+  replayVault, reconcileVaultPool, commitmentForNote, paidCoinOf, type VaultEvent,
 } from '../../src/midnight/vault-recovery.js';
 import { noteToSpend, type Note } from '../../src/midnight/vault-notes.js';
 import { toHex, fromHex, type Hex } from '../../src/core/crypto.js';
@@ -265,6 +265,161 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
       expect(r.recovered).toHaveLength(0);
       expect(r.unexplained).toHaveLength(0);
     });
+
+  /* ---------------------------------------------------------------- *
+   * REBUILT FROM THE POOL'S OWN FILED VERSIONS, WITH NO HISTORY AT ALL
+   * ---------------------------------------------------------------- */
+
+  /**
+   * **`replayVault` NEEDS A HISTORY, AND NOTHING IN THIS REPOSITORY PRODUCES
+   * ONE.** Fourteen refusals on the money path have been naming it as the remedy,
+   * so for as long as that is true they name something nobody can do.
+   *
+   * `reconcileVaultPool` is the route with no history in it: the pool's versions
+   * are filed one per write instead of overwriting each other, so the union of
+   * them is every note this pool has ever believed in. That union is proposed to
+   * the chain and the chain chooses -- the same design, reached from a different
+   * record of what has existed.
+   *
+   * **THESE TESTS DRIVE THE REAL CONTRACT AND READ ITS OWN NOTE SET**, exactly as
+   * every test above does, so what accepts or rejects a rebuilt note is the
+   * chain's commitment set and not a fixture's opinion of it.
+   */
+  const rebuild = (versions: { version: number; notes: readonly Note[] }[]) =>
+    reconcileVaultPool({
+      vault: vaultAddr as Hex,
+      chain: chainNotes(),
+      versions,
+      circuits: vaultCircuits,
+    });
+
+  it('AGREES when the newest filed version is what the chain holds', () => {
+    const r = rebuild([
+      { version: 1, notes: asNotes([FIRST]) },
+      { version: 2, notes: asNotes([FIRST, SECOND]) },
+    ]);
+    expect(r.held).toHaveLength(2);
+    expect(
+      r.recovered,
+      'RED WHEN: a note the newest version already knew about is reported as recovered, which sends somebody looking for a problem that is not there',
+    ).toHaveLength(0);
+    expect(r.stale).toHaveLength(0);
+    expect(r.unexplained).toHaveLength(0);
+  });
+
+  it('RECOVERS a note a later write dropped while the chain still held it — AND IT SPENDS', async () => {
+    /*
+     * The overwrite. Until the change below each write replaced the last, so a write
+     * built on a stale copy erased whatever came in between and there was nothing
+     * left to recover FROM. The note is in an older filed version, the chain still
+     * holds it, and that is the whole mechanism.
+     */
+    const r = rebuild([
+      { version: 1, notes: asNotes([FIRST, SECOND]) },
+      { version: 2, notes: asNotes([FIRST]) },        // SECOND erased by a stale write
+    ]);
+    expect(
+      r.recovered.map((n) => n.nonce),
+      'RED WHEN: the union is not taken across every filed version, so a note only an OLDER version names is lost even though the chain still holds it -- which is the reason the versions are kept at all',
+    ).toEqual([SECOND.nonce]);
+    expect(r.held).toHaveLength(2);
+    expect(r.stale).toHaveLength(0);
+
+    /*
+     * **AND THE ONLY PROOF THAT COUNTS, WHICH IS THIS FILE'S OWN STANDARD: A
+     * RECOVERED NOTE THAT CANNOT BE SPENT IS NOT RECOVERED.** 400 is the smaller
+     * note, so a payment of 300 selects the one that was erased.
+     */
+    priv = { notes: asNotes(r.held) };
+    const c = change(0n, 71);
+    const run = await approvedRun([{ to: ALICE, amount: 300n, nonce: 0xe7 }], c);
+    const paid = await pay(run, c, 0, ALICE, 300n, 0xe7);
+    expect(vaultLedger(vaultState as never).payments).toBe(1n);
+    const kept = changeCoinOf(paid.context.callContext.currentZswapLocalState, vaultAddr as Hex);
+    expect(
+      kept!.value,
+      'RED WHEN: the note handed back cannot actually be spent, which is a rebuild that reports success and leaves the money where it was',
+    ).toBe(100n);
+  });
+
+  it('takes the NEWEST version by its number, not by where it sits in the list', () => {
+    /*
+     * **THREE, SO THAT NEITHER END OF THE LIST IS THE NEWEST.** With two the first
+     * element WAS the newest, so `versions[0]` left this green and only the
+     * last-element mistake was caught -- a second reading found that half of the RED WHEN
+     * below was unearned.
+     */
+    const shuffled = rebuild([
+      { version: 1, notes: asNotes([FIRST, SECOND]) },
+      { version: 3, notes: asNotes([FIRST]) },
+      { version: 2, notes: asNotes([FIRST, SECOND]) },
+    ]);
+    /*
+     * RED WHEN: the newest is taken as the first or last element. The versions come
+     * from a directory listing, whose order is the filesystem's business -- and
+     * "which notes does the pool currently believe in" would then be answered by
+     * whichever file the kernel happened to name first.
+     */
+    expect(shuffled.recovered.map((n) => n.nonce), 'RED WHEN: the newest filed version is chosen by list position rather than by its number').toEqual([SECOND.nonce]);
+  });
+
+  it('does NOT resurrect a note from an old version that the chain no longer holds', async () => {
+    /*
+     * The other half of keeping every version, and the dangerous one. A note that
+     * was spent is in every version filed before the spend. Proposing it is right;
+     * KEEPING it would be a pool claiming more than the chain will honour, which
+     * is every later payment refused after two fees.
+     */
+    const c = change(0n, 72);
+    const run = await approvedRun([{ to: ALICE, amount: 900n, nonce: 0xe8 }], c);
+    await pay(run, c, 0, ALICE, 900n, 0xe8);   // spends FIRST, 1000
+
+    const r = rebuild([
+      { version: 1, notes: asNotes([FIRST, SECOND]) },
+      { version: 2, notes: asNotes([FIRST, SECOND]) },
+    ]);
+    expect(
+      r.held.some((n) => n.nonce === FIRST.nonce),
+      'RED WHEN: a note that has been spent comes back because an old version still names it -- the chain has nullified its commitment, so the pool would offer the next payment money that is gone',
+    ).toBe(false);
+    expect(r.stale.map((n) => n.nonce), 'RED WHEN: the spent note is not reported as stale, so nobody learns the pool was wrong').toEqual([FIRST.nonce]);
+    expect(r.held.map((n) => n.nonce)).toEqual([SECOND.nonce]);
+    /*
+     * **AND THE CHANGE NOTE IS UNEXPLAINED, WHICH IS THE GAP AND NOT A BUG.** The
+     * payment's change is on chain and no filed version has ever named it, because
+     * the write that would have named it is the one that was lost. Its nonce is
+     * derivable from the spent note and its colour is that note's colour, but its
+     * VALUE is the spent value minus an amount only the payment knew -- and a
+     * commitment cannot be inverted. **Nothing here guesses**, and a round that
+     * makes this assertion pass by guessing has invented money.
+     */
+    expect(
+      r.unexplained,
+      'RED WHEN: a commitment nothing explains is dropped from the report, which hides money the vault holds and cannot name',
+    ).toHaveLength(1);
+  });
+
+  it('REFUSES to rebuild from no filed version at all, rather than answering "empty"', () => {
+    expect(
+      () => rebuild([]),
+      'RED WHEN: a pool with no filed version reads as a vault holding nothing -- the one refusal this whole area exists to keep apart from a balance of zero',
+    ).toThrow(/no filed versions/);
+  });
+
+  it('REFUSES two versions that describe one nonce differently, rather than choosing one', () => {
+    /*
+     * Two records of what a nonce is worth cannot both be true, and picking one
+     * would be this function inventing money. It is handed to `replayVault` as two
+     * deposits of one nonce, which that function already refuses by name.
+     */
+    expect(
+      () => rebuild([
+        { version: 1, notes: asNotes([FIRST]) },
+        { version: 2, notes: asNotes([{ ...FIRST, value: 7_777n }]) },
+      ]),
+      'RED WHEN: one of two contradicting records is silently preferred, which is this function deciding what the money is worth',
+    ).toThrow(/already holds/);
+  });
 
   /* ---------------------------------------------------------------- *
    * payout

@@ -18,7 +18,7 @@ import { redactHex } from '../testing/redact.js';
 import type { VaultNotes } from './vault-notes.js';
 import {
   sealPool, openPool, wrapFor, SealedNotePool, MemorySealedPoolStore, VaultPoolUnreadable,
-  VaultPoolAdvancedSinceRead,
+  VaultPoolAdvancedSinceRead, VaultPoolVersionAlreadyFiled, isALostPoolRace,
   type PoolSigner,
 } from './vault-pool.js';
 
@@ -167,6 +167,78 @@ describe('a vault pool wrapped per signer', () => {
     });
 });
 
+/**
+ * **WHAT COUNTS AS A LOST RACE, AND IT HAD NO TEST AT ALL UNTIL A MUTATION SAID
+ * SO.**
+ *
+ * `isALostPoolRace` is the hinge of the retry in `VaultLedger.advancePool`: a
+ * write whose money has already moved is re-derived and filed again only when
+ * this answers true. **Four mutations of it left all 23 tests in this file
+ * green** -- including one that makes it answer false for the claim refusal,
+ * which deletes the retry silently and puts a payment back to losing its change
+ * note. A predicate that decides whether money is recovered, guarded by nothing.
+ */
+describe('a write that lost a race is told apart from a write that failed', () => {
+  it('recognises BOTH refusals that mean nothing was written and the other writer is intact', () => {
+    expect(
+      isALostPoolRace(new VaultPoolAdvancedSinceRead(VAULT, 4, 5)),
+      'RED WHEN: a write built on a version that has moved is not retried, so a payment whose money has moved reports loss instead of filing its change against the pool as it stands',
+    ).toBe(true);
+    expect(
+      isALostPoolRace(new VaultPoolVersionAlreadyFiled(VAULT, 5)),
+      'RED WHEN: the claim refusal is not recognised -- the retry then never happens, every test stays green, and the defect is back',
+    ).toBe(true);
+  });
+
+  /**
+   * **MATCHED BY NAME, AND THIS IS THE ASSERTION THAT SAYS WHY.**
+   *
+   * The store that runs the instruments lives outside this module because it
+   * opens files. A bundler that gives the application its own copy of this module
+   * would make `instanceof` answer false for the very error the file store just
+   * threw -- a retry that stops happening with nothing to read. So an error
+   * carrying only the NAME, from no class of ours, must be recognised.
+   */
+  it('recognises the refusal by NAME, so it survives a second copy of this module', () => {
+    const fromAnotherCopy = Object.assign(new Error('another copy of this module threw this'),
+      { name: 'VaultPoolVersionAlreadyFiled' });
+    expect(
+      isALostPoolRace(fromAnotherCopy),
+      'RED WHEN: the match is by instanceof, which answers false for the store\'s own error across a bundler boundary -- the retry then silently stops, on the money path, with no failure anywhere to read',
+    ).toBe(true);
+  });
+
+  /**
+   * **AND IT IS NOT A CATCH-ALL, WHICH IS THE SAFETY.** A damaged record, a key
+   * that will not unwrap, a store that cannot be reached -- none of those say the
+   * pool is unchanged, and retrying a write into one of them is how a pool gets
+   * written twice or written wrong.
+   */
+  it('refuses to call anything else a lost race', () => {
+    for (const [what, cause] of [
+      ['a pool that could not be read', new VaultPoolUnreadable(VAULT, 'the key would not unwrap')],
+      ['a plain failure', new Error('the disk is full')],
+      ['an error named nothing of ours', Object.assign(new Error('x'), { name: 'TypeError' })],
+      ['not an error at all', 'VaultPoolVersionAlreadyFiled'],
+      /*
+       * RED WHEN: the `instanceof Error` guard is dropped and only the name is
+       * read. A plain object carrying that name -- a rejection revived from JSON, an
+       * error structured-cloned across a worker, anything a caller made up -- would
+       * then be retried as a lost race, and a retry is a second write of money.
+       * The row above cannot catch it: a string's `.name` is `undefined` either way.
+       */
+      ['an object only SHAPED like the refusal', { name: 'VaultPoolVersionAlreadyFiled' }],
+      ['nothing', undefined],
+      ['null', null],
+    ] as const) {
+      expect(
+        isALostPoolRace(cause),
+        `RED WHEN: ${what} is treated as a lost race, so a write is attempted again into a pool nobody has established is unchanged -- which is how one note gets written twice`,
+      ).toBe(false);
+    }
+  });
+});
+
 describe('the pool VaultLedger actually uses', () => {
   const build = () => {
     const a = signer('sgn_a'), b = signer('sgn_b');
@@ -300,8 +372,17 @@ describe('the pool VaultLedger actually uses', () => {
      */
     const { store, a } = build();
     await store.put(VAULT, sealPool(VAULT, POOL, [a.who], 5));
-    await expect(store.put(VAULT, sealPool(VAULT, POOL, [a.who], 5)))
-      .rejects.toThrow(/refusing to write version 5/i);
+    /*
+     * **THE NAMED CLASS, NOT THE SENTENCE.** It used to assert the words
+     * *"refusing to write version 5"*. The file store said the same thing in its
+     * own words, so one fact had two spellings and a caller could only act on
+     * one of them -- which is how `advancePool`'s retry could have been written
+     * against a refusal the shipped store never raises. Both stores raise this
+     * class now, and asserting the class is what keeps them together.
+     */
+    await expect(store.put(VAULT, sealPool(VAULT, POOL, [a.who], 5)),
+      'RED WHEN: the version a write wants is already taken and the store says so with something a caller cannot recognise, which turns a free retry into lost money')
+      .rejects.toThrow(VaultPoolVersionAlreadyFiled);
     await expect(store.put(VAULT, sealPool(VAULT, POOL, [a.who], 4)))
       .rejects.toThrow(/reconcile against the chain/i);
     await store.put(VAULT, sealPool(VAULT, POOL, [a.who], 6));
