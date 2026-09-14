@@ -430,6 +430,102 @@ export const replayVault = (input: PoolRecoveryInput): PoolRecovery => {
 };
 
 /**
+ * **REBUILD A POOL FROM THE CHAIN AND THE POOL'S OWN FILED VERSIONS, WITH NO
+ * HISTORY OF EVENTS AT ALL.**
+ *
+ * `replayVault` above needs a `history` of what has happened to the vault, and
+ * **nothing in this repository produces one** -- which is why fourteen refusals
+ * across the money path have been naming a remedy that cannot be run. This is
+ * the route that needs no history, and it exists because the pool's versions
+ * stopped being overwritten: each one is filed under its own name, so the union
+ * of all of them is every note this pool has ever believed in.
+ *
+ * **THE WHOLE OF IT IS: PROPOSE EVERY NOTE EVER FILED, AND LET THE CHAIN
+ * CHOOSE.** A note the chain still holds is held; one it does not is spent or was
+ * never created, and either way it is not money. That is `replayVault`'s own
+ * design -- *"proposing every note that has ever existed and letting the chain
+ * choose collapses both crash windows into one question"* -- reached from a
+ * different record of what has ever existed. **So it delegates rather than
+ * deriving anything itself**: no second implementation of the rule the money
+ * depends on, which is the failure this project has paid for most often.
+ *
+ * ------------------------------------------------------------------------
+ * **WHAT IT CANNOT RECOVER, SAID PLAINLY BECAUSE THE GAP IS THE POINT.**
+ *
+ * A note that was never written to ANY version is not in the union, so it is not
+ * proposed, and it comes back as an unexplained commitment rather than as money.
+ * **That is exactly the note a payment loses when the process stops between the
+ * transaction and the pool write**: the change note, on chain, named nowhere.
+ * Its nonce is derivable from the note that was spent (`changeNonceOf`, and the
+ * spent note IS still in the pool because the write never happened) and its
+ * colour is that note's colour -- but its VALUE is the spent note's value minus
+ * an amount only the payment knew, and a commitment cannot be inverted to find
+ * it. **Nothing here guesses.** Closing that needs the amount written down
+ * before the money moves, which is a journal and not a derivation.
+ */
+export const reconcileVaultPool = (input: {
+  /** The vault's own address, hex. Part of every one of its commitments. */
+  vault: Hex;
+  /** The vault's `notes` set as the chain holds it, hex commitments. */
+  chain: readonly Hex[];
+  /**
+   * Every version of this pool that has been filed, in any order. The newest is
+   * taken as what the pool currently believes; the union of all of them is what
+   * is proposed to the chain.
+   */
+  versions: readonly { version: number; notes: readonly VaultCoin[] }[];
+  circuits: VaultNoteCircuits;
+  indexOf?: (commitment: Hex) => bigint | undefined;
+}): PoolRecovery => {
+  if (input.versions.length === 0) {
+    throw new Error(
+      'this pool has no filed versions, so there is nothing to propose to the chain. That is not '
+      + 'a vault holding nothing: it is this machine holding no record of it. A rebuild needs '
+      + 'either a version of the pool or a history of the vault\'s events, and with neither there '
+      + 'is nothing to reconcile -- a commitment discloses nothing and cannot be inverted.');
+  }
+  const newest = [...input.versions].sort((a, b) => b.version - a.version)[0]!;
+
+  /*
+   * **ONE ENTRY PER NONCE, AND A NONCE THAT DESCRIBES TWO DIFFERENT COINS IS A
+   * CONTRADICTION RATHER THAN A CHOICE.**
+   *
+   * The same note appears in every version filed after it arrived, so the union
+   * has to be taken by nonce. Two versions disagreeing about what a nonce is
+   * worth cannot both be true, and picking one would be this function inventing
+   * money: it is handed to `replayVault` as two deposits of one nonce, which is
+   * the contradiction that function already refuses by name.
+   */
+  const everFiled = new Map<Hex, VaultCoin>();
+  const contradictions: VaultCoin[] = [];
+  for (const v of input.versions) {
+    for (const note of v.notes) {
+      const already = everFiled.get(note.nonce);
+      if (!already) { everFiled.set(note.nonce, note); continue; }
+      if (already.token !== note.token || already.value !== note.value) contradictions.push(note);
+    }
+  }
+
+  return replayVault({
+    vault: input.vault,
+    chain: input.chain,
+    pool: newest.notes,
+    /*
+     * **EVERY NOTE EVER FILED, OFFERED AS A DEPOSIT, AND THE KIND IS NOT A LIE
+     * ABOUT WHERE IT CAME FROM.** `replayVault` reads a deposit event as *"this
+     * coin existed"* and nothing more -- it is the only event shape that carries
+     * a whole coin, and what this function knows about each note is the whole
+     * coin. Whether it arrived by deposit, as change, or as a split's remainder
+     * is not a question the chain is being asked: the question is whether the
+     * chain still holds it.
+     */
+    history: [...everFiled.values(), ...contradictions].map((coin) => ({ kind: 'deposit' as const, coin })),
+    circuits: input.circuits,
+    ...(input.indexOf === undefined ? {} : { indexOf: input.indexOf }),
+  });
+};
+
+/**
  * The one-line answer for an operator: is this pool the chain's pool?
  *
  * A convenience over `replayVault`, and deliberately not a boolean — a caller

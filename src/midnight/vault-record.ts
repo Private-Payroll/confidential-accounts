@@ -231,6 +231,23 @@ export interface VaultEntry {
    * nowhere on chain, and a company that lost its devices could not find it.
    */
   adopted: boolean;
+  /**
+   * **THIS VAULT IS DEAD AND NO DOOR MAY WORK AGAINST IT.**
+   *
+   * A vault deployed before a ledger field existed has an on-chain ledger a field
+   * SHORT of what this build compiles, and a client reads a vault's fields by
+   * counting -- so every read of it is off by one and the note set it hands back
+   * is not the note set. That was measured on a live vault.
+   *
+   * **IT IS HERE BECAUSE IT WAS NOWHERE.** Which vaults were
+   * disposed of, repeatedly, and it lived only in conversation: nothing on disk
+   * said so, so a rebuild was measured against one of the dead ones and only
+   * learned it afterwards. A fact that decides whether a door may touch money
+   * belongs in the record the door reads, not in the memory of whoever is awake.
+   */
+  disposed?: boolean;
+  /** Why, for a person, in plain terms. Never load-bearing. */
+  disposed_why?: string;
   /** The finalized deploy transaction's public facts, or null when unread. */
   deployTx: Record<string, unknown> | null;
 }
@@ -238,6 +255,12 @@ export interface VaultEntry {
 export interface VaultRegistry {
   network: string;
   savedAt: string;
+  /**
+   * **WHICH VAULT IS LIVE.** The one a door uses when nobody names one, so that a
+   * door does not pick for itself and get whichever key a JSON object listed
+   * first. Absent for a registry written before this was recorded.
+   */
+  current?: string;
   vaults: Record<string, VaultEntry>;
 }
 
@@ -271,7 +294,17 @@ export function parseVaultRegistry(raw: unknown, network: string): VaultRegistry
         'address is meaningless on another chain; the file is per network for that reason.',
     );
   }
-  return { network, savedAt: String(r.savedAt ?? ''), vaults: r.vaults as Record<string, VaultEntry> };
+  return {
+    network,
+    savedAt: String(r.savedAt ?? ''),
+    /*
+     * **WHICH VAULT A DOOR USES WHEN NOBODY NAMES ONE.** Carried through rather
+     * than dropped, because the alternative is every door picking for itself and
+     * the answer being whichever key a JSON object happened to list first.
+     */
+    ...(typeof r._current === 'string' && r._current.length > 0 ? { current: r._current } : {}),
+    vaults: r.vaults as Record<string, VaultEntry>,
+  };
 }
 
 /**
