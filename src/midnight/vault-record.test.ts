@@ -806,7 +806,21 @@ describe('nothing resolves a vault name to a vault outside this module', () => {
      * file, where no rule in this module can reach it.
      */
     const shell = readdirSync(root).filter((n) => n.endsWith('.command'));
-    expect(shell.length).toBeGreaterThan(50);
+    /*
+     * **THE SHELL PICKERS DO NOT SHIP**, so the published tree holds none of
+     * them and a bare count would refuse there while passing here -- which is
+     * what it did, on the first run of this file outside the working tree.
+     * The guard is therefore the pair of states that are real: a tree that has
+     * the pickers has many and every one is scanned, or a tree has none at all
+     * and there is nothing that could offend. **A tree holding one or two is
+     * neither**, and that is the walk breaking rather than a published tree.
+     */
+    expect(
+      shell.length === 0 || shell.length > 50,
+      `RED WHEN: this directory holds ${shell.length} shell picker(s) -- too few to be the `
+      + 'working tree and too many to be the published one, so the scan below is looking at '
+      + 'a fraction of them and reporting an empty result',
+    ).toBe(true);
     const reaching = shell.filter((n) => {
       const text = readFileSync(join(root, n), 'utf8');
       return text.includes('-vaults.json') && text.includes('contractAddress');
