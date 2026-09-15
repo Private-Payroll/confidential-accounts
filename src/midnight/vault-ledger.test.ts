@@ -11,6 +11,7 @@ import {
   VaultLedger, VaultChainUnreadable, VaultPoolDisagreesWithChain,
   VaultCannotAfford, VaultAlreadyHoldsNotes,
   type NotePool, type VaultPayment, type PaymentAttempt, type PaymentJournal,
+  type DepositAttempt, type DepositJournal,
 } from './vault-ledger.js';
 import { VaultPoolAdvancedSinceRead, VaultPoolVersionAlreadyFiled } from './vault-pool.js';
 /*
@@ -184,6 +185,11 @@ function harness(opts: {
    *   'refuses'   a journal whose write throws, which must stop the payment
    */
   journal?: 'none' | 'refuses';
+  /**
+   * **WHERE A PRIVATE DEPOSIT WRITES ITS COIN DOWN.** The same three shapes as
+   * `journal`, remembered in `depositsJournalled`.
+   */
+  depositJournal?: 'none' | 'refuses';
   /**
    * **WHAT THE CHAIN SAYS THIS VAULT HOLDS IN PUBLIC MONEY.**
    *
@@ -687,15 +693,19 @@ function harness(opts: {
       journalled.push({ ...attempt, callsMadeSoFar: calls.length });
     },
   };
-  const ledger = opts.journal === 'none'
-    ? new VaultLedger(
-      { networkId: 'preview' } as never, {} as never, providers as never, {},
-      opts.poolThrows ? refusesEverything : pool,
-      VAULT_ARTEFACTS)
-    : new VaultLedger(
-      { networkId: 'preview' } as never, {} as never, providers as never, {},
-      opts.poolThrows ? refusesEverything : pool,
-      VAULT_ARTEFACTS, journal);
+  const depositsJournalled: Array<DepositAttempt & { callsMadeSoFar: number; savesMadeSoFar: number }> = [];
+  const depositJournal: DepositJournal = {
+    record: async (_vault, attempt) => {
+      if (opts.depositJournal === 'refuses') throw new Error('the deposit journal cannot be written');
+      depositsJournalled.push({ ...attempt, callsMadeSoFar: calls.length, savesMadeSoFar: saves.length });
+    },
+  };
+  const ledger = new VaultLedger(
+    { networkId: 'preview' } as never, {} as never, providers as never, {},
+    opts.poolThrows ? refusesEverything : pool,
+    VAULT_ARTEFACTS,
+    opts.journal === 'none' ? undefined : journal,
+    opts.depositJournal === 'none' ? undefined : depositJournal);
   (ledger as any).connect = async (_a: string, w: unknown) => { witnesses = w; return contract; };
 
   /*
@@ -713,7 +723,7 @@ function harness(opts: {
   };
 
   return {
-    ledger, calls, saves, creates, scopes, eventReads, spentCoins, journalled,
+    ledger, calls, saves, creates, scopes, eventReads, spentCoins, journalled, depositsJournalled,
     current: () => stored, witnessesUsed: () => witnesses,
   };
 }
@@ -2386,5 +2396,78 @@ describe('a private payment journals its attempt before the call', () => {
     expect(journalled.map((j) => j.amount)).toEqual([100n, 200n]);
     /* The second spends the first's change, so its journalled value is what was kept. */
     expect(journalled[1].spent.value).toBe(900n);
+  });
+});
+
+/**
+ * **JOURNALLING A DEPOSIT IS THE LEDGER'S, NOT A HABIT OF ONE DOOR.** The same
+ * four facts the payment's journal is held to: the coin is recorded, before the
+ * call, whole, and a ledger with nowhere to record it refuses rather than
+ * deposits.
+ */
+describe('a private deposit journals its coin before the call', () => {
+  const COIN = { nonce: '77'.repeat(32), token: GBP, value: 500n };
+
+  it('records the coin it is about to create, whole, BEFORE the deposit call and before the pool write', async () => {
+    const { ledger, depositsJournalled, calls, current } = harness({ notes: [] });
+    await ledger.deposit(VAULT, COIN, BY);
+    expect(depositsJournalled).toHaveLength(1);
+    expect(
+      depositsJournalled[0].callsMadeSoFar,
+      'RED WHEN: the deposit\'s line is written after the call -- a nonce recorded after the money moved is not on disk when the process stops in between, which is the only moment this record exists for',
+    ).toBe(0);
+    expect(depositsJournalled[0].savesMadeSoFar).toBe(0);
+    expect(calls.map((c) => c.circuit)).toEqual(['deposit']);
+    expect(
+      depositsJournalled[0].coin,
+      'RED WHEN: the line is not the coin the call creates -- a different nonce or value names a note the chain never held, and the real one stays unnameable',
+    ).toEqual(COIN);
+    expect(Number.isNaN(Date.parse(depositsJournalled[0].attemptedAt))).toBe(false);
+    expect(current().notes.map((n) => n.nonce)).toEqual([COIN.nonce]);
+  });
+
+  it('REFUSES a private deposit by name when the ledger has nowhere to write the coin, and calls nothing', async () => {
+    const { ledger, calls, saves } = harness({ notes: [], depositJournal: 'none' });
+    await expect(
+      ledger.deposit(VAULT, COIN, BY),
+      'RED WHEN: a ledger built without a deposit journal deposits anyway -- the first private deposit through any caller but the door reopens the crash window with nothing red',
+    ).rejects.toThrow(/nowhere to write it/);
+    await expect(ledger.deposit(VAULT, COIN, BY), 'RED WHEN: the refusal stops naming what resolves it, in terms the reader can act on')
+      .rejects.toThrow(/Construct the ledger with a deposit journal/);
+    expect(calls, 'RED WHEN: the refusal arrives after the call').toEqual([]);
+    expect(saves).toHaveLength(0);
+  });
+
+  it('a deposit journal that cannot be written STOPS the deposit with nothing spent', async () => {
+    const { ledger, calls, saves } = harness({ notes: [], depositJournal: 'refuses' });
+    await expect(ledger.deposit(VAULT, COIN, BY))
+      .rejects.toThrow(/deposit journal cannot be written/);
+    expect(calls, 'RED WHEN: a journal failure is swallowed and the deposit goes ahead unjournalled').toEqual([]);
+    expect(saves).toHaveLength(0);
+  });
+
+  it('a deposit the pool would refuse journals NOTHING: the pre-flight comes first', async () => {
+    const { ledger, depositsJournalled, calls } = harness({ notes: [{ nonce: '77'.repeat(32), value: 9n }] });
+    await expect(ledger.deposit(VAULT, COIN, BY)).rejects.toThrow();
+    expect(calls).toEqual([]);
+    expect(
+      depositsJournalled,
+      'RED WHEN: the line is written before the pre-flight, so every refused deposit leaves a line naming a coin nobody tried to make',
+    ).toHaveLength(0);
+  });
+
+  it('a PUBLIC deposit writes no deposit line and needs no deposit journal', async () => {
+    const { ledger, depositsJournalled, calls } = harness({ poolThrows: true, depositJournal: 'none' });
+    await ledger.depositUnshielded(VAULT, { token: NIGHT, amount: 10n }, BY);
+    expect(calls.map((c) => c.circuit)).toEqual(['depositUnshielded']);
+    expect(depositsJournalled, 'RED WHEN: a public deposit is journalled or refused for want of a journal -- it creates no note').toHaveLength(0);
+  });
+
+  it('a PRIVATE PAYMENT needs no deposit journal, and a deposit needs no payment journal', async () => {
+    const paying = harness({ depositJournal: 'none' });
+    await expect(paying.ledger.payout(VAULT, payment(100n), BY, EVENTS)).resolves.toBeDefined();
+    const depositing = harness({ notes: [], journal: 'none' });
+    await expect(depositing.ledger.deposit(VAULT, COIN, BY)).resolves.toBeDefined();
+    expect(depositing.depositsJournalled).toHaveLength(1);
   });
 });

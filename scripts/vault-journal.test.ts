@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
-  SealedPaymentJournal, journalledAttempts, paymentJournalFile, depositJournalFileOf,
+  SealedPaymentJournal, SealedDepositJournal, journalledAttempts, paymentJournalFile, depositJournalFileOf,
 } from './vault-journal.js';
 import { FileSealedPoolStore, vaultPoolFile } from './vault-pool-file.js';
 import { depositJournalFile } from './deposit-to-vault.js';
@@ -228,4 +228,99 @@ describe('the reader takes every filed version of both journals, as the rebuild 
     expect(page.attempts[0].spent.value).toBe(1_000n);
     expect(typeof page.attempts[0].amount, 'RED WHEN: the amount round-trips as something other than a bigint, and a rebuild subtracting it would derive a value that is not a number').toBe('bigint');
   });
+});
+
+/* ------------------------------------------------------------------ *
+ * the deposit journal, now handed to the ledger
+ * ------------------------------------------------------------------ */
+
+describe('the deposit journal the ledger is handed writes what the door always wrote', () => {
+  const opener = (s: ReturnType<typeof signers>) => ({ id: 'ada', wrappingSecret: s.secret as never });
+  const depositIn = (d: string, s: ReturnType<typeof signers>, written = () => {}, vault = VAULT) =>
+    new SealedDepositJournal(
+      depositJournalFileOf(d, 'stagenet', 'payroll-test-1'), vault, opener(s), async () => s.signers, written);
+  const coin = (nonce: string, value: bigint) => ({ coin: { nonce, token: GBP, value }, attemptedAt: 't9' });
+
+  it('files the coin, sealed, in the page the rebuild has always read, and says so only once it is on disk', async () => {
+    const d = dir(); const s = signers();
+    const said: number[] = [];
+    const j = depositIn(d, s, () => { said.push(readdirSync(d).length); });
+    await j.record(VAULT, coin('31'.repeat(32), 700n) as never);
+    await j.record(VAULT, coin('32'.repeat(32), 800n) as never);
+    for (const f of readdirSync(d)) {
+      expect(readFileSync(join(d, f), 'utf8'), 'RED WHEN: the deposit journal is written in the clear').not.toContain('31'.repeat(32));
+    }
+    let r!: ReturnType<typeof journalledAttempts>;
+    expect(
+      () => { r = journalledAttempts({
+        depositJournalFile: depositJournalFileOf(d, 'stagenet', 'payroll-test-1'),
+        paymentJournalFile: paymentJournalFile(d, 'stagenet', 'payroll-test-1'),
+        vault: VAULT, opener: opener(s),
+      }); },
+      'RED WHEN: the ledger\'s deposit line is filed under a page name the rebuild does not read, so every rebuild of this vault stops',
+    ).not.toThrow();
+    expect(
+      r.deposits,
+      'RED WHEN: the ledger\'s deposit line is filed in a shape or file the rebuild does not read -- the door keeps writing and the rebuild reads nothing',
+    ).toEqual([
+      { nonce: '31'.repeat(32), token: GBP, value: 700n },
+      { nonce: '32'.repeat(32), token: GBP, value: 800n },
+    ]);
+    const rec = await new FileSealedPoolStore(depositJournalFileOf(d, 'stagenet', 'payroll-test-1'), VAULT).get(VAULT);
+    const page: any = openPool(rec!, 'ada', s.secret as never);
+    expect(page.notes[1], 'RED WHEN: the page stops carrying each line whole, with when it was attempted, as the door wrote it').toEqual({
+      nonce: '32'.repeat(32), token: GBP, value: 800n, attemptedAt: 't9',
+    });
+    expect(said.every((n) => n > 0), 'RED WHEN: the door is told the line is journalled before it is on disk').toBe(true);
+    expect(said).toHaveLength(2);
+    expect((await j.open()).attempts.map((a) => a.value)).toEqual([700n, 800n]);
+  });
+
+  it('REFUSES to record a deposit into a vault other than the one it was built for, and writes nothing', async () => {
+    const d = dir(); const s = signers();
+    let told = 0;
+    await expect(depositIn(d, s, () => { told += 1; }).record(OTHER, coin('31'.repeat(32), 700n) as never))
+      .rejects.toThrow(/different vault .* nothing is deposited/);
+    expect(readdirSync(d)).toHaveLength(0);
+    expect(told).toBe(0);
+  });
+});
+
+describe('a journal write never takes a reader away', () => {
+  const two = () => {
+    const ada = newWrappingKeypair();
+    const bob = newWrappingKeypair();
+    return {
+      both: [{ id: 'ada', wrappingPublicKey: ada.publicKey }, { id: 'bob', wrappingPublicKey: bob.publicKey }] as PoolSigner[],
+      adaSecret: ada.secret,
+    };
+  };
+
+  for (const kind of ['payment', 'deposit'] as const) {
+    it(`REFUSES a ${kind} line that would re-seal the ${kind} journal to fewer signers than it is wrapped for, and writes nothing`, async () => {
+      const d = dir(); const k = two();
+      let listed: PoolSigner[] = k.both;
+      const me = { id: 'ada', wrappingSecret: k.adaSecret as never };
+      const journal = kind === 'payment'
+        ? new SealedPaymentJournal(paymentJournalFile(d, 'stagenet', 'payroll-test-1'), VAULT, me, async () => listed)
+        : new SealedDepositJournal(depositJournalFileOf(d, 'stagenet', 'payroll-test-1'), VAULT, me, async () => listed);
+      const line = kind === 'payment'
+        ? attempt('01'.repeat(32), 1_000n, 200n)
+        : { coin: { nonce: '31'.repeat(32), token: GBP, value: 700n }, attemptedAt: 't' };
+      await journal.record(VAULT, line as never);
+      const before = readdirSync(d).length;
+
+      listed = k.both.filter((x) => x.id === 'ada');
+      await expect(
+        journal.record(VAULT, line as never),
+        `RED WHEN: the ${kind} journal is re-sealed to whatever the signers list says without comparing its own wrapped list, so a signer loses the only record that names a lost note and the write succeeds`,
+      ).rejects.toThrow(new RegExp(`this vault's ${kind} journal is readable by 1 signer\\(s\\) that the signers file no longer lists \\(bob\\)`));
+      expect(readdirSync(d).length, 'RED WHEN: the refusal comes after the write').toBe(before);
+
+      /* Adding a reader is not taking one away. */
+      const carol = newWrappingKeypair();
+      listed = [...k.both, { id: 'carol', wrappingPublicKey: carol.publicKey }];
+      await expect(journal.record(VAULT, line as never)).resolves.toBeUndefined();
+    });
+  }
 });

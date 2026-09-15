@@ -144,10 +144,14 @@ describe('THE CLIENT ITSELF, driven through the real scope with no seam overridd
       },
     };
 
+    /*
+     * A deposit journal that accepts the line, because a private deposit through a
+     * ledger without one is refused before this convention is ever reached.
+     */
     const ledger = new VaultLedger(
       { networkId: 'preview' } as never, {} as never, async () => ({}) as never, {} as never,
       { load: async () => ({ notes: [] }), save: async () => {} } as never,
-      VAULT_ARTEFACTS,
+      VAULT_ARTEFACTS, undefined, { record: async () => {} },
     );
     (ledger as any).connect = async () => contract;
 

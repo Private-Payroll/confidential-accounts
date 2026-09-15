@@ -37,6 +37,17 @@
  * written. An absent journal is an empty one, and this door says how many
  * versions of each it read.
  *
+ * **AND A NOTE IT WRITES CAN BE SPENT, OR THE DOOR SAYS WHY NOT.** A payment
+ * reads a note's place in the chain from the transaction that created it, and a
+ * journal is written before that transaction exists, so a note named from a
+ * journal arrives with no transaction. Before writing, the chain is asked:
+ * every transaction that acted on this vault is listed, and each is put to the
+ * same three questions every other writer of a note's transaction asks. A note
+ * none of them answers for is still written - it is the vault's money and must
+ * stay named - and printed as not spendable yet, with the reason and what
+ * resolves it. A transaction a filed version already records is kept, never
+ * overwritten.
+ *
  * **AND IT NEVER WRITES AN EMPTY POOL.** A rebuild that could explain none of the
  * notes the chain holds is this machine's ignorance, and an empty pool is a claim
  * that the vault has no money -- indistinguishable afterwards from the truth.
@@ -56,8 +67,14 @@ import { assertVaultLedgerIsThisBuilds } from '../src/midnight/vault-ledger-shap
 import { theNetwork, ENDPOINTS } from '../src/midnight/network.js';
 import { indexerPublicDataProvider } from '@midnight-ntwrk/midnight-js-indexer-public-data-provider';
 import type { Hex } from '../src/core/crypto.js';
-import { reconcileVaultPool } from '../src/midnight/vault-recovery.js';
-import { FileSealedPoolStore, vaultPoolFile, everyVersionFiled } from './vault-pool-file.js';
+import { reconcileVaultPool, NoteDescribedTwice } from '../src/midnight/vault-recovery.js';
+import {
+  creatingTransactionsAmong, indexerNoteEvents, indexerVaultTransactions,
+  type CreatingTransactionFound,
+} from '../src/midnight/note-index.js';
+import {
+  FileSealedPoolStore, vaultPoolFile, vaultPoolVersionFile, everyVersionFiled,
+} from './vault-pool-file.js';
 import { journalledAttempts, paymentJournalFile, depositJournalFileOf } from './vault-journal.js';
 import { chooseOpener } from './deposit-to-vault.js';
 import { createScreen } from './deploy-report.js';
@@ -65,6 +82,7 @@ import { NotUsable } from './note-transaction-rules.js';
 import {
   decideWhetherToWrite, assertNoSignerWouldLoseAccess,
   assertThePoolHasNotMovedSinceTheRebuild, linesForAnOperator,
+  notesNeedingATransaction, whatTheRebuildWrites, whereTheRecordsAre,
 } from './reconcile-vault-pool-rules.js';
 
 const ROOT = process.cwd();
@@ -242,17 +260,61 @@ async function main(): Promise<number> {
   }
   good(`the chain holds ${chain.length} note(s) for this vault`);
 
-  step('4 of 5  The rebuild');
+  step('4 of 5  The rebuild, and the transaction that created each note it would write');
   const { pureCircuits } = await import('../contracts/managed-vault/contract/index.js');
-  const rebuilt = reconcileVaultPool({
-    vault: entry.contractAddress as Hex,
-    chain,
-    versions,
-    attempted,
-    circuits: pureCircuits as never,
-  });
+  let rebuilt: ReturnType<typeof reconcileVaultPool>;
+  try {
+    rebuilt = reconcileVaultPool({
+      vault: entry.contractAddress as Hex,
+      chain,
+      versions,
+      attempted,
+      circuits: pureCircuits as never,
+    });
+  } catch (cause) {
+    if (!(cause instanceof NoteDescribedTwice)) throw cause;
+    /*
+     * **THE REFUSAL NAMES RECORDS; A PERSON MOVES FILES.** So each record is
+     * printed beside the file it is, from the functions that name those files.
+     */
+    const here = (f: string) => f.replace(ROOT + '/', '');
+    throw new NotUsable([
+      cause.message,
+      '',
+      'The records, on this machine:',
+      ...whereTheRecordsAre(cause, {
+        poolVersion: (v) => here(vaultPoolVersionFile(poolFile, v)),
+        depositJournal: here(depositJournalFileOf(STATE_DIR, network, vaultName)),
+        paymentJournal: here(paymentJournalFile(STATE_DIR, network, vaultName)),
+      }).map((l) => `  ${l}`),
+    ].join('\n'));
+  }
+
+  const alsoDropStaleNotes = (process.env.ALSO_DROP_NOTES_THE_CHAIN_DOES_NOT_HOLD ?? '').toLowerCase() === 'yes';
+  /*
+   * **A NOTE THE CHAIN HOLDS AND NO VERSION RECORDS THE TRANSACTION OF IS ASKED
+   * ABOUT HERE, BEFORE ANYTHING IS DECIDED.** Every note recovered from a journal
+   * is one. Nothing is asked when there is none, so a pool that already agrees
+   * with the chain costs no more reading than it did.
+   */
+  const needing = notesNeedingATransaction({ versions, held: rebuilt.held });
+  let found: CreatingTransactionFound[] = [];
+  if (needing.length > 0) {
+    note(`${needing.length} note(s) the chain holds have no creating transaction on file; asking the `
+      + 'chain which transaction created each');
+    const asked = await creatingTransactionsAmong(entry.contractAddress as Hex, needing, {
+      transactions: indexerVaultTransactions(endpoints.indexerUrl, endpoints.indexerWsUrl),
+      events: indexerNoteEvents(endpoints.indexerUrl),
+    });
+    found = asked.found;
+    note(`the chain lists ${asked.listed} transaction(s) for this vault, and ${asked.read} were read`);
+    const named = found.filter((f) => 'createdIn' in f).length;
+    if (named === found.length) good(`the transaction that created each of the ${named} is named`);
+    else warn(`${found.length - named} of ${found.length} could not be given the transaction that created them`);
+  }
+  const toWrite = whatTheRebuildWrites({ versions, held: rebuilt.held, alsoDropStaleNotes, found });
   say();
-  for (const line of linesForAnOperator(rebuilt)) say(`  ${line}`);
+  for (const line of linesForAnOperator(rebuilt, toWrite.notYetSpendable)) say(`  ${line}`);
 
   step('5 of 5  Whether anything is written');
   /*
@@ -263,10 +325,10 @@ async function main(): Promise<number> {
    * spent and refuses -- and that refusal is not a lost race, so nothing retries
    * it. The change note is then in no version of the pool and never will be.
    */
-  const alsoDropStaleNotes = (process.env.ALSO_DROP_NOTES_THE_CHAIN_DOES_NOT_HOLD ?? '').toLowerCase() === 'yes';
   const newestClaims = versions[versions.length - 1]!.notes.length;
   const decision = decideWhetherToWrite({
     recovery: rebuilt, notesTheNewestVersionClaims: newestClaims, alsoDropStaleNotes,
+    transactionsEstablished: toWrite.established,
   });
   if (decision.do === 'refuse') {
     say();
@@ -329,21 +391,24 @@ async function main(): Promise<number> {
    * holds and this machine can name. The index is not written by either -- a spend
    * reads a note's place in the commitment tree from the chain at the moment it
    * spends, so a number stored here has no reader that should trust it.
+   *
+   * Every note is built by `whatTheRebuildWrites`, which keeps the creating
+   * transaction a filed version records and fills only what none does.
    */
-  const bare = ({ commitment: _onChain, index: _readAtTheSpend, ...note }: typeof rebuilt.held[number]) => note;
-  const byNonce = new Map<string, ReturnType<typeof bare>>();
-  if (!alsoDropStaleNotes) {
-    for (const n of versions[versions.length - 1]!.notes) byNonce.set(n.nonce, { ...n });
-  }
-  for (const n of rebuilt.held) byNonce.set(n.nonce, bare(n));
   await pool.save(
     entry.contractAddress,
-    { notes: [...byNonce.values()] },
+    { notes: toWrite.notes },
     { vault: entry.contractAddress, version: newest.version });
 
   say();
   good(`written as version ${newest.version + 1}. Every earlier version is still filed.`);
   say(`  ${GREEN}${BOLD}The pool is the chain's pool. Nothing was proved, submitted or spent.${OFF}`);
+  if (toWrite.notYetSpendable.length > 0) {
+    say();
+    warn(`${toWrite.notYetSpendable.length} note(s) written are the vault's and cannot be spent yet. `
+      + 'They are listed above with the reason, and a payment that would spend one is refused '
+      + 'before its money moves.');
+  }
   if (rebuilt.unexplained.length > 0) {
     say();
     warn(`${rebuilt.unexplained.length} note(s) the chain holds are still unnameable by this `

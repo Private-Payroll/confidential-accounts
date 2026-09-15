@@ -43,8 +43,14 @@ import { buildPayoutTree, type PayoutLeafInput } from '../../src/midnight/payout
 import { changeCoinOf, paidCoinTo } from '../../src/midnight/vault-coins.js';
 import {
   replayVault, reconcileVaultPool, commitmentForNote, paidCoinOf, changeNoteOf, type VaultEvent,
+  NoteDescribedTwice, nameTheRecord,
 } from '../../src/midnight/vault-recovery.js';
-import { noteToSpend, type Note } from '../../src/midnight/vault-notes.js';
+import { noteToSpend, paymentsFit, type Note } from '../../src/midnight/vault-notes.js';
+import {
+  creatingTransactionsAmong, indexForSpend, vaultNoteCommitment,
+  type NoteEvents, type ServedEvent, type VaultTransactions,
+} from '../../src/midnight/note-index.js';
+import { notesNeedingATransaction, whatTheRebuildWrites } from '../../scripts/reconcile-vault-pool-rules.js';
 import { toHex, fromHex, type Hex } from '../../src/core/crypto.js';
 
 /*
@@ -137,11 +143,53 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
   const asNotes = (coins: readonly { nonce: Hex; token: Hex; value: bigint }[]): Note[] =>
     coins.map((c) => ({ ...c, index: NO_INDEX_YET }));
 
+  /*
+   * **THE CHAIN'S OWN RECORD OF WHICH TRANSACTION CREATED WHICH OUTPUT.** Every
+   * call below is logged as one transaction, and the output it created for the
+   * vault is READ OFF THE CALL'S OWN ZSWAP STATE, never derived from a note. So
+   * a note a rebuild names can only be given one of these transactions if the
+   * coin the rebuild named is the coin a call actually made. The index is this
+   * log's own counter: there is no real tree here, and nothing below claims the
+   * index is evidence of anything but having been read from the chain.
+   */
+  let chainLog: Array<{ hash: Hex; made: { nonce: Hex; token: Hex; value: bigint } | undefined; index: bigint }>;
+  const logCall = (r: { context: { callContext: { currentZswapLocalState: unknown } } }) => {
+    const hash = (chainLog.length + 1).toString(16).padStart(64, '0') as Hex;
+    chainLog.push({
+      hash,
+      made: changeCoinOf(r.context.callContext.currentZswapLocalState, vaultAddr as Hex),
+      index: BigInt(100 + chainLog.length),
+    });
+  };
+  const theChain = (): { transactions: VaultTransactions; events: NoteEvents } => ({
+    transactions: { of: async () => [...chainLog].reverse().map((t) => t.hash) },
+    events: {
+      eventsOf: async (tx) => {
+        const t = chainLog.find((x) => 'hash' in tx && x.hash === tx.hash);
+        if (!t) throw new Error(`the test chain holds no transaction ${JSON.stringify(tx)}`);
+        const events: ServedEvent[] = [{ transactionHash: t.hash, details: { tag: 'zswapInput' } }];
+        if (t.made) {
+          events.push({
+            transactionHash: t.hash,
+            details: {
+              tag: 'zswapOutput',
+              commitment: await vaultNoteCommitment(t.made, vaultAddr as Hex),
+              contract: vaultAddr,
+              mtIndex: t.index,
+            },
+          });
+        }
+        return events;
+      },
+    },
+  });
+
   const deposit = async (coin: { nonce: Hex; token: Hex; value: bigint }) => {
     const r = await vault.impureCircuits.deposit(ctx('deposit'), {
       nonce: fromHex(coin.nonce), color: fromHex(coin.token), value: coin.value,
     });
     vaultState = r.context.callContext.currentQueryContext.state;
+    logCall(r);
     return r;
   };
 
@@ -157,6 +205,7 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
     vaultState = init.currentContractState;
 
     priv = { notes: [] };
+    chainLog = [];
     await deposit(FIRST);
     priv = { notes: asNotes([FIRST]) };
     await deposit(SECOND);
@@ -192,6 +241,7 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
       ctx('payout'), run.id, fromHex(run.tree.root), run.tree.payees, WIN_FROM, WIN_UNTIL,
       c.salt, to, GBP, amount, bytes(0x40 + i), bytes(nonce), run.tree.pathFor(i) as never);
     vaultState = r.context.callContext.currentQueryContext.state;
+    logCall(r);
     return r;
   };
 
@@ -409,16 +459,87 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
   it('REFUSES two versions that describe one nonce differently, rather than choosing one', () => {
     /*
      * Two records of what a nonce is worth cannot both be true, and picking one
-     * would be this function inventing money. It is handed to `replayVault` as two
-     * deposits of one nonce, which that function already refuses by name.
+     * would be this function inventing money. It is refused before anything is
+     * derived, and the refusal names both records and which one the chain holds.
      */
-    expect(
-      () => rebuild([
+    let refused: unknown;
+    try {
+      rebuild([
         { version: 1, notes: asNotes([FIRST]) },
         { version: 2, notes: asNotes([{ ...FIRST, value: 7_777n }]) },
-      ]),
+      ]);
+    } catch (e) { refused = e; }
+    expect(
+      refused,
       'RED WHEN: one of two contradicting records is silently preferred, which is this function deciding what the money is worth',
-    ).toThrow(/already holds/);
+    ).toBeInstanceOf(NoteDescribedTwice);
+    const message = (refused as Error).message;
+    expect(
+      message,
+      'RED WHEN: the refusal names neither record -- "one of these two is wrong" is a sentence nobody can act on',
+    ).toMatch(/version 1 of the pool says it is 1000 of .*; version 2 of the pool says it is 7777 of/);
+    expect(
+      message,
+      'RED WHEN: the refusal does not say which description the chain holds, which is the one fact that settles it and the one this function can read',
+    ).toMatch(/The chain holds the coin version 1 of the pool describes, so version 2 of the pool is the wrong record/);
+    expect(
+      message,
+      'RED WHEN: the refusal does not name what resolves it -- correcting the one note in the record the chain does not agree with',
+    ).toMatch(/What resolves this is correcting that one note in version 2 of the pool, and nothing on this machine does that yet/);
+    expect(
+      message,
+      'RED WHEN: the refusal tells somebody to move a pool version aside -- a version is a whole snapshot and can be the only record of another note',
+    ).toMatch(/Keep both files where they are/);
+    expect(message).not.toMatch(/\bmove (version|the)/);
+  });
+
+  it('a nonce the chain holds NEITHER description of names no record to move and no record as the wrong one', async () => {
+    /* SECOND is spent, so the chain holds neither 400 nor 999 under its nonce. */
+    const c = change(0n, 95);
+    const run = await approvedRun([{ to: ALICE, amount: 400n, nonce: 0xfe }], c);
+    await pay(run, c, 0, ALICE, 400n, 0xfe);
+    let refused: unknown;
+    try {
+      rebuildWith([{ version: 1, notes: asNotes([FIRST]) }, { version: 2, notes: asNotes([FIRST, SECOND]) }],
+        { payments: [{ spent: { ...SECOND, value: 999n }, amount: 10n }] });
+    } catch (e) { refused = e; }
+    expect(refused).toBeInstanceOf(NoteDescribedTwice);
+    const message = (refused as Error).message;
+    expect(message).toMatch(/The chain holds neither/);
+    expect(
+      message,
+      'RED WHEN: with the chain holding neither, the refusal still picks a record as the wrong one or tells somebody to move a version -- which can take the only record of a change note with it',
+    ).not.toMatch(/is the wrong record|\bmove (version|the)/);
+    expect(message).toMatch(/correcting that one note in the record that is wrong/);
+  });
+
+  it('a JOURNAL line that contradicts the pool is named as the journal, and the refusal will not send anyone to move a file aside', () => {
+    let refused: unknown;
+    try {
+      rebuildWith([{ version: 3, notes: asNotes([FIRST, SECOND]) }],
+        { payments: [{ spent: { ...SECOND, value: 999n }, amount: 10n }] });
+    } catch (e) { refused = e; }
+    expect(refused).toBeInstanceOf(NoteDescribedTwice);
+    const e = refused as NoteDescribedTwice;
+    expect(
+      e.descriptions.map((d) => [nameTheRecord(d.record), d.value, d.onChain]),
+      'RED WHEN: the two records are not told apart, or the chain is not asked which description it holds',
+    ).toEqual([['version 3 of the pool', 400n, true], ['the payment journal', 999n, false]]);
+    expect(e.message).toMatch(/so the payment journal is the wrong record/);
+    expect(
+      e.message,
+      'RED WHEN: the refusal tells somebody to move the journal aside, which takes every other line with it -- the only record that names a lost note',
+    ).toMatch(/Keep both files where they are/);
+    expect(e.message).not.toMatch(/\bmove (version|the)/);
+    expect(e.message).toMatch(/correcting that one note in the payment journal/);
+
+    /* A deposit line whose note the chain holds and a version that disagrees: the VERSION is named as wrong. */
+    let other: unknown;
+    try {
+      rebuildWith([{ version: 5, notes: asNotes([FIRST, { ...SECOND, value: 401n }]) }], { deposits: [SECOND] });
+    } catch (x) { other = x; }
+    expect((other as Error).message).toMatch(/The chain holds the coin the deposit journal describes, so version 5 of the pool is the wrong record/);
+    expect((other as Error).message).toMatch(/correcting that one note in version 5 of the pool/);
   });
 
   /* ---------------------------------------------------------------- *
@@ -582,7 +703,7 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
       () => rebuildWith([{ version: 1, notes: asNotes([FIRST, SECOND]) }],
         { payments: [{ spent: { ...SECOND, value: 999n }, amount: 10n }] }),
       'RED WHEN: a journal that disagrees with the pool about what a note is worth is silently preferred either way',
-    ).toThrow(/already holds/);
+    ).toThrow(NoteDescribedTwice);
     /* A line naming a note nothing filed is not refused: its change has a commitment the chain does not hold. */
     const stranger = { nonce: toHex(bytes(0x01)), token: toHex(GBP), value: 5_000n };
     const r = rebuildWith([{ version: 1, notes: asNotes([FIRST, SECOND]) }], { payments: [{ spent: stranger, amount: 1n }] });
@@ -671,6 +792,139 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
     const run3 = await approvedRun([{ to: CAROL, amount: 40n, nonce: 0xf9 }], c3);
     await pay(run3, c3, 0, CAROL, 40n, 0xf9);
     expect(vaultLedger(vaultState as never).payments).toBe(3n);
+  });
+
+  /* ---------------------------------------------------------------- *
+   * through the rebuild: a recovered note is one a PAYMENT can spend
+   * ---------------------------------------------------------------- */
+
+  /**
+   * **THE STANDARD THIS FILE SETS, MET THROUGH THE PATH THE PRODUCT TAKES.** The
+   * tests above spend what the replay names through this file's own witness,
+   * which never asks for a note's creating transaction. The product does: its
+   * pre-flight refuses a note that does not record one, and its spend reads the
+   * note's index from that transaction's events. A note the rebuild writes
+   * without one is found, named, listed as held - and refused. So these go the
+   * whole way: rebuild, ask the chain, write, pre-flight, read the index at the
+   * spend, and pay.
+   */
+  const throughTheRebuild = async (
+    versions: { version: number; notes: readonly Note[] }[],
+    attempted: Parameters<typeof rebuildWith>[1],
+    chain = theChain(),
+  ) => {
+    const rebuilt = rebuildWith(versions, attempted);
+    const needing = notesNeedingATransaction({ versions, held: rebuilt.held });
+    const asked = await creatingTransactionsAmong(vaultAddr as Hex, needing, chain);
+    const written = whatTheRebuildWrites({ versions, held: rebuilt.held, alsoDropStaleNotes: false, found: asked.found });
+    return { rebuilt, needing, asked, written };
+  };
+
+  /** What `payPrivately` does with a pool before its call: choose, then read the index from the chain. */
+  const theProductChooses = async (notes: readonly Note[], amount: bigint) => {
+    paymentsFit({ notes: [...notes] }, [{ token: toHex(GBP), amount }]);
+    const chosen = noteToSpend([...notes], toHex(GBP), amount);
+    const index = await indexForSpend(vaultAddr as Hex, chosen, theChain().events);
+    return { chosen, index };
+  };
+
+  it('THROUGH THE REBUILD, CASE C: the change note named from the journal is given its creating transaction by the chain, passes the pre-flight, reads its index at the spend, and SPENDS',
+    async () => {
+      const c = change(0n, 91);
+      const run = await approvedRun([{ to: ALICE, amount: 250n, nonce: 0xfa }], c);
+      await pay(run, c, 0, ALICE, 250n, 0xfa);          // spends SECOND (400), change 150; pool write lost
+      const payout = chainLog[chainLog.length - 1]!;
+      /* The pool as the deposits wrote it: each note with the transaction that created it. */
+      const versions = [{ version: 1, notes: [
+        { ...FIRST, createdIn: chainLog[0]!.hash }, { ...SECOND, createdIn: chainLog[1]!.hash },
+      ] }];
+
+      /* Today's gap, measured first: the same rebuild without asking the chain. */
+      const rebuilt = rebuildWith(versions, { payments: [{ spent: SECOND, amount: 250n }] });
+      const unasked = whatTheRebuildWrites({ versions, held: rebuilt.held, alsoDropStaleNotes: false, found: [] });
+      await expect(
+        theProductChooses(unasked.notes, 120n),
+        'the note a rebuild recovers without asking the chain is the one the product refuses to spend',
+      ).rejects.toThrow(/does not record which transaction created it/);
+
+      const { needing, asked, written } = await throughTheRebuild(versions, { payments: [{ spent: SECOND, amount: 250n }] });
+      expect(
+        needing.map((n) => n.value),
+        'RED WHEN: the recovered change note is not put to the chain, or a note the deposits already recorded is put to it again',
+      ).toEqual([150n]);
+      expect(
+        asked.found,
+        'RED WHEN: the change note is given any transaction but the payout that created it -- the one the chain\'s events show making this coin for this vault',
+      ).toEqual([{ nonce: needing[0]!.nonce, createdIn: payout.hash }]);
+      expect(written.notYetSpendable, 'RED WHEN: a note the chain named is still reported as not spendable').toEqual([]);
+      expect(
+        written.notes.find((n) => n.value === 150n)?.createdIn,
+        'RED WHEN: the transaction the chain established is not written onto the note the rebuild recovered',
+      ).toBe(payout.hash);
+      expect(
+        written.notes.find((n) => n.nonce === FIRST.nonce)?.createdIn,
+        'RED WHEN: writing the rebuild strips the transaction a deposit recorded for a note it carries',
+      ).toBe(chainLog[0]!.hash);
+
+      /* The product's own path: pre-flight, choice, and the index read at the spend. */
+      const { chosen, index } = await theProductChooses(written.notes, 120n);
+      expect(chosen.value, 'the smallest note that covers 120 is the recovered one').toBe(150n);
+      expect(index, 'RED WHEN: the index is read from anywhere but the payout\'s own events').toBe(payout.index);
+
+      /* And the only proof that counts. */
+      priv = { notes: written.notes.map((n) => ({ ...n, index: n.nonce === chosen.nonce ? index : NO_INDEX_YET })) };
+      const c2 = change(0n, 92);
+      const run2 = await approvedRun([{ to: BOB, amount: 120n, nonce: 0xfb }], c2);
+      const paid = await pay(run2, c2, 0, BOB, 120n, 0xfb);
+      expect(vaultLedger(vaultState as never).payments).toBe(2n);
+      expect(
+        changeCoinOf(paid.context.callContext.currentZswapLocalState, vaultAddr as Hex)?.value,
+        'the payment was made out of the recovered 150, not the 1,000',
+      ).toBe(30n);
+    });
+
+  it('THROUGH THE REBUILD, A LOST DEPOSIT: the note named from the deposit journal is given the deposit\'s transaction, and SPENDS', async () => {
+    const versions = [{ version: 1, notes: [{ ...FIRST, createdIn: chainLog[0]!.hash }] }];  // SECOND's write was lost
+    const { asked, written } = await throughTheRebuild(versions, { deposits: [SECOND] });
+    expect(
+      asked.found,
+      'RED WHEN: the deposit journal\'s note is given a transaction other than the deposit that made it',
+    ).toEqual([{ nonce: SECOND.nonce, createdIn: chainLog[1]!.hash }]);
+    const { chosen, index } = await theProductChooses(written.notes, 300n);
+    expect(chosen.nonce).toBe(SECOND.nonce);
+    expect(index).toBe(chainLog[1]!.index);
+    priv = { notes: written.notes.map((n) => ({ ...n, index: n.nonce === chosen.nonce ? index : NO_INDEX_YET })) };
+    const c = change(0n, 93);
+    const run = await approvedRun([{ to: CAROL, amount: 300n, nonce: 0xfc }], c);
+    await pay(run, c, 0, CAROL, 300n, 0xfc);
+    expect(vaultLedger(vaultState as never).payments).toBe(1n);
+  });
+
+  it('THROUGH THE REBUILD, A CHAIN THAT CANNOT SAY: the recovered note is still written, reported as not spendable yet, and the product refuses it before its money moves', async () => {
+    const c = change(0n, 94);
+    const run = await approvedRun([{ to: ALICE, amount: 250n, nonce: 0xfd }], c);
+    await pay(run, c, 0, ALICE, 250n, 0xfd);
+    const versions = [{ version: 1, notes: [
+      { ...FIRST, createdIn: chainLog[0]!.hash }, { ...SECOND, createdIn: chainLog[1]!.hash },
+    ] }];
+    /* The chain lists only the deposits: the indexer has not caught up with the payout. */
+    const behind = theChain();
+    const lagging = { ...behind, transactions: { of: async () => [chainLog[1]!.hash, chainLog[0]!.hash] } };
+    const { written } = await throughTheRebuild(versions, { payments: [{ spent: SECOND, amount: 250n }] }, lagging);
+    expect(
+      written.notes.map((n) => n.value).sort((a, b) => Number(a - b)),
+      'RED WHEN: a note the chain holds and nothing names the transaction of is left out of the write, so the money is unnamed again',
+    ).toEqual([150n, 400n, 1_000n]);
+    expect(
+      written.notYetSpendable.map((n) => n.value),
+      'RED WHEN: the note is written as ordinary money, with nothing saying a payment cannot spend it',
+    ).toEqual([150n]);
+    expect(written.notYetSpendable[0]!.why).toMatch(/none of the 2 transaction\(s\) the chain lists/);
+    await expect(
+      theProductChooses(written.notes, 120n),
+      'RED WHEN: a transaction nothing established is recorded, so the pre-flight passes a note the spend cannot read',
+    ).rejects.toThrow(/does not record which transaction created it/);
+    expect(written.notes.find((n) => n.value === 150n), 'RED WHEN: a hash is recorded that no transaction answered for').not.toHaveProperty('createdIn');
   });
 
   /* ---------------------------------------------------------------- *

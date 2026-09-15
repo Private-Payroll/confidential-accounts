@@ -23,14 +23,19 @@
  * rebuild that could not explain anything is this machine's ignorance, not a
  * treasury of zero, and the two must never be written down as the same thing.
  */
-import type { PoolRecovery } from '../src/midnight/vault-recovery.js';
+import type { PoolRecovery, NoteDescribedTwice } from '../src/midnight/vault-recovery.js';
+import { nameTheRecord } from '../src/midnight/vault-recovery.js';
+import { theTransactionTheseEventsAreFrom } from '../src/midnight/note-index.js';
+import type { Note } from '../src/midnight/vault-notes.js';
+import type { CreatingTransactionFound } from '../src/midnight/note-index.js';
+import type { Hex } from '../src/core/crypto.js';
 
 /** What the door may do, having looked at what the rebuild came back with. */
 export type RebuildDecision =
   /** The pool already says what the chain says. Writing would change nothing. */
   | { do: 'nothing'; why: string }
   /** There is a difference worth writing, and what it is. */
-  | { do: 'write'; why: string; recovers: number; drops: number; unexplained: number }
+  | { do: 'write'; why: string; recovers: number; drops: number; unexplained: number; records: number }
   /** Something is wrong enough that no write is correct. */
   | { do: 'refuse'; why: string };
 
@@ -64,6 +69,11 @@ export const decideWhetherToWrite = (input: {
   notesTheNewestVersionClaims: number;
   /** Whether the operator asked for notes the chain does not hold to be removed. */
   alsoDropStaleNotes: boolean;
+  /**
+   * How many notes the write would give a creating transaction that no filed
+   * version records - `whatTheRebuildWrites`' `established`. Absent is none.
+   */
+  transactionsEstablished?: number;
 }): RebuildDecision => {
   const r = input.recovery;
   /*
@@ -112,7 +122,14 @@ export const decideWhetherToWrite = (input: {
     };
   }
   const drops = input.alsoDropStaleNotes ? r.stale.length : 0;
-  if (r.recovered.length === 0 && drops === 0) {
+  /*
+   * **A NOTE GAINING ITS CREATING TRANSACTION IS A REASON TO WRITE ON ITS OWN.**
+   * Without it the note is held and cannot be spent; with it a payment can read
+   * its place in the tree. A rebuild that established one and then said
+   * *nothing needed writing* would throw away the one read that made it spendable.
+   */
+  const records = input.transactionsEstablished ?? 0;
+  if (r.recovered.length === 0 && drops === 0 && records === 0) {
     return {
       do: 'nothing',
       why: r.stale.length > 0
@@ -137,10 +154,14 @@ export const decideWhetherToWrite = (input: {
       drops > 0
         ? `${drops} note(s) the pool claims are not on chain and would be refused at the spend`
         : '',
+      records > 0
+        ? `${records} note(s) gain the transaction that created them, which is what lets a payment spend them`
+        : '',
     ].filter(Boolean).join('; '),
     recovers: r.recovered.length,
     drops,
     unexplained: r.unexplained.length,
+    records,
   };
 };
 
@@ -176,12 +197,18 @@ export const decideWhetherToWrite = (input: {
  */
 export const assertNoSignerWouldLoseAccess = (
   wrappedFor: readonly string[], willWrapTo: readonly string[],
+  /**
+   * What is being written, as the sentence names it. The journals are sealed the
+   * same way as the pool and lose a reader the same way, so they ask the same
+   * question; the refusal says which record it is about.
+   */
+  record = 'this pool',
 ): void => {
   const to = new Set(willWrapTo);
   const dropped = [...new Set(wrappedFor)].filter((id) => !to.has(id));
   if (dropped.length === 0) return;
   throw new Error(
-    `this pool is readable by ${dropped.length} signer(s) that the signers file no longer lists `
+    `${record} is readable by ${dropped.length} signer(s) that the signers file no longer lists `
     + `(${dropped.join(', ')}), and writing it would re-seal it to the listed ones only. Their `
     + 'access to the record of this vault\x27s money would end, and this run would report success. '
     + 'Nothing is written. Either add them back to the signers file, or remove them deliberately '
@@ -216,6 +243,147 @@ export const assertThePoolHasNotMovedSinceTheRebuild = (
     + 'reads the chain once more and works out the rebuild from what the pool holds now.');
 };
 
+/* ------------------------------------------------------------------ *
+ * what is written, and whether a payment can spend it
+ * ------------------------------------------------------------------ */
+
+/** A note the rebuild writes that a payment cannot spend yet, and why. */
+export interface NotYetSpendable {
+  readonly nonce: string;
+  readonly value: bigint;
+  readonly why: string;
+}
+
+/**
+ * **THE CREATING TRANSACTION A FILED VERSION RECORDS FOR THIS NOTE, NEWEST
+ * VERSION FIRST.** The newest, because a repair that corrected a wrong hash
+ * filed a newer version than the one it corrected; and not only the newest
+ * holding the note, because a version written without the hash - which every
+ * rebuild before this one wrote - must not hide the one an older version kept.
+ */
+const recordedCreatingTransaction = (
+  versions: readonly { version: number; notes: readonly Note[] }[],
+  note: { nonce: string; token: string; value: bigint },
+): Hex | undefined => {
+  for (const v of [...versions].sort((a, b) => b.version - a.version)) {
+    const same = v.notes.find((n) => n.nonce === note.nonce
+      && n.token === note.token && n.value === note.value && isAHash(n.createdIn));
+    if (same) return same.createdIn;
+  }
+  return undefined;
+};
+
+/**
+ * **A RECORDED VALUE COUNTS ONLY IF IT HAS THE SHAPE A SPEND CAN READ.** A
+ * version filed before that shape was enforced can carry something that is not
+ * a transaction hash, and keeping it would write a note that reads as spendable
+ * and is refused at the spend, after its fees. Such a value is treated as not
+ * recorded, so the chain is asked. The shape is the product's one statement of
+ * it, not a second one written here.
+ */
+const isAHash = (value: Hex | undefined): boolean => {
+  if (value === undefined) return false;
+  try {
+    theTransactionTheseEventsAreFrom([], { hash: value });
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * **THE NOTES THE CHAIN HOLDS THAT NO FILED VERSION RECORDS A CREATING
+ * TRANSACTION FOR** - which is every note a rebuild recovers from a journal,
+ * because a journal is written before the transaction exists. These are what
+ * the chain is asked about before anything is written.
+ */
+export const notesNeedingATransaction = (input: {
+  versions: readonly { version: number; notes: readonly Note[] }[];
+  held: PoolRecovery['held'];
+}): Array<{ nonce: Hex; token: Hex; value: bigint }> =>
+  input.held
+    .filter((n) => recordedCreatingTransaction(input.versions, n) === undefined)
+    .map((n) => ({ nonce: n.nonce, token: n.token, value: n.value }));
+
+/**
+ * **WHAT A REBUILD WRITES, NOTE BY NOTE, AND WHICH OF IT A PAYMENT CANNOT SPEND.**
+ *
+ * Additively: every note the newest version claims, plus every note the chain
+ * holds. With `alsoDropStaleNotes`: the notes the chain holds, and nothing else.
+ *
+ * **EACH NOTE CARRIES FOUR FIELDS AND NO OTHER.** The coin, and the transaction
+ * that created it. Never an index - a spend reads that from the chain when it
+ * spends - and never whatever else a record happened to be carrying.
+ *
+ * **THE TRANSACTION COMES FROM A FILED VERSION FIRST, AND FROM THE CHAIN SECOND.**
+ * This used to be the defect: the notes the chain holds were written over the
+ * newest version's by nonce, taken from whichever version had filed the note
+ * FIRST - so a note whose transaction was recorded later by the repair lost it
+ * again at the next rebuild, and a note whose wrong hash had been corrected got
+ * the wrong one back. Now a version's record is kept, and what the chain
+ * established in this run (`found`) fills only what no version records.
+ *
+ * **A NOTE THE CHAIN HOLDS AND NOTHING NAMES THE TRANSACTION OF IS STILL
+ * WRITTEN**, and listed in `notYetSpendable` with its reason. Leaving it out would
+ * put the money back to being unnameable; writing it is a note the payment path
+ * refuses before its money moves, and says why. The door says so for each one,
+ * so the record does not read as ordinary money to the person who wrote it.
+ */
+export const whatTheRebuildWrites = (input: {
+  versions: readonly { version: number; notes: readonly Note[] }[];
+  held: PoolRecovery['held'];
+  alsoDropStaleNotes: boolean;
+  /** What the chain answered for `notesNeedingATransaction`. Absent notes were not asked. */
+  found: readonly CreatingTransactionFound[];
+}): { notes: Note[]; notYetSpendable: NotYetSpendable[]; established: number } => {
+  if (input.versions.length === 0) {
+    throw new Error('there is no filed version to write a rebuild over, so nothing is written.');
+  }
+  const newest = [...input.versions].sort((a, b) => b.version - a.version)[0]!;
+  const fromTheChain = new Map(input.found.map((f) => [f.nonce as string, f]));
+  let established = 0;
+
+  const written = (n: { nonce: Hex; token: Hex; value: bigint }): Note => {
+    const recorded = recordedCreatingTransaction(input.versions, n);
+    if (recorded !== undefined) return { nonce: n.nonce, token: n.token, value: n.value, createdIn: recorded };
+    const answer = fromTheChain.get(n.nonce);
+    if (answer !== undefined && 'createdIn' in answer) {
+      established += 1;
+      return { nonce: n.nonce, token: n.token, value: n.value, createdIn: answer.createdIn };
+    }
+    return { nonce: n.nonce, token: n.token, value: n.value };
+  };
+
+  const byNonce = new Map<string, Note>();
+  if (!input.alsoDropStaleNotes) {
+    for (const n of newest.notes) byNonce.set(n.nonce, written(n));
+  }
+  const onChain = new Set<string>();
+  for (const n of input.held) {
+    onChain.add(n.nonce);
+    /*
+     * A note in both is already written, once. The two are the same coin: a nonce
+     * two records describe differently is refused before the rebuild answers.
+     */
+    if (byNonce.has(n.nonce)) continue;
+    byNonce.set(n.nonce, written(n));
+  }
+
+  const notYetSpendable: NotYetSpendable[] = [];
+  for (const n of byNonce.values()) {
+    if (n.createdIn !== undefined || !onChain.has(n.nonce)) continue;
+    const answer = fromTheChain.get(n.nonce);
+    notYetSpendable.push({
+      nonce: n.nonce,
+      value: n.value,
+      why: answer !== undefined && 'unresolved' in answer
+        ? answer.unresolved
+        : 'the chain was not asked which transaction created it',
+    });
+  }
+  return { notes: [...byNonce.values()], notYetSpendable, established };
+};
+
 /**
  * **WHAT THE OPERATOR IS TOLD, AND WHY UNEXPLAINED MONEY IS NAMED LOUDEST.**
  *
@@ -227,7 +395,11 @@ export const assertThePoolHasNotMovedSinceTheRebuild = (
  * wallet destroys the money sent to it, and a screen is where somebody copies
  * from.
  */
-export const linesForAnOperator = (r: PoolRecovery): string[] => {
+export const linesForAnOperator = (
+  r: PoolRecovery,
+  /** Notes that would be written and that a payment cannot spend yet. */
+  notYetSpendable: readonly NotYetSpendable[] = [],
+): string[] => {
   const lines = [
     `notes the chain holds and this machine can name        ${r.held.length}`,
     `of those, notes the pool had lost                      ${r.recovered.length}`,
@@ -250,9 +422,26 @@ export const linesForAnOperator = (r: PoolRecovery): string[] => {
   const aNote = (n: { nonce: string; value: bigint }) =>
     `    ${n.nonce.slice(0, 16)}…   ${n.value.toLocaleString()}`;
 
-  if (r.recovered.length > 0) {
+  /*
+   * **"THEY CAN BE SPENT AGAIN" IS SAID ONLY OF NOTES IT IS TRUE OF.** It used to
+   * be said of every recovered note, and a recovered note records no creating
+   * transaction unless one was found, so the sentence was false for exactly the
+   * notes this door exists to bring back.
+   */
+  const stuck = new Set(notYetSpendable.map((n) => n.nonce));
+  const spendable = r.recovered.filter((n) => !stuck.has(n.nonce));
+  if (spendable.length > 0) {
     lines.push('', 'THE POOL HAD LOST THESE AND THE CHAIN STILL HOLDS THEM. They can be spent again:');
-    lines.push(...bounded(r.recovered, aNote));
+    lines.push(...bounded(spendable, aNote));
+  }
+  if (notYetSpendable.length > 0) {
+    lines.push('', 'THESE ARE THE VAULT\x27S AND ON CHAIN, AND A PAYMENT CANNOT SPEND THEM YET.');
+    lines.push('A payment reads a note\x27s place in the chain from the transaction that created it,');
+    lines.push('and nothing names that transaction for these. They are written so they stay named,');
+    lines.push('and a payment that would spend one is refused before its money moves. What resolves');
+    lines.push('it: run this rebuild again once the reason below is gone, or name the transaction');
+    lines.push('that created the note to the repair that records it.');
+    lines.push(...bounded(notYetSpendable, (n) => `${aNote(n)}   ${n.why.slice(0, 300)}`));
   }
   if (r.stale.length > 0) {
     lines.push('', 'THE POOL CLAIMED THESE AND THE CHAIN DOES NOT HOLD THEM. They are spent, or the');
@@ -271,3 +460,26 @@ export const linesForAnOperator = (r: PoolRecovery): string[] => {
   }
   return lines;
 };
+
+/**
+ * **WHERE, ON THIS MACHINE, EACH RECORD A CONTRADICTION NAMES IS.**
+ *
+ * The refusal names a record the way the rebuild knows it - *version 2 of the
+ * pool*, *the payment journal* - and a person acts on a file. So the door prints
+ * the file beside each name, from the same functions that chose the file names.
+ */
+export const whereTheRecordsAre = (
+  refused: NoteDescribedTwice,
+  files: {
+    /** `vaultPoolVersionFile(poolFile, version)`, relative to the tree. */
+    poolVersion: (version: number) => string;
+    depositJournal: string;
+    paymentJournal: string;
+  },
+): string[] => refused.descriptions.map((d) => {
+  const where = d.record.kind === 'pool version'
+    ? files.poolVersion(d.record.version)
+    : `${d.record.kind === 'deposit journal' ? files.depositJournal : files.paymentJournal}`
+      + ' and its numbered versions';
+  return `${nameTheRecord(d.record)}${d.onChain ? ' (the chain holds this one)' : ''}: ${where}`;
+});

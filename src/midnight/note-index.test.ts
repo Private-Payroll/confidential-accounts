@@ -5,9 +5,12 @@ import {
 } from '@midnight-ntwrk/midnight-js-protocol/ledger';
 
 import {
-  NoteIndexRefused, NoteIndexUnreadable, indexForSpend, indexerNoteEvents, noteIndexFrom,
-  recordCreatingTransaction, vaultNoteCommitment, type NoteEvents, type ServedEvent,
+  NoteIndexRefused, NoteIndexUnaskable, NoteIndexUnreadable, creatingTransactionsAmong,
+  establishCreatingTransaction, indexForSpend, indexerNoteEvents, indexerVaultTransactions,
+  noteIndexFrom, recordCreatingTransaction, vaultNoteCommitment,
+  type IndexerSocket, type NoteEvents, type ServedEvent,
 } from './note-index.js';
+import type { Hex } from '../core/crypto.js';
 import type { NotePool } from './vault-ledger.js';
 import { VaultPoolAdvancedSinceRead } from './vault-pool.js';
 import type { Note, VaultNotes } from './vault-notes.js';
@@ -544,5 +547,248 @@ describe('a question the indexer will not take is not a question to ask again', 
     /* RED WHEN an ordinary server error is reported as something reading again cannot fix. */
     expect(later).toBeInstanceOf(NoteIndexUnreadable);
     expect(later).not.toBeInstanceOf(NoteIndexUnaskable);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * a note nobody recorded the transaction of
+ * ------------------------------------------------------------------ */
+
+describe('§7 which transaction created a note nobody wrote the transaction down for', () => {
+  const H = (n: number) => n.toString(16).padStart(2, '0').repeat(32) as Hex;
+  const COIN = { nonce: '5a'.repeat(32) as Hex, token: 'aa'.repeat(32) as Hex, value: 300n };
+  const OTHER = { nonce: '5b'.repeat(32) as Hex, token: 'aa'.repeat(32) as Hex, value: 40n };
+
+  /** A chain: the vault's transactions newest first, and the events each one served. */
+  const chainOf = (txs: Array<{ hash: Hex; events: ServedEvent[] | Error }>) => {
+    const reads: string[] = [];
+    let listings = 0;
+    return {
+      reads,
+      listings: () => listings,
+      transactions: { of: async () => { listings += 1; return txs.map((t) => t.hash); } },
+      events: {
+        eventsOf: async (tx: { hash?: string; identifier?: string }) => {
+          reads.push(String(tx.hash));
+          const t = txs.find((x) => x.hash === tx.hash);
+          if (!t) throw new NoteIndexUnreadable('not held');
+          if (t.events instanceof Error) throw t.events;
+          return t.events;
+        },
+      } satisfies NoteEvents,
+    };
+  };
+
+  it('names the one listed transaction whose events answer all three questions for the note, and no other', async () => {
+    const mine = await vaultNoteCommitment(COIN, VAULT);
+    const chain = chainOf([
+      { hash: H(0x31), events: [output('f0'.repeat(32), 9n, VAULT, H(0x31))] },
+      { hash: H(0x32), events: [input(H(0x32)), output(mine, 616n, VAULT, H(0x32))] },
+      { hash: H(0x33), events: [output('f1'.repeat(32), 2n, VAULT, H(0x33))] },
+    ]);
+    const got = await creatingTransactionsAmong(VAULT as Hex, [COIN], chain);
+    expect(
+      got.found,
+      'RED WHEN: a listed transaction is recorded without its events carrying this note\'s output for this vault -- the first one listed, say -- which makes the note read as healthy until the spend',
+    ).toEqual([{ nonce: COIN.nonce, createdIn: H(0x32) }]);
+    expect(got.listed).toBe(3);
+  });
+
+  it('NEVER records a transaction that carries the commitment for a different contract, and says why', async () => {
+    const mine = await vaultNoteCommitment(COIN, VAULT);
+    const chain = chainOf([{ hash: H(0x41), events: [output(mine, 7n, OTHER_VAULT, H(0x41))] }]);
+    const got = await creatingTransactionsAmong(VAULT as Hex, [COIN], chain);
+    expect(
+      'createdIn' in got.found[0]!,
+      'RED WHEN: the three questions are skipped for a transaction that merely carries the commitment, so an output owned by another contract is recorded as this vault\'s',
+    ).toBe(false);
+    expect(
+      (got.found[0] as { unresolved: string }).unresolved,
+      'RED WHEN: a candidate that carried the commitment and was refused is dropped silently, so the operator is told only that nothing answered',
+    ).toMatch(/carries it and was refused: .*different contract/);
+  });
+
+  it('refuses an answer about a different transaction than the one asked, even when it carries the note', async () => {
+    const mine = await vaultNoteCommitment(COIN, VAULT);
+    const chain = chainOf([{ hash: H(0x42), events: [output(mine, 7n, VAULT, H(0x43))] }]);
+    const got = await creatingTransactionsAmong(VAULT as Hex, [COIN], chain);
+    expect(
+      got.found[0],
+      'RED WHEN: the three questions stop comparing every event\'s transaction with the one asked about, so an answer about another transaction gives this note a hash',
+    ).not.toHaveProperty('createdIn');
+  });
+
+  it('reads newest first and STOPS once every note is answered', async () => {
+    const mine = await vaultNoteCommitment(COIN, VAULT);
+    const chain = chainOf([
+      { hash: H(0x51), events: [output(mine, 3n, VAULT, H(0x51))] },
+      { hash: H(0x52), events: [output('f0'.repeat(32), 1n, VAULT, H(0x52))] },
+      { hash: H(0x53), events: [output('f1'.repeat(32), 0n, VAULT, H(0x53))] },
+    ]);
+    const got = await creatingTransactionsAmong(VAULT as Hex, [COIN], chain);
+    expect(got.found).toEqual([{ nonce: COIN.nonce, createdIn: H(0x51) }]);
+    expect(
+      chain.reads,
+      'RED WHEN: the search reads every transaction the vault has ever had after the note is answered -- one indexer request per payroll payment, for nothing',
+    ).toEqual([H(0x51)]);
+    expect(got.read).toBe(1);
+  });
+
+  it('a transaction that could not be read is skipped, NAMED in what is left unanswered, and the search goes on', async () => {
+    const mine = await vaultNoteCommitment(COIN, VAULT);
+    const chain = chainOf([
+      { hash: H(0x61), events: new NoteIndexUnreadable('the indexer is behind') },
+      { hash: H(0x62), events: [output(mine, 3n, VAULT, H(0x62))] },
+    ]);
+    const got = await creatingTransactionsAmong(VAULT as Hex, [COIN, OTHER], chain);
+    expect(
+      got.found[0],
+      'RED WHEN: one unreadable transaction stops the search, so a note a later transaction answers for is left unspendable',
+    ).toEqual({ nonce: COIN.nonce, createdIn: H(0x62) });
+    const left = (got.found[1] as { unresolved: string }).unresolved;
+    expect(
+      left,
+      'RED WHEN: an unreadable candidate is treated as one that did not create the note, so the reason reads as final when reading again could answer',
+    ).toMatch(/1 of them could not be read, so they were never asked: 6161616161616161… \(the indexer is behind\)/);
+    expect(left).toMatch(/none of the 2 transaction\(s\) the chain lists for this vault answered for it/);
+  });
+
+  it('a list the chain cannot give leaves every note unanswered with the reason, and throws nothing', async () => {
+    const chain = {
+      transactions: { of: async () => { throw new NoteIndexUnaskable('Cannot query field "contractActions"'); } },
+      events: { eventsOf: async () => { throw new Error('never asked'); } },
+    };
+    const got = await creatingTransactionsAmong(VAULT as Hex, [COIN, OTHER], chain)
+      .then((r) => r, (e: Error) => ({ threw: e.message, found: [] as never[] }));
+    expect(
+      got,
+      'RED WHEN: a listing failure throws, so the rebuild stops and the notes it recovered are not written at all',
+    ).not.toHaveProperty('threw');
+    expect(
+      got.found.map((f) => 'unresolved' in f && f.unresolved),
+      'RED WHEN: a listing failure throws, so the rebuild stops and the notes it recovered are not written at all -- money named by a journal and then left unnamed',
+    ).toEqual([
+      expect.stringMatching(/could not list the transactions that acted on this vault \(Cannot query field/),
+      expect.stringMatching(/could not list/),
+    ]);
+  });
+
+  it('asks the chain NOTHING when no note needs asking', async () => {
+    const chain = chainOf([]);
+    const got = await creatingTransactionsAmong(VAULT as Hex, [], chain);
+    expect(got).toEqual({ found: [], listed: 0, read: 0 });
+    expect(chain.listings(), 'RED WHEN: a pool that already names every transaction still costs a listing of the vault\'s whole history').toBe(0);
+  });
+
+  it('does not swallow an error that is not about the chain', async () => {
+    const chain = chainOf([{ hash: H(0x71), events: new TypeError('a bug, not a chain') }]);
+    await expect(
+      creatingTransactionsAmong(VAULT as Hex, [COIN], chain),
+      'RED WHEN: every error is turned into an unanswered note, so a defect in this client reads as the indexer being behind',
+    ).rejects.toThrow(TypeError);
+  });
+
+  it('establishCreatingTransaction is the three questions and the hash, and nothing else', async () => {
+    const mine = await vaultNoteCommitment(COIN, VAULT);
+    expect(establishCreatingTransaction(
+      [output(mine, 12n, VAULT, H(0x81))], { vault: VAULT as Hex, commitment: mine, transaction: { hash: H(0x81) } },
+    )).toEqual({ index: 12n, createdIn: H(0x81) });
+    expect(() => establishCreatingTransaction(
+      [output(mine, 12n, VAULT, H(0x81))], { vault: VAULT as Hex, commitment: mine, transaction: { hash: 'not-a-hash' as Hex } },
+    ), 'RED WHEN: the hash is recorded without the shape a spend can read it in').toThrow(NoteIndexRefused);
+  });
+});
+
+describe('§8 the transactions that acted on a vault, from the indexer', () => {
+  const H = (n: number) => n.toString(16).padStart(2, '0').repeat(32);
+
+  /** A socket that speaks `graphql-transport-ws` from a script, and remembers what it was sent. */
+  const scriptedSocket = (script: (subscribe: any) => unknown[], opts: { ack?: boolean } = {}) => {
+    const sent: any[] = [];
+    let closed = 0;
+    const open = () => {
+      const s: IndexerSocket = {
+        onopen: null, onmessage: null, onerror: null, onclose: null,
+        send: (data: string) => {
+          const m = JSON.parse(data);
+          sent.push(m);
+          const reply = (msgs: unknown[]) => setTimeout(() => {
+            for (const r of msgs) s.onmessage?.({ data: JSON.stringify(r) });
+          }, 0);
+          if (m.type === 'connection_init' && opts.ack !== false) reply([{ type: 'connection_ack' }]);
+          if (m.type === 'subscribe') reply(script(m));
+        },
+        close: () => { closed += 1; },
+      };
+      setTimeout(() => s.onopen?.({}), 0);
+      return s;
+    };
+    return { open, sent, closed: () => closed };
+  };
+  const action = (hash: string) => ({ id: '1', type: 'next', payload: { data: { contractActions: { transaction: { hash } } } } });
+  const latestIs = (hash: string | null) => indexerAnswering(
+    { data: { contractAction: hash === null ? null : { transaction: { hash } } } });
+
+  it('lists every transaction up to the latest one, newest first, and asks from the first block', async () => {
+    const latest = latestIs(H(0x03));
+    const socket = scriptedSocket(() => [action(H(0x01)), action(H(0x02)), action(H(0x02)), action(H(0x03)), action(H(0x04))]);
+    const list = await indexerVaultTransactions('https://i/graphql', 'wss://i/ws', { post: latest.post, open: socket.open })
+      .of(('0x' + VAULT.toUpperCase()) as Hex);
+    expect(
+      list,
+      'RED WHEN: the list is returned oldest first, or carries a duplicate, or runs past the transaction the indexer named as latest',
+    ).toEqual([H(0x03), H(0x02), H(0x01)]);
+    const subscribe = socket.sent.find((m) => m.type === 'subscribe');
+    expect(subscribe.payload.query).toMatch(/contractActions\(address: \$a/);
+    expect(
+      subscribe.payload.variables,
+      'RED WHEN: the subscription starts anywhere but the first block -- omitted, it starts at the latest one and lists nothing that came before',
+    ).toEqual({ a: VAULT, o: { height: 0 } });
+    expect(latest.asked[0].variables).toEqual({ a: VAULT });
+    expect(socket.closed(), 'RED WHEN: the subscription is left open after the answer').toBeGreaterThan(0);
+  });
+
+  it('REFUSES a list that ended before the latest transaction, rather than answering a short one', async () => {
+    const socket = scriptedSocket(() => [action(H(0x01)), { id: '1', type: 'complete' }]);
+    await expect(
+      indexerVaultTransactions('u', 'w', { post: latestIs(H(0x03)).post, open: socket.open }).of(VAULT as Hex),
+      'RED WHEN: a list that never reached the latest transaction is returned, so a note it created is reported as created by none of them',
+    ).rejects.toThrow(/stopped before the latest one \(the subscription ended\), after 1 transaction/);
+  });
+
+  it('a list that never comes is "could not read" after the time allowed', async () => {
+    const socket = scriptedSocket(() => []);
+    const failed = await indexerVaultTransactions('u', 'w', { post: latestIs(H(0x03)).post, open: socket.open, timeoutMs: 30 })
+      .of(VAULT as Hex).then(() => null, (e: Error) => e);
+    expect(failed, 'RED WHEN: a silent indexer hangs the rebuild for ever').toBeInstanceOf(NoteIndexUnreadable);
+    expect((failed as Error).message).toMatch(/no answer within/);
+  });
+
+  it('a question the indexer will not take is the third answer, over either transport', async () => {
+    const socket = scriptedSocket(() => [{ id: '1', type: 'error', payload: [{ message: 'Unknown argument "offset" on field "contractActions".' }] }]);
+    const failed = await indexerVaultTransactions('u', 'w', { post: latestIs(H(0x03)).post, open: socket.open })
+      .of(VAULT as Hex).then(() => null, (e: Error) => e);
+    expect(failed, 'RED WHEN: a schema the client is out of step with is reported as the chain being behind').toBeInstanceOf(NoteIndexUnaskable);
+
+    const refusingHttp = indexerAnswering({ errors: [{ message: 'Cannot query field "contractAction" on type "Query".' }] });
+    const early = await indexerVaultTransactions('u', 'w', { post: refusingHttp.post, open: socket.open })
+      .of(VAULT as Hex).then(() => null, (e: Error) => e);
+    expect(early).toBeInstanceOf(NoteIndexUnaskable);
+  });
+
+  it('no latest transaction, or a malformed hash anywhere, is "could not read" and lists nothing', async () => {
+    const never = scriptedSocket(() => [action(H(0x03))]);
+    await expect(indexerVaultTransactions('u', 'w', { post: latestIs(null).post, open: never.open }).of(VAULT as Hex))
+      .rejects.toThrow(NoteIndexUnreadable);
+    expect(never.sent, 'RED WHEN: the subscription is opened for a vault the indexer says has no transaction').toHaveLength(0);
+    await expect(
+      indexerVaultTransactions('u', 'w', { post: latestIs('0x').post, open: never.open, timeoutMs: 50 }).of(VAULT as Hex),
+      'RED WHEN: a latest transaction with no usable hash is accepted, so nothing can tell when the list is complete',
+    ).rejects.toThrow(/without a hash of sixty-four hex characters/);
+    const bad = scriptedSocket(() => [action('abc'), action(H(0x03))]);
+    await expect(
+      indexerVaultTransactions('u', 'w', { post: latestIs(H(0x03)).post, open: bad.open }).of(VAULT as Hex),
+      'RED WHEN: a listed transaction with no usable hash is passed on as a candidate',
+    ).rejects.toThrow(/a transaction without a hash of sixty-four hex characters/);
   });
 });
