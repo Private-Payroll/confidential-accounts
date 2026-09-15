@@ -120,6 +120,23 @@ export const changeNonceOf = (spentNonce: Uint8Array): Uint8Array =>
     FIELD_PAIR, [CHANGE_DOMAIN(), degradeToTransient(spentNonce)]));
 
 /**
+ * **THE NOTE THAT STAYS AFTER `amount` LEAVES `spent`, OR NOTHING WHEN THE
+ * NOTE IS SPENT EXACTLY.** `payout` inserts a change coin only
+ * `if (result.change.is_some)`, so a note proposed for an exact spend would be
+ * one the chain does not have -- the divergence that makes a pool unspendable.
+ *
+ * ONE function, because three places in `replayVault` need it -- a payout, a
+ * split's remainder and a journalled attempt -- and three spellings of
+ * `value - amount` beside three spellings of the nonce derivation is a second
+ * implementation of the rule the money depends on, which is the failure this
+ * project has paid for most often.
+ */
+export const changeNoteOf = (spent: VaultCoin, amount: bigint): VaultCoin | undefined =>
+  amount < spent.value
+    ? { nonce: toHex(changeNonceOf(fromHex(spent.nonce))), token: spent.token, value: spent.value - amount }
+    : undefined;
+
+/**
  * The nonce the coin that LEAVES carries — a payout's payee coin, a split's
  * requested piece — given the nonce it was sent from.
  *
@@ -208,7 +225,28 @@ export type VaultEvent =
   /** One payee of an approved run. `spent` is the nonce of the note paid from. */
   | { kind: 'payout'; spent: Hex; amount: bigint }
   /** Housekeeping: one note into two, both kept. `amount` is the piece asked for. */
-  | { kind: 'split'; spent: Hex; amount: bigint };
+  | { kind: 'split'; spent: Hex; amount: bigint }
+  /**
+   * **A PAYOUT THAT WAS ATTEMPTED, AND MAY OR MAY NOT HAVE LANDED.** Written by
+   * the payment's own journal BEFORE its call, which is the only moment the
+   * amount is known to anybody. `spent` is the note the payment was about to
+   * spend, WHOLE, as the pool held it at that moment -- the journal line
+   * carries it, so the replay derives from the line and looks nothing up.
+   *
+   * It differs from `payout` in two things and they are one rule: **it retires
+   * nothing and it records nothing.** A `payout` is a claim that the note was
+   * spent, so the replay drops it, refuses a second spend of it, and lets later
+   * events spend its change. An attempt is a claim that a call was MADE -- a
+   * journal holds one for every call, landed or not, and a line for a call the
+   * chain refused stays there for ever. So the change note it would have made
+   * is PROPOSED to the chain and nothing else: it does not become a note later
+   * events can spend, and it does not become the value of that nonce for any
+   * later event to read. Two attempts against one note, or against a note and
+   * then its change, are each derived from their own line, and the chain says
+   * which of the results it holds. That is the same question the whole file
+   * asks.
+   */
+  | { kind: 'payout-attempt'; spent: VaultCoin; amount: bigint };
 
 /** A note, with wherever the chain filed it if that is known. */
 export interface PoolNote extends VaultCoin {
@@ -324,6 +362,17 @@ export const replayVault = (input: PoolRecoveryInput): PoolRecovery => {
     everKnown.set(commitmentOf(coin), coin);
     live.set(coin.nonce, coin);
   };
+  /**
+   * **PROPOSED AND NOT REMEMBERED.** Offered to the chain under its commitment,
+   * and written into nothing any later event reads. An attempt's change note
+   * goes here: `live` is keyed by nonce and holds one value per nonce, so an
+   * attempt that wrote there would leave the LAST attempt's remainder as what
+   * that nonce is worth -- and a journal line for a call the chain refused is
+   * the ordinary case after a lost pool write, not a rare one. A later line
+   * spending that change note would then be measured against a value the chain
+   * never held, and refused as wrong while being right.
+   */
+  const propose = (coin: VaultCoin) => { everKnown.set(commitmentOf(coin), coin); };
 
   const spend = (nonce: Hex, amount: bigint, at: number, what: string): VaultCoin => {
     const note = live.get(nonce);
@@ -364,17 +413,36 @@ export const replayVault = (input: PoolRecoveryInput): PoolRecovery => {
       const note = spend(e.spent, e.amount, i, 'pays');
       paid.push(paidCoinOf(e.spent, note.token, e.amount));
       /*
-       * NO CHANGE COIN WHEN THE NOTE IS SPENT EXACTLY. `payout` inserts only
-       * `if (result.change.is_some)`, so a pool entry here would be a note the
-       * chain does not have — the divergence that makes a pool unspendable.
+       * NO CHANGE COIN WHEN THE NOTE IS SPENT EXACTLY -- `changeNoteOf` answers
+       * nothing, and nothing is proposed. See its note.
        */
-      if (e.amount < note.value) {
-        remember({
-          nonce: toHex(changeNonceOf(fromHex(e.spent))),
-          token: note.token,
-          value: note.value - e.amount,
-        });
+      const kept = changeNoteOf(note, e.amount);
+      if (kept) remember(kept);
+      return;
+    }
+
+    if (e.kind === 'payout-attempt') {
+      /*
+       * **PROPOSED, NOT APPLIED, AND DERIVED FROM ITS OWN LINE.** The note it
+       * names is not retired, a second attempt against the same note is not
+       * refused, and nothing is looked up: the line carries the note whole. A
+       * journal records calls that were MADE and at most one of them landed, so
+       * what is refused is only a line that cannot describe any call -- an
+       * amount the contract would not have taken. Past that nothing derived is
+       * real, and the refusal is the same one `spend` gives, for the same
+       * reason. A line whose note the pool never held is not refused here: its
+       * change note has a commitment the chain does not hold, which is the
+       * chain refusing it, loudly, as an unexplained commitment at most.
+       */
+      if (e.amount <= 0n) throw new Error(`event ${i} attempts to pay ${e.amount}, which is not a payment`);
+      if (e.amount > e.spent.value) {
+        throw new Error(
+          `event ${i} attempts to pay ${e.amount} out of note ${e.spent.nonce}, which the line says ` +
+          `holds ${e.spent.value}. The contract refuses that, so this attempt cannot have landed ` +
+          'and the journal line is wrong. Nothing is derived past this point.');
       }
+      const kept = changeNoteOf(e.spent, e.amount);
+      if (kept) propose(kept);
       return;
     }
 
@@ -393,11 +461,8 @@ export const replayVault = (input: PoolRecoveryInput): PoolRecovery => {
     remember({
       nonce: toHex(sentNonceOf(fromHex(e.spent))), token: note.token, value: e.amount,
     });
-    remember({
-      nonce: toHex(changeNonceOf(fromHex(e.spent))),
-      token: note.token,
-      value: note.value - e.amount,
-    });
+    /* The contract asserted `amount < value` just above, so the remainder is never absent. */
+    remember(changeNoteOf(note, e.amount)!);
   });
 
   /* What the pool believed, by commitment, so "did the pool know" is a lookup. */
@@ -450,7 +515,7 @@ export const replayVault = (input: PoolRecoveryInput): PoolRecovery => {
  * depends on, which is the failure this project has paid for most often.
  *
  * ------------------------------------------------------------------------
- * **WHAT IT CANNOT RECOVER, SAID PLAINLY BECAUSE THE GAP IS THE POINT.**
+ * **WHAT THE VERSIONS ALONE CANNOT RECOVER, AND WHAT THE JOURNALS ADD.**
  *
  * A note that was never written to ANY version is not in the union, so it is not
  * proposed, and it comes back as an unexplained commitment rather than as money.
@@ -462,7 +527,29 @@ export const replayVault = (input: PoolRecoveryInput): PoolRecovery => {
  * an amount only the payment knew, and a commitment cannot be inverted to find
  * it. **Nothing here guesses.** Closing that needs the amount written down
  * before the money moves, which is a journal and not a derivation.
+ *
+ * **THE JOURNALS ARE THAT, AND THIS IS WHERE THEY ARE READ.** Each door that
+ * moves a vault's money writes what it is ABOUT to do, sealed, before the call:
+ * a deposit's whole coin; a payment's spent note and the amount. `attempted`
+ * carries both. A journalled deposit is one more coin in the union, proposed
+ * exactly like a filed one. A journalled payment becomes a `payout-attempt`
+ * event, and `replayVault` derives the change note from it -- **here, and not
+ * in this function, so the derivation still exists in one place.** A journal
+ * says what was attempted, never what landed: a journalled note the chain does
+ * not hold is not in `held`, is never written, and is not money. The chain
+ * chooses, as it does for everything else this function proposes.
  */
+export interface AttemptedVaultCalls {
+  /** Deposits journalled before their call: the coin each one would have made. */
+  readonly deposits: readonly VaultCoin[];
+  /**
+   * Payments journalled before their call: the note each was about to spend,
+   * whole, and how much of it was leaving. The note is carried whole so an
+   * attempt can be named even when no filed version holds the note it spent.
+   */
+  readonly payments: readonly { spent: VaultCoin; amount: bigint }[];
+}
+
 export const reconcileVaultPool = (input: {
   /** The vault's own address, hex. Part of every one of its commitments. */
   vault: Hex;
@@ -474,6 +561,8 @@ export const reconcileVaultPool = (input: {
    * is proposed to the chain.
    */
   versions: readonly { version: number; notes: readonly VaultCoin[] }[];
+  /** What the doors journalled before moving money. Absent means no journal was read. */
+  attempted?: AttemptedVaultCalls;
   circuits: VaultNoteCircuits;
   indexOf?: (commitment: Hex) => bigint | undefined;
 }): PoolRecovery => {
@@ -498,12 +587,33 @@ export const reconcileVaultPool = (input: {
    */
   const everFiled = new Map<Hex, VaultCoin>();
   const contradictions: VaultCoin[] = [];
-  for (const v of input.versions) {
-    for (const note of v.notes) {
-      const already = everFiled.get(note.nonce);
-      if (!already) { everFiled.set(note.nonce, note); continue; }
-      if (already.token !== note.token || already.value !== note.value) contradictions.push(note);
-    }
+  const file = (note: VaultCoin) => {
+    const already = everFiled.get(note.nonce);
+    if (!already) { everFiled.set(note.nonce, note); return; }
+    if (already.token !== note.token || already.value !== note.value) contradictions.push(note);
+  };
+  for (const v of input.versions) for (const note of v.notes) file(note);
+  /*
+   * **JOURNALLED COINS JOIN THE UNION UNDER THE SAME RULE.** A deposit's journal
+   * line is the coin it was about to make; a payment's is the coin it was about
+   * to spend. Either one usually duplicates a filed note -- the deposit landed
+   * and was written, the spent note was in the pool -- and the rule above makes a
+   * duplicate free and a disagreement a contradiction, which is exactly right for
+   * a record that claims to describe the same note.
+   */
+  const attempted = input.attempted ?? { deposits: [], payments: [] };
+  for (const coin of attempted.deposits) file(coin);
+  for (const a of attempted.payments) file(a.spent);
+  /*
+   * One event per distinct attempt. The same payment journalled twice -- a door
+   * run again after a stop -- is one proposal, not a contradiction; two attempts
+   * of different amounts against one note are two proposals, and `replayVault`
+   * accepts both by design (see `payout-attempt`). Each carries its own note
+   * whole, exactly as the line recorded it.
+   */
+  const attempts = new Map<string, { spent: VaultCoin; amount: bigint }>();
+  for (const a of attempted.payments) {
+    attempts.set(`${a.spent.nonce}:${a.spent.token}:${a.spent.value}:${a.amount}`, { spent: a.spent, amount: a.amount });
   }
 
   return replayVault({
@@ -518,8 +628,15 @@ export const reconcileVaultPool = (input: {
      * coin. Whether it arrived by deposit, as change, or as a split's remainder
      * is not a question the chain is being asked: the question is whether the
      * chain still holds it.
+     *
+     * **THE ATTEMPTS COME LAST.** They look nothing up, so the order is not
+     * load-bearing for them; it is for the deposits, which refuse a nonce that
+     * is already live, and an attempt makes nothing live.
      */
-    history: [...everFiled.values(), ...contradictions].map((coin) => ({ kind: 'deposit' as const, coin })),
+    history: [
+      ...[...everFiled.values(), ...contradictions].map((coin) => ({ kind: 'deposit' as const, coin })),
+      ...[...attempts.values()].map((a) => ({ kind: 'payout-attempt' as const, ...a })),
+    ],
     circuits: input.circuits,
     ...(input.indexOf === undefined ? {} : { indexOf: input.indexOf }),
   });
