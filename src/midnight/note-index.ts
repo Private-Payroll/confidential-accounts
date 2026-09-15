@@ -336,6 +336,34 @@ export function noteIndexFrom(
 }
 
 /**
+ * **WHETHER ONE TRANSACTION CREATED ONE NOTE, AND IF SO ITS HASH: THE ONLY
+ * PLACE THAT IS DECIDED.**
+ *
+ * The three questions, asked of one transaction's events: exactly one output
+ * carries the note's commitment, that output is owned by this vault, and every
+ * event is that transaction's. Then the transaction's hash, in the one shape a
+ * spend can read it in.
+ *
+ * **EVERY WRITER OF A NOTE'S `createdIn` COMES THROUGH HERE.** A deposit whose
+ * call reported no hash, the repair that is handed a transaction by name, and a
+ * rebuild that has recovered a note this machine never finished writing. They
+ * used to spell the composition out each time, and a hash taken any other way
+ * - the first event's, say - makes the note read as healthy in the pool, on the
+ * screen and in the pre-flight, and be refused at the spend after a proposal
+ * and its approvals have been paid for.
+ *
+ * The commitment is the caller's, from `vaultNoteCommitment`, so a caller asking
+ * about one note and many transactions computes it once.
+ */
+export function establishCreatingTransaction(
+  served: ReadonlyArray<ServedEvent>,
+  want: { readonly vault: Hex; readonly commitment: string; readonly transaction: CreatingTransaction },
+): { index: ChainReadIndex; createdIn: Hex } {
+  const index = noteIndexFrom(served, want);
+  return { index, createdIn: theTransactionTheseEventsAreFrom(served, want.transaction) };
+}
+
+/**
  * **THE INDEX A SPEND USES, READ FROM THE CHAIN AT THE MOMENT OF THE SPEND.**
  *
  * Never taken from the pool. The pool records which transaction created the
@@ -398,14 +426,15 @@ export async function recordCreatingTransaction(
 
   const commitment = await vaultNoteCommitment(before, vault);
   const served = await events.eventsOf(tx);
-  const index = noteIndexFrom(served, { vault, commitment, transaction: tx });
   /*
-   * The same value `noteIndexFrom` compared every event against, derived the
-   * same way and shaped by the same guard rather than read off the array a
-   * second time. It used to be taken straight from `served[0]`, which is the
-   * one value on this path that nothing had checked.
+   * The index and the hash come out of one composition, the one every writer of
+   * `createdIn` uses. The hash is the value every event was compared against,
+   * shaped by the same guard, never read off the array a second time: it used
+   * to be taken straight from `served[0]`, which was the one value on this path
+   * that nothing had checked.
    */
-  const createdIn = theTransactionTheseEventsAreFrom(served, tx);
+  const { index, createdIn } = establishCreatingTransaction(
+    served, { vault, commitment, transaction: tx });
 
   const now = await pool.load(vault);
   const current = now.notes.find((n) => n.nonce === nonce);
@@ -518,6 +547,308 @@ export function indexerNoteEvents(
             + 'that answers, so nothing is recorded.', { cause });
         }
         return { transactionHash: String(event.source.transactionHash), details: event.content };
+      });
+    },
+  };
+}
+
+/* ------------------------------------------------------------------ *
+ * a note nobody recorded the transaction of
+ * ------------------------------------------------------------------ */
+
+/**
+ * **EVERY TRANSACTION THAT DEPLOYED OR CALLED ONE VAULT, AS THE CHAIN NAMES
+ * THEM.** The indexer, in production.
+ */
+export interface VaultTransactions {
+  /**
+   * Newest first, by hash. Throws `NoteIndexUnreadable` when the chain cannot
+   * answer yet and `NoteIndexUnaskable` when the question will not be taken, and
+   * never answers a list it knows to be shorter than the one the chain holds.
+   */
+  of(vault: Hex): Promise<ReadonlyArray<Hex>>;
+}
+
+/** What the search found for one note: its creating transaction, or why there is none. */
+export type CreatingTransactionFound =
+  | { readonly nonce: Hex; readonly createdIn: Hex }
+  | { readonly nonce: Hex; readonly unresolved: string };
+
+/**
+ * **WHICH TRANSACTION CREATED EACH OF THESE NOTES, WHEN NOBODY WROTE IT DOWN.**
+ *
+ * A note a rebuild recovers - a deposit whose pool write was lost, or the change
+ * of a payment whose write was lost - is named from what this machine journalled
+ * before the call, and a journal line is written before the transaction exists,
+ * so it cannot carry the hash. A note without one cannot be spent. But the
+ * transaction that created it is not unknowable: **only a call to the vault
+ * changes the vault's note set**, so it is one of the transactions the chain
+ * lists as having acted on this vault.
+ *
+ * **THE LIST ONLY PROPOSES. NOTHING ON IT IS BELIEVED.** Each listed transaction
+ * is read and put to `establishCreatingTransaction`, the same three questions
+ * every other writer of `createdIn` asks, and a note is given a hash only when a
+ * transaction answers all three for it. So this is not a second way of
+ * establishing which transaction created a note: it is a second way of finding
+ * candidates to ask the one way about. A wrong list costs reads and ends in
+ * `unresolved`; it cannot put a hash on a note.
+ *
+ * Newest first, and it stops reading once every note is answered: a recovered
+ * note is almost always from the latest calls. When two transactions both carry
+ * a note's commitment, the newest one that answers is recorded; either is a
+ * transaction that created an output with this commitment for this vault, which
+ * is exactly what the other writers establish and no more.
+ *
+ * **IT NEVER THROWS FOR THE CHAIN'S SAKE.** A list that cannot be read, or a
+ * transaction that cannot, becomes a reason on the notes it leaves unanswered -
+ * because the caller's job is to write what it recovered either way, and a note
+ * written without its transaction is refused before any fee, while a note not
+ * written at all is money nobody can name.
+ */
+export async function creatingTransactionsAmong(
+  vault: Hex,
+  notes: ReadonlyArray<NoteCoin>,
+  chain: { readonly transactions: VaultTransactions; readonly events: NoteEvents },
+): Promise<{ found: CreatingTransactionFound[]; listed: number; read: number }> {
+  if (notes.length === 0) return { found: [], listed: 0, read: 0 };
+
+  const unresolvedAll = (why: string, listed: number, read: number) => ({
+    found: notes.map((n): CreatingTransactionFound => ({ nonce: n.nonce, unresolved: why })),
+    listed,
+    read,
+  });
+
+  let listed: ReadonlyArray<Hex>;
+  try {
+    listed = await chain.transactions.of(vault);
+  } catch (cause) {
+    if (!(cause instanceof NoteIndexUnreadable || cause instanceof NoteIndexUnaskable)) throw cause;
+    return unresolvedAll(
+      `the chain could not list the transactions that acted on this vault (${(cause as Error).message})`,
+      0, 0);
+  }
+
+  const open = new Map<Hex, { coin: NoteCoin; commitment: string; refused: string[] }>();
+  for (const n of notes) {
+    open.set(n.nonce, { coin: n, commitment: await vaultNoteCommitment(n, vault), refused: [] });
+  }
+  const answered = new Map<Hex, Hex>();
+  const unreadable: string[] = [];
+  let read = 0;
+
+  for (const hash of listed) {
+    if (open.size === 0) break;
+    const transaction = { hash };
+    let served: ReadonlyArray<ServedEvent>;
+    try {
+      served = await chain.events.eventsOf(transaction);
+      read += 1;
+    } catch (cause) {
+      if (!(cause instanceof NoteIndexUnreadable || cause instanceof NoteIndexUnaskable)) throw cause;
+      /*
+       * **A TRANSACTION THAT COULD NOT BE READ IS NOT ONE THAT DID NOT CREATE
+       * THE NOTE**, so it is remembered: a note left unanswered says that one of
+       * its candidates was never asked.
+       */
+      unreadable.push(`${hash.slice(0, 16)}… (${(cause as Error).message})`);
+      continue;
+    }
+    for (const [nonce, want] of [...open]) {
+      /*
+       * **ONLY A TRANSACTION THAT CARRIES THE COMMITMENT IS PUT TO THE THREE
+       * QUESTIONS.** This decides nothing about the note - the questions do -
+       * it decides whether a refusal is worth reporting. A transaction with no
+       * output of this commitment did not create it, which is the answer for
+       * every call but one and not news; a transaction that carries it and is
+       * still refused is, and its reason is kept for the operator.
+       */
+      const carries = served.some((e) => e.details.tag === 'zswapOutput'
+        && typeof e.details.commitment === 'string'
+        && bare(e.details.commitment) === bare(want.commitment));
+      if (!carries) continue;
+      try {
+        const { createdIn } = establishCreatingTransaction(
+          served, { vault, commitment: want.commitment, transaction });
+        answered.set(nonce, createdIn);
+        open.delete(nonce);
+      } catch (cause) {
+        if (!(cause instanceof NoteIndexRefused || cause instanceof NoteIndexUnreadable)) throw cause;
+        want.refused.push(`${hash.slice(0, 16)}… carries it and was refused: ${(cause as Error).message}`);
+      }
+    }
+  }
+
+  const found = notes.map((n): CreatingTransactionFound => {
+    const createdIn = answered.get(n.nonce);
+    if (createdIn !== undefined) return { nonce: n.nonce, createdIn };
+    const want = open.get(n.nonce)!;
+    const parts = [
+      `none of the ${listed.length} transaction(s) the chain lists for this vault answered for it`,
+      ...(want.refused.length > 0 ? [want.refused.join('; ')] : []),
+      ...(unreadable.length > 0
+        ? [`${unreadable.length} of them could not be read, so they were never asked: ${unreadable.slice(0, 3).join('; ')}`]
+        : []),
+    ];
+    return { nonce: n.nonce, unresolved: parts.join('. ') };
+  });
+  return { found, listed: listed.length, read };
+}
+
+/** The part of a WebSocket this file uses. The global one, in Node and in a browser. */
+export interface IndexerSocket {
+  send(data: string): void;
+  close(): void;
+  onopen: ((ev: unknown) => void) | null;
+  onmessage: ((ev: { data: unknown }) => void) | null;
+  onerror: ((ev: unknown) => void) | null;
+  onclose: ((ev: unknown) => void) | null;
+}
+
+const HEX_HASH = /^[0-9a-f]{64}$/;
+
+/**
+ * **THE TRANSACTIONS THAT ACTED ON A VAULT, FROM THE INDEXER, ALL OF THEM.**
+ *
+ * Two questions. The newest action is asked for over HTTP, which names the
+ * transaction the list has to reach. Then every action from the start of the
+ * chain is asked for over the indexer's subscription - the one query that lists
+ * a contract's actions rather than answering for one block - and the list is
+ * taken as complete only when that newest transaction has come past.
+ *
+ * **A LIST THAT DID NOT REACH IT IS AN ERROR, NEVER A SHORT LIST.** A short list
+ * is not dangerous here (nothing on it is believed), but it would answer
+ * *"no transaction created this note"* about a note the chain holds, and that
+ * is a sentence that sends somebody to the wrong place.
+ */
+export function indexerVaultTransactions(
+  indexerUrl: string,
+  indexerWsUrl: string,
+  deps: {
+    post?: typeof fetch;
+    open?: (url: string, protocol: string) => IndexerSocket;
+    timeoutMs?: number;
+  } = {},
+): VaultTransactions {
+  const post = deps.post ?? fetch;
+  const open = deps.open
+    ?? ((url: string, protocol: string) => new (globalThis as any).WebSocket(url, protocol) as IndexerSocket);
+  const timeoutMs = deps.timeoutMs ?? 60_000;
+
+  const newest = async (vault: Hex): Promise<Hex> => {
+    let body: any;
+    try {
+      const res = await post(indexerUrl, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          query: 'query ($a: HexEncoded!) { contractAction(address: $a) { transaction { hash } } }',
+          variables: { a: bare(vault) },
+        }),
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!res.ok) throw new Error(`the indexer answered HTTP ${res.status}`);
+      body = await res.json();
+    } catch (cause) {
+      throw new NoteIndexUnreadable(
+        `the indexer at ${indexerUrl} could not be asked for this vault's latest transaction `
+        + `(${(cause as Error)?.message ?? String(cause)}). Check this machine can reach the `
+        + 'indexer, then read again.', { cause });
+    }
+    if (Array.isArray(body?.errors) && body.errors.length > 0) {
+      const said = everyThingSaid(body.errors);
+      throw theQuestionCannotBeAsked(body.errors)
+        ? new NoteIndexUnaskable(
+          `the indexer will not take the question for this vault's latest transaction: ${said}. `
+          + 'Asking again changes nothing; this client and that indexer are out of step.')
+        : new NoteIndexUnreadable(`the indexer refused the question for this vault's latest transaction: ${said}.`);
+    }
+    const hash = bare(String(body?.data?.contractAction?.transaction?.hash ?? ''));
+    if (body?.data?.contractAction == null) {
+      throw new NoteIndexUnreadable(
+        'the indexer holds no transaction for this vault. A vault the node has just finalised can '
+        + 'be missing from the indexer for a moment; read again shortly.');
+    }
+    if (!HEX_HASH.test(hash)) {
+      throw new NoteIndexUnreadable(
+        'the indexer named this vault\x27s latest transaction without a hash of sixty-four hex '
+        + 'characters, so there is nothing to know the list is complete by. Read again.');
+    }
+    return hash as Hex;
+  };
+
+  return {
+    async of(vault) {
+      const last = await newest(vault);
+      return new Promise<ReadonlyArray<Hex>>((resolve, reject) => {
+        const seen: Hex[] = [];
+        let done = false;
+        let socket: IndexerSocket;
+        const finish = (outcome: { list: Hex[] } | { error: Error }) => {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          try { socket.close(); } catch { /* the answer is already decided */ }
+          if ('list' in outcome) resolve(outcome.list); else reject(outcome.error);
+        };
+        const short = (why: string) => finish({
+          error: new NoteIndexUnreadable(
+            `the indexer's list of this vault's transactions stopped before the latest one (${why}), `
+            + `after ${seen.length} transaction(s). A list known to be short is not used. Read again.`),
+        });
+        const timer = setTimeout(() => short(`no answer within ${Math.round(timeoutMs / 1000)}s`), timeoutMs);
+        try {
+          socket = open(indexerWsUrl, 'graphql-transport-ws');
+        } catch (cause) {
+          clearTimeout(timer);
+          done = true;
+          reject(new NoteIndexUnreadable(
+            `the indexer's subscription at ${indexerWsUrl} could not be opened `
+            + `(${(cause as Error)?.message ?? String(cause)}). Read again.`, { cause }));
+          return;
+        }
+        socket.onopen = () => socket.send(JSON.stringify({ type: 'connection_init', payload: {} }));
+        socket.onerror = () => short('the connection failed');
+        socket.onclose = () => short('the indexer closed the connection');
+        socket.onmessage = (ev) => {
+          let m: any;
+          try { m = JSON.parse(String(ev.data)); } catch { short('an answer that is not JSON'); return; }
+          if (m?.type === 'connection_ack') {
+            socket.send(JSON.stringify({
+              id: '1',
+              type: 'subscribe',
+              payload: {
+                query: 'subscription ($a: HexEncoded!, $o: BlockOffset) { contractActions(address: $a, '
+                  + 'offset: $o) { transaction { hash } } }',
+                /* From the first block: an address is not acted on before it is deployed. */
+                variables: { a: bare(vault), o: { height: 0 } },
+              },
+            }));
+            return;
+          }
+          if (m?.type === 'error' || (m?.type === 'next' && Array.isArray(m.payload?.errors) && m.payload.errors.length > 0)) {
+            const errors = Array.isArray(m.payload) ? m.payload : (m.payload?.errors ?? []);
+            const said = everyThingSaid(errors);
+            finish({
+              error: theQuestionCannotBeAsked(errors)
+                ? new NoteIndexUnaskable(
+                  `the indexer will not take the question for this vault's transactions: ${said}. `
+                  + 'Asking again changes nothing; this client and that indexer are out of step.')
+                : new NoteIndexUnreadable(`the indexer refused the question for this vault's transactions: ${said}.`),
+            });
+            return;
+          }
+          if (m?.type === 'next') {
+            const hash = bare(String(m.payload?.data?.contractActions?.transaction?.hash ?? ''));
+            if (!HEX_HASH.test(hash)) {
+              short('a transaction without a hash of sixty-four hex characters');
+              return;
+            }
+            if (!seen.includes(hash as Hex)) seen.push(hash as Hex);
+            if (hash === last) finish({ list: [...seen].reverse() });
+            return;
+          }
+          if (m?.type === 'complete') short('the subscription ended');
+        };
       });
     },
   };

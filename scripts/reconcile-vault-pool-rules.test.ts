@@ -11,8 +11,11 @@ import { describe, it, expect } from 'vitest';
 import {
   decideWhetherToWrite, assertNoSignerWouldLoseAccess,
   assertThePoolHasNotMovedSinceTheRebuild, linesForAnOperator,
+  notesNeedingATransaction, whatTheRebuildWrites, whereTheRecordsAre,
 } from './reconcile-vault-pool-rules.js';
-import type { PoolRecovery } from '../src/midnight/vault-recovery.js';
+import { NoteDescribedTwice, type PoolRecovery } from '../src/midnight/vault-recovery.js';
+import type { Note } from '../src/midnight/vault-notes.js';
+import type { Hex } from '../src/core/crypto.js';
 
 const note = (n: string, value: bigint) => ({
   nonce: n.repeat(32), token: 'aa'.repeat(32), value, commitment: n.repeat(32),
@@ -294,5 +297,207 @@ describe('what the operator is shown', () => {
       lines.filter((l) => l.includes('and 22 more')),
       'RED WHEN: a list is cut short without saying so, which under-reports how much is wrong -- and a count lower than the number of lists lets one of them do it silently',
     ).toHaveLength(3);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * what is written, note by note, and whether a payment can spend it
+ * ------------------------------------------------------------------ */
+
+describe('what a rebuild writes, and whether each note it writes can be spent', () => {
+  const TX_OLD = '0a'.repeat(32) as Hex;
+  const TX_NEW = '0b'.repeat(32) as Hex;
+  const TX_CHAIN = '0c'.repeat(32) as Hex;
+  const coin = (n: string, value: bigint, createdIn?: Hex): Note => ({
+    nonce: n.repeat(32) as Hex, token: 'aa'.repeat(32) as Hex, value, ...(createdIn ? { createdIn } : {}),
+  });
+  const heldAs = (c: Note) => ({ nonce: c.nonce, token: c.token, value: c.value, commitment: 'cc'.repeat(32) as Hex });
+
+  it('KEEPS the transaction a later version recorded, rather than taking the note from the version that filed it first', () => {
+    /*
+     * The note was filed at v1 without its transaction; the repair recorded it at v2.
+     * The rebuild's held note is v1's object, because the union keeps the first
+     * filing of a nonce. The door used to write that object over v2's.
+     */
+    const versions = [
+      { version: 1, notes: [coin('11', 500n)] },
+      { version: 2, notes: [coin('11', 500n, TX_NEW)] },
+    ];
+    const w = whatTheRebuildWrites({
+      versions, held: [heldAs(coin('11', 500n))], alsoDropStaleNotes: false, found: [],
+    });
+    expect(
+      w.notes,
+      'RED WHEN: a rebuild writes the held note over the newest version\'s entry, so a transaction the repair recorded is lost again and the note is refused at the next payment',
+    ).toEqual([coin('11', 500n, TX_NEW)]);
+    expect(w.notYetSpendable).toEqual([]);
+    expect(w.established).toBe(0);
+  });
+
+  it('takes a CORRECTED transaction from the newer version, not the wrong one an older version held', () => {
+    const versions = [
+      { version: 1, notes: [coin('11', 500n, TX_OLD)] },
+      { version: 2, notes: [coin('11', 500n, TX_NEW)] },
+    ];
+    const w = whatTheRebuildWrites({
+      versions, held: [heldAs(coin('11', 500n))], alsoDropStaleNotes: true, found: [],
+    });
+    expect(
+      w.notes[0]!.createdIn,
+      'RED WHEN: versions are searched oldest first, so a hash the repair replaced because the chain showed it did not create the note comes back -- a note that reads as healthy and is refused at the spend',
+    ).toBe(TX_NEW);
+  });
+
+  it('keeps a transaction an OLDER version recorded when the newest version lost it', () => {
+    const versions = [
+      { version: 1, notes: [coin('11', 500n, TX_OLD)] },
+      { version: 2, notes: [coin('11', 500n)] },
+    ];
+    const w = whatTheRebuildWrites({ versions, held: [heldAs(coin('11', 500n))], alsoDropStaleNotes: false, found: [] });
+    expect(
+      w.notes,
+      'RED WHEN: only the newest version is consulted, so a rebuild that once wrote a note without its transaction makes that loss permanent',
+    ).toEqual([coin('11', 500n, TX_OLD)]);
+    expect(
+      notesNeedingATransaction({ versions, held: [heldAs(coin('11', 500n))] }),
+      'RED WHEN: the chain is asked about a note a filed version already names the transaction of',
+    ).toEqual([]);
+  });
+
+  it('gives a recovered note the transaction the CHAIN established, and counts it as a reason to write', () => {
+    const versions = [{ version: 1, notes: [coin('11', 500n, TX_OLD)] }];
+    const recovered = coin('22', 150n);
+    const needing = notesNeedingATransaction({ versions, held: [heldAs(coin('11', 500n)), heldAs(recovered)] });
+    expect(needing, 'RED WHEN: a recovered note is not put to the chain, so it is written with no transaction and cannot be spent')
+      .toEqual([{ nonce: recovered.nonce, token: recovered.token, value: 150n }]);
+    const w = whatTheRebuildWrites({
+      versions, held: [heldAs(coin('11', 500n)), heldAs(recovered)], alsoDropStaleNotes: false,
+      found: [{ nonce: recovered.nonce, createdIn: TX_CHAIN }],
+    });
+    expect(
+      w.notes,
+      'RED WHEN: what the chain established is not written onto the recovered note -- a note found, named, listed as held and still unreachable',
+    ).toEqual([coin('11', 500n, TX_OLD), coin('22', 150n, TX_CHAIN)]);
+    expect(w.established, 'RED WHEN: a transaction the chain gave is not counted, so a rebuild whose only news is that note gaining one writes nothing').toBe(1);
+    expect(w.notYetSpendable).toEqual([]);
+    const d = decideWhetherToWrite({
+      recovery: recovery({ held: [note('11', 500n)] }), notesTheNewestVersionClaims: 1,
+      alsoDropStaleNotes: false, transactionsEstablished: 1,
+    });
+    expect(d.do, 'RED WHEN: a note gaining its creating transaction is not a reason to write, so the read that made it spendable is thrown away').toBe('write');
+    expect(d.why).toMatch(/1 note\(s\) gain the transaction that created them/);
+  });
+
+  it('a transaction the chain gives NEVER replaces one a version recorded', () => {
+    const versions = [{ version: 1, notes: [coin('11', 500n, TX_OLD)] }];
+    const w = whatTheRebuildWrites({
+      versions, held: [heldAs(coin('11', 500n))], alsoDropStaleNotes: false,
+      found: [{ nonce: coin('11', 500n).nonce, createdIn: TX_CHAIN }],
+    });
+    expect(w.notes[0]!.createdIn, 'RED WHEN: the chain\'s answer is preferred to the filed record, so this door quietly becomes a second repair').toBe(TX_OLD);
+    expect(w.established).toBe(0);
+  });
+
+  it('a note NOTHING names the transaction of is STILL WRITTEN, and listed with its reason', () => {
+    const versions = [{ version: 1, notes: [coin('11', 500n, TX_OLD)] }];
+    const lost = coin('22', 150n);
+    const w = whatTheRebuildWrites({
+      versions, held: [heldAs(coin('11', 500n)), heldAs(lost)], alsoDropStaleNotes: false,
+      found: [{ nonce: lost.nonce, unresolved: 'the chain could not list the transactions' }],
+    });
+    expect(
+      w.notes.map((n) => n.nonce),
+      'RED WHEN: a note without a transaction is left out of the write, which puts money the journal named back to being unnameable',
+    ).toEqual([coin('11', 500n).nonce, lost.nonce]);
+    expect(w.notes[1]).not.toHaveProperty('createdIn');
+    expect(
+      w.notYetSpendable,
+      'RED WHEN: a note written without its transaction is not listed, so the pool entry reads as ordinary money to the person who wrote it',
+    ).toEqual([{ nonce: lost.nonce, value: 150n, why: 'the chain could not list the transactions' }]);
+    const unasked = whatTheRebuildWrites({ versions, held: [heldAs(lost)], alsoDropStaleNotes: false, found: [] });
+    expect(unasked.notYetSpendable[0]!.why).toMatch(/was not asked/);
+  });
+
+  it('lists as not spendable only notes the CHAIN holds, and writes four fields and no others', () => {
+    const stale = { ...coin('33', 70n), index: 4n, commitment: 'dd'.repeat(32), attemptedAt: 'x' } as unknown as Note;
+    const w = whatTheRebuildWrites({
+      versions: [{ version: 1, notes: [stale] }], held: [], alsoDropStaleNotes: false, found: [],
+    });
+    expect(w.notYetSpendable, 'RED WHEN: a stale note is reported as money a payment cannot spend yet, which it will never be').toEqual([]);
+    expect(
+      w.notes,
+      'RED WHEN: an index, a commitment or any other field a record carried is written into the pool -- a stored index is a number a later spend could be handed',
+    ).toEqual([coin('33', 70n)]);
+    const dropped = whatTheRebuildWrites({
+      versions: [{ version: 1, notes: [stale] }], held: [], alsoDropStaleNotes: true, found: [],
+    });
+    expect(dropped.notes, 'RED WHEN: dropping stale notes on request no longer drops them').toEqual([]);
+  });
+
+  it('a recorded value that is NOT a transaction hash counts as not recorded, so the chain is asked and its answer written', () => {
+    const versions = [
+      { version: 1, notes: [coin('11', 500n, TX_OLD)] },
+      { version: 2, notes: [coin('11', 500n, '0x' as Hex)] },
+      { version: 3, notes: [coin('22', 70n, 'abc' as Hex)] },
+    ];
+    const held = [heldAs(coin('11', 500n)), heldAs(coin('22', 70n))];
+    expect(
+      notesNeedingATransaction({ versions, held }).map((n) => n.value),
+      'RED WHEN: a malformed recorded value is trusted, so the chain is never asked about a note whose spend will be refused after its fees',
+    ).toEqual([70n]);
+    const w = whatTheRebuildWrites({
+      versions, held, alsoDropStaleNotes: false,
+      found: [{ nonce: coin('22', 70n).nonce, createdIn: TX_CHAIN }],
+    });
+    expect(
+      w.notes,
+      'RED WHEN: a value that is not a hash is written back, or hides the valid hash an older version recorded',
+    ).toEqual([coin('22', 70n, TX_CHAIN), coin('11', 500n, TX_OLD)]);
+    expect(w.established).toBe(1);
+  });
+
+  it('refuses to build a write with no version under it', () => {
+    expect(() => whatTheRebuildWrites({ versions: [], held: [], alsoDropStaleNotes: false, found: [] }))
+      .toThrow(/no filed version/);
+  });
+
+  it('tells the operator which recovered notes can be spent and which cannot, and what resolves the second', () => {
+    const r = recovery({ held: [note('11', 1_000n), note('22', 150n)], recovered: [note('11', 1_000n), note('22', 150n)] });
+    const lines = linesForAnOperator(r, [{ nonce: '22'.repeat(32), value: 150n, why: 'the indexer is behind' }]);
+    const spendableBlock = lines.slice(lines.findIndex((l) => l.startsWith('THE POOL HAD LOST')));
+    const until = spendableBlock.findIndex((l) => l === '');
+    const claimedSpendable = spendableBlock.slice(1, until === -1 ? undefined : until).join('\n');
+    expect(claimedSpendable).toContain('1111111111111111');
+    expect(
+      claimedSpendable,
+      'RED WHEN: a recovered note nothing names the transaction of is still listed under "they can be spent again"',
+    ).not.toContain('2222222222222222');
+    const text = lines.join('\n');
+    expect(text, 'RED WHEN: a note that cannot be spent yet is not said to be one').toMatch(/A PAYMENT CANNOT SPEND THEM YET/);
+    expect(text, 'RED WHEN: the reason for one is not printed beside it').toMatch(/2222222222222222… {3}150 {3}the indexer is behind/);
+    expect(text, 'RED WHEN: the section stops naming what resolves it, in terms the reader can act on').toMatch(/run this rebuild again/);
+    expect(text).toMatch(/name the transaction\s+that created the note to the repair/);
+  });
+});
+
+describe('a contradiction is printed with the file each record is', () => {
+  it('puts the pool version\'s own file beside it, and the whole journal beside a journal line', () => {
+    const refused = new NoteDescribedTwice('ab'.repeat(32) as Hex, [
+      { record: { kind: 'pool version', version: 4 }, token: 'aa'.repeat(32) as Hex, value: 1n, onChain: false },
+      { record: { kind: 'payment journal' }, token: 'aa'.repeat(32) as Hex, value: 2n, onChain: true },
+    ]);
+    const lines = whereTheRecordsAre(refused, {
+      poolVersion: (v) => `.midnight/stagenet-vault-pool-x.v${v}.json`,
+      depositJournal: '.midnight/stagenet-vault-deposit-journal-x.json',
+      paymentJournal: '.midnight/stagenet-vault-payment-journal-x.json',
+    });
+    expect(
+      lines,
+      'RED WHEN: a record is printed without the file it is, or with the wrong version\'s file, so the person told to move it moves the wrong one',
+    ).toEqual([
+      'version 4 of the pool: .midnight/stagenet-vault-pool-x.v4.json',
+      'the payment journal (the chain holds this one): .midnight/stagenet-vault-payment-journal-x.json and its numbered versions',
+    ]);
+    expect(refused.message, 'the version the chain does not hold is the one named as needing correction').toMatch(/correcting that one note in version 4 of the pool/);
   });
 });

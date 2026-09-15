@@ -50,7 +50,11 @@
  *
  * **CLOSED FOR THIS ROUTE IN THE SAME TURN IT WAS FOUND, by the sealed
  * ATTEMPT JOURNAL below** — one durable, sealed record of vault, nonce, colour
- * and value, written BEFORE the call. That is exactly what `C240` means by the
+ * and value, written BEFORE the call. **The line is written by the ledger now,
+ * not by this door**: `VaultLedger.deposit` records it through the journal this
+ * door hands it and refuses a private deposit when it is handed none, so the
+ * guarantee no longer depends on every caller remembering it. This door keeps
+ * the file. That is exactly what `C240` means by the
  * sender capturing the coin at the moment it is sent, and this is the one route
  * where the sender chooses the nonce and therefore can.
  *
@@ -137,7 +141,7 @@ import {
 } from '../src/midnight/vault-ledger.js';
 import { VAULT_CIRCUITS } from '../src/midnight/vault-contract.js';
 import {
-  SealedNotePool, VaultPoolUnreadable, sealPool, openPool, type PoolSigner,
+  SealedNotePool, VaultPoolUnreadable, type PoolSigner,
 } from '../src/midnight/vault-pool.js';
 import {
   assertVaultName, vaultRegistryFile, parseVaultRegistry, type VaultEntry, theVault,} from '../src/midnight/vault-record.js';
@@ -146,6 +150,7 @@ import { indexerNoteEvents } from '../src/midnight/note-index.js';
 import type { Hex } from '../src/core/crypto.js';
 import type { SignerRef } from '../src/core/ledger.js';
 import { FileSealedPoolStore, vaultPoolFile } from './vault-pool-file.js';
+import { SealedDepositJournal } from './vault-journal.js';
 import { testTokenFile, parseTestTokenRecord } from './mint-test-token.js';
 import { assertVaultIsMarriedToTheDeployedAccount } from './fund-vault.js';
 import { explainNodeError, NODE_ERROR_CODES } from './node-errors.js';
@@ -918,14 +923,13 @@ async function main(): Promise<DepositVerdict> {
    * than surface one statement after the call, which is the one moment this
    * file exists to survive.
    */
-  const journalStore = new FileSealedPoolStore(
-    depositJournalFile(STATE_DIR, NETWORK, VAULT_NAME), entry.contractAddress);
-  let journal: { attempts: any[]; version: number };
+  const journal = new SealedDepositJournal(
+    depositJournalFile(STATE_DIR, NETWORK, VAULT_NAME), entry.contractAddress,
+    { id: opener, wrappingSecret: openerSecret }, async () => signers,
+    () => good('the attempt is journalled, sealed, BEFORE the call — so the nonce survives a crash'));
+  let journalled: { attempts: readonly unknown[]; version: number };
   try {
-    const rec = await journalStore.get(entry.contractAddress);
-    journal = rec
-      ? { attempts: openPool(rec, opener, openerSecret).notes as any[], version: rec.version }
-      : { attempts: [], version: 0 };
+    journalled = await journal.open();
   } catch (cause) {
     throw new Error(
       'this vault has an attempt journal on this machine and it could not be opened: ' +
@@ -935,7 +939,7 @@ async function main(): Promise<DepositVerdict> {
       'without and cannot be recovered from the chain. Depositing while it is unreadable would ' +
       'add another. Nothing was proved and nothing was spent.');
   }
-  good(`the attempt journal holds ${journal.attempts.length} earlier attempt(s), and opens`);
+  good(`the attempt journal holds ${journalled.attempts.length} earlier attempt(s), and opens`);
 
   /* -------------------------------------------------- 3 */
   clock.begin(3, 7, 'Setting the network id');
@@ -1102,8 +1106,14 @@ async function main(): Promise<DepositVerdict> {
   ) as any;
   good(`compiled contract "${compiled.tag}", assets at contracts/managed-vault`);
 
+  /*
+   * **THE DEPOSIT JOURNAL IS THE EIGHTH ARGUMENT**, and a ledger built without
+   * one refuses a private deposit before proving. No payment journal: this door
+   * pays nobody, and a ledger without one refuses a private payment by name.
+   */
   const ledger = new VaultLedger(
-    { networkId: NETWORK } as never, {} as never, providersOnce, compiled, pool, VAULT_ARTEFACTS);
+    { networkId: NETWORK } as never, {} as never, providersOnce, compiled, pool, VAULT_ARTEFACTS,
+    undefined, journal);
 
   /*
    * **THE BALANCE BEFORE, AND IT IS A RECONCILIATION RATHER THAN A READING.**
@@ -1155,32 +1165,27 @@ async function main(): Promise<DepositVerdict> {
   note(`nonce ${nonce.slice(0, 24)}… (fresh this run)`);
 
   /*
-   * **THE JOURNAL ENTRY, WRITTEN BEFORE THE CALL AND NOT AFTER IT.** `V-188`,
-   * `C240`, and it is the one write in this file whose ORDER is the point.
+   * **THE JOURNAL ENTRY IS WRITTEN BEFORE THE CALL AND NOT AFTER IT, BY THE
+   * LEDGER.** `V-188`, `C240`, and it is the one write on this route whose ORDER
+   * is the point.
    *
    * Between the call and `VaultLedger.deposit`'s pool write there is a window
    * `C199` accepts as the recoverable one. It is only recoverable if the nonce
-   * survives, and until this line the nonce lived in this process's memory and
-   * nowhere else: a commitment cannot be inverted, `replayVault` rebuilds from
-   * a history nothing in this repository produces, and the recovery's own
-   * source says a nonce cannot be got back at all.
+   * survives, and until the line is written the nonce lives in this process's
+   * memory and nowhere else: a commitment cannot be inverted, and the rebuild
+   * names a lost deposit only from this journal.
    *
    * **A JOURNAL ENTRY FOR A CALL THAT NEVER LANDS IS HARMLESS AND CORRECT** —
    * it records an attempt, not a holding — which is exactly why this order is
    * safe here and the same order would be wrong for the pool.
    *
-   * Sealed and wrapped to the same signers as the pool, because it carries what
-   * the pool carries.
+   * It used to be written here, by this door. It is written inside
+   * `VaultLedger.deposit` now, after the ledger's own pre-flight and before its
+   * call, through the journal handed to the ledger above; the line announcing it
+   * is printed by that journal once the line is on disk. Sealed and wrapped to
+   * the same signers as the pool, because it carries what the pool carries, and
+   * refused if writing it would take a reader away.
    */
-  await journalStore.put(entry.contractAddress, sealPool(
-    entry.contractAddress,
-    /* Note-shaped, plus when it was attempted. Cast once, here, rather than
-     * widening the pool's own type for a file that is not a pool. */
-    { notes: [...journal.attempts, { nonce, token: colour, value: amount, attemptedAt: new Date().toISOString() }] } as any,
-    signers,
-    journal.version + 1));
-  good('the attempt is journalled, sealed, BEFORE the call — so the nonce survives a crash');
-
   const startedAt = Date.now();
   const tx = await ledger.deposit(
     entry.contractAddress, { nonce, token: colour, value: amount }, DEPOSITOR,

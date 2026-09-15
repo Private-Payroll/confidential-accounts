@@ -95,6 +95,6 @@ Unresolved call sites, named rather than dropped:
 - `src/midnight/governed-call.test.ts:312` — callTx[<expr>]: the circuit is a runtime string; there is no name at this call site
 - `src/midnight/governed-call.test.ts:330` — callTx[<expr>]: the circuit is a runtime string; there is no name at this call site
 - `src/midnight/ledger.ts:2109` — callTx[<expr>]: the circuit is a runtime string; there is no name at this call site
-- `src/midnight/vault-ledger.ts:798` — callTx[<expr>]: the circuit is a runtime string; there is no name at this call site
+- `src/midnight/vault-ledger.ts:854` — callTx[<expr>]: the circuit is a runtime string; there is no name at this call site
 - `scripts/sponsor-test.ts:472` — callTx[<expr>]: the circuit is a runtime string; there is no name at this call site
-<!-- GENERATED:END id="ledger-fields" body="49f921585a5cf723" -->
+<!-- GENERATED:END id="ledger-fields" body="4ddb80982fcf4df8" -->

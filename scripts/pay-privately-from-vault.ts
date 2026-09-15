@@ -792,9 +792,10 @@ function fail(e: any): never {
     console.log('  If this stop came after the payment and before the pool write, the vault\x27s change');
     console.log('  note is on chain and the pool does not name it yet. The note it spent and the amount');
     console.log('  were journalled on this machine BEFORE the call, so the pool rebuild can name the');
-    console.log('  change note from that journal and the chain. A rebuilt note records no creating');
-    console.log('  transaction, so recording this payment\x27s transaction against it is still needed');
-    console.log('  before it can be spent; the refusal at the spend names the door that does it.');
+    console.log('  change note from that journal and the chain, and asks the chain which transaction');
+    console.log('  created it so a payment can spend it. If the chain cannot say yet, the rebuild still');
+    console.log('  writes the note, says it cannot be spent yet and why, and running it again later');
+    console.log('  records the transaction.');
     releaseTheLock();
     process.exit(4);
   }

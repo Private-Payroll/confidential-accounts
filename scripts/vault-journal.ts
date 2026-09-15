@@ -12,13 +12,22 @@
  * Two doors move a vault's private money and each writes one line before its
  * call:
  *
- *   · **a deposit** writes the whole coin it is about to make. The deposit door
- *     has done this since the journal was first built, in its own code; the
- *     file name is `depositJournalFile` there and the reader below opens it.
+ *   · **a deposit** writes the whole coin it is about to make.
+ *     `VaultLedger.deposit` records it through the `DepositJournal` interface,
+ *     and `SealedDepositJournal` below is the implementation the deposit door
+ *     hands it. The door used to write this line in its own code, so the
+ *     guarantee lasted as long as every caller remembered; the file and its
+ *     shape are unchanged, so every line already on disk still reads.
  *   · **a payment** writes the note it is about to spend, whole, and the amount
  *     leaving it. `VaultLedger.payPrivately` records it through the
  *     `PaymentJournal` interface, and `SealedPaymentJournal` below is the
  *     implementation the payment door hands it.
+ *
+ * **A WRITE NEVER TAKES A READER AWAY.** Each write re-seals the whole journal
+ * to the signers it is told about. A signer the journal is wrapped for and that
+ * list has stopped naming would keep no copy of the new key, and the write would
+ * succeed; so a write that would do that is refused, the same way a pool write
+ * is.
  *
  * **A JOURNAL IS NOT A POOL AND MUST NEVER BE READ AS ONE.** The pool is a
  * claim about what the vault HOLDS; a journal is a record of what was
@@ -46,12 +55,15 @@ import { join } from 'node:path';
 import {
   sealPool, openPool, VaultPoolVersionAlreadyFiled, type PoolSigner,
 } from '../src/midnight/vault-pool.js';
-import type { PaymentAttempt, PaymentJournal } from '../src/midnight/vault-ledger.js';
+import type {
+  DepositAttempt, DepositJournal, PaymentAttempt, PaymentJournal,
+} from '../src/midnight/vault-ledger.js';
 import type { AttemptedVaultCalls } from '../src/midnight/vault-recovery.js';
 import type { VaultCoin } from '../src/midnight/vault-coins.js';
 import type { Hex } from '../src/core/crypto.js';
 import { assertVaultName } from '../src/midnight/vault-record.js';
 import { FileSealedPoolStore, everyVersionFiled } from './vault-pool-file.js';
+import { assertNoSignerWouldLoseAccess } from './reconcile-vault-pool-rules.js';
 
 /** Where a vault's payment journal lives. Named after the vault, never addressed by it. */
 export const paymentJournalFile = (stateDir: string, network: string, name: string): string =>
@@ -65,11 +77,6 @@ export const paymentJournalFile = (stateDir: string, network: string, name: stri
  */
 export const depositJournalFileOf = (stateDir: string, network: string, name: string): string =>
   join(stateDir, `${network}-vault-deposit-journal-${assertVaultName(name)}.json`);
-
-/** What the payment journal seals: its lines, under a name that says what they are. */
-interface PaymentJournalPage {
-  readonly attempts: readonly PaymentAttempt[];
-}
 
 /** One signer who can open a sealed record on this machine. */
 export interface JournalOpener {
@@ -85,10 +92,87 @@ export interface JournalOpener {
 const JOURNAL_WRITE_ATTEMPTS = 5;
 
 /**
- * **THE PAYMENT JOURNAL A DOOR HANDS `VaultLedger`.** Every `record` reads the
- * journal as filed, appends one line, and files the next version sealed to
- * every signer -- so a line is on disk, whole, before `record` returns, and
- * `payPrivately` does not call the contract until it has.
+ * **ONE SEALED JOURNAL FILE: READ, APPEND ONE LINE, FILE THE NEXT VERSION.**
+ *
+ * Both journals are this, with a different name for their list of lines and a
+ * different line. Every append reads the journal as filed, appends one line, and
+ * files the next version sealed to every signer -- so a line is on disk, whole,
+ * before the append returns, and the ledger does not call the contract until it
+ * has.
+ */
+class SealedJournalFile<Line> {
+  private readonly store: FileSealedPoolStore;
+
+  constructor(
+    file: string,
+    private readonly vault: string,
+    private readonly me: JournalOpener,
+    private readonly signers: () => Promise<readonly PoolSigner[]>,
+    /** The name the sealed page gives its lines, and what the journal is called in a sentence. */
+    private readonly page: { readonly lines: 'attempts' | 'notes'; readonly called: string },
+  ) {
+    this.store = new FileSealedPoolStore(file, vault);
+  }
+
+  /**
+   * The journal as filed now, the version it was read at, and who it is wrapped
+   * for. An absent file is an empty journal at version 0, wrapped for nobody --
+   * the one place in this product where absent and empty are the same thing,
+   * because a journal that has never been written to records exactly nothing and
+   * claims exactly nothing.
+   */
+  async open(): Promise<{ lines: readonly Line[]; version: number; wrappedFor: readonly string[] }> {
+    const rec = await this.store.get(this.vault);
+    if (!rec) return { lines: [], version: 0, wrappedFor: [] };
+    const opened = openPool(rec, this.me.id, this.me.wrappingSecret) as unknown as Record<string, unknown>;
+    const lines = opened[this.page.lines];
+    if (!Array.isArray(lines)) {
+      throw new Error(
+        `${this.page.called} opened but does not hold a list of ${this.page.lines}. It is not `
+        + 'an empty journal: it is a record something other than this store wrote, and nothing '
+        + 'is added to a record that cannot be read back.');
+    }
+    return { lines: lines as Line[], version: rec.version, wrappedFor: rec.wrapped.map((w) => w.signerId) };
+  }
+
+  async append(vaultAddress: string, line: Line, what: string): Promise<void> {
+    if (vaultAddress !== this.vault) {
+      throw new Error(
+        `${this.page.called} was built for a different vault than the one whose ${what} is being `
+        + `recorded. Nothing is written and nothing is ${what === 'deposit' ? 'deposited' : 'paid'}. `
+        + 'Neither address is printed.');
+    }
+    let lost: unknown;
+    for (let i = 1; i <= JOURNAL_WRITE_ATTEMPTS; i += 1) {
+      const now = await this.open();
+      const to = await this.signers();
+      /*
+       * **COMPARED AGAINST THE JOURNAL'S OWN WRAPPED LIST, ON EVERY WRITE.** A
+       * door compares the POOL's list before it starts, and the journal is a
+       * second record with its own list: a signer it is wrapped for and the list
+       * handed here no longer names would lose the only record that names a lost
+       * note, and the write would succeed.
+       */
+      assertNoSignerWouldLoseAccess(now.wrappedFor, to.map((s) => s.id), this.page.called);
+      const page = { [this.page.lines]: [...now.lines, line] };
+      try {
+        await this.store.put(this.vault, sealPool(this.vault, page as never, to, now.version + 1));
+        return;
+      } catch (cause) {
+        if (!(cause instanceof VaultPoolVersionAlreadyFiled)) throw cause;
+        lost = cause;
+      }
+    }
+    throw new Error(
+      `the ${what}\x27s attempt could not be journalled: another writer filed the next version `
+      + `of ${this.page.called} first on all ${JOURNAL_WRITE_ATTEMPTS} attempts. Nothing is `
+      + `written, nothing is proved and nothing is ${what === 'deposit' ? 'deposited' : 'paid'}. `
+      + `Find what else is moving money in or out of this vault before trying again.`, { cause: lost });
+  }
+}
+
+/**
+ * **THE PAYMENT JOURNAL A DOOR HANDS `VaultLedger`.**
  *
  * `open()` is separate and is called by the door BEFORE anything is proved:
  * a journal the secrets on this machine cannot open has to stop the run
@@ -97,61 +181,72 @@ const JOURNAL_WRITE_ATTEMPTS = 5;
  * the guarantee; `open()` is the courtesy of refusing early.
  */
 export class SealedPaymentJournal implements PaymentJournal {
-  private readonly store: FileSealedPoolStore;
+  private readonly file: SealedJournalFile<PaymentAttempt>;
 
   constructor(
     file: string,
-    private readonly vault: string,
-    private readonly me: JournalOpener,
+    vault: string,
+    me: JournalOpener,
     /** Everybody who must be able to open what this writes: the pool's signers. */
-    private readonly signers: () => Promise<readonly PoolSigner[]>,
+    signers: () => Promise<readonly PoolSigner[]>,
   ) {
-    this.store = new FileSealedPoolStore(file, vault);
+    this.file = new SealedJournalFile(file, vault, me, signers, {
+      lines: 'attempts', called: 'this vault\x27s payment journal',
+    });
   }
 
-  /**
-   * The journal as filed now, and the version it was read at. An absent file is
-   * an empty journal at version 0 -- the one place in this product where absent
-   * and empty are the same thing, because a journal that has never been written
-   * to records exactly nothing and claims exactly nothing.
-   */
   async open(): Promise<{ attempts: readonly PaymentAttempt[]; version: number }> {
-    const rec = await this.store.get(this.vault);
-    if (!rec) return { attempts: [], version: 0 };
-    const page = openPool(rec, this.me.id, this.me.wrappingSecret) as unknown as PaymentJournalPage;
-    if (!Array.isArray(page.attempts)) {
-      throw new Error(
-        'this vault\x27s payment journal opened but does not hold a list of attempts. It is not '
-        + 'an empty journal: it is a record something other than this store wrote, and nothing '
-        + 'is added to a record that cannot be read back.');
-    }
-    return { attempts: page.attempts, version: rec.version };
+    const now = await this.file.open();
+    return { attempts: now.lines, version: now.version };
   }
 
   async record(vaultAddress: string, attempt: PaymentAttempt): Promise<void> {
-    if (vaultAddress !== this.vault) {
-      throw new Error(
-        'this payment journal was built for a different vault than the one whose payment is '
-        + 'being recorded. Nothing is written and nothing is paid. Neither address is printed.');
-    }
-    let lost: unknown;
-    for (let i = 1; i <= JOURNAL_WRITE_ATTEMPTS; i += 1) {
-      const now = await this.open();
-      const page: PaymentJournalPage = { attempts: [...now.attempts, attempt] };
-      try {
-        await this.store.put(this.vault, sealPool(
-          this.vault, page as never, await this.signers(), now.version + 1));
-        return;
-      } catch (cause) {
-        if (!(cause instanceof VaultPoolVersionAlreadyFiled)) throw cause;
-        lost = cause;
-      }
-    }
-    throw new Error(
-      `the payment\x27s attempt could not be journalled: another writer filed the next version `
-      + `of this vault\x27s payment journal first on all ${JOURNAL_WRITE_ATTEMPTS} attempts. `
-      + 'Nothing is written, nothing is proved and nothing is paid. Find what else is paying out '
-      + 'of this vault before paying again.', { cause: lost });
+    await this.file.append(vaultAddress, attempt, 'payment');
+  }
+}
+
+/** One deposit journal line, exactly as the deposit door has always written it. */
+interface DepositLine {
+  readonly nonce: Hex;
+  readonly token: Hex;
+  readonly value: bigint;
+  readonly attemptedAt: string;
+}
+
+/**
+ * **THE DEPOSIT JOURNAL A DOOR HANDS `VaultLedger`.** The same file, name and
+ * page the deposit door wrote in its own code -- `{ notes: [coin + attemptedAt] }`
+ * -- so every line already on disk is read by the same reader, and nothing
+ * about the record changes but who guarantees it is written.
+ */
+export class SealedDepositJournal implements DepositJournal {
+  private readonly file: SealedJournalFile<DepositLine>;
+
+  constructor(
+    file: string,
+    vault: string,
+    me: JournalOpener,
+    /** Everybody who must be able to open what this writes: the pool's signers. */
+    signers: () => Promise<readonly PoolSigner[]>,
+    /** Called once the line is on disk, before the ledger calls the contract. */
+    private readonly written: () => void = () => {},
+  ) {
+    this.file = new SealedJournalFile(file, vault, me, signers, {
+      lines: 'notes', called: 'this vault\x27s deposit journal',
+    });
+  }
+
+  async open(): Promise<{ attempts: readonly DepositLine[]; version: number }> {
+    const now = await this.file.open();
+    return { attempts: now.lines, version: now.version };
+  }
+
+  async record(vaultAddress: string, attempt: DepositAttempt): Promise<void> {
+    await this.file.append(vaultAddress, {
+      nonce: attempt.coin.nonce, token: attempt.coin.token, value: attempt.coin.value,
+      attemptedAt: attempt.attemptedAt,
+    }, 'deposit');
+    this.written();
   }
 }
 

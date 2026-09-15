@@ -361,7 +361,7 @@ const NOT_AN_ASSET_BECOMING_A_TOKEN: Record<string, { count: number; why: string
   'src/midnight/vault-ledger.ts token': { count: 1, why: '`toNote` carries the token it is handed into a note' },
   'src/midnight/vault-recovery.ts token': { count: 1, why: '`paidCoinOf` carries the spent note\'s token to the coin it paid' },
   'src/server/index.ts z.string()': { count: 1, why: 'a request schema, which describes a body and makes nothing' },
-  'scripts/deposit-to-vault.ts colour': { count: 2, why: 'the colour read off the coin that arrived in the wallet' },
+  'scripts/deposit-to-vault.ts colour': { count: 1, why: 'the colour read off the coin that arrived in the wallet, handed to the deposit; the journal line is written from the same coin inside the ledger' },
   'scripts/fund-vault.ts colour': { count: 1, why: 'the ledger\'s own native token, read from the ledger at run time' },
   'scripts/measure-call-cost.ts toHex(GBP)': { count: 1, why: 'a colour a measurement mints for itself, never a payment' },
   'scripts/vault-journal.ts token': { count: 1, why: 'the colour read off a journal line this reader has already checked is a coin, carried into the coin proposed to the chain' },
