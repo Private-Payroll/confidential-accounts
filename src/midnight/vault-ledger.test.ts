@@ -2006,6 +2006,38 @@ describe('T-38: an affordability check refuses on EITHER refusal', () => {
     await expect(ledger.payout(VAULT, payment(250n), BY, EVENTS)).rejects.toThrow(/does not record which transaction created it/);
   });
 
+  it('AFFORDS AND PAYS a run out of a larger recorded note when the smallest covering note records no transaction, and leaves that note in the pool', async () => {
+    /*
+     * The pool this was filed about: 150 that records no creating transaction,
+     * beside 5,000 that does, paying 100. The check before a proposal used to
+     * answer "the vault no longer holds the money" and the payment used to
+     * refuse, while the vault could pay out of the 5,000 all along.
+     */
+    const { ledger, spentCoins, eventReads, saves, journalled, current } = harness({
+      notes: [{ nonce: '01'.repeat(32), value: 150n }, { nonce: '02'.repeat(32), value: 5_000n }],
+    });
+    const { createdIn: _never, ...unrecorded } = current().notes[0]!;
+    current().notes[0] = unrecorded;
+    await expect(
+      ledger.affordable(VAULT, run(100n)),
+      'RED WHEN: the affordability walk refuses a vault that can pay, because it chose a note the payment cannot spend',
+    ).resolves.toBeUndefined();
+    await ledger.payout(VAULT, payment(100n), BY, EVENTS);
+    expect(spentCoins.map((c) => c.value), 'RED WHEN: the payment spends a different note from the one the walk chose').toEqual([5_000n]);
+    expect(eventReads, 'the index is read from the transaction the spent note records').toEqual([{ hash: SEEDED_TX }]);
+    expect(journalled.map((j) => j.spent.value), 'the attempt journalled is the note actually spent').toEqual([5_000n]);
+    const after = saves[saves.length - 1]!.notes;
+    expect(
+      after.find((n) => n.nonce === '01'.repeat(32)),
+      'RED WHEN: the note the payment passed over leaves the pool, which is money on chain nobody can name again',
+    ).toEqual({ nonce: '01'.repeat(32), token: GBP, value: 150n });
+    expect(after.map((n) => n.value).sort((a, b) => Number(a - b))).toEqual([150n, 4_900n]);
+    /* And a payment only the unrecorded note could make is refused before anything is called, naming it. */
+    const again = harness({ notes: [{ nonce: '01'.repeat(32), value: 150n }], noCreatingTransaction: true });
+    await expect(again.ledger.payout(VAULT, payment(100n), BY, EVENTS)).rejects.toThrow(/One note does: 0101.*\(150\)/);
+    expect(again.calls).toEqual([]);
+  });
+
   it('CANNOT AFFORD when the pool and the chain disagree', async () => {
     const { ledger } = harness({
       notes: [{ nonce: '01'.repeat(32), value: 600n }, { nonce: '02'.repeat(32), value: 400n }],

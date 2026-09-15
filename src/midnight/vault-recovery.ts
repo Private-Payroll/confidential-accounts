@@ -560,14 +560,36 @@ export const nameTheRecord = (r: RecordOfANote): string =>
   r.kind === 'pool version' ? `version ${r.version} of the pool` : `the ${r.kind}`;
 
 /**
- * **ONE NONCE, TWO DIFFERENT COINS, AND THE REFUSAL SAYS WHICH RECORDS AND WHICH
- * ONE THE CHAIN AGREES WITH.**
+ * **ONE NONCE THAT RECORDS ON THIS MACHINE DESCRIBE DIFFERENTLY, AND WHAT THE
+ * CHAIN SAID ABOUT IT.**
  *
- * It used to say only that *one of these two records is wrong*, with an event
- * number nobody could map back to a file. A person told that can do nothing: the
- * records are sealed, and the one question that settles it - which description
- * does the chain hold? - is one this function can answer, because it holds the
- * vault's own circuits and the chain's note set. So it answers it.
+ * A nonce is one coin, so two descriptions of it cannot both be money. Choosing
+ * one by any rule of this machine's would be inventing money. **The chain can
+ * choose**, because a commitment binds the vault, the nonce, the colour and the
+ * value together: a description whose commitment is in the vault's note set is
+ * a coin the vault holds, and one whose commitment is not is not money the vault
+ * holds now, whichever record says it.
+ *
+ * So a rebuild settles it by the chain and says so. `chainHolds` is the one
+ * description the chain holds, or absent when it holds none of them; `setAside`
+ * is every description it does not hold, with the records that say it. **No
+ * record is edited, moved or dropped**: each file stays as it was, and the next
+ * rebuild settles the same nonce the same way from the same evidence.
+ */
+export interface SettledByTheChain {
+  readonly nonce: Hex;
+  readonly chainHolds?: { readonly token: Hex; readonly value: bigint; readonly records: readonly RecordOfANote[] };
+  readonly setAside: ReadonlyArray<{ readonly token: Hex; readonly value: bigint; readonly records: readonly RecordOfANote[] }>;
+}
+
+/**
+ * **ONE NONCE, AND THE CHAIN HOLDS MORE THAN ONE OF THE COINS IT IS DESCRIBED
+ * AS - THE ONE CASE THE CHAIN CANNOT SETTLE, SO IT IS REFUSED.**
+ *
+ * A pool keeps one note per nonce, and a payment that spent one of two notes
+ * sharing a nonce would take both out of the pool. So nothing is derived and
+ * nothing is written. Every description is named with its record and whether
+ * the chain holds it, and the door prints each record's file.
  */
 export class NoteDescribedTwice extends Error {
   constructor(
@@ -580,39 +602,24 @@ export class NoteDescribedTwice extends Error {
     }>,
   ) {
     const said = descriptions.map((d) =>
-      `${nameTheRecord(d.record)} says it is ${d.value} of ${d.token.slice(0, 16)}…`).join('; ');
-    const held = descriptions.filter((d) => d.onChain);
-    const wrong = held.length === 1 ? descriptions.filter((d) => !d.onChain) : [];
-    const chain = held.length === 1
-      ? `The chain holds the coin ${nameTheRecord(held[0]!.record)} describes, so `
-        + `${wrong.map((d) => nameTheRecord(d.record)).join(' and ')} is the wrong record.`
-      : held.length === 0
-        ? 'The chain holds neither, so neither description is money this vault holds now.'
-        : 'The chain holds both, which one nonce cannot be, so the chain was not read correctly.';
-    /*
-     * **WHAT RESOLVES IT, IN THE ONLY TERMS THAT ARE TRUE TODAY - AND IT IS NOT
-     * MOVING A FILE.** A pool version is a whole snapshot and a journal is
-     * cumulative, so either file can be the only record of some OTHER note, and
-     * moving it aside takes that record with it: the note becomes a commitment
-     * nothing explains. An earlier draft of this refusal told the reader to move
-     * the wrong pool version and said nothing else was lost; an audit showed the
-     * sequence where that is false. What resolves it is correcting one note in one
-     * record, and nothing on this machine does that yet - so the refusal says so,
-     * and says the money itself is untouched.
-     */
-    const remedy = held.length > 1
-      ? 'Read the chain again before acting on either record.'
-      : 'Keep both files where they are: a pool version is a whole snapshot and a journal holds '
-        + 'every line ever written, so moving either aside can take the only record of other notes '
-        + 'with it. What resolves this is correcting that one note in '
-        + `${held.length === 1 ? wrong.map((d) => nameTheRecord(d.record)).join(' and ') : 'the record that is wrong'}`
-        + ', and nothing on this machine does that yet. Until it is corrected this vault\'s pool '
-        + 'cannot be rebuilt; nothing about its money has changed.';
+      `${nameTheRecord(d.record)} says it is ${d.value} of ${d.token.slice(0, 16)}…`
+      + `${d.onChain ? ' (the chain holds this one)' : ''}`).join('; ');
     super(
-      `note ${nonce} is described two ways, and a nonce is one coin: ${said}. ${chain} `
-      + `Nothing is derived and nothing is written. ${remedy}`);
+      `note ${nonce} is described more than one way, and the chain holds more than one of those `
+      + `coins: ${said}. Nothing is derived and nothing is written, and no file is moved or changed. `
+      + 'This pool keeps one note per nonce, so it cannot record two coins under one nonce, and '
+      + 'choosing either would leave the other on chain with nothing naming it. First read the chain '
+      + 'again by running this rebuild again: one nonce naming two coins the vault holds is far more '
+      + 'likely a wrong read than the truth. If a fresh read still holds both, the money is on chain '
+      + 'and it is the vault\'s, and this machine cannot rebuild this pool or spend either coin until '
+      + 'a pool can hold two notes under one nonce, which nothing here does yet.');
     this.name = 'NoteDescribedTwice';
   }
+}
+
+/** What `reconcileVaultPool` answers: the rebuild, and every nonce the chain had to settle. */
+export interface ReconciledPool extends PoolRecovery {
+  readonly settled: readonly SettledByTheChain[];
 }
 
 export const reconcileVaultPool = (input: {
@@ -630,7 +637,7 @@ export const reconcileVaultPool = (input: {
   attempted?: AttemptedVaultCalls;
   circuits: VaultNoteCircuits;
   indexOf?: (commitment: Hex) => bigint | undefined;
-}): PoolRecovery => {
+}): ReconciledPool => {
   if (input.versions.length === 0) {
     throw new Error(
       'this pool has no filed versions, so there is nothing to propose to the chain. That is not '
@@ -641,26 +648,27 @@ export const reconcileVaultPool = (input: {
   const newest = [...input.versions].sort((a, b) => b.version - a.version)[0]!;
 
   /*
-   * **ONE ENTRY PER NONCE, AND A NONCE THAT DESCRIBES TWO DIFFERENT COINS IS A
-   * CONTRADICTION RATHER THAN A CHOICE.**
+   * **ONE ENTRY PER NONCE, AND A NONCE DESCRIBED TWO WAYS IS SETTLED BY THE CHAIN
+   * OR REFUSED - NEVER CHOSEN BY THIS FUNCTION.**
    *
    * The same note appears in every version filed after it arrived, so the union
-   * has to be taken by nonce. Two versions disagreeing about what a nonce is
-   * worth cannot both be true, and picking one would be this function inventing
-   * money. It is refused here, before anything is derived, by `NoteDescribedTwice`,
-   * which names both records and says which one the chain agrees with.
+   * has to be taken by nonce. Two records disagreeing about what a nonce is worth
+   * cannot both be true. Picking one by any rule of this machine's would be
+   * inventing money; asking the chain is not, because a description is money only
+   * if the vault's note set holds its commitment - which is the same test every
+   * note this function proposes is put to. So the one description the chain
+   * holds is proposed, a nonce the chain holds none of is proposed as nothing,
+   * and a nonce the chain holds two of is refused by `NoteDescribedTwice`.
    */
   const everFiled = new Map<Hex, VaultCoin>();
-  const filedBy = new Map<Hex, RecordOfANote>();
-  const contradictions: Array<{ nonce: Hex; first: [RecordOfANote, VaultCoin]; second: [RecordOfANote, VaultCoin] }> = [];
+  const described = new Map<Hex, Array<{ coin: VaultCoin; records: RecordOfANote[] }>>();
   const file = (note: VaultCoin, record: RecordOfANote) => {
-    const already = everFiled.get(note.nonce);
-    if (!already) { everFiled.set(note.nonce, note); filedBy.set(note.nonce, record); return; }
-    if (already.token !== note.token || already.value !== note.value) {
-      contradictions.push({
-        nonce: note.nonce, first: [filedBy.get(note.nonce)!, already], second: [record, note],
-      });
-    }
+    if (!everFiled.has(note.nonce)) everFiled.set(note.nonce, note);
+    const ways = described.get(note.nonce) ?? [];
+    const same = ways.find((w) => w.coin.token === note.token && w.coin.value === note.value);
+    if (same) same.records.push(record);
+    else ways.push({ coin: note, records: [record] });
+    described.set(note.nonce, ways);
   };
   for (const v of input.versions) {
     for (const note of v.notes) file(note, { kind: 'pool version', version: v.version });
@@ -670,21 +678,39 @@ export const reconcileVaultPool = (input: {
    * line is the coin it was about to make; a payment's is the coin it was about
    * to spend. Either one usually duplicates a filed note -- the deposit landed
    * and was written, the spent note was in the pool -- and the rule above makes a
-   * duplicate free and a disagreement a contradiction, which is exactly right for
-   * a record that claims to describe the same note.
+   * duplicate free and a disagreement a question for the chain, which is exactly
+   * right for a record that claims to describe the same note.
+   *
+   * **A PAYMENT LINE IS STILL REPLAYED FROM ITS OWN LINE BELOW**, whatever the
+   * chain settles its spent note to, so the change note it would have made is
+   * proposed either way and nothing it could name is lost by the settlement.
    */
   const attempted = input.attempted ?? { deposits: [], payments: [] };
   for (const coin of attempted.deposits) file(coin, { kind: 'deposit journal' });
   for (const a of attempted.payments) file(a.spent, { kind: 'payment journal' });
-  if (contradictions.length > 0) {
-    const onChain = new Set<Hex>(input.chain);
-    const c = contradictions[0]!;
-    throw new NoteDescribedTwice(c.nonce, [c.first, c.second].map(([record, coin]) => ({
-      record,
-      token: coin.token,
-      value: coin.value,
-      onChain: onChain.has(commitmentForNote(input.circuits, input.vault, coin)),
-    })));
+
+  const onChain = new Set<Hex>(input.chain);
+  const settled: SettledByTheChain[] = [];
+  for (const [nonce, ways] of described) {
+    if (ways.length < 2) continue;
+    const held = ways.filter((w) => onChain.has(commitmentForNote(input.circuits, input.vault, w.coin)));
+    if (held.length > 1) {
+      throw new NoteDescribedTwice(nonce, ways.flatMap((w) => w.records.map((record) => ({
+        record,
+        token: w.coin.token,
+        value: w.coin.value,
+        onChain: held.includes(w),
+      }))));
+    }
+    const kept = held[0];
+    if (kept) everFiled.set(nonce, kept.coin);
+    else everFiled.delete(nonce);
+    settled.push({
+      nonce,
+      ...(kept ? { chainHolds: { token: kept.coin.token, value: kept.coin.value, records: kept.records } } : {}),
+      setAside: ways.filter((w) => w !== kept)
+        .map((w) => ({ token: w.coin.token, value: w.coin.value, records: w.records })),
+    });
   }
   /*
    * One event per distinct attempt. The same payment journalled twice -- a door
@@ -698,7 +724,7 @@ export const reconcileVaultPool = (input: {
     attempts.set(`${a.spent.nonce}:${a.spent.token}:${a.spent.value}:${a.amount}`, { spent: a.spent, amount: a.amount });
   }
 
-  return replayVault({
+  const rebuilt = replayVault({
     vault: input.vault,
     chain: input.chain,
     pool: newest.notes,
@@ -722,6 +748,7 @@ export const reconcileVaultPool = (input: {
     circuits: input.circuits,
     ...(input.indexOf === undefined ? {} : { indexOf: input.indexOf }),
   });
+  return { ...rebuilt, settled };
 };
 
 /**

@@ -106,7 +106,7 @@ import {
 } from '../contracts/test/simulator.js';
 import { buildPayoutTree, type PayoutLeafInput } from '../src/midnight/payout-tree.js';
 import { applyNetworkId, theNetwork } from '../src/midnight/network.js';
-import { toHex, fromHex } from '../src/core/crypto.js';
+import { toHex, fromHex, type Hex } from '../src/core/crypto.js';
 import {
   classCeiling, extrinsicCeiling, extrinsicFraction, printDerivation,
 } from './dispatch-ceiling.js';
@@ -788,8 +788,16 @@ async function measureVault(
    * ledger the contract did not produce.
    */
   const filedAt = applyToVaultTree(deposited);
+  /*
+   * **AND IT RECORDS A CREATING TRANSACTION, BECAUSE THE CLIENT'S WITNESS ONLY
+   * TAKES A NOTE THAT DOES.** A payment reads a note's place in the tree from
+   * that transaction, so the client passes over a note without one. Nothing
+   * here reads the value: the index above is already the tree's own, so this
+   * only has to have the shape of a hash, and it is visibly not a real one.
+   */
   pool.notes = [{
     nonce: toHex(NOTE.nonce), token: toHex(GBP), value: NOTE.value, index: filedAt ?? 0n,
+    createdIn: '0'.repeat(64) as Hex,
   }];
   if (filedAt === undefined) {
     line('    \x1b[33mthe deposit built no Zswap offer this could read, so the rows that SPEND'

@@ -122,7 +122,7 @@ import {
 } from './pay-from-vault-rules.js';
 import {
   assertPrivatePayee, assertVaultCanPayPrivately, theAssetPaidPrivately,
-  checkTheColourWasMinted, assertANoteCanBeSpent,
+  checkTheColourWasMinted, assertANoteCanBeSpent, linesAboutNotesPassedOver,
 } from './pay-privately-rules.js';
 
 /* ------------------------------------------------------------------ */
@@ -594,8 +594,9 @@ async function main(): Promise<number> {
    */
   const inThePool = await pool.load(vaultAddress!);
   note(`the pool holds ${inThePool.notes.length} note(s) for this vault`);
-  assertANoteCanBeSpent(inThePool.notes, facts.token, amount, ASSET);
+  const spendable = assertANoteCanBeSpent(inThePool.notes, facts.token, amount, ASSET);
   good('one of them is this colour, large enough, and records the transaction that created it');
+  for (const line of linesAboutNotesPassedOver(spendable, ASSET)) warn(line);
 
   let before: bigint | null = null;
   try {

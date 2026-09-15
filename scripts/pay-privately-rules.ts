@@ -18,7 +18,8 @@ import type { Asset, AssetRegistry } from '../src/core/assets.js';
 import { ledgerFormOf } from '../src/core/assets.js';
 import type { Payee, PayeeAddress } from '../src/midnight/payee-address.js';
 import type { VaultEntry } from '../src/midnight/vault-record.js';
-import type { Note } from '../src/midnight/vault-notes.js';
+import { choosingANoteToSpend, type Note } from '../src/midnight/vault-notes.js';
+import type { Hex } from '../src/core/crypto.js';
 
 /* ------------------------------------------------------------------ *
  * who is paid, and out of which vault
@@ -132,28 +133,60 @@ export function checkTheColourWasMinted(
  * approvals have been paid for. **This is the same question asked before the
  * first fee**, so a run that cannot end in a payment does not begin with two.
  *
- * It answers about the notes THIS payment could draw on rather than about the
- * pool: a vault holding one unrecorded note and one recorded one can make the
- * payment, and a refusal naming the whole pool would be wrong.
+ * **IT IS NOT A SECOND ANSWER. IT ASKS THE FUNCTION THE PAYMENT ASKS.** It used
+ * to answer *spendable* when ANY covering note recorded its transaction, while
+ * the payment chose the SMALLEST covering note whether or not it did - so a
+ * vault holding a small unrecorded note and a larger recorded one passed here and
+ * was refused at the spend. Now both ask `choosingANoteToSpend` with the same
+ * notes, token and amount, so what this says is what the payment will do, and
+ * the colour is compared exactly as the payment compares it.
+ *
+ * A vault holding one unrecorded note and one recorded one can make the payment
+ * out of the recorded one, and the unrecorded notes it passed over are handed
+ * back so the door can say they exist.
  */
 export type SpendableVerdict =
-  | { readonly of: 'spendable' }
+  | { readonly of: 'spendable'; readonly nonce: string; readonly passedOver: readonly string[] }
   | { readonly of: 'nothing-big-enough' }
   | { readonly of: 'stranded'; readonly nonces: readonly string[] };
 
 export function whetherANoteCanBeSpent(
   notes: readonly Note[], token: string, amount: bigint,
 ): SpendableVerdict {
-  const colour = token.trim().toLowerCase();
-  const bigEnough = notes.filter(
-    n => String(n.token).trim().toLowerCase() === colour && n.value >= amount);
-  if (bigEnough.length === 0) return { of: 'nothing-big-enough' };
-  if (bigEnough.some(n => n.createdIn !== undefined)) return { of: 'spendable' };
-  return { of: 'stranded', nonces: bigEnough.map(n => String(n.nonce)) };
+  const choice = choosingANoteToSpend(notes, token as Hex, amount);
+  if (choice.of === 'chosen') {
+    return {
+      of: 'spendable',
+      nonce: String(choice.note.nonce),
+      passedOver: choice.passedOver.map((n) => String(n.nonce)),
+    };
+  }
+  if (choice.of === 'stranded') return { of: 'stranded', nonces: choice.notes.map((n) => String(n.nonce)) };
+  return { of: 'nothing-big-enough' };
+}
+
+/**
+ * **WHAT THE DOOR SAYS ABOUT A NOTE THE PAYMENT PASSED OVER.** The payment goes
+ * ahead out of a note it can spend, and the money it could not reach is named
+ * rather than left for somebody to notice later. Nothing when there is none.
+ */
+export function linesAboutNotesPassedOver(verdict: SpendableVerdict, asset: string): string[] {
+  if (verdict.of !== 'spendable' || verdict.passedOver.length === 0) return [];
+  const n = verdict.passedOver.length;
+  return [
+    `${n} other note${n === 1 ? '' : 's'} of ${asset} large enough for this payment `
+    + `${n === 1 ? 'is' : 'are'} the vault's and on chain, and a payment cannot spend `
+    + `${n === 1 ? 'it' : 'them'} yet: no transaction that created ${n === 1 ? 'it' : 'them'} is recorded. `
+    + `This payment does not use ${n === 1 ? 'it' : 'them'}. What resolves it: record the transaction `
+    + `that paid ${n === 1 ? 'it' : 'each one'} in against the note, or rebuild the pool so the chain is asked.`,
+    ...verdict.passedOver.map((nonce) => `  ${nonce}`),
+  ];
 }
 
 /**
  * The refusal, and it names what resolves it in terms the reader can act on.
+ * When there is no refusal, the answer is handed back so the notes it passed
+ * over can be named.
  *
  * **THE TWO REFUSALS ARE DIFFERENT SENTENCES BECAUSE THEY SEND A PERSON TO TWO
  * DIFFERENT PLACES.** One needs money put in; the other needs a transaction
@@ -162,9 +195,9 @@ export function whetherANoteCanBeSpent(
  */
 export function assertANoteCanBeSpent(
   notes: readonly Note[], token: string, amount: bigint, asset: string,
-): void {
+): Extract<SpendableVerdict, { of: 'spendable' }> {
   const verdict = whetherANoteCanBeSpent(notes, token, amount);
-  if (verdict.of === 'spendable') return;
+  if (verdict.of === 'spendable') return verdict;
   if (verdict.of === 'nothing-big-enough') {
     throw new Error(
       `this vault holds no single note of ${asset} worth ${amount.toLocaleString()} or more, and a `

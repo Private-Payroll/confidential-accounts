@@ -23,7 +23,9 @@
  * rebuild that could not explain anything is this machine's ignorance, not a
  * treasury of zero, and the two must never be written down as the same thing.
  */
-import type { PoolRecovery, NoteDescribedTwice } from '../src/midnight/vault-recovery.js';
+import type {
+  PoolRecovery, NoteDescribedTwice, SettledByTheChain, RecordOfANote,
+} from '../src/midnight/vault-recovery.js';
 import { nameTheRecord } from '../src/midnight/vault-recovery.js';
 import { theTransactionTheseEventsAreFrom } from '../src/midnight/note-index.js';
 import type { Note } from '../src/midnight/vault-notes.js';
@@ -211,9 +213,11 @@ export const assertNoSignerWouldLoseAccess = (
     `${record} is readable by ${dropped.length} signer(s) that the signers file no longer lists `
     + `(${dropped.join(', ')}), and writing it would re-seal it to the listed ones only. Their `
     + 'access to the record of this vault\x27s money would end, and this run would report success. '
-    + 'Nothing is written. Either add them back to the signers file, or remove them deliberately '
-    + 'with the door that exists for that, so it is a decision somebody made rather than a '
-    + 'side effect of a repair.');
+    + 'Nothing is written, and nothing is lost by stopping here. What resolves it: add them back to '
+    + 'the signers file and run this again. Taking a signer\x27s access away is a decision about who '
+    + 'may read the record of this vault\x27s money, and nothing on this machine makes that decision '
+    + 'yet, for this record or any other; until something does, the signers file has to keep '
+    + 'listing everyone the record is sealed to.');
 };
 
 /**
@@ -341,14 +345,20 @@ export const whatTheRebuildWrites = (input: {
   }
   const newest = [...input.versions].sort((a, b) => b.version - a.version)[0]!;
   const fromTheChain = new Map(input.found.map((f) => [f.nonce as string, f]));
-  let established = 0;
+  /*
+   * **THE CHAIN WAS ASKED ABOUT A COIN, NOT ABOUT A NONCE.** Its answer is keyed
+   * by nonce, so it is applied only to the coin the chain holds under that nonce:
+   * a version that describes the same nonce differently must never be handed the
+   * transaction that created a different coin.
+   */
+  const coinKey = (n: { nonce: string; token: string; value: bigint }) => `${n.nonce}:${n.token}:${n.value}`;
+  const asTheChainHoldsIt = new Set(input.held.map(coinKey));
 
   const written = (n: { nonce: Hex; token: Hex; value: bigint }): Note => {
     const recorded = recordedCreatingTransaction(input.versions, n);
     if (recorded !== undefined) return { nonce: n.nonce, token: n.token, value: n.value, createdIn: recorded };
     const answer = fromTheChain.get(n.nonce);
-    if (answer !== undefined && 'createdIn' in answer) {
-      established += 1;
+    if (answer !== undefined && 'createdIn' in answer && asTheChainHoldsIt.has(coinKey(n))) {
       return { nonce: n.nonce, token: n.token, value: n.value, createdIn: answer.createdIn };
     }
     return { nonce: n.nonce, token: n.token, value: n.value };
@@ -362,12 +372,21 @@ export const whatTheRebuildWrites = (input: {
   for (const n of input.held) {
     onChain.add(n.nonce);
     /*
-     * A note in both is already written, once. The two are the same coin: a nonce
-     * two records describe differently is refused before the rebuild answers.
+     * **A NOTE IN BOTH IS WRITTEN ONCE, AS THE CHAIN HOLDS IT.** Usually the two
+     * are the same coin. When the newest version describes the nonce differently
+     * from the coin the chain holds, the chain has settled it (`settled` in the
+     * rebuild) and the version's description is not money: writing it would keep
+     * a note every payment that chose it is refused for, and writing both would
+     * put two notes under one nonce. So the chain's coin replaces it.
      */
-    if (byNonce.has(n.nonce)) continue;
+    const already = byNonce.get(n.nonce);
+    if (already && already.token === n.token && already.value === n.value) continue;
     byNonce.set(n.nonce, written(n));
   }
+
+  /* Counted over what is actually written, so a note is counted once whatever it replaced. */
+  const established = [...byNonce.values()].filter((n) =>
+    n.createdIn !== undefined && recordedCreatingTransaction(input.versions, n) === undefined).length;
 
   const notYetSpendable: NotYetSpendable[] = [];
   for (const n of byNonce.values()) {
@@ -399,12 +418,17 @@ export const linesForAnOperator = (
   r: PoolRecovery,
   /** Notes that would be written and that a payment cannot spend yet. */
   notYetSpendable: readonly NotYetSpendable[] = [],
+  /** Nonces records here describe more than one way, and what the chain said of each. */
+  settled: readonly SettledByTheChain[] = [],
 ): string[] => {
   const lines = [
     `notes the chain holds and this machine can name        ${r.held.length}`,
     `of those, notes the pool had lost                      ${r.recovered.length}`,
     `notes the pool claimed and the chain does not hold     ${r.stale.length}`,
     `notes the chain holds that nothing here explains       ${r.unexplained.length}`,
+    ...(settled.length > 0
+      ? [`notes described two ways, settled by the chain         ${settled.length}`]
+      : []),
   ];
   /*
    * **EVERY LIST IS BOUNDED THE SAME WAY, AND THIS ONE WAS NOT.** `recovered` was
@@ -428,8 +452,35 @@ export const linesForAnOperator = (
    * transaction unless one was found, so the sentence was false for exactly the
    * notes this door exists to bring back.
    */
+  /*
+   * **A NOTE THE CHAIN SETTLED IS SHOWN ONCE, IN ITS OWN SECTION.** A version
+   * that described it wrongly makes the chain's coin look *lost* and the
+   * version's look *stale*, and neither word is what happened. A nonce the
+   * chain holds NONE of the descriptions of is different: an additive rebuild
+   * still writes the newest version's entry for it, exactly as it writes any
+   * other note the chain does not hold, so it stays in the stale list too,
+   * where what resolves it is said.
+   */
+  const settledNonces = new Set<string>(settled.filter((x) => x.chainHolds !== undefined).map((x) => x.nonce));
+  if (settled.length > 0) {
+    lines.push('', 'RECORDS HERE DESCRIBE THESE NOTES MORE THAN ONE WAY, AND THE CHAIN SAID WHICH IS MONEY.');
+    lines.push('A nonce is one coin. A description is money only if the vault\x27s note set holds its');
+    lines.push('commitment, which binds the vault, the nonce, the colour and the value, so nothing here');
+    lines.push('chose. Where the chain holds one, the rebuild uses it. No record is edited, moved or dropped: each');
+    lines.push('file stays as it is, and every rebuild settles the same note the same way.');
+    const described = (d: { value: bigint; records: readonly RecordOfANote[] }) =>
+      `${d.records.map(nameTheRecord).join(', ')} say${d.records.length === 1 ? 's' : ''} ${d.value.toLocaleString()}`;
+    for (const x of settled.slice(0, 8)) {
+      lines.push(`    ${x.nonce.slice(0, 16)}…`);
+      lines.push(x.chainHolds
+        ? `      the chain holds this one:  ${described(x.chainHolds)}`
+        : '      the chain holds none of them, so no record here describes money this vault holds now');
+      for (const d of x.setAside) lines.push(`      set aside:                 ${described(d)}`);
+    }
+    if (settled.length > 8) lines.push(`    … and ${settled.length - 8} more`);
+  }
   const stuck = new Set(notYetSpendable.map((n) => n.nonce));
-  const spendable = r.recovered.filter((n) => !stuck.has(n.nonce));
+  const spendable = r.recovered.filter((n) => !stuck.has(n.nonce) && !settledNonces.has(n.nonce));
   if (spendable.length > 0) {
     lines.push('', 'THE POOL HAD LOST THESE AND THE CHAIN STILL HOLDS THEM. They can be spent again:');
     lines.push(...bounded(spendable, aNote));
@@ -443,11 +494,11 @@ export const linesForAnOperator = (
     lines.push('that created the note to the repair that records it.');
     lines.push(...bounded(notYetSpendable, (n) => `${aNote(n)}   ${n.why.slice(0, 300)}`));
   }
-  if (r.stale.length > 0) {
+  if (r.stale.some((n) => !settledNonces.has(n.nonce))) {
     lines.push('', 'THE POOL CLAIMED THESE AND THE CHAIN DOES NOT HOLD THEM. They are spent, or the');
     lines.push('call that would have created them never landed. Left in, every payment that chose');
     lines.push('one would be proposed, approved, paid for and then refused inside the circuit:');
-    lines.push(...bounded(r.stale, aNote));
+    lines.push(...bounded(r.stale.filter((n) => !settledNonces.has(n.nonce)), aNote));
   }
   if (r.unexplained.length > 0) {
     lines.push('', 'THE VAULT HOLDS MONEY THIS MACHINE CANNOT NAME, AND A REBUILD CANNOT FIX IT.');

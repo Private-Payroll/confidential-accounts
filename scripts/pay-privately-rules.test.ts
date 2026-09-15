@@ -2,8 +2,10 @@ import { describe, it, expect } from 'vitest';
 
 import {
   assertPrivatePayee, assertVaultCanPayPrivately, theAssetPaidPrivately,
-  checkTheColourWasMinted, whetherANoteCanBeSpent, assertANoteCanBeSpent,
+  checkTheColourWasMinted, whetherANoteCanBeSpent, assertANoteCanBeSpent, linesAboutNotesPassedOver,
 } from './pay-privately-rules.js';
+import { noteToSpend, paymentsFit } from '../src/midnight/vault-notes.js';
+import type { Hex } from '../src/core/crypto.js';
 import { StaticAssetRegistry, assets as productAssets, type Asset } from '../src/core/assets.js';
 import type { VaultEntry } from '../src/midnight/vault-record.js';
 import type { Note } from '../src/midnight/vault-notes.js';
@@ -163,7 +165,7 @@ describe('whether a note can be spent at all, asked before the first fee', () =>
   it('says spendable when one note of the colour is big enough AND records its transaction', () => {
     const notes = [note({ createdIn: 'ef'.repeat(32) as Note['createdIn'] })];
     /* RED WHEN a perfectly spendable note is refused, which refuses every private payment. */
-    expect(whetherANoteCanBeSpent(notes, COLOUR, 1_000n)).toEqual({ of: 'spendable' });
+    expect(whetherANoteCanBeSpent(notes, COLOUR, 1_000n)).toMatchObject({ of: 'spendable', passedOver: [] });
     expect(() => assertANoteCanBeSpent(notes, COLOUR, 1_000n, 'TESTUSD')).not.toThrow();
   });
 
@@ -210,7 +212,7 @@ describe('whether a note can be spent at all, asked before the first fee', () =>
       .toThrow('0a'.repeat(32));
   });
 
-  it('is SPENDABLE when one big enough note is stranded and another is not', () => {
+  it('is SPENDABLE when one big enough note is stranded and another is not, and NAMES the stranded one', () => {
     const notes = [
       note({ nonce: '0a'.repeat(32) }),
       note({ nonce: '0b'.repeat(32), createdIn: 'ef'.repeat(32) as Note['createdIn'] }),
@@ -220,7 +222,52 @@ describe('whether a note can be spent at all, asked before the first fee', () =>
      * payment could draw on. A vault holding one unrecorded note and one
      * recorded one CAN make the payment, and refusing it would be wrong.
      */
-    expect(whetherANoteCanBeSpent(notes, COLOUR, 1_000n)).toEqual({ of: 'spendable' });
+    expect(whetherANoteCanBeSpent(notes, COLOUR, 1_000n))
+      .toEqual({ of: 'spendable', nonce: '0b'.repeat(32), passedOver: ['0a'.repeat(32)] });
+    const lines = linesAboutNotesPassedOver(whetherANoteCanBeSpent(notes, COLOUR, 1_000n), 'TESTUSD');
+    /* RED WHEN the door goes quiet about money on chain that a payment cannot reach. */
+    expect(lines, 'RED WHEN: the door says nothing about a note the payment passed over').toHaveLength(2);
+    expect(lines[0]).toMatch(/1 other note of TESTUSD large enough for this payment is the vault's and on chain, and a payment cannot spend it yet/);
+    expect(lines[0], 'RED WHEN: the line names nothing a person can do').toMatch(/What resolves it: record the transaction that paid it in against the note, or rebuild the pool/);
+    expect(lines.slice(1)).toEqual([`  ${'0a'.repeat(32)}`]);
+    expect(linesAboutNotesPassedOver({ of: 'spendable', nonce: 'x', passedOver: [] }, 'TESTUSD')).toEqual([]);
+    expect(linesAboutNotesPassedOver({ of: 'nothing-big-enough' }, 'TESTUSD')).toEqual([]);
+    expect(linesAboutNotesPassedOver({ of: 'spendable', nonce: 'x', passedOver: ['a', 'b'] }, 'TESTUSD')[0])
+      .toMatch(/^2 other notes of TESTUSD .* are the vault's and on chain, and a payment cannot spend them yet: no transaction that created them is recorded\. This payment does not use them\. .*paid each one in/);
+  });
+
+  it('THE CHECK BEFORE THE FIRST FEE AND THE PAYMENT CHOOSE THE SAME NOTE, for the pool the pre-flight used to pass and the spend refused', () => {
+    /*
+     * A small note with no recorded transaction beside a larger one that has
+     * one. The pre-flight used to say spendable because ANY covering note was
+     * recorded, while the payment chose the SMALLEST covering note and refused
+     * it at the spend - after the proposal and its approvals had been paid for.
+     */
+    const small = note({ nonce: '0a'.repeat(32), value: 1_200n });
+    const large = note({ nonce: '0b'.repeat(32), value: 9_000n, createdIn: 'ef'.repeat(32) as Note['createdIn'] });
+    const pools: Note[][] = [
+      [small, large], [large, small], [small], [large],
+      [note({ nonce: '0c'.repeat(32), value: 1_000n, createdIn: 'nope' as Note['createdIn'] }), large],
+      [note({ nonce: '0c'.repeat(32), value: 1_000n, createdIn: 'nope' as Note['createdIn'] })],
+      [note({ value: 999n, createdIn: 'ef'.repeat(32) as Note['createdIn'] })],
+    ];
+    for (const notes of pools) {
+      const verdict = whetherANoteCanBeSpent(notes, COLOUR, 1_000n);
+      let paid: string | undefined;
+      try { paid = noteToSpend(notes, COLOUR as Hex, 1_000n).nonce; } catch { paid = undefined; }
+      let fits = true;
+      try { paymentsFit({ notes }, [{ token: COLOUR as Hex, amount: 1_000n }]); } catch { fits = false; }
+      expect(
+        verdict.of === 'spendable' ? verdict.nonce : undefined,
+        `RED WHEN: the pre-flight and the payment answer differently for ${notes.map((n) => n.nonce.slice(0, 2)).join('+')}`,
+      ).toBe(paid);
+      expect(fits, 'RED WHEN: the affordability walk answers differently from the pre-flight').toBe(verdict.of === 'spendable');
+    }
+    /* Spelt differently from the pool's own colour, the pre-flight says what the payment would: no such notes. */
+    expect(
+      whetherANoteCanBeSpent([large], ` ${COLOUR.toUpperCase()} `, 1_000n),
+      'RED WHEN: the pre-flight normalises a colour the payment compares exactly, and passes a run the spend refuses',
+    ).toEqual({ of: 'nothing-big-enough' });
   });
 
   it('says nothing-big-enough for an empty pool, and never stranded', () => {
@@ -231,7 +278,7 @@ describe('whether a note can be spent at all, asked before the first fee', () =>
   it('takes a note worth EXACTLY the amount, which is the boundary the circuit takes', () => {
     const notes = [note({ value: 1_000n, createdIn: 'ef'.repeat(32) as Note['createdIn'] })];
     /* RED WHEN the comparison becomes strictly greater, refusing an exact payment the vault can make. */
-    expect(whetherANoteCanBeSpent(notes, COLOUR, 1_000n)).toEqual({ of: 'spendable' });
+    expect(whetherANoteCanBeSpent(notes, COLOUR, 1_000n)).toMatchObject({ of: 'spendable' });
     expect(whetherANoteCanBeSpent(notes, COLOUR, 1_001n)).toEqual({ of: 'nothing-big-enough' });
   });
 });

@@ -45,7 +45,9 @@ import {
   replayVault, reconcileVaultPool, commitmentForNote, paidCoinOf, changeNoteOf, type VaultEvent,
   NoteDescribedTwice, nameTheRecord,
 } from '../../src/midnight/vault-recovery.js';
-import { noteToSpend, paymentsFit, type Note } from '../../src/midnight/vault-notes.js';
+import {
+  noteToSpend, paymentsFit, smallestNoteCovering, choosingANoteToSpend, type Note,
+} from '../../src/midnight/vault-notes.js';
 import {
   creatingTransactionsAmong, indexForSpend, vaultNoteCommitment,
   type NoteEvents, type ServedEvent, type VaultTransactions,
@@ -75,12 +77,18 @@ const CAROL = bytes(0x0c);
 /**
  * The device's pool, and the witness the contract calls over it.
  *
- * **Coin selection is the PRODUCTION rule**, imported rather than written here:
- * `noteToSpend` picks the smallest note that covers the payment, ties broken by
- * nonce. A test with its own selection would be a second implementation of the
- * thing `B3` is about — two operators picking differently and both
- * half-succeeding — and would also let these tests pass while the client's rule
- * was wrong.
+ * **Coin selection is the PRODUCTION ordering**, imported rather than written
+ * here: `smallestNoteCovering` picks the smallest note that covers the payment,
+ * ties broken by nonce. A test with its own selection would be a second
+ * implementation of the thing `B3` is about — two operators picking differently
+ * and both half-succeeding — and would also let these tests pass while the
+ * client's rule was wrong.
+ *
+ * **It is the ordering and not the whole decision**, because this witness
+ * models the circuit's view of a pool whose notes carry no creating
+ * transaction. The product's `noteToSpend` applies the same ordering to the
+ * notes a payment can spend; the tests that go through the product's path
+ * (`theProductChooses`) ask it, and pay the note it chose.
  */
 interface VaultPrivate { notes: Note[] }
 
@@ -88,7 +96,8 @@ const vaultWitnesses = {
   noteToSpend: (
     ctx: { privateState: VaultPrivate }, token: Uint8Array, amount: bigint,
   ) => {
-    const n = noteToSpend(ctx.privateState.notes, toHex(token), amount);
+    const n = smallestNoteCovering(ctx.privateState.notes, toHex(token), amount);
+    if (n === undefined) throw new Error(`the test pool has no note covering ${amount}`);
     return [ctx.privateState, {
       nonce: fromHex(n.nonce), color: fromHex(n.token), value: n.value, mt_index: n.index,
     }];
@@ -456,90 +465,176 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
     ).toThrow(/no filed versions/);
   });
 
-  it('REFUSES two versions that describe one nonce differently, rather than choosing one', () => {
+  it('SETTLES two versions that describe one nonce differently BY THE CHAIN, writes the coin the chain holds once, and that note SPENDS through the product\'s path', async () => {
     /*
-     * Two records of what a nonce is worth cannot both be true, and picking one
-     * would be this function inventing money. It is refused before anything is
-     * derived, and the refusal names both records and which one the chain holds.
+     * Two records of what a nonce is worth cannot both be true, and choosing one
+     * by any rule of this machine's would be inventing money. The chain is not
+     * such a rule: a description is money only if the vault's note set holds its
+     * commitment, and the commitment binds the value. So the rebuild takes the
+     * one the chain holds, sets the other aside with the record that says it, and
+     * edits and moves nothing. Version 2 here is the wrong one, and it is the
+     * NEWEST, so it is also what the pool believes now.
      */
+    const versions = [
+      { version: 1, notes: [{ ...FIRST, createdIn: chainLog[0]!.hash }, { ...SECOND, createdIn: chainLog[1]!.hash }] },
+      { version: 2, notes: [{ ...FIRST, value: 7_777n, createdIn: chainLog[0]!.hash }, { ...SECOND, createdIn: chainLog[1]!.hash }] },
+    ];
+    let r!: ReturnType<typeof rebuild>;
+    expect(
+      /* The deposit journal agrees with version 1, so two records stand behind the coin the chain holds. */
+      () => { r = rebuildWith(versions, { deposits: [FIRST] }); },
+      'RED WHEN: a disagreement the chain can settle is still refused, which blocks the vault\'s only recovery with nothing a person can do',
+    ).not.toThrow();
+    expect(
+      r.settled,
+      'RED WHEN: the settlement is not reported, or names the wrong description as the one the chain holds, or loses the record that said the other',
+    ).toEqual([{
+      nonce: FIRST.nonce,
+      chainHolds: {
+        token: FIRST.token, value: 1_000n,
+        records: [{ kind: 'pool version', version: 1 }, { kind: 'deposit journal' }],
+      },
+      setAside: [{ token: FIRST.token, value: 7_777n, records: [{ kind: 'pool version', version: 2 }] }],
+    }]);
+    expect(
+      r.held.find((n) => n.nonce === FIRST.nonce)?.value,
+      'RED WHEN: the description the chain does not hold is proposed as money, which is this rebuild inventing 7,777',
+    ).toBe(1_000n);
+    expect(r.unexplained).toHaveLength(0);
+
+    /* What is written: the chain's coin, once, with the transaction the version that described IT recorded. */
+    const written = whatTheRebuildWrites({ versions, held: r.held, alsoDropStaleNotes: false, found: [] });
+    expect(
+      written.notes.filter((n) => n.nonce === FIRST.nonce),
+      'RED WHEN: the newest version\'s wrong description is kept beside or instead of the chain\'s coin - two notes under one nonce, or a note every payment that chose it is refused for',
+    ).toEqual([{ ...FIRST, createdIn: chainLog[0]!.hash }]);
+    expect(written.notes).toHaveLength(2);
+
+    /* And the only proof that counts: the corrected note is chosen, its index is read, and it pays. */
+    const { chosen, index } = await theProductChooses(written.notes, 900n);
+    expect(chosen.nonce).toBe(FIRST.nonce);
+    expect(index).toBe(chainLog[0]!.index);
+    priv = { notes: written.notes.map((n) => ({ ...n, index: n.nonce === chosen.nonce ? index : NO_INDEX_YET })) };
+    const c = change(0n, 96);
+    const run = await approvedRun([{ to: ALICE, amount: 900n, nonce: 0xf9 }], c);
+    const paid = await pay(run, c, 0, ALICE, 900n, 0xf9);
+    expect(vaultLedger(vaultState as never).payments).toBe(1n);
+    expect(
+      changeCoinOf(paid.context.callContext.currentZswapLocalState, vaultAddr as Hex)?.value,
+      'the payment was made out of the 1,000 the chain holds, not the 7,777 a version claimed',
+    ).toBe(100n);
+  });
+
+  it('REFUSES only when the chain holds MORE THAN ONE of the coins a nonce is described as, names every record, and moves nothing', () => {
     let refused: unknown;
     try {
-      rebuild([
-        { version: 1, notes: asNotes([FIRST]) },
-        { version: 2, notes: asNotes([{ ...FIRST, value: 7_777n }]) },
-      ]);
+      reconcileVaultPool({
+        vault: vaultAddr as Hex,
+        /* A chain that holds a second coin under FIRST's nonce - which one nonce should never be. */
+        chain: [...chainNotes(), held({ ...FIRST, value: 5n })],
+        versions: [
+          { version: 1, notes: asNotes([FIRST, SECOND]) },
+          { version: 2, notes: asNotes([{ ...FIRST, value: 5n }, SECOND]) },
+          { version: 3, notes: asNotes([{ ...FIRST, value: 6n }, SECOND]) },
+        ],
+        circuits: vaultCircuits,
+      });
     } catch (e) { refused = e; }
     expect(
       refused,
-      'RED WHEN: one of two contradicting records is silently preferred, which is this function deciding what the money is worth',
+      'RED WHEN: with two coins under one nonce on chain the rebuild picks one, which leaves the other on chain with nothing naming it and a pool a payment would empty of both',
     ).toBeInstanceOf(NoteDescribedTwice);
-    const message = (refused as Error).message;
+    const e = refused as NoteDescribedTwice;
     expect(
-      message,
-      'RED WHEN: the refusal names neither record -- "one of these two is wrong" is a sentence nobody can act on',
-    ).toMatch(/version 1 of the pool says it is 1000 of .*; version 2 of the pool says it is 7777 of/);
-    expect(
-      message,
-      'RED WHEN: the refusal does not say which description the chain holds, which is the one fact that settles it and the one this function can read',
-    ).toMatch(/The chain holds the coin version 1 of the pool describes, so version 2 of the pool is the wrong record/);
-    expect(
-      message,
-      'RED WHEN: the refusal does not name what resolves it -- correcting the one note in the record the chain does not agree with',
-    ).toMatch(/What resolves this is correcting that one note in version 2 of the pool, and nothing on this machine does that yet/);
-    expect(
-      message,
-      'RED WHEN: the refusal tells somebody to move a pool version aside -- a version is a whole snapshot and can be the only record of another note',
-    ).toMatch(/Keep both files where they are/);
-    expect(message).not.toMatch(/\bmove (version|the)/);
+      e.descriptions.map((d) => [nameTheRecord(d.record), d.value, d.onChain]),
+      'RED WHEN: a description is not named, or is said to be on chain when it is not',
+    ).toEqual([
+      ['version 1 of the pool', 1_000n, true], ['version 2 of the pool', 5n, true], ['version 3 of the pool', 6n, false],
+    ]);
+    expect(e.message, 'RED WHEN: the refusal names nothing a person can do').toMatch(/read the chain\s+again by running this rebuild again/);
+    expect(e.message).toMatch(/no file is moved or changed/);
+    expect(e.message, 'RED WHEN: the refusal implies the money is gone').toMatch(/the money is on chain\s+and it is the vault's/);
+    expect(e.message).not.toMatch(/\bmove (version|the)\b/);
   });
 
-  it('a nonce the chain holds NEITHER description of names no record to move and no record as the wrong one', async () => {
+  it('a nonce the chain holds NONE of the descriptions of is settled as no money, both records are kept, and the rebuild goes on', async () => {
     /* SECOND is spent, so the chain holds neither 400 nor 999 under its nonce. */
     const c = change(0n, 95);
     const run = await approvedRun([{ to: ALICE, amount: 400n, nonce: 0xfe }], c);
     await pay(run, c, 0, ALICE, 400n, 0xfe);
-    let refused: unknown;
-    try {
-      rebuildWith([{ version: 1, notes: asNotes([FIRST]) }, { version: 2, notes: asNotes([FIRST, SECOND]) }],
+    let r!: ReturnType<typeof rebuildWith>;
+    expect(() => {
+      r = rebuildWith([{ version: 1, notes: asNotes([FIRST]) }, { version: 2, notes: asNotes([FIRST, SECOND]) }],
         { payments: [{ spent: { ...SECOND, value: 999n }, amount: 10n }] });
-    } catch (e) { refused = e; }
-    expect(refused).toBeInstanceOf(NoteDescribedTwice);
-    const message = (refused as Error).message;
-    expect(message).toMatch(/The chain holds neither/);
+    }, 'RED WHEN: a disagreement about a note the chain no longer holds still blocks the rebuild of every other note').not.toThrow();
     expect(
-      message,
-      'RED WHEN: with the chain holding neither, the refusal still picks a record as the wrong one or tells somebody to move a version -- which can take the only record of a change note with it',
-    ).not.toMatch(/is the wrong record|\bmove (version|the)/);
-    expect(message).toMatch(/correcting that one note in the record that is wrong/);
+      r.settled,
+      'RED WHEN: with the chain holding neither, one record is still treated as right, or a record that described the note is forgotten',
+    ).toEqual([{
+      nonce: SECOND.nonce,
+      setAside: [
+        { token: SECOND.token, value: 400n, records: [{ kind: 'pool version', version: 2 }] },
+        { token: SECOND.token, value: 999n, records: [{ kind: 'payment journal' }] },
+      ],
+    }]);
+    expect(r.held.map((n) => n.nonce), 'RED WHEN: a description the chain does not hold is proposed as money').toEqual([FIRST.nonce]);
+    expect(r.stale.map((n) => n.value), 'the newest version still claims 400, and it is spent').toEqual([400n]);
+    expect(r.unexplained).toHaveLength(0);
   });
 
-  it('a JOURNAL line that contradicts the pool is named as the journal, and the refusal will not send anyone to move a file aside', () => {
-    let refused: unknown;
-    try {
-      rebuildWith([{ version: 3, notes: asNotes([FIRST, SECOND]) }],
-        { payments: [{ spent: { ...SECOND, value: 999n }, amount: 10n }] });
-    } catch (e) { refused = e; }
-    expect(refused).toBeInstanceOf(NoteDescribedTwice);
-    const e = refused as NoteDescribedTwice;
-    expect(
-      e.descriptions.map((d) => [nameTheRecord(d.record), d.value, d.onChain]),
-      'RED WHEN: the two records are not told apart, or the chain is not asked which description it holds',
-    ).toEqual([['version 3 of the pool', 400n, true], ['the payment journal', 999n, false]]);
-    expect(e.message).toMatch(/so the payment journal is the wrong record/);
-    expect(
-      e.message,
-      'RED WHEN: the refusal tells somebody to move the journal aside, which takes every other line with it -- the only record that names a lost note',
-    ).toMatch(/Keep both files where they are/);
-    expect(e.message).not.toMatch(/\bmove (version|the)/);
-    expect(e.message).toMatch(/correcting that one note in the payment journal/);
+  it('a JOURNAL line that disagrees with the pool is settled by the chain either way round, and the attempt it records is still replayed from its own line', () => {
+    const r = rebuildWith([{ version: 3, notes: asNotes([FIRST, SECOND]) }],
+      { payments: [{ spent: { ...SECOND, value: 999n }, amount: 10n }] });
+    expect(r.settled).toEqual([{
+      nonce: SECOND.nonce,
+      chainHolds: { token: SECOND.token, value: 400n, records: [{ kind: 'pool version', version: 3 }] },
+      setAside: [{ token: SECOND.token, value: 999n, records: [{ kind: 'payment journal' }] }],
+    }]);
+    expect(r.held.map((n) => [n.nonce, n.value])).toEqual([[FIRST.nonce, 1_000n], [SECOND.nonce, 400n]]);
 
-    /* A deposit line whose note the chain holds and a version that disagrees: the VERSION is named as wrong. */
-    let other: unknown;
-    try {
-      rebuildWith([{ version: 5, notes: asNotes([FIRST, { ...SECOND, value: 401n }]) }], { deposits: [SECOND] });
-    } catch (x) { other = x; }
-    expect((other as Error).message).toMatch(/The chain holds the coin the deposit journal describes, so version 5 of the pool is the wrong record/);
-    expect((other as Error).message).toMatch(/correcting that one note in version 5 of the pool/);
+    /* The other way round: a deposit line the chain agrees with, and a NEWEST version that says 401. */
+    const other = rebuildWith([{ version: 5, notes: asNotes([FIRST, { ...SECOND, value: 401n }]) }], { deposits: [SECOND] });
+    expect(other.settled).toEqual([{
+      nonce: SECOND.nonce,
+      chainHolds: { token: SECOND.token, value: 400n, records: [{ kind: 'deposit journal' }] },
+      setAside: [{ token: SECOND.token, value: 401n, records: [{ kind: 'pool version', version: 5 }] }],
+    }]);
+    expect(
+      other.held.find((n) => n.nonce === SECOND.nonce)?.value,
+      'RED WHEN: the version is preferred because it is the pool, when the chain holds the journal\'s coin',
+    ).toBe(400n);
+    const written = whatTheRebuildWrites({
+      versions: [{ version: 5, notes: asNotes([FIRST, { ...SECOND, value: 401n }]) }],
+      held: other.held, alsoDropStaleNotes: false, found: [],
+    });
+    expect(written.notes.filter((n) => n.nonce === SECOND.nonce).map((n) => n.value)).toEqual([400n]);
+
+    /* The same value in another colour is another description, not the same one. */
+    const OTHER = toHex(bytes(0x9c));
+    const colours = rebuildWith([{ version: 1, notes: asNotes([FIRST, SECOND]) }], { deposits: [{ ...SECOND, token: OTHER }] });
+    expect(
+      colours.settled,
+      'RED WHEN: two descriptions of one nonce that differ only in colour are taken for the same coin, so the one the chain does not hold is never set aside',
+    ).toEqual([{
+      nonce: SECOND.nonce,
+      chainHolds: { token: SECOND.token, value: 400n, records: [{ kind: 'pool version', version: 1 }] },
+      setAside: [{ token: OTHER, value: 400n, records: [{ kind: 'deposit journal' }] }],
+    }]);
+
+    /* A payment line whose spent note is set aside is still an attempt: its change is proposed from the line. */
+    const c1 = changeNoteOf({ ...SECOND, value: 999n }, 10n)!;
+    const withChange = reconcileVaultPool({
+      vault: vaultAddr as Hex,
+      chain: [...chainNotes(), held(c1)],
+      versions: [{ version: 3, notes: asNotes([FIRST, SECOND]) }],
+      attempted: { deposits: [], payments: [{ spent: { ...SECOND, value: 999n }, amount: 10n }] },
+      circuits: vaultCircuits,
+    });
+    expect(
+      withChange.held.map((n) => n.value),
+      'RED WHEN: settling a nonce drops the attempt recorded against its set-aside description, so a change note that line names becomes unexplained',
+    ).toContain(989n);
+    expect(withChange.unexplained).toHaveLength(0);
   });
 
   /* ---------------------------------------------------------------- *
@@ -698,12 +793,12 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
       () => rebuildWith([{ version: 1, notes: asNotes([FIRST, SECOND]) }],
         { payments: [{ spent: SECOND, amount: 0n }] }),
     ).toThrow(/not a payment/);
-    /* A journal line whose spent note contradicts the filed one is the existing refusal. */
+    /* A journal line whose spent note disagrees with the filed one is settled by the chain, never by preference. */
     expect(
-      () => rebuildWith([{ version: 1, notes: asNotes([FIRST, SECOND]) }],
-        { payments: [{ spent: { ...SECOND, value: 999n }, amount: 10n }] }),
-      'RED WHEN: a journal that disagrees with the pool about what a note is worth is silently preferred either way',
-    ).toThrow(NoteDescribedTwice);
+      rebuildWith([{ version: 1, notes: asNotes([FIRST, SECOND]) }],
+        { payments: [{ spent: { ...SECOND, value: 999n }, amount: 10n }] }).held.map((n) => n.value),
+      'RED WHEN: a journal that disagrees with the pool about what a note is worth is preferred over the chain',
+    ).toEqual([1_000n, 400n]);
     /* A line naming a note nothing filed is not refused: its change has a commitment the chain does not hold. */
     const stranger = { nonce: toHex(bytes(0x01)), token: toHex(GBP), value: 5_000n };
     const r = rebuildWith([{ version: 1, notes: asNotes([FIRST, SECOND]) }], { payments: [{ spent: stranger, amount: 1n }] });
@@ -812,11 +907,12 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
     versions: { version: number; notes: readonly Note[] }[],
     attempted: Parameters<typeof rebuildWith>[1],
     chain = theChain(),
+    alsoDropStaleNotes = false,
   ) => {
     const rebuilt = rebuildWith(versions, attempted);
     const needing = notesNeedingATransaction({ versions, held: rebuilt.held });
     const asked = await creatingTransactionsAmong(vaultAddr as Hex, needing, chain);
-    const written = whatTheRebuildWrites({ versions, held: rebuilt.held, alsoDropStaleNotes: false, found: asked.found });
+    const written = whatTheRebuildWrites({ versions, held: rebuilt.held, alsoDropStaleNotes, found: asked.found });
     return { rebuilt, needing, asked, written };
   };
 
@@ -841,10 +937,15 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
 
       /* Today's gap, measured first: the same rebuild without asking the chain. */
       const rebuilt = rebuildWith(versions, { payments: [{ spent: SECOND, amount: 250n }] });
-      const unasked = whatTheRebuildWrites({ versions, held: rebuilt.held, alsoDropStaleNotes: false, found: [] });
+      const unasked = whatTheRebuildWrites({ versions, held: rebuilt.held, alsoDropStaleNotes: true, found: [] });
+      const recoveredNonce = unasked.notes.find((n) => n.value === 150n)!.nonce;
+      const withoutAsking = choosingANoteToSpend(unasked.notes, toHex(GBP), 120n);
+      expect(
+        withoutAsking.of === 'chosen' && [withoutAsking.note.value, withoutAsking.passedOver.map((n) => n.nonce)],
+        'the note a rebuild recovers without asking the chain is one the product cannot spend: it pays out of the 1,000 and names the 150 as passed over',
+      ).toEqual([1_000n, [recoveredNonce]]);
       await expect(
-        theProductChooses(unasked.notes, 120n),
-        'the note a rebuild recovers without asking the chain is the one the product refuses to spend',
+        indexForSpend(vaultAddr as Hex, unasked.notes.find((n) => n.value === 150n)!, theChain().events),
       ).rejects.toThrow(/does not record which transaction created it/);
 
       const { needing, asked, written } = await throughTheRebuild(versions, { payments: [{ spent: SECOND, amount: 250n }] });
@@ -920,11 +1021,24 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
       'RED WHEN: the note is written as ordinary money, with nothing saying a payment cannot spend it',
     ).toEqual([150n]);
     expect(written.notYetSpendable[0]!.why).toMatch(/none of the 2 transaction\(s\) the chain lists/);
-    await expect(
-      theProductChooses(written.notes, 120n),
-      'RED WHEN: a transaction nothing established is recorded, so the pre-flight passes a note the spend cannot read',
-    ).rejects.toThrow(/does not record which transaction created it/);
     expect(written.notes.find((n) => n.value === 150n), 'RED WHEN: a hash is recorded that no transaction answered for').not.toHaveProperty('createdIn');
+    /*
+     * The product passes it over and names it. With the stale 400 dropped, a
+     * payment of 120 is made out of the 1,000; a payment only the 150 could
+     * make would be refused before its money moves, naming the note.
+     */
+    const { written: dropped } = await throughTheRebuild(versions, { payments: [{ spent: SECOND, amount: 250n }] }, lagging, true);
+    const stuck = dropped.notes.find((n) => n.value === 150n)!;
+    const choice = choosingANoteToSpend(dropped.notes, toHex(GBP), 120n);
+    expect(
+      choice.of === 'chosen' && [choice.note.value, choice.passedOver.map((n) => n.nonce)],
+      'RED WHEN: a transaction nothing established is recorded, or the note that records none is chosen and refused at the spend',
+    ).toEqual([1_000n, [stuck.nonce]]);
+    expect(
+      choosingANoteToSpend([stuck], toHex(GBP), 120n),
+      'RED WHEN: a vault whose only covering note records no transaction is told to pay in more money, or is told it can pay',
+    ).toEqual({ of: 'stranded', notes: [stuck] });
+    await expect(theProductChooses([stuck], 120n)).rejects.toThrow(/does not record which transaction created it/);
   });
 
   /* ---------------------------------------------------------------- *
