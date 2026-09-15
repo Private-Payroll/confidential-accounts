@@ -183,6 +183,17 @@ describe('a rebuild never takes away a signer\'s access, and never lands on a po
       () => assertNoSignerWouldLoseAccess(['a', 'b', 'c'], ['a', 'b']),
       'RED WHEN: a repair silently ends a signer\'s access to the record of the company\'s money and reports success -- one matching signer is enough to open the pool and enough to write it back narrower',
     ).toThrow(/no longer lists \(c\)/);
+    const why = (() => {
+      try { assertNoSignerWouldLoseAccess(['a', 'c'], ['a'], "this vault's payment journal"); return ''; }
+      catch (e) { return (e as Error).message; }
+    })();
+    expect(
+      why,
+      'RED WHEN: the refusal sends the reader to a door that does not exist - nothing on this machine removes a signer deliberately, for a pool or a journal',
+    ).not.toMatch(/door that exists/);
+    expect(why, 'RED WHEN: the refusal stops naming what resolves it').toMatch(/What resolves it: add them back to the signers file and run this again/);
+    expect(why, 'RED WHEN: the refusal pretends removing a signer is something the reader can do here').toMatch(/nothing on this machine makes that decision\s+yet/);
+    expect(why).toMatch(/^this vault's payment journal is readable by 1 signer/);
   });
 
   it('allows a write that keeps every reader, and one that adds a reader', () => {
@@ -456,6 +467,112 @@ describe('what a rebuild writes, and whether each note it writes can be spent', 
     expect(w.established).toBe(1);
   });
 
+  it('writes the coin the CHAIN holds when the newest version describes that nonce differently, once, with the transaction recorded for that coin', () => {
+    const wrong = coin('11', 999n, TX_NEW);
+    const right = coin('11', 500n, TX_OLD);
+    const versions = [
+      { version: 1, notes: [right] },
+      { version: 2, notes: [wrong, coin('22', 70n, TX_OLD)] },
+    ];
+    for (const alsoDropStaleNotes of [false, true]) {
+      const w = whatTheRebuildWrites({
+        versions, held: [heldAs(right), heldAs(coin('22', 70n))], alsoDropStaleNotes, found: [],
+      });
+      expect(
+        w.notes.filter((n) => n.nonce === right.nonce),
+        `RED WHEN: the newest version's description of a nonce the chain settled otherwise is written, or written beside the chain's (drop ${alsoDropStaleNotes})`,
+      ).toEqual([right]);
+      expect(w.notes.map((n) => n.value).sort((a, b) => Number(a - b))).toEqual([70n, 500n]);
+    }
+    /* Another colour at the same value is another description, and the chain's is still the one written. */
+    const otherColour = { ...right, token: 'bb'.repeat(32) as Hex, createdIn: TX_NEW };
+    const colours = whatTheRebuildWrites({
+      versions: [{ version: 1, notes: [right] }, { version: 2, notes: [otherColour] }],
+      held: [heldAs(right)], alsoDropStaleNotes: false, found: [],
+    });
+    expect(
+      colours.notes,
+      'RED WHEN: a description in another colour is taken for the chain\'s coin because the values match',
+    ).toEqual([right]);
+    /* The chain's answer about the coin it holds is not given to a version's other description of that nonce, and is counted once. */
+    const answered = whatTheRebuildWrites({
+      versions: [{ version: 1, notes: [coin('11', 999n)] }],
+      held: [heldAs(coin('11', 500n))], alsoDropStaleNotes: false,
+      found: [{ nonce: coin('11', 500n).nonce, createdIn: TX_CHAIN }],
+    });
+    expect(answered.notes).toEqual([coin('11', 500n, TX_CHAIN)]);
+    expect(
+      answered.established,
+      'RED WHEN: a note is counted as gaining its transaction twice, once for the description it replaced',
+    ).toBe(1);
+    const neitherAnswered = whatTheRebuildWrites({
+      versions: [{ version: 1, notes: [coin('11', 999n)] }],
+      held: [], alsoDropStaleNotes: false,
+      found: [{ nonce: coin('11', 500n).nonce, createdIn: TX_CHAIN }],
+    });
+    expect(
+      neitherAnswered.notes,
+      'RED WHEN: the transaction the chain named for one coin is written onto a different description of the same nonce',
+    ).toEqual([coin('11', 999n)]);
+    expect(neitherAnswered.established).toBe(0);
+    /* A note the chain holds as the version describes it is still written once, as the version has it. */
+    const same = whatTheRebuildWrites({ versions: [{ version: 1, notes: [right] }], held: [heldAs(right)], alsoDropStaleNotes: false, found: [] });
+    expect(same.notes).toEqual([right]);
+    /* A nonce the chain holds under NO description is left as any stale note is: kept additively, dropped on request. */
+    const neither = whatTheRebuildWrites({ versions: [{ version: 2, notes: [wrong] }], held: [], alsoDropStaleNotes: false, found: [] });
+    expect(neither.notes).toEqual([wrong]);
+  });
+
+  it('prints a note the chain settled ONCE, in its own section, naming every record and which description the chain holds', () => {
+    const r = recovery({
+      held: [note('11', 500n)], recovered: [note('11', 500n)], stale: [note('11', 999n), note('33', 5n)],
+    });
+    const lines = linesForAnOperator(r, [], [
+      {
+        nonce: '11'.repeat(32) as Hex,
+        chainHolds: { token: 'aa'.repeat(32) as Hex, value: 500n, records: [{ kind: 'pool version', version: 1 }, { kind: 'deposit journal' }] },
+        setAside: [{ token: 'aa'.repeat(32) as Hex, value: 999n, records: [{ kind: 'pool version', version: 2 }] }],
+      },
+      {
+        nonce: '44'.repeat(32) as Hex,
+        setAside: [
+          { token: 'aa'.repeat(32) as Hex, value: 1n, records: [{ kind: 'pool version', version: 2 }] },
+          { token: 'aa'.repeat(32) as Hex, value: 2n, records: [{ kind: 'payment journal' }] },
+        ],
+      },
+    ]);
+    const text = lines.join('\n');
+    expect(text, 'RED WHEN: the settlement is not counted where the operator reads the counts').toMatch(/notes described two ways, settled by the chain +2/);
+    expect(text).toMatch(/RECORDS HERE DESCRIBE THESE NOTES MORE THAN ONE WAY, AND THE CHAIN SAID WHICH IS MONEY/);
+    expect(
+      text,
+      'RED WHEN: the records behind the chain\'s description are not named, so the settlement is not answerable',
+    ).toMatch(/1111111111111111…\n +the chain holds this one: +version 1 of the pool, the deposit journal say 500\n +set aside: +version 2 of the pool says 999/);
+    expect(text).toMatch(/4444444444444444…\n +the chain holds none of them, so no record here describes money this vault holds now\n +set aside: +version 2 of the pool says 1\n +set aside: +the payment journal says 2/);
+    expect(text, 'RED WHEN: the settlement tells anybody to edit or move a record').toMatch(/No record is edited, moved or dropped/);
+    expect(
+      text,
+      'RED WHEN: the chain\'s coin for a settled nonce is also listed as lost, or the set-aside description as stale, so one note is reported three ways',
+    ).not.toMatch(/THE POOL HAD LOST THESE/);
+    const staleBlock = text.slice(text.indexOf('THE POOL CLAIMED THESE'));
+    expect(staleBlock).toContain('3333333333333333');
+    expect(staleBlock).not.toContain('1111111111111111');
+    /*
+     * A nonce the chain holds none of is still written additively as the newest
+     * version has it, so it stays in the stale list, where what resolves it is said.
+     */
+    const withNeither = linesForAnOperator(recovery({ stale: [note('44', 1n)] }), [], [{
+      nonce: '44'.repeat(32) as Hex,
+      setAside: [{ token: 'aa'.repeat(32) as Hex, value: 1n, records: [{ kind: 'pool version', version: 2 }] }],
+    }]).join('\n');
+    expect(
+      withNeither.slice(withNeither.indexOf('THE POOL CLAIMED THESE')),
+      'RED WHEN: a note the rebuild still writes and the chain does not hold is left out of the stale list, so the screen contradicts the write',
+    ).toContain('4444444444444444');
+    /* Nothing settled, nothing said. */
+    expect(linesForAnOperator(r).join('\n')).not.toMatch(/settled by the chain|MORE THAN ONE WAY/);
+  });
+
   it('refuses to build a write with no version under it', () => {
     expect(() => whatTheRebuildWrites({ versions: [], held: [], alsoDropStaleNotes: false, found: [] }))
       .toThrow(/no filed version/);
@@ -483,7 +600,8 @@ describe('what a rebuild writes, and whether each note it writes can be spent', 
 describe('a contradiction is printed with the file each record is', () => {
   it('puts the pool version\'s own file beside it, and the whole journal beside a journal line', () => {
     const refused = new NoteDescribedTwice('ab'.repeat(32) as Hex, [
-      { record: { kind: 'pool version', version: 4 }, token: 'aa'.repeat(32) as Hex, value: 1n, onChain: false },
+      { record: { kind: 'pool version', version: 4 }, token: 'aa'.repeat(32) as Hex, value: 1n, onChain: true },
+      { record: { kind: 'pool version', version: 6 }, token: 'aa'.repeat(32) as Hex, value: 1n, onChain: false },
       { record: { kind: 'payment journal' }, token: 'aa'.repeat(32) as Hex, value: 2n, onChain: true },
     ]);
     const lines = whereTheRecordsAre(refused, {
@@ -495,9 +613,10 @@ describe('a contradiction is printed with the file each record is', () => {
       lines,
       'RED WHEN: a record is printed without the file it is, or with the wrong version\'s file, so the person told to move it moves the wrong one',
     ).toEqual([
-      'version 4 of the pool: .midnight/stagenet-vault-pool-x.v4.json',
+      'version 4 of the pool (the chain holds this one): .midnight/stagenet-vault-pool-x.v4.json',
+      'version 6 of the pool: .midnight/stagenet-vault-pool-x.v6.json',
       'the payment journal (the chain holds this one): .midnight/stagenet-vault-payment-journal-x.json and its numbered versions',
     ]);
-    expect(refused.message, 'the version the chain does not hold is the one named as needing correction').toMatch(/correcting that one note in version 4 of the pool/);
+    expect(refused.message, 'every description is named with whether the chain holds it').toMatch(/version 4 of the pool says it is 1 of aaaaaaaaaaaaaaaa… \(the chain holds this one\); version 6 of the pool says it is 1 of aaaaaaaaaaaaaaaa…; the payment journal says it is 2/);
   });
 });

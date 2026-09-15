@@ -42,8 +42,21 @@ import type { ChainReadIndex } from '../../src/midnight/note-index.js';
  * in the client.
  */
 const noTreeHere = 0n as ChainReadIndex;
+
+/**
+ * **EVERY CALL RECORDS THE TRANSACTION THAT MADE ITS NOTE, AS THE CLIENT DOES.**
+ * A deposit and a payment each write it onto the note they create, and a
+ * payment only spends a note that records one. There is no chain here to name a
+ * real hash, so each call gets the next of these; nothing reads them but the
+ * choice of which note can be spent.
+ */
+let transactions = 0;
+const aTransaction = (): Hex => {
+  transactions += 1;
+  return transactions.toString(16).padStart(64, '0') as Hex;
+};
 import { changeCoinOf } from '../../src/midnight/vault-coins.js';
-import { toHex, fromHex } from '../../src/core/crypto.js';
+import { toHex, fromHex, type Hex } from '../../src/core/crypto.js';
 
 const NOW = 1_800_000_000;
 const FROM = BigInt(NOW - 3_600);
@@ -152,7 +165,7 @@ describe('V-74: a vault driven by the client\'s own note pool', () => {
     const coin = { nonce: bytes(nonce), color: GBP, value };
     const r = await vault.impureCircuits.deposit(ctx('deposit'), coin);
     vaultState = r.context.callContext.currentQueryContext.state;
-    notes = afterDeposit(notes, { nonce: toHex(coin.nonce), token: toHex(GBP), value });
+    notes = afterDeposit(notes, { nonce: toHex(coin.nonce), token: toHex(GBP), value, createdIn: aTransaction() });
     notes = withIndexRead(notes, toHex(coin.nonce), noTreeHere);
   };
 
@@ -207,7 +220,7 @@ describe('V-74: a vault driven by the client\'s own note pool', () => {
      * above uses: there is no commitment tree in this test to assign one.
      */
     const kept = changeCoinOf(r.context.callContext.currentZswapLocalState, toHex(vaultBytes()));
-    notes = afterPayment(notes, pending.spending!, a.amount, kept);
+    notes = afterPayment(notes, pending.spending!, a.amount, kept, aTransaction());
     if (kept) notes = withIndexRead(notes, kept.nonce, noTreeHere);
     return r;
   };
@@ -264,6 +277,28 @@ describe('V-74: a vault driven by the client\'s own note pool', () => {
     expect(balanceOf(notes, toHex(GBP))).toBe(1_000n);
     expect(notes.notes).toHaveLength(1);
     expect([...vaultLedger(vaultState as never).notes]).toHaveLength(1);
+  });
+
+  it('THROUGH THE COMPILED CIRCUIT: a note that records no transaction is passed over, the larger one is spent, and the passed-over note is still the vault\'s', async () => {
+    await deposit(0xc1, 5_000n);
+    await deposit(0xc2, 150n);
+    /* The 150 as a note recorded before its transaction was kept. */
+    notes = { notes: notes.notes.map(({ createdIn, ...n }) => (n.value === 150n ? n : { ...n, createdIn })) };
+
+    const c = change(0n, 78);
+    const { run, id } = await approvedRun(
+      [{ payee: payeeFor(ALICE, 'undeployed'), token: toHex(GBP), amount: 100n }], c, 'payroll-passed-over');
+    await pay(run, id, c, 0);
+
+    expect(vaultLedger(vaultState as never).payments).toBe(1n);
+    expect(
+      pending.spending,
+      'RED WHEN: the witness the circuit calls takes the smallest covering note whether or not a payment can spend it',
+    ).toBe(toHex(bytes(0xc1)));
+    expect(notes.notes.map((n) => n.value).sort((a, b) => Number(a - b))).toEqual([150n, 4_900n]);
+    /* Both are on chain: the one passed over is the vault's, and so is the change. */
+    expect([...vaultLedger(vaultState as never).notes]).toHaveLength(2);
+    expect(notes.notes.find((n) => n.value === 150n)).not.toHaveProperty('createdIn');
   });
 
   it('REFUSES A PAYMENT NO SINGLE NOTE COVERS rather than paying part of it', async () => {

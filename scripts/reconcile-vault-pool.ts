@@ -274,8 +274,11 @@ async function main(): Promise<number> {
   } catch (cause) {
     if (!(cause instanceof NoteDescribedTwice)) throw cause;
     /*
-     * **THE REFUSAL NAMES RECORDS; A PERSON MOVES FILES.** So each record is
-     * printed beside the file it is, from the functions that name those files.
+     * **THE REFUSAL NAMES RECORDS, AND A PERSON LOOKS FOR FILES.** It is raised
+     * only when the chain holds more than one coin under one nonce; every other
+     * disagreement between records is settled by the chain and printed with the
+     * rebuild below. Each record is printed beside the file it is, from the
+     * functions that name those files, so it can be found and kept.
      */
     const here = (f: string) => f.replace(ROOT + '/', '');
     throw new NotUsable([
@@ -314,7 +317,7 @@ async function main(): Promise<number> {
   }
   const toWrite = whatTheRebuildWrites({ versions, held: rebuilt.held, alsoDropStaleNotes, found });
   say();
-  for (const line of linesForAnOperator(rebuilt, toWrite.notYetSpendable)) say(`  ${line}`);
+  for (const line of linesForAnOperator(rebuilt, toWrite.notYetSpendable, rebuilt.settled)) say(`  ${line}`);
 
   step('5 of 5  Whether anything is written');
   /*
