@@ -38,6 +38,14 @@
  *     note is, only that a commitment exists, so this door opens the vault's
  *     sealed pool and the payment rewrites it. A run without it would be
  *     refused with nothing to reconcile against.
+ *   · **THE AMOUNT IS WRITTEN DOWN BEFORE THE MONEY MOVES.** The pool is
+ *     rewritten AFTER the payment lands, so a process that stops in between
+ *     leaves the chain holding a change note whose value only this process
+ *     knew. So the ledger writes the note it is about to spend and the amount
+ *     into a sealed payment journal beside the pool, before its call, and the
+ *     rebuild reads that journal. This door opens the journal before any fee
+ *     for the same reason it opens the pool: a refusal has to arrive while it
+ *     still costs nothing.
  *
  * ------------------------------------------------------------------------
  * **WHAT AN OBSERVER LEARNS ANYWAY, SAID HERE RATHER THAN IMPLIED.** The
@@ -102,6 +110,7 @@ import { serialiseWholeDetailed, describeDropped } from './error-report.js';
 import { createScreen, phaseClock, withTimeout, describeError } from './deploy-report.js';
 import { previewSignersFile, parsePreviewSigners, signerBytes, PREVIEW_SIGNER_IDS } from './preview-signers.js';
 import { FileSealedPoolStore, vaultPoolFile } from './vault-pool-file.js';
+import { SealedPaymentJournal, paymentJournalFile } from './vault-journal.js';
 import { chooseOpener, assertNoSignerIsDropped } from './deposit-to-vault.js';
 import { testTokenFile } from './mint-test-token.js';
 import {
@@ -428,6 +437,32 @@ async function main(): Promise<number> {
   const pool = new SealedNotePool(
     store, { signerId: chosen.id, wrappingSecret: chosen.wrappingSecret }, async () => poolSigners);
 
+  /*
+   * **THE ATTEMPT JOURNAL, OPENED HERE SO IT CANNOT FAIL AFTER THE MONEY HAS
+   * MOVED.** The same courtesy the deposit door pays its own journal, for the
+   * same reason: the ledger writes the note it is about to spend and the amount
+   * into this file BEFORE its call, so a journal the secrets on this machine
+   * cannot open has to stop the run now, while stopping costs nothing, rather
+   * than one statement before the payment. The write itself refuses on the same
+   * condition; this is refusing early.
+   */
+  const journal = new SealedPaymentJournal(
+    paymentJournalFile(STATE_DIR, NETWORK, VAULT_NAME), entry.contractAddress,
+    { id: chosen.id, wrappingSecret: chosen.wrappingSecret }, async () => poolSigners);
+  let journalled: { attempts: readonly unknown[]; version: number };
+  try {
+    journalled = await journal.open();
+  } catch (cause) {
+    throw new Error(
+      'this vault has a payment journal on this machine and it could not be opened: ' +
+      `${(cause as Error)?.message ?? String(cause)}\n` +
+      'THAT IS NOT AN EMPTY JOURNAL. It records, for every private payment ever attempted ' +
+      'from here, the note it spent and the amount, which is what names a change note when the ' +
+      'process stops before the pool is written. Paying while it is unreadable would add a line ' +
+      'nobody here can read. Nothing was proved and nothing was spent.');
+  }
+  good(`the payment journal holds ${journalled.attempts.length} earlier attempt(s), and opens`);
+
   await applyNetworkId(NETWORK);
   const logger = createDefaultTestLogger();
   const { env, how } = testEnvironmentFor(NETWORK, logger);
@@ -485,8 +520,15 @@ async function main(): Promise<number> {
   });
   good('found the vault on chain: its verifier keys match these, and so does its ledger shape');
 
+  /*
+   * The journal is the seventh argument, and a ledger built without one refuses
+   * a private payment by name before proving. The line it writes lands between
+   * choosing the note and the call, inside the ledger, because only the ledger
+   * knows which note it is about to spend.
+   */
   const vaultLedger = new VaultLedger(
-    { networkId: NETWORK } as never, {} as never, async () => vaultProviders, vaultCompiled, pool, VAULT_ARTEFACTS);
+    { networkId: NETWORK } as never, {} as never, async () => vaultProviders, vaultCompiled, pool,
+    VAULT_ARTEFACTS, journal);
   const events = indexerNoteEvents(cfg.indexer);
 
   const becomeSigner = async (id: (typeof PREVIEW_SIGNER_IDS)[number]) => {
@@ -747,6 +789,12 @@ function fail(e: any): never {
     }
     console.log('  \x1b[1mTHE ACCOUNT HAS ALREADY RECORDED THIS PAYMENT.\x1b[0m');
     console.log('  DO NOT RUN THIS DOOR AGAIN FOR IT: a new record would be a second payment.');
+    console.log('  If this stop came after the payment and before the pool write, the vault\x27s change');
+    console.log('  note is on chain and the pool does not name it yet. The note it spent and the amount');
+    console.log('  were journalled on this machine BEFORE the call, so the pool rebuild can name the');
+    console.log('  change note from that journal and the chain. A rebuilt note records no creating');
+    console.log('  transaction, so recording this payment\x27s transaction against it is still needed');
+    console.log('  before it can be spent; the refusal at the spend names the door that does it.');
     releaseTheLock();
     process.exit(4);
   }

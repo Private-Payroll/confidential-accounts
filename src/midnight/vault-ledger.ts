@@ -225,6 +225,68 @@ export interface NotePool {
 }
 
 /**
+ * **WHAT A PRIVATE PAYMENT WRITES DOWN BEFORE ITS MONEY MOVES.**
+ *
+ * A payment spends one note and the chain keeps its change as a commitment,
+ * which discloses nothing. The change note's nonce follows from the spent
+ * note's and its colour is the spent note's colour, so a rebuild can derive
+ * both. **Its value is the spent note's value minus this payment's amount, and
+ * the amount exists nowhere but in this process until the pool is written** --
+ * which happens AFTER the call. A process that stops in between leaves the
+ * vault holding money it cannot name, and a commitment cannot be inverted to
+ * find it.
+ *
+ * So the attempt is recorded first: the note about to be spent, whole, and
+ * the amount leaving it. Recorded, not applied -- this is what was ATTEMPTED,
+ * and a line for a call that never landed is correct and harmless, because
+ * the rebuild proposes it to the chain and the chain says whether it holds
+ * the note. A pool entry for the same call would be the opposite: a claim the
+ * vault holds a note it may not, which is every later payment refused.
+ */
+export interface PaymentAttempt {
+  /** The note the payment is about to spend, exactly as the pool holds it. */
+  readonly spent: { readonly nonce: Hex; readonly token: Hex; readonly value: bigint };
+  /** How much of it is leaving. The change note is worth the rest. */
+  readonly amount: bigint;
+  /** When, so two lines for one note can be told apart by a reader. */
+  readonly attemptedAt: string;
+}
+
+/**
+ * Where a payment's attempts are kept. An interface for the reason `NotePool`
+ * is one: what it holds is a nonce, a colour and a value -- exactly what the
+ * pool seals -- so it belongs in whatever sealed store the customer trusts
+ * with the pool, and never in this module, whose callers include tests and a
+ * server that must write no file.
+ *
+ * **`record` throws, and then nothing is proved or paid.** It is called after
+ * the note is chosen and before the call, so a store that cannot be written
+ * stops the payment while stopping still costs nothing. A refusal here after
+ * the money moved would move the loss rather than remove it, and the order of
+ * the two statements in `payPrivately` is the whole guarantee.
+ */
+export interface PaymentJournal {
+  record(vaultAddress: string, attempt: PaymentAttempt): Promise<void>;
+}
+
+/**
+ * The journal a `VaultLedger` has when it is given none: one that refuses a
+ * private payment by name, before anything is proved. A ledger built to read
+ * holdings, or to move public money, never reaches it; one built to pay
+ * privately without saying where the attempt is written is one that would
+ * open the window this record exists to close, and it is stopped instead.
+ */
+export const noPaymentJournal = (): PaymentJournal => ({
+  record: async () => {
+    throw new Error(
+      'a private payment writes down the note it is about to spend and the amount before the '
+      + 'money moves, and this ledger was given nowhere to write it. Nothing is proved or paid. '
+      + 'Construct the ledger with a payment journal -- the sealed one the payment door keeps '
+      + 'beside the pool -- and pay again.');
+  },
+});
+
+/**
  * WHAT ONE CIRCUIT CALL IS, before any of it reaches the SDK. V-82.
  *
  * Separated out because the fault this fixes was invisible: the arguments and
@@ -449,6 +511,12 @@ export class VaultLedger {
      * wrong, which is worse than absent. V-82.
      */
     private vaultZkConfigPath: string,
+    /**
+     * Where a private payment records its attempt before the call. Optional
+     * only so a ledger that never pays privately need not name one; a private
+     * payment through a ledger without one is refused before proving, by name.
+     */
+    private journal: PaymentJournal = noPaymentJournal(),
   ) {}
 
   /**
@@ -1511,6 +1579,22 @@ export class VaultLedger {
      * this vault, each stops the payment here with a sentence.
      */
     const index = await indexForSpend(vaultAddress as Hex, chosen, events);
+
+    /*
+     * **THE AMOUNT IS WRITTEN DOWN HERE, BEFORE THE MONEY MOVES, AND THIS LINE
+     * MAY NOT MOVE BELOW THE CALL.** The note `call` spends is `chosen` or
+     * nothing: every other note reaches the witness without an index and is
+     * refused by name. So this is the moment the whole of the change note is
+     * known -- the nonce and colour follow from `chosen`, and the value is
+     * `chosen.value - p.amount` -- and the last moment before the process can
+     * stop with the chain holding it. A journal that throws stops the payment
+     * with nothing spent; the same throw one statement later would be a loss.
+     */
+    await this.journal.record(vaultAddress, {
+      spent: { nonce: chosen.nonce, token: chosen.token, value: chosen.value },
+      amount: p.amount,
+      attemptedAt: new Date().toISOString(),
+    });
 
     const { result, spent, notes: spentFrom, readAt } = await this.call(vaultAddress, 'payout', [
       fromHex(p.proposal), fromHex(p.root), p.payees, p.opensAt, p.closesAt, fromHex(p.salt),

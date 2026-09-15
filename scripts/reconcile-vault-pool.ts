@@ -23,12 +23,19 @@
  * there is anything wrong, which is the point: a door somebody is afraid of is a
  * door they run too late.
  *
- * **WHAT IT CANNOT DO, SAID HERE RATHER THAN DISCOVERED.** A note that was never
- * written to any version of the pool is not proposed, so it comes back as a
- * commitment nothing explains rather than as money. That is the change note of a
- * payment whose write was lost: its nonce is derivable from the note that was
- * spent and its colour is that note's colour, but its VALUE is the spent value
- * minus an amount only the payment knew. **Nothing here guesses at it.**
+ * **AND IT READS THE JOURNALS, WHICH IS WHAT NAMES THE NOTE THE VERSIONS
+ * CANNOT.** A note that was never written to any version of the pool is not in
+ * the union. That is the change note of a payment whose write was lost: its
+ * nonce is derivable from the note that was spent and its colour is that note's
+ * colour, but its VALUE is the spent value minus an amount only the payment
+ * knew. **Nothing here guesses at it.** What it reads instead is what the doors
+ * wrote down BEFORE their money moved: the deposit journal, holding every coin
+ * a deposit was about to make, and the payment journal, holding the note every
+ * private payment was about to spend and the amount. Both are proposed to the
+ * chain beside the versions, and the chain chooses. A journal says what was
+ * attempted; a journalled note the chain does not hold is not money and is not
+ * written. An absent journal is an empty one, and this door says how many
+ * versions of each it read.
  *
  * **AND IT NEVER WRITES AN EMPTY POOL.** A rebuild that could explain none of the
  * notes the chain holds is this machine's ignorance, and an empty pool is a claim
@@ -51,6 +58,7 @@ import { indexerPublicDataProvider } from '@midnight-ntwrk/midnight-js-indexer-p
 import type { Hex } from '../src/core/crypto.js';
 import { reconcileVaultPool } from '../src/midnight/vault-recovery.js';
 import { FileSealedPoolStore, vaultPoolFile, everyVersionFiled } from './vault-pool-file.js';
+import { journalledAttempts, paymentJournalFile, depositJournalFileOf } from './vault-journal.js';
 import { chooseOpener } from './deposit-to-vault.js';
 import { createScreen } from './deploy-report.js';
 import { NotUsable } from './note-transaction-rules.js';
@@ -166,6 +174,28 @@ async function main(): Promise<number> {
     ? versions[versions.length - 1]!.notes.length : '?'} note(s)`);
   note(`across every version, ${everFiled.size} distinct note(s) have ever been filed`);
 
+  /*
+   * **THE JOURNALS, OPENED WITH THE SAME SIGNER.** They are sealed to the pool's
+   * signers because they carry what the pool carries, so the opener that opened
+   * the versions opens them. A journal that is present and will not open stops
+   * the rebuild here: proposing without it would report a change note the
+   * journal could have named as a commitment nothing explains, which reads as
+   * *"somebody else's money"* about the vault's own.
+   */
+  const attempted = journalledAttempts({
+    depositJournalFile: depositJournalFileOf(STATE_DIR, network, vaultName),
+    paymentJournalFile: paymentJournalFile(STATE_DIR, network, vaultName),
+    vault: entry.contractAddress,
+    opener: { id: chosen.id, wrappingSecret: chosen.wrappingSecret },
+  });
+  note(`the deposit journal: ${attempted.versionsRead.deposits} version(s) filed, `
+    + `${attempted.deposits.length} distinct coin(s) journalled before a deposit`);
+  note(`the payment journal: ${attempted.versionsRead.payments} version(s) filed, `
+    + `${attempted.payments.length} distinct attempt(s) journalled before a payment`);
+  if (attempted.versionsRead.deposits === 0 && attempted.versionsRead.payments === 0) {
+    note('no journal is filed on this machine, so only the versions are proposed');
+  }
+
   step('3 of 5  What the chain says this vault holds');
   const endpoints = ENDPOINTS[network];
   if (!endpoints) {
@@ -218,6 +248,7 @@ async function main(): Promise<number> {
     vault: entry.contractAddress as Hex,
     chain,
     versions,
+    attempted,
     circuits: pureCircuits as never,
   });
   say();

@@ -10,7 +10,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   VaultLedger, VaultChainUnreadable, VaultPoolDisagreesWithChain,
   VaultCannotAfford, VaultAlreadyHoldsNotes,
-  type NotePool, type VaultPayment,
+  type NotePool, type VaultPayment, type PaymentAttempt, type PaymentJournal,
 } from './vault-ledger.js';
 import { VaultPoolAdvancedSinceRead, VaultPoolVersionAlreadyFiled } from './vault-pool.js';
 /*
@@ -176,6 +176,14 @@ function harness(opts: {
    * somebody refactoring the first.
    */
   poolThrows?: boolean;
+  /**
+   * **WHERE A PRIVATE PAYMENT WRITES ITS ATTEMPT DOWN.**
+   *
+   *   omitted     a journal that remembers, in `journalled`, in order
+   *   'none'      the ledger is built without one, and must refuse by name
+   *   'refuses'   a journal whose write throws, which must stop the payment
+   */
+  journal?: 'none' | 'refuses';
   /**
    * **WHAT THE CHAIN SAYS THIS VAULT HOLDS IN PUBLIC MONEY.**
    *
@@ -667,10 +675,27 @@ function harness(opts: {
     },
   });
 
-  const ledger = new VaultLedger(
-    { networkId: 'preview' } as never, {} as never, providers as never, {},
-    opts.poolThrows ? refusesEverything : pool,
-    VAULT_ARTEFACTS);
+  /*
+   * The journal is a list this harness holds, and each entry also notes how
+   * many circuit calls had been made when it was written -- **which is the
+   * fact under test**: an attempt written after the call closes nothing.
+   */
+  const journalled: Array<PaymentAttempt & { callsMadeSoFar: number }> = [];
+  const journal: PaymentJournal = {
+    record: async (_vault, attempt) => {
+      if (opts.journal === 'refuses') throw new Error('the journal cannot be written');
+      journalled.push({ ...attempt, callsMadeSoFar: calls.length });
+    },
+  };
+  const ledger = opts.journal === 'none'
+    ? new VaultLedger(
+      { networkId: 'preview' } as never, {} as never, providers as never, {},
+      opts.poolThrows ? refusesEverything : pool,
+      VAULT_ARTEFACTS)
+    : new VaultLedger(
+      { networkId: 'preview' } as never, {} as never, providers as never, {},
+      opts.poolThrows ? refusesEverything : pool,
+      VAULT_ARTEFACTS, journal);
   (ledger as any).connect = async (_a: string, w: unknown) => { witnesses = w; return contract; };
 
   /*
@@ -688,7 +713,7 @@ function harness(opts: {
   };
 
   return {
-    ledger, calls, saves, creates, scopes, eventReads, spentCoins,
+    ledger, calls, saves, creates, scopes, eventReads, spentCoins, journalled,
     current: () => stored, witnessesUsed: () => witnesses,
   };
 }
@@ -2290,5 +2315,76 @@ describe('S6k: an affordability check reads the right treasury', () => {
       { payee: PAYEE, token: GBP, amount: 250n },
       { payee: PUBLIC_PAYEE, token: NIGHT, amount: 250n },
     ])).resolves.toBeUndefined();
+  });
+});
+
+/**
+ * **THE AMOUNT IS WRITTEN DOWN BEFORE THE MONEY MOVES.**
+ *
+ * A payment's change note is on chain as a commitment the moment the call
+ * lands, and the pool is written after. The nonce and colour of that note can
+ * be derived from the note that was spent; **its value cannot** -- it is the
+ * spent value minus an amount that until this record existed lived in one
+ * process's memory. A crash between the call and the pool write therefore
+ * left money the vault owned and could not name. These pin that the attempt
+ * is recorded, that it is recorded BEFORE the call, that it carries what a
+ * rebuild needs, and that a ledger with nowhere to record it refuses rather
+ * than pays.
+ */
+describe('a private payment journals its attempt before the call', () => {
+  it('records the note it is about to spend and the amount, BEFORE the payout call', async () => {
+    const { ledger, journalled, calls, spentCoins } = harness({
+      notes: [{ nonce: '01'.repeat(32), value: 60n }, { nonce: '02'.repeat(32), value: 1_000n }],
+    });
+    await ledger.payout(VAULT, payment(200n), BY, EVENTS);
+
+    expect(journalled).toHaveLength(1);
+    expect(
+      journalled[0].callsMadeSoFar,
+      'RED WHEN: the journal write is moved below the call -- an attempt recorded after the money moved is not on disk when the process stops in between, which is the only moment this record exists for',
+    ).toBe(0);
+    expect(calls.map((c) => c.circuit)).toEqual(['payout']);
+
+    /* What a rebuild needs to name the change note without inverting anything. */
+    expect(journalled[0].spent).toEqual({ nonce: '02'.repeat(32), token: GBP, value: 1_000n });
+    expect(journalled[0].amount).toBe(200n);
+    expect(
+      journalled[0].spent.nonce,
+      'RED WHEN: the note journalled is not the note the contract then spent, so the change note the rebuild derives belongs to no payment',
+    ).toBe(toHex(spentCoins[0].nonce));
+  });
+
+  it('REFUSES a private payment by name when the ledger has nowhere to write the attempt, and calls nothing', async () => {
+    const { ledger, calls, saves } = harness({ journal: 'none' });
+    await expect(ledger.payout(VAULT, payment(100n), BY, EVENTS))
+      .rejects.toThrow(/nowhere to write it/);
+    expect(calls, 'RED WHEN: a payment proceeds unjournalled, which reopens the window silently').toEqual([]);
+    expect(saves).toHaveLength(0);
+  });
+
+  it('a journal that cannot be written STOPS the payment with nothing spent', async () => {
+    const { ledger, calls, saves } = harness({ journal: 'refuses' });
+    await expect(ledger.payout(VAULT, payment(100n), BY, EVENTS))
+      .rejects.toThrow(/journal cannot be written/);
+    expect(calls, 'RED WHEN: the journal refusal arrives after the call, which moves the loss rather than removing it').toEqual([]);
+    expect(saves).toHaveLength(0);
+  });
+
+  it('a PUBLIC payment writes no journal line: it spends no note and keeps no change', async () => {
+    const { ledger, journalled, calls } = harness({ poolThrows: true });
+    await ledger.payout(VAULT, { ...payment(200n), payee: PUBLIC_PAYEE, token: NIGHT }, BY);
+    expect(calls.map((c) => c.circuit)).toEqual(['payoutUnshielded']);
+    expect(journalled, 'RED WHEN: a public payment is journalled -- it spends no note, so the line would name money that does not exist').toHaveLength(0);
+  });
+
+  it('one line per payment, each naming the note THAT payment spent', async () => {
+    const { ledger, journalled, spentCoins } = harness();
+    await ledger.payout(VAULT, payment(100n), BY, EVENTS);
+    await ledger.payout(VAULT, payment(200n), BY, EVENTS);
+    expect(journalled).toHaveLength(2);
+    expect(journalled.map((j) => j.spent.nonce)).toEqual(spentCoins.map((c: any) => toHex(c.nonce)));
+    expect(journalled.map((j) => j.amount)).toEqual([100n, 200n]);
+    /* The second spends the first's change, so its journalled value is what was kept. */
+    expect(journalled[1].spent.value).toBe(900n);
   });
 });

@@ -42,7 +42,7 @@ import { AccountSimulator, privateStateFor, change, type Change } from './simula
 import { buildPayoutTree, type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
 import { changeCoinOf, paidCoinTo } from '../../src/midnight/vault-coins.js';
 import {
-  replayVault, reconcileVaultPool, commitmentForNote, paidCoinOf, type VaultEvent,
+  replayVault, reconcileVaultPool, commitmentForNote, paidCoinOf, changeNoteOf, type VaultEvent,
 } from '../../src/midnight/vault-recovery.js';
 import { noteToSpend, type Note } from '../../src/midnight/vault-notes.js';
 import { toHex, fromHex, type Hex } from '../../src/core/crypto.js';
@@ -419,6 +419,258 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
       ]),
       'RED WHEN: one of two contradicting records is silently preferred, which is this function deciding what the money is worth',
     ).toThrow(/already holds/);
+  });
+
+  /* ---------------------------------------------------------------- *
+   * REBUILT FROM THE VERSIONS AND THE JOURNALS: THE AMOUNT WRITTEN DOWN
+   * BEFORE THE MONEY MOVED
+   * ---------------------------------------------------------------- */
+
+  /**
+   * **THE CASE THE VERSIONS ALONE CANNOT ANSWER, MEASURED BEFORE AND AFTER.**
+   * A payment lands and the process stops before the pool is written. The
+   * chain holds the change note; no version of the pool names it; its nonce
+   * and colour follow from the spent note but its value is the spent value
+   * minus an amount only the payment knew. Against the versions alone that is
+   * one stale note and one commitment nothing explains. **With the line the
+   * payment journalled before its call, it is a named note -- and it SPENDS,
+   * which is this file's standard.**
+   */
+  const rebuildWith = (
+    versions: { version: number; notes: readonly Note[] }[],
+    attempted: { deposits?: readonly typeof FIRST[]; payments?: readonly { spent: typeof FIRST; amount: bigint }[] },
+  ) => reconcileVaultPool({
+    vault: vaultAddr as Hex,
+    chain: chainNotes(),
+    versions,
+    attempted: { deposits: attempted.deposits ?? [], payments: attempted.payments ?? [] },
+    circuits: vaultCircuits,
+  });
+
+  it('CASE C: a payment\'s change note the versions cannot name IS named from the journal, and it SPENDS',
+    async () => {
+      const c = change(0n, 81);
+      const run = await approvedRun([{ to: ALICE, amount: 250n, nonce: 0xf1 }], c);
+      await pay(run, c, 0, ALICE, 250n, 0xf1);          // spends SECOND (400), change 150
+      const versions = [{ version: 1, notes: asNotes([FIRST, SECOND]) }];  // never advanced
+
+      /* Before: the gap, exactly as it was measured. */
+      const without = rebuild(versions);
+      expect(without.held.map((n) => n.nonce)).toEqual([FIRST.nonce]);
+      expect(without.stale.map((n) => n.nonce)).toEqual([SECOND.nonce]);
+      expect(without.unexplained, 'the versions alone cannot name the change note, by design').toHaveLength(1);
+
+      /* After: the one line the payment wrote before its call. */
+      const r = rebuildWith(versions, { payments: [{ spent: SECOND, amount: 250n }] });
+      expect(
+        r.unexplained,
+        'RED WHEN: the journalled attempt is not proposed, so the change note stays a commitment nothing explains',
+      ).toHaveLength(0);
+      expect(r.recovered).toHaveLength(1);
+      expect(
+        r.recovered[0].value,
+        'RED WHEN: the change note is derived with a value other than the spent value minus the journalled amount -- a wrong value is a wrong commitment, and the chain refuses it',
+      ).toBe(150n);
+      expect(r.recovered[0].nonce).not.toBe(SECOND.nonce);
+      expect(r.stale.map((n) => n.nonce), 'the spent note is still stale: the journal does not resurrect it').toEqual([SECOND.nonce]);
+      expect(r.held.map((n) => n.value).sort((x, y) => Number(x - y))).toEqual([150n, 1_000n]);
+
+      /* And the only proof that counts. */
+      priv = { notes: asNotes(r.held) };
+      const c2 = change(0n, 82);
+      const run2 = await approvedRun([{ to: BOB, amount: 120n, nonce: 0xf2 }], c2);
+      await pay(run2, c2, 0, BOB, 120n, 0xf2);         // 150 is the smallest that covers it
+      expect(vaultLedger(vaultState as never).payments).toBe(2n);
+      expect(chainNotes()).toHaveLength(2);
+      expect(chainNotes()).toContain(held({ ...FIRST }));
+    });
+
+  it('a journalled payment that NEVER LANDED names nothing: the chain, not the journal, decides', () => {
+    /* No payment was made. The journal says one was attempted. */
+    const r = rebuildWith([{ version: 1, notes: asNotes([FIRST, SECOND]) }],
+      { payments: [{ spent: SECOND, amount: 250n }] });
+    expect(
+      r.held.map((n) => n.nonce).sort(),
+      'RED WHEN: a journalled change note is written into the pool without the chain holding it -- a pool entry for a note that does not exist, which makes the pool unspendable rather than incomplete',
+    ).toEqual([FIRST.nonce, SECOND.nonce].sort());
+    expect(r.recovered).toHaveLength(0);
+    expect(r.stale).toHaveLength(0);
+    expect(r.unexplained).toHaveLength(0);
+  });
+
+  it('TWO attempts against one note, the first never landed: both are proposed and the chain keeps one', async () => {
+    /*
+     * The door was run, stopped before the chain saw it, and run again for a
+     * different amount. Both lines are in the journal. A `payout` event would
+     * refuse the second as a double spend; an ATTEMPT retires nothing.
+     */
+    const c = change(0n, 83);
+    const run = await approvedRun([{ to: ALICE, amount: 100n, nonce: 0xf3 }], c);
+    await pay(run, c, 0, ALICE, 100n, 0xf3);          // spends SECOND, change 300
+    let r!: ReturnType<typeof rebuildWith>;
+    expect(
+      () => { r = rebuildWith([{ version: 1, notes: asNotes([FIRST, SECOND]) }], {
+        payments: [{ spent: SECOND, amount: 250n }, { spent: SECOND, amount: 100n }],
+      }); },
+      'RED WHEN: an attempt is replayed as a payout, so the second attempt against the same note is refused as a double spend',
+    ).not.toThrow();
+    expect(
+      r.recovered.map((n) => n.value),
+      'RED WHEN: a second attempt against a note an earlier attempt named is refused, or the first attempt retires the note so the second cannot find it',
+    ).toEqual([300n]);
+    expect(r.unexplained).toHaveLength(0);
+  });
+
+  it('a journalled DEPOSIT whose pool write was lost is recovered from the deposit journal, and SPENDS', async () => {
+    /* The deposit of SECOND landed; the only filed version predates it. */
+    const r = rebuildWith([{ version: 1, notes: asNotes([FIRST]) }], { deposits: [SECOND] });
+    expect(
+      r.recovered.map((n) => n.nonce),
+      'RED WHEN: the deposit journal is not proposed beside the versions, so the one record written BEFORE a deposit moved money stays unread by the rebuild',
+    ).toEqual([SECOND.nonce]);
+    priv = { notes: asNotes(r.held) };
+    const c = change(0n, 84);
+    const run = await approvedRun([{ to: CAROL, amount: 400n, nonce: 0xf4 }], c);
+    await pay(run, c, 0, CAROL, 400n, 0xf4);           // SECOND, exactly
+    expect(vaultLedger(vaultState as never).payments).toBe(1n);
+  });
+
+  it('a journalled attempt is named even when NO version filed the note it spent', async () => {
+    /* The pool file was restored from before SECOND arrived; the journal carries SECOND whole. */
+    const c = change(0n, 85);
+    const run = await approvedRun([{ to: ALICE, amount: 250n, nonce: 0xf5 }], c);
+    await pay(run, c, 0, ALICE, 250n, 0xf5);
+    let r!: ReturnType<typeof rebuildWith>;
+    expect(
+      () => { r = rebuildWith([{ version: 1, notes: asNotes([FIRST]) }],
+        { payments: [{ spent: SECOND, amount: 250n }] }); },
+      'RED WHEN: the spent note is not carried whole into the union, so an attempt against a note the versions never filed cannot be resolved',
+    ).not.toThrow();
+    expect(r.recovered.map((n) => n.value)).toEqual([150n]);
+  });
+
+  it('an attempt that spent the note EXACTLY proposes nothing, and the same line twice is one line', async () => {
+    const c = change(0n, 86);
+    const run = await approvedRun([{ to: CAROL, amount: 400n, nonce: 0xf6 }], c);
+    await pay(run, c, 0, CAROL, 400n, 0xf6);           // SECOND, exactly: no change
+    const r = rebuildWith([{ version: 1, notes: asNotes([FIRST, SECOND]) }],
+      { payments: [{ spent: SECOND, amount: 400n }, { spent: SECOND, amount: 400n }] });
+    expect(r.held.map((n) => n.nonce)).toEqual([FIRST.nonce]);
+    expect(r.stale.map((n) => n.nonce)).toEqual([SECOND.nonce]);
+    expect(r.recovered, 'RED WHEN: a change note of zero is invented for an exact spend -- the contract inserts none').toHaveLength(0);
+    expect(r.unexplained).toHaveLength(0);
+    /* The chain would refuse a zero-value note anyway, so the derivation is pinned directly too. */
+    expect(
+      changeNoteOf(SECOND, 400n),
+      'RED WHEN: an exact spend derives a change note of zero, which the contract never inserts',
+    ).toBeUndefined();
+    expect(changeNoteOf(SECOND, 399n)?.value).toBe(1n);
+  });
+
+  it('REFUSES a journal line the contract could not have taken, rather than deriving past it', () => {
+    expect(
+      () => rebuildWith([{ version: 1, notes: asNotes([FIRST, SECOND]) }],
+        { payments: [{ spent: SECOND, amount: 5_000n }] }),
+      'RED WHEN: an amount larger than the note is subtracted anyway, which is a value nothing could have committed to',
+    ).toThrow(/cannot have landed/);
+    expect(
+      () => rebuildWith([{ version: 1, notes: asNotes([FIRST, SECOND]) }],
+        { payments: [{ spent: SECOND, amount: 0n }] }),
+    ).toThrow(/not a payment/);
+    /* A journal line whose spent note contradicts the filed one is the existing refusal. */
+    expect(
+      () => rebuildWith([{ version: 1, notes: asNotes([FIRST, SECOND]) }],
+        { payments: [{ spent: { ...SECOND, value: 999n }, amount: 10n }] }),
+      'RED WHEN: a journal that disagrees with the pool about what a note is worth is silently preferred either way',
+    ).toThrow(/already holds/);
+    /* A line naming a note nothing filed is not refused: its change has a commitment the chain does not hold. */
+    const stranger = { nonce: toHex(bytes(0x01)), token: toHex(GBP), value: 5_000n };
+    const r = rebuildWith([{ version: 1, notes: asNotes([FIRST, SECOND]) }], { payments: [{ spent: stranger, amount: 1n }] });
+    expect(r.held.map((n) => n.nonce).sort()).toEqual([FIRST.nonce, SECOND.nonce].sort());
+    expect(r.recovered).toHaveLength(0);
+  });
+
+  it('`payout-attempt` in a HISTORY is derived from its own line: a payout the pool recorded AND the journal\'s line for it is one event, described twice', () => {
+    let r!: ReturnType<typeof recover>;
+    expect(
+      () => { r = recover([
+        ...OPENING,
+        { kind: 'payout', spent: SECOND.nonce, amount: 250n },
+        { kind: 'payout-attempt', spent: SECOND, amount: 250n },
+      ], asNotes([FIRST])); },
+      'RED WHEN: an attempt is refused because the note it names was already retired by the payout that recorded the same call',
+    ).not.toThrow();
+    /* Nothing landed on chain in this test, so nothing derived is held; the point is that it did not throw. */
+    expect(r.held.map((n) => n.nonce).sort()).toEqual([FIRST.nonce, SECOND.nonce].sort());
+  });
+
+  it('an attempt RECORDS NOTHING a later event can read: its change is proposed, never made live', () => {
+    /*
+     * A `payout` after an attempt cannot spend the attempt's change, because an
+     * attempt is not a fact about the pool. If it were made live, the LAST
+     * attempt against a note would decide what its change nonce is worth for
+     * every later line -- see the poisoning case below.
+     */
+    const kept = changeNoteOf(SECOND, 100n)!;
+    expect(
+      () => recover([
+        ...OPENING,
+        { kind: 'payout-attempt', spent: SECOND, amount: 100n },
+        { kind: 'payout', spent: kept.nonce, amount: 10n },
+      ], []),
+      'RED WHEN: an attempt\'s change note is written into the live set, so a later event reads a value the chain never confirmed',
+    ).toThrow(/never held/);
+  });
+
+  it('A STALE LINE CANNOT POISON A LATER ONE: two attempts of different amounts against one note, then a spend of its change, and the real change note is recovered', async () => {
+    /*
+     * The ordinary sequence after a lost pool write, found by the audit of this
+     * mechanism before any door ran it. Payee 1 is paid 100 out of SECOND; the
+     * call lands; the pool write is lost. The pool still holds SECOND, so the
+     * next payment chooses it again, journals (SECOND, 250), and the chain
+     * refuses the spend -- that line stays in the journal for ever. The pool is
+     * rebuilt (change N = 300 recovered and written). Payee 2 is then paid 250
+     * out of N: journal (N, 250), and the process stops before the pool write.
+     *
+     * A rebuild that let the (SECOND, 250) line decide what N is worth would
+     * measure the (N, 250) line against 150, refuse it as wrong while it is
+     * right, and leave N's real change note as money nobody can name.
+     */
+    const c1 = change(0n, 87);
+    const run1 = await approvedRun([{ to: ALICE, amount: 100n, nonce: 0xf7 }], c1);
+    await pay(run1, c1, 0, ALICE, 100n, 0xf7);        // spends SECOND (400), change N = 300
+    const N = changeNoteOf(SECOND, 100n)!;
+    priv = { notes: asNotes([FIRST, N]) };
+    const c2 = change(0n, 88);
+    const run2 = await approvedRun([{ to: BOB, amount: 250n, nonce: 0xf8 }], c2);
+    await pay(run2, c2, 0, BOB, 250n, 0xf8);          // spends N (300), change 50
+
+    const versions = [
+      { version: 1, notes: asNotes([FIRST, SECOND]) },
+      { version: 2, notes: asNotes([FIRST, N]) },     // the rebuild that recovered N
+    ];
+    let r!: ReturnType<typeof rebuildWith>;
+    expect(
+      () => { r = rebuildWith(versions, { payments: [
+        { spent: SECOND, amount: 100n },              // landed
+        { spent: SECOND, amount: 250n },              // refused by the chain; the line stays
+        { spent: N, amount: 250n },                   // landed, pool write lost
+      ] }); },
+      'RED WHEN: the stale (SECOND, 250) line decides what N is worth, and the correct (N, 250) line is refused as "the journal line is wrong"',
+    ).not.toThrow();
+    expect(
+      r.recovered.map((n) => n.value),
+      'RED WHEN: the correct line is derived from a poisoned value, so the real change note of 50 is reported as a commitment nothing explains',
+    ).toEqual([50n]);
+    expect(r.unexplained).toHaveLength(0);
+    expect(r.stale.map((n) => n.nonce)).toEqual([N.nonce]);
+
+    /* And the 50 spends. */
+    priv = { notes: asNotes(r.held) };
+    const c3 = change(0n, 89);
+    const run3 = await approvedRun([{ to: CAROL, amount: 40n, nonce: 0xf9 }], c3);
+    await pay(run3, c3, 0, CAROL, 40n, 0xf9);
+    expect(vaultLedger(vaultState as never).payments).toBe(3n);
   });
 
   /* ---------------------------------------------------------------- *
