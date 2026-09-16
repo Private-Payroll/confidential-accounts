@@ -13,12 +13,13 @@
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { newWrappingKeypair } from '../core/crypto.js';
+import { newWrappingKeypair, newSymmetricKey, seal, wrapKey, canonical } from '../core/crypto.js';
 import { redactHex } from '../testing/redact.js';
 import type { VaultNotes } from './vault-notes.js';
 import {
   sealPool, openPool, wrapFor, SealedNotePool, MemorySealedPoolStore, VaultPoolUnreadable,
   VaultPoolAdvancedSinceRead, VaultPoolVersionAlreadyFiled, isALostPoolRace,
+  assertTheNextVersion, whyThisIsNotASealedPool, paddedToABucket,
   type PoolSigner,
 } from './vault-pool.js';
 
@@ -371,7 +372,8 @@ describe('the pool VaultLedger actually uses', () => {
      * chain never had, the intersection drops ones it does.
      */
     const { store, a } = build();
-    await store.put(VAULT, sealPool(VAULT, POOL, [a.who], 5));
+    /* Versions follow one another, so version 5 is filed after 1 to 4. */
+    for (let v = 1; v <= 5; v += 1) await store.put(VAULT, sealPool(VAULT, POOL, [a.who], v));
     /*
      * **THE NAMED CLASS, NOT THE SENTENCE.** It used to assert the words
      * *"refusing to write version 5"*. The file store said the same thing in its
@@ -411,5 +413,122 @@ describe('the pool VaultLedger actually uses', () => {
     const whole = redactHex(rec);
     expect(whole).not.toMatch(/1000/);
     expect(whole).not.toMatch(/400/);
+  });
+});
+
+describe('what a sealed record\'s size says', () => {
+  const note = (i: number, value: bigint) => ({ nonce: i.toString(16).padStart(64, '0'), token: '9b'.repeat(32), value });
+
+  it('pools of 0 to 7 notes, of any values, seal to exactly the same size', () => {
+    const a = signer('sgn_a');
+    const sizes = new Set<number>();
+    for (let n = 0; n < 8; n += 1) {
+      for (const v of [1n, 1_000_000_000_000n]) {
+        sizes.add(sealPool(VAULT, { notes: Array.from({ length: n }, (_, i) => note(i, v)) }, [a.who], 1).sealed.body.length);
+      }
+    }
+    expect([...sizes], 'RED WHEN: a stored record\'s size tells whoever holds it how many notes the vault has, or how large their values are').toHaveLength(1);
+  });
+
+  it('a larger pool moves to the next power of two, and still opens to exactly what was sealed', () => {
+    const a = signer('sgn_a');
+    const big = { notes: Array.from({ length: 40 }, (_, i) => note(i, BigInt(i) + 1n)) };
+    const text = canonical(big).length;
+    expect(text, 'the fixture must not fit the smallest size').toBeGreaterThan(4096);
+    expect(text).toBeLessThanOrEqual(8192);
+    const rec = sealPool(VAULT, big, [a.who], 1);
+    /* The body is the padded text plus the 16-byte tag, in hex. */
+    expect(rec.sealed.body.length, 'RED WHEN: the record is not padded to the next power of two').toBe((8192 + 16) * 2);
+    expect(openPool(rec, 'sgn_a', a.secret)).toEqual(big);
+    expect(paddedToABucket('x'.repeat(4097))).toHaveLength(8192);
+    expect(paddedToABucket('')).toHaveLength(4096);
+  });
+
+  it('a record sealed before the padding still opens', () => {
+    const a = signer('sgn_a');
+    const key = newSymmetricKey();
+    const unpadded = {
+      vault: VAULT, version: 1,
+      sealed: seal(canonical(POOL), key),
+      wrapped: [{ signerId: 'sgn_a', wrapped: wrapKey(key, a.who.wrappingPublicKey) }],
+    };
+    expect(openPool(unpadded, 'sgn_a', a.secret), 'RED WHEN: a pool written before the padding no longer opens').toEqual(POOL);
+  });
+});
+
+describe('what every store must do, pinned on the in-memory one', () => {
+  it('keeps every version it files, oldest first, and answers the newest', async () => {
+    const a = signer('sgn_a');
+    const store = new MemorySealedPoolStore();
+    expect(await store.versions(VAULT)).toEqual([]);
+    for (let v = 1; v <= 3; v += 1) await store.put(VAULT, sealPool(VAULT, POOL, [a.who], v));
+    expect((await store.versions(VAULT)).map((x) => x.version),
+      'RED WHEN: a store keeps only the newest version, so a rebuild cannot propose what an older one held').toEqual([1, 2, 3]);
+    expect((await store.get(VAULT))?.version).toBe(3);
+  });
+
+  it('REFUSES a version past the next one, in the words every store uses, and files nothing', async () => {
+    const a = signer('sgn_a');
+    const store = new MemorySealedPoolStore();
+    await expect(store.put(VAULT, sealPool(VAULT, POOL, [a.who], 2)),
+      'RED WHEN: a first version other than 1 is filed').rejects.toThrow(/the next one is 1/);
+    await store.put(VAULT, sealPool(VAULT, POOL, [a.who], 1));
+    await expect(store.put(VAULT, sealPool(VAULT, POOL, [a.who], 3)),
+      'RED WHEN: a gap is filed').rejects.toThrow(/the next one is 2/);
+    expect(await store.versions(VAULT)).toHaveLength(1);
+  });
+
+  it('assertTheNextVersion: the taken version is a lost race, a later one is a gap, the next is fine', () => {
+    expect(() => assertTheNextVersion(VAULT, 4, 5)).not.toThrow();
+    expect(() => assertTheNextVersion(VAULT, null, 1)).not.toThrow();
+    expect(() => assertTheNextVersion(VAULT, 4, 4)).toThrow(VaultPoolVersionAlreadyFiled);
+    expect(() => assertTheNextVersion(VAULT, 4, 2)).toThrow(VaultPoolVersionAlreadyFiled);
+    let gap: unknown;
+    try { assertTheNextVersion(VAULT, 4, 6); } catch (e) { gap = e; }
+    expect(gap).not.toBeInstanceOf(VaultPoolVersionAlreadyFiled);
+    expect(String((gap as Error).message)).toMatch(/Nothing has been written/);
+    expect(String((gap as Error).message), 'RED WHEN: the refusal prints the vault').not.toContain(VAULT);
+  });
+
+  it('whyThisIsNotASealedPool refuses each thing a record cannot be, and nothing a record is', () => {
+    const a = signer('sgn_a');
+    const rec = sealPool(VAULT, POOL, [a.who], 1);
+    expect(whyThisIsNotASealedPool(JSON.parse(JSON.stringify(rec)), VAULT)).toBeNull();
+    expect(whyThisIsNotASealedPool(null, VAULT)).toMatch(/not a record/);
+    expect(whyThisIsNotASealedPool({ ...rec, vault: 'cd'.repeat(32) }, VAULT)).toMatch(/DIFFERENT vault/);
+    expect(whyThisIsNotASealedPool({ ...rec, version: 0 }, VAULT)).toMatch(/whole number/);
+    expect(whyThisIsNotASealedPool({ ...rec, wrapped: [] }, VAULT)).toMatch(/no wrapped keys/);
+    expect(whyThisIsNotASealedPool({ ...rec, sealed: null }, VAULT)).toMatch(/no sealed payload/);
+  });
+});
+
+describe('a rebuild\'s answer about a contradicted note is sealed into the version it files', () => {
+  const settled = [{
+    nonce: '11'.repeat(32),
+    chainHolds: { token: '9b'.repeat(32), value: 1_000n, records: [{ kind: 'pool version' as const, version: 2 }] },
+    setAside: [{ token: '9b'.repeat(32), value: 999n, records: [{ kind: 'pool version' as const, version: 1 }] }],
+  }];
+
+  it('seals the settlements with the notes when they are given, and opens them back whole', async () => {
+    const a = signer('sgn_a');
+    const store = new MemorySealedPoolStore();
+    const pool = new SealedNotePool(store, { signerId: 'sgn_a', wrappingSecret: a.secret }, async () => [a.who]);
+    await pool.create(VAULT, POOL);
+    const read = await pool.load(VAULT);
+    await pool.save(VAULT, { notes: POOL.notes, settled }, read.readAt);
+    const opened = openPool((await store.get(VAULT))!, 'sgn_a', a.secret);
+    expect(opened.settled, 'RED WHEN: save drops what the rebuild worked out, so the answer dies with the coin').toEqual(settled);
+    expect(opened.notes).toEqual(POOL.notes);
+  });
+
+  it('seals nothing but the notes when there are no settlements, and never the load\'s bookkeeping', async () => {
+    const a = signer('sgn_a');
+    const store = new MemorySealedPoolStore();
+    const pool = new SealedNotePool(store, { signerId: 'sgn_a', wrappingSecret: a.secret }, async () => [a.who]);
+    await pool.create(VAULT, POOL);
+    const read = await pool.load(VAULT);
+    await pool.save(VAULT, { ...read, settled: [] }, read.readAt);
+    const opened = openPool((await store.get(VAULT))!, 'sgn_a', a.secret);
+    expect(Object.keys(opened), 'RED WHEN: the readAt or an empty list is sealed into the record').toEqual(['notes']);
   });
 });

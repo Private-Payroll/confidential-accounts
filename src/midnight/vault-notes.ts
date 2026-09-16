@@ -43,6 +43,7 @@
  */
 import { toHex, fromHex, type Hex } from '../core/crypto.js';
 import type { VaultCoin } from './vault-coins.js';
+import type { SettledByTheChain } from './vault-recovery.js';
 import { theTransactionTheseEventsAreFrom, type ChainReadIndex } from './note-index.js';
 
 /**
@@ -151,6 +152,16 @@ export interface Note {
  */
 export interface VaultNotes {
   notes: Note[];
+  /**
+   * **WHAT A REBUILD WORKED OUT ABOUT NONCES ITS RECORDS DESCRIBED MORE THAN ONE
+   * WAY**, written into the version the rebuild files and into no other.
+   *
+   * It is a record of what the chain said, not a note and not money: nothing
+   * that chooses, spends or counts a note reads it. It is kept because the
+   * chain can answer which description is the coin only while it holds that
+   * coin, and a rebuild after the coin is spent needs the earlier answer.
+   */
+  settled?: readonly SettledByTheChain[];
 }
 
 /**

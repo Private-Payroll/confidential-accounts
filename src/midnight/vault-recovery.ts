@@ -580,6 +580,16 @@ export interface SettledByTheChain {
   readonly nonce: Hex;
   readonly chainHolds?: { readonly token: Hex; readonly value: bigint; readonly records: readonly RecordOfANote[] };
   readonly setAside: ReadonlyArray<{ readonly token: Hex; readonly value: bigint; readonly records: readonly RecordOfANote[] }>;
+  /**
+   * **WHAT AN EARLIER REBUILD WROTE DOWN, WHEN THE CHAIN HOLDS NONE OF THEM NOW.**
+   * A coin that has been spent is in no note set, so the chain can no longer say
+   * which description was the coin. A rebuild that settled this nonce while the
+   * coin was held sealed its answer into the version it filed; this is that
+   * answer, and the version it is read from. It decides nothing about money -
+   * a description the chain does not hold is not money the vault holds now,
+   * whichever rebuild said it once was.
+   */
+  readonly heldWhenFiled?: { readonly version: number; readonly token: Hex; readonly value: bigint };
 }
 
 /**
@@ -622,6 +632,29 @@ export interface ReconciledPool extends PoolRecovery {
   readonly settled: readonly SettledByTheChain[];
 }
 
+/**
+ * The newest settlement a filed version records for this nonce whose coin is one
+ * of `described`, with the version it was filed in. A version records what the
+ * chain held when that version was filed, or what an earlier rebuild had
+ * already recorded.
+ */
+const earlierSettlement = (
+  versions: readonly { version: number; settled?: readonly SettledByTheChain[] }[],
+  nonce: Hex,
+  described: readonly VaultCoin[],
+): { version: number; token: Hex; value: bigint } | undefined => {
+  for (const v of [...versions].sort((a, b) => b.version - a.version)) {
+    for (const s of v.settled ?? []) {
+      if (s.nonce !== nonce) continue;
+      const said = s.chainHolds
+        ? { version: v.version, token: s.chainHolds.token, value: s.chainHolds.value }
+        : s.heldWhenFiled;
+      if (said && described.some((c) => c.token === said.token && c.value === said.value)) return said;
+    }
+  }
+  return undefined;
+};
+
 export const reconcileVaultPool = (input: {
   /** The vault's own address, hex. Part of every one of its commitments. */
   vault: Hex;
@@ -632,7 +665,12 @@ export const reconcileVaultPool = (input: {
    * taken as what the pool currently believes; the union of all of them is what
    * is proposed to the chain.
    */
-  versions: readonly { version: number; notes: readonly VaultCoin[] }[];
+  versions: readonly {
+    version: number;
+    notes: readonly VaultCoin[];
+    /** What the rebuild that filed this version wrote down about contradicted nonces, if any. */
+    settled?: readonly SettledByTheChain[];
+  }[];
   /** What the doors journalled before moving money. Absent means no journal was read. */
   attempted?: AttemptedVaultCalls;
   circuits: VaultNoteCircuits;
@@ -705,11 +743,19 @@ export const reconcileVaultPool = (input: {
     const kept = held[0];
     if (kept) everFiled.set(nonce, kept.coin);
     else everFiled.delete(nonce);
+    /*
+     * **WHEN THE CHAIN HOLDS NONE, THE NEWEST ANSWER A REBUILD WROTE DOWN IS
+     * REPORTED, AND ONLY IF IT NAMES ONE OF THE DESCRIPTIONS HERE.** It changes
+     * nothing that is proposed: that is the chain's to decide, and the chain
+     * holds none of these coins now.
+     */
+    const earlier = kept ? undefined : earlierSettlement(input.versions, nonce, ways.map((w) => w.coin));
     settled.push({
       nonce,
       ...(kept ? { chainHolds: { token: kept.coin.token, value: kept.coin.value, records: kept.records } } : {}),
       setAside: ways.filter((w) => w !== kept)
         .map((w) => ({ token: w.coin.token, value: w.coin.value, records: w.records })),
+      ...(earlier ? { heldWhenFiled: earlier } : {}),
     });
   }
   /*

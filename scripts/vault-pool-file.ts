@@ -82,19 +82,28 @@
  * held, which is the one question a rebuild needs answered and the one thing a
  * single overwritten file cannot answer.
  *
+ * **AND A WRITE THAT RETURNS IS ON THE DISK.** The staged bytes are flushed to
+ * the device before `link` names them, and the directory is flushed after, so a
+ * power loss once `put` has returned cannot leave the version absent or
+ * truncated. Renaming alone survives a crash of the process and not a loss of
+ * power, and the journal exists for exactly the moment a stop would be costly.
+ *
  * **A POOL WRITTEN BEFORE THIS EXISTED IS STILL READ.** A record under the
  * unnumbered name and no numbered file at all is that pool, and it is answered
  * as itself. The first write after that files a numbered one and the series
  * begins.
  */
 import {
-  existsSync, linkSync, mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync,
+  closeSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readdirSync, readFileSync,
+  renameSync, unlinkSync, writeSync,
 } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
 
-import { VaultPoolVersionAlreadyFiled } from '../src/midnight/vault-pool.js';
-import type { SealedPool, SealedPoolStore } from '../src/midnight/vault-pool.js';
+import {
+  VaultPoolVersionAlreadyFiled, whyThisIsNotASealedPool, assertTheNextVersion,
+} from '../src/midnight/vault-pool.js';
+import type { FiledPoolVersion, SealedPool, SealedPoolStore } from '../src/midnight/vault-pool.js';
 import { assertVaultName } from '../src/midnight/vault-record.js';
 
 /**
@@ -227,11 +236,71 @@ export class VaultPoolFileUnreadable extends Error {
 export const stagingNameFor = (poolFile: string): string =>
   `${poolFile}.writing.${process.pid}.${randomBytes(8).toString('hex')}`;
 
+/**
+ * **THE DISK CALLS A WRITE MAKES, SO A TEST CAN WATCH THEIR ORDER.** The real
+ * ones by default; nothing but a test ever passes others.
+ */
+export interface DurableDisk {
+  openSync: typeof openSync;
+  /** Writes from `offset` to the end of `bytes`, answering how many were written. */
+  writeSync: (fd: number, bytes: Uint8Array, offset: number) => number;
+  fsyncSync: typeof fsyncSync;
+  closeSync: typeof closeSync;
+  linkSync: typeof linkSync;
+  renameSync: typeof renameSync;
+}
+const theDisk: DurableDisk = {
+  openSync,
+  writeSync: (fd, bytes, offset) => writeSync(fd, bytes, offset, bytes.length - offset),
+  fsyncSync, closeSync, linkSync, renameSync,
+};
+
+/**
+ * **A NEW FILE, WHOLE, AND ON THE DISK BEFORE THIS RETURNS.**
+ *
+ * Writing and renaming survives a process being killed and does not survive
+ * the power going: the name can reach the disk before the bytes do, and the
+ * record then reads as truncated -- unreadable, which stops a payment and a
+ * rebuild alike. So the bytes are flushed to the device before anything names
+ * them. On macOS Node's flush asks the drive to empty its own cache as well,
+ * which a plain `fsync` there does not.
+ *
+ * `wx`: the staging name is unique to this attempt, so finding it already
+ * there is a fault, not a case to overwrite.
+ */
+const writeDurably = (disk: DurableDisk, file: string, data: string): void => {
+  const fd = disk.openSync(file, 'wx', 0o600);
+  try {
+    const bytes = Buffer.from(data, 'utf8');
+    /* A write may take fewer bytes than it was given; the rest is written, not dropped. */
+    for (let at = 0; at < bytes.length;) {
+      const n = disk.writeSync(fd, bytes, at);
+      if (!(n > 0)) throw new Error(`the disk accepted no bytes at offset ${at} of ${bytes.length}`);
+      at += n;
+    }
+    disk.fsyncSync(fd);
+  } finally {
+    disk.closeSync(fd);
+  }
+};
+
+/**
+ * **A DIRECTORY'S ENTRIES, ON THE DISK.** A `link` or a `rename` changes the
+ * directory, not the file, and it is the directory that has to be flushed for
+ * the new name to survive the power going.
+ */
+const flushDirectory = (disk: DurableDisk, dir: string): void => {
+  const fd = disk.openSync(dir, 'r');
+  try { disk.fsyncSync(fd); } finally { disk.closeSync(fd); }
+};
+
 export class FileSealedPoolStore implements SealedPoolStore {
   constructor(
     private file: string,
     /** The one vault this store is for. Lower-case hex, as the registry holds it. */
     private vault: string,
+    /** The disk calls a write makes. Only a test passes anything else. */
+    private disk: DurableDisk = theDisk,
   ) {}
 
   private mine(vault: string): void {
@@ -300,34 +369,11 @@ export class FileSealedPoolStore implements SealedPoolStore {
         from, 'it is not JSON — a truncated write looks exactly like this');
     }
     /*
-     * SHAPE-CHECKED AT THE BOUNDARY, refusing rather than coercing. `C188`'s
-     * rule: a record missing its `wrapped` list is not a pool wrapped to
-     * nobody, it is a record we do not understand — and `sealPool` already
-     * refuses to CREATE one wrapped to nobody (`V-91`), so reading one back
-     * that way means the file is wrong.
+     * SHAPE-CHECKED AT THE BOUNDARY, refusing rather than coercing, by the one
+     * copy of these refusals every store asks (`whyThisIsNotASealedPool`).
      */
-    if (parsed === null || typeof parsed !== 'object') {
-      throw new VaultPoolFileUnreadable(from, `it holds ${typeof parsed}, not a record`);
-    }
-    if (typeof parsed.vault !== 'string' || parsed.vault !== this.vault) {
-      throw new VaultPoolFileUnreadable(
-        from,
-        'it is a pool for a DIFFERENT vault than the one this store is for. Opening it would '
-        + 'describe somebody else\x27s money in this vault\x27s name');
-    }
-    if (!Number.isInteger(parsed.version) || parsed.version < 1) {
-      throw new VaultPoolFileUnreadable(
-        from, `its version is ${JSON.stringify(parsed.version)} rather than a whole number`);
-    }
-    if (!Array.isArray(parsed.wrapped) || parsed.wrapped.length === 0) {
-      throw new VaultPoolFileUnreadable(
-        from,
-        'it carries no wrapped keys, so there is no device anywhere that could open it. That is '
-        + 'not a pool with no notes in it — it is ciphertext with no key in the world');
-    }
-    if (parsed.sealed === null || typeof parsed.sealed !== 'object') {
-      throw new VaultPoolFileUnreadable(from, 'it carries no sealed payload');
-    }
+    const unusable = whyThisIsNotASealedPool(parsed, this.vault);
+    if (unusable !== null) throw new VaultPoolFileUnreadable(from, unusable);
     /*
      * **THE NUMBER IN THE NAME AND THE NUMBER IN THE RECORD ARE ONE FACT, SO
      * THEY HAVE TO AGREE.** The name is what the version was CLAIMED under -- it
@@ -355,6 +401,12 @@ export class FileSealedPoolStore implements SealedPoolStore {
     return parsed as SealedPool;
   }
 
+  /** Every version filed for this vault, oldest first: a directory read, made only by a rebuild. */
+  async versions(vault: string): Promise<readonly FiledPoolVersion[]> {
+    this.mine(vault);
+    return everyVersionFiled(this.file, this.vault);
+  }
+
   async get(vault: string): Promise<SealedPool | null> {
     this.mine(vault);
     /* ABSENT is `null`, and `SealedNotePool` is what turns that into a refusal
@@ -372,9 +424,8 @@ export class FileSealedPoolStore implements SealedPoolStore {
    * half-write"* — the first is `SealedNotePool`'s job through `create` versus
    * `save`, and the second is this method's. A truncated pool is
    * indistinguishable from a wrong key and both read as *"this vault is
-   * unreadable"* forever, so the bytes are written to a neighbouring file and
-   * RENAMED over the target: a rename within one directory is the only step
-   * here that either happens or does not.
+   * unreadable"* forever, so the bytes are written to a neighbouring file,
+   * flushed to the disk, and only then given the version's name by `link`.
    *
    * And the version check the memory store makes is made here too, for the same
    * reason and against the same failure: two operators reconciling one vault at
@@ -408,6 +459,11 @@ export class FileSealedPoolStore implements SealedPoolStore {
        */
       throw new VaultPoolVersionAlreadyFiled(this.vault, rec.version);
     }
+    /*
+     * **VERSIONS FOLLOW ONE ANOTHER.** A version further on than the next one is
+     * refused before any byte is written, in the words every store uses.
+     */
+    assertTheNextVersion(this.vault, existing?.version ?? null, rec.version);
     const dir = dirname(this.file);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     /*
@@ -418,7 +474,21 @@ export class FileSealedPoolStore implements SealedPoolStore {
      * reused, and one process may write twice -- so random bytes carry it.
      */
     const staging = stagingNameFor(this.file);
-    writeFileSync(staging, JSON.stringify(rec, null, 2), { mode: 0o600 });
+    /*
+     * **ON THE DISK BEFORE IT IS NAMED.** A name that reaches the disk before its
+     * bytes is a record that reads as truncated after a power loss, and the
+     * journal is written precisely so that a stop at the wrong moment loses
+     * nothing.
+     */
+    try {
+      writeDurably(this.disk, staging, JSON.stringify(rec, null, 2));
+    } catch (cause) {
+      try { unlinkSync(staging); } catch { /* nothing was staged, or it is rubbish */ }
+      throw new Error(
+        `this vault's pool could not be staged as version ${rec.version} `
+        + `(${(cause as Error)?.message ?? String(cause)}). **Nothing has been written**, so the pool `
+        + 'is exactly as it was.', { cause });
+    }
     /*
      * **THE ONE STEP THAT DECIDES, AND IT HAS TWO OUTCOMES AND NO MIDDLE.**
      *
@@ -434,7 +504,7 @@ export class FileSealedPoolStore implements SealedPoolStore {
      */
     const filed = vaultPoolVersionFile(this.file, rec.version);
     try {
-      linkSync(staging, filed);
+      this.disk.linkSync(staging, filed);
     } catch (cause) {
       /*
        * **THE STAGED COPY GOES, WHICHEVER WAY THIS FAILED.** It is a sealed copy of
@@ -481,6 +551,33 @@ export class FileSealedPoolStore implements SealedPoolStore {
      * the record correct and this copy one version behind, which is exactly why
      * nothing reads it while a numbered file exists.
      */
-    renameSync(staging, this.file);
+    /*
+     * **THE CLAIM IS ON THE DISK BEFORE ANYTHING ELSE HAPPENS.** The new name is
+     * an entry in the directory, and it is the directory that is flushed for it
+     * to survive the power going. If that flush fails the version IS filed --
+     * the claim was made -- and saying "nothing was written" would be false in
+     * the direction that loses a change note, so the refusal says what is true.
+     */
+    try {
+      flushDirectory(this.disk, dir);
+    } catch (cause) {
+      throw new Error(
+        `version ${rec.version} of this vault's pool was filed, and the disk did not confirm it is `
+        + `durable (${(cause as Error)?.message ?? String(cause)}). **The version is filed and is the `
+        + 'newest record**; it is the power going before the disk catches up that could still lose '
+        + 'it. Do not file it again. If this fails every time, move the state folder to a local disk.',
+        { cause });
+    }
+    try {
+      this.disk.renameSync(staging, this.file);
+    } catch (cause) {
+      throw new Error(
+        `version ${rec.version} of this vault's pool was filed and is durable, and the copy under the `
+        + `plain name could not be updated (${(cause as Error)?.message ?? String(cause)}). **The version `
+        + 'is filed and is the newest record**; nothing reads the plain name while a numbered version '
+        + 'exists. Do not file it again.', { cause });
+    }
+    /* The courtesy copy's name decides nothing, and is flushed so it is not left one version behind. */
+    try { flushDirectory(this.disk, dir); } catch { /* the record is already durable under its number */ }
   }
 }

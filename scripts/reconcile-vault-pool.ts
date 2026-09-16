@@ -82,7 +82,7 @@ import { NotUsable } from './note-transaction-rules.js';
 import {
   decideWhetherToWrite, assertNoSignerWouldLoseAccess,
   assertThePoolHasNotMovedSinceTheRebuild, linesForAnOperator,
-  notesNeedingATransaction, whatTheRebuildWrites, whereTheRecordsAre,
+  notesNeedingATransaction, whatTheRebuildWrites, whereTheRecordsAre, settlementsNotYetRecorded,
 } from './reconcile-vault-pool-rules.js';
 
 const ROOT = process.cwd();
@@ -183,10 +183,15 @@ async function main(): Promise<number> {
 
   const chosen = chooseOpener(newest.sealed.wrapped.map((w) => w.signerId), signers, secrets);
   good(`opening every version as "${chosen.id}"`);
-  const versions = filed.map((f) => ({
-    version: f.version,
-    notes: openPool(f.sealed, chosen.id, chosen.wrappingSecret).notes,
-  }));
+  /*
+   * **EACH VERSION WITH WHAT THE REBUILD THAT FILED IT WROTE DOWN.** A version a
+   * rebuild filed carries the chain's answer about every nonce it had to settle,
+   * which is the only record of that answer once the coin is spent.
+   */
+  const versions = filed.map((f) => {
+    const page = openPool(f.sealed, chosen.id, chosen.wrappingSecret);
+    return { version: f.version, notes: page.notes, ...(page.settled ? { settled: page.settled } : {}) };
+  });
   const everFiled = new Set(versions.flatMap((v) => v.notes.map((n) => n.nonce)));
   note(`the newest version holds ${newest.sealed.version === versions[versions.length - 1]!.version
     ? versions[versions.length - 1]!.notes.length : '?'} note(s)`);
@@ -332,6 +337,7 @@ async function main(): Promise<number> {
   const decision = decideWhetherToWrite({
     recovery: rebuilt, notesTheNewestVersionClaims: newestClaims, alsoDropStaleNotes,
     transactionsEstablished: toWrite.established,
+    settlementsToRecord: settlementsNotYetRecorded(rebuilt.settled, versions).length,
   });
   if (decision.do === 'refuse') {
     say();
@@ -398,9 +404,14 @@ async function main(): Promise<number> {
    * Every note is built by `whatTheRebuildWrites`, which keeps the creating
    * transaction a filed version records and fills only what none does.
    */
+  /*
+   * **THE REBUILD'S OWN ANSWER GOES INTO THE VERSION IT FILES**: every nonce the
+   * chain settled in this run, and every answer an earlier version recorded that
+   * the chain can no longer give.
+   */
   await pool.save(
     entry.contractAddress,
-    { notes: toWrite.notes },
+    { notes: toWrite.notes, settled: rebuilt.settled },
     { vault: entry.contractAddress, version: newest.version });
 
   say();

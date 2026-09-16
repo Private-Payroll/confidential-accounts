@@ -76,6 +76,11 @@ export const decideWhetherToWrite = (input: {
    * version records - `whatTheRebuildWrites`' `established`. Absent is none.
    */
   transactionsEstablished?: number;
+  /**
+   * How many nonces the chain settled in this run that no filed version has
+   * written down yet - `settlementsNotYetRecorded`. Absent is none.
+   */
+  settlementsToRecord?: number;
 }): RebuildDecision => {
   const r = input.recovery;
   /*
@@ -131,7 +136,14 @@ export const decideWhetherToWrite = (input: {
    * *nothing needed writing* would throw away the one read that made it spendable.
    */
   const records = input.transactionsEstablished ?? 0;
-  if (r.recovered.length === 0 && drops === 0 && records === 0) {
+  /*
+   * **A SETTLEMENT NOT YET WRITTEN DOWN IS A REASON TO WRITE ON ITS OWN.** The
+   * chain can say which description of a nonce is the coin only while it holds
+   * the coin. Once the coin is spent the answer is gone unless a version holds
+   * it, so a rebuild that worked it out and wrote nothing would lose it.
+   */
+  const settlements = input.settlementsToRecord ?? 0;
+  if (r.recovered.length === 0 && drops === 0 && records === 0 && settlements === 0) {
     return {
       do: 'nothing',
       why: r.stale.length > 0
@@ -159,6 +171,10 @@ export const decideWhetherToWrite = (input: {
       records > 0
         ? `${records} note(s) gain the transaction that created them, which is what lets a payment spend them`
         : '',
+      settlements > 0
+        ? `${settlements} note(s) described more than one way were settled by the chain, and no version `
+          + 'records the answer yet; once such a coin is spent the chain can no longer give it'
+        : '',
     ].filter(Boolean).join('; '),
     recovers: r.recovered.length,
     drops,
@@ -184,41 +200,13 @@ export const decideWhetherToWrite = (input: {
  */
 
 /**
- * **REMOVING A SIGNER'S ACCESS BY WRITING THE POOL, WHICH IS WHAT THIS DOOR
- * WOULD DO SILENTLY.**
- *
- * A write seals the pool afresh under a new key and wraps it to the signers the
- * signers FILE lists. Anybody the file has stopped listing keeps no copy of the
- * new key and their access to the record of the company's money ends -- and the
- * run that did it SUCCEEDS. Opening the pool does not catch it: one matching
- * signer is enough to open it and enough to write it back narrower.
- *
- * The same refusal the deposit door and the repair door make, for the same write.
- * It is here rather than imported from one of them because those live inside
- * doors, and this is the file that can be measured.
+ * **REMOVING A SIGNER'S ACCESS BY WRITING THE POOL, WHICH THIS DOOR WOULD DO
+ * SILENTLY.** The refusal is `assertNoSignerWouldLoseAccess` in
+ * `src/midnight/vault-pool.ts`, where every writer of the pool and of the
+ * journals asks it, and it is re-exported here for the doors that import it
+ * from this file.
  */
-export const assertNoSignerWouldLoseAccess = (
-  wrappedFor: readonly string[], willWrapTo: readonly string[],
-  /**
-   * What is being written, as the sentence names it. The journals are sealed the
-   * same way as the pool and lose a reader the same way, so they ask the same
-   * question; the refusal says which record it is about.
-   */
-  record = 'this pool',
-): void => {
-  const to = new Set(willWrapTo);
-  const dropped = [...new Set(wrappedFor)].filter((id) => !to.has(id));
-  if (dropped.length === 0) return;
-  throw new Error(
-    `${record} is readable by ${dropped.length} signer(s) that the signers file no longer lists `
-    + `(${dropped.join(', ')}), and writing it would re-seal it to the listed ones only. Their `
-    + 'access to the record of this vault\x27s money would end, and this run would report success. '
-    + 'Nothing is written, and nothing is lost by stopping here. What resolves it: add them back to '
-    + 'the signers file and run this again. Taking a signer\x27s access away is a decision about who '
-    + 'may read the record of this vault\x27s money, and nothing on this machine makes that decision '
-    + 'yet, for this record or any other; until something does, the signers file has to keep '
-    + 'listing everyone the record is sealed to.');
-};
+export { assertNoSignerWouldLoseAccess } from '../src/midnight/vault-pool.js';
 
 /**
  * **A REBUILD IS BUILT ON ONE READ OF THE CHAIN, AND A REBUILD IS NOT A DELTA.**
@@ -256,7 +244,24 @@ export interface NotYetSpendable {
   readonly nonce: string;
   readonly value: bigint;
   readonly why: string;
+  /**
+   * The whole hash of every transaction the chain lists that could be the one
+   * that created it - what a person names to the repair. Empty when none could.
+   */
+  readonly candidates: readonly string[];
 }
+
+/**
+ * **THE SETTLEMENTS THIS RUN WORKED OUT THAT NO FILED VERSION WRITES DOWN YET.**
+ * Only an answer the chain gave in this run counts: one read back from an
+ * earlier version is already written.
+ */
+export const settlementsNotYetRecorded = (
+  settled: readonly SettledByTheChain[],
+  versions: readonly { readonly settled?: readonly SettledByTheChain[] }[],
+): SettledByTheChain[] => settled.filter((s) => s.chainHolds !== undefined && !versions.some((v) =>
+  (v.settled ?? []).some((w) => w.nonce === s.nonce && w.chainHolds !== undefined
+    && w.chainHolds.token === s.chainHolds!.token && w.chainHolds.value === s.chainHolds!.value)));
 
 /**
  * **THE CREATING TRANSACTION A FILED VERSION RECORDS FOR THIS NOTE, NEWEST
@@ -398,6 +403,7 @@ export const whatTheRebuildWrites = (input: {
       why: answer !== undefined && 'unresolved' in answer
         ? answer.unresolved
         : 'the chain was not asked which transaction created it',
+      candidates: answer !== undefined && 'unresolved' in answer ? answer.candidates : [],
     });
   }
   return { notes: [...byNonce.values()], notYetSpendable, established };
@@ -475,6 +481,10 @@ export const linesForAnOperator = (
       lines.push(x.chainHolds
         ? `      the chain holds this one:  ${described(x.chainHolds)}`
         : '      the chain holds none of them, so no record here describes money this vault holds now');
+      if (!x.chainHolds && x.heldWhenFiled) {
+        lines.push(`      when version ${x.heldWhenFiled.version} was filed the chain held the one worth `
+          + `${x.heldWhenFiled.value.toLocaleString()}; it has been spent since`);
+      }
       for (const d of x.setAside) lines.push(`      set aside:                 ${described(d)}`);
     }
     if (settled.length > 8) lines.push(`    … and ${settled.length - 8} more`);
@@ -491,8 +501,22 @@ export const linesForAnOperator = (
     lines.push('and nothing names that transaction for these. They are written so they stay named,');
     lines.push('and a payment that would spend one is refused before its money moves. What resolves');
     lines.push('it: run this rebuild again once the reason below is gone, or name the transaction');
-    lines.push('that created the note to the repair that records it.');
-    lines.push(...bounded(notYetSpendable, (n) => `${aNote(n)}   ${n.why.slice(0, 300)}`));
+    lines.push('that created the note to the repair that records it. Under each note is every');
+    lines.push('transaction that could be that one, whole, so it can be copied.');
+    /*
+     * **THE WHOLE HASH, ON ITS OWN LINE.** The reason shortens every hash to keep
+     * a sentence readable, and the repair takes a whole one; a remedy that names
+     * a transaction the screen never prints is a remedy nobody can act on.
+     */
+    for (const n of notYetSpendable.slice(0, 8)) {
+      lines.push(`${aNote(n)}   ${n.why.slice(0, 300)}`);
+      if (n.candidates.length === 0) {
+        lines.push('      no transaction the chain lists for this vault could be the one');
+      }
+      for (const c of n.candidates.slice(0, 4)) lines.push(`      could be:  ${c}`);
+      if (n.candidates.length > 4) lines.push(`      … and ${n.candidates.length - 4} more`);
+    }
+    if (notYetSpendable.length > 8) lines.push(`    … and ${notYetSpendable.length - 8} more`);
   }
   if (r.stale.some((n) => !settledNonces.has(n.nonce))) {
     lines.push('', 'THE POOL CLAIMED THESE AND THE CHAIN DOES NOT HOLD THEM. They are spent, or the');

@@ -582,6 +582,41 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
     expect(r.unexplained).toHaveLength(0);
   });
 
+  it('A SETTLEMENT A VERSION WROTE DOWN OUTLIVES THE COIN: once the chain holds none of the descriptions, the recorded answer is reported, and nothing proposed changes', async () => {
+    const versions = [
+      { version: 1, notes: asNotes([FIRST, { ...SECOND, value: 999n }]) },
+      { version: 2, notes: asNotes([FIRST, SECOND]) },
+    ];
+    /* While the coin is held, the chain settles it, and that answer is what a rebuild writes into its version. */
+    const before = rebuildWith(versions, {});
+    expect(before.settled[0]!.chainHolds?.value).toBe(400n);
+    const recorded = [...versions, { version: 3, notes: asNotes([FIRST, SECOND]), settled: before.settled }];
+
+    /* SECOND is spent: the chain now holds neither 400 nor 999 under its nonce. */
+    const c = change(0n, 94);
+    const run = await approvedRun([{ to: ALICE, amount: 400n, nonce: 0xfd }], c);
+    await pay(run, c, 0, ALICE, 400n, 0xfd);
+    const after = rebuildWith(recorded, {});
+    expect(after.settled[0]!.chainHolds, 'the chain cannot answer any more').toBeUndefined();
+    expect(
+      after.settled[0]!.heldWhenFiled,
+      'RED WHEN: what an earlier rebuild worked out is not read back, so once the coin is spent the record of which description was right survives only in an old screen',
+    ).toEqual({ version: 3, token: SECOND.token, value: 400n });
+    const unrecorded = rebuildWith(versions, {});
+    expect(unrecorded.settled[0]!.heldWhenFiled, 'RED WHEN: an answer is reported that no version wrote down').toBeUndefined();
+    expect(
+      [after.held, after.stale.map((n) => n.value), after.unexplained],
+      'RED WHEN: a recorded answer changes what is proposed to the chain, which is the chain\'s to decide',
+    ).toEqual([unrecorded.held, unrecorded.stale.map((n) => n.value), unrecorded.unexplained]);
+
+    /* A recorded answer naming a coin no record here describes is not reported. */
+    const forged = rebuildWith([...versions, {
+      version: 3, notes: asNotes([FIRST, SECOND]),
+      settled: [{ nonce: SECOND.nonce, chainHolds: { token: SECOND.token, value: 555n, records: [] }, setAside: [] }],
+    }], {});
+    expect(forged.settled[0]!.heldWhenFiled, 'RED WHEN: a written answer about a coin none of these records describes is believed').toBeUndefined();
+  });
+
   it('a JOURNAL line that disagrees with the pool is settled by the chain either way round, and the attempt it records is still replayed from its own line', () => {
     const r = rebuildWith([{ version: 3, notes: asNotes([FIRST, SECOND]) }],
       { payments: [{ spent: { ...SECOND, value: 999n }, amount: 10n }] });
@@ -653,7 +688,7 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
    * which is this file's standard.**
    */
   const rebuildWith = (
-    versions: { version: number; notes: readonly Note[] }[],
+    versions: { version: number; notes: readonly Note[]; settled?: ReturnType<typeof reconcileVaultPool>['settled'] }[],
     attempted: { deposits?: readonly typeof FIRST[]; payments?: readonly { spent: typeof FIRST; amount: bigint }[] },
   ) => reconcileVaultPool({
     vault: vaultAddr as Hex,
