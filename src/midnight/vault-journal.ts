@@ -47,6 +47,7 @@ import {
 import type {
   DepositAttempt, DepositJournal, PaymentAttempt, PaymentJournal,
 } from './vault-ledger.js';
+import { depositNonceAt, type DepositMoney, type DepositNonceKey } from './deposit-nonce.js';
 import type { AttemptedVaultCalls } from './vault-recovery.js';
 import type { VaultCoin } from './vault-coins.js';
 import type { Hex } from '../core/crypto.js';
@@ -103,7 +104,18 @@ export class SealedJournal<Line> {
     return { lines: lines as Line[], version: rec.version, wrappedFor: rec.wrapped.map((w) => w.signerId) };
   }
 
-  async append(vaultAddress: string, line: Line, what: 'deposit' | 'payment'): Promise<void> {
+  /**
+   * Files one line at the next version and returns the line as filed.
+   *
+   * **THE LINE IS BUILT FROM THE VERSION THIS ATTEMPT FILES**, and built again
+   * when a lost race moves it to the next one. A line that depends on its
+   * version (a deposit's nonce does) is therefore always the line of the
+   * version that holds it, and two writers who read the same journal never
+   * file the same line twice.
+   */
+  async append(
+    vaultAddress: string, lineAt: (version: number) => Line, what: 'deposit' | 'payment',
+  ): Promise<{ line: Line; version: number }> {
     if (vaultAddress !== this.vault) {
       throw new Error(
         `${this.page.called} was built for a different vault than the one whose ${what} is being `
@@ -121,10 +133,12 @@ export class SealedJournal<Line> {
        * would succeed.
        */
       assertNoSignerWouldLoseAccess(now.wrappedFor, to.map((s) => s.id), this.page.called);
+      const version = now.version + 1;
+      const line = lineAt(version);
       const page = { [this.page.lines]: [...now.lines, line] };
       try {
-        await this.store.put(this.vault, sealPool(this.vault, page as never, to, now.version + 1));
-        return;
+        await this.store.put(this.vault, sealPool(this.vault, page as never, to, version));
+        return { line, version };
       } catch (cause) {
         /*
          * **BY NAME, NOT BY `instanceof`.** A store in another module, or a
@@ -173,7 +187,7 @@ export class PaymentJournalInStore implements PaymentJournal {
   }
 
   async record(vaultAddress: string, attempt: PaymentAttempt): Promise<void> {
-    await this.journal.append(vaultAddress, attempt, 'payment');
+    await this.journal.append(vaultAddress, () => attempt, 'payment');
   }
 }
 
@@ -188,6 +202,11 @@ export interface DepositLine {
 /**
  * **THE DEPOSIT JOURNAL A LEDGER IS HANDED, OVER ANY STORE.** The page is
  * `{ notes: [coin + attemptedAt] }`, the shape every deposit line has always had.
+ *
+ * **IT CHOOSES THE NONCE, INSIDE THE CLAIM.** The nonce is derived from the
+ * vault's deposit nonce key and the version this attempt actually files, and
+ * the coin handed back is the coin that line records. A caller never supplies
+ * a nonce, so no caller can make a deposit this journal cannot name again.
  */
 export class DepositJournalInStore implements DepositJournal {
   private readonly journal: SealedJournal<DepositLine>;
@@ -198,6 +217,8 @@ export class DepositJournalInStore implements DepositJournal {
     me: JournalOpener,
     /** Everybody who must be able to open what this writes: the pool's signers. */
     signers: () => Promise<readonly PoolSigner[]>,
+    /** The key this vault's deposit nonces are derived from. */
+    private readonly nonces: DepositNonceKey,
     /** Called once the line is stored, before the ledger calls the contract. */
     private readonly written: () => void = () => {},
   ) {
@@ -211,12 +232,15 @@ export class DepositJournalInStore implements DepositJournal {
     return { attempts: now.lines, version: now.version };
   }
 
-  async record(vaultAddress: string, attempt: DepositAttempt): Promise<void> {
-    await this.journal.append(vaultAddress, {
-      nonce: attempt.coin.nonce, token: attempt.coin.token, value: attempt.coin.value,
-      attemptedAt: attempt.attemptedAt,
-    }, 'deposit');
+  async claim(vaultAddress: string, money: DepositMoney, attemptedAt: string): Promise<DepositAttempt> {
+    const { line } = await this.journal.append(vaultAddress, (version) => ({
+      nonce: depositNonceAt(this.nonces, money, version),
+      token: money.token,
+      value: money.value,
+      attemptedAt,
+    }), 'deposit');
     this.written();
+    return { coin: { nonce: line.nonce, token: line.token, value: line.value }, attemptedAt: line.attemptedAt };
   }
 }
 

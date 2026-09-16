@@ -14,6 +14,9 @@ import {
   type DepositAttempt, type DepositJournal,
 } from './vault-ledger.js';
 import { VaultPoolAdvancedSinceRead, VaultPoolVersionAlreadyFiled } from './vault-pool.js';
+import {
+  DepositCoinAlreadyMade, depositNonceAt, depositNonceKeyFor, type VaultOutputHistory,
+} from './deposit-nonce.js';
 /*
  * The VAULT's own pure circuits, imported for real. `C198`'s reconciliation
  * computes a note's commitment with these, and a fake chain that computed them
@@ -123,6 +126,8 @@ const DEP_TX = 'de'.repeat(32);
  */
 const DEP_ID = `00${'de'.repeat(32)}`;
 const payHash = (k: number) => k.toString(16).padStart(64, 'c');
+/** The nonce the harness's fake deposit claim hands back on its `n`th claim: `77…`, `78…`, … */
+const claimedNonce = (n: number): string => (0x76 + n).toString(16).repeat(32);
 const seededIndex = (i: number) => 40n + BigInt(i) * 3n;
 
 /*
@@ -186,10 +191,22 @@ function harness(opts: {
    */
   journal?: 'none' | 'refuses';
   /**
-   * **WHERE A PRIVATE DEPOSIT WRITES ITS COIN DOWN.** The same three shapes as
-   * `journal`, remembered in `depositsJournalled`.
+   * **WHERE A PRIVATE DEPOSIT WRITES ITS COIN DOWN, AND WHAT NONCE ITS CLAIM
+   * HANDS BACK.** The same three shapes as `journal`, remembered in
+   * `depositsJournalled`. The fake claim's `n`th nonce is `claimedNonce(n)`:
+   * `77…` first, then `78…`, and so on, unless `depositNonces` says otherwise.
    */
   depositJournal?: 'none' | 'refuses';
+  depositNonces?: readonly string[];
+  /**
+   * **EVERY COIN THE CHAIN HAS EVER CREATED FOR THIS VAULT.**
+   *
+   *   omitted        every coin this harness's chain has made, seeded and produced
+   *   'none'         the ledger is built without a history, and must refuse by name
+   *   'unreadable'   the read throws
+   *   string[]       also these nonces, as coins of 500 GBP made and since spent
+   */
+  history?: 'none' | 'unreadable' | readonly string[];
   /**
    * **WHAT THE CHAIN SAYS THIS VAULT HOLDS IN PUBLIC MONEY.**
    *
@@ -717,9 +734,22 @@ function harness(opts: {
   };
   const depositsJournalled: Array<DepositAttempt & { callsMadeSoFar: number; savesMadeSoFar: number }> = [];
   const depositJournal: DepositJournal = {
-    record: async (_vault, attempt) => {
+    claim: async (_vault, money, attemptedAt) => {
       if (opts.depositJournal === 'refuses') throw new Error('the deposit journal cannot be written');
+      const n = depositsJournalled.length + 1;
+      const nonce = opts.depositNonces?.[n - 1] ?? claimedNonce(n);
+      const attempt = { coin: { nonce, token: money.token, value: money.value }, attemptedAt };
       depositsJournalled.push({ ...attempt, callsMadeSoFar: calls.length, savesMadeSoFar: saves.length });
+      return attempt;
+    },
+  };
+  const history: VaultOutputHistory = {
+    everCreated: async () => {
+      if (opts.history === 'unreadable') throw new Error('the vault\x27s outputs cannot be listed');
+      const spentBefore = (Array.isArray(opts.history) ? opts.history : [])
+        .map((nonce) => ({ nonce, token: GBP, value: 500n }));
+      const coins = [...seeded.map((x) => x.coin), ...produced.map((x) => x.coin), ...spentBefore];
+      return new Set(await Promise.all(coins.map((c) => vaultNoteCommitment(c, VAULT))));
     },
   };
   const ledger = new VaultLedger(
@@ -727,7 +757,8 @@ function harness(opts: {
     opts.poolThrows ? refusesEverything : pool,
     VAULT_ARTEFACTS,
     kept ? kept.payments : opts.journal === 'none' ? undefined : journal,
-    kept ? kept.deposits : opts.depositJournal === 'none' ? undefined : depositJournal);
+    kept ? kept.deposits : opts.depositJournal === 'none' ? undefined : depositJournal,
+    opts.history === 'none' ? undefined : history);
   (ledger as any).connect = async (_a: string, w: unknown) => { witnesses = w; return contract; };
 
   /*
@@ -759,7 +790,7 @@ describe('V-74: the vault client', () => {
      * could carry a value nobody can reproduce is the whole of C124.
      */
     const { ledger, calls, current } = harness({ notes: [] });
-    await ledger.deposit(VAULT, { nonce: '77'.repeat(32), token: GBP, value: 500n }, BY);
+    await ledger.deposit(VAULT, { token: GBP, value: 500n }, BY);
 
     expect(calls[0].circuit).toBe('deposit');
     expect(calls[0].args).toHaveLength(1);
@@ -778,7 +809,7 @@ describe('V-74: the vault client', () => {
   it('records the creating transaction off the call, and does not ask the chain when it does not have to', async () => {
     const { ledger, current, eventReads, saves } = harness({ notes: [] });
     const out = await ledger.deposit(
-      VAULT, { nonce: '77'.repeat(32), token: GBP, value: 500n }, BY, eventsInUse);
+      VAULT, { token: GBP, value: 500n }, BY, eventsInUse);
 
     /* RED WHEN the ordinary path stops recording the transaction the call reported. */
     expect(out.recordedFrom).toBe('the call');
@@ -793,7 +824,7 @@ describe('V-74: the vault client', () => {
   it('READS IT FROM THE CHAIN when the call reports only the identifier, still in ONE write', async () => {
     const { ledger, current, eventReads, saves } = harness({ notes: [], depositResult: 'no-hash' });
     const out = await ledger.deposit(
-      VAULT, { nonce: '77'.repeat(32), token: GBP, value: 500n }, BY, eventsInUse);
+      VAULT, { token: GBP, value: 500n }, BY, eventsInUse);
 
     /*
      * RED WHEN a result carrying no hash strands the note. This is the branch
@@ -811,7 +842,7 @@ describe('V-74: the vault client', () => {
   it('STILL WRITES THE NOTE when nothing can be recorded, and SAYS the note is stranded', async () => {
     const { ledger, current, saves } = harness({ notes: [], depositResult: 'no-hash' });
     /* No events source at all: the money has landed and there is nothing to read the hash from. */
-    const out = await ledger.deposit(VAULT, { nonce: '77'.repeat(32), token: GBP, value: 500n }, BY);
+    const out = await ledger.deposit(VAULT, { token: GBP, value: 500n }, BY);
 
     /*
      * RED WHEN the deposit throws here. The transaction has settled: throwing
@@ -831,7 +862,7 @@ describe('V-74: the vault client', () => {
     const { ledger, current, saves } = harness({
       notes: [], depositResult: 'no-hash', events: 'unreadable' });
     const out = await ledger.deposit(
-      VAULT, { nonce: '77'.repeat(32), token: GBP, value: 500n }, BY, eventsInUse);
+      VAULT, { token: GBP, value: 500n }, BY, eventsInUse);
 
     /* RED WHEN a chain read that throws takes the deposit down with it. */
     expect(out.recordedFrom).toBe('nowhere');
@@ -845,7 +876,7 @@ describe('V-74: the vault client', () => {
     const { ledger, eventReads } = harness({
       notes: [], depositResult: 'hash-shaped-identifier' });
     const out = await ledger.deposit(
-      VAULT, { nonce: '77'.repeat(32), token: GBP, value: 500n }, BY, eventsInUse);
+      VAULT, { token: GBP, value: 500n }, BY, eventsInUse);
 
     /*
      * RED WHEN the length check on the identifier widens. The two names are 32
@@ -863,7 +894,7 @@ describe('V-74: the vault client', () => {
     const { ledger, current, saves } = harness({
       notes: [], depositResult: 'no-hash', chainDoesNotFileTheNote: true });
     const out = await ledger.deposit(
-      VAULT, { nonce: '77'.repeat(32), token: GBP, value: 500n }, BY, eventsInUse);
+      VAULT, { token: GBP, value: 500n }, BY, eventsInUse);
 
     /*
      * RED WHEN the hash is taken off the first event the chain returns. A hash
@@ -894,7 +925,7 @@ describe('V-74: the vault client', () => {
     const { ledger, current, saves } = harness({
       notes: [], depositResult: 'no-hash', events: 'unreadable' });
     const out = await ledger.deposit(
-      VAULT, { nonce: '77'.repeat(32), token: GBP, value: 500n }, BY, eventsInUse);
+      VAULT, { token: GBP, value: 500n }, BY, eventsInUse);
 
     /*
      * RED WHEN a read that could succeed in a minute is reported as the chain's
@@ -918,7 +949,7 @@ describe('V-74: the vault client', () => {
      */
     const refused = harness({ notes: [], depositResult: 'no-hash', chainDoesNotFileTheNote: true });
     const a = await refused.ledger.deposit(
-      VAULT, { nonce: '77'.repeat(32), token: GBP, value: 500n }, BY, eventsInUse);
+      VAULT, { token: GBP, value: 500n }, BY, eventsInUse);
     /* RED WHEN a refusal the chain can answer differently tomorrow is called
      * final. Its own sentence tells the reader to read again. */
     expect(a.recordedFrom).toBe('nowhere');
@@ -926,7 +957,7 @@ describe('V-74: the vault client', () => {
 
     const unaskable = harness({ notes: [], depositResult: 'no-hash', events: 'unaskable' });
     const b = await unaskable.ledger.deposit(
-      VAULT, { nonce: '77'.repeat(32), token: GBP, value: 500n }, BY, eventsInUse);
+      VAULT, { token: GBP, value: 500n }, BY, eventsInUse);
     /* RED WHEN the one error that IS final stops being reported as final,
      * which leaves somebody reading again for ever. */
     expect(b.permanent).toBe(true);
@@ -936,7 +967,7 @@ describe('V-74: the vault client', () => {
     const { ledger, current, saves } = harness({
       notes: [], depositResult: 'no-hash', events: 'unaskable' });
     const out = await ledger.deposit(
-      VAULT, { nonce: '77'.repeat(32), token: GBP, value: 500n }, BY, eventsInUse);
+      VAULT, { token: GBP, value: 500n }, BY, eventsInUse);
 
     /*
      * RED WHEN the two are not told apart. They used to produce the identical
@@ -957,7 +988,7 @@ describe('V-74: the vault client', () => {
     const { ledger, current, saves } = harness({
       notes: [], depositResult: 'no-hash', events: 'no-hash-named' });
     const out = await ledger.deposit(
-      VAULT, { nonce: '77'.repeat(32), token: GBP, value: 500n }, BY, eventsInUse);
+      VAULT, { token: GBP, value: 500n }, BY, eventsInUse);
 
     /*
      * **THE ONE VALUE ON THIS PATH THAT NOTHING CHECKED.** Every event agrees
@@ -992,7 +1023,7 @@ describe('V-74: the vault client', () => {
   it('says so when the call names the transaction NEITHER way', async () => {
     const { ledger, current } = harness({ notes: [], depositResult: 'nothing-to-go-on' });
     const out = await ledger.deposit(
-      VAULT, { nonce: '77'.repeat(32), token: GBP, value: 500n }, BY, eventsInUse);
+      VAULT, { token: GBP, value: 500n }, BY, eventsInUse);
 
     /* RED WHEN a result with no name at all is reported as some other failure. */
     expect(out.recordedFrom).toBe('nowhere');
@@ -1017,7 +1048,7 @@ describe('V-74: the vault client', () => {
 
   it('AND A STRANDED NOTE IS EXACTLY THE ONE A PAYMENT REFUSES, which is why it is worth saying', async () => {
     const { ledger, current } = harness({ notes: [], depositResult: 'no-hash' });
-    await ledger.deposit(VAULT, { nonce: '77'.repeat(32), token: GBP, value: 500n }, BY);
+    await ledger.deposit(VAULT, { token: GBP, value: 500n }, BY);
 
     /*
      * RED WHEN a note with no recorded transaction becomes spendable, or stops
@@ -1687,7 +1718,7 @@ describe('a write to the pool is applied to what the pool holds NOW', () => {
 
   it('RECORDS the note of a deposit when another process wrote the pool while it proved, and keeps what that process wrote', async () => {
     const { ledger, current, saves } = harness({ notes: [], anotherWriterAddsDuringTheCall: OTHER });
-    await ledger.deposit(VAULT, { nonce: DEPOSITED, token: GBP, value: 500n }, BY);
+    await ledger.deposit(VAULT, { token: GBP, value: 500n }, BY);
 
     expect(saves, 'RED WHEN: the deposit gives up instead of adding its note to the pool as it stands, which leaves money on chain the pool has never heard of').toHaveLength(1);
     const after = current().notes.map((n) => n.nonce);
@@ -1835,7 +1866,7 @@ describe('a write to the pool is applied to what the pool holds NOW', () => {
       anotherWriterAddsDuringTheChainRead: OTHER,
     });
 
-    await ledger.deposit(VAULT, { nonce: DEPOSITED, token: GBP, value: 500n }, BY, eventsInUse);
+    await ledger.deposit(VAULT, { token: GBP, value: 500n }, BY, eventsInUse);
 
     expect(eventReads, 'RED WHEN: the chain is not asked at all, so this test is not in the branch it is about').not.toEqual([]);
     /*
@@ -1881,7 +1912,7 @@ describe('a write to the pool is applied to what the pool holds NOW', () => {
       anotherWriterAddsDuringTheCall: { nonce: DEPOSITED, value: 1n },
     });
     await expect(
-      ledger.deposit(VAULT, { nonce: DEPOSITED, token: GBP, value: 500n }, BY),
+      ledger.deposit(VAULT, { token: GBP, value: 500n }, BY),
       'RED WHEN: the retry catches everything rather than only a lost race, so a change that cannot be true is attempted five times and then reported as contention',
     ).rejects.toThrow(/already holds a note/);
     expect(saves, 'RED WHEN: a refused change is written anyway').toHaveLength(0);
@@ -1895,9 +1926,11 @@ describe('a write to the pool is applied to what the pool holds NOW', () => {
    * recorded costs nothing rather than a fee and a note on chain nobody can name.
    */
   it('refuses that deposit BEFORE the call, so no money moves', async () => {
-    const { ledger, calls } = harness({ notes: [{ nonce: DEPOSITED, value: 1_000n }] });
-    await expect(ledger.deposit(VAULT, { nonce: DEPOSITED, token: GBP, value: 500n }, BY))
-      .rejects.toThrow(/already holds a note/);
+    const { ledger, calls } = harness({
+      notes: [{ nonce: DEPOSITED, value: 1_000n }], depositNonces: [DEPOSITED, DEPOSITED, DEPOSITED],
+    });
+    await expect(ledger.deposit(VAULT, { token: GBP, value: 500n }, BY))
+      .rejects.toThrow(/pool already holds a note under this nonce/);
     expect(
       calls.filter((c) => c.circuit === 'deposit'),
       'RED WHEN: the pre-flight write moves below the call, so the vault pays a fee to deposit a note that cannot be recorded',
@@ -1909,7 +1942,7 @@ describe('a write to the pool is applied to what the pool holds NOW', () => {
     await paid.ledger.payout(VAULT, payment(200n), BY, EVENTS);
     expect(paid.saves).toHaveLength(1);
     const deposited = harness({ notes: [] });
-    await deposited.ledger.deposit(VAULT, { nonce: '77'.repeat(32), token: GBP, value: 500n }, BY);
+    await deposited.ledger.deposit(VAULT, { token: GBP, value: 500n }, BY);
     expect(deposited.saves).toHaveLength(1);
   });
 
@@ -2171,7 +2204,7 @@ describe('S6k: public money needs no pool', () => {
 
   it('still loads the pool for a SHIELDED deposit, which is C242 unchanged', async () => {
     const { ledger } = harness({ poolThrows: true });
-    await expect(ledger.deposit(VAULT, { nonce: '77'.repeat(32), token: GBP, value: 5n }, BY))
+    await expect(ledger.deposit(VAULT, { token: GBP, value: 5n }, BY))
       .rejects.toThrow(/note pool was LOADED/);
   });
 });
@@ -2460,11 +2493,12 @@ describe('a private payment journals its attempt before the call', () => {
  * deposits.
  */
 describe('a private deposit journals its coin before the call', () => {
-  const COIN = { nonce: '77'.repeat(32), token: GBP, value: 500n };
+  const MONEY = { token: GBP, value: 500n };
+  const COIN = { nonce: '77'.repeat(32), ...MONEY };
 
   it('records the coin it is about to create, whole, BEFORE the deposit call and before the pool write', async () => {
     const { ledger, depositsJournalled, calls, current } = harness({ notes: [] });
-    await ledger.deposit(VAULT, COIN, BY);
+    await ledger.deposit(VAULT, MONEY, BY);
     expect(depositsJournalled).toHaveLength(1);
     expect(
       depositsJournalled[0].callsMadeSoFar,
@@ -2480,29 +2514,106 @@ describe('a private deposit journals its coin before the call', () => {
     expect(current().notes.map((n) => n.nonce)).toEqual([COIN.nonce]);
   });
 
+  it('CALLS THE CONTRACT WITH THE COIN THE CLAIM RETURNED, and with no nonce of its own', async () => {
+    const { ledger, calls, current } = harness({ notes: [], depositNonces: ['5a'.repeat(32)] });
+    await ledger.deposit(VAULT, MONEY, BY);
+    const made: any = calls[0].args[0];
+    expect(
+      toHex(made.nonce),
+      'RED WHEN: the deposit is made under any nonce but the one its claim filed -- a note whose line names another coin can only be named by luck',
+    ).toBe('5a'.repeat(32));
+    expect(current().notes.map((n) => n.nonce)).toEqual(['5a'.repeat(32)]);
+  });
+
+  it('A COIN THE CHAIN HAS ALREADY MADE AND SPENT IS NOT ATTEMPTED AGAIN: the claim moves on, and the coin made is the next one', async () => {
+    /*
+     * A journal restored to an earlier point hands back a version, and with it
+     * the nonce of a deposit of the same amount made months ago and spent since.
+     * That coin is in no note set now, so only the vault's whole history can
+     * see it. The ledger would refuse to create it again, after the proof and
+     * the submission; this refuses it before either, and moves on.
+     */
+    const { ledger, calls, current, depositsJournalled } = harness({ notes: [], history: ['77'.repeat(32)] });
+    await ledger.deposit(VAULT, MONEY, BY);
+    expect(
+      depositsJournalled.map((d) => d.coin.nonce),
+      'RED WHEN: a claim whose coin the chain already made is not followed by another claim',
+    ).toEqual(['77'.repeat(32), '78'.repeat(32)]);
+    expect(
+      toHex((calls[0].args[0] as any).nonce),
+      'RED WHEN: the history is not read, or only the notes held NOW are, so a spent coin is attempted a second time',
+    ).toBe('78'.repeat(32));
+    expect(calls).toHaveLength(1);
+    expect(current().notes.map((n) => n.nonce)).toEqual(['78'.repeat(32)]);
+  });
+
+  it('a coin the POOL already holds under that nonce, or the vault HOLDS NOW, is not made again either', async () => {
+    const pooled = harness({ notes: [{ nonce: '77'.repeat(32), value: 9n }] });
+    const outcome = await pooled.ledger.deposit(VAULT, MONEY, BY).then(() => 'deposited', (e: unknown) => String(e));
+    expect(
+      [outcome, pooled.calls.map((c) => toHex((c.args[0] as any).nonce))],
+      'RED WHEN: a nonce the pool already holds is deposited under, so the pool write refuses after the money has moved',
+    ).toEqual(['deposited', ['78'.repeat(32)]]);
+
+    const held = harness({ notes: [], chain: [{ nonce: '77'.repeat(32), value: 500n }], history: [] });
+    await held.ledger.deposit(VAULT, MONEY, BY);
+    expect(
+      held.depositsJournalled.map((d) => d.coin.nonce).slice(0, 2),
+      'RED WHEN: a coin the vault holds now is attempted a second time',
+    ).toEqual(['77'.repeat(32), '78'.repeat(32)]);
+    expect(held.calls.every((c) => toHex((c.args[0] as any).nonce) !== '77'.repeat(32))).toBe(true);
+  });
+
+  it('REFUSES, AND CALLS NOTHING, when every version tried names a coin that already exists', async () => {
+    const { ledger, calls, saves, depositsJournalled } = harness({
+      notes: [], history: ['77'.repeat(32), '78'.repeat(32), '79'.repeat(32)],
+    });
+    const refused = await ledger.deposit(VAULT, MONEY, BY).then(() => undefined, (e: unknown) => e);
+    expect(refused, 'RED WHEN: the claims stop being bounded, or the last collision is deposited anyway')
+      .toBeInstanceOf(DepositCoinAlreadyMade);
+    expect((refused as Error).message, 'RED WHEN: the refusal stops naming what resolves it')
+      .toMatch(/Find which store is the current one for this vault/);
+    expect(calls, 'RED WHEN: a refused deposit reaches the contract').toEqual([]);
+    expect(saves).toHaveLength(0);
+    expect(depositsJournalled.slice(0, 3).map((d) => d.coin.nonce))
+      .toEqual(['77'.repeat(32), '78'.repeat(32), '79'.repeat(32)]);
+  });
+
   it('REFUSES a private deposit by name when the ledger has nowhere to write the coin, and calls nothing', async () => {
     const { ledger, calls, saves } = harness({ notes: [], depositJournal: 'none' });
     await expect(
-      ledger.deposit(VAULT, COIN, BY),
+      ledger.deposit(VAULT, MONEY, BY),
       'RED WHEN: a ledger built without a deposit journal deposits anyway -- the first private deposit through any caller but the door reopens the crash window with nothing red',
     ).rejects.toThrow(/nowhere to write it/);
-    await expect(ledger.deposit(VAULT, COIN, BY), 'RED WHEN: the refusal stops naming what resolves it, in terms the reader can act on')
+    await expect(ledger.deposit(VAULT, MONEY, BY), 'RED WHEN: the refusal stops naming what resolves it, in terms the reader can act on')
       .rejects.toThrow(/Construct the ledger with a deposit journal/);
     expect(calls, 'RED WHEN: the refusal arrives after the call').toEqual([]);
     expect(saves).toHaveLength(0);
   });
 
+  it('REFUSES by name when the ledger cannot read what the chain has made for the vault, and FILES NOTHING', async () => {
+    for (const history of ['none', 'unreadable'] as const) {
+      const { ledger, calls, depositsJournalled } = harness({ notes: [], history });
+      await expect(
+        ledger.deposit(VAULT, MONEY, BY),
+        `RED WHEN (${history}): a deposit goes ahead without knowing whether its coin already exists`,
+      ).rejects.toThrow(history === 'none' ? /Construct the ledger with the vault's output history/ : /cannot be listed/);
+      expect(calls).toEqual([]);
+      expect(depositsJournalled, `RED WHEN (${history}): the history is read after a line is filed, so every unreadable read leaves a line`).toHaveLength(0);
+    }
+  });
+
   it('a deposit journal that cannot be written STOPS the deposit with nothing spent', async () => {
     const { ledger, calls, saves } = harness({ notes: [], depositJournal: 'refuses' });
-    await expect(ledger.deposit(VAULT, COIN, BY))
+    await expect(ledger.deposit(VAULT, MONEY, BY))
       .rejects.toThrow(/deposit journal cannot be written/);
     expect(calls, 'RED WHEN: a journal failure is swallowed and the deposit goes ahead unjournalled').toEqual([]);
     expect(saves).toHaveLength(0);
   });
 
-  it('a deposit the pool would refuse journals NOTHING: the pre-flight comes first', async () => {
-    const { ledger, depositsJournalled, calls } = harness({ notes: [{ nonce: '77'.repeat(32), value: 9n }] });
-    await expect(ledger.deposit(VAULT, COIN, BY)).rejects.toThrow();
+  it('a deposit of nothing journals NOTHING: the pre-flight comes first', async () => {
+    const { ledger, depositsJournalled, calls } = harness({ notes: [] });
+    await expect(ledger.deposit(VAULT, { token: GBP, value: 0n }, BY)).rejects.toThrow(/not a deposit/);
     expect(calls).toEqual([]);
     expect(
       depositsJournalled,
@@ -2521,7 +2632,7 @@ describe('a private deposit journals its coin before the call', () => {
     const paying = harness({ depositJournal: 'none' });
     await expect(paying.ledger.payout(VAULT, payment(100n), BY, EVENTS)).resolves.toBeDefined();
     const depositing = harness({ notes: [], journal: 'none' });
-    await expect(depositing.ledger.deposit(VAULT, COIN, BY)).resolves.toBeDefined();
+    await expect(depositing.ledger.deposit(VAULT, MONEY, BY)).resolves.toBeDefined();
     expect(depositing.depositsJournalled).toHaveLength(1);
   });
 });
@@ -2573,6 +2684,8 @@ const STORE_DB = process.env.TEST_DATABASE_URL;
     const k = newWrappingKeypair();
     const signers = async () => [{ id: 'kc', wrappingPublicKey: k.publicKey }];
     const opener = { id: 'kc', wrappingSecret: k.secret };
+    const nonces = depositNonceKeyFor(new Uint8Array(32).fill(7), VAULT);
+    const DERIVED = depositNonceAt(nonces, { token: GBP, value: 500n }, 1);
     const one = postgres(url, { onnotice: () => {} });
     const other = postgres(url, { onnotice: () => {} });
     try {
@@ -2583,15 +2696,15 @@ const STORE_DB = process.env.TEST_DATABASE_URL;
         keptIn: {
           pool: new SealedNotePool(records.of('pool'), { signerId: 'kc', wrappingSecret: k.secret }, signers),
           payments: new PaymentJournalInStore(records.of('payment-journal'), VAULT, opener, signers),
-          deposits: new DepositJournalInStore(records.of('deposit-journal'), VAULT, opener, signers),
+          deposits: new DepositJournalInStore(records.of('deposit-journal'), VAULT, opener, signers, nonces),
         },
       });
 
       await h.ledger.openPool(VAULT);
-      await h.ledger.deposit(VAULT, { nonce: '77'.repeat(32), token: GBP, value: 500n }, BY, eventsInUse);
+      await h.ledger.deposit(VAULT, { token: GBP, value: 500n }, BY, eventsInUse);
       const paid = await h.ledger.payout(VAULT, payment(200n), BY, EVENTS);
       if (paid.kind !== 'shielded') throw new Error('a private payee was paid through another door');
-      expect(paid.spentNote).toBe('77'.repeat(32));
+      expect(paid.spentNote).toBe(DERIVED);
 
       /* A second connection, and a store object that shares nothing with the one that wrote. */
       const theirs = await openVaultRecords(other, { refuseToCreate: NOTHING_IS_KEPT_ELSEWHERE });
@@ -2610,9 +2723,9 @@ const STORE_DB = process.env.TEST_DATABASE_URL;
         opener,
       });
       expect(attempted.deposits, 'RED WHEN: the deposit was made without its coin written down first, in the store')
-        .toEqual([{ nonce: '77'.repeat(32), token: GBP, value: 500n }]);
+        .toEqual([{ nonce: DERIVED, token: GBP, value: 500n }]);
       expect(attempted.payments, 'RED WHEN: the payment moved money without its amount written down first, in the store')
-        .toEqual([{ spent: { nonce: '77'.repeat(32), token: GBP, value: 500n }, amount: 200n }]);
+        .toEqual([{ spent: { nonce: DERIVED, token: GBP, value: 500n }, amount: 200n }]);
 
       /* And the rebuild, from nothing but what the store holds and what the chain holds. */
       const change = now.notes[0]!;

@@ -151,12 +151,19 @@ describe('THE CLIENT ITSELF, driven through the real scope with no seam overridd
     const ledger = new VaultLedger(
       { networkId: 'preview' } as never, {} as never, async () => ({}) as never, {} as never,
       { load: async () => ({ notes: [] }), save: async () => {} } as never,
-      VAULT_ARTEFACTS, undefined, { record: async () => {} },
+      VAULT_ARTEFACTS, undefined,
+      {
+        claim: async (_v: string, money: { token: string; value: bigint }, attemptedAt: string) =>
+          ({ coin: { nonce: '77'.repeat(32), token: money.token, value: money.value }, attemptedAt }),
+      },
+      { everCreated: async () => new Set<string>() },
     );
     (ledger as any).connect = async () => contract;
+    /* The vault's note set, read before the claim; this convention is about the call after it. */
+    (ledger as any).chainNotes = async () => ({ member: () => false, size: () => 0n });
 
     await expect(ledger.deposit(
-      'addr_vault', { nonce: '77'.repeat(32), token: 'aa'.repeat(32), value: 1n },
+      'ab'.repeat(32), { token: 'aa'.repeat(32), value: 1n },
       { id: 'kc' } as never,
     )).rejects.toThrow(/No calls were submitted/);
 

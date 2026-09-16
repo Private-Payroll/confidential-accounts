@@ -47,6 +47,10 @@ import {
 import { assertVaultLedgerIsThisBuilds } from './vault-ledger-shape.js';
 import { commitmentForNote } from './vault-recovery.js';
 import { isALostPoolRace } from './vault-pool.js';
+import {
+  noVaultOutputHistory, whyThisCoinIsNotNew, DepositCoinAlreadyMade,
+  type DepositMoney, type VaultOutputHistory,
+} from './deposit-nonce.js';
 
 /** One payment, exactly as `PayrollRun.payeeArgs` hands it over. */
 export interface VaultPayment {
@@ -308,13 +312,17 @@ export interface DepositAttempt {
 }
 
 /**
- * Where a deposit's attempts are kept. The same contract as `PaymentJournal`:
- * `record` is called after the deposit's own pre-flight and before the call,
- * and a `record` that throws stops the deposit while stopping still costs
- * nothing.
+ * Where a deposit's attempts are kept, and **what chooses a deposit's nonce**.
+ *
+ * `claim` files one line at the journal's next version, with the nonce derived
+ * from the version that line is actually filed under, and hands back the coin
+ * it recorded. It is called after the deposit's own pre-flight and before the
+ * call, and a `claim` that throws stops the deposit while stopping still costs
+ * nothing. The ledger calls the contract only with a coin a claim returned, so
+ * a deposit can never land on a nonce from a claim it lost.
  */
 export interface DepositJournal {
-  record(vaultAddress: string, attempt: DepositAttempt): Promise<void>;
+  claim(vaultAddress: string, money: DepositMoney, attemptedAt: string): Promise<DepositAttempt>;
 }
 
 /**
@@ -328,7 +336,7 @@ export interface DepositJournal {
  * the window the journal exists to close, and it is stopped instead.
  */
 export const noDepositJournal = (): DepositJournal => ({
-  record: async () => {
+  claim: async () => {
     throw new Error(
       'a private deposit writes down the coin it is about to create before the money moves, and '
       + 'this ledger was given nowhere to write it. Nothing is proved or deposited. Construct the '
@@ -574,7 +582,22 @@ export class VaultLedger {
      * deposit through a ledger without one is refused before proving, by name.
      */
     private depositJournal: DepositJournal = noDepositJournal(),
+    /**
+     * Every coin the chain has ever created for a vault, read before a private
+     * deposit's call so a deposit never makes a coin that already exists.
+     * Optional for the journals' reason; a private deposit through a ledger
+     * without one is refused before anything is filed, by name.
+     */
+    private depositHistory: VaultOutputHistory = noVaultOutputHistory(),
   ) {}
+
+  /**
+   * **HOW MANY DEPOSIT JOURNAL VERSIONS ARE TRIED BEFORE A DEPOSIT IS REFUSED
+   * FOR NAMING COINS THAT ALREADY EXIST.** Only a journal handing out versions
+   * it has handed out before reaches a second attempt at all, so three in a row
+   * is not bad luck; it is a store that is not the current one.
+   */
+  private static readonly DEPOSIT_CLAIM_ATTEMPTS = 3;
 
   /**
    * Connects with the witnesses attached WHERE THE SDK READS THEM. V-82.
@@ -1163,20 +1186,21 @@ export class VaultLedger {
   async deposit(
     vaultAddress: string,
     /**
-     * **THE COIN THIS DEPOSIT CREATES, CAPTURED BY WHOEVER SENDS IT.**
+     * **WHAT THIS DEPOSIT PUTS IN: A TOKEN AND AN AMOUNT. NOT A COIN.**
      *
-     * `deposit` compiles to `receiveShielded`, which is `createZswapOutput` —
+     * `deposit` compiles to `receiveShielded`, which is `createZswapOutput` -
      * read from the generated contract, `contracts/managed-vault/contract/index.js`,
      * `_receiveShielded_0`. **So a deposit does not spend a coin the caller
      * already holds; it CREATES one, addressed to the vault, and the wallet
-     * balancing the transaction funds it.** The nonce is therefore the
-     * depositor's own choice, made before the transaction exists.
+     * balancing the transaction funds it.** The nonce is chosen before the
+     * transaction exists, and it is chosen HERE, by the deposit journal's claim:
+     * derived from a secret the company keeps and the version the claim files.
+     * A caller cannot hand one in, so no caller can make a note that only a
+     * stored record could ever name again.
      *
-     * That is what makes `C240` closable on this route and not on the general
-     * one: the sender chose the nonce, so the sender can record the note in the
-     * same breath — which is what happens below. **An outsider's deposit is
-     * still unrecoverable by anybody but them**, because a commitment cannot be
-     * inverted, and no route this client builds changes that.
+     * **An outsider's deposit is still unrecoverable by anybody but them**,
+     * because a commitment cannot be inverted, and no route this client builds
+     * changes that.
      *
      * **THERE IS NO INDEX HERE, AND THAT IS A RULE RATHER THAN AN OMISSION.**
      * Where the chain files the commitment is assigned when the transaction is
@@ -1184,7 +1208,7 @@ export class VaultLedger {
      * transaction's hash, read off the finalised result, and the index is read
      * from that transaction's events when the note is spent. See `Note.index`.
      */
-    coin: { nonce: Hex; token: Hex; value: bigint },
+    money: DepositMoney,
     by: SignerRef,
     /**
      * **WHERE TO READ THE CREATING TRANSACTION FROM WHEN THE CALL DOES NOT
@@ -1197,35 +1221,52 @@ export class VaultLedger {
      */
     events?: NoteEvents,
   ): Promise<VaultDeposited> {
-    if (coin.value <= 0n) throw new Error('a note of nothing is not a deposit');
-    const note: Note = { nonce: coin.nonce, token: coin.token, value: coin.value };
+    if (money.value <= 0n) throw new Error('a note of nothing is not a deposit');
     /*
-     * **THE WRITE IS TRIED AGAINST THE POOL BEFORE THE MONEY MOVES, AND THE
-     * ANSWER IS THROWN AWAY.**
-     *
-     * This load used to be the one the write was built on, which is why the
-     * write was built on a copy taken before a proof and a network read. It is
-     * now a pre-flight and nothing else: `afterDeposit` is the same function
-     * that will make the write, so a deposit it would refuse — a nonce this
-     * vault already holds, a value of nothing, an index nobody read — refuses
-     * HERE, before a fee, rather than after the money has moved. The pool the
-     * write is actually built on is read below, after everything that can be
-     * settled has been.
+     * **WHAT CAN BE SETTLED BEFORE A LINE IS FILED, IS.** The pool must be
+     * readable, the vault's note set must be readable, and so must every coin
+     * the chain has ever created for it. Any of the three failing stops the
+     * deposit here, with nothing filed and nothing proved.
      */
-    afterDeposit(await this.pool.load(vaultAddress), note);
+    await this.pool.load(vaultAddress);
+    const heldNow = await this.chainNotes(vaultAddress);
+    const createdBefore = await this.depositHistory.everCreated(vaultAddress as Hex);
+    const { pureCircuits } = await import('../../contracts/managed-vault/contract/index.js');
 
     /*
      * **THE COIN IS WRITTEN DOWN HERE, BEFORE THE MONEY MOVES, AND THIS LINE MAY
-     * NOT MOVE BELOW THE CALL.** After the pre-flight, so a deposit the pool would
-     * refuse journals nothing; before the call, because the nonce is the one value
-     * the note cannot be spent without and cannot be read back from the chain. A
-     * journal that throws stops the deposit with nothing spent; the same throw one
-     * statement later would be a loss.
+     * NOT MOVE BELOW THE CALL.** The claim files the line and derives the nonce
+     * from the version it filed; before the call, because the nonce is the one
+     * value the note cannot be spent without. A claim that throws stops the
+     * deposit with nothing spent; the same throw one statement later would be a
+     * loss.
+     *
+     * **AND THE COIN IT NAMES IS CHECKED AGAINST EVERYTHING THAT ALREADY EXISTS,
+     * BEFORE THE CALL.** A journal that hands out a version again - a restored
+     * store, a second store for this vault - names a coin again, and the ledger
+     * refuses to create a coin it has already recorded, but only once the proof
+     * is made and the transaction submitted. So a coin that already exists is
+     * not attempted: its line stays filed as an attempt that never landed, and
+     * the next version is claimed. `afterDeposit` is the same function that will make the write, so
+     * a deposit it would refuse refuses HERE, before a fee.
      */
-    await this.depositJournal.record(vaultAddress, {
-      coin: { nonce: coin.nonce, token: coin.token, value: coin.value },
-      attemptedAt: new Date().toISOString(),
-    });
+    let note: Note | undefined;
+    let because = '';
+    for (let attempt = 1; attempt <= VaultLedger.DEPOSIT_CLAIM_ATTEMPTS && !note; attempt += 1) {
+      const { coin } = await this.depositJournal.claim(vaultAddress, money, new Date().toISOString());
+      const now = await this.pool.load(vaultAddress);
+      const why = whyThisCoinIsNotNew({
+        poolHoldsTheNonce: now.notes.some((n) => n.nonce === coin.nonce),
+        heldNow: heldNow.member(fromHex(commitmentForNote(pureCircuits as never, vaultAddress as Hex, coin))),
+        createdBefore: createdBefore.has(await vaultNoteCommitment(coin, vaultAddress as Hex)),
+      });
+      if (why !== null) { because = why; continue; }
+      const candidate: Note = { nonce: coin.nonce, token: coin.token, value: coin.value };
+      afterDeposit(now, candidate);
+      note = candidate;
+    }
+    if (!note) throw new DepositCoinAlreadyMade(VaultLedger.DEPOSIT_CLAIM_ATTEMPTS, because);
+    const coin = { nonce: note.nonce, token: note.token, value: note.value };
 
     const { result } = await this.call(vaultAddress, 'deposit', [
       { nonce: fromHex(coin.nonce), color: fromHex(coin.token), value: coin.value },

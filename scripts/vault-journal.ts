@@ -62,6 +62,7 @@ import {
   PaymentJournalInStore, DepositJournalInStore, attemptsFromJournalVersions, type JournalOpener,
 } from '../src/midnight/vault-journal.js';
 import type { AttemptedVaultCalls } from '../src/midnight/vault-recovery.js';
+import type { DepositNonceKey } from '../src/midnight/deposit-nonce.js';
 import { assertVaultName } from '../src/midnight/vault-record.js';
 import { FileSealedPoolStore, everyVersionFiled } from './vault-pool-file.js';
 
@@ -96,7 +97,8 @@ export class SealedPaymentJournal extends PaymentJournalInStore {
 /**
  * **THE DEPOSIT JOURNAL A DOOR HANDS `VaultLedger`**, kept in the same file, under
  * the same name and page the deposit door has always written, so every line
- * already on disk is read by the same reader.
+ * already on disk is read by the same reader. Lines written before nonces were
+ * derived keep the random nonces they recorded, and are read exactly as before.
  */
 export class SealedDepositJournal extends DepositJournalInStore {
   constructor(
@@ -105,10 +107,12 @@ export class SealedDepositJournal extends DepositJournalInStore {
     me: JournalOpener,
     /** Everybody who must be able to open what this writes: the pool's signers. */
     signers: () => Promise<readonly PoolSigner[]>,
+    /** The key this vault's deposit nonces are derived from. */
+    nonces: DepositNonceKey,
     /** Called once the line is on disk, before the ledger calls the contract. */
     written: () => void = () => {},
   ) {
-    super(new FileSealedPoolStore(file, vault), vault, me, signers, written);
+    super(new FileSealedPoolStore(file, vault), vault, me, signers, nonces, written);
   }
 }
 

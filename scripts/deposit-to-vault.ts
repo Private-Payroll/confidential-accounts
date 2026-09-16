@@ -126,7 +126,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { randomBytes } from '@noble/hashes/utils.js';
+import { hkdf } from '@noble/hashes/hkdf.js';
+import { sha256 } from '@noble/hashes/sha2.js';
 
 import * as CompiledContract from '@midnight-ntwrk/compact-js/effect/CompiledContract';
 import { StaticProofServerContainer, createDefaultTestLogger } from '@midnight-ntwrk/testkit-js';
@@ -146,8 +147,11 @@ import {
 import {
   assertVaultName, vaultRegistryFile, parseVaultRegistry, type VaultEntry, theVault,} from '../src/midnight/vault-record.js';
 import { applyNetworkId, theNetwork } from '../src/midnight/network.js';
-import { indexerNoteEvents } from '../src/midnight/note-index.js';
-import type { Hex } from '../src/core/crypto.js';
+import { indexerNoteEvents, indexerVaultTransactions } from '../src/midnight/note-index.js';
+import {
+  depositNonceKeyFor, vaultOutputHistoryFrom, type DepositNonceKey,
+} from '../src/midnight/deposit-nonce.js';
+import { fromHex, utf8, type Hex } from '../src/core/crypto.js';
 import type { SignerRef } from '../src/core/ledger.js';
 import { FileSealedPoolStore, vaultPoolFile } from './vault-pool-file.js';
 import { SealedDepositJournal } from './vault-journal.js';
@@ -528,6 +532,30 @@ export function chooseOpener(
  */
 export const depositJournalFile = (stateDir: string, network: string, name: string): string =>
   join(stateDir, `${network}-vault-deposit-journal-${assertVaultName(name)}.json`);
+
+/**
+ * **THE KEY THIS DOOR'S DEPOSIT NONCES ARE DERIVED FROM: THE WALLET SEED IT
+ * ALREADY KEEPS, NEVER A NUMBER DRAWN FOR THE RUN.**
+ *
+ * The seed is expanded under a domain of its own first, so the root the nonce
+ * key is derived from is not the seed itself, and a deposit made by this door
+ * can be named again from the seed file and the amounts deposited. Deposits
+ * this door made before derive nothing: their nonces were random, and the
+ * journal that recorded them is the only thing that names them.
+ *
+ * Exported and pure so the test can pin it without running the door.
+ */
+export function depositNonceKeyFromTheWalletSeed(seedHex: string, vault: Hex): DepositNonceKey {
+  const seed = seedHex.trim();
+  if (!/^(?:[0-9a-fA-F]{2}){16,64}$/u.test(seed)) {
+    throw new Error(
+      'the wallet seed file does not hold a hex seed of 16 to 64 bytes, so no deposit nonce can be '
+      + 'derived from it. Nothing was filed, proved or deposited.');
+  }
+  const root = hkdf(sha256, fromHex(seed.toLowerCase()), utf8('confidential-accounts/operator-deposit-root/v1'),
+    new Uint8Array(0), 32);
+  return depositNonceKeyFor(root, vault);
+}
 
 /**
  * **WHAT THE TWO READS SAY, AS A VALUE RATHER THAN A BRANCH INSIDE A PRINT.**
@@ -923,9 +951,16 @@ async function main(): Promise<DepositVerdict> {
    * than surface one statement after the call, which is the one moment this
    * file exists to survive.
    */
+  if (!existsSync(SEED_FILE)) {
+    throw new Error(
+      `there is no wallet: ${SEED_FILE.replace(ROOT + '/', '')} does not exist, and a deposit's nonce ` +
+      'is derived from it. This door will not make one: restore the wallet seed file this machine ' +
+      'deposited with before, or create the wallet first. Nothing was proved and nothing was spent.');
+  }
   const journal = new SealedDepositJournal(
     depositJournalFile(STATE_DIR, NETWORK, VAULT_NAME), entry.contractAddress,
     { id: opener, wrappingSecret: openerSecret }, async () => signers,
+    depositNonceKeyFromTheWalletSeed(readFileSync(SEED_FILE, 'utf8'), entry.contractAddress as Hex),
     () => good('the attempt is journalled, sealed, BEFORE the call — so the nonce survives a crash'));
   let journalled: { attempts: readonly unknown[]; version: number };
   try {
@@ -1113,7 +1148,11 @@ async function main(): Promise<DepositVerdict> {
    */
   const ledger = new VaultLedger(
     { networkId: NETWORK } as never, {} as never, providersOnce, compiled, pool, VAULT_ARTEFACTS,
-    undefined, journal);
+    undefined, journal,
+    vaultOutputHistoryFrom({
+      transactions: indexerVaultTransactions(cfg.indexer, cfg.indexerWS),
+      events: indexerNoteEvents(cfg.indexer),
+    }));
 
   /*
    * **THE BALANCE BEFORE, AND IT IS A RECONCILIATION RATHER THAN A READING.**
@@ -1153,16 +1192,11 @@ async function main(): Promise<DepositVerdict> {
   }
 
   /*
-   * **THE NONCE IS THIS SIDE'S, AND IT IS FRESH.** The deposit CREATES the
-   * coin, so the nonce is chosen before the transaction exists — that is what
-   * lets the note be recorded in the same breath. Two deposits of the
-   * same amount and colour under one nonce are one coin, which the ledger will
-   * not take twice.
+   * **THE NONCE IS NOT CHOSEN HERE.** The ledger's deposit journal derives it
+   * from the wallet seed and the journal version the attempt files, and checks
+   * the coin it names has never been made for this vault before the call.
    */
-  const hexOf = (b: Uint8Array): string =>
-    [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
-  const nonce = hexOf(randomBytes(32)) as Hex;
-  note(`nonce ${nonce.slice(0, 24)}… (fresh this run)`);
+  note('the nonce is derived from the wallet seed and the journal version this attempt files');
 
   /*
    * **THE JOURNAL ENTRY IS WRITTEN BEFORE THE CALL AND NOT AFTER IT, BY THE
@@ -1188,7 +1222,7 @@ async function main(): Promise<DepositVerdict> {
    */
   const startedAt = Date.now();
   const tx = await ledger.deposit(
-    entry.contractAddress, { nonce, token: colour, value: amount }, DEPOSITOR,
+    entry.contractAddress, { token: colour, value: amount }, DEPOSITOR,
     indexerNoteEvents(cfg.indexer));
   provingSeconds = (Date.now() - startedAt) / 1000;
   good(`submitted in ${provingSeconds.toFixed(1)}s`);

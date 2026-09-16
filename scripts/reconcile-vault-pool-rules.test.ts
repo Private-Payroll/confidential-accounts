@@ -704,6 +704,13 @@ describe('a contradiction is printed with the file each record is', () => {
       'version 6 of the pool: .midnight/stagenet-vault-pool-x.v6.json',
       'the payment journal (the chain holds this one): .midnight/stagenet-vault-payment-journal-x.json and its numbered versions',
     ]);
+    const fromRecords = whereTheRecordsAre(new NoteDescribedTwice('ab'.repeat(32) as Hex, [
+      { record: { kind: 'company records' }, token: 'aa'.repeat(32) as Hex, value: 3n, onChain: true },
+    ]), { poolVersion: () => 'p', depositJournal: 'd', paymentJournal: 'q' });
+    expect(
+      fromRecords,
+      'RED WHEN: a coin named from the company\'s own records is printed as a line of a journal file it never came from',
+    ).toEqual(['the company\'s own records (the chain holds this one): the amounts the company recorded depositing and paying, with its deposit key']);
     expect(refused.message, 'every description is named with whether the chain holds it').toMatch(/version 4 of the pool says it is 1 of aaaaaaaaaaaaaaaa… \(the chain holds this one\); version 6 of the pool says it is 1 of aaaaaaaaaaaaaaaa…; the payment journal says it is 2/);
   });
 });
