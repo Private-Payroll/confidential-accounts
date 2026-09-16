@@ -554,7 +554,9 @@ export const whereTheRecordsAre = (
 ): string[] => refused.descriptions.map((d) => {
   const where = d.record.kind === 'pool version'
     ? files.poolVersion(d.record.version)
-    : `${d.record.kind === 'deposit journal' ? files.depositJournal : files.paymentJournal}`
-      + ' and its numbered versions';
+    : d.record.kind === 'company records'
+      ? 'the amounts the company recorded depositing and paying, with its deposit key'
+      : `${d.record.kind === 'deposit journal' ? files.depositJournal : files.paymentJournal}`
+        + ' and its numbered versions';
   return `${nameTheRecord(d.record)}${d.onChain ? ' (the chain holds this one)' : ''}: ${where}`;
 });

@@ -554,10 +554,13 @@ export interface AttemptedVaultCalls {
 export type RecordOfANote =
   | { readonly kind: 'pool version'; readonly version: number }
   | { readonly kind: 'deposit journal' }
-  | { readonly kind: 'payment journal' };
+  | { readonly kind: 'payment journal' }
+  /** A coin found by walking the company's own records of what it deposited and paid. */
+  | { readonly kind: 'company records' };
 
 export const nameTheRecord = (r: RecordOfANote): string =>
-  r.kind === 'pool version' ? `version ${r.version} of the pool` : `the ${r.kind}`;
+  r.kind === 'pool version' ? `version ${r.version} of the pool`
+    : r.kind === 'company records' ? 'the company\x27s own records' : `the ${r.kind}`;
 
 /**
  * **ONE NONCE THAT RECORDS ON THIS MACHINE DESCRIBE DIFFERENTLY, AND WHAT THE
@@ -673,17 +676,29 @@ export const reconcileVaultPool = (input: {
   }[];
   /** What the doors journalled before moving money. Absent means no journal was read. */
   attempted?: AttemptedVaultCalls;
+  /**
+   * **COINS NAMED WITH NOTHING OF OURS**: found by walking the company's own
+   * records of what it deposited and paid, with the key its deposits were
+   * derived from, against every coin the chain ever created for the vault
+   * (`walkCompanyRecords`). Proposed exactly like a filed note: the chain
+   * decides which of them the vault still holds.
+   */
+  named?: readonly VaultCoin[];
   circuits: VaultNoteCircuits;
   indexOf?: (commitment: Hex) => bigint | undefined;
 }): ReconciledPool => {
-  if (input.versions.length === 0) {
+  const named = input.named ?? [];
+  const journalled = (input.attempted?.deposits.length ?? 0) + (input.attempted?.payments.length ?? 0);
+  if (input.versions.length === 0 && named.length === 0 && journalled === 0) {
     throw new Error(
       'this pool has no filed versions, so there is nothing to propose to the chain. That is not '
       + 'a vault holding nothing: it is this machine holding no record of it. A rebuild needs '
-      + 'either a version of the pool or a history of the vault\'s events, and with neither there '
-      + 'is nothing to reconcile -- a commitment discloses nothing and cannot be inverted.');
+      + 'a version of the pool, a journal of what was attempted, or the company\'s own records of '
+      + 'what it deposited and paid together with the key its deposits were derived from; with none '
+      + 'of them there is nothing to reconcile -- a commitment discloses nothing and cannot be inverted.');
   }
-  const newest = [...input.versions].sort((a, b) => b.version - a.version)[0]!;
+  const newest = [...input.versions].sort((a, b) => b.version - a.version)[0]
+    ?? { version: 0, notes: [] as readonly VaultCoin[] };
 
   /*
    * **ONE ENTRY PER NONCE, AND A NONCE DESCRIBED TWO WAYS IS SETTLED BY THE CHAIN
@@ -725,6 +740,7 @@ export const reconcileVaultPool = (input: {
    */
   const attempted = input.attempted ?? { deposits: [], payments: [] };
   for (const coin of attempted.deposits) file(coin, { kind: 'deposit journal' });
+  for (const coin of named) file(coin, { kind: 'company records' });
   for (const a of attempted.payments) file(a.spent, { kind: 'payment journal' });
 
   const onChain = new Set<Hex>(input.chain);

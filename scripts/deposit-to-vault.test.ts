@@ -27,8 +27,10 @@ import type { ShieldedWaitOutcome } from './shielded-wallet.js';
 import {
   amountFromText, assertVaultTakesPrivateMoney, assertNoSignerIsDropped, depositVerdict,
   depositJournalFile, noColourRefusal, chooseOpener, openerVerdicts,
-  whatTheDepositLeftBehind,
+  whatTheDepositLeftBehind, depositNonceKeyFromTheWalletSeed,
 } from './deposit-to-vault.js';
+import { depositNonceKeyFor } from '../src/midnight/deposit-nonce.js';
+import { toHex } from '../src/core/crypto.js';
 import { VAULT_CIRCUITS } from '../src/midnight/vault-contract.js';
 import type { VaultEntry } from '../src/midnight/vault-record.js';
 
@@ -590,5 +592,45 @@ describe('the two names one transaction has, and whether the note can be spent',
       ref: IDENTIFIER, recordedFrom: 'nowhere', stranded: 'the indexer could not be asked' }).join('\n');
     expect(named).toMatch(/identifier above is enough to find it by/);
     expect(named).toContain(IDENTIFIER);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * the nonce is derived from the wallet seed, never drawn for the run
+ * ------------------------------------------------------------------ */
+
+describe('this door\'s deposit nonces come from the wallet seed it already keeps', () => {
+  const SEED = '3c'.repeat(32);
+  const VAULT = 'ab'.repeat(32);
+
+  it('is one key per seed and vault, not the seed, and not the key the seed would give if used as the root directly', () => {
+    const k = toHex(depositNonceKeyFromTheWalletSeed(SEED, VAULT));
+    expect(toHex(depositNonceKeyFromTheWalletSeed(` ${SEED.toUpperCase()}\n`, VAULT)), 'RED WHEN: the file\'s whitespace or case changes the key').toBe(k);
+    expect(toHex(depositNonceKeyFromTheWalletSeed(SEED, 'cd'.repeat(32))), 'RED WHEN: two vaults share their nonces').not.toBe(k);
+    expect(toHex(depositNonceKeyFromTheWalletSeed('3d'.repeat(32), VAULT)), 'RED WHEN: the seed stops being an input').not.toBe(k);
+    expect(k).not.toContain(SEED);
+    expect(
+      toHex(depositNonceKeyFor(Uint8Array.from(Buffer.from(SEED, 'hex')), VAULT)),
+      'RED WHEN: the seed is used as the root without its own domain, so the operator root and a released company key share one space',
+    ).not.toBe(k);
+  });
+
+  it('REFUSES a seed file that does not hold a hex seed, before anything is filed', () => {
+    for (const bad of ['', 'not a seed', '3c'.repeat(15), '3c'.repeat(65), '3'.repeat(63)]) {
+      expect(() => depositNonceKeyFromTheWalletSeed(bad, VAULT), `RED WHEN: ${JSON.stringify(bad.slice(0, 12))} derives a key`)
+        .toThrow(/does not hold a hex seed/);
+    }
+  });
+
+  it('the door draws no nonce of its own and hands the ledger its seed-derived key and the vault\'s history', () => {
+    const src = readFileSync(new URL('./deposit-to-vault.ts', import.meta.url), 'utf8');
+    const body = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    expect(body, 'RED WHEN: a random nonce comes back into the door').not.toMatch(/randomBytes/);
+    expect(body, 'RED WHEN: the door passes a nonce to the ledger again').toMatch(
+      /ledger\.deposit\(\s*entry\.contractAddress, \{ token: colour, value: amount \}, DEPOSITOR,/);
+    expect(body, 'RED WHEN: the journal is built without the seed-derived key').toMatch(
+      /depositNonceKeyFromTheWalletSeed\(readFileSync\(SEED_FILE, 'utf8'\), entry\.contractAddress as Hex\)/);
+    expect(body, 'RED WHEN: the ledger is built without the vault\'s output history, so it refuses every deposit').toMatch(
+      /vaultOutputHistoryFrom\(\{\s*transactions: indexerVaultTransactions\(cfg\.indexer, cfg\.indexerWS\),\s*events: indexerNoteEvents\(cfg\.indexer\),\s*\}\)\)/);
   });
 });

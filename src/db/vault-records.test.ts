@@ -29,6 +29,7 @@ import {
 } from '../midnight/vault-pool.js';
 import { PaymentJournalInStore, DepositJournalInStore, attemptsFromJournalVersions } from '../midnight/vault-journal.js';
 import { newWrappingKeypair } from '../core/crypto.js';
+import { depositNonceKeyFor } from '../midnight/deposit-nonce.js';
 
 const DB = process.env.TEST_DATABASE_URL;
 const withDb = DB ? describe : describe.skip;
@@ -362,8 +363,9 @@ withDb('against a real database', () => {
 
     const opener = { id: 'ada', wrappingSecret: s.secret };
     const payments = new PaymentJournalInStore(records.of('payment-journal'), v, opener, async () => s.list);
-    const deposits = new DepositJournalInStore(records.of('deposit-journal'), v, opener, async () => s.list);
-    await deposits.record(v, { coin: { nonce: '33'.repeat(32), token: GBP, value: 900n }, attemptedAt: 'now' } as never);
+    const deposits = new DepositJournalInStore(
+      records.of('deposit-journal'), v, opener, async () => s.list, depositNonceKeyFor(new Uint8Array(32).fill(9), v));
+    const claimed = await deposits.claim(v, { token: GBP, value: 900n }, 'now');
     await payments.record(v, { spent: { nonce: '33'.repeat(32), token: GBP, value: 900n }, amount: 250n, attemptedAt: 'now' } as never);
     await payments.record(v, { spent: { nonce: '33'.repeat(32), token: GBP, value: 900n }, amount: 250n, attemptedAt: 'again' } as never);
     const read = attemptsFromJournalVersions({
@@ -372,7 +374,7 @@ withDb('against a real database', () => {
       opener,
     });
     expect(read.versionsRead).toEqual({ deposits: 1, payments: 2 });
-    expect(read.deposits).toEqual([{ nonce: '33'.repeat(32), token: GBP, value: 900n }]);
+    expect(read.deposits).toEqual([claimed.coin]);
     expect(read.payments).toEqual([{ spent: { nonce: '33'.repeat(32), token: GBP, value: 900n }, amount: 250n }]);
   });
 });
