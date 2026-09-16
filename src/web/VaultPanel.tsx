@@ -38,6 +38,9 @@ const STATE_WORDS: Record<string, string> = {
   'handover-owed': 'Not finished: still held by the key it was created with',
   'not-on-chain-yet': 'Sent, not yet on the chain',
   'not-fundable': 'Held by the committee, but changed in a way this service cannot vouch for: no money goes in',
+  'account-not-handed-over': 'Held by the committee, but the company account is not yet: no money goes in',
+  'account-not-fundable': 'THE COMPANY ACCOUNT IS NOT AS THIS SERVICE CAN VOUCH FOR: no money goes into any vault',
+  'held-by-other-keys': 'Held by keys that are not the company\'s committee now: no money goes in',
   unknown: 'The chain could not be asked',
 };
 
@@ -49,6 +52,7 @@ export function VaultPanel({ account, me }: {
 }) {
   const [rows, setRows] = useState<VaultRow[] | null>(null);
   const [committee, setCommittee] = useState<{ ready: boolean; why: string | null; mine: boolean } | null>(null);
+  const [everySigner, setEverySigner] = useState<string | null>(null);
   const [stage, setStage] = useState<VaultStage | null>(null);
   const [err, setErr] = useState('');
   const [said, setSaid] = useState('');
@@ -71,6 +75,8 @@ export function VaultPanel({ account, me }: {
     ]);
     setRows(list.rows);
     setCommittee({ ready: keys.committee !== null, why: keys.why, mine: keys.mine !== null });
+    const authority = await keyring.api(`/api/accounts/${account.id}/authority`).catch(() => null);
+    setEverySigner(authority?.everySignerNeeded ?? null);
   }, [account.id]);
 
   useEffect(() => { void refresh().catch((e) => setErr(String(e?.message ?? e))); }, [refresh]);
@@ -183,11 +189,17 @@ export function VaultPanel({ account, me }: {
                       Finish handing it to the committee
                     </button>
                   )}
+                  {row.state === 'account-not-handed-over' && (
+                    <button className="btn" disabled={busy} onClick={openPool(row.vault)} data-open-pool>
+                      Open its record of what it holds
+                    </button>
+                  )}
                   {row.state === 'held-by-committee' && (
                     <>
                       <button className="btn" disabled={busy} onClick={openPool(row.vault)} data-open-pool>
                         Open its record of what it holds
                       </button>
+                      {everySigner && <div className="err" data-every-signer-needed>{everySigner}</div>}
                       <div className="two">
                         <div className="field"><label>Asset</label>
                           <select value={asset} onChange={(e) => setAsset(e.target.value)} disabled={busy}>

@@ -132,6 +132,7 @@ export const startingLedgerFrom = (l: {
  */
 export function circuitsRefusal(
   state: unknown, verifierKeys: ReadonlyMap<string, Uint8Array>, what: string,
+  circuits: readonly string[] = VAULT_CIRCUITS, whose = 'the vault\'s',
 ): string | null {
   const s = state as {
     operations?: () => unknown[];
@@ -143,9 +144,9 @@ export function circuitsRefusal(
   } catch {
     return `${what}: its circuits cannot be read. Nothing was sent.`;
   }
-  const wanted = [...VAULT_CIRCUITS].sort();
+  const wanted = [...circuits].sort();
   if (names.length !== wanted.length || names.some((n, i) => n !== wanted[i])) {
-    return `${what}: it has circuits other than the vault's own. Nothing was sent.`;
+    return `${what}: it has circuits other than ${whose} own. Nothing was sent.`;
   }
   for (const name of wanted) {
     let onChain: unknown;
@@ -217,24 +218,36 @@ export function readVaultDeploy(tx: unknown, expect: VaultDeployExpectations): D
 
 /* ---------------------------------------------------------- 2. the handover */
 
+/**
+ * **A CONTRACT HANDED FROM ITS TEMPORARY KEY TO THE COMPANY'S COMMITTEE.** The
+ * same reading serves a vault, whose temporary key a signer's device made, and
+ * the company account, whose temporary key this service keeps: either way it is
+ * one change, the first the contract has ever had, installing exactly the
+ * committee.
+ */
 export function refusalForHandover(
   tx: unknown,
-  expect: { readonly vault: string; readonly to: Committee; readonly onChain: OnChainAuthority },
+  expect: {
+    readonly vault: string; readonly to: Committee; readonly onChain: OnChainAuthority;
+    readonly contract?: 'vault' | 'account';
+  },
 ): string | null {
-  const what = 'this vault being handed to the company\'s committee';
+  const noun = expect.contract === 'account' ? 'the company\'s account' : 'this vault';
+  const its = expect.contract === 'account' ? 'the account\'s' : 'the vault\'s';
+  const what = `${noun} being handed to the company's committee`;
   const only = theOnlyIntent(tx, what);
   if ('refusal' in only) return only.refusal;
   const update = (only.intent.actions as unknown[])[0] as {
     address?: unknown; updates?: unknown; counter?: unknown; signatures?: unknown; entryPoint?: unknown;
   };
   if (update.entryPoint !== undefined || !Array.isArray(update.updates) || update.address === undefined) {
-    return `this is not ${what}: it does something other than change the vault's rules. Nothing was sent.`;
+    return `this is not ${what}: it does something other than change ${its} rules. Nothing was sent.`;
   }
   if (bare(update.address) !== bare(expect.vault)) {
     return `this is not ${what}: it changes a different contract. Nothing was sent.`;
   }
   if (expect.onChain.shape !== 'one-key') {
-    return 'this vault is no longer held by its temporary key, so there is nothing to hand over. Nothing was sent.';
+    return `${noun} is no longer held by its temporary key, so there is nothing to hand over. Nothing was sent.`;
   }
   /*
    * **THE TEMPORARY KEY SIGNS ONE CHANGE, AND IT IS THIS ONE.** A vault is
@@ -243,11 +256,14 @@ export function refusalForHandover(
    * is never handed to the committee as if it were new.
    */
   if (expect.onChain.counter !== 0n) {
-    return 'this vault\'s rules were already changed by the key it was created with, so it is not handed to '
-      + 'the committee and no money goes into it. Nothing was sent; create a new vault.';
+    return expect.contract === 'account'
+      ? 'the company\'s account has already had its rules changed by the key it was created with, so it is not '
+        + 'handed to the committee and no money goes into any of its vaults. Nothing was sent.'
+      : 'this vault\'s rules were already changed by the key it was created with, so it is not handed to '
+        + 'the committee and no money goes into it. Nothing was sent; create a new vault.';
   }
   if (update.counter !== expect.onChain.counter) {
-    return `this change was built against counter ${String(update.counter)} and the vault is at `
+    return `this change was built against counter ${String(update.counter)} and ${noun} is at `
       + `${expect.onChain.counter}, so the chain would refuse it after charging the fee. Nothing was sent; `
       + 'build it again from what the chain holds now.';
   }
@@ -257,7 +273,7 @@ export function refusalForHandover(
   const authority = (update.updates[0] as { authority?: { committee?: unknown; threshold?: unknown; counter?: unknown } })
     .authority;
   if (!authority || !Array.isArray(authority.committee) || typeof authority.threshold !== 'number') {
-    return `this is not ${what}: it changes something other than who holds the vault's rules. Nothing was sent.`;
+    return `this is not ${what}: it changes something other than who holds ${its} rules. Nothing was sent.`;
   }
   const installs: Committee = {
     committee: (authority.committee as CommitteeKey[]).map((k) => ({ tag: k.tag, value: k.value })),

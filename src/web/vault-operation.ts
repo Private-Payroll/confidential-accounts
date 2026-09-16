@@ -59,6 +59,12 @@ export interface VaultChainView {
   } | null;
   readonly committee?: Committee | null;
   readonly heldByCommittee?: boolean;
+  /**
+   * Whether money may go in now: the vault held by the committee AND the
+   * company account held by it too, since a vault pays out on the account's
+   * approval.
+   */
+  readonly fundable?: boolean;
   readonly why?: string | null;
 }
 
@@ -270,6 +276,10 @@ export async function depositIntoCompanyVault(
   const view = await doors.service.chain(vault);
   if (!view.onChain || view.heldByCommittee !== true || view.state === undefined) {
     throw new Error(view.why ?? 'this vault is not held by the company\'s committee, so no money goes in.');
+  }
+  /* Asked before a coin is chosen or the wallet is asked, so a deposit the service will refuse books nothing. */
+  if (view.fundable !== true) {
+    throw new Error(view.why ?? 'this company\'s account is not held by its committee yet, so no money goes in.');
   }
   const notes = new Set((view.notes ?? []).map((n) => n.toLowerCase()));
   const commitments = (coin: { nonce: Hex; token: Hex; value: bigint }) => doors.builder.commitments({

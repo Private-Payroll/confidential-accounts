@@ -3304,6 +3304,52 @@ export function requireBuildableAuthority(
   return { committee: committee.map((k) => ({ tag: k.tag, value: k.value })), threshold };
 }
 
+/** The two ledger classes an authority replacement is made of. `@midnightntwrk/ledger-v9` satisfies this. */
+export interface AuthorityReplacementPrimitives {
+  ContractMaintenanceAuthority: new (committee: AuthorityKey[], threshold: number, counter?: bigint) => object;
+  ReplaceAuthority: new (authority: never) => object;
+}
+
+/**
+ * **THE ONE PLACE THIS PRODUCT MAKES A REPLACEMENT OF A CONTRACT'S MAINTENANCE
+ * AUTHORITY.** Every builder that installs a committee - a vault handed to its
+ * company, a company account handed to its signers, a committee changed after
+ * a signer joins or leaves, and every rebuild of any of those against a counter
+ * read again - reaches the ledger's `ReplaceAuthority` through this function and
+ * through no other.
+ *
+ * **WHY IT HAS TO BE ONE PLACE.** The ledger checks nothing about the authority
+ * a replacement installs except its counter, and it applies the new value whole.
+ * There is no instruction that removes one member: removing a member IS a
+ * replacement, so a replacement with one field wrong is how a committee reaches
+ * a threshold of zero, which anybody at all can then satisfy with no signature.
+ * A refusal that lives in one caller is a refusal the next caller walks around.
+ *
+ * `updateCounter` is the contract's counter as the chain reports it now. The
+ * installed authority carries the next one, which the ledger requires exactly,
+ * so it is derived here and is never the caller's to choose.
+ */
+export function replaceAuthorityOf<P extends AuthorityReplacementPrimitives>(
+  P: P,
+  input: {
+    readonly committee: readonly AuthorityKey[];
+    readonly threshold: number;
+    readonly updateCounter: bigint;
+    readonly emptyCommitteeIsDeliberate: boolean;
+  },
+): object {
+  if (typeof input.updateCounter !== 'bigint' || input.updateCounter < 0n) {
+    throw new Error('a maintenance counter is a whole number read off the chain, and this is not one. Nothing was built.');
+  }
+  const { committee, threshold } = requireBuildableAuthority(
+    input.committee, input.threshold,
+    { emptyCommitteeIsDeliberate: input.emptyCommitteeIsDeliberate },
+  );
+  return new P.ReplaceAuthority(
+    new P.ContractMaintenanceAuthority(committee, threshold, input.updateCounter + 1n) as never,
+  );
+}
+
 /**
  * WHAT TO DO ABOUT ONE CONTRACT, DECIDED BEFORE ANYTHING IS BUILT.
  *
@@ -3706,9 +3752,10 @@ export function buildMaintenanceInstruction(
   }
 
   const updates: object[] = [
-    new P.ReplaceAuthority(
-      new P.ContractMaintenanceAuthority(committee, threshold, plan.updateCounter + 1n),
-    ),
+    replaceAuthorityOf(P as unknown as AuthorityReplacementPrimitives, {
+      committee, threshold, updateCounter: plan.updateCounter,
+      emptyCommitteeIsDeliberate: opts.emptyCommitteeIsDeliberate,
+    }),
   ];
   for (const vk of opts.verifierKeys ?? []) {
     updates.push(new P.VerifierKeyInsert(
