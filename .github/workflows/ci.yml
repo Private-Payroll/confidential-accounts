@@ -121,8 +121,8 @@ jobs:
     # Those keys are produced by the proving backend rather than by an ordinary
     # compile: about a minute, and a hundred megabytes that nothing else here
     # reads. Building them in every job above would put that on six machines to
-    # serve five assertions, so it happens once, here, and those five are the
-    # only thing this runs.
+    # serve a handful of files, so it happens once, here, for both contracts,
+    # and those files are the only thing this runs.
     #
     # It is a mark of its own so that "the keys were not built" and "the keys
     # disagree with the contract" are different lines on the page. What it
@@ -138,7 +138,12 @@ jobs:
       - uses: ./.github/actions/build
       - name: build the proving and verifier keys
         run: npm run compact
-      - run: npx vitest run src/midnight/ledger.test.ts src/midnight/deferred-set.test.ts src/midnight/the-key-reaches-the-circuit.test.ts src/midnight/the-secret-comes-from-the-keyring.test.ts
+      # The vault is a second contract with keys of its own, which the account's
+      # full build does not produce. Built after the account, because the
+      # vault's generated caller reaches the account's generated module.
+      - name: build the vault's proving and verifier keys
+        run: npm run compact:vault -- --full
+      - run: npx vitest run src/midnight/ledger.test.ts src/midnight/deferred-set.test.ts src/midnight/the-key-reaches-the-circuit.test.ts src/midnight/the-secret-comes-from-the-keyring.test.ts src/wiring/vault-submission.test.ts contracts/test/a-company-vault-from-the-page.test.ts
 
   rules:
     # THE RULES THE JOB BELOW APPLIES, CHECKED BEFORE IT APPLIES THEM.

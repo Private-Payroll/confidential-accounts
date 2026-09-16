@@ -26,6 +26,7 @@
  * follows it.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { existsSync } from 'node:fs';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
 import * as L from '@midnightntwrk/ledger-v9';
@@ -119,7 +120,24 @@ class Chain {
   }
 }
 
-describe('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE', () => {
+/*
+ * **THE DEPLOY, THE HANDOVER AND THE DEPOSIT BELOW ARE BUILT FROM THE VAULT'S
+ * VERIFIER KEYS, WHICH ONLY A FULL VAULT COMPILE PRODUCES.** The general checks
+ * compile without them, so this is skipped there by name, and the job that
+ * builds the keys runs this file by name after building them.
+ *
+ * Derived from this file's own location, not the working directory.
+ */
+const KEYS_ON_DISK = existsSync(new URL('../managed-vault/keys/deposit.verifier', import.meta.url));
+if (!KEYS_ON_DISK) {
+  console.log(
+    '  NOT CHECKED HERE: the vault\'s verifier keys are not on disk, so a company vault was not'
+    + ' created, handed over, pooled and funded through the routes the page calls.'
+    + ' `npm run compact:vault -- --full` builds them.',
+  );
+}
+
+describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [needs contracts/managed-vault/keys; `npm run compact:vault -- --full` builds them]', () => {
   let chain: Chain;
   let server: ReturnType<express.Express['listen']>;
   let base: string;
