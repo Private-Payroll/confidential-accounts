@@ -37,6 +37,7 @@ import { ContractBook } from '../src/wiring/account-contract.js';
 import { startProduct } from '../src/wiring/product.js';
 import { deploymentWriteCapability } from '../src/wiring/write-capability-for-deployment.js';
 import { fileFeeSink } from '../src/midnight/sponsored-fees.js';
+import { feeCeilingFrom } from '../src/midnight/fee-ceiling.js';
 import { applyNetworkId, theNetwork, ENDPOINTS } from '../src/midnight/network.js';
 import { bringUpWallet } from './wallet-bringup.js';
 import { fundedPartiesOver, paidFeeFrom } from './funded-wallets.js';
@@ -130,6 +131,8 @@ async function main() {
   };
   const incomplete = refuseIncompleteSetup(present);
   if (incomplete) throw new Error(incomplete);
+  /* Read before any wallet is brought up, so a missing ceiling stops this here. */
+  const ceiling = feeCeilingFrom(process.env);
   good('the authority is recorded, the contract is compiled, the prover answers,');
   good('and both wallets have a seed on this machine');
 
@@ -203,6 +206,7 @@ async function main() {
     ({ fee, remaining }) => good(
       `paid ${fee ?? 'an amount that was not read back'}; `
       + `${remaining} DUST reported after (it lags, and is not a capacity reading)`),
+    ceiling,
   );
 
   const store = new FileStore(DATA);

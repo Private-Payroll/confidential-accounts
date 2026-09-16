@@ -42,6 +42,7 @@ import {
 import type { Hex } from '../core/crypto.js';
 import { payeeAddress } from '../midnight/payee-address.js';
 import { theNetwork } from '../midnight/network.js';
+import { saysNothingWasSent } from '../core/jobs.js';
 import { runPayments } from '../midnight/run-status.js';
 import { rootOfLeaves } from '../midnight/payout-tree.js';
 import { runMaterialFor, retryMaterialFor } from '../midnight/run-material.js';
@@ -178,33 +179,36 @@ const book = new ContractBook(
   wiring().name,
 );
 /*
- * **WHAT THIS PROCESS CAN WRITE WITH, WHICH IS NOTHING, AND THE ARGUMENT IS THE
- * LAST ARGUMENT ON THE LINE.**
+ * **WHAT THIS PROCESS CAN WRITE WITH.**
  *
  * Writing needs five things: somebody to balance the legs the company owns,
  * somebody to pay the fee, the compiled contract this build proves against, a
  * recorded maintenance authority and a key for the private state store. Three
  * of those are this deployment's own facts and the function below resolves them
- * itself. **The other two are a funded wallet, and a server does not acquire one
- * by starting up** - bringing one up means a seed, a proof server, a sync and a
- * wait for DUST to accrue, none of which is a thing a web process should do to
- * itself on boot, and one that quietly did would be a web process that can
- * spend.
+ * itself. **The other two are parties that can spend, and a server does not
+ * acquire either by starting up** - bringing a funded wallet up means a seed, a
+ * proof server, a sync and a wait for DUST to accrue, none of which is a thing a
+ * web process should do to itself on boot, and one that quietly did would be a
+ * web process that can spend.
  *
- * So the pair is handed in, and nothing in this file can make one. It asks
- * `handedInFundedParties`, which answers with a pair a launcher brought up and
- * handed over before importing this file, or with `null` - and `null` is what
- * every process started the ordinary way gets. Every write then goes on
- * refusing by name and saying which pieces are missing; reading accounts,
- * balances and rounds is unaffected, which is what a deployment built to watch
- * a chain is for.
+ * **THE FEE PAYER IS A SEPARATE SERVICE, NAMED BY THIS DEPLOYMENT'S SETTINGS.**
+ * This process holds a client to it and no key: it can ask for a capped fee to
+ * be added and for what the service built to be submitted. With no fee payer
+ * named, there is none.
  *
- * **WHAT PUTS A WALLET BEHIND THIS LINE TODAY IS A PERSON, BY ONE OF TWO
- * SCRIPTS.** The one that creates a company from this machine calls this same
- * supplier in its own process and never starts this server. The launcher that
- * serves the product on a chain brings the same two wallets up and hands them
- * over before importing this file, and this line then calls the supplier with
- * them. **There is one supplier and both paths reach it.**
+ * **THE COMPANY'S SIDE IS HANDED IN OR ABSENT.** `handedInFundedParties`
+ * answers with what a launcher brought up and handed over before importing this
+ * file, or with `null`, which is what every process started the ordinary way
+ * gets. Without both halves every write goes on refusing by name; reading
+ * accounts, balances and rounds is unaffected, which is what a deployment built
+ * to watch a chain is for.
+ *
+ * **ONE SUPPLIER, AND EVERY PATH REACHES IT.** The script that creates a
+ * company from this machine calls it in its own process and never starts this
+ * server. The launcher that serves the product on a chain hands both halves in
+ * before importing this file. A deployment names its fee payer in its settings,
+ * **and that alone does not make it able to write**: until the company's side
+ * is handed in too, every write is refused.
  *
  * **AND WHAT ELSE HAS TO CHANGE ON THE DAY THIS ARGUMENT DOES, BECAUSE THIS
  * PARAGRAPH SAID *nothing else* AND THAT WAS FALSE.** A fee payer is told which
@@ -1116,6 +1120,49 @@ app.post('/api/proposals/:id/cancel', authed, ownsProposal, wrap(async (req, res
  * answering it from the database is how a UI comes to offer a button the chain
  * rejects.
  */
+/*
+ * **A TRANSACTION A SIGNER'S DEVICE PROVED, SENT.**
+ *
+ * The device proves where the private input is and sends the proven
+ * transaction here. This deployment balances the company's side, has its fee
+ * payer add the capped fee, and submits - or refuses. Only a member of the
+ * company reaches it, and the ledger pays only for calls into that company's
+ * own contract.
+ *
+ * **THE ANSWER SAYS WHETHER ANYTHING WAS SENT.** `nothingWasSent: true` is a
+ * refusal before any submission, which the device can report as final.
+ * `nothingWasSent: false` is a submission that failed, which may have landed,
+ * and the device must not report as nothing.
+ */
+app.post('/api/accounts/:id/proven', authed, member, async (req, res) => {
+  /* Held under the body limit above, so a refusal here is this route's and not the parser's. */
+  const body = z.object({ tx: z.string().min(1).max(1_000_000) }).safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json({
+      nothingWasSent: true,
+      error: 'this request carries no proven transaction to send. Nothing was sent.',
+    });
+    return;
+  }
+  if (typeof ledger.submitProven !== 'function') {
+    res.status(503).json({
+      nothingWasSent: true,
+      error: 'this deployment does not send transactions proved on a device, so nothing was sent.',
+    });
+    return;
+  }
+  try {
+    const ref = await ledger.submitProven(
+      String(req.params.id), new Uint8Array(Buffer.from(body.data.tx, 'base64')));
+    res.json({ txRef: ref.ref });
+  } catch (e: any) {
+    const nothing = saysNothingWasSent(e);
+    const reason = e?.message ?? 'unknown error';
+    appendRefusal(req.method, req.originalUrl, nothing ? 422 : 502, e?.name ?? 'Error', reason);
+    res.status(nothing ? 422 : 502).json({ nothingWasSent: nothing, error: reason });
+  }
+});
+
 app.get('/api/accounts/:id/ledger', authed, member, wrap(async (req, res) => {
   res.json(await accounts.ledgerStatus(String(req.params.id)));
 }));

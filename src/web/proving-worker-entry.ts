@@ -25,10 +25,10 @@
  * after `startJobWorker` returns, which is after `serveJobs` has registered.
  */
 import { startJobWorker } from './prover-worker.js';
-import { provingOnlyRunner, type ProvingCapability } from './proving-runner.js';
+import { provingRunner, type ProvingCapability, type SendProven } from './proving-runner.js';
 import { httpKeyMaterialSource, IndexedDbArtefactCache } from './key-material.js';
 import { configFromWorkerName } from './proving-session.js';
-import type { Job } from '../core/jobs.js';
+import { NothingWasSent, type Job } from '../core/jobs.js';
 
 /**
  * Where a job says its preimage can be fetched.
@@ -79,6 +79,51 @@ export const preimageOver = (fetchImpl: typeof fetch) => async (job: Job) => {
     );
   }
   return { circuit, unprovenTransaction: new Uint8Array(await res.arrayBuffer()) };
+};
+
+/** Bytes as base64, in a scope that may have no `Buffer`. */
+const base64Of = (bytes: Uint8Array): string => {
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(binary);
+};
+
+/**
+ * Sends a proven transaction to this application's own service.
+ *
+ * **WHAT THE ANSWER MEANS, AND IT IS THE WHOLE OF THIS FUNCTION.**
+ *
+ * - an answer carrying a reference: sent.
+ * - `nothingWasSent: true`: the service refused before submitting. Final.
+ * - `nothingWasSent: false`: the service's submission failed, and it may have
+ *   landed. Not final.
+ * - a refusal with no mark and a 4xx status: refused before any handler ran -
+ *   not signed in, not a member. Nothing was sent.
+ * - anything else, including no answer at all: the request may have been
+ *   acted on, so the outcome is unknown.
+ *
+ * Same origin, for the reason the preimage is: the sign-in is this
+ * application's, and the path is relative.
+ */
+export const sendOver = (fetchImpl: typeof fetch): SendProven => async (job, proven) => {
+  const res = await fetchImpl(`/api/accounts/${encodeURIComponent(job.accountId)}/proven`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ tx: base64Of(proven) }),
+  });
+  let body: { txRef?: unknown; error?: unknown; nothingWasSent?: unknown } = {};
+  try { body = await res.json(); } catch { /* an answer that is not ours */ }
+  if (res.ok && typeof body.txRef === 'string') return { txRef: body.txRef };
+  const why = typeof body.error === 'string'
+    ? body.error
+    : `the service answered ${res.status} to this approval`;
+  if (body.nothingWasSent === true) throw new NothingWasSent(why);
+  if (body.nothingWasSent !== false && res.status >= 400 && res.status < 500) {
+    throw new NothingWasSent(why);
+  }
+  throw new Error(why);
 };
 
 /**
@@ -158,7 +203,7 @@ export const startProvingWorker = async (scope: any): Promise<void> => {
     },
   });
 
-  const runner = provingOnlyRunner(capability);
+  const runner = provingRunner(capability, sendOver(scope.fetch.bind(scope)));
   startJobWorker(scope, {
     ...runner,
     prove: async (job) => {

@@ -18,6 +18,7 @@ import {
   artifactsIn, deploymentWriteCapability, storagePasswordFrom, type FundedParties,
 } from './write-capability-for-deployment.js';
 import { refusalForCapability } from './write-capability.js';
+import { RemoteFeeSponsor } from '../fee-payer/client.js';
 
 /** A funded pair, with the members the write path actually calls. */
 const parties = (): FundedParties => ({
@@ -187,3 +188,62 @@ describe('where the compiled contract is looked for', () => {
     expect(artifactsIn('/elsewhere')).not.toBe(artifactsIn('/somewhere'));
   });
 });
+
+describe('a fee payer this deployment\'s settings name', () => {
+  const customerOnly = () => ({ customer: parties().customer });
+  const named = parties().sponsor;
+
+  /*
+   * RED WHEN: a customer wallet is built or defaulted here, so a fee payer in
+   * the settings is enough to write. The company's side is never ours to make.
+   */
+  it('is not enough to write: the company\'s side must still be handed in', async () => {
+    const nowhere = mkdtempSync(join(tmpdir(), 'empty-'));
+    try {
+      await expect(deploymentWriteCapability(nowhere, {}, null, () => named)).resolves.toBeUndefined();
+    } finally { rmSync(nowhere, { recursive: true, force: true }); }
+  });
+
+  /* RED WHEN: the configured fee payer is ignored when only the company's side is handed in. */
+  it('pays, once the company\'s side is handed in', async () => {
+    const root = deploymentRoot();
+    const handed = customerOnly();
+    try {
+      const c = await deploymentWriteCapability(root, {}, handed, () => named);
+      expect(c, 'no capability came back').toBeDefined();
+      expect(c!.sponsor, 'the fee payer the settings name was not the one used').toBe(named);
+      expect(c!.customer).toBe(handed.customer);
+      expect(refusalForCapability(c)).toBeNull();
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  /* RED WHEN: the two-fee-payer refusal is removed, so one silently wins. */
+  it('and one handed in as well is refused', async () => {
+    const root = deploymentRoot();
+    try {
+      await expect(deploymentWriteCapability(root, {}, parties(), () => named))
+        .rejects.toThrow(/its settings name another/);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  /*
+   * THROUGH THE REAL SETTINGS READER. RED WHEN: the default reader is not the
+   * one that turns the two settings into a client, or a half-configured
+   * deployment starts quietly.
+   */
+  it('comes from the two settings, and half of them is refused', async () => {
+    const root = deploymentRoot();
+    const env = {
+      MIDNIGHT_FEE_PAYER_URL: 'http://127.0.0.1:6310',
+      MIDNIGHT_FEE_PAYER_SECRET: 'not-a-secret: a test literal of enough length',
+    };
+    try {
+      const c = await deploymentWriteCapability(root, env, customerOnly());
+      expect(c, 'no capability came back').toBeDefined();
+      expect(c!.sponsor).toBeInstanceOf(RemoteFeeSponsor);
+      await expect(deploymentWriteCapability(root, { MIDNIGHT_FEE_PAYER_URL: env.MIDNIGHT_FEE_PAYER_URL }, null))
+        .rejects.toThrow(/MIDNIGHT_FEE_PAYER_SECRET is not/);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+});
+

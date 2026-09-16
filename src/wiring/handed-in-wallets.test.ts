@@ -57,11 +57,13 @@ describe('§1 - nothing the product ships can hand the server a wallet', () => {
   });
 });
 
-describe('§2 - the server\'s capability is exactly the handed-in pair', () => {
+describe('§2 - the server\'s parties are the handed-in read, and nothing it builds', () => {
   /*
    * RED WHEN: the server's third argument becomes anything but the handed-in
    * read - a constructed pair, a pair looked up by name, or a second call to
-   * the supplier somewhere else in the file.
+   * the supplier somewhere else in the file. The fee payer a deployment's
+   * settings name is a client to another process, resolved inside the
+   * supplier, and is held by its own cases.
    */
   it('one call to the supplier, and its third argument is the handed-in read', () => {
     const server = code(readFileSync(join(SRC, 'server', 'index.ts'), 'utf8'));

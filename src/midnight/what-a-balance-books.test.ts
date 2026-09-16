@@ -345,7 +345,8 @@ describe('and the same, through the classes that actually ship', () => {
     balanceUnboundTransaction: async (tx: unknown) => ({ booked: tx }),
     balanceFinalizedTransaction: async (tx: unknown) => ({ fee: tx }),
     signRecipe: async (r: unknown) => r,
-    finalizeRecipe: async (r: unknown) => r,
+    /* A balanced transaction declares what it spends from DUST; this one spends nothing. */
+    finalizeRecipe: async (r: object) => ({ ...r, intents: new Map() }),
     submitTransaction: async () => 'tx_1',
     revert: async () => {},
     estimateFee: async () => 1n,
@@ -360,7 +361,7 @@ describe('and the same, through the classes that actually ship', () => {
     return sponsoredProviders(
       new SponsoredCustomerWallet(f as never, { shieldedSecretKeys: 'k', dustSecretKey: 'k' },
         () => 'sig', { coinPublicKey: 'not-a-secret', encryptionPublicKey: 'not-a-secret' }),
-      new WalletFeeSponsor(f as never),
+      new WalletFeeSponsor(f as never, { perTransaction: 1n }),
     );
   };
 

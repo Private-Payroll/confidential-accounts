@@ -29,10 +29,11 @@
  * wallet with each request, which needs the wallet to answer a balancing ask
  * it does not answer today.
  *
- * **ONE FEE PAYER, NOTHING METERED, NOTHING CAPPED** beyond what the vendor's
- * own balancing does. Every payment is recorded with its company, its estimate
- * and what the chain says it cost - best effort: a record that cannot be written
- * never turns a payment that landed into a failure, so a full disk loses rows.
+ * **ONE FEE PAYER, NOTHING METERED, AND EACH TRANSACTION CAPPED** at the
+ * ceiling this machine's settings name; nothing starts without one. Every
+ * payment is recorded with its company, its estimate and what the chain says it
+ * cost - best effort: a record that cannot be written never turns a payment
+ * that landed into a failure, so a full disk loses rows.
  *
  * -- WHAT IT SPENDS ----------------------------------------------------------
  *
@@ -46,6 +47,7 @@ import { join } from 'node:path';
 import { StaticProofServerContainer } from '@midnight-ntwrk/testkit-js';
 
 import { fileFeeSink } from '../src/midnight/sponsored-fees.js';
+import { feeCeilingFrom } from '../src/midnight/fee-ceiling.js';
 import { applyNetworkId, theNetwork, ENDPOINTS, type NetworkName } from '../src/midnight/network.js';
 import { handInFundedParties } from '../src/wiring/handed-in-wallets.js';
 import { bringUpWallet } from './wallet-bringup.js';
@@ -125,6 +127,11 @@ async function main() {
     },
   });
   if (refusal) throw new Error(refusal);
+  /*
+   * **READ BEFORE ANY WALLET IS BROUGHT UP**, so a missing ceiling stops this
+   * here rather than after the slow part.
+   */
+  const ceiling = feeCeilingFrom(process.env);
   const plan = pageStartsFor(posture);
   /* Already refused above when it cannot be started; this narrows the type. */
   if ('refusals' in plan) throw new Error(plan.refusals.join('; '));
@@ -178,8 +185,10 @@ async function main() {
     ({ fee, remaining }) => good(
       `paid ${fee ?? 'an amount that was not read back'}; `
       + `${remaining} DUST reported after (it lags, and is not a capacity reading)`),
+    ceiling,
   ));
   good(`every fee paid is recorded in ${FEE_RECORD}`);
+  good(`no transaction may spend more than ${ceiling.perTransaction} SPECKs of DUST`);
 
   /* ---------------------------------------------------------------- 4 */
   step(4, 5, 'Starting the server');

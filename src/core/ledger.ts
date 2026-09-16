@@ -919,6 +919,19 @@ export interface Ledger {
   writeInFlight?(): WriteInFlight | null;
 
   /**
+   * **SENDS A TRANSACTION A SIGNER'S DEVICE HAS ALREADY PROVED.**
+   *
+   * The proof is made where the private input lives; what arrives here is the
+   * proven, unbound transaction. This balances it and pays its fee through the
+   * same parties every other write uses, and submits it. Nothing is proved here.
+   *
+   * Optional, because only an implementation that can pay fees can send. A
+   * refusal that happens before anything is submitted carries the mark that
+   * says nothing was sent.
+   */
+  submitProven?(accountId: string, proven: Uint8Array): Promise<TxRef>;
+
+  /**
    * **WHICH IMPLEMENTATION OF THIS BOUNDARY IS ANSWERING, AS A WORD.**
    *
    * `describe()` above is prose for a person and it is free to change; this is
