@@ -27,6 +27,7 @@ import {
  * know which file below this one the wallet plumbing lives in. */
 export type { WalletDialog } from './wallet-sign-in.js';
 import { askWalletForKeys } from './wallet-unlock.js';
+import { askWalletToPay } from './wallet-balance.js';
 /* **THE WALLET IS SHOWN INSIDE THIS PAGE.** Every journey below defaults to it;
  * a test hands in a window of its own and drives the same conversation. */
 import { walletInThisPage } from './wallet-frame.js';
@@ -206,7 +207,12 @@ let walletAddress: string | null = null;
  * In memory only, dropped on sign-out and replaced whenever the wallet gives a
  * company's key, for the same reason as `encKey`: a reload asks the wallet again.
  */
-let releasedCompanyKey: { accountId: string; key: Hex } | null = null;
+let releasedCompanyKey: {
+  accountId: string;
+  key: Hex;
+  /** Public. Given in the same answer as the company key, so it is that wallet's. */
+  committeeKey: { tag: string; value: string } | null;
+} | null = null;
 /**
  * **WHAT THE SERVER HOLDS SAVED FOR THIS PERSON, AS LAST READ AND OPENED HERE.**
  *
@@ -265,6 +271,13 @@ export const signedInWallet = () => walletAddress;
  */
 export const companyKeyReleasedFor = (accountId: string): Hex | null =>
   releasedCompanyKey?.accountId === accountId ? releasedCompanyKey.key : null;
+/**
+ * **THE PUBLIC KEY THIS PERSON SITS ON `accountId`'s VAULT COMMITTEE WITH**, from
+ * the same answer as the company key this tab holds, or null. The key that signs
+ * with it never reaches this page.
+ */
+export const committeeKeyReleasedFor = (accountId: string): { tag: string; value: string } | null =>
+  releasedCompanyKey?.accountId === accountId ? releasedCompanyKey.committeeKey : null;
 export const isSignedIn = () => sessionLive && me !== null;
 /**
  * **WHETHER THIS TAB CAN OPEN A COMPANY, WHICH IS NOT THE SAME QUESTION AS
@@ -764,7 +777,9 @@ async function openKeysOnceOpen(
        * keyring key has just matched the one this tab's saved keys are open with,
        * so its company key came from that same wallet. A payslip key can only
        * ever be derived from it, for THIS company. */
-      releasedCompanyKey = { accountId: company.accountId, key: toHex(released.companyKey) };
+      releasedCompanyKey = {
+        accountId: company.accountId, key: toHex(released.companyKey), committeeKey: released.committeeKey,
+      };
     }
   } else {
     const r = await api('/api/me/keys');
@@ -837,6 +852,70 @@ export async function payslipKeyAndPayeeAddress(
     throw e;
   } finally {
     if (twoAsks) putAway(dialog);
+    doneWaiting();
+  }
+}
+
+/**
+ * **THIS COMPANY'S KEY AND THE PUBLIC KEY THIS PERSON SITS ON ITS VAULT
+ * COMMITTEE WITH, FROM THE WALLET WHOSE KEYS THIS TAB HAS OPEN.** The same
+ * journey as the payslip key's first half, and the same check: both come in the
+ * answer that also gives the keyring key this tab already holds, so they are
+ * that wallet's. A tab that already holds them asks nothing.
+ */
+export async function companyKeysForVaults(
+  accountId: string, walletOrigin: string,
+  view: Openable = walletInThisPage(window),
+  atOrigin: string = window.location.origin,
+): Promise<{ companyKey: Hex; committeeKey: { tag: string; value: string }; company: Hex }> {
+  if (!sessionLive) throw new Error('not signed in');
+  const { company } = await api(`/api/accounts/${accountId}/unlock`, { method: 'POST' });
+  let companyKey = companyKeyReleasedFor(accountId);
+  let committeeKey = committeeKeyReleasedFor(accountId);
+  if (companyKey === null || committeeKey === null) {
+    if (encKey === null) {
+      throw new Error('your saved keys are not open in this tab, so the key for this company '
+        + 'cannot be checked against them. Open the company with your wallet and try again.');
+    }
+    const dialog = openTheWallet(view, walletOrigin);
+    try {
+      await openKeysOnceOpen(walletOrigin, view, atOrigin, dialog, { accountId, address: company });
+    } catch (e) {
+      putAway(dialog);
+      throw e;
+    } finally {
+      doneWaiting();
+    }
+    companyKey = companyKeyReleasedFor(accountId);
+    committeeKey = committeeKeyReleasedFor(accountId);
+  }
+  if (companyKey === null || committeeKey === null) {
+    throw new Error('your wallet did not give this company\'s keys, so nothing about its vaults can be done here.');
+  }
+  return { companyKey, committeeKey, company: company as Hex };
+}
+
+/**
+ * **ASKS THIS PERSON'S WALLET TO PUT IN THE COINS A DEPOSIT NEEDS.** Opened in
+ * the press, like every wallet journey; see `wallet-balance.ts`.
+ */
+export async function payIntoAVaultFromTheWallet(
+  walletOrigin: string,
+  ask: { company: string; vault: string; transaction: string },
+  view: Openable = walletInThisPage(window),
+  atOrigin: string = window.location.origin,
+  already?: WalletDialog,
+): Promise<{ transaction: string; leaves: readonly unknown[] }> {
+  if (!sessionLive) throw new Error('not signed in');
+  const dialog = openTheWallet(view, walletOrigin, already);
+  try {
+    return await askWalletToPay(view, walletOrigin, {
+      ...ask, atOrigin, name: US_TO_A_WALLET.name, rdns: US_TO_A_WALLET.rdns,
+    }, dialog);
+  } catch (e) {
+    if (!already) putAway(dialog);
+    throw e;
+  } finally {
     doneWaiting();
   }
 }

@@ -53,14 +53,38 @@ const fold = (h: string): string => h.trim().toLowerCase().replace(/^0x/u, '');
  * **THE ANSWER TO WHO MAY TOUCH WHICH VAULT'S RECORDS**, from the chain's pin and
  * this product's rosters.
  */
+/**
+ * The filing key a person gave for a company (`VaultKeysOfASigner.filingKey`),
+ * or null when they have given none.
+ */
+export type FilingKeyOf = (companyId: string, person: string) => Hex | null;
+
 export const signersOfTheVaultsCompany = (deps: {
   readonly accountOf: VaultAccountReader;
   readonly companies: () => readonly CompanyRoster[];
+  /**
+   * **WHO A FILING IS FROM, BOUND TO WHO SENT IT.** When given, a person may
+   * file only records signed with the one filing key they gave for that
+   * company, so a version on record is always attributable to the member who
+   * filed it, and no member files under a key they did not give.
+   */
+  readonly filingKeyOf?: FilingKeyOf;
 }): MayTouchVaultRecords => async (person: string, vault: string, _record: WireRecord, act, filer?: Hex) => {
   if (typeof person !== 'string' || person.length === 0) return false;
   if (!HEX64.test(vault)) return false;
   if (act === 'file' && (typeof filer !== 'string' || !HEX64.test(filer))) return false;
-  const pinned = await deps.accountOf(vault);
+  let pinned: string | null;
+  try {
+    pinned = await deps.accountOf(vault);
+  } catch (e) {
+    /*
+     * A contract the chain holds that is not a vault belongs to no company, so
+     * nobody may touch records under it: that is a refusal, not a question
+     * left undecided. Every other failure still is one.
+     */
+    if (e instanceof NotAVaultsState) return false;
+    throw e;
+  }
   if (pinned === null) return false;
   if (typeof pinned !== 'string' || !HEX64.test(fold(pinned))) {
     throw new Error('the chain answered for this vault\x27s account with something that is not an address');
@@ -69,8 +93,15 @@ export const signersOfTheVaultsCompany = (deps: {
     && fold(c.contractAddress) === fold(pinned));
   /* Two companies claiming one account is this store disagreeing with itself; nobody is let in on it. */
   if (matches.length !== 1) return false;
-  return matches[0]!.memberUserIds.includes(person);
+  const company = matches[0]!;
+  if (!company.memberUserIds.includes(person)) return false;
+  if (act !== 'file' || deps.filingKeyOf === undefined) return true;
+  const given = deps.filingKeyOf(company.id, person);
+  return typeof given === 'string' && fold(given) === fold(filer!);
 };
+
+/** A contract state the chain holds and the vault's ledger cannot read: not a vault. */
+export class NotAVaultsState extends Error {}
 
 /**
  * **THE CHAIN READER THE PRODUCT USES**: the vault's contract state from the
@@ -88,10 +119,10 @@ export const vaultAccountFromTheIndexer = (query: {
   try {
     bytes = read(state.data).account.bytes;
   } catch (cause) {
-    throw new Error('this contract\x27s state could not be read as a vault\x27s, so which company it belongs to is not known', { cause });
+    throw new NotAVaultsState('this contract\x27s state could not be read as a vault\x27s, so which company it belongs to is not known', { cause });
   }
   if (!(bytes instanceof Uint8Array) || bytes.length !== 32) {
-    throw new Error('this vault\x27s pinned account is not thirty-two bytes');
+    throw new NotAVaultsState('this vault\x27s pinned account is not thirty-two bytes');
   }
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 };
@@ -115,11 +146,15 @@ export const mountVaultRecords = (app: express.Express, deps: {
   readonly records: { of(record: WireRecord): SealedPoolStore };
   readonly accountOf: VaultAccountReader;
   readonly companies: () => readonly CompanyRoster[];
+  /** Required on the product's mount: every filing is bound to the key its filer gave. */
+  readonly filingKeyOf: FilingKeyOf;
 }): void => {
   app.use('/api/vaults', deps.signedIn, express.json({ limit: VAULT_RECORD_BODY_LIMIT }));
   app.use(vaultRecordsRoutes({
     records: deps.records,
-    mayTouch: signersOfTheVaultsCompany({ accountOf: deps.accountOf, companies: deps.companies }),
+    mayTouch: signersOfTheVaultsCompany({
+      accountOf: deps.accountOf, companies: deps.companies, filingKeyOf: deps.filingKeyOf,
+    }),
   }));
 };
 
@@ -151,3 +186,21 @@ export const openedOnFirstUse = (
     }),
   };
 };
+
+/**
+ * **A SERVER THAT WRITES TO A REAL CHAIN DOES NOT KEEP A VAULT'S RECORDS IN
+ * MEMORY.** A vault's note pool, journals and nonce secret are filed here; in
+ * memory they are gone at the next restart, and every deposit the lost nonce
+ * secret named is then named by nothing. So a process whose deployment reaches
+ * a chain refuses to start without a database, and says why.
+ */
+export function whyVaultRecordsCannotBeKept(input: {
+  readonly reachesAChain: boolean;
+  readonly database: boolean;
+}): string | null {
+  if (!input.reachesAChain || input.database) return null;
+  return 'this server writes to a chain and has no database, so a vault\'s records - its note pool, '
+    + 'its journals and the secret its deposits are named by - would be held in memory and lost at the '
+    + 'next restart, and money deposited under them would be named by nothing. Set DATABASE_URL and '
+    + 'start again.';
+}

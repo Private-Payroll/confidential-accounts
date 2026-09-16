@@ -158,6 +158,7 @@ import { SealedDepositJournal } from './vault-journal.js';
 import { testTokenFile, parseTestTokenRecord } from './mint-test-token.js';
 import { assertVaultIsMarriedToTheDeployedAccount } from './fund-vault.js';
 import { explainNodeError, NODE_ERROR_CODES } from './node-errors.js';
+import { keysThisMachineHolds, refusalToFund } from './funding-gate.js';
 import { testEnvironmentFor, startEnvironment } from './test-environment.js';
 import { bringUpWallet } from './wallet-bringup.js';
 import { saveDustState } from './dust-wallet.js';
@@ -1221,6 +1222,24 @@ async function main(): Promise<DepositVerdict> {
    * refused if writing it would take a reader away.
    */
   const startedAt = Date.now();
+  /*
+   * **WHO HOLDS THIS VAULT'S RULES, READ FROM THE CHAIN NOW.** Not from the
+   * authority file in the state folder: a check against our own record is a
+   * check against our own claim. A vault still held by a single key, or by a
+   * committee with a key this machine keeps, is not funded.
+   */
+  {
+    const L: any = await import('@midnightntwrk/ledger-v9');
+    const refusal = await refusalToFund({
+      vault: entry.contractAddress,
+      vaultName: VAULT_NAME,
+      readState: (a) => providers.publicDataProvider.queryContractState(a),
+      held: keysThisMachineHolds(ROOT, STATE_DIR, VAULT_NAME, (k) => L.signatureVerifyingKey(k)),
+    });
+    if (refusal !== null) throw new Error(refusal);
+    good('the chain says this vault is not held by a key this machine keeps');
+  }
+
   const tx = await ledger.deposit(
     entry.contractAddress, { token: colour, value: amount }, DEPOSITOR,
     indexerNoteEvents(cfg.indexer));

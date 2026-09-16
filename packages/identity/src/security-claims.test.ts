@@ -98,10 +98,10 @@ describe('no extended public key above the leaf leaves this library', () => {
    * them. Now something does. */
 
   it('no source file derives or names an HD node, except the tests that walk one independently', () => {
-    /* The three named files walk `@scure/bip32` DELIBERATELY, as an
+    /* The four named files walk `@scure/bip32` DELIBERATELY, as an
      * independent check that our derivation and the SDK's agree — they are
      * the reason the money keys are pinned at all, and they export nothing.
-     * Any FOURTH file is the finding.
+     * Any FIFTH file is the finding.
      *
      * The needle carries no `\b` anchors deliberately: this file has to match
      * its own needle, the same way the neighbouring test does, so that the
@@ -111,6 +111,7 @@ describe('no extended public key above the leaf leaves this library', () => {
     expect(carrying(/HDKey/u)).toEqual([
       'apps/wallet/src/accounts/subwallets.test.ts',
       'packages/identity/src/keys/derivation.portability.test.ts',
+      'packages/identity/src/profile/committee-key.test.ts',
       'packages/identity/src/profile/unlock.test.ts',
       SELF,
     ].sort());

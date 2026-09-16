@@ -1597,3 +1597,41 @@ export interface PayrollRun {
   /** Absent on every run that repeats nothing. */
   repeats?: RunRepeatRecord;
 }
+
+/**
+ * **ONE SIGNER'S PUBLIC KEYS FOR A COMPANY'S VAULTS**, given by that signer's
+ * own wallet and device the first time they open the company here.
+ *
+ *   - `committeeKey` is the key they sit on every vault's committee with. Its
+ *     secret half never leaves their wallet.
+ *   - `recordsKey` is the key the vault's nonce secret is wrapped to for them.
+ *   - `filingKey` is the key every sealed record they file is signed with; the
+ *     service refuses a filing from them signed by any other.
+ *
+ * All three are public. Kept outside the sealed roster, so this service can
+ * see which member gave which key - the same exposure as `memberUserIds` - and
+ * a service that lied about another signer's keys would be believed by a
+ * device assembling a committee of more than one.
+ */
+export interface VaultKeysOfASigner {
+  accountId: string;
+  userId: string;
+  committeeKey: { tag: string; value: string };
+  recordsKey: Hex;
+  filingKey: Hex;
+  givenAt: string;
+}
+
+/**
+ * **A VAULT CREATED FROM THIS COMPANY'S PAGE.** A record that it was deployed
+ * here and what committee it was to be handed to - never a record of who holds
+ * it now. That is read from the chain every time it is asked.
+ */
+export interface CompanyVault {
+  accountId: string;
+  vault: Hex;
+  deployedAt: string;
+  deployRef: string;
+  /** The committee the device said it would hand the vault to, at deploy time. */
+  intended: { committee: { tag: string; value: string }[]; threshold: number };
+}

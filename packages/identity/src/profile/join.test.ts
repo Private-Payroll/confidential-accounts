@@ -101,9 +101,11 @@ describe('a join is one of the kinds this wallet answers', () => {
     const said = refusal(join({ kind: 'approve' })).message;
     /* **AND IT WENT RED WHEN THE FIFTH KIND WAS APPENDED**, which is what it is
      * for: `namedKinds` was read again and produced the commas unchanged. */
+    /* **AND AGAIN WHEN THE SIXTH, `balance`, WAS APPENDED**, and the function
+     * produced the commas unchanged once more. */
     expect(said).toContain(
-      "this wallet answers 'disclosure', 'sign-in', 'unlock', 'join' and 'keyring', and that asks");
-    expect(said).not.toContain("'join' and 'keyring' and");
+      "this wallet answers 'disclosure', 'sign-in', 'unlock', 'join', 'keyring' and 'balance', and that asks");
+    expect(said).not.toContain("'keyring' and 'balance' and");
   });
 
   it('a well-formed invitation parses, and the key is folded to one spelling', () => {

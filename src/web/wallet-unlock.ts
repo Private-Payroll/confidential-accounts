@@ -130,7 +130,12 @@ export interface KeyringAsked {
  */
 export async function askWalletForKeys(
   view: Openable, walletOrigin: string, ask: KeyringAsked, dialog?: WalletDialog,
-): Promise<{ key: Uint8Array; companyKey: Uint8Array | null }> {
+): Promise<{
+  key: Uint8Array;
+  companyKey: Uint8Array | null;
+  /** Public: the key the person sits on this company's vault committee with. */
+  committeeKey: { tag: string; value: string } | null;
+}> {
   const now = ask.now ?? (() => Date.now());
   const nonce = ask.nonce ?? toHex(randomBytes(16));
   const answer = await askWallet(view, walletOrigin, keyringAsk({
@@ -147,6 +152,6 @@ export async function askWalletForKeys(
   const checked = readKeyringRelease(answer, {
     atOrigin, expectingNonce: nonce, person, signedInAs, forCompany: company,
   });
-  if (checked.ok) return { key: checked.key, companyKey: checked.companyKey };
+  if (checked.ok) return { key: checked.key, companyKey: checked.companyKey, committeeKey: checked.committeeKey };
   throw new UnlockRefused(checked.code, checked.says);
 }

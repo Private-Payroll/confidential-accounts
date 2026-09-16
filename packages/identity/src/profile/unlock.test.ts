@@ -22,6 +22,7 @@ import {
   KEYRING_RELEASE_SCHEMA, RELEASE_SCHEMA, UnlockError, keyringKeyFor, keyringReleaseFor,
   readKeyringRelease, readRelease, releaseFor, unlockKeyFor,
 } from './unlock.js';
+import { committeeKeyFor, committeeSigningKeyFor } from './committee-key.js';
 import type { KeyringRequest } from './request.js';
 import { emptyProfile, grantTo, originsFor, recordRelease, releasesOf } from './model.js';
 import { WALLET_ACCOUNTS } from '../../../../apps/wallet/src/accounts/subwallets.js';
@@ -980,7 +981,8 @@ describe('THE KEYRING RELEASE: THE GATE IS INSIDE IT, AND THE READER TAKES ITS O
   it('a wallet holding the signed-in address gives the keyring key and nothing else', () => {
     const released = keyringReleaseFor(identity, keyringAt(A), NOW, holdsSignedIn);
     expect(Object.keys(released).sort()).toEqual(
-      ['at', 'company', 'companyKey', 'key', 'nonce', 'origin', 'person', 'schema', 'signedInAs']);
+      ['at', 'committeeKey', 'company', 'companyKey', 'key', 'nonce', 'origin', 'person', 'schema', 'signedInAs']);
+    expect(released.committeeKey).toBeNull();
     expect(released.schema).toBe(KEYRING_RELEASE_SCHEMA);
     expect(released.origin).toBe(A);
     expect(hex(fromBase64Url(released.key))).toBe(hex(independentKeyringKey(PERSON)));
@@ -1015,6 +1017,14 @@ describe('THE KEYRING RELEASE: THE GATE IS INSIDE IT, AND THE READER TAKES ITS O
     expect(released.companyKey).not.toBe(released.key);
   });
 
+  it('WITH A COMPANY, THE ANSWER ALSO CARRIES THE PUBLIC COMMITTEE KEY FOR THAT COMPANY, AND NO SECRET BESIDE IT', () => {
+    const released = keyringReleaseFor(identity, keyringAt(A, { company: CO_B }), NOW, holdsSignedIn);
+    expect(released.committeeKey).toEqual(committeeKeyFor(identity, CO_B));
+    expect(released.committeeKey).not.toEqual(committeeKeyFor(identity, CO_A));
+    const signing = committeeSigningKeyFor(identity, CO_B).value;
+    expect(JSON.stringify(released)).not.toContain(signing);
+  });
+
   it('THE READER REFUSES AN ANSWER TO ANY OTHER QUESTION', () => {
     const expecting: {
       atOrigin: string; expectingNonce: string; person: string;
@@ -1042,6 +1052,8 @@ describe('THE KEYRING RELEASE: THE GATE IS INSIDE IT, AND THE READER TAKES ITS O
     expect(refused({ key: toBase64Url(new Uint8Array(31)) })).toBe('unusable-key');
     expect(refused({ company: CO_A, companyKey: released.key })).toBe('company-mismatch');
     expect(refused({ companyKey: released.key })).toBe('company-mismatch');
+    /* A committee key nobody asked for is an answer to another question. */
+    expect(refused({ committeeKey: committeeKeyFor(identity, CO_A) })).toBe('company-mismatch');
     expect(refused({ at: 1.5 })).toBe('not-a-release');
     /* Asked about a company, answered without one, or with a different one. */
     const withCompany = { ...expecting, forCompany: CO_A };
@@ -1052,11 +1064,20 @@ describe('THE KEYRING RELEASE: THE GATE IS INSIDE IT, AND THE READER TAKES ITS O
     const forA = keyringReleaseFor(identity, keyringAt(A, { company: CO_A.toUpperCase() }), NOW, holdsSignedIn);
     const good = readKeyringRelease(forA, withCompany);
     expect(good.ok).toBe(true);
-    if (good.ok) expect(hex(good.companyKey!)).toBe(hex(independentUnlockKey(CO_A)));
-    expect(refused({ company: CO_A, companyKey: toBase64Url(new Uint8Array(8)) }, withCompany))
+    if (good.ok) {
+      expect(hex(good.companyKey!)).toBe(hex(independentUnlockKey(CO_A)));
+      expect(good.committeeKey).toEqual(committeeKeyFor(identity, CO_A));
+    }
+    const committee = { company: CO_A, committeeKey: committeeKeyFor(identity, CO_A) };
+    expect(refused({ ...committee, companyKey: toBase64Url(new Uint8Array(8)) }, withCompany))
       .toBe('unusable-key');
     /* A company key that is the keyring key itself has been put in the wrong place. */
-    expect(refused({ company: CO_A, companyKey: released.key }, withCompany)).toBe('unusable-key');
+    expect(refused({ ...committee, companyKey: released.key }, withCompany)).toBe('unusable-key');
+    /* A company key with no committee key beside it, or with something else there. */
+    expect(refused({ company: CO_A, companyKey: forA.companyKey, committeeKey: null }, withCompany))
+      .toBe('unusable-key');
+    expect(refused({ company: CO_A, companyKey: forA.companyKey, committeeKey: { tag: 'schnorr', value: 'ab' } }, withCompany))
+      .toBe('unusable-key');
   });
 
   it('A COMPANY-KEY RELEASE IS NOT A KEYRING RELEASE, AND THE REVERSE', () => {

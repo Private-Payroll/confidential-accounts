@@ -1,7 +1,7 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
 import { utf8 } from './crypto.js';
-import type { SealedAccount, Proposal, SealedProposal, PayrollRun, SealedRun, Attestation, SealedEmployee, Invite, Installation, PluginEvent, User } from './types.js';
+import type { SealedAccount, Proposal, SealedProposal, PayrollRun, SealedRun, Attestation, SealedEmployee, Invite, Installation, PluginEvent, User, CompanyVault, VaultKeysOfASigner } from './types.js';
 import { provenanceOf, type Marked, type WiringName } from './provenance.js';
 
 export interface Shape {
@@ -14,6 +14,10 @@ export interface Shape {
   installations: Record<string, Installation>;
   pluginEvents: Record<string, PluginEvent>;
   users: Record<string, User>;
+  /** A company's vaults, keyed by vault address. */
+  companyVaults: Record<string, CompanyVault>;
+  /** Each signer's public vault keys, keyed by `accountId:userId`. */
+  vaultKeys: Record<string, VaultKeysOfASigner>;
   /**
    * **EVERY LEDGER OBSERVED WRITING HERE, IN THE ORDER IT WAS FIRST SEEN.**
    *
@@ -40,7 +44,7 @@ export interface Shape {
 
 export const emptyShape = (): Shape =>
   ({ accounts: {}, proposals: {}, runs: {}, attestations: {}, employees: {}, invites: {},
-    installations: {}, pluginEvents: {}, users: {}, writtenBy: [] });
+    installations: {}, pluginEvents: {}, users: {}, writtenBy: [], companyVaults: {}, vaultKeys: {} });
 
 /**
  * Note what is NOT stored here: viewing keys and signer secrets. Nothing that can
@@ -267,6 +271,17 @@ export class MemoryStore {
   listPluginEvents(accountId: string) {
     return Object.values(this.data.pluginEvents).filter(e => e.accountId === accountId);
   }
+
+  /* A company's vaults, and its signers' public vault keys. */
+  putCompanyVault(v: CompanyVault) { this.data.companyVaults[v.vault] = v; this.flush(); }
+  getCompanyVault(vault: string) { return this.data.companyVaults[vault.toLowerCase()] ?? null; }
+  listCompanyVaults(accountId: string): CompanyVault[] {
+    return Object.values(this.data.companyVaults)
+      .filter(v => v.accountId === accountId)
+      .sort((a, b) => a.deployedAt.localeCompare(b.deployedAt));
+  }
+  putVaultKeys(k: VaultKeysOfASigner) { this.data.vaultKeys[`${k.accountId}:${k.userId}`] = k; this.flush(); }
+  getVaultKeys(accountId: string, userId: string) { return this.data.vaultKeys[`${accountId}:${userId}`] ?? null; }
 
   putAttestation(a: Attestation) { this.data.attestations[a.id] = a; this.flush(); }
   getAttestation(id: string) { return this.data.attestations[id] ?? null; }

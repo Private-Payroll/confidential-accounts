@@ -7,7 +7,7 @@
  * all of it, so the refusals live here and are pinned without a wallet.
  */
 import type { CreatePreconditions } from './create-company-rules.js';
-import { refuseIncompleteSetup } from './create-company-rules.js';
+import { refuseIncompleteSetup, PRECONDITIONS } from './create-company-rules.js';
 import { pageStartsFor } from './serve-rules.js';
 import { PAIR_NETWORK } from '../src/midnight/network.js';
 
@@ -62,6 +62,16 @@ export function postureFrom(devScript: string): Record<string, string> {
 }
 
 /**
+ * **WHAT THIS LAUNCHER NEEDS: EVERYTHING THE COMPANY CREATOR DOES EXCEPT A
+ * COMPANY WALLET.** It brings no company wallet up. Every transaction the
+ * product sends moves no coins, so the company's side is one that holds nothing;
+ * a company's money comes from its own signer's wallet, with the request that
+ * needs it.
+ */
+export const SERVED_PRECONDITIONS: readonly (keyof CreatePreconditions)[] =
+  PRECONDITIONS.filter(p => p !== 'companySeed');
+
+/**
  * **WHETHER TWO SEED FILES WOULD BRING UP ONE WALLET.** Compared after the
  * differences that do not change which wallet a seed makes - surrounding space,
  * letter case and a leading `0x` - so a copy that differs only in those is still
@@ -81,10 +91,8 @@ export function seedsAreOneParty(first: string, second: string): boolean {
  */
 export function refuseToServe(input: {
   readonly network: string;
-  readonly present: CreatePreconditions;
+  readonly present: Omit<CreatePreconditions, 'companySeed'>;
   readonly posture: Record<string, string>;
-  /** True when both seed files are on this machine and would bring up one wallet. */
-  readonly oneSeedForBoth: boolean;
 }): string | null {
   const reasons: string[] = [];
   if (input.network !== SERVED_NETWORK) {
@@ -107,15 +115,7 @@ export function refuseToServe(input: {
         'the development script\'s origins cannot be started as they are: ' + plan.refusals.join('; '));
     }
   }
-  if (input.oneSeedForBoth) {
-    reasons.push(
-      'the wallet that pays and the company wallet have the same seed on this machine, so they '
-      + 'would be one wallet. They are meant to be two parties - one pays the fees, the other '
-      + 'balances and signs the company\'s own part of each transaction - and with one seed both '
-      + 'jobs fall to one wallet while everything else reports two. Give the company wallet a seed '
-      + 'of its own');
-  }
-  const setup = refuseIncompleteSetup(input.present);
+  const setup = refuseIncompleteSetup(input.present, SERVED_PRECONDITIONS);
   if (reasons.length === 0 && setup === null) return null;
   const head = reasons.length === 0
     ? ''

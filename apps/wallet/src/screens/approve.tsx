@@ -29,6 +29,7 @@ import { sealToInbox } from 'midnight-identity/profile/inbox';
 import { addressFingerprint, companyFingerprint } from 'midnight-identity/profile/fingerprint';
 import { EMBEDDER } from '../config.js';
 import { useConsent } from '../framing.js';
+import { ApproveBalance } from './approve-balance.js';
 import type { Consent } from '../framing.js';
 
 /**
@@ -478,6 +479,9 @@ export function Approve({
     /* **AND NEITHER DOES A KEYRING ASK**, for the same reason: it gives keys and
      * signs nothing. `releaseKeyring` below is its only door. */
     if (request.kind === 'keyring') return;
+    /* **NOR A BALANCE ASK**: it pays and discloses nothing, and its one door is
+     * the press on its own screen (`approve-balance.tsx`). */
+    if (request.kind === 'balance') return;
     const disclosed: Sent[] = [];
     const declined: AttributeName[] = [];
     for (const row of rows) {
@@ -1120,6 +1124,23 @@ export function Approve({
     </Section>
   );
 
+  if (request.kind === 'balance') {
+    return (
+      <ApproveBalance
+        request={request}
+        identity={identity}
+        account={subwallet}
+        channel={channel}
+        consent={consent}
+        whoIsAsking={whoIsAsking}
+        whichWallet={whichWallet(
+          'Which of your wallets pays',
+          'The coins come from this wallet, and only from it.')}
+        onDecline={() => { channel?.refuse('declined'); setChannelState({ of: 'waiting' }); }}
+      />
+    );
+  }
+
   if (request.kind === 'unlock') {
     /*
      * **WHERE ELSE THIS COMPANY'S KEY HAS ALREADY GONE.**
@@ -1391,6 +1412,10 @@ export function Approve({
             <p className="m-0 text-sm text-muted">
               That company&rsquo;s key is what your payslip key there is worked out from. This wallet
               cannot check that the company belongs to that page; it can only show you both.
+            </p>
+            <p className="m-0 text-sm text-muted" data-committee-key-given>
+              The answer also carries the public half of the key you sit on that company&rsquo;s vault
+              committee with, so the company can list it. The half that signs never leaves this wallet.
             </p>
           </Section>
         )}

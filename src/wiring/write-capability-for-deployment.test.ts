@@ -10,6 +10,7 @@
  * *everything resolved*, and about the fact that there is deliberately nothing
  * in between.
  */
+import { CoinlessCustomer } from '../midnight/coinless-customer.js';
 import { describe, it, expect } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -194,13 +195,33 @@ describe('a fee payer this deployment\'s settings name', () => {
   const named = parties().sponsor;
 
   /*
-   * RED WHEN: a customer wallet is built or defaulted here, so a fee payer in
-   * the settings is enough to write. The company's side is never ours to make.
+   * A fee payer alone is enough to write, and the company's side is one that
+   * holds nothing. RED WHEN: a wallet is built here for the company, or the
+   * side that is made refuses nothing.
    */
-  it('is not enough to write: the company\'s side must still be handed in', async () => {
+  it('is enough to write, and the company\'s side it comes with holds nothing and refuses a coin', async () => {
+    const root = deploymentRoot();
+    try {
+      const c = await deploymentWriteCapability(root, {}, null, () => named);
+      expect(c, 'no capability came back').toBeDefined();
+      expect(c!.customer).toBeInstanceOf(CoinlessCustomer);
+      expect(refusalForCapability(c)).toBeNull();
+      const needsACoin = {
+        intents: new Map([[1, {}]]),
+        imbalances: (segment: number) => new Map(segment === 0 ? [[{ tag: 'shielded' }, -1n]] : []),
+        bind: () => 'bound',
+      };
+      await expect(c!.customer.balanceOwnLegs(needsACoin, new Date())).rejects.toThrow(/holds none for any company/);
+      const movesNothing = { ...needsACoin, imbalances: () => new Map([[{ tag: 'dust' }, -5n]]) };
+      await expect(c!.customer.balanceOwnLegs(movesNothing, new Date())).resolves.toBe('bound');
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  /* RED WHEN: a deployment with no fee payer at all writes. */
+  it('without a fee payer there is still nothing to write with', async () => {
     const nowhere = mkdtempSync(join(tmpdir(), 'empty-'));
     try {
-      await expect(deploymentWriteCapability(nowhere, {}, null, () => named)).resolves.toBeUndefined();
+      await expect(deploymentWriteCapability(nowhere, {}, null, () => null)).resolves.toBeUndefined();
     } finally { rmSync(nowhere, { recursive: true, force: true }); }
   });
 

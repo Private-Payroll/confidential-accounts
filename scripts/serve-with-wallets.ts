@@ -4,12 +4,11 @@
  *
  * -- WHAT IT DOES -----------------------------------------------------------
  *
- * It brings up the wallet that pays and the company wallet, turns them into
- * the pair the product is handed, hands that pair over, and only then starts
- * the product - the same server, application and wallet `npm run dev` starts,
- * through the same code, on the same origins. A person signs in with their wallet,
- * presses the button, and the company is deployed to stagenet through the
- * route the screen already calls.
+ * It brings up the wallet that pays, turns it into the fee payer the product is
+ * handed, hands that over, and only then starts the product - the same server,
+ * application and wallet `npm run dev` starts, through the same code, on the
+ * same origins. A person signs in with their wallet, presses the button, and the
+ * company is deployed to stagenet through the route the screen already calls.
  *
  * -- WHAT IT IS NOT --------------------------------------------------------
  *
@@ -21,13 +20,13 @@
  *
  * -- WHAT IT TRADES, STATED ---------------------------------------------------
  *
- * **THE COMPANY'S HALF IS THE COMPANY WALLET ON THIS MACHINE, FOR EVERY COMPANY
- * CREATED WHILE IT RUNS.** It is brought up without DUST and pays no fee, and
- * its balance is not read here; it balances and signs the legs a company owns,
- * and a deploy carries no coin. The
- * design it stands in for takes that half from the signed-in person's own
- * wallet with each request, which needs the wallet to answer a balancing ask
- * it does not answer today.
+ * **NO COMPANY WALLET.** Every transaction the product sends from here moves no
+ * coins, so the company's side is one that holds nothing and refuses any
+ * transaction that would need a coin. A company's money is put in by its own
+ * signer's wallet, which adds the coins to the one request that needs them - a
+ * deposit into the company's vault. This launcher used to bring up one wallet
+ * on this machine as the company half of every company created while it ran;
+ * it no longer does, and needs no company seed.
  *
  * **ONE FEE PAYER, NOTHING METERED, AND EACH TRANSACTION CAPPED** at the
  * ceiling this machine's settings name; nothing starts without one. Every
@@ -51,10 +50,11 @@ import { feeCeilingFrom } from '../src/midnight/fee-ceiling.js';
 import { applyNetworkId, theNetwork, ENDPOINTS, type NetworkName } from '../src/midnight/network.js';
 import { handInFundedParties } from '../src/wiring/handed-in-wallets.js';
 import { bringUpWallet } from './wallet-bringup.js';
-import { fundedPartiesOver, paidFeeFrom } from './funded-wallets.js';
+import { feePayerOver, paidFeeFrom } from './funded-wallets.js';
+import { coinlessCustomer } from '../src/midnight/coinless-customer.js';
 import { testEnvironmentFor, startEnvironment } from './test-environment.js';
 import {
-  POSTURE_NOT_CARRIED, postureFrom, refuseToServe, seedsAreOneParty,
+  POSTURE_NOT_CARRIED, postureFrom, refuseToServe,
 } from './serve-with-wallets-rules.js';
 import { pageStartsFor, refuseWhatTheServerSaid } from './serve-rules.js';
 import { startTheServer, startThePages, stopChildren, stopEverythingOnExit } from './serve-product.js';
@@ -70,7 +70,6 @@ const STATE_DIR = join(ROOT, '.midnight');
 const NETWORK: NetworkName = theNetwork();
 const PROVER_PORT = Number(process.env.MIDNIGHT_PROVER_PORT ?? 6301);
 const SPONSOR_SEED_FILE = join(STATE_DIR, 'wallet.seed');
-const COMPANY_SEED_FILE = join(STATE_DIR, `${NETWORK}-company.seed`);
 const ARTIFACTS = join(ROOT, 'contracts', 'managed');
 const FEE_RECORD = join(STATE_DIR, 'sponsored-fees.jsonl');
 /*
@@ -108,19 +107,11 @@ async function main() {
   const devScript = String(
     (JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).scripts ?? {}).dev ?? '');
   const posture = postureFrom(devScript);
-  /*
-   * **COMPARED HERE AND NEVER PRINTED.** Two halves brought up from one seed are
-   * one wallet, and nothing after this point would say so.
-   */
-  const oneSeedForBoth = existsSync(SPONSOR_SEED_FILE) && existsSync(COMPANY_SEED_FILE)
-    && seedsAreOneParty(readFileSync(SPONSOR_SEED_FILE, 'utf8'), readFileSync(COMPANY_SEED_FILE, 'utf8'));
   const refusal = refuseToServe({
     network: NETWORK,
     posture,
-    oneSeedForBoth,
     present: {
       fundedSeed: existsSync(SPONSOR_SEED_FILE),
-      companySeed: existsSync(COMPANY_SEED_FILE),
       maintenanceAuthority: existsSync(join(STATE_DIR, 'maintenance-authority.json')),
       compiledContract: existsSync(join(ARTIFACTS, 'keys')),
       proofServer: await proofServerAnswers(PROVER_PORT),
@@ -136,10 +127,10 @@ async function main() {
   /* Already refused above when it cannot be started; this narrows the type. */
   if ('refusals' in plan) throw new Error(plan.refusals.join('; '));
   good('the authority is recorded, the contract is compiled, the prover answers,');
-  good('and both wallets have a seed on this machine');
+  good('and the wallet that pays has a seed on this machine');
 
   /* ---------------------------------------------------------------- 2 */
-  step(2, 5, 'Bringing up the two wallets (this is the slow part: a sync, then DUST)');
+  step(2, 5, 'Bringing up the wallet that pays (this is the slow part: a sync, then DUST)');
 
   await applyNetworkId(NETWORK);
   const logger: any = {
@@ -157,13 +148,8 @@ async function main() {
     { withDust: true, requireDust: true, onNote: (m) => good(m) });
   good(`the wallet that pays holds ${payerLive.night()} NIGHT and ${payerLive.dust()} DUST`);
 
-  const companyLive = await bringUpWallet(
-    logger, cfg, readFileSync(COMPANY_SEED_FILE, 'utf8').trim(), NETWORK, ROOT,
-    { withDust: false, onNote: (m) => good(m) });
-  good('the company wallet is up; it is not given DUST and pays no fee');
-
   /* ---------------------------------------------------------------- 3 */
-  step(3, 5, 'Handing the pair to the product, before the server exists');
+  step(3, 5, 'Handing the fee payer to the product, before the server exists');
 
   const { indexerPublicDataProvider } = await import(
     '@midnight-ntwrk/midnight-js-indexer-public-data-provider');
@@ -171,22 +157,23 @@ async function main() {
   const publicData = indexerPublicDataProvider(E.indexerUrl, E.indexerWsUrl);
 
   mkdirSync(STATE_DIR, { recursive: true });
-  handInFundedParties(fundedPartiesOver(
-    {
-      provider: payerLive.wallet, facade: payerLive.wallet.wallet,
-      dust: () => payerLive.dust(), night: () => payerLive.night(),
-    },
-    {
-      provider: companyLive.wallet, facade: companyLive.wallet.wallet,
-      dust: () => companyLive.dust(), night: () => companyLive.night(),
-    },
-    paidFeeFrom(publicData),
-    fileFeeSink(FEE_RECORD, (p, l) => appendFileSync(p, l)),
-    ({ fee, remaining }) => good(
-      `paid ${fee ?? 'an amount that was not read back'}; `
-      + `${remaining} DUST reported after (it lags, and is not a capacity reading)`),
-    ceiling,
-  ));
+  handInFundedParties({
+    sponsor: feePayerOver(
+      {
+        provider: payerLive.wallet, facade: payerLive.wallet.wallet,
+        dust: () => payerLive.dust(), night: () => payerLive.night(),
+      },
+      paidFeeFrom(publicData),
+      fileFeeSink(FEE_RECORD, (p, l) => appendFileSync(p, l)),
+      ({ fee, remaining }) => good(
+        `paid ${fee ?? 'an amount that was not read back'}; `
+        + `${remaining} DUST reported after (it lags, and is not a capacity reading)`),
+      ceiling,
+    ),
+    /* The company's side holds nothing: see the header. */
+    customer: await coinlessCustomer(),
+  });
+  good('no company wallet is brought up: a company\'s money comes from its own signer\'s wallet');
   good(`every fee paid is recorded in ${FEE_RECORD}`);
   good(`no transaction may spend more than ${ceiling.perTransaction} SPECKs of DUST`);
 
@@ -199,8 +186,8 @@ async function main() {
   process.env.DATA_PATH = DATA;
   good(`companies are recorded in ${DATA}`);
   /*
-   * **THE SERVER READS THE PAIR ONCE, WHILE IT IS BEING LOADED**, which is why
-   * the pair was handed over above this line and not below it.
+   * **THE SERVER READS WHAT IT WAS HANDED ONCE, WHILE IT IS BEING LOADED**, which
+   * is why it was handed over above this line and not below it.
    */
   const { said, port } = await startTheServer(ROOT);
 

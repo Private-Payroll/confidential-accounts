@@ -353,6 +353,7 @@ const NOT_AN_ASSET_BECOMING_A_TOKEN: Record<string, { count: number; why: string
   'src/core/account.ts raw': { count: 1, why: 'an invitation\'s secret, handed back once to whoever raised it' },
   'src/core/payroll.ts inviteKeyOf(raw)': { count: 1, why: 'the stored key of an invitation' },
   'src/core/payroll.ts token': { count: 1, why: 'the record of an invitation delivered' },
+  'src/core/store.ts inviteKeyOf(token)': { count: 1, why: 'an invitation kept under its old key, moved to its stored key' },
   'src/core/plugins.ts \' \' + nanoid(24)': { count: 1, why: 'a plug-in\'s capability, minted at random' },
   'src/testing/assets.ts token': { count: 1, why: 'a record of which token a test vault was asked about' },
   'src/web/App.tsx token': { count: 2, why: 'an invitation link shown to whoever raised it' },

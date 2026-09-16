@@ -276,6 +276,32 @@ export const Purposes = {
    * rather than changing one, and fails BY NAME on a purpose that has none.
    */
   Keyring: 'keyring',
+  /**
+   * THE ROOT OF A PERSON'S VOTE ON WHO MAY CHANGE A COMPANY VAULT'S RULES.
+   *
+   * A vault's maintenance authority is a committee of signature keys, one per
+   * company signer, and a maintenance update is valid only with enough of their
+   * signatures. The key a person sits on that committee with is an expansion of
+   * this parent under the company's address (`profile/committee-key.ts`), so it
+   * differs per company and links nobody across companies.
+   *
+   * **ONLY ITS PUBLIC HALF EVER LEAVES THE WALLET.** A key that can sign
+   * maintenance can replace the proofs a vault accepts, which is a key that can
+   * move the vault's money; a page that held it could do that on its own.
+   *
+   * WHY NOT `Purposes.Unlock`. The unlock key is RELEASED to the company's page,
+   * and the page already expands it into the key the company's records are
+   * wrapped to. A committee key built on that parent would be computable by the
+   * page. **A different job gets a different parent**, so no released key, no
+   * records key and no committee key can ever be derived from one another.
+   *
+   * ADDITIVE, AND THAT IS THE ONLY REASON IT IS ALLOWED HERE -- the same
+   * sentence every purpose after the first four was added under. The eight
+   * purposes above are untouched, so every credential already in existence
+   * derives to the same bytes; `derivation.portability.test.ts` ADDS a vector
+   * rather than changing one.
+   */
+  Maintenance: 'maintenance',
 } as const;
 
 export type Purpose = (typeof Purposes)[keyof typeof Purposes];

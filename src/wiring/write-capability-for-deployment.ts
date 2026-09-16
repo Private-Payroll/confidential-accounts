@@ -48,6 +48,7 @@ import type { CustomerWallet } from '../midnight/providers.js';
 import type { FeeSponsor } from '../midnight/ledger.js';
 import type { WriteCapability } from './write-capability.js';
 import { feePayerFrom } from '../fee-payer/client.js';
+import { coinlessCustomer } from '../midnight/coinless-customer.js';
 
 /**
  * The two parties a funded wallet becomes.
@@ -138,13 +139,17 @@ export async function deploymentWriteCapability(
       + 'Remove the fee payer from the settings, or start this process without handing one in.');
   }
   const sponsor = wallets?.sponsor ?? configured;
+  if (!sponsor) return undefined;
   /*
-   * **THE COMPANY'S SIDE IS ONLY EVER WHAT WAS HANDED IN.** There is no
-   * fallback here and there must never be one: a customer wallet this process
-   * built for itself would put the company's money in our process.
+   * **THE COMPANY'S SIDE HOLDS NOTHING UNLESS SOMETHING WAS HANDED IN.** Every
+   * transaction this process builds moves no coins, so the side that would put
+   * them in is one that holds none and refuses any transaction that needs one
+   * (`coinless-customer.ts`). A company's money comes from its own signer's
+   * wallet, on their own device, with the one request that needs it. **There is
+   * still no wallet this process builds for itself**: one would put the
+   * company's money in our process.
    */
-  const customer = wallets?.customer ?? null;
-  if (!sponsor || !customer) return undefined;
+  const customer = wallets?.customer ?? await coinlessCustomer();
   return {
     /*
      * Read, never chosen. Whoever holds this can change which proofs the

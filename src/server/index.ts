@@ -51,11 +51,16 @@ import { appendWebConsole, webConsoleLogPath } from './web-console-log.js';
 /* `C157` — every refusal this service makes, kept. See `wrap` below. */
 import { appendRefusal, refusalLogPath } from './refusal-log.js';
 import {
-  mountVaultRecords, openedOnFirstUse, vaultAccountFromTheIndexer, type VaultAccountReader,
+  mountVaultRecords, openedOnFirstUse, vaultAccountFromTheIndexer, whyVaultRecordsCannotBeKept,
+  type VaultAccountReader,
 } from './vault-records-authority.js';
 import { openVaultRecords, refuseVaultsTheOperatorToolsKeep } from '../db/vault-records.js';
 import { MemorySealedPoolStore, type SealedPoolStore } from '../midnight/vault-pool.js';
 import type { WireRecord } from '../midnight/sealed-record-wire.js';
+import { companyVaultRoutes, type VaultChain } from './company-vaults.js';
+import { vaultArtefactPlaces, vaultArtefactRoutes } from './vault-artefacts.js';
+import { vaultChainFromTheIndexer, vaultVerifierKeysIn } from './vault-chain.js';
+import { readProvenTransaction, readFinishedTransaction } from '../wiring/proven-submission.js';
 
 /**
  * **`.env` IS READ HERE, AND UNTIL X2 IT WAS NOT READ AT ALL.**
@@ -509,7 +514,38 @@ app.use(cors());
   mountVaultRecords(app, {
     signedIn: (req, res, next) => authed(req, res, next),
     records, accountOf, companies: () => store.listAccounts(),
+    filingKeyOf: (companyId, person) => store.getVaultKeys(companyId, person)?.filingKey ?? null,
   });
+
+  /*
+   * A COMPANY'S VAULTS: created, handed to the company's committee and funded
+   * from its signers' own devices. Mounted before the general parser for the
+   * same reason as the records above: a deploy is larger than most bodies.
+   */
+  const refusingChain: VaultChain = {
+    contractState: async () => { throw new Error(startup.started ? 'unreachable' : startup.refusal); },
+    serialize: () => { throw new Error('no chain'); },
+    notesOf: () => { throw new Error('no chain'); },
+    startingLedgerOf: () => { throw new Error('no chain'); },
+    everCreated: async () => { throw new Error(startup.started ? 'unreachable' : startup.refusal); },
+  };
+  app.use(vaultArtefactRoutes(vaultArtefactPlaces(process.cwd(), process.env)));
+  app.use(companyVaultRoutes({
+    signedIn: (req, res, next) => authed(req, res, next),
+    member: (req, res, next) => member(req, res, next),
+    store,
+    company: async (accountId) => {
+      const [address, status] = await Promise.all([ledger.address(accountId), ledger.status(accountId)]);
+      if (!address || !status) return null;
+      return { address: address.value as Hex, threshold: status.threshold };
+    },
+    ledger,
+    chain: startup.started
+      ? await vaultChainFromTheIndexer({ url: startup.deployment.indexerUrl, wsUrl: startup.deployment.indexerWsUrl })
+      : refusingChain,
+    verifierKeys: vaultVerifierKeysIn(process.cwd()),
+    readers: { proven: readProvenTransaction, finished: readFinishedTransaction },
+  }));
 }
 
 app.use(express.json({ limit: '1mb' }));
@@ -2286,6 +2322,18 @@ if (process.env.SERVE !== '0') {
    */
   if (!startup.started) {
     console.error(`\n${startup.refusal}\n`);
+    process.exit(1);
+  }
+  /*
+   * **A SERVER THAT WRITES TO A CHAIN DOES NOT KEEP A VAULT'S RECORDS IN
+   * MEMORY.** Money deposited under records a restart loses is named by
+   * nothing, so this is asked before listening rather than found afterwards.
+   * Asked here and not where the records are mounted, so that importing this
+   * module to drive its routes stops nothing.
+   */
+  const cannotKeep = whyVaultRecordsCannotBeKept({ reachesAChain: startup.started && handed === null, database: recordsSql !== null });
+  if (cannotKeep !== null) {
+    console.error(`\n  ${cannotKeep}\n`);
     process.exit(1);
   }
   const PORT = Number(process.env.PORT ?? 8787);

@@ -1,6 +1,8 @@
 import { hkdf } from '@noble/hashes/hkdf.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { Purposes } from '../keys/derivation.js';
+import { committeeKeyFor, readCommitteeKey } from './committee-key.js';
+import type { SignatureVerifyingKey } from '@midnightntwrk/ledger-v9';
 import type { Identity } from '../keys/derivation.js';
 import { fromBase64Url, toBase64Url } from '../passkey/bytes.js';
 import type { KeyringRequest, UnlockRequest } from './request.js';
@@ -555,6 +557,12 @@ export interface KeyringRelease {
   readonly key: string;
   /** Base64url of the 32-byte key for `company`, or null when no company was asked about. */
   readonly companyKey: string | null;
+  /**
+   * **PUBLIC.** The key this person sits on `company`'s vault committee with
+   * (`committee-key.ts`), or null when no company was asked about. Its secret
+   * half is not in this message and never leaves the wallet.
+   */
+  readonly committeeKey: SignatureVerifyingKey | null;
 }
 
 /**
@@ -601,6 +609,7 @@ export function keyringReleaseFor(
     at,
     key: toBase64Url(key),
     companyKey,
+    committeeKey: ask.company === null ? null : committeeKeyFor(identity, ask.company),
   });
 }
 
@@ -609,6 +618,8 @@ export type KeyringRead =
     readonly ok: true;
     readonly key: Uint8Array;
     readonly companyKey: Uint8Array | null;
+    /** Public, and present exactly when a company key is. */
+    readonly committeeKey: SignatureVerifyingKey | null;
     readonly at: number;
   }
   | { readonly ok: false; readonly code: ReleaseFailure | 'person-mismatch'; readonly says: string };
@@ -690,7 +701,17 @@ export function readKeyringRelease(
     return { ok: false, code: 'unusable-key', says: `a released key is ${KEY_BYTES} bytes and that one is not.` };
   }
   let companyKey: Uint8Array | null = null;
+  let committeeKey: SignatureVerifyingKey | null = null;
   if (wanted !== null) {
+    committeeKey = readCommitteeKey(body.committeeKey);
+    if (committeeKey === null) {
+      return {
+        ok: false,
+        code: 'unusable-key',
+        says: 'this answer gives a company key without the committee key that belongs beside it, '
+          + 'or with one that is not a committee key. It is refused rather than used.',
+      };
+    }
     companyKey = readKeyBytes(body.companyKey);
     if (companyKey === null) {
       return {
@@ -709,7 +730,8 @@ export function readKeyringRelease(
           + 'never the same. It is refused rather than used.',
       };
     }
-  } else if (body.companyKey !== null && body.companyKey !== undefined) {
+  } else if ((body.companyKey !== null && body.companyKey !== undefined)
+    || (body.committeeKey !== null && body.committeeKey !== undefined)) {
     return {
       ok: false,
       code: 'company-mismatch',
@@ -719,5 +741,5 @@ export function readKeyringRelease(
   if (typeof body.at !== 'number' || !Number.isSafeInteger(body.at)) {
     return { ok: false, code: 'not-a-release', says: 'that is not a released key.' };
   }
-  return { ok: true, key, companyKey, at: body.at };
+  return { ok: true, key, companyKey, committeeKey, at: body.at };
 }

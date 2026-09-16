@@ -299,6 +299,15 @@ describe('the authority compartment', () => {
       0: '0105236d9d8345e4edf21d77ad4a325c04b1f36456c75f310a104cfc32fd5bbf',
       1: '845113ced8a0706a307d58e8fe825e8c4044c747ac7126cc9e533ae1643c4075',
     },
+    /* The ninth purpose, added under the same sentence as the three before it:
+     * every value above is the value it already had. Computed by an independent
+     * walk (`@scure/bip32`, `@scure/bip39` and `@noble/hashes`, outside this
+     * repository's derivation), which gave the recorded `unlock` and `keyring`
+     * vectors above byte for byte before these two were trusted. */
+    maintenance: {
+      0: 'fef9ff639a1cf52b690927055ab8fb1f8d702576d4234a799e46b8098eda7a8f',
+      1: '8906085371a8aef6957f11f6c6591789ce73cbc04ca4350f1cf33493e5d61f48',
+    },
   };
 
   /**
@@ -352,7 +361,9 @@ describe('the authority compartment', () => {
      * because a row was added, never because a row changed. */
     /* Twelve became fourteen when `keyring` arrived with two indices. Same
      * sentence again: the twelve before it are byte-identical. */
-    expect(checked).toBe(14);
+    /* Fourteen became sixteen when `maintenance` arrived with two indices. The
+     * fourteen before it are byte-identical. */
+    expect(checked).toBe(16);
   });
 
   it('walks the path this repository says it walks — every purpose', () => {

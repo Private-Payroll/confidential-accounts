@@ -1,0 +1,108 @@
+/**
+ * **WHAT THE VAULT SCREEN HANDS THE VAULT OPERATIONS**, assembled from this
+ * page's own session: the company's routes over this page's own sign-in, the
+ * company's records over the mounted records route, the roster this device
+ * opened, and a place in this browser for a vault's temporary key.
+ */
+import type { Hex } from '../core/crypto.js';
+import { fromHex, signingPublicKeyOf } from '../core/crypto.js';
+import type { Account } from '../core/types.js';
+import type { WireRecord } from '../midnight/sealed-record-wire.js';
+import type { PoolSigner } from '../midnight/vault-pool.js';
+import { recordsKeypairFrom } from '../midnight/company-nonce-secret.js';
+import { HttpSealedPoolStore, pageWireSend } from './http-sealed-pool-store.js';
+import type { DeviceRecords, DeviceSigner } from './deposit-on-device.js';
+import type { TemporaryKeys, VaultService } from './vault-operation.js';
+import type { SigningKeyOnTheWire } from './vault-worker-client.js';
+
+type Api = (path: string, init?: RequestInit) => Promise<any>;
+
+/** A refusal from the service keeps the service's own mark of whether anything was sent. */
+const marked = async <T>(call: () => Promise<T>): Promise<T> => {
+  try {
+    return await call();
+  } catch (e) {
+    const message = (e as Error)?.message ?? String(e);
+    throw Object.assign(new Error(message), { nothingWasSent: /Nothing was sent/u.test(message) });
+  }
+};
+
+export const vaultServiceFor = (api: Api, accountId: string): VaultService => {
+  const base = `/api/accounts/${encodeURIComponent(accountId)}`;
+  const post = (path: string, tx: string) => marked(() => api(path, { method: 'POST', body: JSON.stringify({ tx }) }));
+  return {
+    keys: () => api(`${base}/vault-keys`),
+    deploy: (tx) => post(`${base}/vaults`, tx),
+    handover: (vault, tx) => post(`${base}/vaults/${vault}/handover`, tx),
+    chain: (vault) => api(`${base}/vaults/${vault}/chain`),
+    deposit: (vault, tx) => post(`${base}/vaults/${vault}/deposit`, tx),
+  };
+};
+
+/** Gives this signer's three public vault keys, once; the service keeps the first set. */
+export const giveVaultKeys = (
+  api: Api, accountId: string,
+  keys: { committeeKey: { tag: string; value: string }; companyKey: Hex; signingSecret: Hex },
+): Promise<unknown> => api(`/api/accounts/${encodeURIComponent(accountId)}/vault-keys`, {
+  method: 'PUT',
+  body: JSON.stringify({
+    committeeKey: keys.committeeKey,
+    recordsKey: recordsKeypairFrom(fromHex(keys.companyKey)).publicKey,
+    filingKey: signingPublicKeyOf(keys.signingSecret),
+  }),
+});
+
+/** This device as a signer of the company's vaults. */
+export const deviceSignerFrom = (
+  secrets: { signerId: string; wrappingSecret: Hex }, companyKey: Hex,
+): DeviceSigner => ({ signerId: secrets.signerId, wrappingSecret: secrets.wrappingSecret, companyKey: fromHex(companyKey) });
+
+/** Everybody on the roster this device opened: who the pool is wrapped to, and whose filings are believed. */
+export const rosterOf = (account: Account) => {
+  const active = account.signers.filter((s) => s.status === 'active');
+  return {
+    signers: async (): Promise<readonly PoolSigner[]> =>
+      active.map((s) => ({ id: s.id, wrappingPublicKey: s.wrappingPublicKey })),
+    filers: async (): Promise<ReadonlySet<Hex>> => new Set(active.map((s) => s.signingPublicKey.toLowerCase())),
+  };
+};
+
+export const deviceRecordsFor = (
+  signingSecret: Hex, filers: () => Promise<ReadonlySet<Hex>>, signedInAs: () => string | null,
+): DeviceRecords => {
+  const send = pageWireSend(signedInAs);
+  return (record: WireRecord) => new HttpSealedPoolStore(record, send, signingSecret, filers);
+};
+
+/**
+ * **A VAULT'S TEMPORARY KEY, KEPT IN THIS BROWSER UNTIL ITS HANDOVER HAS LANDED.**
+ * It is written before the deploy is sent, so an answer lost on the way does
+ * not lose it, and it goes nowhere but the handover this device signs.
+ */
+export function browserTemporaryKeys(factory: IDBFactory = indexedDB): TemporaryKeys {
+  const STORE = 'temporary-keys';
+  const open = () => new Promise<IDBDatabase>((resolve, reject) => {
+    const req = factory.open('vault-handover', 1);
+    req.onupgradeneeded = () => { req.result.createObjectStore(STORE); };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error ?? new Error('this browser would not keep the vault\'s temporary key.'));
+  });
+  const run = async <T>(mode: IDBTransactionMode, act: (s: IDBObjectStore) => IDBRequest<T>): Promise<T> => {
+    const db = await open();
+    try {
+      return await new Promise<T>((resolve, reject) => {
+        const tx = db.transaction(STORE, mode);
+        const req = act(tx.objectStore(STORE));
+        tx.oncomplete = () => resolve(req.result);
+        tx.onerror = () => reject(tx.error ?? new Error('this browser did not keep the vault\'s temporary key.'));
+      });
+    } finally {
+      db.close();
+    }
+  };
+  return {
+    put: async (vault, key) => { await run('readwrite', (s) => s.put({ tag: key.tag, value: key.value }, vault)); },
+    get: async (vault) => ((await run('readonly', (s) => s.get(vault))) as SigningKeyOnTheWire | undefined) ?? null,
+    forget: async (vault) => { await run('readwrite', (s) => s.delete(vault)); },
+  };
+}

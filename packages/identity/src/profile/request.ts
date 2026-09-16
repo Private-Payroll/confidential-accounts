@@ -163,7 +163,7 @@ export const REQUEST_SCHEMA = 'midnight-identity/disclosure-request/v1';
  * than inserted, so the sentence a refusal already produced does not change
  * shape for the three kinds that were there before it.
  */
-export const ASK_KINDS = ['disclosure', 'sign-in', 'unlock', 'join', 'keyring'] as const;
+export const ASK_KINDS = ['disclosure', 'sign-in', 'unlock', 'join', 'keyring', 'balance'] as const;
 export type AskKind = (typeof ASK_KINDS)[number];
 
 /** One thing an application is asking for. */
@@ -325,8 +325,35 @@ export interface KeyringRequest extends Asking {
   readonly company: string | null;
 }
 
+/**
+ * ASKING THIS WALLET TO PAY FOR THE COIN LEGS OF A TRANSACTION A PAGE BUILT.
+ *
+ * **THE ONE KIND THAT MOVES MONEY OUT OF THIS WALLET.** A company's page builds
+ * and proves a call into the company's vault - a deposit - and the call needs
+ * coins the page does not hold. This asks the wallet to add them from the
+ * person's own balance, sign what it added, and hand the finished transaction
+ * back. The wallet balances the shielded and unshielded legs and nothing else:
+ * the network fee is the company's fee payer's, and a wallet asked here never
+ * spends DUST.
+ *
+ * **EVERYTHING HERE IS CLAIMED.** `company` and `vault` are the page's words
+ * and are shown whole. `transaction` is bytes the wallet reads for itself: what
+ * leaves the wallet is worked out from the transaction, never from a figure the
+ * page supplies, and there is no field on this type for one.
+ */
+export interface BalanceRequest extends Asking {
+  readonly kind: 'balance';
+  /** The company's own account address, canonical lower case. Claimed; shown. */
+  readonly company: string;
+  /** The contract the transaction calls, canonical lower case. Claimed; checked against the transaction. */
+  readonly vault: string;
+  /** Base64 of a proven transaction that is not yet bound. */
+  readonly transaction: string;
+}
+
 /** What an application may open this wallet with. */
-export type Ask = DisclosureRequest | SignInRequest | UnlockRequest | JoinRequest | KeyringRequest;
+export type Ask =
+  | DisclosureRequest | SignInRequest | UnlockRequest | JoinRequest | KeyringRequest | BalanceRequest;
 
 /**
  * THE KINDS THAT CARRY A LIST OF THINGS ASKED FOR.
@@ -382,7 +409,15 @@ export type RequestFailure =
   | 'inbox-key-on-a-keyring'
   /* A person or a signed-in address on any kind but a keyring ask. One code,
    * and its sentence names the kind it arrived on. */
-  | 'keyring-fields-on-another-kind';
+  | 'keyring-fields-on-another-kind'
+  /* A request to balance a transaction: the transaction and the vault it
+   * names, the two things it may not carry, and the fields that belong to it
+   * alone arriving on another kind. */
+  | 'not-a-transaction'
+  | 'not-a-vault-address'
+  | 'attributes-on-a-balance'
+  | 'inbox-key-on-a-balance'
+  | 'balance-fields-on-another-kind';
 
 export class RequestError extends Error {
   readonly code: RequestFailure;
@@ -470,6 +505,14 @@ const SIGNED_IN_ADDRESS = /^[a-z][a-z0-9_]{0,82}1[02-9ac-hj-np-z]{6,200}$/u;
  * screen shows one spelling and the seal is handed one.
  */
 const INBOX_PUBLIC_KEY = /^[0-9a-fA-F]{64}$/u;
+
+/**
+ * **A TRANSACTION ON THIS WIRE IS STANDARD BASE64, AND AT MOST A MEGABYTE.**
+ * The limit is the one the company's own service puts on a proven transaction,
+ * so nothing this wallet would balance is refused there for its size.
+ */
+const TRANSACTION = /^[A-Za-z0-9+/]+={0,2}$/u;
+const MAX_TRANSACTION = 1_000_000;
 
 const isText = (value: unknown, max = MAX_TEXT): value is string =>
   typeof value === 'string' && value.length > 0 && value.length <= max;
@@ -718,6 +761,72 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
       `this is a '${kind}' and it names a person or the address a page signed in as. Those `
       + 'belong only to an ask for the key your saved keys at a site are sealed under, so '
       + 'they are refused rather than ignored. Nothing has been shown to them.');
+  }
+
+  /*
+   * **A TRANSACTION AND A VAULT BELONG TO A BALANCE ASK AND TO NOTHING ELSE.**
+   * Refused by presence on every other kind, for the keyring fields' reason: a
+   * requester that sent one and was answered with something else would be
+   * entitled to believe the wallet had read it.
+   */
+  if (kind !== 'balance' && ('transaction' in body || 'vault' in body)) {
+    throw new RequestError(
+      'balance-fields-on-another-kind',
+      `this is a '${kind}' and it carries a transaction or names a vault. Those belong only to `
+      + 'a request to pay for a transaction, so they are refused rather than ignored. Nothing '
+      + 'has been shown to them.');
+  }
+
+  if (kind === 'balance') {
+    if ('wants' in body) {
+      throw new RequestError(
+        'attributes-on-a-balance',
+        'this asks your wallet to pay for a transaction, and it also carries a list of details '
+        + 'to hand over. Those are two different powers and this wallet will not approve them '
+        + 'behind one press, so the whole request is refused. Nothing has been shown to them '
+        + 'and nothing has been paid.');
+    }
+    if ('inboxPublicKey' in body) {
+      throw new RequestError(
+        'inbox-key-on-a-balance',
+        'this asks your wallet to pay for a transaction, and it also names a key to seal an '
+        + 'answer to. A paid transaction is handed back to the page that asked, so the key is '
+        + 'refused rather than ignored. Nothing has been shown to them and nothing has been paid.');
+    }
+    const company = body['company'];
+    if (typeof company !== 'string' || !COMPANY_ADDRESS.test(company)) {
+      throw new RequestError(
+        'not-a-company-address',
+        'this asks your wallet to pay into a company and does not name one this wallet can make '
+        + 'sense of. A company is named by its own address on the chain - sixty-four '
+        + 'characters, exactly as the chain writes it. Nothing has been shown to them and '
+        + 'nothing has been paid.');
+    }
+    const vault = body['vault'];
+    if (typeof vault !== 'string' || !COMPANY_ADDRESS.test(vault)) {
+      throw new RequestError(
+        'not-a-vault-address',
+        'this asks your wallet to pay into a vault and does not name one this wallet can make '
+        + 'sense of. A vault is named by its own sixty-four character address on the chain. '
+        + 'Nothing has been shown to them and nothing has been paid.');
+    }
+    const transaction = body['transaction'];
+    if (typeof transaction !== 'string' || transaction.length === 0
+      || transaction.length > MAX_TRANSACTION || transaction.length % 4 !== 0
+      || !TRANSACTION.test(transaction)) {
+      throw new RequestError(
+        'not-a-transaction',
+        'this asks your wallet to pay for a transaction and what it sent is not one this wallet '
+        + `can read: it must be base64, and no longer than ${MAX_TRANSACTION} characters. `
+        + 'Nothing has been shown to them and nothing has been paid.');
+    }
+    return Object.freeze({
+      ...asking,
+      kind,
+      company: company.toLowerCase(),
+      vault: vault.toLowerCase(),
+      transaction,
+    });
   }
 
   if (kind === 'keyring') {

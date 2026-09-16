@@ -21,6 +21,7 @@ import { shownError } from './shown-error.js';
 import { LedgerMark } from './ledger-mark.js';
 import type { Marked } from '../core/provenance.js';
 import { AuthScreen, AccountPicker, WALLET_ORIGIN } from './Auth.js';
+import { VaultPanel } from './VaultPanel.js';
 import { WalletWaiting } from './wallet-waiting.js';
 import { JoinScreen, joinTokenFromLocation } from './Join.js';
 /* X12 §2 — the drop box is opened HERE, on this machine, because computing the
@@ -804,7 +805,7 @@ function Screens({ commitments }: { commitments: CommitmentScheme }) {
             pending={pending} account={s.account} session={s} me={me} busy={busy}
             runs={runs} act={act} />}
 
-          {page === 'vault' && <Vault />}
+          {page === 'vault' && <Vault account={s.account} me={me} />}
 
           {page === 'apps' && <Apps session={s} me={me} busy={busy} act={act} />}
 
@@ -1000,115 +1001,27 @@ function RunPaymentsCard({ runId, viewingKey }: { runId: string; viewingKey: str
 /* ------------------------------------------------------------------ */
 
 /**
- * **THE VAULT SURFACE, BUILT FOR THE END STATE.**
+ * **THE VAULT SURFACE.**
  *
  * An account is an authority over a vault, not a holder of money: the vault is
- * where the money actually sits and it is the thing that pays people. Every
- * control that surface will carry is on this screen now, disabled, each with
- * the reason it cannot be used — because a control that is missing is a control
- * nobody can ask about, and the questions people ask about this screen are the
- * ones worth answering before it goes live.
+ * where the money actually sits and it is the thing that pays people. Creating
+ * a vault, handing it to the company's committee and putting money in are live
+ * (`VaultPanel.tsx`). Paying a run from a vault and spending limits are still on
+ * this screen disabled, each with the reason it cannot be used - because a
+ * control that is missing is a control nobody can ask about.
  *
- * **NOT ONE OF THESE IS A PLACEHOLDER FOR A FEATURE THAT MERELY HAS NOT BEEN
- * TYPED.** Each reason below is a thing that is genuinely not settled, and two
- * of them are reasons not to ship the button rather than reasons it is late.
+ * **NEITHER DISABLED CONTROL IS A PLACEHOLDER FOR A FEATURE THAT MERELY HAS NOT
+ * BEEN TYPED.** Each reason below is a thing that is genuinely not settled.
  */
-function Vault() {
+function Vault({ account, me }: {
+  account: Account;
+  me: { signerId: string; signingSecret: Hex; wrappingSecret: Hex };
+}) {
   return (
     <div className="stack">
-      <div className="card">
-        <div className="hd"><h3>This account's vaults</h3>
-          <span className="sub">a vault is taken on by a round every signer approves</span></div>
-        <div className="bd">
-          <div className="empty">
-            <b>No vault is listed here.</b>
-            <div style={{ marginTop: 8 }}>
-              This service keeps no record of which vaults an account has taken on, and this
-              screen asks nothing — there is no read here to show you the result of. The
-              account's own published list is deliberately not the answer either: it can be
-              missing exactly the funded vault that is still paying people out, so a screen
-              built on it would be confidently short.
-            </div>
-          </div>
-          <div className="hint" style={{ marginTop: 14 }}>
-            Taking on a vault is a round every signer approves, and this product raises no such
-            round yet. There is a limitation to fix before it can: the device that opens a round
-            is currently the only one able to close it, and opening a second round from that
-            device destroys the first one's only key — no error, and the fee already spent. Once
-            that is fixed, several rounds can be open at once, which the account itself has
-            always allowed.
-          </div>
-        </div>
-      </div>
+      <VaultPanel account={account} me={me} />
 
       <div className="grid2">
-        <div className="card">
-          <div className="hd"><h3>Deploy a vault</h3>
-            <span className="sub">publishes a contract and fixes who may maintain it</span></div>
-          <div className="bd">
-            <div className="field"><label>Name</label>
-              <input disabled placeholder="Payroll" /></div>
-            <div className="field"><label>Who may maintain it afterwards</label>
-              <select disabled><option>One key, held here</option></select></div>
-            <button className="btn pri" disabled>Deploy</button>
-            <div className="hint" style={{ marginTop: 14 }}>
-              <b>Not available yet.</b> Deploying a vault fixes, permanently, who may maintain
-              it. A maintenance key that nobody actually holds is accepted by every check this
-              product makes today, and the vault it produces can never be changed again by
-              anyone. That is not a control to put behind a button while it is still true.
-            </div>
-          </div>
-        </div>
-
-        <div className="card">
-          <div className="hd"><h3>What a vault holds</h3>
-            <span className="sub">read from the chain, checked against this device's record</span></div>
-          <div className="bd">
-            <div className="field"><label>Vault</label>
-              <select disabled><option>No vault</option></select></div>
-            <button className="btn" disabled>Read the balance</button>
-            <div className="hint" style={{ marginTop: 14 }}>
-              <b>Not available yet.</b> A vault's balance is the chain's answer reconciled
-              against this device's own record of the notes the vault holds. There are three
-              outcomes and only one is a number: the two agree, they disagree, or the chain
-              could not be reached. When it is built, this will say which of the three happened
-              — and it will never fall back to the last number it saw.
-            </div>
-          </div>
-        </div>
-
-        <div className="card">
-          <div className="hd"><h3>Put money in</h3>
-            <span className="sub">a call into the vault, never a transfer to it</span></div>
-          <div className="bd">
-            <div className="two">
-              <div className="field"><label>Asset</label>
-                <select disabled><option>GBP</option></select></div>
-              <div className="field"><label>Amount</label><input disabled placeholder="0.00" /></div>
-            </div>
-            <button className="btn pri" disabled>Fund</button>
-            {/*
-              * **THE DISTINCTION IN THIS SENTENCE IS THE WHOLE DEFENCE, AND IT
-              * IS THE ONE THING ON THIS PAGE THAT MUST NOT BE LOOSENED.**
-              * Funding is a call: the vault takes the money in and records
-              * holding it, in one transaction. A plain send to a vault's
-              * address does the first half only — the money arrives, the vault
-              * has no record of it, and every later payment refuses to spend
-              * it. It is then on chain, owned by the vault, and spendable by
-              * nobody, permanently, and no contract can refuse the send that
-              * caused it. That is why no vault address is shown anywhere in
-              * this product, and why this card says CALL and not TRANSFER.
-              */}
-            <div className="hint" style={{ marginTop: 14 }}>
-              <b>Not available yet.</b> Money is put into a vault by calling it, not by sending
-              to it: the vault has to take the money in and record that it holds it, in one
-              step. A plain send to a vault leaves money it can never spend — permanently, with
-              no way to recover it and nothing able to refuse it — which is why this product
-              never shows a vault address to paste into a wallet.
-            </div>
-          </div>
-        </div>
-
         <div className="card">
           <div className="hd"><h3>Pay a run from a vault</h3>
             <span className="sub">one payee at a time, against an approved round</span></div>

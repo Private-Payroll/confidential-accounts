@@ -76,6 +76,7 @@ import { applyNetworkId, theNetwork } from '../src/midnight/network.js';
 import type { Hex } from '../src/core/crypto.js';
 import type { SignerRef } from '../src/core/ledger.js';
 import { explainNodeError, NODE_ERROR_CODES } from './node-errors.js';
+import { keysThisMachineHolds, refusalToFund } from './funding-gate.js';
 import { testEnvironmentFor, startEnvironment } from './test-environment.js';
 import { bringUpWallet } from './wallet-bringup.js';
 import { saveDustState } from './dust-wallet.js';
@@ -739,6 +740,24 @@ async function main(): Promise<MovementVerdict | 'not-read'> {
     note(`the balance BEFORE this deposit could not be read: ${String(e?.message ?? e)}`);
     note('  so this run cannot check that the balance moved by what was deposited, and stage 6');
     note('  will say that rather than reading whatever it finds as agreement.');
+  }
+
+  /*
+   * **WHO HOLDS THIS VAULT'S RULES, READ FROM THE CHAIN NOW.** Not from the
+   * authority file in the state folder: a check against our own record is a
+   * check against our own claim. A vault still held by a single key, or by a
+   * committee with a key this machine keeps, is not funded.
+   */
+  {
+    const L: any = await import('@midnightntwrk/ledger-v9');
+    const refusal = await refusalToFund({
+      vault: entry.contractAddress,
+      vaultName: VAULT_NAME,
+      readState: (a) => providers.publicDataProvider.queryContractState(a),
+      held: keysThisMachineHolds(ROOT, STATE_DIR, VAULT_NAME, (k) => L.signatureVerifyingKey(k)),
+    });
+    if (refusal !== null) throw new Error(refusal);
+    good('the chain says this vault is not held by a key this machine keeps');
   }
 
   const startedAt = Date.now();
