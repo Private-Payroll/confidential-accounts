@@ -22,8 +22,16 @@
  * one block apart, and the temporary key is made on the device that deploys,
  * never leaves it, and signs exactly one update: this one.
  *
+ * **THE RULE ABOUT WHICH COMMITTEE MAY BE INSTALLED IS NOT WRITTEN HERE.** It is
+ * `authorityValueRefusals`, the refusal every replacement of a contract's
+ * authority goes through, and the replacement itself is made by
+ * `replaceAuthorityOf` and nowhere else. (An authority written at DEPLOY is
+ * checked by `requireMaintenanceAuthority` instead.) What this file adds is only what is particular to a company:
+ * every signer has given a key, and each key is one a wallet derives.
+ *
  * Imports nothing that loads WebAssembly: the ledger's classes are handed in.
  */
+import { authorityValueRefusals, replaceAuthorityOf, type MaintenanceRefusal } from './ledger.js';
 
 export interface CommitteeKey {
   readonly tag: string;
@@ -38,6 +46,23 @@ export interface Committee {
 const KEY = /^[0-9a-f]{64}$/u;
 
 const idOf = (k: CommitteeKey): string => `${k.tag.toLowerCase()}:${k.value.toLowerCase()}`;
+
+/** The refusal a company's signers read, for each way a committee value can be wrong. */
+const companySentence = (r: MaintenanceRefusal, threshold: number, signerCount: number): string => {
+  switch (r.code) {
+    case 'repeated-committee-member':
+      return 'two of this company\'s signers gave the same committee key, so the committee would '
+        + 'not be the threshold it reads as. No vault is created.';
+    case 'malformed-committee-key':
+      return 'a committee key this company holds is not one a wallet derives, so the committee '
+        + 'cannot be trusted. No vault is created.';
+    case 'committee-emptied':
+      return 'this company has no signers, so there is nobody to hold its vault\'s rules. No vault is created.';
+    default:
+      return `this company's threshold is ${threshold} over ${signerCount} signer${signerCount === 1 ? '' : 's'}, `
+        + 'which no committee can be. No vault is created.';
+  }
+};
 
 /**
  * **WHY THERE IS NO COMMITTEE YET, OR `null` WHEN THERE IS ONE.**
@@ -69,15 +94,8 @@ export function whyNoCommittee(input: {
         + 'cannot be trusted. No vault is created.';
     }
   }
-  if (new Set(given.map(idOf)).size !== given.length) {
-    return 'two of this company\'s signers gave the same committee key, so the committee would '
-      + 'not be the threshold it reads as. No vault is created.';
-  }
-  if (!Number.isInteger(threshold) || threshold < 1 || threshold > signerCount) {
-    return `this company's threshold is ${threshold} over ${signerCount} signer${signerCount === 1 ? '' : 's'}, `
-      + 'which no committee can be. No vault is created.';
-  }
-  return null;
+  const refused = authorityValueRefusals(given, threshold, { emptyCommitteeIsDeliberate: false });
+  return refused.length === 0 ? null : companySentence(refused[0]!, threshold, signerCount);
 }
 
 /** The committee value, in the one order every party uses. Refuses what `whyNoCommittee` refuses. */
@@ -100,8 +118,8 @@ export const sameCommittee = (a: Committee, b: Committee): boolean =>
 
 /** The ledger classes the update is built from. `@midnightntwrk/ledger-v9` satisfies this. */
 export interface ReplacementPrimitives {
-  ContractMaintenanceAuthority: new (committee: CommitteeKey[], threshold: number, counter?: bigint) => unknown;
-  ReplaceAuthority: new (authority: never) => unknown;
+  ContractMaintenanceAuthority: new (committee: CommitteeKey[], threshold: number, counter?: bigint) => object;
+  ReplaceAuthority: new (authority: never) => object;
   MaintenanceUpdate: new (address: string, updates: never[], counter: bigint) => {
     readonly dataToSign: Uint8Array;
     addSignature(index: bigint, signature: never): unknown;
@@ -126,8 +144,9 @@ export function committeeReplacement<P extends ReplacementPrimitives>(
     keys: input.to.committee, threshold: input.to.threshold, signerCount: input.to.committee.length,
   });
   if (again !== null) throw new Error(again);
-  const authority = new P.ContractMaintenanceAuthority(
-    input.to.committee.map((k) => ({ tag: k.tag, value: k.value })), input.to.threshold, input.counter + 1n);
-  const replace = new P.ReplaceAuthority(authority as never);
+  const replace = replaceAuthorityOf(P, {
+    committee: input.to.committee, threshold: input.to.threshold, updateCounter: input.counter,
+    emptyCommitteeIsDeliberate: false,
+  });
   return new P.MaintenanceUpdate(input.vault.toLowerCase(), [replace as never], input.counter) as InstanceType<P['MaintenanceUpdate']>;
 }

@@ -159,10 +159,28 @@ describe('THE POOL AND A DEPOSIT', () => {
     expect(await records('deposit-journal').get(VAULT)).toBeNull();
   });
 
+  it('A VAULT THE COMMITTEE HOLDS TAKES NO MONEY WHILE THE COMPANY ACCOUNT IS NOT HELD BY IT, AND THE WALLET IS NEVER ASKED', async () => {
+    /* RED WHEN: the `fundable` check in `depositIntoCompanyVault` is removed or moved after the coin is chosen -
+     * the log then carries 'build deposit' and 'paid', and the journal holds a coin for a deposit the service refuses. */
+    const log: string[] = [];
+    const records = stores();
+    const vaultOnly = view({
+      heldByCommittee: true, fundable: false, state: 'AAAA', notes: [], everCreated: [],
+      why: 'this company\'s account is still held by the temporary key it was created with.',
+    });
+    await openCompanyVaultPool(poolDoors(serviceFrom([vaultOnly], log), records), VAULT);
+    await expect(depositIntoCompanyVault({
+      ...poolDoors(serviceFrom([vaultOnly], log), records), company: ACCOUNT, builder: builder(log),
+      pay: async () => { log.push('paid'); return { transaction: 'X', leaves: [] }; },
+    }, VAULT, { token: 'ab'.repeat(32), value: 7n })).rejects.toThrow(/account is still held by the temporary key/);
+    expect(log).toEqual([]);
+    expect(await records('deposit-journal').get(VAULT)).toBeNull();
+  });
+
   it('A DEPOSIT THE CHAIN HAS NOT SHOWN IS NOT RECORDED IN THE POOL, AND SAYS IT MAY STILL LAND', async () => {
     const log: string[] = [];
     const records = stores();
-    const ready = view({ heldByCommittee: true, state: 'AAAA', notes: [], everCreated: [] });
+    const ready = view({ heldByCommittee: true, fundable: true, state: 'AAAA', notes: [], everCreated: [] });
     await openCompanyVaultPool(poolDoors(serviceFrom([ready], log), records), VAULT);
     const e = await depositIntoCompanyVault({
       ...poolDoors(serviceFrom([ready], log), records), company: ACCOUNT, builder: builder(log),

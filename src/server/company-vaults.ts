@@ -2,11 +2,13 @@
  * **A COMPANY'S VAULTS, AS ITS SIGNERS' DEVICES CREATE, HAND OVER AND FUND
  * THEM.**
  *
- * Nothing on these routes builds, proves or signs a transaction, and nothing a
- * device sends here carries a secret: the device builds and proves; the
- * depositor's own wallet puts in and signs for any coin; this service reads
- * what arrives, refuses anything that is not exactly what the route is for, and
- * pays only the network fee. What it answers about a vault's rules is read from
+ * Nothing a device sends here carries a secret: the device builds and proves a
+ * vault's transactions; the depositor's own wallet puts in and signs for any
+ * coin; this service reads what arrives, refuses anything that is not exactly
+ * what the route is for, and pays only the network fee. **The one transaction
+ * this service builds and signs itself is a company account's handover**, with
+ * the temporary key it deployed the account under, and it reads that one as it
+ * reads a stranger's before paying for it. What it answers about a vault's rules is read from
  * the chain each time it is asked.
  *
  *   PUT  /api/accounts/:id/vault-keys                   a signer's three public vault keys
@@ -16,6 +18,14 @@
  *   POST /api/accounts/:id/vaults/:vault/handover       that vault handed to the company's committee
  *   GET  /api/accounts/:id/vaults/:vault/chain          what the chain holds for one vault
  *   POST /api/accounts/:id/vaults/:vault/deposit        a deposit the depositor's wallet has paid for
+ *   GET  /api/accounts/:id/authority                    who holds the account's and every vault's rules
+ *   POST /api/accounts/:id/authority/handover           the company account handed to the committee
+ *
+ * **AND THESE ROUTES CARRY NO MONEY INTO ANY VAULT UNTIL THE CHAIN SHOWS THE
+ * COMPANY ACCOUNT HELD BY THE COMMITTEE TOO.** A vault pays out on its
+ * account's approval, so whoever holds the account's rules decides every
+ * vault's payouts, whoever holds the vault's. What these routes cannot stop:
+ * anybody paying their own fee can call a vault's deposit directly.
  *
  * **A VAULT IS NEVER REPORTED CREATED UNTIL THE CHAIN SAYS ITS COMMITTEE HOLDS
  * IT.** A deploy whose handover has not landed is reported as a handover owed,
@@ -28,7 +38,10 @@ import type { SealedAccount, CompanyVault, VaultKeysOfASigner } from '../core/ty
 import type { Ledger, VaultTxArrival } from '../core/ledger.js';
 import { saysNothingWasSent } from '../core/jobs.js';
 import { readContractAuthority, type AuthorityRead } from '../midnight/ledger.js';
-import { committeeOf, whyNoCommittee, type Committee } from '../midnight/vault-committee.js';
+import { committeeOf, sameCommittee, whyNoCommittee, type Committee } from '../midnight/vault-committee.js';
+import {
+  accountFundingRefusal, authorityView, everySignerNeeded, type ContractAuthorityView,
+} from '../midnight/company-authority.js';
 import {
   circuitsRefusal, fundingRefusal, readVaultDeploy, refusalForDeposit, refusalForHandover,
   type VaultStartingLedger,
@@ -71,6 +84,19 @@ export interface CompanyVaultDeps {
   readonly chain: VaultChain;
   /** Every vault circuit's verifying key, as this build compiled it. */
   readonly verifierKeys: () => Promise<ReadonlyMap<string, Uint8Array>>;
+  /** The company account's deployed circuits and their verifying keys, as this build compiled them. */
+  readonly account: {
+    readonly circuits: readonly string[];
+    readonly verifierKeys: () => Promise<ReadonlyMap<string, Uint8Array>>;
+    /**
+     * Builds and proves the account's handover, signed by this service's
+     * temporary key. Absent when this deployment keeps no such key, and then
+     * the handover is refused by name.
+     */
+    readonly handover?: (input: { read: AuthorityRead; to: Committee }) => Promise<Uint8Array>;
+    /** The public half of that temporary key, so a seat it holds is named as this service's. */
+    readonly temporaryKey?: { tag: string; value: string };
+  };
   readonly readers: { proven(bytes: Uint8Array): Promise<unknown>; finished(bytes: Uint8Array): Promise<unknown> };
   readonly now?: () => Date;
 }
@@ -88,6 +114,34 @@ export function companyCommittee(
 }
 
 const toBase64 = (bytes: Uint8Array): string => Buffer.from(bytes).toString('base64');
+
+/**
+ * **ONE WORD FOR WHERE A VAULT STANDS, FROM WHAT THE CHAIN SAID AND WHY MONEY
+ * MAY NOT GO IN.** `handover-owed` only when the vault is exactly as it was
+ * deployed - one key, never changed - because that is the only state the
+ * "finish" button can move. A vault held by any other set of keys, including a
+ * committee the company had before a signer joined or left, is
+ * `held-by-other-keys`: nothing on this screen can finish that, and saying
+ * otherwise would send a person to press a button the service will refuse.
+ */
+export type AccountNotReady = 'not-handed-over' | 'not-vouched' | 'unknown';
+
+export function vaultState(
+  read: AuthorityRead,
+  refused: { heldByOthers: boolean; accountNotReady?: AccountNotReady } | null,
+): string {
+  if (refused === null) return 'held-by-committee';
+  /* An account still exactly as deployed is a step somebody has not taken yet; any other refusal about the
+   * account - other keys, more than one change, circuits this build did not compile - is an alarm. */
+  if (refused.accountNotReady === 'not-handed-over') return 'account-not-handed-over';
+  if (refused.accountNotReady === 'not-vouched') return 'account-not-fundable';
+  if (refused.accountNotReady === 'unknown') return 'unknown';
+  if (!refused.heldByOthers) return 'not-fundable';
+  if (read.state === 'read') {
+    return read.authority.shape === 'one-key' && read.authority.counter === 0n ? 'handover-owed' : 'held-by-other-keys';
+  }
+  return read.state === 'absent' ? 'not-on-chain-yet' : 'unknown';
+}
 
 /** The signed-in person, as the sign-in in front of these routes set them. */
 const personOf = (req: express.Request): string => (req as { userId?: string }).userId!;
@@ -126,6 +180,38 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
     readContractAuthority((a) => deps.chain.contractState(a as Hex), vault);
 
   /*
+   * **WHETHER THE COMPANY ACCOUNT MAY STAND BEHIND ANY DEPOSIT, READ FROM THE
+   * CHAIN AS IT IS NOW.** Its authority, how often it has changed, and its
+   * circuits, each read afresh: never from a record kept here.
+   */
+  const whyAccountNotReady = async (
+    companyAddress: Hex, committee: Committee,
+  ): Promise<{ why: string; kind: AccountNotReady } | null> => {
+    const read = await authorityOf(companyAddress);
+    let state: unknown;
+    try {
+      state = await deps.chain.contractState(companyAddress);
+    } catch (e) {
+      return {
+        kind: 'unknown',
+        why: `the chain could not be read for this company's account (${(e as Error)?.message ?? e}), and a vault pays `
+          + 'out on the account\'s approval, so no money goes in. Nothing was sent.',
+      };
+    }
+    const circuits = circuitsRefusal(
+      state, await deps.account.verifierKeys(),
+      'no money goes in, because this company\'s account is not the one this service\'s build compiled',
+      deps.account.circuits, 'the account\'s');
+    const why = accountFundingRefusal(read, committee, circuits);
+    if (why === null) return null;
+    const ours = deps.account.temporaryKey;
+    const asDeployed = read.state === 'read' && read.authority.shape === 'one-key' && read.authority.counter === 0n
+      && (ours === undefined || read.authority.committee.every((k) =>
+        k.tag.toLowerCase() === ours.tag.toLowerCase() && k.value.toLowerCase() === ours.value.toLowerCase()));
+    return { why, kind: read.state !== 'read' ? 'unknown' : asDeployed && circuits === null ? 'not-handed-over' : 'not-vouched' };
+  };
+
+  /*
    * **WHETHER MONEY MAY GO INTO THIS VAULT, READ FROM THE CHAIN AS IT IS NOW.**
    * The committee's keys are not enough on their own: a key that held the rules
    * before the handover could have swapped a circuit, used it to rewrite the
@@ -137,7 +223,8 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
    */
   const whyNotFunded = async (
     vault: Hex, read: AuthorityRead, committee: Committee, companyAddress: string, state?: unknown,
-  ): Promise<{ why: string; heldByOthers: boolean } | null> => {
+    account?: { why: string; kind: AccountNotReady } | null,
+  ): Promise<{ why: string; heldByOthers: boolean; accountNotReady?: AccountNotReady } | null> => {
     const held = fundingRefusal(read, committee);
     if (held !== null) return { why: held, heldByOthers: true };
     if (read.state !== 'read' || read.authority.counter !== 1n) {
@@ -171,6 +258,8 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
         heldByOthers: false,
       };
     }
+    const accountWhy = account !== undefined ? account : await whyAccountNotReady(companyAddress as Hex, committee);
+    if (accountWhy !== null) return { why: accountWhy.why, heldByOthers: false, accountNotReady: accountWhy.kind };
     return null;
   };
 
@@ -255,18 +344,17 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
     const account = accountOf(req);
     const { company, committee, why } = await committeeNow(account);
     const out = [];
+    const accountWhy = company === null || committee === null ? null : await whyAccountNotReady(company.address, committee);
     for (const v of deps.store.listCompanyVaults(account.id)) {
       const read = await authorityOf(v.vault);
-      const refused = company === null || committee === null
-        ? { why: why ?? 'this company has no committee yet.', heldByOthers: true }
-        : await whyNotFunded(v.vault, read, committee, company.address);
+      const refused: { why: string; heldByOthers: boolean; accountNotReady?: AccountNotReady } | null =
+        company === null || committee === null
+          ? { why: why ?? 'this company has no committee yet.', heldByOthers: true }
+          : await whyNotFunded(v.vault, read, committee, company.address, undefined, accountWhy);
       out.push({
         vault: v.vault,
         deployedAt: v.deployedAt,
-        state: refused === null ? 'held-by-committee'
-          : !refused.heldByOthers ? 'not-fundable'
-            : read.state === 'read' ? 'handover-owed'
-              : read.state === 'absent' ? 'not-on-chain-yet' : 'unknown',
+        state: vaultState(read, refused),
         why: refused?.why ?? null,
       });
     }
@@ -344,9 +432,14 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
     }
     const { company, committee, why } = await committeeNow(account);
     const read = await authorityOf(record.vault);
+    /* Whether the COMMITTEE HOLDS THIS VAULT is one answer, and a device's handover waits on it; whether money
+     * may go in also needs the company account held by the committee, and is a second one. */
     const refusal = company === null || committee === null
       ? why
-      : (await whyNotFunded(record.vault, read, committee, company.address, state))?.why ?? null;
+      : (await whyNotFunded(record.vault, read, committee, company.address, state, null))?.why ?? null;
+    const accountWhy = refusal !== null || company === null || committee === null
+      ? null
+      : (await whyAccountNotReady(company.address, committee))?.why ?? null;
     let everCreated: string[];
     try {
       everCreated = [...await deps.chain.everCreated(record.vault)];
@@ -365,7 +458,8 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
         : null,
       committee,
       heldByCommittee: refusal === null,
-      why: refusal,
+      fundable: refusal === null && accountWhy === null,
+      why: refusal ?? accountWhy,
     });
   });
 
@@ -390,6 +484,167 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
       (tx) => refusalForDeposit(tx, { vault: record.vault }));
     if (sent === null) return;
     res.json({ txRef: sent.ref, transactionHash: sent.transactionHash });
+  });
+
+  /* ---- who holds the company's rules ---- */
+
+  const holdersOf = (account: SealedAccount): Map<string, string> => {
+    const out = new Map<string, string>();
+    for (const u of account.memberUserIds) {
+      const k = deps.store.getVaultKeys(account.id, u)?.committeeKey;
+      if (k) out.set(`${k.tag.toLowerCase()}:${k.value.toLowerCase()}`, u);
+    }
+    return out;
+  };
+
+  /*
+   * **A HANDOVER SENT AND NOT YET SHOWN BY THE CHAIN IS NOT SENT AGAIN.** Every
+   * copy would be built against the same counter, and the chain charges the fee
+   * for each one it then refuses. Kept for as long as the handover could still
+   * land, and in this process only: a restart forgets it, and the chain's own
+   * counter still refuses a second one that arrives after the first landed.
+   */
+  const handoversSent = new Map<string, number>();
+  /*
+   * **NOT WHILE ONE SIGNER COULD ACT ALONE AND ANOTHER COULD LEAVE.** A handed-over account's committee cannot be
+   * changed until signers can sign a change in their wallets, so a signer removed afterwards keeps their seat. At
+   * a threshold of one, that one person could then replace the rules every vault of the company pays out by.
+   */
+  const whyNotYet = (threshold: number, signerCount: number): string | null =>
+    threshold < 2 && signerCount > 1
+      ? `this company has ${signerCount} signers and any one of them can approve alone. Once the account is handed over, `
+        + 'its committee cannot be changed until signers can sign a change in their wallets, so a signer who later leaves '
+        + 'could alone change the rules every vault pays out by. Raise the threshold to at least two first. Nothing was sent.'
+      : null;
+  const HANDOVER_LIFETIME_MS = 30 * 60_000;
+  const handoverStillPending = (accountId: string): boolean => {
+    const at = handoversSent.get(accountId);
+    return at !== undefined && now().getTime() - at < HANDOVER_LIFETIME_MS;
+  };
+
+  r.get('/api/accounts/:id/authority', ...guard, async (req, res) => {
+    const account = accountOf(req);
+    const { company, committee, why } = await committeeNow(account);
+    const holders = holdersOf(account);
+    const serviceKey = deps.account.temporaryKey ?? null;
+    const contracts: ContractAuthorityView[] = [];
+    if (company !== null) {
+      contracts.push(authorityView('account', await authorityOf(company.address), committee, holders, serviceKey));
+      for (const v of deps.store.listCompanyVaults(account.id)) {
+        contracts.push(authorityView('vault', await authorityOf(v.vault), committee, holders, serviceKey));
+      }
+    }
+    const accountRow = contracts[0];
+    const handover = company === null || committee === null
+      ? { possible: false, why: why ?? 'this company has no committee yet.' }
+      : accountRow?.heldByTheCompany
+        ? { possible: false, why: 'the company\'s account is already held by its committee.' }
+        : accountRow?.read === 'read' && accountRow.shape === 'one-key' && accountRow.changes === '0'
+          ? !deps.account.handover
+            ? { possible: false, why: 'this deployment keeps no temporary key for company accounts, so it cannot hand one over.' }
+            : whyNotYet(company.threshold, account.signerCount) !== null
+              ? { possible: false, why: whyNotYet(company.threshold, account.signerCount) }
+            : handoverStillPending(account.id)
+              ? { possible: false, why: 'the handover was sent and the chain has not shown it yet. Wait for it before sending another.' }
+              : { possible: true, why: null }
+          : { possible: false, why: accountRow?.why ?? 'the chain could not be asked who holds this company\'s account.' };
+    res.json({
+      company: company === null ? null : { address: company.address, threshold: company.threshold, signerCount: account.signerCount },
+      committee,
+      why,
+      everySignerNeeded: company === null ? null : everySignerNeeded(account.signerCount, company.threshold),
+      contracts: contracts.map((c) => ({ ...c, seats: c.seats.map((s) => ({ ...s, you: s.holder === personOf(req) })) })),
+      handover: {
+        ...handover,
+        /* Said beside the button, because a handover cannot be undone from this screen. */
+        permanent: 'Once handed over, the account is held by the company\'s committee as it stands now. Until '
+          + 'signers can sign a change in their wallets, nobody can change that committee: a signer who joins '
+          + 'or leaves afterwards stops every deposit into every vault, and a signer who leaves keeps their seat, '
+          + `so with ${Math.max(0, (company?.threshold ?? 1) - 1)} of the signers who stay they could change the rules `
+          + 'every vault pays out by.',
+      },
+      /*
+       * A change after the handover is a replacement signed by the committee
+       * that holds the contract now, and a committee key signs only inside its
+       * holder's wallet. Until the wallet can be asked to, no change is offered.
+       */
+      change: {
+        possible: false,
+        why: 'Changing who holds these rules needs the signers who hold them now to sign the change in their own '
+          + 'wallets, and the wallet cannot be asked to sign one yet. Until it can, a signer who joins or leaves '
+          + 'is shown here; if the account\'s keys are no longer the company\'s, no money goes into any vault, and '
+          + 'if a vault\'s are not, none goes into that vault.',
+      },
+    });
+  });
+
+  r.post('/api/accounts/:id/authority/handover', ...guard, async (req, res) => {
+    const account = accountOf(req);
+    const { company, committee, why } = await committeeNow(account);
+    if (company === null || committee === null) {
+      res.status(409).json({ nothingWasSent: true, error: `${why} Nothing was sent.` });
+      return;
+    }
+    const build = deps.account.handover;
+    if (build === undefined) {
+      res.status(503).json({
+        nothingWasSent: true,
+        error: 'this deployment keeps no temporary key for company accounts, so it cannot hand this one over. Nothing was sent.',
+      });
+      return;
+    }
+    const alone = whyNotYet(company.threshold, account.signerCount);
+    if (alone !== null) {
+      res.status(409).json({ nothingWasSent: true, error: alone });
+      return;
+    }
+    /* The committee the pressing device checked, and nothing else, is the one installed. */
+    const checked = z.object({
+      committee: z.object({
+        committee: z.array(z.object({ tag: z.string(), value: z.string() })),
+        threshold: z.number(),
+      }),
+    }).safeParse(req.body);
+    if (!checked.success || !sameCommittee(checked.data.committee, committee)) {
+      res.status(409).json({
+        nothingWasSent: true,
+        error: 'the committee your device checked is not the one this service would install now, so nothing was '
+          + 'built. Nothing was sent; read the settings again and check it again.',
+      });
+      return;
+    }
+    if (handoverStillPending(account.id)) {
+      res.status(409).json({
+        nothingWasSent: true,
+        error: 'the handover was sent and the chain has not shown it yet, and a second copy would be refused after '
+          + 'its fee was paid. Nothing was sent; wait for the first.',
+      });
+      return;
+    }
+    /* Held from here, before the first wait, so a second press arriving meanwhile is refused rather than paid. */
+    handoversSent.set(account.id, now().getTime());
+    const release = () => { handoversSent.delete(account.id); };
+    const read = await authorityOf(company.address);
+    if (read.state !== 'read') {
+      release();
+      res.status(503).json({ nothingWasSent: true, error: `the chain could not be asked who holds this company's account (${read.why}). Nothing was sent.` });
+      return;
+    }
+    let bytes: Uint8Array;
+    try {
+      bytes = await build({ read, to: committee });
+    } catch (e) {
+      release();
+      res.status(409).json({ nothingWasSent: true, error: (e as Error)?.message ?? String(e) });
+      return;
+    }
+    /* The service built it, and still reads it as if a stranger had: what is paid for is what is checked. */
+    const sent = await send(res, account.id, 'handing the company account to its committee', 'proven-moving-nothing', bytes,
+      (tx) => refusalForHandover(tx, { vault: company.address, to: committee, onChain: read.authority, contract: 'account' }));
+    /* Only a refusal that says nothing was sent frees the account for another press; one that may have landed does not. */
+    if (sent === null && res.statusCode !== 502) release();
+    if (sent === null) return;
+    res.json({ txRef: sent.ref, state: 'handover-sent' });
   });
 
   return r;

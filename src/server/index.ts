@@ -59,7 +59,11 @@ import { MemorySealedPoolStore, type SealedPoolStore } from '../midnight/vault-p
 import type { WireRecord } from '../midnight/sealed-record-wire.js';
 import { companyVaultRoutes, type VaultChain } from './company-vaults.js';
 import { vaultArtefactPlaces, vaultArtefactRoutes } from './vault-artefacts.js';
-import { vaultChainFromTheIndexer, vaultVerifierKeysIn } from './vault-chain.js';
+import {
+  accountHandoverWith, accountTemporaryVerifyingKey, accountVerifierKeysIn, vaultChainFromTheIndexer,
+  vaultVerifierKeysIn,
+} from './vault-chain.js';
+import { DEPLOYED_CIRCUITS } from '../midnight/deferral.js';
 import { readProvenTransaction, readFinishedTransaction } from '../wiring/proven-submission.js';
 
 /**
@@ -544,6 +548,14 @@ app.use(cors());
       ? await vaultChainFromTheIndexer({ url: startup.deployment.indexerUrl, wsUrl: startup.deployment.indexerWsUrl })
       : refusingChain,
     verifierKeys: vaultVerifierKeysIn(process.cwd()),
+    /* A company account is handed to its committee with the temporary key this deployment recorded, and no
+     * money goes into a vault until the chain shows the account held by the committee. */
+    account: {
+      circuits: DEPLOYED_CIRCUITS,
+      verifierKeys: accountVerifierKeysIn(process.cwd()),
+      handover: startup.started ? accountHandoverWith(writeCapability?.maintenanceAuthority, NETWORK) : undefined,
+      temporaryKey: startup.started ? await accountTemporaryVerifyingKey(writeCapability?.maintenanceAuthority) : undefined,
+    },
     readers: { proven: readProvenTransaction, finished: readFinishedTransaction },
   }));
 }

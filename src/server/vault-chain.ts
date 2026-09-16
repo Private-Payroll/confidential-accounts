@@ -6,6 +6,11 @@ import { vaultOutputHistoryFrom } from '../midnight/deposit-nonce.js';
 import { indexerNoteEvents, indexerVaultTransactions } from '../midnight/note-index.js';
 import type { VaultChain } from './company-vaults.js';
 import { startingLedgerFrom } from '../wiring/vault-submission.js';
+import { DEPLOYED_CIRCUITS } from '../midnight/deferral.js';
+import type { AuthorityRead } from '../midnight/ledger.js';
+import type { MaintenanceAuthorityChoice } from '../midnight/partial-contract.js';
+import type { Committee } from '../midnight/vault-committee.js';
+import { buildAccountHandover, type AccountHandoverLedger } from '../midnight/company-authority.js';
 
 /**
  * **WHAT THE COMPANY-VAULT ROUTES READ, FROM THE INDEXER THIS DEPLOYMENT NAMES.**
@@ -56,5 +61,58 @@ export function vaultVerifierKeysIn(root: string): () => Promise<ReadonlyMap<str
       c, new Uint8Array(readFileSync(join(root, 'contracts', 'managed-vault', 'keys', `${c}.verifier`))),
     ]));
     return read;
+  };
+}
+
+/** Every circuit the company account deploys, and its verifying key, read once from this build's own artefacts. */
+export function accountVerifierKeysIn(root: string): () => Promise<ReadonlyMap<string, Uint8Array>> {
+  let read: Map<string, Uint8Array> | null = null;
+  return async () => {
+    read ??= new Map(DEPLOYED_CIRCUITS.map((c) => [
+      c, new Uint8Array(readFileSync(join(root, 'contracts', 'managed', 'keys', `${c}.verifier`))),
+    ]));
+    return read;
+  };
+}
+
+/** The public half of this deployment's temporary account key, or `undefined` when it keeps none. */
+export async function accountTemporaryVerifyingKey(
+  choice: MaintenanceAuthorityChoice | undefined,
+): Promise<{ tag: string; value: string } | undefined> {
+  if (choice === undefined || choice.kind !== 'single-key') return undefined;
+  const L = await import('@midnightntwrk/ledger-v9');
+  const vk = L.signatureVerifyingKey({ tag: choice.signingKey.tag, value: choice.signingKey.value } as never);
+  return { tag: vk.tag, value: vk.value };
+}
+
+/** A proving provider for a transaction that calls no circuit: it is never asked, and says so if it is. */
+const neverAsked = {
+  check: async () => { throw new Error('a company account\'s handover calls no circuit, and a circuit was asked to be checked'); },
+  prove: async () => { throw new Error('a company account\'s handover calls no circuit, and a circuit was asked to be proved'); },
+  lookupKey: async () => undefined,
+};
+
+/**
+ * **THE COMPANY ACCOUNT'S HANDOVER, SIGNED BY THIS DEPLOYMENT'S TEMPORARY KEY.**
+ * `undefined` - and so refused by name - unless the recorded authority is that
+ * one temporary key: a deployment that recorded anything else has nothing it
+ * may sign with. The key is read here and handed only to the builder; nothing
+ * here puts it in a response or in a record this service keeps.
+ */
+export function accountHandoverWith(
+  choice: MaintenanceAuthorityChoice | undefined,
+  network: string,
+  now: () => number = Date.now,
+): ((input: { read: AuthorityRead; to: Committee }) => Promise<Uint8Array>) | undefined {
+  if (choice === undefined || choice.kind !== 'single-key') return undefined;
+  const temporaryKey = { tag: choice.signingKey.tag, value: choice.signingKey.value };
+  return async ({ read, to }) => {
+    const L = await import('@midnightntwrk/ledger-v9');
+    const { unproven } = buildAccountHandover(L as unknown as AccountHandoverLedger, {
+      read, to, temporaryKey, network, ttl: new Date(now() + 30 * 60_000),
+    });
+    const proven = await (unproven as { prove(p: unknown, c: unknown): Promise<{ serialize(): Uint8Array }> })
+      .prove(neverAsked, (L as unknown as { CostModel: { initialCostModel(): unknown } }).CostModel.initialCostModel());
+    return proven.serialize();
   };
 }

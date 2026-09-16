@@ -75,8 +75,8 @@ nothing.
 
 | | |
 |---|---|
-| modules walked | 492 |
-| module-to-module import sites | 1873 |
+| modules walked | 497 |
+| module-to-module import sites | 1899 |
 | modules that could not be read | 0 |
 | specifiers that resolved to nothing | 0 |
 | specifiers naming a real file outside the walked set | 121 |
@@ -116,7 +116,7 @@ What the import walk cannot see, named rather than implied complete:
 | `src/midnight/payee-address.ts` | 1 | 2 | 23 | 12 | 11 | 1 | 0 |
 | `src/core/payslip-key.ts` | 1 | 3 | 3 | 2 | 1 | 0 | 0 |
 | `src/core/payslip-key-derive.ts` | 1 | 1 | 4 | 1 | 1 | 3 | 0 |
-| `src/midnight/ledger.ts` | 2 | 11 | 27 | 46 | 46 | 5 | 14 |
+| `src/midnight/ledger.ts` | 2 | 11 | 31 | 48 | 47 | 5 | 14 |
 | `src/midnight/vault-ledger.ts` | 2 | 14 | 20 | 21 | 27 | 0 | 24 |
 | `src/midnight/vault-notes.ts` | 2 | 5 | 21 | 14 | 13 | 2 | 24 |
 | `src/midnight/vault-coins.ts` | 2 | 1 | 12 | 4 | 7 | 0 | 0 |
@@ -137,21 +137,21 @@ through another contract, which is a fact about the design and not a dead circui
 
 | circuit | modules naming it | modules reaching it |
 |---|---|---|
-| `ConfidentialAccount.signerPublicKey` | `contracts/test/one-definition.test.ts` `contracts/test/simulator.ts` `contracts/test/what-a-signer-is.test.ts` `scripts/diagnose-state.ts` `scripts/governance-steps.ts` `scripts/mutate-authority.mjs` `scripts/prove-compare.ts` `scripts/run-preview.ts` `src/midnight/commitments.ts` | 182 |
-| `ConfidentialAccount.signerLeaf` | `contracts/test/commitments.test.ts` `contracts/test/one-definition.test.ts` `contracts/test/simulator.ts` `contracts/test/what-a-signer-is.test.ts` `scripts/diagnose-state.ts` `scripts/governance-steps.ts` `scripts/prove-compare.ts` `scripts/run-preview.ts` `src/midnight/commitments.ts` | 181 |
-| `ConfidentialAccount.assetKeyOf` | `contracts/test/commitments.test.ts` `contracts/test/one-definition.test.ts` `contracts/test/simulator.ts` `scripts/run-preview.ts` `src/midnight/commitments.ts` | 178 |
-| `ConfidentialAccount.changeCommitmentOf` | `contracts/test/commitments.test.ts` `contracts/test/one-definition.test.ts` `contracts/test/the-service-layer-meets-the-chain.test.ts` `src/midnight/commitments.ts` `src/midnight/ledger.ts` | 178 |
-| `ConfidentialAccount.proposalIdOf` | `contracts/test/commitments.test.ts` `contracts/test/one-definition.test.ts` `contracts/test/simulator.ts` `contracts/test/the-payroll-run-meets-the-chain.test.ts` `contracts/test/the-service-layer-meets-the-chain.test.ts` `scripts/governance-steps.ts` `scripts/run-preview.ts` `src/midnight/commitments.ts` | 179 |
-| `ConfidentialAccount.signerAddPayload` | `contracts/test/commitments.test.ts` `contracts/test/one-definition.test.ts` `contracts/test/payout-runs.test.ts` `contracts/test/signer-governance.test.ts` `contracts/test/simulator.ts` `contracts/test/vault-threshold-recovery.test.ts` `scripts/governance-steps.ts` `scripts/measure-call-cost.ts` `scripts/run-preview.ts` `src/midnight/commitments.ts` | 177 |
-| `ConfidentialAccount.removeSignerPayload` | `contracts/test/one-definition.test.ts` `contracts/test/signer-governance.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `scripts/governance-steps.ts` `scripts/measure-call-cost.ts` `src/midnight/commitments.ts` | 177 |
-| `ConfidentialAccount.setThresholdPayload` | `contracts/test/one-definition.test.ts` `contracts/test/payout-runs.test.ts` `contracts/test/signer-governance.test.ts` `contracts/test/simulator.ts` `contracts/test/the-service-layer-meets-the-chain.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `scripts/governance-steps.ts` `scripts/measure-call-cost.ts` `src/midnight/commitments.ts` | 176 |
-| `ConfidentialAccount.allVaults` | `contracts/test/one-definition.test.ts` `contracts/test/vault-scoping.test.ts` `scripts/diagnose-state.ts` `scripts/prove-compare.ts` `scripts/run-preview.ts` `scripts/sponsor-test.ts` `src/midnight/commitments.ts` | 161 |
-| `ConfidentialAccount.noVault` | `contracts/test/one-definition.test.ts` `contracts/test/payout-runs.test.ts` `contracts/test/vault-scoping.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `scripts/governance-steps.ts` `scripts/run-preview.ts` `src/midnight/commitments.ts` `src/midnight/ledger.test.ts` | 179 |
-| `ConfidentialAccount.paidMovementOf` | `contracts/test/a-retry-lives-on-the-leg-it-retries.test.ts` `contracts/test/nobody-is-paid-twice-by-a-restart.test.ts` `contracts/test/one-definition.test.ts` `contracts/test/payout-runs.test.ts` `contracts/test/the-payroll-run-meets-the-chain.test.ts` `contracts/test/transcript.test.ts` `contracts/test/vault-client.test.ts` `contracts/test/vault-payout.test.ts` `contracts/test/vault-scoping.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `contracts/test/vault-unshielded.test.ts` `src/midnight/ledger.ts` | 167 |
-| `ConfidentialAccount.runPayload` | `contracts/test/a-deposit-made-on-the-device.test.ts` `contracts/test/a-vault-rebuilt-with-us-gone.test.ts` `contracts/test/approvals.test.ts` `contracts/test/one-definition.test.ts` `contracts/test/payout-runs.test.ts` `contracts/test/run-status.test.ts` `contracts/test/the-payroll-run-meets-the-chain.test.ts` `contracts/test/transcript.test.ts` `contracts/test/vault-client.test.ts` `contracts/test/vault-payout.test.ts` `contracts/test/vault-recovery.test.ts` `contracts/test/vault-registry.test.ts` `contracts/test/vault-scoping.test.ts` `contracts/test/vault-split.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `contracts/test/vault-unshielded.test.ts` `scripts/measure-call-cost.ts` `src/midnight/commitments.ts` | 178 |
-| `ConfidentialAccount.payoutLeaf` | `contracts/test/one-definition.test.ts` `contracts/test/payout-runs.test.ts` `contracts/test/vault-scoping.test.ts` `src/midnight/payout-tree.ts` | 185 |
-| `ConfidentialAccount.setVaultThresholdPayload` | `contracts/test/one-definition.test.ts` `contracts/test/vault-registry.test.ts` `contracts/test/vault-scoping.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `scripts/measure-call-cost.ts` `src/midnight/commitments.ts` | 175 |
-| `ConfidentialAccount.vacantSlot` | `contracts/test/one-definition.test.ts` `contracts/test/simulator.ts` `contracts/test/what-a-signer-is.test.ts` `scripts/governance-steps.ts` `src/midnight/ledger.test.ts` `src/midnight/ledger.ts` | 168 |
+| `ConfidentialAccount.signerPublicKey` | `contracts/test/one-definition.test.ts` `contracts/test/simulator.ts` `contracts/test/what-a-signer-is.test.ts` `scripts/diagnose-state.ts` `scripts/governance-steps.ts` `scripts/mutate-authority.mjs` `scripts/prove-compare.ts` `scripts/run-preview.ts` `src/midnight/commitments.ts` | 188 |
+| `ConfidentialAccount.signerLeaf` | `contracts/test/commitments.test.ts` `contracts/test/one-definition.test.ts` `contracts/test/simulator.ts` `contracts/test/what-a-signer-is.test.ts` `scripts/diagnose-state.ts` `scripts/governance-steps.ts` `scripts/prove-compare.ts` `scripts/run-preview.ts` `src/midnight/commitments.ts` | 187 |
+| `ConfidentialAccount.assetKeyOf` | `contracts/test/commitments.test.ts` `contracts/test/one-definition.test.ts` `contracts/test/simulator.ts` `scripts/run-preview.ts` `src/midnight/commitments.ts` | 184 |
+| `ConfidentialAccount.changeCommitmentOf` | `contracts/test/commitments.test.ts` `contracts/test/one-definition.test.ts` `contracts/test/the-service-layer-meets-the-chain.test.ts` `src/midnight/commitments.ts` `src/midnight/ledger.ts` | 184 |
+| `ConfidentialAccount.proposalIdOf` | `contracts/test/commitments.test.ts` `contracts/test/one-definition.test.ts` `contracts/test/simulator.ts` `contracts/test/the-payroll-run-meets-the-chain.test.ts` `contracts/test/the-service-layer-meets-the-chain.test.ts` `scripts/governance-steps.ts` `scripts/run-preview.ts` `src/midnight/commitments.ts` | 185 |
+| `ConfidentialAccount.signerAddPayload` | `contracts/test/commitments.test.ts` `contracts/test/one-definition.test.ts` `contracts/test/payout-runs.test.ts` `contracts/test/signer-governance.test.ts` `contracts/test/simulator.ts` `contracts/test/vault-threshold-recovery.test.ts` `scripts/governance-steps.ts` `scripts/measure-call-cost.ts` `scripts/run-preview.ts` `src/midnight/commitments.ts` | 183 |
+| `ConfidentialAccount.removeSignerPayload` | `contracts/test/one-definition.test.ts` `contracts/test/signer-governance.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `scripts/governance-steps.ts` `scripts/measure-call-cost.ts` `src/midnight/commitments.ts` | 183 |
+| `ConfidentialAccount.setThresholdPayload` | `contracts/test/one-definition.test.ts` `contracts/test/payout-runs.test.ts` `contracts/test/signer-governance.test.ts` `contracts/test/simulator.ts` `contracts/test/the-service-layer-meets-the-chain.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `scripts/governance-steps.ts` `scripts/measure-call-cost.ts` `src/midnight/commitments.ts` | 182 |
+| `ConfidentialAccount.allVaults` | `contracts/test/one-definition.test.ts` `contracts/test/vault-scoping.test.ts` `scripts/diagnose-state.ts` `scripts/prove-compare.ts` `scripts/run-preview.ts` `scripts/sponsor-test.ts` `src/midnight/commitments.ts` | 167 |
+| `ConfidentialAccount.noVault` | `contracts/test/one-definition.test.ts` `contracts/test/payout-runs.test.ts` `contracts/test/vault-scoping.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `scripts/governance-steps.ts` `scripts/run-preview.ts` `src/midnight/commitments.ts` `src/midnight/ledger.test.ts` | 185 |
+| `ConfidentialAccount.paidMovementOf` | `contracts/test/a-retry-lives-on-the-leg-it-retries.test.ts` `contracts/test/nobody-is-paid-twice-by-a-restart.test.ts` `contracts/test/one-definition.test.ts` `contracts/test/payout-runs.test.ts` `contracts/test/the-payroll-run-meets-the-chain.test.ts` `contracts/test/transcript.test.ts` `contracts/test/vault-client.test.ts` `contracts/test/vault-payout.test.ts` `contracts/test/vault-scoping.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `contracts/test/vault-unshielded.test.ts` `src/midnight/ledger.ts` | 173 |
+| `ConfidentialAccount.runPayload` | `contracts/test/a-deposit-made-on-the-device.test.ts` `contracts/test/a-vault-rebuilt-with-us-gone.test.ts` `contracts/test/approvals.test.ts` `contracts/test/one-definition.test.ts` `contracts/test/payout-runs.test.ts` `contracts/test/run-status.test.ts` `contracts/test/the-payroll-run-meets-the-chain.test.ts` `contracts/test/transcript.test.ts` `contracts/test/vault-client.test.ts` `contracts/test/vault-payout.test.ts` `contracts/test/vault-recovery.test.ts` `contracts/test/vault-registry.test.ts` `contracts/test/vault-scoping.test.ts` `contracts/test/vault-split.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `contracts/test/vault-unshielded.test.ts` `scripts/measure-call-cost.ts` `src/midnight/commitments.ts` | 184 |
+| `ConfidentialAccount.payoutLeaf` | `contracts/test/one-definition.test.ts` `contracts/test/payout-runs.test.ts` `contracts/test/vault-scoping.test.ts` `src/midnight/payout-tree.ts` | 187 |
+| `ConfidentialAccount.setVaultThresholdPayload` | `contracts/test/one-definition.test.ts` `contracts/test/vault-registry.test.ts` `contracts/test/vault-scoping.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `scripts/measure-call-cost.ts` `src/midnight/commitments.ts` | 181 |
+| `ConfidentialAccount.vacantSlot` | `contracts/test/one-definition.test.ts` `contracts/test/simulator.ts` `contracts/test/what-a-signer-is.test.ts` `scripts/governance-steps.ts` `src/midnight/ledger.test.ts` `src/midnight/ledger.ts` | 174 |
 | `ConfidentialAccount.adoptVaultPayload` | `contracts/test/one-definition.test.ts` `contracts/test/vault-registry.test.ts` `scripts/measure-call-cost.ts` | 29 |
 | `ConfidentialAccount.retireVaultPayload` | `contracts/test/one-definition.test.ts` `contracts/test/vault-registry.test.ts` `scripts/measure-call-cost.ts` | 4 |
 | `ConfidentialAccount.slotOf` | `contracts/test/one-definition.test.ts` `contracts/test/signer-governance.test.ts` `contracts/test/simulator.ts` `scripts/governance-steps.ts` | 32 |
@@ -515,7 +515,7 @@ Tier 1 of the declared set.
 Tier 2 of the declared set.
 
 - **imports** — `src/core/assets.ts`, `src/core/crypto.ts`, `src/core/ledger.ts`, `src/midnight/circuit-arity.ts`, `src/midnight/commitments.ts`, `src/midnight/deferral.ts`, `src/midnight/fee-seat.ts`, `src/midnight/governed-call.ts`, `src/midnight/network.ts`, `src/midnight/partial-contract.ts`, `src/midnight/retry.ts`
-- **imported by** — `scripts/circuits-that-read-no-witness.test.ts`, `scripts/deploy-preview.ts`, `scripts/funding-gate.ts`, `scripts/pay-from-vault.ts`, `scripts/pay-privately-from-vault.ts`, `scripts/run-preview.ts`, `scripts/sponsor-test.ts`, `src/fee-payer/client.ts`, `src/fee-payer/service.test.ts`, `src/fee-payer/service.ts`, `src/midnight/fee-seat.test.ts`, `src/midnight/fee-seat.ts`, `src/midnight/ledger.test.ts`, `src/midnight/private-state-addressing.test.ts`, `src/midnight/providers.ts`, `src/midnight/sealed-store.ts`, `src/midnight/sponsor.ts`, `src/midnight/the-key-reaches-the-circuit.test.ts`, `src/midnight/the-secret-comes-from-the-keyring.test.ts`, `src/midnight/vault-ledger.ts`, `src/midnight/what-a-balance-books.test.ts`, `src/server/company-vaults.ts`, `src/wiring/chain.ts`, `src/wiring/vault-submission.test.ts`, `src/wiring/vault-submission.ts`, `src/wiring/write-capability-for-deployment.ts`, `src/wiring/write-capability.ts`
+- **imported by** — `scripts/circuits-that-read-no-witness.test.ts`, `scripts/deploy-preview.ts`, `scripts/funding-gate.ts`, `scripts/pay-from-vault.ts`, `scripts/pay-privately-from-vault.ts`, `scripts/run-preview.ts`, `scripts/sponsor-test.ts`, `src/fee-payer/client.ts`, `src/fee-payer/service.test.ts`, `src/fee-payer/service.ts`, `src/midnight/company-authority.test.ts`, `src/midnight/company-authority.ts`, `src/midnight/fee-seat.test.ts`, `src/midnight/fee-seat.ts`, `src/midnight/ledger.test.ts`, `src/midnight/private-state-addressing.test.ts`, `src/midnight/providers.ts`, `src/midnight/sealed-store.ts`, `src/midnight/sponsor.ts`, `src/midnight/the-key-reaches-the-circuit.test.ts`, `src/midnight/the-secret-comes-from-the-keyring.test.ts`, `src/midnight/vault-committee.ts`, `src/midnight/vault-ledger.ts`, `src/midnight/what-a-balance-books.test.ts`, `src/server/company-vaults.ts`, `src/server/vault-chain.ts`, `src/wiring/chain.ts`, `src/wiring/vault-submission.test.ts`, `src/wiring/vault-submission.ts`, `src/wiring/write-capability-for-deployment.ts`, `src/wiring/write-capability.ts`
 - **outside packages** — *none*
 - **platform modules** — *none*
 - **circuits named here** — `ConfidentialAccount.changeCommitmentOf`, `ConfidentialAccount.paidMovementOf`, `ConfidentialAccount.vacantSlot`
@@ -551,26 +551,28 @@ Tier 2 of the declared set.
 | 3130 | `verifierKeyRefusals` | `export function verifierKeyRefusals(` |
 | 3190 | `authorityValueRefusals` | `export function authorityValueRefusals(` |
 | 3292 | `requireBuildableAuthority` | `export function requireBuildableAuthority(` |
-| 3315 | `MaintenancePlan` | `export type MaintenancePlan` |
-| 3352 | `planAuthorityReplacement` | `export function planAuthorityReplacement(` |
-| 3442 | `MaintenanceEndStateRecord` | `export interface MaintenanceEndStateRecord` |
-| 3479 | `EndStateVerdict` | `export type EndStateVerdict = 'settled' \| 'not-yet' \| 'unexplained' \| 'unknown';` |
-| 3481 | `EndStateCheck` | `export interface EndStateCheck` |
-| 3496 | `checkEndState` | `export function checkEndState(` |
-| 3537 | `MaintenanceSignature` | `export type MaintenanceSignature = AuthorityKey;` |
-| 3552 | `MaintenanceUpdateLike` | `export interface MaintenanceUpdateLike` |
-| 3559 | `MaintenancePrimitives` | `export interface MaintenancePrimitives` |
-| 3575 | `VerifierKeyWrite` | `export interface VerifierKeyWrite` |
-| 3602 | `BuiltMaintenanceInstruction` | `export interface BuiltMaintenanceInstruction` |
-| 3676 | `buildMaintenanceInstruction` | `export function buildMaintenanceInstruction(` |
-| 3775 | `attachMaintenanceSignature` | `export function attachMaintenanceSignature(` |
-| 3809 | `signatureProgress` | `export function signatureProgress(` |
-| 3862 | `OnChainOperation` | `export interface OnChainOperation` |
-| 3869 | `OperationsRead` | `export type OperationsRead` |
-| 3880 | `operationsFromContractState` | `export function operationsFromContractState(` |
-| 3930 | `VerifierKeyVerdict` | `export type VerifierKeyVerdict = 'agree' \| 'disagree' \| 'unknown';` |
-| 3932 | `VerifierKeyComparison` | `export interface VerifierKeyComparison` |
-| 3973 | `compareVerifierKeys` | `export function compareVerifierKeys(` |
+| 3308 | `AuthorityReplacementPrimitives` | `export interface AuthorityReplacementPrimitives` |
+| 3332 | `replaceAuthorityOf` | `export function replaceAuthorityOf<P extends AuthorityReplacementPrimitives>(` |
+| 3361 | `MaintenancePlan` | `export type MaintenancePlan` |
+| 3398 | `planAuthorityReplacement` | `export function planAuthorityReplacement(` |
+| 3488 | `MaintenanceEndStateRecord` | `export interface MaintenanceEndStateRecord` |
+| 3525 | `EndStateVerdict` | `export type EndStateVerdict = 'settled' \| 'not-yet' \| 'unexplained' \| 'unknown';` |
+| 3527 | `EndStateCheck` | `export interface EndStateCheck` |
+| 3542 | `checkEndState` | `export function checkEndState(` |
+| 3583 | `MaintenanceSignature` | `export type MaintenanceSignature = AuthorityKey;` |
+| 3598 | `MaintenanceUpdateLike` | `export interface MaintenanceUpdateLike` |
+| 3605 | `MaintenancePrimitives` | `export interface MaintenancePrimitives` |
+| 3621 | `VerifierKeyWrite` | `export interface VerifierKeyWrite` |
+| 3648 | `BuiltMaintenanceInstruction` | `export interface BuiltMaintenanceInstruction` |
+| 3722 | `buildMaintenanceInstruction` | `export function buildMaintenanceInstruction(` |
+| 3822 | `attachMaintenanceSignature` | `export function attachMaintenanceSignature(` |
+| 3856 | `signatureProgress` | `export function signatureProgress(` |
+| 3909 | `OnChainOperation` | `export interface OnChainOperation` |
+| 3916 | `OperationsRead` | `export type OperationsRead` |
+| 3927 | `operationsFromContractState` | `export function operationsFromContractState(` |
+| 3977 | `VerifierKeyVerdict` | `export type VerifierKeyVerdict = 'agree' \| 'disagree' \| 'unknown';` |
+| 3979 | `VerifierKeyComparison` | `export interface VerifierKeyComparison` |
+| 4020 | `compareVerifierKeys` | `export function compareVerifierKeys(` |
 
 ### `src/midnight/ledger.ts` — what it refuses
 
@@ -617,11 +619,12 @@ Tier 2 of the declared set.
 | 2487 | throw | not implemented: verification happens on chain |
 | 2834 | throw | a maintenance authority at threshold [value] is not a committee. Set the threshold to at least one and no more than the number of keys in the committee. A threshold ABOVE the committee size is the unmaintainable state — say { kind: "unmaintainable" } deliberately if that is the intent, rather than reaching it by arithmetic. A threshold BELOW one is WORLD-WRITABLE, not unmaintainable: MEASURED on `@midnightntwrk/ledger-v9@1.0.0-rc.3`, a maintenance update carrying NO SIGNATURES AT ALL is well-formed against an authority at threshold zero, so anybody at all could replace this contract's verifier keys while holding nothing. Committee membership IS still checked — a signature at an out-of-range seat is refused, and so is a wrong signature at a valid seat — what is missing is any requirement to attach one. This refuses rather than comparing the value against the chain. |
 | 3299 | throw | this maintenance authority will not be built:n - [[value]] [value]n |
-| 3688 | throw | this plan carries no on-chain authority, so there is nothing to say who must sign the update it describes. A `build` plan always carries one; a plan that does not is a defect in this module rather than a fact about the contract, and building anyway would produce an instruction nobody can be told how to sign. |
-| 3702 | throw | these verifier-key writes will not be built:n - [[value]] [value]n |
-| 3782 | throw | seat [value] is not a seat on the committee that currently maintains [value]: it holds [value] seat(s), numbered 0 to [value]. The signatures on a maintenance update are checked against the CURRENT committee, not the one being installed. |
-| 3790 | throw | seat [value] has already signed this update. A second signature at the same index is refused by the chain as a malformed transaction, and attaching it here would waste a submission rather than add a vote. |
-| 3798 | throw | this signature does not verify against the key in seat [value] of [value]'s current committee. Either it was made by a different key, or it was made over different data — a signature is bound to (contract address, exact update list, counter), so one collected for another contract, or before the counter moved, is dead. |
+| 3342 | throw | a maintenance counter is a whole number read off the chain, and this is not one. Nothing was built. |
+| 3734 | throw | this plan carries no on-chain authority, so there is nothing to say who must sign the update it describes. A `build` plan always carries one; a plan that does not is a defect in this module rather than a fact about the contract, and building anyway would produce an instruction nobody can be told how to sign. |
+| 3748 | throw | these verifier-key writes will not be built:n - [[value]] [value]n |
+| 3829 | throw | seat [value] is not a seat on the committee that currently maintains [value]: it holds [value] seat(s), numbered 0 to [value]. The signatures on a maintenance update are checked against the CURRENT committee, not the one being installed. |
+| 3837 | throw | seat [value] has already signed this update. A second signature at the same index is refused by the chain as a malformed transaction, and attaching it here would waste a submission rather than add a vote. |
+| 3845 | throw | this signature does not verify against the key in seat [value] of [value]'s current committee. Either it was made by a different key, or it was made over different data — a signature is bound to (contract address, exact update list, counter), so one collected for another contract, or before the counter moved, is dead. |
 
 ### `src/midnight/ledger.ts` — where a width is fixed
 
@@ -630,8 +633,8 @@ Tier 2 of the declared set.
 | 685 | `randomBytes(32)` | a fixed-width random draw |
 | 1703 | `.slice(0, 12)` | a fixed-width slice |
 | 2725 | `.length === 1` | a width compared |
-| 3739 | `.slice(0, 8)` | a fixed-width slice |
-| 3985 | `.slice(0, 8)` | a fixed-width slice |
+| 3786 | `.slice(0, 8)` | a fixed-width slice |
+| 4032 | `.slice(0, 8)` | a fixed-width slice |
 
 ## `src/midnight/vault-ledger.ts`
 
@@ -879,4 +882,4 @@ Tier 2 of the declared set.
 
 *No width here matches the shapes above.* A width this module works to may
 arrive in a variable, and this list sees only a number or a capitalised constant.
-<!-- GENERATED:END id="modules" body="fa4ebae786c6b48d" -->
+<!-- GENERATED:END id="modules" body="6126dd4cfa577b99" -->

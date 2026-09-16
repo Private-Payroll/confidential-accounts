@@ -22,6 +22,7 @@ import { LedgerMark } from './ledger-mark.js';
 import type { Marked } from '../core/provenance.js';
 import { AuthScreen, AccountPicker, WALLET_ORIGIN } from './Auth.js';
 import { VaultPanel } from './VaultPanel.js';
+import { MaintenancePanel } from './MaintenancePanel.js';
 import { WalletWaiting } from './wallet-waiting.js';
 import { JoinScreen, joinTokenFromLocation } from './Join.js';
 /* X12 §2 — the drop box is opened HERE, on this machine, because computing the
@@ -2860,6 +2861,7 @@ function Settings({ account, state, session, me, busy, act, commitments }: {
 
   return (
     <div className="stack">
+      <MaintenancePanel account={account} />
       {open && (
         <div className="card">
           <div className="hd"><h3>Invite a signer</h3></div>
