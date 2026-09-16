@@ -132,9 +132,20 @@ export const changeNonceOf = (spentNonce: Uint8Array): Uint8Array =>
  * project has paid for most often.
  */
 export const changeNoteOf = (spent: VaultCoin, amount: bigint): VaultCoin | undefined =>
-  amount < spent.value
-    ? { nonce: toHex(changeNonceOf(fromHex(spent.nonce))), token: spent.token, value: spent.value - amount }
-    : undefined;
+  changeNotesOf(spent, [amount])[0];
+
+/**
+ * **EVERY NOTE THAT COULD STAY AFTER ONE OF `amounts` LEAVES `spent`**, in the
+ * order given, leaving out the amounts that would spend it exactly or more.
+ * The same rule as `changeNoteOf`, with the nonce worked out once for all of
+ * them: it depends only on the spent note.
+ */
+export const changeNotesOf = (spent: VaultCoin, amounts: readonly bigint[]): VaultCoin[] => {
+  const leaving = amounts.filter((amount) => amount < spent.value);
+  if (leaving.length === 0) return [];
+  const nonce = toHex(changeNonceOf(fromHex(spent.nonce)));
+  return leaving.map((amount) => ({ nonce, token: spent.token, value: spent.value - amount }));
+};
 
 /**
  * The nonce the coin that LEAVES carries — a payout's payee coin, a split's

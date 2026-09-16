@@ -85,6 +85,36 @@ export interface PoolSigner {
   wrappingPublicKey: Hex;
 }
 
+/** Which of a vault's sealed records a record is. */
+export type SealedRecordKind = 'pool' | 'deposit-journal' | 'payment-journal' | 'nonce-secret';
+
+/**
+ * **WHAT A SEALED RECORD SAYS IT IS, SEALED INSIDE IT.** Written by every seal
+ * and checked by every open: a record moved to another vault, presented as
+ * another version, or presented as another kind of record does not open as
+ * one. The readable `vault` and `version` beside the ciphertext are for the
+ * store; this is what the reader believes.
+ */
+export interface SealedLabel {
+  readonly record: SealedRecordKind;
+  readonly vault: string;
+  readonly version: number;
+}
+
+/** The key the label is sealed under, inside the record's body. */
+export const SEALED_LABEL_KEY = '$label';
+
+/** How an open treats a record sealed before labels were written. */
+export interface OpenExpecting {
+  /** The kind of record the reader asked for. `pool` when not said. */
+  readonly record?: SealedRecordKind;
+  /**
+   * A record with no label inside is refused unless the store it came from
+   * says it holds records written before labels were (`unlabelledRecordsFiled`).
+   */
+  readonly unlabelled?: 'accept' | 'refuse';
+}
+
 /** One signer's copy of the key that opens a pool. */
 export interface WrappedPoolKey {
   signerId: string;
@@ -119,6 +149,12 @@ export interface SealedPool {
   version: number;
   sealed: Sealed;
   wrapped: WrappedPoolKey[];
+  /**
+   * **WHO FILED IT**: a signer's signing public key and their signature over
+   * the record, what kind it is, its vault and its version
+   * (`sealed-record-wire.ts`, `signFiling`). Absent on a record nobody signed.
+   */
+  filedBy?: { publicKey: Hex; signature: Hex };
 }
 
 /** Thrown rather than answering with a pool nobody should act on. */
@@ -211,6 +247,19 @@ export class VaultPoolVersionAlreadyFiled extends Error {
 }
 
 /**
+ * **A STORE REFUSED TO FILE THIS RECORD, FOR A REASON THAT WILL NOT CHANGE ON
+ * ITS OWN, AND NOTHING WAS WRITTEN.** Not a lost race and not a failure to
+ * reach the store: filing the same record again gets the same answer. The
+ * reason is the message.
+ */
+export class VaultRecordRefused extends Error {
+  constructor(why: string) {
+    super(why);
+    this.name = 'VaultRecordRefused';
+  }
+}
+
+/**
  * **DID THIS WRITE LOSE A RACE, LEAVING THE POOL EXACTLY AS IT WAS?**
  *
  * The two refusals above and nothing else. Both are *"another writer got there,
@@ -275,6 +324,8 @@ export const sealPool = (
   notes: VaultNotes,
   signers: readonly PoolSigner[],
   version: number,
+  /** Which of the vault's records this is, sealed inside it. */
+  record: SealedRecordKind = 'pool',
 ): SealedPool => {
   if (signers.length === 0) {
     /*
@@ -289,7 +340,9 @@ export const sealPool = (
   return {
     vault,
     version,
-    sealed: seal(paddedToABucket(canonical(notes)), key),
+    sealed: seal(paddedToABucket(canonical({
+      ...notes, [SEALED_LABEL_KEY]: { record, vault, version } satisfies SealedLabel,
+    })), key),
     wrapped: signers.map((s) => ({ signerId: s.id, wrapped: wrapKey(key, s.wrappingPublicKey) })),
   };
 };
@@ -303,7 +356,7 @@ export const sealPool = (
  * copy that will not open** is a wrong secret or a damaged record.
  */
 export const openPool = (
-  rec: SealedPool, signerId: string, wrappingSecret: Hex,
+  rec: SealedPool, signerId: string, wrappingSecret: Hex, expect: OpenExpecting = {},
 ): VaultNotes => {
   const mine = rec.wrapped.find((w) => w.signerId === signerId);
   if (!mine) {
@@ -320,8 +373,9 @@ export const openPool = (
     throw new VaultPoolUnreadable(
       rec.vault, `signer ${signerId}'s copy of the key would not unwrap with the secret given`);
   }
+  let opened: Record<string, unknown>;
   try {
-    return parseCanonical<VaultNotes>(unseal(rec.sealed, key));
+    opened = parseCanonical<Record<string, unknown>>(unseal(rec.sealed, key));
   } catch {
     /*
      * `parseCanonical`, not `JSON.parse`. A note's value is a bigint,
@@ -332,6 +386,34 @@ export const openPool = (
     throw new VaultPoolUnreadable(
       rec.vault, 'the key unwrapped but the pool itself did not open or did not parse');
   }
+  if (opened === null || typeof opened !== 'object') {
+    throw new VaultPoolUnreadable(rec.vault, 'the key unwrapped but what it opened is not a record');
+  }
+  const { [SEALED_LABEL_KEY]: label, ...body } = opened;
+  const wanted = expect.record ?? 'pool';
+  if (label === undefined) {
+    if (expect.unlabelled !== 'accept') {
+      throw new VaultPoolUnreadable(
+        rec.vault,
+        'what is sealed inside does not say which record, vault and version it is, so nothing '
+        + 'stops it being another record presented as this one. Only a store that kept records '
+        + 'before they were labelled may hand back one without a label');
+    }
+    return body as unknown as VaultNotes;
+  }
+  const l = label as Partial<SealedLabel>;
+  if (l.vault !== rec.vault) {
+    throw new VaultPoolUnreadable(rec.vault, 'what is sealed inside names a different vault than the record it is filed as');
+  }
+  if (l.version !== rec.version) {
+    throw new VaultPoolUnreadable(
+      rec.vault, `it is filed as version ${rec.version} and what is sealed inside says ${JSON.stringify(l.version)}`);
+  }
+  if (l.record !== wanted) {
+    throw new VaultPoolUnreadable(
+      rec.vault, `the ${wanted} was asked for and what is sealed inside says it is the ${JSON.stringify(l.record)}`);
+  }
+  return body as unknown as VaultNotes;
 };
 
 /**
@@ -362,8 +444,10 @@ export const wrapFor = (
   }
   const key = unwrapKey(mine.wrapped, by.wrappingSecret);
   const already = new Set(rec.wrapped.map((w) => w.signerId));
+  /* A signature covers the wrapped list, so a record given a new reader is no longer the one signed. */
+  const { filedBy: _signedAsItWas, ...unsigned } = rec;
   return {
-    ...rec,
+    ...unsigned,
     wrapped: [
       ...rec.wrapped,
       ...added
@@ -411,11 +495,19 @@ export interface FiledPoolVersion {
  *      as its one surviving record; what it held before that is gone.
  */
 export interface SealedPoolStore {
+  /**
+   * True only for a store that holds records written before a record's label
+   * was sealed inside it. A reader accepts an unlabelled record only from such
+   * a store.
+   */
+  readonly unlabelledRecordsFiled?: boolean;
   /** The newest filed version, or `null` when none has ever been filed. */
   get(vault: string): Promise<SealedPool | null>;
   put(vault: string, rec: SealedPool): Promise<void>;
   /** Every version ever filed for this vault, oldest first. Empty when none is. */
   versions(vault: string): Promise<readonly FiledPoolVersion[]>;
+  /** One filed version, or `null` when that version is not filed. Optional; `versions` answers it otherwise. */
+  at?(vault: string, version: number): Promise<SealedPool | null>;
 }
 
 /**
@@ -445,6 +537,13 @@ export const whyThisIsNotASealedPool = (parsed: unknown, vault: string): string 
   }
   if (r.sealed === null || typeof r.sealed !== 'object') {
     return 'it carries no sealed payload';
+  }
+  if (r.filedBy !== undefined) {
+    const f = r.filedBy as Record<string, unknown> | null;
+    if (f === null || typeof f !== 'object' || typeof f.publicKey !== 'string' || !/^[0-9a-f]{64}$/u.test(f.publicKey)
+      || typeof f.signature !== 'string' || !/^[0-9a-f]{128}$/u.test(f.signature)) {
+      return 'it says who filed it in a form that is not a signing key and a signature';
+    }
   }
   return null;
 };
@@ -538,7 +637,9 @@ export class SealedNotePool implements NotePool {
         'with create(); a vault that had one and now does not is the store having lost it, ' +
         'and those are not the same event');
     }
-    const { notes } = openPool(rec, this.me.signerId, this.me.wrappingSecret);
+    const { notes } = openPool(rec, this.me.signerId, this.me.wrappingSecret, {
+      record: 'pool', unlabelled: this.store.unlabelledRecordsFiled === true ? 'accept' : 'refuse',
+    });
     return { notes, readAt: { vault: vaultAddress, version: rec.version } };
   }
 
@@ -590,7 +691,7 @@ export class SealedNotePool implements NotePool {
       : { notes: notes.notes };
     await this.store.put(
       vaultAddress,
-      sealPool(vaultAddress, page, await this.signers(), builtOn.version + 1));
+      sealPool(vaultAddress, page, await this.signers(), builtOn.version + 1, 'pool'));
   }
 
   /**
@@ -604,7 +705,7 @@ export class SealedNotePool implements NotePool {
         `${vaultAddress} already has a note pool. Creating a second would replace the record ` +
         'of every note it holds with whatever this caller happened to know about');
     }
-    await this.store.put(vaultAddress, sealPool(vaultAddress, notes, await this.signers(), 1));
+    await this.store.put(vaultAddress, sealPool(vaultAddress, notes, await this.signers(), 1, 'pool'));
   }
 }
 
@@ -624,6 +725,10 @@ export class MemorySealedPoolStore implements SealedPoolStore {
 
   async versions(vault: string): Promise<readonly FiledPoolVersion[]> {
     return (this.byVault.get(vault) ?? []).map((sealed) => ({ version: sealed.version, sealed }));
+  }
+
+  async at(vault: string, version: number): Promise<SealedPool | null> {
+    return (this.byVault.get(vault) ?? []).find((sealed) => sealed.version === version) ?? null;
   }
 
   async put(vault: string, rec: SealedPool): Promise<void> {

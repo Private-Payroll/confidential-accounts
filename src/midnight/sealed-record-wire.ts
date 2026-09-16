@@ -10,7 +10,15 @@
  *   · **which version** - in the path AND in the message AND inside the record,
  *     and all three must agree;
  *   · **the exact bytes**, as one JSON string, with their SHA-256 beside them,
- *     checked by whoever receives them.
+ *     checked by whoever receives them;
+ *   · **who filed it**: a signature over the record, its kind, its vault and
+ *     its version (`signFiling`). The store refuses a filing it does not
+ *     verify; the device that reads it believes it only if the key is one the
+ *     company's roster has held.
+ *
+ * What a record says it is, is also sealed inside it (`SealedLabel` in
+ * `vault-pool.ts`), so a store that relabels or swaps a record gets a record the
+ * reader refuses to open as the one it asked for.
  *
  * A message that disagrees with itself about any of those is refused, by
  * whichever end reads it, before anything is filed or believed. A reply about a
@@ -21,11 +29,11 @@
  * (`whyThisIsNotASealedPool`) and nothing inside the sealed payload.
  */
 import { sha256 } from '@noble/hashes/sha2.js';
-import { toHex, utf8 } from '../core/crypto.js';
-import { whyThisIsNotASealedPool, type SealedPool } from './vault-pool.js';
+import { canonical, sign, signingPublicKeyOf, toHex, utf8, verify, type Hex } from '../core/crypto.js';
+import { whyThisIsNotASealedPool, type SealedPool, type SealedRecordKind } from './vault-pool.js';
 
-export type WireRecord = 'pool' | 'deposit-journal' | 'payment-journal';
-export const WIRE_RECORDS: readonly WireRecord[] = ['pool', 'deposit-journal', 'payment-journal'];
+export type WireRecord = SealedRecordKind;
+export const WIRE_RECORDS: readonly WireRecord[] = ['pool', 'deposit-journal', 'payment-journal', 'nonce-secret'];
 
 /** One filed version, as it crosses the wire. */
 export interface WireVersion {
@@ -125,12 +133,14 @@ export const wirePaths = {
   newest: (vault: string, record: WireRecord) => `/api/vaults/${vault}/records/${record}`,
   versions: (vault: string, record: WireRecord) => `/api/vaults/${vault}/records/${record}/versions`,
   file: (vault: string, record: WireRecord, version: number) => `/api/vaults/${vault}/records/${record}/${version}`,
+  one: (vault: string, record: WireRecord, version: number) => `/api/vaults/${vault}/records/${record}/${version}`,
 };
 
 /** What a store refused a filing for, in words both ends share. */
 export type WireRefusal =
   | { readonly refused: 'version-already-filed'; readonly record: WireRecord; readonly version: number }
-  | { readonly refused: 'not-the-next-version'; readonly record: WireRecord; readonly version: number; readonly why: string };
+  | { readonly refused: 'not-the-next-version'; readonly record: WireRecord; readonly version: number; readonly why: string }
+  | { readonly refused: 'not-filed'; readonly record: WireRecord; readonly version: number; readonly why: string };
 
 /** What the store says once a version is filed. */
 export interface WireFiled {
@@ -139,3 +149,43 @@ export interface WireFiled {
   readonly version: number;
   readonly digest: string;
 }
+
+/* ------------------------------------------------------------------ *
+ * who filed a record
+ * ------------------------------------------------------------------ */
+
+const FILING_DOMAIN = 'confidential-accounts/sealed-filing/v1';
+
+/** The exact text a filer signs: the record without its signature, and what it is filed as. */
+export const filingMessage = (record: WireRecord, rec: SealedPool): string => canonical({
+  domain: FILING_DOMAIN,
+  record,
+  vault: rec.vault,
+  version: rec.version,
+  sealed: rec.sealed,
+  wrapped: rec.wrapped,
+});
+
+/**
+ * **THE RECORD, SIGNED BY THE SIGNER FILING IT.** Their signing secret stays on
+ * their device; the record carries the public half and the signature.
+ */
+export const signFiling = (record: WireRecord, rec: SealedPool, signingSecret: Hex): SealedPool => {
+  const { filedBy: _replaced, ...unsigned } = rec;
+  return {
+    ...unsigned,
+    filedBy: { publicKey: signingPublicKeyOf(signingSecret), signature: sign(filingMessage(record, unsigned), signingSecret) },
+  };
+};
+
+/**
+ * **THE SIGNING KEY THAT FILED THIS RECORD AS THIS KIND, OR `null`.** Null for a
+ * record nobody signed, and for a signature that does not cover exactly this
+ * record, kind, vault and version.
+ */
+export const verifiedFiler = (record: WireRecord, rec: SealedPool): Hex | null => {
+  const f = rec.filedBy;
+  if (!f || typeof f.publicKey !== 'string' || typeof f.signature !== 'string') return null;
+  const { filedBy: _signature, ...unsigned } = rec;
+  return verify(filingMessage(record, unsigned), f.signature, f.publicKey) ? f.publicKey : null;
+};

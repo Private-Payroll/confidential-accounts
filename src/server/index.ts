@@ -50,6 +50,12 @@ import { loadEnvFile } from '../db/connect.js';
 import { appendWebConsole, webConsoleLogPath } from './web-console-log.js';
 /* `C157` — every refusal this service makes, kept. See `wrap` below. */
 import { appendRefusal, refusalLogPath } from './refusal-log.js';
+import {
+  mountVaultRecords, openedOnFirstUse, vaultAccountFromTheIndexer, type VaultAccountReader,
+} from './vault-records-authority.js';
+import { openVaultRecords, refuseVaultsTheOperatorToolsKeep } from '../db/vault-records.js';
+import { MemorySealedPoolStore, type SealedPoolStore } from '../midnight/vault-pool.js';
+import type { WireRecord } from '../midnight/sealed-record-wire.js';
 
 /**
  * **`.env` IS READ HERE, AND UNTIL X2 IT WAS NOT READ AT ALL.**
@@ -328,6 +334,8 @@ const plugins = new PluginService(store, accounts);
 const DATABASE_URL = process.env.DATABASE_URL;
 let sessions: SessionStore;
 let limiter: RateLimiter;
+/* The same database, kept for a vault's sealed records below. */
+let recordsSql: import('../db/vault-records.js').RecordsSql | null = null;
 
 /*
  * **BOTH ANSWERS AT ONCE IS NOT AN ANSWER.** `X2`, and it is the guard that
@@ -362,6 +370,7 @@ if (DATABASE_URL) {
   const sql = postgres(DATABASE_URL, { onnotice: () => {} });
   sessions = new PostgresSessionStore(sql);
   limiter = new PostgresRateLimiter(sql);
+  recordsSql = sql as never;
 } else if (process.env.ALLOW_MEMORY_SESSIONS === '1') {
   console.warn(
     '\n  !! ALLOW_MEMORY_SESSIONS=1 — sessions and the attempt limiter are in memory.\n' +
@@ -462,6 +471,47 @@ const app = express();
  */
 app.set('json replacer', bigintJsonReplacer);
 app.use(cors());
+/*
+ * **A VAULT'S SEALED RECORDS: ITS NOTE POOL, ITS TWO JOURNALS AND ITS NONCE
+ * SECRET, KEPT HERE AND OPENED ONLY ON A SIGNER'S DEVICE.**
+ *
+ * Who may read and file them is answered by the chain and the account records:
+ * the vault's ledger names the company's account, and the person must be an
+ * active signer of the company with that address. Every filing is signed.
+ * Without a database the records are kept in this process only, which is for
+ * development and says so.
+ */
+{
+  /*
+   * Opened at the first request rather than at start, so a database that is not
+   * answering refuses the records it holds and does not stop the server; and
+   * asked about its durability on that first open, as the store requires.
+   */
+  const sqlForRecords = recordsSql;
+  if (!sqlForRecords) {
+    console.warn('     A vault\'s sealed records are in memory too, and a restart loses them.\n');
+  }
+  const records: { of(record: WireRecord): SealedPoolStore } = sqlForRecords
+    ? openedOnFirstUse(() => openVaultRecords(sqlForRecords, {
+      refuseToCreate: refuseVaultsTheOperatorToolsKeep(join(process.cwd(), '.midnight')),
+    }))
+    : (() => {
+      const kept = new Map<WireRecord, SealedPoolStore>();
+      return { of: (record: WireRecord) => kept.get(record) ?? kept.set(record, new MemorySealedPoolStore()).get(record)! };
+    })();
+  const accountOf: VaultAccountReader = startup.started
+    ? vaultAccountFromTheIndexer(await (async () => {
+      const { indexerPublicDataProvider } = await import('@midnight-ntwrk/midnight-js-indexer-public-data-provider');
+      return indexerPublicDataProvider(startup.deployment.indexerUrl, startup.deployment.indexerWsUrl) as never;
+    })())
+    : async () => { throw new Error(startup.refusal); };
+  /* `authed` is defined further down; it is looked up when a request arrives, by which time it is. */
+  mountVaultRecords(app, {
+    signedIn: (req, res, next) => authed(req, res, next),
+    records, accountOf, companies: () => store.listAccounts(),
+  });
+}
+
 app.use(express.json({ limit: '1mb' }));
 
 /*

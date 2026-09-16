@@ -132,4 +132,6 @@ export const journalledAttempts = (input: {
     deposits: everyVersionFiled(input.depositJournalFile, input.vault),
     payments: everyVersionFiled(input.paymentJournalFile, input.vault),
     opener: input.opener,
+    /* These files hold versions written before labels were sealed inside records. */
+    unlabelled: 'accept',
   });

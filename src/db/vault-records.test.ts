@@ -365,7 +365,7 @@ withDb('against a real database', () => {
     const payments = new PaymentJournalInStore(records.of('payment-journal'), v, opener, async () => s.list);
     const deposits = new DepositJournalInStore(
       records.of('deposit-journal'), v, opener, async () => s.list, depositNonceKeyFor(new Uint8Array(32).fill(9), v));
-    const claimed = await deposits.claim(v, { token: GBP, value: 900n }, 'now');
+    const claimed = await deposits.claim(v, { token: GBP, value: 900n }, 1, 'now');
     await payments.record(v, { spent: { nonce: '33'.repeat(32), token: GBP, value: 900n }, amount: 250n, attemptedAt: 'now' } as never);
     await payments.record(v, { spent: { nonce: '33'.repeat(32), token: GBP, value: 900n }, amount: 250n, attemptedAt: 'again' } as never);
     const read = attemptsFromJournalVersions({

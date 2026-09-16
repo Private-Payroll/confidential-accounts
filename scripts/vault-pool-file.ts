@@ -295,6 +295,12 @@ const flushDirectory = (disk: DurableDisk, dir: string): void => {
 };
 
 export class FileSealedPoolStore implements SealedPoolStore {
+  /**
+   * These files were written before a record's label was sealed inside it, and
+   * their older versions still are unlabelled, so a reader accepts them from here.
+   */
+  readonly unlabelledRecordsFiled = true;
+
   constructor(
     private file: string,
     /** The one vault this store is for. Lower-case hex, as the registry holds it. */

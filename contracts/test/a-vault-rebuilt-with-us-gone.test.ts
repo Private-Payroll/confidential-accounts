@@ -8,8 +8,8 @@
  * deposited, the amounts it put in, the amounts it paid, and the chain.
  *
  * The vault is the real compiled contract, run in process. Deposits go through
- * the product's own claim (the nonce is derived inside it, from the version it
- * files) and the product's own check that the coin is new. Payments go through
+ * the product's own claim (the nonce is derived inside it, from the slot the vault
+ * gives it) and the product's own check that the coin is new. Payments go through
  * the contract's own `payout`. The chain's record of which transaction made
  * which output is read off each call's own Zswap state, never derived.
  *
@@ -45,7 +45,7 @@ import {
   DepositJournalInStore, PaymentJournalInStore, attemptsFromJournalVersions,
 } from '../../src/midnight/vault-journal.js';
 import {
-  depositNonceKeyFor, vaultOutputHistoryFrom, whyThisCoinIsNotNew, type DepositNonceKey,
+  depositNonceKeyFor, vaultOutputHistoryFrom, claimNewDepositCoin, type DepositNonceKey,
 } from '../../src/midnight/deposit-nonce.js';
 import { walkCompanyRecords, type CompanyRecords } from '../../src/midnight/rebuild-from-records.js';
 import { UNLOCK_PURPOSE, UNLOCK_WINDOW_MS, unlockAsk } from '../../src/core/wallet-unlock.js';
@@ -223,12 +223,13 @@ describe('a vault whose every record of ours is gone', () => {
     /* A deposit, the way the product makes one: claim, check the coin is new, call, record. */
     const deposit = async (value: bigint, opts: { abandon?: boolean } = {}) => {
       const createdBefore = await vaultOutputHistoryFrom(theChain()).everCreated(vaultAddr);
-      const { coin } = await depositJournal.claim(vaultAddr, { token: toHex(GBP), value }, new Date().toISOString());
-      expect(whyThisCoinIsNotNew({
-        poolHoldsTheNonce: (await pool.load(vaultAddr)).notes.some((n) => n.nonce === coin.nonce),
-        heldNow: chainNotes().includes(held(coin)),
-        createdBefore: createdBefore.has(await vaultNoteCommitment(coin, vaultAddr)),
-      })).toBeNull();
+      const { coin, slot } = await claimNewDepositCoin({
+        vault: vaultAddr, money: { token: toHex(GBP), value }, journal: depositJournal, everCreated: createdBefore,
+        outputCommitmentOf: (c) => vaultNoteCommitment(c, vaultAddr),
+        heldNow: (c) => chainNotes().includes(held(c)),
+        poolHoldsTheNonce: async (n) => (await pool.load(vaultAddr)).notes.some((x) => x.nonce === n),
+      });
+      expect(slot, 'the setup meant every coin here to be new at its first slot').toBe(createdBefore.size + 1);
       if (opts.abandon) return coin;
       const r = await vault.impureCircuits.deposit(ctx('deposit'), {
         nonce: fromHex(coin.nonce), color: fromHex(coin.token), value: coin.value,
@@ -260,10 +261,10 @@ describe('a vault whose every record of ours is gone', () => {
   it('THE POOL DELETED, THE VAULT REBUILT FROM THE COMPANY\'S SEED AND ITS OWN RECORDS, AND A NOTE THAT COMES BACK SPENT', async () => {
     const work = await aCompanyAtWork(depositNonceKeyFor(releasedCompanyKey(WORDS, company), vaultAddr));
 
-    const first = await work.deposit(1_000n);                       // version 1
-    const second = await work.deposit(400n);                        // version 2
-    await work.deposit(5_000n, { abandon: true });                  // version 3: filed, never called
-    const third = await work.deposit(1_000n);                       // version 4: the same amount as the first
+    const first = await work.deposit(1_000n);                       // slot 1
+    const second = await work.deposit(400n);                        // slot 2
+    await work.deposit(5_000n, { abandon: true });                  // slot 3: filed, never called, so it uses nothing up
+    const third = await work.deposit(1_000n);                       // slot 3 again: the same amount as the first
     expect(third.nonce, 'RED WHEN: two deposits of one amount share a nonce').not.toBe(first.nonce);
 
     const toBob = await work.payFromThePool(BOB, 250n, 0xb1);        // 400 -> change 150
@@ -310,8 +311,8 @@ describe('a vault whose every record of ours is gone', () => {
       walk.found,
       'RED WHEN: a deposit, or a change that a spent note became, is not named from the records -- the 50 is only reachable through a 400 and a 150 the vault no longer holds',
     ).toEqual({ deposits: 3, changes: 3, pieces: 0 });
-    expect(walk.versions, 'RED WHEN: an abandoned attempt stops the walk, so the deposit after it is never named')
-      .toEqual([{ walked: 24, lastFound: 4 }]);
+    expect(walk.slots, 'RED WHEN: the walk is bounded by anything but the vault\'s six outputs and the attempts')
+      .toEqual({ walked: 9, lastFound: 3 });
 
     const rebuilt = reconcileVaultPool({
       vault: vaultAddr, chain: chainNotes(), versions: [], named: walk.coins, circuits: vaultCircuits,

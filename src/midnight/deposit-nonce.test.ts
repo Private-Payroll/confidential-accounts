@@ -8,8 +8,10 @@
 import { describe, it, expect } from 'vitest';
 import {
   depositNonceAt, depositNonceKeyFor, vaultOutputHistoryFrom, noVaultOutputHistory,
-  whyThisCoinIsNotNew, DepositCoinAlreadyMade, type DepositNonceKey,
+  whyThisCoinIsNotNew, DepositCoinAlreadyMade, claimNewDepositCoin, lastDepositSlot,
+  DEPOSIT_SLOT_ATTEMPTS, type DepositNonceKey, type DepositCoin,
 } from './deposit-nonce.js';
+import type { DepositJournal } from './vault-ledger.js';
 import { toHex } from '../core/crypto.js';
 import type { NoteEvents, ServedEvent, VaultTransactions } from './note-index.js';
 
@@ -24,7 +26,7 @@ describe('the key a vault\'s deposit nonces are derived from', () => {
     expect(
       toHex(depositNonceKeyFor(ROOT, 'AB'.repeat(32))),
       'RED WHEN: the salt, the info or the fold of the vault address changes -- every deposit made before is then found only by its journal',
-    ).toBe('b2dffd6dab025e29e8ea3b54e57973d38ccb5567ccc183dddabd84f740e2ca6a');
+    ).toBe('3af8de1847ce876b1c8d46fe95fedc486b39b0d96f3d6c3b67ffb9badf0f781c');
   });
 
   it('differs by vault and by root, and is never the root itself', () => {
@@ -44,30 +46,30 @@ describe('the key a vault\'s deposit nonces are derived from', () => {
   });
 });
 
-describe('the nonce of the deposit filed at one version', () => {
+describe('the nonce of a deposit at one slot', () => {
   const money = { token: GBP, value: 1_000_000n };
 
   it('IS THE PINNED VECTOR', () => {
     expect(
       depositNonceAt(key(), money, 3),
-      'RED WHEN: the tag, the separator, the token, the 16-byte value or the 8-byte version is laid out differently',
-    ).toBe('8f51c63653fcfd3739f97c83c34368e00e6afb0de97f280f342ed3703c8dd846');
+      'RED WHEN: the tag, the separator, the token, the 16-byte value or the 8-byte slot is laid out differently',
+    ).toBe('02e76f223e74985f31440c1dccece3be5b8a9310ec2e67f729624831638de3cf');
   });
 
-  it('changes with the version, the value, the token and the key, and with nothing else', () => {
+  it('changes with the slot, the value, the token and the key, and with nothing else', () => {
     const at3 = depositNonceAt(key(), money, 3);
     expect(depositNonceAt(key(), money, 3)).toBe(at3);
-    expect(depositNonceAt(key(), money, 4), 'RED WHEN: the version is not an input, so every deposit shares a nonce').not.toBe(at3);
+    expect(depositNonceAt(key(), money, 4), 'RED WHEN: the slot is not an input, so every deposit of one amount shares a nonce').not.toBe(at3);
     expect(depositNonceAt(key(), { ...money, value: 999_999n }, 3),
-      'RED WHEN: the value is not an input, so a version handed out again makes two coins under one nonce').not.toBe(at3);
+      'RED WHEN: the value is not an input, so two amounts at one slot make two coins under one nonce').not.toBe(at3);
     expect(depositNonceAt(key(), { ...money, token: 'bb'.repeat(32) }, 3), 'RED WHEN: the token is not an input').not.toBe(at3);
     expect(depositNonceAt(key(ROOT, 'cd'.repeat(32)), money, 3), 'RED WHEN: the key is not an input').not.toBe(at3);
     expect(depositNonceAt(key(), { ...money, token: GBP.toUpperCase() }, 3), 'RED WHEN: two spellings of a token derive two nonces').toBe(at3);
   });
 
-  it('REFUSES a version that is not a whole number from 1, and an amount the ledger cannot hold', () => {
+  it('REFUSES a slot that is not a whole number from 1, and an amount the ledger cannot hold', () => {
     for (const v of [0, -1, 1.5, Number.NaN]) {
-      expect(() => depositNonceAt(key(), money, v), `RED WHEN: version ${v} derives a nonce`).toThrow(/whole version from 1/);
+      expect(() => depositNonceAt(key(), money, v), `RED WHEN: slot ${v} derives a nonce`).toThrow(/whole slot from 1/);
     }
     expect(() => depositNonceAt(key(), { ...money, value: 0n }, 1), 'RED WHEN: a deposit of nothing derives a nonce').toThrow(/positive amount/);
     expect(() => depositNonceAt(key(), { ...money, value: 1n << 128n }, 1), 'RED WHEN: an amount wider than the ledger\'s value derives a nonce').toThrow(/positive amount/);
@@ -135,6 +137,70 @@ describe('whether a coin is new', () => {
     const e = new DepositCoinAlreadyMade(3, 'because');
     expect(e.name).toBe('DepositCoinAlreadyMade');
     expect(e.message).toMatch(/no money moved/);
-    expect(e.message).toMatch(/Find which store is the current one/);
+    expect(e.message).toMatch(/read the vault again, and deposit/);
+  });
+});
+
+describe('the slots a deposit may use, and how far a rebuild walks', () => {
+  it('is the vault\'s output count plus the attempts, and nothing else', () => {
+    expect(DEPOSIT_SLOT_ATTEMPTS, 'RED WHEN: a deposit may try a different number of slots than the walk covers').toBe(3);
+    expect(lastDepositSlot(0), 'RED WHEN: the walk of an empty vault stops before the first deposit\'s slots').toBe(3);
+    expect(lastDepositSlot(3_060), 'RED WHEN: the walk bound is not the count plus the attempts').toBe(3_063);
+    for (const bad of [-1, 1.5, Number.NaN]) {
+      expect(() => lastDepositSlot(bad), `RED WHEN: a count of ${bad} is walked`).toThrow(/whole number of coins/);
+    }
+  });
+});
+
+describe('choosing a deposit\'s coin', () => {
+  const GBP_MONEY = { token: GBP, value: 500n };
+  const journalOf = (lines: Array<{ slot: number; coin: DepositCoin }>): DepositJournal => ({
+    claim: async (_vault, money, slot, attemptedAt) => {
+      const coin = { nonce: depositNonceAt(key(), money, slot), token: money.token, value: money.value };
+      lines.push({ slot, coin });
+      return { coin, attemptedAt };
+    },
+  });
+  const commitment = (c: DepositCoin) => `c-${c.nonce}`;
+
+  it('USES THE SLOT AFTER EVERYTHING THE VAULT HAS MADE, and hands back the coin the journal filed', async () => {
+    const lines: Array<{ slot: number; coin: DepositCoin }> = [];
+    const got = await claimNewDepositCoin({
+      vault: VAULT, money: GBP_MONEY, journal: journalOf(lines),
+      everCreated: new Set(['x', 'y', 'z', 'w']),
+      outputCommitmentOf: commitment, heldNow: () => false, poolHoldsTheNonce: () => false,
+    });
+    expect(got.slot, 'RED WHEN: the first slot is not the output count plus one').toBe(5);
+    expect(got.coin, 'RED WHEN: the coin used is not the one the journal filed').toEqual(lines[0]!.coin);
+    expect(lines.map((l) => l.slot), 'RED WHEN: more than one line is filed for a coin that is new').toEqual([5]);
+  });
+
+  it('MOVES TO THE NEXT SLOT when a coin already exists anywhere, and refuses after the last', async () => {
+    const lines: Array<{ slot: number; coin: DepositCoin }> = [];
+    const at = (slot: number) => ({ nonce: depositNonceAt(key(), GBP_MONEY, slot), ...GBP_MONEY });
+    const made = new Set([commitment(at(2))]);
+    const got = await claimNewDepositCoin({
+      vault: VAULT, money: GBP_MONEY, journal: journalOf(lines), everCreated: made,
+      outputCommitmentOf: commitment, heldNow: () => false,
+      poolHoldsTheNonce: (n) => n === at(3).nonce,
+    });
+    expect(lines.map((l) => l.slot), 'RED WHEN: a coin the chain made, or the pool holds, is used instead of moving on').toEqual([2, 3, 4]);
+    expect(got.slot, 'RED WHEN: the coin handed back is not the one at the first free slot').toBe(4);
+    const stuck: Array<{ slot: number; coin: DepositCoin }> = [];
+    await expect(claimNewDepositCoin({
+      vault: VAULT, money: GBP_MONEY, journal: journalOf(stuck), everCreated: new Set(),
+      outputCommitmentOf: commitment, heldNow: () => true, poolHoldsTheNonce: () => false,
+    }), 'RED WHEN: a deposit tries past the last slot a rebuild walks, or uses a coin the vault holds').rejects.toThrow(DepositCoinAlreadyMade);
+    expect(stuck.map((l) => l.slot), 'RED WHEN: the slots tried are not exactly the ones a rebuild walks').toEqual([1, 2, 3]);
+  });
+
+  it('a check that refuses the coin stops the deposit with the line filed and nothing else', async () => {
+    const lines: Array<{ slot: number; coin: DepositCoin }> = [];
+    await expect(claimNewDepositCoin({
+      vault: VAULT, money: GBP_MONEY, journal: journalOf(lines), everCreated: new Set(),
+      outputCommitmentOf: commitment, heldNow: () => false, poolHoldsTheNonce: () => false,
+      accept: () => { throw new Error('the pool would refuse this note'); },
+    }), 'RED WHEN: the last check is skipped').rejects.toThrow(/pool would refuse/);
+    expect(lines).toHaveLength(1);
   });
 });

@@ -189,7 +189,7 @@ async function main(): Promise<number> {
    * which is the only record of that answer once the coin is spent.
    */
   const versions = filed.map((f) => {
-    const page = openPool(f.sealed, chosen.id, chosen.wrappingSecret);
+    const page = openPool(f.sealed, chosen.id, chosen.wrappingSecret, { record: 'pool', unlabelled: 'accept' });
     return { version: f.version, notes: page.notes, ...(page.settled ? { settled: page.settled } : {}) };
   });
   const everFiled = new Set(versions.flatMap((v) => v.notes.map((n) => n.nonce)));

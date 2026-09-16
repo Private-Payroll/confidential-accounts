@@ -6,23 +6,26 @@
  * But the search for one is not blind. A company knows what it put in (its
  * bank or exchange records) and what it paid (its payroll), and it keeps both
  * whether or not this product exists. With deposit nonces derived from a key
- * the company holds (`deposit-nonce.ts`), each (version, amount) pair is one
+ * the company holds (`deposit-nonce.ts`), each (slot, amount) pair is one
  * candidate coin, and each candidate costs one commitment and one set lookup
  * against every coin the chain has ever created for the vault.
  *
  * **THE WALK.**
- *   1. Deposits: for each version of the deposit journal from 1, every amount
- *      the company deposited is tried under every key it was given. The walk
- *      goes at least as far as the number of coins the chain has created for
- *      the vault, and then stops after `gap` versions in a row at which no key
- *      names anything: an attempt that never landed, a line written before
- *      nonces were derived and a deposit by a person whose key is not given
- *      each leave such a version.
+ *   1. Deposits: for each slot from 1 to the vault's output count plus
+ *      `DEPOSIT_SLOT_ATTEMPTS` (`lastDepositSlot`), every amount the company
+ *      deposited is tried under every epoch of the vault's nonce secret. That
+ *      is every slot any deposit to this vault can have used, however many
+ *      attempts were abandoned or refused, so the walk has no gap to guess.
  *   2. Everything a found note became: for each amount the company paid,
  *      the change a payment of that amount left (its nonce follows from the
  *      spent note's, its value is the rest) and the piece a split of that
  *      amount made. Found notes are walked the same way until nothing new is
  *      found.
+ *
+ * **ASK THE CONTRACT, NOT THE LEDGER'S GENERAL CODE.** Each candidate is one
+ * commitment. The vault's own compiled contract computes the same value the
+ * ledger records for a contract-owned output (`compiledOutputCommitment`), at
+ * a small fraction of the cost of building a ledger output to read it off.
  *
  * **THIS ONLY PROPOSES.** What it returns is every coin the chain has ever
  * created for this vault that the records can name, spent or not. Which of
@@ -32,15 +35,17 @@
  *
  * **WHAT IT CANNOT FIND, SAID RATHER THAN HIDDEN.** An amount the records do
  * not hold to the base unit names nothing, and so does a deposit somebody else
- * made, a split of an amount that is not a payment, and a deposit made with a
- * nonce that was not derived. Each of those leaves a commitment in the vault's
+ * made, a split of an amount that is not a payment, a deposit made with a
+ * nonce that was not derived, and a deposit derived from a key that is not one
+ * of the vault's epochs (the operator tools derive theirs from their own seed
+ * file). Each of those leaves a commitment in the vault's
  * note set that nothing explains, and the rebuild reports it as unexplained.
  */
 import type { Hex } from '../core/crypto.js';
 import { toHex, fromHex } from '../core/crypto.js';
 import type { VaultCoin } from './vault-coins.js';
-import { changeNoteOf, sentNonceOf } from './vault-recovery.js';
-import { depositNonceAt, type DepositNonceKey } from './deposit-nonce.js';
+import { changeNotesOf, sentNonceOf } from './vault-recovery.js';
+import { depositNonceAt, lastDepositSlot, type DepositNonceKey } from './deposit-nonce.js';
 
 /** What the company recorded, per token, in the token's base units. */
 export interface CompanyRecords {
@@ -58,16 +63,44 @@ export interface RecordsWalk {
   readonly found: { readonly deposits: number; readonly changes: number; readonly pieces: number };
   /** Candidate coins put to the history. */
   readonly checks: number;
-  /** The highest deposit version walked, and the highest at which any key named a coin (0 for none). */
-  readonly versions: ReadonlyArray<{ readonly walked: number; readonly lastFound: number }>;
+  /** The last deposit slot walked, which the vault's output count decides, and the last at which a coin was named (0 for none). */
+  readonly slots: { readonly walked: number; readonly lastFound: number };
 }
 
 /**
- * How many versions in a row may name nothing before the deposit walk stops.
- * Each is one refused or abandoned deposit attempt; a company with more in a
- * row than this passes a larger number.
+ * **THE LEDGER'S COMMITMENT OF A COIN OWNED BY A VAULT, COMPUTED BY THE VAULT'S
+ * OWN COMPILED CONTRACT.** The same function its deposit and payout circuits
+ * use to claim the outputs they make, which the ledger checks against the
+ * outputs it records; so it answers what the ledger answers, without building a
+ * ledger output for every candidate.
  */
-export const DEPOSIT_VERSION_GAP = 20;
+export const compiledOutputCommitment = async (): Promise<(coin: VaultCoin, vault: Hex) => string> => {
+  const { Contract } = await import('../../contracts/managed-vault/contract/index.js');
+  /* The one witness the contract requires, which a commitment never reaches. */
+  const spendsNothing = { noteToSpend: () => { throw new Error('a rebuild computes commitments and spends nothing'); } };
+  const contract = new Contract(spendsNothing as never) as unknown as {
+    _coinCommitment_0?: (
+      coin: { nonce: Uint8Array; color: Uint8Array; value: bigint },
+      recipient: { is_left: boolean; left: { bytes: Uint8Array }; right: { bytes: Uint8Array } },
+    ) => Uint8Array;
+  };
+  const commit = contract._coinCommitment_0;
+  if (typeof commit !== 'function') {
+    throw new Error(
+      'the compiled vault contract no longer carries the commitment function a rebuild asks, so no '
+      + 'candidate can be checked. Nothing is proposed. Rebuild the contract artefacts this build expects.');
+  }
+  const noUser = new Uint8Array(32);
+  /* A walk asks about one vault many times; its bytes are made once per vault asked about. */
+  let asked: { vault: Hex; recipient: { is_left: boolean; left: { bytes: Uint8Array }; right: { bytes: Uint8Array } } } | null = null;
+  return (coin, vault) => {
+    if (asked === null || asked.vault !== vault) {
+      asked = { vault, recipient: { is_left: false, left: { bytes: noUser }, right: { bytes: fromHex(vault) } } };
+    }
+    return toHex(commit.call(contract,
+      { nonce: fromHex(coin.nonce), color: fromHex(coin.token), value: coin.value }, asked.recipient));
+  };
+};
 
 const distinct = <T>(xs: readonly T[], keyOf: (x: T) => string): T[] => {
   const seen = new Map<string, T>();
@@ -78,17 +111,14 @@ const distinct = <T>(xs: readonly T[], keyOf: (x: T) => string): T[] => {
 export const walkCompanyRecords = async (input: {
   /** The vault's own address. */
   readonly vault: Hex;
-  /** One key per person who has deposited into this vault. */
+  /** One key per epoch of the vault's nonce secret, every epoch the company has had. */
   readonly keys: readonly DepositNonceKey[];
   readonly records: CompanyRecords;
   /** The ledger's commitment of every coin the chain has ever created for the vault. */
   readonly everCreated: ReadonlySet<string>;
   /** The ledger's commitment of one coin owned by the vault. */
   readonly commitmentOf: (coin: VaultCoin, vault: Hex) => Promise<string> | string;
-  readonly gap?: number;
 }): Promise<RecordsWalk> => {
-  const gap = input.gap ?? DEPOSIT_VERSION_GAP;
-  if (!Number.isInteger(gap) || gap < 1) throw new Error('the deposit walk needs a gap of at least one version');
   /*
    * A token is written one way, 64 lower-case hex characters, as the pool writes
    * it: a record in another spelling is refused rather than folded, because a
@@ -133,46 +163,46 @@ export const walkCompanyRecords = async (input: {
   };
 
   /*
-   * **ONE WALK OVER THE VERSIONS, FOR EVERY KEY AT ONCE.** A version number
-   * belongs to the vault's deposit journal, not to a person: every depositor,
-   * every abandoned attempt and every line written before nonces were derived
-   * uses one. So the gap is counted over versions at which NO key named a coin.
-   * Counted per key, one person's run of deposits would read as a gap for
-   * everybody else, and a deposit made after it would never be tried.
+   * **EVERY SLOT A DEPOSIT CAN HAVE USED, FOR EVERY EPOCH AT ONCE.** A slot is
+   * the vault's output count when the deposit was prepared, plus its attempt,
+   * and that count only grows; so no deposit to this vault used a slot past
+   * `lastDepositSlot` of the count read now. The bound is the vault's, not a
+   * number of misses in a row.
    */
-  /*
-   * **AND NEVER SHORTER THAN THE VAULT'S OWN OUTPUT COUNT.** Every deposit that
-   * landed made an output and used a version - one made before nonces were
-   * derived, or by a person whose key is not here, included. So at least that
-   * many versions are walked before the gap is allowed to end it, however many
-   * of them this walk cannot name.
-   */
-  const floor = input.keys.length > 0 ? input.everCreated.size : 0;
+  const last = input.keys.length > 0 ? lastDepositSlot(input.everCreated.size) : 0;
   let lastFound = 0;
-  let version = 1;
-  for (; input.keys.length > 0 && (version <= floor || version - lastFound <= gap); version += 1) {
+  for (let slot = 1; slot <= last; slot += 1) {
     for (const key of input.keys) {
       for (const d of deposited) {
-        const coin = { nonce: depositNonceAt(key, d, version), token: d.token, value: d.value };
-        if (await made(coin)) {
+        const coin = { nonce: depositNonceAt(key, d, slot), token: d.token, value: d.value };
+        if (!byNonce.has(coin.nonce) && await made(coin)) {
           keep(coin, 'deposits');
-          lastFound = version;
+          lastFound = slot;
         }
       }
     }
   }
-  const versions = [{ walked: version - 1, lastFound }];
+  const slots = { walked: last, lastFound };
 
+  /*
+   * **A CHANGE'S NONCE, AND A PIECE'S, DEPEND ONLY ON THE NOTE THEY CAME FROM**,
+   * so each is worked out once per note, and only one change and one piece can
+   * exist per note: once one is found, the other amounts are not tried.
+   */
   for (let i = 0; i < coins.length; i += 1) {
     const note = coins[i]!;
-    for (const amount of paidByToken.get(note.token) ?? []) {
-      if (amount >= note.value) continue;
-      const change = changeNoteOf(note, amount)!;
-      if (!byNonce.has(change.nonce) && await made(change)) keep(change, 'changes');
-      const piece = { nonce: toHex(sentNonceOf(fromHex(note.nonce))), token: note.token, value: amount };
-      if (!byNonce.has(piece.nonce) && await made(piece)) keep(piece, 'pieces');
+    const amounts = paidByToken.get(note.token) ?? [];
+    for (const change of changeNotesOf(note, amounts)) {
+      if (byNonce.has(change.nonce)) break;
+      if (await made(change)) keep(change, 'changes');
+    }
+    const pieceNonce = toHex(sentNonceOf(fromHex(note.nonce)));
+    for (const amount of amounts) {
+      if (amount >= note.value || byNonce.has(pieceNonce)) continue;
+      const piece = { nonce: pieceNonce, token: note.token, value: amount };
+      if (await made(piece)) keep(piece, 'pieces');
     }
   }
 
-  return { coins, found, checks, versions };
+  return { coins, found, checks, slots };
 };

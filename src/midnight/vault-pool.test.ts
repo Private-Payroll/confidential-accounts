@@ -452,7 +452,37 @@ describe('what a sealed record\'s size says', () => {
       sealed: seal(canonical(POOL), key),
       wrapped: [{ signerId: 'sgn_a', wrapped: wrapKey(key, a.who.wrappingPublicKey) }],
     };
-    expect(openPool(unpadded, 'sgn_a', a.secret), 'RED WHEN: a pool written before the padding no longer opens').toEqual(POOL);
+    expect(openPool(unpadded, 'sgn_a', a.secret, { unlabelled: 'accept' }), 'RED WHEN: a pool written before the padding no longer opens where such pools are kept').toEqual(POOL);
+    expect(() => openPool(unpadded, 'sgn_a', a.secret), 'RED WHEN: a record that does not say what it is opens by default').toThrow(/does not say which record/);
+  });
+});
+
+describe('what a sealed record says it is, sealed inside it', () => {
+  it('OPENS ONLY AS THE VAULT, VERSION AND KIND IT WAS SEALED AS', () => {
+    const a = signer('sgn_a');
+    const rec = sealPool(VAULT, POOL, [a.who], 3);
+    expect(openPool(rec, 'sgn_a', a.secret), 'RED WHEN: the label leaks into what a pool opens to').toEqual(POOL);
+    expect(() => openPool({ ...rec, version: 4 }, 'sgn_a', a.secret), 'RED WHEN: an old version presented as a newer one opens').toThrow(/filed as version 4/);
+    expect(() => openPool({ ...rec, vault: 'cd'.repeat(32) }, 'sgn_a', a.secret), 'RED WHEN: one vault\'s record opens as another\'s').toThrow(/different vault/);
+    expect(() => openPool(rec, 'sgn_a', a.secret, { record: 'deposit-journal' }), 'RED WHEN: a pool opens as a journal').toThrow(/deposit-journal was asked for/);
+    const journal = sealPool(VAULT, POOL, [a.who], 3, 'deposit-journal');
+    expect(() => openPool(journal, 'sgn_a', a.secret), 'RED WHEN: a deposit journal, whose lines are coins under `notes`, opens as the pool').toThrow(/pool was asked for/);
+    expect(openPool(journal, 'sgn_a', a.secret, { record: 'deposit-journal' })).toEqual(POOL);
+  });
+
+  it('a record given a new reader is no longer the one somebody signed', () => {
+    const a = signer('sgn_a'); const c = signer('sgn_c');
+    const rec = { ...sealPool(VAULT, POOL, [a.who], 1), filedBy: { publicKey: 'aa'.repeat(32), signature: 'bb'.repeat(64) } };
+    const wider = wrapFor(rec, { signerId: 'sgn_a', wrappingSecret: a.secret }, [c.who]);
+    expect(wider.filedBy, 'RED WHEN: a signature is carried onto a wrapped list it does not cover').toBeUndefined();
+  });
+
+  it('refuses a record that says who filed it in any other form', () => {
+    const a = signer('sgn_a');
+    const rec = sealPool(VAULT, POOL, [a.who], 1);
+    expect(whyThisIsNotASealedPool({ ...rec, filedBy: { publicKey: 'zz', signature: 'bb'.repeat(64) } }, VAULT)).toMatch(/who filed it/);
+    expect(whyThisIsNotASealedPool({ ...rec, filedBy: null }, VAULT)).toMatch(/who filed it/);
+    expect(whyThisIsNotASealedPool({ ...rec, filedBy: { publicKey: 'aa'.repeat(32), signature: 'bb'.repeat(64) } }, VAULT)).toBeNull();
   });
 });
 
