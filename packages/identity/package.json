@@ -56,6 +56,14 @@
       "types": "./lib/profile/attributes.d.ts",
       "default": "./lib/profile/attributes.js"
     },
+    "./profile/balance": {
+      "types": "./lib/profile/balance.d.ts",
+      "default": "./lib/profile/balance.js"
+    },
+    "./profile/committee-key": {
+      "types": "./lib/profile/committee-key.d.ts",
+      "default": "./lib/profile/committee-key.js"
+    },
     "./profile/origin": {
       "types": "./lib/profile/origin.d.ts",
       "default": "./lib/profile/origin.js"

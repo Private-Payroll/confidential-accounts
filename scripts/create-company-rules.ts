@@ -79,8 +79,12 @@ export const PRECONDITIONS: Array<keyof CreatePreconditions> = [
  * **AND IT NAMES THE STATE THAT RESOLVES IT RATHER THAN A FILE TO CREATE.**
  * The person reading it is not the person who wrote the paths.
  */
-export function refuseIncompleteSetup(present: CreatePreconditions): string | null {
-  const missing = PRECONDITIONS.filter(p => !present[p]);
+export function refuseIncompleteSetup(
+  present: Partial<CreatePreconditions>,
+  /** The pieces this door needs; every door but the company creator needs no company wallet. */
+  needed: readonly (keyof CreatePreconditions)[] = PRECONDITIONS,
+): string | null {
+  const missing = PRECONDITIONS.filter(p => needed.includes(p) && !present[p]);
   if (missing.length === 0) return null;
   const reasons = missing.map(p => WHAT_IS_MISSING[p]);
   const listed = reasons.length === 1

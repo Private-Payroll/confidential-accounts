@@ -932,6 +932,24 @@ export interface Ledger {
   submitProven?(accountId: string, proven: Uint8Array): Promise<TxRef>;
 
   /**
+   * **SENDS A TRANSACTION A SIGNER'S DEVICE BUILT FOR ONE OF THE COMPANY'S
+   * VAULTS**: its deploy, its handover to the company's committee, or a deposit
+   * the depositor's own wallet has already paid the coins for. `check` reads the
+   * transaction and refuses it with a sentence before anything is booked. The
+   * fee payer adds only the network fee.
+   *
+   * Optional, because only an implementation that can pay fees can send.
+   */
+  sendVault?(
+    accountId: string,
+    what: string,
+    arrival: VaultTxArrival,
+    bytes: Uint8Array,
+    check: (tx: unknown) => string | null | Promise<string | null>,
+    read: (bytes: Uint8Array) => Promise<unknown>,
+  ): Promise<VaultTxSent>;
+
+  /**
    * **WHICH IMPLEMENTATION OF THIS BOUNDARY IS ANSWERING, AS A WORD.**
    *
    * `describe()` above is prose for a person and it is free to change; this is
@@ -2473,3 +2491,19 @@ export const SimulatedCommitments: CommitmentScheme = {
     return 'simulated commitments (HMAC-SHA256, not provable in a circuit)';
   },
 };
+
+/**
+ * What a paid vault transaction came to: the reference the fee payer's
+ * submission gave, and the hash of the transaction exactly as it was sent,
+ * which is what a note is later named by.
+ */
+export interface VaultTxSent extends TxRef {
+  readonly transactionHash: string | null;
+}
+
+/** How a transaction a device sends for a vault arrives. */
+export type VaultTxArrival =
+  /** Proven by the device and moving no coins: a vault's deploy, or its handover. */
+  | 'proven-moving-nothing'
+  /** Proven by the device and finished by the depositor's own wallet: a deposit. */
+  | 'finished-by-the-depositor';

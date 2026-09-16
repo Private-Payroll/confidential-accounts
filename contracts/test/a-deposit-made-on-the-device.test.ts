@@ -249,6 +249,8 @@ describe('a deposit whose record is made on the device', () => {
         queryContractState: async (a) => (a === vaultAddr ? { data: charged() } : null),
       }),
       companies,
+      /* Each person files only under the key they gave, as the product binds it. */
+      filingKeyOf: (_company, person) => [ada, bo, carol].find((p) => p.name === person)?.signing.publicKey ?? null,
     });
     /* The API's general parser, after the mount, as the product has it. */
     app.use(express.json({ limit: '1mb' }));

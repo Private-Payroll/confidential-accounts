@@ -77,7 +77,7 @@ export default defineConfig({
    * only as a response header, so it is sent with every document here.
    */
   server: {
-    port: 5173, host: true, proxy: { '/api': 'http://localhost:8787' },
+    port: 5173, host: true, proxy: { '/api': 'http://localhost:8787', '/artefacts/vault': 'http://localhost:8787' },
     headers: { ...framingHeadersFor(null) },
   },
   preview: { headers: { ...framingHeadersFor(null) } },

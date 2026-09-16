@@ -6,10 +6,11 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { postureFrom, refuseToServe, seedsAreOneParty, POSTURE_REQUIRED } from './serve-with-wallets-rules.js';
+import { refuseIncompleteSetup } from './create-company-rules.js';
 
 const ROOT = join(import.meta.dirname, '..');
 const ALL_PRESENT = {
-  fundedSeed: true, companySeed: true, maintenanceAuthority: true,
+  fundedSeed: true, maintenanceAuthority: true,
   compiledContract: true, proofServer: true,
 };
 const DEV = String(JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).scripts.dev);
@@ -36,44 +37,42 @@ describe('the posture is read off the development script', () => {
 describe('refusals before anything is brought up', () => {
   /* RED WHEN: the network check is removed. */
   it('refuses any network but stagenet', () => {
-    const r = refuseToServe({ network: 'preview', present: ALL_PRESENT, posture: postureFrom(DEV), oneSeedForBoth: false });
+    const r = refuseToServe({ network: 'preview', present: ALL_PRESENT, posture: postureFrom(DEV) });
     expect(r).toMatch(/serves stagenet and nothing else/);
     expect(r).toMatch(/nothing has been spent/i);
   });
 
   /* RED WHEN: the posture check is removed. */
   it('refuses a development script that no longer declares the origins', () => {
-    const r = refuseToServe({ network: 'stagenet', present: ALL_PRESENT, posture: { APP_ORIGIN: 'x' }, oneSeedForBoth: false });
+    const r = refuseToServe({ network: 'stagenet', present: ALL_PRESENT, posture: { APP_ORIGIN: 'x' } });
     expect(r).toMatch(/WALLET_ORIGIN, VITE_WALLET_ORIGIN/);
   });
 
   /* RED WHEN: machine preconditions stop being asked, or only the first refusal is named. */
   it('names every missing piece at once, its own and the machine\'s', () => {
     const r = refuseToServe({
-      network: 'preview', posture: {}, oneSeedForBoth: true,
+      network: 'preview', posture: {},
       present: { ...ALL_PRESENT, proofServer: false, fundedSeed: false },
     })!;
     expect(r).toMatch(/serves stagenet/);
     expect(r).toMatch(/no longer declares/);
     expect(r).toMatch(/no proof server is reachable/);
     expect(r).toMatch(/no funded wallet/);
-    expect(r).toMatch(/have the same seed on this machine/);
   });
 
   /* RED WHEN: a complete machine is refused. */
   it('answers null when everything is in place', () => {
-    expect(refuseToServe({ network: 'stagenet', present: ALL_PRESENT, posture: postureFrom(DEV), oneSeedForBoth: false }))
+    expect(refuseToServe({ network: 'stagenet', present: ALL_PRESENT, posture: postureFrom(DEV) }))
       .toBeNull();
   });
 
   /*
-   * RED WHEN: one seed for both halves is not refused. The two are meant to be
-   * two parties, and nothing after this point would say they were one.
+   * RED WHEN: the launcher asks for a company wallet again. It brings none up,
+   * and the company creator still needs one.
    */
-  it('refuses the same seed for the wallet that pays and the company wallet', () => {
-    const r = refuseToServe({ network: 'stagenet', present: ALL_PRESENT, posture: postureFrom(DEV), oneSeedForBoth: true });
-    expect(r).toMatch(/the wallet that pays and the company wallet have the same seed on this machine/);
-    expect(r).toMatch(/nothing has been spent/i);
+  it('does not ask for a company wallet, while the company creator still does', () => {
+    expect(refuseToServe({ network: 'stagenet', present: ALL_PRESENT, posture: postureFrom(DEV) })).toBeNull();
+    expect(refuseIncompleteSetup({ ...ALL_PRESENT, companySeed: false })).toMatch(/no wallet for the company itself/);
   });
 
   /* RED WHEN: a copy that differs only in space, case or a leading 0x is taken for a second wallet. */
@@ -91,7 +90,7 @@ describe('refusals before anything is brought up', () => {
    */
   it('refuses origins it cannot start before anything is brought up', () => {
     const onePort = { ...postureFrom(DEV), WALLET_ORIGIN: 'http://localhost:5173', VITE_WALLET_ORIGIN: 'http://localhost:5173' };
-    const r = refuseToServe({ network: 'stagenet', present: ALL_PRESENT, posture: onePort, oneSeedForBoth: false });
+    const r = refuseToServe({ network: 'stagenet', present: ALL_PRESENT, posture: onePort });
     expect(r).toMatch(/origins cannot be started as they are: .*are on one port/);
   });
 });
@@ -117,8 +116,8 @@ describe('the launcher hands the pair over before the server exists', () => {
    * RED WHEN: the launcher builds its fee payer by hand instead of through the
    * one construction that requires a fee record and uses the dust-only payer.
    */
-  it('builds the pair through the one construction and nothing else', () => {
-    expect(launcher).toMatch(/handInFundedParties\(fundedPartiesOver\(/);
+  it('builds the fee payer through the one construction and nothing else', () => {
+    expect(launcher).toMatch(/sponsor: feePayerOver\(/);
     expect(launcher).not.toMatch(/new WalletFeeSponsor|customerWalletOver|sponsorWalletOver/);
   });
 
@@ -134,8 +133,8 @@ describe('the launcher hands the pair over before the server exists', () => {
       const bringUp = text.indexOf('bringUpWallet(');
       expect(ceiling, `${name} does not read the ceiling`).toBeGreaterThan(-1);
       expect(ceiling, `${name} brings a wallet up before reading the ceiling`).toBeLessThan(bringUp);
-      expect(text, `${name} does not pass the ceiling to the pair`)
-        .toMatch(/fundedPartiesOver\([\s\S]*?\bceiling,\s*\)/);
+      expect(text, `${name} does not pass the ceiling to the fee payer`)
+        .toMatch(/(fundedPartiesOver|feePayerOver)\([\s\S]*?\bceiling,\s*\)/);
     }
   });
 
@@ -170,13 +169,15 @@ describe('the launcher hands the pair over before the server exists', () => {
     expect(check, 'the pages are started before the server is checked').toBeLessThan(launcher.indexOf('startThePages('));
   });
 
-  /* RED WHEN: the seeds are compared after a wallet has already been brought up from them. */
-  it('compares the two seeds before either wallet is brought up', () => {
-    const compared = launcher.indexOf('seedsAreOneParty(');
-    const passed = launcher.search(/refuseToServe\(\{[^}]*\boneSeedForBoth,/);
-    expect(compared).toBeGreaterThan(-1);
-    expect(compared).toBeLessThan(launcher.indexOf('bringUpWallet('));
-    expect(passed, 'the comparison is not what the refusal is given').toBeGreaterThan(-1);
-    expect(passed).toBeLessThan(launcher.indexOf('bringUpWallet('));
+  /*
+   * RED WHEN: the launcher brings up a company wallet again, or hands the
+   * product a company side that holds keys.
+   */
+  it('brings up one wallet, the one that pays, and hands in a company side that holds nothing', () => {
+    expect(launcher.match(/bringUpWallet\(/g) ?? []).toHaveLength(1);
+    expect(launcher).not.toContain('company.seed');
+    expect(launcher).not.toContain('fundedPartiesOver');
+    expect(launcher).toMatch(/customer: await coinlessCustomer\(\)/);
+    expect(launcher.indexOf('handInFundedParties(')).toBeLessThan(launcher.indexOf('await startTheServer(ROOT)'));
   });
 });

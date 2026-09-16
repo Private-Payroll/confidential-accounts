@@ -468,9 +468,11 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
    * source is a match is a scanner that reports itself.
    */
   const KEY_DIR = ['contracts', 'managed', 'keys'].join('/');
+  // The vault is a second contract, and its keys come from a build of its own.
+  const VAULT_KEY_DIR = ['contracts', 'managed-vault', 'keys'].join('/');
   const GATE = `skip${'If'}(`;
 
-  const gatedOnKeys = (): string[] => {
+  const gatedOnKeys = (dirs: readonly string[] = [KEY_DIR, VAULT_KEY_DIR]): string[] => {
     const out: string[] = [];
     const walk = (rel: string) => {
       for (const name of readdirSync(join(ROOT, rel))) {
@@ -481,14 +483,16 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
         const text = readFileSync(join(ROOT, child), 'utf8');
         // Gated means BOTH: it names the key directory, and it turns something
         // off. Either alone is a file that merely mentions one of them.
-        if (text.includes(KEY_DIR) && text.includes(GATE)) out.push(child);
+        if (dirs.some((d) => text.includes(d)) && text.includes(GATE)) out.push(child);
       }
     };
     for (const tree of ['src', 'scripts', 'contracts/test']) walk(tree);
     return out.sort();
   };
 
-  const keysCoverageProblem = (workflow: string, gated: readonly string[]): string | null => {
+  const keysCoverageProblem = (
+    workflow: string, gated: readonly string[], vaultGated: readonly string[] = gatedOnKeys([VAULT_KEY_DIR]),
+  ): string | null => {
     if (gated.length === 0) return 'nothing in the tree gates on the verifier keys, so this rule is checking nothing';
     const jobs = parseWorkflow(workflow);
 
@@ -514,6 +518,20 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
     for (const missing of gated.filter((f) => !reads.some((s) => (s.run as string).includes(f)))) {
       return `${missing} gates on the keys and is run by no step after they are built`;
     }
+    // THE VAULT'S KEYS ARE NOT THE ACCOUNT'S, and the account's full build does
+    // not make them: a file that reads them needs the vault's own full build,
+    // in the same job, before the step that runs it.
+    if (vaultGated.length > 0) {
+      const buildsVault = (s: WorkflowStep) => s.run !== null && /(^|&&\s*)npm run compact:vault -- --full(\s|$)/.test(s.run);
+      const v = job.steps.findIndex(buildsVault);
+      if (v === -1) return `nothing in ${job.id} builds the vault's keys, and ${vaultGated[0]} reads them`;
+      if (job.steps[v].conditional) return `the step that builds the vault's keys in ${job.id} is conditional, so it need never run`;
+      if (job.steps[v].tolerated) return `the step that builds the vault's keys in ${job.id} tolerates its own failure`;
+      const afterVault = job.steps.slice(v + 1).filter((s) => reads.includes(s));
+      for (const missing of vaultGated.filter((f) => !afterVault.some((s) => (s.run as string).includes(f)))) {
+        return `${missing} reads the vault's keys and is run by no step after they are built`;
+      }
+    }
     for (const s of reads) {
       if (s.conditional) return `a step in ${job.id} that reads the keys is conditional, so it need never run`;
       if (s.tolerated) return `a step in ${job.id} that reads the keys tolerates its own failure`;
@@ -529,10 +547,16 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
     // The list is derived, so say what it found: a rule over an empty list is a
     // rule over nothing, and the refusal above says so rather than passing.
     expect(gated).toEqual([
+      'contracts/test/a-company-vault-from-the-page.test.ts',
       'src/midnight/deferred-set.test.ts',
       'src/midnight/ledger.test.ts',
       'src/midnight/the-key-reaches-the-circuit.test.ts',
       'src/midnight/the-secret-comes-from-the-keyring.test.ts',
+      'src/wiring/vault-submission.test.ts',
+    ]);
+    expect(gatedOnKeys([VAULT_KEY_DIR])).toEqual([
+      'contracts/test/a-company-vault-from-the-page.test.ts',
+      'src/wiring/vault-submission.test.ts',
     ]);
     expect(keysCoverageProblem(WORKFLOW(), gated)).toBeNull();
   });
@@ -572,8 +596,23 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
     refuses('the run passes when it collects nothing',
       real.replace(/- run: npx vitest run /, '- run: npx vitest run --passWithNoTests '), /collects nothing/);
     refuses('THE CHEAP ONE: the keys are built AFTER the tests that read them',
-      real.replace(/      - name: build the proving and verifier keys\n        run: npm run compact\n(      - run: npx vitest run [^\n]*\n)/,
-        '$1      - name: build the proving and verifier keys\n        run: npm run compact\n'), /runs the suite after/);
+      real.replace(/      - name: build the proving and verifier keys\n        run: npm run compact\n((?:      #[^\n]*\n|      - name: build the vault[^\n]*\n        run: [^\n]*\n)*)(      - run: npx vitest run [^\n]*\n)/,
+        '$1$2      - name: build the proving and verifier keys\n        run: npm run compact\n'), /runs the suite after/);
+    refuses('the vault\'s keys are never built',
+      real.replace(/      - name: build the vault's proving and verifier keys\n        run: npm run compact:vault -- --full\n/, ''),
+      /nothing in keys builds the vault's keys/);
+    refuses('the vault\'s keys are built AFTER the tests that read them',
+      real.replace(/(      - name: build the vault's proving and verifier keys\n        run: npm run compact:vault -- --full\n)(      - run: npx vitest run [^\n]*\n)/,
+        '$2$1'), /reads the vault's keys and is run by no step after they are built/);
+    refuses('the vault\'s build is made conditional',
+      real.replace(/\n(\s+)run: npm run compact:vault -- --full\n/, '\n$1if: false\n$1run: npm run compact:vault -- --full\n'), /vault's keys .* conditional/);
+    refuses('the vault\'s build tolerates its own failure',
+      real.replace(/\n(\s+)run: npm run compact:vault -- --full\n/, '\n$1continue-on-error: true\n$1run: npm run compact:vault -- --full\n'), /vault's keys .* tolerates/);
+    refuses('the vault\'s build is only the fast one',
+      real.replace(/run: npm run compact:vault -- --full\n/, 'run: npm run compact:vault\n'), /nothing in keys builds the vault's keys/);
+    refuses('a file that reads the vault\'s keys is dropped from the run',
+      real.replace(/(- run: npx vitest run [^\n]*?) (src\/wiring\/vault-submission\.test\.ts)([^\n]*)\n/, '$1$3\n'),
+      /vault-submission\.test\.ts gates on the keys/);
 
     // AND A SHAPE IT CANNOT READ IS A REFUSAL RATHER THAN A PASS.
     expect(() => keysCoverageProblem('name: check\non: push\n', gated)).toThrow(/no `jobs:` block/);

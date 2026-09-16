@@ -49,10 +49,10 @@ import { MidnightCommitments } from '../midnight/commitments.js';
 import { FileSealedStateStore } from '../midnight/sealed-store.js';
 import { midnightProviders, sponsoredProviders, type CustomerWallet } from '../midnight/providers.js';
 import { NothingWasSent, saysNothingWasSent } from '../core/jobs.js';
-import { refusalForProven, readProvenTransaction } from './proven-submission.js';
+import { refusalForProven, readProvenTransaction, readFinishedTransaction } from './proven-submission.js';
 import type {
   Ledger, LedgerAddress, LedgerStatus, LedgerRecord, PaymentsAmong,
-  AccountOpening, SealedStateAt, TxRef, SignerRef, WriteInFlight,
+  AccountOpening, SealedStateAt, TxRef, SignerRef, WriteInFlight, VaultTxArrival, VaultTxSent,
 } from '../core/ledger.js';
 import type { Hex } from '../core/crypto.js';
 import type { Deployment } from './deployment.js';
@@ -535,6 +535,56 @@ export class ChainLedger implements Ledger {
    * so the device can say so. A failure of the submission itself does not: it
    * may have landed.
    */
+  /**
+   * **A VAULT TRANSACTION A SIGNER'S DEVICE BUILT, PAID FOR AND SENT, WITH NO
+   * COMPANY WALLET ANYWHERE ON THE WAY.**
+   *
+   * `check` reads the transaction and answers a sentence to refuse it; nothing
+   * is booked until it answers `null`. A transaction that moves nothing is
+   * bound here; one a depositor's wallet finished is already bound and signed.
+   * Either way the fee payer adds only DUST and submits, so the token kinds the
+   * two parties balance never overlap.
+   *
+   * Through the same one-write-at-a-time lane as every other write, and every
+   * failure before the submission carries the mark that nothing was sent.
+   */
+  sendVault(
+    accountId: string,
+    what: string,
+    arrival: VaultTxArrival,
+    bytes: Uint8Array,
+    check: (tx: unknown) => string | null | Promise<string | null>,
+    read: (bytes: Uint8Array) => Promise<unknown>,
+  ): Promise<VaultTxSent> {
+    let submitting = false;
+    return this.write(accountId, what, async () => {
+      let tx: unknown;
+      try {
+        tx = await read(bytes);
+      } catch {
+        throw new NothingWasSent(`this is not a transaction this service can read, so ${what} was not paid for. Nothing was sent.`);
+      }
+      const refusal = await check(tx);
+      if (refusal !== null) throw new NothingWasSent(refusal);
+      const bound = arrival === 'proven-moving-nothing'
+        ? (tx as { bind(): unknown }).bind()
+        : tx;
+      const deadline = new Date(Date.now() + 20 * 60_000);
+      const payer = this.payer!;
+      const finalised = await payer.addFeeAndFinalise(bound, deadline);
+      let transactionHash: string | null = null;
+      try {
+        transactionHash = String((finalised as { transactionHash(): unknown }).transactionHash());
+      } catch { /* the reference below still names it */ }
+      submitting = true;
+      const ref = await payer.submit(finalised);
+      return { ref: String(ref.ref), at: ref.at, transactionHash };
+    }).catch((e: unknown) => {
+      if (submitting || saysNothingWasSent(e)) throw e;
+      throw new NothingWasSent(String((e as { message?: unknown })?.message ?? e));
+    });
+  }
+
   submitProven(
     accountId: string,
     proven: Uint8Array,
@@ -571,6 +621,15 @@ export class ChainLedger implements Ledger {
     });
   }
 }
+
+/**
+ * **HOW A VAULT TRANSACTION A DEVICE SENT IS READ**: proven and not yet bound
+ * when it moves nothing, bound and signed when the depositor's wallet finished
+ * it. `ChainLedger.sendVault` takes the reader as an argument so a test can
+ * hand in the ledger's own objects without bytes.
+ */
+export const vaultTransactionReader = (arrival: VaultTxArrival): ((bytes: Uint8Array) => Promise<unknown>) =>
+  arrival === 'proven-moving-nothing' ? readProvenTransaction : readFinishedTransaction;
 
 /** The configuration the ledger takes, derived from the deployment and nowhere else. */
 export const configFor = (d: Deployment): MidnightConfig => ({

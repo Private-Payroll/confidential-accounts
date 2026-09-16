@@ -111,3 +111,12 @@ export const readProvenTransaction = async (bytes: Uint8Array): Promise<unknown>
   const l: any = await import('@midnightntwrk/ledger-v9');
   return l.Transaction.deserialize('signature', 'proof', 'pre-binding', bytes);
 };
+
+/**
+ * A transaction a depositor's wallet has already balanced, signed and bound:
+ * the reading the company's fee payer adds its fee to.
+ */
+export const readFinishedTransaction = async (bytes: Uint8Array): Promise<unknown> => {
+  const l: any = await import('@midnightntwrk/ledger-v9');
+  return l.Transaction.deserialize('signature', 'proof', 'binding', bytes);
+};
