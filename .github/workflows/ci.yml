@@ -12,6 +12,19 @@ name: check
 on:
   push:
     branches: [main]
+  # RUN THE CHECKS BY HAND, FROM THE ACTIONS PAGE.
+  #
+  # Everything else here is a reaction to something that happened. When a run is
+  # never created at all - the Actions allowance was spent on 15 Sep 2026 and a
+  # merge landed with no checks against it - there is nothing to re-run and no
+  # way to ask for one, because a workflow with no manual trigger can only be
+  # started by a push, and `main` moves by squash merge alone. That left a
+  # commit on `main` whose marks could not be filled in by any means.
+  #
+  # It takes no input: the run is about the commit it is started from, and a
+  # trigger that accepted arguments would be a second way to decide what gets
+  # checked.
+  workflow_dispatch:
   # `edited` is not one of the default activity types, and without it a title or
   # a body changed on the page after the checks went green is merged on the
   # strength of a run that never read it.
