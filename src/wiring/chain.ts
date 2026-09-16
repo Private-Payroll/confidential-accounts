@@ -787,13 +787,21 @@ export function chainVaultHoldingsFor(d: Deployment): VaultHoldings {
    * NO BRANCH".** If any read ever loads, saves or creates a note here, it
    * stops with a sentence naming the method rather than quietly answering from
    * a pool this service has no business holding.
+   *
+   * **IT STAYS A REFUSAL NOW THAT THE PRODUCT'S DATABASE HOLDS VAULT POOLS**
+   * (`PostgresVaultRecords`). What the database holds is ciphertext wrapped
+   * to each signer's own key, and opening it needs one of those keys. A service
+   * that held one would be able to read every balance it serves, which is the
+   * thing the pool is sealed per signer to prevent; so this reader is given no
+   * store and no key, and a store arriving elsewhere does not make it a writer.
    */
   const refuse = (method: string) => (): never => {
     throw new Error(
       `reading what a vault holds asked the note pool to ${method}, and a service holds no `
-      + "vault note pool. A private balance is a reconciliation against this client's own "
-      + 'record of the vault\'s notes, and there is no such record on a server. What can be '
-      + 'answered here is public money, which is a ledger balance and reads no note.');
+      + "vault note pool it can open. A private balance is a reconciliation against the "
+      + 'record of the vault\'s notes, and that record is sealed so that only a signer\'s own '
+      + 'key opens it: a server keeps it and cannot read it. What can be answered here is public '
+      + 'money, which is a ledger balance and reads no note.');
   };
   const noPool: NotePool = {
     load: refuse('load') as NotePool['load'],

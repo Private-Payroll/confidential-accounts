@@ -572,7 +572,19 @@ export interface VaultTransactions {
 /** What the search found for one note: its creating transaction, or why there is none. */
 export type CreatingTransactionFound =
   | { readonly nonce: Hex; readonly createdIn: Hex }
-  | { readonly nonce: Hex; readonly unresolved: string };
+  | {
+    readonly nonce: Hex;
+    readonly unresolved: string;
+    /**
+     * **THE TRANSACTIONS A PERSON COULD NAME FOR THIS NOTE, IN FULL.** Every
+     * listed transaction that carries the note's commitment and was refused,
+     * then every one that could not be read. `unresolved` shortens hashes to
+     * keep a sentence readable, and a repair takes a whole hash, so a screen
+     * that offers the remedy prints these. Empty when no listed transaction
+     * could be the one.
+     */
+    readonly candidates: readonly Hex[];
+  };
 
 /**
  * **WHICH TRANSACTION CREATED EACH OF THESE NOTES, WHEN NOBODY WROTE IT DOWN.**
@@ -613,7 +625,7 @@ export async function creatingTransactionsAmong(
   if (notes.length === 0) return { found: [], listed: 0, read: 0 };
 
   const unresolvedAll = (why: string, listed: number, read: number) => ({
-    found: notes.map((n): CreatingTransactionFound => ({ nonce: n.nonce, unresolved: why })),
+    found: notes.map((n): CreatingTransactionFound => ({ nonce: n.nonce, unresolved: why, candidates: [] })),
     listed,
     read,
   });
@@ -628,12 +640,13 @@ export async function creatingTransactionsAmong(
       0, 0);
   }
 
-  const open = new Map<Hex, { coin: NoteCoin; commitment: string; refused: string[] }>();
+  const open = new Map<Hex, { coin: NoteCoin; commitment: string; refused: string[]; carriers: Hex[] }>();
   for (const n of notes) {
-    open.set(n.nonce, { coin: n, commitment: await vaultNoteCommitment(n, vault), refused: [] });
+    open.set(n.nonce, { coin: n, commitment: await vaultNoteCommitment(n, vault), refused: [], carriers: [] });
   }
   const answered = new Map<Hex, Hex>();
   const unreadable: string[] = [];
+  const unreadHashes: Hex[] = [];
   let read = 0;
 
   for (const hash of listed) {
@@ -651,6 +664,7 @@ export async function creatingTransactionsAmong(
        * its candidates was never asked.
        */
       unreadable.push(`${hash.slice(0, 16)}… (${(cause as Error).message})`);
+      unreadHashes.push(hash);
       continue;
     }
     for (const [nonce, want] of [...open]) {
@@ -674,6 +688,7 @@ export async function creatingTransactionsAmong(
       } catch (cause) {
         if (!(cause instanceof NoteIndexRefused || cause instanceof NoteIndexUnreadable)) throw cause;
         want.refused.push(`${hash.slice(0, 16)}… carries it and was refused: ${(cause as Error).message}`);
+        want.carriers.push(hash);
       }
     }
   }
@@ -689,7 +704,7 @@ export async function creatingTransactionsAmong(
         ? [`${unreadable.length} of them could not be read, so they were never asked: ${unreadable.slice(0, 3).join('; ')}`]
         : []),
     ];
-    return { nonce: n.nonce, unresolved: parts.join('. ') };
+    return { nonce: n.nonce, unresolved: parts.join('. '), candidates: [...want.carriers, ...unreadHashes] };
   });
   return { found, listed: listed.length, read };
 }

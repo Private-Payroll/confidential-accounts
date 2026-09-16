@@ -10,13 +10,17 @@
  * wrapped keys all arrive as bytes, and only the first of them is `null`.
  */
 import { describe, it, expect } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  closeSync, existsSync, fsyncSync, linkSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync,
+  renameSync, writeFileSync, writeSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
   FileSealedPoolStore, VaultPoolFileUnreadable, vaultPoolFile,
   vaultPoolVersionFile, versionFiledAs, highestVersionFiled, stagingNameFor,
+  type DurableDisk,
 } from './vault-pool-file.js';
 import {
   SealedNotePool, sealPool, openPool, MemorySealedPoolStore, VaultPoolUnreadable,
@@ -451,7 +455,8 @@ describe('the pool is written whole or not at all', () => {
     const d = dir();
     const { signers: s } = signers();
     const store = storeIn(d);
-    await store.put(VAULT, sealPool(VAULT, { notes: [] }, s, 4));
+    /* Versions follow one another, so version 4 is filed after 1 to 3. */
+    for (const v of [1, 2, 3, 4]) await store.put(VAULT, sealPool(VAULT, { notes: [] }, s, v));
     await expect(store.put(VAULT, sealPool(VAULT, { notes: [] }, s, 4)),
       'RED WHEN: a write of a version that is already filed is accepted, which replaces one record of the money with another')
       .rejects.toThrow(VaultPoolVersionAlreadyFiled);
@@ -479,5 +484,103 @@ describe('the pool is written whole or not at all', () => {
     }
     const pool = new SealedNotePool(file, { signerId: 'nobody', wrappingSecret: '00'.repeat(32) }, async () => s);
     await expect(pool.load(VAULT)).rejects.toThrow(VaultPoolUnreadable);
+  });
+});
+
+describe('A WRITE THAT RETURNS IS ON THE DISK', () => {
+  /** The real disk, with every call written down in order. */
+  const recording = (fail?: { fsyncOf?: 'file' | 'dir' }) => {
+    const calls: string[] = [];
+    const fds = new Map<number, string>();
+    const disk: DurableDisk = {
+      openSync: ((p: string, flags: string, mode?: number) => {
+        const fd = openSync(p, flags, mode);
+        fds.set(fd, flags === 'r' ? 'dir' : 'file');
+        calls.push(`open ${flags === 'r' ? 'dir' : 'file'}`);
+        return fd;
+      }) as never,
+      writeSync: (fd, bytes, offset) => { calls.push('write'); return writeSync(fd, bytes, offset, bytes.length - offset); },
+      fsyncSync: (fd) => {
+        const what = fds.get(fd)!;
+        calls.push(`fsync ${what}`);
+        if (fail?.fsyncOf === what) throw new Error(`the disk refused to flush the ${what}`);
+        fsyncSync(fd);
+      },
+      closeSync: (fd) => { calls.push(`close ${fds.get(fd)}`); closeSync(fd); },
+      linkSync: (a, b) => { calls.push('link'); linkSync(a, b); },
+      renameSync: (a, b) => { calls.push('rename'); renameSync(a, b); },
+    };
+    return { calls, disk };
+  };
+
+  it('flushes the bytes before the version is named, and the directory after', async () => {
+    const d = dir();
+    const { signers: s } = signers();
+    const { calls, disk } = recording();
+    const store = new FileSealedPoolStore(vaultPoolFile(d, 'stagenet', 'payroll-test-1'), VAULT, disk);
+    await store.put(VAULT, sealPool(VAULT, { notes: [] }, s, 1));
+    const at = (c: string) => calls.indexOf(c);
+    expect(at('fsync file'), 'RED WHEN: the staged bytes are never flushed, so a power loss can leave a named, truncated version').toBeGreaterThan(-1);
+    expect(at('fsync file'), 'RED WHEN: the version is named before its bytes are on the disk').toBeLessThan(at('link'));
+    expect(at('write')).toBeLessThan(at('fsync file'));
+    expect(calls.indexOf('fsync dir', at('link')),
+      'RED WHEN: the directory holding the new name is not flushed before the write returns').toBeGreaterThan(at('link'));
+    expect(calls.indexOf('fsync dir', at('link'))).toBeLessThan(at('rename'));
+    expect((await store.get(VAULT))?.version).toBe(1);
+  });
+
+  it('a flush of the bytes that fails files NOTHING and leaves no staged copy', async () => {
+    const d = dir();
+    const { signers: s } = signers();
+    const { disk } = recording({ fsyncOf: 'file' });
+    const f = vaultPoolFile(d, 'stagenet', 'payroll-test-1');
+    const store = new FileSealedPoolStore(f, VAULT, disk);
+    await expect(store.put(VAULT, sealPool(VAULT, { notes: [] }, s, 1))).rejects.toThrow(/Nothing has been written/);
+    expect(existsSync(vaultPoolVersionFile(f, 1)), 'RED WHEN: a version whose bytes were not flushed is named anyway').toBe(false);
+    expect(readdirSync(d).filter((n) => n.includes('.writing.'))).toEqual([]);
+  });
+
+  it('a flush of the directory that fails says the version IS filed, because it is', async () => {
+    const d = dir();
+    const { signers: s } = signers();
+    const { disk } = recording({ fsyncOf: 'dir' });
+    const f = vaultPoolFile(d, 'stagenet', 'payroll-test-1');
+    const store = new FileSealedPoolStore(f, VAULT, disk);
+    const refused = await store.put(VAULT, sealPool(VAULT, { notes: [] }, s, 1)).then(() => null, (e: Error) => e);
+    expect(refused?.message).toMatch(/was filed/);
+    expect(refused?.message, 'RED WHEN: a version that was filed is reported as not written, which invites filing the change again').not.toMatch(/Nothing has been written/);
+    expect(existsSync(vaultPoolVersionFile(f, 1))).toBe(true);
+  });
+
+  it('REFUSES a version past the next one, in the words every store uses, and names nothing on disk', async () => {
+    const d = dir();
+    const { signers: s } = signers();
+    const f = vaultPoolFile(d, 'stagenet', 'payroll-test-1');
+    const store = storeIn(d);
+    await store.put(VAULT, sealPool(VAULT, { notes: [] }, s, 1));
+    await expect(store.put(VAULT, sealPool(VAULT, { notes: [] }, s, 3)),
+      'RED WHEN: the file store files a version with a gap before it, which the newest read would then step over').rejects.toThrow(/the next one is 2/);
+    expect(existsSync(vaultPoolVersionFile(f, 3))).toBe(false);
+    expect(readdirSync(d).filter((n) => n.includes('.writing.'))).toEqual([]);
+  });
+
+  it('a courtesy copy that cannot be renamed says the version IS filed', async () => {
+    const d = dir();
+    const { signers: s } = signers();
+    const { disk } = recording();
+    const f = vaultPoolFile(d, 'stagenet', 'payroll-test-1');
+    const store = new FileSealedPoolStore(f, VAULT, { ...disk, renameSync: () => { throw new Error('the disk refused the rename'); } });
+    const refused = await store.put(VAULT, sealPool(VAULT, { notes: [] }, s, 1)).then(() => null, (e: Error) => e);
+    expect(refused?.message, 'RED WHEN: a filed version whose plain-name copy failed is reported in words that do not say it was filed').toMatch(/was filed and is durable/);
+    expect((await store.get(VAULT))?.version).toBe(1);
+  });
+
+  it('answers every version it has filed, oldest first', async () => {
+    const d = dir();
+    const { signers: s } = signers();
+    const store = storeIn(d);
+    for (const v of [1, 2, 3]) await store.put(VAULT, sealPool(VAULT, { notes: [] }, s, v));
+    expect((await store.versions(VAULT)).map((x) => x.version)).toEqual([1, 2, 3]);
+    await expect(store.versions(OTHER)).rejects.toThrow(/different vault/);
   });
 });

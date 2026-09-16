@@ -117,7 +117,7 @@ withDb('against a real database', () => {
      * run of the suite fail while the first passed — found by running it twice
      * rather than once, which is the only way that class of bug shows up.
      */
-    await sql`DROP TABLE IF EXISTS schema_migrations, widgets, gadgets, sessions, login_attempts`;
+    await sql`DROP TABLE IF EXISTS schema_migrations, widgets, gadgets, sessions, login_attempts, vault_sealed_records`;
     dir = mkdtempSync(join(tmpdir(), 'mig-'));
   });
 
@@ -262,12 +262,15 @@ withDb('against a real database', () => {
   });
 
   it('applies the real migrations to an empty database', async () => {
-    await sql`DROP TABLE IF EXISTS sessions, login_attempts, schema_migrations`;
+    await sql`DROP TABLE IF EXISTS sessions, login_attempts, vault_sealed_records, schema_migrations`;
     const r = await migrate(sql, {});
     expect(r.applied).toContain('0001_sessions_and_rate_limits.sql');
 
     const t = await sql`SELECT to_regclass('sessions') AS s, to_regclass('login_attempts') AS l`;
     expect(t[0].s).not.toBeNull();
     expect(t[0].l).not.toBeNull();
+    expect(r.applied).toContain('0002_vault_sealed_records.sql');
+    const [v] = await sql`SELECT to_regclass('vault_sealed_records') AS v`;
+    expect(v.v, 'RED WHEN: a deployment\'s migration does not create the table a vault\'s note pool is kept in').not.toBeNull();
   });
 });

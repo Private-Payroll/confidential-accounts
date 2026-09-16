@@ -688,6 +688,32 @@ describe('§7 which transaction created a note nobody wrote the transaction down
     ).rejects.toThrow(TypeError);
   });
 
+  it('A NOTE LEFT UNANSWERED CARRIES, IN FULL, EVERY TRANSACTION A PERSON COULD NAME FOR IT: two transactions, one carrying the note and refused, one unreadable', async () => {
+    const mine = await vaultNoteCommitment(COIN, VAULT);
+    const chain = chainOf([
+      { hash: H(0x91), events: [output(mine, 7n, OTHER_VAULT, H(0x91))] },
+      { hash: H(0x92), events: new NoteIndexUnreadable('the indexer is behind') },
+      { hash: H(0x93), events: [output('f2'.repeat(32), 1n, VAULT, H(0x93))] },
+    ]);
+    const got = await creatingTransactionsAmong(VAULT as Hex, [COIN], chain);
+    const left = got.found[0] as { unresolved: string; candidates: readonly string[] };
+    expect(
+      left.candidates,
+      'RED WHEN: the refusal says "name the transaction" and nothing hands the person a whole hash to name -- the sentence shortens every hash to sixteen characters',
+    ).toEqual([H(0x91), H(0x92)]);
+    expect(left.candidates.every((c) => c.length === 64)).toBe(true);
+    expect(left.candidates, 'RED WHEN: a transaction that does not carry the note is offered as the one that created it').not.toContain(H(0x93));
+  });
+
+  it('offers no candidate when the chain could not list the vault\'s transactions at all', async () => {
+    const chain = {
+      transactions: { of: async () => { throw new NoteIndexUnreadable('behind'); } },
+      events: { eventsOf: async () => { throw new Error('never asked'); } },
+    };
+    const got = await creatingTransactionsAmong(VAULT as Hex, [COIN], chain);
+    expect((got.found[0] as { candidates: readonly string[] }).candidates).toEqual([]);
+  });
+
   it('establishCreatingTransaction is the three questions and the hash, and nothing else', async () => {
     const mine = await vaultNoteCommitment(COIN, VAULT);
     expect(establishCreatingTransaction(

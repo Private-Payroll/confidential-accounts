@@ -6,7 +6,7 @@
  * the call. Each of those is a vault whose money stops moving, and none of them
  * is visible in the contract tests.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 import {
   VaultLedger, VaultChainUnreadable, VaultPoolDisagreesWithChain,
   VaultCannotAfford, VaultAlreadyHoldsNotes,
@@ -290,6 +290,12 @@ function harness(opts: {
   chainDoesNotFileTheNote?: boolean;
   /** How the DEPLOYED vault's ledger is shaped. Defaults to what this build makes. */
   ledgerSlots?: readonly string[];
+  /**
+   * **THE POOL AND BOTH JOURNALS ARE KEPT IN A REAL STORE**, and this harness
+   * only watches them. The chain this harness answers for still follows the
+   * pool, so every load and save is mirrored into `stored` as it happens.
+   */
+  keptIn?: { pool: NotePool; payments: PaymentJournal; deposits: DepositJournal };
 } = {}) {
   let stored: VaultNotes = {
     notes: (opts.notes ?? [{ nonce: '01'.repeat(32), value: 1_000n }])
@@ -357,7 +363,23 @@ function harness(opts: {
    */
   let version = 1;
   let racesLeftToLose = opts.poolRaceLostTimes ?? 0;
-  const pool: NotePool = {
+  const kept = opts.keptIn;
+  const watched: NotePool | undefined = kept && {
+    load: async (a) => {
+      const r = await kept.pool.load(a);
+      stored = { notes: r.notes }; version = r.readAt.version;
+      return r;
+    },
+    save: async (a, n, builtOn) => {
+      await kept.pool.save(a, n, builtOn);
+      stored = { notes: n.notes }; version = builtOn.version + 1; saves.push(n);
+    },
+    create: async (a, n) => {
+      await kept.pool.create(a, n);
+      exists = true; stored = { notes: n.notes }; version = 1; creates.push(n);
+    },
+  };
+  const pool: NotePool = watched ?? {
     load: async () => ({ notes: stored.notes, readAt: { vault: VAULT, version } }),
     save: async (a, n, builtOn) => {
       if (builtOn.version !== version) throw new VaultPoolAdvancedSinceRead(a, builtOn.version, version);
@@ -704,8 +726,8 @@ function harness(opts: {
     { networkId: 'preview' } as never, {} as never, providers as never, {},
     opts.poolThrows ? refusesEverything : pool,
     VAULT_ARTEFACTS,
-    opts.journal === 'none' ? undefined : journal,
-    opts.depositJournal === 'none' ? undefined : depositJournal);
+    kept ? kept.payments : opts.journal === 'none' ? undefined : journal,
+    kept ? kept.deposits : opts.depositJournal === 'none' ? undefined : depositJournal);
   (ledger as any).connect = async (_a: string, w: unknown) => { witnesses = w; return contract; };
 
   /*
@@ -2501,5 +2523,111 @@ describe('a private deposit journals its coin before the call', () => {
     const depositing = harness({ notes: [], journal: 'none' });
     await expect(depositing.ledger.deposit(VAULT, COIN, BY)).resolves.toBeDefined();
     expect(depositing.depositsJournalled).toHaveLength(1);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * THE PRODUCT'S OWN STORE, WATCHED FROM THE CLIENT. A pool created, a
+ * deposit recorded into it and a private payment made against it, through
+ * `VaultLedger` with the pool and both journals kept in the product's
+ * database - and then everything read back by a second connection that
+ * shares nothing with the first, and rebuilt from.
+ * ------------------------------------------------------------------ */
+const STORE_DB = process.env.TEST_DATABASE_URL;
+(STORE_DB ? describe : describe.skip)('the product\'s store, from where a person stands', () => {
+  const OWN_DB = 'ca_test_vault_client';
+  let admin: any;
+  let url: string;
+
+  beforeAll(async () => {
+    const { default: postgres } = await import('postgres');
+    admin = postgres(STORE_DB!, { onnotice: () => {} });
+    const [row] = await admin`SELECT count(*)::int AS n FROM pg_database WHERE datname = ${OWN_DB}`;
+    if (row.n === 0) await admin.unsafe(`CREATE DATABASE "${OWN_DB}"`);
+    const u = new URL(STORE_DB!);
+    u.pathname = `/${OWN_DB}`;
+    url = u.toString();
+    /*
+     * THIS DATABASE IS THIS TEST'S ALONE, AND IT STARTS EMPTY. The vault's
+     * address is a constant of this file, so a record left by an earlier run
+     * would make `create` refuse. A table is dropped, which its triggers do not
+     * stop, and nothing else uses this database.
+     */
+    const own = postgres(url, { onnotice: () => {} });
+    const [me] = await own`SELECT current_database() AS db`;
+    if (me.db !== OWN_DB) throw new Error(`refusing to run: connected to ${me.db}, not ${OWN_DB}`);
+    await own`DROP TABLE IF EXISTS vault_sealed_records`;
+    await own.unsafe(readFileSync('db/migrations/0002_vault_sealed_records.sql', 'utf8'));
+    await own.end({ timeout: 2 });
+  });
+  afterAll(async () => { if (admin) await admin.end({ timeout: 2 }); });
+
+  it('CREATES, DEPOSITS AND PAYS through the ledger with every record in the database, and a second connection rebuilds the vault from them', async () => {
+    const { default: postgres } = await import('postgres');
+    const { openVaultRecords, NOTHING_IS_KEPT_ELSEWHERE } = await import('../db/vault-records.js');
+    const { SealedNotePool, openPool } = await import('./vault-pool.js');
+    const { PaymentJournalInStore, DepositJournalInStore, attemptsFromJournalVersions } = await import('./vault-journal.js');
+    const { reconcileVaultPool, commitmentForNote } = await import('./vault-recovery.js');
+    const { newWrappingKeypair } = await import('../core/crypto.js');
+
+    const k = newWrappingKeypair();
+    const signers = async () => [{ id: 'kc', wrappingPublicKey: k.publicKey }];
+    const opener = { id: 'kc', wrappingSecret: k.secret };
+    const one = postgres(url, { onnotice: () => {} });
+    const other = postgres(url, { onnotice: () => {} });
+    try {
+      const records = await openVaultRecords(one, { refuseToCreate: NOTHING_IS_KEPT_ELSEWHERE });
+      const h = harness({
+        notes: [],
+        poolExists: false,
+        keptIn: {
+          pool: new SealedNotePool(records.of('pool'), { signerId: 'kc', wrappingSecret: k.secret }, signers),
+          payments: new PaymentJournalInStore(records.of('payment-journal'), VAULT, opener, signers),
+          deposits: new DepositJournalInStore(records.of('deposit-journal'), VAULT, opener, signers),
+        },
+      });
+
+      await h.ledger.openPool(VAULT);
+      await h.ledger.deposit(VAULT, { nonce: '77'.repeat(32), token: GBP, value: 500n }, BY, eventsInUse);
+      const paid = await h.ledger.payout(VAULT, payment(200n), BY, EVENTS);
+      if (paid.kind !== 'shielded') throw new Error('a private payee was paid through another door');
+      expect(paid.spentNote).toBe('77'.repeat(32));
+
+      /* A second connection, and a store object that shares nothing with the one that wrote. */
+      const theirs = await openVaultRecords(other, { refuseToCreate: NOTHING_IS_KEPT_ELSEWHERE });
+      const versions = await theirs.of('pool').versions(VAULT);
+      expect(
+        versions.map((v) => v.version),
+        'RED WHEN: the pool the client created, deposited into and paid from is not the record the database holds - one version per write',
+      ).toEqual([1, 2, 3]);
+      const now = openPool(versions[2]!.sealed, 'kc', k.secret);
+      expect(now.notes.map((n) => [n.value, n.createdIn]),
+        'RED WHEN: the change note the payment made is not what the store now says the vault holds').toEqual([[300n, payHash(1)]]);
+
+      const attempted = attemptsFromJournalVersions({
+        deposits: await theirs.of('deposit-journal').versions(VAULT),
+        payments: await theirs.of('payment-journal').versions(VAULT),
+        opener,
+      });
+      expect(attempted.deposits, 'RED WHEN: the deposit was made without its coin written down first, in the store')
+        .toEqual([{ nonce: '77'.repeat(32), token: GBP, value: 500n }]);
+      expect(attempted.payments, 'RED WHEN: the payment moved money without its amount written down first, in the store')
+        .toEqual([{ spent: { nonce: '77'.repeat(32), token: GBP, value: 500n }, amount: 200n }]);
+
+      /* And the rebuild, from nothing but what the store holds and what the chain holds. */
+      const change = now.notes[0]!;
+      const rebuilt = reconcileVaultPool({
+        vault: VAULT as never,
+        chain: [commitmentForNote(vaultCircuits as never, VAULT as never, change)],
+        versions: versions.map((v) => ({ version: v.version, notes: openPool(v.sealed, 'kc', k.secret).notes })),
+        attempted,
+        circuits: vaultCircuits as never,
+      });
+      expect(rebuilt.held.map((n) => n.value)).toEqual([300n]);
+      expect(rebuilt.unexplained).toEqual([]);
+    } finally {
+      await one.end({ timeout: 2 });
+      await other.end({ timeout: 2 });
+    }
   });
 });

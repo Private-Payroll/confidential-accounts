@@ -185,7 +185,20 @@ describe('§1 the reader a service is handed reads the chain, and a run turns on
      * "this vault holds no private money", which is a number nobody measured. */
     const reader = chainVaultHoldingsFor(DEPLOYMENT);
     await expect(reader.held(VAULT, 'shielded', 'aa'.repeat(32)))
-      .rejects.toThrow(/asked the note pool to load, and a service holds no vault note pool/);
+      .rejects.toThrow(/asked the note pool to load, and a service holds no vault note pool it can open/);
+  });
+
+  it('A STORE ARRIVING DOES NOT MAKE THE READER A WRITER: it takes the deployment and nothing else', () => {
+    /* RED WHEN a store, a signer or a capability can be handed to the reader. A
+     * real pool inside a reader is a funded writer sitting inside a reader. */
+    expect(chainVaultHoldingsFor.length).toBe(1);
+    const src = readFileSync(new URL('./chain.ts', import.meta.url), 'utf8');
+    /* A parameter with a default is not counted by `length`, so the signature itself is pinned too. */
+    expect(src, 'RED WHEN: the reader gains a parameter of any kind').toContain('export function chainVaultHoldingsFor(d: Deployment): VaultHoldings {');
+    /* The code only: a comment that names the store is an explanation, not a reach. */
+    const body = src.slice(src.indexOf('export function chainVaultHoldingsFor'), src.indexOf('/** The set, whole.'))
+      .replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    expect(body, 'RED WHEN: the reader reaches the product\'s store of sealed pools').not.toMatch(/new SealedNotePool|openVaultRecords\(|PostgresVaultRecords|\.of\('pool'\)/);
   });
 
   it('a public read never asks the note pool at all', async () => {

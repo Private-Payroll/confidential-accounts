@@ -96,9 +96,14 @@ export interface WrappedPoolKey {
  *
  * `vault` and `version` are the only readable fields and both are Tier 4 — an
  * address that is already public, and a counter. **Nothing here says what the
- * vault holds, how many notes it has, or what they are worth**, which is the
- * difference between this and a purpose-sealed record whose key we could
- * derive.
+ * vault holds or what its notes are worth**, which is the difference between
+ * this and a purpose-sealed record whose key we could derive. **How many notes
+ * it has is hidden only down to a size**: the sealed text is padded to 4 KiB or
+ * the next power of two (`paddedToABucket`), so a large pool is told from a
+ * small one, to within a factor of two, and nothing finer. What stays visible
+ * is said rather than hidden: the version counter says how often the record was
+ * written (for a journal, how many attempts it holds), and the wrapped list says
+ * how many signers can open it.
  */
 export interface SealedPool {
   vault: string;
@@ -232,6 +237,27 @@ export const isALostPoolRace = (cause: unknown): boolean =>
     || cause.name === 'VaultPoolVersionAlreadyFiled');
 
 /**
+ * **THE SMALLEST SIZE A SEALED RECORD IS PADDED TO, AND THE SIZES ABOVE IT.**
+ *
+ * Encryption hides what a record says and not how long it is, and a pool's
+ * length is almost exactly its note count - about half a kilobyte a note - and
+ * moves with the number of digits in each value. Whoever holds the stored
+ * record, our database included, could read both off the size. So the sealed
+ * text is padded with spaces to 4 KiB, or the next power of two above that, and
+ * what the size says is only which of those sizes the record fits.
+ * Trailing spaces are whitespace to a JSON reader, so a record written before
+ * this padding and one written after open the same way.
+ */
+export const SEALED_RECORD_BUCKET = 4096;
+
+export const paddedToABucket = (text: string): string => {
+  const bytes = new TextEncoder().encode(text).length;
+  let bucket = SEALED_RECORD_BUCKET;
+  while (bucket < bytes) bucket *= 2;
+  return text + ' '.repeat(bucket - bytes);
+};
+
+/**
  * Seals a pool for a set of signers, under a key made here and kept by nobody.
  *
  * **A FRESH KEY ON EVERY WRITE, not a long-lived pool key.** A pool changes on
@@ -263,7 +289,7 @@ export const sealPool = (
   return {
     vault,
     version,
-    sealed: seal(canonical(notes), key),
+    sealed: seal(paddedToABucket(canonical(notes)), key),
     wrapped: signers.map((s) => ({ signerId: s.id, wrapped: wrapKey(key, s.wrappingPublicKey) })),
   };
 };
@@ -347,6 +373,12 @@ export const wrapFor = (
   };
 };
 
+/** One filed version of a sealed record, as a store hands it back. */
+export interface FiledPoolVersion {
+  readonly version: number;
+  readonly sealed: SealedPool;
+}
+
 /**
  * Where a sealed pool is kept. An interface for the reason `NotePool` is one:
  * this belongs in whatever store the customer already trusts with their sealed
@@ -356,11 +388,119 @@ export const wrapFor = (
  * `SealedStateStore` must not, and for the same reason: a truncated record is
  * indistinguishable from a wrong key, and both read as "this vault is
  * unreadable" forever.
+ *
+ * **AND FOUR MORE PROPERTIES EVERY STORE MUST HAVE, BECAUSE THE POOL IS THE
+ * ONLY RECORD OF WHAT A NOTE IS.**
+ *
+ *   1. **A version is filed by exactly one writer.** `put` CLAIMS
+ *      `rec.version`: the claim either happens or it does not, and a writer
+ *      that loses it is told with `VaultPoolVersionAlreadyFiled` and has
+ *      written nothing. A store that compares a number and then writes lets two
+ *      writers through.
+ *   2. **Versions follow one another.** `put` files version `n` only when the
+ *      newest filed version is `n - 1` (or nothing, for `n = 1`), so "the
+ *      newest version" is one fact and never a guess across a gap.
+ *   3. **A `put` that returns has happened.** The record is durable before the
+ *      call returns: a power loss afterwards cannot leave it absent or
+ *      truncated. A write that is only in a cache is a write that can vanish
+ *      after the money it records has moved.
+ *   4. **Nothing filed is ever replaced or removed.** `versions` answers every
+ *      version the store has filed since it began keeping versions, oldest
+ *      first, because the union of them is what a rebuild proposes to the
+ *      chain. A pool written before versions were kept separately is answered
+ *      as its one surviving record; what it held before that is gone.
  */
 export interface SealedPoolStore {
+  /** The newest filed version, or `null` when none has ever been filed. */
   get(vault: string): Promise<SealedPool | null>;
   put(vault: string, rec: SealedPool): Promise<void>;
+  /** Every version ever filed for this vault, oldest first. Empty when none is. */
+  versions(vault: string): Promise<readonly FiledPoolVersion[]>;
 }
+
+/**
+ * **WHY A STORED RECORD CANNOT BE USED AS A SEALED POOL, OR `null` WHEN IT CAN.**
+ *
+ * One copy of these refusals, asked by every store at its boundary, so a record
+ * that reaches a payment from a file has passed exactly what one from a
+ * database has passed. Refusing rather than coercing: a record missing its
+ * `wrapped` list is not a pool wrapped to nobody, it is a record nothing here
+ * wrote, and `sealPool` already refuses to create one wrapped to nobody.
+ */
+export const whyThisIsNotASealedPool = (parsed: unknown, vault: string): string | null => {
+  if (parsed === null || typeof parsed !== 'object') {
+    return `it holds ${parsed === null ? 'null' : typeof parsed}, not a record`;
+  }
+  const r = parsed as Record<string, unknown>;
+  if (typeof r.vault !== 'string' || r.vault !== vault) {
+    return 'it is a pool for a DIFFERENT vault than the one this store is for. Opening it would '
+      + 'describe somebody else\x27s money in this vault\x27s name';
+  }
+  if (!Number.isInteger(r.version) || (r.version as number) < 1) {
+    return `its version is ${JSON.stringify(r.version)} rather than a whole number`;
+  }
+  if (!Array.isArray(r.wrapped) || r.wrapped.length === 0) {
+    return 'it carries no wrapped keys, so there is no device anywhere that could open it. That is '
+      + 'not a pool with no notes in it — it is ciphertext with no key in the world';
+  }
+  if (r.sealed === null || typeof r.sealed !== 'object') {
+    return 'it carries no sealed payload';
+  }
+  return null;
+};
+
+/**
+ * **THE VERSION A STORE MAY FILE NEXT, OR THE REFUSAL FOR ANY OTHER.**
+ *
+ * `newest` is the newest version the store holds (`null` for none). The
+ * version already taken, or an older one, is `VaultPoolVersionAlreadyFiled`:
+ * another writer got there, and nothing has been written. A version further on
+ * than the next one is refused as a gap, because a store whose newest version
+ * is a guess across missing ones is a store a payment can be built on the
+ * wrong copy of.
+ */
+export const assertTheNextVersion = (vault: string, newest: number | null, filing: number): void => {
+  const next = (newest ?? 0) + 1;
+  if (filing === next) return;
+  if (filing < next) throw new VaultPoolVersionAlreadyFiled(vault, filing);
+  throw new Error(
+    `version ${filing} of this vault's sealed record cannot be filed: the newest filed version is `
+    + `${newest ?? 'none'}, so the next one is ${next}. **Nothing has been written.** A writer builds `
+    + 'the version after the one it read, so a gap means this write was built on something other '
+    + 'than a read of this store. Read the record again and build the change on what it holds now.'
+    + ' (the vault is not named here: its address is the one value that destroys money when '
+    + 'somebody pastes it into a wallet. It is this error\'s `vault` property.)');
+};
+
+/**
+ * **REMOVING A SIGNER'S ACCESS BY WRITING A SEALED RECORD, WHICH A WRITE WOULD
+ * DO SILENTLY.**
+ *
+ * A write seals the record afresh under a new key and wraps it to the signers
+ * it is handed. Anybody that list has stopped naming keeps no copy of the new
+ * key and their access to the record of the company's money ends -- and the
+ * write that did it SUCCEEDS. Opening the record does not catch it: one
+ * matching signer is enough to open it and enough to write it back narrower.
+ * So every writer of the pool and of the journals asks this first.
+ */
+export const assertNoSignerWouldLoseAccess = (
+  wrappedFor: readonly string[], willWrapTo: readonly string[],
+  /** What is being written, as the sentence names it. */
+  record = 'this pool',
+): void => {
+  const to = new Set(willWrapTo);
+  const dropped = [...new Set(wrappedFor)].filter((id) => !to.has(id));
+  if (dropped.length === 0) return;
+  throw new Error(
+    `${record} is readable by ${dropped.length} signer(s) that the signers file no longer lists `
+    + `(${dropped.join(', ')}), and writing it would re-seal it to the listed ones only. Their `
+    + 'access to the record of this vault\x27s money would end, and this run would report success. '
+    + 'Nothing is written, and nothing is lost by stopping here. What resolves it: add them back to '
+    + 'the signers file and run this again. Taking a signer\x27s access away is a decision about who '
+    + 'may read the record of this vault\x27s money, and nothing on this machine makes that decision '
+    + 'yet, for this record or any other; until something does, the signers file has to keep '
+    + 'listing everyone the record is sealed to.');
+};
 
 /**
  * The pool `VaultLedger` actually uses, sealed and wrapped per signer.
@@ -413,14 +553,13 @@ export class SealedNotePool implements NotePool {
    * version comes from the caller's own load. If the stored version is no
    * longer that one, nothing is written and the refusal says so. If two writers
    * built on the same version both get past this check, both write the same
-   * next version. `MemorySealedPoolStore` refuses the second, because its check
-   * and its write happen in one step. **A store whose check and write are two
-   * steps, such as a file read and then renamed over, does not close that window
-   * across two processes**, and the later write wins.
-
+   * next version, and **the store settles that by claiming the number**
+   * (`SealedPoolStore`'s first property): exactly one of them files it and the
+   * other is refused by name, having written nothing.
    *
-   * Only the notes are sealed; the load's `readAt` is bookkeeping about this
-   * store, not part of what the vault holds.
+   * Only the notes are sealed, with the chain's settlements when a rebuild
+   * supplies them; the load's `readAt` is bookkeeping about this store, not
+   * part of what the vault holds.
    */
   async save(vaultAddress: string, notes: VaultNotes, builtOn: PoolVersion): Promise<void> {
     const rec = await this.store.get(vaultAddress);
@@ -440,9 +579,18 @@ export class SealedNotePool implements NotePool {
     if (builtOn.version !== rec.version) {
       throw new VaultPoolAdvancedSinceRead(vaultAddress, builtOn.version, rec.version);
     }
+    /*
+     * **WHAT A REBUILD WORKED OUT ABOUT A CONTRADICTED NOTE IS SEALED INTO THE
+     * VERSION IT FILES.** The chain can settle which description of a nonce is
+     * money only while it still holds that coin; once the coin is spent it holds
+     * none of them. Written here, the answer outlives the coin.
+     */
+    const page: VaultNotes = notes.settled !== undefined && notes.settled.length > 0
+      ? { notes: notes.notes, settled: notes.settled }
+      : { notes: notes.notes };
     await this.store.put(
       vaultAddress,
-      sealPool(vaultAddress, { notes: notes.notes }, await this.signers(), builtOn.version + 1));
+      sealPool(vaultAddress, page, await this.signers(), builtOn.version + 1));
   }
 
   /**
@@ -466,14 +614,21 @@ export class SealedNotePool implements NotePool {
  * class and nothing else.
  */
 export class MemorySealedPoolStore implements SealedPoolStore {
-  private byVault = new Map<string, SealedPool>();
+  /** Every version filed for each vault, oldest first. Nothing is ever removed. */
+  private byVault = new Map<string, SealedPool[]>();
 
   async get(vault: string): Promise<SealedPool | null> {
-    return this.byVault.get(vault) ?? null;
+    const filed = this.byVault.get(vault);
+    return filed?.[filed.length - 1] ?? null;
+  }
+
+  async versions(vault: string): Promise<readonly FiledPoolVersion[]> {
+    return (this.byVault.get(vault) ?? []).map((sealed) => ({ version: sealed.version, sealed }));
   }
 
   async put(vault: string, rec: SealedPool): Promise<void> {
-    const existing = this.byVault.get(vault);
+    const filed = this.byVault.get(vault) ?? [];
+    const existing = filed[filed.length - 1];
     if (existing && rec.version <= existing.version) {
       /*
        * **REFUSED, NOT MERGED.** Two beliefs about which notes a vault holds
@@ -491,6 +646,8 @@ export class MemorySealedPoolStore implements SealedPoolStore {
        */
       throw new VaultPoolVersionAlreadyFiled(vault, rec.version);
     }
-    this.byVault.set(vault, rec);
+    /* The same gap refusal every store makes, in the same words. */
+    assertTheNextVersion(vault, existing?.version ?? null, rec.version);
+    this.byVault.set(vault, [...filed, rec]);
   }
 }

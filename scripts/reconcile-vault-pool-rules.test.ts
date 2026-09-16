@@ -11,7 +11,7 @@ import { describe, it, expect } from 'vitest';
 import {
   decideWhetherToWrite, assertNoSignerWouldLoseAccess,
   assertThePoolHasNotMovedSinceTheRebuild, linesForAnOperator,
-  notesNeedingATransaction, whatTheRebuildWrites, whereTheRecordsAre,
+  notesNeedingATransaction, whatTheRebuildWrites, whereTheRecordsAre, settlementsNotYetRecorded,
 } from './reconcile-vault-pool-rules.js';
 import { NoteDescribedTwice, type PoolRecovery } from '../src/midnight/vault-recovery.js';
 import type { Note } from '../src/midnight/vault-notes.js';
@@ -414,7 +414,7 @@ describe('what a rebuild writes, and whether each note it writes can be spent', 
     const lost = coin('22', 150n);
     const w = whatTheRebuildWrites({
       versions, held: [heldAs(coin('11', 500n)), heldAs(lost)], alsoDropStaleNotes: false,
-      found: [{ nonce: lost.nonce, unresolved: 'the chain could not list the transactions' }],
+      found: [{ nonce: lost.nonce, unresolved: 'the chain could not list the transactions', candidates: [] }],
     });
     expect(
       w.notes.map((n) => n.nonce),
@@ -424,7 +424,7 @@ describe('what a rebuild writes, and whether each note it writes can be spent', 
     expect(
       w.notYetSpendable,
       'RED WHEN: a note written without its transaction is not listed, so the pool entry reads as ordinary money to the person who wrote it',
-    ).toEqual([{ nonce: lost.nonce, value: 150n, why: 'the chain could not list the transactions' }]);
+    ).toEqual([{ nonce: lost.nonce, value: 150n, why: 'the chain could not list the transactions', candidates: [] }]);
     const unasked = whatTheRebuildWrites({ versions, held: [heldAs(lost)], alsoDropStaleNotes: false, found: [] });
     expect(unasked.notYetSpendable[0]!.why).toMatch(/was not asked/);
   });
@@ -580,7 +580,7 @@ describe('what a rebuild writes, and whether each note it writes can be spent', 
 
   it('tells the operator which recovered notes can be spent and which cannot, and what resolves the second', () => {
     const r = recovery({ held: [note('11', 1_000n), note('22', 150n)], recovered: [note('11', 1_000n), note('22', 150n)] });
-    const lines = linesForAnOperator(r, [{ nonce: '22'.repeat(32), value: 150n, why: 'the indexer is behind' }]);
+    const lines = linesForAnOperator(r, [{ nonce: '22'.repeat(32), value: 150n, why: 'the indexer is behind', candidates: [] }]);
     const spendableBlock = lines.slice(lines.findIndex((l) => l.startsWith('THE POOL HAD LOST')));
     const until = spendableBlock.findIndex((l) => l === '');
     const claimedSpendable = spendableBlock.slice(1, until === -1 ? undefined : until).join('\n');
@@ -594,6 +594,93 @@ describe('what a rebuild writes, and whether each note it writes can be spent', 
     expect(text, 'RED WHEN: the reason for one is not printed beside it').toMatch(/2222222222222222… {3}150 {3}the indexer is behind/);
     expect(text, 'RED WHEN: the section stops naming what resolves it, in terms the reader can act on').toMatch(/run this rebuild again/);
     expect(text).toMatch(/name the transaction\s+that created the note to the repair/);
+  });
+});
+
+describe('the remedy the rebuild names can be reached from the screen', () => {
+  const TX_OLD = 'a1'.repeat(32) as Hex;
+  const coin = (n: string, value: bigint, createdIn?: Hex): Note => ({
+    nonce: n.repeat(32) as Hex, token: 'aa'.repeat(32) as Hex, value, ...(createdIn ? { createdIn } : {}),
+  });
+  const heldAs = (c: Note) => ({ nonce: c.nonce, token: c.token, value: c.value, commitment: c.nonce });
+
+  it('prints, in full and on its own line, every transaction a person could name for a note, on a vault with two', () => {
+    const versions = [{ version: 1, notes: [coin('11', 500n, TX_OLD)] }];
+    const lost = coin('22', 150n);
+    const one = 'c1'.repeat(32); const two = 'c2'.repeat(32);
+    const w = whatTheRebuildWrites({
+      versions, held: [heldAs(coin('11', 500n)), heldAs(lost)], alsoDropStaleNotes: false,
+      found: [{
+        nonce: lost.nonce,
+        unresolved: `none of the 2 transaction(s) answered for it. ${one.slice(0, 16)}… carries it and was refused`,
+        candidates: [one, two],
+      }],
+    });
+    expect(w.notYetSpendable[0]!.candidates, 'RED WHEN: the candidates the chain offered are dropped on the way to the screen').toEqual([one, two]);
+    const r = recovery({ held: [note('11', 500n), note('22', 150n)], recovered: [note('22', 150n)] });
+    const text = linesForAnOperator(r, w.notYetSpendable).join('\n');
+    expect(
+      text,
+      'RED WHEN: the screen tells a person to name the transaction and never prints a whole hash they could name',
+    ).toMatch(new RegExp(`\n +could be: +${one}\n +could be: +${two}(\n|$)`));
+  });
+
+  it('says so when no transaction the chain lists could be the one, rather than printing nothing', () => {
+    const r = recovery({ held: [note('22', 150n)], recovered: [note('22', 150n)] });
+    const text = linesForAnOperator(r, [{ nonce: '22'.repeat(32), value: 150n, why: 'none answered', candidates: [] }]).join('\n');
+    expect(text).toMatch(/no transaction the chain lists for this vault could be the one/);
+  });
+
+  it('bounds the candidates under one note', () => {
+    const many = Array.from({ length: 7 }, (_, i) => `d${i}`.repeat(32));
+    const r = recovery({ held: [note('22', 150n)], recovered: [note('22', 150n)] });
+    const text = linesForAnOperator(r, [{ nonce: '22'.repeat(32), value: 150n, why: 'x', candidates: many }]).join('\n');
+    expect(text.match(/could be:/g)).toHaveLength(4);
+    expect(text).toMatch(/… and 3 more/);
+  });
+});
+
+describe('the rebuild\'s own answer about a contradicted note is written down', () => {
+  const settledNow = {
+    nonce: '11'.repeat(32) as Hex,
+    chainHolds: { token: 'aa'.repeat(32) as Hex, value: 500n, records: [{ kind: 'pool version' as const, version: 1 }] },
+    setAside: [{ token: 'aa'.repeat(32) as Hex, value: 999n, records: [{ kind: 'pool version' as const, version: 2 }] }],
+  };
+
+  it('counts an answer no version records yet, and not one a version already records', () => {
+    expect(settlementsNotYetRecorded([settledNow], [{ settled: [] }, {}])).toEqual([settledNow]);
+    expect(
+      settlementsNotYetRecorded([settledNow], [{ settled: [settledNow] }]),
+      'RED WHEN: an answer already written down is counted again, so every rebuild writes a version',
+    ).toEqual([]);
+    const different = { ...settledNow, chainHolds: { ...settledNow.chainHolds, value: 999n } };
+    expect(settlementsNotYetRecorded([settledNow], [{ settled: [different] }])).toEqual([settledNow]);
+    expect(
+      settlementsNotYetRecorded([{ nonce: settledNow.nonce, setAside: settledNow.setAside }], []),
+      'RED WHEN: a nonce the chain holds none of is counted as an answer to record',
+    ).toEqual([]);
+  });
+
+  it('WRITES when the only difference is an answer the chain gave that no version records', () => {
+    const r = recovery({ held: [note('11', 500n)] });
+    expect(decideWhetherToWrite({ recovery: r, notesTheNewestVersionClaims: 1, alsoDropStaleNotes: false }).do).toBe('nothing');
+    const d = decideWhetherToWrite({
+      recovery: r, notesTheNewestVersionClaims: 1, alsoDropStaleNotes: false, settlementsToRecord: 1,
+    });
+    expect(d.do, 'RED WHEN: a rebuild that settled a nonce writes nothing, so the answer is lost once the coin is spent').toBe('write');
+    expect(d.why).toMatch(/no version records the answer yet/);
+  });
+
+  it('shows what an earlier version wrote down when the chain holds none of the descriptions now', () => {
+    const text = linesForAnOperator(recovery({}), [], [{
+      nonce: '11'.repeat(32) as Hex,
+      setAside: settledNow.setAside,
+      heldWhenFiled: { version: 3, token: 'aa'.repeat(32) as Hex, value: 500n },
+    }]).join('\n');
+    expect(
+      text,
+      'RED WHEN: the answer an earlier rebuild wrote down is read back and never shown',
+    ).toMatch(/the chain holds none of them[^\n]*\n +when version 3 was filed the chain held the one worth 500; it has been spent since/);
   });
 });
 

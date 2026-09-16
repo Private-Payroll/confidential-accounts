@@ -614,6 +614,23 @@ export function theVault(
 }
 
 /**
+ * **THE NAMES THIS RECORD GIVES A VAULT ADDRESS, WHICH IS THE ONE QUESTION ASKED
+ * BY ADDRESS RATHER THAN BY NAME.**
+ *
+ * Asked by a store that must not give a vault a second record: whether this
+ * record already keeps it. It answers names and never an entry, so nothing that
+ * asks it can reach past the rules `theVault` enforces. Retired vaults are
+ * included, because a retired vault's records are still its records. Addresses
+ * are compared without regard to case, as hex.
+ */
+export function namesRecordedFor(registry: VaultRegistry, address: string): string[] {
+  const wanted = address.toLowerCase();
+  return Object.entries(registry.vaults)
+    .filter(([, entry]) => entry.contractAddress.toLowerCase() === wanted)
+    .map(([name]) => name);
+}
+
+/**
  * **WHICH VAULT SOMEBODY MEANT WHEN THEY PRESSED RETURN.**
  *
  * Using the right vault should be what happens when a person answers nothing,

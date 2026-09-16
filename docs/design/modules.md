@@ -75,8 +75,8 @@ nothing.
 
 | | |
 |---|---|
-| modules walked | 446 |
-| module-to-module import sites | 1624 |
+| modules walked | 450 |
+| module-to-module import sites | 1643 |
 | modules that could not be read | 0 |
 | specifiers that resolved to nothing | 0 |
 | specifiers naming a real file outside the walked set | 108 |
@@ -112,13 +112,13 @@ What the import walk cannot see, named rather than implied complete:
 | `src/midnight/run-keys.ts` | 1 | 1 | 9 | 8 | 4 | 0 | 0 |
 | `src/midnight/commitments.ts` | 1 | 3 | 20 | 2 | 3 | 0 | 12 |
 | `src/core/signer-leaf.ts` | 1 | 2 | 7 | 9 | 2 | 1 | 0 |
-| `src/core/crypto.ts` | 1 | 0 | 132 | 28 | 2 | 7 | 0 |
+| `src/core/crypto.ts` | 1 | 0 | 134 | 28 | 2 | 7 | 0 |
 | `src/midnight/payee-address.ts` | 1 | 2 | 23 | 12 | 11 | 1 | 0 |
 | `src/core/payslip-key.ts` | 1 | 3 | 3 | 2 | 1 | 0 | 0 |
 | `src/core/payslip-key-derive.ts` | 1 | 1 | 3 | 1 | 1 | 3 | 0 |
 | `src/midnight/ledger.ts` | 2 | 11 | 23 | 46 | 46 | 5 | 14 |
 | `src/midnight/vault-ledger.ts` | 2 | 13 | 18 | 21 | 27 | 0 | 24 |
-| `src/midnight/vault-notes.ts` | 2 | 3 | 18 | 14 | 16 | 2 | 24 |
+| `src/midnight/vault-notes.ts` | 2 | 4 | 18 | 14 | 16 | 2 | 24 |
 | `src/midnight/vault-coins.ts` | 2 | 1 | 8 | 4 | 7 | 0 | 0 |
 | `src/core/movement.ts` | 2 | 4 | 8 | 9 | 6 | 0 | 1 |
 | `src/midnight/run-status.ts` | 2 | 3 | 8 | 12 | 2 | 0 | 0 |
@@ -137,21 +137,21 @@ through another contract, which is a fact about the design and not a dead circui
 
 | circuit | modules naming it | modules reaching it |
 |---|---|---|
-| `ConfidentialAccount.signerPublicKey` | `contracts/test/one-definition.test.ts` `contracts/test/simulator.ts` `contracts/test/what-a-signer-is.test.ts` `scripts/diagnose-state.ts` `scripts/governance-steps.ts` `scripts/mutate-authority.mjs` `scripts/prove-compare.ts` `scripts/run-preview.ts` `src/midnight/commitments.ts` | 139 |
-| `ConfidentialAccount.signerLeaf` | `contracts/test/commitments.test.ts` `contracts/test/one-definition.test.ts` `contracts/test/simulator.ts` `contracts/test/what-a-signer-is.test.ts` `scripts/diagnose-state.ts` `scripts/governance-steps.ts` `scripts/prove-compare.ts` `scripts/run-preview.ts` `src/midnight/commitments.ts` | 138 |
-| `ConfidentialAccount.assetKeyOf` | `contracts/test/commitments.test.ts` `contracts/test/one-definition.test.ts` `contracts/test/simulator.ts` `scripts/run-preview.ts` `src/midnight/commitments.ts` | 135 |
-| `ConfidentialAccount.changeCommitmentOf` | `contracts/test/commitments.test.ts` `contracts/test/one-definition.test.ts` `contracts/test/the-service-layer-meets-the-chain.test.ts` `src/midnight/commitments.ts` `src/midnight/ledger.ts` | 135 |
-| `ConfidentialAccount.proposalIdOf` | `contracts/test/commitments.test.ts` `contracts/test/one-definition.test.ts` `contracts/test/simulator.ts` `contracts/test/the-payroll-run-meets-the-chain.test.ts` `contracts/test/the-service-layer-meets-the-chain.test.ts` `scripts/governance-steps.ts` `scripts/run-preview.ts` `src/midnight/commitments.ts` | 136 |
-| `ConfidentialAccount.signerAddPayload` | `contracts/test/commitments.test.ts` `contracts/test/one-definition.test.ts` `contracts/test/payout-runs.test.ts` `contracts/test/signer-governance.test.ts` `contracts/test/simulator.ts` `contracts/test/vault-threshold-recovery.test.ts` `scripts/governance-steps.ts` `scripts/measure-call-cost.ts` `scripts/run-preview.ts` `src/midnight/commitments.ts` | 134 |
-| `ConfidentialAccount.removeSignerPayload` | `contracts/test/one-definition.test.ts` `contracts/test/signer-governance.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `scripts/governance-steps.ts` `scripts/measure-call-cost.ts` `src/midnight/commitments.ts` | 134 |
-| `ConfidentialAccount.setThresholdPayload` | `contracts/test/one-definition.test.ts` `contracts/test/payout-runs.test.ts` `contracts/test/signer-governance.test.ts` `contracts/test/simulator.ts` `contracts/test/the-service-layer-meets-the-chain.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `scripts/governance-steps.ts` `scripts/measure-call-cost.ts` `src/midnight/commitments.ts` | 133 |
-| `ConfidentialAccount.allVaults` | `contracts/test/one-definition.test.ts` `contracts/test/vault-scoping.test.ts` `scripts/diagnose-state.ts` `scripts/prove-compare.ts` `scripts/run-preview.ts` `scripts/sponsor-test.ts` `src/midnight/commitments.ts` | 118 |
-| `ConfidentialAccount.noVault` | `contracts/test/one-definition.test.ts` `contracts/test/payout-runs.test.ts` `contracts/test/vault-scoping.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `scripts/governance-steps.ts` `scripts/run-preview.ts` `src/midnight/commitments.ts` `src/midnight/ledger.test.ts` | 136 |
-| `ConfidentialAccount.paidMovementOf` | `contracts/test/a-retry-lives-on-the-leg-it-retries.test.ts` `contracts/test/nobody-is-paid-twice-by-a-restart.test.ts` `contracts/test/one-definition.test.ts` `contracts/test/payout-runs.test.ts` `contracts/test/the-payroll-run-meets-the-chain.test.ts` `contracts/test/transcript.test.ts` `contracts/test/vault-client.test.ts` `contracts/test/vault-payout.test.ts` `contracts/test/vault-scoping.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `contracts/test/vault-unshielded.test.ts` `src/midnight/ledger.ts` | 121 |
-| `ConfidentialAccount.runPayload` | `contracts/test/approvals.test.ts` `contracts/test/one-definition.test.ts` `contracts/test/payout-runs.test.ts` `contracts/test/run-status.test.ts` `contracts/test/the-payroll-run-meets-the-chain.test.ts` `contracts/test/transcript.test.ts` `contracts/test/vault-client.test.ts` `contracts/test/vault-payout.test.ts` `contracts/test/vault-recovery.test.ts` `contracts/test/vault-registry.test.ts` `contracts/test/vault-scoping.test.ts` `contracts/test/vault-split.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `contracts/test/vault-unshielded.test.ts` `scripts/measure-call-cost.ts` `src/midnight/commitments.ts` | 135 |
-| `ConfidentialAccount.payoutLeaf` | `contracts/test/one-definition.test.ts` `contracts/test/payout-runs.test.ts` `contracts/test/vault-scoping.test.ts` `src/midnight/payout-tree.ts` | 152 |
-| `ConfidentialAccount.setVaultThresholdPayload` | `contracts/test/one-definition.test.ts` `contracts/test/vault-registry.test.ts` `contracts/test/vault-scoping.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `scripts/measure-call-cost.ts` `src/midnight/commitments.ts` | 132 |
-| `ConfidentialAccount.vacantSlot` | `contracts/test/one-definition.test.ts` `contracts/test/simulator.ts` `contracts/test/what-a-signer-is.test.ts` `scripts/governance-steps.ts` `src/midnight/ledger.test.ts` `src/midnight/ledger.ts` | 122 |
+| `ConfidentialAccount.signerPublicKey` | `contracts/test/one-definition.test.ts` `contracts/test/simulator.ts` `contracts/test/what-a-signer-is.test.ts` `scripts/diagnose-state.ts` `scripts/governance-steps.ts` `scripts/mutate-authority.mjs` `scripts/prove-compare.ts` `scripts/run-preview.ts` `src/midnight/commitments.ts` | 143 |
+| `ConfidentialAccount.signerLeaf` | `contracts/test/commitments.test.ts` `contracts/test/one-definition.test.ts` `contracts/test/simulator.ts` `contracts/test/what-a-signer-is.test.ts` `scripts/diagnose-state.ts` `scripts/governance-steps.ts` `scripts/prove-compare.ts` `scripts/run-preview.ts` `src/midnight/commitments.ts` | 142 |
+| `ConfidentialAccount.assetKeyOf` | `contracts/test/commitments.test.ts` `contracts/test/one-definition.test.ts` `contracts/test/simulator.ts` `scripts/run-preview.ts` `src/midnight/commitments.ts` | 139 |
+| `ConfidentialAccount.changeCommitmentOf` | `contracts/test/commitments.test.ts` `contracts/test/one-definition.test.ts` `contracts/test/the-service-layer-meets-the-chain.test.ts` `src/midnight/commitments.ts` `src/midnight/ledger.ts` | 139 |
+| `ConfidentialAccount.proposalIdOf` | `contracts/test/commitments.test.ts` `contracts/test/one-definition.test.ts` `contracts/test/simulator.ts` `contracts/test/the-payroll-run-meets-the-chain.test.ts` `contracts/test/the-service-layer-meets-the-chain.test.ts` `scripts/governance-steps.ts` `scripts/run-preview.ts` `src/midnight/commitments.ts` | 140 |
+| `ConfidentialAccount.signerAddPayload` | `contracts/test/commitments.test.ts` `contracts/test/one-definition.test.ts` `contracts/test/payout-runs.test.ts` `contracts/test/signer-governance.test.ts` `contracts/test/simulator.ts` `contracts/test/vault-threshold-recovery.test.ts` `scripts/governance-steps.ts` `scripts/measure-call-cost.ts` `scripts/run-preview.ts` `src/midnight/commitments.ts` | 138 |
+| `ConfidentialAccount.removeSignerPayload` | `contracts/test/one-definition.test.ts` `contracts/test/signer-governance.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `scripts/governance-steps.ts` `scripts/measure-call-cost.ts` `src/midnight/commitments.ts` | 138 |
+| `ConfidentialAccount.setThresholdPayload` | `contracts/test/one-definition.test.ts` `contracts/test/payout-runs.test.ts` `contracts/test/signer-governance.test.ts` `contracts/test/simulator.ts` `contracts/test/the-service-layer-meets-the-chain.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `scripts/governance-steps.ts` `scripts/measure-call-cost.ts` `src/midnight/commitments.ts` | 137 |
+| `ConfidentialAccount.allVaults` | `contracts/test/one-definition.test.ts` `contracts/test/vault-scoping.test.ts` `scripts/diagnose-state.ts` `scripts/prove-compare.ts` `scripts/run-preview.ts` `scripts/sponsor-test.ts` `src/midnight/commitments.ts` | 122 |
+| `ConfidentialAccount.noVault` | `contracts/test/one-definition.test.ts` `contracts/test/payout-runs.test.ts` `contracts/test/vault-scoping.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `scripts/governance-steps.ts` `scripts/run-preview.ts` `src/midnight/commitments.ts` `src/midnight/ledger.test.ts` | 140 |
+| `ConfidentialAccount.paidMovementOf` | `contracts/test/a-retry-lives-on-the-leg-it-retries.test.ts` `contracts/test/nobody-is-paid-twice-by-a-restart.test.ts` `contracts/test/one-definition.test.ts` `contracts/test/payout-runs.test.ts` `contracts/test/the-payroll-run-meets-the-chain.test.ts` `contracts/test/transcript.test.ts` `contracts/test/vault-client.test.ts` `contracts/test/vault-payout.test.ts` `contracts/test/vault-scoping.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `contracts/test/vault-unshielded.test.ts` `src/midnight/ledger.ts` | 125 |
+| `ConfidentialAccount.runPayload` | `contracts/test/approvals.test.ts` `contracts/test/one-definition.test.ts` `contracts/test/payout-runs.test.ts` `contracts/test/run-status.test.ts` `contracts/test/the-payroll-run-meets-the-chain.test.ts` `contracts/test/transcript.test.ts` `contracts/test/vault-client.test.ts` `contracts/test/vault-payout.test.ts` `contracts/test/vault-recovery.test.ts` `contracts/test/vault-registry.test.ts` `contracts/test/vault-scoping.test.ts` `contracts/test/vault-split.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `contracts/test/vault-unshielded.test.ts` `scripts/measure-call-cost.ts` `src/midnight/commitments.ts` | 139 |
+| `ConfidentialAccount.payoutLeaf` | `contracts/test/one-definition.test.ts` `contracts/test/payout-runs.test.ts` `contracts/test/vault-scoping.test.ts` `src/midnight/payout-tree.ts` | 156 |
+| `ConfidentialAccount.setVaultThresholdPayload` | `contracts/test/one-definition.test.ts` `contracts/test/vault-registry.test.ts` `contracts/test/vault-scoping.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `scripts/measure-call-cost.ts` `src/midnight/commitments.ts` | 136 |
+| `ConfidentialAccount.vacantSlot` | `contracts/test/one-definition.test.ts` `contracts/test/simulator.ts` `contracts/test/what-a-signer-is.test.ts` `scripts/governance-steps.ts` `src/midnight/ledger.test.ts` `src/midnight/ledger.ts` | 126 |
 | `ConfidentialAccount.adoptVaultPayload` | `contracts/test/one-definition.test.ts` `contracts/test/vault-registry.test.ts` `scripts/measure-call-cost.ts` | 27 |
 | `ConfidentialAccount.retireVaultPayload` | `contracts/test/one-definition.test.ts` `contracts/test/vault-registry.test.ts` `scripts/measure-call-cost.ts` | 4 |
 | `ConfidentialAccount.slotOf` | `contracts/test/one-definition.test.ts` `contracts/test/signer-governance.test.ts` `contracts/test/simulator.ts` `scripts/governance-steps.ts` | 30 |
@@ -161,18 +161,18 @@ through another contract, which is a fact about the design and not a dead circui
 | `ConfidentialAccount.approve` | `contracts/test/simulator.ts` `scripts/governance-steps.ts` `scripts/measure-call-cost.ts` `scripts/pay-from-vault.ts` `scripts/pay-privately-from-vault.ts` `scripts/run-preview.ts` `src/midnight/job-runner.test.ts` `src/midnight/what-a-balance-books.test.ts` | 32 |
 | `ConfidentialAccount.cancel` | `contracts/test/simulator.ts` `scripts/governance-steps.ts` `scripts/measure-call-cost.ts` `scripts/run-preview.ts` | 28 |
 | `ConfidentialAccount.closeExpiredRun` | `contracts/test/simulator.ts` `scripts/measure-call-cost.ts` | 26 |
-| `ConfidentialAccount.recordPayment` | `contracts/test/simulator.ts` `scripts/measure-call-cost.ts` | 86 |
+| `ConfidentialAccount.recordPayment` | `contracts/test/simulator.ts` `scripts/measure-call-cost.ts` | 90 |
 | `ConfidentialAccount.setVaultThreshold` | `contracts/test/simulator.ts` `scripts/measure-call-cost.ts` | 26 |
 | `ConfidentialAccount.adopt` | `contracts/test/simulator.ts` `scripts/measure-call-cost.ts` | 26 |
 | `ConfidentialAccount.retireVault` | **NONE** | 3 |
-| `Vault.payoutDetails` | `contracts/test/transcript.test.ts` `contracts/test/vault-client.test.ts` `contracts/test/vault-payout.test.ts` `contracts/test/vault-recovery.test.ts` `contracts/test/vault-registry.test.ts` `contracts/test/vault-split.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `scripts/measure-call-cost.ts` | 69 |
-| `Vault.unshieldedPayoutDetails` | `contracts/test/vault-client.test.ts` `scripts/pay-from-vault-rules.test.ts` | 63 |
-| `Vault.heldCommitmentOf` | `contracts/test/vault-payout.test.ts` `contracts/test/vault-split.test.ts` `src/midnight/vault-ledger.test.ts` | 70 |
-| `Vault.noteBlindingOf` | `contracts/test/vault-payout.test.ts` `contracts/test/vault-split.test.ts` `src/midnight/vault-ledger.test.ts` | 70 |
-| `Vault.deposit` | `contracts/test/transcript.test.ts` `contracts/test/vault-client.test.ts` `contracts/test/vault-payout.test.ts` `contracts/test/vault-recovery.test.ts` `contracts/test/vault-registry.test.ts` `contracts/test/vault-split.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `contracts/test/vault-unshielded.test.ts` `scripts/chain-probe.ts` `scripts/measure-call-cost.ts` `src/midnight/vault-call-convention.test.ts` `src/midnight/vault-ledger.test.ts` `src/midnight/vault-ledger.ts` | 69 |
-| `Vault.depositUnshielded` | `contracts/test/vault-client.test.ts` `contracts/test/vault-unshielded.test.ts` `src/midnight/vault-ledger.test.ts` `src/midnight/vault-ledger.ts` | 63 |
-| `Vault.payout` | `contracts/test/transcript.test.ts` `contracts/test/vault-client.test.ts` `contracts/test/vault-payout.test.ts` `contracts/test/vault-recovery.test.ts` `contracts/test/vault-registry.test.ts` `contracts/test/vault-split.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `contracts/test/vault-unshielded.test.ts` `scripts/cross-contract-spike.ts` `scripts/measure-call-cost.ts` `src/midnight/vault-call-convention.test.ts` `src/midnight/vault-ledger.test.ts` `src/midnight/vault-ledger.ts` | 69 |
-| `Vault.payoutUnshielded` | `contracts/test/vault-client.test.ts` `contracts/test/vault-unshielded.test.ts` `src/midnight/vault-ledger.test.ts` `src/midnight/vault-ledger.ts` | 63 |
+| `Vault.payoutDetails` | `contracts/test/transcript.test.ts` `contracts/test/vault-client.test.ts` `contracts/test/vault-payout.test.ts` `contracts/test/vault-recovery.test.ts` `contracts/test/vault-registry.test.ts` `contracts/test/vault-split.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `scripts/measure-call-cost.ts` | 73 |
+| `Vault.unshieldedPayoutDetails` | `contracts/test/vault-client.test.ts` `scripts/pay-from-vault-rules.test.ts` | 67 |
+| `Vault.heldCommitmentOf` | `contracts/test/vault-payout.test.ts` `contracts/test/vault-split.test.ts` `src/midnight/vault-ledger.test.ts` | 74 |
+| `Vault.noteBlindingOf` | `contracts/test/vault-payout.test.ts` `contracts/test/vault-split.test.ts` `src/midnight/vault-ledger.test.ts` | 74 |
+| `Vault.deposit` | `contracts/test/transcript.test.ts` `contracts/test/vault-client.test.ts` `contracts/test/vault-payout.test.ts` `contracts/test/vault-recovery.test.ts` `contracts/test/vault-registry.test.ts` `contracts/test/vault-split.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `contracts/test/vault-unshielded.test.ts` `scripts/chain-probe.ts` `scripts/measure-call-cost.ts` `src/midnight/vault-call-convention.test.ts` `src/midnight/vault-ledger.test.ts` `src/midnight/vault-ledger.ts` | 73 |
+| `Vault.depositUnshielded` | `contracts/test/vault-client.test.ts` `contracts/test/vault-unshielded.test.ts` `src/midnight/vault-ledger.test.ts` `src/midnight/vault-ledger.ts` | 67 |
+| `Vault.payout` | `contracts/test/transcript.test.ts` `contracts/test/vault-client.test.ts` `contracts/test/vault-payout.test.ts` `contracts/test/vault-recovery.test.ts` `contracts/test/vault-registry.test.ts` `contracts/test/vault-split.test.ts` `contracts/test/vault-threshold-recovery.test.ts` `contracts/test/vault-unshielded.test.ts` `scripts/cross-contract-spike.ts` `scripts/measure-call-cost.ts` `src/midnight/vault-call-convention.test.ts` `src/midnight/vault-ledger.test.ts` `src/midnight/vault-ledger.ts` | 73 |
+| `Vault.payoutUnshielded` | `contracts/test/vault-client.test.ts` `contracts/test/vault-unshielded.test.ts` `src/midnight/vault-ledger.test.ts` `src/midnight/vault-ledger.ts` | 67 |
 | `Vault.splitNote` | `contracts/test/vault-recovery.test.ts` `contracts/test/vault-split.test.ts` `scripts/measure-call-cost.ts` | 3 |
 | `Vault.forgetUnshielded` | `contracts/test/vault-unshielded.test.ts` | 1 |
 | `Vault.retire` | `contracts/test/vault-registry.test.ts` `contracts/test/vault-unshielded.test.ts` `scripts/measure-call-cost.ts` | 3 |
@@ -342,7 +342,7 @@ Tier 1 of the declared set.
 Tier 1 of the declared set.
 
 - **imports** — *nothing in these trees*
-- **imported by** — `contracts/test/a-leg-is-raised-again-as-itself.test.ts`, `contracts/test/a-payroll-the-vault-cannot-pay-is-not-raised.test.ts`, `contracts/test/a-retry-lives-on-the-leg-it-retries.test.ts`, `contracts/test/a-run-carries-its-own-material.test.ts`, `contracts/test/approvals.test.ts`, `contracts/test/commitments.test.ts`, `contracts/test/nobody-is-paid-twice-by-a-restart.test.ts`, `contracts/test/one-definition.test.ts`, `contracts/test/payout-runs.test.ts`, `contracts/test/run-keys.test.ts`, `contracts/test/run-status.test.ts`, `contracts/test/the-payroll-run-meets-the-chain.test.ts`, `contracts/test/the-service-layer-meets-the-chain.test.ts`, `contracts/test/transcript.test.ts`, `contracts/test/vault-client.test.ts`, `contracts/test/vault-payout.test.ts`, `contracts/test/vault-recovery.test.ts`, `contracts/test/vault-registry.test.ts`, `contracts/test/vault-scoping.test.ts`, `contracts/test/vault-split.test.ts`, `contracts/test/vault-threshold-recovery.test.ts`, `contracts/test/vault-unshielded.test.ts`, `contracts/test/what-a-signer-is.test.ts`, `scripts/deploy-preview.ts`, `scripts/deposit-to-vault.ts`, `scripts/fund-vault.ts`, `scripts/measure-call-cost.ts`, `scripts/pay-from-vault-rules.test.ts`, `scripts/pay-from-vault-rules.ts`, `scripts/pay-from-vault.ts`, `scripts/pay-privately-from-vault.ts`, `scripts/pay-privately-rules.test.ts`, `scripts/pay-privately-rules.ts`, `scripts/preview-signers.test.ts`, `scripts/preview-signers.ts`, `scripts/reconcile-vault-pool-rules.test.ts`, `scripts/reconcile-vault-pool-rules.ts`, `scripts/reconcile-vault-pool.ts`, `scripts/record-a-notes-transaction.ts`, `scripts/transfer-from-vault.test.ts`, `scripts/transfer-from-vault.ts`, `scripts/vault-journal.test.ts`, `scripts/vault-journal.ts`, `scripts/vault-pool-file.test.ts`, `src/core/a-payroll-run-is-always-private.test.ts`, `src/core/a-run-is-not-a-governance-round.test.ts`, `src/core/a-vault-must-hold-what-a-round-pays.test.ts`, `src/core/a-vault-s-own-threshold.test.ts`, `src/core/account.ts`, `src/core/challenges.ts`, `src/core/core.test.ts`, `src/core/create-company.test.ts`, `src/core/crypto.test.ts`, `src/core/demo.ts`, `src/core/identity.ts`, `src/core/invite-handover.ts`, `src/core/jobs.ts`, `src/core/ledger-token.test.ts`, `src/core/ledger.ts`, `src/core/nobody-is-paid-twice-by-a-retyped-month.test.ts`, `src/core/one-pending-employee-does-not-refuse-the-run.test.ts`, `src/core/payroll.ts`, `src/core/payslip-key-derive.ts`, `src/core/payslip-key.test.ts`, `src/core/payslip-key.ts`, `src/core/plugins.ts`, `src/core/principal.test.ts`, `src/core/principal.ts`, `src/core/sealed-records.test.ts`, `src/core/sealed-records.ts`, `src/core/sessions.ts`, `src/core/signer-leaf.ts`, `src/core/store-file.test.ts`, `src/core/store-file.ts`, `src/core/store.ts`, `src/core/the-threshold-is-the-chain-s.test.ts`, `src/core/types.ts`, `src/core/wallet-identity.ts`, `src/core/wallet-unlock.test.ts`, `src/core/which-seat-is-yours.test.ts`, `src/midnight/commitments.ts`, `src/midnight/job-runner.test.ts`, `src/midnight/job-runner.ts`, `src/midnight/ledger.test.ts`, `src/midnight/ledger.ts`, `src/midnight/note-index-against-the-chain.test.ts`, `src/midnight/note-index.test.ts`, `src/midnight/note-index.ts`, `src/midnight/payee-address.ts`, `src/midnight/payout-tree.ts`, `src/midnight/private-state-addressing.test.ts`, `src/midnight/run-keys.ts`, `src/midnight/run-material.ts`, `src/midnight/run-skips.ts`, `src/midnight/run-status.ts`, `src/midnight/sealed-store.test.ts`, `src/midnight/sealed-store.ts`, `src/midnight/the-key-reaches-the-circuit.test.ts`, `src/midnight/the-secret-comes-from-the-keyring.test.ts`, `src/midnight/vault-coins.test.ts`, `src/midnight/vault-coins.ts`, `src/midnight/vault-holdings.test.ts`, `src/midnight/vault-holdings.ts`, `src/midnight/vault-ledger.test.ts`, `src/midnight/vault-ledger.ts`, `src/midnight/vault-notes.test.ts`, `src/midnight/vault-notes.ts`, `src/midnight/vault-pool.test.ts`, `src/midnight/vault-pool.ts`, `src/midnight/vault-recovery.ts`, `src/server/approval-signature.test.ts`, `src/server/index.ts`, `src/server/invitations.test.ts`, `src/server/self-payee.test.ts`, `src/standalone/main.tsx`, `src/testing/payees.ts`, `src/web/App.tsx`, `src/web/Join.tsx`, `src/web/accept-seat.test.ts`, `src/web/accept-seat.ts`, `src/web/accepted-address.ts`, `src/web/after-a-company-is-unlocked.test.tsx`, `src/web/connector-wallet.ts`, `src/web/keyring.ts`, `src/web/private-state.test.ts`, `src/web/private-state.ts`, `src/web/seat-repair.test.ts`, `src/web/seat-repair.ts`, `src/web/wallet-unlock.ts`, `src/wiring/a-chain-selection-needs-marked-records.test.ts`, `src/wiring/a-service-can-read-a-vault.test.ts`, `src/wiring/chain.ts`
+- **imported by** — `contracts/test/a-leg-is-raised-again-as-itself.test.ts`, `contracts/test/a-payroll-the-vault-cannot-pay-is-not-raised.test.ts`, `contracts/test/a-retry-lives-on-the-leg-it-retries.test.ts`, `contracts/test/a-run-carries-its-own-material.test.ts`, `contracts/test/approvals.test.ts`, `contracts/test/commitments.test.ts`, `contracts/test/nobody-is-paid-twice-by-a-restart.test.ts`, `contracts/test/one-definition.test.ts`, `contracts/test/payout-runs.test.ts`, `contracts/test/run-keys.test.ts`, `contracts/test/run-status.test.ts`, `contracts/test/the-payroll-run-meets-the-chain.test.ts`, `contracts/test/the-service-layer-meets-the-chain.test.ts`, `contracts/test/transcript.test.ts`, `contracts/test/vault-client.test.ts`, `contracts/test/vault-payout.test.ts`, `contracts/test/vault-recovery.test.ts`, `contracts/test/vault-registry.test.ts`, `contracts/test/vault-scoping.test.ts`, `contracts/test/vault-split.test.ts`, `contracts/test/vault-threshold-recovery.test.ts`, `contracts/test/vault-unshielded.test.ts`, `contracts/test/what-a-signer-is.test.ts`, `scripts/deploy-preview.ts`, `scripts/deposit-to-vault.ts`, `scripts/fund-vault.ts`, `scripts/measure-call-cost.ts`, `scripts/pay-from-vault-rules.test.ts`, `scripts/pay-from-vault-rules.ts`, `scripts/pay-from-vault.ts`, `scripts/pay-privately-from-vault.ts`, `scripts/pay-privately-rules.test.ts`, `scripts/pay-privately-rules.ts`, `scripts/preview-signers.test.ts`, `scripts/preview-signers.ts`, `scripts/reconcile-vault-pool-rules.test.ts`, `scripts/reconcile-vault-pool-rules.ts`, `scripts/reconcile-vault-pool.ts`, `scripts/record-a-notes-transaction.ts`, `scripts/transfer-from-vault.test.ts`, `scripts/transfer-from-vault.ts`, `scripts/vault-journal.test.ts`, `scripts/vault-pool-file.test.ts`, `src/core/a-payroll-run-is-always-private.test.ts`, `src/core/a-run-is-not-a-governance-round.test.ts`, `src/core/a-vault-must-hold-what-a-round-pays.test.ts`, `src/core/a-vault-s-own-threshold.test.ts`, `src/core/account.ts`, `src/core/challenges.ts`, `src/core/core.test.ts`, `src/core/create-company.test.ts`, `src/core/crypto.test.ts`, `src/core/demo.ts`, `src/core/identity.ts`, `src/core/invite-handover.ts`, `src/core/jobs.ts`, `src/core/ledger-token.test.ts`, `src/core/ledger.ts`, `src/core/nobody-is-paid-twice-by-a-retyped-month.test.ts`, `src/core/one-pending-employee-does-not-refuse-the-run.test.ts`, `src/core/payroll.ts`, `src/core/payslip-key-derive.ts`, `src/core/payslip-key.test.ts`, `src/core/payslip-key.ts`, `src/core/plugins.ts`, `src/core/principal.test.ts`, `src/core/principal.ts`, `src/core/sealed-records.test.ts`, `src/core/sealed-records.ts`, `src/core/sessions.ts`, `src/core/signer-leaf.ts`, `src/core/store-file.test.ts`, `src/core/store-file.ts`, `src/core/store.ts`, `src/core/the-threshold-is-the-chain-s.test.ts`, `src/core/types.ts`, `src/core/wallet-identity.ts`, `src/core/wallet-unlock.test.ts`, `src/core/which-seat-is-yours.test.ts`, `src/db/vault-records.test.ts`, `src/midnight/commitments.ts`, `src/midnight/job-runner.test.ts`, `src/midnight/job-runner.ts`, `src/midnight/ledger.test.ts`, `src/midnight/ledger.ts`, `src/midnight/note-index-against-the-chain.test.ts`, `src/midnight/note-index.test.ts`, `src/midnight/note-index.ts`, `src/midnight/payee-address.ts`, `src/midnight/payout-tree.ts`, `src/midnight/private-state-addressing.test.ts`, `src/midnight/run-keys.ts`, `src/midnight/run-material.ts`, `src/midnight/run-skips.ts`, `src/midnight/run-status.ts`, `src/midnight/sealed-store.test.ts`, `src/midnight/sealed-store.ts`, `src/midnight/the-key-reaches-the-circuit.test.ts`, `src/midnight/the-secret-comes-from-the-keyring.test.ts`, `src/midnight/vault-coins.test.ts`, `src/midnight/vault-coins.ts`, `src/midnight/vault-holdings.test.ts`, `src/midnight/vault-holdings.ts`, `src/midnight/vault-journal.test.ts`, `src/midnight/vault-journal.ts`, `src/midnight/vault-ledger.test.ts`, `src/midnight/vault-ledger.ts`, `src/midnight/vault-notes.test.ts`, `src/midnight/vault-notes.ts`, `src/midnight/vault-pool.test.ts`, `src/midnight/vault-pool.ts`, `src/midnight/vault-recovery.ts`, `src/server/approval-signature.test.ts`, `src/server/index.ts`, `src/server/invitations.test.ts`, `src/server/self-payee.test.ts`, `src/standalone/main.tsx`, `src/testing/payees.ts`, `src/web/App.tsx`, `src/web/Join.tsx`, `src/web/accept-seat.test.ts`, `src/web/accept-seat.ts`, `src/web/accepted-address.ts`, `src/web/after-a-company-is-unlocked.test.tsx`, `src/web/connector-wallet.ts`, `src/web/keyring.ts`, `src/web/private-state.test.ts`, `src/web/private-state.ts`, `src/web/seat-repair.test.ts`, `src/web/seat-repair.ts`, `src/web/wallet-unlock.ts`, `src/wiring/a-chain-selection-needs-marked-records.test.ts`, `src/wiring/a-service-can-read-a-vault.test.ts`, `src/wiring/chain.ts`
 - **outside packages** — `@noble/ciphers`, `@noble/curves`, `@noble/hashes`
 - **platform modules** — *none*
 - **circuits named here** — *none*
@@ -638,7 +638,7 @@ Tier 2 of the declared set.
 Tier 2 of the declared set.
 
 - **imports** — `src/core/crypto.ts`, `src/core/ledger.ts`, `src/midnight/circuit-arity.ts`, `src/midnight/fee-seat.ts`, `src/midnight/ledger.ts`, `src/midnight/note-index.ts`, `src/midnight/payee-address.ts`, `src/midnight/vault-coins.ts`, `src/midnight/vault-contract.ts`, `src/midnight/vault-ledger-shape.ts`, `src/midnight/vault-notes.ts`, `src/midnight/vault-pool.ts`, `src/midnight/vault-recovery.ts`
-- **imported by** — `scripts/deposit-to-vault.ts`, `scripts/fund-vault.ts`, `scripts/open-vault-pool.ts`, `scripts/pay-from-vault-rules.test.ts`, `scripts/pay-from-vault-rules.ts`, `scripts/pay-from-vault.ts`, `scripts/pay-privately-from-vault.ts`, `scripts/vault-journal.ts`, `src/midnight/fee-seat.test.ts`, `src/midnight/note-index.test.ts`, `src/midnight/note-index.ts`, `src/midnight/vault-call-convention.test.ts`, `src/midnight/vault-holdings.test.ts`, `src/midnight/vault-holdings.ts`, `src/midnight/vault-ledger.test.ts`, `src/midnight/vault-pool.ts`, `src/midnight/vault-witness-binding.test.ts`, `src/wiring/chain.ts`
+- **imported by** — `scripts/deposit-to-vault.ts`, `scripts/fund-vault.ts`, `scripts/open-vault-pool.ts`, `scripts/pay-from-vault-rules.test.ts`, `scripts/pay-from-vault-rules.ts`, `scripts/pay-from-vault.ts`, `scripts/pay-privately-from-vault.ts`, `src/midnight/fee-seat.test.ts`, `src/midnight/note-index.test.ts`, `src/midnight/note-index.ts`, `src/midnight/vault-call-convention.test.ts`, `src/midnight/vault-holdings.test.ts`, `src/midnight/vault-holdings.ts`, `src/midnight/vault-journal.ts`, `src/midnight/vault-ledger.test.ts`, `src/midnight/vault-pool.ts`, `src/midnight/vault-witness-binding.test.ts`, `src/wiring/chain.ts`
 - **outside packages** — `@midnight-ntwrk/compact-js`, `@midnight-ntwrk/midnight-js-contracts`
 - **platform modules** — *none*
 - **circuits named here** — `Vault.deposit`, `Vault.depositUnshielded`, `Vault.payout`, `Vault.payoutUnshielded`
@@ -711,7 +711,7 @@ arrive in a variable, and this list sees only a number or a capitalised constant
 
 Tier 2 of the declared set.
 
-- **imports** — `src/core/crypto.ts`, `src/midnight/note-index.ts`, `src/midnight/vault-coins.ts`
+- **imports** — `src/core/crypto.ts`, `src/midnight/note-index.ts`, `src/midnight/vault-coins.ts`, `src/midnight/vault-recovery.ts`
 - **imported by** — `contracts/test/vault-client.test.ts`, `contracts/test/vault-recovery.test.ts`, `scripts/measure-call-cost.ts`, `scripts/pay-from-vault.ts`, `scripts/pay-privately-from-vault.ts`, `scripts/pay-privately-rules.test.ts`, `scripts/pay-privately-rules.ts`, `scripts/reconcile-vault-pool-rules.test.ts`, `scripts/reconcile-vault-pool-rules.ts`, `scripts/vault-pool-file.test.ts`, `src/midnight/note-index.test.ts`, `src/midnight/note-index.ts`, `src/midnight/vault-holdings.test.ts`, `src/midnight/vault-ledger.test.ts`, `src/midnight/vault-ledger.ts`, `src/midnight/vault-notes.test.ts`, `src/midnight/vault-pool.test.ts`, `src/midnight/vault-pool.ts`
 - **outside packages** — *none*
 - **platform modules** — *none*
@@ -722,55 +722,55 @@ Tier 2 of the declared set.
 
 | line | name | as written |
 |---|---|---|
-| 55 | `Note` | `export interface Note` |
-| 152 | `VaultNotes` | `export interface VaultNotes` |
-| 169 | `aPaymentCanSpend` | `export const aPaymentCanSpend = (note: Note): boolean =>` |
-| 212 | `smallestNoteCovering` | `export const smallestNoteCovering = (notes: readonly Note[], token: Hex, amount: bigint): Note \| undefined =>` |
-| 220 | `NoteChoice` | `export type NoteChoice` |
-| 253 | `choosingANoteToSpend` | `export const choosingANoteToSpend = (notes: readonly Note[], token: Hex, amount: bigint): NoteChoice =>` |
-| 279 | `noteToSpend` | `export const noteToSpend = (notes: readonly Note[], token: Hex, amount: bigint): Note =>` |
-| 340 | `afterPayment` | `export const afterPayment = (` |
-| 447 | `paymentsFit` | `export const paymentsFit = (` |
-| 487 | `afterDeposit` | `export const afterDeposit = (state: VaultNotes, note: Note): VaultNotes =>` |
-| 513 | `withIndexRead` | `export const withIndexRead = (state: VaultNotes, nonce: Hex, index: ChainReadIndex): VaultNotes =>` |
-| 527 | `balanceOf` | `export const balanceOf = (state: VaultNotes, token: Hex): bigint =>` |
-| 557 | `witnessesWithoutAPool` | `export const witnessesWithoutAPool = () => (` |
-| 568 | `witnessesOver` | `export const witnessesOver = (get: () => VaultNotes, pending: { spending?: Hex }) => (` |
+| 56 | `Note` | `export interface Note` |
+| 153 | `VaultNotes` | `export interface VaultNotes` |
+| 180 | `aPaymentCanSpend` | `export const aPaymentCanSpend = (note: Note): boolean =>` |
+| 223 | `smallestNoteCovering` | `export const smallestNoteCovering = (notes: readonly Note[], token: Hex, amount: bigint): Note \| undefined =>` |
+| 231 | `NoteChoice` | `export type NoteChoice` |
+| 264 | `choosingANoteToSpend` | `export const choosingANoteToSpend = (notes: readonly Note[], token: Hex, amount: bigint): NoteChoice =>` |
+| 290 | `noteToSpend` | `export const noteToSpend = (notes: readonly Note[], token: Hex, amount: bigint): Note =>` |
+| 351 | `afterPayment` | `export const afterPayment = (` |
+| 458 | `paymentsFit` | `export const paymentsFit = (` |
+| 498 | `afterDeposit` | `export const afterDeposit = (state: VaultNotes, note: Note): VaultNotes =>` |
+| 524 | `withIndexRead` | `export const withIndexRead = (state: VaultNotes, nonce: Hex, index: ChainReadIndex): VaultNotes =>` |
+| 538 | `balanceOf` | `export const balanceOf = (state: VaultNotes, token: Hex): bigint =>` |
+| 568 | `witnessesWithoutAPool` | `export const witnessesWithoutAPool = () => (` |
+| 579 | `witnessesOver` | `export const witnessesOver = (get: () => VaultNotes, pending: { spending?: Hex }) => (` |
 
 ### `src/midnight/vault-notes.ts` — what it refuses
 
 | line | kind | message |
 |---|---|---|
-| 283 | throw | this vault holds no notes of [value] |
-| 286 | throw | no single note covers [value]: the largest is [value] and the pool holds [value] across [value] notes. Merge them first — a payment cannot. |
-| 291 | throw | no note this vault can spend covers [value]. [value]: [value]. [value] which transaction created it with a hash a spend can read, so a payment cannot read its place in the chain's commitment tree. The money is still on chain and still the vault's. Name the transaction that paid it in to recordCreatingTransaction, or rebuild the pool so the chain is asked, and pay again. |
-| 360 | throw | this vault has no note [value] to spend; its pool and the chain disagree |
-| 364 | throw | note [value] holds [value] and the payment is [value] |
-| 377 | throw | note [value] was spent exactly and the contract emits no change for that, but the call's outputs carry a coin of [value] coming back to the vault. The pool cannot be advanced from two answers about the same money — rebuild it from the chain with replayVault. |
-| 394 | throw | note [value] holds [value] and the payment is [value], so the vault kept [value] — but the call's outputs carry no coin coming back to it. Something is being read that is not this payout. The pool is NOT advanced: the change is on chain and a guess at its nonce is a note nobody can spend. |
-| 401 | throw | the coin coming back to this vault is worth [value] and the arithmetic says [value] (note [value] of [value], paying [value]). These are two claims about the same money and there is no correct way to pick one. |
-| 407 | throw | the coin coming back to this vault is of [value] and the note spent was of [value]. That is not this payout's change. |
-| 465 | throw | payment [value] of [value] cannot be made out of this vault: [value] |
-| 489 | throw | this vault already holds a note [value] |
-| 491 | throw | a note of nothing is not a deposit |
-| 498 | throw | note [value] arrives at a deposit already carrying an index. A deposit cannot know where the chain will file it, so that number was not read from the chain and is not recorded. Record the deposit without it; the index is read from the transaction later. |
-| 516 | throw | this vault's pool has no note [value], so there is nothing to record an index against. The pool may have moved on since the note was chosen; choose again. |
-| 559 | throw | this vault was asked which note to spend for [value] on a call that has no note pool. The unshielded circuits move a LEDGER BALANCE and read no witness, so either the contract has changed or this call was routed to the wrong circuit. Nothing is substituted: a note handed over here would be one this path never established the vault holds. |
-| 591 | throw | the vault's note [value] is the one to spend for [value], and its position in the chainx27s commitment tree has not been read for this call. It cannot be spent until it is: the transaction would carry a merkle path for a different leaf. The note is safe, because an index is not part of a commitment. Its index is read from the events of the transaction that created it, which a private payment does before it calls. NOTHING HERE MAY SUBSTITUTE A NUMBER. |
+| 294 | throw | this vault holds no notes of [value] |
+| 297 | throw | no single note covers [value]: the largest is [value] and the pool holds [value] across [value] notes. Merge them first — a payment cannot. |
+| 302 | throw | no note this vault can spend covers [value]. [value]: [value]. [value] which transaction created it with a hash a spend can read, so a payment cannot read its place in the chain's commitment tree. The money is still on chain and still the vault's. Name the transaction that paid it in to recordCreatingTransaction, or rebuild the pool so the chain is asked, and pay again. |
+| 371 | throw | this vault has no note [value] to spend; its pool and the chain disagree |
+| 375 | throw | note [value] holds [value] and the payment is [value] |
+| 388 | throw | note [value] was spent exactly and the contract emits no change for that, but the call's outputs carry a coin of [value] coming back to the vault. The pool cannot be advanced from two answers about the same money — rebuild it from the chain with replayVault. |
+| 405 | throw | note [value] holds [value] and the payment is [value], so the vault kept [value] — but the call's outputs carry no coin coming back to it. Something is being read that is not this payout. The pool is NOT advanced: the change is on chain and a guess at its nonce is a note nobody can spend. |
+| 412 | throw | the coin coming back to this vault is worth [value] and the arithmetic says [value] (note [value] of [value], paying [value]). These are two claims about the same money and there is no correct way to pick one. |
+| 418 | throw | the coin coming back to this vault is of [value] and the note spent was of [value]. That is not this payout's change. |
+| 476 | throw | payment [value] of [value] cannot be made out of this vault: [value] |
+| 500 | throw | this vault already holds a note [value] |
+| 502 | throw | a note of nothing is not a deposit |
+| 509 | throw | note [value] arrives at a deposit already carrying an index. A deposit cannot know where the chain will file it, so that number was not read from the chain and is not recorded. Record the deposit without it; the index is read from the transaction later. |
+| 527 | throw | this vault's pool has no note [value], so there is nothing to record an index against. The pool may have moved on since the note was chosen; choose again. |
+| 570 | throw | this vault was asked which note to spend for [value] on a call that has no note pool. The unshielded circuits move a LEDGER BALANCE and read no witness, so either the contract has changed or this call was routed to the wrong circuit. Nothing is substituted: a note handed over here would be one this path never established the vault holds. |
+| 602 | throw | the vault's note [value] is the one to spend for [value], and its position in the chainx27s commitment tree has not been read for this call. It cannot be spent until it is: the transaction would carry a merkle path for a different leaf. The note is safe, because an index is not part of a commitment. Its index is read from the events of the transaction that created it, which a private payment does before it calls. NOTHING HERE MAY SUBSTITUTE A NUMBER. |
 
 ### `src/midnight/vault-notes.ts` — where a width is fixed
 
 | line | site | what fixes it |
 |---|---|---|
-| 293 | `.length === 1` | a width compared |
-| 294 | `.length === 1` | a width compared |
+| 304 | `.length === 1` | a width compared |
+| 305 | `.length === 1` | a width compared |
 
 ## `src/midnight/vault-coins.ts`
 
 Tier 2 of the declared set.
 
 - **imports** — `src/core/crypto.ts`
-- **imported by** — `contracts/test/vault-client.test.ts`, `contracts/test/vault-payout.test.ts`, `contracts/test/vault-recovery.test.ts`, `scripts/vault-journal.ts`, `src/midnight/vault-coins.test.ts`, `src/midnight/vault-ledger.ts`, `src/midnight/vault-notes.ts`, `src/midnight/vault-recovery.ts`
+- **imported by** — `contracts/test/vault-client.test.ts`, `contracts/test/vault-payout.test.ts`, `contracts/test/vault-recovery.test.ts`, `src/midnight/vault-coins.test.ts`, `src/midnight/vault-journal.ts`, `src/midnight/vault-ledger.ts`, `src/midnight/vault-notes.ts`, `src/midnight/vault-recovery.ts`
 - **outside packages** — *none*
 - **platform modules** — *none*
 - **circuits named here** — *none*
@@ -882,4 +882,4 @@ Tier 2 of the declared set.
 
 *No width here matches the shapes above.* A width this module works to may
 arrive in a variable, and this list sees only a number or a capitalised constant.
-<!-- GENERATED:END id="modules" body="7a6329ead60eb6ce" -->
+<!-- GENERATED:END id="modules" body="db57a65fdec287aa" -->

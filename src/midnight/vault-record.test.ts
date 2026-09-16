@@ -23,7 +23,7 @@ import { fileURLToPath } from 'node:url';
 import {
   assertVaultName, vaultAuthorityFile, vaultRegistryFile, vaultPoolSignersFile, mintedSignerIds,
   emptyVaultRegistry, parseVaultRegistry, addVault, updateVault, describeVaultForReport,
-  theVault, theVaultNameMeant, whenThisNameWasTaken, vaultRegistryForDisk,
+  theVault, theVaultNameMeant, whenThisNameWasTaken, vaultRegistryForDisk, namesRecordedFor,
   type VaultEntry, type VaultRegistry,
 } from './vault-record.js';
 
@@ -684,6 +684,18 @@ describe('asking whether a vault name is already taken', () => {
 /* ------------------------------------------------------------------ *
  * AND THE CHECK THAT THE NEXT DOOR CANNOT QUIETLY SKIP IT
  * ------------------------------------------------------------------ */
+
+describe('which names a record gives an address', () => {
+  it('answers every name recorded for the address, retired ones included, whatever the case of the hex', () => {
+    let r = emptyVaultRegistry('stagenet');
+    r = addVault(r, entry('payroll-a', { contractAddress: ADDRESS }));
+    r = addVault(r, entry('payroll-b', { contractAddress: '8d'.repeat(32) }));
+    r = { ...r, vaults: { ...r.vaults, 'payroll-a': { ...r.vaults['payroll-a']!, disposed: true } } };
+    expect(namesRecordedFor(r, ADDRESS.toUpperCase()),
+      'RED WHEN: a vault the record keeps is not found because it is retired or its address was written in capitals').toEqual(['payroll-a']);
+    expect(namesRecordedFor(r, 'ff'.repeat(32))).toEqual([]);
+  });
+});
 
 describe('nothing resolves a vault name to a vault outside this module', () => {
   /**
