@@ -38,6 +38,7 @@ import { privateStateKey } from '../src/midnight/ledger.js';
 import { isDeployedCircuit } from '../src/midnight/deferral.js';
 import { assetIdBytes } from '../src/core/assets.js';
 import { WalletFeeSponsor, CUSTOMER_BALANCES, SPONSOR_BALANCES } from '../src/midnight/sponsor.js';
+import { feeCeilingFrom } from '../src/midnight/fee-ceiling.js';
 import { sponsorWalletOver } from './funded-wallets.js';
 import { testEnvironmentFor } from './test-environment.js';
 import { explainNodeError } from './node-errors.js';
@@ -122,6 +123,8 @@ function customerSeed(): string {
 }
 
 async function main() {
+  /* Read before any wallet syncs: this rig spends a real fee, and nothing pays one uncapped. */
+  const ceiling = feeCeilingFrom(process.env);
   console.log('────────────────────────────────────────────────────────────');
   console.log(`  ${BOLD}Fee sponsorship on ${NETWORK}${OFF}  (M-4)`);
   console.log('  A wallet with nothing in it calls a circuit. Someone else pays.');
@@ -290,6 +293,7 @@ async function main() {
       },
       async () => null,
     ),
+    ceiling,
     /*
      * Read immediately after submitting, so it lags: the first run printed
      * "remaining: 0" while the sponsor held 4.1e17, because the wallet had not

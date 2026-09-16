@@ -47,7 +47,9 @@ import {
 } from '../midnight/ledger.js';
 import { MidnightCommitments } from '../midnight/commitments.js';
 import { FileSealedStateStore } from '../midnight/sealed-store.js';
-import { midnightProviders } from '../midnight/providers.js';
+import { midnightProviders, sponsoredProviders, type CustomerWallet } from '../midnight/providers.js';
+import { NothingWasSent, saysNothingWasSent } from '../core/jobs.js';
+import { refusalForProven, readProvenTransaction } from './proven-submission.js';
 import type {
   Ledger, LedgerAddress, LedgerStatus, LedgerRecord, PaymentsAmong,
   AccountOpening, SealedStateAt, TxRef, SignerRef, WriteInFlight,
@@ -76,6 +78,8 @@ import type { VaultHoldings } from '../core/vault-holdings.js';
  * nothing.
  */
 const noSponsor = (refusal: string): FeeSponsor => ({
+  /* What a description reads, so the seat being filled is not reported as somebody paying. */
+  paysNothing: true,
   addFeeAndFinalise: async () => Promise.reject(new Error(refusal)),
   submit: async () => Promise.reject(new Error(refusal)),
   /*
@@ -295,6 +299,12 @@ export class ChainLedger implements Ledger {
    */
   private readonly payer: FeeSponsor | undefined;
 
+  /**
+   * The company's side, kept for the one write that does not go through the
+   * ledger underneath: a transaction a signer's device already proved.
+   */
+  private readonly company: CustomerWallet | undefined;
+
   constructor(
     private readonly inner: MidnightLedger,
     private readonly deployment: Deployment,
@@ -303,6 +313,7 @@ export class ChainLedger implements Ledger {
   ) {
     this.cannotWrite = refusalForCapability(capability);
     this.payer = capability?.sponsor;
+    this.company = capability?.customer;
   }
 
   /**
@@ -508,6 +519,57 @@ export class ChainLedger implements Ledger {
     return this.write(args[0], 'changing a vault\'s approval threshold',
       () => this.inner.setVaultThreshold(...args));
   }
+
+  /**
+   * **A TRANSACTION A SIGNER'S DEVICE ALREADY PROVED, BALANCED, PAID FOR AND
+   * SENT.**
+   *
+   * Nothing is proved here. The company's side balances what it owns, the fee
+   * payer adds the capped fee, and the fee payer submits - the same two parties,
+   * in the same order, through the same one-write-at-a-time lane as every other
+   * write. Before anything is booked the transaction is read and refused unless
+   * it only calls this company's own contract.
+   *
+   * **EVERY FAILURE BEFORE THE SUBMISSION CARRIES THE MARK THAT NOTHING WAS
+   * SENT**, including a refusal to start because an earlier write is overdue,
+   * so the device can say so. A failure of the submission itself does not: it
+   * may have landed.
+   */
+  submitProven(
+    accountId: string,
+    proven: Uint8Array,
+    read: (bytes: Uint8Array) => Promise<unknown> = readProvenTransaction,
+  ): Promise<TxRef> {
+    let submitting = false;
+    /*
+     * A deployment that cannot write is refused by the lane itself, before
+     * anything below runs, and the refusal is marked on the way out.
+     */
+    return this.write(accountId, 'sending an approval proved on a device', async () => {
+      const address = await this.inner.address(accountId);
+      if (!address) {
+        throw new NothingWasSent(
+          'this company has no contract on this chain that this deployment can find, so '
+          + 'there is nothing to send an approval to. Nothing was sent.');
+      }
+      const tx = await read(proven);
+      const refusal = refusalForProven(tx, address.value);
+      if (refusal) throw new NothingWasSent(refusal);
+      /*
+       * **WHAT EITHER SIDE BOOKS IS LET GO BY THESE PROVIDERS THEMSELVES**: a
+       * failed balance releases both sides' bookings inside the balance, and a
+       * submission takes both over from the moment it starts.
+       */
+      const providers = sponsoredProviders(this.company!, this.payer!);
+      const finalised = await providers.walletProvider.balanceTx(tx as never);
+      submitting = true;
+      const ref = await providers.midnightProvider.submitTx(finalised);
+      return { ref: String(ref), at: new Date().toISOString() };
+    }).catch((e: unknown) => {
+      if (submitting || saysNothingWasSent(e)) throw e;
+      throw new NothingWasSent(String((e as { message?: unknown })?.message ?? e));
+    });
+  }
 }
 
 /** The configuration the ledger takes, derived from the deployment and nowhere else. */
@@ -661,9 +723,9 @@ export function chainLedger(
  * given **no fee payer, no customer wallet and no compiled contract** — not as
  * an omission but as the guard: a write reaches `connect`, which builds on the
  * compiled contract, so every write on this object stops there. The reads do
- * not go near it. **`nobodyPays` is still a truthy object**, so
- * `VaultLedger.describe()` will say this client has a sponsor; that sentence is
- * wrong about this object and is fixed where that sentence is written.
+ * not go near it. **`nobodyPays` is still a truthy object**, so it carries the
+ * mark a description reads, and `VaultLedger.describe()` says this client has
+ * no fee payer.
  *
  * **THE VAULT'S OWN ARTEFACT PATH IS PASSED** in all three places that take one
  * - `vaultConfigFor` below covers the config and the provider bundle, and the

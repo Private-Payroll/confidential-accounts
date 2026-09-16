@@ -144,13 +144,14 @@ describe('writes over one fee payer wait their turn', () => {
       shieldedSecretKeys: 'k', dustSecretKey: 'd',
       estimateFee: async () => 100n,
       balanceFinalizedTransaction: async (tx: unknown) => ({ recipe: tx }),
-      finalizeRecipe: async (r: any) => r.recipe,
+      /* Declares no DUST spent, and still reads as the id it was balanced for. */
+      finalizeRecipe: async (r: any) => ({ intents: new Map(), toString: () => String(r.recipe) }),
       submitTransaction: async (tx: unknown) => `ref-${String(tx)}`,
       revert: async () => {},
       paidFee: async (ref: string) => (ref === 'ref-a' ? 90n : 80n),
       balances: async () => ({ dust: 0n, night: 0n }),
     } as unknown as SponsorWallet;
-    const sponsor = new WalletFeeSponsor(wallet, undefined, { record: (e) => { records.push(e); } });
+    const sponsor = new WalletFeeSponsor(wallet, { perTransaction: 1_000n }, undefined, { record: (e) => { records.push(e); } });
 
     const inner: any = {
       open: async (id: string) => {

@@ -11,17 +11,12 @@
  *     balance    books coins. Effectful, and it expires.
  *     SUBMIT     effectful. Past this line the chain may know.
  *
- * **THIS FILE DOES THE SECOND ONE AND REFUSES THE LAST TWO BY NAME.** Not as a
- * placeholder: nothing in this product is wired to pay a fee. The one place
- * that would supply a customer wallet and a fee payer sets its capability to
- * nothing on purpose, with the reason written beside it, so a runner here that
- * appeared to balance and submit would be describing a deployment that does not
- * exist.
- *
- * The refusal is the honest version and it costs nothing later: the day a
- * deployment has a wallet, the balance and submission arrive through the same
- * `JobRunner` interface the queue already calls, and nothing above this file
- * changes.
+ * **THIS FILE PROVES, THEN HANDS THE PROVEN TRANSACTION TO THE SERVICE.** The
+ * device has no wallet and pays no fee. The service balances the company's
+ * side, has the fee payer add the fee and submit, or refuses - and its answer
+ * says whether anything was sent, which is what this runner passes on to the
+ * queue. What leaves the device is the proven transaction, which is what
+ * reaches the chain anyway; the preimage never does.
  *
  * ── AND THE PREIMAGE IS NEVER WRITTEN DOWN ───────────────────────────────
  *
@@ -38,8 +33,7 @@
  * not where the browser is - so the preimage a browser proves is one it was
  * handed. Proving it on the device is what stops it reaching a proving service;
  * it is not yet what stops it existing anywhere but the device. The step that
- * closes that is a private-state provider in the browser, and it is not this
- * round's.
+ * closes that is a private-state provider in the browser.
  */
 import { NothingWasSent, type Job, type JobRunner } from '../core/jobs.js';
 import type { KeyMaterialSource } from '../midnight/wasm-proving.js';
@@ -89,25 +83,22 @@ export interface ProvingCapability {
 }
 
 /**
- * Why this runner cannot finish a job, in the product's own words.
+ * Hands a proven transaction to the service and answers its reference.
  *
- * **IT NAMES THE STATE THAT WOULD RESOLVE IT AND NOT A FILE TO EDIT.** Whoever
- * meets this is a person waiting on an approval, and the useful sentence is
- * what is missing from this deployment rather than where the code for it lives.
+ * **IT MUST SAY WHICH FAILURES SENT NOTHING.** A failure marked as nothing sent
+ * is final for the queue; any other is an outcome nobody knows yet, because the
+ * service may have submitted before the answer was lost.
  */
-export const NOTHING_PAYS_FEES =
-  'this device can prove an approval but cannot send it: no wallet has been set up to pay the ' +
-  'network fee. The proof itself is finished and costs nothing to make again, so nothing has ' +
-  'been lost and nothing has been sent.';
+export type SendProven = (job: Job, proven: Uint8Array) => Promise<{ txRef: string }>;
 
 /**
- * A runner that proves and says plainly that it cannot do the rest.
+ * A runner that proves on this device and sends through the service.
  *
  * The proof is real: the contract's own compiled circuit, the proving key this
  * repository builds, and the prover running in this process with no proving
  * service anywhere in the path.
  */
-export const provingOnlyRunner = (capability: ProvingCapability): JobRunner => {
+export const provingRunner = (capability: ProvingCapability, send: SendProven): JobRunner => {
   /*
    * Built once and shared. Constructing the prover instantiates a WebAssembly
    * module and reads nothing job-specific, so building one per job would pay
@@ -132,29 +123,28 @@ export const provingOnlyRunner = (capability: ProvingCapability): JobRunner => {
       return { proof: { circuit, provenTx } };
     },
 
-    async submit(): Promise<{ txRef: string }> {
-      /*
-       * **MARKED, AND THE MARK IS THE WHOLE OF WHY THIS IS NOT A PLAIN
-       * `Error`.** A thrown submission is otherwise recorded as *sent, outcome
-       * unknown*, which is correct for anything that reached a network call and
-       * wrong here: this refuses before there is a call to make. Unmarked, the
-       * queue asks the chain, finds nothing able to answer, and finishes by
-       * telling a person the transaction may have settled and they should check
-       * the account - about a payment that never existed.
-       *
-       * **THAT EXACT SENTENCE WAS PRODUCED BY A REAL RUN OF THIS RUNNER BEFORE
-       * THE MARK EXISTED**, which is how it was found.
-       */
-      throw new NothingWasSent(NOTHING_PAYS_FEES);
+    async submit(job: Job, proof: unknown): Promise<{ txRef: string }> {
+      const provenTx = (proof as { provenTx?: unknown } | null | undefined)?.provenTx;
+      if (provenTx === undefined || provenTx === null) {
+        /*
+         * **MARKED, BECAUSE NOTHING LEFT THIS DEVICE.** A proof that is not in
+         * hand - a tab reopened after the proof was made, which the queue does
+         * not keep - is proved again rather than reported as possibly sent.
+         */
+        throw new NothingWasSent(
+          'this approval has no finished proof on this device to send, so nothing was sent. '
+          + 'It will be proved again.');
+      }
+      const codec = await capability.transactionCodec();
+      return send(job, codec.serializeProven(provenTx));
     },
 
     /*
-     * **NO `recover`, AND ITS ABSENCE IS CORRECT RATHER THAN UNFINISHED.** A
-     * recovery answers *did this land on chain*. Nothing this runner does
-     * reaches a chain, so there is no landing to ask about - and the queue's
-     * own behaviour with no `recover` is exactly right for that: it stops and
-     * says a person should look, which is the only honest answer a device that
-     * cannot submit can give about something it never submitted.
+     * **NO `recover` YET, AND WHAT THAT COSTS IS SAID HERE.** A recovery
+     * answers *did this land on chain*. Without one, a submission whose answer
+     * was lost stops the job and says a person should look - which is the
+     * honest answer about something that may have been sent, and the one the
+     * queue gives on its own.
      */
   };
 };

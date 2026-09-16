@@ -32,6 +32,7 @@ import { recipientOf, type Payee, type PayeeAddress } from './payee-address.js';
 import { arityFrom, assertArity } from './circuit-arity.js';
 import { fromHex, toHex } from '../core/crypto.js';
 import type { MidnightConfig, FeeSponsor } from './ledger.js';
+import { paysNoFees } from './fee-seat.js';
 import type { SignerRef, TxRef } from '../core/ledger.js';
 import {
   witnessesOver, witnessesWithoutAPool, afterDeposit, afterPayment, noteToSpend, paymentsFit,
@@ -2103,7 +2104,8 @@ export class VaultLedger {
 
   /** Named so a reader can see what this class does NOT hold. */
   describe(): string {
-    return `vault client on ${this.cfg.networkId}, fees via ${this.sponsor ? 'sponsor' : 'none'}; `
+    return `vault client on ${this.cfg.networkId}, `
+      + `${paysNoFees(this.sponsor) ? 'with no fee payer' : 'with fees paid by the fee payer it was given'}; `
       + 'the account it calls is pinned by the vault on chain, never by this client';
   }
 }

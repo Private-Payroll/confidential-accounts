@@ -34,6 +34,9 @@
 import type { FeeSponsor } from './ledger.js';
 import type { TxRef } from '../core/ledger.js';
 import type { SponsoredFeeSink } from './sponsored-fees.js';
+import {
+  FeeRefused, dustSpentBy, refusalForCommitted, refusalForExpected, type FeeCeiling,
+} from './fee-ceiling.js';
 
 /**
  * **WHAT A SPONSOR NEEDS FROM A FUNDED WALLET, AND NOTHING MORE. THIS IS THE
@@ -89,21 +92,20 @@ import type { SponsoredFeeSink } from './sponsored-fees.js';
  * **WHAT IS DELIBERATELY NOT HERE, SO THAT ADDING IT LATER IS A DECISION AND
  * NOT A DISCOVERY.** The vendor offers a sponsor two spend controls at exactly
  * this call site - checking that what it is about to pay for was actually
- * signed, and estimating the fee before committing to it. **The second of the
- * two is now here and the first is not**, and the asymmetry is deliberate
- * rather than half-finished: the estimate produces a NUMBER that cannot be
- * recovered afterwards, so taking it late costs the number; the signature check
- * produces a VERDICT, and a verdict is only worth taking when something refuses
- * on it. Nothing refuses on anything here yet.
+ * signed, and estimating the fee before committing to it. **The second is here
+ * and the first is not.** The signature check produces a verdict about the
+ * company's half, and the fee payer's exposure does not depend on it: what the
+ * fee payer can lose on one transaction is bounded by the ceiling below whether
+ * or not the other half is well signed.
  *
- * **NOTHING CAPS WHAT A SPONSOR PAYS AND THIS SEAM STILL DOES NOT.** The fee
- * follows the transaction's complexity and the customer composes the
- * transaction, so the failure is a bill rather than an outage. The estimate
- * below is what a cap would one day be compared against; it is recorded and it
- * is not consulted. **A cap, and the signature check in front of it, belong
- * here the day a policy exists to refuse against** - and they are a change to
- * this interface and to the class below and to nothing else, which is the whole
- * reason the seam is one narrow interface in one file.
+ * **WHAT A SPONSOR PAYS IS CAPPED, AND THE CAP IS IN THE CLASS BELOW RATHER
+ * THAN IN THIS INTERFACE.** The fee follows the transaction's complexity and
+ * somebody else composes the transaction, so without a cap the failure is a
+ * bill. The class refuses before booking when the estimate is already over the
+ * ceiling, and refuses again - releasing what it booked - when the balanced
+ * transaction declares more DUST spent than the ceiling allows. The second
+ * check reads the transaction itself, so it needs nothing more from a wallet
+ * than this interface already asks for.
  */
 export interface SponsorWallet {
   balanceFinalizedTransaction(
@@ -138,10 +140,9 @@ export interface SponsorWallet {
    * which, for a fee payer that adds nothing but a fee leg, is the only leg it
    * is paying for. **The cheap one is the wrong number, not a rough one.**
    *
-   * **NOTHING CAPS IT AND THIS CHANGE DOES NOT ADD ONE.** A cap needs a
-   * policy and a per-company ceiling, neither of which exists, and a cap that
-   * refuses on a number nobody chose is an outage. What this does is make the
-   * number exist.
+   * **IT IS A FIRST CHECK AND NOT THE DECIDING ONE.** Over the ceiling, the
+   * payment is refused before anything is booked. Unread, the payment goes on
+   * to the balance, and the amount read off the balanced transaction decides.
    */
   estimateFee(tx: unknown, ttl: Date): Promise<bigint>;
   /**
@@ -185,8 +186,9 @@ export class WalletFeeSponsor implements FeeSponsor {
    * BOTH ARE THERE BECAUSE THE INFORMATION EXISTS NOWHERE ELSE BY THE TIME IT
    * IS WANTED.** The company is told to this object and cannot be derived from
    * what it is handed; the estimate is read before the balance and is gone
-   * once the balance has run. Neither is consulted by anything that decides
-   * whether to pay.
+   * once the balance has run. The company decides nothing. The estimate is
+   * compared with the ceiling once, before the balance, and is otherwise a
+   * record.
    *
    * **THEY REST ON ONE OPERATION AT A TIME**, which is the same property the
    * provider bundle above this already rests on and states. Two operations
@@ -198,6 +200,13 @@ export class WalletFeeSponsor implements FeeSponsor {
 
   constructor(
     private wallet: SponsorWallet,
+    /**
+     * The most one transaction may spend from this wallet's DUST.
+     *
+     * **REQUIRED, AND CHECKED HERE**, because a fee payer built without one pays
+     * whatever it is handed, and the place that would notice is an invoice.
+     */
+    private ceiling: FeeCeiling,
     /**
      * Told when the sponsor pays, and how much capacity is left.
      *
@@ -215,7 +224,13 @@ export class WalletFeeSponsor implements FeeSponsor {
      * the fact.
      */
     private fees?: SponsoredFeeSink,
-  ) {}
+  ) {
+    if (!ceiling || typeof ceiling.perTransaction !== 'bigint' || ceiling.perTransaction <= 0n) {
+      throw new Error(
+        'a fee payer was about to be built with no ceiling on what one transaction may spend, '
+        + 'so it was not built. Without one it pays whatever it is handed.');
+    }
+  }
 
   /**
    * Which company the next transaction is for.
@@ -238,17 +253,18 @@ export class WalletFeeSponsor implements FeeSponsor {
    */
   async addFeeAndFinalise(customerFinalised: unknown, ttl: Date): Promise<unknown> {
     /*
-     * **READ BEFORE ANYTHING IS BOOKED, AND A FAILURE HERE DOES NOT STOP THE
-     * PAYMENT.** This is the only moment the expected cost exists: it is the
-     * fee the balance below is about to converge on, and the balance hands back
-     * a transaction rather than a price.
+     * **READ BEFORE ANYTHING IS BOOKED.** This is the only moment the expected
+     * cost exists: it is the fee the balance below is about to converge on,
+     * and the balance hands back a transaction rather than a price.
      *
-     * It is deliberately NOT a gate. Nothing caps what a fee payer pays today,
-     * a cap needs a policy nobody has chosen, and an estimate that refused a
-     * payment because a measurement did not come back would be an outage caused
-     * by an instrument. **What is not read is recorded as not read.**
+     * **OVER THE CEILING, IT STOPS HERE, WITH NOTHING TO RELEASE.** A reading
+     * that did not come back does not stop anything: an instrument failing is
+     * not a reason to refuse, and the amount read off the balanced transaction
+     * below decides either way. **What is not read is recorded as not read.**
      */
     this.estimated = await this.wallet.estimateFee(customerFinalised, ttl).catch(() => null);
+    const tooDear = refusalForExpected(this.estimated, this.ceiling);
+    if (tooDear) throw new FeeRefused(tooDear);
 
     const recipe = await this.wallet.balanceFinalizedTransaction(
       customerFinalised,
@@ -277,8 +293,9 @@ export class WalletFeeSponsor implements FeeSponsor {
      * a recipe rather than a transaction, and the failure lands at submission
      * as a type error from inside the SDK — which names none of this.
      */
+    let finalised: unknown;
     try {
-      return await this.wallet.finalizeRecipe(recipe);
+      finalised = await this.wallet.finalizeRecipe(recipe);
     } catch (e) {
       /* Swallowed HERE and not inside the release: `e` is the error naming what
        * actually happened, and a complaint about tidying up in its place sends
@@ -286,6 +303,21 @@ export class WalletFeeSponsor implements FeeSponsor {
       try { await this.release(recipe); } catch { /* see above */ }
       throw e;
     }
+
+    /*
+     * **THE CHECK THAT DECIDES, ON THE TRANSACTION THAT WOULD BE SENT.** The
+     * DUST it declares it will spend is the most the chain can take from this
+     * wallet for it. Over the ceiling, or unreadable, the booking is released
+     * and nothing is handed back to submit. The release target is the
+     * transaction, as it is on the submit path below, because that is what the
+     * booking has become.
+     */
+    const overCeiling = refusalForCommitted(dustSpentBy(finalised), this.ceiling);
+    if (overCeiling) {
+      try { await this.release(finalised); } catch { /* the refusal is the error that matters */ }
+      throw new FeeRefused(overCeiling);
+    }
+    return finalised;
   }
 
   /**

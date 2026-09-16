@@ -1,22 +1,22 @@
 /**
- * **WHAT A DEVICE THAT CAN PROVE AND CANNOT PAY IS ALLOWED TO DO.**
+ * **WHAT A DEVICE THAT PROVES IS ALLOWED TO DO, AND HOW IT SENDS.**
  *
  * The four steps of a job cost different things. Building and proving are pure:
  * they reach no chain, spend nothing, and an interruption costs time. Balancing
  * books coins, and submitting may settle whether or not anybody is still
  * watching.
  *
- * **THIS RUNNER DOES THE PURE HALF AND REFUSES THE REST BY NAME**, because
- * nothing in this product is wired to pay a network fee - the one place that
- * would supply a wallet and a fee payer sets its capability to nothing, on
- * purpose. A runner that appeared to balance and submit would be describing a
- * deployment that does not exist, and every case about it would be reading its
- * own double back.
+ * **THIS RUNNER DOES THE PURE HALF ON THE DEVICE AND HANDS THE PROVEN
+ * TRANSACTION TO THE SERVICE**, which balances, pays and submits or refuses.
+ * The cases here hold what leaves the device and how the service's answer is
+ * read - a refusal is final, a failed submission is not.
  */
 import { describe, it, expect } from 'vitest';
-import { provingOnlyRunner, NOTHING_PAYS_FEES, type ProvingCapability } from './proving-runner.js';
-import { preimageOver } from './proving-worker-entry.js';
-import { saysNothingWasSent, type Job } from '../core/jobs.js';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { provingRunner, type ProvingCapability, type SendProven } from './proving-runner.js';
+import { preimageOver, sendOver } from './proving-worker-entry.js';
+import { NothingWasSent, saysNothingWasSent, type Job } from '../core/jobs.js';
 
 const job = (payload: Record<string, unknown> = {}): Job => ({
   id: 'job_1', accountId: 'acc_1', kind: 'approve', state: 'queued', signerId: 'sgn_1',
@@ -31,16 +31,24 @@ const capability = (over: Partial<ProvingCapability> = {}) => {
     keyMaterial: { lookupKey: async () => undefined, getParams: async () => new Uint8Array() },
     transactionCodec: async () => ({
       deserializeUnproven: (raw) => ({ unproven: [...raw] }),
-      serializeProven: () => new Uint8Array(),
+      serializeProven: (tx) => new Uint8Array([(tx as { proven?: number }).proven ?? 0, 42]),
     }),
     proofProvider: async () => {
       built.push(1);
-      return { proveTx: async (tx, cfg) => { proved.push({ tx, cfg }); return { proven: true }; } };
+      return { proveTx: async (tx, cfg) => { proved.push({ tx, cfg }); return { proven: 9 }; } };
     },
     ...over,
   };
   return { it, proved, built };
 };
+
+/** A sender that records what it was handed and answers a reference. */
+const sender = (answer: SendProven = async () => ({ txRef: 'ref-from-the-service' })) => {
+  const sent: Array<{ job: Job; bytes: number[] }> = [];
+  const send: SendProven = async (j, bytes) => { sent.push({ job: j, bytes: [...bytes] }); return answer(j, bytes); };
+  return { send, sent };
+};
+const provingOnlyRunner = (c: ProvingCapability) => provingRunner(c, sender().send);
 
 describe('a device that can prove', () => {
   it('proves the transaction it was given, for the circuit it was told', async () => {
@@ -54,7 +62,7 @@ describe('a device that can prove', () => {
     const out = await provingOnlyRunner(c.it).prove(job());
 
     expect(c.proved).toEqual([{ tx: { unproven: [1, 2, 3] }, cfg: { circuitId: 'propose' } }]);
-    expect(out.proof).toEqual({ circuit: 'propose', provenTx: { proven: true } });
+    expect(out.proof).toEqual({ circuit: 'propose', provenTx: { proven: 9 } });
   });
 
   it('builds the prover once and shares it across approvals', async () => {
@@ -70,49 +78,109 @@ describe('a device that can prove', () => {
     expect(c.built).toHaveLength(1);
   });
 
-  it('and cannot send it, in a sentence that says which half is missing', async () => {
+  it('sends the proof it made, as the transaction\'s own wire form, and answers the reference', async () => {
     /*
-     * **NOT A PLACEHOLDER.** A device can prove without a wallet because
-     * proving is pure, and cannot send without one. Those are genuinely
-     * different halves, and a person who is told only *it failed* cannot tell
-     * whether they did something wrong.
-     *
-     * RED WHEN: `submit` returns anything, or the refusal stops saying that
-     * nothing was sent and nothing was lost.
+     * RED WHEN: `submit` sends anything but the serialised proven transaction -
+     * the preimage, the proof object, nothing - or drops the service's reference.
      */
-    await expect(provingOnlyRunner(capability().it).submit(job(), {}))
-      .rejects.toThrow(/cannot send it/);
-
-    /*
-     * **AND IT IS MARKED AS HAVING REACHED NOTHING, WHICH IS THE HALF THAT
-     * MATTERS TO THE QUEUE.** Unmarked, a thrown submission is recorded as
-     * *sent, outcome unknown* - correct for anything that made a network call
-     * and wrong here - and the person ends up being told to check the account
-     * for a payment that never existed. Measured on a real run before the mark
-     * existed.
-     *
-     * RED WHEN: this throws a plain `Error`.
-     */
-    const refusal = await provingOnlyRunner(capability().it).submit(job(), {}).catch((e) => e);
-    expect(saysNothingWasSent(refusal),
-      'the refusal does not say that nothing reached the chain, so the queue will ask about it')
-      .toBe(true);
-    expect(NOTHING_PAYS_FEES).toMatch(/nothing has been lost and nothing has been sent/);
-    expect(NOTHING_PAYS_FEES, 'the refusal names something only a developer could act on')
-      .not.toMatch(/\.ts\b|writeCapability|undefined|FeeSponsor/);
+    const c = capability();
+    const s = sender();
+    const runner = provingRunner(c.it, s.send);
+    const { proof } = await runner.prove(job());
+    await expect(runner.submit(job(), proof)).resolves.toEqual({ txRef: 'ref-from-the-service' });
+    expect(s.sent).toEqual([{ job: job(), bytes: [9, 42] }]);
+    expect(s.sent[0].bytes, 'the preimage left the device').not.toEqual([1, 2, 3]);
   });
 
-  it('has no recovery, because nothing it does reaches a chain', async () => {
+  it('passes a refusal on as nothing sent, and a failure as unknown', async () => {
     /*
-     * **THE ABSENCE IS THE CORRECT ANSWER RATHER THAN AN UNFINISHED ONE.** A
-     * recovery answers *did this land*. Nothing here lands. And the queue's own
-     * behaviour with no recovery is exactly right for that: it stops and says a
-     * person should look, which is the only honest thing a device that cannot
-     * submit can say about something it never submitted.
-     *
-     * RED WHEN: a `recover` is added that answers anything at all.
+     * RED WHEN: the runner rewraps what the service said, so a refusal loses
+     * its mark or a failed submission gains one.
+     */
+    const c = capability();
+    const refusing = provingRunner(c.it, sender(async () => { throw new NothingWasSent('over the ceiling'); }).send);
+    const refused = await refusing.submit(job(), { provenTx: { proven: 1 } }).catch((e) => e);
+    expect(refused.message).toBe('over the ceiling');
+    expect(saysNothingWasSent(refused)).toBe(true);
+
+    const failing = provingRunner(c.it, sender(async () => { throw new Error('socket closed'); }).send);
+    const failed = await failing.submit(job(), { provenTx: { proven: 1 } }).catch((e) => e);
+    expect(saysNothingWasSent(failed), 'a send that may have landed was called nothing sent').toBe(false);
+  });
+
+  it('with no proof in hand, sends nothing and says so', async () => {
+    /*
+     * RED WHEN: the guard on a missing proof is removed, so `undefined` reaches
+     * the codec and the failure is recorded as a send whose outcome is unknown.
+     */
+    const s = sender();
+    const refusal = await provingRunner(capability().it, s.send).submit(job(), {}).catch((e) => e);
+    expect(refusal.message).toMatch(/no finished proof on this device/);
+    expect(saysNothingWasSent(refusal)).toBe(true);
+    expect(s.sent).toEqual([]);
+  });
+
+  it('has no recovery yet, so a lost answer stops the job for a person to look at', async () => {
+    /*
+     * RED WHEN: a `recover` is added that answers without asking the chain.
+     * The queue's own behaviour with none is to stop and say a person should
+     * look, which is the honest answer about a send whose answer was lost.
      */
     expect(provingOnlyRunner(capability().it).recover).toBeUndefined();
+  });
+});
+
+describe('what the service\'s answer means', () => {
+  const answering = (status: number, body: unknown) => {
+    const asked: Array<{ url: string; init: RequestInit }> = [];
+    const f = (async (url: any, init: any) => {
+      asked.push({ url: String(url), init });
+      return new Response(typeof body === 'string' ? body : JSON.stringify(body), { status });
+    }) as typeof fetch;
+    return { send: sendOver(f), asked };
+  };
+  const PROVEN = new Uint8Array([1, 255, 0, 7]);
+
+  /* RED WHEN: the path, the method or the encoding of the proven bytes changes. */
+  it('posts the proven transaction to the company\'s own route, same origin', async () => {
+    const a = answering(200, { txRef: 'ref-9' });
+    await expect(a.send(job(), PROVEN)).resolves.toEqual({ txRef: 'ref-9' });
+    expect(a.asked[0].url).toBe('/api/accounts/acc_1/proven');
+    expect(a.asked[0].init.method).toBe('POST');
+    expect(JSON.parse(String(a.asked[0].init.body))).toEqual({ tx: Buffer.from(PROVEN).toString('base64') });
+  });
+
+  /* RED WHEN: an account id is put into the path unescaped. */
+  it('escapes the company in the path', async () => {
+    const a = answering(200, { txRef: 'r' });
+    await a.send({ ...job(), accountId: '../x?y' }, PROVEN);
+    expect(a.asked[0].url).toBe('/api/accounts/..%2Fx%3Fy/proven');
+  });
+
+  /* RED WHEN: any row of the table in `sendOver`'s comment is read the other way. */
+  it('reads each kind of answer the way it was meant', async () => {
+    const outcome = async (status: number, body: unknown) => {
+      const e = await answering(status, body).send(job(), PROVEN).catch((x) => x);
+      return { nothing: saysNothingWasSent(e), message: String(e?.message) };
+    };
+    expect(await outcome(422, { nothingWasSent: true, error: 'over' })).toEqual({ nothing: true, message: 'over' });
+    expect(await outcome(503, { nothingWasSent: true, error: 'cannot send' }))
+      .toEqual({ nothing: true, message: 'cannot send' });
+    expect(await outcome(502, { nothingWasSent: false, error: 'lost' })).toEqual({ nothing: false, message: 'lost' });
+    expect((await outcome(404, { error: 'account not found' })).nothing).toBe(true);
+    expect((await outcome(401, 'not json')).nothing).toBe(true);
+    expect((await outcome(502, 'bad gateway')).nothing, 'a gateway failure was called nothing sent').toBe(false);
+    const noReference = await outcome(200, { nope: 1 });
+    expect(noReference.nothing, 'an answer with no reference was called nothing sent').toBe(false);
+    expect(noReference.message, 'an answer with no reference was taken as sent').toMatch(/answered 200/);
+    expect((await outcome(409, { nothingWasSent: false, error: 'x' })).nothing).toBe(false);
+  });
+
+  /* RED WHEN: a request that never got an answer is called nothing sent. */
+  it('no answer at all is an unknown outcome', async () => {
+    const send = sendOver((async () => { throw new TypeError('network down'); }) as typeof fetch);
+    const e = await send(job(), PROVEN).catch((x) => x);
+    expect(saysNothingWasSent(e)).toBe(false);
   });
 });
 
@@ -209,3 +277,18 @@ describe('the preimage is never written down', () => {
       .rejects.toThrow(/no longer available \(404\)/);
   });
 });
+
+describe('the worker the page starts', () => {
+  /*
+   * READ, NOT RUN: starting it opens a database and a thread. RED WHEN: the
+   * worker is started with a runner that does not send through the service's
+   * route, or with a sender other than its own same-origin fetch.
+   */
+  it('sends what it proves through this application\'s own route', () => {
+    const text = readFileSync(join(import.meta.dirname, 'proving-worker-entry.ts'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(text).toMatch(/const runner = provingRunner\(capability, sendOver\(scope\.fetch\.bind\(scope\)\)\);/);
+    expect(text.match(/provingRunner\(/g)).toHaveLength(1);
+  });
+});
+

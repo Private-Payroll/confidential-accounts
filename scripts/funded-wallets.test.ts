@@ -27,7 +27,8 @@ const live = (calls: Call[], label: string): LiveWalletParts => {
       estimateTransactionFee: rec('estimateTransactionFee', () => 700n),
       balanceFinalizedTransaction: rec('balanceFinalizedTransaction', (tx: unknown) => ({ recipe: tx })),
       balanceUnboundTransaction: rec('balanceUnboundTransaction', (tx: unknown) => ({ recipe: tx })),
-      finalizeRecipe: rec('finalizeRecipe', (r: any) => r.recipe),
+      /* A balanced transaction declares what it spends from DUST. */
+      finalizeRecipe: rec('finalizeRecipe', (r: any) => ({ ...r.recipe, intents: new Map() })),
       signRecipe: rec('signRecipe', (r: unknown) => r),
       revert: rec('revert', () => undefined),
     },
@@ -38,6 +39,9 @@ const live = (calls: Call[], label: string): LiveWalletParts => {
 
 const sink = (records: SponsoredFee[]) => ({ record: (e: SponsoredFee) => { records.push(e); } });
 
+/** Above what the double below estimates, so the cases that are not about the ceiling pass. */
+const CEILING = { perTransaction: 1_000n };
+
 describe('the fee payer handed to the server', () => {
   /*
    * RED WHEN: the fee payer's balancing call omits `tokenKindsToBalance`, or
@@ -47,7 +51,7 @@ describe('the fee payer handed to the server', () => {
   it('asks the paying wallet to balance dust and nothing else', async () => {
     const calls: Call[] = [];
     const parties = fundedPartiesOver(
-      live(calls, 'payer'), live(calls, 'company'), async () => 650n, sink([]), () => {});
+      live(calls, 'payer'), live(calls, 'company'), async () => 650n, sink([]), () => {}, CEILING);
     await parties.sponsor.addFeeAndFinalise({ tx: 1 }, new Date(Date.now() + 60_000));
 
     const balance = calls.find(c => c.method === 'payer.balanceFinalizedTransaction');
@@ -67,7 +71,7 @@ describe('the fee payer handed to the server', () => {
     const records: SponsoredFee[] = [];
     const calls: Call[] = [];
     const parties = fundedPartiesOver(
-      live(calls, 'payer'), live(calls, 'company'), async () => 650n, sink(records), () => {});
+      live(calls, 'payer'), live(calls, 'company'), async () => 650n, sink(records), () => {}, CEILING);
     parties.sponsor.payingFor('acc_demo');
     const finalised = await parties.sponsor.addFeeAndFinalise({ tx: 1 }, new Date(Date.now() + 60_000));
     await parties.sponsor.submit(finalised);
@@ -82,7 +86,7 @@ describe('the fee payer handed to the server', () => {
   /* RED WHEN: the refusal for a missing record is removed. */
   it('refuses to build a fee payer with nowhere to record what it pays', () => {
     expect(() => fundedPartiesOver(
-      live([], 'payer'), live([], 'company'), async () => null, undefined as never, () => {}))
+      live([], 'payer'), live([], 'company'), async () => null, undefined as never, () => {}, CEILING))
       .toThrow(/nowhere to record what it pays/);
   });
 
@@ -93,8 +97,30 @@ describe('the fee payer handed to the server', () => {
    */
   it('the company half carries the company wallet\'s keys', () => {
     const parties = fundedPartiesOver(
-      live([], 'payer'), live([], 'company'), async () => null, sink([]), () => {});
+      live([], 'payer'), live([], 'company'), async () => null, sink([]), () => {}, CEILING);
     expect(parties.customer.coinPublicKey()).toBe('company-coin');
     expect(parties.customer.encryptionPublicKey()).toBe('company-enc');
+  });
+
+  /*
+   * RED WHEN: `fundedPartiesOver` or `feePayerOver` stops passing the ceiling
+   * through, so the pair a server is handed pays whatever it is given.
+   */
+  it('the fee payer it builds refuses above the ceiling it was given', async () => {
+    const calls: Call[] = [];
+    const parties = fundedPartiesOver(
+      live(calls, 'payer'), live(calls, 'company'), async () => null, sink([]), () => {},
+      { perTransaction: 699n });
+    await expect(parties.sponsor.addFeeAndFinalise({ tx: 1 }, new Date(Date.now() + 60_000)))
+      .rejects.toThrow(/expected to cost 700 SPECKs/);
+    expect(calls.some(c => c.method === 'payer.balanceFinalizedTransaction'),
+      'coins were booked above the ceiling').toBe(false);
+  });
+
+  /* RED WHEN: the ceiling argument is dropped on the way to the fee payer. */
+  it('and is not built without one', () => {
+    expect(() => fundedPartiesOver(
+      live([], 'payer'), live([], 'company'), async () => null, sink([]), () => {}, undefined as never))
+      .toThrow(/no ceiling/);
   });
 });

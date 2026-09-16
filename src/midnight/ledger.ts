@@ -87,6 +87,7 @@ import { withRetry, sleep, type RetryOptions } from './retry.js';
 import { isDeferredCircuit, deferredCircuitError } from './deferral.js';
 import { refuseACallWithoutItsPrivateState } from './governed-call.js';
 import type { MaintenanceAuthorityChoice } from './partial-contract.js';
+import { paysNoFees } from './fee-seat.js';
 
 /* ------------------------------------------------------------------ *
  * configuration
@@ -280,6 +281,13 @@ export interface FeeSponsor {
 
   /** Remaining DUST capacity, so we can alarm before customers start failing. */
   capacity(): Promise<{ dust: bigint; night: bigint }>;
+
+  /**
+   * **SET, TO `true`, ONLY BY THE STAND-IN THAT FILLS THIS SEAT WHEN NOBODY
+   * PAYS.** Every member of that stand-in refuses; this is how anything that
+   * describes itself can say so without calling one.
+   */
+  readonly paysNothing?: true;
 }
 
 /**
@@ -1780,8 +1788,15 @@ export class MidnightLedger implements Ledger {
     return { commitment: viewDigestOf([]), sealedState: sealed, updatedAt: state.updatedAt };
   }
 
+  /**
+   * **WHAT IS WIRED, NOT WHETHER IT WORKS.** A fee payer in the seat is named as
+   * the one fees go to; nothing here has watched it pay.
+   */
   describe(): string {
-    return `Midnight ${this.cfg.networkId} via ${this.cfg.nodeUrl}, fees sponsored`;
+    return `Midnight ${this.cfg.networkId} via ${this.cfg.nodeUrl}, `
+      + (paysNoFees(this.sponsor)
+        ? 'with no fee payer, so nothing can be written'
+        : 'with fees paid by the fee payer it was given');
   }
 
   /* ---------------- internals ---------------- */

@@ -16,14 +16,23 @@
  * of the three can be sampled, defaulted or invented here, and each refuses by
  * name rather than producing something plausible.
  *
- * **TWO ARE HANDED IN, BECAUSE THEY ARE A FUNDED WALLET AND A PROCESS DOES NOT
- * ACQUIRE ONE BY STARTING UP.** The company's side balances and signs; the fee
+ * **THE OTHER TWO ARE PARTIES THAT CAN SPEND, AND A PROCESS DOES NOT ACQUIRE
+ * EITHER BY STARTING UP.** The company's side balances and signs; the fee
  * payer's side balances the fee, submits, and is the only thing in this system
- * with spend authority. A server that quietly acquired either would be a server
- * that can spend, so they arrive as an argument or the deployment does not
- * write. **`null` is the ordinary answer and not a failure**: a deployment built
- * to watch a chain reads accounts, balances and rounds perfectly well and has no
- * business holding a wallet.
+ * with spend authority over our money.
+ *
+ * - **The fee payer is a separate service this deployment's settings name.**
+ *   What this process holds is a client to it: it can ask for a capped fee to
+ *   be added to a transaction and for that transaction to be submitted, and it
+ *   holds no key and no DUST. A launcher that brought a fee payer up in its own
+ *   process may hand one in instead; both at once is refused, because two fee
+ *   payers is one nobody chose.
+ * - **The company's side is handed in, or it is absent.** Nothing here builds
+ *   one and nothing here ever will: those coins are the company's.
+ *
+ * **An absent half is the ordinary answer and not a failure**: a deployment
+ * built to watch a chain reads accounts, balances and rounds perfectly well and
+ * has no business holding a wallet.
  *
  * -- WHY IT ANSWERS WITH THE WHOLE OBJECT OR WITH NOTHING -------------------
  *
@@ -38,6 +47,7 @@ import { compiledAccountContract } from '../midnight/compiled-account.js';
 import type { CustomerWallet } from '../midnight/providers.js';
 import type { FeeSponsor } from '../midnight/ledger.js';
 import type { WriteCapability } from './write-capability.js';
+import { feePayerFrom } from '../fee-payer/client.js';
 
 /**
  * The two parties a funded wallet becomes.
@@ -49,6 +59,17 @@ import type { WriteCapability } from './write-capability.js';
 export interface FundedParties {
   readonly customer: CustomerWallet;
   readonly sponsor: FeeSponsor;
+}
+
+/**
+ * What was handed to this process: both parties, one, or neither.
+ *
+ * A launcher that brought both up hands in a `FundedParties`. A process whose
+ * fee payer comes from its settings needs only the company's side handed in.
+ */
+export interface HandedParties {
+  readonly customer?: CustomerWallet | null;
+  readonly sponsor?: FeeSponsor | null;
 }
 
 /**
@@ -87,10 +108,15 @@ export const artifactsIn = (root: string): string => `${root}/contracts/managed`
 /**
  * What this deployment can write with, or nothing.
  *
- * `wallets` is the funded pair, or `null` when none has been handed to this
- * process. **A `null` here is answered with `undefined` and no work at all** -
- * nothing is read off disk, no artefact is loaded, and the boundary above goes
- * on refusing every write by name and saying which pieces are missing.
+ * `wallets` is what was handed to this process, or `null`. The fee payer is the
+ * one handed in, or else the one this deployment's settings name. **Without both
+ * a fee payer and the company's side the answer is `undefined`, with no work at
+ * all** - nothing is read off disk, no artefact is loaded, and the boundary
+ * above goes on refusing every write by name.
+ *
+ * **SETTINGS THAT NAME A FEE PAYER HALFWAY THROW HERE**, even for a deployment
+ * that will not write, because they are a configuration somebody chose and
+ * cannot work.
  *
  * **WHEN A PAIR IS HANDED IN, EVERY OTHER PIECE MUST RESOLVE OR THIS THROWS.**
  * A process that was given a wallet and cannot find its own governance record
@@ -101,9 +127,24 @@ export const artifactsIn = (root: string): string => `${root}/contracts/managed`
 export async function deploymentWriteCapability(
   root: string,
   env: NodeJS.ProcessEnv,
-  wallets: FundedParties | null,
+  wallets: HandedParties | null,
+  configuredFeePayer: (env: NodeJS.ProcessEnv) => FeeSponsor | null = (e) => feePayerFrom(e),
 ): Promise<WriteCapability | undefined> {
-  if (!wallets) return undefined;
+  const configured = configuredFeePayer(env);
+  if (wallets?.sponsor && configured) {
+    throw new Error(
+      'a fee payer was handed to this process and its settings name another, so it did not '
+      + 'start: the one that pays and the one it reports would be two different wallets. '
+      + 'Remove the fee payer from the settings, or start this process without handing one in.');
+  }
+  const sponsor = wallets?.sponsor ?? configured;
+  /*
+   * **THE COMPANY'S SIDE IS ONLY EVER WHAT WAS HANDED IN.** There is no
+   * fallback here and there must never be one: a customer wallet this process
+   * built for itself would put the company's money in our process.
+   */
+  const customer = wallets?.customer ?? null;
+  if (!sponsor || !customer) return undefined;
   return {
     /*
      * Read, never chosen. Whoever holds this can change which proofs the
@@ -114,8 +155,8 @@ export async function deploymentWriteCapability(
      */
     maintenanceAuthority: loadMaintenanceAuthority(root),
     compiled: await compiledAccountContract(artifactsIn(root)),
-    customer: wallets.customer,
-    sponsor: wallets.sponsor,
+    customer,
+    sponsor,
     storagePassword: storagePasswordFrom(env),
   };
 }

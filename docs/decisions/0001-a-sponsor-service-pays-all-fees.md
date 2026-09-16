@@ -28,3 +28,66 @@ Reference: `midnight-docs/static/midnight-wallet/snippets/dust-sponsorship.ts`.
 - **DUST capacity is an operational metric with a one-week refill curve.** Running dry fails every customer transaction at once. Alarm well before zero.
 - **NIGHT holdings are a balance-sheet item** sized by transaction volume.
 - **A sponsor that submits can censor.** Customers who object need a path to pay their own fees. The interface allows it; the default hides it.
+
+---
+
+## The three phases, decided 16 September 2026
+
+The sponsor is now built. It runs as its own process with its own wallet, behind
+a shared secret, and the application is given a client to it that holds no key.
+That is deliberately the smallest shape that can grow, and the growth is planned
+in three phases so that none of them is a rebuild.
+
+| Phase | What it is | Where it runs | Who may call it |
+| --- | --- | --- | --- |
+| 1 | a process this application starts | the same machine as the application | that application |
+| 2 | a deployable service with a versioned wire | its own host | our own applications |
+| 3 | a dependency others integrate | its own host, its own repository | any application |
+
+### What already supports every phase
+
+The client accepts `https:` to any host and plain `http:` **only to a loopback
+address**, so a secret is never sent in clear over a network. It holds no key,
+performs no cryptography, and is a thin caller — which is the unit that moves in
+phase 3. The service holds the wallet and its seed setting, and nothing is shared
+between the two at run time.
+
+### The one thing that must not be deferred: version the wire
+
+The service answers `POST /fee`. There is no version in the path and none in the
+payload. **Today there is exactly one caller and adding a version is a rename.
+After a second application integrates it is a migration**, and the unversioned
+route has to be kept alive indefinitely because nothing can say who is still
+calling it.
+
+This is the same argument that makes a deployment record a published file rather
+than a value somebody is told: a boundary that is not stated while it is cheap to
+state becomes a boundary nobody can change.
+
+### What phase 2 needs
+
+- a version on the wire, before anything else integrates
+- the host it binds to becomes a setting rather than a constant
+- transport security for a caller that is not on the same machine, which the
+  client already requires
+
+### What phase 3 needs, beyond phase 2
+
+- a published record of where it is deployed, keyed by the network's own
+  identifier, shipped and versioned with the service — the rule already decided
+  for the other dependency this project has
+- the wire contract published with it, so an integrator reads a contract rather
+  than a source tree
+- the one remaining source-level seam cut: the client imports a type from the
+  service. Types do not exist at run time, so this is not a coupling a caller can
+  observe, but it is the line that separates the two repositories
+
+### What would make this wrong
+
+- **Extracting before there is a second caller.** A dependency with one consumer
+  is a folder with extra steps. Phase 3 begins when another application asks.
+- **Versioning after the fact.** See above; it is the only item here that gets
+  more expensive by waiting.
+- **A second way to reach the wallet.** The service is the only component that
+  holds spend authority. Every phase keeps that true, and any path that lets an
+  application balance a fee itself has undone the reason this exists.

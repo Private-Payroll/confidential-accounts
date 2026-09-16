@@ -13,6 +13,14 @@
 import { describe, it, expect } from 'vitest';
 import { WalletFeeSponsor, CUSTOMER_BALANCES, SPONSOR_BALANCES, type SponsorWallet } from './sponsor.js';
 import { CUSTOMER_TOKEN_KINDS, SPONSOR_TOKEN_KINDS } from './wallet.js';
+import { saysNothingWasSent } from '../core/jobs.js';
+
+/** A ceiling well above what the double below spends, so the cases that are not about it pass. */
+const CEILING = { perTransaction: 1_000n };
+
+/** A balanced transaction as the ledger shapes one: intents, DUST actions, spends with their fee. */
+const spending = (...fees: bigint[]) =>
+  new Map([[1, { dustActions: { spends: fees.map(vFee => ({ vFee })) } }]]);
 
 interface Call { method: string; args: unknown[] }
 
@@ -27,7 +35,7 @@ function fakeWallet(overrides: Partial<SponsorWallet> = {}) {
     },
     async finalizeRecipe(recipe) {
       calls.push({ method: 'finalizeRecipe', args: [recipe] });
-      return { submittable: true, from: recipe };
+      return { submittable: true, from: recipe, intents: spending(5n) };
     },
     async submitTransaction(tx) {
       calls.push({ method: 'submitTransaction', args: [tx] });
@@ -58,7 +66,7 @@ describe('WalletFeeSponsor', () => {
      * spend and the node rejects the whole transaction.
      */
     const { wallet, calls } = fakeWallet();
-    await new WalletFeeSponsor(wallet).addFeeAndFinalise({ tx: 1 }, new Date());
+    await new WalletFeeSponsor(wallet, CEILING).addFeeAndFinalise({ tx: 1 }, new Date());
 
     const balance = calls.find(c => c.method === 'balanceFinalizedTransaction')!;
     const options = balance.args[2] as { tokenKindsToBalance: string[] };
@@ -105,7 +113,7 @@ describe('WalletFeeSponsor', () => {
      * none of this.
      */
     const { wallet, calls } = fakeWallet();
-    const out: any = await new WalletFeeSponsor(wallet).addFeeAndFinalise({ tx: 1 }, new Date());
+    const out: any = await new WalletFeeSponsor(wallet, CEILING).addFeeAndFinalise({ tx: 1 }, new Date());
 
     expect(calls.map(c => c.method))
       .toEqual(['estimateFee', 'balanceFinalizedTransaction', 'finalizeRecipe']);
@@ -123,7 +131,7 @@ describe('WalletFeeSponsor', () => {
      * RED WHEN: the `estimateFee` call is moved below the balance, or removed.
      */
     const { wallet, calls } = fakeWallet();
-    await new WalletFeeSponsor(wallet).addFeeAndFinalise({ tx: 1 }, new Date());
+    await new WalletFeeSponsor(wallet, CEILING).addFeeAndFinalise({ tx: 1 }, new Date());
     expect(calls[0].method,
       'the fee was estimated after the coins were already booked, or not at all')
       .toBe('estimateFee');
@@ -143,7 +151,7 @@ describe('WalletFeeSponsor', () => {
     const { wallet } = fakeWallet({
       estimateFee: async () => { throw new Error('the indexer would not answer'); },
     });
-    const sponsor = new WalletFeeSponsor(wallet, undefined, { record: (e) => recorded.push(e) });
+    const sponsor = new WalletFeeSponsor(wallet, CEILING, undefined, { record: (e) => recorded.push(e) });
     await expect(sponsor.addFeeAndFinalise({ tx: 1 }, new Date())).resolves.toBeTruthy();
     await sponsor.submit({ done: true });
     expect(recorded[0].estimated,
@@ -163,7 +171,7 @@ describe('WalletFeeSponsor', () => {
      */
     const recorded: Array<{ company: string | null; estimated: bigint | null; actual: bigint | null; ref: string }> = [];
     const { wallet } = fakeWallet();
-    const sponsor = new WalletFeeSponsor(wallet, undefined, { record: (e) => recorded.push(e) });
+    const sponsor = new WalletFeeSponsor(wallet, CEILING, undefined, { record: (e) => recorded.push(e) });
     sponsor.payingFor('acc_the_company');
     await sponsor.addFeeAndFinalise({ tx: 1 }, new Date());
     await sponsor.submit({ done: true });
@@ -186,7 +194,7 @@ describe('WalletFeeSponsor', () => {
      */
     const recorded: Array<{ company: string | null; estimated: bigint | null }> = [];
     const { wallet } = fakeWallet();
-    const sponsor = new WalletFeeSponsor(wallet, undefined, { record: (e) => recorded.push(e) });
+    const sponsor = new WalletFeeSponsor(wallet, CEILING, undefined, { record: (e) => recorded.push(e) });
     sponsor.payingFor('acc_one');
     await sponsor.addFeeAndFinalise({ tx: 1 }, new Date());
     await sponsor.submit({ done: true });
@@ -208,7 +216,7 @@ describe('WalletFeeSponsor', () => {
      * RED WHEN: the `try` around the record is removed.
      */
     const { wallet } = fakeWallet();
-    const sponsor = new WalletFeeSponsor(wallet, undefined, {
+    const sponsor = new WalletFeeSponsor(wallet, CEILING, undefined, {
       record: () => { throw new Error('the disk is full'); },
     });
     await expect(sponsor.submit({ done: true })).resolves.toEqual(
@@ -225,7 +233,7 @@ describe('WalletFeeSponsor', () => {
     const { wallet } = fakeWallet({
       paidFee: async () => { throw new Error('the indexer never answered'); },
     });
-    const sponsor = new WalletFeeSponsor(wallet, undefined, { record: (e) => recorded.push(e) });
+    const sponsor = new WalletFeeSponsor(wallet, CEILING, undefined, { record: (e) => recorded.push(e) });
     await expect(sponsor.submit({ done: true })).resolves.toBeTruthy();
     expect(recorded[0].actual, 'a reading nobody took was written down as a number').toBeNull();
   });
@@ -234,7 +242,7 @@ describe('WalletFeeSponsor', () => {
     // The dust being spent is ours. Passing the customer's keys here would ask
     // them to pay, which is the entire thing this component exists to avoid.
     const { wallet, calls } = fakeWallet();
-    await new WalletFeeSponsor(wallet).addFeeAndFinalise({ tx: 1 }, new Date());
+    await new WalletFeeSponsor(wallet, CEILING).addFeeAndFinalise({ tx: 1 }, new Date());
     const balance = calls.find(c => c.method === 'balanceFinalizedTransaction')!;
     const keys = balance.args[1] as { dustSecretKey: string };
     expect(keys.dustSecretKey).toBe('sponsor-dust');
@@ -245,7 +253,7 @@ describe('WalletFeeSponsor', () => {
     // after the customer intended it to expire.
     const ttl = new Date('2026-01-01T00:00:00Z');
     const { wallet, calls } = fakeWallet();
-    await new WalletFeeSponsor(wallet).addFeeAndFinalise({ tx: 1 }, ttl);
+    await new WalletFeeSponsor(wallet, CEILING).addFeeAndFinalise({ tx: 1 }, ttl);
     const balance = calls.find(c => c.method === 'balanceFinalizedTransaction')!;
     expect((balance.args[2] as { ttl: Date }).ttl).toBe(ttl);
     /* And the estimate is measured against the same deadline, because a fee
@@ -258,7 +266,7 @@ describe('WalletFeeSponsor', () => {
     // M-28 was this class of bug one layer up: `callTx` already submits, and a
     // second submission was handed the wrong type entirely.
     const { wallet, calls } = fakeWallet();
-    const ref = await new WalletFeeSponsor(wallet).submit({ done: true });
+    const ref = await new WalletFeeSponsor(wallet, CEILING).submit({ done: true });
     expect(calls.filter(c => c.method === 'submitTransaction')).toHaveLength(1);
     expect(ref.ref).toBe('tx_sponsored');
   });
@@ -268,7 +276,7 @@ describe('WalletFeeSponsor', () => {
     // cannot watch it finds out DUST ran out when customers start failing.
     const seen: Array<{ fee?: bigint; remaining?: bigint }> = [];
     const { wallet } = fakeWallet();
-    await new WalletFeeSponsor(wallet, (i) => seen.push(i)).submit({ done: true });
+    await new WalletFeeSponsor(wallet, CEILING, (i) => seen.push(i)).submit({ done: true });
     /*
      * **THE FEE IS THE CHAIN'S CHARGED NUMBER, AND IT USED TO BE ABSENT
      * ALWAYS** - the field existed on this callback and nothing ever filled it.
@@ -284,7 +292,7 @@ describe('WalletFeeSponsor', () => {
     // Reporting is not worth failing a customer's transaction over, and the
     // transaction is already on the node by the time we ask.
     const { wallet } = fakeWallet({ balances: async () => { throw new Error('indexer down'); } });
-    const ref = await new WalletFeeSponsor(wallet, () => {}).submit({ done: true });
+    const ref = await new WalletFeeSponsor(wallet, CEILING, () => {}).submit({ done: true });
     expect(ref.ref).toBe('tx_sponsored');
   });
 
@@ -295,7 +303,7 @@ describe('WalletFeeSponsor', () => {
      * perfectly healthy. One number cannot express that.
      */
     const { wallet } = fakeWallet();
-    expect(await new WalletFeeSponsor(wallet).capacity()).toEqual({ dust: 5_000n, night: 100n });
+    expect(await new WalletFeeSponsor(wallet, CEILING).capacity()).toEqual({ dust: 5_000n, night: 100n });
   });
 });
 
@@ -325,7 +333,7 @@ describe('a sponsor releases what it booked and did not spend', () => {
     const { wallet, calls } = fakeWallet({
       async finalizeRecipe() { throw new Error('the prover refused'); },
     });
-    await expect(new WalletFeeSponsor(wallet).addFeeAndFinalise({ tx: 1 }, new Date()))
+    await expect(new WalletFeeSponsor(wallet, CEILING).addFeeAndFinalise({ tx: 1 }, new Date()))
       .rejects.toThrow(/the prover refused/);
 
     /*
@@ -352,7 +360,7 @@ describe('a sponsor releases what it booked and did not spend', () => {
     const { wallet, calls } = fakeWallet({
       async submitTransaction() { throw new Error('the node closed the socket'); },
     });
-    await expect(new WalletFeeSponsor(wallet).submit(submitted))
+    await expect(new WalletFeeSponsor(wallet, CEILING).submit(submitted))
       .rejects.toThrow(/the node closed the socket/);
 
     /* The transaction that was submitted, and not something else. */
@@ -370,7 +378,7 @@ describe('a sponsor releases what it booked and did not spend', () => {
    */
   it('releases nothing when the transaction goes out', async () => {
     const { wallet, calls } = fakeWallet();
-    const sponsor = new WalletFeeSponsor(wallet);
+    const sponsor = new WalletFeeSponsor(wallet, CEILING);
     await sponsor.addFeeAndFinalise({ tx: 1 }, new Date());
     await sponsor.submit({ tx: 1 });
     expect(calls.map(c => c.method)).not.toContain('revert');
@@ -388,7 +396,7 @@ describe('a sponsor releases what it booked and did not spend', () => {
       async submitTransaction() { throw new Error('the node closed the socket'); },
       async revert() { throw new Error('nothing to revert'); },
     });
-    await expect(new WalletFeeSponsor(wallet).submit({ tx: 1 }))
+    await expect(new WalletFeeSponsor(wallet, CEILING).submit({ tx: 1 }))
       .rejects.toThrow(/the node closed the socket/);
   });
 
@@ -408,7 +416,7 @@ describe('a sponsor releases what it booked and did not spend', () => {
       async finalizeRecipe() { throw new Error('the prover refused'); },
       async revert() { throw new Error('nothing to revert'); },
     });
-    await expect(new WalletFeeSponsor(wallet).addFeeAndFinalise({ tx: 1 }, new Date()))
+    await expect(new WalletFeeSponsor(wallet, CEILING).addFeeAndFinalise({ tx: 1 }, new Date()))
       .rejects.toThrow(/the prover refused/);
   });
 
@@ -423,12 +431,121 @@ describe('a sponsor releases what it booked and did not spend', () => {
     const { wallet, calls } = fakeWallet({
       async finalizeRecipe() { throw new Error('stopped after balancing'); },
     });
-    await expect(new WalletFeeSponsor(wallet).addFeeAndFinalise({ tx: 1 }, new Date()))
+    await expect(new WalletFeeSponsor(wallet, CEILING).addFeeAndFinalise({ tx: 1 }, new Date()))
       .rejects.toThrow();
 
     const balance = calls.find(c => c.method === 'balanceFinalizedTransaction')!;
     const options = balance.args[2] as { tokenKindsToBalance?: string[] };
     expect(options.tokenKindsToBalance, 'the argument was omitted').toBeDefined();
     expect(options.tokenKindsToBalance).toEqual(['dust']);
+  });
+});
+
+/**
+ * **WHAT ONE TRANSACTION MAY SPEND FROM OUR DUST IS CAPPED, AND ABOVE THE CAP
+ * NOTHING IS SENT.**
+ *
+ * The fee payer pays for transactions it did not compose. These cases hold the
+ * two places it refuses: before booking, on the estimate, and after balancing,
+ * on the DUST the balanced transaction declares it will spend.
+ */
+describe('a sponsor refuses to pay more than its ceiling', () => {
+  /*
+   * RED WHEN: the `refusalForExpected` check in `addFeeAndFinalise` is removed,
+   * so an estimate already over the ceiling goes on to book coins.
+   */
+  it('refuses on the estimate before anything is booked', async () => {
+    const { wallet, calls } = fakeWallet({ estimateFee: async () => 1_001n });
+    const refusal: any = await new WalletFeeSponsor(wallet, CEILING)
+      .addFeeAndFinalise({ tx: 1 }, new Date()).catch((e: any) => e);
+    expect(refusal, 'a transaction expected to cost more than the ceiling was paid for')
+      .toBeInstanceOf(Error);
+    expect(String(refusal.message)).toMatch(/expected to cost 1001 SPECKs/);
+    expect(calls.map(c => c.method), 'coins were booked for a refused payment')
+      .not.toContain('balanceFinalizedTransaction');
+  });
+
+  /*
+   * RED WHEN: `FeeRefused` stops carrying the mark, so the queue and the server
+   * would report a refusal as a payment that may have landed.
+   */
+  it('and says that nothing was sent', async () => {
+    const { wallet } = fakeWallet({ estimateFee: async () => 1_001n });
+    const refusal: any = await new WalletFeeSponsor(wallet, CEILING)
+      .addFeeAndFinalise({ tx: 1 }, new Date()).catch((e: any) => e);
+    expect(saysNothingWasSent(refusal)).toBe(true);
+  });
+
+  /*
+   * RED WHEN: the `refusalForCommitted` check after `finalizeRecipe` is removed,
+   * so a transaction declaring more DUST than the ceiling is handed back to be
+   * submitted. The estimate is unread here on purpose: the deciding check must
+   * not depend on it.
+   */
+  it('refuses on what the balanced transaction would spend, with no estimate at all', async () => {
+    const { wallet, calls } = fakeWallet({
+      estimateFee: async () => { throw new Error('the estimate did not come back'); },
+      async finalizeRecipe(recipe) {
+        calls.push({ method: 'finalizeRecipe', args: [recipe] });
+        return { dear: true, intents: spending(600n, 401n) };
+      },
+    });
+    const refusal: any = await new WalletFeeSponsor(wallet, CEILING)
+      .addFeeAndFinalise({ tx: 1 }, new Date()).catch((e: any) => e);
+    expect(refusal, 'a transaction spending more than the ceiling was handed back to submit')
+      .toBeInstanceOf(Error);
+    expect(String(refusal.message)).toMatch(/would spend 1001 SPECKs/);
+    expect(saysNothingWasSent(refusal)).toBe(true);
+    expect(calls.map(c => c.method)).not.toContain('submitTransaction');
+  });
+
+  /*
+   * RED WHEN: the release before the committed-amount refusal is removed, so a
+   * refused transaction leaves our DUST marked in flight for ever.
+   */
+  it('releases what it booked when it refuses after balancing', async () => {
+    const dear = { dear: true, intents: spending(2_000n) };
+    const { wallet, calls } = fakeWallet({ async finalizeRecipe() { return dear; } });
+    await new WalletFeeSponsor(wallet, CEILING)
+      .addFeeAndFinalise({ tx: 1 }, new Date()).catch(() => undefined);
+    const released = calls.find(c => c.method === 'revert');
+    expect(released, 'a refused transaction left its booking standing').toBeDefined();
+    expect(released!.args[0], 'the wrong object was released').toBe(dear);
+  });
+
+  /*
+   * RED WHEN: an unreadable amount is treated as zero or as a pass - for
+   * example `refusalForCommitted` returning `null` for `null`.
+   */
+  it('refuses a balanced transaction whose DUST spend cannot be read', async () => {
+    const { wallet, calls } = fakeWallet({ async finalizeRecipe() { return { shapeless: true }; } });
+    const refusal: any = await new WalletFeeSponsor(wallet, CEILING)
+      .addFeeAndFinalise({ tx: 1 }, new Date()).catch((e: any) => e);
+    expect(refusal, 'a transaction nobody could measure was paid for').toBeInstanceOf(Error);
+    expect(String(refusal.message)).toMatch(/could not be read off it/);
+    expect(calls.map(c => c.method)).toContain('revert');
+  });
+
+  /*
+   * THE POSITIVE CONTROL AT THE EDGE. RED WHEN: either comparison becomes
+   * strict, so a transaction costing exactly the ceiling is refused.
+   */
+  it('pays a transaction that costs exactly the ceiling', async () => {
+    const { wallet, calls } = fakeWallet({
+      estimateFee: async () => 1_000n,
+      async finalizeRecipe() { return { exact: true, intents: spending(400n, 600n) }; },
+    });
+    await expect(new WalletFeeSponsor(wallet, CEILING).addFeeAndFinalise({ tx: 1 }, new Date()))
+      .resolves.toEqual(expect.objectContaining({ exact: true }));
+    expect(calls.map(c => c.method)).not.toContain('revert');
+  });
+
+  /* RED WHEN: the constructor's ceiling guard is removed. */
+  it('is not built without a ceiling', () => {
+    const { wallet } = fakeWallet();
+    expect(() => new WalletFeeSponsor(wallet, undefined as never))
+      .toThrow(/no ceiling on what one transaction may spend/);
+    expect(() => new WalletFeeSponsor(wallet, { perTransaction: 0n }))
+      .toThrow(/no ceiling on what one transaction may spend/);
   });
 });
