@@ -80,7 +80,11 @@ export class SealedJournal<Line> {
     private readonly me: JournalOpener,
     private readonly signers: () => Promise<readonly PoolSigner[]>,
     /** The name the sealed page gives its lines, and what the journal is called in a sentence. */
-    private readonly page: { readonly lines: 'attempts' | 'notes'; readonly called: string },
+    private readonly page: {
+      readonly lines: 'attempts' | 'notes';
+      readonly called: string;
+      readonly record: 'deposit-journal' | 'payment-journal';
+    },
   ) {}
 
   /**
@@ -93,7 +97,9 @@ export class SealedJournal<Line> {
   async open(): Promise<{ lines: readonly Line[]; version: number; wrappedFor: readonly string[] }> {
     const rec = await this.store.get(this.vault);
     if (!rec) return { lines: [], version: 0, wrappedFor: [] };
-    const opened = openPool(rec, this.me.id, this.me.wrappingSecret) as unknown as Record<string, unknown>;
+    const opened = openPool(rec, this.me.id, this.me.wrappingSecret, {
+      record: this.page.record, unlabelled: this.store.unlabelledRecordsFiled === true ? 'accept' : 'refuse',
+    }) as unknown as Record<string, unknown>;
     const lines = opened[this.page.lines];
     if (!Array.isArray(lines)) {
       throw new Error(
@@ -107,11 +113,9 @@ export class SealedJournal<Line> {
   /**
    * Files one line at the next version and returns the line as filed.
    *
-   * **THE LINE IS BUILT FROM THE VERSION THIS ATTEMPT FILES**, and built again
-   * when a lost race moves it to the next one. A line that depends on its
-   * version (a deposit's nonce does) is therefore always the line of the
-   * version that holds it, and two writers who read the same journal never
-   * file the same line twice.
+   * **THE LINE IS BUILT FOR THE VERSION THIS ATTEMPT FILES**, and built again
+   * when a lost race moves it to the next one, so a line that depended on its
+   * version would always be the line of the version that holds it.
    */
   async append(
     vaultAddress: string, lineAt: (version: number) => Line, what: 'deposit' | 'payment',
@@ -137,7 +141,7 @@ export class SealedJournal<Line> {
       const line = lineAt(version);
       const page = { [this.page.lines]: [...now.lines, line] };
       try {
-        await this.store.put(this.vault, sealPool(this.vault, page as never, to, version));
+        await this.store.put(this.vault, sealPool(this.vault, page as never, to, version, this.page.record));
         return { line, version };
       } catch (cause) {
         /*
@@ -177,7 +181,7 @@ export class PaymentJournalInStore implements PaymentJournal {
     signers: () => Promise<readonly PoolSigner[]>,
   ) {
     this.journal = new SealedJournal(store, vault, me, signers, {
-      lines: 'attempts', called: 'this vault\x27s payment journal',
+      lines: 'attempts', called: 'this vault\x27s payment journal', record: 'payment-journal',
     });
   }
 
@@ -203,10 +207,11 @@ export interface DepositLine {
  * **THE DEPOSIT JOURNAL A LEDGER IS HANDED, OVER ANY STORE.** The page is
  * `{ notes: [coin + attemptedAt] }`, the shape every deposit line has always had.
  *
- * **IT CHOOSES THE NONCE, INSIDE THE CLAIM.** The nonce is derived from the
- * vault's deposit nonce key and the version this attempt actually files, and
- * the coin handed back is the coin that line records. A caller never supplies
- * a nonce, so no caller can make a deposit this journal cannot name again.
+ * **IT DERIVES THE NONCE, INSIDE THE CLAIM.** The nonce comes from the vault's
+ * deposit nonce key, the coin, and the slot the caller read off the vault's
+ * output count (`claimNewDepositCoin`), and the coin handed back is the coin
+ * that line records. A caller never supplies a nonce, so no caller can make a
+ * deposit that the vault's nonce secret cannot name again.
  */
 export class DepositJournalInStore implements DepositJournal {
   private readonly journal: SealedJournal<DepositLine>;
@@ -223,7 +228,7 @@ export class DepositJournalInStore implements DepositJournal {
     private readonly written: () => void = () => {},
   ) {
     this.journal = new SealedJournal(store, vault, me, signers, {
-      lines: 'notes', called: 'this vault\x27s deposit journal',
+      lines: 'notes', called: 'this vault\x27s deposit journal', record: 'deposit-journal',
     });
   }
 
@@ -232,9 +237,10 @@ export class DepositJournalInStore implements DepositJournal {
     return { attempts: now.lines, version: now.version };
   }
 
-  async claim(vaultAddress: string, money: DepositMoney, attemptedAt: string): Promise<DepositAttempt> {
-    const { line } = await this.journal.append(vaultAddress, (version) => ({
-      nonce: depositNonceAt(this.nonces, money, version),
+  async claim(vaultAddress: string, money: DepositMoney, slot: number, attemptedAt: string): Promise<DepositAttempt> {
+    const nonce = depositNonceAt(this.nonces, money, slot);
+    const { line } = await this.journal.append(vaultAddress, () => ({
+      nonce,
       token: money.token,
       value: money.value,
       attemptedAt,
@@ -260,11 +266,15 @@ export const attemptsFromJournalVersions = (input: {
   deposits: readonly FiledPoolVersion[];
   payments: readonly FiledPoolVersion[];
   opener: JournalOpener;
+  /** `accept` only for versions read from a store that kept records before they were labelled. */
+  unlabelled?: 'accept' | 'refuse';
 }): AttemptedVaultCalls & { versionsRead: { deposits: number; payments: number } } => {
-  const open = (filed: readonly FiledPoolVersion[]): unknown[] =>
-    filed.map((v) => openPool(v.sealed, input.opener.id, input.opener.wrappingSecret));
+  const open = (filed: readonly FiledPoolVersion[], record: 'deposit-journal' | 'payment-journal'): unknown[] =>
+    filed.map((v) => openPool(v.sealed, input.opener.id, input.opener.wrappingSecret, {
+      record, unlabelled: input.unlabelled ?? 'refuse',
+    }));
 
-  const depositPages = open(input.deposits);
+  const depositPages = open(input.deposits, 'deposit-journal');
   const deposits = new Map<string, VaultCoin>();
   for (const page of depositPages) {
     const lines = (page as { notes?: unknown }).notes;
@@ -283,7 +293,7 @@ export const attemptsFromJournalVersions = (input: {
     }
   }
 
-  const paymentPages = open(input.payments);
+  const paymentPages = open(input.payments, 'payment-journal');
   const payments = new Map<string, { spent: VaultCoin; amount: bigint }>();
   for (const page of paymentPages) {
     const lines = (page as { attempts?: unknown }).attempts;

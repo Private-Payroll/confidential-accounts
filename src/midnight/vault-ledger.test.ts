@@ -732,14 +732,14 @@ function harness(opts: {
       journalled.push({ ...attempt, callsMadeSoFar: calls.length });
     },
   };
-  const depositsJournalled: Array<DepositAttempt & { callsMadeSoFar: number; savesMadeSoFar: number }> = [];
+  const depositsJournalled: Array<DepositAttempt & { slot: number; callsMadeSoFar: number; savesMadeSoFar: number }> = [];
   const depositJournal: DepositJournal = {
-    claim: async (_vault, money, attemptedAt) => {
+    claim: async (_vault, money, slot, attemptedAt) => {
       if (opts.depositJournal === 'refuses') throw new Error('the deposit journal cannot be written');
       const n = depositsJournalled.length + 1;
       const nonce = opts.depositNonces?.[n - 1] ?? claimedNonce(n);
       const attempt = { coin: { nonce, token: money.token, value: money.value }, attemptedAt };
-      depositsJournalled.push({ ...attempt, callsMadeSoFar: calls.length, savesMadeSoFar: saves.length });
+      depositsJournalled.push({ ...attempt, slot, callsMadeSoFar: calls.length, savesMadeSoFar: saves.length });
       return attempt;
     },
   };
@@ -2505,6 +2505,7 @@ describe('a private deposit journals its coin before the call', () => {
       'RED WHEN: the deposit\'s line is written after the call -- a nonce recorded after the money moved is not on disk when the process stops in between, which is the only moment this record exists for',
     ).toBe(0);
     expect(depositsJournalled[0].savesMadeSoFar).toBe(0);
+    expect(depositsJournalled[0].slot, 'RED WHEN: the first slot is not the one after everything the chain has made for this vault').toBe(1);
     expect(calls.map((c) => c.circuit)).toEqual(['deposit']);
     expect(
       depositsJournalled[0].coin,
@@ -2527,11 +2528,11 @@ describe('a private deposit journals its coin before the call', () => {
 
   it('A COIN THE CHAIN HAS ALREADY MADE AND SPENT IS NOT ATTEMPTED AGAIN: the claim moves on, and the coin made is the next one', async () => {
     /*
-     * A journal restored to an earlier point hands back a version, and with it
-     * the nonce of a deposit of the same amount made months ago and spent since.
-     * That coin is in no note set now, so only the vault's whole history can
-     * see it. The ledger would refuse to create it again, after the proof and
-     * the submission; this refuses it before either, and moves on.
+     * A deposit of the same amount landed, and was spent, after this one read
+     * the vault: the coin at this slot exists and is in no note set now, so only
+     * the vault's whole history can see it. The ledger would refuse to create it
+     * again, after the proof and the submission; this refuses it before either,
+     * and moves on to the next slot.
      */
     const { ledger, calls, current, depositsJournalled } = harness({ notes: [], history: ['77'.repeat(32)] });
     await ledger.deposit(VAULT, MONEY, BY);
@@ -2539,6 +2540,10 @@ describe('a private deposit journals its coin before the call', () => {
       depositsJournalled.map((d) => d.coin.nonce),
       'RED WHEN: a claim whose coin the chain already made is not followed by another claim',
     ).toEqual(['77'.repeat(32), '78'.repeat(32)]);
+    expect(
+      depositsJournalled.map((d) => d.slot),
+      'RED WHEN: the slots claimed are not the ones after the vault\'s one output, in order',
+    ).toEqual([2, 3]);
     expect(
       toHex((calls[0].args[0] as any).nonce),
       'RED WHEN: the history is not read, or only the notes held NOW are, so a spent coin is attempted a second time',
@@ -2564,7 +2569,7 @@ describe('a private deposit journals its coin before the call', () => {
     expect(held.calls.every((c) => toHex((c.args[0] as any).nonce) !== '77'.repeat(32))).toBe(true);
   });
 
-  it('REFUSES, AND CALLS NOTHING, when every version tried names a coin that already exists', async () => {
+  it('REFUSES, AND CALLS NOTHING, when every slot tried names a coin that already exists', async () => {
     const { ledger, calls, saves, depositsJournalled } = harness({
       notes: [], history: ['77'.repeat(32), '78'.repeat(32), '79'.repeat(32)],
     });
@@ -2572,11 +2577,12 @@ describe('a private deposit journals its coin before the call', () => {
     expect(refused, 'RED WHEN: the claims stop being bounded, or the last collision is deposited anyway')
       .toBeInstanceOf(DepositCoinAlreadyMade);
     expect((refused as Error).message, 'RED WHEN: the refusal stops naming what resolves it')
-      .toMatch(/Find which store is the current one for this vault/);
+      .toMatch(/read the vault again, and deposit again/);
     expect(calls, 'RED WHEN: a refused deposit reaches the contract').toEqual([]);
     expect(saves).toHaveLength(0);
-    expect(depositsJournalled.slice(0, 3).map((d) => d.coin.nonce))
+    expect(depositsJournalled.map((d) => d.coin.nonce), 'RED WHEN: more slots are tried than a rebuild walks')
       .toEqual(['77'.repeat(32), '78'.repeat(32), '79'.repeat(32)]);
+    expect(depositsJournalled.map((d) => d.slot)).toEqual([4, 5, 6]);
   });
 
   it('REFUSES a private deposit by name when the ledger has nowhere to write the coin, and calls nothing', async () => {

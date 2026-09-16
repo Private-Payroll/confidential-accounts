@@ -1,82 +1,81 @@
 /**
- * **A DEPOSIT'S NONCE, DERIVED FROM A SECRET THE COMPANY ALREADY KEEPS, AND THE
- * CHECK THAT THE COIN IT NAMES HAS NEVER BEEN MADE BEFORE.**
+ * **A DEPOSIT'S NONCE, DERIVED FROM THE COMPANY'S OWN SECRET FOR THE VAULT, AND
+ * THE CHECK THAT THE COIN IT NAMES HAS NEVER BEEN MADE BEFORE.**
  *
  * A deposit creates a coin addressed to the vault, and the chain keeps only
  * commitments to it, which cannot be inverted. A nonce drawn at random is
  * therefore named by one thing in the world: whatever record wrote it down.
  * Lose that record and the note is unnameable for good.
  *
- * A nonce derived from a company secret, the vault, the coin and the attempt's
- * place in the deposit journal can be found again by anybody holding that
+ * A nonce derived from a secret the company holds, the vault, the coin and a
+ * SLOT the vault itself bounds can be found again by anybody holding that
  * secret and the company's own record of what it deposited: each candidate is
- * one commitment computed and one set lookup. That is what lets a vault's notes
- * be rebuilt with nothing of ours (`rebuild-from-records.ts`).
+ * one commitment computed and one set lookup (`rebuild-from-records.ts`).
  *
  * ------------------------------------------------------------------------
- * **WHICH SECRET.** The root is thirty-two bytes the company's own wallet
- * already derives for this company: the released company key, a pure function
- * of the person's recovery words and the company's address, stored nowhere and
- * recomputable on any device after any recovery. It is secret, and it has to
- * be: a nonce anybody could compute would let anybody put a guessed salary to
- * the chain and be told whether it is right. **It tells nothing new to whoever
- * can derive it**: that takes the person's recovery words, which already hold
- * their wallet and derive their own payslip keys in this company. Nothing here
- * stores it, sends it anywhere, or writes it down. The operator tools use their
- * wallet seed file as the root instead, expanded under a domain of its own;
- * replacing that file changes every nonce they derive afterwards, and the
- * deposits made before are then named only with the old file or the journal.
+ * **WHICH SECRET.** The root is one epoch of the vault's nonce secret
+ * (`company-nonce-secret.ts`): thirty-two random bytes that belong to the
+ * company, not to whoever deposits, wrapped to every signer under a key each
+ * signer derives from their own recovery words. Any signer opens it; a signer
+ * who leaves takes nothing with them, because every other signer still opens
+ * it; and when one leaves, a new epoch begins and every earlier one is kept, so
+ * older deposits keep their names. It is secret, and it has to be: a nonce
+ * anybody could compute would let anybody put a guessed salary to the chain and
+ * be told whether it is right.
  *
- * What it costs, stated where the choice is made:
- *   · the key is the DEPOSITOR's. Without the journal, a deposit is named only
- *     with the words of the person who made it - and so is every change note
- *     that descends from it, which is every note that money ever becomes. A
- *     person who leaves, or loses their words, takes that with them for good;
- *   · it does not rotate. A person who moves to new recovery words derives new
- *     deposits from a new key; the deposits made before are found only with the
- *     old words or the journal;
- *   · a person with no released company key has no root and must not deposit
- *     privately at all. A random nonce in its place is exactly the note that only
- *     a stored record can ever name.
+ * ------------------------------------------------------------------------
+ * **THE SLOT, AND WHY IT IS BOUNDED BY THE VAULT RATHER THAN BY A GUESS.**
+ *
+ * A deposit's slot is the number of coins the chain has ever created for the
+ * vault, as the depositor read it, plus its attempt: 1, 2 or at most
+ * `DEPOSIT_SLOT_ATTEMPTS`. That set only grows, so every deposit that ever
+ * lands used a slot no larger than the vault's final output count plus
+ * `DEPOSIT_SLOT_ATTEMPTS`, and a rebuild that walks that far has tried every
+ * slot any deposit could have used. An attempt that never lands consumes
+ * nothing: the next deposit reads the same count and may use the same slot.
+ *
+ * Two deposits of one amount that read the same count before either lands name
+ * the same coin. Only one of them can land: the ledger refuses to create an
+ * output whose commitment it has already recorded, spent or not, and it
+ * refuses the whole transaction, so the other moves no money. What that costs
+ * is one proof made for nothing.
  *
  * ------------------------------------------------------------------------
  * **WHY THE COIN IS PART OF THE NONCE, AND WHY THE CHECK READS THE VAULT'S
  * WHOLE HISTORY.**
  *
- * The version a deposit files is not unique for all time: a restored store, a
- * second store or a replica can hand out the same number again. If the nonce
- * named only the version, a repeated version with a different amount would make
- * two different coins under one nonce: the ledger takes both, and this product's
- * pool, which keeps one note per nonce, cannot hold them and its rebuild refuses
- * them. **With the token and the value in it, a repeated nonce can only ever be
- * a repeated coin.**
+ * If the nonce named only the slot, two deposits of different amounts at one
+ * slot would make two different coins under one nonce: the ledger takes both,
+ * and this product's pool, which keeps one note per nonce, cannot hold them.
+ * **With the token and the value in it, a repeated nonce can only ever be a
+ * repeated coin.**
  *
- * A repeated coin cannot land: the ledger refuses to create an output whose
- * commitment it has already recorded, spent or not. But it refuses after the
- * transaction has been proved and submitted, and a restored journal names the
- * same coin again whenever a version it hands out again is used for the token
- * and amount the earlier line at that version had. So the check below
- * reads every coin the chain has ever created for this vault - the note set it
- * holds now does not contain a spent one - and a deposit whose coin already
- * exists moves on to the next version before anything is proved.
+ * A repeated coin cannot land, but the ledger says so only after the
+ * transaction has been proved and submitted. So the check below reads every
+ * coin the chain has ever created for this vault - the note set it holds now
+ * does not contain a spent one - and a deposit whose coin already exists moves
+ * to the next slot before anything is proved.
  */
 import { hkdf } from '@noble/hashes/hkdf.js';
 import { hmac } from '@noble/hashes/hmac.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { fromHex, toHex, utf8, type Hex } from '../core/crypto.js';
 import type { NoteEvents, VaultTransactions } from './note-index.js';
+import type { DepositJournal } from './vault-ledger.js';
 
 const KEY_BYTES = 32;
 const HEX32 = /^[0-9a-fA-F]{64}$/u;
 const MAX_VALUE = (1n << 128n) - 1n;
-const MAX_VERSION = Number.MAX_SAFE_INTEGER;
+const MAX_SLOT = Number.MAX_SAFE_INTEGER;
 
 /*
  * The domain of this derivation. The day it changes, every deposit made under
  * the old one is found only by its journal, so a change is a migration and
- * never a patch.
+ * never a patch. `v2` expands a vault's nonce secret and counts slots. `v1`
+ * expanded one person's key and counted journal versions; a deposit derived
+ * under it is named by its journal line.
  */
-const NONCE_KEY_SALT = utf8('confidential-accounts/deposit-nonce/v1');
+const NONCE_KEY_SALT = utf8('confidential-accounts/deposit-nonce/v2');
 const NONCE_TAG = utf8('deposit');
 
 declare const nonceKeyBrand: unique symbol;
@@ -87,6 +86,13 @@ declare const nonceKeyBrand: unique symbol;
  * expected; all four are the same length.
  */
 export type DepositNonceKey = Uint8Array & { readonly [nonceKeyBrand]: true };
+
+/** A coin a deposit creates: its nonce, token and value. */
+export interface DepositCoin {
+  readonly nonce: Hex;
+  readonly token: Hex;
+  readonly value: bigint;
+}
 
 /** What a deposit moves: a token and an amount in the token's base units. */
 export interface DepositMoney {
@@ -104,8 +110,8 @@ const hex32 = (what: string, h: unknown): Uint8Array => {
 /**
  * **THE KEY ONE VAULT'S DEPOSIT NONCES ARE DERIVED FROM.**
  *
- * `root` is the released company key: the depositor's own, for this company.
- * The vault's address goes in as its one lower-case spelling, so two spellings
+ * `root` is one epoch of the vault's nonce secret, opened by a signer
+ * (`openNonceSecrets`). The vault's address goes in as its one lower-case spelling, so two spellings
  * of one vault never derive two keys.
  */
 export const depositNonceKeyFor = (root: Uint8Array, vault: Hex): DepositNonceKey => {
@@ -136,18 +142,35 @@ const be = (value: bigint, bytes: number): Uint8Array => {
 };
 
 /**
- * **THE NONCE OF THE DEPOSIT FILED AT `version` OF THE DEPOSIT JOURNAL.**
- *
- * The version is the one the journal actually filed the line under, never the
- * one a writer expected to get: two writers who read the same journal file two
- * different versions, so they derive two different nonces.
+ * **HOW MANY SLOTS ONE DEPOSIT MAY TRY**, and so how far past the vault's
+ * output count a rebuild walks. It is the bound, not a tuning: raising it
+ * without raising the walk makes deposits a rebuild cannot find.
  */
-export const depositNonceAt = (key: DepositNonceKey, money: DepositMoney, version: number): Hex => {
+export const DEPOSIT_SLOT_ATTEMPTS = 3;
+
+/**
+ * **THE HIGHEST SLOT ANY DEPOSIT TO A VAULT CAN HAVE USED**, given every coin
+ * the chain has ever created for it.
+ */
+export const lastDepositSlot = (everCreatedCount: number): number => {
+  if (!Number.isSafeInteger(everCreatedCount) || everCreatedCount < 0) {
+    throw new Error(`a vault has created a whole number of coins, and ${String(everCreatedCount)} is not one.`);
+  }
+  return everCreatedCount + DEPOSIT_SLOT_ATTEMPTS;
+};
+
+/**
+ * **THE NONCE OF A DEPOSIT OF `money` AT `slot`.**
+ *
+ * The slot is the vault's output count as the depositor read it, plus the
+ * attempt (`claimNewDepositCoin`). Nothing else chooses it.
+ */
+export const depositNonceAt = (key: DepositNonceKey, money: DepositMoney, slot: number): Hex => {
   if (!(key instanceof Uint8Array) || key.length !== KEY_BYTES) {
     throw new Error('a deposit nonce needs the vault\x27s deposit nonce key, and this is not one.');
   }
-  if (!Number.isInteger(version) || version < 1 || version > MAX_VERSION) {
-    throw new Error(`a deposit is filed at a whole version from 1, and ${String(version)} is not one.`);
+  if (!Number.isInteger(slot) || slot < 1 || slot > MAX_SLOT) {
+    throw new Error(`a deposit takes a whole slot from 1, and ${String(slot)} is not one.`);
   }
   if (typeof money.value !== 'bigint' || money.value <= 0n || money.value > MAX_VALUE) {
     throw new Error('a deposit moves a positive amount the ledger can hold, and this one does not.');
@@ -159,7 +182,7 @@ export const depositNonceAt = (key: DepositNonceKey, money: DepositMoney, versio
   message[at] = 0; at += 1;
   message.set(token, at); at += 32;
   message.set(be(money.value, 16), at); at += 16;
-  message.set(be(BigInt(version), 8), at);
+  message.set(be(BigInt(slot), 8), at);
   return toHex(hmac(sha256, key, message));
 };
 
@@ -248,20 +271,68 @@ export const whyThisCoinIsNotNew = (seen: {
 };
 
 /**
- * **THE REFUSAL WHEN EVERY VERSION TRIED NAMED A COIN THAT ALREADY EXISTS.**
+ * **THE REFUSAL WHEN EVERY SLOT TRIED NAMED A COIN THAT ALREADY EXISTS.**
  *
- * Only a deposit journal that has handed out the same versions again can get
- * here, which is a store restored to an earlier point, or two stores for one
- * vault. Every line filed on the way is a harmless attempt that never landed.
+ * Each slot a deposit may use is the vault's output count plus one, two or
+ * three, so getting here means the chain created this exact coin at each of
+ * them since the count was read: deposits of the same amount landing while this
+ * one was being prepared, or a count read from an indexer that is behind. Every
+ * line filed on the way is a harmless attempt that never landed.
  */
 export class DepositCoinAlreadyMade extends Error {
   constructor(readonly attempts: number, readonly because: string) {
     super(
-      `nothing was deposited: each of the last ${attempts} deposit journal versions named a coin that `
-      + `already exists (${because}). The deposit journal is handing out versions it has handed out `
-      + 'before, which happens when its store has been restored to an earlier point or a second store '
-      + 'is being written for this vault. Nothing was proved and no money moved. Find which store is '
-      + 'the current one for this vault and deposit through that one.');
+      `nothing was deposited: each of the ${attempts} slots this deposit may use named a coin that `
+      + `already exists (${because}). Deposits of this same amount are landing while this one is `
+      + 'being prepared, or the chain was read from an indexer that is behind. Nothing was proved and '
+      + 'no money moved. Wait for the other deposits to finish, read the vault again, and deposit '
+      + 'again.');
     this.name = 'DepositCoinAlreadyMade';
   }
 }
+
+/**
+ * **CHOOSE A DEPOSIT'S COIN: READ THE VAULT, CLAIM A LINE, CHECK THE COIN IS NEW.**
+ *
+ * One function, for every place a private deposit's coin is chosen (the
+ * ledger and the device), so the order is written once:
+ *
+ *   1. the vault's history is already read (`everCreated`); its size is the
+ *      first slot less one;
+ *   2. a line is filed in the deposit journal, which derives the nonce;
+ *   3. the coin it names is refused if the pool, the vault's notes now or the
+ *      chain's whole history already hold it, and the next slot is claimed;
+ *   4. after `DEPOSIT_SLOT_ATTEMPTS` slots, `DepositCoinAlreadyMade`.
+ *
+ * Nothing here calls the contract. The caller calls it with the coin returned,
+ * and with nothing else.
+ */
+export const claimNewDepositCoin = async (input: {
+  readonly vault: string;
+  readonly money: DepositMoney;
+  readonly journal: DepositJournal;
+  readonly everCreated: ReadonlySet<string>;
+  /** The ledger's commitment of a coin owned by this vault, lower-case hex. */
+  readonly outputCommitmentOf: (coin: DepositCoin) => Promise<string> | string;
+  readonly heldNow: (coin: DepositCoin) => Promise<boolean> | boolean;
+  readonly poolHoldsTheNonce: (nonce: Hex) => Promise<boolean> | boolean;
+  /** A last check before the coin is used, which may throw; the pool's own pre-flight. */
+  readonly accept?: (coin: DepositCoin) => Promise<void> | void;
+  readonly now?: () => string;
+}): Promise<{ readonly coin: DepositCoin; readonly slot: number }> => {
+  const first = input.everCreated.size + 1;
+  let because = '';
+  for (let slot = first; slot < first + DEPOSIT_SLOT_ATTEMPTS; slot += 1) {
+    const { coin } = await input.journal.claim(
+      input.vault, input.money, slot, (input.now ?? (() => new Date().toISOString()))());
+    const why = whyThisCoinIsNotNew({
+      poolHoldsTheNonce: await input.poolHoldsTheNonce(coin.nonce),
+      heldNow: await input.heldNow(coin),
+      createdBefore: input.everCreated.has(bare(await input.outputCommitmentOf(coin))),
+    });
+    if (why !== null) { because = why; continue; }
+    await input.accept?.(coin);
+    return { coin, slot };
+  }
+  throw new DepositCoinAlreadyMade(DEPOSIT_SLOT_ATTEMPTS, because);
+};

@@ -6,10 +6,11 @@
  * `contracts/test/a-vault-rebuilt-with-us-gone.test.ts`.
  */
 import { describe, it, expect } from 'vitest';
-import { walkCompanyRecords, DEPOSIT_VERSION_GAP, type CompanyRecords } from './rebuild-from-records.js';
-import { depositNonceAt, depositNonceKeyFor } from './deposit-nonce.js';
+import { walkCompanyRecords, compiledOutputCommitment, type CompanyRecords } from './rebuild-from-records.js';
+import { depositNonceAt, depositNonceKeyFor, DEPOSIT_SLOT_ATTEMPTS } from './deposit-nonce.js';
 import { changeNoteOf, sentNonceOf, nameTheRecord } from './vault-recovery.js';
-import { toHex, fromHex, type Hex } from '../core/crypto.js';
+import { vaultNoteCommitment } from './note-index.js';
+import { toHex, fromHex, randomBytes, type Hex } from '../core/crypto.js';
 import type { VaultCoin } from './vault-coins.js';
 
 const VAULT = 'ab'.repeat(32) as Hex;
@@ -18,15 +19,16 @@ const EUR = 'ee'.repeat(32) as Hex;
 const KEY = depositNonceKeyFor(new Uint8Array(32).fill(3), VAULT);
 const OTHER_KEY = depositNonceKeyFor(new Uint8Array(32).fill(4), VAULT);
 const label = (c: VaultCoin, vault: Hex = VAULT) => `${vault}|${c.nonce}|${c.token}|${c.value}`;
-const dep = (key: typeof KEY, value: bigint, version: number, token: Hex = GBP): VaultCoin =>
-  ({ nonce: depositNonceAt(key, { token, value }, version), token, value });
+const dep = (key: typeof KEY, value: bigint, slot: number, token: Hex = GBP): VaultCoin =>
+  ({ nonce: depositNonceAt(key, { token, value }, slot), token, value });
 const piece = (c: VaultCoin, amount: bigint): VaultCoin =>
   ({ nonce: toHex(sentNonceOf(fromHex(c.nonce))), token: c.token, value: amount });
+/** An output the vault holds that no record here can name: another depositor's, or one made at random. */
+const stranger = (i: number): VaultCoin => ({ nonce: toHex(new Uint8Array(32).fill(i + 1)), token: GBP, value: 1n });
 
-const walk = (made: VaultCoin[], records: CompanyRecords, keys = [KEY], gap?: number) =>
+const walk = (made: VaultCoin[], records: CompanyRecords, keys = [KEY]) =>
   walkCompanyRecords({
     vault: VAULT, keys, records, everCreated: new Set(made.map((c) => label(c))), commitmentOf: label,
-    ...(gap === undefined ? {} : { gap }),
   });
 
 describe('walking a company\'s records against everything the chain made for the vault', () => {
@@ -44,51 +46,58 @@ describe('walking a company\'s records against everything the chain made for the
     expect(w.found).toEqual({ deposits: 1, changes: 3, pieces: 1 });
   });
 
-  it('WALKS PAST ABANDONED VERSIONS up to the gap, and stops after it', async () => {
-    const at5 = dep(KEY, 100n, 5);
-    const at30 = dep(KEY, 100n, 30);
-    const w = await walk([at5, at30], { deposited: [{ token: GBP, value: 100n }], paid: [] }, [KEY], 20);
-    expect(w.coins, 'RED WHEN: a deposit after four abandoned attempts is not named').toEqual([at5]);
-    expect(w.versions, 'RED WHEN: the walk stops before the gap, or runs past it').toEqual([{ walked: 25, lastFound: 5 }]);
-    const wide = await walk([at5, at30], { deposited: [{ token: GBP, value: 100n }], paid: [] }, [KEY], 25);
-    expect(wide.coins, 'RED WHEN: a wider gap is not honoured').toEqual([at5, at30]);
-    expect(DEPOSIT_VERSION_GAP).toBe(20);
+  it('WALKS EXACTLY AS FAR AS THE VAULT LETS A DEPOSIT GO: its output count plus the attempts, whatever was abandoned', async () => {
+    /*
+     * Four outputs already, then a deposit whose first two slots named coins that
+     * already existed: it landed at the last slot a deposit may use. Any number
+     * of attempts abandoned in between used no slot, because the count did not move.
+     */
+    const earlier = [0, 1, 2, 3].map(stranger);
+    const last = dep(KEY, 100n, 4 + DEPOSIT_SLOT_ATTEMPTS);
+    const w = await walk([...earlier, last], { deposited: [{ token: GBP, value: 100n }], paid: [] });
+    expect(w.coins, 'RED WHEN: a deposit at the last slot it may use is not named').toEqual([last]);
+    expect(w.slots, 'RED WHEN: the walk is bounded by anything but the vault\'s outputs and the attempts')
+      .toEqual({ walked: 5 + DEPOSIT_SLOT_ATTEMPTS, lastFound: 7 });
+    const none = await walk([], { deposited: [{ token: GBP, value: 100n }], paid: [] });
+    expect(none.slots, 'RED WHEN: an empty vault is walked past the slots its first deposit could use').toEqual({ walked: DEPOSIT_SLOT_ATTEMPTS, lastFound: 0 });
+    expect(none.checks).toBe(DEPOSIT_SLOT_ATTEMPTS);
   });
 
-  it('tries every recorded amount at every version, so a version handed out twice names both coins', async () => {
-    const a = dep(KEY, 100n, 2);
-    const b = dep(KEY, 300n, 2);
+  it('A LONG RUN OF OUTPUTS NOBODY HERE CAN NAME DOES NOT END THE WALK, however long it is', async () => {
+    const unnameable = Array.from({ length: 60 }, (_, i) => stranger(i));
+    const mine = dep(KEY, 700n, 61);
+    const w = await walk([...unnameable, mine], { deposited: [{ token: GBP, value: 700n }], paid: [] });
+    expect(w.coins, 'RED WHEN: a run of versions that no key names ends the walk before a later deposit').toEqual([mine]);
+    expect(w.slots).toEqual({ walked: 61 + DEPOSIT_SLOT_ATTEMPTS, lastFound: 61 });
+  });
+
+  it('a change counts as an output, so the deposit after a payment is at the slot after it', async () => {
+    const d1 = dep(KEY, 1_000n, 1);
+    const c1 = changeNoteOf(d1, 400n)!;
+    const d2 = dep(KEY, 1_000n, 3);
+    const w = await walk([d1, c1, d2], {
+      deposited: [{ token: GBP, value: 1_000n }], paid: [{ token: GBP, amount: 400n }],
+    });
+    expect(w.coins, 'RED WHEN: a deposit made after a payment is not named').toEqual([d1, d2, c1]);
+  });
+
+  it('tries every recorded amount at every slot, so two amounts at one slot both name their coins', async () => {
+    const a = dep(KEY, 100n, 1);
+    const b = dep(KEY, 300n, 1);
     const w = await walk([a, b], { deposited: [{ token: GBP, value: 100n }, { token: GBP, value: 300n }], paid: [] });
     expect(w.coins).toEqual([a, b]);
   });
 
-  it('COUNTS THE GAP OVER VERSIONS THE WHOLE VAULT SHARES: a deposit after another person\'s long run of deposits is still found', async () => {
-    /* Another person deposits at versions 1-25, fifteen attempts are abandoned, and then this person deposits. */
-    const theirs = Array.from({ length: 25 }, (_, i) => dep(OTHER_KEY, 100n, i + 1));
-    const mine = dep(KEY, 700n, 41);
-    const w = await walk([...theirs, mine], {
-      deposited: [{ token: GBP, value: 100n }, { token: GBP, value: 700n }], paid: [],
-    }, [KEY, OTHER_KEY]);
-    expect(
-      w.coins.some((c) => c.nonce === mine.nonce && c.value === 700n),
-      'RED WHEN: the gap is counted per person, so one depositor\'s run of versions reads as a gap for everybody else and a later deposit is never tried',
-    ).toBe(true);
-    expect(w.found.deposits).toBe(26);
-    expect(w.versions).toEqual([{ walked: 61, lastFound: 41 }]);
+  it('WALKS EVERY EPOCH AT EVERY SLOT: a deposit made under a secret since rotated is still named', async () => {
+    const old = dep(OTHER_KEY, 100n, 1);
+    const now = dep(KEY, 100n, 2);
+    const w = await walk([old, now], { deposited: [{ token: GBP, value: 100n }], paid: [] }, [OTHER_KEY, KEY]);
+    expect(w.coins, 'RED WHEN: only the newest epoch is walked, so money deposited before a signer left loses its name').toEqual([old, now]);
+    const onlyNew = await walk([old, now], { deposited: [{ token: GBP, value: 100n }], paid: [] }, [KEY]);
+    expect(onlyNew.coins).toEqual([now]);
   });
 
-  it('WALKS AT LEAST AS FAR AS THE VAULT HAS OUTPUTS: versions no given key can name (old random lines, a person who left) do not end the walk early', async () => {
-    const unnameable = Array.from({ length: 25 }, (_, i) => dep(OTHER_KEY, 100n, i + 1));
-    const mine = dep(KEY, 700n, 26);
-    const w = await walk([...unnameable, mine], { deposited: [{ token: GBP, value: 700n }], paid: [] }, [KEY]);
-    expect(
-      w.coins,
-      'RED WHEN: a run of versions longer than the gap that no given key can name ends the walk before a later deposit',
-    ).toEqual([mine]);
-    expect(w.versions).toEqual([{ walked: 46, lastFound: 26 }]);
-  });
-
-  it('walks every key it is given, one per person who deposited, and names nothing for a key nobody used', async () => {
+  it('walks every key it is given, and names nothing for a key nobody used', async () => {
     const mine = dep(KEY, 100n, 1);
     const theirs = dep(OTHER_KEY, 100n, 1);
     const both = await walk([mine, theirs], { deposited: [{ token: GBP, value: 100n }], paid: [] }, [KEY, OTHER_KEY]);
@@ -106,21 +115,22 @@ describe('walking a company\'s records against everything the chain made for the
       paid: [{ token: EUR, amount: 400n }],
     });
     expect(w.coins).toEqual([g, e, eChange]);
-    expect(w.checks, 'RED WHEN: a payment in one token is tried against the other token\'s notes').toBe(20 * 2 + 2 * 2 + 2 * 2);
+    /* Three outputs, so six slots, two amounts each; then one payment amount against the EUR note and against its change. */
+    expect(w.checks, 'RED WHEN: a payment in one token is tried against the other token\'s notes').toBe(6 * 2 + 2 + 2);
   });
 
   it('an amount the records hold rounded, or not at all, names nothing -- and the walk says what it tried', async () => {
     const d = dep(KEY, 1_234n, 1);
     const w = await walk([d], { deposited: [{ token: GBP, value: 1_230n }], paid: [] });
     expect(w.coins).toEqual([]);
-    expect(w.versions).toEqual([{ walked: 20, lastFound: 0 }]);
-    expect(w.checks).toBe(20);
+    expect(w.slots).toEqual({ walked: 1 + DEPOSIT_SLOT_ATTEMPTS, lastFound: 0 });
+    expect(w.checks).toBe(1 + DEPOSIT_SLOT_ATTEMPTS);
   });
 
   it('does not try an amount at least as large as the note: an exact spend leaves no change and a split must leave some', async () => {
     const d = dep(KEY, 100n, 1);
     const w = await walk([d], { deposited: [{ token: GBP, value: 100n }], paid: [{ token: GBP, amount: 100n }, { token: GBP, amount: 150n }] });
-    expect(w.checks, 'RED WHEN: amounts that cannot have left change are tried').toBe(21);
+    expect(w.checks, 'RED WHEN: amounts that cannot have left change are tried').toBe(1 + DEPOSIT_SLOT_ATTEMPTS);
   });
 
   it('tries a recorded amount ONCE however many times the books repeat it', async () => {
@@ -131,13 +141,12 @@ describe('walking a company\'s records against everything the chain made for the
       paid: [{ token: GBP, amount: 40n }, { token: GBP, amount: 40n }],
     });
     expect(thrice.checks, 'RED WHEN: a monthly deposit of one amount multiplies the walk by the months').toBe(once.checks);
-    expect(once.checks).toBe(21 + 2);
+    expect(once.checks).toBe(1 + DEPOSIT_SLOT_ATTEMPTS + 2);
   });
 
-  it('REFUSES a record of nothing, and a gap of nothing', async () => {
+  it('REFUSES a record of nothing, and a token in a second spelling', async () => {
     await expect(walk([], { deposited: [{ token: GBP, value: 0n }], paid: [] })).rejects.toThrow(/deposit of nothing/);
     await expect(walk([], { deposited: [], paid: [{ token: GBP, amount: 0n }] })).rejects.toThrow(/payment of nothing/);
-    await expect(walk([], { deposited: [], paid: [] }, [KEY], 0)).rejects.toThrow(/gap of at least one/);
     await expect(walk([], { deposited: [{ token: GBP.toUpperCase() as Hex, value: 1n }], paid: [] }),
       'RED WHEN: a second spelling of a token is carried into a coin').rejects.toThrow(/64 lower-case hex/);
     await expect(walk([], { deposited: [], paid: [{ token: `0x${GBP}` as Hex, amount: 1n }] })).rejects.toThrow(/64 lower-case hex/);
@@ -154,5 +163,27 @@ describe('walking a company\'s records against everything the chain made for the
       everCreated: new Set([label(d).toLowerCase()]), commitmentOf: (c) => `0x${label(c).toUpperCase()}`,
     });
     expect(w.coins).toEqual([d]);
+  });
+});
+
+describe('the commitment a rebuild asks the compiled contract for', () => {
+  it('IS THE LEDGER\'S OWN, for coins of every shape', async () => {
+    const ask = await compiledOutputCommitment();
+    const coins: VaultCoin[] = [
+      { nonce: toHex(randomBytes(32)), token: GBP, value: 1n },
+      { nonce: toHex(randomBytes(32)), token: EUR, value: (1n << 128n) - 1n },
+      ...Array.from({ length: 6 }, (_, i) => ({ nonce: toHex(randomBytes(32)), token: toHex(randomBytes(32)), value: BigInt(1_000 * (i + 1)) })),
+    ];
+    for (const coin of coins) {
+      const vault = toHex(randomBytes(32)) as Hex;
+      expect(ask(coin, vault), 'RED WHEN: the contract\'s commitment is not the one the ledger records, so a walk through it names nothing')
+        .toBe(await vaultNoteCommitment(coin, vault));
+    }
+  });
+
+  it('differs by vault, so one vault\'s history never names another\'s coin', async () => {
+    const ask = await compiledOutputCommitment();
+    const coin = { nonce: toHex(randomBytes(32)), token: GBP, value: 5n };
+    expect(ask(coin, VAULT)).not.toBe(ask(coin, 'cd'.repeat(32) as Hex));
   });
 });

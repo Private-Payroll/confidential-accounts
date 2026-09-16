@@ -153,7 +153,7 @@ describe('THE CLIENT ITSELF, driven through the real scope with no seam overridd
       { load: async () => ({ notes: [] }), save: async () => {} } as never,
       VAULT_ARTEFACTS, undefined,
       {
-        claim: async (_v: string, money: { token: string; value: bigint }, attemptedAt: string) =>
+        claim: async (_v: string, money: { token: string; value: bigint }, _slot: number, attemptedAt: string) =>
           ({ coin: { nonce: '77'.repeat(32), token: money.token, value: money.value }, attemptedAt }),
       },
       { everCreated: async () => new Set<string>() },

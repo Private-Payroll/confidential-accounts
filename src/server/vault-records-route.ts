@@ -13,17 +13,37 @@
  * record make a vault read as empty. So the router is built only with an
  * answer to that question, and it is mounted behind the sign-in, which sets
  * the person every decision here is about.
+ *
+ * **A FILING IS SIGNED, AND THE SIGNATURE IS CHECKED BEFORE ANYTHING ELSE IS
+ * ASKED.** The record carries a signature over what it is, its vault and its
+ * version (`signFiling`). A record with none, or one that does not cover
+ * exactly this filing, is refused. The signing key it names is handed to the
+ * answer about who may file; this server cannot tell whether that key is the
+ * person's own, because the company's roster is sealed, and the device that
+ * reads the record makes that check.
  */
 import express from 'express';
 import type { SealedPoolStore } from '../midnight/vault-pool.js';
+import type { Hex } from '../core/crypto.js';
 import {
   assertWireRecord, assertWireVault, assertWireVersionNumber,
-  fromWire, toWire, type WireFiled, type WireRecord, type WireRefusal,
+  fromWire, toWire, verifiedFiler, type WireFiled, type WireRecord, type WireRefusal,
 } from '../midnight/sealed-record-wire.js';
 
-/** Whether this person may read, or file, this record of this vault. */
+/**
+ * **HOW LARGE A FILED RECORD MAY BE.** A journal is sealed whole on every write
+ * and grows by about half a kilobyte a line; this allows about a hundred
+ * thousand lines, where a one-megabyte body stopped a fifty-person payroll's
+ * payment journal in under two years.
+ */
+export const VAULT_RECORD_BODY_LIMIT = '64mb';
+
+/**
+ * Whether this person may read, or file, this record of this vault. A filing
+ * also names the signing key whose signature it carries, already checked.
+ */
 export type MayTouchVaultRecords = (
-  person: string, vault: string, record: WireRecord, act: 'read' | 'file',
+  person: string, vault: string, record: WireRecord, act: 'read' | 'file', filer?: Hex,
 ) => Promise<boolean>;
 
 export const vaultRecordsRoutes = (deps: {
@@ -35,7 +55,7 @@ export const vaultRecordsRoutes = (deps: {
   }
   const router = express.Router();
 
-  const gate = async (req: express.Request, res: express.Response, act: 'read' | 'file') => {
+  const gate = async (req: express.Request, res: express.Response, act: 'read' | 'file', filing?: (vault: string, record: WireRecord) => Hex | null) => {
     const person = (req as { userId?: unknown }).userId;
     if (typeof person !== 'string' || person.length === 0) {
       res.status(401).json({ error: 'a vault\x27s records are reached only by a signed-in person' });
@@ -50,7 +70,20 @@ export const vaultRecordsRoutes = (deps: {
       res.status(400).json({ error: (e as Error).message });
       return null;
     }
-    if (!(await deps.mayTouch(person, vault, record, act))) {
+    let filer: Hex | undefined;
+    if (filing) {
+      const f = filing(vault, record);
+      if (f === null) return null;
+      filer = f;
+    }
+    let may: boolean;
+    try {
+      may = await deps.mayTouch(person, vault, record, act, filer);
+    } catch (e) {
+      res.status(503).json({ error: `who may ${act} this vault\x27s records could not be decided: ${(e as Error)?.message ?? String(e)}` });
+      return null;
+    }
+    if (!may) {
       res.status(403).json({ error: `this person may not ${act} this vault\x27s ${record}` });
       return null;
     }
@@ -78,21 +111,53 @@ export const vaultRecordsRoutes = (deps: {
     } catch (e) { unreadable(res, e); }
   });
 
-  router.put('/api/vaults/:vault/records/:record/:version', async (req, res) => {
-    const g = await gate(req, res, 'file');
+  /*
+   * **ONE FILED VERSION**, so a writer told its version is taken can read that
+   * version back without reading the whole history.
+   */
+  router.get('/api/vaults/:vault/records/:record/:version', async (req, res) => {
+    const g = await gate(req, res, 'read');
     if (!g) return;
     let version: number;
-    let sealed;
-    let digest: string;
     try {
       version = assertWireVersionNumber(req.params.version);
-      const got = fromWire(req.body, { vault: g.vault, record: g.record, version });
-      sealed = got.sealed;
-      digest = got.wire.digest;
     } catch (e) {
       res.status(400).json({ error: (e as Error).message });
       return;
     }
+    try {
+      const one = g.store.at
+        ? await g.store.at(g.vault, version)
+        : (await g.store.versions(g.vault)).find((v) => v.version === version)?.sealed ?? null;
+      res.status(200).json({ record: g.record, version, filed: one === null ? null : toWire(g.record, one) });
+    } catch (e) { unreadable(res, e); }
+  });
+
+  router.put('/api/vaults/:vault/records/:record/:version', async (req, res) => {
+    let version = 0;
+    let sealed: ReturnType<typeof fromWire>['sealed'] | undefined;
+    let digest = '';
+    const g = await gate(req, res, 'file', (vault, record) => {
+      try {
+        version = assertWireVersionNumber(req.params.version);
+        const got = fromWire(req.body, { vault, record, version });
+        sealed = got.sealed;
+        digest = got.wire.digest;
+      } catch (e) {
+        res.status(400).json({ error: (e as Error).message });
+        return null;
+      }
+      const filer = verifiedFiler(record, sealed);
+      if (filer === null) {
+        res.status(403).json({
+          error: 'a filing is signed by the signer who files it, over exactly this record, its kind, its vault and '
+            + 'its version, and this one is not. Nothing was filed. Sign the record with your signing key and file it again.',
+        });
+        return null;
+      }
+      return filer;
+    });
+    if (!g || sealed === undefined) return;
     /*
      * The version this filing may take, decided from the newest one filed. The
      * store decides again, atomically, when it files; this answers the two
@@ -122,6 +187,11 @@ export const vaultRecordsRoutes = (deps: {
       if ((e as Error)?.name === 'VaultPoolVersionAlreadyFiled') {
         const refusal: WireRefusal = { refused: 'version-already-filed', record: g.record, version };
         res.status(409).json(refusal);
+        return;
+      }
+      if ((e as Error)?.name === 'VaultRecordRefused') {
+        const refusal: WireRefusal = { refused: 'not-filed', record: g.record, version, why: (e as Error).message };
+        res.status(422).json(refusal);
         return;
       }
       res.status(503).json({

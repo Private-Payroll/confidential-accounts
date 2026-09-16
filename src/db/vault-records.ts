@@ -44,13 +44,13 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import {
-  whyThisIsNotASealedPool, assertTheNextVersion, VaultPoolVersionAlreadyFiled,
+  whyThisIsNotASealedPool, assertTheNextVersion, VaultPoolVersionAlreadyFiled, VaultRecordRefused,
   type FiledPoolVersion, type SealedPool, type SealedPoolStore,
 } from '../midnight/vault-pool.js';
 import { parseVaultRegistry, namesRecordedFor } from '../midnight/vault-record.js';
 
-/** The three sealed records a vault has. */
-export type VaultRecord = 'pool' | 'deposit-journal' | 'payment-journal';
+/** The sealed records a vault has. */
+export type VaultRecord = 'pool' | 'deposit-journal' | 'payment-journal' | 'nonce-secret';
 
 /** A tagged query, as the driver and a transaction inside it both offer. */
 export interface RecordsQuery {
@@ -235,6 +235,13 @@ class RecordInTheDatabase implements SealedPoolStore {
     return rows.length === 0 ? null : this.validated(vault, rows[0]!);
   }
 
+  async at(vault: string, version: number): Promise<SealedPool | null> {
+    const rows = await this.sql<{ version: number; body: string; digest: Uint8Array }>`
+      SELECT version, body, digest FROM vault_sealed_records
+      WHERE vault_key = ${vaultKeyOf(vault)} AND record = ${this.record} AND version = ${version}`;
+    return rows.length === 0 ? null : this.validated(vault, rows[0]!);
+  }
+
   async versions(vault: string): Promise<readonly FiledPoolVersion[]> {
     const rows = await this.sql<{ version: number; body: string; digest: Uint8Array }>`
       SELECT version, body, digest FROM vault_sealed_records
@@ -246,12 +253,12 @@ class RecordInTheDatabase implements SealedPoolStore {
   async put(vault: string, rec: SealedPool): Promise<void> {
     const unusable = whyThisIsNotASealedPool(rec, vault);
     if (unusable !== null) {
-      throw new Error(`this is not a sealed record for this vault (${unusable}), so nothing is filed.`);
+      throw new VaultRecordRefused(`this is not a sealed record for this vault (${unusable}), so nothing is filed.`);
     }
     theOneSpelling(vault);
     if (rec.version === 1) {
       const refused = this.refuseToCreate(vault);
-      if (refused !== null) throw new Error(refused);
+      if (refused !== null) throw new VaultRecordRefused(refused);
     }
     const key = vaultKeyOf(vault);
     const body = JSON.stringify(rec);
@@ -295,6 +302,12 @@ class RecordInTheDatabase implements SealedPoolStore {
       if ((cause as { code?: string })?.code === '23505') {
         /* The primary key refused the second of two writers: the claim, decided. */
         throw new VaultPoolVersionAlreadyFiled(vault, rec.version);
+      }
+      if ((cause as { code?: string })?.code === '23514') {
+        /* A check on the table refused the row, and will refuse it every time. */
+        throw new VaultRecordRefused(
+          `this database does not keep a vault's ${this.record} (${(cause as Error)?.message ?? 'a check refused it'}). `
+          + 'Nothing was filed. What resolves it: apply the database\'s pending migrations.');
       }
       throw new Error(
         `version ${rec.version} of this vault's ${this.record} was not confirmed filed `

@@ -12,7 +12,7 @@ import {
 import {
   MemorySealedPoolStore, sealPool, type PoolSigner, type SealedPoolStore,
 } from './vault-pool.js';
-import { newWrappingKeypair } from '../core/crypto.js';
+import { newWrappingKeypair, newSymmetricKey, seal, wrapKey, canonical } from '../core/crypto.js';
 import { depositNonceAt, depositNonceKeyFor } from './deposit-nonce.js';
 
 const KEY = depositNonceKeyFor(new Uint8Array(32).fill(0x31), 'c4'.repeat(32));
@@ -56,7 +56,7 @@ describe('a journal over any store', () => {
     const toldAfter: number[] = [];
     const j = new DepositJournalInStore(
       store, VAULT, { id: 'ada', wrappingSecret: a.secret }, async () => [a.who], KEY, () => { toldAfter.push(filed); });
-    const claimed = await j.claim(VAULT, { token: GBP, value: 70n }, 'x');
+    const claimed = await j.claim(VAULT, { token: GBP, value: 70n }, 1, 'x');
     expect(toldAfter, 'RED WHEN: the ledger is told the line is stored before it is, or is told twice or never').toEqual([1]);
     const read = attemptsFromJournalVersions({
       deposits: await inner.versions(VAULT), payments: [], opener: { id: 'ada', wrappingSecret: a.secret },
@@ -65,22 +65,24 @@ describe('a journal over any store', () => {
       .toEqual([claimed.coin]);
   });
 
-  it('A CLAIM DERIVES ITS NONCE FROM THE VERSION IT FILES, one version per claim', async () => {
+  it('A CLAIM DERIVES ITS NONCE FROM THE SLOT IT IS GIVEN, whatever version it files', async () => {
     const a = signer('ada');
     const store = new MemorySealedPoolStore();
     const j = new DepositJournalInStore(store, VAULT, { id: 'ada', wrappingSecret: a.secret }, async () => [a.who], KEY);
     const money = { token: GBP, value: 70n };
-    const first = await j.claim(VAULT, money, 'x');
-    const second = await j.claim(VAULT, money, 'y');
-    expect(first.coin.nonce, 'RED WHEN: the nonce is not the one derived from version 1')
-      .toBe(depositNonceAt(KEY, money, 1));
-    expect(second.coin.nonce, 'RED WHEN: a second claim of the same amount does not move to version 2, so two deposits share a coin')
-      .toBe(depositNonceAt(KEY, money, 2));
-    expect(first.coin.nonce).not.toBe(second.coin.nonce);
+    const first = await j.claim(VAULT, money, 5, 'x');
+    const second = await j.claim(VAULT, money, 6, 'y');
+    expect(first.coin.nonce, 'RED WHEN: the nonce is not the one derived from the slot given')
+      .toBe(depositNonceAt(KEY, money, 5));
+    expect(second.coin.nonce, 'RED WHEN: a claim at another slot names the same coin')
+      .toBe(depositNonceAt(KEY, money, 6));
+    expect((await store.versions(VAULT)).map((v) => v.version), 'the two lines are two versions').toEqual([1, 2]);
     expect(second.attemptedAt).toBe('y');
+    await expect(j.claim(VAULT, money, 0, 'z'), 'RED WHEN: a slot a rebuild never walks is accepted').rejects.toThrow(/whole slot from 1/);
+    expect(await store.versions(VAULT), 'RED WHEN: a line is filed for a slot that derives nothing').toHaveLength(2);
   });
 
-  it('TWO WRITERS WHO READ THE SAME VERSION FILE TWO VERSIONS AND DERIVE TWO NONCES: the loser\'s coin is the one of the version it actually filed', async () => {
+  it('TWO WRITERS WHO READ THE SAME VAULT CLAIM THE SAME COIN AND FILE TWO VERSIONS, and the journal reads it as one attempt', async () => {
     const a = signer('ada');
     const inner = new MemorySealedPoolStore();
     /* Both writers read before either writes: the first read of each is held until both have read. */
@@ -102,14 +104,44 @@ describe('a journal over any store', () => {
     const one = new DepositJournalInStore(store, VAULT, opener, async () => [a.who], KEY);
     const two = new DepositJournalInStore(store, VAULT, opener, async () => [a.who], KEY);
     const money = { token: GBP, value: 70n };
-    const [x, y] = await Promise.all([one.claim(VAULT, money, 'x'), two.claim(VAULT, money, 'y')]);
-    expect(
-      [x.coin.nonce, y.coin.nonce].sort(),
-      'RED WHEN: the losing writer keeps the nonce of the version it expected, so both deposits land under one nonce',
-    ).toEqual([depositNonceAt(KEY, money, 1), depositNonceAt(KEY, money, 2)].sort());
+    const [x, y] = await Promise.all([one.claim(VAULT, money, 1, 'x'), two.claim(VAULT, money, 1, 'y')]);
+    expect(x.coin, 'only one of these can land: the ledger refuses a coin it has already made').toEqual(y.coin);
+    expect((await inner.versions(VAULT)).map((v) => v.version), 'RED WHEN: the lost race is not retried at the next version').toEqual([1, 2]);
     const filed = attemptsFromJournalVersions({ deposits: await inner.versions(VAULT), payments: [], opener });
-    expect(filed.deposits.map((d) => d.nonce).sort(), 'RED WHEN: a line is filed under a version whose nonce it does not carry')
-      .toEqual([x.coin.nonce, y.coin.nonce].sort());
+    expect(filed.deposits, 'RED WHEN: one coin journalled twice is proposed as two').toEqual([x.coin]);
+  });
+
+  it('A RECORD IS OPENED ONLY AS WHAT IT WAS SEALED AS: a deposit journal presented as the payment journal is refused', async () => {
+    const a = signer('ada');
+    const deposits = new MemorySealedPoolStore();
+    const d = new DepositJournalInStore(deposits, VAULT, { id: 'ada', wrappingSecret: a.secret }, async () => [a.who], KEY);
+    await d.claim(VAULT, { token: GBP, value: 9n }, 1, 'x');
+    const relabelled: SealedPoolStore = { get: (v) => deposits.get(v), versions: (v) => deposits.versions(v), put: async () => {} };
+    const p = new PaymentJournalInStore(relabelled, VAULT, { id: 'ada', wrappingSecret: a.secret }, async () => [a.who]);
+    await expect(p.open(), 'RED WHEN: a store can hand one record back as another').rejects.toThrow(/payment-journal was asked for/);
+    const filedAsDeposits = await deposits.versions(VAULT);
+    expect(() => attemptsFromJournalVersions({
+      deposits: [], payments: filedAsDeposits, opener: { id: 'ada', wrappingSecret: a.secret },
+    }), 'RED WHEN: the rebuild reads a deposit journal\'s versions as payments').toThrow(/payment-journal was asked for/);
+  });
+
+  it('AN UNLABELLED RECORD IS REFUSED unless the store it came from kept records before labels', async () => {
+    const a = signer('ada');
+    const key = newSymmetricKey();
+    const old = {
+      vault: VAULT, version: 1, sealed: seal(canonical({ attempts: [] }), key),
+      wrapped: [{ signerId: 'ada', wrapped: wrapKey(key, a.who.wrappingPublicKey) }],
+    };
+    const store = new MemorySealedPoolStore();
+    await store.put(VAULT, old);
+    const fresh = new PaymentJournalInStore(store, VAULT, { id: 'ada', wrappingSecret: a.secret }, async () => [a.who]);
+    await expect(fresh.open(), 'RED WHEN: a record that does not say what it is is believed from a store that never held such records')
+      .rejects.toThrow(/does not say which record/);
+    const legacy: SealedPoolStore = {
+      unlabelledRecordsFiled: true, get: (v) => store.get(v), versions: (v) => store.versions(v), put: (v, r) => store.put(v, r),
+    };
+    const kept = new PaymentJournalInStore(legacy, VAULT, { id: 'ada', wrappingSecret: a.secret }, async () => [a.who]);
+    expect((await kept.open()).attempts, 'RED WHEN: records written before labels stop opening where they are kept').toEqual([]);
   });
 
   it('A LOST VERSION IS RETRIED, AND IT IS RECOGNISED BY NAME, not by which module\'s class threw it', async () => {
@@ -168,7 +200,7 @@ describe('a journal over any store', () => {
   it('REFUSES a line that would drop a signer the journal is sealed to, and a vault it was not built for', async () => {
     const a = signer('ada'); const b = signer('bo');
     const store = new MemorySealedPoolStore();
-    await store.put(VAULT, sealPool(VAULT, { attempts: [] } as never, [a.who, b.who], 1));
+    await store.put(VAULT, sealPool(VAULT, { attempts: [] } as never, [a.who, b.who], 1, 'payment-journal'));
     const j = new PaymentJournalInStore(store, VAULT, { id: 'ada', wrappingSecret: a.secret }, async () => [a.who]);
     await expect(j.record(VAULT, attempt('01'.repeat(32), 5n, 1n) as never)).rejects.toThrow(/bo/);
     await expect(j.record('d9'.repeat(32), attempt('01'.repeat(32), 5n, 1n) as never)).rejects.toThrow(/different vault/);

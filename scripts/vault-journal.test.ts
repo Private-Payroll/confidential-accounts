@@ -20,7 +20,7 @@ import {
 import { FileSealedPoolStore, vaultPoolFile } from './vault-pool-file.js';
 import { depositJournalFile } from './deposit-to-vault.js';
 import { sealPool, openPool, type PoolSigner } from '../src/midnight/vault-pool.js';
-import { newWrappingKeypair } from '../src/core/crypto.js';
+import { newWrappingKeypair, newSymmetricKey, seal, wrapKey, canonical } from '../src/core/crypto.js';
 import { depositNonceAt, depositNonceKeyFor } from '../src/midnight/deposit-nonce.js';
 
 const KEY = depositNonceKeyFor(new Uint8Array(32).fill(0x42), 'd0'.repeat(32));
@@ -171,8 +171,8 @@ describe('the reader takes every filed version of both journals, as the rebuild 
     const depositStore = new FileSealedPoolStore(depositFile, VAULT);
     const line1 = { nonce: '11'.repeat(32), token: GBP, value: 700n, attemptedAt: 't1' };
     const line2 = { nonce: '12'.repeat(32), token: GBP, value: 800n, attemptedAt: 't2' };
-    await depositStore.put(VAULT, sealPool(VAULT, { notes: [line1] } as never, s.signers, 1));
-    await depositStore.put(VAULT, sealPool(VAULT, { notes: [line1, line2] } as never, s.signers, 2));
+    await depositStore.put(VAULT, sealPool(VAULT, { notes: [line1] } as never, s.signers, 1, 'deposit-journal'));
+    await depositStore.put(VAULT, sealPool(VAULT, { notes: [line1, line2] } as never, s.signers, 2, 'deposit-journal'));
 
     await journalIn(d, s).record(VAULT, attempt('01'.repeat(32), 1_000n, 200n));
 
@@ -199,8 +199,8 @@ describe('the reader takes every filed version of both journals, as the rebuild 
     const a1 = attempt('01'.repeat(32), 1_000n, 200n);
     const a2 = attempt('02'.repeat(32), 500n, 100n);
     /* Version 2 was written by a writer that had not seen version 1's line. */
-    await store.put(VAULT, sealPool(VAULT, { attempts: [a1] } as never, s.signers, 1));
-    await store.put(VAULT, sealPool(VAULT, { attempts: [a2] } as never, s.signers, 2));
+    await store.put(VAULT, sealPool(VAULT, { attempts: [a1] } as never, s.signers, 1, 'payment-journal'));
+    await store.put(VAULT, sealPool(VAULT, { attempts: [a2] } as never, s.signers, 2, 'payment-journal'));
     const r = journalledAttempts({
       depositJournalFile: depositJournalFileOf(d, 'stagenet', 'payroll-test-1'),
       paymentJournalFile: file, vault: VAULT, opener: opener(s),
@@ -215,7 +215,7 @@ describe('the reader takes every filed version of both journals, as the rebuild 
     const d = dir(); const s = signers();
     const file = paymentJournalFile(d, 'stagenet', 'payroll-test-1');
     const store = new FileSealedPoolStore(file, VAULT);
-    await store.put(VAULT, sealPool(VAULT, { attempts: [{ spent: { nonce: '01'.repeat(32), token: GBP, value: 1n }, amount: 'ten' }] } as never, s.signers, 1));
+    await store.put(VAULT, sealPool(VAULT, { attempts: [{ spent: { nonce: '01'.repeat(32), token: GBP, value: 1n }, amount: 'ten' }] } as never, s.signers, 1, 'payment-journal'));
     expect(() => journalledAttempts({
       depositJournalFile: depositJournalFileOf(d, 'stagenet', 'payroll-test-1'),
       paymentJournalFile: file, vault: VAULT, opener: opener(s),
@@ -227,7 +227,7 @@ describe('the reader takes every filed version of both journals, as the rebuild 
     await journalIn(d, s).record(VAULT, attempt('01'.repeat(32), 1_000n, 200n));
     const file = paymentJournalFile(d, 'stagenet', 'payroll-test-1');
     const rec = await new FileSealedPoolStore(file, VAULT).get(VAULT);
-    const page: any = openPool(rec!, 'ada', s.secret as never);
+    const page: any = openPool(rec!, 'ada', s.secret as never, { record: 'payment-journal' });
     expect(page.attempts[0].spent.value).toBe(1_000n);
     expect(typeof page.attempts[0].amount, 'RED WHEN: the amount round-trips as something other than a bigint, and a rebuild subtracting it would derive a value that is not a number').toBe('bigint');
   });
@@ -248,9 +248,9 @@ describe('the deposit journal the ledger is handed writes what the door always w
     const d = dir(); const s = signers();
     const said: number[] = [];
     const j = depositIn(d, s, () => { said.push(readdirSync(d).length); });
-    const first = await j.claim(VAULT, money(700n), 't9');
-    const second = await j.claim(VAULT, money(800n), 't9');
-    expect(first.coin.nonce, 'RED WHEN: the door\'s journal does not derive the nonce from version 1')
+    const first = await j.claim(VAULT, money(700n), 1, 't9');
+    const second = await j.claim(VAULT, money(800n), 2, 't9');
+    expect(first.coin.nonce, 'RED WHEN: the door\'s journal does not derive the nonce from the slot it is given')
       .toBe(depositNonceAt(KEY, money(700n), 1));
     expect(second.coin.nonce).toBe(depositNonceAt(KEY, money(800n), 2));
     for (const f of readdirSync(d)) {
@@ -270,7 +270,7 @@ describe('the deposit journal the ledger is handed writes what the door always w
       'RED WHEN: the ledger\'s deposit line is filed in a shape or file the rebuild does not read -- the door keeps writing and the rebuild reads nothing',
     ).toEqual([first.coin, second.coin]);
     const rec = await new FileSealedPoolStore(depositJournalFileOf(d, 'stagenet', 'payroll-test-1'), VAULT).get(VAULT);
-    const page: any = openPool(rec!, 'ada', s.secret as never);
+    const page: any = openPool(rec!, 'ada', s.secret as never, { record: 'deposit-journal' });
     expect(page.notes[1], 'RED WHEN: the page stops carrying each line whole, with when it was attempted, as the door wrote it').toEqual({
       nonce: second.coin.nonce, token: GBP, value: 800n, attemptedAt: 't9',
     });
@@ -283,9 +283,16 @@ describe('the deposit journal the ledger is handed writes what the door always w
     const d = dir(); const s = signers();
     const file = depositJournalFileOf(d, 'stagenet', 'payroll-test-1');
     const random = { nonce: '5c'.repeat(32), token: GBP, value: 600n, attemptedAt: 'before' };
-    await new FileSealedPoolStore(file, VAULT).put(VAULT, sealPool(VAULT, { notes: [random] } as never, s.signers, 1));
-    const next = await depositIn(d, s).claim(VAULT, money(600n), 'after');
-    expect(next.coin.nonce, 'RED WHEN: a claim after a random line is not filed at version 2').toBe(depositNonceAt(KEY, money(600n), 2));
+    /* Written as the door wrote it then: sealed, with nothing inside saying what it is. */
+    const key = newSymmetricKey();
+    await new FileSealedPoolStore(file, VAULT).put(VAULT, {
+      vault: VAULT, version: 1, sealed: seal(canonical({ notes: [random] }), key),
+      wrapped: s.signers.map((x) => ({ signerId: x.id, wrapped: wrapKey(key, x.wrappingPublicKey) })),
+    });
+    const next = await depositIn(d, s).claim(VAULT, money(600n), 1, 'after');
+    expect(next.coin.nonce, 'RED WHEN: a claim after a random line does not derive its nonce').toBe(depositNonceAt(KEY, money(600n), 1));
+    expect((await new FileSealedPoolStore(file, VAULT).versions(VAULT)).map((v) => v.version),
+      'RED WHEN: a claim after an unlabelled line is not filed after it').toEqual([1, 2]);
     const r = journalledAttempts({
       depositJournalFile: file, paymentJournalFile: paymentJournalFile(d, 'stagenet', 'payroll-test-1'), vault: VAULT, opener: opener(s),
     });
@@ -296,7 +303,7 @@ describe('the deposit journal the ledger is handed writes what the door always w
   it('REFUSES to record a deposit into a vault other than the one it was built for, and writes nothing', async () => {
     const d = dir(); const s = signers();
     let told = 0;
-    await expect(depositIn(d, s, () => { told += 1; }).claim(OTHER, money(700n), 't'))
+    await expect(depositIn(d, s, () => { told += 1; }).claim(OTHER, money(700n), 1, 't'))
       .rejects.toThrow(/different vault .* nothing is deposited/);
     expect(readdirSync(d)).toHaveLength(0);
     expect(told).toBe(0);
@@ -323,7 +330,7 @@ describe('a journal write never takes a reader away', () => {
         : new SealedDepositJournal(depositJournalFileOf(d, 'stagenet', 'payroll-test-1'), VAULT, me, async () => listed, KEY);
       const write = async (): Promise<void> => {
         if (journal instanceof SealedPaymentJournal) await journal.record(VAULT, attempt('01'.repeat(32), 1_000n, 200n) as never);
-        else await journal.claim(VAULT, { token: GBP, value: 700n }, 't');
+        else await journal.claim(VAULT, { token: GBP, value: 700n }, 1, 't');
       };
       await write();
       const before = readdirSync(d).length;
