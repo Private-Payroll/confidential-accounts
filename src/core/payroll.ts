@@ -491,6 +491,36 @@ export class PayrollService {
     private delivery: InviteDelivery = new RecordingInviteDelivery(),
   ) {}
 
+  /**
+   * **THE LEGS THIS PROCESS IS RAISING RIGHT NOW** - a leg's own proposal, or a
+   * retry on it - from the moment the run's material for it is written until
+   * the raise answers.
+   *
+   * A raise writes the leg's material, then awaits the vault check and, from
+   * here, the chain; only afterwards does the run say which proposal the leg is.
+   * Two raises of one leg that overlap in that window would each find the leg
+   * unraised and write two proposals over the same people, and a leg raised
+   * again while a retry on it is in that window would replace the material the
+   * retry was built against. So a second raise of the same leg, of either kind,
+   * is refused while one is on its way, as having raised nothing. **It holds
+   * nothing else** - approvals, withdrawals, standing reads and other legs all
+   * proceed - and an entry leaves when its raise answers, whether it succeeded
+   * or failed. It is in memory: a restart clears it, and what the run and the
+   * proposals it names say is what the next raise is checked against.
+   */
+  private readonly raising = new Set<string>();
+
+  private holdTheLeg(run: PayrollRun, leg: AssetId): () => void {
+    const key = `${run.id} ${leg}`;
+    if (this.raising.has(key)) {
+      throw new Error(
+        `the ${leg} leg of run ${run.id} is being raised right now by another request, so it was not raised `
+        + 'again. Nothing was raised. Once that raise has answered, the run says where the leg stands.');
+    }
+    this.raising.add(key);
+    return () => { this.raising.delete(key); };
+  }
+
   /* ---------------- roster ---------------- */
 
   /**
@@ -2475,6 +2505,20 @@ export class PayrollService {
    * by accident.
    */
   async proposeRun(
+    runId: string, viewingKey: Hex, proposedBy: string, payable: RunMaterial | null, asset?: AssetId,
+    how?: { onDevice: true },
+  ) {
+    const run = this.requireRun(runId, viewingKey);
+    const release = this.holdTheLeg(run, legOf(run, asset));
+    try {
+      return await this.raiseTheLeg(runId, viewingKey, proposedBy, payable, asset, how);
+    } finally {
+      release();
+    }
+  }
+
+  /** `proposeRun`, once the leg is held. */
+  private async raiseTheLeg(
     runId: string, viewingKey: Hex, proposedBy: string,
     /**
      * **THIS LEG'S PAYOUT MATERIAL — OR `null` FROM A CALLER THAT HAS NONE.**
@@ -2509,7 +2553,7 @@ export class PayrollService {
     if (run.status !== 'draft' && run.status !== 'proposed') throw new Error(`run is ${run.status}`);
 
     const leg = legOf(run, asset);
-    if (run.proposalIds[leg]) throw new Error(`the ${leg} leg of this run is already proposed`);
+    this.refuseALegThatIsProposed(run, leg, viewingKey);
 
     const paid = legEmployees(run, leg);
     const entries: ShieldedEntry[] = paid.map(e => ({
@@ -2688,9 +2732,7 @@ export class PayrollService {
     }
 
     const beforeRaising = this.requireRun(runId, viewingKey);
-    if (beforeRaising.proposalIds[leg]) {
-      throw new Error(`the ${leg} leg of this run is already proposed`);
-    }
+    this.refuseALegThatIsProposed(beforeRaising, leg, viewingKey);
     beforeRaising.payout = { ...(beforeRaising.payout ?? {}), [leg]: {
       root: payable.run.root,
       payees: payable.run.payees,
@@ -2769,6 +2811,19 @@ export class PayrollService {
    * account refuses their leaf a second time.
    */
   async proposeRetry(
+    runId: string, viewingKey: Hex, proposedBy: string, payable: RetryMaterial | null, asset?: AssetId,
+  ) {
+    const run = this.requireRun(runId, viewingKey);
+    const release = this.holdTheLeg(run, legOf(run, asset));
+    try {
+      return await this.raiseARetry(runId, viewingKey, proposedBy, payable, asset);
+    } finally {
+      release();
+    }
+  }
+
+  /** `proposeRetry`, once the leg is held. */
+  private async raiseARetry(
     runId: string, viewingKey: Hex, proposedBy: string,
     /**
      * **THIS ATTEMPT'S PAYOUT MATERIAL, OR `null` FROM A CALLER THAT HAS NONE.**
@@ -3047,6 +3102,41 @@ export class PayrollService {
       + 'twice. Raise that run again unchanged - it is asked of the chain first and cannot open a '
       + 'second round - and if some people on it are not paid by the time its window closes, '
       + 'raise a retry on it for them.');
+  }
+
+  /**
+   * **A LEG IS PROPOSED WHILE THE PROPOSAL IT POINTS AT STANDS, AND NOT BECAUSE
+   * IT ONCE POINTED AT ONE.** The run keeps which proposal each leg was raised
+   * as, and nothing clears that pointer; a leg whose proposal was withdrawn is
+   * therefore free to be raised again, as a new proposal, and the pointer moves
+   * to it. Every other state of the proposal it names - written down and not
+   * yet sent, open, approved, or stopped by this company's policy - still
+   * refuses.
+   *
+   * **AND A WITHDRAWN LEG IS NOT RAISED AGAIN WHILE A RETRY ON IT MAY STILL
+   * PAY.** A retry pays some of the leg's people from a smaller tree. Raising
+   * the leg again pays all of them, so while any retry on the leg is neither
+   * withdrawn nor stopped, the two could both pay somebody; that retry is
+   * withdrawn first.
+   */
+  private refuseALegThatIsProposed(run: PayrollRun, leg: AssetId, viewingKey: Hex): void {
+    const pointed = run.proposalIds[leg];
+    if (!pointed) return;
+    const standing = this.accounts.requireProposal(pointed, viewingKey).status;
+    if (standing !== 'cancelled') {
+      throw new Error(
+        `the ${leg} leg of this run is already proposed, as ${pointed}, which is ${standing}. A leg is raised `
+        + 'again only once that proposal is withdrawn - withdrawing asks the chain - and then as a new proposal.');
+    }
+    const retries = this.accounts.payrollRoundsOf(run.accountId, viewingKey).filter(r =>
+      r.runId === run.id && r.asset === leg && r.retry !== undefined && isLiveRound(r));
+    if (retries.length > 0) {
+      throw new Error(
+        `the ${leg} leg of run ${run.id} was withdrawn, and a retry on it is still live `
+        + `(${retries.map(r => r.id).join(', ')}). Raising the leg again would raise all of its people while `
+        + 'that retry can still pay some of them. Withdraw the retry first - withdrawing asks the chain - '
+        + 'and raise the leg again after.');
+    }
   }
 
   /** A round seen on chain that is neither withdrawn nor stopped by policy. */

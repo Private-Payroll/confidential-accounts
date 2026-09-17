@@ -26,7 +26,7 @@
  * harness named after either round would have put one of them behind a name
  * that says nothing about the other, and a round number is not a subject.
  *
- * **AND `R6` BELONGS HERE FOR THE SAME REASON, ONE STEP FURTHER ON.** Once the
+ * **AND THE THIRD ENTITLEMENT BELONGS HERE FOR THE SAME REASON, ONE STEP FURTHER ON.** Once the
  * chain has said a round is approved, something has to be entitled to say the
  * round HAPPENED — and while settling and executing were two calls, two
  * different transactions could each answer half of that, with the record
@@ -34,14 +34,14 @@
  * second reference used to be minted.
  *
  * **WHY THIS IS A HARNESS AT ALL.** The FIVE THIS FILE STARTED WITH were each
- * performed by hand, watched once, and written down off this tree — `R4`'s
- * three under VERIFIED, and `R2`'s and `R3`'s allow-list control, which each ran
+ * performed by hand, watched once, and written down off this tree — three
+ * of them under VERIFIED, and two allow-list controls, which each ran
  * in a throwaway replication OUTSIDE the working tree. **A proof watched once
  * has no alarm.** (**The count below is not five and this sentence used to read
  * as though it were.** Entries come and go, each with its reason;
- * the harness derives the count from the array and prints it — **and since
- * `S56` this sentence writes none either. It said THIRTEEN against an array of
- * TWENTY-TWO, in the same breath. `T-312`.**) **THE VALUABLE HALF OF THE REPORT
+ * the harness derives the count from the array and prints it — **and this
+ * sentence writes none either. It said THIRTEEN against an array of
+ * TWENTY-TWO, in the same breath.**) **THE VALUABLE HALF OF THE REPORT
  * IS THE TWO NUMBERS THAT ARE NOT `survived`:** a mutation that COULD NOT BE
  * APPLIED has guarded nothing since; one that MEASURED NOTHING proves nothing.
  *
@@ -52,7 +52,7 @@
  * repository: `scripts/mutate-web-wasm.mjs` mutates
  * `src/web/no-wasm-in-the-page.test.ts` for the same reason.
  *
- * **05 is the defect `R2` actually found, made standing.** Its stripper once
+ * **05 is a defect that was actually met, made standing.** Its stripper once
  * collapsed comments onto one line, and the test PASSED while the `file:line`
  * it would have printed named the wrong line. A detector whose green is cheap
  * needs a standing control, and the control is the presence assertion: making
@@ -716,8 +716,18 @@ export const MUTATIONS = [
      * later refactor would produce — somebody tidying two `putProposal` calls
      * into one.
      */
-    from: '    this.putProposal(proposal, viewingKey);\n\n    /*\n     * **AND THE STANDING, WHICH IS THE HALF THAT NEEDS THE CHAIN.**',
-    to: '    /*\n     * **AND THE STANDING, WHICH IS THE HALF THAT NEEDS THE CHAIN.**',
+    /*
+     * **RE-ANCHORED BY `S179`, IN THE TURN THAT MOVED THE LINE - RULE 18.** The
+     * durable write is `recordApproval` now, which appends onto the record as it
+     * is after the send instead of writing back the one read before it, and it
+     * sits inside the `try` that releases the send's hold. Deleting it would no
+     * longer restore the window - nothing would write the approval at all - so
+     * the mutation MOVES it behind the standing read, which is the window
+     * exactly. Measured over the suites above: these four die, and so does
+     * *does not reconcile a round that is no longer open*, which is not named.
+     */
+    from: "      this.recordApproval(proposalId, viewingKey, {\n        signerId, signature, at: new Date().toISOString(),\n      });\n    } finally {\n      release();\n    }\n",
+    to: "    } finally {\n      release();\n    }\n    await this.recordStanding(proposalId, account, viewingKey);\n    this.recordApproval(proposalId, viewingKey, {\n      signerId, signature, at: new Date().toISOString(),\n    });\n",
     /* MEASURED by `S52`, and the list is the four that actually died — the
      * third name here was RENAMED after `S52`'s test-coverage pass showed the old
      * one was not the negative control it claimed to be, and a kill list
@@ -771,7 +781,13 @@ export const MUTATIONS = [
      * method sits at four. Verified: exactly one match. The BINDING under test
      * is unchanged and so are its `kills`.
      */
-    from: '        await this.recordStanding(proposal, account, viewingKey);\n',
+    /*
+     * **RE-ANCHORED BY `S179`: THE CALL TAKES THE PROPOSAL'S ID NOW**, because
+     * the standing is written onto the record as it is after the chain read and
+     * not onto an object held across it. Same eight-space call, one match,
+     * same binding, same two kills - measured.
+     */
+    from: "        await this.recordStanding(proposalId, account, viewingKey);\n",
     to: '',
     kills: [
       'recovers the standing on the retry, and still refuses the second approval',
@@ -854,8 +870,20 @@ export const MUTATIONS = [
     says: 'the record goes back to being written AFTER the chain call, which is C378 exactly — '
       + 'a failed write then leaves a proposal paid for, live on chain, and with no durable '
       + 'record of any kind, so the product cannot list it, approve it or cancel it',
-    from: '    this.putProposal(proposal, viewingKey);\n    const tx = await call();',
-    to: '    const tx = await call();',
+    /*
+     * **RE-ANCHORED BY `S179`, AND IT WAS ALREADY STALE WHEN THAT ROUND OPENED
+     * IT:** the device-send return and its comment had been put between the
+     * first write and the chain call, so this `from:` matched zero times before
+     * `S179` changed a line. `S179` then held the send across the call and wrote
+     * the confirmation onto the record read after it. The mutation is the same
+     * regression in today's shape - no write before the call, and the
+     * confirmation written onto the object the caller built - and it spans the
+     * block, so any edit inside it re-anchors this entry. Measured over the
+     * suites above: these five die, and so does *`grantAccess` reaches the
+     * APPROVED round too*, which is not named.
+     */
+    from: "      this.putProposal(written, viewingKey);\n      /*\n       * **A PROPOSAL A DEVICE SENDS STOPS HERE, WITH ITS RECORD WRITTEN AND NOTHING\n       * SENT** - the same state a raise is in when its chain call throws, and it\n       * is recovered the same way: `approve` and `cancel` ask the chain first.\n       */\n      if (call === THE_DEVICE_SENDS) return;\n      /*\n       * **THE CONFIRMATION IS WRITTEN ONTO THE RECORD AS IT IS WHEN THE CALL\n       * ANSWERS**, so nothing another request wrote meanwhile is put back.\n       */\n      const tx = await call();\n      const latest = this.requireProposal(proposal.id, viewingKey);\n",
+    to: "      /*\n       * **A PROPOSAL A DEVICE SENDS STOPS HERE, WITH ITS RECORD WRITTEN AND NOTHING\n       * SENT** - the same state a raise is in when its chain call throws, and it\n       * is recovered the same way: `approve` and `cancel` ask the chain first.\n       */\n      if (call === THE_DEVICE_SENDS) return;\n      /*\n       * **THE CONFIRMATION IS WRITTEN ONTO THE RECORD AS IT IS WHEN THE CALL\n       * ANSWERS**, so nothing another request wrote meanwhile is put back.\n       */\n      const tx = await call();\n      const latest = proposal;\n",
     kills: [
       'keeps the proposal when the chain call throws, and says the chain has not confirmed it',
       'and that record can be cancelled, which is what "the product cannot cancel it" was',
