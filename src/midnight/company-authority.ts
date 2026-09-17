@@ -176,48 +176,6 @@ export function everySignerNeeded(signerCount: number, threshold: number): strin
 
 /* ----------------------------------------------- whether money may go in */
 
-/**
- * **`null` ONLY WHEN THE CHAIN SHOWS THE COMPANY'S ACCOUNT HELD BY ITS
- * COMMITTEE, CHANGED EXACTLY ONCE, AND RUNNING THIS BUILD'S CIRCUITS.**
- *
- * A vault pays out on its account's approval, so a vault held by the company's
- * committee is still paid out of by whoever holds the account's rules. The
- * account's own handover is its one permitted change: a key that held the
- * account before could have swapped a circuit, used it, and put it back, and
- * the chain would then show the committee and this build's circuits.
- *
- * `circuitsRefusal` is the caller's reading of the account's circuits against
- * this build's, `null` when they are the same.
- */
-export function accountFundingRefusal(
-  read: AuthorityRead, committee: Committee, circuitsRefusal: string | null,
-): string | null {
-  const verdict = compareAuthority(read, {
-    committee: committee.committee.map((k) => ({ ...k })), threshold: committee.threshold,
-  });
-  if (verdict.verdict === 'unknown') {
-    return 'the chain could not be asked who holds this company\'s account, and a vault pays out on the '
-      + 'account\'s approval, so no money goes in. Nothing was sent; try again when the chain answers.';
-  }
-  if (verdict.verdict === 'disagree') {
-    const shape = read.state === 'read' ? read.authority.shape : null;
-    return shape === 'one-key' && read.state === 'read' && read.authority.counter === 0n
-      ? 'this company\'s account is still held by the temporary key it was created with, and a vault pays out '
-        + 'on the account\'s approval, so no money goes into any of its vaults. Hand the account to the '
-        + 'company\'s committee in Settings first. Nothing was sent.'
-      : 'this company\'s account is not held by the company\'s committee on the chain, and a vault pays out on '
-        + `the account's approval, so no money goes in: ${verdict.why} Nothing was sent.`;
-  }
-  if (read.state !== 'read' || read.authority.counter !== 1n) {
-    const changes = read.state === 'read' ? String(read.authority.counter) : 'an unknown number of';
-    return `this company's account has had its rules changed ${changes} times, and an account handed straight `
-      + 'to its committee has been changed once, so what it approves cannot be vouched for and no money goes '
-      + 'in. Nothing was sent.';
-  }
-  if (circuitsRefusal !== null) return circuitsRefusal;
-  return null;
-}
-
 /* ------------------------------------------------ the account's handover */
 
 /** The ledger this service builds the account's handover with. `@midnightntwrk/ledger-v9` satisfies it. */

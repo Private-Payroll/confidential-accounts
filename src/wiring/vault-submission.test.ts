@@ -12,7 +12,7 @@ import { committeeReplacement, type Committee } from '../midnight/vault-committe
 import { VAULT_CIRCUITS } from '../midnight/vault-contract.js';
 import type { AuthorityRead, OnChainAuthority } from '../midnight/ledger.js';
 import {
-  circuitsRefusal, fundingRefusal, heldKeyFundingRefusal, readVaultDeploy, refusalForDeposit, refusalForHandover,
+  circuitsRefusal, refusalToPutMoneyIn, readVaultDeploy, refusalForDeposit, refusalForHandover,
   refusalForPayout, startingLedgerFrom, type VaultStartingLedger,
 } from './vault-submission.js';
 
@@ -228,13 +228,26 @@ describe.skipIf(!KEYS_ON_DISK)('what the fee payer pays for on a vault [needs co
       authority: { committee: committee.committee.map((k) => ({ ...k })), threshold: 2, counter: 1n, shape: 'committee', hasDuplicateMembers: false, ...authority },
     });
 
+    /*
+     * **THE ONE GATE, ASKED ABOUT THE VAULT.** The account half is handed a read
+     * that passes, so each row below is about the vault and nothing else.
+     */
+    const ok = read({});
+    const gate = (
+      vaultRead: AuthorityRead, to: Committee | null, over: Record<string, unknown> = {},
+    ): string | null => refusalToPutMoneyIn({
+      label: 'v', what: 'no money goes in', vault: vaultRead, vaultCircuits: null,
+      pinnedAccount: 'acc', companyAccount: 'acc', account: ok, accountCircuits: null,
+      committee: to, heldHere: [], ...over,
+    })?.why ?? null;
+
     it('only when the chain holds exactly the company\'s committee', () => {
-      expect(fundingRefusal(read({}), committee)).toBeNull();
-      expect(fundingRefusal(read({ threshold: 1 }), committee)).toMatch(/not held by the company's committee/);
-      expect(fundingRefusal(read({ committee: [{ tag: 'schnorr', value: 'aa'.repeat(32) }], threshold: 1, shape: 'one-key' }), committee))
+      expect(gate(read({}), committee)).toBeNull();
+      expect(gate(read({ threshold: 1 }), committee)).toMatch(/not held by the company's committee/);
+      expect(gate(read({ committee: [{ tag: 'schnorr', value: 'aa'.repeat(32) }], threshold: 1, shape: 'one-key' }), committee))
         .toMatch(/finish handing it to the committee first/);
-      expect(fundingRefusal({ state: 'unreachable', address: vault, why: 'down' }, committee)).toMatch(/could not be asked/);
-      expect(fundingRefusal({ state: 'absent', address: vault, why: 'none' }, committee)).toMatch(/could not be asked/);
+      expect(gate({ state: 'unreachable', address: vault, why: 'down' }, committee)).toMatch(/could not be asked/);
+      expect(gate({ state: 'absent', address: vault, why: 'none' }, committee)).toMatch(/could not be asked/);
     });
 
     it('A VAULT WHOSE PROOFS ARE NOT THIS BUILD\'S IS NOT FUNDED, whoever holds it', () => {
@@ -249,23 +262,30 @@ describe.skipIf(!KEYS_ON_DISK)('what the fee payer pays for on a vault [needs co
       expect(circuitsRefusal(null, verifierKeys, 'no')).toMatch(/circuits other than the vault's own/);
     });
 
-    it('the operator tools refuse a committee any one member can act for, one nobody can, and one listing a key twice', () => {
+    /* The same gate with no roster to compare against, which is what an operator tool asks. */
+    it('with no roster it refuses a committee any one member can act for, one nobody can, and one listing a key twice', () => {
       const three = [vk(4), vk(5), vk(6)];
-      expect(heldKeyFundingRefusal(read({ committee: three, threshold: 2 }), [], 'v')).toBeNull();
-      expect(heldKeyFundingRefusal(read({ committee: three, threshold: 1 }), [], 'v')).toMatch(/any one member/);
-      expect(heldKeyFundingRefusal(read({ committee: three, threshold: 4, shape: 'no-one' }), [], 'v')).toMatch(/nobody can ever change its rules/);
-      expect(heldKeyFundingRefusal(read({ committee: [], threshold: 1, shape: 'no-one' }), [], 'v')).toMatch(/nobody can ever change its rules/);
-      expect(heldKeyFundingRefusal(read({ committee: [vk(4), vk(4), vk(5)], threshold: 2, hasDuplicateMembers: true }), [], 'v'))
+      expect(gate(read({ committee: three, threshold: 2 }), null)).toBeNull();
+      expect(gate(read({ committee: three, threshold: 1 }), null)).toMatch(/any one member/);
+      expect(gate(read({ committee: three, threshold: 4, shape: 'no-one' }), null)).toMatch(/nobody can ever change its rules/);
+      expect(gate(read({ committee: [], threshold: 1, shape: 'no-one' }), null)).toMatch(/nobody can ever change its rules/);
+      expect(gate(read({ committee: [vk(4), vk(4), vk(5)], threshold: 2, hasDuplicateMembers: true }), null))
         .toMatch(/lists one key more than once/);
     });
 
-    it('the operator tools refuse a single key, a committee holding a key they keep, and a chain they cannot read', () => {
+    it('with no roster it refuses a single key, a committee holding a key this machine keeps, and a chain it cannot read', () => {
       const held = [vk(1)];
-      expect(heldKeyFundingRefusal(read({ committee: [vk(9)], threshold: 1, shape: 'one-key' }), [], 'v')).toMatch(/still held by a single key/);
-      expect(heldKeyFundingRefusal(read({}), held, 'v')).toMatch(/a key this machine keeps/);
-      expect(heldKeyFundingRefusal(read({ threshold: 0, shape: 'anyone' }), [], 'v')).toMatch(/single key/);
-      expect(heldKeyFundingRefusal({ state: 'unreadable', address: vault, why: 'x' }, [], 'v')).toMatch(/could not be asked/);
-      expect(heldKeyFundingRefusal(read({ committee: [vk(3), vk(4)], shape: 'committee' }), held, 'v')).toBeNull();
+      expect(gate(read({ committee: [vk(9)], threshold: 1, shape: 'one-key' }), null)).toMatch(/still held by a single key/);
+      /* `account: ok` would say the same sentence, so the account is given a committee this machine has no key of. */
+      const theirs = read({ committee: [vk(3), vk(4)], shape: 'committee' });
+      expect(gate(read({}), null, { heldHere: held, account: theirs })).toMatch(/a key this machine keeps/);
+      expect(gate(read({ threshold: 0, shape: 'anyone' }), null)).toMatch(/single key/);
+      expect(gate({ state: 'unreadable', address: vault, why: 'x' }, null)).toMatch(/could not be asked/);
+      /* The account is asked the same question, so it too must hold no key this machine keeps. */
+      const clean = read({ committee: [vk(3), vk(4)], shape: 'committee' });
+      expect(gate(clean, null, { heldHere: held, account: clean })).toBeNull();
+      expect(gate(clean, null, { heldHere: held }), 'RED WHEN: the account half stops being asked with no roster')
+        .toMatch(/a key this machine keeps/);
     });
   });
 });

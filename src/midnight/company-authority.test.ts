@@ -4,13 +4,42 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as L from '@midnightntwrk/ledger-v9';
 import {
-  accountFundingRefusal, authorityView, buildAccountHandover, everySignerNeeded,
+  authorityView, buildAccountHandover, everySignerNeeded,
   type AccountHandoverLedger,
 } from './company-authority.js';
 import { readContractAuthority, replaceAuthorityOf, type AuthorityRead } from './ledger.js';
-import { committeeReplacement } from './vault-committee.js';
+import { committeeReplacement, type Committee, type CommitteeKey } from './vault-committee.js';
 import { readProvenTransaction } from '../wiring/proven-submission.js';
-import { refusalForHandover } from '../wiring/vault-submission.js';
+import { refusalForHandover, refusalToPutMoneyIn } from '../wiring/vault-submission.js';
+
+/*
+ * **THE ONE GATE, ASKED ABOUT THE ACCOUNT.** The vault half is handed a read
+ * that passes, so every answer below is about the company's account. This
+ * used to call `accountFundingRefusal`, which was a second implementation of
+ * the same rule; it is now the function every door actually asks.
+ */
+const moneyIn = (
+  accountRead: AuthorityRead, to: Committee, circuits: string | null, heldHere: CommitteeKey[] = [],
+): string | null => refusalToPutMoneyIn({
+  label: 'v',
+  what: 'no money goes in',
+  vault: {
+    state: 'read',
+    address: 'v',
+    authority: {
+      committee: to.committee.map((k) => ({ ...k })), threshold: to.threshold,
+      counter: 1n, shape: 'committee', hasDuplicateMembers: false,
+    },
+  },
+  vaultCircuits: null,
+  pinnedAccount: 'acc',
+  companyAccount: 'acc',
+  account: accountRead,
+  accountCircuits: circuits,
+  committee: to,
+  heldHere,
+})?.why ?? null;
+
 
 /*
  * The company's own authority: one refusal for every replacement this product
@@ -190,7 +219,8 @@ describe('A COMPANY ACCOUNT HANDED FROM THE TEMPORARY KEY TO ITS COMMITTEE, ON T
     const { ls, address } = deployedUnder([L.signatureVerifyingKey(temporary)], 1);
     const before = await readFrom(ls, address);
     expect(before).toMatchObject({ state: 'read', authority: { shape: 'one-key', counter: 0n } });
-    expect(accountFundingRefusal(before, committee, null)).toMatch(/still held by the temporary key/);
+    expect(moneyIn(before, committee, null, [L.signatureVerifyingKey(temporary)]))
+      .toMatch(/still held by the temporary key/);
 
     const built = buildAccountHandover(Lh, { read: before, to: committee, temporaryKey: temporary, network: NET, ttl: ttl() });
     expect(built.endState).toMatchObject({ address, threshold: 2, builtAgainstCounter: 0n, expectedCounter: 1n });
@@ -210,8 +240,8 @@ describe('A COMPANY ACCOUNT HANDED FROM THE TEMPORARY KEY TO ITS COMMITTEE, ON T
     const [after] = ls.apply(bound.wellFormed(ls, strictness(), NOW), new L.TransactionContext(ls, blockContext));
     const now = await readFrom(after, address);
     expect(now).toMatchObject({ state: 'read', authority: { shape: 'committee', threshold: 2, counter: 1n } });
-    expect(accountFundingRefusal(now, committee, null)).toBeNull();
-    expect(accountFundingRefusal(now, committee, 'its circuits are not this build\'s')).toBe('its circuits are not this build\'s');
+    expect(moneyIn(now, committee, null)).toBeNull();
+    expect(moneyIn(now, committee, 'its circuits are not this build\'s')).toBe('its circuits are not this build\'s');
     expect(authorityView('account', now, committee, new Map([[`schnorr:${vk(1).value}`, 'ada']]))).toMatchObject({
       heldByTheCompany: true, seatsOutsideTheCommittee: 0, changes: '1',
     });
@@ -299,7 +329,7 @@ describe('WHAT A COMPANY IS TOLD', () => {
     expect(ours.seats[0]).toMatchObject({ thisService: true, holder: null, onTheCompanysCommittee: false });
     expect(ours.why).toMatch(/THIS SERVICE'S temporary key holds this account's rules/);
     expect(down).toMatchObject({ heldByTheCompany: false, seats: [], read: 'unreachable' });
-    expect(accountFundingRefusal({ state: 'unreachable', address: 'a', why: 'down' }, { committee: [vk(1)], threshold: 1 }, null))
+    expect(moneyIn({ state: 'unreachable', address: 'a', why: 'down' }, { committee: [vk(1)], threshold: 1 }, null))
       .toMatch(/could not be asked/);
   });
 });

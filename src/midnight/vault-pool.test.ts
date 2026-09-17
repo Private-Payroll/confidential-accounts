@@ -562,3 +562,51 @@ describe('a rebuild\'s answer about a contradicted note is sealed into the versi
     expect(Object.keys(opened), 'RED WHEN: the readAt or an empty list is sealed into the record').toEqual(['notes']);
   });
 });
+
+/*
+ * **A DEPOSIT THAT SUCCEEDS MUST NOT BE THE MOMENT A SIGNER LOSES THE RECORD OF
+ * THE COMPANY'S MONEY.** A write re-seals the whole pool under a fresh key
+ * wrapped to exactly the signers the caller hands it, and the record is then
+ * replaced whole. A caller holding a shorter list therefore ends somebody's
+ * access, and the write reports success.
+ */
+describe('A WRITE NEVER RE-SEALS A POOL NARROWER THAN IT FOUND IT', () => {
+  const VAULT2 = 'ab'.repeat(32);
+  const POOL2 = { notes: [] as never[] };
+
+  it('REFUSES a save whose signer list has dropped somebody the record is sealed to, and writes nothing', async () => {
+    const a = signer('sgn_a');
+    const b = signer('sgn_b');
+    const store = new MemorySealedPoolStore();
+    let to = [a.who, b.who];
+    const pool = new SealedNotePool(store, { signerId: 'sgn_a', wrappingSecret: a.secret }, async () => to);
+    await pool.create(VAULT2, POOL2);
+    const read = await pool.load(VAULT2);
+    const before = (await store.get(VAULT2))!;
+
+    to = [a.who];
+    await expect(
+      pool.save(VAULT2, { notes: POOL2.notes }, read.readAt),
+      'RED WHEN: save seals to the caller\'s list without asking whether it dropped anybody',
+    ).rejects.toThrow(/sgn_b/);
+
+    const after = (await store.get(VAULT2))!;
+    expect(after.version, 'RED WHEN: the refusal happens after the write rather than before it').toBe(before.version);
+    expect(openPool(after, 'sgn_b', b.secret).notes, 'RED WHEN: sgn_b can no longer open the record').toEqual([]);
+  });
+
+  it('allows a save that adds a signer, and one that changes nobody', async () => {
+    const a = signer('sgn_a');
+    const b = signer('sgn_b');
+    const store = new MemorySealedPoolStore();
+    let to = [a.who];
+    const pool = new SealedNotePool(store, { signerId: 'sgn_a', wrappingSecret: a.secret }, async () => to);
+    await pool.create(VAULT2, POOL2);
+    let read = await pool.load(VAULT2);
+    to = [a.who, b.who];
+    await pool.save(VAULT2, { notes: POOL2.notes }, read.readAt);
+    expect(openPool((await store.get(VAULT2))!, 'sgn_b', b.secret).notes).toEqual([]);
+    read = await pool.load(VAULT2);
+    await expect(pool.save(VAULT2, { notes: POOL2.notes }, read.readAt)).resolves.toBeUndefined();
+  });
+});
