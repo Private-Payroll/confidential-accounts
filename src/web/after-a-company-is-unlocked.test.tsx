@@ -105,6 +105,7 @@ const PENDING = {
 
 const NEW_KEYS = {
   signerId: 'sgn_new', signingSecret: 'dd'.repeat(32), wrappingSecret: 'ee'.repeat(32), blinding: 'ff'.repeat(32),
+  scope: 'ab'.repeat(32),
 };
 
 const A_COMPANY = { name: 'Acme Ltd', signers: [{ name: 'You', role: 'admin' as const }], threshold: 1 };
@@ -118,7 +119,9 @@ interface Deployment {
    * companies, one that holds a pending seat too, or keys sealed under a key
    * this person's wallet does not give.
    */
-  keyBundle: 'none' | 'another-company' | 'a-pending-seat' | 'sealed-under-another-key';
+  keyBundle: 'none' | 'another-company' | 'a-pending-seat' | 'sealed-under-another-key'
+    /** Another company's keys, saved before scopes were recorded, so the entry has none. */
+    | 'saved-before-scopes';
   /** Whether saving the key bundle is refused, as it is when another tab or device wrote first. */
   bundleWriteRefused?: boolean;
   /** Held until the test lets it through, so something can happen while a write is on its way. */
@@ -140,6 +143,7 @@ function aDeployment(d: Deployment) {
       : seal(JSON.stringify({ accounts: { acc_other: {
         signerId: 'sgn_x', signingSecret: 'aa'.repeat(32), wrappingSecret: 'bb'.repeat(32),
         blinding: 'cc'.repeat(32),
+        ...(d.keyBundle === 'saved-before-scopes' ? {} : { scope: 'bc'.repeat(32) }),
       } }, ...(d.keyBundle === 'a-pending-seat' ? { pendingSeats: { [PENDING.signingPublicKey]: PENDING } } : {}) }),
       keyringHex());
   /* What is saved, and its version: each accepted write replaces the one and raises the other. */
@@ -174,7 +178,8 @@ function aDeployment(d: Deployment) {
         }
         return json(200, {
           account: { id: 'acc_new' },
-          secrets: [{ signerId: 'sgn_new', signingSecret: 'dd'.repeat(32), wrappingSecret: 'ee'.repeat(32), blinding: 'ff'.repeat(32) }],
+          /* As the service answers: every seat's secrets carry the scope it was seated under. */
+          secrets: [{ signerId: 'sgn_new', signingSecret: 'dd'.repeat(32), wrappingSecret: 'ee'.repeat(32), blinding: 'ff'.repeat(32), scope: 'ab'.repeat(32) }],
         });
       }
       default: return json(404, { error: `no route for ${method} ${url}` });
@@ -321,6 +326,36 @@ describe('what the keyring knows about the keys saved for this person', () => {
     expect(keyring.keysFor('acc_other')).not.toBeNull();
     expect(keyring.lockedCompanyReason('acc_other')).toBe('it did not open with the keys saved for you');
     expect(keyring.lockedCompanyRefusal('acc_other')).toContain('you may not have been given access to it yet');
+  });
+});
+
+describe('KEYS SAVED BEFORE VAULT SCOPES WERE RECORDED', () => {
+  it('are refused by name when asked for, and nothing is filled in for the scope they do not have', async () => {
+    aDeployment({ keyBundle: 'saved-before-scopes' });
+    await signInAndOpenKeys();
+    /* RED WHEN: an entry with no scope is handed out - with any scope at all, or with none. */
+    expect(() => keyring.keysFor('acc_other')).toThrow(keyring.SeatSavedBeforeScopes);
+    expect(() => keyring.keysFor('acc_other')).toThrow(/can no longer act at all/);
+    expect(() => keyring.signerMaterialFor('acc_other')).toThrow(keyring.SeatSavedBeforeScopes);
+    /* RED WHEN: the list row blames the wrong thing for a company it cannot open. */
+    expect(keyring.lockedCompanyReason('acc_other')).toBe('the keys saved for you were written before vault scopes were recorded');
+    /* A company with no keys here at all is not affected. */
+    expect(keyring.keysFor('acc_1')).toBeNull();
+  });
+
+  it('an entry whose scope is there is handed out with it, and so is its material for a raise or an approval', async () => {
+    aDeployment({ keyBundle: 'another-company' });
+    await signInAndOpenKeys();
+    expect(keyring.keysFor('acc_other')?.scope).toBe('bc'.repeat(32));
+    expect(keyring.signerMaterialFor('acc_other')).toEqual({
+      signingSecret: 'aa'.repeat(32), blinding: 'cc'.repeat(32), scope: 'bc'.repeat(32),
+    });
+    /* RED WHEN: a scope that is not thirty-two bytes is handed out as though it were one. */
+    expect(() => keyring.keysToActWith('acc_x', { signerId: 's', signingSecret: 'a', wrappingSecret: 'b', blinding: 'c', scope: 'bc'.repeat(31) }))
+      .toThrow(keyring.SeatSavedBeforeScopes);
+    expect(() => keyring.keysToActWith('acc_x', { signerId: 's', signingSecret: 'a', wrappingSecret: 'b', blinding: 'c', scope: 7 }))
+      .toThrow(keyring.SeatSavedBeforeScopes);
+    expect(keyring.keysToActWith('acc_x', undefined)).toBeNull();
   });
 });
 

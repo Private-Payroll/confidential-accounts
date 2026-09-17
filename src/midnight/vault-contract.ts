@@ -157,6 +157,19 @@ export type VaultCircuit = (typeof VAULT_CIRCUITS)[number];
 export const ACCOUNT_CIRCUITS_A_VAULT_CALLS: readonly string[] = Object.freeze(['recordPayment']);
 
 /**
+ * **THE ACCOUNT'S CIRCUITS A SIGNER'S OWN DEVICE BUILDS AND PROVES**: raising a
+ * round and approving one. Each opens with the signer check, so each runs
+ * against the signer's own secret, which exists only on that device. No vault
+ * circuit shares a name with either.
+ */
+export const ACCOUNT_CIRCUITS_A_DEVICE_GOVERNS: readonly string[] = Object.freeze(['propose', 'approve']);
+
+/** Every one of the account's circuits whose proving material is served to a device, for either reason above. */
+export const ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE: readonly string[] = Object.freeze([
+  ...ACCOUNT_CIRCUITS_A_VAULT_CALLS, ...ACCOUNT_CIRCUITS_A_DEVICE_GOVERNS,
+]);
+
+/**
  * The account's circuits, named here for ONE purpose: telling a reader that the
  * address they pointed a vault client at is an account.
  *

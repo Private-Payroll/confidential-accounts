@@ -38,6 +38,8 @@ const builder = (log: string[]): VaultBuilderClient => ({
     const rest = BigInt(i.note.value) - BigInt(i.payment.amount);
     return { tx: 'O', spent: i.note.nonce, change: rest === 0n ? null : { nonce: 'cc'.repeat(32), token: i.note.token, value: rest.toString() } };
   },
+  /* No vault operation raises or approves a round. */
+  governedCall: async () => { throw new Error('a vault operation asked for a governed call'); },
 });
 const memoryKeys = (log: string[]) => {
   const held = new Map<string, { tag: string; value: string }>();

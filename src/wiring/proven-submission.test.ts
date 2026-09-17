@@ -8,7 +8,7 @@
  * a fee payer that record what they were asked for.
  */
 import { describe, it, expect } from 'vitest';
-import { refusalForProven } from './proven-submission.js';
+import { refusalForProven, refusalUnlessOnlyACallTo } from './proven-submission.js';
 import { ChainLedger } from './chain.js';
 import type { Deployment } from './deployment.js';
 import type { WriteCapability } from './write-capability.js';
@@ -229,5 +229,41 @@ describe('sending a transaction a device proved', () => {
     expect(refused.message, 'the bytes were not read by the ledger at all').not.toMatch(/calls nothing|could not be read/);
     expect(saysNothingWasSent(refused)).toBe(true);
     expect(r.steps).toEqual(['paying for acc_1']);
+  });
+});
+
+describe('a transaction the service is about to record as one particular call', () => {
+  const at = (address: string, entryPoint: unknown) => ({ address, entryPoint });
+
+  it('is exactly one call, to that circuit, whether the name arrives as text or as bytes', () => {
+    /* RED WHEN: the one call it was sent as is refused. */
+    expect(refusalUnlessOnlyACallTo(tx([at(OURS, 'propose')]), 'propose')).toBeNull();
+    expect(refusalUnlessOnlyACallTo(tx([at(OURS, new TextEncoder().encode('approve'))]), 'approve')).toBeNull();
+  });
+
+  it('refuses another circuit, a second call anywhere, and a transaction that calls nothing', () => {
+    /* RED WHEN: the record could say one call while the chain is handed another, or two. */
+    for (const t of [
+      tx([at(OURS, 'approve')]),
+      tx([at(OURS, 'propose'), at(OURS, 'propose')]),
+      tx([at(OURS, 'propose')], [at(OURS, 'cancel')]),
+      tx([]),
+      { intents: 'not a map' },
+    ]) {
+      expect(String(refusalUnlessOnlyACallTo(t, 'propose'))).toMatch(/not the one call to "propose"/);
+    }
+  });
+
+  it('the door refuses it before anything is booked, as nothing sent, and passes the one call it was sent as', async () => {
+    const r = rig();
+    const refused: any = await r.ledger.submitProvenCall('acc_1', BYTES, 'propose', reads(tx([at(OURS, 'approve')]))).catch((e) => e);
+    /* RED WHEN: the door pays for a call other than the one it is told this is. */
+    expect(saysNothingWasSent(refused)).toBe(true);
+    expect(r.steps).toEqual(['paying for acc_1']);
+    const ref = await r.ledger.submitProvenCall('acc_1', BYTES, 'propose', reads(tx([at(OURS, 'propose')])));
+    expect(ref.ref).toBe('ref-from-the-fee-payer');
+    /* And the company's own contract is still the only one paid for. */
+    const theirs: any = await r.ledger.submitProvenCall('acc_1', BYTES, 'propose', reads(tx([at(THEIRS, 'propose')]))).catch((e) => e);
+    expect(String(theirs.message)).toMatch(/not this company's/);
   });
 });

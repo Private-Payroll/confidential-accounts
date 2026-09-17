@@ -150,7 +150,7 @@ const A_KEYRING = JSON.stringify({
   accounts: {
     acc_1: {
       signerId: 'sgn_1', signingSecret: 'aa'.repeat(32),
-      wrappingSecret: 'bb'.repeat(32), blinding: 'cc'.repeat(32),
+      wrappingSecret: 'bb'.repeat(32), blinding: 'cc'.repeat(32), scope: 'ab'.repeat(32),
     },
   },
 });
@@ -499,7 +499,7 @@ describe('§4 - THE KEYS SAVED FOR A PERSON OPEN WITH THE KEY THEIR WALLET GIVES
     expect(companyKey).toBeNull();
     const both = JSON.stringify({ accounts: {
       acc_1: JSON.parse(A_KEYRING).accounts.acc_1,
-      acc_2: { signerId: 'sgn_2', signingSecret: 'dd'.repeat(32), wrappingSecret: 'ee'.repeat(32), blinding: 'ff'.repeat(32) },
+      acc_2: { signerId: 'sgn_2', signingSecret: 'dd'.repeat(32), wrappingSecret: 'ee'.repeat(32), blinding: 'ff'.repeat(32), scope: 'ab'.repeat(32) },
     } });
     const bundle = seal(both, toHex(key));
     const opened = JSON.parse(unseal(bundle, toHex(key)));

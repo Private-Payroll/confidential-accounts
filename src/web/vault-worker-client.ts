@@ -6,6 +6,7 @@
 import type { Committee } from '../midnight/vault-committee.js';
 import type { PrivatePaymentOnTheWire, PrivatePaymentOrderOnTheWire } from '../midnight/private-payment-wire.js';
 import type { EventOnTheWire, NoteOnTheWire, PaymentConfirmation } from './vault-builder.js';
+import type { GovernedCallOrder, SignerMaterial } from './governed-call-builder.js';
 
 export interface SigningKeyOnTheWire { readonly tag: string; readonly value: string }
 export interface CoinOnTheWire { readonly nonce: string; readonly token: string; readonly value: string }
@@ -18,6 +19,12 @@ export interface PayoutChainOnTheWire {
   readonly accountState: string;
 }
 export type OrderOnTheWire = Omit<PrivatePaymentOrderOnTheWire, 'payments'>;
+/** One block's view of the company account, for a raise or an approval to be built on. Base64 of the bytes. */
+export interface AccountCallChainOnTheWire {
+  readonly blockHash: string;
+  readonly accountState: string;
+  readonly parameters: string;
+}
 
 export type VaultAsk =
   | { id: number; network: string; ask: 'deploy'; account: string }
@@ -36,6 +43,15 @@ export type VaultAsk =
   | {
     id: number; network: string; ask: 'payout'; vault: string; account: string; order: OrderOnTheWire;
     payment: PrivatePaymentOnTheWire; note: NoteOnTheWire; events: readonly EventOnTheWire[]; chain: PayoutChainOnTheWire;
+  }
+  /*
+   * **THE ONE ASK THAT CARRIES A SIGNER'S OWN KEY MATERIAL**, from the page to
+   * the worker on the same device. The worker uses it for this one call and
+   * keeps none of it.
+   */
+  | {
+    id: number; network: string; ask: 'governed-call'; account: string; order: GovernedCallOrder;
+    material: SignerMaterial; chain: AccountCallChainOnTheWire;
   };
 
 type Answered<A extends VaultAsk['ask'], T> = { id: number; ok: true; ask: A } & T;
@@ -49,6 +65,7 @@ export type VaultAnswer =
   | Answered<'after-payment', { notes: NoteOnTheWire[] }>
   | Answered<'confirm-payment', { confirmation: PaymentConfirmation }>
   | Answered<'payout', { tx: string; spent: string; change: NoteOnTheWire | null }>
+  | Answered<'governed-call', { tx: string }>
   | { id: number; ok: false; error: string };
 
 type Without<T> = T extends unknown ? Omit<T, 'id' | 'network'> : never;
@@ -72,6 +89,10 @@ export interface VaultBuilderClient {
     vault: string; account: string; order: OrderOnTheWire; payment: PrivatePaymentOnTheWire;
     note: NoteOnTheWire; events: readonly EventOnTheWire[]; chain: PayoutChainOnTheWire;
   }): Promise<{ tx: string; spent: string; change: NoteOnTheWire | null }>;
+  /** A raise or an approval on the company account, built and proved with this signer's own material. */
+  governedCall(input: {
+    account: string; order: GovernedCallOrder; material: SignerMaterial; chain: AccountCallChainOnTheWire;
+  }): Promise<{ tx: string }>;
 }
 
 interface WorkerLike {
@@ -128,6 +149,7 @@ export function vaultBuilderOver(worker: WorkerLike, network: string): VaultBuil
       const a = await ask({ ask: 'payout', ...input });
       return { tx: a.tx, spent: a.spent, change: a.change };
     },
+    governedCall: async (input) => ({ tx: (await ask({ ask: 'governed-call', ...input })).tx }),
   };
 }
 

@@ -40,6 +40,7 @@ let handoverShape: unknown;
 let payoutShape: unknown;
 let payoutState: CompanyVaultDeps['chain']['payoutState'];
 let eventsOf: CompanyVaultDeps['chain']['eventsOf'];
+let accountCallState: CompanyVaultDeps['chain']['accountCallState'];
 let asked: string[];
 const vkOf = (c: string) => new TextEncoder().encode(`vk:${c}`);
 const aDeploy = () => ({
@@ -80,6 +81,10 @@ beforeEach(async () => {
     return { blockHash: 'B', vaultState: 'dg==', zswapState: 'eg==', parameters: 'cA==', accountState: 'YQ==' };
   };
   eventsOf = async (tx) => { asked.push(`events of ${tx.slice(0, 2)}`); return [{ transactionHash: tx, details: { tag: 'zswapOutput', mtIndex: '7' } }]; };
+  accountCallState = async (address) => {
+    asked.push(`call state of ${address.slice(0, 2)}`);
+    return { blockHash: 'B', accountState: 'YQ==', parameters: 'cA==' };
+  };
   pinnedNow = hex(0xc0);
   sendVault = async (_a, what) => { sent.push(what); return { ref: 'r', at: 'now', transactionHash: 'h' }; };
   const app = express();
@@ -117,6 +122,7 @@ beforeEach(async () => {
       everCreated: async () => new Set(),
       get payoutState() { return payoutState; },
       get eventsOf() { return eventsOf; },
+      get accountCallState() { return accountCallState; },
     },
     verifierKeys: async () => new Map(CIRCUITS.map((c) => [c, vkOf(c)])),
     account: {
@@ -613,6 +619,25 @@ describe('A PRIVATE PAYMENT OUT OF A VAULT', () => {
       .toMatchObject({ status: 503, body: { error: expect.stringMatching(/the indexer did not answer/) } });
     payoutState = undefined;
     expect((await call(`/api/accounts/acc_1/vaults/${VAULT}/payout-state`, 'ada')).status).toBe(503);
+  });
+
+  it('WHAT A RAISE OR AN APPROVAL IS BUILT ON IS THIS COMPANY\'S ACCOUNT AT ONE BLOCK, FOR A MEMBER, AND NOTHING ELSE', async () => {
+    /* RED WHEN: the account read is any but this company's, or the address or the block is dropped from the answer. */
+    expect(await call('/api/accounts/acc_1/call-state', 'ada')).toEqual({
+      status: 200, body: { account: hex(0xc0), blockHash: 'B', accountState: 'YQ==', parameters: 'cA==' },
+    });
+    expect(asked).toEqual(['call state of c0']);
+    /* RED WHEN: a person who is not a member, or nobody, is answered. */
+    expect((await call('/api/accounts/acc_1/call-state', 'carol')).status).toBe(404);
+    expect((await call('/api/accounts/acc_1/call-state', null)).status).toBe(401);
+    expect(asked).toEqual(['call state of c0']);
+    accountCallState = async () => null;
+    expect((await call('/api/accounts/acc_1/call-state', 'ada')).status).toBe(409);
+    accountCallState = async () => { throw new Error('the indexer did not answer'); };
+    expect(await call('/api/accounts/acc_1/call-state', 'ada'))
+      .toMatchObject({ status: 503, body: { error: expect.stringMatching(/the indexer did not answer/) } });
+    accountCallState = undefined;
+    expect((await call('/api/accounts/acc_1/call-state', 'ada')).status).toBe(503);
   });
 
   it('A TRANSACTION\'S EVENTS ARE READ ONLY BY ITS HASH, AND A READER THAT CANNOT ANSWER SAYS WHICH KIND OF NO', async () => {

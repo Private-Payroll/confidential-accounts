@@ -932,6 +932,14 @@ export interface Ledger {
   submitProven?(accountId: string, proven: Uint8Array): Promise<TxRef>;
 
   /**
+   * **THE SAME, FOR A TRANSACTION ABOUT TO BE RECORDED AS ONE PARTICULAR
+   * CALL.** Refused, with the mark that nothing was sent, unless it is exactly
+   * one call to `circuit` on the company's own contract. Optional for the same
+   * reason as above.
+   */
+  submitProvenCall?(accountId: string, proven: Uint8Array, circuit: string): Promise<TxRef>;
+
+  /**
    * **SENDS A TRANSACTION A SIGNER'S DEVICE BUILT FOR ONE OF THE COMPANY'S
    * VAULTS**: its deploy, its handover to the company's committee, or a deposit
    * the depositor's own wallet has already paid the coins for. `check` reads the
