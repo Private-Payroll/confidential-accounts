@@ -743,21 +743,64 @@ async function main(): Promise<MovementVerdict | 'not-read'> {
   }
 
   /*
-   * **WHO HOLDS THIS VAULT'S RULES, READ FROM THE CHAIN NOW.** Not from the
-   * authority file in the state folder: a check against our own record is a
-   * check against our own claim. A vault still held by a single key, or by a
-   * committee with a key this machine keeps, is not funded.
+   * **WHO HOLDS THIS VAULT'S RULES AND THE RULES OF THE ACCOUNT IT PAYS OUT
+   * ON, BOTH READ FROM THE CHAIN NOW.** Not from the authority file in the
+   * state folder: a check against our own record is a check against our own
+   * claim. Either one still held by a single key, or by a committee with a key
+   * this machine keeps, and no money goes in - the account included, because a
+   * vault held by its committee is still paid out of by whoever holds the
+   * account's rules.
    */
   {
     const L: any = await import('@midnightntwrk/ledger-v9');
+    const { ledger: vaultLedgerOf } = await import('../contracts/managed-vault/contract/index.js');
+    /*
+     * **READ FROM THE CHAIN, NOT FROM THE RECORD.** The record's own
+     * `accountAddress` is what this machine believes; what decides where the
+     * money is paid out is the account the vault's ledger actually pins.
+     */
+    /*
+     * **THE READ IS OUTSIDE THE CATCH, AND THAT IS THE POINT.** A provider that
+     * cannot be asked is not an answer about this contract: it stops the door
+     * here, loudly, rather than becoming *its state cannot be read as a
+     * vault's*, which reads as a permanent fact about the address and sends a
+     * person to change it. Only the DECODE is caught, because a state that will
+     * not decode as a vault's really is this contract not being one.
+     */
+    const onChain = await providers.publicDataProvider.queryContractState(entry.contractAddress);
+    let pinnedAccount: string | null = null;
+    if (onChain !== null && onChain !== undefined) {
+      try {
+        const bytes = (vaultLedgerOf as never as (d: unknown) => { account: { bytes: Uint8Array } })(onChain.data)
+          .account.bytes;
+        pinnedAccount = !(bytes instanceof Uint8Array) || bytes.length !== 32
+          ? null
+          : Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+      } catch { pinnedAccount = null; }
+    }
     const refusal = await refusalToFund({
       vault: entry.contractAddress,
       vaultName: VAULT_NAME,
+      account: entry.accountAddress,
+      pinnedAccount,
       readState: (a) => providers.publicDataProvider.queryContractState(a),
       held: keysThisMachineHolds(ROOT, STATE_DIR, VAULT_NAME, (k) => L.signatureVerifyingKey(k)),
+      /*
+       * **NOT READ AT THIS DOOR, AND SAID SO RATHER THAN DEFAULTED.** The
+       * verifying keys these compare against are built by a separate job that
+       * costs a minute and a hundred megabytes, and this tool does not build
+       * them. A contract at this address that is not this build's vault passes
+       * here and is refused by the product's own door.
+       */
+      vaultCircuits: null,
+      accountCircuits: null,
     });
     if (refusal !== null) throw new Error(refusal);
-    good('the chain says this vault is not held by a key this machine keeps');
+    good('the chain says neither this vault nor the account it pays out on is held by a key this machine keeps,');
+    good('  that each has been changed exactly once, and that this vault pins that account.');
+    note('  NOT checked here: that either runs the circuits this build compiled. This tool does not build');
+    note('  the verifying keys that would answer it, so a contract at this address that is not this build\'s');
+    note('  vault passes this door. The product\'s own door reads them.');
   }
 
   const startedAt = Date.now();

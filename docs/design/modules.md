@@ -76,10 +76,10 @@ nothing.
 | | |
 |---|---|
 | modules walked | 511 |
-| module-to-module import sites | 2035 |
+| module-to-module import sites | 2038 |
 | modules that could not be read | 0 |
 | specifiers that resolved to nothing | 0 |
-| specifiers naming a real file outside the walked set | 130 |
+| specifiers naming a real file outside the walked set | 132 |
 | call sites carrying a literal circuit name | 501 |
 
 The last row counts a SITE once. A site whose text answers to more than one of the
@@ -116,7 +116,7 @@ What the import walk cannot see, named rather than implied complete:
 | `src/midnight/payee-address.ts` | 1 | 2 | 25 | 12 | 11 | 1 | 0 |
 | `src/core/payslip-key.ts` | 1 | 3 | 3 | 2 | 1 | 0 | 0 |
 | `src/core/payslip-key-derive.ts` | 1 | 1 | 4 | 1 | 1 | 3 | 0 |
-| `src/midnight/ledger.ts` | 2 | 11 | 31 | 48 | 47 | 5 | 14 |
+| `src/midnight/ledger.ts` | 2 | 11 | 32 | 48 | 47 | 5 | 14 |
 | `src/midnight/vault-ledger.ts` | 2 | 14 | 20 | 21 | 27 | 0 | 24 |
 | `src/midnight/vault-notes.ts` | 2 | 5 | 24 | 14 | 13 | 2 | 24 |
 | `src/midnight/vault-coins.ts` | 2 | 1 | 13 | 4 | 7 | 0 | 0 |
@@ -515,7 +515,7 @@ Tier 1 of the declared set.
 Tier 2 of the declared set.
 
 - **imports** — `src/core/assets.ts`, `src/core/crypto.ts`, `src/core/ledger.ts`, `src/midnight/circuit-arity.ts`, `src/midnight/commitments.ts`, `src/midnight/deferral.ts`, `src/midnight/fee-seat.ts`, `src/midnight/governed-call.ts`, `src/midnight/network.ts`, `src/midnight/partial-contract.ts`, `src/midnight/retry.ts`
-- **imported by** — `scripts/circuits-that-read-no-witness.test.ts`, `scripts/deploy-preview.ts`, `scripts/funding-gate.ts`, `scripts/pay-from-vault.ts`, `scripts/pay-privately-from-vault.ts`, `scripts/run-preview.ts`, `scripts/sponsor-test.ts`, `src/fee-payer/client.ts`, `src/fee-payer/service.test.ts`, `src/fee-payer/service.ts`, `src/midnight/company-authority.test.ts`, `src/midnight/company-authority.ts`, `src/midnight/fee-seat.test.ts`, `src/midnight/fee-seat.ts`, `src/midnight/ledger.test.ts`, `src/midnight/private-state-addressing.test.ts`, `src/midnight/providers.ts`, `src/midnight/sealed-store.ts`, `src/midnight/sponsor.ts`, `src/midnight/the-key-reaches-the-circuit.test.ts`, `src/midnight/the-secret-comes-from-the-keyring.test.ts`, `src/midnight/vault-committee.ts`, `src/midnight/vault-ledger.ts`, `src/midnight/what-a-balance-books.test.ts`, `src/server/company-vaults.ts`, `src/server/vault-chain.ts`, `src/wiring/chain.ts`, `src/wiring/vault-submission.test.ts`, `src/wiring/vault-submission.ts`, `src/wiring/write-capability-for-deployment.ts`, `src/wiring/write-capability.ts`
+- **imported by** — `scripts/circuits-that-read-no-witness.test.ts`, `scripts/deploy-preview.ts`, `scripts/funding-gate.test.ts`, `scripts/funding-gate.ts`, `scripts/pay-from-vault.ts`, `scripts/pay-privately-from-vault.ts`, `scripts/run-preview.ts`, `scripts/sponsor-test.ts`, `src/fee-payer/client.ts`, `src/fee-payer/service.test.ts`, `src/fee-payer/service.ts`, `src/midnight/company-authority.test.ts`, `src/midnight/company-authority.ts`, `src/midnight/fee-seat.test.ts`, `src/midnight/fee-seat.ts`, `src/midnight/ledger.test.ts`, `src/midnight/private-state-addressing.test.ts`, `src/midnight/providers.ts`, `src/midnight/sealed-store.ts`, `src/midnight/sponsor.ts`, `src/midnight/the-key-reaches-the-circuit.test.ts`, `src/midnight/the-secret-comes-from-the-keyring.test.ts`, `src/midnight/vault-committee.ts`, `src/midnight/vault-ledger.ts`, `src/midnight/what-a-balance-books.test.ts`, `src/server/company-vaults.ts`, `src/server/vault-chain.ts`, `src/wiring/chain.ts`, `src/wiring/vault-submission.test.ts`, `src/wiring/vault-submission.ts`, `src/wiring/write-capability-for-deployment.ts`, `src/wiring/write-capability.ts`
 - **outside packages** — *none*
 - **platform modules** — *none*
 - **circuits named here** — `ConfidentialAccount.changeCommitmentOf`, `ConfidentialAccount.paidMovementOf`, `ConfidentialAccount.vacantSlot`
@@ -882,4 +882,4 @@ Tier 2 of the declared set.
 
 *No width here matches the shapes above.* A width this module works to may
 arrive in a variable, and this list sees only a number or a capitalised constant.
-<!-- GENERATED:END id="modules" body="620a340a424736dd" -->
+<!-- GENERATED:END id="modules" body="44d9d1b10d936d20" -->

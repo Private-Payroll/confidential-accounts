@@ -689,9 +689,18 @@ export class SealedNotePool implements NotePool {
     const page: VaultNotes = notes.settled !== undefined && notes.settled.length > 0
       ? { notes: notes.notes, settled: notes.settled }
       : { notes: notes.notes };
+    /*
+     * **THE SIGNERS THIS WRITE WOULD RE-SEAL TO ARE THE CALLER'S, AND A SHORTER
+     * LIST ENDS SOMEBODY'S ACCESS AT THE MOMENT A DEPOSIT SUCCEEDS.** The
+     * record is replaced whole under a fresh key, so anybody the new list has
+     * stopped naming keeps no copy of it and the write reports success. Asked
+     * before the seal, so nothing is written when it refuses.
+     */
+    const to = await this.signers();
+    assertNoSignerWouldLoseAccess(rec.wrapped.map((w) => w.signerId), to.map((sig) => sig.id));
     await this.store.put(
       vaultAddress,
-      sealPool(vaultAddress, page, await this.signers(), builtOn.version + 1, 'pool'));
+      sealPool(vaultAddress, page, to, builtOn.version + 1, 'pool'));
   }
 
   /**

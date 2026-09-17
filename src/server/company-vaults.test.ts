@@ -335,6 +335,8 @@ describe('THE COMPANY ACCOUNT STANDS BEHIND EVERY VAULT', () => {
     /* RED WHEN: the account check at the end of `whyNotFunded` is removed - the first deposit is then paid for,
      * `sent` carries it, and the row reads 'held-by-committee' over an account one machine's key can drain. */
     await vaultHeld();
+    /* The key the chain shows on the account is THIS SERVICE'S: a door that keeps none cannot say whose it is. */
+    serviceKey = key(9);
     accountAuthority = { committee: [key(9)], threshold: 1, counter: 0n };
     const refused = await deposit();
     expect(refused).toMatchObject({ status: 409, body: { nothingWasSent: true } });
@@ -350,8 +352,9 @@ describe('THE COMPANY ACCOUNT STANDS BEHIND EVERY VAULT', () => {
   });
 
   it('NOR WHILE THE ACCOUNT IS HELD BY OTHER KEYS, HAS CHANGED MORE THAN ONCE, RUNS OTHER CIRCUITS, OR CANNOT BE READ', async () => {
-    /* RED WHEN, one per step: `accountFundingRefusal` answers `null` on a disagreeing authority; its counter test is
-     * removed; `whyAccountNotReady` stops comparing the account's circuits; an unreachable account is read as ready. */
+    /* RED WHEN, one per step, all inside the one gate: `committeeHoldsIt` answers `null` on a disagreeing
+     * authority; `changedOnceRefusal` stops being asked of the account; the account's circuits stop being
+     * compared; an unreachable account is read as ready. */
     await vaultHeld();
     accountAuthority = { committee: [key(1), key(3)], threshold: 2, counter: 1n };
     expect((await deposit()).body.error).toMatch(/not held by the company's committee on the chain/);
@@ -361,12 +364,24 @@ describe('THE COMPANY ACCOUNT STANDS BEHIND EVERY VAULT', () => {
     accountKeys = (c) => (c === 'recordPayment' ? new TextEncoder().encode('vk:drain') : vkOf(c));
     expect((await deposit()).body.error).toMatch(/'recordPayment' circuit is not the one this service's build compiled/);
     /* An account as deployed but running circuits this build did not compile is an alarm, not a step not yet taken. */
+    serviceKey = key(9);
     accountAuthority = { committee: [key(9)], threshold: 1, counter: 0n };
     expect((await deposit()).body.error).toMatch(/temporary key/);
     expect((await call('/api/accounts/acc_1/vaults', 'ada')).body.rows[0].state).toBe('account-not-fundable');
     accountAuthority = { committee: [key(1), key(2)], threshold: 2, counter: 2n };
     accountKeys = vkOf;
     expect((await call('/api/accounts/acc_1/vaults', 'ada')).body.rows[0].state).toBe('account-not-fundable');
+    /*
+     * **A DOOR THAT KEEPS NO KEY OF ITS OWN CANNOT SAY WHOSE SINGLE KEY THAT IS.**
+     * RED WHEN: `accountAsDeployed` treats an empty `heldHere` as a match, which makes every one-key,
+     * never-changed account read as OUR temporary key - so a screen offers the handover button, and the
+     * sentence claims custody the door has not checked, while a stranger holds the account.
+     */
+    serviceKey = undefined;
+    accountAuthority = { committee: [key(9)], threshold: 1, counter: 0n };
+    expect((await call('/api/accounts/acc_1/vaults', 'ada')).body.rows[0].state).toBe('account-not-fundable');
+    expect((await deposit()).body.error).not.toMatch(/temporary key it was created with/);
+
     /* One key, never changed, and not this service's: somebody else holds the account, which is not a step not yet taken.
      * RED WHEN: the "as deployed" test stops comparing the key with this service's own. */
     serviceKey = key(9);
@@ -397,6 +412,13 @@ describe('THE COMPANY ACCOUNT STANDS BEHIND EVERY VAULT', () => {
     expect(vaultState(read({ committee: [key(9)], threshold: 1, counter: 1n, shape: 'one-key' }), { heldByOthers: true })).toBe('held-by-other-keys');
     expect(vaultState(read({ committee: [key(1), key(3)], threshold: 2, counter: 1n, shape: 'committee' }), { heldByOthers: true })).toBe('held-by-other-keys');
     expect(vaultState({ state: 'absent', address: VAULT, why: '' }, { heldByOthers: true })).toBe('not-on-chain-yet');
+    /*
+     * **WHAT THE CHAIN SAID IS READ BEFORE THE REFUSAL'S FLAGS.**
+     * RED WHEN: the `!heldByOthers` branch runs before the read's own state, so a vault the chain could not be
+     * asked about is reported as a decision this service made about it - an alarm for a chain hiccup.
+     */
+    expect(vaultState({ state: 'unreachable', address: VAULT, why: 'down' }, { heldByOthers: false })).toBe('unknown');
+    expect(vaultState({ state: 'absent', address: VAULT, why: '' }, { heldByOthers: false })).toBe('not-on-chain-yet');
   });
 
   it('SETTINGS SHOWS EVERY CONTRACT\'S SEATS FROM THE CHAIN, WHO HOLDS EACH, AND A SEAT HELD BY SOMEBODY NOT ON THE COMPANY', async () => {
@@ -579,7 +601,19 @@ describe('A PRIVATE PAYMENT OUT OF A VAULT', () => {
     /* RED WHEN: the route stops asking what the chain shows of the vault before it pays the fee. */
     authority = { committee: [key(9)], threshold: 1, counter: 0n };
     expect(await call(`/api/accounts/acc_1/vaults/${VAULT}/payout`, 'ada', 'POST', { tx: PAYOUT_TX }))
-      .toMatchObject({ status: 409, body: { nothingWasSent: true, error: expect.stringMatching(/cannot vouch for/) } });
+      /* RED WHEN: the payout door quotes the deposit gate's wording, so a person paying money OUT is told about
+       * money going IN. The cause is the one gate's; the consequence belongs to the door that asked. */
+      .toMatchObject({
+        status: 409,
+        body: {
+          nothingWasSent: true,
+          error: expect.stringMatching(/^this service pays no fee for a payment out of this vault:/),
+        },
+      });
+    expect(
+      (await call(`/api/accounts/acc_1/vaults/${VAULT}/payout`, 'ada', 'POST', { tx: PAYOUT_TX })).body.error,
+      'RED WHEN: a payout refusal tells the reader that no money goes IN',
+    ).not.toMatch(/money goes in|goes into this vault/);
     authority = { committee: [key(1), key(2)], threshold: 2, counter: 2n };
     expect((await call(`/api/accounts/acc_1/vaults/${VAULT}/payout`, 'ada', 'POST', { tx: PAYOUT_TX })).status).toBe(409);
     authority = { committee: [key(1), key(2)], threshold: 2, counter: 1n };

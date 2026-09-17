@@ -43,12 +43,10 @@ import type { Ledger, VaultTxArrival } from '../core/ledger.js';
 import { saysNothingWasSent } from '../core/jobs.js';
 import { readContractAuthority, type AuthorityRead } from '../midnight/ledger.js';
 import { committeeOf, sameCommittee, whyNoCommittee, type Committee } from '../midnight/vault-committee.js';
+import { authorityView, everySignerNeeded, type ContractAuthorityView } from '../midnight/company-authority.js';
 import {
-  accountFundingRefusal, authorityView, everySignerNeeded, type ContractAuthorityView,
-} from '../midnight/company-authority.js';
-import {
-  circuitsRefusal, fundingRefusal, readVaultDeploy, refusalForDeposit, refusalForHandover, refusalForPayout,
-  type VaultStartingLedger,
+  circuitsRefusal, asFarAsTheVault, readVaultDeploy, refusalForDeposit, refusalForHandover, refusalForPayout,
+  refusalToPutMoneyIn, type FundingFacts, type VaultStartingLedger,
 } from '../wiring/vault-submission.js';
 
 const HEX64 = /^[0-9a-f]{64}$/u;
@@ -181,11 +179,14 @@ export function vaultState(
   if (refused.accountNotReady === 'not-handed-over') return 'account-not-handed-over';
   if (refused.accountNotReady === 'not-vouched') return 'account-not-fundable';
   if (refused.accountNotReady === 'unknown') return 'unknown';
+  /*
+   * **WHAT THE CHAIN SAID IS READ HERE AND NOT INFERRED FROM THE REFUSAL.** A
+   * vault the chain could not be asked about is not a vault this service has
+   * decided something about, whatever else the refusal carries.
+   */
+  if (read.state !== 'read') return read.state === 'absent' ? 'not-on-chain-yet' : 'unknown';
   if (!refused.heldByOthers) return 'not-fundable';
-  if (read.state === 'read') {
-    return read.authority.shape === 'one-key' && read.authority.counter === 0n ? 'handover-owed' : 'held-by-other-keys';
-  }
-  return read.state === 'absent' ? 'not-on-chain-yet' : 'unknown';
+  return read.authority.shape === 'one-key' && read.authority.counter === 0n ? 'handover-owed' : 'held-by-other-keys';
 }
 
 /** The signed-in person, as the sign-in in front of these routes set them. */
@@ -225,61 +226,45 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
     readContractAuthority((a) => deps.chain.contractState(a as Hex), vault);
 
   /*
-   * **WHETHER THE COMPANY ACCOUNT MAY STAND BEHIND ANY DEPOSIT, READ FROM THE
-   * CHAIN AS IT IS NOW.** Its authority, how often it has changed, and its
-   * circuits, each read afresh: never from a record kept here.
+   * **WHAT THE CHAIN SAYS ABOUT THE COMPANY'S ACCOUNT RIGHT NOW.** Its
+   * authority and its circuits, each read afresh and never from a record kept
+   * here. Read once per request and handed to every vault the request answers
+   * for, because the account is the same account for all of them.
    */
-  const whyAccountNotReady = async (
-    companyAddress: Hex, committee: Committee,
-  ): Promise<{ why: string; kind: AccountNotReady } | null> => {
+  const accountFactsOf = async (
+    companyAddress: Hex,
+  ): Promise<{ read: AuthorityRead; circuits: string | null }> => {
     const read = await authorityOf(companyAddress);
     let state: unknown;
     try {
       state = await deps.chain.contractState(companyAddress);
     } catch (e) {
       return {
-        kind: 'unknown',
-        why: `the chain could not be read for this company's account (${(e as Error)?.message ?? e}), and a vault pays `
-          + 'out on the account\'s approval, so no money goes in. Nothing was sent.',
+        read: { state: 'unreachable', address: companyAddress, why: (e as Error)?.message ?? String(e) },
+        circuits: null,
       };
     }
-    const circuits = circuitsRefusal(
-      state, await deps.account.verifierKeys(),
-      'no money goes in, because this company\'s account is not the one this service\'s build compiled',
-      deps.account.circuits, 'the account\'s');
-    const why = accountFundingRefusal(read, committee, circuits);
-    if (why === null) return null;
-    const ours = deps.account.temporaryKey;
-    const asDeployed = read.state === 'read' && read.authority.shape === 'one-key' && read.authority.counter === 0n
-      && (ours === undefined || read.authority.committee.every((k) =>
-        k.tag.toLowerCase() === ours.tag.toLowerCase() && k.value.toLowerCase() === ours.value.toLowerCase()));
-    return { why, kind: read.state !== 'read' ? 'unknown' : asDeployed && circuits === null ? 'not-handed-over' : 'not-vouched' };
+    return {
+      read,
+      circuits: circuitsRefusal(
+        state, await deps.account.verifierKeys(),
+        'no money goes in, because this company\'s account is not the one this service\'s build compiled',
+        deps.account.circuits, 'the account\'s'),
+    };
   };
 
   /*
-   * **WHETHER MONEY MAY GO INTO THIS VAULT, READ FROM THE CHAIN AS IT IS NOW.**
-   * The committee's keys are not enough on their own: a key that held the rules
-   * before the handover could have swapped a circuit, used it to rewrite the
-   * vault's ledger, put the circuit back and installed the committee itself,
-   * and the chain would then show the committee and this build's circuits. So a
-   * vault is funded only when the chain also shows exactly one change to its
-   * rules - the handover - its circuits are this build's, and the account it is
-   * pinned to now is still the company's.
+   * **WHETHER MONEY MAY GO INTO THIS VAULT.** Every fact is read from the chain
+   * here and the answer itself is `refusalToPutMoneyIn`, which is the same
+   * function the operator tools ask. This route reads; it does not decide.
    */
   const whyNotFunded = async (
     vault: Hex, read: AuthorityRead, committee: Committee, companyAddress: string, state?: unknown,
-    account?: { why: string; kind: AccountNotReady } | null,
+    accountFacts?: { read: AuthorityRead; circuits: string | null },
+    what = 'no money goes into this vault',
+    /* The narrower question a device's handover waits on: the vault alone, never a door carrying money. */
+    asFar: typeof refusalToPutMoneyIn = refusalToPutMoneyIn,
   ): Promise<{ why: string; heldByOthers: boolean; accountNotReady?: AccountNotReady } | null> => {
-    const held = fundingRefusal(read, committee);
-    if (held !== null) return { why: held, heldByOthers: true };
-    if (read.state !== 'read' || read.authority.counter !== 1n) {
-      const changes = read.state === 'read' ? String(read.authority.counter) : 'an unknown number of';
-      return {
-        why: `this vault's rules have been changed ${changes} times, and a vault handed straight to its committee `
-          + 'has been changed once, so what it accepts cannot be vouched for and no money goes in. Nothing was sent.',
-        heldByOthers: false,
-      };
-    }
     let now = state;
     if (now === undefined) {
       try {
@@ -288,24 +273,26 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
         return { why: `the chain could not be read for this vault (${(e as Error)?.message ?? e}). Nothing was sent.`, heldByOthers: false };
       }
     }
-    const circuits = circuitsRefusal(now, await deps.verifierKeys(), 'this vault is not funded');
-    if (circuits !== null) return { why: circuits, heldByOthers: false };
-    let pinned: string;
+    let pinned: string | null;
     try {
       pinned = deps.chain.startingLedgerOf(now).account;
     } catch {
-      return { why: 'this vault\'s state on the chain cannot be read as a vault\'s, so no money goes in. Nothing was sent.', heldByOthers: false };
+      pinned = null;
     }
-    if (fold(pinned) !== fold(companyAddress)) {
-      return {
-        why: 'this vault is now pinned to an account other than the company\'s, so money put in it would be paid out '
-          + 'on somebody else\'s approvals. No money goes in. Nothing was sent.',
-        heldByOthers: false,
-      };
-    }
-    const accountWhy = account !== undefined ? account : await whyAccountNotReady(companyAddress as Hex, committee);
-    if (accountWhy !== null) return { why: accountWhy.why, heldByOthers: false, accountNotReady: accountWhy.kind };
-    return null;
+    const acc = accountFacts ?? await accountFactsOf(companyAddress as Hex);
+    const facts: FundingFacts = {
+      label: vault,
+      what,
+      vault: read,
+      vaultCircuits: circuitsRefusal(now, await deps.verifierKeys(), 'this vault is not funded'),
+      pinnedAccount: pinned,
+      companyAccount: companyAddress,
+      committee,
+      heldHere: deps.account.temporaryKey === undefined ? [] : [deps.account.temporaryKey],
+      account: acc.read,
+      accountCircuits: acc.circuits,
+    };
+    return asFar(facts);
   };
 
   const txFrom = (req: express.Request, res: express.Response): Uint8Array | null => {
@@ -389,13 +376,13 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
     const account = accountOf(req);
     const { company, committee, why } = await committeeNow(account);
     const out = [];
-    const accountWhy = company === null || committee === null ? null : await whyAccountNotReady(company.address, committee);
+    const accountFacts = company === null || committee === null ? undefined : await accountFactsOf(company.address);
     for (const v of deps.store.listCompanyVaults(account.id)) {
       const read = await authorityOf(v.vault);
       const refused: { why: string; heldByOthers: boolean; accountNotReady?: AccountNotReady } | null =
         company === null || committee === null
           ? { why: why ?? 'this company has no committee yet.', heldByOthers: true }
-          : await whyNotFunded(v.vault, read, committee, company.address, undefined, accountWhy);
+          : await whyNotFunded(v.vault, read, committee, company.address, undefined, accountFacts);
       out.push({
         vault: v.vault,
         deployedAt: v.deployedAt,
@@ -479,12 +466,20 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
     const read = await authorityOf(record.vault);
     /* Whether the COMMITTEE HOLDS THIS VAULT is one answer, and a device's handover waits on it; whether money
      * may go in also needs the company account held by the committee, and is a second one. */
+    /*
+     * **TWO QUESTIONS, AND KEEPING THEM APART IS DELIBERATE.** Whether the
+     * committee holds this vault is what a device's handover waits on, and it
+     * is answered by the committee alone. Whether money may go in is the whole
+     * gate, the account included, and every door that carries money asks that
+     * one.
+     */
     const refusal = company === null || committee === null
       ? why
-      : (await whyNotFunded(record.vault, read, committee, company.address, state, null))?.why ?? null;
-    const accountWhy = refusal !== null || company === null || committee === null
+      : (await whyNotFunded(
+        record.vault, read, committee, company.address, state, undefined, undefined, asFarAsTheVault))?.why ?? null;
+    const notFundable = refusal !== null || company === null || committee === null
       ? null
-      : (await whyAccountNotReady(company.address, committee))?.why ?? null;
+      : (await whyNotFunded(record.vault, read, committee, company.address, state))?.why ?? null;
     let everCreated: string[];
     try {
       everCreated = [...await deps.chain.everCreated(record.vault)];
@@ -503,8 +498,8 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
         : null,
       committee,
       heldByCommittee: refusal === null,
-      fundable: refusal === null && accountWhy === null,
-      why: refusal ?? accountWhy,
+      fundable: refusal === null && notFundable === null,
+      why: refusal ?? notFundable,
     });
   });
 
@@ -637,14 +632,19 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
       res.status(409).json({ nothingWasSent: true, error: `${why} Nothing was sent.` });
       return;
     }
-    const unvouched = await whyNotFunded(record.vault, await authorityOf(record.vault), committee, company.address, undefined, null);
+    /*
+     * **THE SAME GATE, ASKED IN THIS DOOR'S OWN WORDS.** A person paying money
+     * out is told why this payment is not paid for, never about money going in.
+     */
+    const unvouched = await whyNotFunded(
+      record.vault, await authorityOf(record.vault), committee, company.address, undefined, undefined,
+      'this service pays no fee for a payment out of this vault');
     if (unvouched !== null) {
       res.status(409).json({
         nothingWasSent: true,
-        error: 'this service pays no fee for a payment out of a vault it cannot vouch for as held by the company\'s '
-          + `committee. What it found: ${unvouched.why} Where the cause is that a signer joined or left, or the `
-          + 'threshold changed, since the vault was handed over, its committee cannot be changed from this product '
-          + 'yet, and no payment out of it is paid for until it can.',
+        error: `${unvouched.why} Where the cause is that a signer joined or left, or the threshold changed, since `
+          + 'the vault was handed over, its committee cannot be changed from this product yet, and no payment out '
+          + 'of it is paid for until it can.',
       });
       return;
     }
