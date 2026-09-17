@@ -2,7 +2,7 @@
  * **WHAT THE COMPANY'S FEE PAYER WILL PAY FOR ON A VAULT, AND WHEN A VAULT MAY
  * TAKE MONEY.**
  *
- * A signer's device builds and proves three kinds of transaction for a vault,
+ * A signer's device builds and proves four kinds of transaction for a vault,
  * and this service pays the network fee on each. Paying is a choice, so each is
  * read here first and refused unless it is exactly what its route says:
  *
@@ -14,7 +14,11 @@
  *      and nothing else, replacing the whole authority with exactly the
  *      company's committee, against the counter the chain holds now;
  *   3. **a deposit into a vault the committee holds**: calls to that vault's
- *      `deposit` and nothing else, with coins the depositor's own wallet added.
+ *      `deposit` and nothing else, with coins the depositor's own wallet added;
+ *   4. **a private payment out of that vault**: the vault's `payout` and the
+ *      company account's `recordPayment` it asks, and nothing else, spending one
+ *      coin the vault owns into one person's coin and at most one coin back to
+ *      the vault, balanced in its own money so the fee payer adds only DUST.
  *
  * And the one rule that decides whether any money may go in at all:
  * **the vault's maintenance authority, read from the chain, must be the
@@ -325,6 +329,135 @@ export function refusalForDeposit(tx: unknown, expect: { readonly vault: string 
     }
   }
   if (calls === 0) return 'this deposit calls nothing, so there is nothing to pay for. Nothing was sent.';
+  return null;
+}
+
+/* ------------------------------------------------ 4. a private payment out */
+
+/** The two contracts a private payment out of a company's vault touches. */
+export interface PayoutExpectations {
+  /** The vault the money leaves. */
+  readonly vault: string;
+  /** The company's own account, whose approval the vault asks for. */
+  readonly account: string;
+}
+
+interface ShieldedPart { readonly contractAddress?: unknown }
+interface ShieldedOfferShape {
+  readonly inputs?: unknown;
+  readonly outputs?: unknown;
+  readonly transients?: unknown;
+}
+
+const ownerOf = (part: ShieldedPart): string | null =>
+  part.contractAddress === undefined || part.contractAddress === null ? null : bare(part.contractAddress);
+
+/**
+ * **`null` ONLY FOR A PAYMENT THAT MOVES THIS VAULT'S OWN MONEY TO ONE PERSON
+ * AND NOTHING ELSE.**
+ *
+ * What the chain decides is not decided here: whether the company approved the
+ * run, whether the window is open, whether this person was already paid. The
+ * vault asks the account all of that inside the same transaction, and a payment
+ * the account refuses is not applied. What is decided here is only whether the
+ * fee payer adds DUST to it, and it adds DUST to nothing that could spend a coin
+ * of anybody else's, send public money, pay a fee from elsewhere, or leave any
+ * imbalance but the fee for somebody to fill.
+ */
+export function refusalForPayout(tx: unknown, expect: PayoutExpectations): string | null {
+  const what = 'a private payment out of this company\'s vault';
+  const t = tx as (TxShape & { imbalances?: (segment: number) => Map<{ tag?: unknown }, bigint> }) | null;
+  if (!(t?.intents instanceof Map) || t.intents.size !== 1) {
+    return `this is not ${what}: it must carry exactly one set of actions. Nothing was sent.`;
+  }
+  const intent = [...t.intents.values()][0] as IntentShape | null;
+  if (!intent || !Array.isArray(intent.actions)) {
+    return `this is not ${what}: it could not be read, so it was not paid for. Nothing was sent.`;
+  }
+  if (!emptyOffer(intent.guaranteedUnshieldedOffer, ['inputs', 'outputs'])
+    || !emptyOffer(intent.fallibleUnshieldedOffer, ['inputs', 'outputs'])) {
+    return `this is not ${what}: it moves public money as well, and a private payment moves none. Nothing was sent.`;
+  }
+  if (!emptyOffer(intent.dustActions, ['spends', 'registrations'])) {
+    return `this is not ${what}: it already pays a network fee from somewhere else. Nothing was sent.`;
+  }
+  /*
+   * **EXACTLY THE TWO CALLS A PAYOUT IS, AND NO THIRD.** The vault's `payout`
+   * and the account's `recordPayment` it asks. The account is this company's:
+   * a vault pinned elsewhere would be asking some other company's approvals.
+   */
+  const called: string[] = [];
+  for (const action of intent.actions) {
+    const call = action as { address?: unknown; entryPoint?: unknown } | null;
+    if (!call || call.entryPoint === undefined || call.address === undefined) {
+      return `this is not ${what}: it does something other than call the vault and the account. Nothing was sent.`;
+    }
+    called.push(`${bare(call.address)}/${nameOf(call.entryPoint)}`);
+  }
+  const wanted = [`${bare(expect.account)}/recordPayment`, `${bare(expect.vault)}/payout`];
+  if (called.length !== 2 || [...called].sort().join() !== [...wanted].sort().join()) {
+    return `this is not ${what}: it must call this vault's payout and this company's approval of it, and `
+      + 'nothing else. Nothing was sent.';
+  }
+  /*
+   * **THE COINS: ONE OF THE VAULT'S IN, ONE PERSON'S OUT, AND AT MOST ONE BACK
+   * TO THE VAULT.** Read across the guaranteed part and every fallible part,
+   * because a coin in either is a coin moved.
+   */
+  const offers: ShieldedOfferShape[] = [];
+  if (t.guaranteedOffer !== undefined && t.guaranteedOffer !== null) offers.push(t.guaranteedOffer as ShieldedOfferShape);
+  if (t.fallibleOffer !== undefined && t.fallibleOffer !== null) {
+    if (!(t.fallibleOffer instanceof Map)) {
+      return `this is not ${what}: its coins could not be read, so it was not paid for. Nothing was sent.`;
+    }
+    offers.push(...[...t.fallibleOffer.values()] as ShieldedOfferShape[]);
+  }
+  const inputs: ShieldedPart[] = [];
+  const outputs: ShieldedPart[] = [];
+  for (const offer of offers) {
+    if (!Array.isArray(offer.inputs) || !Array.isArray(offer.outputs) || !Array.isArray(offer.transients)) {
+      return `this is not ${what}: its coins could not be read, so it was not paid for. Nothing was sent.`;
+    }
+    if (offer.transients.length > 0) {
+      return `this is not ${what}: it makes and spends a coin in one go, which a payout never does. Nothing was sent.`;
+    }
+    inputs.push(...offer.inputs as ShieldedPart[]);
+    outputs.push(...offer.outputs as ShieldedPart[]);
+  }
+  if (inputs.length !== 1 || ownerOf(inputs[0]!) !== bare(expect.vault)) {
+    return `this is not ${what}: it must spend exactly one coin, and that coin must be this vault's. Nothing was sent.`;
+  }
+  const toPeople = outputs.filter((o) => ownerOf(o) === null);
+  const toContracts = outputs.filter((o) => ownerOf(o) !== null);
+  if (toPeople.length !== 1) {
+    return `this is not ${what}: it must pay exactly one person. Nothing was sent.`;
+  }
+  if (toContracts.length > 1 || toContracts.some((o) => ownerOf(o) !== bare(expect.vault))) {
+    return `this is not ${what}: what it does not pay out may only go back to this vault. Nothing was sent.`;
+  }
+  /*
+   * **BALANCED IN ITS OWN MONEY.** The fee payer adds DUST and nothing else, so
+   * anything else left unbalanced is either somebody else's to fill or a
+   * transaction the network refuses after the fee payer has booked for it.
+   */
+  if (typeof t.imbalances !== 'function') {
+    return `this is not ${what}: what it moves could not be added up, so it was not paid for. Nothing was sent.`;
+  }
+  const segments = [0, ...(t.fallibleOffer instanceof Map ? [...t.fallibleOffer.keys()].map(Number) : [])];
+  for (const segment of segments) {
+    let owed: Map<{ tag?: unknown }, bigint>;
+    try {
+      owed = t.imbalances(segment);
+    } catch {
+      return `this is not ${what}: what it moves could not be added up, so it was not paid for. Nothing was sent.`;
+    }
+    for (const [token, amount] of owed) {
+      if (token?.tag !== 'dust' && amount !== 0n) {
+        return `this is not ${what}: it does not balance in its own money, and the company pays only the network `
+          + 'fee. Nothing was sent.';
+      }
+    }
+  }
   return null;
 }
 

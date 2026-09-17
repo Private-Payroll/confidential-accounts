@@ -32,6 +32,7 @@ import { vaultDetails } from '../../src/testing/vault-details.js';
 import { registryWithTestPrivateForms, aVaultHolding } from '../../src/testing/assets.js';
 import { FileStore } from '../../src/core/store-file.js';
 import { toHex, type Hex } from '../../src/core/crypto.js';
+import { assemblePrivatePayments, pathFromWire } from '../../src/midnight/private-payment-wire.js';
 
 const PAYROLL_VAULT = toHex(new Uint8Array(32).fill(0xa1));
 
@@ -436,6 +437,58 @@ describe('a run carries what it takes to rebuild it', () => {
    * **THE CHANGE THAT TURNS THIS RED:** return an empty `RunInputs` instead of
    * `null` for a leg that has not been raised.
    */
+  /**
+   * **WHAT A DEVICE IS HANDED TO PAY A RAISED LEG IS THE RUN THE SIGNERS
+   * APPROVED, REBUILT, AND NOTHING ELSE.** The service's route composes these
+   * same calls: the leg's order, its material, its rebuild, and the assembly.
+   *
+   * **THE CHANGES THAT TURN THIS RED:** read the salt from anywhere but the
+   * round's own sealed payload (the id no longer rebuilds); read the vault, the
+   * root or the window from anywhere but the leg's record; answer an order for a
+   * leg that was never raised; or rebuild the leg from another seed generation
+   * (the leaves no longer match and the assembly refuses).
+   */
+  it('hands a device the approved round of a raised leg, and nothing for a leg not raised', async () => {
+    const { payroll, accounts, created, run } = await aPayroll([
+      { asset: 'GBP', amount: 100_00n }, { asset: 'GBP', amount: 42_00n },
+    ]);
+    const vk = created.viewingKey;
+    expect(payroll.privatePaymentOrderOf(run.id, vk)).toBeNull();
+    const { material, proposal } = await raise(payroll, run.id, vk, created.secrets[0]!.signerId);
+
+    const order = payroll.privatePaymentOrderOf(run.id, vk)!;
+    expect(order).toMatchObject({
+      asset: 'GBP', vault: PAYROLL_VAULT, proposal: proposal.chainId, root: material.run.root,
+      payees: 2n, opensAt: OPENS, closesAt: CLOSES,
+    });
+    /* The salt is the one the run's identity was folded with: the id rebuilds from it and nothing else. */
+    expect(order.salt).toBe(accounts.runSaltOf(proposal.id, vk));
+    expect(MidnightCommitments.proposalId(
+      MidnightCommitments.runPayload(order.root, order.payees, order.opensAt, order.closesAt), order.salt, order.vault))
+      .toBe(proposal.chainId);
+
+    const inputs = payroll.payoutMaterialOf(run.id, vk, { rootOf: rootOfLeaves })!;
+    const rebuild = (await payroll.payoutRebuildOf(run.id, vk))!;
+    const built = buildRun(rebuild.seeds, rebuild.identity, rebuild.facts, vaultDetails);
+    const assembled = assemblePrivatePayments({
+      order, leaves: inputs.leaves, window: inputs.window, idFrom: inputs.proposal!.idFrom,
+      built, facts: rebuild.facts, paid: new Set(),
+    });
+    if ('refusal' in assembled) throw new Error(assembled.refusal);
+    expect(assembled.order.payments.map((p) => [p.amount, p.leaf])).toEqual([
+      ['10000', material.leaves[0]], ['4200', material.leaves[1]],
+    ]);
+    expect(pathFromWire(assembled.order.payments[1]!.path)).toEqual(built.payeeArgs(1).path);
+
+    /* A rebuild from another generation of the seed is not the approved round, and is refused. */
+    const other = buildRun([{ epoch: rebuild.identity.epoch, seed: toHex(new Uint8Array(32).fill(7)) }],
+      rebuild.identity, rebuild.facts, vaultDetails);
+    expect(assemblePrivatePayments({
+      order, leaves: inputs.leaves, window: inputs.window, idFrom: inputs.proposal!.idFrom,
+      built: other, facts: rebuild.facts, paid: new Set(),
+    })).toEqual({ refusal: expect.stringMatching(/not the ones its signers approved/) });
+  });
+
   it('answers null for a leg with no material, rather than an empty run', async () => {
     const { payroll, created, run } = await aPayroll([{ asset: 'GBP', amount: 100_00n }]);
     expect(payroll.payoutMaterialOf(run.id, created.viewingKey)).toBeNull();

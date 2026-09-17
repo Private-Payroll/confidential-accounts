@@ -126,6 +126,8 @@ const DEP_TX = 'de'.repeat(32);
  */
 const DEP_ID = `00${'de'.repeat(32)}`;
 const payHash = (k: number) => k.toString(16).padStart(64, 'c');
+/** A payment's 33-byte identifier, the other name its finalised result carries. */
+const payId = (k: number) => `00${payHash(k)}`;
 /** The nonce the harness's fake deposit claim hands back on its `n`th claim: `77…`, `78…`, … */
 const claimedNonce = (n: number): string => (0x76 + n).toString(16).repeat(32);
 const seededIndex = (i: number) => 40n + BigInt(i) * 3n;
@@ -299,6 +301,8 @@ function harness(opts: {
    *   'nothing-to-go-on'   neither, so there is no name at all
    */
   depositResult?: 'no-hash' | 'nothing-to-go-on' | 'hash-shaped-identifier';
+  /** **WHAT A FINALISED PRIVATE PAYMENT REPORTS ABOUT ITS OWN TRANSACTION**, in the same three shapes. */
+  payoutResult?: 'no-hash' | 'nothing-to-go-on';
   /**
    * **THE CHAIN'S EVENTS DO NOT CARRY THIS DEPOSIT'S NOTE.** What a wrong
    * identifier, or an identifier belonging to somebody else's transaction,
@@ -342,7 +346,11 @@ function harness(opts: {
        * the hash. The real indexer takes both offsets; a fake that took only
        * one could not fail the way the product does.
        */
-      const named = 'hash' in tx ? tx.hash : (tx.identifier === DEP_ID ? DEP_TX : '');
+      const named = 'hash' in tx ? tx.hash
+        : tx.identifier === DEP_ID ? DEP_TX
+          : (Array.from({ length: payouts }, (_, i) => i + 1).find((k) => payId(k) === tx.identifier) ?? 0) > 0
+            ? payHash(Array.from({ length: payouts }, (_, i) => i + 1).find((k) => payId(k) === tx.identifier)!)
+            : '';
       /*
        * **WHAT THE CHAIN PUTS ON AN EVENT IS NOT ALWAYS A TRANSACTION HASH**,
        * and the events still describe this note. This is the answer nothing
@@ -522,7 +530,9 @@ function harness(opts: {
       produced.push({ coin: { nonce: 'ab'.repeat(32), token: GBP, value: kept }, hash, index: 90n + BigInt(payouts) });
     }
     return {
-      public: { txId: 'tx_pay', txHash: hash },
+      public: opts.payoutResult === 'no-hash' ? { txId: payId(payouts) }
+        : opts.payoutResult === 'nothing-to-go-on' ? { txId: 'tx_pay' }
+          : { txId: 'tx_pay', txHash: hash },
       private: opts.reads === 'absent' ? {} : { nextZswapLocalState: { outputs } },
     };
   };
@@ -1059,6 +1069,39 @@ describe('V-74: the vault client', () => {
     const stranded = current().notes[0];
     await expect(indexForSpend(VAULT as `${string}`, stranded, eventsInUse)).rejects
       .toThrow(/does not record which transaction created it/);
+  });
+
+  it('A CHANGE NOTE WHOSE CALL REPORTED NO HASH IS RECORDED FROM THE CHAIN BY ITS IDENTIFIER, AND THE NEXT PAYMENT CAN SPEND IT', async () => {
+    /*
+     * RED WHEN: the change note's transaction is taken from the call's hash alone -
+     * the change is then written with no `createdIn`, the answer says nothing, and the
+     * next payment that needs it is refused after its round has been paid for.
+     */
+    const { ledger, current, eventReads } = harness({ notes: [{ nonce: '01'.repeat(32), value: 1_000n }], payoutResult: 'no-hash' });
+    const r = await ledger.payout(VAULT, payment(200n), BY, EVENTS);
+    if (r.kind !== 'shielded') throw new Error('a shielded payee was paid through another door');
+    expect(r.change).toEqual({ createdIn: payHash(1), recordedFrom: 'the chain' });
+    expect(eventReads).toContainEqual({ identifier: payId(1) });
+    expect(current().notes).toEqual([{ nonce: 'ab'.repeat(32), token: GBP, value: 800n, createdIn: payHash(1) }]);
+    /* And the note it recorded is one the next payment can spend: its index is read from that transaction. */
+    await expect(ledger.payout(VAULT, payment(700n), BY, EVENTS)).resolves.toMatchObject({ kind: 'shielded', spentNote: 'ab'.repeat(32) });
+  });
+
+  it('A CHANGE NOTE NOTHING CAN NAME IS STILL KEPT, AND THE PAYMENT SAYS IT CANNOT BE SPENT YET', async () => {
+    /* RED WHEN: the payment answers as though its change were spendable, or throws and loses the change from the pool. */
+    const { ledger, current } = harness({ notes: [{ nonce: '01'.repeat(32), value: 1_000n }], payoutResult: 'nothing-to-go-on' });
+    const r = await ledger.payout(VAULT, payment(200n), BY, EVENTS);
+    if (r.kind !== 'shielded') throw new Error('a shielded payee was paid through another door');
+    expect(r.change?.recordedFrom).toBe('nowhere');
+    expect(r.change?.stranded).toMatch(/neither a transaction hash nor an identifier/);
+    expect(current().notes).toEqual([{ nonce: 'ab'.repeat(32), token: GBP, value: 800n }]);
+    await expect(ledger.payout(VAULT, payment(700n), BY, EVENTS)).rejects.toThrow(/does not record which transaction created it/);
+  });
+
+  it('a payment that spends its note exactly says nothing about a change it did not make', async () => {
+    const { ledger } = harness({ notes: [{ nonce: '01'.repeat(32), value: 200n }] });
+    const r = await ledger.payout(VAULT, payment(200n), BY, EVENTS);
+    expect(r).not.toHaveProperty('change');
   });
 
   it('ADVANCES THE POOL BY THE NOTE THE CONTRACT ACTUALLY TOOK, not the one it assumed', async () => {

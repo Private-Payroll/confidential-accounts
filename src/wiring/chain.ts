@@ -540,8 +540,9 @@ export class ChainLedger implements Ledger {
    * COMPANY WALLET ANYWHERE ON THE WAY.**
    *
    * `check` reads the transaction and answers a sentence to refuse it; nothing
-   * is booked until it answers `null`. A transaction that moves nothing is
-   * bound here; one a depositor's wallet finished is already bound and signed.
+   * is booked until it answers `null`. A transaction that moves nothing, or
+   * moves only a vault's own coins, is bound here; one a depositor's wallet
+   * finished is already bound and signed.
    * Either way the fee payer adds only DUST and submits, so the token kinds the
    * two parties balance never overlap.
    *
@@ -566,9 +567,10 @@ export class ChainLedger implements Ledger {
       }
       const refusal = await check(tx);
       if (refusal !== null) throw new NothingWasSent(refusal);
-      const bound = arrival === 'proven-moving-nothing'
-        ? (tx as { bind(): unknown }).bind()
-        : tx;
+      /* Only a depositor's wallet binds and signs what it finished; everything else a device sends is bound here. */
+      const bound = arrival === 'finished-by-the-depositor'
+        ? tx
+        : (tx as { bind(): unknown }).bind();
       const deadline = new Date(Date.now() + 20 * 60_000);
       const payer = this.payer!;
       const finalised = await payer.addFeeAndFinalise(bound, deadline);
@@ -623,13 +625,14 @@ export class ChainLedger implements Ledger {
 }
 
 /**
- * **HOW A VAULT TRANSACTION A DEVICE SENT IS READ**: proven and not yet bound
- * when it moves nothing, bound and signed when the depositor's wallet finished
- * it. `ChainLedger.sendVault` takes the reader as an argument so a test can
- * hand in the ledger's own objects without bytes.
+ * **HOW A VAULT TRANSACTION A DEVICE SENT IS READ**: bound and signed when the
+ * depositor's wallet finished it, and proven and not yet bound otherwise - a
+ * transaction that moves nothing, and a payment out that moves only the vault's
+ * own coins. `ChainLedger.sendVault` takes the reader as an argument so a test
+ * can hand in the ledger's own objects without bytes.
  */
 export const vaultTransactionReader = (arrival: VaultTxArrival): ((bytes: Uint8Array) => Promise<unknown>) =>
-  arrival === 'proven-moving-nothing' ? readProvenTransaction : readFinishedTransaction;
+  arrival === 'finished-by-the-depositor' ? readFinishedTransaction : readProvenTransaction;
 
 /** The configuration the ledger takes, derived from the deployment and nowhere else. */
 export const configFor = (d: Deployment): MidnightConfig => ({

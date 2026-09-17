@@ -37,6 +37,10 @@ let handoverDep: CompanyVaultDeps['account']['handover'];
 let serviceKey: { tag: string; value: string } | undefined;
 let acc1Threshold = 2;
 let handoverShape: unknown;
+let payoutShape: unknown;
+let payoutState: CompanyVaultDeps['chain']['payoutState'];
+let eventsOf: CompanyVaultDeps['chain']['eventsOf'];
+let asked: string[];
 const vkOf = (c: string) => new TextEncoder().encode(`vk:${c}`);
 const aDeploy = () => ({
   intents: new Map([[1, { actions: [{
@@ -69,6 +73,13 @@ beforeEach(async () => {
   serviceKey = undefined;
   acc1Threshold = 2;
   handoverShape = {};
+  payoutShape = {};
+  asked = [];
+  payoutState = async (vault, account) => {
+    asked.push(`state of ${vault.slice(0, 2)} and ${account.slice(0, 2)}`);
+    return { blockHash: 'B', vaultState: 'dg==', zswapState: 'eg==', parameters: 'cA==', accountState: 'YQ==' };
+  };
+  eventsOf = async (tx) => { asked.push(`events of ${tx.slice(0, 2)}`); return [{ transactionHash: tx, details: { tag: 'zswapOutput', mtIndex: '7' } }]; };
   pinnedNow = hex(0xc0);
   sendVault = async (_a, what) => { sent.push(what); return { ref: 'r', at: 'now', transactionHash: 'h' }; };
   const app = express();
@@ -104,6 +115,8 @@ beforeEach(async () => {
       notesOf: () => [],
       startingLedgerOf: () => ({ account: pinnedNow, notes: 0n, unshieldedTokens: 0n, payments: 0n, spendingCaps: 0n }),
       everCreated: async () => new Set(),
+      get payoutState() { return payoutState; },
+      get eventsOf() { return eventsOf; },
     },
     verifierKeys: async () => new Map(CIRCUITS.map((c) => [c, vkOf(c)])),
     account: {
@@ -113,7 +126,7 @@ beforeEach(async () => {
       get temporaryKey() { return serviceKey; },
     },
     readers: {
-      proven: async (b) => (b[0] === 0xee ? handoverShape : deployShape ? aDeploy() : {}),
+      proven: async (b) => (b[0] === 0xee ? handoverShape : b[0] === 0xdd ? payoutShape : deployShape ? aDeploy() : {}),
       finished: async () => ({}),
     },
   }));
@@ -509,5 +522,110 @@ describe('THE COMPANY ACCOUNT STANDS BEHIND EVERY VAULT', () => {
     const r = await call('/api/accounts/acc_1/authority/handover', 'ada', 'POST', {});
     expect(r).toMatchObject({ status: 409, body: { nothingWasSent: true } });
     expect(r.body.error).toMatch(/1 of this company's 2 signers has not/);
+  });
+});
+
+describe('A PRIVATE PAYMENT OUT OF A VAULT', () => {
+  const PAYOUT_TX = Buffer.from([0xdd, 1]).toString('base64');
+  /* A payment with the shape the fee payer reads: one of the vault's coins to one person, asking acc_1's account. */
+  const aPayout = (account = hex(0xc0), vault = VAULT) => ({
+    intents: new Map([[1, { actions: [{ address: account, entryPoint: 'recordPayment' }, { address: vault, entryPoint: 'payout' }] }]]),
+    guaranteedOffer: { inputs: [{ contractAddress: vault }], outputs: [{}], transients: [] },
+    imbalances: () => new Map(),
+  });
+  let arrivals: string[];
+  beforeEach(async () => {
+    store.putCompanyVault({ accountId: 'acc_1', vault: VAULT, deployedAt: '', deployRef: 'r', intended: { committee: [], threshold: 2 } });
+    /* A vault the service can vouch for: the committee holds it, changed once, this build's circuits, pinned here. */
+    await give('ada', 1); await give('bo', 2);
+    authority = { committee: [key(1), key(2)], threshold: 2, counter: 1n };
+    arrivals = [];
+    payoutShape = aPayout();
+    sendVault = async (_a, what, arrival, bytes, check, read) => {
+      arrivals.push(arrival);
+      const refusal = await check(await read(bytes));
+      if (refusal !== null) throw new NothingWasSent(refusal);
+      sent.push(what);
+      return { ref: 'r-pay', at: 'now', transactionHash: 'fe'.repeat(32) };
+    };
+  });
+
+  it('is paid for as the vault\'s own coins, read as a proven transaction, and answers the transaction that made the change', async () => {
+    /* RED WHEN: the route sends under another arrival (the reader or the binding then differ), or drops the hash. */
+    const r = await call(`/api/accounts/acc_1/vaults/${VAULT}/payout`, 'ada', 'POST', { tx: PAYOUT_TX });
+    expect(r).toEqual({ status: 200, body: { txRef: 'r-pay', transactionHash: 'fe'.repeat(32) } });
+    expect(arrivals).toEqual(['proven-moving-the-vaults-own-coins']);
+    expect(sent).toEqual(['a private payment out of a vault']);
+  });
+
+  it('IS NOT PAID FOR WHEN IT ASKS ANOTHER COMPANY\'S ACCOUNT, OR SPENDS FROM ANOTHER VAULT', async () => {
+    /* RED WHEN: the route hands the reader anything but this company's account and this vault. */
+    payoutShape = aPayout(hex(0xc1));
+    expect(await call(`/api/accounts/acc_1/vaults/${VAULT}/payout`, 'ada', 'POST', { tx: PAYOUT_TX }))
+      .toMatchObject({ status: 422, body: { nothingWasSent: true } });
+    payoutShape = aPayout(hex(0xc0), hex(0xaa));
+    expect(await call(`/api/accounts/acc_1/vaults/${VAULT}/payout`, 'ada', 'POST', { tx: PAYOUT_TX }))
+      .toMatchObject({ status: 422, body: { nothingWasSent: true } });
+    expect(sent).toEqual([]);
+  });
+
+  it('NO FEE IS PAID FOR A PAYMENT OUT OF A VAULT THE SERVICE CANNOT VOUCH FOR, READ FROM THE CHAIN NOW', async () => {
+    /* RED WHEN: the route stops asking what the chain shows of the vault before it pays the fee. */
+    authority = { committee: [key(9)], threshold: 1, counter: 0n };
+    expect(await call(`/api/accounts/acc_1/vaults/${VAULT}/payout`, 'ada', 'POST', { tx: PAYOUT_TX }))
+      .toMatchObject({ status: 409, body: { nothingWasSent: true, error: expect.stringMatching(/cannot vouch for/) } });
+    authority = { committee: [key(1), key(2)], threshold: 2, counter: 2n };
+    expect((await call(`/api/accounts/acc_1/vaults/${VAULT}/payout`, 'ada', 'POST', { tx: PAYOUT_TX })).status).toBe(409);
+    authority = { committee: [key(1), key(2)], threshold: 2, counter: 1n };
+    circuitKeys = (c) => (c === 'payout' ? new Uint8Array([1]) : vkOf(c));
+    expect((await call(`/api/accounts/acc_1/vaults/${VAULT}/payout`, 'ada', 'POST', { tx: PAYOUT_TX })).status).toBe(409);
+    circuitKeys = vkOf;
+    pinnedNow = hex(0xc1);
+    expect((await call(`/api/accounts/acc_1/vaults/${VAULT}/payout`, 'ada', 'POST', { tx: PAYOUT_TX })).status).toBe(409);
+    expect(arrivals).toEqual([]);
+    expect(sent).toEqual([]);
+  });
+
+  it('A VAULT THAT IS NOT THIS COMPANY\'S, A PERSON WHO IS NOT A MEMBER, OR NO TRANSACTION: NOTHING IS READ OR SENT', async () => {
+    store.putCompanyVault({ accountId: 'acc_2', vault: hex(0xba), deployedAt: '', deployRef: 'r', intended: { committee: [], threshold: 1 } });
+    expect((await call(`/api/accounts/acc_1/vaults/${hex(0xba)}/payout`, 'ada', 'POST', { tx: PAYOUT_TX })).status).toBe(404);
+    expect((await call(`/api/accounts/acc_1/vaults/${hex(0xba)}/payout-state`, 'ada')).status).toBe(404);
+    expect((await call(`/api/accounts/acc_1/vaults/${hex(0xba)}/events/${hex(1)}`, 'ada')).status).toBe(404);
+    expect((await call(`/api/accounts/acc_1/vaults/${VAULT}/payout`, 'carol', 'POST', { tx: PAYOUT_TX })).status).toBe(404);
+    expect((await call(`/api/accounts/acc_1/vaults/${VAULT}/payout`, null, 'POST', { tx: PAYOUT_TX })).status).toBe(401);
+    expect((await call(`/api/accounts/acc_1/vaults/${VAULT}/payout`, 'ada', 'POST', {})).status).toBe(400);
+    expect(sent).toEqual([]);
+    expect(asked).toEqual([]);
+  });
+
+  it('WHAT A PAYMENT IS BUILT ON IS READ FOR THIS VAULT AND THIS COMPANY\'S ACCOUNT, AT ONE BLOCK', async () => {
+    /* RED WHEN: the state is read for any other pair, or the block is dropped from the answer. */
+    const r = await call(`/api/accounts/acc_1/vaults/${VAULT}/payout-state`, 'ada');
+    expect(r).toEqual({
+      status: 200,
+      body: { vault: VAULT, account: hex(0xc0), blockHash: 'B', vaultState: 'dg==', zswapState: 'eg==', parameters: 'cA==', accountState: 'YQ==' },
+    });
+    expect(asked).toEqual(['state of ab and c0']);
+    payoutState = async () => null;
+    expect((await call(`/api/accounts/acc_1/vaults/${VAULT}/payout-state`, 'ada')).status).toBe(409);
+    payoutState = async () => { throw new Error('the indexer did not answer'); };
+    expect(await call(`/api/accounts/acc_1/vaults/${VAULT}/payout-state`, 'ada'))
+      .toMatchObject({ status: 503, body: { error: expect.stringMatching(/the indexer did not answer/) } });
+    payoutState = undefined;
+    expect((await call(`/api/accounts/acc_1/vaults/${VAULT}/payout-state`, 'ada')).status).toBe(503);
+  });
+
+  it('A TRANSACTION\'S EVENTS ARE READ ONLY BY ITS HASH, AND A READER THAT CANNOT ANSWER SAYS WHICH KIND OF NO', async () => {
+    const tx = hex(0x0e);
+    expect(await call(`/api/accounts/acc_1/vaults/${VAULT}/events/${tx}`, 'ada')).toEqual({
+      status: 200, body: { events: [{ transactionHash: tx, details: { tag: 'zswapOutput', mtIndex: '7' } }] },
+    });
+    /* RED WHEN: the hash is not checked before the chain is asked. */
+    expect((await call(`/api/accounts/acc_1/vaults/${VAULT}/events/${'0e'.repeat(33)}`, 'ada')).status).toBe(400);
+    expect((await call(`/api/accounts/acc_1/vaults/${VAULT}/events/not-a-hash`, 'ada')).status).toBe(400);
+    expect(asked).toEqual(['events of 0e']);
+    eventsOf = async () => { throw Object.assign(new Error('not yet'), { name: 'NoteIndexUnreadable' }); };
+    expect(await call(`/api/accounts/acc_1/vaults/${VAULT}/events/${tx}`, 'ada'))
+      .toMatchObject({ status: 503, body: { error: 'not yet', kind: 'NoteIndexUnreadable' } });
   });
 });

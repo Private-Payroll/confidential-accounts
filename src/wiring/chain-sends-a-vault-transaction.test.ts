@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { ChainLedger } from './chain.js';
+import { ChainLedger, vaultTransactionReader } from './chain.js';
+import { readFinishedTransaction, readProvenTransaction } from './proven-submission.js';
 import { saysNothingWasSent } from '../core/jobs.js';
 import type { Deployment } from './deployment.js';
 import type { WriteCapability } from './write-capability.js';
@@ -43,6 +44,16 @@ describe('A VAULT TRANSACTION A DEVICE SENT', () => {
       () => null, async () => unbound());
     expect(sent).toEqual({ ref: 'ref-1', at: 'now', transactionHash: 'h1' });
     expect(log).toEqual(['paying for acc_1', 'fee bound=true', 'submit']);
+  });
+
+  it('moving only the vault\'s own coins: read, checked, BOUND HERE, and paid for by the fee payer alone', async () => {
+    /* RED WHEN: only 'proven-moving-nothing' is bound here - a payment out then reaches the fee payer unbound. */
+    const { ledger, log, unbound } = setUp();
+    const sent = await ledger.sendVault('acc_1', 'a private payment out of a vault', 'proven-moving-the-vaults-own-coins',
+      new Uint8Array([1]), () => null, async () => unbound());
+    expect(sent).toEqual({ ref: 'ref-1', at: 'now', transactionHash: 'h1' });
+    expect(log).toEqual(['paying for acc_1', 'fee bound=true', 'submit']);
+    expect(log).not.toContain('THE COMPANY SIDE WAS ASKED');
   });
 
   it('finished by the depositor: already bound, so it is handed to the fee payer as it came', async () => {
@@ -100,6 +111,13 @@ describe('A VAULT TRANSACTION A DEVICE SENT', () => {
 });
 
 describe('THE SERVICE READS ONLY PROVEN TRANSACTIONS', () => {
+  it('reads what a depositor\'s wallet finished as finished, and everything else a device sends as proven', () => {
+    /* RED WHEN: a payment out is read as finished - it arrives proven and unbound, and would not be read at all. */
+    expect(vaultTransactionReader('finished-by-the-depositor')).toBe(readFinishedTransaction);
+    expect(vaultTransactionReader('proven-moving-nothing')).toBe(readProvenTransaction);
+    expect(vaultTransactionReader('proven-moving-the-vaults-own-coins')).toBe(readProvenTransaction);
+  });
+
   it('refuses an unproven deposit, which would carry its coin in the material its proof is made from', async () => {
     const { readFinishedTransaction, readProvenTransaction } = await import('./proven-submission.js');
     const L: any = await import('@midnightntwrk/ledger-v9');

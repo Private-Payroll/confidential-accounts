@@ -44,7 +44,9 @@ import { payeeAddress } from '../midnight/payee-address.js';
 import { theNetwork } from '../midnight/network.js';
 import { saysNothingWasSent } from '../core/jobs.js';
 import { runPayments } from '../midnight/run-status.js';
-import { rootOfLeaves } from '../midnight/payout-tree.js';
+import { buildRun, rootOfLeaves } from '../midnight/payout-tree.js';
+import { vaultDetailsOf } from '../midnight/vault-details.js';
+import { assemblePrivatePayments } from '../midnight/private-payment-wire.js';
 import { runMaterialFor, retryMaterialFor } from '../midnight/run-material.js';
 import { loadEnvFile } from '../db/connect.js';
 import { appendWebConsole, webConsoleLogPath } from './web-console-log.js';
@@ -1573,6 +1575,47 @@ app.post('/api/runs/:id/payments', authed, ownsRun, wrap(async (req, res) => {
     run.id, b.viewingKey, { asset: b.asset, rootOf: rootOfLeaves });
   const among = material ? await ledger.paidAmong(run.accountId, material.leaves) : null;
   res.json(runPayments(material, among));
+}));
+
+/*
+ * **WHAT A SIGNER'S DEVICE NEEDS TO PAY ONE APPROVED LEG PRIVATELY, AND NOTHING
+ * THAT OPENS A NOTE.**
+ *
+ * The device holds the vault's pool and chooses which note to spend; this
+ * answers only what every payment in the leg is, rebuilt from what the leg was
+ * raised under - the run's own recorded facts, the account's payout seed of the
+ * generation the leg was built with, and the run's own salt - and checked
+ * twice before anything is answered: the rebuilt leaves are the recorded ones,
+ * and they rebuild the identity the chain opened the run under. A leg that
+ * fails either check is refused rather than paid against.
+ *
+ * **A POST FOR A READ**, for the reason the payment view above gives: the
+ * viewing key travels in the body and never in an address.
+ */
+app.post('/api/runs/:id/private-payments', authed, ownsRun, wrap(async (req, res) => {
+  const b = z.object({ viewingKey: z.string(), asset: assetCode.optional() }).parse(req.body ?? {});
+  const run = payroll.requireRun(String(req.params.id), b.viewingKey);
+  const order = payroll.privatePaymentOrderOf(run.id, b.viewingKey, b.asset);
+  const material = payroll.payoutMaterialOf(run.id, b.viewingKey, { asset: b.asset, rootOf: rootOfLeaves });
+  const rebuild = await payroll.payoutRebuildOf(run.id, b.viewingKey, b.asset);
+  if (order === null || material === null || rebuild === null || material.proposal === undefined) {
+    res.status(409).json({
+      error: 'this run has no round on the chain a vault can pay yet. It is paid once it has been raised and '
+        + 'approved.',
+    });
+    return;
+  }
+  const built = buildRun(rebuild.seeds, rebuild.identity, rebuild.facts, await vaultDetailsOf());
+  const among = await ledger.paidAmong(run.accountId, material.leaves);
+  const assembled = assemblePrivatePayments({
+    order, leaves: material.leaves, window: material.window, idFrom: material.proposal.idFrom,
+    built, facts: rebuild.facts, paid: among?.known ? new Set(among.paid) : null,
+  });
+  if ('refusal' in assembled) {
+    res.status(409).json({ error: assembled.refusal });
+    return;
+  }
+  res.json(assembled.order);
 }));
 
 /*

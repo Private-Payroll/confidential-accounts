@@ -27,9 +27,15 @@ export async function vaultChainFromTheIndexer(indexer: { url: string; wsUrl: st
     import('@midnight-ntwrk/compact-runtime'),
     import('../../contracts/managed-vault/contract/index.js'),
   ]);
+  type Serialisable = { serialize(): Uint8Array };
+  type AtBlock = { type: 'blockHash'; blockHash: string };
   const provider = indexerPublicDataProvider(indexer.url, indexer.wsUrl) as unknown as {
-    queryContractState(address: string): Promise<unknown | null | undefined>;
+    queryContractState(address: string, at?: AtBlock): Promise<Serialisable | null | undefined>;
+    queryBlock(): Promise<{ hash: string; height: number } | null>;
+    queryZSwapAndContractState(address: string, at: AtBlock): Promise<[Serialisable, Serialisable, Serialisable] | null>;
   };
+  const events = indexerNoteEvents(indexer.url);
+  const base64 = (x: Serialisable): string => Buffer.from(x.serialize()).toString('base64');
   const asRuntime = (state: unknown): { data: unknown } =>
     (runtime as unknown as { ContractState: { deserialize(b: Uint8Array): { data: unknown } } })
       .ContractState.deserialize((state as { serialize(): Uint8Array }).serialize());
@@ -50,6 +56,39 @@ export async function vaultChainFromTheIndexer(indexer: { url: string; wsUrl: st
       return startingLedgerFrom(ledger);
     },
     everCreated: (address) => history.everCreated(address),
+    /*
+     * **ONE BLOCK, NAMED FIRST, AND BOTH CONTRACTS READ AS OF IT.** The vault's
+     * call reads the account's state inside the same circuit, so the two must
+     * be the same moment; the commitment tree comes from that block too, because
+     * the chain keeps only a window of past roots a spend may prove against.
+     */
+    payoutState: async (vault, account) => {
+      const block = await provider.queryBlock();
+      if (block === null) return null;
+      const at: AtBlock = { type: 'blockHash', blockHash: block.hash };
+      const [both, accountState] = await Promise.all([
+        provider.queryZSwapAndContractState(vault, at),
+        provider.queryContractState(account, at),
+      ]);
+      if (both === null || accountState === null || accountState === undefined) return null;
+      const [zswap, vaultState, parameters] = both;
+      return {
+        blockHash: block.hash,
+        vaultState: base64(vaultState),
+        zswapState: base64(zswap),
+        parameters: base64(parameters),
+        accountState: base64(accountState),
+      };
+    },
+    eventsOf: async (transactionHash) => (await events.eventsOf({ hash: transactionHash })).map((e) => ({
+      transactionHash: e.transactionHash,
+      details: {
+        tag: e.details.tag,
+        ...(e.details.commitment === undefined ? {} : { commitment: e.details.commitment }),
+        ...(e.details.contract === undefined ? {} : { contract: e.details.contract }),
+        ...(e.details.mtIndex === undefined ? {} : { mtIndex: e.details.mtIndex.toString() }),
+      },
+    })),
   };
 }
 

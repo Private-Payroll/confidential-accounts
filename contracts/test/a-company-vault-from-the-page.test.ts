@@ -329,6 +329,10 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     handover: (vault, tx) => http(`/api/accounts/${ACCOUNT_ID}/vaults/${vault}/handover`, { method: 'POST', body: { tx } }, as),
     chain: (vault) => http(`/api/accounts/${ACCOUNT_ID}/vaults/${vault}/chain`, undefined, as),
     deposit: (vault, tx) => http(`/api/accounts/${ACCOUNT_ID}/vaults/${vault}/deposit`, { method: 'POST', body: { tx } }, as),
+    /* A payment out is watched in `a-private-payment-from-the-page.test.ts`; nothing here asks for one. */
+    payoutState: () => { throw new Error('this watch makes no payment out'); },
+    events: () => { throw new Error('this watch makes no payment out'); },
+    payout: () => { throw new Error('this watch makes no payment out'); },
   });
   const keys: TemporaryKeys = {
     put: async (v, k) => { temporaryKeys.set(v, k); },

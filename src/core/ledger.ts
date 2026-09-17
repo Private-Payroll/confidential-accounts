@@ -2506,4 +2506,10 @@ export type VaultTxArrival =
   /** Proven by the device and moving no coins: a vault's deploy, or its handover. */
   | 'proven-moving-nothing'
   /** Proven by the device and finished by the depositor's own wallet: a deposit. */
-  | 'finished-by-the-depositor';
+  | 'finished-by-the-depositor'
+  /**
+   * Proven by the device, moving only a vault's own coins, which balance among
+   * themselves: a private payment out. Nobody's wallet signs for it, so it is
+   * bound where it is paid for, as a transaction that moves nothing is.
+   */
+  | 'proven-moving-the-vaults-own-coins';

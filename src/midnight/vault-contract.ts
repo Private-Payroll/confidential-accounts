@@ -148,6 +148,15 @@ export const VAULT_CIRCUITS = [
 export type VaultCircuit = (typeof VAULT_CIRCUITS)[number];
 
 /**
+ * **THE ACCOUNT'S CIRCUITS A VAULT'S OWN CIRCUITS CALL**, and so the only ones
+ * of the account's a device proves beside a vault's: `payout` asks
+ * `recordPayment` inside the same transaction. No vault circuit shares a name
+ * with one of these, which is what lets a prover be pointed at the account's
+ * material by the circuit's name alone.
+ */
+export const ACCOUNT_CIRCUITS_A_VAULT_CALLS: readonly string[] = Object.freeze(['recordPayment']);
+
+/**
  * The account's circuits, named here for ONE purpose: telling a reader that the
  * address they pointed a vault client at is an account.
  *

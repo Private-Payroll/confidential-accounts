@@ -16,6 +16,21 @@ describe('THE PROVING MATERIAL A DEVICE MAY FETCH', () => {
       .toBe('/params/bls_midnight_2p9');
   });
 
+  it('A PAYMENT OUT ALSO PROVES THE ACCOUNT\'S recordPayment, AND THAT IS THE ONLY ONE OF THE ACCOUNT\'S SERVED', () => {
+    /* RED WHEN: the account's folder is not served (a payment out then cannot be proved on a device), or it
+     * serves any other circuit of the account's, or a vault name reaches it. */
+    expect(vaultArtefactFile(places, '/account/keys/recordPayment.prover')).toBe('/repo/contracts/managed/keys/recordPayment.prover');
+    expect(vaultArtefactFile(places, '/account/keys/recordPayment.verifier')).toBe('/repo/contracts/managed/keys/recordPayment.verifier');
+    expect(vaultArtefactFile(places, '/account/zkir/recordPayment.bzkir')).toBe('/repo/contracts/managed/zkir/recordPayment.bzkir');
+    for (const path of [
+      '/account/keys/approve.prover', '/account/keys/propose.prover', '/account/keys/payout.prover',
+      '/account/zkir/recordPayment.prover', '/account/keys/recordPayment.bzkir', '/account/keys/../keys/recordPayment.prover',
+      '/keys/recordPayment.prover', '/account/params/bls_midnight_2p13', '/account/keys/recordpayment.prover',
+    ]) {
+      expect(vaultArtefactFile(places, path), path).toBeNull();
+    }
+  });
+
   it('REFUSES EVERY OTHER NAME: another circuit, another folder, a mismatched kind, or a way out', () => {
     for (const path of [
       '/keys/../../.env', '/keys/deposit.prover/../x', '/keys/notACircuit.prover', '/keys/deposit.bzkir',

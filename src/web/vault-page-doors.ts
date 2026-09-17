@@ -14,6 +14,7 @@ import { HttpSealedPoolStore, pageWireSend } from './http-sealed-pool-store.js';
 import type { DeviceRecords, DeviceSigner } from './deposit-on-device.js';
 import type { TemporaryKeys, VaultService } from './vault-operation.js';
 import type { SigningKeyOnTheWire } from './vault-worker-client.js';
+import type { PrivatePaymentOrderOnTheWire } from '../midnight/private-payment-wire.js';
 
 type Api = (path: string, init?: RequestInit) => Promise<any>;
 
@@ -36,8 +37,22 @@ export const vaultServiceFor = (api: Api, accountId: string): VaultService => {
     handover: (vault, tx) => post(`${base}/vaults/${vault}/handover`, tx),
     chain: (vault) => api(`${base}/vaults/${vault}/chain`),
     deposit: (vault, tx) => post(`${base}/vaults/${vault}/deposit`, tx),
+    payoutState: (vault) => api(`${base}/vaults/${vault}/payout-state`),
+    events: (vault, transactionHash) => api(`${base}/vaults/${vault}/events/${encodeURIComponent(transactionHash)}`),
+    payout: (vault, tx) => post(`${base}/vaults/${vault}/payout`, tx),
   };
 };
+
+/**
+ * **ONE APPROVED LEG'S PAYMENTS, AS THE SERVICE REBUILT THEM FROM THE RUN THE
+ * COMPANY APPROVED.** The viewing key travels in the body, never in an address.
+ */
+export const privatePaymentsFor = (
+  api: Api, runId: string, viewingKey: Hex, asset?: string,
+): Promise<PrivatePaymentOrderOnTheWire> => api(`/api/runs/${encodeURIComponent(runId)}/private-payments`, {
+  method: 'POST',
+  body: JSON.stringify(asset === undefined ? { viewingKey } : { viewingKey, asset }),
+});
 
 /** Gives this signer's three public vault keys, once; the service keeps the first set. */
 export const giveVaultKeys = (

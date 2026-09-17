@@ -22,6 +22,7 @@ import { LedgerMark } from './ledger-mark.js';
 import type { Marked } from '../core/provenance.js';
 import { AuthScreen, AccountPicker, WALLET_ORIGIN } from './Auth.js';
 import { VaultPanel } from './VaultPanel.js';
+import { PayoutPanel } from './PayoutPanel.js';
 import { MaintenancePanel } from './MaintenancePanel.js';
 import { WalletWaiting } from './wallet-waiting.js';
 import { JoinScreen, joinTokenFromLocation } from './Join.js';
@@ -806,7 +807,7 @@ function Screens({ commitments }: { commitments: CommitmentScheme }) {
             pending={pending} account={s.account} session={s} me={me} busy={busy}
             runs={runs} act={act} />}
 
-          {page === 'vault' && <Vault account={s.account} me={me} />}
+          {page === 'vault' && <Vault account={s.account} me={me} viewingKey={s.viewingKey as Hex} runs={runs} />}
 
           {page === 'apps' && <Apps session={s} me={me} busy={busy} act={act} />}
 
@@ -1007,38 +1008,22 @@ function RunPaymentsCard({ runId, viewingKey }: { runId: string; viewingKey: str
  * An account is an authority over a vault, not a holder of money: the vault is
  * where the money actually sits and it is the thing that pays people. Creating
  * a vault, handing it to the company's committee and putting money in are live
- * (`VaultPanel.tsx`). Paying a run from a vault and spending limits are still on
- * this screen disabled, each with the reason it cannot be used - because a
- * control that is missing is a control nobody can ask about.
- *
- * **NEITHER DISABLED CONTROL IS A PLACEHOLDER FOR A FEATURE THAT MERELY HAS NOT
- * BEEN TYPED.** Each reason below is a thing that is genuinely not settled.
+ * (`VaultPanel.tsx`), and so is paying a person privately out of it against a
+ * round the company approved (`PayoutPanel.tsx`). Spending limits are shown and
+ * not offered, with the reason - because a control that is missing is a control
+ * nobody can ask about.
  */
-function Vault({ account, me }: {
+function Vault({ account, me, viewingKey, runs }: {
   account: Account;
   me: { signerId: string; signingSecret: Hex; wrappingSecret: Hex };
+  viewingKey: Hex;
+  runs: PayrollRun[];
 }) {
   return (
     <div className="stack">
       <VaultPanel account={account} me={me} />
 
-      <div className="grid2">
-        <div className="card">
-          <div className="hd"><h3>Pay a run from a vault</h3>
-            <span className="sub">one payee at a time, against an approved round</span></div>
-          <div className="bd">
-            <div className="field"><label>Run</label>
-              <select disabled><option>No payable run</option></select></div>
-            <button className="btn pri" disabled>Pay</button>
-            <div className="hint" style={{ marginTop: 14 }}>
-              <b>Not available yet.</b> A vault pays against the payout root a run was approved
-              on, inside the window its signers approved, and this product writes neither yet.
-              A run raised without them collects real signatures and can never be paid, which is
-              why the control that would raise one is disabled on the payroll screen too.
-            </div>
-          </div>
-        </div>
-      </div>
+      <PayoutPanel account={account} me={me} viewingKey={viewingKey} runs={runs} />
 
       {/*
         * **NOT DRAWN AT ALL, AND SAYING SO IS THE POINT.** A spending cap that
