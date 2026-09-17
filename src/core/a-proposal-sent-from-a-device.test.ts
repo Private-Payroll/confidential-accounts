@@ -258,6 +258,49 @@ describe('A PAYROLL PROPOSAL RAISED FROM A DEVICE', () => {
     expect(c.accounts.requireProposal(round.id, c.viewingKey).approvals.map((a) => a.signerId)).toEqual(['sgn_other']);
   });
 
+  it('AND A STANDING READ THAT STARTED EARLIER NEVER WRITES A LOWER COUNT OVER A COUNT ANOTHER REQUEST RECORDED MEANWHILE', async () => {
+    const c = await aCompany();
+    const round = await c.raiseOnDevice();
+    c.setEffect(c.theRaiseLands((await c.payroll.raiseOrderOf(c.runId, c.viewingKey))!));
+    await c.accounts.sendRaise(round.id, c.viewingKey, BYTES, c.me.signerId);
+    await c.accounts.refreshStanding(round.id, c.viewingKey);
+    const putProposal = (p: unknown) =>
+      (c.accounts as unknown as { putProposal(p: unknown, vk: string): void }).putProposal(p, c.viewingKey);
+    /* While the read waits on a chain that shows no approvals, another request records a count of two. */
+    const status = c.ledger.status.bind(c.ledger);
+    let meanwhile: ((p: ReturnType<typeof c.accounts.requireProposal>) => void) | null = (p) => {
+      p.approvalRound = { state: 'short', approvals: 2, threshold: 3 };
+    };
+    Object.assign(c.ledger, {
+      status: async (id: string) => {
+        const answer = await status(id);
+        if (meanwhile) {
+          const p = c.accounts.requireProposal(round.id, c.viewingKey);
+          meanwhile(p);
+          meanwhile = null;
+          putProposal(p);
+        }
+        return answer;
+      },
+    });
+    const after = await c.accounts.refreshStanding(round.id, c.viewingKey);
+    /* RED WHEN: the verdict computed from the earlier chain read is assigned onto the record read after it. */
+    expect(after.approvalRound).toEqual({ state: 'short', approvals: 2, threshold: 3 });
+    expect(c.accounts.requireProposal(round.id, c.viewingKey).approvalRound)
+      .toEqual({ state: 'short', approvals: 2, threshold: 3 });
+    expect(after.status).toBe('open');
+    /*
+     * The other direction: a later request recorded that the chain could not be asked, and this read
+     * counts the approval. A higher count is not lowered by being older, so it is written.
+     */
+    await c.theApprovalLands(round.chainId)(c.account, BYTES);
+    meanwhile = (p) => { p.approvalRound = { state: 'unknown', why: 'no-status' }; };
+    const counted = await c.accounts.refreshStanding(round.id, c.viewingKey);
+    /* RED WHEN: a record another request touched is never written again by a read that started earlier. */
+    expect(counted.approvalRound).toEqual({ state: 'satisfied', approvals: 1, threshold: 1 });
+    expect(c.accounts.requireProposal(round.id, c.viewingKey).status).toBe('approved');
+  });
+
   it('A DEPLOYMENT WITH NO DOOR FOR A DEVICE\'S TRANSACTION REFUSES TO SEND, AND SAYS NOTHING WAS SENT', async () => {
     const c = await aCompany({ door: 'none' });
     const round = await c.raiseOnDevice();

@@ -52,6 +52,41 @@ const MOVES_NO_MONEY = 'moves-no-money' as const;
 const THE_DEVICE_SENDS = 'the-device-sends' as const;
 
 /**
+ * **HOW LONG AN APPROVAL A DEVICE SENT IS WAITED ON BEFORE ITS STANDING IS LEFT
+ * AS LAST READ.**
+ *
+ * The door a device's transaction goes through answers when the transaction is
+ * handed over, before the chain has counted it. So the standing read straight
+ * after the send can be one short - and for the last approval that is the
+ * difference between `open` and `approved`. The service asks again, inside the
+ * same request, until the chain counts every signature this record holds, the
+ * proposal leaves `open`, or `attempts` reads have been made.
+ *
+ * **IT IS A BOUND, NOT A PROMISE.** A transaction the chain takes longer than
+ * this to count leaves the record as last read, and the next standing read -
+ * the page's own, or this signer's next approval - catches it up. The viewing
+ * key is held for as long as this request is, and no longer.
+ */
+export interface InclusionWait {
+  /** Milliseconds between one read and the next. */
+  readonly everyMs: number;
+  /** How many standing reads, the first included, before the record is left as it is. */
+  readonly attempts: number;
+}
+const INCLUSION_WAIT: InclusionWait = Object.freeze({ everyMs: 3_000, attempts: 30 });
+
+/** What one call being sent to the chain is known by while it is on its way. */
+const aRaiseOf = (proposalId: string) => `raise ${proposalId}`;
+const anApprovalOf = (proposalId: string, signerId: string) => `approve ${proposalId} ${signerId}`;
+
+/** The approvals a recorded standing says the chain counted; an answer that is not a count counts below zero. */
+const countIn = (o: ApprovalOutcome | undefined): number =>
+  (o === undefined || o.state === 'unknown' ? -1 : o.approvals);
+
+const sameStanding = (a: ApprovalOutcome | undefined, b: ApprovalOutcome | undefined): boolean =>
+  JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+
+/**
  * **THE ACCOUNT'S HALF OF A RAISE, FOR THE SIGNER'S DEVICE THAT BUILDS IT.**
  * Every value is the hexadecimal of its thirty-two bytes, except the amount,
  * which is decimal digits. All of it opens with the account's viewing key, which
@@ -695,7 +730,49 @@ export class AccountService {
      * cannot pay from being approved and paid for.
      */
     private holdings: VaultHoldings = noVaultHoldingsReader,
+    /** How long an approval a device sent is waited on. A test passes a shorter one. */
+    private inclusion: InclusionWait = INCLUSION_WAIT,
   ) {}
+
+  /**
+   * **THE CALLS THIS PROCESS IS SENDING TO THE CHAIN RIGHT NOW**: a proposal's
+   * raise, and one signer's approval of one proposal.
+   *
+   * A send is checked against the record and then awaited, so two requests for
+   * the same send can both pass the check before either writes anything, and
+   * both would be handed to the chain, which refuses the second after its fee is
+   * booked. An entry here is taken in the same step as the last check - nothing
+   * is awaited between them - and a second request for the same send is refused
+   * as having sent nothing.
+   *
+   * **IT HOLDS NOTHING ELSE.** Another signer's approval, a standing read and a
+   * withdrawal of an approval's proposal all proceed while one is here; only a
+   * withdrawal of a proposal whose raise is on its way is refused, because a
+   * record closed here while that raise lands would sit beside an open proposal
+   * on chain that nothing here can withdraw. **An entry leaves when its send
+   * answers, whether it succeeded or failed**, so a node that does not answer
+   * refuses only a repeat of the one send it has not answered, and only for as
+   * long as the fee payer's own queue is already held by that same send. It is
+   * in memory: a restart clears it, and the chain's own answer is what the next
+   * send is checked against.
+   */
+  private readonly sending = new Set<string>();
+
+  /** Takes the entry for one send, or refuses as nothing sent. Returns what lets it go. */
+  private holdTheSend(key: string, what: string): () => void {
+    if (this.sending.has(key)) {
+      throw new NothingWasSent(
+        `${what} is being sent to the chain right now by another request, so it was not sent again. `
+        + 'Nothing was sent. Once that send has answered, this proposal says where it stands.');
+    }
+    this.sending.add(key);
+    let held = true;
+    return () => {
+      if (!held) return;
+      held = false;
+      this.sending.delete(key);
+    };
+  }
 
   /**
    * **WHICH LEDGER THIS SERVICE IS RUNNING AGAINST, AS THE LEDGER REPORTS IT.**
@@ -2795,11 +2872,12 @@ export class AccountService {
     }
   }
 
-  private async approveWith(
-    proposalId: string, signerId: string, signature: Hex, viewingKey: Hex,
-    device: { proven: Uint8Array; phase: { sending: boolean } } | null,
-  ): Promise<Proposal> {
-    const proposal = this.requireProposal(proposalId, viewingKey);
+  /**
+   * **THE STATES A PROPOSAL TAKES NO APPROVAL IN.** Asked of the record when an
+   * approval starts, and again of the record as it is immediately before the
+   * approval is sent, because everything between the two is awaited.
+   */
+  private refuseApprovingIn(proposal: Proposal): void {
     if (proposal.status === 'executed') throw new Error('already executed');
     /* Ours, and it says so. `R4` — the chain has no ceiling and refused nothing. */
     if (proposal.status === 'blocked') {
@@ -2820,6 +2898,14 @@ export class AccountService {
         + 'be raised as a new round: for a payroll run, raise the run again, or a retry on it if '
         + 'its round had reached the chain.');
     }
+  }
+
+  private async approveWith(
+    proposalId: string, signerId: string, signature: Hex, viewingKey: Hex,
+    device: { proven: Uint8Array; phase: { sending: boolean } } | null,
+  ): Promise<Proposal> {
+    const proposal = this.requireProposal(proposalId, viewingKey);
+    this.refuseApprovingIn(proposal);
 
     const account = this.open(proposal.accountId, viewingKey);
     const signer = account.signers.find(s => s.id === signerId);
@@ -2873,7 +2959,7 @@ export class AccountService {
        * property `the-threshold-is-the-chain-s.test.ts` holds down.
        */
       try {
-        await this.recordStanding(proposal, account, viewingKey);
+        await this.recordStanding(proposalId, account, viewingKey);
       } catch (e) {
         if (!(e instanceof ProposerRoleGone)) throw e;
       }
@@ -2898,6 +2984,18 @@ export class AccountService {
     }
 
     /*
+     * **THE LAST LOOK BEFORE THE SEND, AND NOTHING IS AWAITED BETWEEN IT AND
+     * THE HOLD.** Everything above awaited at least once, so the record read at
+     * the top may have been withdrawn, or this signer's approval recorded by
+     * another request, since. The same questions are asked of the record as it
+     * is now, and the send is held in the same step.
+     */
+    const current = this.requireProposal(proposalId, viewingKey);
+    this.refuseApprovingIn(current);
+    if (current.approvals.some(a => a.signerId === signerId)) throw new Error('already approved');
+    const release = this.holdTheSend(anApprovalOf(proposalId, signerId), 'this approval');
+
+    /*
      * The ledger call comes BEFORE the local record.
      *
      * The chain is the thing that decides whether this approval counts — it
@@ -2907,38 +3005,42 @@ export class AccountService {
      * first and the chain second is how a UI comes to show two approvals where
      * the chain holds one.
      */
-    if (device !== null) {
-      device.phase.sending = true;
-      await this.sendProvenCall(proposal.accountId, device.proven, 'approve', 'this approval');
-    } else {
-      await this.ledger.approve(proposal.accountId, proposal.chainId, this.refFor(account, signerId));
+    try {
+      if (device !== null) {
+        device.phase.sending = true;
+        await this.sendProvenCall(proposal.accountId, device.proven, 'approve', 'this approval');
+      } else {
+        await this.ledger.approve(proposal.accountId, proposal.chainId, this.refFor(account, signerId));
+      }
+
+      /*
+       * **THE DURABLE WRITE, THE INSTANT THE IRREVERSIBLE ONE RETURNS.** `C377`,
+       * It used to be the LAST statement of this method, with a
+       * second network call and four throw sites standing between it and the
+       * burn above — so a rejection in that window left the approval **spent on
+       * chain and absent from the record**, and the retry was refused for ever on
+       * the nullifier the chain already held.
+       *
+       * `R6`'s rule is stated at `src/core/ledger.ts:1511` — *"an operation
+       * with two halves is one transaction or it refuses"* — and the two halves
+       * here are **this signature counts** and **this round now stands at N of
+       * M**. There is no transaction spanning a chain and a disk, so the halves
+       * are ordered by what each costs to lose: the approval cannot be recovered
+       * by anybody, and the standing can be re-read from the chain by the one
+       * signer who is about to come back for it.
+       *
+       * **NOTHING HERE NEEDS THE CHAIN READ.** Measured field by field: every
+       * value `putProposal` seals — the id, the account, the digest, the chain
+       * id, the key epoch, the approval count and the signatures themselves — is
+       * known the moment `ledger.approve` returns. Only `approvalRound` and
+       * `status` are functions of the read, and those are the second write's.
+       */
+      this.recordApproval(proposalId, viewingKey, {
+        signerId, signature, at: new Date().toISOString(),
+      });
+    } finally {
+      release();
     }
-
-    proposal.approvals.push({ signerId, signature, at: new Date().toISOString() });
-
-    /*
-     * **THE DURABLE WRITE, THE INSTANT THE IRREVERSIBLE ONE RETURNS.** `C377`,
-     * It used to be the LAST statement of this method, with a
-     * second network call and four throw sites standing between it and the
-     * burn above — so a rejection in that window left the approval **spent on
-     * chain and absent from the record**, and the retry was refused for ever on
-     * the nullifier the chain already held.
-     *
-     * `R6`'s rule is stated at `src/core/ledger.ts:1511` — *"an operation
-     * with two halves is one transaction or it refuses"* — and the two halves
-     * here are **this signature counts** and **this round now stands at N of
-     * M**. There is no transaction spanning a chain and a disk, so the halves
-     * are ordered by what each costs to lose: the approval cannot be recovered
-     * by anybody, and the standing can be re-read from the chain by the one
-     * signer who is about to come back for it.
-     *
-     * **NOTHING HERE NEEDS THE CHAIN READ.** Measured field by field: every
-     * value `putProposal` seals — the id, the account, the digest, the chain
-     * id, the key epoch, the approval count and the signatures themselves — is
-     * known the moment `ledger.approve` returns. Only `approvalRound` and
-     * `status` are functions of the read, and those are the second write's.
-     */
-    this.putProposal(proposal, viewingKey);
 
     /*
      * **AND THE STANDING, WHICH IS THE HALF THAT NEEDS THE CHAIN.** A throw
@@ -2947,8 +3049,62 @@ export class AccountService {
      * used by both the first pass and the recovery, so the two can never come
      * to disagree about what the standing is — `M-104`'s shape, avoided.
      */
-    await this.recordStanding(proposal, account, viewingKey);
-    return proposal;
+    return device === null
+      ? this.recordStanding(proposalId, account, viewingKey)
+      : this.standingOnceCounted(proposalId, account, viewingKey);
+  }
+
+  /**
+   * **ONE APPROVAL, WRITTEN ONTO THE RECORD AS IT IS NOW.** Read, changed and
+   * written with nothing awaited in between, so another request's signature,
+   * refusal or withdrawal recorded while this approval was being sent stays.
+   *
+   * **A PROPOSAL WITHDRAWN WHILE THE APPROVAL WAS ON ITS WAY STAYS WITHDRAWN.**
+   * The approval is not added to it: a withdrawn proposal claims no approvals,
+   * and nothing is to be derived from them. The caller is told, and told that
+   * the approval was sent, because the chain may have counted it before the
+   * withdrawal.
+   */
+  private recordApproval(
+    proposalId: string, viewingKey: Hex, approval: Proposal['approvals'][number],
+  ): Proposal {
+    const latest = this.requireProposal(proposalId, viewingKey);
+    if (latest.status === 'cancelled') {
+      throw new Error(
+        'this proposal was withdrawn while this approval was being sent, so the approval is not recorded '
+        + 'against it. The approval was sent, and the chain may have counted it before the withdrawal; either '
+        + 'way the proposal stays withdrawn, and whatever it was for has to be raised again.');
+    }
+    if (!latest.approvals.some(a => a.signerId === approval.signerId)) latest.approvals.push(approval);
+    this.putProposal(latest, viewingKey);
+    return latest;
+  }
+
+  /**
+   * **THE STANDING AFTER AN APPROVAL A DEVICE SENT, READ UNTIL THE CHAIN HAS
+   * COUNTED IT.** The first read is the ordinary one and a failure of it reaches
+   * the caller as before. Later reads are asked only while the proposal is open
+   * and the chain counts fewer approvals than this record holds signatures; a
+   * later read that fails ends the wait, because the approval is already
+   * recorded and the standing is the half anybody can read again.
+   */
+  private async standingOnceCounted(
+    proposalId: string, account: Account, viewingKey: Hex,
+  ): Promise<Proposal> {
+    let now = await this.recordStanding(proposalId, account, viewingKey);
+    for (let asked = 1; asked < this.inclusion.attempts && this.notYetCounted(now); asked++) {
+      await new Promise<void>(r => setTimeout(r, this.inclusion.everyMs));
+      try {
+        now = await this.recordStanding(proposalId, account, viewingKey);
+      } catch {
+        return this.requireProposal(proposalId, viewingKey);
+      }
+    }
+    return now;
+  }
+
+  private notYetCounted(p: Proposal): boolean {
+    return p.status === 'open' && countIn(p.approvalRound) < p.approvals.length;
   }
 
   /**
@@ -3007,17 +3163,42 @@ export class AccountService {
    * Sent by a seated signer who may propose, and only as the one call it is.
    */
   async sendRaise(proposalId: string, viewingKey: Hex, proven: Uint8Array, by: string): Promise<Proposal> {
-    const proposal = await this.mayBeSentFromADevice(proposalId, viewingKey);
-    const sender = this.open(proposal.accountId, viewingKey).signers.find(x => x.id === by);
+    const asked = await this.mayBeSentFromADevice(proposalId, viewingKey);
+    const sender = this.open(asked.accountId, viewingKey).signers.find(x => x.id === by);
     if (!sender || sender.status !== 'active' || sender.role === 'viewer') {
       throw new NothingWasSent('only a signer who may propose sends a proposal to the chain. Nothing was sent.');
     }
-    const tx = await this.sendProvenCall(proposal.accountId, proven, 'propose', 'this proposal');
-    /* Re-read before the write: the send is an `await`, and the record is written whole. */
-    const fresh = this.requireProposal(proposalId, viewingKey);
-    fresh.txRef = tx.ref;
-    this.putProposal(fresh, viewingKey);
-    return fresh;
+    const release = this.holdARaise(proposalId, viewingKey, asked);
+    try {
+      const tx = await this.sendProvenCall(asked.accountId, proven, 'propose', 'this proposal');
+      /* Re-read before the write: the send is an `await`, and the record is written whole. */
+      const fresh = this.requireProposal(proposalId, viewingKey);
+      fresh.txRef = tx.ref;
+      this.putProposal(fresh, viewingKey);
+      return fresh;
+    } finally {
+      release();
+    }
+  }
+
+  /**
+   * **THE LAST LOOK BEFORE A RAISE IS SENT, AND THE HOLD, IN ONE STEP.** The
+   * chain was asked about the record as `asked` holds it, and that was awaited.
+   * If the record has since left `open`, been seen on chain, or been sent by
+   * another request, the answer is about a record that no longer exists and the
+   * send is refused as having sent nothing.
+   */
+  private holdARaise(proposalId: string, viewingKey: Hex, asked: Proposal): () => void {
+    const now = this.requireProposal(proposalId, viewingKey);
+    if (now.status !== 'open') throw new NothingWasSent(notSentBecauseItIs(now.status));
+    if (now.raisedAt) throw new NothingWasSent(THE_CHAIN_ALREADY_HOLDS_IT);
+    if (now.txRef !== asked.txRef) {
+      throw new NothingWasSent(
+        'this proposal was sent by another request while the chain was being asked about it, so it was not '
+        + 'sent again. Nothing was sent. Once the chain shows it, this proposal says so; if it never does, '
+        + 'send it again then.');
+    }
+    return this.holdTheSend(aRaiseOf(proposalId), 'this proposal');
   }
 
   /**
@@ -3029,26 +3210,27 @@ export class AccountService {
    * under the same identity, so if the first send is still on its way the chain
    * refuses whichever arrives second, and if the first was dropped the second is
    * what lands. While the chain cannot say, it is refused rather than guessed.
+   *
+   * Answers with the record as it was when the chain was asked. The chain read
+   * is awaited, so a caller about to send checks that record against the one as
+   * it is now, in the same step as it holds the send: see `holdARaise`.
    */
   private async mayBeSentFromADevice(proposalId: string, viewingKey: Hex): Promise<Proposal> {
     const proposal = this.requireProposal(proposalId, viewingKey);
     if (proposal.kind !== 'payroll') {
       throw new NothingWasSent('only a payroll proposal is raised from a device here, and this is not one. Nothing was sent.');
     }
-    if (proposal.status !== 'open') {
-      throw new NothingWasSent(`this proposal is ${proposal.status}, so it is not sent to the chain. Nothing was sent.`);
-    }
+    if (proposal.status !== 'open') throw new NothingWasSent(notSentBecauseItIs(proposal.status));
     const held = proposal.raisedAt ? 'present'
       : proposal.txRef ? await this.chainHolds(proposal, viewingKey) : 'absent';
-    if (held === 'present') {
-      throw new NothingWasSent('the chain already holds this proposal, so it is not sent again. Nothing was sent.');
-    }
+    if (held === 'present') throw new NothingWasSent(THE_CHAIN_ALREADY_HOLDS_IT);
     if (held === 'unknown') {
       throw new NothingWasSent(
         `this proposal was already sent from a device, as ${proposal.txRef}, and the chain did not answer whether it `
         + 'holds it. Sending it again now would be a guess. Nothing was sent. Try again once the chain answers.');
     }
-    return this.requireProposal(proposalId, viewingKey);
+    /* The record the chain was asked about, which a send compares against before it goes. */
+    return proposal;
   }
 
   /**
@@ -3062,9 +3244,11 @@ export class AccountService {
    *
    * **IT WRITES ONLY WHAT IT READ, ONTO THE RECORD AS IT IS AFTER THE READ.**
    * The chain read is an `await`, and in that window another request may have
-   * recorded an approval, withdrawn the proposal or found it approved. So the
-   * record is read again after the chain answers, only the standing is set on
-   * it, and a proposal that is no longer open is left exactly as it is.
+   * recorded an approval, withdrawn the proposal, found it approved or written
+   * a standing from a later read. So the record is read again after the chain
+   * answers, only the standing is set on it, a proposal that is no longer open
+   * is left exactly as it is, and a count another request wrote meanwhile is
+   * never replaced by a lower one: see `writeStanding`.
    */
   async refreshStanding(proposalId: string, viewingKey: Hex): Promise<Proposal> {
     const proposal = this.requireProposal(proposalId, viewingKey);
@@ -3082,10 +3266,7 @@ export class AccountService {
     }
     const latest = this.requireProposal(proposalId, viewingKey);
     if (latest.status !== 'open') return latest;
-    latest.approvalRound = verdict.approval;
-    if (verdict.approval.state === 'satisfied') latest.status = 'approved';
-    this.putProposal(latest, viewingKey);
-    return latest;
+    return this.writeStanding(proposalId, viewingKey, read.approvalRound, verdict);
   }
 
   /**
@@ -3130,13 +3311,47 @@ export class AccountService {
    * with the screen or job that calls it.
    */
   private async recordStanding(
-    proposal: Proposal, account: Account, viewingKey: Hex,
-  ): Promise<void> {
-    const verdict = await this.standingOf(proposal, account, viewingKey);
-    proposal.approvalRound = verdict.approval;
-    if (verdict.approval.state === 'satisfied') proposal.status = 'approved';
+    proposalId: string, account: Account, viewingKey: Hex,
+  ): Promise<Proposal> {
+    const read = this.requireProposal(proposalId, viewingKey);
+    const verdict = await this.standingOf(read, account, viewingKey);
+    return this.writeStanding(proposalId, viewingKey, read.approvalRound, verdict);
+  }
 
-    this.putProposal(proposal, viewingKey);
+  /**
+   * **A STANDING, WRITTEN ONLY IF NOTHING NEWER HAS BEEN WRITTEN SINCE IT WAS
+   * ASKED FOR.** `before` is the standing the record held when the chain read
+   * began. The record is read again here, and the verdict is written onto it
+   * with nothing awaited in between, on these terms:
+   *
+   * - a proposal that is neither open nor approved is left exactly as it is;
+   * - if the standing on the record is still `before`, nobody has written one
+   *   since, and the verdict is written whatever it says, including that the
+   *   chain did not answer;
+   * - **if another request has written a standing meanwhile, the verdict is
+   *   written only if it counts more approvals than that one.** A chain's count
+   *   for an open proposal only rises, so a verdict counting fewer came from an
+   *   older read and would put the count backwards;
+   * - an approved proposal only ever takes a higher count, and no write here
+   *   lowers a status.
+   *
+   * **WHAT IT DOES NOT HOLD.** A standing recorded as *the chain did not
+   * answer* carries no count, so an older count arriving after it is written
+   * over it, and the record can then show fewer approvals than it showed
+   * before that answer. It is what the page displays; nothing is decided on it,
+   * and the next read puts the chain's count back.
+   */
+  private writeStanding(
+    proposalId: string, viewingKey: Hex, before: ApprovalOutcome | undefined, verdict: PolicyVerdict,
+  ): Proposal {
+    const latest = this.requireProposal(proposalId, viewingKey);
+    if (latest.status !== 'open' && latest.status !== 'approved') return latest;
+    const newer = latest.status === 'approved' || !sameStanding(latest.approvalRound, before);
+    if (newer && countIn(verdict.approval) <= countIn(latest.approvalRound)) return latest;
+    latest.approvalRound = verdict.approval;
+    if (verdict.approval.state === 'satisfied') latest.status = 'approved';
+    this.putProposal(latest, viewingKey);
+    return latest;
   }
 
   /** The verdict `recordStanding` writes, from one chain read, and nothing written. */
@@ -3279,7 +3494,25 @@ export class AccountService {
     if (held === 'present') await this.ledger.cancel(proposal.accountId, proposal.chainId,
       this.refFor(account, by ?? proposal.proposedBy));
 
-    proposal.status = 'cancelled';
+    /*
+     * **WRITTEN ONTO THE RECORD AS IT IS NOW, AND ONLY IF WHAT THE CHAIN WAS
+     * ASKED ABOUT IS STILL THE RECORD.** Everything above awaited. When the
+     * chain withdrew the proposal, the withdrawal is written whatever else
+     * changed. When it did not - the chain did not hold it, or the policy had
+     * stopped it - a raise sent or seen meanwhile means the answer was about a
+     * record that no longer exists, and nothing is withdrawn.
+     */
+    const latest = this.requireProposal(proposalId, viewingKey);
+    if (held !== 'present') {
+      if (this.sending.has(aRaiseOf(proposalId))) throw new Error(RAISE_ON_ITS_WAY);
+      if (latest.txRef !== proposal.txRef || (latest.raisedAt && !proposal.raisedAt)) {
+        throw new Error(
+          'this proposal was sent to the chain while it was being withdrawn, so it is not withdrawn here: it may '
+          + 'still arrive, and a record closed here would then sit beside an open proposal nothing here can '
+          + 'withdraw. Nothing was withdrawn. Try again, and the chain will be asked again.');
+      }
+    }
+    latest.status = 'cancelled';
     /*
      * The local record must not keep claiming approvals for a round that is
      * dead — nothing may be re-derived from them, and a re-proposal takes a
@@ -3295,9 +3528,9 @@ export class AccountService {
      * stays; the sentence was not, because a round reading it could add
      * ceremony around `cancel` that nothing requires.**
      */
-    proposal.approvals = [];
-    this.putProposal(proposal, viewingKey);
-    return proposal;
+    latest.approvals = [];
+    this.putProposal(latest, viewingKey);
+    return latest;
   }
 
   /* ---------------- helpers ---------------- */
@@ -3725,37 +3958,71 @@ export class AccountService {
     call: (() => Promise<{ ref: string; at: string }>) | typeof THE_DEVICE_SENDS,
   ): Promise<void> {
     /*
-     * **AND BEFORE EITHER HALF, A ROUND THAT MOVES MONEY IS ASKED WHETHER ITS
-     * VAULT CAN PAY IT.** Every call has to say which it is: a round that moves
-     * no money says so, and a round that pays says who, in what and how much. A
-     * door that labels a paying round as moving no money is not caught here;
-     * what holds that today is that only a run names a vault. The payments are
-     * checked against the asset's own row, then the vault is read from the
-     * chain. A refusal writes nothing and spends nothing, because the record has
-     * not been written and the chain has not been called.
+     * **THE PROPOSAL IS HELD FROM HERE UNTIL THIS RAISE ANSWERS.** A proposal
+     * raised again is a record that already exists, and everything below
+     * awaits: the vault check, and from here the chain. While it is held no
+     * withdrawal can close the record locally, and a second raise or send of it
+     * is refused as having sent nothing.
      */
-    if (pays !== MOVES_NO_MONEY) {
-      if (pays.asset === NO_ASSET) {
-        throw new Error(
-          'a round that pays somebody has to name the asset it pays in, and this one names none. '
-          + 'Nothing was raised and no fee was spent.');
+    const release = this.holdTheSend(aRaiseOf(proposal.id), 'this proposal');
+    try {
+      /*
+       * **AND BEFORE EITHER HALF, A ROUND THAT MOVES MONEY IS ASKED WHETHER ITS
+       * VAULT CAN PAY IT.** Every call has to say which it is: a round that moves
+       * no money says so, and a round that pays says who, in what and how much. A
+       * door that labels a paying round as moving no money is not caught here;
+       * what holds that today is that only a run names a vault. The payments are
+       * checked against the asset's own row, then the vault is read from the
+       * chain. A refusal writes nothing and spends nothing, because the record has
+       * not been written and the chain has not been called.
+       */
+      if (pays !== MOVES_NO_MONEY) {
+        if (pays.asset === NO_ASSET) {
+          throw new Error(
+            'a round that pays somebody has to name the asset it pays in, and this one names none. '
+            + 'Nothing was raised and no fee was spent.');
+        }
+        await refuseWhatTheVaultCannotPay(this.holdings, {
+          vault: pays.vault, asset: this.assets.require(pays.asset), total: pays.total,
+          payees: pays.payees, payments: pays.payments,
+        });
       }
-      await refuseWhatTheVaultCannotPay(this.holdings, {
-        vault: pays.vault, asset: this.assets.require(pays.asset), total: pays.total,
-        payees: pays.payees, payments: pays.payments,
-      });
+      /*
+       * **A RECORD THAT ALREADY EXISTS IS WRITTEN AS IT IS NOW, AND ONLY IF IT
+       * IS STILL OPEN.** A withdrawal can have closed it before the hold above
+       * was taken; raising it again then would reopen a proposal a signer was
+       * told is withdrawn.
+       */
+      let written = proposal;
+      if (this.store.getProposal(proposal.id)) {
+        written = this.requireProposal(proposal.id, viewingKey);
+        if (written.status !== 'open') {
+          throw new Error(
+            `this proposal is ${written.status} now, so it was not raised again. Nothing was raised and no fee `
+            + 'was spent.');
+        }
+      }
+      this.putProposal(written, viewingKey);
+      /*
+       * **A PROPOSAL A DEVICE SENDS STOPS HERE, WITH ITS RECORD WRITTEN AND NOTHING
+       * SENT** - the same state a raise is in when its chain call throws, and it
+       * is recovered the same way: `approve` and `cancel` ask the chain first.
+       */
+      if (call === THE_DEVICE_SENDS) return;
+      /*
+       * **THE CONFIRMATION IS WRITTEN ONTO THE RECORD AS IT IS WHEN THE CALL
+       * ANSWERS**, so nothing another request wrote meanwhile is put back.
+       */
+      const tx = await call();
+      const latest = this.requireProposal(proposal.id, viewingKey);
+      latest.txRef = tx.ref;
+      latest.raisedAt = tx.at;
+      this.putProposal(latest, viewingKey);
+      proposal.txRef = latest.txRef;
+      proposal.raisedAt = latest.raisedAt;
+    } finally {
+      release();
     }
-    this.putProposal(proposal, viewingKey);
-    /*
-     * **A PROPOSAL A DEVICE SENDS STOPS HERE, WITH ITS RECORD WRITTEN AND NOTHING
-     * SENT** - the same state a raise is in when its chain call throws, and it
-     * is recovered the same way: `approve` and `cancel` ask the chain first.
-     */
-    if (call === THE_DEVICE_SENDS) return;
-    const tx = await call();
-    proposal.txRef = tx.ref;
-    proposal.raisedAt = tx.at;
-    this.putProposal(proposal, viewingKey);
   }
 
   /**
@@ -4201,6 +4468,16 @@ export function approvalMessage(proposal: { digest: Hex; chainId: Hex }): string
  * citations into it. This file's own citations end above the class.
  */
 export const REFUSED_APPROVALS_KEPT = 20;
+
+/** What a withdrawal says while the proposal's raise is on its way to the chain. */
+const RAISE_ON_ITS_WAY =
+  'this proposal is being sent to the chain right now, so it is not withdrawn: if that send lands, a record '
+  + 'closed here would sit beside an open proposal on chain that nothing here can withdraw. Nothing was '
+  + 'withdrawn. Try again once the send has answered.';
+/** What a device's send is told when the proposal is not one to send, said once for every place that asks. */
+const notSentBecauseItIs = (status: string) =>
+  `this proposal is ${status}, so it is not sent to the chain. Nothing was sent.`;
+const THE_CHAIN_ALREADY_HOLDS_IT = 'the chain already holds this proposal, so it is not sent again. Nothing was sent.';
 
 /**
  * **WHAT `cancel` SAYS WHEN THE LEDGER WOULD NOT ANSWER.** `C378`, `S55`,
