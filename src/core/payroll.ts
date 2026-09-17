@@ -3481,6 +3481,41 @@ export class PayrollService {
   }
 
   /**
+   * **WHAT A VAULT IS HANDED TO PAY ONE LEG, BESIDE EACH PAYEE'S OWN VALUES.**
+   *
+   * The vault recomputes the run's identity from the root, the count, the
+   * window and the salt, folds in its own address, and asks the account whether
+   * that round is approved. Every one of those is read off the leg's own record
+   * and the run it was raised as - never off the roster and never off the
+   * request - so a payment is built against exactly what the signers approved.
+   *
+   * `null` for a leg with no material, or one the chain was never asked to open:
+   * a round with no raise has no identity a vault could present.
+   */
+  privatePaymentOrderOf(runId: string, viewingKey: Hex, asset?: AssetId): {
+    asset: AssetId; vault: Hex; proposal: Hex; salt: Hex;
+    root: Hex; payees: bigint; opensAt: bigint; closesAt: bigint;
+  } | null {
+    const run = this.requireRun(runId, viewingKey);
+    const leg = raisedLegOf(run, asset);
+    const payout = leg ? run.payout?.[leg] : undefined;
+    const proposalId = leg ? run.proposalIds[leg] : undefined;
+    if (!leg || !payout || !proposalId) return null;
+    const raised = this.accounts.requireProposal(proposalId, viewingKey);
+    if (!raised.raisedAt) return null;
+    return {
+      asset: leg,
+      vault: payout.vault,
+      proposal: raised.chainId,
+      salt: this.accounts.runSaltOf(proposalId, viewingKey),
+      root: payout.root,
+      payees: payout.payees,
+      opensAt: payout.opensAt,
+      closesAt: payout.closesAt,
+    };
+  }
+
+  /**
    * **WHAT ONE LEG OF A RUN WAS RAISED AGAINST, READ BACK OFF THE RECORD.**
    *
    * A payment view is built against a run's payout LEAVES and the window its

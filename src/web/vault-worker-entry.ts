@@ -10,8 +10,13 @@
  * fetches the vault's public proving material from this application's own
  * origin and sends nothing anywhere.
  */
-import { buildCommitteeHandover, buildDeposit, buildVaultDeploy, type VaultBuilderDeps } from './vault-builder.js';
-import { httpKeyMaterialSource, IndexedDbArtefactCache, type ArtefactSource } from './key-material.js';
+import {
+  buildCommitteeHandover, buildDeposit, buildPayout, buildVaultDeploy, chooseNoteForPayment, confirmPayment,
+  poolAfterPayment,
+  type VaultBuilderDeps,
+} from './vault-builder.js';
+import { circuitOf, httpKeyMaterialSource, IndexedDbArtefactCache, type ArtefactSource } from './key-material.js';
+import { ACCOUNT_CIRCUITS_A_VAULT_CALLS } from '../midnight/vault-contract.js';
 import { zkConfigOver, byCircuitName } from './zk-config.js';
 import type { VaultAsk, VaultAnswer } from './vault-worker-client.js';
 
@@ -44,6 +49,22 @@ export const networkCircuitsBeside = (vault: ArtefactSource, network: ArtefactSo
   };
 };
 
+/**
+ * **A PAYMENT OUT ALSO PROVES THE COMPANY ACCOUNT'S `recordPayment`**, which the
+ * vault's `payout` calls inside the same transaction. Its material is served
+ * beside the vault's, and a location is sent there by the circuit it names:
+ * no vault circuit shares a name with one of the account's that a vault calls.
+ */
+export const accountCircuitsBeside = (vault: ArtefactSource, account: ArtefactSource): ArtefactSource => {
+  const which = (keyLocation: string) =>
+    (ACCOUNT_CIRCUITS_A_VAULT_CALLS.includes(circuitOf(keyLocation)) ? account : vault);
+  return {
+    lookupKey: (keyLocation) => which(keyLocation).lookupKey(keyLocation),
+    getParams: (k) => vault.getParams(k),
+    artefact: (kind, keyLocation) => which(keyLocation).artefact(kind, keyLocation),
+  };
+};
+
 /** Everything heavy, loaded the first time it is needed and kept. */
 const loadDeps = (scope: any) => {
   let loaded: Promise<Omit<VaultBuilderDeps, 'network'> & { vault: any }> | null = null;
@@ -62,7 +83,9 @@ const loadDeps = (scope: any) => {
         fetchImpl: scope.fetch.bind(scope),
       };
       const source = networkCircuitsBeside(
-        httpKeyMaterialSource(VAULT_ARTEFACT_BASE, options),
+        accountCircuitsBeside(
+          httpKeyMaterialSource(VAULT_ARTEFACT_BASE, options),
+          httpKeyMaterialSource(`${VAULT_ARTEFACT_BASE}/account`, options)),
         httpKeyMaterialSource(`${VAULT_ARTEFACT_BASE}/builtin/zswap/9`, options));
       const prover = await proving.wasmProofProvider(source);
       const CompiledContract = (compactJs as any).CompiledContract;
@@ -78,6 +101,9 @@ const loadDeps = (scope: any) => {
         runtimeState: (runtime as any).ContractState,
         contracts: contracts as any,
         compiled,
+        /* A payment out is the one transaction built here that spends a note, and it hands in the one it chose. */
+        compiledWith: (witnesses: unknown) => CompiledContract.make('Vault', (vault as any).Contract).pipe(
+          CompiledContract.withWitnesses(witnesses)),
         zkConfig: zkConfigOver(source, byCircuitName),
         prove: async (unproven: any, circuit?: string) =>
           (await (prover as any).proveTx(unproven, circuit === undefined ? undefined : { circuitId: circuit })) as { serialize(): Uint8Array },
@@ -115,6 +141,36 @@ export const answerVaultAsk = async (
         state: fromBase64(ask.state),
       });
       return { id: ask.id, ok: true, ask: 'deposit', tx: toBase64(built.proven) };
+    }
+    case 'choose-note': {
+      const note = chooseNoteForPayment({ notes: ask.notes, token: ask.token, amount: ask.amount });
+      return { id: ask.id, ok: true, ask: 'choose-note', note };
+    }
+    case 'after-payment': {
+      const notes = poolAfterPayment({
+        notes: ask.notes, spent: ask.spent, amount: ask.amount, change: ask.change, createdIn: ask.createdIn,
+      });
+      return { id: ask.id, ok: true, ask: 'after-payment', notes };
+    }
+    case 'confirm-payment': {
+      const confirmation = await confirmPayment({
+        vault: ask.vault, transactionHash: ask.transactionHash, change: ask.change, events: ask.events,
+      });
+      return { id: ask.id, ok: true, ask: 'confirm-payment', confirmation };
+    }
+    case 'payout': {
+      const built = await buildPayout(withNetwork, {
+        vault: ask.vault, account: ask.account, order: ask.order, payment: ask.payment,
+        note: ask.note, events: ask.events,
+        chain: {
+          blockHash: ask.chain.blockHash,
+          vaultState: fromBase64(ask.chain.vaultState),
+          zswapState: fromBase64(ask.chain.zswapState),
+          parameters: fromBase64(ask.chain.parameters),
+          accountState: fromBase64(ask.chain.accountState),
+        },
+      });
+      return { id: ask.id, ok: true, ask: 'payout', tx: toBase64(built.proven), spent: built.spent, change: built.change };
     }
     case 'commitments': {
       /* The two commitments a coin has: as an output the ledger records, and as the note the vault holds. */

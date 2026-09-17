@@ -115,7 +115,17 @@ export interface VaultPayment {
  * that stops a pool being advanced by a payment that never touched one.
  */
 export type VaultPaid =
-  | (TxRef & { kind: 'shielded'; spentNote: Hex })
+  | (TxRef & {
+    kind: 'shielded';
+    spentNote: Hex;
+    /**
+     * **WHERE THE CHANGE NOTE'S TRANSACTION WAS RECORDED FROM**, exactly as a
+     * deposit says it for the note it made. Present when the payment left a
+     * change note; `'nowhere'` is the one answer a person has to act on,
+     * because that note cannot be spent until its transaction is named.
+     */
+    change?: Omit<VaultDeposited, 'ref' | 'at'>;
+  })
   | (TxRef & { kind: 'unshielded' });
 
 /**
@@ -1803,10 +1813,25 @@ export class VaultLedger {
      * it as unused makes this ordering the unrecoverable one without touching a
      * line of it.
      */
+    /*
+     * **THE CHANGE NOTE'S TRANSACTION IS SETTLED THE WAY A DEPOSIT'S IS: FROM THE
+     * CALL, OR FROM THE CHAIN BY THE IDENTIFIER THE CALL DID REPORT.** Before
+     * the one pool write, so the window before it stays local. A change note
+     * recorded without its transaction is the vault's money and cannot be spent,
+     * and a run judged to fit would stop at the payment that needs it; so when
+     * nothing can be recorded the answer says so, rather than reading as a
+     * payment that kept its change.
+     */
+    const recorded = kept === undefined
+      ? undefined
+      : await this.creatingTransactionOf(result, events, kept, vaultAddress);
     await this.advancePool(vaultAddress, 'the payment\'s change note', (now) => afterPayment(
       { notes: now.notes.map(({ index: _readAtTheSpend, ...note }) => note) },
-      spent, p.amount, kept, VaultLedger.createdInOf(result)));
-    return { ...this.txRef(result, by), kind: 'shielded', spentNote: spent };
+      spent, p.amount, kept, recorded?.createdIn));
+    return {
+      ...this.txRef(result, by), kind: 'shielded', spentNote: spent,
+      ...(recorded === undefined ? {} : { change: recorded }),
+    };
   }
 
   /**

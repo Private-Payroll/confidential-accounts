@@ -1,8 +1,8 @@
 /**
- * **CREATING A COMPANY'S VAULT, OPENING ITS POOL, AND PUTTING MONEY IN IT,
- * FROM A SIGNER'S OWN DEVICE.**
+ * **CREATING A COMPANY'S VAULT, OPENING ITS POOL, PUTTING MONEY IN IT AND
+ * PAYING SOMEBODY OUT OF IT, FROM A SIGNER'S OWN DEVICE.**
  *
- * Each of the three is one operation a person starts with one press. Everything
+ * Each of the four is one operation a person starts with one press. Everything
  * it touches is handed in, so the same order runs in a test against the ledger's
  * own objects.
  *
@@ -30,12 +30,27 @@
  * built and proved here; the person's own wallet adds the coin and signs; the
  * service adds the network fee and sends it. The vault's note pool records the
  * new note only once the chain holds it, with the transaction that made it.
+ *
+ * ── A PRIVATE PAYMENT OUT ──
+ *
+ * The pool is opened here, with this signer's own key, and the note to spend is
+ * chosen here; nothing that opens a note leaves this device. The note's place
+ * in the chain's commitment tree is read from the events of the transaction
+ * that created it; the payment is written into the vault's payment journal
+ * BEFORE anything is proved; the payment is built and proved here against one
+ * block's view of the vault and the account; the service adds the network fee
+ * and sends it; and the pool is advanced - the note gone, its change added with
+ * the transaction that made it - only once the chain shows both.
  */
 import type { Hex } from '../core/crypto.js';
 import type { Committee } from '../midnight/vault-committee.js';
 import type { DepositMoney } from '../midnight/deposit-nonce.js';
 import { SealedNotePool, isALostPoolRace, type PoolSigner } from '../midnight/vault-pool.js';
 import { afterDeposit } from '../midnight/vault-note-deposit.js';
+import type { Note } from '../midnight/vault-notes.js';
+import { PaymentJournalInStore } from '../midnight/vault-journal.js';
+import type { PrivatePaymentOnTheWire, PrivatePaymentOrderOnTheWire } from '../midnight/private-payment-wire.js';
+import type { EventOnTheWire, NoteOnTheWire } from './vault-builder.js';
 import type { NonceSecretReader } from '../midnight/company-nonce-secret.js';
 import {
   depositCoinOnThisDevice, startVaultNonceSecretOnThisDevice,
@@ -82,6 +97,14 @@ export interface VaultService {
   handover(vault: Hex, tx: string): Promise<{ txRef: string }>;
   chain(vault: Hex): Promise<VaultChainView>;
   deposit(vault: Hex, tx: string): Promise<{ txRef: string; transactionHash: string | null }>;
+  /** One block's view of the vault and the company's account, for a payment out to be built on. */
+  payoutState(vault: Hex): Promise<{
+    vault: Hex; account: Hex; blockHash: string;
+    vaultState: string; zswapState: string; parameters: string; accountState: string;
+  }>;
+  /** The chain's events for one transaction. */
+  events(vault: Hex, transactionHash: string): Promise<{ events: EventOnTheWire[] }>;
+  payout(vault: Hex, tx: string): Promise<{ txRef: string; transactionHash: string | null }>;
 }
 
 /** Where this device keeps a vault's temporary key until the handover has landed. */
@@ -95,7 +118,9 @@ export type VaultStage =
   | 'checking the committee' | 'building the vault' | 'sending the vault'
   | 'waiting for the chain' | 'handing the vault to the committee' | 'waiting for the handover'
   | 'opening the pool' | 'choosing the coin' | 'building the deposit'
-  | 'asking your wallet' | 'sending the deposit' | 'recording the deposit' | 'done';
+  | 'asking your wallet' | 'sending the deposit' | 'recording the deposit'
+  | 'choosing the note' | 'reading the chain' | 'writing the payment down' | 'building the payment'
+  | 'sending the payment' | 'waiting for the payment' | 'recording the payment' | 'done';
 
 export interface Pacing {
   readonly sleep: (ms: number) => Promise<void>;
@@ -327,4 +352,225 @@ export async function depositIntoCompanyVault(
   }
   doors.progress?.('done');
   return { txRef: sent.txRef, transactionHash: sent.transactionHash, note };
+}
+
+/* ------------------------------------------------------------ a payment out */
+
+export interface PayoutDoors extends PoolDoors {
+  readonly builder: VaultBuilderClient;
+  readonly now?: () => Date;
+}
+
+/**
+ * **THE PAYMENT MAY HAVE BEEN SENT, AND THIS DEVICE HAS NOT SEEN IT LAND.** The
+ * money may have moved. Raised for every failure after the service began
+ * sending, whatever it was, so no screen reads it as a payment that did not
+ * happen.
+ */
+export class PaymentNotYetSeen extends Error {
+  constructor(readonly vault: Hex, readonly txRef: string, why?: string) {
+    super(`the payment may have been sent${txRef === '' ? '' : ` (${txRef})`} and this device has not seen it land`
+      + `${why === undefined ? '' : ` (${why})`}, so it may still land. This device has not changed the vault's `
+      + 'record for it and will not do so later; its payment journal names the note it spends. Do not pay this '
+      + 'person again: open the run later, and it shows them paid once the chain does. If it does, a payment that '
+      + 'would spend the same note is refused on this device until the vault\'s record is rebuilt from the '
+      + 'company\'s records.');
+    this.name = 'PaymentNotYetSeen';
+  }
+}
+
+/**
+ * **THE PAYMENT LANDED, AND THE VAULT'S RECORD WAS NOT WRITTEN.** The person is
+ * paid. A payment that would spend the same note is refused on this device until
+ * the vault's record is rebuilt from the company's records.
+ */
+export class PaymentLandedUnrecorded extends Error {
+  constructor(readonly vault: Hex, readonly transactionHash: string, why: string) {
+    super(`the payment landed (${transactionHash}) and the vault's record could not be written (${why}). The person `
+      + 'is paid: do not pay them again. A payment that would spend the same note is refused on this device until '
+      + 'the vault\'s record is rebuilt from the company\'s records.');
+    this.name = 'PaymentLandedUnrecorded';
+  }
+}
+
+/**
+ * **A TRANSACTION UNDER THIS PAYMENT'S NAME IS ON THE CHAIN, AND IT IS NOT THE
+ * PAYMENT THIS DEVICE BUILT.** Nothing is recorded from it, and waiting will not
+ * change what it says.
+ */
+export class PaymentNotAsBuilt extends Error {
+  constructor(readonly vault: Hex, readonly transactionHash: string, why: string) {
+    super(`the chain holds a transaction under this payment's name (${transactionHash}) that is not the payment this `
+      + `device built: ${why}. The vault's record is not changed. Do not pay this person again until the run shows `
+      + 'whether they were paid; the vault\'s record has to be rebuilt from the company\'s records before this device '
+      + 'spends that note.');
+    this.name = 'PaymentNotAsBuilt';
+  }
+}
+
+const HEX64 = /^[0-9a-f]{64}$/u;
+
+const wireOf = (n: Note): NoteOnTheWire => ({
+  nonce: n.nonce, token: n.token, value: n.value.toString(),
+  ...(n.createdIn === undefined ? {} : { createdIn: n.createdIn }),
+});
+type NoteAsHex = { readonly nonce: Hex; readonly token: Hex; readonly value: string; readonly createdIn?: Hex };
+const noteOf = (wire: NoteOnTheWire): Note => {
+  const n = wire as unknown as NoteAsHex;
+  return {
+    nonce: n.nonce, token: n.token, value: BigInt(n.value),
+    ...(n.createdIn === undefined ? {} : { createdIn: n.createdIn }),
+  };
+};
+
+/**
+ * **ONE PERSON PAID PRIVATELY OUT OF THE COMPANY'S VAULT, AGAINST A ROUND THE
+ * COMPANY APPROVED.** `order` and `payment` are what the service rebuilt from
+ * that round; everything that opens a note stays on this device.
+ *
+ * **THE POOL IS ADVANCED ONLY ON THIS PAYMENT'S OWN EVENTS.** Two payments out of
+ * one note for one amount make the same change coin, so what the vault holds
+ * cannot say which of them landed; the transaction the service sent can. The
+ * change is recorded under that transaction, and under nothing else.
+ */
+export async function payPrivatelyFromCompanyVault(
+  doors: PayoutDoors,
+  input: { readonly order: PrivatePaymentOrderOnTheWire; readonly payment: PrivatePaymentOnTheWire },
+): Promise<{ txRef: string; transactionHash: string; spent: Hex; change: NoteOnTheWire | null }> {
+  const { order, payment } = input;
+  const vault = order.vault.toLowerCase() as Hex;
+  if (payment.paid === true) {
+    throw new Error('the company\'s account already records this person paid for this run. Nothing was sent.');
+  }
+  const seconds = BigInt(Math.floor((doors.now ?? (() => new Date()))().getTime() / 1000));
+  if (seconds < BigInt(order.opensAt) || seconds >= BigInt(order.closesAt)) {
+    throw new Error('this run can be paid only inside the window its signers approved, and it is not open now. '
+      + 'Nothing was sent.');
+  }
+  doors.progress?.('opening the pool');
+  const view = await doors.service.chain(vault);
+  if (!view.onChain || view.heldByCommittee !== true) {
+    throw new Error('this service does not read this vault as held by the company\'s committee, so its record is not '
+      + `opened here and nothing is paid out of it. Nothing was sent.${view.why ? ` The service says: ${view.why}` : ''} `
+      + 'Where the cause is that a signer joined or left, or the threshold changed, since the vault was handed over, '
+      + 'its committee cannot be changed from this product yet, and no payment out of it is made until it can.');
+  }
+  const me = { signerId: doors.me.signerId, wrappingSecret: doors.me.wrappingSecret };
+  const pool = new SealedNotePool(doors.records('pool'), me, doors.signers);
+  const loaded = await pool.load(vault);
+
+  doors.progress?.('choosing the note');
+  const note = await doors.builder.chooseNote({
+    notes: loaded.notes.map(wireOf), token: payment.token, amount: payment.amount,
+  });
+  if (note.createdIn === undefined) {
+    throw new Error(`the vault's note that covers this payment does not record which transaction created it, so `
+      + 'its place in the chain cannot be read and it cannot be spent yet. It is still the vault\'s. Nothing was sent.');
+  }
+  const heldOf = async (n: NoteOnTheWire) => (await doors.builder.commitments({
+    vault, coin: { nonce: n.nonce, token: n.token, value: n.value },
+  })).held.toLowerCase();
+  /*
+   * **A NOTE THE CHAIN NO LONGER HOLDS IS NOT SPENT AGAIN.** It means a payment
+   * from it landed and this record does not show it yet - another device still
+   * writing it down, or a tab closed while it waited. The vault's own check
+   * would refuse the build anyway; stopping here says which case it is.
+   */
+  if (!new Set((view.notes ?? []).map((n) => n.toLowerCase())).has(await heldOf(note))) {
+    throw new Error('the chain no longer holds the note this vault\'s record would spend for this payment: a payment '
+      + 'from it has landed that this record does not show yet. Nothing was sent. If another signer is paying '
+      + 'from this vault right now, try again in a minute. Otherwise this payment, and any other that would '
+      + 'spend that note, waits until the vault\'s record is rebuilt from the company\'s records.');
+  }
+
+  doors.progress?.('reading the chain');
+  const { events } = await doors.service.events(vault, note.createdIn);
+  const chain = await doors.service.payoutState(vault);
+  if (chain.vault.toLowerCase() !== vault) {
+    throw new Error('the chain was read for a different vault, so nothing was built. Nothing was sent.');
+  }
+
+  /*
+   * **WRITTEN DOWN BEFORE ANYTHING IS PROVED, AND THIS MAY NOT MOVE BELOW THE
+   * SEND.** The note and the amount fix the whole of the change; a journal that
+   * refuses stops the payment with nothing spent.
+   */
+  doors.progress?.('writing the payment down');
+  const journal = new PaymentJournalInStore(doors.records('payment-journal'), vault,
+    { id: me.signerId, wrappingSecret: me.wrappingSecret }, doors.signers);
+  const spending = note as unknown as NoteAsHex;
+  await journal.record(vault, {
+    spent: { nonce: spending.nonce, token: spending.token, value: BigInt(spending.value) },
+    amount: BigInt(payment.amount),
+    attemptedAt: new Date().toISOString(),
+  });
+
+  doors.progress?.('building the payment');
+  const { payments: _all, ...round } = order;
+  const built = await doors.builder.payout({
+    vault, account: chain.account, order: round, payment, note, events,
+    chain: {
+      blockHash: chain.blockHash, vaultState: chain.vaultState, zswapState: chain.zswapState,
+      parameters: chain.parameters, accountState: chain.accountState,
+    },
+  });
+  if (built.spent !== note.nonce) {
+    throw new Error('the payment built spends a different note from the one chosen, so it was not sent. Nothing was sent.');
+  }
+
+  doors.progress?.('sending the payment');
+  let sent: { txRef: string; transactionHash: string | null };
+  try {
+    sent = await doors.service.payout(vault, built.tx);
+  } catch (e) {
+    if (sentNothing(e)) throw e;
+    throw new PaymentNotYetSeen(vault, '', (e as Error)?.message ?? String(e));
+  }
+
+  /* ---- from here the money may have moved, and every failure says so ---- */
+  try {
+    const hash = sent.transactionHash === null ? null : sent.transactionHash.toLowerCase();
+    if (hash === null || !HEX64.test(hash)) {
+      throw new PaymentNotYetSeen(vault, sent.txRef, 'the service could not name the transaction it sent');
+    }
+    doors.progress?.('waiting for the payment');
+    const confirmed = await until(doors, async () => {
+      let own: { events: EventOnTheWire[] };
+      try {
+        own = await doors.service.events(vault, hash);
+      } catch {
+        /* The indexer does not hold it yet, or could not be asked: ask again. */
+        return null;
+      }
+      const answer = await doors.builder.confirmPayment({ vault, transactionHash: hash, change: built.change, events: own.events });
+      return answer.state === 'not-yet' ? null : answer;
+    });
+    if (confirmed === null) throw new PaymentNotYetSeen(vault, sent.txRef);
+    if (confirmed.state === 'not-as-built') throw new PaymentNotAsBuilt(vault, hash, confirmed.why);
+    const createdIn = confirmed.createdIn;
+
+    doors.progress?.('recording the payment');
+    try {
+      const ATTEMPTS = 5;
+      for (let attempt = 1; ; attempt += 1) {
+        const now = await pool.load(vault);
+        const next = await doors.builder.afterPayment({
+          notes: now.notes.map(wireOf), spent: note.nonce, amount: payment.amount, change: built.change, createdIn,
+        });
+        try {
+          await pool.save(vault, { notes: next.map(noteOf) }, now.readAt);
+          break;
+        } catch (cause) {
+          if (!isALostPoolRace(cause) || attempt === ATTEMPTS) throw cause;
+        }
+      }
+    } catch (cause) {
+      throw new PaymentLandedUnrecorded(vault, createdIn, (cause as Error)?.message ?? String(cause));
+    }
+    doors.progress?.('done');
+    return { txRef: sent.txRef, transactionHash: createdIn, spent: note.nonce as Hex, change: built.change };
+  } catch (e) {
+    if (e instanceof PaymentNotYetSeen || e instanceof PaymentNotAsBuilt || e instanceof PaymentLandedUnrecorded) throw e;
+    throw new PaymentNotYetSeen(vault, sent.txRef, (e as Error)?.message ?? String(e));
+  }
 }

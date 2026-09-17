@@ -4,15 +4,39 @@
  * and receives proven bytes back.
  */
 import type { Committee } from '../midnight/vault-committee.js';
+import type { PrivatePaymentOnTheWire, PrivatePaymentOrderOnTheWire } from '../midnight/private-payment-wire.js';
+import type { EventOnTheWire, NoteOnTheWire, PaymentConfirmation } from './vault-builder.js';
 
 export interface SigningKeyOnTheWire { readonly tag: string; readonly value: string }
 export interface CoinOnTheWire { readonly nonce: string; readonly token: string; readonly value: string }
+/** One block's view of what a payment out is built on, every value base64 of its bytes. */
+export interface PayoutChainOnTheWire {
+  readonly blockHash: string;
+  readonly vaultState: string;
+  readonly zswapState: string;
+  readonly parameters: string;
+  readonly accountState: string;
+}
+export type OrderOnTheWire = Omit<PrivatePaymentOrderOnTheWire, 'payments'>;
 
 export type VaultAsk =
   | { id: number; network: string; ask: 'deploy'; account: string }
   | { id: number; network: string; ask: 'handover'; vault: string; counter: string; temporaryKey: SigningKeyOnTheWire; to: Committee }
   | { id: number; network: string; ask: 'deposit'; vault: string; coin: CoinOnTheWire; state: string }
-  | { id: number; network: string; ask: 'commitments'; vault: string; coin: CoinOnTheWire };
+  | { id: number; network: string; ask: 'commitments'; vault: string; coin: CoinOnTheWire }
+  | { id: number; network: string; ask: 'choose-note'; notes: readonly NoteOnTheWire[]; token: string; amount: string }
+  | {
+    id: number; network: string; ask: 'after-payment'; notes: readonly NoteOnTheWire[];
+    spent: string; amount: string; change: NoteOnTheWire | null; createdIn: string | null;
+  }
+  | {
+    id: number; network: string; ask: 'confirm-payment'; vault: string; transactionHash: string;
+    change: NoteOnTheWire | null; events: readonly EventOnTheWire[];
+  }
+  | {
+    id: number; network: string; ask: 'payout'; vault: string; account: string; order: OrderOnTheWire;
+    payment: PrivatePaymentOnTheWire; note: NoteOnTheWire; events: readonly EventOnTheWire[]; chain: PayoutChainOnTheWire;
+  };
 
 type Answered<A extends VaultAsk['ask'], T> = { id: number; ok: true; ask: A } & T;
 
@@ -21,6 +45,10 @@ export type VaultAnswer =
   | Answered<'handover', { tx: string }>
   | Answered<'deposit', { tx: string }>
   | Answered<'commitments', { output: string; held: string }>
+  | Answered<'choose-note', { note: NoteOnTheWire }>
+  | Answered<'after-payment', { notes: NoteOnTheWire[] }>
+  | Answered<'confirm-payment', { confirmation: PaymentConfirmation }>
+  | Answered<'payout', { tx: string; spent: string; change: NoteOnTheWire | null }>
   | { id: number; ok: false; error: string };
 
 type Without<T> = T extends unknown ? Omit<T, 'id' | 'network'> : never;
@@ -32,6 +60,18 @@ export interface VaultBuilderClient {
   handover(input: { vault: string; counter: bigint; temporaryKey: SigningKeyOnTheWire; to: Committee }): Promise<{ tx: string }>;
   deposit(input: { vault: string; coin: CoinOnTheWire; state: string }): Promise<{ tx: string }>;
   commitments(input: { vault: string; coin: CoinOnTheWire }): Promise<{ output: string; held: string }>;
+  chooseNote(input: { notes: readonly NoteOnTheWire[]; token: string; amount: string }): Promise<NoteOnTheWire>;
+  afterPayment(input: {
+    notes: readonly NoteOnTheWire[]; spent: string; amount: string; change: NoteOnTheWire | null; createdIn: string | null;
+  }): Promise<NoteOnTheWire[]>;
+  /** What this payment's own events say about it. */
+  confirmPayment(input: {
+    vault: string; transactionHash: string; change: NoteOnTheWire | null; events: readonly EventOnTheWire[];
+  }): Promise<PaymentConfirmation>;
+  payout(input: {
+    vault: string; account: string; order: OrderOnTheWire; payment: PrivatePaymentOnTheWire;
+    note: NoteOnTheWire; events: readonly EventOnTheWire[]; chain: PayoutChainOnTheWire;
+  }): Promise<{ tx: string; spent: string; change: NoteOnTheWire | null }>;
 }
 
 interface WorkerLike {
@@ -80,6 +120,13 @@ export function vaultBuilderOver(worker: WorkerLike, network: string): VaultBuil
     commitments: async (input) => {
       const a = await ask({ ask: 'commitments', ...input });
       return { output: a.output, held: a.held };
+    },
+    chooseNote: async (input) => (await ask({ ask: 'choose-note', ...input })).note,
+    afterPayment: async (input) => (await ask({ ask: 'after-payment', ...input })).notes,
+    confirmPayment: async (input) => (await ask({ ask: 'confirm-payment', ...input })).confirmation,
+    payout: async (input) => {
+      const a = await ask({ ask: 'payout', ...input });
+      return { tx: a.tx, spent: a.spent, change: a.change };
     },
   };
 }

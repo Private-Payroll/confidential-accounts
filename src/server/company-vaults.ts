@@ -18,6 +18,9 @@
  *   POST /api/accounts/:id/vaults/:vault/handover       that vault handed to the company's committee
  *   GET  /api/accounts/:id/vaults/:vault/chain          what the chain holds for one vault
  *   POST /api/accounts/:id/vaults/:vault/deposit        a deposit the depositor's wallet has paid for
+ *   GET  /api/accounts/:id/vaults/:vault/payout-state   the chain as one block saw it, for a payout to be built on
+ *   GET  /api/accounts/:id/vaults/:vault/events/:tx     what one transaction created, for a note's place to be read
+ *   POST /api/accounts/:id/vaults/:vault/payout         a private payment out of the vault
  *   GET  /api/accounts/:id/authority                    who holds the account's and every vault's rules
  *   POST /api/accounts/:id/authority/handover           the company account handed to the committee
  *
@@ -43,7 +46,7 @@ import {
   accountFundingRefusal, authorityView, everySignerNeeded, type ContractAuthorityView,
 } from '../midnight/company-authority.js';
 import {
-  circuitsRefusal, fundingRefusal, readVaultDeploy, refusalForDeposit, refusalForHandover,
+  circuitsRefusal, fundingRefusal, readVaultDeploy, refusalForDeposit, refusalForHandover, refusalForPayout,
   type VaultStartingLedger,
 } from '../wiring/vault-submission.js';
 
@@ -65,6 +68,33 @@ export interface VaultChain {
   startingLedgerOf(state: unknown): VaultStartingLedger;
   /** Every output the chain has ever created for the vault. */
   everCreated(vault: Hex): Promise<ReadonlySet<string>>;
+  /**
+   * **ONE BLOCK'S VIEW OF EVERYTHING A PRIVATE PAYMENT IS BUILT ON**: the vault's
+   * state, the chain's commitment tree and parameters as that block holds them,
+   * and the account's state at the same block, which the vault's call reads.
+   * Each value is its bytes. Absent where this deployment reads no chain.
+   */
+  payoutState?(vault: Hex, account: Hex): Promise<PayoutState | null>;
+  /**
+   * **WHAT ONE TRANSACTION CREATED**, as the chain's own events say: the only
+   * place a note's position in the commitment tree is read from.
+   */
+  eventsOf?(transactionHash: Hex): Promise<readonly ServedEventOnTheWire[]>;
+}
+
+/** The chain as one block saw it, for a private payment to be built on. Every value is the bytes, as base64. */
+export interface PayoutState {
+  readonly blockHash: string;
+  readonly vaultState: string;
+  readonly zswapState: string;
+  readonly parameters: string;
+  readonly accountState: string;
+}
+
+/** One zswap event of one transaction, with its position as a decimal string. */
+export interface ServedEventOnTheWire {
+  readonly transactionHash: string;
+  readonly details: { readonly tag: string; readonly commitment?: string; readonly contract?: string; readonly mtIndex?: string };
 }
 
 export interface CompanyVaultDeps {
@@ -282,7 +312,7 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
     }
     try {
       return await deps.ledger.sendVault(accountId, what, arrival, bytes, check,
-        arrival === 'proven-moving-nothing' ? deps.readers.proven : deps.readers.finished);
+        arrival === 'finished-by-the-depositor' ? deps.readers.finished : deps.readers.proven);
     } catch (e: unknown) {
       const nothing = saysNothingWasSent(e);
       res.status(nothing ? 422 : 502).json({
@@ -482,6 +512,101 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
     }
     const sent = await send(res, account.id, 'a deposit into a vault', 'finished-by-the-depositor', bytes,
       (tx) => refusalForDeposit(tx, { vault: record.vault }));
+    if (sent === null) return;
+    res.json({ txRef: sent.ref, transactionHash: sent.transactionHash });
+  });
+
+  /* ---- a private payment out ---- */
+
+  /*
+   * **WHAT A PAYMENT OUT IS BUILT ON, AND NOTHING THAT OPENS A NOTE.** The
+   * device holds the pool and chooses the note; this answers only what the
+   * chain holds, all of it read at one block, so the vault's call and the
+   * account's answer to it are built on the same moment.
+   */
+  r.get('/api/accounts/:id/vaults/:vault/payout-state', ...guard, async (req, res) => {
+    const record = theVault(req, res);
+    if (record === null) return;
+    const company = await deps.company(record.accountId);
+    if (company === null) {
+      res.status(409).json({ error: 'this company has no contract on the chain this service can read, so nothing can be paid out.' });
+      return;
+    }
+    if (deps.chain.payoutState === undefined) {
+      res.status(503).json({ error: 'this deployment reads no chain, so nothing can be paid out.' });
+      return;
+    }
+    try {
+      const state = await deps.chain.payoutState(record.vault, company.address);
+      if (state === null) {
+        res.status(409).json({ error: 'the chain does not hold this vault and this company\'s account at one block yet. Try again shortly.' });
+        return;
+      }
+      res.json({ vault: record.vault, account: company.address, ...state });
+    } catch (e) {
+      res.status(503).json({ error: `the chain could not be read for this payment: ${(e as Error)?.message ?? e}` });
+    }
+  });
+
+  r.get('/api/accounts/:id/vaults/:vault/events/:tx', ...guard, async (req, res) => {
+    const record = theVault(req, res);
+    if (record === null) return;
+    const tx = fold(String(req.params.tx));
+    if (!HEX64.test(tx)) {
+      res.status(400).json({ error: 'a transaction is named by its hash, sixty-four hex characters.' });
+      return;
+    }
+    if (deps.chain.eventsOf === undefined) {
+      res.status(503).json({ error: 'this deployment reads no chain.' });
+      return;
+    }
+    try {
+      res.json({ events: await deps.chain.eventsOf(tx as Hex) });
+    } catch (e) {
+      /* The reader's own name travels, because "not yet" and "never" are different answers to a person waiting. */
+      res.status(503).json({ error: (e as Error)?.message ?? String(e), kind: (e as Error)?.name ?? 'Error' });
+    }
+  });
+
+  /*
+   * **THE FEE ON A PRIVATE PAYMENT OUT, AND NOTHING ELSE.** Whether the company
+   * approved it, whether its window is open and whether this person was already
+   * paid are the account's to decide inside the same transaction; what is read
+   * here is that it moves only this vault's own money, to one person, and needs
+   * nothing from the fee payer but DUST.
+   *
+   * **AND ONLY OUT OF A VAULT THIS SERVICE CAN VOUCH FOR, READ FROM THE CHAIN
+   * NOW** - the same answer a device waits on before it opens the vault's
+   * record: held by the company's committee, changed once, running this build's
+   * circuits, pinned to this company's account. A vault whose rules somebody
+   * else changed may pay out by rules this service never compiled, and this
+   * service does not pay the fee for that. The funding rules for money going in
+   * are asked exactly as they are above and are not changed.
+   */
+  r.post('/api/accounts/:id/vaults/:vault/payout', ...guard, async (req, res) => {
+    const record = theVault(req, res);
+    if (record === null) return;
+    const bytes = txFrom(req, res);
+    if (bytes === null) return;
+    const account = accountOf(req);
+    const { company, committee, why } = await committeeNow(account);
+    if (company === null || committee === null) {
+      res.status(409).json({ nothingWasSent: true, error: `${why} Nothing was sent.` });
+      return;
+    }
+    const unvouched = await whyNotFunded(record.vault, await authorityOf(record.vault), committee, company.address, undefined, null);
+    if (unvouched !== null) {
+      res.status(409).json({
+        nothingWasSent: true,
+        error: 'this service pays no fee for a payment out of a vault it cannot vouch for as held by the company\'s '
+          + `committee. What it found: ${unvouched.why} Where the cause is that a signer joined or left, or the `
+          + 'threshold changed, since the vault was handed over, its committee cannot be changed from this product '
+          + 'yet, and no payment out of it is paid for until it can.',
+      });
+      return;
+    }
+    const sent = await send(res, account.id, 'a private payment out of a vault', 'proven-moving-the-vaults-own-coins', bytes,
+      (tx) => refusalForPayout(tx, { vault: record.vault, account: company.address }));
     if (sent === null) return;
     res.json({ txRef: sent.ref, transactionHash: sent.transactionHash });
   });

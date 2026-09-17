@@ -13,7 +13,7 @@ import { VAULT_CIRCUITS } from '../midnight/vault-contract.js';
 import type { AuthorityRead, OnChainAuthority } from '../midnight/ledger.js';
 import {
   circuitsRefusal, fundingRefusal, heldKeyFundingRefusal, readVaultDeploy, refusalForDeposit, refusalForHandover,
-  startingLedgerFrom, type VaultStartingLedger,
+  refusalForPayout, startingLedgerFrom, type VaultStartingLedger,
 } from './vault-submission.js';
 
 /*
@@ -267,5 +267,106 @@ describe.skipIf(!KEYS_ON_DISK)('what the fee payer pays for on a vault [needs co
       expect(heldKeyFundingRefusal({ state: 'unreadable', address: vault, why: 'x' }, [], 'v')).toMatch(/could not be asked/);
       expect(heldKeyFundingRefusal(read({ committee: [vk(3), vk(4)], shape: 'committee' }), held, 'v')).toBeNull();
     });
+  });
+});
+
+/*
+ * **A PRIVATE PAYMENT OUT, AS THE FEE PAYER READS IT.** Shaped objects with the
+ * ledger's own field names; the same reader over a payment the device's own
+ * builder made, applied by the ledger's own state machine, is
+ * `contracts/test/a-company-vault-from-the-page.test.ts`.
+ */
+describe('A PRIVATE PAYMENT OUT OF THE VAULT', () => {
+  const VAULT = 'ab'.repeat(32);
+  const OTHER = 'ee'.repeat(32);
+  const shielded = (raw: string) => ({ tag: 'shielded', raw });
+  type Shape = {
+    actions?: unknown[]; intentExtra?: Record<string, unknown>;
+    guaranteed?: unknown; fallible?: unknown; imbalances?: (segment: number) => Map<unknown, bigint>; intents?: number;
+  };
+  const payout = (over: Shape = {}) => {
+    const actions = over.actions ?? [
+      { address: ACCOUNT, entryPoint: 'recordPayment' },
+      { address: VAULT, entryPoint: new TextEncoder().encode('payout') },
+    ];
+    const intent = { actions, ...(over.intentExtra ?? {}) };
+    return {
+      intents: new Map(Array.from({ length: over.intents ?? 1 }, (_, i) => [i + 1, intent])),
+      guaranteedOffer: 'guaranteed' in over ? over.guaranteed : {
+        inputs: [{ contractAddress: VAULT }],
+        outputs: [{ contractAddress: undefined }, { contractAddress: VAULT }],
+        transients: [],
+      },
+      fallibleOffer: 'fallible' in over ? over.fallible : undefined,
+      imbalances: over.imbalances ?? (() => new Map<unknown, bigint>([[{ tag: 'dust' }, -5n], [shielded('ab'), 0n]])),
+    };
+  };
+  const expect_ = { vault: VAULT, account: ACCOUNT };
+
+  it('is paid for when it spends one of this vault\'s coins into one person\'s, with the change back to the vault, and asks this company\'s account', () => {
+    expect(refusalForPayout(payout(), expect_)).toBeNull();
+    /* A payment that spends a note exactly has no change. RED WHEN: the change output is required. */
+    expect(refusalForPayout(payout({ guaranteed: { inputs: [{ contractAddress: VAULT }], outputs: [{}], transients: [] } }), expect_)).toBeNull();
+    /* The coins may sit in a fallible part. RED WHEN: only the guaranteed offer is read. */
+    expect(refusalForPayout(payout({
+      guaranteed: undefined,
+      fallible: new Map([[1, { inputs: [{ contractAddress: VAULT }], outputs: [{}, { contractAddress: VAULT }], transients: [] }]]),
+    }), expect_)).toBeNull();
+  });
+
+  it('REFUSES ANY CALL BUT THE VAULT\'S PAYOUT AND THIS COMPANY\'S APPROVAL OF IT', () => {
+    /* RED WHEN: the call set is not compared exactly. */
+    const refuse = /must call this vault's payout and this company's approval of it/;
+    expect(refusalForPayout(payout({ actions: [{ address: VAULT, entryPoint: 'payout' }] }), expect_)).toMatch(refuse);
+    expect(refusalForPayout(payout({ actions: [{ address: OTHER, entryPoint: 'recordPayment' }, { address: VAULT, entryPoint: 'payout' }] }), expect_)).toMatch(refuse);
+    expect(refusalForPayout(payout({ actions: [{ address: ACCOUNT, entryPoint: 'recordPayment' }, { address: OTHER, entryPoint: 'payout' }] }), expect_)).toMatch(refuse);
+    expect(refusalForPayout(payout({ actions: [{ address: ACCOUNT, entryPoint: 'recordPayment' }, { address: VAULT, entryPoint: 'splitNote' }] }), expect_)).toMatch(refuse);
+    expect(refusalForPayout(payout({ actions: [
+      { address: ACCOUNT, entryPoint: 'recordPayment' }, { address: VAULT, entryPoint: 'payout' }, { address: VAULT, entryPoint: 'payout' },
+    ] }), expect_)).toMatch(refuse);
+    expect(refusalForPayout(payout({ actions: [{ address: ACCOUNT, entryPoint: 'recordPayment' }, { address: VAULT, initialState: {} }] }), expect_))
+      .toMatch(/something other than call the vault and the account/);
+    expect(refusalForPayout(payout({ intents: 2 }), expect_)).toMatch(/exactly one set of actions/);
+    expect(refusalForPayout({ intents: new Map() }, expect_)).toMatch(/exactly one set of actions/);
+  });
+
+  it('REFUSES PUBLIC MONEY AND A FEE PAID FROM ELSEWHERE', () => {
+    /* RED WHEN: either offer check is removed. */
+    expect(refusalForPayout(payout({ intentExtra: { fallibleUnshieldedOffer: { inputs: [], outputs: [1] } } }), expect_)).toMatch(/moves public money/);
+    expect(refusalForPayout(payout({ intentExtra: { guaranteedUnshieldedOffer: { inputs: [1], outputs: [] } } }), expect_)).toMatch(/moves public money/);
+    expect(refusalForPayout(payout({ intentExtra: { dustActions: { spends: [1], registrations: [] } } }), expect_)).toMatch(/network fee from somewhere else/);
+  });
+
+  it('REFUSES A COIN THAT IS NOT THIS VAULT\'S, A SECOND COIN, A SECOND PERSON, CHANGE SENT ELSEWHERE, OR A COIN MADE AND SPENT', () => {
+    const offer = (o: Record<string, unknown>) => payout({ guaranteed: { inputs: [{ contractAddress: VAULT }], outputs: [{}], transients: [], ...o } });
+    /* RED WHEN: the input's owner is not compared - a person's own coin, or another contract's, would be spent under the company's fee. */
+    expect(refusalForPayout(offer({ inputs: [{ contractAddress: OTHER }] }), expect_)).toMatch(/exactly one coin, and that coin must be this vault's/);
+    expect(refusalForPayout(offer({ inputs: [{}] }), expect_)).toMatch(/exactly one coin, and that coin must be this vault's/);
+    expect(refusalForPayout(offer({ inputs: [{ contractAddress: VAULT }, { contractAddress: VAULT }] }), expect_)).toMatch(/exactly one coin/);
+    expect(refusalForPayout(offer({ inputs: [] }), expect_)).toMatch(/exactly one coin/);
+    /* RED WHEN: the person count is not checked. */
+    expect(refusalForPayout(offer({ outputs: [{}, {}] }), expect_)).toMatch(/pay exactly one person/);
+    expect(refusalForPayout(offer({ outputs: [{ contractAddress: VAULT }] }), expect_)).toMatch(/pay exactly one person/);
+    /* RED WHEN: a contract-owned output's owner is not compared. */
+    expect(refusalForPayout(offer({ outputs: [{}, { contractAddress: OTHER }] }), expect_)).toMatch(/may only go back to this vault/);
+    expect(refusalForPayout(offer({ outputs: [{}, { contractAddress: VAULT }, { contractAddress: VAULT }] }), expect_)).toMatch(/may only go back to this vault/);
+    expect(refusalForPayout(offer({ transients: [{}] }), expect_)).toMatch(/makes and spends a coin in one go/);
+    expect(refusalForPayout(payout({ guaranteed: undefined, fallible: [] }), expect_)).toMatch(/coins could not be read/);
+    expect(refusalForPayout(offer({ outputs: undefined }), expect_)).toMatch(/coins could not be read/);
+  });
+
+  it('REFUSES A PAYMENT THAT DOES NOT BALANCE IN ITS OWN MONEY, IN ANY PART, OR ONE THAT CANNOT BE ADDED UP', () => {
+    /* RED WHEN: the imbalance check is removed, reads only the guaranteed part, or treats DUST as the payment's own money. */
+    expect(refusalForPayout(payout({ imbalances: () => new Map([[shielded('ab'), 7n]]) }), expect_)).toMatch(/does not balance in its own money/);
+    expect(refusalForPayout(payout({ imbalances: () => new Map([[{ tag: 'unshielded', raw: '00' }, -1n]]) }), expect_)).toMatch(/does not balance/);
+    const fallibleOnly = (segment: number) => new Map([[shielded('ab'), segment === 1 ? 3n : 0n]]);
+    expect(refusalForPayout(payout({
+      guaranteed: undefined, imbalances: fallibleOnly,
+      fallible: new Map([[1, { inputs: [{ contractAddress: VAULT }], outputs: [{}], transients: [] }]]),
+    }), expect_)).toMatch(/does not balance/);
+    expect(refusalForPayout(payout({ imbalances: () => { throw new Error('unreadable'); } }), expect_)).toMatch(/could not be added up/);
+    const noSums = payout() as Record<string, unknown>;
+    delete noSums.imbalances;
+    expect(refusalForPayout(noSums, expect_)).toMatch(/could not be added up/);
   });
 });

@@ -548,6 +548,7 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
     // rule over nothing, and the refusal above says so rather than passing.
     expect(gated).toEqual([
       'contracts/test/a-company-vault-from-the-page.test.ts',
+      'contracts/test/a-private-payment-from-the-page.test.ts',
       'src/midnight/deferred-set.test.ts',
       'src/midnight/ledger.test.ts',
       'src/midnight/the-key-reaches-the-circuit.test.ts',
@@ -556,6 +557,7 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
     ]);
     expect(gatedOnKeys([VAULT_KEY_DIR])).toEqual([
       'contracts/test/a-company-vault-from-the-page.test.ts',
+      'contracts/test/a-private-payment-from-the-page.test.ts',
       'src/wiring/vault-submission.test.ts',
     ]);
     expect(keysCoverageProblem(WORKFLOW(), gated)).toBeNull();

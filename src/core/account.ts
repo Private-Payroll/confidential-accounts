@@ -3192,6 +3192,24 @@ export class AccountService {
   }
 
   /**
+   * **THE SALT A RAISED RUN'S IDENTITY WAS FOLDED WITH, OFF THE RUN ITSELF.**
+   *
+   * A vault is handed it when it pays, and recomputes the run's id from it
+   * beside the root and the window; a salt from anywhere else builds an id no
+   * signer approved. So it is read where `runProposalIdFrom` reads it, out of
+   * the proposal's own sealed payload, and from nowhere a caller could supply.
+   */
+  runSaltOf(proposalId: string, viewingKey: Hex): Hex {
+    const proposal = this.requireProposal(proposalId, viewingKey);
+    if (proposal.kind !== 'payroll') {
+      throw new Error('that round is not a payroll run, so no vault pays against it');
+    }
+    const { __change: change } = parseCanonical<{ __change: StateChange }>(
+      unseal(proposal.sealedPayload, viewingKey));
+    return change.salt;
+  }
+
+  /**
    * Both halves at once, for the callers that are about to write one back.
    *
    * `save` needs the stored record — for the pending signers and the key epoch,
