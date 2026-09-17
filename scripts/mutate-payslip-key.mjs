@@ -28,6 +28,8 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { measuredNothingBecause, openTheDoor, runSuiteHonestly, tail } from './mutation-door.mjs';
+
 const ROOT = process.cwd();
 const SUITES = [
   'src/core/company-address-source.test.ts',
@@ -215,14 +217,6 @@ const wanted = only ? new Set(only.split(',').map(Number)) : null;
 const reportAt = (process.argv.find(a => a.startsWith('--report=')) ?? '').slice(9)
   || join(ROOT, 'logs', 'REPORT-MUTATE-PAYSLIP-KEY.txt');
 
-mkdirSync(OUT, { recursive: true });
-
-/** The last twenty lines the child said, for a report a person reads. */
-const tail = (text, n = 20) => {
-  const ls = String(text ?? '').split('\n').map(l => l.trimEnd()).filter(l => l !== '');
-  return ls.length ? ls.slice(-n) : ['(the child printed nothing)'];
-};
-
 /**
  * Runs both suites and returns what the run actually COLLECTED, not what it
  * PARSED.
@@ -239,57 +233,7 @@ const tail = (text, n = 20) => {
  * it was the only record of the cause.
  */
 function runSuite(tag) {
-  const file = join(OUT, `${tag}.json`);
-  try { rmSync(file); } catch { /* first run */ }
-  let said = '';
-  try {
-    execFileSync('./node_modules/.bin/vitest',
-      ['run', ...SUITES, '--reporter=json', `--outputFile=${file}`],
-      { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
-  } catch (e) {
-    /* A failing suite exits non-zero, which is the ordinary case here. What
-     * changed is that the child's words are KEPT rather than dropped. */
-    said = [e?.stderr, e?.stdout].map(b => (b ? String(b) : '')).join('\n');
-  }
-  let json;
-  try { json = JSON.parse(readFileSync(file, 'utf8')); }
-  catch {
-    return {
-      ran: false, collected: 0, emptyFiles: [], byFile: [], titles: [],
-      failed: [], passed: 0, failures: 0, said,
-      why: 'vitest wrote no report this run could parse',
-    };
-  }
-  const suites = json.testResults ?? [];
-  const byFile = suites.flatMap(r => (r.assertionResults ?? []).map(a => ({
-    file: r.name ?? '(unnamed suite)', title: a.title, status: a.status,
-  })));
-  const emptyFiles = suites
-    .filter(r => (r.assertionResults ?? []).length === 0)
-    .map(r => r.name ?? '(unnamed suite)');
-  return {
-    ran: byFile.length > 0,
-    why: byFile.length > 0 ? ''
-      : `vitest wrote a report naming ${suites.length} suite file(s) and NOT ONE assertion`,
-    collected: byFile.length,
-    emptyFiles,
-    byFile,
-    said,
-    /*
-     * **A SKIPPED ASSERTION IS NOT ONE THAT RAN, AND `titles` IS WHAT CHECK 4
-     * ASKS.** `S56`'s test-coverage pass measured vitest 4.1.10: when a `beforeAll`
-     * throws, the file's assertions come back with `status: 'skipped'` and the
-     * run reports ZERO failures — so a named guard that never executed would
-     * have been present in `titles`, passed check 4, and scored SURVIVED. That
-     * is this door's own defect surviving through a route the four checks did
-     * not cover. Nothing in either corpus reaches it today; nothing kept it
-     * that way, so it is closed here rather than filed.
-     */
-    titles: byFile.filter(a => a.status !== 'skipped').map(a => a.title),
-    failed: byFile.filter(a => a.status === 'failed').map(a => a.title),
-    passed: byFile.filter(a => a.status === 'passed').length,
-    failures: byFile.filter(a => a.status === 'failed').length,
-  };
+  return runSuiteHonestly({ suites: SUITES, cwd: ROOT, outFile: join(OUT, `${tag}.json`) });
 }
 
 /*
@@ -351,230 +295,259 @@ function recoverFromLastRun(say) {
   say(`  ${held.path} has been put back before anything else was done.`);
   say("");
 }
-const lines = [];
-const say = (s = '') => { lines.push(s); console.log(s); };
+function main() {
+  mkdirSync(OUT, { recursive: true });
 
-say(`MUTATING THE ADDRESS PROVENANCE AND THE PAYSLIP KEY  —  ${new Date().toISOString()}`);
-for (const s of SUITES) say(`suite: ${s}`);
-say('');
+  const lines = [];
+  const say = (s = '') => { lines.push(s); console.log(s); };
 
-recoverFromLastRun(say);
-
-const clean = runSuite('baseline');
-if (!clean.ran) {
-  say('  THE SUITES DID NOT RUN AT ALL. Nothing below means anything.');
-  say(`  ${clean.why}.`);
-  say('  the last thing vitest said:');
-  for (const l of tail(clean.said)) say(`    ${l}`);
-  writeFileSync(reportAt, lines.join('\n') + '\n');
-  process.exit(1);
-}
-say(`baseline: ${clean.failures} failed | ${clean.passed} passed | ${clean.collected} collected`);
-if (clean.failures > 0) {
+  say(`MUTATING THE ADDRESS PROVENANCE AND THE PAYSLIP KEY  —  ${new Date().toISOString()}`);
+  for (const s of SUITES) say(`suite: ${s}`);
   say('');
-  say('  THE SUITE IS RED BEFORE ANY MUTATION. A mutation cannot be judged against');
-  say('  a suite that is already failing, so nothing was run.');
-  for (const t of clean.failed) say(`    - ${t}`);
-  writeFileSync(reportAt, lines.join('\n') + '\n');
-  process.exit(1);
-}
-say('');
 
-/*
- * **A `kills:` ENTRY IS MATCHED BY TITLE AND NOTHING ELSE**, so the moment two
- * suites carry the same title this harness can no longer say WHICH guard ran.
- * It held by naming luck until `S56` and now it names what enforces it —
- * rule 27. The reasoning is in `scripts/mutate-authority.mjs`; this is the same
- * guard, and it refuses before anything is mutated.
- */
-const named = new Set(MUTATIONS.flatMap(m => m.kills));
-const seenAt = new Map();
-for (const a of clean.byFile) {
-  if (!named.has(a.title)) continue;
-  if (!seenAt.has(a.title)) seenAt.set(a.title, []);
-  seenAt.get(a.title).push(a.file);
-}
-/*
- * **TWO CORRECTIONS FROM `S56`'s OWN money-safety pass, BOTH ITS OWN
- * SUBJECT.** The first version compared every title in the baseline, so a
- * duplicate in a file no `kills:` entry names would have stopped the whole
- * corpus for a reason unrelated to any of it. And it compared FILES — `files.size
- * > 1` — so two assertions with the same title in ONE file passed, while
- * `known.has(t)` and `result.failed.includes(t)` are exactly as ambiguous there.
- * It now counts OCCURRENCES of the titles a mutation actually names.
- */
-const collisions = [...seenAt].filter(([, files]) => files.length > 1);
-if (collisions.length) {
-  say('  TWO SUITES CARRY THE SAME ASSERTION TITLE, so a `kills:` entry cannot be');
-  say('  matched to a file and this harness cannot say which guard ran. Nothing');
-  say('  was mutated.');
-  for (const [title, files] of collisions) {
-    say(`    "${title}" — named by a mutation, and it appears ${files.length} times:`);
-    for (const f of files) say(`      ${f}`);
+  recoverFromLastRun(say);
+
+  const clean = runSuite('baseline');
+  if (!clean.ran) {
+    say('  THE SUITES DID NOT RUN AT ALL. Nothing below means anything.');
+    say(`  ${clean.why}.`);
+    say('  the last thing vitest said:');
+    for (const l of tail(clean.said)) say(`    ${l}`);
+    writeFileSync(reportAt, lines.join('\n') + '\n');
+    process.exit(1);
   }
-  writeFileSync(reportAt, lines.join('\n') + '\n');
-  process.exit(1);
-}
-
-const known = new Set(clean.titles);
-let survived = 0;
-let stale = 0;
-/*
- * **THE FOURTH OUTCOME, NAMED.** `stale` is a mutation that could not be
- * APPLIED; `notRun` is one that WAS applied and whose run measured nothing.
- * `T-285` is what one number for two states costs: this door reported
- * `0 survived, 1 not run` while the only check that a person's wallet words
- * never leave in an HTTP body had not run, and the number a reader took away
- * was the zero.
- */
-let notRun = 0;
-let aborted = false;
-
-for (const m of MUTATIONS) {
-  if (wanted && !wanted.has(m.id)) continue;
-  const path = join(ROOT, m.file);
-  const before = readFileSync(path, 'utf8');
-  const hits = before.split(m.from).length - 1;
-
-  say(`${String(m.id).padStart(2, '0')}  ${m.binding}`);
-  say(`    breaks: ${m.says}`);
-
-  if (hits === 0) {
-    say('    STALE MUTATION — that text is not in the file any more. NOT RUN.');
-    say(`      ${m.file}: ${m.from.trim()}`);
+  say(`baseline: ${clean.failures} failed | ${clean.passed} passed | ${clean.collected} collected`);
+  if (clean.failures > 0) {
     say('');
-    stale += 1;
-    continue;
+    say('  THE SUITE IS RED BEFORE ANY MUTATION. A mutation cannot be judged against');
+    say('  a suite that is already failing, so nothing was run.');
+    for (const t of clean.failed) say(`    - ${t}`);
+    writeFileSync(reportAt, lines.join('\n') + '\n');
+    process.exit(1);
   }
-  if (hits > 1) {
-    say(`    AMBIGUOUS TARGET — that text appears ${hits} times, so which copy was`);
-    say('    broken is unknown. NOT RUN.');
-    say('');
-    stale += 1;
-    continue;
-  }
-  const missing = m.kills.filter(t => !known.has(t));
-  if (missing.length) {
-    say('    STALE EXPECTATION — it names a test that is not in the suite:');
-    for (const t of missing) say(`      "${t}"`);
-    say('');
-    stale += 1;
-    continue;
-  }
-
-  beginMutation(path, before);
-  writeFileSync(path, before.replace(m.from, m.to));
-  let result;
-  try {
-    result = runSuite(`mutation-${m.id}`);
-  } finally {
-    endMutation(path, before);
-  }
+  say('');
 
   /*
-   * **THE FOUR WAYS A RUN CAN HAVE MEASURED NOTHING.** Written out in full in
-   * `scripts/mutate-authority.mjs`; this is the same guard, deliberately
-   * identical, so the two doors say the same thing about the same state.
+   * **A `kills:` ENTRY IS MATCHED BY TITLE AND NOTHING ELSE**, so the moment two
+   * suites carry the same title this harness can no longer say WHICH guard ran.
+   * It held by naming luck until `S56` and now it names what enforces it —
+   * rule 27. The reasoning is in `scripts/mutate-authority.mjs`; this is the same
+   * guard, and it refuses before anything is mutated.
    */
-  const collapsed = [];
-  if (!result.ran) collapsed.push(`${result.why}`);
-  if (result.collected < clean.collected) {
-    collapsed.push(`${result.collected} assertions collected where the baseline collected ${clean.collected}`);
+  const named = new Set(MUTATIONS.flatMap(m => m.kills));
+  const seenAt = new Map();
+  for (const a of clean.byFile) {
+    if (!named.has(a.title)) continue;
+    if (!seenAt.has(a.title)) seenAt.set(a.title, []);
+    seenAt.get(a.title).push(a.file);
   }
-  const wentQuiet = result.emptyFiles.filter(f => !clean.emptyFiles.includes(f));
-  if (wentQuiet.length) {
-    collapsed.push(`a suite file collected nothing that collected at the baseline: ${wentQuiet.join(', ')}`);
-  }
-  const silent = m.kills.filter(t => !result.titles.includes(t));
-  if (silent.length) {
-    collapsed.push(`the guard it names did not execute: ${silent.map(t => `"${t}"`).join(', ')}`);
+  /*
+   * **TWO CORRECTIONS FROM `S56`'s OWN money-safety pass, BOTH ITS OWN
+   * SUBJECT.** The first version compared every title in the baseline, so a
+   * duplicate in a file no `kills:` entry names would have stopped the whole
+   * corpus for a reason unrelated to any of it. And it compared FILES — `files.size
+   * > 1` — so two assertions with the same title in ONE file passed, while
+   * `known.has(t)` and `result.failed.includes(t)` are exactly as ambiguous there.
+   * It now counts OCCURRENCES of the titles a mutation actually names.
+   */
+  const collisions = [...seenAt].filter(([, files]) => files.length > 1);
+  if (collisions.length) {
+    say('  TWO SUITES CARRY THE SAME ASSERTION TITLE, so a `kills:` entry cannot be');
+    say('  matched to a file and this harness cannot say which guard ran. Nothing');
+    say('  was mutated.');
+    for (const [title, files] of collisions) {
+      say(`    "${title}" — named by a mutation, and it appears ${files.length} times:`);
+      for (const f of files) say(`      ${f}`);
+    }
+    writeFileSync(reportAt, lines.join('\n') + '\n');
+    process.exit(1);
   }
 
-  if (collapsed.length) {
-    say('    NOT RUN. The mutation was applied and the run measured NOTHING here.');
-    say('    This is not a survivor and it is not a kill: nothing executed, so the');
-    say('    entry says nothing about the binding in either direction.');
-    for (const c of collapsed) say(`      - ${c}`);
-    if (result.failed.length) {
-      /*
-       * **AND WHAT DID GO RED IS PRINTED, NOT DISCARDED.** `S56`'s
-       * test-coverage pass: when check 2, 3 or 4 fires because ONE file collapsed
-       * while a named guard in another genuinely died, *"nothing executed to
-       * say it"* is false and the list of tests that died was being thrown
-       * away — `T-295`'s shape, one branch over.
-       */
-      say(`    ${result.failed.length} test(s) DID go red under it, and they are evidence even`);
-      say('    though the run as a whole measured less than it should have:');
-      for (const t of result.failed) say(`      ${m.kills.includes(t) ? '✓' : '+'} ${t}`);
+  const known = new Set(clean.titles);
+  let survived = 0;
+  let stale = 0;
+  /*
+   * **THE FOURTH OUTCOME, NAMED.** `stale` is a mutation that could not be
+   * APPLIED; `notRun` is one that WAS applied and whose run measured nothing.
+   * `T-285` is what one number for two states costs: this door reported
+   * `0 survived, 1 not run` while the only check that a person's wallet words
+   * never leave in an HTTP body had not run, and the number a reader took away
+   * was the zero.
+   */
+  let notRun = 0;
+  let aborted = false;
+
+  for (const m of MUTATIONS) {
+    if (wanted && !wanted.has(m.id)) continue;
+    const path = join(ROOT, m.file);
+    const before = readFileSync(path, 'utf8');
+    const hits = before.split(m.from).length - 1;
+
+    say(`${String(m.id).padStart(2, '0')}  ${m.binding}`);
+    say(`    breaks: ${m.says}`);
+
+    if (hits === 0) {
+      say('    STALE MUTATION — that text is not in the file any more. NOT RUN.');
+      say(`      ${m.file}: ${m.from.trim()}`);
+      say('');
+      stale += 1;
+      continue;
     }
-    say('    the last thing vitest said, which is where the reason is:');
-    for (const l of tail(result.said)) say(`      ${l}`);
-    notRun += 1;
+    if (hits > 1) {
+      say(`    AMBIGUOUS TARGET — that text appears ${hits} times, so which copy was`);
+      say('    broken is unknown. NOT RUN.');
+      say('');
+      stale += 1;
+      continue;
+    }
+    const missing = m.kills.filter(t => !known.has(t));
+    if (missing.length) {
+      say('    STALE EXPECTATION — it names a test that is not in the suite:');
+      for (const t of missing) say(`      "${t}"`);
+      say('');
+      stale += 1;
+      continue;
+    }
+
+    beginMutation(path, before);
+    writeFileSync(path, before.replace(m.from, m.to));
+    let result;
+    try {
+      result = runSuite(`mutation-${m.id}`);
+    } finally {
+      endMutation(path, before);
+    }
+
     /*
-     * The tree is already restored by the `finally` above, so one more run says
-     * whether the fault was this mutation's or the tree's — and only the second
-     * kind will stop the next one too. `C293`'s abort, conditioned on a
-     * measurement rather than on an assumption; the argument on both sides is
-     * written out in `scripts/mutate-authority.mjs`.
+     * **THE FOUR WAYS A RUN CAN HAVE MEASURED NOTHING.** Written out in full in
+     * `scripts/mutate-authority.mjs`; this is the same guard, deliberately
+     * identical, so the two doors say the same thing about the same state.
      */
-    const recheck = runSuite(`recheck-${m.id}`);
-    if (!recheck.ran || recheck.collected < clean.collected) {
-      say('');
-      say('    AND THE TREE IS BACK AND THE SUITE STILL DOES NOT RUN, so whatever');
-      say('    stopped it will stop the next one too. ABORTING rather than scoring');
-      say('    nothing. C293.');
-      for (const l of tail(recheck.said)) say(`      ${l}`);
-      aborted = true;
-      say('');
-      break;
+    const collapsed = measuredNothingBecause({ result, baseline: clean, kills: m.kills });
+
+    if (collapsed.length) {
+      say('    NOT RUN. The mutation was applied and the run measured NOTHING here.');
+      say('    This is not a survivor and it is not a kill: nothing executed, so the');
+      say('    entry says nothing about the binding in either direction.');
+      /*
+       * UNLESS THE NAMED GUARDS DID RUN, in which case that last sentence is
+       * not true of this entry and saying it anyway is the kind of false line
+       * these harnesses exist to catch. Checks 2 and 3 fire on a collapse
+       * ANYWHERE in the run, which can happen while the guards this entry names
+       * executed normally. Nothing here is graded differently: no counter
+       * moves, the exit status is unchanged, and the outcome is still RAN AND
+       * MEASURED NOTHING. What changes is that the report stops claiming more
+       * than it knows.
+       */
+      if (m.kills.length && m.kills.every(k => result.titles.includes(k))) {
+        say('    EXCEPT THAT THE GUARD(S) THIS ENTRY NAMES DID EXECUTE, and');
+        say(`    ${result.failed.some(x => m.kills.includes(x)) ? 'at least one of them FAILED' : 'every one of them PASSED'}.`);
+        say('    So the collapse above is somewhere else in the run, and this');
+        say('    entry is worth reading rather than dismissing.');
+      }
+      for (const c of collapsed) say(`      - ${c}`);
+      if (result.failed.length) {
+        /*
+         * **AND WHAT DID GO RED IS PRINTED, NOT DISCARDED.** `S56`'s
+         * test-coverage pass: when check 2, 3 or 4 fires because ONE file collapsed
+         * while a named guard in another genuinely died, *"nothing executed to
+         * say it"* is false and the list of tests that died was being thrown
+         * away — `T-295`'s shape, one branch over.
+         */
+        say(`    ${result.failed.length} test(s) DID go red under it, and they are evidence even`);
+        say('    though the run as a whole measured less than it should have:');
+        for (const t of result.failed) say(`      ${m.kills.includes(t) ? '✓' : '+'} ${t}`);
+      }
+      say('    the last thing vitest said, which is where the reason is:');
+      for (const l of tail(result.said)) say(`      ${l}`);
+      notRun += 1;
+      /*
+       * The tree is already restored by the `finally` above, so one more run says
+       * whether the fault was this mutation's or the tree's — and only the second
+       * kind will stop the next one too. `C293`'s abort, conditioned on a
+       * measurement rather than on an assumption; the argument on both sides is
+       * written out in `scripts/mutate-authority.mjs`.
+       */
+      const recheck = runSuite(`recheck-${m.id}`);
+      if (!recheck.ran || recheck.collected < clean.collected) {
+        say('');
+        say('    AND THE TREE IS BACK AND THE SUITE STILL DOES NOT RUN, so whatever');
+        say('    stopped it will stop the next one too. ABORTING rather than scoring');
+        say('    nothing. C293.');
+        for (const l of tail(recheck.said)) say(`      ${l}`);
+        aborted = true;
+        say('');
+        break;
+      }
+      say(`    The restored tree runs (${recheck.collected} collected), so the collapse is`);
+      say('    this mutation\'s own doing and the entries after it still mean something.');
+    } else if (result.failures === 0) {
+      say('    SURVIVED. The code was broken and every test still passed —');
+      say('    nothing is watching this binding.');
+      survived += 1;
+    } else {
+      const named = m.kills.filter(t => result.failed.includes(t));
+      const extra = result.failed.filter(t => !m.kills.includes(t));
+      say(`    KILLED by ${result.failed.length} test${result.failed.length === 1 ? '' : 's'}:`);
+      for (const t of named) say(`      ✓ ${t}`);
+      for (const t of m.kills.filter(x => !named.includes(x))) {
+        say(`      ! EXPECTED TO DIE AND DID NOT: ${t}`);
+      }
+      for (const t of extra) say(`      + also: ${t}`);
+      if (named.length === 0) {
+        say('    NAMED NO TEST THAT ACTUALLY DIED. The mutation is killed, but by');
+        say('    something other than the assertion written for it — worth reading.');
+      }
     }
-    say(`    The restored tree runs (${recheck.collected} collected), so the collapse is`);
-    say('    this mutation\'s own doing and the entries after it still mean something.');
-  } else if (result.failures === 0) {
-    say('    SURVIVED. The code was broken and every test still passed —');
-    say('    nothing is watching this binding.');
-    survived += 1;
-  } else {
-    const named = m.kills.filter(t => result.failed.includes(t));
-    const extra = result.failed.filter(t => !m.kills.includes(t));
-    say(`    KILLED by ${result.failed.length} test${result.failed.length === 1 ? '' : 's'}:`);
-    for (const t of named) say(`      ✓ ${t}`);
-    for (const t of m.kills.filter(x => !named.includes(x))) {
-      say(`      ! EXPECTED TO DIE AND DID NOT: ${t}`);
-    }
-    for (const t of extra) say(`      + also: ${t}`);
-    if (named.length === 0) {
-      say('    NAMED NO TEST THAT ACTUALLY DIED. The mutation is killed, but by');
-      say('    something other than the assertion written for it — worth reading.');
-    }
+    say('');
+  }
+
+  say('-----------------------------------------------------------------------');
+  /*
+   * **THREE NUMBERS, THREE SENTENCES, NEVER ONE LINE.** `T-285`: the old summary
+   * put staleness in the same breath as survivors, and *survivor* is the word
+   * this door attaches "hole" to. `0 survived, 1 not run` therefore read as a
+   * procedural hiccup while `C312`'s guard — the one that says a wallet phrase
+   * never leaves in an HTTP body — had produced no evidence at all.
+   */
+  say(`${survived} SURVIVED — the code was broken and nothing noticed. A hole in the product.`);
+  say(`${stale} COULD NOT BE APPLIED — a mutation aimed at code that has moved. The`);
+  say('   binding it names has been unguarded since the day the code moved, and');
+  say('   that looks exactly like a passing check.');
+  say(`${notRun} RAN AND MEASURED NOTHING — the mutation went in and no assertion came`);
+  say('   back. This says nothing about the product in either direction.');
+  if (aborted) {
+    say('');
+    say('AND THE RUN STOPPED EARLY. Every entry after the last one above was never');
+    say('scored, and this report does not describe them.');
   }
   say('');
+  say(survived + stale + notRun === 0 && !aborted
+    ? 'Every binding has a test that notices when it is broken.'
+    : 'Read the entries above. THE THREE NUMBERS ARE THREE DIFFERENT FAILURES, and'
+      + ' only the first is about the product. The other two are about this door.');
+  writeFileSync(reportAt, lines.join('\n') + '\n');
+  console.log(`\nwritten to ${reportAt}`);
+  process.exit(survived + stale + notRun === 0 && !aborted ? 0 : 1);
 }
 
-say('-----------------------------------------------------------------------');
+
 /*
- * **THREE NUMBERS, THREE SENTENCES, NEVER ONE LINE.** `T-285`: the old summary
- * put staleness in the same breath as survivors, and *survivor* is the word
- * this door attaches "hole" to. `0 survived, 1 not run` therefore read as a
- * procedural hiccup while `C312`'s guard — the one that says a wallet phrase
- * never leaves in an HTTP body — had produced no evidence at all.
+ * THE CORPUS IS READABLE WITHOUT RUNNING ANYTHING, and it is exported HERE
+ * rather than on its declaration for a reason worth keeping: the module-graph
+ * scan reads `export` at column zero and runs to the first `from '...'` before a
+ * semicolon, and several of these entries hold the TEXT of an import as data. On
+ * the declaration it would put a module edge into a generated document for a
+ * dependency this file does not have. Measured: one, and it is gone.
  */
-say(`${survived} SURVIVED — the code was broken and nothing noticed. A hole in the product.`);
-say(`${stale} COULD NOT BE APPLIED — a mutation aimed at code that has moved. The`);
-say('   binding it names has been unguarded since the day the code moved, and');
-say('   that looks exactly like a passing check.');
-say(`${notRun} RAN AND MEASURED NOTHING — the mutation went in and no assertion came`);
-say('   back. This says nothing about the product in either direction.');
-if (aborted) {
-  say('');
-  say('AND THE RUN STOPPED EARLY. Every entry after the last one above was never');
-  say('scored, and this report does not describe them.');
-}
-say('');
-say(survived + stale + notRun === 0 && !aborted
-  ? 'Every binding has a test that notices when it is broken.'
-  : 'Read the entries above. THE THREE NUMBERS ARE THREE DIFFERENT FAILURES, and'
-    + ' only the first is about the product. The other two are about this door.');
-writeFileSync(reportAt, lines.join('\n') + '\n');
-console.log(`\nwritten to ${reportAt}`);
-process.exit(survived + stale + notRun === 0 && !aborted ? 0 : 1);
+export { MUTATIONS };
+
+/*
+ * ONE ENTRANCE, SHARED. `openTheDoor` answers three ways rather than two: node
+ * pointed at this file MUTATES; an import does nothing at all, so reading this
+ * harness's list of mutations costs a tree nothing; and an entrance that cannot
+ * be resolved REFUSES, because the alternative is exiting 0 having mutated
+ * nothing and measured nothing, which every script that invokes a harness reads
+ * as a clean run in which every binding was checked.
+ */
+if (openTheDoor(import.meta.url)) main();

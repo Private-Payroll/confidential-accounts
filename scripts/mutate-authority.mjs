@@ -70,7 +70,7 @@
  *
  * Usage:  node scripts/mutate-authority.mjs [--only=1,3] [--report=PATH]
  */
-import { execFileSync } from 'node:child_process'; import { createHash } from 'node:crypto'; import { fileURLToPath } from 'node:url'; // THREE ON ONE LINE ON PURPOSE — see `RUN_AS_DOOR` below. Do not split them.
+import { createHash } from 'node:crypto'; import { measuredNothingBecause, openTheDoor, runSuiteHonestly, scoreKills, tail } from './mutation-door.mjs'; // TWO ON ONE LINE ON PURPOSE — the generated document set pins a call site below by LINE NUMBER. Do not split them.
 import { readFileSync, writeFileSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 
@@ -113,7 +113,7 @@ export const SUITES = [
   'contracts/test/what-a-signer-is.test.ts',
   /* The invite path's ordering and its leaf, out of the screen so a test can
    * drive them. */
-  'src/web/accept-seat.test.ts', 'src/core/core.test.ts', 'src/midnight/ledger.test.ts', // EIGHTH — S67, T-286. NINTH — S74, T-358: the maintenance boundary, tier 2 of the money-path set, which this corpus targeted at no entry at all. Both line-neutral on purpose: `edges.json` pins `:542` below and a suite added on its own line moves it. See `RUN_AS_DOOR`.
+  'src/web/accept-seat.test.ts', 'src/core/core.test.ts', 'src/midnight/ledger.test.ts', // EIGHTH — S67, T-286. NINTH — S74, T-358: the maintenance boundary, tier 2 of the money-path set, which this corpus targeted at no entry at all. Both line-neutral on purpose: `edges.json` pins a call site below BY LINE NUMBER and a suite added on its own line moves it. See the entrance at the foot of this file.
 ];
 const OUT = join(ROOT, 'logs', 'mutate-authority');
 
@@ -357,8 +357,24 @@ export const MUTATIONS = [
     says: 'the allow-list loses `core/ledger.ts`, so the file that DEFINES the simulated '
       + 'implementations becomes an offender — the negative control R2 and R3 each ran by '
       + 'hand, in a throwaway replication outside the tree, and never again',
-    from: "const ALLOWED = new Set([\n  'core/ledger.ts',\n  'wiring/selection.ts',\n]);",
-    to: "const ALLOWED = new Set([\n  'wiring/selection.ts',\n]);",
+    /*
+     * **RE-ANCHORED 18 Sep, AND THE ANCHOR IS THE FINDING.** This entry aimed at
+     * a two-name allow-list and the second name is gone: `wiring/selection.ts`
+     * was dropped from it when the product stopped choosing anything simulated,
+     * and the allow-list has held ONE name since. The `from:` text has matched
+     * NOTHING from that day to this, so the binding it names - that the detector
+     * finds a real code reference and is not merely passing - has been unguarded
+     * for exactly as long, while the door reported it as *could not be applied*
+     * rather than as unwatched.
+     *
+     * **THE BINDING IS UNCHANGED AND SO IS THE INTENT.** The mutation still
+     * takes `core/ledger.ts` out of the allow-list, so the file that DEFINES
+     * the simulated implementations becomes an offender and the named test must
+     * die. What moved was the text around it, which is the whole of why an
+     * anchor rots: nothing about the removal stopped being worth watching.
+     */
+    from: "const ALLOWED = new Set([\n  'core/ledger.ts',\n]);",
+    to: 'const ALLOWED = new Set([]);',
     kills: [
       'no other file on the product path names a simulated implementation in code',
     ],
@@ -1050,100 +1066,13 @@ const reportAt = (process.argv.find(a => a.startsWith('--report=')) ?? '').slice
   || join(ROOT, 'logs', 'REPORT-MUTATE-AUTHORITY.txt');
 
 /**
- * The last twenty lines of whatever the child said, for a report a person
- * reads. Empty in, empty out — a missing reason is printed as a missing
- * reason and never as a blank space that reads like nothing happened.
- */
-const tail = (text, n = 20) => {
-  const ls = String(text ?? '').split('\n').map(l => l.trimEnd()).filter(l => l !== '');
-  return ls.length ? ls.slice(-n) : ['(the child printed nothing)'];
-};
-
-/**
- * Runs the suites and returns what the run actually COLLECTED — not merely what
- * it PARSED.
- *
- * **`ran` USED TO MEAN *THE JSON PARSED*, AND THAT IS THE DEFECT THIS ROUND WAS
- * CALLED TO FIX.** A vitest run that collects
- * NOTHING — a `globalSetup` that threw, a config error, a crashed worker —
- * still writes a well-formed 483-byte report: `numTotalTestSuites: 0`,
- * `numTotalTests: 0`, `testResults: []`, `success: false`, exit 1. **That
- * parses.** `failures` was then `0`, and the loop below printed *SURVIVED. The
- * code was broken and every test still passed* — the loudest sentence this
- * harness owns, about a run in which not one of the 75 assertions executed.
- * **That is `R4`/`C121`'s own error — "we could not read the chain" is not "not
- * enough approvals" — committed by the instrument that exists to police it.**
- *
- * **AND THE OTHER HALF NEVER REACHED `ran` AT ALL.** `flatMap(r =>
- * r.assertionResults ?? [])` swallows a suite entry that collected nothing —
- * a broken import, a syntax error, a module-scope throw. Such a report names
- * its files, parses, and yields an EMPTY assertion list, so the old code went
- * straight past the `!ran` branch to SURVIVED without even printing *the suite
- * did not run*. `emptyFiles` is that case named.
- *
- * So: `ran` means ASSERTIONS WERE COLLECTED; `collected` is the number a caller
- * compares against the baseline's; `byFile` keeps each assertion's SUITE FILE,
- * which the old return threw away at the one point the harness needed it; and
- * **`stderr` IS KEPT.** Under mutation 22 the only record of the cause was
- * vitest's refusal naming the regeneration, and this function discarded it —
- * which is why that cost a round rather than a glance.
+ * Runs the suites and reports what the run actually COLLECTED, not what it
+ * PARSED. The reading is in `scripts/mutation-door.mjs`, where every harness in
+ * this project asks it, so none of them can drift into calling a run that
+ * collected nothing a run that happened.
  */
 function runSuite(tag) {
-  const file = join(OUT, `${tag}.json`);
-  try { rmSync(file); } catch { /* first run */ }
-  let said = '';
-  try {
-    execFileSync('./node_modules/.bin/vitest',
-      ['run', ...SUITES, '--reporter=json', `--outputFile=${file}`],
-      { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
-  } catch (e) {
-    /*
-     * A failing suite exits non-zero, which is still the ordinary case here, so
-     * this is not an error path. What changed is that the child's own words are
-     * KEPT rather than dropped on the floor: on a suite that refused to START,
-     * this is the only place the reason exists at all.
-     */
-    said = [e?.stderr, e?.stdout].map(b => (b ? String(b) : '')).join('\n');
-  }
-  let json;
-  try { json = JSON.parse(readFileSync(file, 'utf8')); }
-  catch {
-    return {
-      ran: false, collected: 0, emptyFiles: [], byFile: [], titles: [],
-      failed: [], passed: 0, failures: 0, said,
-      why: 'vitest wrote no report this run could parse',
-    };
-  }
-  const suites = json.testResults ?? [];
-  const byFile = suites.flatMap(r => (r.assertionResults ?? []).map(a => ({
-    file: r.name ?? '(unnamed suite)', title: a.title, status: a.status,
-  })));
-  const emptyFiles = suites
-    .filter(r => (r.assertionResults ?? []).length === 0)
-    .map(r => r.name ?? '(unnamed suite)');
-  return {
-    ran: byFile.length > 0,
-    why: byFile.length > 0 ? ''
-      : `vitest wrote a report naming ${suites.length} suite file(s) and NOT ONE assertion`,
-    collected: byFile.length,
-    emptyFiles,
-    byFile,
-    said,
-    /*
-     * **A SKIPPED ASSERTION IS NOT ONE THAT RAN, AND `titles` IS WHAT CHECK 4
-     * ASKS.** `S56`'s test-coverage pass measured vitest 4.1.10: when a `beforeAll`
-     * throws, the file's assertions come back with `status: 'skipped'` and the
-     * run reports ZERO failures — so a named guard that never executed would
-     * have been present in `titles`, passed check 4, and scored SURVIVED. That
-     * is this door's own defect surviving through a route the four checks did
-     * not cover. Nothing in either corpus reaches it today; nothing kept it
-     * that way, so it is closed here rather than filed.
-     */
-    titles: byFile.filter(a => a.status !== 'skipped').map(a => a.title),
-    failed: byFile.filter(a => a.status === 'failed').map(a => a.title),
-    passed: byFile.filter(a => a.status === 'passed').length,
-    failures: byFile.filter(a => a.status === 'failed').length,
-  };
+  return runSuiteHonestly({ suites: SUITES, cwd: ROOT, outFile: join(OUT, `${tag}.json`) });
 }
 
 /*
@@ -1379,11 +1308,10 @@ export function recoverFromLastRun(say, { root = ROOT, journal = JOURNAL } = {})
  * its own `shaped()` ratchet, that a text match *is a ratchet and it is not a
  * proof*.
  */
-export const scoreKills = (kills, failed) => ({
-  named: kills.filter(t => failed.includes(t)),
-  missed: kills.filter(t => !failed.includes(t)),
-  extra: failed.filter(t => !kills.includes(t)),
-});
+/* The scoring itself is in `scripts/mutation-door.mjs`; it is re-exported here
+ * so that anything already reading it off this harness keeps working and there
+ * is still exactly one copy of the decision. */
+export { scoreKills };
 
 /*
  * ── THE DOOR RUNS ONLY WHEN IT IS THE DOOR ──────────────────────────────────
@@ -1433,12 +1361,7 @@ export const scoreKills = (kills, failed) => ({
  * case throw instead: if this file is the thing node was pointed at and the
  * comparison still said otherwise, the door stops and says so.
  */
-const RUN_AS_DOOR = (() => {
-  const entry = process.argv[1];
-  if (typeof entry !== 'string' || entry === '') return false;
-  try { return realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url)); }
-  catch { return false; }
-})();
+/* The entrance itself is in `scripts/mutation-door.mjs`, below. */
 
 function main() {
   /*
@@ -1693,24 +1616,27 @@ function main() {
      * guard that did not run has not observed anything, and NOT RUN is the
      * outcome this door already defines as a failure.
      */
-    const collapsed = [];
-    if (!result.ran) collapsed.push(`${result.why}`);
-    if (result.collected < clean.collected) {
-      collapsed.push(`${result.collected} assertions collected where the baseline collected ${clean.collected}`);
-    }
-    const wentQuiet = result.emptyFiles.filter(f => !clean.emptyFiles.includes(f));
-    if (wentQuiet.length) {
-      collapsed.push(`a suite file collected nothing that collected at the baseline: ${wentQuiet.join(', ')}`);
-    }
-    const silent = m.kills.filter(t => !result.titles.includes(t));
-    if (silent.length) {
-      collapsed.push(`the guard it names did not execute: ${silent.map(t => `"${t}"`).join(', ')}`);
-    }
+    const collapsed = measuredNothingBecause({ result, baseline: clean, kills: m.kills });
 
     if (collapsed.length) {
       say('    NOT RUN. The mutation was applied and the run measured NOTHING here.');
       say('    This is not a survivor and it is not a kill: it says nothing whatever');
       say('    about the binding, because nothing executed to say it.');
+    /*
+     * UNLESS THE NAMED GUARDS DID RUN, in which case that last sentence is not
+     * true of this entry and saying it anyway is the kind of false line these
+     * harnesses exist to catch. Checks 2 and 3 fire on a collapse ANYWHERE in
+     * the run, which can happen while the guards this entry names executed
+     * normally. Nothing here is graded differently: no counter moves, the exit
+     * status is unchanged, and the outcome is still RAN AND MEASURED NOTHING.
+     * What changes is that the report stops claiming more than it knows.
+     */
+    if (m.kills.length && m.kills.every(k => result.titles.includes(k))) {
+      say('    EXCEPT THAT THE GUARD(S) THIS ENTRY NAMES DID EXECUTE, and');
+      say(`    ${result.failed.some(x => m.kills.includes(x)) ? 'at least one of them FAILED' : 'every one of them PASSED'}.`);
+      say('    So the collapse above is somewhere else in the run, and this');
+      say('    entry is worth reading rather than dismissing.');
+    }
       for (const c of collapsed) say(`      - ${c}`);
       if (result.failed.length) {
         /*
@@ -1834,17 +1760,4 @@ function main() {
   process.exit(survived + stale + notRun + wrongClaim === 0 && !aborted ? 0 : 1);
 }
 
-if (RUN_AS_DOOR) {
-  main();
-} else if (/[\\/]mutate-authority\.mjs$/.test(process.argv[1] ?? '')) {
-  /*
-   * Node was pointed at this file and the comparison above still said it was an
-   * import. Rather than exit 0 having measured nothing — which the door would
-   * score as a clean run — refuse.
-   */
-  throw new Error(
-    'mutate-authority: node was started on this file and its entry-point check did not '
-      + 'recognise it, so the door would have exited without running. Nothing was measured. '
-      + 'Run AUTHORITY-CHECK.command again from the repository root.',
-  );
-}
+if (openTheDoor(import.meta.url)) main();

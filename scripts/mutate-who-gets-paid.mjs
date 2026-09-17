@@ -76,8 +76,10 @@
  * Usage:  node scripts/mutate-who-gets-paid.mjs [--only=1,3] [--report=PATH]
  */
 import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+
+import { measuredNothingBecause, openTheDoor, runSuiteHonestly, tail } from './mutation-door.mjs';
 
 const ROOT = process.cwd();
 
@@ -221,18 +223,6 @@ const wanted = only ? new Set(only.split(',').map(Number)) : null;
 const reportAt = (process.argv.find(a => a.startsWith('--report=')) ?? '').slice(9)
   || join(ROOT, 'logs', 'REPORT-MUTATE-WHO-GETS-PAID.txt');
 
-mkdirSync(OUT, { recursive: true });
-
-/**
- * The last twenty lines of whatever the child said, for a report a person
- * reads. Empty in, empty out — a missing reason is printed as a missing reason
- * and never as a blank space that reads like nothing happened.
- */
-const tail = (text, n = 20) => {
-  const ls = String(text ?? '').split('\n').map(l => l.trimEnd()).filter(l => l !== '');
-  return ls.length ? ls.slice(-n) : ['(the child printed nothing)'];
-};
-
 /**
  * Runs the suite and returns what it actually COLLECTED — not merely what it
  * PARSED.
@@ -264,53 +254,7 @@ const tail = (text, n = 20) => {
  * only place the reason exists at all.
  */
 function runSuite(tag) {
-  const file = join(OUT, `${tag}.json`);
-  /* Removed first, so a run that writes nothing cannot be scored against the
-   * PREVIOUS run's report sitting at the same path. */
-  try { rmSync(file); } catch { /* first run */ }
-  let said = '';
-  try {
-    execFileSync('./node_modules/.bin/vitest',
-      ['run', ...SUITES, '--reporter=json', `--outputFile=${file}`],
-      { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
-  } catch (e) {
-    /* A failing suite exits non-zero, which is the ordinary case here, so this
-     * is not an error path. What it does is KEEP the child's own words. */
-    said = [e?.stderr, e?.stdout].map(b => (b ? String(b) : '')).join('\n');
-  }
-  let json;
-  try { json = JSON.parse(readFileSync(file, 'utf8')); }
-  catch {
-    return {
-      ran: false, collected: 0, emptyFiles: [], byFile: [], titles: [],
-      failed: [], passed: 0, failures: 0, said,
-      why: 'vitest wrote no report this run could parse',
-    };
-  }
-  const suites = json.testResults ?? [];
-  const byFile = suites.flatMap(r => (r.assertionResults ?? []).map(a => ({
-    file: r.name ?? '(unnamed suite)', title: a.title, status: a.status,
-  })));
-  const emptyFiles = suites
-    .filter(r => (r.assertionResults ?? []).length === 0)
-    .map(r => r.name ?? '(unnamed suite)');
-  return {
-    ran: byFile.length > 0,
-    why: byFile.length > 0 ? ''
-      : `vitest wrote a report naming ${suites.length} suite file(s) and NOT ONE assertion`,
-    collected: byFile.length,
-    emptyFiles,
-    byFile,
-    said,
-    /* **A SKIPPED ASSERTION IS NOT ONE THAT RAN.** When a `beforeAll` throws,
-     * vitest returns the file's assertions with `status: 'skipped'` and reports
-     * ZERO failures — so a named guard that never executed would be present in
-     * `titles`, pass the check below, and score SURVIVED. */
-    titles: byFile.filter(a => a.status !== 'skipped').map(a => a.title),
-    failed: byFile.filter(a => a.status === 'failed').map(a => a.title),
-    passed: byFile.filter(a => a.status === 'passed').length,
-    failures: byFile.filter(a => a.status === 'failed').length,
-  };
+  return runSuiteHonestly({ suites: SUITES, cwd: ROOT, outFile: join(OUT, `${tag}.json`) });
 }
 
 /*
@@ -347,232 +291,260 @@ function recoverFromLastRun(say) {
   say('');
 }
 
-const lines = [];
-const say = (s = '') => { lines.push(s); console.log(s); };
+function main() {
+  mkdirSync(OUT, { recursive: true });
 
-say(`MUTATING WHO GETS PAID  —  ${new Date().toISOString()}`);
-for (const s of SUITES) say(`suite: ${s}`);
-say(`target: ${TARGET}`);
-say('');
-say('WHAT THIS CANNOT SEE: one test file only, so a binding watched elsewhere');
-say('scores SURVIVED here. The documentation gate is WIRED, and a run that');
-say('collected nothing is scored NOT RUN — never SURVIVED. the collected-nothing scoring defect.');
-say('');
+  const lines = [];
+  const say = (s = '') => { lines.push(s); console.log(s); };
 
-recoverFromLastRun(say);
-
-const clean = runSuite('baseline');
-if (!clean.ran) {
-  say('  THE SUITES DID NOT RUN AT ALL. Nothing below means anything.');
-  say(`  ${clean.why}.`);
-  say('  the last thing vitest said, which is where the reason is:');
-  for (const l of tail(clean.said)) say(`    ${l}`);
-  writeFileSync(reportAt, lines.join('\n') + '\n');
-  process.exit(1);
-}
-say(`baseline: ${clean.failures} failed | ${clean.passed} passed | ${clean.collected} collected`);
-if (clean.failures > 0) {
+  say(`MUTATING WHO GETS PAID  —  ${new Date().toISOString()}`);
+  for (const s of SUITES) say(`suite: ${s}`);
+  say(`target: ${TARGET}`);
   say('');
-  say('  THE SUITE IS RED BEFORE ANY MUTATION. A mutation cannot be judged against');
-  say('  a suite that is already failing, so nothing was run.');
-  for (const t of clean.failed) say(`    - ${t}`);
-  writeFileSync(reportAt, lines.join('\n') + '\n');
-  process.exit(1);
-}
-say('');
+  say('WHAT THIS CANNOT SEE: one test file only, so a binding watched elsewhere');
+  say('scores SURVIVED here. The documentation gate is WIRED, and a run that');
+  say('collected nothing is scored NOT RUN — never SURVIVED. the collected-nothing scoring defect.');
+  say('');
 
-const known = new Set(clean.titles);
-let survived = 0;
-let stale = 0;
-/*
- * **THE FOURTH OUTCOME, WHICH THIS FILE HAD AND NEVER NAMED.** `stale` is a
- * mutation that could not be APPLIED — the text has moved, or the test it names
- * is gone. `notRun` is a mutation that WAS applied and whose run measured
- * nothing. **They are different failures with different fixes**, and a door that
- * prints one number for two states is the collected-nothing scoring defect exactly: `0 survived, 1 not run`
- * reads as a procedural hiccup when what it means is that the only check on a
- * binding produced no evidence at all.
- */
-let notRun = 0;
-let aborted = false;
-let judged = 0;
+  recoverFromLastRun(say);
 
-for (const m of MUTATIONS) {
-  if (wanted && !wanted.has(m.id)) continue;
-
-  const path = join(ROOT, m.file);
-  const before = readFileSync(path, 'utf8');
-  const hits = before.split(m.from).length - 1;
-
-  say(`${String(m.id).padStart(2, '0')}  ${m.binding}`);
-  say(`    breaks: ${m.says}`);
-
-  if (hits === 0) {
-    say('    STALE MUTATION — that text is not in the file any more. NOT RUN.');
-    say(`      ${m.file}: ${m.from.trim().slice(0, 120)}`);
+  const clean = runSuite('baseline');
+  if (!clean.ran) {
+    say('  THE SUITES DID NOT RUN AT ALL. Nothing below means anything.');
+    say(`  ${clean.why}.`);
+    say('  the last thing vitest said, which is where the reason is:');
+    for (const l of tail(clean.said)) say(`    ${l}`);
+    writeFileSync(reportAt, lines.join('\n') + '\n');
+    process.exit(1);
+  }
+  say(`baseline: ${clean.failures} failed | ${clean.passed} passed | ${clean.collected} collected`);
+  if (clean.failures > 0) {
     say('');
-    stale += 1;
-    continue;
+    say('  THE SUITE IS RED BEFORE ANY MUTATION. A mutation cannot be judged against');
+    say('  a suite that is already failing, so nothing was run.');
+    for (const t of clean.failed) say(`    - ${t}`);
+    writeFileSync(reportAt, lines.join('\n') + '\n');
+    process.exit(1);
   }
-  if (hits > 1) {
-    say(`    AMBIGUOUS TARGET — that text appears ${hits} times, so which copy was`);
-    say('    broken is unknown. NOT RUN.');
-    say('');
-    stale += 1;
-    continue;
-  }
-  const missing = m.kills.filter(t => !known.has(t));
-  if (missing.length) {
-    say('    STALE EXPECTATION — it names a test that is not in the suite:');
-    for (const t of missing) say(`      "${t}"`);
-    say('');
-    stale += 1;
-    continue;
-  }
+  say('');
 
-  beginMutation(path, before);
-  let result;
-  try {
-    writeFileSync(path, before.replace(m.from, m.to));
-    result = runSuite(`mutation-${m.id}`);
-  } finally {
-    endMutation(path, before);
-  }
-  judged += 1;
-
+  const known = new Set(clean.titles);
+  let survived = 0;
+  let stale = 0;
   /*
-   * **FOUR CHECKS, ALL COLLECTED BEFORE ANYTHING IS SAID, SO THE REPORT NAMES
-   * EVERY REASON IT HAS RATHER THAN THE FIRST.** the collected-nothing scoring defect, and the
-   * shape is `scripts/mutate-authority.mjs`'s.
-   *
-   *   1. NOTHING AT ALL was collected — a `globalSetup` that threw (the
-   *      documentation gate, the standing exception's freshness guard), a config error, a
-   *      crashed worker. vitest writes a well-formed empty report and it parses.
-   *   2. FEWER assertions than the baseline — a collapse this door would
-   *      otherwise score as a clean run that happened to notice less.
-   *   3. A SUITE FILE that collected nothing and was not empty at the baseline.
-   *      **This is the route that needs no doc gate and the one this harness is
-   *      most exposed to**: there is exactly ONE suite file, and a mutation to
-   *      `src/core/payroll.ts` that breaks the module is a mutation that file cannot
-   *      import. `flatMap(… ?? [])` hides it inside a report that parses.
-   *   4. A TITLE IN `kills:` ABSENT FROM WHAT RAN — the post-mutation twin of
-   *      the stale-expectation check above. **A named guard that did not execute
-   *      has observed nothing, whatever else ran.**
-   *
-   * A mutation that legitimately breaks its own suite's import is scored NOT RUN
-   * by 3 and 4. **That is the right answer and not a defect in it:** a guard that
-   * did not run has not observed anything.
+   * **THE FOURTH OUTCOME, WHICH THIS FILE HAD AND NEVER NAMED.** `stale` is a
+   * mutation that could not be APPLIED — the text has moved, or the test it names
+   * is gone. `notRun` is a mutation that WAS applied and whose run measured
+   * nothing. **They are different failures with different fixes**, and a door that
+   * prints one number for two states is the collected-nothing scoring defect exactly: `0 survived, 1 not run`
+   * reads as a procedural hiccup when what it means is that the only check on a
+   * binding produced no evidence at all.
    */
-  const collapsed = [];
-  if (!result.ran) collapsed.push(`${result.why}`);
-  if (result.collected < clean.collected) {
-    collapsed.push(`${result.collected} assertions collected where the baseline collected ${clean.collected}`);
-  }
-  const wentQuiet = result.emptyFiles.filter(f => !clean.emptyFiles.includes(f));
-  if (wentQuiet.length) {
-    collapsed.push(`a suite file collected nothing that collected at the baseline: ${wentQuiet.join(', ')}`);
-  }
-  const silent = m.kills.filter(t => !result.titles.includes(t));
-  if (silent.length) {
-    collapsed.push(`the guard it names did not execute: ${silent.map(t => `"${t}"`).join(', ')}`);
-  }
+  let notRun = 0;
+  let aborted = false;
+  let judged = 0;
 
-  if (collapsed.length) {
-    say('    NOT RUN. The mutation was applied and the run measured NOTHING here.');
-    say('    This is not a survivor and it is not a kill: it says nothing whatever');
-    say('    about the binding, because nothing executed to say it.');
-    for (const c of collapsed) say(`      - ${c}`);
-    if (result.failed.length) {
-      /* **AND WHAT DID GO RED IS PRINTED, NOT DISCARDED.** When check 4 fires
-       * because one named guard did not execute while another genuinely died,
-       * *"nothing executed to say it"* is false and throwing the list away is
-       * the collected-nothing scoring defect's shape one branch over. */
-      say(`    ${result.failed.length} test(s) DID go red under it, and they are evidence even`);
-      say('    though the run as a whole measured less than it should have:');
-      for (const t of result.failed) say(`      ${m.kills.includes(t) ? '✓' : '+'} ${t}`);
+  for (const m of MUTATIONS) {
+    if (wanted && !wanted.has(m.id)) continue;
+
+    const path = join(ROOT, m.file);
+    const before = readFileSync(path, 'utf8');
+    const hits = before.split(m.from).length - 1;
+
+    say(`${String(m.id).padStart(2, '0')}  ${m.binding}`);
+    say(`    breaks: ${m.says}`);
+
+    if (hits === 0) {
+      say('    STALE MUTATION — that text is not in the file any more. NOT RUN.');
+      say(`      ${m.file}: ${m.from.trim().slice(0, 120)}`);
+      say('');
+      stale += 1;
+      continue;
     }
-    say('    the last thing vitest said, which is where the reason is:');
-    for (const l of tail(result.said)) say(`      ${l}`);
-    notRun += 1;
+    if (hits > 1) {
+      say(`    AMBIGUOUS TARGET — that text appears ${hits} times, so which copy was`);
+      say('    broken is unknown. NOT RUN.');
+      say('');
+      stale += 1;
+      continue;
+    }
+    const missing = m.kills.filter(t => !known.has(t));
+    if (missing.length) {
+      say('    STALE EXPECTATION — it names a test that is not in the suite:');
+      for (const t of missing) say(`      "${t}"`);
+      say('');
+      stale += 1;
+      continue;
+    }
+
+    beginMutation(path, before);
+    let result;
+    try {
+      writeFileSync(path, before.replace(m.from, m.to));
+      result = runSuite(`mutation-${m.id}`);
+    } finally {
+      endMutation(path, before);
+    }
+    judged += 1;
 
     /*
-     * **ABORT OR CONTINUE, MEASURED RATHER THAN GUESSED.**
+     * **FOUR CHECKS, ALL COLLECTED BEFORE ANYTHING IS SAID, SO THE REPORT NAMES
+     * EVERY REASON IT HAS RATHER THAN THE FIRST.** the collected-nothing scoring defect, and the
+     * shape is `scripts/mutate-authority.mjs`'s.
      *
-     * a tree that collapses on its own says abort — whatever stopped one suite will stop the next — and
-     * the Compact mutation harness is right about its own case, where the causes are
-     * properties of the tree and outlive any one mutation.
-     * `scripts/mutate-authority.mjs` takes the position against, because ITS
-     * mutation 22 collapses the suite by its own edit and an unconditional abort
-     * would truncate every future run at that entry for ever.
+     *   1. NOTHING AT ALL was collected — a `globalSetup` that threw (the
+     *      documentation gate, the standing exception's freshness guard), a config error, a
+     *      crashed worker. vitest writes a well-formed empty report and it parses.
+     *   2. FEWER assertions than the baseline — a collapse this door would
+     *      otherwise score as a clean run that happened to notice less.
+     *   3. A SUITE FILE that collected nothing and was not empty at the baseline.
+     *      **This is the route that needs no doc gate and the one this harness is
+     *      most exposed to**: there is exactly ONE suite file, and a mutation to
+     *      `src/core/payroll.ts` that breaks the module is a mutation that file cannot
+     *      import. `flatMap(… ?? [])` hides it inside a report that parses.
+     *   4. A TITLE IN `kills:` ABSENT FROM WHAT RAN — the post-mutation twin of
+     *      the stale-expectation check above. **A named guard that did not execute
+     *      has observed nothing, whatever else ran.**
      *
-     * **THIS CORPUS HAS NO KNOWN SELF-COLLAPSING ENTRY**, so a tree that collapses on its own would apply
-     * cleanly today — and the recheck is here anyway, because *no known entry*
-     * is a fact about the eight that exist now and not about the ninth. The tree
-     * is already restored by the `finally` above, so one more run answers which
-     * kind it is: a restored tree that still collects nothing means the fault is
-     * not this mutation's, and that is a tree that collapses on its own exactly. It costs one extra suite
-     * run, and only ever after something has already gone wrong.
+     * A mutation that legitimately breaks its own suite's import is scored NOT RUN
+     * by 3 and 4. **That is the right answer and not a defect in it:** a guard that
+     * did not run has not observed anything.
      */
-    const recheck = runSuite(`recheck-${m.id}`);
-    if (!recheck.ran || recheck.collected < clean.collected) {
-      say('');
-      say('    AND THE TREE IS BACK AND THE SUITE STILL DOES NOT RUN. Whatever');
-      say('    stopped it is not this mutation, so it will stop the next one too.');
-      say('    ABORTING rather than scoring nothing. a tree that collapses on its own.');
-      say('    the last thing the recheck said:');
-      for (const l of tail(recheck.said)) say(`      ${l}`);
-      aborted = true;
-      say('');
-      break;
+    const collapsed = measuredNothingBecause({ result, baseline: clean, kills: m.kills });
+
+    if (collapsed.length) {
+      say('    NOT RUN. The mutation was applied and the run measured NOTHING here.');
+      say('    This is not a survivor and it is not a kill: it says nothing whatever');
+      say('    about the binding, because nothing executed to say it.');
+    /*
+     * UNLESS THE NAMED GUARDS DID RUN, in which case that last sentence is not
+     * true of this entry and saying it anyway is the kind of false line these
+     * harnesses exist to catch. Checks 2 and 3 fire on a collapse ANYWHERE in
+     * the run, which can happen while the guards this entry names executed
+     * normally. Nothing here is graded differently: no counter moves, the exit
+     * status is unchanged, and the outcome is still RAN AND MEASURED NOTHING.
+     * What changes is that the report stops claiming more than it knows.
+     */
+    if (m.kills.length && m.kills.every(k => result.titles.includes(k))) {
+      say('    EXCEPT THAT THE GUARD(S) THIS ENTRY NAMES DID EXECUTE, and');
+      say(`    ${result.failed.some(x => m.kills.includes(x)) ? 'at least one of them FAILED' : 'every one of them PASSED'}.`);
+      say('    So the collapse above is somewhere else in the run, and this');
+      say('    entry is worth reading rather than dismissing.');
     }
-    say(`    The restored tree runs (${recheck.collected} collected), so the collapse is`);
-    say('    this mutation\'s own doing and the entries after it still mean something.');
-  } else if (result.failures === 0) {
-    say('    SURVIVED. The code was broken and every test still passed —');
-    say('    nothing is watching this binding.');
-    survived += 1;
-  } else {
-    const named = m.kills.filter(t => result.failed.includes(t));
-    const extra = result.failed.filter(t => !m.kills.includes(t));
-    say(`    KILLED by ${result.failed.length} test${result.failed.length === 1 ? '' : 's'}:`);
-    for (const t of named) say(`      ✓ ${t}`);
-    for (const t of m.kills.filter(x => !named.includes(x))) {
-      say(`      ! EXPECTED TO DIE AND DID NOT: ${t}`);
+      for (const c of collapsed) say(`      - ${c}`);
+      if (result.failed.length) {
+        /* **AND WHAT DID GO RED IS PRINTED, NOT DISCARDED.** When check 4 fires
+         * because one named guard did not execute while another genuinely died,
+         * *"nothing executed to say it"* is false and throwing the list away is
+         * the collected-nothing scoring defect's shape one branch over. */
+        say(`    ${result.failed.length} test(s) DID go red under it, and they are evidence even`);
+        say('    though the run as a whole measured less than it should have:');
+        for (const t of result.failed) say(`      ${m.kills.includes(t) ? '✓' : '+'} ${t}`);
+      }
+      say('    the last thing vitest said, which is where the reason is:');
+      for (const l of tail(result.said)) say(`      ${l}`);
+      notRun += 1;
+
+      /*
+       * **ABORT OR CONTINUE, MEASURED RATHER THAN GUESSED.**
+       *
+       * a tree that collapses on its own says abort — whatever stopped one suite will stop the next — and
+       * the Compact mutation harness is right about its own case, where the causes are
+       * properties of the tree and outlive any one mutation.
+       * `scripts/mutate-authority.mjs` takes the position against, because ITS
+       * mutation 22 collapses the suite by its own edit and an unconditional abort
+       * would truncate every future run at that entry for ever.
+       *
+       * **THIS CORPUS HAS NO KNOWN SELF-COLLAPSING ENTRY**, so a tree that collapses on its own would apply
+       * cleanly today — and the recheck is here anyway, because *no known entry*
+       * is a fact about the eight that exist now and not about the ninth. The tree
+       * is already restored by the `finally` above, so one more run answers which
+       * kind it is: a restored tree that still collects nothing means the fault is
+       * not this mutation's, and that is a tree that collapses on its own exactly. It costs one extra suite
+       * run, and only ever after something has already gone wrong.
+       */
+      const recheck = runSuite(`recheck-${m.id}`);
+      if (!recheck.ran || recheck.collected < clean.collected) {
+        say('');
+        say('    AND THE TREE IS BACK AND THE SUITE STILL DOES NOT RUN. Whatever');
+        say('    stopped it is not this mutation, so it will stop the next one too.');
+        say('    ABORTING rather than scoring nothing. a tree that collapses on its own.');
+        say('    the last thing the recheck said:');
+        for (const l of tail(recheck.said)) say(`      ${l}`);
+        aborted = true;
+        say('');
+        break;
+      }
+      say(`    The restored tree runs (${recheck.collected} collected), so the collapse is`);
+      say('    this mutation\'s own doing and the entries after it still mean something.');
+    } else if (result.failures === 0) {
+      say('    SURVIVED. The code was broken and every test still passed —');
+      say('    nothing is watching this binding.');
+      survived += 1;
+    } else {
+      const named = m.kills.filter(t => result.failed.includes(t));
+      const extra = result.failed.filter(t => !m.kills.includes(t));
+      say(`    KILLED by ${result.failed.length} test${result.failed.length === 1 ? '' : 's'}:`);
+      for (const t of named) say(`      ✓ ${t}`);
+      for (const t of m.kills.filter(x => !named.includes(x))) {
+        say(`      ! EXPECTED TO DIE AND DID NOT: ${t}`);
+      }
+      for (const t of extra) say(`      + also: ${t}`);
+      if (named.length === 0) {
+        say('    NAMED NO TEST THAT ACTUALLY DIED. The mutation is killed, but by');
+        say('    something other than the assertion written for it — worth reading.');
+      }
     }
-    for (const t of extra) say(`      + also: ${t}`);
-    if (named.length === 0) {
-      say('    NAMED NO TEST THAT ACTUALLY DIED. The mutation is killed, but by');
-      say('    something other than the assertion written for it — worth reading.');
-    }
+    say('');
+  }
+
+  say('-----------------------------------------------------------------------');
+  /*
+   * **THREE NUMBERS, THREE SENTENCES, NEVER ONE LINE.** the collected-nothing scoring defect. The old summary
+   * here read `${judged} judged, ${survived} survived, ${stale} not run` — and a
+   * reader takes the SURVIVOR count away, because *survivor* is the word this door
+   * attaches "hole" to. They are three different failures with three different
+   * fixes, so they get three lines and each says what it is.
+   */
+  say(`${judged} JUDGED — a mutation went in and the run measured what happened.`);
+  say(`${survived} SURVIVED — the code was broken and nothing noticed. A hole in the product.`);
+  say(`${stale} COULD NOT BE APPLIED — a mutation aimed at code that has moved, or naming a`);
+  say('   test that is gone. The binding has been unguarded since the day it moved,');
+  say('   which is a hole in the instrument that looks exactly like a passing check.');
+  say(`${notRun} RAN AND MEASURED NOTHING — the mutation went in and no assertion came`);
+  say('   back. This says nothing about the product in either direction, and it is');
+  say('   NOT a survivor: scoring it as one is what the collected-nothing scoring defect are about.');
+  if (aborted) {
+    say('');
+    say('AND THE RUN STOPPED EARLY. Every entry after the last one above was never');
+    say('scored, and this report does not describe them.');
   }
   say('');
+  say(survived + stale + notRun === 0 && !aborted
+    ? 'Every binding has a test that notices when it is broken.'
+    : 'Read the entries above.');
+  writeFileSync(reportAt, lines.join('\n') + '\n');
+  console.log(`\nwritten to ${reportAt}`);
+  process.exit(survived + stale + notRun === 0 && !aborted ? 0 : 1);
 }
 
-say('-----------------------------------------------------------------------');
+
 /*
- * **THREE NUMBERS, THREE SENTENCES, NEVER ONE LINE.** the collected-nothing scoring defect. The old summary
- * here read `${judged} judged, ${survived} survived, ${stale} not run` — and a
- * reader takes the SURVIVOR count away, because *survivor* is the word this door
- * attaches "hole" to. They are three different failures with three different
- * fixes, so they get three lines and each says what it is.
+ * THE CORPUS IS READABLE WITHOUT RUNNING ANYTHING, and it is exported HERE
+ * rather than on its declaration for a reason worth keeping: the module-graph
+ * scan reads `export` at column zero and runs to the first `from '...'` before a
+ * semicolon, and several of these entries hold the TEXT of an import as data. On
+ * the declaration it would put a module edge into a generated document for a
+ * dependency this file does not have. Measured: one, and it is gone.
  */
-say(`${judged} JUDGED — a mutation went in and the run measured what happened.`);
-say(`${survived} SURVIVED — the code was broken and nothing noticed. A hole in the product.`);
-say(`${stale} COULD NOT BE APPLIED — a mutation aimed at code that has moved, or naming a`);
-say('   test that is gone. The binding has been unguarded since the day it moved,');
-say('   which is a hole in the instrument that looks exactly like a passing check.');
-say(`${notRun} RAN AND MEASURED NOTHING — the mutation went in and no assertion came`);
-say('   back. This says nothing about the product in either direction, and it is');
-say('   NOT a survivor: scoring it as one is what the collected-nothing scoring defect are about.');
-if (aborted) {
-  say('');
-  say('AND THE RUN STOPPED EARLY. Every entry after the last one above was never');
-  say('scored, and this report does not describe them.');
-}
-say('');
-say(survived + stale + notRun === 0 && !aborted
-  ? 'Every binding has a test that notices when it is broken.'
-  : 'Read the entries above.');
-writeFileSync(reportAt, lines.join('\n') + '\n');
-console.log(`\nwritten to ${reportAt}`);
-process.exit(survived + stale + notRun === 0 && !aborted ? 0 : 1);
+export { MUTATIONS };
+
+/*
+ * ONE ENTRANCE, SHARED. `openTheDoor` answers three ways rather than two: node
+ * pointed at this file MUTATES; an import does nothing at all, so reading this
+ * harness's list of mutations costs a tree nothing; and an entrance that cannot
+ * be resolved REFUSES, because the alternative is exiting 0 having mutated
+ * nothing and measured nothing, which every script that invokes a harness reads
+ * as a clean run in which every binding was checked.
+ */
+if (openTheDoor(import.meta.url)) main();
