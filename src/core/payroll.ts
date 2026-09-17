@@ -389,7 +389,7 @@ const legOf = (run: PayrollRun, asset: AssetId | undefined): AssetId => {
   if (!legs.includes(leg)) throw new Error(`this run pays nobody in ${leg}`);
   return leg;
 };
-import type { AccountService, PayrollRound } from './account.js';
+import type { AccountService, PayrollRound, RaiseHalf } from './account.js';
 import type { ProofSystem, RunProposal } from './ledger.js';
 import type { DataStore } from './store.js';
 
@@ -2497,7 +2497,14 @@ export class PayrollService {
      * door most needs and least can check.
      */
     payable: RunMaterial | null,
-    asset?: AssetId) {
+    asset?: AssetId,
+    /**
+     * **THE SIGNER'S DEVICE SENDS THE PROPOSAL.** Everything below happens
+     * exactly as it does otherwise - the material and the proposal are written down - and
+     * nothing is sent from this process. `raiseOrderOf` is what the device then
+     * builds from.
+     */
+    how?: { onDevice: true }) {
     const run = this.requireRun(runId, viewingKey);
     if (run.status !== 'draft' && run.status !== 'proposed') throw new Error(`run is ${run.status}`);
 
@@ -2714,6 +2721,7 @@ export class PayrollService {
       payments: payable.facts,
       proposedBy,
       ...(again !== undefined ? { again } : {}),
+      ...(how?.onDevice ? { onDevice: true as const } : {}),
     });
 
     /*
@@ -3492,6 +3500,40 @@ export class PayrollService {
    * `null` for a leg with no material, or one the chain was never asked to open:
    * a round with no raise has no identity a vault could present.
    */
+  /**
+   * **WHAT A SIGNER'S DEVICE BUILDS ONE LEG'S PROPOSAL FROM, WHILE THAT
+   * PROPOSAL IS WRITTEN DOWN AND NOT YET SENT.** The run as the chain will be
+   * asked to open it - read back off the leg's own record, never from the caller
+   * - and the account's half of the call, read off the proposal's own sealed
+   * payload.
+   *
+   * `null` when the leg has no proposal written down, or its proposal is already
+   * confirmed on chain; the account refuses one that is not open or that a
+   * device has already sent, with its own sentence.
+   */
+  async raiseOrderOf(runId: string, viewingKey: Hex, asset?: AssetId): Promise<{
+    proposalId: string;
+    chainId: Hex;
+    run: { root: Hex; payees: bigint; opensAt: bigint; closesAt: bigint; vault: Hex };
+    half: RaiseHalf;
+  } | null> {
+    const run = this.requireRun(runId, viewingKey);
+    const leg = raisedLegOf(run, asset);
+    const payout = leg ? run.payout?.[leg] : undefined;
+    const proposalId = leg ? run.proposalIds[leg] : undefined;
+    if (!leg || !payout || !proposalId) return null;
+    const raised = this.accounts.requireProposal(proposalId, viewingKey);
+    if (raised.raisedAt) return null;
+    return {
+      proposalId,
+      chainId: raised.chainId,
+      run: {
+        root: payout.root, payees: payout.payees, opensAt: payout.opensAt, closesAt: payout.closesAt, vault: payout.vault,
+      },
+      half: await this.accounts.raiseHalfOf(proposalId, viewingKey),
+    };
+  }
+
   privatePaymentOrderOf(runId: string, viewingKey: Hex, asset?: AssetId): {
     asset: AssetId; vault: Hex; proposal: Hex; salt: Hex;
     root: Hex; payees: bigint; opensAt: bigint; closesAt: bigint;

@@ -235,8 +235,8 @@ export const signerHalfOf = (
       'vault scope',
       material.scope,
       'the key material saved for this company on this device was written before vault ' +
-        'scopes were recorded, so it cannot say which vaults this signer may act on. Take ' +
-        'the seat on this device again to replace it.',
+        'scopes were recorded, so it cannot say which vaults this signer may act on, and ' +
+        'nothing converts it. A seat taken under a new invitation by another sign-in can act.',
     ),
   };
 };

@@ -87,6 +87,8 @@ const FIRST_SECRETS = {
   signingSecret: 'aa'.repeat(32),
   wrappingSecret: 'bb'.repeat(32),
   blinding: 'cc'.repeat(32),
+  /* As the service answers: every seat's secrets carry the scope it was seated under. */
+  scope: 'dd'.repeat(32),
 };
 const SECOND_SECRETS = {
   signerId: 'sgn_second',
@@ -94,12 +96,14 @@ const SECOND_SECRETS = {
   signingSecret: 'a2'.repeat(32),
   wrappingSecret: 'b2'.repeat(32),
   blinding: 'c2'.repeat(32),
+  scope: 'd2'.repeat(32),
 };
 const OTHER_DEVICE_KEYS = {
   signerId: 'sgn_elsewhere',
   signingSecret: 'a3'.repeat(32),
   wrappingSecret: 'b3'.repeat(32),
   blinding: 'c3'.repeat(32),
+  scope: 'd3'.repeat(32),
 };
 
 const NORTHWIND = { name: 'Northwind', signers: [{ name: 'Ada', role: 'admin' as const }], threshold: 1 };

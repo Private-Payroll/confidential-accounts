@@ -103,6 +103,32 @@ export function refusalForProven(tx: unknown, contractAddress: string): string |
   return null;
 }
 
+const entryPointName = (entryPoint: unknown): string =>
+  entryPoint instanceof Uint8Array ? new TextDecoder().decode(entryPoint) : String(entryPoint);
+
+/**
+ * **AND WHEN THE SERVICE IS ABOUT TO WRITE DOWN WHAT THE TRANSACTION IS, IT
+ * MUST BE EXACTLY THAT: ONE CALL, TO THE NAMED CIRCUIT.** A raise and an
+ * approval are recorded against the transaction a device sent for them, so a
+ * transaction that calls anything else - another circuit, or more than one -
+ * would leave a record that says one thing and a chain that holds another.
+ * Read after `refusalForProven`, which has already refused what cannot be read.
+ */
+export function refusalUnlessOnlyACallTo(tx: unknown, circuit: string): string | null {
+  const intents = (tx as { intents?: unknown } | null | undefined)?.intents;
+  const names: string[] = [];
+  if (intents instanceof Map) {
+    for (const intent of intents.values()) {
+      const actions = (intent as { actions?: unknown } | null)?.actions;
+      if (!Array.isArray(actions)) continue;
+      for (const action of actions) names.push(entryPointName((action as { entryPoint?: unknown } | null)?.entryPoint));
+    }
+  }
+  if (names.length === 1 && names[0] === circuit) return null;
+  return `this transaction is not the one call to "${circuit}" it was sent as, so it was not paid for and `
+    + 'nothing was written down. Nothing was sent.';
+}
+
 /**
  * Reads a proven, unbound transaction from its wire form, with the ledger's own
  * markers. Loaded when first used.

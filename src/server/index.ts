@@ -42,7 +42,7 @@ import {
 import type { Hex } from '../core/crypto.js';
 import { payeeAddress } from '../midnight/payee-address.js';
 import { theNetwork } from '../midnight/network.js';
-import { saysNothingWasSent } from '../core/jobs.js';
+import { NothingWasSent, saysNothingWasSent } from '../core/jobs.js';
 import { runPayments } from '../midnight/run-status.js';
 import { buildRun, rootOfLeaves } from '../midnight/payout-tree.js';
 import { vaultDetailsOf } from '../midnight/vault-details.js';
@@ -1194,8 +1194,45 @@ app.get('/api/accounts/:id/proposals', authed, member, wrap(async (req, res) => 
 app.post('/api/proposals/:id/approve', authed, refuseSigningSecret, ownsProposal, wrap(async (req, res) => {
   const b = z.object({
     signerId: z.string(), signature: z.string().min(1), viewingKey: z.string(),
+    /*
+     * **THE APPROVAL ITSELF, AS THE SIGNER'S DEVICE BUILT AND PROVED IT**, as
+     * base64. A proof, not a key: what the device proved with never leaves it.
+     */
+    tx: z.string().min(1).max(1_000_000).optional(),
   }).strict().parse(req.body);
-  res.json(await accounts.approve(String(req.params.id), b.signerId, b.signature, b.viewingKey));
+  if (b.tx === undefined) {
+    res.json(await accounts.approve(String(req.params.id), b.signerId, b.signature, b.viewingKey));
+    return;
+  }
+  await answerASend(req, res, () => accounts.approve(
+    String(req.params.id), b.signerId, b.signature, b.viewingKey, new Uint8Array(Buffer.from(b.tx!, 'base64'))));
+}));
+
+/**
+ * **A SEND FROM A DEVICE IS ANSWERED WITH WHETHER ANYTHING WAS SENT.**
+ * `nothingWasSent: true` is a refusal before the chain was asked, which the
+ * device may report as final; `false` is a failure from the send onwards, which
+ * may have landed and must not be reported as nothing.
+ */
+async function answerASend(req: express.Request, res: express.Response, send: () => Promise<unknown>): Promise<void> {
+  try {
+    res.json(await send());
+  } catch (e: any) {
+    const nothing = saysNothingWasSent(e);
+    const reason = e?.message ?? 'unknown error';
+    appendRefusal(req.method, req.originalUrl, nothing ? 422 : 502, e?.name ?? 'Error', reason);
+    res.status(nothing ? 422 : 502).json({ nothingWasSent: nothing, error: reason });
+  }
+}
+
+/*
+ * **WHERE A PROPOSAL STANDS ON THE CHAIN NOW, READ AND WRITTEN DOWN.** An approval
+ * a device sends is answered before the chain has counted it, so the device
+ * asks again here once it has. Sends nothing.
+ */
+app.post('/api/proposals/:id/standing', authed, ownsProposal, wrap(async (req, res) => {
+  const b = z.object({ viewingKey: z.string() }).strict().parse(req.body ?? {});
+  res.json(await accounts.refreshStanding(String(req.params.id), b.viewingKey));
 }));
 
 /*
@@ -1453,6 +1490,12 @@ app.post('/api/runs/:id/propose', authed, ownsRun, wrap(async (req, res) => {
      */
     opensAt: z.string().regex(/^[0-9]+$/, 'a window bound is whole seconds since the Unix epoch'),
     closesAt: z.string().regex(/^[0-9]+$/, 'a window bound is whole seconds since the Unix epoch'),
+    /*
+     * **THE SIGNER'S DEVICE BUILDS AND SENDS THE PROPOSAL.** It is written
+     * down here exactly as it otherwise is, nothing is sent from this service,
+     * and the answer carries what the device builds it from.
+     */
+    onDevice: z.literal(true).optional(),
   }).parse(req.body);
 
   /*
@@ -1481,11 +1524,80 @@ app.post('/api/runs/:id/propose', authed, ownsRun, wrap(async (req, res) => {
    * scoped by run id, so `inputs.accountId` is the only account in scope and
    * taking it from anywhere else would be taking it from the caller again.
    */
-  res.json(await payroll.proposeRun(
+  const proposal = await payroll.proposeRun(
     String(req.params.id), b.viewingKey,
     accounts.seatOf(inputs.accountId, b.viewingKey as Hex, req.userId!),
-    material, b.asset));
+    material, b.asset, b.onDevice ? { onDevice: true } : undefined);
+  if (!b.onDevice) {
+    res.json(proposal);
+    return;
+  }
+  res.json({ proposal, order: raiseOrderOnTheWire(await payroll.raiseOrderOf(String(req.params.id), b.viewingKey, b.asset)) });
 }));
+
+/** What a device builds a written-down proposal from, every value a string; `null` when there is nothing to send. */
+const raiseOrderOnTheWire = (o: Awaited<ReturnType<typeof payroll.raiseOrderOf>>) => (o === null ? null : {
+  proposalId: o.proposalId,
+  chainId: o.chainId,
+  order: {
+    circuit: 'propose' as const,
+    run: {
+      root: o.run.root, payees: o.run.payees.toString(), opensAt: o.run.opensAt.toString(),
+      closesAt: o.run.closesAt.toString(), vault: o.run.vault,
+    },
+    half: o.half,
+    proposal: o.chainId,
+  },
+});
+
+/*
+ * **THE PROPOSAL ONE LEG OF A RUN IS WRITTEN DOWN AS, FOR THE SIGNER'S DEVICE
+ * TO BUILD** - again, after a device that raised it did not get as far as
+ * sending it. The run is read off the leg's own record and the account's half
+ * off the proposal's own sealed payload. The viewing key travels in the body.
+ */
+app.post('/api/runs/:id/raise-order', authed, ownsRun, wrap(async (req, res) => {
+  const b = z.object({ viewingKey: z.string(), asset: assetCode.optional() }).strict().parse(req.body ?? {});
+  const order = raiseOrderOnTheWire(await payroll.raiseOrderOf(String(req.params.id), b.viewingKey, b.asset));
+  if (order === null) {
+    res.status(409).json({ error: 'this run has no proposal written down that is waiting to be sent to the chain.' });
+    return;
+  }
+  res.json(order);
+}));
+
+/*
+ * **THE PROPOSAL A SIGNER'S DEVICE BUILT FOR ONE LEG OF A RUN, SENT.** It goes
+ * through the one door this service has for a transaction proved on a device,
+ * which reads it and refuses anything but calls to this company's own contract
+ * that move no coin.
+ */
+app.post('/api/runs/:id/raise-send', authed, ownsRun, async (req, res) => {
+  const b = z.object({
+    viewingKey: z.string(), asset: assetCode.optional(), tx: z.string().min(1).max(1_000_000),
+  }).strict().safeParse(req.body ?? {});
+  if (!b.success) {
+    res.status(400).json({ nothingWasSent: true, error: 'this request does not carry a proposal to send. Nothing was sent.' });
+    return;
+  }
+  await answerASend(req, res, async () => {
+    /* Everything before the send is a refusal that sent nothing, and is marked so. */
+    let order: Awaited<ReturnType<typeof payroll.raiseOrderOf>>;
+    let by: string;
+    try {
+      const run = payroll.requireRun(String(req.params.id), b.data.viewingKey);
+      by = accounts.seatOf(run.accountId, b.data.viewingKey as Hex, req.userId!);
+      order = await payroll.raiseOrderOf(String(req.params.id), b.data.viewingKey, b.data.asset);
+    } catch (e: any) {
+      if (saysNothingWasSent(e)) throw e;
+      throw new NothingWasSent(`${String(e?.message ?? e).replace(/\.\s*$/u, '')}. Nothing was sent.`);
+    }
+    if (order === null) {
+      throw new NothingWasSent('this run has no proposal written down that is waiting to be sent to the chain. Nothing was sent.');
+    }
+    return accounts.sendRaise(order.proposalId, b.data.viewingKey, new Uint8Array(Buffer.from(b.data.tx, 'base64')), by);
+  });
+});
 
 /*
  * **ANOTHER ATTEMPT AT SOME OF ONE LEG'S PEOPLE, ON THE RUN THAT FIRST TRIED

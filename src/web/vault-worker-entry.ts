@@ -1,5 +1,6 @@
 /**
- * **THE WORKER A COMPANY VAULT'S TRANSACTIONS ARE BUILT AND PROVED IN.**
+ * **THE WORKER A COMPANY VAULT'S TRANSACTIONS ARE BUILT AND PROVED IN, AND THE
+ * COMPANY ACCOUNT'S RAISES AND APPROVALS BESIDE THEM.**
  *
  * The ledger, the contract runtime and the prover are WebAssembly and are not
  * allowed on the page; this thread is where they load, and only once something
@@ -15,8 +16,9 @@ import {
   poolAfterPayment,
   type VaultBuilderDeps,
 } from './vault-builder.js';
+import { buildGovernedCall, type GovernedCallDeps } from './governed-call-builder.js';
 import { circuitOf, httpKeyMaterialSource, IndexedDbArtefactCache, type ArtefactSource } from './key-material.js';
-import { ACCOUNT_CIRCUITS_A_VAULT_CALLS } from '../midnight/vault-contract.js';
+import { ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE } from '../midnight/vault-contract.js';
 import { zkConfigOver, byCircuitName } from './zk-config.js';
 import type { VaultAsk, VaultAnswer } from './vault-worker-client.js';
 
@@ -51,13 +53,14 @@ export const networkCircuitsBeside = (vault: ArtefactSource, network: ArtefactSo
 
 /**
  * **A PAYMENT OUT ALSO PROVES THE COMPANY ACCOUNT'S `recordPayment`**, which the
- * vault's `payout` calls inside the same transaction. Its material is served
- * beside the vault's, and a location is sent there by the circuit it names:
- * no vault circuit shares a name with one of the account's that a vault calls.
+ * vault's `payout` calls inside the same transaction, **AND A RAISE OR AN
+ * APPROVAL IS ONE OF THE ACCOUNT'S OWN CIRCUITS.** Their material is served
+ * beside the vault's, and a location is sent there by the circuit it names: no
+ * vault circuit shares a name with one of the account's served to a device.
  */
 export const accountCircuitsBeside = (vault: ArtefactSource, account: ArtefactSource): ArtefactSource => {
   const which = (keyLocation: string) =>
-    (ACCOUNT_CIRCUITS_A_VAULT_CALLS.includes(circuitOf(keyLocation)) ? account : vault);
+    (ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE.includes(circuitOf(keyLocation)) ? account : vault);
   return {
     lookupKey: (keyLocation) => which(keyLocation).lookupKey(keyLocation),
     getParams: (k) => vault.getParams(k),
@@ -65,18 +68,23 @@ export const accountCircuitsBeside = (vault: ArtefactSource, account: ArtefactSo
   };
 };
 
+/** What this worker builds with: the vault's builder, and the account's two circuits beside it. */
+export type WorkerDeps = Omit<VaultBuilderDeps, 'network'> & { vault: any } & Omit<GovernedCallDeps, 'random'>;
+
 /** Everything heavy, loaded the first time it is needed and kept. */
 const loadDeps = (scope: any) => {
-  let loaded: Promise<Omit<VaultBuilderDeps, 'network'> & { vault: any }> | null = null;
-  return (): Promise<Omit<VaultBuilderDeps, 'network'> & { vault: any }> => {
+  let loaded: Promise<WorkerDeps> | null = null;
+  return (): Promise<WorkerDeps> => {
     loaded ??= (async () => {
-      const [ledger, runtime, contracts, compactJs, vault, proving] = await Promise.all([
+      const [ledger, runtime, contracts, compactJs, vault, proving, account, accountWitnesses] = await Promise.all([
         import('@midnightntwrk/ledger-v9'),
         import('@midnight-ntwrk/compact-runtime'),
         import('@midnight-ntwrk/midnight-js-contracts'),
         import('@midnight-ntwrk/compact-js'),
         import('../../contracts/managed-vault/contract/index.js'),
         import('../midnight/wasm-proving.js'),
+        import('../../contracts/managed/contract/index.js'),
+        import('../../contracts/src/witnesses.js'),
       ]);
       const options = {
         cache: new IndexedDbArtefactCache(scope.indexedDB),
@@ -89,6 +97,7 @@ const loadDeps = (scope: any) => {
         httpKeyMaterialSource(`${VAULT_ARTEFACT_BASE}/builtin/zswap/9`, options));
       const prover = await proving.wasmProofProvider(source);
       const CompiledContract = (compactJs as any).CompiledContract;
+      const zkConfig = zkConfigOver(source, byCircuitName);
       const compiled = CompiledContract.make('Vault', (vault as any).Contract).pipe(
         CompiledContract.withWitnesses({
           /* No transaction built here spends a note, so nothing may ask for one. */
@@ -104,7 +113,16 @@ const loadDeps = (scope: any) => {
         /* A payment out is the one transaction built here that spends a note, and it hands in the one it chose. */
         compiledWith: (witnesses: unknown) => CompiledContract.make('Vault', (vault as any).Contract).pipe(
           CompiledContract.withWitnesses(witnesses)),
-        zkConfig: zkConfigOver(source, byCircuitName),
+        zkConfig,
+        /*
+         * **THE COMPANY ACCOUNT, WITH ITS OWN WITNESSES.** A raise and an approval
+         * are built with the record handed to each call as a value; this object
+         * is given no store to read a record from.
+         */
+        accountCompiled: CompiledContract.make('ConfidentialAccount', (account as any).Contract).pipe(
+          CompiledContract.withWitnesses((accountWitnesses as any).witnesses)),
+        accountZkConfig: zkConfig,
+        accountPure: (account as any).pureCircuits,
         prove: async (unproven: any, circuit?: string) =>
           (await (prover as any).proveTx(unproven, circuit === undefined ? undefined : { circuitId: circuit })) as { serialize(): Uint8Array },
       };
@@ -116,7 +134,7 @@ const loadDeps = (scope: any) => {
 
 /** One answer for one ask. Exported so it can be driven without a Worker. */
 export const answerVaultAsk = async (
-  deps: () => Promise<Omit<VaultBuilderDeps, 'network'> & { vault: any }>,
+  deps: () => Promise<WorkerDeps>,
   ask: VaultAsk,
 ): Promise<VaultAnswer> => {
   const d = await deps();
@@ -171,6 +189,15 @@ export const answerVaultAsk = async (
         },
       });
       return { id: ask.id, ok: true, ask: 'payout', tx: toBase64(built.proven), spent: built.spent, change: built.change };
+    }
+    case 'governed-call': {
+      const built = await buildGovernedCall(d, {
+        account: ask.account,
+        order: ask.order,
+        material: ask.material,
+        chain: { accountState: fromBase64(ask.chain.accountState), parameters: fromBase64(ask.chain.parameters) },
+      });
+      return { id: ask.id, ok: true, ask: 'governed-call', tx: toBase64(built.proven) };
     }
     case 'commitments': {
       /* The two commitments a coin has: as an output the ledger records, and as the note the vault holds. */

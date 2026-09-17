@@ -49,7 +49,9 @@ import { MidnightCommitments } from '../midnight/commitments.js';
 import { FileSealedStateStore } from '../midnight/sealed-store.js';
 import { midnightProviders, sponsoredProviders, type CustomerWallet } from '../midnight/providers.js';
 import { NothingWasSent, saysNothingWasSent } from '../core/jobs.js';
-import { refusalForProven, readProvenTransaction, readFinishedTransaction } from './proven-submission.js';
+import {
+  refusalForProven, refusalUnlessOnlyACallTo, readProvenTransaction, readFinishedTransaction,
+} from './proven-submission.js';
 import type {
   Ledger, LedgerAddress, LedgerStatus, LedgerRecord, PaymentsAmong,
   AccountOpening, SealedStateAt, TxRef, SignerRef, WriteInFlight, VaultTxArrival, VaultTxSent,
@@ -592,6 +594,30 @@ export class ChainLedger implements Ledger {
     proven: Uint8Array,
     read: (bytes: Uint8Array) => Promise<unknown> = readProvenTransaction,
   ): Promise<TxRef> {
+    return this.sendProven(accountId, proven, read, null);
+  }
+
+  /**
+   * **THE SAME DOOR, FOR A TRANSACTION THE SERVICE IS ABOUT TO RECORD AS ONE
+   * PARTICULAR CALL** - a raise or an approval a device built. It is refused
+   * unless it is exactly one call, to that circuit, as well as everything the
+   * door above refuses.
+   */
+  submitProvenCall(
+    accountId: string,
+    proven: Uint8Array,
+    circuit: string,
+    read: (bytes: Uint8Array) => Promise<unknown> = readProvenTransaction,
+  ): Promise<TxRef> {
+    return this.sendProven(accountId, proven, read, circuit);
+  }
+
+  private sendProven(
+    accountId: string,
+    proven: Uint8Array,
+    read: (bytes: Uint8Array) => Promise<unknown>,
+    only: string | null,
+  ): Promise<TxRef> {
     let submitting = false;
     /*
      * A deployment that cannot write is refused by the lane itself, before
@@ -605,7 +631,8 @@ export class ChainLedger implements Ledger {
           + 'there is nothing to send an approval to. Nothing was sent.');
       }
       const tx = await read(proven);
-      const refusal = refusalForProven(tx, address.value);
+      const refusal = refusalForProven(tx, address.value)
+        ?? (only === null ? null : refusalUnlessOnlyACallTo(tx, only));
       if (refusal) throw new NothingWasSent(refusal);
       /*
        * **WHAT EITHER SIDE BOOKS IS LET GO BY THESE PROVIDERS THEMSELVES**: a

@@ -80,6 +80,20 @@ export async function vaultChainFromTheIndexer(indexer: { url: string; wsUrl: st
         accountState: base64(accountState),
       };
     },
+    /*
+     * **THE ACCOUNT ALONE, AT ONE NAMED BLOCK**, with the parameters that block
+     * holds. A raise and an approval move no coin, so the commitment tree is
+     * not handed over.
+     */
+    accountCallState: async (account) => {
+      const block = await provider.queryBlock();
+      if (block === null) return null;
+      const at: AtBlock = { type: 'blockHash', blockHash: block.hash };
+      const both = await provider.queryZSwapAndContractState(account, at);
+      if (both === null) return null;
+      const [, accountState, parameters] = both;
+      return { blockHash: block.hash, accountState: base64(accountState), parameters: base64(parameters) };
+    },
     eventsOf: async (transactionHash) => (await events.eventsOf({ hash: transactionHash })).map((e) => ({
       transactionHash: e.transactionHash,
       details: {

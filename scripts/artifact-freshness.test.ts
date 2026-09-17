@@ -549,6 +549,7 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
     expect(gated).toEqual([
       'contracts/test/a-company-vault-from-the-page.test.ts',
       'contracts/test/a-private-payment-from-the-page.test.ts',
+      'contracts/test/a-run-raised-and-approved-from-the-page.test.ts',
       'src/midnight/deferred-set.test.ts',
       'src/midnight/ledger.test.ts',
       'src/midnight/the-key-reaches-the-circuit.test.ts',

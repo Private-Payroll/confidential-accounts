@@ -58,12 +58,45 @@ export interface AccountKeys {
    * is scoped to, which is exactly the partition of the signer set the leaf's
    * blinding exists to hide.
    *
-   * **OPTIONAL, AND ABSENT MEANS `allVaults()`.** Every bundle sealed before
-   * `S34` was written by a caller that passed two arguments and took the
-   * scheme's default; reading a missing value as anything else would report
-   * every one of those seats as a mismatch.
+   * **REQUIRED, AND AN ENTRY SAVED WITHOUT ONE IS REFUSED BY NAME.** Key
+   * material saved before scopes were recorded has none. Reading that absence
+   * as any value - the scheme's own "every vault", or thirty-two zero bytes -
+   * would be this page deciding a seat's leaf for it, and a wrong guess is a
+   * signer who cannot prove they are one on a device that looks healthy. So
+   * such an entry is not handed out at all: `keysFor` refuses it, and says the
+   * seat has to be taken on this device again. Nothing converts one.
    */
-  scope?: Hex;
+  scope: Hex;
+}
+
+/** An entry as a saved bundle may hold it: material saved before scopes were recorded has no scope. */
+export type SavedAccountKeys = Omit<AccountKeys, 'scope'> & { scope?: unknown };
+
+/** Key material this device holds for a company, saved before scopes were recorded. */
+export class SeatSavedBeforeScopes extends Error {
+  constructor(readonly accountId: string) {
+    super(
+      'the keys saved for you for this company were written before vault scopes were recorded, so they ' +
+        'cannot say which vaults you may act on, and nothing here guesses or converts them. Nothing was ' +
+        'opened, signed or sent. Your keys are saved for your sign-in, so taking a seat again under the same ' +
+        'sign-in is refused too; a seat taken under a new invitation by another sign-in can act. A company ' +
+        'where every signer holds keys like these can no longer act at all.',
+    );
+    this.name = 'SeatSavedBeforeScopes';
+  }
+}
+
+const SCOPE = /^[0-9a-fA-F]{64}$/u;
+
+/**
+ * **THE KEYS A SAVED ENTRY MAY BE USED AS, OR A REFUSAL.** An entry with no
+ * scope, or a scope that is not thirty-two bytes, is refused; nothing is
+ * filled in.
+ */
+export function keysToActWith(accountId: string, saved: SavedAccountKeys | undefined | null): AccountKeys | null {
+  if (!saved) return null;
+  if (typeof saved.scope !== 'string' || !SCOPE.test(saved.scope)) throw new SeatSavedBeforeScopes(accountId);
+  return { ...saved, scope: saved.scope };
 }
 
 /**
@@ -109,7 +142,7 @@ export interface PendingSeat {
  * is exactly the mistake being removed — so the screens no longer can.
  *
  * **WHAT IS SIGNED IS `approvalMessage(proposal)`, NOT THE DIGEST ALONE.**
- * A digest states what a round SAYS; `chainId` states which round it IS and which
+ * A digest states what a proposal SAYS; `chainId` states which round it IS and which
  * vault will pay. Signing the digest alone made a signature replayable across
  * rounds and across vaults. One definition, in `core/account.ts`.
  */
@@ -131,8 +164,8 @@ export function signApproval(proposal: { digest: Hex; chainId: Hex }, keys: { si
  * What this holds is the keys that OPEN things, one entry per account.
  */
 export interface Keyring {
-  /** Keyed by account id. */
-  accounts: Record<string, AccountKeys>;
+  /** Keyed by account id. As saved, so an entry may predate scopes; `keysFor` is the only way one is handed out. */
+  accounts: Record<string, SavedAccountKeys>;
   /**
    * **KEYED BY SIGNING PUBLIC KEY, NOT BY ACCOUNT**, and normally empty.
    *
@@ -309,7 +342,13 @@ export const signedInForTheFirstTimeHere = () => firstSignInHere;
  * has not managed to save, so nothing here claims what no device can do.
  */
 export function lockedCompanyReason(accountId: string): string {
-  if (keysFor(accountId)) return 'it did not open with the keys saved for you';
+  try {
+    keysFor(accountId);
+  } catch (e) {
+    if (e instanceof SeatSavedBeforeScopes) return 'the keys saved for you were written before vault scopes were recorded';
+    throw e;
+  }
+  if (anythingSavedFor(accountId)) return 'it did not open with the keys saved for you';
   if (savedKeys === 'none') return 'no keys were saved for you here when this tab last looked';
   if (savedKeys === 'some') {
     return 'the keys saved for you here, when this tab last looked, do not include this company';
@@ -318,7 +357,7 @@ export function lockedCompanyReason(accountId: string): string {
 }
 
 export function lockedCompanyRefusal(accountId: string): string {
-  if (keysFor(accountId)) {
+  if (anythingSavedFor(accountId)) {
     return `${lockedCompanyReason(accountId)}: you may not have been given access to it yet.`;
   }
   if (savedKeys === null) {
@@ -380,7 +419,22 @@ export function companyAwaitingSetupProblem(): { canFinish: boolean; why: string
   if (pendingCompany?.savingFailed === 'cannot-be-saved') return { canFinish: false, why: cannotBeSavedSentence() };
   return null;
 }
-export const keysFor = (accountId: string): AccountKeys | null => keyring.accounts[accountId] ?? null;
+export const keysFor = (accountId: string): AccountKeys | null => keysToActWith(accountId, keyring.accounts[accountId]);
+
+/** Whether anything at all is saved here for a company, whether or not it can be used. */
+const anythingSavedFor = (accountId: string): boolean => Boolean(keyring.accounts[accountId]);
+
+/**
+ * **THIS SIGNER'S OWN THREE, FOR THE BACKGROUND THREAD THAT BUILDS A RAISE OR
+ * AN APPROVAL ON THIS DEVICE.** The one place outside this file a signing key
+ * goes, and it goes nowhere off this device: the thread uses it for one call
+ * and keeps none of it.
+ */
+export function signerMaterialFor(accountId: string): { signingSecret: Hex; blinding: Hex; scope: Hex } {
+  const keys = keysFor(accountId);
+  if (!keys) throw new Error(lockedCompanyRefusal(accountId));
+  return { signingSecret: keys.signingSecret, blinding: keys.blinding, scope: keys.scope };
+}
 
 /* ---------------- transport ---------------- */
 
@@ -610,7 +664,7 @@ async function finishWalletSignIn(
   /* A sign-in releases nothing. The unlock is what does. */
   releasedCompanyKey = null;
   /* NO KEYRING AND NO `encKey`. See `canOpenCompanies` — this is not an
-   * omission here, it is the state of the product after this round. */
+   * omission here, it is the state of the product after this proposal. */
   encKey = null;
   keyring = { accounts: {} };
   me = r.user;
@@ -666,7 +720,7 @@ export async function payeeDisclosureFromWallet(
 ): Promise<{ handle: string; nonce: string; response: unknown }> {
   if (!sessionLive) throw new Error('not signed in');
   /* **OPENED IN THE CLICK.** `C154` — the same order as the other two, and for
-   * the same reason: the challenge below is a round trip, and a permission
+   * the same reason: the challenge below is a proposal trip, and a permission
    * spent on it is gone by the time a window is wanted. */
   const dialog = openTheWallet(view, walletOrigin, already);
   try {

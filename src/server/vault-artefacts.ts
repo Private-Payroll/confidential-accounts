@@ -1,7 +1,7 @@
 import express from 'express';
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { ACCOUNT_CIRCUITS_A_VAULT_CALLS, VAULT_CIRCUITS } from '../midnight/vault-contract.js';
+import { ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE, VAULT_CIRCUITS } from '../midnight/vault-contract.js';
 
 /**
  * **THE PUBLIC MATERIAL A DEVICE PROVES A VAULT'S TRANSACTIONS WITH**, served
@@ -17,15 +17,20 @@ import { ACCOUNT_CIRCUITS_A_VAULT_CALLS, VAULT_CIRCUITS } from '../midnight/vaul
  * **A PAYMENT OUT ALSO PROVES ONE OF THE COMPANY ACCOUNT'S CIRCUITS.** The
  * vault's `payout` asks the account's `recordPayment` inside the same
  * transaction, and that call is proved beside the vault's own, so its three
- * files are served too - that one circuit, and no other of the account's.
+ * files are served too.
+ *
+ * **AND A SIGNER'S DEVICE PROVES TWO MORE OF THE ACCOUNT'S: RAISING A PROPOSAL AND
+ * APPROVING ONE.** Both open with the signer check and so can only be proved
+ * where the signer's secret is. Those three circuits, and no other of the
+ * account's, are served.
  *
  *   /artefacts/vault/keys/<circuit>.prover|verifier
  *   /artefacts/vault/zkir/<circuit>.bzkir
  *   /artefacts/vault/params/bls_midnight_2p<k>
  *   /artefacts/vault/builtin/zswap/9/keys/<output|spend|sign>.prover|verifier
  *   /artefacts/vault/builtin/zswap/9/zkir/<output|spend|sign>.bzkir
- *   /artefacts/vault/account/keys/recordPayment.prover|verifier
- *   /artefacts/vault/account/zkir/recordPayment.bzkir
+ *   /artefacts/vault/account/keys/<recordPayment|propose|approve>.prover|verifier
+ *   /artefacts/vault/account/zkir/<recordPayment|propose|approve>.bzkir
  */
 export const VAULT_ARTEFACT_PATH = '/artefacts/vault';
 
@@ -59,7 +64,7 @@ export function vaultArtefactFile(places: VaultArtefactPlaces, path: string): st
   const account = /^\/account\/(keys|zkir)\/([A-Za-z]+)\.(prover|verifier|bzkir)$/u.exec(path);
   if (account) {
     const [, dir, circuit, ext] = account;
-    if (!ACCOUNT_CIRCUITS_A_VAULT_CALLS.includes(circuit!)) return null;
+    if (!ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE.includes(circuit!)) return null;
     if ((dir === 'zkir') !== (ext === 'bzkir')) return null;
     return join(places.account, dir!, `${circuit}.${ext}`);
   }

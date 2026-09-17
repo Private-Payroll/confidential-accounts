@@ -11,7 +11,8 @@ import type {
   ApprovalOutcome, ApprovalUnknown, PayoutSeed,
 } from './types.js';
 import type { AssetId } from './assets.js';
-import { assets as defaultAssets, NO_ASSET, sumChangeAmount } from './assets.js';
+import { assets as defaultAssets, assetIdBytes, NO_ASSET, sumChangeAmount } from './assets.js';
+import { NothingWasSent, saysNothingWasSent } from './jobs.js';
 import {
   sealRecord, openRecord, inboxPublicKey, sealToInbox, openFromInbox,
 } from './sealed-records.js';
@@ -42,6 +43,29 @@ export const GENESIS_KEY_EPOCH = 0;
 
 /** What a round that moves no money says when it is raised, so that saying nothing is not an option. */
 const MOVES_NO_MONEY = 'moves-no-money' as const;
+
+/**
+ * **WHAT A RAISE SAYS WHEN THE CHAIN CALL IS MADE BY A SIGNER'S DEVICE AND NOT
+ * HERE.** The record is written exactly as for any raise; nothing is sent from
+ * this process, and the device sends the proposal it builds with `sendRaise`.
+ */
+const THE_DEVICE_SENDS = 'the-device-sends' as const;
+
+/**
+ * **THE ACCOUNT'S HALF OF A RAISE, FOR THE SIGNER'S DEVICE THAT BUILDS IT.**
+ * Every value is the hexadecimal of its thirty-two bytes, except the amount,
+ * which is decimal digits. All of it opens with the account's viewing key, which
+ * is what a caller presents to be given it.
+ */
+export interface RaiseHalf {
+  assetId: Hex;
+  assetBlinding: Hex;
+  proposalSalt: Hex;
+  changeAmount: string;
+  changeBatchDigest: Hex;
+}
+
+const hexOfBytes = (b: Uint8Array): Hex => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 
 export interface SignerSpec { name: string; role: Role; userId?: string | null; }
 
@@ -2536,6 +2560,14 @@ export class AccountService {
     proposedBy: string;
     /** A round already written down for this run that may be on chain: raised again AS ITSELF. See `raiseRunAgain`. */
     again?: string;
+    /**
+     * **THE SIGNER'S DEVICE BUILDS AND SENDS THE PROPOSAL, AND THIS PROCESS
+     * DOES NOT.** The record is written as for any raise and nothing is sent from
+     * here; the device reads what it needs with `raiseHalfOf` and sends what it
+     * built with `sendRaise`. A proposal that opens with the signer check can only
+     * be built where the signer's secret is.
+     */
+    onDevice?: true;
   }): Promise<Proposal> {
     const account = this.open(args.accountId, args.viewingKey);
     const proposer = account.signers.find(s => s.id === args.proposedBy);
@@ -2677,7 +2709,7 @@ export class AccountService {
       await this.raise(proposal, args.viewingKey, {
         vault: args.run.vault, asset, total: change.amount, payees: args.run.payees,
         payments: args.payments,
-      }, async () => {
+      }, args.onDevice ? THE_DEVICE_SENDS : async () => {
         const raised = await this.ledger.proposeRun(
           args.accountId, args.run, change, this.refFor(account, args.proposedBy));
         if (raised.proposalId !== chainId) {
@@ -2735,7 +2767,38 @@ export class AccountService {
    * against it. That ceiling is a rule the company set over a number the
    * company owns, which is the whole of what is left of `C121`'s second half.
    */
-  async approve(proposalId: string, signerId: string, signature: Hex, viewingKey: Hex): Promise<Proposal> {
+  async approve(
+    proposalId: string, signerId: string, signature: Hex, viewingKey: Hex,
+    /**
+     * **THE APPROVAL AS THE SIGNER'S OWN DEVICE BUILT AND PROVED IT**, sent in
+     * place of the chain call this process would otherwise make. The approval
+     * circuit opens with the signer check, so the call can only be built where
+     * the signer's secret is.
+     */
+    proven?: Uint8Array,
+  ): Promise<Proposal> {
+    if (proven === undefined) return this.approveWith(proposalId, signerId, signature, viewingKey, null);
+    /*
+     * **A DEVICE THAT SENT AN APPROVAL IS TOLD WHETHER IT WAS SENT.** Every
+     * refusal before the send - a signature that does not verify, an approval
+     * already recorded, a chain that did not answer - is marked as having sent
+     * nothing, so the device may say so. From the send onwards nothing is
+     * re-marked: a failure there may be an approval the chain already holds.
+     */
+    const phase = { sending: false };
+    try {
+      return await this.approveWith(proposalId, signerId, signature, viewingKey, { proven, phase });
+    } catch (e) {
+      if (phase.sending || saysNothingWasSent(e)) throw e;
+      const why = String((e as { message?: unknown })?.message ?? e).replace(/\.\s*$/u, '');
+      throw new NothingWasSent(`${why}. Nothing was sent.`);
+    }
+  }
+
+  private async approveWith(
+    proposalId: string, signerId: string, signature: Hex, viewingKey: Hex,
+    device: { proven: Uint8Array; phase: { sending: boolean } } | null,
+  ): Promise<Proposal> {
     const proposal = this.requireProposal(proposalId, viewingKey);
     if (proposal.status === 'executed') throw new Error('already executed');
     /* Ours, and it says so. `R4` — the chain has no ceiling and refused nothing. */
@@ -2844,7 +2907,12 @@ export class AccountService {
      * first and the chain second is how a UI comes to show two approvals where
      * the chain holds one.
      */
-    await this.ledger.approve(proposal.accountId, proposal.chainId, this.refFor(account, signerId));
+    if (device !== null) {
+      device.phase.sending = true;
+      await this.sendProvenCall(proposal.accountId, device.proven, 'approve', 'this approval');
+    } else {
+      await this.ledger.approve(proposal.accountId, proposal.chainId, this.refFor(account, signerId));
+    }
 
     proposal.approvals.push({ signerId, signature, at: new Date().toISOString() });
 
@@ -2881,6 +2949,143 @@ export class AccountService {
      */
     await this.recordStanding(proposal, account, viewingKey);
     return proposal;
+  }
+
+  /**
+   * **A CALL A SIGNER'S DEVICE BUILT AND PROVED, SENT THROUGH THE LEDGER'S ONE
+   * DOOR FOR THOSE.** That door reads the transaction and refuses anything but
+   * exactly one call, to `circuit`, on this company's own contract, moving no
+   * coin - before anything is paid. A deployment with no such door refuses
+   * here, and says nothing was sent.
+   */
+  private async sendProvenCall(
+    accountId: string, proven: Uint8Array, circuit: string, what: string,
+  ): Promise<{ ref: string; at: string }> {
+    if (typeof this.ledger.submitProvenCall !== 'function') {
+      throw new NothingWasSent(
+        `this deployment does not send transactions proved on a device, so ${what} was not sent. `
+        + 'Nothing was sent.');
+    }
+    return this.ledger.submitProvenCall(accountId, proven, circuit);
+  }
+
+  /**
+   * **WHAT A SIGNER'S DEVICE NEEDS TO BUILD A PAYROLL PROPOSAL THIS SERVICE
+   * HAS WRITTEN DOWN AND NOT SENT.** The asset, the account's asset blinding, the
+   * salt and the change - read out of the proposal's own sealed payload and the
+   * account's sealed state, with the viewing key the caller presents. Nothing a
+   * caller supplies reaches any of the five.
+   *
+   * Refused for a proposal the chain holds, and while the chain cannot say
+   * whether it holds one a device already sent: see `mayBeSentFromADevice`.
+   */
+  async raiseHalfOf(proposalId: string, viewingKey: Hex): Promise<RaiseHalf> {
+    const proposal = await this.mayBeSentFromADevice(proposalId, viewingKey);
+    const { __change: change } = parseCanonical<{ __change: StateChange }>(
+      unseal(proposal.sealedPayload, viewingKey));
+    const { blinding } = await this.readSealed(
+      proposal.accountId, viewingKey, this.require(proposal.accountId).keyEpoch);
+    /* The account's own name for the asset, which is what the asset witness answers with. */
+    const named = { assetId: assetIdBytes(change.asset) };
+    return {
+      assetId: hexOfBytes(named.assetId),
+      assetBlinding: blinding.assetBlinding,
+      proposalSalt: change.salt,
+      changeAmount: change.amount.toString(),
+      changeBatchDigest: change.batchDigest,
+    };
+  }
+
+  /**
+   * **THE PROPOSAL A SIGNER'S DEVICE BUILT, SENT.** The record already exists - it
+   * was written when the proposal was raised - and what is written now is the
+   * reference the ledger answered with. **It is not marked confirmed**: the
+   * ledger answers when the transaction is handed over, before the chain holds
+   * it, and `approve`, `cancel` and `refreshStanding` ask the chain before they
+   * rely on it.
+   *
+   * Sent by a seated signer who may propose, and only as the one call it is.
+   */
+  async sendRaise(proposalId: string, viewingKey: Hex, proven: Uint8Array, by: string): Promise<Proposal> {
+    const proposal = await this.mayBeSentFromADevice(proposalId, viewingKey);
+    const sender = this.open(proposal.accountId, viewingKey).signers.find(x => x.id === by);
+    if (!sender || sender.status !== 'active' || sender.role === 'viewer') {
+      throw new NothingWasSent('only a signer who may propose sends a proposal to the chain. Nothing was sent.');
+    }
+    const tx = await this.sendProvenCall(proposal.accountId, proven, 'propose', 'this proposal');
+    /* Re-read before the write: the send is an `await`, and the record is written whole. */
+    const fresh = this.requireProposal(proposalId, viewingKey);
+    fresh.txRef = tx.ref;
+    this.putProposal(fresh, viewingKey);
+    return fresh;
+  }
+
+  /**
+   * **WHETHER A WRITTEN-DOWN PAYROLL PROPOSAL MAY BE BUILT AND SENT FROM A
+   * DEVICE NOW**, and the record as it stands if so.
+   *
+   * Never one the chain holds. **One a device already sent may be sent again
+   * only when the chain says it does not hold it**: it is the same proposal
+   * under the same identity, so if the first send is still on its way the chain
+   * refuses whichever arrives second, and if the first was dropped the second is
+   * what lands. While the chain cannot say, it is refused rather than guessed.
+   */
+  private async mayBeSentFromADevice(proposalId: string, viewingKey: Hex): Promise<Proposal> {
+    const proposal = this.requireProposal(proposalId, viewingKey);
+    if (proposal.kind !== 'payroll') {
+      throw new NothingWasSent('only a payroll proposal is raised from a device here, and this is not one. Nothing was sent.');
+    }
+    if (proposal.status !== 'open') {
+      throw new NothingWasSent(`this proposal is ${proposal.status}, so it is not sent to the chain. Nothing was sent.`);
+    }
+    const held = proposal.raisedAt ? 'present'
+      : proposal.txRef ? await this.chainHolds(proposal, viewingKey) : 'absent';
+    if (held === 'present') {
+      throw new NothingWasSent('the chain already holds this proposal, so it is not sent again. Nothing was sent.');
+    }
+    if (held === 'unknown') {
+      throw new NothingWasSent(
+        `this proposal was already sent from a device, as ${proposal.txRef}, and the chain did not answer whether it `
+        + 'holds it. Sending it again now would be a guess. Nothing was sent. Try again once the chain answers.');
+    }
+    return this.requireProposal(proposalId, viewingKey);
+  }
+
+  /**
+   * **ASKS THE CHAIN WHERE A PROPOSAL STANDS NOW, AND WRITES IT DOWN.**
+   *
+   * An approval a device sends is handed to the chain and answered before the
+   * chain has counted it, so the standing written by `approve` itself can be
+   * one short - and for the last approval, that is the difference between
+   * `open` and `approved`. This is the read that catches up, for anybody who
+   * presents the viewing key. It sends nothing and changes nothing on chain.
+   *
+   * **IT WRITES ONLY WHAT IT READ, ONTO THE RECORD AS IT IS AFTER THE READ.**
+   * The chain read is an `await`, and in that window another request may have
+   * recorded an approval, withdrawn the proposal or found it approved. So the
+   * record is read again after the chain answers, only the standing is set on
+   * it, and a proposal that is no longer open is left exactly as it is.
+   */
+  async refreshStanding(proposalId: string, viewingKey: Hex): Promise<Proposal> {
+    const proposal = this.requireProposal(proposalId, viewingKey);
+    if (proposal.status !== 'open') return proposal;
+    if (!proposal.raisedAt && await this.chainHolds(proposal, viewingKey) !== 'present') {
+      return this.requireProposal(proposalId, viewingKey);
+    }
+    const read = this.requireProposal(proposalId, viewingKey);
+    let verdict: PolicyVerdict;
+    try {
+      verdict = await this.standingOf(read, this.open(read.accountId, viewingKey), viewingKey);
+    } catch (e) {
+      if (e instanceof ProposerRoleGone) return this.requireProposal(proposalId, viewingKey);
+      throw e;
+    }
+    const latest = this.requireProposal(proposalId, viewingKey);
+    if (latest.status !== 'open') return latest;
+    latest.approvalRound = verdict.approval;
+    if (verdict.approval.state === 'satisfied') latest.status = 'approved';
+    this.putProposal(latest, viewingKey);
+    return latest;
   }
 
   /**
@@ -2927,6 +3132,17 @@ export class AccountService {
   private async recordStanding(
     proposal: Proposal, account: Account, viewingKey: Hex,
   ): Promise<void> {
+    const verdict = await this.standingOf(proposal, account, viewingKey);
+    proposal.approvalRound = verdict.approval;
+    if (verdict.approval.state === 'satisfied') proposal.status = 'approved';
+
+    this.putProposal(proposal, viewingKey);
+  }
+
+  /** The verdict `recordStanding` writes, from one chain read, and nothing written. */
+  private async standingOf(
+    proposal: Proposal, account: Account, viewingKey: Hex,
+  ): Promise<PolicyVerdict> {
     const status = await this.ledger.status(proposal.accountId);
     const chain = approvalsOnChain(status, proposal.chainId, proposal.vault);
 
@@ -2963,12 +3179,7 @@ export class AccountService {
      * caller past to the honest answer rather than re-throwing for ever.
      */
     if (!proposerRole) throw new ProposerRoleGone(proposal.proposedBy);
-    const verdict = evaluatePolicy(account, asset, amount, proposerRole, chain);
-
-    proposal.approvalRound = verdict.approval;
-    if (verdict.approval.state === 'satisfied') proposal.status = 'approved';
-
-    this.putProposal(proposal, viewingKey);
+    return evaluatePolicy(account, asset, amount, proposerRole, chain);
   }
 
   /*
@@ -3052,6 +3263,19 @@ export class AccountService {
     const account = this.open(proposal.accountId, viewingKey);
     const held = proposal.status === 'blocked' ? 'absent' : await this.chainHolds(proposal, viewingKey);
     if (held === 'unknown') throw new Error(CANNOT_ASK_THE_CHAIN);
+    /*
+     * **A PROPOSAL A DEVICE SENT, THAT THE CHAIN DOES NOT SHOW YET, IS NOT
+     * CLOSED HERE.** It may still land, and a record closed locally would then
+     * sit beside an open proposal on chain that nothing here can withdraw. It is
+     * sent again instead - the same proposal, under the same identity - or
+     * withdrawn once the chain shows it.
+     */
+    if (held === 'absent' && proposal.txRef && !proposal.raisedAt) {
+      throw new Error(
+        `this proposal was sent from a device, as ${proposal.txRef}, and the chain does not show it yet, so it may `
+        + 'still arrive. Nothing was withdrawn. Send it to the chain again from a signer\'s device - it is the same '
+        + 'proposal, and the chain takes it once - or withdraw it once the chain shows it.');
+    }
     if (held === 'present') await this.ledger.cancel(proposal.accountId, proposal.chainId,
       this.refFor(account, by ?? proposal.proposedBy));
 
@@ -3498,7 +3722,7 @@ export class AccountService {
       vault: Hex; asset: AssetId; total: bigint; payees: bigint;
       payments: ReadonlyArray<PaymentAsked>;
     },
-    call: () => Promise<{ ref: string; at: string }>,
+    call: (() => Promise<{ ref: string; at: string }>) | typeof THE_DEVICE_SENDS,
   ): Promise<void> {
     /*
      * **AND BEFORE EITHER HALF, A ROUND THAT MOVES MONEY IS ASKED WHETHER ITS
@@ -3522,6 +3746,12 @@ export class AccountService {
       });
     }
     this.putProposal(proposal, viewingKey);
+    /*
+     * **A PROPOSAL A DEVICE SENDS STOPS HERE, WITH ITS RECORD WRITTEN AND NOTHING
+     * SENT** - the same state a raise is in when its chain call throws, and it
+     * is recovered the same way: `approve` and `cancel` ask the chain first.
+     */
+    if (call === THE_DEVICE_SENDS) return;
     const tx = await call();
     proposal.txRef = tx.ref;
     proposal.raisedAt = tx.at;
@@ -3808,6 +4038,7 @@ export class AccountService {
     args: {
       accountId: string; viewingKey: Hex; run: RunProposal; asset?: AssetId; proposedBy: string;
       payments: ReadonlyArray<PaymentAsked>;
+      onDevice?: true;
     },
     earlierId: string,
     account: Account,
@@ -3840,7 +4071,7 @@ export class AccountService {
     await this.raise(fresh, args.viewingKey, {
       vault: args.run.vault, asset: kept.asset, total: kept.amount, payees: args.run.payees,
       payments: args.payments,
-    }, async () => {
+    }, args.onDevice ? THE_DEVICE_SENDS : async () => {
       const raised = await this.ledger.proposeRun(
         args.accountId, args.run, kept, this.refFor(account, args.proposedBy));
       if (raised.proposalId !== fresh.chainId) {

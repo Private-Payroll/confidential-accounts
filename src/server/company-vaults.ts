@@ -22,6 +22,7 @@
  *   GET  /api/accounts/:id/vaults/:vault/events/:tx     what one transaction created, for a note's place to be read
  *   POST /api/accounts/:id/vaults/:vault/payout         a private payment out of the vault
  *   GET  /api/accounts/:id/authority                    who holds the account's and every vault's rules
+ *   GET  /api/accounts/:id/call-state                   the account as one block saw it, for a raise or an approval to be built on
  *   POST /api/accounts/:id/authority/handover           the company account handed to the committee
  *
  * **AND THESE ROUTES CARRY NO MONEY INTO ANY VAULT UNTIL THE CHAIN SHOWS THE
@@ -76,6 +77,13 @@ export interface VaultChain {
    */
   payoutState?(vault: Hex, account: Hex): Promise<PayoutState | null>;
   /**
+   * **ONE BLOCK'S VIEW OF THE COMPANY ACCOUNT, FOR A PROPOSAL TO BE RAISED OR
+   * APPROVED ON**: the account's state and the ledger parameters as that block
+   * holds them. Each value is its bytes. Absent where this deployment reads no
+   * chain.
+   */
+  accountCallState?(account: Hex): Promise<AccountCallState | null>;
+  /**
    * **WHAT ONE TRANSACTION CREATED**, as the chain's own events say: the only
    * place a note's position in the commitment tree is read from.
    */
@@ -89,6 +97,13 @@ export interface PayoutState {
   readonly zswapState: string;
   readonly parameters: string;
   readonly accountState: string;
+}
+
+/** The company account as one block saw it, for a governed call to be built on. Base64 of the bytes. */
+export interface AccountCallState {
+  readonly blockHash: string;
+  readonly accountState: string;
+  readonly parameters: string;
 }
 
 /** One zswap event of one transaction, with its position as a decimal string. */
@@ -545,6 +560,34 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
       res.json({ vault: record.vault, account: company.address, ...state });
     } catch (e) {
       res.status(503).json({ error: `the chain could not be read for this payment: ${(e as Error)?.message ?? e}` });
+    }
+  });
+
+  /*
+   * **WHAT A RAISE OR AN APPROVAL IS BUILT ON: THE ACCOUNT AS THE CHAIN HOLDS
+   * IT, AND NOTHING A SIGNER HOLDS.** The device composes its own half; this
+   * answers only public state, read at one block, and the account's address.
+   */
+  r.get('/api/accounts/:id/call-state', ...guard, async (req, res) => {
+    const account = accountOf(req);
+    const company = await deps.company(account.id);
+    if (company === null) {
+      res.status(409).json({ error: 'this company has no contract on the chain this service can read, so no round can be raised or approved on it yet.' });
+      return;
+    }
+    if (deps.chain.accountCallState === undefined) {
+      res.status(503).json({ error: 'this deployment reads no chain, so no round can be raised or approved from a device.' });
+      return;
+    }
+    try {
+      const state = await deps.chain.accountCallState(company.address);
+      if (state === null) {
+        res.status(409).json({ error: 'the chain does not show this company\'s account yet. Try again shortly.' });
+        return;
+      }
+      res.json({ account: company.address, ...state });
+    } catch (e) {
+      res.status(503).json({ error: `the chain could not be read for this company: ${(e as Error)?.message ?? e}` });
     }
   });
 

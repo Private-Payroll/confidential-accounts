@@ -16,16 +16,20 @@ describe('THE PROVING MATERIAL A DEVICE MAY FETCH', () => {
       .toBe('/params/bls_midnight_2p9');
   });
 
-  it('A PAYMENT OUT ALSO PROVES THE ACCOUNT\'S recordPayment, AND THAT IS THE ONLY ONE OF THE ACCOUNT\'S SERVED', () => {
-    /* RED WHEN: the account's folder is not served (a payment out then cannot be proved on a device), or it
-     * serves any other circuit of the account's, or a vault name reaches it. */
-    expect(vaultArtefactFile(places, '/account/keys/recordPayment.prover')).toBe('/repo/contracts/managed/keys/recordPayment.prover');
-    expect(vaultArtefactFile(places, '/account/keys/recordPayment.verifier')).toBe('/repo/contracts/managed/keys/recordPayment.verifier');
-    expect(vaultArtefactFile(places, '/account/zkir/recordPayment.bzkir')).toBe('/repo/contracts/managed/zkir/recordPayment.bzkir');
+  it('A PAYMENT OUT ALSO PROVES THE ACCOUNT\'S recordPayment, AND A SIGNER\'S DEVICE PROVES propose AND approve: THOSE THREE AND NO OTHER OF THE ACCOUNT\'S', () => {
+    /* RED WHEN: the account's folder is not served (a payment out, a raise or an approval then cannot be
+     * proved on a device), or it serves any other circuit of the account's, or a vault name reaches it. */
+    for (const circuit of ['recordPayment', 'propose', 'approve']) {
+      expect(vaultArtefactFile(places, `/account/keys/${circuit}.prover`)).toBe(`/repo/contracts/managed/keys/${circuit}.prover`);
+      expect(vaultArtefactFile(places, `/account/keys/${circuit}.verifier`)).toBe(`/repo/contracts/managed/keys/${circuit}.verifier`);
+      expect(vaultArtefactFile(places, `/account/zkir/${circuit}.bzkir`)).toBe(`/repo/contracts/managed/zkir/${circuit}.bzkir`);
+    }
     for (const path of [
-      '/account/keys/approve.prover', '/account/keys/propose.prover', '/account/keys/payout.prover',
+      '/account/keys/cancel.prover', '/account/keys/closeExpiredRun.prover', '/account/keys/amendSigner.prover',
+      '/account/keys/adopt.prover', '/account/keys/payout.prover',
       '/account/zkir/recordPayment.prover', '/account/keys/recordPayment.bzkir', '/account/keys/../keys/recordPayment.prover',
-      '/keys/recordPayment.prover', '/account/params/bls_midnight_2p13', '/account/keys/recordpayment.prover',
+      '/keys/recordPayment.prover', '/keys/propose.prover', '/keys/approve.prover',
+      '/account/params/bls_midnight_2p13', '/account/keys/recordpayment.prover', '/account/keys/Propose.prover',
     ]) {
       expect(vaultArtefactFile(places, path), path).toBeNull();
     }

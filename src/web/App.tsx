@@ -23,6 +23,8 @@ import type { Marked } from '../core/provenance.js';
 import { AuthScreen, AccountPicker, WALLET_ORIGIN } from './Auth.js';
 import { VaultPanel } from './VaultPanel.js';
 import { PayoutPanel } from './PayoutPanel.js';
+import { RaiseLeg, approveFromThisDevice, sendRunFromThisDevice, stageWords } from './GovernedCallControls.js';
+import type { GovernedStage } from './governed-call-on-device.js';
 import { MaintenancePanel } from './MaintenancePanel.js';
 import { WalletWaiting } from './wallet-waiting.js';
 import { JoinScreen, joinTokenFromLocation } from './Join.js';
@@ -213,7 +215,7 @@ interface EmployeeIdentity {
  *
  * `S33` put a money-safety refusal in this file and no test in this repository
  * imports it, so what stood in for rule 11 was a source pin over this file's
- * text — and a source pin cannot see semantics: its own round's test-coverage pass
+ * text — and a source pin cannot see semantics: its own proposal's test-coverage pass
  * defeated the first version three ways with the text intact, and `S34` found a
  * fourth without looking, because `loadDemo` built a session here without ever
  * entering `openAccount`, which is the only function the pin counted calls in.
@@ -487,10 +489,8 @@ function Screens({ commitments }: { commitments: CommitmentScheme }) {
         account, viewingKey, employees, seat,
         secrets: [{
           ...keys, name: mine?.name ?? 'You',
-          /* Absent on a bundle sealed before `S34`, and absent means the
-           * scheme's default — which is what those seats were written under.
-           */
-          scope: keys.scope ?? commitments.allVaults(),
+          /* Required: keys saved without one were refused when they were read. */
+          scope: keys.scope,
         }],
       };
       setS(sess); await load(sess);
@@ -1104,7 +1104,7 @@ function Dashboard({ state, runs, people, pending, onGo }: {
             ))}
             {/* THE SETTLEMENT ROW STOOD HERE — "One aggregate transfer per
                 asset". Nothing transfers anything: the account has no send
-                operation and the circuit that closed a round is deleted.
+                operation and the circuit that closed a proposal is deleted.
                 Deleted rather than reworded, because any wording of
                 it is a claim about a payment this system cannot make. */}
             <div style={{ marginTop: 16 }}>
@@ -1307,6 +1307,8 @@ function RunDetail({ run, proposals, account, session, me, busy, onBack, act }: 
   run: (PayrollRun & Marked) | undefined; proposals: Array<Proposal & Marked>; account: Account;
   session: Session; me: SignerSecrets; busy: boolean; onBack: () => void; act: Act;
 }) {
+  /* Which step a raise or an approval from this device is on. Above the early return, as every hook is. */
+  const [stage, setStage] = useState<GovernedStage | null>(null);
   if (!run) return null;
   const need = account.policy.threshold;
   const legs = Object.keys(run.totals).sort();
@@ -1324,7 +1326,7 @@ function RunDetail({ run, proposals, account, session, me, busy, onBack, act }: 
    * reproduce — approved, paid for, and unpayable for ever. **That route now
    * raises a real run and takes three more fields for it: a vault, and the two
    * ends of the window.** The old handler sent none of them, so restoring it
-   * would produce a refusal rather than a round; it stays deleted rather than
+   * would produce a refusal rather than a proposal; it stays deleted rather than
    * kept beside a disabled button, because a handler that looks finished is how
    * a control gets quietly re-enabled by somebody who assumes it works.
    *
@@ -1341,15 +1343,23 @@ function RunDetail({ run, proposals, account, session, me, busy, onBack, act }: 
    * is already public; `signApproval` is in the keyring because this screen is
    * not allowed to reach a secret.
    */
+  /*
+   * **AND THE APPROVAL ITSELF IS BUILT AND PROVED ON THIS DEVICE**, with this
+   * signer's own keys, and sent beside the signature.
+   */
   const approve = (proposal: Proposal) => act(async () => {
-    await api(`/api/proposals/${proposal.id}/approve`, {
-      method: 'POST',
-      body: JSON.stringify({
-        signerId: me.signerId,
-        signature: keyring.signApproval(proposal, me),
-        viewingKey: session.viewingKey,
-      }),
-    });
+    try {
+      await approveFromThisDevice(account, proposal, me, session.viewingKey, setStage);
+    } finally {
+      setStage(null);
+    }
+  });
+  const sendAgain = (asset: AssetId) => act(async () => {
+    try {
+      await sendRunFromThisDevice(account, run.id, asset, session.viewingKey, setStage);
+    } finally {
+      setStage(null);
+    }
   });
   /*
    * **THE SETTLE CONTROL STOOD HERE AND IS DELETED.**
@@ -1397,6 +1407,7 @@ function RunDetail({ run, proposals, account, session, me, busy, onBack, act }: 
       <div className="card">
         <div className="hd"><h3>Settlement</h3>
           <span className="sub">one approval round per asset</span></div>
+        {stage && <div className="hint" data-governed-stage style={{ margin: '8px 16px' }}>Now: {stageWords(stage)}…</div>}
         <div className="bd tight">
           <table>
             <thead><tr>
@@ -1416,31 +1427,28 @@ function RunDetail({ run, proposals, account, session, me, busy, onBack, act }: 
                     <td>{paid}</td>
                     <td>{proposal ? `${approvals} of ${need}` : 'not proposed'}</td>
                     <td style={{ textAlign: 'right' }}>
-                      {/* **STILL DISABLED, AND THE REASON HAS CHANGED — WHICH IS
-                          WHY IT IS REWRITTEN RATHER THAN LEFT.** The three
-                          values a run is raised against are no longer all
-                          missing: the payout root is now derived from this
-                          run's own payees and the company's own seed, and the
-                          window is a number somebody chooses. **What this
-                          screen still has no way to collect is the vault** —
-                          the contract that will pay the run — and a run raised
-                          without one is approved, paid for, and presentable by
-                          nobody. Shown with its reason rather than hidden, so
-                          the gap is visible to whoever is looking at the run. */}
-                      {!proposal && <button className="btn sm pri" disabled
-                        title={'A run is submitted against a payout root, a payment window and '
-                          + 'the vault that will pay it. This screen has no way to name a vault '
-                          + 'yet, and the vault is folded into what the signers approve — so a '
-                          + 'run raised without one collects real signatures and can never be '
-                          + 'paid by anybody.'}>
-                        Submit {asset} for approval</button>}
+                      {/* **RAISED FROM THIS DEVICE.** The vault that pays the leg is
+                          chosen from the company's own, the window is picked, and
+                          the proposal is built and proved here with this signer's own
+                          keys; the company's service writes it down first and
+                          pays the fee. */}
+                      {!proposal && <RaiseLeg account={account} runId={run.id} asset={asset}
+                        viewingKey={session.viewingKey} act={act} busy={busy} />}
+                      {/* A proposal written down that the chain does not show yet: sent (again), as itself.
+                          The service sends one a device already sent only when the chain says it does not
+                          hold it, and says so otherwise. */}
+                      {proposal && proposal.status === 'open' && !proposal.raisedAt && proposal.txRef &&
+                        <span className="chip" data-round-sent>sent, waiting for the chain</span>}
+                      {proposal && proposal.status === 'open' && !proposal.raisedAt &&
+                        <button className="btn sm" disabled={busy} data-send-round
+                          onClick={() => sendAgain(asset)}>{proposal.txRef ? 'Send to the chain again' : 'Send to the chain'}</button>}
                       {proposal && proposal.status === 'executed' && <span className="chip ok">settled</span>}
                       {proposal && proposal.status !== 'executed' && approvals < need &&
                         <button className="btn sm pri" onClick={() => approve(proposal)} disabled={busy || mine}>
                           {mine ? 'You have signed' : `Approve as ${me.name}`}</button>}
                       {/* Nothing here at the threshold: the Settle control was
                           deleted with the account's balance. The
-                          approvals column already says the round is at its bar. */}
+                          approvals column already says the proposal is at its bar. */}
                     </td>
                   </tr>
                 );
@@ -2052,7 +2060,7 @@ function People({ people, session, busy, act }: {
           {!openSelf && <button className="btn ghost" onClick={() => setOpenSelf(true)}>Add yourself</button>}
           {!open && <button className="btn pri" onClick={() => setOpen(true)}>Invite employee</button>}
           {/*
-            * `C21` — **THE EMAIL BOX IS STILL HERE AND THIS ROUND LEAVES IT.**
+            * `C21` — **THE EMAIL BOX IS STILL HERE AND THIS PROPOSAL LEAVES IT.**
             * `X11` says so by name: `C21` closes by DELETION, and that deletion
             * touches the hire form, the roster and `C24`'s defence — `admit`'s
             * only positive check compares a redeemer's sign-in against the
@@ -2140,16 +2148,14 @@ function Approvals({ pending, account, session, me, busy, runs, act }: {
     return null;
   };
 
-  /* `C121` — see the note on the other approve button. The key stays here. */
+  /* See the note on the other approve button: built and proved on this device, the key stays here. */
+  const [stage, setStage] = useState<GovernedStage | null>(null);
   const approve = (p: Proposal) => act(async () => {
-    await api(`/api/proposals/${p.id}/approve`, {
-      method: 'POST',
-      body: JSON.stringify({
-        signerId: me.signerId,
-        signature: keyring.signApproval(p, me),
-        viewingKey: session.viewingKey,
-      }),
-    });
+    try {
+      await approveFromThisDevice(account, p, me, session.viewingKey, setStage);
+    } finally {
+      setStage(null);
+    }
   });
   // The Settle control was deleted here too, with the account's balance.
 
@@ -2159,6 +2165,7 @@ function Approvals({ pending, account, session, me, busy, runs, act }: {
 
   return (
     <div className="stack">
+      {stage && <div className="hint" data-governed-stage>Now: {stageWords(stage)}…</div>}
       {pending.map(p => {
         const mine = p.approvals.some(a => a.signerId === me.signerId);
         const need = account.policy.threshold;
@@ -2191,7 +2198,7 @@ function Approvals({ pending, account, session, me, busy, runs, act }: {
               <div className="row"><span>Amount</span>
                 <span className="r"><span className="chip off">shielded</span></span></div>
               <div className="hint" style={{ marginTop: 12 }}>
-                The amount is inside the sealed payload and never appears in the clear. Whether this round has
+                The amount is inside the sealed payload and never appears in the clear. Whether this proposal has
                 enough signatures is the contract&rsquo;s answer, not ours &mdash; we only show it. The amount is
                 opened here for one thing: your company&rsquo;s own spending ceilings, which this service applies
                 and the chain knows nothing about.
@@ -2557,7 +2564,7 @@ function Disclosures({ runs, session, busy, act }: {
    * what a VAULT holds is a real statement and this is where it will be made.
    *
    * It is not preserved as dead code: the request it made is three lines and
-   * the round that builds vault solvency is writing a different one, against a
+   * the proposal that builds vault solvency is writing a different one, against a
    * different commitment.
    */
 
@@ -2969,7 +2976,7 @@ function Settings({ account, state, session, me, busy, act, commitments }: {
         * **THE VISIBILITY IS THE POINT.** This card is the whole argument for
         * deleting the server-held exception `R4` removed: the rule a company
         * uses to move small amounts faster is a number every signer can read
-        * off the contract, changed only by a round every signer approves — not
+        * off the contract, changed only by a proposal every signer approves — not
         * a figure in our database that we apply on their behalf.
         *
         * It renders `LedgerStatus` and never `account.policy`. There is no
@@ -2979,7 +2986,7 @@ function Settings({ account, state, session, me, busy, act, commitments }: {
       <div className="card">
         <div className="hd">
           <h3>Vault thresholds</h3>
-          <span className="sub">on chain, and changed only by a round every signer approves</span>
+          <span className="sub">on chain, and changed only by a proposal every signer approves</span>
         </div>
         <div className="bd">
           {!chain ? (
@@ -3072,7 +3079,7 @@ function Settings({ account, state, session, me, busy, act, commitments }: {
                   })}>Propose this threshold</button>
               </div>
               <div className="hint" style={{ marginTop: 10 }}>
-                Proposing opens a round. It is approved like any other, at this account\u2019s own
+                Proposing opens a proposal. It is approved like any other, at this account\u2019s own
                 threshold \u2014 a vault\u2019s own lower number never authorises changing itself.
               </div>
             </>
@@ -3102,7 +3109,7 @@ function Settings({ account, state, session, me, busy, act, commitments }: {
               <div className="hint" style={{ marginTop: 12 }}>
                 The account is an authority over a vault, not a holder of money, so it settles
                 nothing and publishes no settlement. What an observer sees when a vault pays a
-                run is decided by the round that builds vault payroll, and is deliberately not
+                run is decided by the proposal that builds vault payroll, and is deliberately not
                 shown here in advance of it.
               </div>
             </div>
