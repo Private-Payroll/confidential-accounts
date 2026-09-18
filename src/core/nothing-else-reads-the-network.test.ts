@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join, relative, sep } from 'node:path';
 import { PAIR_NETWORK } from '../midnight/network.js';
@@ -373,7 +373,20 @@ describe('§2 one statement of where a network is reached', () => {
      * local indexer is the point; what must not happen is a new one appearing
      * unremarked, because neither scan above can see the shape.
      */
-    expect(overridesAnEndpoint(THE_REPOSITORY)).toEqual([
+    /*
+     * **BOTH DIRECTIONS, AND ONLY ONE OF THEM IS ABOUT THIS REPOSITORY'S
+     * CONTENTS.** This was a literal `toEqual` over what the walk found. The
+     * walk reads directories, so in any copy that does not carry one of these
+     * eight it went red - with a message saying a file had GAINED OR LOST AN
+     * ENDPOINT OVERRIDE when nothing of the sort had happened. A reader meeting
+     * that in a clone goes looking for a network defect that is not there.
+     *
+     * The guard is the first direction and it does not weaken: an override this
+     * list does not name is what this is watching for, whatever else changed.
+     * The second is intersected with what the walk actually found, so a file
+     * this copy does not have is simply not asserted about.
+     */
+    const WRITTEN_DOWN = [
       join('scripts', 'balance-check.ts'),
       join('scripts', 'chain-alive.ts'),
       join('scripts', 'chain-balance.ts'),
@@ -382,7 +395,37 @@ describe('§2 one statement of where a network is reached', () => {
       join('scripts', 'measure-note-index.ts'),
       join('scripts', 'refresh-reference.ts'),
       join('scripts', 'version-check.ts'),
-    ]);
+    ];
+    const overriding = overridesAnEndpoint(THE_REPOSITORY);
+    expect(
+      overriding.filter((f) => !WRITTEN_DOWN.includes(f)),
+      'a file overrides an endpoint and this list does not name it',
+    ).toEqual([]);
+    /*
+     * **THE SECOND DIRECTION ASKS THE DISK, NOT THE WALK, AND THAT IS THE WHOLE
+     * POINT.** Asking `THE_REPOSITORY.keys()` made both directions depend on the
+     * same walk: drop `scripts/` from `SOURCE_DIRS` and all eight overrides
+     * vanish, the first direction passes over an empty set, the second passes
+     * over nothing, and every assertion here goes green while the tripwire reads
+     * no part of the tree it was written for. Measured: 730 files walked becomes
+     * 582, eight overrides become zero, and nothing turns red.
+     *
+     * `existsSync` is an oracle this walk cannot switch off.
+     */
+    const inThisCopy = (f: string): boolean => existsSync(join(ROOT, f));
+    expect(
+      WRITTEN_DOWN.filter((f) => inThisCopy(f) && !overriding.includes(f)),
+      'a file named here is in this copy and no longer overrides an endpoint',
+    ).toEqual([]);
+    /* AND THE WALK REACHED THEM, WHICH IS A DIFFERENT CLAIM FROM *IT FOUND
+     * NOTHING WRONG*. Every file named here that is in this copy must be in the
+     * walked set - so a walk narrowed to exclude their tree turns this red
+     * rather than quietly reporting a clean scan of less than it was asked for. */
+    const here = new Set(THE_REPOSITORY.keys());
+    expect(
+      WRITTEN_DOWN.filter((f) => inThisCopy(f) && !here.has(f)),
+      'a file named here is in this copy and the walk did not reach it',
+    ).toEqual([]);
     /* RED WHEN a door puts a variable in front of the record inside its own
      * inline TypeScript, where no `.ts` search reaches. */
     expect(overridesAnEndpoint(THE_DOORS)).toEqual([]);

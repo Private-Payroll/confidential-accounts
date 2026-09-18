@@ -1,0 +1,62 @@
+# WHAT IS WATCHED FOR UPDATES, AND THE ONE THING THAT IS DELIBERATELY NOT.
+#
+# THE COMPACT COMPILER IS PINNED AND NOTHING HERE MAY MOVE IT. Its version is
+# declared in .github/checks/toolchain.mjs and in no other place, it is fetched
+# by version on every push, and the version it reports is checked against the
+# version that was asked for. It is not an npm dependency and nothing in this
+# file reaches it - which is worth writing down, because a repository that
+# updates everything automatically invites the assumption that the compiler
+# moves with it. It does not. Moving it is a change somebody makes on purpose,
+# to one constant, and the suite is what says whether it held.
+
+version: 2
+
+updates:
+  # The product, the scripts, the contracts' test harness.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # One pull request for the routine ones. Reviewing forty separate patch
+      # bumps is how a real change gets waved through in the middle of them.
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+    commit-message:
+      # The subject kinds and the 72-character limit are decided by
+      # .github/checks/commit.mjs, and the message job on every push holds a
+      # pull request to them whoever opened it. `chore(deps): ...` is what
+      # that checker accepts.
+      prefix: chore
+      prefix-development: chore
+      include: scope
+
+  # The key library ships its own manifest and its own lockfile.
+  - package-ecosystem: npm
+    directory: /packages/identity
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+    commit-message:
+      prefix: chore
+      prefix-development: chore
+      include: scope
+
+  # The actions the checks are built on. An action pinned to a moved tag is a
+  # change to what runs on every push, arriving without a pull request.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: ci
+      include: scope

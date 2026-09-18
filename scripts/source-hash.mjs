@@ -104,7 +104,7 @@ const SKIP_DIRS = new Set(['node_modules']);
  * check. One name, and the day a second door starts writing inside `src/`,
  * `contracts/src/` or `scripts/` somebody has to add it here on purpose.
  */
-const SKIP_FILES = new Set(['scripts/check-shipping-language.baseline']);
+const SKIP_FILES = new Set(['.maintainer/language/check-shipping-language.baseline']);
 
 const walk = (rel, out) => {
   const abs = join(ROOT, rel);

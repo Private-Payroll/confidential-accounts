@@ -1,0 +1,34 @@
+# The formatting every editor here agrees on, so a diff shows what changed
+# rather than who opened the file.
+#
+# These values were read off the tree rather than chosen: LF endings, two-space
+# indentation, and a final newline are what the source already uses. A setting
+# that disagreed with the files would be a setting that reformats somebody's
+# first pull request into a diff nobody can review.
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+indent_style = space
+indent_size = 2
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# A subject line is at most 72 characters and a body is wrapped at 72. The
+# rule is decided by .github/checks/commit.mjs; this only stops the editor
+# fighting it.
+[COMMIT_EDITMSG]
+max_line_length = 72
+
+[*.md]
+# Two trailing spaces are a line break in Markdown, and trimming them silently
+# changes the rendered text.
+trim_trailing_whitespace = false
+
+[*.{yml,yaml}]
+indent_size = 2
+
+[*.sh]
+indent_size = 2

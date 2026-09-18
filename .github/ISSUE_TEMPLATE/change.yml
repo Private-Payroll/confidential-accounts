@@ -1,0 +1,42 @@
+name: Something should be different
+description: A change to how this works, or something it should do and does not.
+labels: [proposal]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        **Read `docs/decisions/` first.** The architecture here is the way it is
+        on purpose, each decision is written down with its reasoning, and the
+        most useful proposal is usually one that names the decision it disagrees
+        with and says what changed since it was made.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: >-
+        What is hard or impossible today. Describe the situation, not the
+        solution — a proposal that starts from the fix hides whether there is a
+        better one.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you propose
+      description: What should be different, and what a person would do afterwards that they cannot do now.
+    validations:
+      required: true
+  - type: textarea
+    id: decision
+    attributes:
+      label: Which recorded decision this touches, if any
+      description: >-
+        A file under `docs/decisions/`, or "none that I found". Saying none is a
+        fine answer and is itself useful.
+  - type: textarea
+    id: cost
+    attributes:
+      label: What it would cost
+      description: >-
+        What else would have to change, what would get slower, and what could be
+        lost. A proposal with an honest cost in it is read first.

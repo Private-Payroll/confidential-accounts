@@ -1,0 +1,22 @@
+blank_issues_enabled: false
+contact_links:
+  - name: A security problem, or anything about money or disclosure
+    url: https://github.com/Private-Payroll/confidential-accounts/security/advisories/new
+    about: >-
+      Do not open a public issue. This software moves other people's salaries and
+      the privacy of a payment is part of what it promises. Report it privately
+      here; SECURITY.md says what happens next and what this project does and
+      does not promise.
+  - name: A problem with how somebody is behaving here
+    url: https://github.com/Private-Payroll/confidential-accounts/security/advisories/new
+    about: >-
+      The same private channel, because it is the only one this project has. Put
+      "conduct" in the title so it is not read as a defect report. CODE_OF_CONDUCT.md
+      says what happens next, and is honest about the limits of a route this small.
+  - name: A question about how something works
+    url: https://github.com/Private-Payroll/confidential-accounts/blob/main/docs/decisions
+    about: >-
+      The recorded decisions answer most of the architectural questions, and
+      README.md answers most of the rest. If the answer is not there, that is
+      worth an issue on its own - it means the answer is not where somebody
+      looked.

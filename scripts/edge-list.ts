@@ -282,24 +282,25 @@ const CLIENT_EXT = /\.(ts|tsx|mjs)$/;
  * threw would take the whole suite down over a file that is not the subject.
  */
 function clientFiles(root: string): string[] {
-  // Both files git itself consults, in the order git reads them. `.gitignore`
-  // travels with the repository; `.git/info/exclude` is local to one checkout
-  // and is never committed, which is where a file is excluded when naming it in
-  // a published file would disclose something. Reading only the first made this
-  // walk disagree with what the repository actually contains the moment a file
-  // was excluded in the second, and a walk that names a file a fresh copy does
-  // not contain is a generated document that cannot be regenerated.
+  // ONE IGNORE FILE, BECAUSE THERE IS ONE ANSWER.
   //
-  // It is the same answer in both places, which is the point: here the second
-  // file excludes those paths, and in a fresh copy it does not exist and
-  // neither do they.
+  // This used to read a second, checkout-local exclude file as well, because
+  // tooling that does not belong in the distributed source was sitting inside a
+  // directory that does, and naming it in a file that travels with the
+  // repository would have disclosed it. Reading one of the two made this walk
+  // disagree with what a fresh copy contains; reading both made a generated
+  // document depend on a file no fresh copy has.
+  //
+  // **THE TOOLING MOVED INSTEAD.** It is under a directory of its own, outside
+  // the three trees this walk reads, and a fresh copy does not have it at all -
+  // so the walk gives the same answer here and in a clone without being told
+  // anything twice. A rule that has nothing left to exclude is removed rather
+  // than kept for the day it might.
   let ignoreRules: ReturnType<typeof parseIgnore> = [];
-  for (const rel of ['.gitignore', join('.git', 'info', 'exclude')]) {
-    try {
-      ignoreRules = ignoreRules.concat(parseIgnore(readFileSync(join(root, rel), 'utf8')));
-    } catch {
-      /* absent is normal: a fresh copy has no local exclude file */
-    }
+  try {
+    ignoreRules = parseIgnore(readFileSync(join(root, '.gitignore'), 'utf8'));
+  } catch {
+    /* absent is normal: a copy taken without it still walks */
   }
   const out: string[] = [];
   const walk = (rel: string) => {

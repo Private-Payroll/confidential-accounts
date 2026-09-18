@@ -227,14 +227,22 @@ COMMIT-BRANCH.txt
 # machine at one moment, like a report.
 PUBLIC-REPO-APPLIED.txt
 
+# THE TWO OTHER FILES A DOOR READS AT THE ROOT, NAMED 18 Sep (CT15).
+# Both were on NO list at all - neither ignored here nor allowlisted - which is
+# the one state this file and the take list exist together to make impossible,
+# and they were found by measuring rather than by reading. ADMIT-REASON.txt is
+# the sentence a person writes to justify admitting files to the language floor;
+# BACKUP-PROCESS-FILES.txt is the list the backup door reads. Both describe this
+# working copy at one moment, exactly like the three above them.
+ADMIT-REASON.txt
+BACKUP-PROCESS-FILES.txt
+
 
 # ── THE MIGRATION'S OWN TOOLING AND ITS TWO LISTS ──────────────────────────
 # The config describes this process, and the take list is a decision record
 # with our own reasoning in it. Neither is software.
 PUBLIC-REPO-CONFIG.json
 PUBLIC-REPO-TAKE-LIST.txt
-scripts/public-repo.mjs
-scripts/public-repo.test.ts
 
 
 # ── THE `.command` FILES ───────────────────────────────────────────────────
@@ -247,29 +255,29 @@ scripts/public-repo.test.ts
 # round. If it does not happen, this rule is where the loss began.
 *.command
 
-
-# ── TWO TRACKED-LOOKING SCRIPTS THAT OPEN PRIVATE DOCUMENTS AT RUN TIME ────
-# Both would ship a permanently broken tool AND publish the shape of the
-# private process.
-# check-backlog-ids.py opens BACKLOG.md; check-board-integrity.mjs opens the
-# board and the register. A trailing comment is not a comment in this file —
-# gitignore reads the whole line as the pattern — so they go above.
-scripts/check-backlog-ids.py
-scripts/check-board-integrity.mjs
-
-
-# ── THREE SCRIPTS TAKEN OFF THE TAKE LIST 5 Sep ────────────────────────────
-# The two probes are a research RECORD, not a tool, and both hard-code one
-# machine's browser binary, so neither runs in a clone. `new-wallet.ts` is
-# referenced by nothing anywhere and writes `.midnight/wallet.seed`. All three
-# stay on disk.
+# ── THE MAINTAINER'S OWN MACHINERY, EXCLUDED BY ONE RULE ───────────────────
+# Everything this project uses to BUILD, CHECK, PUBLISH and GOVERN itself, in
+# one directory, ignored whole: the publication tooling, the language floor and
+# its guards, the commit doors' rules, the board's checkers, the mutation
+# harnesses, and two research probes.
 #
-# **AND ALL THREE ARE ALREADY IN THE INDEX**, so these rules do not remove
-# them — nothing about ignoring a tracked file does. They come out with the
-# seven below, in UNTRACK-SHIPPED-BY-MISTAKE.command, which names all ten.
-scripts/prf-probe.mjs
-scripts/prf-probe-failure-mode.mjs
-scripts/new-wallet.ts
+# IT IS ONE LINE BECAUSE IT IS ONE FACT. Until 18 Sep this file named 34 of
+# those files by hand, one at a time, and `.git/info/exclude` named 20 more —
+# 54 lines all restating that private machinery was sitting inside `scripts/`,
+# a published directory. **BOOKKEEPING THAT LONG GOES WRONG, AND IT HAD:** four
+# more files of exactly the same kind were on disk in `scripts/` and on NO list
+# at all — neither ignored here nor allowlisted there, which is the one state
+# this file and the take list exist together to make impossible.
+#
+# SO THE BOUNDARY IS THE DIRECTORY, NOT A LIST OF NAMES. A new tool is private
+# because of where it is put, rather than because somebody remembered to add a
+# line here afterwards. `.midnight/` above is the same shape, and until today it
+# was this repository's only correct instance of it.
+#
+# AND IT IS DELIBERATELY NOT INSIDE `.midnight/`. That directory holds this
+# project's wallet seeds and its signer keys in plain text; a directory people
+# copy tooling out of must not be the directory that holds the money.
+.maintainer/
 
 
 # ── WORKING DOCUMENTS AT THE ROOT ──────────────────────────────────────────
@@ -379,40 +387,6 @@ docs/handoff/
 .claude/
 
 
-# ── NINE MORE THAT WERE ON NO LIST AT ALL, NAMED 7 Sep ─────────────────────
-#
-# EVERY ONE OF THESE WAS NEITHER ALLOWLISTED NOR IGNORED, WHICH IS THE ONE
-# STATE THIS PAIR OF FILES EXISTS TO MAKE IMPOSSIBLE: a file nobody has
-# classified. They were found by measuring, not by reading — the walk that
-# feeds a generated document counted them, so this folder derived 308 client
-# files where a clone can only ever derive 299, and the documentation gate
-# refused every test run in a clone over the difference.
-#
-# ALL NINE READ SOMETHING THAT DOES NOT SHIP: the publication allowlist, the
-# ignore rules, the merge-admission list, the record of how money can be lost,
-# or the shipping-language baseline. Each is a checker whose data is this working copy's
-# configuration, which is the same reason the four guards below them are here.
-# None is imported by anything on the allowlist — measured before writing this.
-#
-# They were never tracked, because the repository was built from the allowlist
-# and the allowlist never named them, so these rules take effect immediately
-# rather than needing anything removed from the index.
-scripts/backup-process-rules.mjs
-scripts/backup-process-rules.test.ts
-scripts/check-take-list-vs-gitignore.mjs
-# Its type declarations, which are not walked by the counter above but which
-# would otherwise ship a declaration for a program that does not.
-scripts/check-take-list-vs-gitignore.d.mts
-scripts/merge-admission-list.mjs
-scripts/merge-admission-rules.mjs
-# Its type declarations, for the reason given beside the other one below.
-scripts/merge-admission-rules.d.mts
-scripts/merge-admission-rules.test.ts
-scripts/public-repo-lists.test.ts
-scripts/register-index.mjs
-scripts/shipping-language-door.test.ts
-
-
 # ── THE BROWSER-ONLY BUILD, TAKEN OFF 9 Sep ────────────────────────────────
 # It ran the whole product in a browser with no server, against a simulated
 # ledger. The product runs against a chain now, and a build with no filesystem
@@ -450,38 +424,5 @@ src/testing/no-attribution.test.ts
 src/testing/command-index.test.ts
 src/testing/mint-signers-call.test.ts
 src/testing/new-vault-door.test.ts
-scripts/mutation-config.test.ts
-
-# Local maintainer tooling. Each one reads or contains a word list that is
-# configuration for this working copy and not part of the published project,
-# and a checker whose data is the thing it screens for publishes that data in
-# the act of screening it. They are kept on disk and are not part of the
-# distributed source.
-scripts/check-commit-message.sh
-scripts/ship-lock.sh
-scripts/check-branch-name.sh
-scripts/check-commit-subject.sh
-
-# The last two were tracked before they were listed here, and ignoring a file
-# that is already tracked does nothing at all — it stays in the repository and
-# it stays published. They are removed from the index in the same commit that
-# carries this line, and they remain on disk, unchanged, where they are used.
-# The same is true of the local test listed above them.
-scripts/check-shipping-language.sh
-scripts/check-shipping-language.baseline
-
-# The standing test for that program, and the guard that goes with the pass it
-# gates. The test drives the program above, which is not published; the guard
-# is the instrument a bulk edit of the published prose is checked with, and an
-# instrument for preparing what ships is not itself part of what ships.
-scripts/check-shipping-language.test.ts
-scripts/check-shipping-language.rules.cjs
-scripts/prose-edit-guard.mjs
-scripts/prose-edit-guard.test.ts
-scripts/replacement-vocabulary-guard.mjs
-scripts/replacement-vocabulary-guard.test.ts
-scripts/sweep-measure.mjs
-scripts/sweep-measure.test.ts
 
 docs/BUILD-ORDER-WHY.md
-scripts/render-build-order.mjs

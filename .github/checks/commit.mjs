@@ -62,6 +62,44 @@ const SUBJECT = new RegExp(`^(${SUBJECT_KINDS.join('|')})(\\(([a-z0-9][a-z0-9._/
 
 const BRANCH = new RegExp(`^(${BRANCH_KINDS.join('|')})\\/[a-z0-9]+(-[a-z0-9]+)*$`);
 
+/**
+ * THE ONE BRANCH SHAPE THIS PROJECT DOES NOT CHOOSE.
+ *
+ * By default the dependency bot names its branches
+ * `dependabot/<ecosystem>/<package>-<version>` — two slashes, an underscore in
+ * `npm_and_yarn`, and dots in a version. That default is what the dependency
+ * configuration leaves in place, and under the rule above every pull request the
+ * bot opens would fail on its branch name, for ever, leaving the dependency
+ * policy a file that can never do anything. **THE SEPARATOR IS CONFIGURABLE, so
+ * this shape and that configuration have to be changed together.**
+ *
+ * **WIDENED RATHER THAN THE POLICY ABANDONED, AND THE TRADE IS WRITTEN DOWN:**
+ * this repository pins a compiler and moves salaries, so silent dependency rot
+ * is the worse outcome of the two.
+ *
+ * **WHAT IS GIVEN UP IS GIVEN UP TO ANY BRANCH THAT ADOPTS THE PREFIX**, and
+ * that is not only the bot: the name checked here is the head branch of a pull
+ * request, which whoever opened it chose. The prefix is exact and the shape
+ * below is anchored at both ends, so what a borrowed prefix buys is escape from
+ * the kebab-case shape and nothing else — the length limit and the
+ * must-not-publish reading are read BEFORE this and are not weakened.
+ *
+ * WHAT THE SHAPE ACTUALLY PERMITS, SAID EXACTLY RATHER THAN APPROXIMATELY: the
+ * literal prefix, then an ecosystem of lower case, digits and underscores, then
+ * one or more `/`-separated segments each starting with a letter or digit and
+ * continuing in lower case, digits, dots, underscores and hyphens. A package
+ * name may carry an underscore and a version carries dots, which is why both are
+ * in there. An empty segment, a doubled slash and a trailing slash are all
+ * refused, which is the part a looser class would have let through.
+ *
+ * **AND THE LENGTH LIMIT BITES THE BOT BEFORE THIS DOES.** A directory-scoped
+ * update can produce a name longer than the limit above, and it is refused for
+ * its length with the message that says so. That is the rule working, not an
+ * oversight, and it is written down here so the next person meets it as a
+ * decision rather than as a surprise.
+ */
+const BOT_BRANCH = /^dependabot\/[a-z0-9_]+(\/[a-z0-9][a-z0-9._-]*)+$/;
+
 /** The branches every change here is merged INTO, and never made on. */
 const PROTECTED = ['main', 'master', 'HEAD'];
 
@@ -233,7 +271,7 @@ export function branchProblem(branch, also) {
   if ([...branch].length > BRANCH_LIMIT) {
     return `a branch name is at most ${BRANCH_LIMIT} characters and this one is ${[...branch].length}`;
   }
-  if (!BRANCH.test(branch)) {
+  if (!BRANCH.test(branch) && !BOT_BRANCH.test(branch)) {
     return `a branch name reads "kind/what-changed" in lower case, with single hyphens, where kind is one of ${BRANCH_KINDS.join(', ')}`;
   }
   return null;

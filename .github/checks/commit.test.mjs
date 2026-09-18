@@ -6,8 +6,15 @@
  * is a rule that may have stopped refusing, and the only evidence that it still
  * does is a case that goes red when the rule is taken out.
  *
- * Every test below names ONE clause. Delete that clause and this test, and no
+ * Most tests below name ONE clause. Delete that clause and this test, and no
  * other, fails.
+ *
+ * THE DEPENDENCY-BOT CASE IS THE EXCEPTION AND IT IS NAMED HERE RATHER THAN
+ * LEFT TO BE DISCOVERED. It covers one clause plus the two read before it - the
+ * length limit and the must-not-publish reading - because the docblock beside
+ * that clause CLAIMS those two are not weakened for the bot, and a claim in
+ * prose with nothing behind it is the thing this file exists to stop. Deleting
+ * the length clause therefore fails two tests, not one.
  */
 
 import { test } from 'node:test';
@@ -50,6 +57,48 @@ test('THE POSITIVE CONTROL: the shapes this repository actually writes are accep
     messageProblem('fix: put the compiled artefact back\n\nThe suite reads it before any worker starts.\n'),
     'a whole message',
   );
+});
+
+test('the dependency bot\'s own branch shape is admitted, and nothing else gains by it', () => {
+  // THE BOT CANNOT BE ASKED TO NAME ITS BRANCHES DIFFERENTLY. Without this the
+  // branch check refuses every pull request it will ever open, so the
+  // dependency policy is a file that can never do anything.
+  accepted(branchProblem('dependabot/npm_and_yarn/vitest-3.2.4'), "the bot's npm branch");
+  accepted(branchProblem('dependabot/github_actions/actions/checkout-5'), "the bot's actions branch");
+
+  // AND THE WIDENING IS EXACTLY ONE PREFIX. Each of these was refused before
+  // the rule was widened and must still be refused after it, or what was added
+  // is a general escape hatch rather than one bot's name.
+  refused(branchProblem('dependabot'), 'the prefix alone, with no path after it');
+  refused(branchProblem('dependabot/'), 'the prefix and an empty path');
+  refused(branchProblem('Dependabot/npm_and_yarn/vitest-3.2.4'), 'the prefix in title case');
+  refused(branchProblem('notdependabot/npm_and_yarn/vitest-3'), 'a prefix that merely ends in it');
+  refused(branchProblem('feature/npm_and_yarn/thing-1'), 'an ordinary branch borrowing the shape');
+  refused(branchProblem('chore/two_words'), 'an underscore in an ordinary branch name');
+
+  // AN EMPTY, DOUBLED OR TRAILING SEGMENT IS REFUSED. These are what a looser
+  // character class lets through, and the docblock claims they do not pass.
+  refused(branchProblem('dependabot/npm_and_yarn/a//b'), 'a doubled slash');
+  refused(branchProblem('dependabot/npm_and_yarn/a/'), 'a trailing slash');
+  refused(branchProblem('dependabot//vitest-3'), 'an empty ecosystem');
+  refused(branchProblem('dependabot/npm_and_yarn/-leading-hyphen'), 'a segment starting with a hyphen');
+
+  // A REAL MULTI-SEGMENT NAME IS ACCEPTED, so the tightening above did not
+  // narrow the shape past what the bot actually produces.
+  accepted(branchProblem('dependabot/npm_and_yarn/pkgs/id/minor-1a2b'), 'a directory-scoped bot branch');
+
+  // THE CHECKS READ BEFORE THE SHAPE ARE NOT WEAKENED FOR THE BOT EITHER, AND
+  // BOTH OF THEM ARE ASSERTED RATHER THAN CLAIMED IN PROSE. The docblock beside
+  // the rule says the length limit and the must-not-publish reading are read
+  // first; until these two lines nothing behind that sentence was checked.
+  refused(branchProblem(`dependabot/npm_and_yarn/${'a'.repeat(80)}-1`), 'a bot branch over the length limit');
+  // THIS ONE ISOLATES THE READING AND NOTHING ELSE: it satisfies the bot shape
+  // exactly, it is inside the length limit, and the only thing that refuses it
+  // is the must-not-publish read finding a home-directory path. An em dash would
+  // not do - the bot shape rejects it first, so the case would pass for the
+  // wrong reason and go green with the reading deleted.
+  refused(branchProblem('dependabot/npm_and_yarn/home/kc/thing'),
+    'a bot branch carrying a path inside a home directory');
 });
 
 test('a subject line says what changed, so an empty one is refused', () => {

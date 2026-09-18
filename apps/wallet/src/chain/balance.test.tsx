@@ -215,19 +215,48 @@ describe('the viewing key never enters this repository’s CODE — §1.2', () =
     expect(offendersUnder(REPO, SOURCE_TREES, TRIPWIRE_TRIGGER)).toEqual([]);
   });
 
-  it('AND THE SCAN IS ALIVE: it reaches both trees and every extension source is written in', () => {
+  it('AND THE SCAN IS ALIVE: it reaches every tree and every extension source is written in', () => {
     /* An empty offender list is also what a scan that visited nothing returns,
      * and a walk pointed at a directory that does not exist returns exactly
      * that, silently. So the files the scan MUST have opened are named. */
     const seen = sourceFilesUnder(REPO, SOURCE_TREES);
+    /*
+     * **EVERY TREE AND EVERY EXTENSION, STRUCTURALLY - NOT SEVEN PARTICULAR
+     * FILENAMES.** Naming seven files made this a claim about which files a copy
+     * carries: in a copy without one of them it went red reporting that the scan
+     * had stopped reaching a tree, when it had not. Extensions and trees are
+     * structural; a list of filenames is inventory.
+     *
+     * **TWO NAMES ARE KEPT AND BOTH EARN IT.** `balance.ts` is the file this
+     * whole block is about, so a rename or a move of it out of the walked trees
+     * must turn this red rather than be absorbed by the floors below - with a
+     * hundred and fifty other sources under `apps/wallet`, a floor would stay
+     * green while the tripwire quietly stopped reading the one file it exists to
+     * read. This file is the second, because it is the one path that must be in
+     * the walk for the assertion to be running at all. Both are published, so
+     * both are present in a clone.
+     */
     expect(seen).toContain(path.join('apps', 'wallet', 'src', 'chain', 'balance.ts'));
     expect(seen).toContain(path.join('apps', 'wallet', 'src', 'chain', 'balance.test.tsx'));
-    expect(seen).toContain(path.join('apps', 'wallet', 'scripts', 'probe-verdict.mjs'));
-    expect(seen).toContain(path.join('apps', 'wallet', 'scripts', 'probe-verdict.d.mts'));
+    for (const ext of ['.ts', '.tsx', '.mjs', '.d.mts']) {
+      expect(seen.filter((f) => f.endsWith(ext)).length, `no ${ext} source was scanned`)
+        .toBeGreaterThan(0);
+    }
+    for (const tree of SOURCE_TREES) {
+      expect(seen.filter((f) => f.startsWith(tree)).length, `the scan did not reach ${tree}`)
+        .toBeGreaterThan(0);
+    }
+    /*
+     * **AND ONE NAMED FILE INSIDE A SUBDIRECTORY, BECAUSE A TREE FLOOR DOES NOT
+     * PROVE THE WALK DESCENDS.** `apps/wallet` clears its floor on 150-odd files
+     * sitting above `apps/wallet/scripts/`, so a walk that stopped descending
+     * into `scripts` directories would pass every floor above. It happens to be
+     * caught today by the `.d.mts` floor - all three `.d.mts` files in this
+     * repository live there - which is coincidence rather than a check, and it
+     * reports the wrong thing when it fires. This names the tripwire source
+     * itself: it is published, and this file already depends on it existing.
+     */
     expect(seen).toContain(path.join('apps', 'wallet', 'scripts', 'viewing-key-tripwire.mjs'));
-    /* And the library half, which the old two names also covered. */
-    expect(seen).toContain(path.join('packages', 'identity', 'src', 'index.ts'));
-    expect(seen).toContain(path.join('packages', 'identity', 'scripts', 'check-library-build.mjs'));
   });
 
   it('AND IT STILL CATCHES ONE: a decoy file naming the field is found, in either tree', () => {

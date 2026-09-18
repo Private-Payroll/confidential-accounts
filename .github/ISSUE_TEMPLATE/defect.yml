@@ -1,0 +1,50 @@
+name: Something is wrong
+description: Behaviour that does not match what this repository says it does.
+labels: [defect]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        **If this concerns money that can be lost, a key, or who can see a
+        payment, stop and report it privately instead** — the Security tab,
+        Report a vulnerability. A public issue about a disclosure defect is the
+        disclosure.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happens
+      description: What you did, and what happened instead of what you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What said it would happen
+      description: >-
+        The file that made you expect otherwise, and the line if you have it —
+        a README claim, a comment, a screen, a test name. This project holds its
+        prose to the same standard as its code, so "the documentation is wrong"
+        is a valid and useful defect on its own.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to get there from a clean clone
+      description: >-
+        Commands, in order, starting from `npm install`. If it only happens with
+        a chain, a proof server or an indexer, say which and at what address.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: What you are running it on
+      description: >-
+        `node --version`, your operating system, and — if a contract is involved
+        — what `compactc --version` reports. The compiler version this
+        repository pins is in .github/checks/toolchain.mjs.
+      render: shell
+    validations:
+      required: true
