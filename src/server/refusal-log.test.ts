@@ -14,7 +14,7 @@
  *
  * The redaction is not the deliverable — **a test that opens the file and
  * searches it is**, because redaction nothing greps is redaction a refactor can
- * remove without anything going red. `scripts/mutate-refusals.mjs` 01 takes
+ * remove without anything going red. The deliberate defect here takes
  * `redactSecrets` out of `renderRefusal`, and the case below has to die.
  *
  * ── WHY IT IMPORTS THE APP RATHER THAN SPAWNING ONE ──────────────────────
@@ -163,7 +163,7 @@ describe('what the service writes down when it refuses', () => {
     /*
      * A refusal about a key is exactly the kind of message that quotes one, and
      * the path carries a query string, which is where `viewingKey` travels.
-     * Both go through the redactor. `mutate-refusals.mjs` 01 removes it.
+     * Both go through the redactor. A defect removes it from the reason.
      */
     appendRefusal(
       'GET', `/api/accounts/a1/state?viewingKey=${PLANTED.viewingKey}`, 400, 'Error',

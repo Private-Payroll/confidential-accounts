@@ -167,7 +167,7 @@ describe('the browser error sink', () => {
      * fragment of a real key and the redaction downstream could not see it.
      *
      * The padding puts the key across the 300-character cap deliberately.
-     * `scripts/mutate-refusals.mjs` 02 swaps the two operations round, and this
+     * The deliberate defect here swaps the two operations round, and this
      * is the test that has to die when it does.
      */
     const key = '0123456789abcdef'.repeat(4);

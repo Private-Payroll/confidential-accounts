@@ -26,7 +26,7 @@ import { addressOfVerifyingKey, mint } from 'midnight-identity/profile/disclosur
  * **SO THIS ONE CREATES TWO.** Over real HTTP, from one wallet sign-in, with
  * the second creation's status quoted rather than inferred: that is the whole
  * assertion, and putting the refusal back is what
- * `scripts/mutate-wallet-dialog.mjs` 03 does.
+ * a deliberate defect on the creation route does.
  *
  * ── IT IS NOT A JUDGEMENT CALL, IT IS A CONTRADICTED DECISION ─────────────
  *

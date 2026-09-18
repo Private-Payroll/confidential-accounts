@@ -153,7 +153,7 @@ export default defineConfig({
      * **AND THE FIRST OF THOSE IS NOW TAKEN, WHICH IS WHY THE SENTENCE THAT
      * STOOD HERE IS GONE.** It read *what keeps it shut is that neither door
      * passes that flag*, and `S39` made it false. `T-171`, ruled 2 Sep:
-     * `MUTATE.command` runs under `vitest.mutation.config.ts`, which is DERIVED
+     * `MUTATE.command` runs under a mutation configuration, which is DERIVED
      * from this file and removes exactly one `globalSetup` entry below — the
      * doc gate, and only the doc gate. The harness breaks a contract on
      * purpose, so for the length of a run the artifact is a deliberate
@@ -202,7 +202,7 @@ export default defineConfig({
      * generator reads the COMPILED artifact, and a harness that regenerated for
      * itself would emit a document that is confidently wrong from whatever
      * artifact happened to be on disk. Same reasoning as the entry above, one
-     * layer out. **It is the one entry `vitest.mutation.config.ts` removes, and
+     * layer out. **It is the one entry the mutation configuration removes, and
      * the block above says under what ruling and what pins it.**
      *
      * `ledger-limit` refuses a contract whose ledger has passed fifteen

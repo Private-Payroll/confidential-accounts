@@ -971,7 +971,7 @@ export class PayrollService {
    *
    * **The rule is expressed as a missing parameter**, the same way
    * `companyForSession` has nowhere to put a claimed company. A route cannot
-   * forget a rule it has no argument for, and `scripts/mutate-invitations.mjs`
+   * forget a rule it has no argument for, and a deliberate defect
    * puts the plain address back at the route — which is the only place it could
    * be added — and names the test that dies.
    */

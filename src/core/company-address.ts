@@ -32,7 +32,7 @@ import type { DataStore } from './store.js';
  * user the session resolved to, and the account in the path — and there is no
  * fourth parameter, in the same way `unlockKeyFor` in the wallet has no third.
  * A rule expressed as a missing parameter cannot be forgotten by a caller;
- * `scripts/mutate-wallet-unlock.mjs` puts the door back at the route, which is
+ * a deliberate defect that adds one back adds it at the route, which is
  * the only place it could be added, and names the test that dies.
  *
  * ── AND THE MEMBERSHIP CHECK IS MADE HERE TOO, DELIBERATELY ───────────────

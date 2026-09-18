@@ -32,7 +32,7 @@
  * `requireSigner()` derives its own leaf from the device's witnesses and
  * asserts a Merkle path to it; if the two derivations part, there is no path,
  * and the call fails. **That is the failure mode that actually happened**, and
- * it is measured rather than asserted: `mutate-authority.mjs` row 22 makes the
+ * it is measured rather than asserted: a deliberate defect makes the
  * adapter hand back the secret instead of the circuit's hash of it, and this
  * file dies.
  *

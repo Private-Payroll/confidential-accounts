@@ -639,7 +639,7 @@ if (process.env.TRUST_PROXY) app.set('trust proxy', process.env.TRUST_PROXY);
  * `renderRefusal` redacts on the way to the disk; the page redacts on the way
  * to the wire. Redacting a third time here would mask both, so a mutation that
  * removed either would survive and prove the opposite of what it looked like it
- * proved — the trap `scripts/mutate-web-sink.mjs` was written to avoid.
+ * proved — the trap the sink's own layer defects were written to avoid.
  *
  * **IT CANNOT THROW.** `appendRefusal` swallows its own filesystem errors, so a
  * disk that is full answers the request and loses the line rather than turning
@@ -1382,7 +1382,7 @@ app.post('/api/accounts/:id/vault-threshold', authed, member, wrap(async (req, r
  * **NOTHING IS READ OUT OF THE BODY, AND THE BODY IS WHERE A CLAIM WOULD GO.**
  * There is no `z.object(...).parse(req.body)` here and no reference to
  * `req.body` anywhere below — not as a fallback, not as an override, not as a
- * hint. `scripts/mutate-wallet-unlock.mjs` mutation 1 puts exactly that door in
+ * hint. A deliberate defect for this route puts exactly that door in
  * and names the test that dies.
  *
  * It is a POST because it is not a read of a public field: it is this

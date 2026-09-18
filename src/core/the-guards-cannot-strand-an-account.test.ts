@@ -63,7 +63,7 @@ const THREE = [
  *
  * **A NEAR-TWIN OF THE HARNESS IN `the-threshold-is-the-chain-s.test.ts`, AND
  * DELIBERATELY NOT SHARED WITH IT.** Both files are judged by
- * `scripts/mutate-authority.mjs`, which breaks the product and requires named
+ * the same deliberate defects, which break the product and require named
  * tests in each to die alone. A fixture common to both is a place where one
  * suite's mutation can change the other suite's setup, which is the one kind of
  * coupling a mutation harness cannot see.

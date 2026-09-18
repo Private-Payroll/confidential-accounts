@@ -13,7 +13,7 @@
  * So these assert ABSENCE, over real HTTP, against the running app: the two
  * routes that took a password answer `404`, by name, and the row a sign-in
  * leaves carries none of what a password left behind.
- * `scripts/mutate-password-gone.mjs` puts each one back and names the test that
+ * A deliberate defect puts each removed door back and names the test that
  * dies.
  *
  * ── AND WHAT REPLACED IT IS ASSERTED IN THE SAME FILE ─────────────────────
