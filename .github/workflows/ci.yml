@@ -110,6 +110,35 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/build
+      # THE REFUSAL PATH FIRST, WHILE THE MAP IS STILL ABSENT.
+      #
+      # The query below reads a module map. The one answer it must never give is
+      # *nothing depends on it* for a name that is not there, and the assertion
+      # holding that runs only where no map is on disk - so deriving the map and
+      # then running the suite would stand it down as surely as a fresh checkout
+      # does. It is the cheaper half to lose and the worse half to lose quietly,
+      # so it runs here, in the one moment of this job when there is no map.
+      - name: the module map query refuses before there is a map to query
+        run: npx vitest run scripts/what-breaks.test.ts
+      # THEN THE MAP IS DERIVED, BEFORE THE SUITE READS IT.
+      #
+      # 10 assertions read that map instead of building their own picture of
+      # the graph, and they stand down when it is not on disk - which in a fresh
+      # checkout is always. Without this step the suite passes with ten fewer
+      # assertions than it collects, and says so nowhere.
+      #
+      # An eleventh stands down on the publication allowlist and this step does
+      # not reach it: that file names the files that are not published, so it
+      # cannot be published, and the assertion reading it - the instrument for a
+      # published file swallowed by an ignore rule - runs only where that list
+      # already is. That gap is recorded rather than closed.
+      #
+      # This writes the map and no document. The command that writes everything
+      # generated would also rewrite the design documents, and rewriting them
+      # immediately before the step that compares them against the source is a
+      # comparison that can no longer refuse anything.
+      - name: derive the module map the suite reads
+        run: npx tsx scripts/edge-list-run.ts
       # The runner rather than the manifest's `test` script, which compiles and
       # typechecks first. Both have already happened above, as marks of their
       # own, and doing them again here would hide them behind this one.

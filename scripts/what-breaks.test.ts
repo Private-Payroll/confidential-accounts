@@ -39,7 +39,7 @@ if (!HAS_GRAPH) {
 }
 
 describe('with no graph on disk, it says so rather than answering', () => {
-  it.skipIf(HAS_GRAPH)('refuses, and names what would produce one', () => {
+  it.skipIf(HAS_GRAPH)('refuses, and names what would produce one [only without the module map; `npx tsx scripts/edge-list-run.ts` derives one]', () => {
     let refused = '';
     try { loadEdges(ROOT); } catch (e) { refused = String((e as Error).message); }
     expect(refused).toContain(EDGE_LIST_FILE);
@@ -52,7 +52,7 @@ describe('with no graph on disk, it says so rather than answering', () => {
 
 const edges = HAS_GRAPH ? loadEdges(ROOT) : (undefined as never);
 
-describe.skipIf(!HAS_GRAPH)('a name it does not know is a REFUSAL, not an empty answer [needs the edge list, which this repository does not publish]', () => {
+describe.skipIf(!HAS_GRAPH)('a name it does not know is a REFUSAL, not an empty answer [needs the module map; `npx tsx scripts/edge-list-run.ts` derives it]', () => {
   it('says so, and does not say "nothing depends on it"', () => {
     const out = answer(edges, 'payoutDetalis');
     expect(out).toContain('IS NOT IN THE GRAPH');
@@ -72,7 +72,7 @@ describe.skipIf(!HAS_GRAPH)('a name it does not know is a REFUSAL, not an empty 
   });
 });
 
-describe.skipIf(!HAS_GRAPH)('it answers the question that keeps getting asked [needs the edge list, which this repository does not publish]', () => {
+describe.skipIf(!HAS_GRAPH)('it answers the question that keeps getting asked [needs the module map; `npx tsx scripts/edge-list-run.ts` derives it]', () => {
   it('a ledger field: who writes it, who reads it, and whether money flows through it', () => {
     const out = answer(edges, 'movements');
     expect(out).toContain('LEDGER FIELD');
@@ -122,7 +122,7 @@ describe.skipIf(!HAS_GRAPH)('it answers the question that keeps getting asked [n
   });
 });
 
-describe.skipIf(!HAS_GRAPH)('the index, which is what a double-click with no name prints — rule 8 [needs the edge list, which this repository does not publish]', () => {
+describe.skipIf(!HAS_GRAPH)('the index, which is what a run with no name asked for prints [needs the module map; `npx tsx scripts/edge-list-run.ts` derives it]', () => {
   it('lists every field of both contracts with its heat', () => {
     const out = index(edges);
     for (const c of edges.contracts) {

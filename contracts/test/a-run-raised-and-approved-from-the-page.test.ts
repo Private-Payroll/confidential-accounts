@@ -79,7 +79,7 @@ if (!KEYS_ON_DISK) {
   );
 }
 
-describe.skipIf(!KEYS_ON_DISK)('A PAYROLL RUN RAISED AND APPROVED FROM THE SIGNER\'S OWN DEVICE [needs contracts/managed/keys]', () => {
+describe.skipIf(!KEYS_ON_DISK)('A PAYROLL RUN RAISED AND APPROVED FROM THE SIGNER\'S OWN DEVICE [needs contracts/managed/keys; `npm run compact` builds them]', () => {
   let chain: Chain;
   let company: string;
   let founder: AccountPrivateState;
