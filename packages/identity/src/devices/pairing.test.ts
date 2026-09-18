@@ -114,8 +114,6 @@ describe('the relay, which is the attack this exists to stop', () => {
      * relay has committed to its key, so there is nothing left to grind: the
      * relay would have to find a key it has already named.
      */
-    const honest = askToPair(T0);
-
     /* The relay pairs with the old device using its own code. */
     const relayRequest = askToPair(T0);
     const toRelay = beginOffer(relayRequest.code, T0);
@@ -127,9 +125,55 @@ describe('the relay, which is the attack this exists to stop', () => {
       sealKeys(toRelay.pending, secret, T0), oldScreen, T0);
     expect(hex(stolen.secret)).toBe(hex(secret));
 
-    /* Now it must reach the honest device, and it must commit FIRST. */
-    const onward = beginOffer(honest.code, T0);
-    const honestAnswered = answerCommitment(honest, onward.message, T0);
+    /*
+     * NOW IT MUST REACH THE HONEST DEVICE, AND IT MUST COMMIT FIRST - DRAWN
+     * UNTIL THE NUMBER THE NEW DEVICE WILL SHOW DIFFERS FROM THE OLD SCREEN.
+     *
+     * The same repair, for the same reason, as the case named *refuses a number
+     * that is right for a DIFFERENT exchange* below: two independently derived
+     * two-digit numbers agree about one draw in a hundred, so an inequality
+     * between them is a coin toss asserted as though it were a law. Measured on
+     * exactly this pair rather than assumed from the `% 100`: 966 agreements in
+     * 100,000 independent draws.
+     *
+     * **WHAT IS DIFFERENT HERE IS WHAT THE COLLIDING DRAW BREAKS SECOND.** The
+     * refusal at the end of this case is unsatisfiable on the same draw: the
+     * number the relay presents IS the number the person confirmed, so
+     * `acceptKeys` has nothing to refuse and hands the account over. Watched, on
+     * a forced colliding draw - with the inequality in place the run stops there
+     * and says *expected '06' not to be '06'*; with the inequality deleted and
+     * nothing else changed, the same draw reaches the refusal and says *expected
+     * this to be refused, and it was not*, which a reader meets as the relay
+     * having succeeded. So deleting the inequality alone would have moved a
+     * one-in-a-hundred false red from a clear message to an alarming one. What
+     * has to go is the draw.
+     *
+     * AND THE REDRAW MAKES THAT REFUSAL DETERMINISTIC WHERE IT WAS 99 PER CENT:
+     * `acceptKeys` is reached with two numbers already asserted to differ. The
+     * property the case exists for - that a relay cannot make the numbers match
+     * ON PURPOSE - is carried by the grinding loop below, which runs once, on
+     * the accepted draw, with the same bound it always had.
+     */
+    const drawHonestly = (): {
+      asked: PairingRequest; offer: ReturnType<typeof beginOffer>;
+      answered: ReturnType<typeof answerCommitment>;
+      reveal: ReturnType<typeof revealAndShow>;
+    } => {
+      const asked = askToPair(T0);
+      const offer = beginOffer(asked.code, T0);
+      const answered = answerCommitment(asked, offer.message, T0);
+      return { asked, offer, answered, reveal: revealAndShow(offer.pending, answered.nonce, T0) };
+    };
+    let draw = drawHonestly();
+    for (let i = 0; i < 50 && draw.reveal.digits === oldScreen; i += 1) draw = drawHonestly();
+    const { asked: honest, offer: onward, answered: honestAnswered, reveal: onwardReveal } = draw;
+    /* Fifty draws all colliding is not chance, and this is where that says so:
+     * a `digitsFor` that ignored its inputs leaves the loop still colliding and
+     * turns this red. A separate count of the collisions was tried here and
+     * taken out - the loop cannot reach fifty and then draw a differing
+     * fifty-first under any hash a defect produces, so the count could not fail
+     * for any reason this line does not already catch. */
+    expect(onwardReveal.digits, 'fifty draws all colliding is not chance').not.toBe(oldScreen);
 
     /*
      * FOUR THOUSAND ATTEMPTS TO CHEAT. Each is a fresh ephemeral keypair — the
@@ -158,9 +202,8 @@ describe('the relay, which is the attack this exists to stop', () => {
     /* Every one of them was refused, by the commitment rather than by luck. */
     expect(couldHaveCheated).toBeGreaterThan(8);
 
-    /* Playing honestly, the relay's number simply differs and the person sees it. */
-    const onwardReveal = revealAndShow(onward.pending, honestAnswered.nonce, T0);
-    expect(onwardReveal.digits).not.toBe(oldScreen);
+    /* Playing honestly, the relay's number differs and the person sees it - so the
+     * number they confirmed off the old screen is one this device can refuse. */
     refuses(
       () => acceptKeys(
         honestAnswered.request, onwardReveal.ephemeralPublic,
