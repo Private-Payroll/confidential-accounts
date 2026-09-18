@@ -326,11 +326,17 @@ const namedCommands = (title: string): string[] => {
  * NOTHING JOINS THEM QUIETLY.
  *
  * Every one stands down on the machine rather than on anything this repository
- * ships: six on a database being reachable, one on a sampling budget, one on
- * whether the filesystem can refuse a write. That is a different question from
- * the build output above and answering it is not this change's. THE LIST MAY
- * SHRINK AND MAY NEVER GROW: name the condition in the title and delete the
- * line here in the same turn.
+ * ships: on a database being reachable, or on whether the filesystem can refuse
+ * a write. That is a different question from the build output above and
+ * answering it is not this change's. THE LIST MAY SHRINK AND MAY NEVER GROW:
+ * name the condition in the title and delete the line here in the same turn.
+ *
+ * ONE LINE LEFT THIS LIST BECAUSE ITS FILE LEFT THE PUBLISHED SET. It stood
+ * down on a sampling budget, and it was a reproduction harness rather than
+ * coverage - so it is now private tooling and is not walked from here at all.
+ * The breakdown above no longer counts the entries, deliberately: a count in a
+ * sentence beside a list is a second copy of the list, and this one had already
+ * drifted from it before today.
  */
 /**
  * THE FILES WHOSE PROSE MENTIONS STANDING DOWN WHILE HOLDING NONE OF IT.
@@ -348,7 +354,6 @@ const MENTIONS_IT_WITHOUT_DOING_IT: readonly string[] = [
 ];
 
 const SAYS_NOTHING_YET: readonly string[] = [
-  'packages/identity/src/devices/flake-chase.test.ts',
   'src/core/rate-limit.test.ts',
   'src/core/sessions.test.ts',
   'src/core/store-file.test.ts',
