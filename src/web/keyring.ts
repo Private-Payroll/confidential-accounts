@@ -616,7 +616,7 @@ export async function signInWithWallet(
 ): Promise<Me> {
   /*
    * **OPENED HERE, IN THE CLICK, BEFORE ONE BYTE HAS BEEN AWAITED.**
-   * `scripts/mutate-wallet-dialog.mjs` 01 moves this line below the challenge
+   * The deliberate defect for this order moves this line below the challenge
    * and a test dies by name.
    */
   const dialog = openTheWallet(view, walletOrigin);
@@ -779,7 +779,7 @@ export async function openKeysWithWallet(
 
   /*
    * **OPENED HERE, IN THE CLICK, BEFORE ANYTHING IS AWAITED.**
-   * `scripts/mutate-wallet-dialog.mjs` 02 moves this line below the ask and a
+   * A deliberate defect moves this line below the ask and a
    * test dies by name.
    */
   const dialog = openTheWallet(view, walletOrigin, already);

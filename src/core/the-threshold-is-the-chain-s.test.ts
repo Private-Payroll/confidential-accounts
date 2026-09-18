@@ -80,7 +80,7 @@ const THREE = [
  *
  * **DELIBERATELY NOT SHARED WITH THE NEAR-TWIN IN
  * `the-guards-cannot-strand-an-account.test.ts`,** which says the same of this
- * one at its own top. Both files are judged by `scripts/mutate-authority.mjs`,
+ * one at its own top. Both files are judged by the same deliberate defects,
  * and a shared fixture lets one suite's mutation quietly change the other's
  * setup.
  */

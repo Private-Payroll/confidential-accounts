@@ -15,7 +15,7 @@
  * a ROUTE, so it is tested over real HTTP for `server.test.ts`'s reason — the
  * two leaks that actually shipped in this project were both in a route, and a
  * mock request object gets middleware order, body parsing and status codes
- * right by definition. `scripts/mutate-self-payee.mjs` mutation 3 puts the door
+ * right by definition. The deliberate defect for this route puts the door
  * back in and this is the test that dies.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';

@@ -19,7 +19,7 @@ import { NoCompanyAddress, companyForSession } from './company-address.js';
  *
  * So the deliverable of that item is not the field. It is **the mutation that
  * makes a simulated address indistinguishable again, and the assertion that
- * dies when it does.** `scripts/mutate-payslip-key.mjs` 01 and 02 are the two
+ * dies when it does.** Two deliberate defects between them are the two
  * ways to put it back; the tests below are what notices.
  *
  * ── AND THE POINT IS THAT IT CAN TELL, NOT THAT IT STOPS ──────────────────

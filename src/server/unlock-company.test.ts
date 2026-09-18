@@ -11,7 +11,7 @@
  * **WHAT IS BEING PROVED IS AN ABSENCE**, which is why the body of the attempt
  * matters more than the assertion: a caller sends a complete, well-formed,
  * plausible company address of its own choosing, and the answer is somebody
- * else's — its own. `scripts/mutate-wallet-unlock.mjs` mutation 1 puts the door
+ * else's — its own. A deliberate defect for this route puts the door
  * in and this is the test that dies.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';

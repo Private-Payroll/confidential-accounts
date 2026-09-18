@@ -29,7 +29,7 @@ import type { Openable, WalletWindow } from './wallet-sign-in.js';
  * window is required to be open before the first `fetch` has been allowed to
  * answer. A test that awaited the whole journey would pass whichever order the
  * two lines are in, which is exactly how this shipped.
- * `scripts/mutate-wallet-dialog.mjs` 01 and 02 put the old order back.
+ * Two deliberate defects put the old order back, and this is what notices.
  *
  * ── AND WHY THE REST OF IT IS HERE RATHER THAN IN A SCREENSHOT ────────────
  *

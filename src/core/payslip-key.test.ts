@@ -797,8 +797,8 @@ describe('§3 — THE KEY OPENS THIS PERSON\'S PAYSLIP AND NOTHING ELSE OPENS IT
        * **THE ONE THAT MATTERS.** Decided 23 Aug: the architecture stands as
        * it is. The employer holds the viewing key that opens the
        * roster, the runs and the policy, and it must not open one payslip.
-       * `scripts/mutate-payslip-key.mjs` 05 wraps the slip key to a company-held
-       * key instead of the payee's, and this is what dies.
+       * **AND NOTHING BREAKS IT ON PURPOSE.** These assertions are the only
+       * thing holding it: a wrap to any key but the payee's dies here.
        */
       const h = world();
       const { account, viewingKey, secrets } = await h.accounts.create('Acme', SIGNERS, 1);
@@ -815,7 +815,7 @@ describe('§3 — THE KEY OPENS THIS PERSON\'S PAYSLIP AND NOTHING ELSE OPENS IT
 
   it('ANOTHER PERSON\'S DERIVED KEY DOES NOT OPEN IT EITHER', async () => {
     /*
-     * `scripts/mutate-payslip-key.mjs` 04 takes the person's own key out of the
+     * The defect this is written against takes the person's own key out of the
      * expansion, so every employee derives the same keypair. This is what
      * notices — and it notices through the real product path rather than by
      * comparing two derivations, because equal keys are only a defect once
@@ -842,7 +842,7 @@ describe('§3 — THE KEY OPENS THIS PERSON\'S PAYSLIP AND NOTHING ELSE OPENS IT
      * the FIRST payee's key leaves the first person's own slip working
      * perfectly — and a test that only ever reads downwards would pass while
      * everybody else's pay was readable by one colleague.
-     * `scripts/mutate-payslip-key.mjs` 05 is exactly that, and this line is
+     * A defect that wraps every slip to one key does that, and this line is
      * what dies.
      */
     expect(() =>

@@ -282,11 +282,24 @@ const CLIENT_EXT = /\.(ts|tsx|mjs)$/;
  * threw would take the whole suite down over a file that is not the subject.
  */
 function clientFiles(root: string): string[] {
+  // Both files git itself consults, in the order git reads them. `.gitignore`
+  // travels with the repository; `.git/info/exclude` is local to one checkout
+  // and is never committed, which is where a file is excluded when naming it in
+  // a published file would disclose something. Reading only the first made this
+  // walk disagree with what the repository actually contains the moment a file
+  // was excluded in the second, and a walk that names a file a fresh copy does
+  // not contain is a generated document that cannot be regenerated.
+  //
+  // It is the same answer in both places, which is the point: here the second
+  // file excludes those paths, and in a fresh copy it does not exist and
+  // neither do they.
   let ignoreRules: ReturnType<typeof parseIgnore> = [];
-  try {
-    ignoreRules = parseIgnore(readFileSync(join(root, '.gitignore'), 'utf8'));
-  } catch {
-    ignoreRules = [];
+  for (const rel of ['.gitignore', join('.git', 'info', 'exclude')]) {
+    try {
+      ignoreRules = ignoreRules.concat(parseIgnore(readFileSync(join(root, rel), 'utf8')));
+    } catch {
+      /* absent is normal: a fresh copy has no local exclude file */
+    }
   }
   const out: string[] = [];
   const walk = (rel: string) => {

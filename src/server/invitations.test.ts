@@ -12,7 +12,7 @@
  * in a route**, and a mock request object gets middleware order, body parsing
  * and status codes right by definition.
  *
- * `scripts/mutate-invitations.mjs` breaks each of these on purpose and names
+ * Deliberate defects break each of these on purpose, and each names
  * the test that has to die.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
@@ -298,7 +298,7 @@ describe('§7 — the browser seals and the route takes a blob it cannot open', 
      * *"handover is required"* and whoever wrote it would be entitled to
      * believe the address had been read.
      *
-     * `scripts/mutate-invitations.mjs` puts the plain address back at this
+     * The deliberate defect for this rule puts the plain address back at this
      * route and this is the test that dies.
      */
     const c = await withACompany();
@@ -747,8 +747,8 @@ describe('PI4c — AND WHAT A REAL INVITEE GETS TODAY, WHICH IS HIRED', () => {
        * it travels sealed, and `admit` computes the same code from the address
        * that actually arrived. **Two codes, both derived from an address and
        * from nothing an operator can type.** The test below this one is the
-       * refusal that proves it bites; `scripts/mutate-invitations.mjs` §9 and
-       * §10 are what say both halves are load-bearing rather than decorative.
+       * refusal that proves it bites, and a deliberate defect against each
+       * half says both are load-bearing rather than decorative.
        *
        * **WHAT IS STILL NOT PROVEN, and the screens say so:** somebody
        * accepting their own invitation pastes their own matching code. That is

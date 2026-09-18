@@ -124,7 +124,7 @@ const FLUSH_AFTER_MS = 250;
  *
  * **This is why this call exists at all when `record` redacts as well.** The
  * one below cannot save this: by the time it runs, the cut has happened.
- * `scripts/mutate-refusals.mjs` 02 swaps the order back.
+ * The deliberate defect this answers swaps the order back.
  *
  * The body is JSON with an `error` in it for everything `wrap` answers, and
  * something else entirely for an error page a proxy wrote. Both are kept —

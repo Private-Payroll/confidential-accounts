@@ -11,7 +11,7 @@
  *
  * So these assert ABSENCE, over real HTTP, against the running app: the routes
  * answer 404, and the one field that carried the envelope is not in the
- * response. `scripts/mutate-deleted-systems.mjs` puts each one back and names
+ * response. A deliberate defect puts each removed path back and names
  * the test that dies.
  *
  * ── AND ONE OF THEM ASSERTS A PRESENCE, WHICH MATTERS MORE ────────────────

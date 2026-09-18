@@ -34,7 +34,7 @@ describe('removing a secret from a line of text', () => {
    * so `above Absent` ended the run of lower-case words and the whole phrase
    * survived. The words are a working wallet in either shape.
    *
-   * `scripts/mutate-refusals.mjs` 03 takes the flag back off, and these are the
+   * The defect this pair answers takes the flag back off, and these are the
    * two tests that have to die when it does.
    */
   it('C148: a phrase with ONE capitalised word in it, which a phone keyboard produces', () => {

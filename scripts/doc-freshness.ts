@@ -32,7 +32,7 @@
  *
  * ── AND ONE DOOR NOW TAKES THE FIRST OF THOSE, AGAINST THIS GATE ALONE ───────
  *
- * `T-171`, ruled 2 Sep. `MUTATE.command` runs under `vitest.mutation.config.ts`,
+ * `T-171`, ruled 2 Sep. `MUTATE.command` runs under a mutation configuration,
  * which is DERIVED from `vitest.config.ts` and removes exactly one `globalSetup`
  * entry: this one. `artifact-freshness` and `ledger-limit` stay wired there, so
  * a mutation is still scored against a fresh artifact and a bounded ledger.

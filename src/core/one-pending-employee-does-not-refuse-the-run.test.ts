@@ -17,7 +17,7 @@
  *      end of the month is a decision with a name on it rather than a gap
  *
  * **THE TWO THE BRIEF NAMES ARE `6` AND `7` IN
- * `scripts/mutate-who-gets-paid.mjs`** — the run helping itself to an
+ * THE CORPUS OF DELIBERATE DEFECTS** — the run helping itself to an
  * acknowledgement nobody gave, and the two pending reasons collapsing into one.
  * Each `it` below cites its corpus entry by NUMBER AND BY BINDING, because a
  * number alone drifts silently: the first draft of this file cited `1` and `2`
