@@ -174,7 +174,7 @@ if (!KEYS_ON_DISK) {
   );
 }
 
-describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [needs contracts/managed-vault/keys and contracts/managed/keys]', () => {
+describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [needs contracts/managed-vault/keys and contracts/managed/keys; `npm run compact` then `npm run compact:vault -- --full` build them]', () => {
   let chain: Chain;
   let server: ReturnType<express.Express['listen']>;
   let base: string;

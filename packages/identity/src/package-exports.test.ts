@@ -104,7 +104,7 @@ describe('the exports map', () => {
    * as worse than a red run. `skipIf` reports honestly and costs one word.
    */
   it.skipIf(!existsSync(join(root, 'lib')))(
-    'resolves to files on disk once the library has been built',
+    'resolves to files on disk once the library has been built [needs packages/identity/lib; `npm run identity:build` builds it]',
     () => {
       const missing = allTargets.filter(({ target }) => !existsSync(join(root, target)));
       expect(missing).toEqual([]);
