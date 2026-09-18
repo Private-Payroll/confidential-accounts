@@ -35,7 +35,7 @@
  * order. Under `sequence.concurrent` it goes red for a reason that has nothing
  * to do with the guard.
  */
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -544,9 +544,18 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
 
   it('THE ASSERTIONS THAT NEED PROVING KEYS ARE STILL MADE SOMEWHERE, or this goes red', () => {
     const gated = gatedOnKeys();
-    // The list is derived, so say what it found: a rule over an empty list is a
-    // rule over nothing, and the refusal above says so rather than passing.
-    expect(gated).toEqual([
+    /*
+     * **THE LIST IS DERIVED FROM A DIRECTORY WALK, SO A LITERAL `toEqual` OVER
+     * IT IS A CLAIM ABOUT WHICH FILES A COPY HAS, NOT ABOUT KEY COVERAGE.** In
+     * any copy that does not carry one of these eight it went red with a message
+     * about proving keys, which is not what changed.
+     *
+     * The direction that is the guard: every file gated on keys is named here,
+     * so a new one cannot appear unremarked. The reverse is intersected with
+     * what the walk found, and the emptiness refusal below is what stops the
+     * whole thing passing over nothing.
+     */
+    const NAMED = [
       'contracts/test/a-company-vault-from-the-page.test.ts',
       'contracts/test/a-private-payment-from-the-page.test.ts',
       'contracts/test/a-run-raised-and-approved-from-the-page.test.ts',
@@ -555,12 +564,26 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
       'src/midnight/the-key-reaches-the-circuit.test.ts',
       'src/midnight/the-secret-comes-from-the-keyring.test.ts',
       'src/wiring/vault-submission.test.ts',
-    ]);
-    expect(gatedOnKeys([VAULT_KEY_DIR])).toEqual([
+    ];
+    expect(gated.filter((f) => !NAMED.includes(f)),
+      'a test is gated on proving keys and this list does not name it').toEqual([]);
+    expect(NAMED.filter((f) => existsSync(join(ROOT, f)) && !gated.includes(f)),
+      'a test named here is still in this tree and is no longer gated on keys').toEqual([]);
+    // A RULE OVER AN EMPTY LIST IS A RULE OVER NOTHING, and that was the point
+    // of pinning the whole list. It is kept, as a floor rather than an identity.
+    expect(gated.length, 'the walk found no gated tests, so nothing below means anything')
+      .toBeGreaterThan(0);
+    const VAULT_NAMED = [
       'contracts/test/a-company-vault-from-the-page.test.ts',
       'contracts/test/a-private-payment-from-the-page.test.ts',
       'src/wiring/vault-submission.test.ts',
-    ]);
+    ];
+    const vaultGated = gatedOnKeys([VAULT_KEY_DIR]);
+    expect(vaultGated.filter((f) => !VAULT_NAMED.includes(f)),
+      'a test is gated on the vault keys and this list does not name it').toEqual([]);
+    expect(VAULT_NAMED.filter((f) => existsSync(join(ROOT, f)) && !vaultGated.includes(f)),
+      'a test named here is still in this tree and is no longer gated on the vault keys')
+      .toEqual([]);
     expect(keysCoverageProblem(WORKFLOW(), gated)).toBeNull();
   });
 

@@ -199,7 +199,12 @@ function fieldsBlock(edges: EdgeList): string {
   out.push('');
   out.push('## What the client-side scan does NOT know');
   out.push('');
-  out.push(`Scanned ${edges.coverage.clientFilesScanned} files; ${edges.coverage.resolvedInvocations} invocations carry a literal circuit name and ${edges.coverage.unresolvedInvocations} do not.`);
+  // THE COUNT OF FILES SCANNED IS LEFT OUT FOR THE REASON `modulesBlock` below
+  // gives at its own table: it is a measurement of this working copy, it moves
+  // when the walked set moves, and these blocks are compared byte for byte. What
+  // the scan FOUND stays - though the invocation counts on this line are derived
+  // from the walked files too, and move with them.
+  out.push(`${edges.coverage.resolvedInvocations} invocations carry a literal circuit name and ${edges.coverage.unresolvedInvocations} do not.`);
   out.push('');
   out.push('Five layers stand between a product call and a circuit, three of which rename:');
   out.push('');
@@ -264,10 +269,31 @@ function modulesBlock(edges: EdgeList): string {
   const sites = new Set(edges.edges.flatMap((e) => (e.kind === 'invokes' ? [`${e.from} ${e.circuit}`] : [])));
   out.push('## What the walk covered');
   out.push('');
+  /*
+   * **HOW MANY FILES THE WALK HAPPENED TO SEE IS NOT IN HERE, AND THAT IS A
+   * DECISION.** `modules walked` and `module-to-module import sites` were, and
+   * they are counts of this working copy rather than facts about the software.
+   * Measured 18 Sep: removing one file that nothing imports moved exactly three
+   * numbers across both generated documents - these two and the file count that
+   * stood in the field reference, which went at the same time - and left every
+   * other line of both byte for byte the same.
+   *
+   * The cost of carrying them was not a stale line. These blocks are compared
+   * byte for byte by a gate that runs in `globalSetup`, so a number that moves
+   * when the walked set moves stopped the whole suite STARTING - zero
+   * assertions, in every shard, with a message about a contract that had not
+   * changed.
+   *
+   * **AND THE EXPOSURE IS NARROWED RATHER THAN CLOSED, WHICH IS WORTH SAYING
+   * PLAINLY.** The first two rows below are invariants - nothing unreadable,
+   * nothing unresolved - and are claims about the code. The other two are not:
+   * both are derived from the files this walk saw, so a module that imports
+   * something or names a circuit still moves them when it leaves, and so does
+   * the invocation count in the field reference. Removing those three numbers
+   * buys the common case; it does not make every removal free.
+   */
   out.push('| | |');
   out.push('|---|---|');
-  out.push(`| modules walked | ${String(mc.modulesWalked)} |`);
-  out.push(`| module-to-module import sites | ${String(mc.importEdges)} |`);
   out.push(`| modules that could not be read | ${String(mc.unreadableModules)} |`);
   out.push(`| specifiers that resolved to nothing | ${String(mc.unresolvedSpecifiers)} |`);
   out.push(`| specifiers naming a real file outside the walked set | ${String(mc.resolvedOutsideTheWalkedSet)} |`);

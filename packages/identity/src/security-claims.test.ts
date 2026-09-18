@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -101,20 +101,58 @@ describe('no extended public key above the leaf leaves this library', () => {
     /* The four named files walk `@scure/bip32` DELIBERATELY, as an
      * independent check that our derivation and the SDK's agree — they are
      * the reason the money keys are pinned at all, and they export nothing.
-     * Any FIFTH file is the finding.
+     * Any FIFTH file is what this is watching for.
      *
      * The needle carries no `\b` anchors deliberately: this file has to match
      * its own needle, the same way the neighbouring test does, so that the
      * expected list reads the same in both and nobody has to work out why one
      * of them names itself and the other does not. A tripwire is allowed to be
      * broader than the thing it is watching for. */
-    expect(carrying(/HDKey/u)).toEqual([
+    /*
+     * **THE FIFTH FILE IS THE POINT, AND THAT IS THE DIRECTION THAT MATTERS.**
+     * This was a literal `toEqual` over a directory walk, so in any copy that
+     * does not carry one of the four this tripwire went red - a SECURITY claim
+     * failing with a message about key derivation because an unrelated file was
+     * not there. A maintainer meeting that in a clone goes looking for a
+     * disclosure defect.
+     *
+     * So: nothing outside the four may carry the needle, always; and each of
+     * the four is checked only where this walk still reaches it.
+     */
+    const DELIBERATE = [
       'apps/wallet/src/accounts/subwallets.test.ts',
       'packages/identity/src/keys/derivation.portability.test.ts',
       'packages/identity/src/profile/committee-key.test.ts',
       'packages/identity/src/profile/unlock.test.ts',
       SELF,
-    ].sort());
+    ].sort();
+    const found = carrying(/HDKey/u);
+    expect(
+      found.filter((f) => !DELIBERATE.includes(f)),
+      'a file derives or names an HD node and is not one of the four that do it deliberately',
+    ).toEqual([]);
+    /*
+     * **THE REACH IS ASSERTED AGAINST THE DISK, NOT AGAINST THE SWEEP.** Asking
+     * the sweep whether it saw a file makes a narrowed sweep silence both
+     * directions at once: drop `apps/wallet` from `ROOTS` and 223 files swept
+     * becomes 67, one of the four disappears, and every assertion here stays
+     * green - on a SECURITY claim, in the file whose own header says sweeping
+     * one folder and not the other is worse than not sweeping at all.
+     *
+     * `expect(found).toContain(SELF)` will not do it either: the needle is a
+     * literal in this file, so the file that defines it always matches. That is
+     * true by construction and proves nothing about reach.
+     */
+    const walked = new Set(sources().map(([file]) => file));
+    const inThisCopy = (f: string): boolean => existsSync(path.join(REPO, f));
+    expect(
+      DELIBERATE.filter((f) => inThisCopy(f) && !found.includes(f)),
+      'a file named here is in this copy and no longer walks an HD node',
+    ).toEqual([]);
+    expect(
+      DELIBERATE.filter((f) => inThisCopy(f) && !walked.has(f)),
+      'a file named here is in this copy and the sweep did not reach it',
+    ).toEqual([]);
   });
 
   it('the words for an extended key appear in no source file at all', () => {

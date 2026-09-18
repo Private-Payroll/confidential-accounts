@@ -51,7 +51,7 @@ _to_delete/
 # lowering, and it means nothing to a reader of the published repository — a
 # clone starts every file it does not know at zero, which is stricter than any
 # number written here. It is on no take list either.
-scripts/check-shipping-language.baseline
+.maintainer/language/check-shipping-language.baseline
 
 # The convenience scripts and everything they print. Local tooling, not the
 # project. Their reports live in logs/, which is ignored above.

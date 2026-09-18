@@ -2,8 +2,8 @@
 
 [![check](https://github.com/Private-Payroll/confidential-accounts/actions/workflows/ci.yml/badge.svg)](https://github.com/Private-Payroll/confidential-accounts/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![Compact](https://img.shields.io/badge/Compact-0.33.0-informational.svg)](.github/checks/toolchain.mjs)
-[![Tests](https://img.shields.io/badge/tests-3%2C224-informational.svg)](#tests)
+[![Compact](https://img.shields.io/badge/Compact-pinned-informational.svg)](.github/checks/toolchain.mjs)
+[![Tests](https://img.shields.io/badge/tests-see%20CI-informational.svg)](#tests)
 
 An M-of-N account layer for the Midnight Network, and the first product built on it: confidential
 stablecoin payroll.
@@ -99,7 +99,9 @@ simulated.
 
 ## Tests
 
-A clone of this repository runs **193 test files and 3,224 tests**, and every push runs them.
+A clone of this repository runs the whole suite with `npm test`, and every push runs it. The file
+and assertion counts are on the run rather than written down here, because a number typed into a
+README is a number nothing keeps true.
 
 Sixteen assertions do not run in a clone. Five are on the money path: they read verifier keys, which
 an ordinary compile does not produce, so a separate job builds those keys and runs exactly those

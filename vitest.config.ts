@@ -107,7 +107,19 @@ export default defineConfig({
        */
       'packages/identity/src/**/*.test.{ts,tsx}', 'apps/wallet/**/*.test.{ts,tsx}',
     ],
-    root: '.',
+    /*
+     * **THE ROOT IS THIS FILE'S OWN DIRECTORY, SAID ABSOLUTELY.**
+     *
+     * It was `'.'`. A relative root is handed to vite and resolved with
+     * `path.resolve`, which resolves against the WORKING DIRECTORY - so `'.'`
+     * meant this repository only for as long as every run started here, and a
+     * run begun from a subdirectory would have pointed the whole suite at that
+     * subdirectory. Deriving it from this file's own URL makes it the
+     * repository root whatever directory the runner was invoked from, and gives
+     * a config that spreads this `test` block a settled absolute path rather
+     * than one that re-resolves under it.
+     */
+    root: fileURLToPath(new URL('.', import.meta.url)),
     testTimeout: 30_000,
     /*
      * **THE ENVIRONMENT IS NOT SET HERE, ON PURPOSE.**

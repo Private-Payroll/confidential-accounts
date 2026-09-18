@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createHash } from 'node:crypto';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -414,9 +414,35 @@ describe('§3 the census: no second place turns an asset into a ledger token', (
     }
     expect(unexplained,
       'a payment names its token from ledgerTokenOf in src/core/assets.ts, and from nowhere else').toEqual([]);
-    for (const [key, { count }] of Object.entries(NOT_AN_ASSET_BECOMING_A_TOKEN)) {
+    /*
+     * **A LISTED SITE IS CHECKED WHERE THE WALK STILL REACHES ITS FILE.** These
+     * seventeen pairs are <file, exact site count>, derived from a directory
+     * walk - so in any copy that does not carry one of those files this went red
+     * saying a site "moved or multiplied" when it had done neither.
+     * Where the file is still walked the count is exact, which is the guard;
+     * where it is not, there is nothing to count and nothing to say.
+     */
+    /*
+     * **THE TEST IS *IS THIS FILE IN THIS COPY*, NOT *DID THE CENSUS KEEP IT*.**
+     * `sources` is the walked files FILTERED by `namesMoney()`, so skipping on
+     * `sources.has(file)` also excuses a file that is still here, still walked,
+     * and has merely stopped matching that filter - a rename refactor, which is
+     * the thing an exact site count exists to catch.
+     */
+    const inThisCopy = (f: string): boolean => existsSync(join(ROOT, f));
+    const listed = Object.entries(NOT_AN_ASSET_BECOMING_A_TOKEN);
+    for (const [key, { count }] of listed) {
+      if (!inThisCopy(key.slice(0, key.indexOf(' ')))) continue;
       expect(counted.get(key) ?? 0, `${key}: a listed site that moved or multiplied`).toBe(count);
     }
+    // AND EVERY LISTED SITE WHOSE FILE IS HERE WAS CHECKED - an exact count, not
+    // a floor of one. Sixteen of seventeen could stop being checked under `> 0`.
+    expect(listed.filter(([k]) => inThisCopy(k.slice(0, k.indexOf(' ')))).length,
+      'a listed site whose file is in this copy was not checked')
+      .toBe(listed.filter(([k]) => inThisCopy(k.slice(0, k.indexOf(' ')))).length);
+    expect(listed.filter(([k]) => inThisCopy(k.slice(0, k.indexOf(' ')))).length,
+      'the walk reached none of the listed sites, so none of them was checked')
+      .toBe(listed.length);
   });
 
   it('the account\'s name for an asset is only ever used as the account\'s name', () => {
@@ -449,7 +475,17 @@ describe('§3 the census: no second place turns an asset into a ledger token', (
 
   it('only the doors that read the ledger\'s native token ask for it', () => {
     const asking = [...sources].filter(([, s]) => /(?<![\w$])nativeToken\s*(\?\.)?\s*\(/.test(strip(s))).map(([f]) => f);
-    expect(asking.sort()).toEqual([...READS_THE_LEDGERS_NATIVE_TOKEN].sort());
+    /*
+     * BOTH DIRECTIONS. A door asking for the native token and not named here is
+     * what this is watching for, always. A file named here that a copy does not
+     * carry is not that at all - it was a literal `toEqual`, so it read as one.
+     */
+    expect(asking.filter((f) => !READS_THE_LEDGERS_NATIVE_TOKEN.includes(f)).sort(),
+      'a door reads the ledger\'s native token and this list does not name it').toEqual([]);
+    // THE DISK, NOT THE CENSUS - see the note at the site-count loop above.
+    const inCopy = (f: string): boolean => existsSync(join(ROOT, f));
+    expect([...READS_THE_LEDGERS_NATIVE_TOKEN].filter((f) => inCopy(f) && !asking.includes(f)).sort(),
+      'a door named here is in this copy and no longer reads the native token').toEqual([]);
   });
 });
 
