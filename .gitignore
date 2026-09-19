@@ -319,6 +319,7 @@ docs/BUILD-ORDER.md
 # source, and it ships for the same reason that one does not: it is the plan and
 # the plan is not the product.
 docs/BUILD-ORDER.html
+docs/BUILD-ORDER-WHY.md
 docs/NEXT.md
 docs/THE-MIGRATION.md
 docs/accepted-risks.md
@@ -412,7 +413,7 @@ docs/decisions/
 # has nothing to select. It stays on disk, it still builds, and it comes back
 # the day it selects the chain for itself.
 #
-# ALL THREE ARE ALREADY IN THE INDEX, so these rules do not remove them:
+# BOTH ARE ALREADY IN THE INDEX, so these rules do not remove them:
 # ignoring a tracked file does nothing at all. They come out with the others
 # UNTRACK-SHIPPED-BY-MISTAKE.command names, and they stay on disk where they
 # work.
@@ -426,21 +427,3 @@ docs/decisions/
 # for, so that a mis-edited list cannot make it remove the wrong thing.
 # src/standalone/
 # vite.standalone.config.ts
-# Its measurement, which used to live in a file that ships. A published test
-# that builds an entry point a clone does not have is red in that clone before
-# a single assertion runs.
-src/testing/the-standalone-build.test.ts
-
-
-# ── LOCAL TOOLING, KEPT ON DISK AND NOT PUBLISHED ──────────────────────────
-src/testing/no-attribution.test.ts
-# THE REST OF THE SAME FAMILY, NAMED 7 Sep. Each reads a local launcher at this
-# root, or the index of them, at load time - so in a copy that does not have
-# those, the file is red before a single assertion runs rather than merely
-# weaker. All four are already in the index, so these rules do not remove them:
-# UNTRACK-SHIPPED-BY-MISTAKE.command does, and they stay on disk where they work.
-src/testing/command-index.test.ts
-src/testing/mint-signers-call.test.ts
-src/testing/new-vault-door.test.ts
-
-docs/BUILD-ORDER-WHY.md
