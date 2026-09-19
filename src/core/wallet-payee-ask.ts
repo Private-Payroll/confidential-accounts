@@ -38,7 +38,7 @@ import { RECEIVING_ADDRESS } from 'midnight-identity/profile/attributes';
  *
  * ── **AND IT NEVER PROPOSES AN ADDRESS.** ─────────────────────────────────
  *
- * `Identity/src/profile/request.ts` refuses a request that names one, on the
+ * `packages/identity/src/profile/request.ts` refuses a request that names one, on the
  * body and on any single want, **by presence and by name**. This builder has
  * nowhere to put one: there is no parameter for an address anywhere below, and
  * a want carries exactly the three fields the wallet allows. A payer that could

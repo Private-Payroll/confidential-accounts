@@ -410,10 +410,52 @@ export const extractCandidates = (repoRoot, rawCfg) => {
 
   const byValue = new Map();
   const tooShort = [];
+  const asPath = [];
+
+  /**
+   * A VALUE THAT IS A PATH TO A FILE IN THIS REPOSITORY IS A PATH, NOT A SECRET.
+   *
+   * **WHY THIS RULE EXISTS.** Route 3 reads any base64 run out of a file in a
+   * secret root, and `/` is a base64 character, so a FILE PATH is a valid run.
+   * `.midnight/take-list-purpose.baseline` lists every published path with its
+   * purpose, and it lives in a secret root - so every path in this repository is
+   * a candidate secret, and any file that names one in a comment refuses.
+   * On 19 Sep that refused a commit over
+   * `packages/identity/src/profile/disclosure`, a file that is on disk and in
+   * the published set. The run stops at the dot, which is why the value looks
+   * like a path with its extension shorn off.
+   *
+   * **THIS IS NARROWER THAN AN EXEMPTION AND THAT IS THE POINT.** The config
+   * already carries `publicValues`, and adding one line to it per round would
+   * have worked and would have grown a hole nobody re-reads. A rule that says
+   * *this resolves to a file* is checkable by anybody, needs no reason written
+   * beside it, and cannot be used to wave through a value that is not a file.
+   *
+   * **WHAT IT DOES NOT EXEMPT.** A value with no `/` is never excluded, so a
+   * sixty-four character seed stays a candidate whatever it resembles. A value
+   * that does not resolve on disk is never excluded, so a base64 key containing
+   * slashes stays a candidate. Both halves must hold.
+   */
+  const resolvesToAFile = (v) => {
+    if (!v.includes('/')) return false;
+    if (v.startsWith('/') || v.includes('..')) return false;
+    try {
+      if (existsSync(join(repoRoot, v)) && !lstatSync(join(repoRoot, v)).isDirectory()) return true;
+      // The run stops at a dot, so the extension is shorn off. Ask the parent
+      // directory whether anything there is this name plus an extension.
+      const cut = v.lastIndexOf('/');
+      const dir = join(repoRoot, v.slice(0, cut));
+      const stem = v.slice(cut + 1);
+      if (!stem) return false;
+      return readdirSync(dir).some((n) => n.startsWith(stem + '.'));
+    } catch { return false; }
+  };
+
   const add = (value, sourceFile, field, kind) => {
     if (typeof value !== 'string') return;
     const v = value.trim();
     if (v.length < minLength) { tooShort.push({ sourceFile, field }); return; }
+    if (resolvesToAFile(v)) { asPath.push({ sourceFile, field, value: v }); return; }
     if (!byValue.has(v)) byValue.set(v, { value: v, sources: [], kinds: new Set() });
     const c = byValue.get(v);
     if (!c.sources.some((s) => s.sourceFile === sourceFile && s.field === field)) {

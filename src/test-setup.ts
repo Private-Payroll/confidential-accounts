@@ -1,7 +1,7 @@
 /**
  * WHAT EVERY WAIT IN THIS SUITE IS ALLOWED TO TAKE.
  *
- * **COPIED FROM `Identity/src/test-setup.ts`, WITH ITS REASONING, WHEN `X10`
+ * **COPIED FROM `packages/identity/src/test-setup.ts`, WITH ITS REASONING, WHEN `X10`
  * GAVE THIS REPOSITORY A SCREEN ENVIRONMENT AT ALL.** The lesson below cost the
  * wallet two false alarms and a probe to close; payroll starts with it rather
  * than learning it again in six weeks.

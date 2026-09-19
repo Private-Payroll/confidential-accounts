@@ -23,7 +23,7 @@
     "identity:build": "tsc -p packages/identity/tsconfig.build.json",
     "vendor-keys": "node apps/wallet/scripts/vendor-keys.mjs",
     "deploy": "tsx scripts/deploy-preview.ts",
-    "preflight": "node scripts/preflight-preview.mjs",
+    "preflight": "tsx scripts/preflight.ts",
     "migrate": "tsx scripts/migrate.ts"
   },
   "keywords": [],

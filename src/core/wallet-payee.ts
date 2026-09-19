@@ -49,10 +49,10 @@ import { RECEIVING_ADDRESS } from './wallet-payee-ask.js';
  * check that the shielded address disclosed and the key that signed are one
  * person's. They cannot be compared — the signature is made by the subwallet's
  * NIGHT key and the address is its ZSWAP one, and no derivation joins them on
- * this side. `Identity/src/profile/disclosure.ts` says the same thing about
+ * this side. `packages/identity/src/profile/disclosure.ts` says the same thing about
  * itself: *round tripping proves the encoding, never the pairing.* **The
  * pairing is guaranteed by the wallet computing both from one subwallet**, and
- * `Identity/src/app/payee-disclosure.test.tsx` is where that is held.
+ * `apps/wallet/src/screens/payee-disclosure.test.tsx` is where that is held.
  *
  * **And a disclosure obtained from somebody else cannot be replayed here**,
  * because the nonce is one-use and bound to a handle that never leaves this
@@ -215,7 +215,7 @@ export async function payeeFromWallet(
 
   /*
    * **THE VALUE MUST BE ONE THE WALLET WORKED OUT, AND THIS IS THE WHOLE ROUND
-   * IN ONE REFUSAL.** `Identity/src/profile/model.ts`'s third assertion arm.
+   * IN ONE REFUSAL.** `packages/identity/src/profile/model.ts`'s third assertion arm.
    *
    * `by: 'self'` means a person typed it. **That is exactly what `X7`'s pasted
    * box was**, and accepting it here would leave the precedent alive with a

@@ -148,7 +148,7 @@ function asResponse(raw: unknown): DisclosureResponse {
  * observe a browser, so it holds the value instead. Same rule, other end.
  *
  * **`https://` ONLY, AND THAT IS THE WALLET'S RULE RATHER THAN A PREFERENCE.**
- * `Identity/src/profile/request.ts` refuses any observed origin that is not
+ * `packages/identity/src/profile/request.ts` refuses any observed origin that is not
  * `https://`, saying *an origin nobody can authenticate is a name, not an
  * identity*. So a deployment served over plain HTTP — `http://localhost`
  * included — cannot be signed in to at all, and finding that out here at
