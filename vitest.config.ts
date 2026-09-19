@@ -149,7 +149,7 @@ export default defineConfig({
      * so a refusal there is ninety-nine file-level failures in a wall of
      * output, which is a warning wearing a refusal's clothes. This runs ONCE,
      * in the main process, before any worker evaluates any test module. It
-     * cannot be out-ordered by an import, and it covers all three `include`
+     * cannot be out-ordered by an import, and it covers all five `include`
      * globs rather than `contracts/test/**`.
      *
      * **IT CARRIES NO ESCAPE HATCH, AND THAT IS DELIBERATE.** No environment
