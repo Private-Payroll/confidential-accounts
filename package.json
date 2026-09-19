@@ -53,12 +53,12 @@
     "cors": "2.8.6",
     "express": "5.2.1",
     "nanoid": "6.0.1",
-    "playwright": "1.62.1",
+    "playwright": "1.63.0",
     "rollup": "^4.62.4",
     "vite-plugin-singlefile": "2.3.3",
     "vite-plugin-top-level-await": "^1.6.0",
     "vite-plugin-wasm": "^3.6.0",
-    "zod": "4.4.3",
+    "zod": "4.6.5",
     "postgres": "3.4.9"
   },
   "devDependencies": {
@@ -72,7 +72,7 @@
     "@vitejs/plugin-react": "6.0.5",
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "tsx": "4.23.12",
+    "tsx": "4.23.13",
     "typescript": "7.0.2",
     "vite": "8.2.1",
     "vitest": "4.1.10"
