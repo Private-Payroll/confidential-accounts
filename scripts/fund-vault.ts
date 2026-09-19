@@ -1064,7 +1064,8 @@ if (RUN_DIRECTLY) {
  *   2. **No amount, or an amount that is not digits.** It says the unit.
  *   3. **No `contracts/managed-vault/keys`.** Name `COMPILE-VAULT.command`.
  *   4. **The proof server on 6301 not answering the pin**, through the shared
- *      `scripts/proof-server-lib.sh`, whose refusals name `STOP-PROVER.command`.
+ *      proof server helper these entry points source, whose refusals name the
+ *      command that stops it.
  *
  * WHAT IT MUST NOT DO:
  *

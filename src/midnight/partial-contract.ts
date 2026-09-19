@@ -41,8 +41,8 @@
  *   ContractExecutable.js:100-118`) — and the midnight-js adapter turns a
  *   missing key file into a `ZKConfigurationReadError` failure even earlier
  *   (`midnight-js-types/dist/index.mjs:36-46`). There is NO silent skip in the
- *   SDK deploy path: the skip `S8a` recorded as a hazard lives in our own
- *   instrument (`scripts/measure-deploy-shape.ts:221`), not in the SDK. So a
+ *   SDK deploy path: the skip recorded as a hazard is in our own deploy-shape
+ *   measurement tooling, which does not ship, and not in the SDK. So a
  *   deferral cannot be had by leaving keys off disk — the SDK would refuse to
  *   deploy at all — and it cannot be had by accident, which is the right
  *   property for it to have.
@@ -76,9 +76,9 @@
  *
  * M-16 is the standing warning about doing SDK work by hand, and it is
  * answered rather than ignored: the SDK has no partial deploy to call, the
- * assembly below is the instrument's measured construction
- * (`scripts/measure-deploy-shape.ts`, whose transactions produced every number
- * the architecture was chosen on), and the read-back verification keeps M-9's
+ * assembly below is the construction our own deploy-shape measurement tooling
+ * exercised, and its transactions produced every number the architecture was
+ * chosen on, and the read-back verification keeps M-9's
  * property — deployed verifier keys are compared byte-for-byte against the
  * compiled ones, for the deployed circuits that exist.
  */

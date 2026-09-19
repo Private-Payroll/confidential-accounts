@@ -74,9 +74,9 @@ import { readProvenTransaction, readFinishedTransaction } from '../wiring/proven
  * `npm run dev` starts this file, `DATABASE_URL` lives in `.env`, and nothing
  * in this process ever opened that file — so the server refused to start with
  * *DATABASE_URL is not set* on a machine where it was set, and the payroll app
- * could not be started by anybody. `scripts/db-setup.ts` and `scripts/migrate.ts`
- * have always called this on their first line; the server, which is the thing a
- * person actually runs, was the one entry point that did not.
+ * could not be started by anybody. `scripts/migrate.ts` has always called this
+ * before it connects; the server, which is the thing a person actually runs, was
+ * the one entry point that did not.
  *
  * **THE ENVIRONMENT STILL WINS.** `loadEnvFile` only fills a name that is
  * `undefined`, so `ALLOW_SIMULATED_COMPANY_ADDRESS=1` and

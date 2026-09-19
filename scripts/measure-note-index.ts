@@ -201,7 +201,7 @@
  * **A, B, D and E are not in `C244`'s text and B, D and E were not in our
  * reference either.** That is a finding whether or not any of them answers.
  */
-export {};   // a MODULE rather than a global script; see scripts/indexer-check.ts.
+export {};   // a MODULE rather than a global script.
 
 import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

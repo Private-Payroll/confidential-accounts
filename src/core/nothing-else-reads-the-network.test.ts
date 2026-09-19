@@ -376,27 +376,37 @@ describe('§2 one statement of where a network is reached', () => {
     /*
      * **BOTH DIRECTIONS, AND ONLY ONE OF THEM IS ABOUT THIS REPOSITORY'S
      * CONTENTS.** This was a literal `toEqual` over what the walk found. The
-     * walk reads directories, so in any copy that does not carry one of these
-     * eight it went red - with a message saying a file had GAINED OR LOST AN
-     * ENDPOINT OVERRIDE when nothing of the sort had happened. A reader meeting
-     * that in a clone goes looking for a network defect that is not there.
+     * walk reads directories, so in any copy that does not carry one of the
+     * files named here it went red - with a message saying a file had GAINED OR
+     * LOST AN ENDPOINT OVERRIDE when nothing of the sort had happened. A reader
+     * meeting that in a clone goes looking for a network defect that is not
+     * there.
      *
-     * The guard is the first direction and it does not weaken: an override this
-     * list does not name is what this is watching for, whatever else changed.
-     * The second is intersected with what the walk actually found, so a file
-     * this copy does not have is simply not asserted about.
+     * **THE LIST IS ONE ENTRY NOW AND IT WAS EIGHT.** The other seven were
+     * diagnostic entry points that are no longer part of the published set, so
+     * naming them here would be naming files a reader has not got. **AND THE
+     * REASON THE WALK NO LONGER SEES THEM IS NOT THAT THEY ARE GONE - THEY ARE
+     * ON DISK, ONE DIRECTORY AWAY - IT IS THAT `SOURCE_DIRS` DOES NOT NAME
+     * THAT DIRECTORY.** That is an exemption by omission, it is stated here
+     * rather than left to be found, and it is why the count below is asserted:
+     * an exemption list one entry from empty passes every check under it in
+     * the instant that entry leaves, which is the failure this whole block was
+     * rewritten once already to avoid. The first direction is what does the
+     * work and it is unchanged: anything under the walked trees that overrides
+     * an endpoint and is not named here turns this red, and the second is
+     * intersected with what the walk actually found, so a file this copy does
+     * not have is simply not asserted about.
      */
     const WRITTEN_DOWN = [
-      join('scripts', 'balance-check.ts'),
-      join('scripts', 'chain-alive.ts'),
-      join('scripts', 'chain-balance.ts'),
-      join('scripts', 'fund-fee-payer.ts'),
-      join('scripts', 'indexer-check.ts'),
       join('scripts', 'measure-note-index.ts'),
-      join('scripts', 'refresh-reference.ts'),
-      join('scripts', 'version-check.ts'),
     ];
     const overriding = overridesAnEndpoint(THE_REPOSITORY);
+    /* RED WHEN: the last named file leaves this copy, which would otherwise
+     * turn all three assertions below green over an empty list at once. */
+    expect(
+      WRITTEN_DOWN.filter((f) => existsSync(join(ROOT, f))).length,
+      'every file this list names has left this copy, so nothing below asserts anything',
+    ).toBeGreaterThan(0);
     expect(
       overriding.filter((f) => !WRITTEN_DOWN.includes(f)),
       'a file overrides an endpoint and this list does not name it',
@@ -404,11 +414,12 @@ describe('§2 one statement of where a network is reached', () => {
     /*
      * **THE SECOND DIRECTION ASKS THE DISK, NOT THE WALK, AND THAT IS THE WHOLE
      * POINT.** Asking `THE_REPOSITORY.keys()` made both directions depend on the
-     * same walk: drop `scripts/` from `SOURCE_DIRS` and all eight overrides
-     * vanish, the first direction passes over an empty set, the second passes
+     * same walk: drop `scripts/` from `SOURCE_DIRS` and every override this
+     * list names vanishes, the first direction passes over an empty set, the second passes
      * over nothing, and every assertion here goes green while the tripwire reads
-     * no part of the tree it was written for. Measured: 730 files walked becomes
-     * 582, eight overrides become zero, and nothing turns red.
+     * no part of the tree it was written for. Measured when that was written:
+     * 730 files walked becomes 582, every override found becomes zero, and
+     * nothing turns red.
      *
      * `existsSync` is an oracle this walk cannot switch off.
      */

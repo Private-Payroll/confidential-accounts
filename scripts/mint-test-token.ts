@@ -895,7 +895,8 @@ if (RUN_DIRECTLY) {
  *   1. **No amount, or an amount that is not digits.**
  *   2. **No `contracts/probe-out4/mint-64/keys/issue.prover`.**
  *   3. **The proof server on 6301 not answering the pin**, through the shared
- *      `scripts/proof-server-lib.sh`, whose refusals name `STOP-PROVER.command`.
+ *      proof server helper these entry points source, whose refusals name the
+ *      command that stops it.
  *
  * WHAT IT MUST NOT DO:
  *
