@@ -197,7 +197,7 @@
  *      A probe that answers yes to everything looks exactly like a probe that
  *      found everything retained. So an index far outside the range is asked
  *      too, and unless it comes back collapsed this surface refuses the lot.
- * *
+ *
  * **A, B, D and E are not in `C244`'s text and B, D and E were not in our
  * reference either.** That is a finding whether or not any of them answers.
  */

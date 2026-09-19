@@ -1849,7 +1849,7 @@ describe('C222: a ledger is bound to the harness it was built with', () => {
  * BY `S35d`, WHICH IS `C366` HAPPENING TO THIS SENTENCE:** the ranges `S35b`
  * cited on 1 Sep were right when written and the third refusal's justification
  * was rewritten under them, moving everything below. The refusals themselves
- * did not move and none was unguarded), and the credentials guard
+ * did not move and none was unguarded, and the credentials guard
  * predates them. These tests had simply never executed: `S35` edited a
  * `.compact`, `C294`'s freshness guard refused every test file in the
  * repository, and rule 11 was discharged at `TEST.command` — which is where

@@ -39,10 +39,10 @@
  *      WRITTEN HERE.** It was, and it went stale inside the same day it was
  *      written, because adding this file and its test changed it. A number a
  *      document writes down is a number that rots; the walk derives it and
- *      prints it. The anchor is what keeps prose out --
- *      the words `from "B is no longer in the tree"` appear in twelve comment
- *      lines in this repository, every one of them indented behind a marker,
- *      and an unanchored matcher takes all twelve.
+ *      prints it. The anchor is what keeps prose out -- the words
+ *      `from "B is no longer in the tree"` appear in two comment lines in
+ *      this repository, both of them indented behind a marker, and an
+ *      unanchored matcher takes both.
  *   2. THE STATEMENT ENDS AT THE FIRST SEMICOLON. Multi-line brace imports are
  *      ordinary here -- 683 of them -- so the statement is read from the anchor
  *      to the first `;`, not to the end of the line.

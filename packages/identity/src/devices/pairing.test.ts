@@ -573,7 +573,7 @@ describe('the two digits', () => {
      *
      * This assertion was a SINGLE `expect(digitsFor(a, b, n1)).not.toBe(
      * digitsFor(b, a, n1))`: two independent two-digit hashes compared for
-     * inequality, and `digitsFor` ends `% 100` (`pairing.ts:476`). **It
+     * inequality, and `digitsFor` ends `% 100` (`pairing.ts:479`). **It
      * failed about one full-suite run in a hundred by construction, on any
      * machine, loaded or idle** — reproduced under contention, 2 red in 40
      * runs, both here, and the

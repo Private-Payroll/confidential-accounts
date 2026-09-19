@@ -11,8 +11,8 @@
  * contract that grows past the ceiling again needs it back. **A vault fits — four circuits,
  * 16,040 bytesWritten, 49.4% of the ceiling — so it deploys whole, through the
  * SDK's ordinary `deployContract`, and reads back through its own find.**
- * `findDeployedPartialContract` below refuses a FULL deployment on purpose
- *, which is right for the account and wrong for a vault; pointed at
+ * `findDeployedPartialContract` below refuses a FULL deployment on purpose,
+ * which is right for the account and wrong for a vault; pointed at
  * one it would compare verifier keys against circuit names a vault has never
  * had.
  *
@@ -21,9 +21,9 @@
  * `describeMaintenanceAuthority` — and that is deliberate rather than an
  * oversight. `C225` is `deployContract`'s own `signingKey ?? sampleSigningKey()`
  * default, which is the FULL deploy path's defect before it is anybody else's,
- * so the rule is not about partiality and two validators of it would be
- * The vault narrows the choice further in its own module, because the
- * SDK's full path can express only a single key.
+ * so the rule is not about partiality and two validators of it would be two
+ * copies of one rule to keep in step. The vault narrows the choice further in
+ * its own module, because the SDK's full path can express only a single key.
  *
  * How many circuits deploy and which defer is `src/midnight/deferral.ts`'s
  * to say — S8b deferred four of the fifteen; S9 re-decided the split to

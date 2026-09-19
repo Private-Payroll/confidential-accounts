@@ -27,11 +27,13 @@
 #
 # ── WHAT THIS FILE DOES NOT DO ────────────────────────────────────────────
 #
-# IGNORING A TRACKED FILE DOES NOTHING. TEN files are in the first commit and
-# should not be — seven documents that should never have shipped, and three
-# scripts taken off the take list afterwards. The rules for all ten are below
-# AND the removal is UNTRACK-SHIPPED-BY-MISTAKE.command, which is a separate
-# act by a person.
+# IGNORING A TRACKED FILE DOES NOTHING. TEN files were in the first commit and
+# should not have been — seven documents that should never have shipped, and
+# three scripts taken off the take list afterwards. The rules for all ten are
+# below AND the removal was UNTRACK-SHIPPED-BY-MISTAKE.command, which is a
+# separate act by a person. IT HAS BEEN RUN: none of the ten is in the index
+# now, and none was deleted — the seven documents are where they were, and the
+# three scripts moved under `.maintainer/probes/` afterwards.
 # Every other process file in this folder was never tracked at all — the
 # fresh `init` honoured a take list that does not name them — and that is
 # a property of THE REPOSITORY CREATED ON 5 Sep, not of the one before it.
@@ -303,7 +305,7 @@ pi4a-cut.mjs
 /XXkUxM9m
 
 
-# ── docs/ — THE DESIGN SET SHIPS AND NOTHING ELSE DOES ─────────────────────
+# ── docs/ - NOTHING UNDER docs/ IS IN THE INDEX ────────────────────────────
 # The round documents, the board, the build order, the backlog, the register,
 # the build log, the corrections and the audit scopes are HOW WE WORK, not
 # what the software is. Several are controller-only under the working rules
@@ -366,12 +368,19 @@ docs/vaults.md
 
 
 # ── THE SEVEN DOCUMENTS THAT SHIPPED AND SHOULD NOT HAVE ───────────────────
-# THESE TWO RULES, AND THE THREE ABOVE, ARE THE FIVE RULES IN THIS FILE THAT
-# NAME A FILE ALREADY IN THE INDEX — TEN FILES BETWEEN THEM — AND IGNORING A
-# TRACKED FILE DOES NOTHING.
-# UNTRACK-SHIPPED-BY-MISTAKE.command names all ten, removes them from the index
-# and leaves every one of them on disk. Every other rule here is honoured from
-# the first commit because the fresh `init` was built from the take list.
+# THE THREE RULES BELOW NAME FILES THAT WERE ALREADY IN THE INDEX WHEN THOSE
+# RULES WERE WRITTEN, AND IGNORING A TRACKED FILE DOES NOTHING ABOUT THAT.
+# The three scripts among the ten are a different case: they left the index by
+# being MOVED under `.maintainer/` above, and nothing under `.maintainer/` has
+# ever been tracked.
+# UNTRACK-SHIPPED-BY-MISTAKE.command TOOK THE TEN OUT OF THE INDEX AND LEFT
+# EVERY ONE OF THEM ON DISK. Nothing under docs/ is in the index now, so these
+# rules do what every other rule here does: they keep a file out rather than
+# argue with one that is already in. That door's fixed list has since been
+# re-pinned to a later set of fourteen: none of the ten is among them, and
+# none of the fourteen is tracked any longer either. Every other rule here is
+# honoured from the first commit because the fresh `init` was built from the
+# take list.
 #
 # docs/design/ is a GENERATED OUTPUT DIRECTORY rather than written
 # documentation. Everything under it is derived from the compiled contracts,
@@ -415,17 +424,21 @@ docs/decisions/
 .claude/
 
 
-# ── THE BROWSER-ONLY BUILD, TAKEN OFF 9 Sep ────────────────────────────────
+# ── THE BROWSER-ONLY BUILD, DECIDED AGAINST 9 Sep, STILL PUBLISHED ─────────
 # It ran the whole product in a browser with no server, against a simulated
 # ledger. The product runs against a chain now, and a build with no filesystem
 # cannot read a contract address, an indexer, a node or a proof server - so it
-# has nothing to select. It stays on disk, it still builds, and it comes back
-# the day it selects the chain for itself.
+# has nothing to select. IT WAS NOT TAKEN OFF: `src/standalone/` and
+# `vite.standalone.config.ts` are still in the index and still named by
+# PUBLIC-REPO-TAKE-LIST.txt, and so is `browser-proving/`. It stays on disk,
+# it still builds, and it is used again the day it selects the chain for
+# itself.
 #
-# BOTH ARE ALREADY IN THE INDEX, so these rules do not remove them:
-# ignoring a tracked file does nothing at all. They come out with the others
-# UNTRACK-SHIPPED-BY-MISTAKE.command names, and they stay on disk where they
-# work.
+# THE TWO COMMENTED RULES BELOW NAME PATHS THAT ARE ALREADY IN THE INDEX, so
+# they do not remove them: ignoring a tracked file does nothing at all.
+# NEITHER DOES UNTRACK-SHIPPED-BY-MISTAKE.command, whose fixed list names
+# neither path. Taking them out means changing that list first, and they stay
+# on disk where they work.
 #
 # HELD, DELIBERATELY, AND THE TWO LINES ARE COMMENTED RATHER THAN DELETED SO
 # THE DECISION IS VISIBLE. Taking the browser-only build off the published set
