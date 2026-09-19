@@ -2,10 +2,10 @@
  * THE MODULE GRAPH. EVERY RULE IN IT IS PURE AND TAKES NO FILESYSTEM, AND THAT
  * IS THE POINT RATHER THAN A STYLE.
  *
- * `scripts/edge-list.ts` already walks the client trees, and the walk it does
- * could have been widened in place. It was not: a rule that exists only inside
- * a walk over the real tree can be watched succeed and can never be watched
- * FAIL, because the only way to make it fail is to break the tree.
+ * A rule of this kind could have been written inside a walk over the real
+ * tree. It was not: a rule that exists only inside such a walk can be watched
+ * succeed and can never be watched FAIL, because the only way to make it fail
+ * is to break the tree.
  * Everything here takes `read` and `exists` as arguments, so
  * `scripts/module-graph.test.ts` hands it a fixture, mutates one character of
  * that fixture, and watches a named assertion go red. Nothing in this file
@@ -25,9 +25,8 @@
  * them is honest. Skipping it produces a graph with a hole in it that looks
  * exactly like a module nothing imports -- and *nothing imports this* is a
  * conclusion somebody acts on. So every file this cannot read and every
- * specifier it cannot resolve is COLLECTED and returned, the caller prints
- * both, and the counts go in the generated document where a reader meets them.
- * A check over nothing cannot fail.
+ * specifier it cannot resolve is COLLECTED and returned, and the caller prints
+ * both. A check over nothing cannot fail.
  *
  * -- THE THREE MATCHING RULES, WRITTEN DOWN BECAUSE THEY ARE ASSUMPTIONS ------
  *
@@ -64,11 +63,11 @@
 /**
  * The four statement shapes, as one exported table.
  *
- * `scripts/edge-list.ts`'s `SHAPES` is the same construct and its test says why
- * it is a table and not four literals inside a walk: seven of that file's ten
- * shapes were once dropped and the suite stayed green, because nothing asserted
- * what the scanner LOOKS for -- only that the numbers it produced agreed with
- * each other.
+ * It is a table and not four literals inside a walk for a reason this project
+ * has paid for: in a scanner of the same shape, seven of ten statement shapes
+ * were once dropped and the suite stayed green, because nothing asserted what
+ * the scanner LOOKS for -- only that the numbers it produced agreed with each
+ * other.
  */
 export const IMPORT_SHAPES: readonly { name: string; re: RegExp; anchored: boolean }[] = [
   /* `import x from 'y'`, `import type {A} from 'y'`, `export {A} from 'y'`,
@@ -83,8 +82,8 @@ export const IMPORT_SHAPES: readonly { name: string; re: RegExp; anchored: boole
    * caution: `assets.require('NIGHT')` is a method named `require` and was read
    * as a dependency on a package called NIGHT, and this file's own shape table
    * contains the literal `"import('X')"`, which was read as a dependency on a
-   * package called X. Two packages this repository does not have, in a
-   * published document, from a matcher that was told to look anywhere.
+   * package called X. Two packages this repository does not have, reported as
+   * real, from a matcher that was told to look anywhere.
    */
   { name: "import('X')", re: /(?<![.'"`\w])import\s*\(\s*['"]([^'"]+)['"]\s*\)/g, anchored: false },
   /* One site in this repository, and a shape that costs nothing to keep. */
@@ -97,8 +96,9 @@ export const IMPORT_SHAPES: readonly { name: string; re: RegExp; anchored: boole
  * It is deliberately crude and deliberately stated: a line whose first
  * non-space characters open or continue a comment. It does not know about a
  * block comment's interior lines that begin with a word, and it does not know
- * about a string containing the text of an import. Both are named in the
- * document this feeds rather than left for a reader to find.
+ * about a string containing the text of an import. Both are limits of this rule
+ * rather than of the walk, and both are stated here because nothing downstream
+ * states them.
  */
 export const isCommentLine = (line: string): boolean => /^\s*(?:\*|\/\/|\/\*)/.test(line);
 

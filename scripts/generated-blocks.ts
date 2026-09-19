@@ -7,8 +7,9 @@
  * whole value of the arrangement is that regenerating it cannot touch the other
  * two. That needs a delimiter, and this repository had none — 176 markdown
  * files carry exactly one HTML comment between them and it is prose. So the
- * shape is invented here, once, and every generated region in the repository
- * uses it.
+ * shape is invented here, once. **No document in this repository currently
+ * carries one**; the format is kept in one place so the two questions below
+ * stay answerable the moment one does.
  *
  * ONE DIGEST HERE, AND IT ANSWERS ONE QUESTION: HAS A PERSON TYPED INSIDE THE
  * BLOCK? `body` is a digest of the block's own text, recorded when it was
@@ -19,8 +20,8 @@
  * THE OTHER QUESTION — IS THE BLOCK STALE — IS NOT ANSWERED BY A DIGEST STORED
  * HERE. It used to be, by hashing a list of files the block was believed to be
  * generated from, and `T-167` is the record of that list being wrong three
- * times in one round. `scripts/doc-freshness.ts` now RENDERS the block and
- * compares, which is the question itself rather than a proxy for it.
+ * times in one round. Rendering the block and comparing it is the question
+ * itself rather than a proxy for it, and that is what replaced the digest.
  *
  * WHY NOT MTIMES, WHICH IS WHAT `scripts/artifact-freshness.ts` USES.
  * `scripts/source-hash.mjs` already argues this out for the commit guard and

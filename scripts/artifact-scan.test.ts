@@ -2,10 +2,10 @@
  * THE EXTRACTOR IS THE PART THAT CAN BE WRONG WITHOUT ANYTHING GOING RED, so
  * this is where the tests are.
  *
- * A stale document announces itself — the freshness gate stops the suite. A
- * MISATTRIBUTED EDGE does not. It renders as a confident row in a table `SC8`
- * is about to decide the account contract's shape from, and nothing anywhere
- * disagrees with it.
+ * A MISATTRIBUTED EDGE DOES NOT ANNOUNCE ITSELF. It renders as a confident row
+ * in a table somebody is about to decide the account contract's shape from, and
+ * nothing anywhere disagrees with it. Nothing downstream re-derives this and
+ * compares, so a wrong answer here stays wrong and stays quiet.
  *
  * The one that nearly happened is preserved below as a test. `Vault.payout`
  * calls `_sendShielded_0`, which writes KERNEL slots 0, 1 and 2 — and the

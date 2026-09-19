@@ -76,18 +76,8 @@ building them takes minutes and the artefacts are measured in megabytes, so they
 A separate job on every push builds those keys and runs exactly the eight files that need them.
 `SECURITY.md` says which key material is checked against a digest and which is not.
 
-**And about ten assertions read a module map that is derived rather than committed.** Without it they
-stand down silently, so a local `npm test` is quieter than the one on the pull request. Derive it
-first and they run:
-
-```bash
-npx tsx scripts/edge-list-run.ts
-```
-
-The order matters on the automated run and is worth knowing: `scripts/what-breaks.test.ts` is run
-first and alone, while no map is on disk, because one of its assertions only means anything where
-there is nothing to query. `README.md` records how many files and assertions a clone runs, and how
-many do not run in one.
+`README.md` says which assertions do not run in a clone, and why the counts that do run are not
+written down anywhere.
 
 ## Proposing a change
 

@@ -2370,7 +2370,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
           ({ vault: hex(vault), threshold: Number(threshold) }))
         .sort((a: { vault: string }, b: { vault: string }) => a.vault.localeCompare(b.vault)),
       signerCount: Number(l.signerLeaves.size()), // Derived; S35c deleted the counter.
-      movementCount: Number(l.movements.size()), retiredVaults: [...l.retiredAt].map(([v]) => hex(v)).sort(), // `T-220`, `S52`; on ONE line because the doc set cites this file by line.
+      movementCount: Number(l.movements.size()), retiredVaults: [...l.retiredAt].map(([v]) => hex(v)).sort(), // On ONE line so that nothing below it moves; line numbers here are quoted elsewhere.
     };
   };
 
