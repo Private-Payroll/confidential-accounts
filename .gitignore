@@ -379,6 +379,23 @@ docs/design/
 docs/design/edges.json
 docs/handoff/
 
+# docs/decisions/ is thirteen numbered records of choices made while building
+# this system. They are kept on disk because they are still read here, and they
+# are not published yet because they are written in shorthand and numbered
+# rather than titled, so a newcomer opening 0004 learns very little. They go
+# out together, once, when they have titles somebody can read.
+#
+# THE FOLDER IS THE RULE AND NOT THIRTEEN FILE NAMES. Naming each file here
+# would publish thirteen names to say that thirteen files are private, which is
+# the opposite of the intent. It is also what an earlier change left undone:
+# the records were taken out of the published set and given no rule at all, so
+# they sat on disk belonging to neither list. That is the one state this file
+# and the published file list exist together to prevent, and it cost a merge
+# the same afternoon - changing branch could not write eleven files that were
+# already sitting there unclaimed, and the tool reported a failure that had in
+# fact already succeeded.
+docs/decisions/
+
 
 # ── THE AGENT DEFINITIONS ──────────────────────────────────────────────────
 # `.claude/agents/*.md` describe HOW work is checked here rather than WHAT the
