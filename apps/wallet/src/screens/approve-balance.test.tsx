@@ -94,7 +94,17 @@ describe('A PAGE ASKING THIS WALLET TO PAY FOR A DEPOSIT', () => {
   it('THE PRESS pays, signs, finishes, and answers the origin that asked with the figure that was shown', async () => {
     const log: string[] = []; const answers: unknown[] = [];
     renderWith(doorsWith(log), answers);
-    fireEvent.click(await screen.findByText('Pay into the vault'));
+    // WAIT FOR THE SCREEN TO BE READY BEFORE PRESSING, BECAUSE THE BUTTON
+    // RENDERS IN EVERY STAGE AND IS DISABLED IN ALL BUT ONE. findByText
+    // resolves on the FIRST render, while the screen is still reading the
+    // transaction and the button is disabled, so a press fired then lands on
+    // a dead control and the test waits out its timeout for a confirmation
+    // that can never come. On a fast machine the read settles in the same
+    // tick and the press works; on a slow runner the press wins the race.
+    // This is what turned CI red on 19 Sep with no change to the wallet.
+    // The amount below is rendered only once the stage is `ready`.
+    expect(await screen.findByText(`2500 base units of the private token below`)).toBeTruthy();
+    fireEvent.click(screen.getByText('Pay into the vault'));
     await screen.findByText(`You paid for a deposit for ${ORIGIN}`);
     expect(log).toEqual(['balance', 'sign', 'finish']);
     const answer = answers[0] as BalancedAnswer;
@@ -107,7 +117,10 @@ describe('A PAGE ASKING THIS WALLET TO PAY FOR A DEPOSIT', () => {
   it('A FAILED PRESS ANSWERS NOTHING, LETS GO OF WHAT IT BOOKED, AND SAYS SO', async () => {
     const log: string[] = []; const answers: unknown[] = [];
     renderWith(doorsWith(log, { finalizeRecipe: async () => { throw new Error('the proof would not build.'); } }), answers);
-    fireEvent.click(await screen.findByText('Pay into the vault'));
+    // THE SAME RACE AS THE TEST ABOVE, AND IT WAS STILL GREEN ONLY BECAUSE
+    // THIS RUNNER HAPPENED TO WIN IT. Wait for the ready stage before pressing.
+    expect(await screen.findByText(`2500 base units of the private token below`)).toBeTruthy();
+    fireEvent.click(screen.getByText('Pay into the vault'));
     expect(await screen.findByText(/the proof would not build\. Anything this wallet set aside/)).toBeTruthy();
     expect(log).toEqual(['balance', 'sign', 'revert']);
     expect(answers).toEqual([]);
