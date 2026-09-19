@@ -3,10 +3,9 @@
  * IMAGINED AND EACH PRODUCES A WRONG COLUMN RATHER THAN AN EMPTY ONE.
  *
  * A DISCLOSES column that is short by a site says a circuit reveals less than it
- * does, in a document that goes to GitHub, about a system that holds money.
- * `docs/design/privacy.md` will be written from this. So the fixtures below are
- * the exact shapes `ConfidentialAccount.compact` and `Vault.compact` contain,
- * and the last group asserts the real counts against the real files.
+ * does, about a system that holds money. So the fixtures below are the exact
+ * shapes `ConfidentialAccount.compact` and `Vault.compact` contain, and the
+ * last group asserts the real counts against the real files.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -45,8 +44,9 @@ describe('TRAP 1 and 2 — comments are stripped BEFORE anything else', () => {
   });
 
   it('blanks comments WITHOUT moving any line number', () => {
-    // Every line number in the output is a citation the citation test will
-    // check, so a scanner that shifted them would be manufacturing bad ones.
+    // Every line number in the output is quoted as a `file:line` citation, so
+    // a scanner that shifted them by one would be manufacturing citations that
+    // point at the wrong line. Nothing downstream re-checks them.
     const src = 'a\n/* two\n   three */\nfour\n';
     const blanked = blankNonCode(src);
     expect(blanked.split('\n')).toHaveLength(src.split('\n').length);
@@ -240,10 +240,9 @@ describe('the real sources', () => {
     // THIS IS A COUNT OF SITES AND IT IS NOT A PRIVACY BUDGET. What makes 68 safe
     // is not that 68 is a small number; it is that THIS site reaches no ledger
     // operation. A site feeding a ledger read would be equally ONE site and would
-    // publish its value. `docs/design/circuits.md:34-43` says the same in its own
-    // words — *"`DISCLOSES` IS NOT A LIST OF WHAT IS PUBLIC, AND MUST NOT BE
-    // READ AS ONE"* — and the enumeration that IS that list is `docs/design/
-    // privacy.md`, which does not exist yet.
+    // publish its value. Said the other way round: *`DISCLOSES` IS NOT A LIST
+    // OF WHAT IS PUBLIC, AND MUST NOT BE READ AS ONE* — and the enumeration
+    // that WOULD be that list has not been written.
     // ======================================================================
     const account = scanSourceFile(ROOT, 'contracts/src/ConfidentialAccount.compact');
     const vault = scanSourceFile(ROOT, 'contracts/src/Vault.compact');

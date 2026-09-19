@@ -5,10 +5,10 @@ body:
   - type: markdown
     attributes:
       value: >-
-        **Read `docs/decisions/` first.** The architecture here is the way it is
-        on purpose, each decision is written down with its reasoning, and the
-        most useful proposal is usually one that names the decision it disagrees
-        with and says what changed since it was made.
+        **Read `README.md` first.** The architecture here is the way it is on
+        purpose, and the most useful proposal is usually one that names the
+        property it would change and says what has changed since that property
+        was chosen.
   - type: textarea
     id: problem
     attributes:
@@ -27,12 +27,12 @@ body:
     validations:
       required: true
   - type: textarea
-    id: decision
+    id: property
     attributes:
-      label: Which recorded decision this touches, if any
+      label: Which stated property of the system this touches, if any
       description: >-
-        A file under `docs/decisions/`, or "none that I found". Saying none is a
-        fine answer and is itself useful.
+        A claim in `README.md` or `SECURITY.md`, or "none that I found". Saying
+        none is a fine answer and is itself useful.
   - type: textarea
     id: cost
     attributes:

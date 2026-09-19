@@ -182,11 +182,11 @@ id_ed25519
 # meant to be read, and a rule excluding them is a rule somebody later deletes
 # for being wrong - taking the rest of this list with it.
 #
-# WHAT MAKES THIS LIST HOLD FROM TODAY IS NOT THAT IT IS LONGER. It is that
-# scripts/gitignore-rules.test.ts asks whether each shape would actually be
-# EXCLUDED, at the top of the tree and buried deep in it - so a rule that is
-# later anchored, or reached back over by a negation written below it, turns
-# red instead of quietly covering less than it reads as covering.
+# THE SHAPES THIS LIST NAMES ARE NOT CHECKED ANYWHERE IN THIS REPOSITORY.
+# A rule that is later anchored, or reached back over by a negation written
+# below it, covers less than it reads as covering and nothing here says so.
+# Read a rule against the shape it is meant to catch before trusting it.
+#
 *.pfx
 *.p8
 *.jks
@@ -363,9 +363,9 @@ docs/vaults.md
 # and leaves every one of them on disk. Every other rule here is honoured from
 # the first commit because the fresh `init` was built from the take list.
 #
-# docs/design/edges.json is 199 KB of machine JSON, already ruled stage 2. It
-# is an INPUT TO A GATE rather than a document, and it records
-# `clientFilesScanned`, a count of internal files.
+# docs/design/ is a GENERATED OUTPUT DIRECTORY rather than written
+# documentation. Everything under it is derived from the compiled contracts,
+# and edges.json is 199 KB of machine JSON that records a count of internal files.
 #
 # docs/handoff/ is six documents written for an internal successor — "You are
 # picking up a system that moves other people's salaries" — that CITE
@@ -373,8 +373,9 @@ docs/vaults.md
 # BACKLOG.md. A reader following them reaches nothing. identity-brief.md
 # describes the OTHER repository and shipped by default.
 #
-# BOTH ARE KEPT ON DISK BECAUSE BOTH ARE USED HERE: edges.json is read by the
-# documentation freshness gate, and docs/handoff/ is the map a person reads.
+# BOTH ARE KEPT ON DISK BECAUSE BOTH ARE USED HERE: the generated design
+# output is the working copy of a derived description, and docs/handoff/ is the map a person reads.
+docs/design/
 docs/design/edges.json
 docs/handoff/
 

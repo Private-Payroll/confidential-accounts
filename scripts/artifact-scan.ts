@@ -1,10 +1,10 @@
 /**
  * READING A COMPILED ARTIFACT WITHOUT WRITING A JAVASCRIPT PARSER.
  *
- * Everything the doc set and `SC8` need — which circuit reads which ledger
- * field, which writes it, what it asserts, which witness it consumes, which
- * contract it calls — is in `contracts/managed{,-vault}/contract/index.js`. None of it
- * is in a data structure; all of it is in the shape of emitted code.
+ * Everything a description of these contracts needs — which circuit reads which
+ * ledger field, which writes it, what it asserts, which witness it consumes,
+ * which contract it calls — is in `contracts/managed{,-vault}/contract/index.js`.
+ * None of it is in a data structure; all of it is in the shape of emitted code.
  *
  * THE FIRST DRAFT OF THIS FILE MATCHED METHOD BODIES WITH A BRACE COUNTER OVER
  * THE FILE TEXT AND THAT IS THE WRONG INSTRUMENT. The artifact is a valid ES
@@ -25,10 +25,9 @@
  * `this._helper_0`) and punctuation survive every loader; module-scope bindings
  * do not. Where a name is needed, it comes from `compiler/contract-info.json`.
  *
- * AND THE GATE IS WHAT KEEPS THAT HONEST FROM NOW ON. `npm run docs` renders
- * under `tsx` and `scripts/doc-freshness.ts` renders under `vitest` and compares
- * the two, so any future dependence on loader-specific text turns the suite red
- * on the next run rather than years later.
+ * AND WHAT KEEPS THAT HONEST IS THAT NOTHING HERE READS A MODULE-SCOPE NAME.
+ * A dependence on loader-specific text would show up as a name this scanner
+ * cannot find, rather than as a wrong answer it can still produce.
  *
  * WHAT IS STILL SCANNED BY HAND, AND WHY THAT IS AFFORDABLE. Inside one method
  * body the interesting things are argument lists — `queryLedgerState(...)`,
@@ -61,9 +60,10 @@
  *     in `Vault.compact`. It is a compile-time marker and the compiler erases
  *     it. So the DISCLOSES column is SOURCE-derived, it is labelled as such
  *     wherever it is rendered, and it is read by `scripts/disclose-scan.ts`
- *     rather than here. What makes that safe rather than sloppy is the
- *     freshness gate: source and artifact cannot diverge without the suite
- *     going red first.
+ *     rather than here. What makes that safe rather than sloppy is
+ *     `scripts/artifact-freshness.ts`, wired as a `globalSetup` entry: the
+ *     suite refuses to run when a `.compact` is newer than the artifact built
+ *     from it, so the two columns cannot describe different revisions.
  */
 import { readFileSync, statSync, readdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -704,9 +704,9 @@ export async function readContract(root: string, spec: ArtifactSpec): Promise<Co
        * `__compactContractsImport_Acct` argument, and that identifier does not
        * survive every module loader: under `tsx` it is the text on disk, under
        * `vitest`, whose runner rewrites a namespace import, it is something
-       * else. The generator wrote `Acct.recordPayment` and the gate computed
-       * `UNKNOWN.recordPayment` — the same artifact, two answers, and a gate
-       * that would have refused for ever with `npm run docs` unable to fix it.
+       * else. One loader produced `Acct.recordPayment` and the other
+       * `UNKNOWN.recordPayment` — the same artifact, two answers, and no way
+       * to make either of them right.
        * The same fault in the assert needle emptied a whole column earlier in
        * this round.
        *

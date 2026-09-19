@@ -1275,13 +1275,12 @@ describe('V-73: a payroll run, raised and swept through the client', () => {
   it('puts every run part in the slot the COMPILED ARTIFACT names for it, not the slot we typed',
     async () => {
       /*
-       * **READ DYNAMICALLY, AND THE REASON IS `C393` RATHER THAN STYLE.** A
-       * top-level `import` here adds two lines above `:794` and `:1125`, which
-       * `docs/design/edges.json` cites — and a moved citation turns the doc set
-       * stale and refuses EVERY test file in the repository until a person runs
-       * `DOCS.command` (rule 38's gate). Measured, not assumed: the import was
-       * written, the gate refused with those two line numbers, and it was taken
-       * out again.
+       * **READ DYNAMICALLY, AND THE REASON HAS LAPSED RATHER THAN CHANGED.**
+       * A top-level `import` here adds two lines to everything below it. That
+       * used to move line numbers a derived record cited, and the record
+       * refused. That record is no longer part of this repository, so the
+       * constraint is gone; the dynamic read is left as it is because nothing
+       * is gained by changing it, and NOT because anything still requires it.
        */
       const { readFileSync } = await import('node:fs');
       const info = JSON.parse(
@@ -1333,19 +1332,11 @@ describe('V-73: a payroll run, raised and swept through the client', () => {
    * the identical seven slots — `:781-794` above asserts it against indices
    * typed into this file — and it is the vector `C375` actually lived on
    * (`isRun: false`, `:1144`). **The case was written, run, and taken out
-   * again.** Adding one invocation carrying a literal circuit name moves
-   * `docs/design/ledger-fields.md`'s count from 525 to 526 and **995 lines of
-   * `docs/design/edges.json`** — measured by the freshness gate refusing this
-   * file, not estimated — which under rule 38 turns the doc set stale and
-   * refuses EVERY test in the repository until a person runs `DOCS.command`.
-   * **The run vector's own case above adds no such invocation**, because the
-   * account contract declares no `proposeRun` circuit (`:1082-1084` pins that),
-   * so pinning the half this row is FOR costs the doc set nothing.
-   *
-   * **A `DOCS.command` debt is not worth spending on a vector outside this
-   * row's one subject.** `T-293` is this repository's precedent and its
-   * disposal: a round already regenerating the doc set takes it. `BACKLOG.md`
-   * carries the row.
+   * again**, because adding one invocation carrying a literal circuit name
+   * moved derived records this repository kept of its own circuit call sites.
+   * **THOSE RECORDS ARE NO LONGER KEPT, SO THE CASE NOW COSTS NOTHING AND THE
+   * ONLY THING THAT STOPPED IT IS GONE.** It is said here rather than left
+   * looking like a judgement about the case itself.
    */
   it('hands back the id every approval and every payment will be made against', async () => {
     const { ledger } = harness({ openProposals: [] });
@@ -2204,12 +2195,12 @@ describe('T-220: the detector\'s two fields are read, and a reader that omits th
  *
  *
  * **APPENDED AT THE END OF THIS FILE RATHER THAN BESIDE THE `propose` CASES IT
- * BELONGS WITH, AND `C393` IS THE REASON.** `docs/design/edges.json` cites this
- * file by `file:line` — `:794` and `:1125` — and the doc-freshness `globalSetup`
- * turns EVERY test file in the repository red when a generated citation moves.
- * Rule 1 forbids a session the recompile door that would fix it, so a case
- * inserted in the middle of this file would have cost the round its suite. Below
- * the last cited line nothing moves.
+ * BELONGS WITH.** A derived record used to cite this file by `file:line`, and
+ * a case inserted in the middle moved those citations and made them false, so
+ * everything was appended below the last cited line. **THAT RECORD IS NO
+ * LONGER PART OF THIS REPOSITORY AND THE CONSTRAINT HAS LIFTED.** This block
+ * is left where it is; a later reader may move it back beside the `propose`
+ * cases, and nothing about it changes when they do.
  */
 describe('C367: a governance round may not name a vault, and the boundary says so first', () => {
   it('propose REFUSES a real vault before the fee and before the proving', async () => {
@@ -2243,20 +2234,13 @@ describe('C367: a governance round may not name a vault, and the boundary says s
 /**
  * **A REFUSED `proposeRun` STAGES NOTHING.**
  *
- * **APPENDED AT THE END OF THIS FILE FOR `C393`'s REASON, WHICH `S55` ALREADY
- * MET HERE.** `docs/design/edges.json` cites this file at `:794` and `:1125`,
- * and the doc-freshness `globalSetup` turns EVERY test file in the repository
- * red when a generated citation moves. Rule 1 forbids a session the recompile
- * that would fix it. Below the last cited line, nothing moves.
+ * **APPENDED AT THE END OF THIS FILE FOR THE SAME LAPSED REASON AS THE BLOCK
+ * ABOVE**, and it may be moved back for the same reason.
  *
  * **AND THE FIX IT PINS WAS MADE LINE-NEUTRAL IN `src/midnight/ledger.ts` FOR
- * THE SAME REASON** — `edges.json` cites that file at FOURTEEN lines, of which
- * thirteen, `:1186` through `:1796`, fall below the block that was reordered
- * (the fourteenth, `:1142`, sits above it). **This comment said ten until this
- * round's auditor counted them; rule 9.** The three
- * refusals moved above `stageChange` without the enclosing `case` changing
- * length. Measured, not assumed: the same gate refused an earlier draft of this
- * fix that added twenty-nine lines, naming `ledger.ts:1422` against `:1451`.
+ * THE SAME REASON.** The three refusals moved above `stageChange` without the
+ * enclosing `case` changing length. Measured, not assumed: an earlier draft of
+ * this fix added twenty-nine lines and moved `ledger.ts:1422` to `:1451`.
  */
 describe('T-324: a refused run leaves no salt behind, because nothing was staged', () => {
   const RUN = {
@@ -2346,9 +2330,7 @@ describe('T-324: a refused run leaves no salt behind, because nothing was staged
  * these two are pinned.**
  *
  * **AND `partial-contract.ts` STILL HAS NO OWNING TEST FILE**, which is the
- * other half of `T-345` and is not this round's to create — A new test
- * file makes the generated doc set stale and refuses the whole suite until a
- * person runs `DOCS.command`. The row stays open for it.
+ * other half of the same subject and is recorded rather than quietly left.
  */
 describe('T-345: a committee the SDK could never sign with is refused at the account door', () => {
   const opening = (over: Partial<AccountOpening> = {}): AccountOpening => ({
@@ -2359,9 +2341,9 @@ describe('T-345: a committee the SDK could never sign with is refused at the acc
     ...over,
   });
 
-  /* The type is reached THROUGH the constructor rather than imported: an added
-   * import line at the top of this file moves `:794` and `:1125`, which
-   * `docs/design/edges.json` cites and the freshness gate refuses. */
+  /* The type is reached THROUGH the constructor rather than imported, because
+   * an added import line at the top of this file used to move line numbers a
+   * derived record cited. That record is gone; this is left as it is. */
   type Deployment = NonNullable<ConstructorParameters<typeof MidnightLedger>[6]>;
   const withAuthority = (
     maintenanceAuthority: Deployment['maintenanceAuthority'],
@@ -2414,10 +2396,10 @@ describe('T-345: a committee the SDK could never sign with is refused at the acc
    * three refusals above still go through `open`, which is where `T-345` asks
    * for them; only the control steps in one layer.
    *
-   * **THE IMPORT IS DYNAMIC BECAUSE A TOP-OF-FILE IMPORT LINE WOULD MOVE
-   * `:794` AND `:1125`**, which `docs/design/edges.json` cites. `C393` again.
-   * It resolves through this file's own `vi.doMock`, which spreads the real
-   * module — so the validator under test is the shipped one.
+   * **THE IMPORT IS DYNAMIC FOR THE LAPSED LINE-NUMBER REASON GIVEN BELOW**,
+   * and needs no longer be. It resolves through this file's own `vi.doMock`,
+   * which spreads the real module — so the validator under test is the shipped
+   * one, and THAT is the part worth keeping.
    */
   it('and a well-formed committee is ACCEPTED, unchanged', async () => {
     const { requireMaintenanceAuthority } = await import('./partial-contract.js');
@@ -2431,16 +2413,12 @@ describe('T-345: a committee the SDK could never sign with is refused at the acc
  * ================================================================== */
 
 /**
- * **APPENDED TO THIS FILE RATHER THAN GIVEN ITS OWN, AND THE REASON IS
- * MEASURED.** `C393` is broader than `S61`'s brief states it: the generated doc
- * set records the NUMBER OF FILES SCANNED under `src`, `scripts` and
- * `contracts/test` (`docs/design/ledger-fields.md:78`, `edges.json`'s
- * `clientFilesScanned`), so ANY new file in those trees turns the gate red — a
- * source module exactly as much as a test. Measured: two new files moved `298`
- * to `300` and `scripts/doc-freshness.ts` refused. It refuses in `globalSetup`,
- * so it stops every named-file `vitest` run and not only `TEST.command` — which
- * would have cost this round the red measurement `§6` requires. Appended at the
- * END, where no line moves: this file's last `edges.json` locator is `:1125`.
+ * **APPENDED TO THIS FILE RATHER THAN GIVEN ITS OWN, FOR A REASON THAT HAS
+ * SINCE LAPSED.** This repository used to keep a derived record of how many
+ * files `src`, `scripts` and `contracts/test` hold, so ANY new file in those
+ * trees made the record wrong — a source module exactly as much as a test, and
+ * two new files once moved it from `298` to `300`. **THAT RECORD IS NO LONGER
+ * KEPT, SO A NEW FILE COSTS NOTHING** and these cases may be given one.
  *
  * **EVERY COMMITTEE KEY BELOW IS A FIXED PUBLIC CONSTANT, NOT A GENERATED ONE.**
  * `AUTH_KEY_1`/`_2`/`_3` are the verifying keys of the signing values 1, 2 and 3
@@ -2786,13 +2764,12 @@ describe('comparing the chain against the maintenance authority chosen on disk',
  * ================================================================== */
 
 /**
- * WHY THESE ARE APPENDED AND NOT IN A FILE OF THEIR OWN: `C393`, re-measured
- * this round. `scripts/edge-list.ts:162-163` counts every `.ts`/`.tsx`/`.mjs`
- * under `src`, `scripts` and `contracts/test` into
- * `docs/design/edges.json`'s `coverage.clientFilesScanned`; the walk finds 302
- * and the file records 302, so ONE new file turns the gate red — in
- * `globalSetup`, which stops every named-file `vitest` run, including this one.
- * The door that clears it is `DOCS.command`, which no session may run.
+ * WHY THESE ARE APPENDED AND NOT IN A FILE OF THEIR OWN, AND THE REASON HAS
+ * LAPSED. Every `.ts`/`.tsx`/`.mjs` under `src`, `scripts` and `contracts/test`
+ * was once counted into a derived record of this repository's own size, so ONE
+ * new file in those trees made a written-down number wrong. That record is no
+ * longer kept and no number is checked, so these may be given a file of their
+ * own whenever somebody wants to.
  *
  * **NO SIGNING KEY IN THIS FILE IS SECRET, AND THAT IS STRUCTURAL RATHER THAN
  * CAREFUL.** `C400`: on 5 Sep a round put the LIVE maintenance-authority signing

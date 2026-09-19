@@ -33,19 +33,17 @@ and every balance. On Midnight we can do what Safe cannot.
 
 ## How it works
 
-- **Customers never touch a token.** A sponsor service pays all fees. See
-  [decision 1](docs/decisions/0001-a-sponsor-service-pays-all-fees.md).
+- **Customers never touch a token.** A sponsor service pays all fees.
 - **Signers share confidential state** through a viewing key wrapped to each of them, with a
-  commitment on chain. Midnight has no primitive for this, so the account layer supplies it. See
-  [decision 2](docs/decisions/0002-shared-confidential-state-is-built-at-the-account-layer.md).
-- **The chain learns that a threshold was met, not who met it.** See
-  [decision 3](docs/decisions/0003-signers-are-merkle-leaves-and-approvals-are-nullifiers.md).
-- **One commitment scheme for account state**, defined once in the contract. See
-  [decision 4](docs/decisions/0004-one-state-commitment-scheme-defined-in-the-contract.md).
+  commitment on chain. Midnight has no primitive for this, so the account layer supplies it.
+- **The chain learns that a threshold was met, not who met it.**
+- **One commitment scheme for account state.** It is defined once in the contract, so the product
+  and the tests cannot disagree about how a state is committed.
 
-Read `docs/decisions/` before changing the contract or the key handling. Those four files are the
-difference between this and a Safe clone, and two of them exist because writing the contract tests
-found real bugs.
+Those four properties are the difference between this and a Safe clone. They are enforced in
+`contracts/src/ConfidentialAccount.compact`, `contracts/src/Vault.compact` and
+`packages/identity/`, so read those before changing any of them; `contracts/test/` is where they
+are held to, and it is the shortest route to what each one actually means.
 
 ## Current state
 
@@ -103,10 +101,11 @@ A clone of this repository runs the whole suite with `npm test`, and every push 
 and assertion counts are on the run rather than written down here, because a number typed into a
 README is a number nothing keeps true.
 
-Sixteen assertions do not run in a clone. Five are on the money path: they read verifier keys, which
-an ordinary compile does not produce, so a separate job builds those keys and runs exactly those
-files on every push. The other eleven read files that are not published, and they are excluded rather
-than left to fail.
+Some assertions do not run in a clone, and they divide in two. The ones on the money path read
+verifier keys, which an ordinary compile does not produce, so a separate job builds those keys and
+runs the eight files that need them on every push. The rest read files that are not published, and
+they stand down rather than fail. Both kinds say so when they stand down, so a quiet run and a
+short run are not the same thing.
 
 ## Layout
 
@@ -127,7 +126,6 @@ packages/identity/ the key library. its own manifest, its own SECURITY.md
 apps/wallet/   the wallet application. React, its source under src/
 scripts/       the build, the checks, and the tools that measure them
 .github/       the checks that run on every push
-docs/decisions/ why the architecture is the way it is
 ```
 
 ## Running it
@@ -207,10 +205,9 @@ Not style preferences. Breaking one turns this into a normal SaaS app that menti
 
 ## Proving
 
-**Proving runs where the private data already is** - see
-[decision 7](docs/decisions/0007-proving-runs-where-the-private-data-already-is.md). For a web
-product that means the customer's browser, and the SDK supports it: the prover ships as WASM with a
-browser entry point declared separately from the Node one.
+**Proving runs where the private data already is.** For a web product that means the customer's
+browser, and the SDK supports it: the prover ships as WASM with a browser entry point declared
+separately from the Node one.
 
 **Nothing has proved a real transaction in a browser yet.** What has been measured is what the SDK
 contains and what these circuits cost, by reading the installed packages and running the compiled

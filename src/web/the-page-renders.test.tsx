@@ -73,10 +73,9 @@ import { describe, it, expect, afterEach } from 'vitest';
  *
  * READ WITH `readFileSync` AND NOT WITH A `?raw` IMPORT, and the reason is not
  * style: the import graph walker resolves a specifier to a file on disk, and
- * nothing on disk answers to `./index.html?raw`. It counted one unresolved
- * specifier and `scripts/edge-list.test.ts` refuses at anything but zero - so
- * a build-tool idiom in one file turned a generated count red in a gate that
- * has nothing to do with this page. The bytes are the same bytes either way.
+ * nothing on disk answers to `./index.html?raw`. A build-tool idiom in one
+ * file therefore shows up as an unresolved specifier in a graph that has
+ * nothing to do with this page. The bytes are the same bytes either way.
  */
 import { readFileSync } from 'node:fs';
 /*

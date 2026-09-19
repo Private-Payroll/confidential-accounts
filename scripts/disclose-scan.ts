@@ -9,11 +9,10 @@
  * checker and the compiler erases it. So this reads the `.compact` SOURCE, and
  * every rendering of the column says that is where it came from.
  *
- * WHAT MAKES THAT SAFE RATHER THAN A HOLE IN THE RULE. `scripts/doc-freshness.ts`
- * RENDERS the documents and compares them against what is on disk, and this
- * scanner feeds that render — so a `.compact` that has moved ahead of its doc
- * turns the suite red before anybody reads the column. Source-derived and
- * stale-derived are different things, and only the second one is dangerous.
+ * WHAT MAKES THAT SAFE RATHER THAN A HOLE IN THE RULE. Every rendering of the
+ * column names the `.compact` source it was read from, so a reader checking a
+ * figure opens the file it came from rather than a copy of it. Source-derived
+ * and stale-derived are different things, and only the second one is dangerous.
  * (It used to say the gate hashed these sources into a digest. It did, and
  * `T-167` deleted the digest: a list of inputs was a proxy that was wrong three
  * times in one round.)

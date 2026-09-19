@@ -164,21 +164,7 @@ export default defineConfig({
      *
      * **AND THE FIRST OF THOSE IS NOW TAKEN, WHICH IS WHY THE SENTENCE THAT
      * STOOD HERE IS GONE.** It read *what keeps it shut is that neither door
-     * passes that flag*, and `S39` made it false. `T-171`, ruled 2 Sep:
-     * `MUTATE.command` runs under a mutation configuration, which is DERIVED
-     * from this file and removes exactly one `globalSetup` entry below — the
-     * doc gate, and only the doc gate. The harness breaks a contract on
-     * purpose, so for the length of a run the artifact is a deliberate
-     * temporary lie; since `T-167` made that gate a render-and-compare against
-     * the COMPILED artifact, the first mutation to change an `assert` throws in
-     * `globalSetup`, no worker evaluates a test module, and the harness aborts
-     * having scored nothing.
-     *
-     * **THAT IS A PREDICTION AND IS WRITTEN AS ONE — rule 9.** The harness and
-     * this gate have never run together: `REPORT-MUTATE.txt:1` is 31 Aug and
-     * `scripts/doc-freshness.globalSetup.ts` was written 2 Sep, so there is no
-     * run to have watched, and rule 1 forbids a session the door that would
-     * settle it. `MUTATE.command` is that door.
+     * passes that flag*, and that stopped being true.
      *
      * **WHAT IS STILL TRUE, AND IT IS NARROWER RATHER THAN WEAKER: only the
      * mutation door passes that flag, it DERIVES the config it weakens rather
@@ -206,16 +192,7 @@ export default defineConfig({
      * a silent hole.
      */
     /*
-     * **AND TWO MORE GUARDS, EACH WIRED SEPARATELY.**
-     *
-     * `doc-freshness` refuses when a generated block in `docs/design/` no
-     * longer describes the contracts it was generated from, or when somebody
-     * has typed inside one. It names `DOCS.command` and never regenerates: the
-     * generator reads the COMPILED artifact, and a harness that regenerated for
-     * itself would emit a document that is confidently wrong from whatever
-     * artifact happened to be on disk. Same reasoning as the entry above, one
-     * layer out. **It is the one entry the mutation configuration removes, and
-     * the block above says under what ruling and what pins it.**
+     * **AND ONE MORE GUARD, WIRED SEPARATELY.**
      *
      * `ledger-limit` refuses a contract whose ledger has passed fifteen
      * top-level fields. Sixteen COMPILES and DEPLOYS, the state nests,
@@ -224,14 +201,13 @@ export default defineConfig({
      * property of the built artifact, and because a guard nobody wired in is
      * invisible to a unit test of the guard.
      *
-     * THREE ENTRIES RATHER THAN ONE MODULE CALLING THREE THINGS, so that each
+     * TWO ENTRIES RATHER THAN ONE MODULE CALLING TWO THINGS, so that each
      * one's own test can import its wiring module and call its default export
-     * against a fixture. A single wrapper would give the three of them one
+     * against a fixture. A single wrapper would give the two of them one
      * shared failure and one shared way to be disarmed.
      */
     globalSetup: [
       './scripts/artifact-freshness.globalSetup.ts',
-      './scripts/doc-freshness.globalSetup.ts',
       './scripts/ledger-limit.globalSetup.ts',
     ],
     /*

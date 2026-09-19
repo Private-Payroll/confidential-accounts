@@ -14,9 +14,8 @@ contact_links:
       "conduct" in the title so it is not read as a defect report. CODE_OF_CONDUCT.md
       says what happens next, and is honest about the limits of a route this small.
   - name: A question about how something works
-    url: https://github.com/Private-Payroll/confidential-accounts/blob/main/docs/decisions
+    url: https://github.com/Private-Payroll/confidential-accounts/blob/main/README.md
     about: >-
-      The recorded decisions answer most of the architectural questions, and
-      README.md answers most of the rest. If the answer is not there, that is
-      worth an issue on its own - it means the answer is not where somebody
-      looked.
+      README.md answers most of the architectural questions and SECURITY.md
+      answers most of the rest. If the answer is not there, that is worth an
+      issue on its own - it means the answer is not where somebody looked.

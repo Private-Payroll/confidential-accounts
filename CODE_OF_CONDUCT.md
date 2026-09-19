@@ -17,10 +17,10 @@ and what they are.
 - Insults, demeaning remarks, or comments about somebody's identity or characteristics rather than
   their work.
 - Publishing other people's private information.
-- Deliberately derailing a discussion, or reopening a decision already recorded under
-  `docs/decisions/` without naming what has changed since it was made. The proposal template asks for
-  exactly that, and asking a small project to re-argue a settled decision from scratch is how its
-  attention gets exhausted.
+- Deliberately derailing a discussion, or reopening a settled property of the system without
+  naming what has changed since it was chosen. The proposal template asks for exactly that,
+  and asking a small project to re-argue a settled decision from scratch is how its attention gets
+  exhausted.
 - Treating a refusal as a verdict on the person who tripped it. The checks here refuse rather than
   warn, deliberately, and a review that reads *this is wrong and here is why* is doing its job. One
   that reads *you always do this* is not.

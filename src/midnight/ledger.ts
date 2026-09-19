@@ -2997,19 +2997,14 @@ export function compareAuthority(
  *
  * ── WHY IT IS APPENDED HERE AND NOT IN A FILE OF ITS OWN ─────────────────────
  *
- * **`C393`, re-measured rather than inherited.** `scripts/edge-list.ts:162-163`
- * walks `src`, `scripts` and `contracts/test` for `/\.(ts|tsx|mjs)$/` and
- * `docs/design/edges.json`'s `coverage.clientFilesScanned` records the count.
- * Measured this round: the live walk finds **302** and `edges.json` records
- * **302**, so the gate is green and ONE new file in those three trees turns it
- * red — and it refuses in `globalSetup`, which stops every named-file `vitest`
- * run, the only measuring instrument rule 3 leaves a round. The door that clears
- * it is `DOCS.command`, which no session may run. **So this is appended at the
- * END of the file that already holds the read-back and the comparator, where no
- * line moves**: `src/midnight/ledger.ts`'s last `edges.json` locator is `:1796` —
- * MEASURED, by listing every locator into this file rather than taking the number
- * from `S61`'s account, which recorded `:1672` and was one entry short — and this
- * block begins far below it.
+ * **THE REASON HAS LAPSED AND IS RECORDED RATHER THAN QUIETLY DROPPED.** Every
+ * `.ts`/`.tsx`/`.mjs` under `src`, `scripts` and `contracts/test` was once
+ * counted into a derived record of this repository's own size, and that record
+ * also cited lines in this file, so ONE new file in those trees, or one line
+ * inserted above a cited line, made a written-down number wrong. **That record
+ * is no longer kept and nothing checks those citations**, so this block sits at
+ * the END of the file that already holds the read-back and the comparator for
+ * no reason stronger than that it was put there, and it may be moved.
  *
  * ── THE FOUR THINGS `S61` SETTLED BY MEASUREMENT, USED AND NOT RE-LITIGATED ──
  *
