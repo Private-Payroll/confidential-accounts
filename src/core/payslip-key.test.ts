@@ -265,7 +265,7 @@ describe('§1 — THE DERIVATION IS A PURE FUNCTION OF A WALLET AND A COMPANY', 
  * (`@midnight-ntwrk/testkit-js`, `wallet-seed.ts:19`). **IT IS A PUBLISHED TEST
  * VECTOR AND IT MUST NEVER HOLD FUNDS ANYWHERE.** It is used here rather than a
  * phrase of our own for one reason: **Identity's recorded vectors use exactly
- * this phrase** (`Identity/src/keys/derivation.portability.test.ts:2,:41-42`),
+ * this phrase** (`packages/identity/src/keys/derivation.portability.test.ts:2,:41-42`),
  * so the two repositories pin ONE vector and a disagreement between them is a
  * comparison rather than two unrelated numbers. It is not `newWords()` and
  * nothing in this round generated it.
@@ -284,10 +284,11 @@ describe('§1 — THE DERIVATION IS A PURE FUNCTION OF A WALLET AND A COMPANY', 
  *
  * **A VECTOR NOBODY HAS WATCHED FAIL IS NOT A VECTOR.** The literals below were
  * checked against a NEUTERED COPY of `midnight-identity` built outside this
- * repository — copies of `Identity/lib` and of this tree's own `core/` files in
- * a scratch directory, so **nothing in the working tree was mutated to prove
- * this** (rule 40, `C401`). A control run over pristine copies reproduced all
- * four literals exactly; then three changes of the kind `C404` names:
+ * repository — copies of `packages/identity/lib` and of this tree's own
+ * `core/` files in a scratch directory, so **nothing in the working tree was
+ * mutated to prove this** (rule 40, `C401`). A control run over pristine copies
+ * reproduced all four literals exactly; then three changes of the kind `C404`
+ * names:
  *
  *   · `UNLOCK_SALT` `…/unlock/v2` → `…/v3` (a salt tidy) — **`§1b.2` and
  *     `§1b.3` both fail. `§1b.1` stays green**, which is the localisation
@@ -301,7 +302,7 @@ describe('§1 — THE DERIVATION IS A PURE FUNCTION OF A WALLET AND A COMPANY', 
  * OF THEM:**
  *
  *   · `phraseOf`'s `normalize`/`trim`/`toLowerCase`/whitespace collapse deleted
- *     (`derivation.ts:363`) — **only the denormalised-words line in `§1b.1`
+ *     (`derivation.ts:410-412`) — **only the denormalised-words line in `§1b.1`
  *     fails**, and it fails by THROWING `not-a-recovery-phrase`. Every other
  *     assertion in the block stays green, which is what made that line worth
  *     rewriting: it was green through this until it was fed a phrase with
@@ -333,20 +334,21 @@ describe('§1 — THE DERIVATION IS A PURE FUNCTION OF A WALLET AND A COMPANY', 
  * moves it. **It does not prove that a future change to the real package would
  * take that path**, and nothing in a test file can.
  *
- * ── AND THE OTHER LIMIT: THIS PINS `Identity/lib`, NOT `Identity/src` ─────
+ * ── AND THE OTHER LIMIT: THIS PINS `packages/identity/lib`, NOT ITS `src` ─────
  *
- * `package.json:26` is `"midnight-identity": "file:./Identity"` and every entry
- * in `Identity/package.json`'s `exports` map resolves to `./lib/…`. **So the
- * running test loads the COMPILED output, and every `unlock.ts` and
- * `derivation.ts` line number cited in this block is a `src/` path for the
- * READER — not a file this test ever evaluates.** Pinning the built package is
- * the right thing for a consumer to pin, and it is what a published tarball
- * will ship; the cost is that **a change to `Identity/src` that has not been
- * rebuilt is invisible here**, and Identity's own suite runs against `src`
- * while this runs against `lib`. Nothing bridges the two at the `unlockKeyFor`
- * level. `§1b.1`'s `5781ec70…` is the one thread that does, at the authority
- * level, and it is why that literal was taken from Identity's table rather than
- * from a run here. **Found by this round's money-safety pass and by its
+ * `package.json:34` is `"midnight-identity": "file:./packages/identity"` and
+ * every entry in `packages/identity/package.json`'s `exports` map resolves to
+ * `./lib/…`. **So the running test loads the COMPILED output, and every
+ * `unlock.ts` and `derivation.ts` line number cited in this block is a `src/`
+ * path for the READER — not a file this test ever evaluates.** Pinning the
+ * built package is the right thing for a consumer to pin, and it is what a
+ * published tarball will ship; the cost is that **a change to
+ * `packages/identity/src` that has not been rebuilt is invisible here**, and
+ * Identity's own suite runs against `src` while this runs against `lib`.
+ * Nothing bridges the two at the `unlockKeyFor` level. `§1b.1`'s `5781ec70…`
+ * is the one thread that does, at the authority level, and it is why that
+ * literal was taken from Identity's table rather than from a run here.
+ * **Found by this round's money-safety pass and by its
  * test-coverage pass, separately.**
  */
 
@@ -415,7 +417,7 @@ describe('§1b — A FIXED MNEMONIC AND A FIXED COMPANY GIVE A FIXED KEY, RECORD
      * This line read `identityFromWords(TEST_MNEMONIC).words.join(' ')` until
      * this round's test-coverage pass measured it: `TEST_MNEMONIC` is already
      * lower-case, single-spaced and clean, so `phraseOf`
-     * (`Identity/src/keys/derivation.ts:361-364`) is the identity function on
+     * (`packages/identity/src/keys/derivation.ts:410-412`) is the identity function on
      * it — **the assertion stayed GREEN with NFKD, `trim`, `toLowerCase` and
      * whitespace collapse all deleted.** Upper-cased, double-spaced and padded,
      * it is green on the code as it stands and red with those removed, which is
@@ -453,7 +455,7 @@ describe('§1b — A FIXED MNEMONIC AND A FIXED COMPANY GIVE A FIXED KEY, RECORD
      * **RULE 9.** Every other literal in `§1b` was read off THIS code running
      * — stated plainly above and not dressed up as anything else. **This one
      * was not.** It is copied from Identity's own recorded vector table —
-     * `Identity/src/keys/derivation.portability.test.ts:280`, the `unlock`
+     * `packages/identity/src/keys/derivation.portability.test.ts:279`, the `unlock`
      * entry at index `0` — where it is computed for this same phrase by an
      * INDEPENDENT walk (`@scure/bip32` and `@noble/hashes` driven directly at
      * `:237`, not through `derivation.ts`). **It was written here BEFORE the
@@ -499,8 +501,12 @@ describe('§1b — A FIXED MNEMONIC AND A FIXED COMPANY GIVE A FIXED KEY, RECORD
      * **THE SAME LITERAL FROM THE OTHER SPELLING OF THE SAME COMPANY.** Found
      * by this round's money-safety pass, and it is `C404`'s own thesis
      * turned on `C137`: the fold that makes two spellings of one company one
-     * key is pinned by `Identity/src/profile/unlock.test.ts:257-263` — **and
-     * payroll does not run that file** (`vitest.config.ts:16-18`).
+     * key is pinned by `packages/identity/src/profile/unlock.test.ts:253` — **and
+     * since the merge this suite DOES run that file**: `vitest.config.ts:108`
+     * collects `packages/identity/src/**` alongside `src/**`, and the comment
+     * above that line says why. **This line is still worth carrying**, because
+     * that one pins the fold inside the library and this one pins the KEY a
+     * payslip is opened with, which is the thing a company loses.
      * `VECTOR_COMPANY` is already lower-case, so **no literal above moves when
      * the fold goes.** This line is what dies instead.
      *
@@ -508,8 +514,8 @@ describe('§1b — A FIXED MNEMONIC AND A FIXED COMPANY GIVE A FIXED KEY, RECORD
      *
      * **THE FOLD IS DOUBLED, WHICH THE AUDIT DID NOT SAY AND THE MEASUREMENT
      * DID.** It happens twice on this path: `parseAsk` folds the company as it
-     * freezes the ask (`Identity/src/profile/request.ts:732`), and `companyOf`
-     * folds again inside `unlockKeyFor` (`unlock.ts:294`). Against neutered
+     * freezes the ask (`packages/identity/src/profile/request.ts:826`), and `companyOf`
+     * folds again inside `unlockKeyFor` (`unlock.ts:299`). Against neutered
      * copies outside this repository: **removing EITHER one alone leaves this
      * line GREEN; removing BOTH turns it RED.** So what this assertion buys is
      * not a guard on one line — it is a guard on the PROPERTY surviving, and it

@@ -151,6 +151,75 @@ describe('the case the door exists for: a bare 64-hex value in a file nothing ex
   });
 });
 
+describe('a value that resolves to a file in this repository is a path, not a secret', () => {
+  /**
+   * `/` IS A BASE64 CHARACTER, SO A FILE PATH IS A VALID BASE64 RUN. Route 3
+   * reads any such run out of a file in a secret root, and a secret root holds
+   * a list of every published path with its purpose - so without this rule
+   * every path in the repository is a candidate secret and any file naming one
+   * in a comment refuses. That happened on 19 Sep over a real source file.
+   *
+   * **BOTH HALVES OF THE RULE ARE DRIVEN HERE, AND SO IS EACH WAY IT MUST NOT
+   * FIRE**, because a secret scan somebody learns to wave through is worse than
+   * no secret scan at all.
+   */
+  it('does NOT make a candidate of a path that is on disk', () => {
+    write('src/thing/module.ts', 'export const a = 1;\n');
+    write('.midnight/paths.md', 'src/thing/module.ts\n');
+    const { candidates } = extractCandidates(ROOT, config() as never);
+    expect(candidates.some((c) => c.value.startsWith('src/thing/module'))).toBe(false);
+  });
+
+  it('does NOT make a candidate when the run stops at the dot and the stem still resolves', () => {
+    // The base64 run ends before `.ts`, so the value seen is the path without
+    // its extension. The parent directory is asked whether anything there is
+    // that name plus an extension. This is the exact shape of the 19 Sep case.
+    write('src/deep/profile/disclosure.ts', 'export const b = 2;\n');
+    write('.midnight/paths.md', 'src/deep/profile/disclosure\n');
+    const { candidates } = extractCandidates(ROOT, config() as never);
+    expect(candidates.some((c) => c.value === 'src/deep/profile/disclosure')).toBe(false);
+  });
+
+  it('STILL makes a candidate of a seed, which has no slash and resolves to nothing', () => {
+    const seed = randomBytes(32).toString('hex');
+    write('.midnight/wallet.seed', `${seed}\n`);
+    const { candidates } = extractCandidates(ROOT, config() as never);
+    expect(candidates.some((c) => c.value === seed)).toBe(true);
+  });
+
+  it('STILL makes a candidate of a base64 key that CONTAINS a slash and resolves to nothing', () => {
+    const key = `ab/cd/${randomBytes(24).toString('base64').replace(/[+=]/g, 'x')}`;
+    write('.midnight/api.env', `API_KEY=${key}\n`);
+    const { candidates } = extractCandidates(ROOT, config() as never);
+    // `=` is a base64 character, so the run swallows the field name with it -
+    // the candidate is `API_KEY=ab/cd/...` and not the key alone. What matters
+    // here is that the slashes did NOT buy it an exemption.
+    expect(candidates.some((c) => c.value.includes(key))).toBe(true);
+  });
+
+  it('STILL refuses a real secret that reaches a file which would ship', () => {
+    const seed = randomBytes(32).toString('hex');
+    write('.midnight/wallet.seed', `${seed}\n`);
+    write('shipped/leak.md', `the value is ${seed}\n`);
+    const cfg = config();
+    const { candidates } = extractCandidates(ROOT, cfg as never);
+    const scan = scanFiles(ROOT, ['shipped/leak.md'], candidates, cfg as never);
+    expect(scan.secretHits).toHaveLength(1);
+  });
+
+  it('does NOT treat a directory as a file, so a directory name is still a candidate', () => {
+    // Long enough to clear the minimum length, or it never reaches the rule.
+    const dir = 'src/a-directory-long-enough-to-be-a-candidate';
+    write(`${dir}/keep.ts`, 'export const c = 3;\n');
+    write('.midnight/paths.md', `${dir}\n`);
+    const { candidates } = extractCandidates(ROOT, config() as never);
+    // It is a DIRECTORY and no `<dir>.<ext>` exists beside it, so the rule must
+    // not fire and the value stays a candidate. A rule that exempted directory
+    // names would exempt any prefix of any path.
+    expect(candidates.some((c) => c.value === dir)).toBe(true);
+  });
+});
+
 describe('extraction — four routes in, because a shape test is the thing that failed', () => {
   it('takes the WHOLE FILE when it is one token, whatever the token looks like', () => {
     const odd = `zz-${randomBytes(9).toString('base64url')}-qq`;

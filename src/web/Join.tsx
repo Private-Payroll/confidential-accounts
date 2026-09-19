@@ -55,7 +55,7 @@ import { walletInThisPage } from './wallet-frame.js';
  * **whoever opens an invitation sets the address the salary is paid to.** This
  * screen is reachable by anybody holding the link and by nobody else, and there
  * is no route that hands an operator a token after the invitation is made —
- * `src/server/invite-token.test.ts` is what holds that.
+ * `src/server/invitations.test.ts` is what holds that.
  */
 
 /** What `offerFor` returns. `bigint` arrives as a tagged value; see below. */

@@ -52,7 +52,7 @@ export const SIGN_IN_KIND = 'sign-in' as const;
  * THE WIRE SHAPE OF A SIGN-IN ASK, BUILT HERE SO ONE PLACE OWNS IT.
  *
  * Two fields are ABSENT rather than empty, and both absences are load-bearing
- * on the wallet's side — `Identity/src/profile/request.ts` refuses either by
+ * on the wallet's side — `packages/identity/src/profile/request.ts` refuses either by
  * name rather than ignoring it:
  *
  *   · **no `origin`.** A requester that can name its own origin can name
