@@ -3398,9 +3398,8 @@ export class AccountService {
   }
 
   /*
-   * `applyTo` STOOD HERE AND `S52` DELETED IT. `T-226` `P3`. The only other
-   * `applyTo` in the repository is an unrelated module-local function in
-   * `scripts/db-setup.ts`.
+   * `applyTo` STOOD HERE AND WAS DELETED. No `applyTo` is defined anywhere in
+   * the published source, so no second definition is left here to drift.
    *
    * **ITS REASON FOR EXISTING WAS ONE DEFINITION** — `propose` computed the
    * outcome the signers approved with it and `execute` produced the state that

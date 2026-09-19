@@ -84,10 +84,12 @@ contracts/chainprobe/
 # ── NETWORK STATE, KEYS AND SECRETS ────────────────────────────────────────
 # THE WALLET SEED THAT HOLDS THIS PROJECT'S FUNDS IS IN HERE, IN PLAIN TEXT.
 # Losing it means asking the faucet again; committing it means anyone who
-# reads the repository can spend those funds. The door that refuses a tree
-# containing any value read out of these files is scripts/secret-scan.mjs,
-# and it runs inside COMMIT.command — because a key in a published history
-# cannot be taken back by any later edit.
+# reads the repository can spend those funds. A key in a published history
+# cannot be taken back by any later edit, so these paths are excluded here
+# rather than cleaned up afterwards. The maintainers also run a scanner over
+# the whole tree before publishing, which reads every value in these files and
+# refuses a tree carrying one anywhere else; that is their own tooling, it does
+# not run over a contribution, and this list is the guarantee.
 .midnight/
 .env
 .env.example
@@ -121,6 +123,13 @@ logs/
 _to_delete/
 .pre-reset-*/
 .s38-scratch/
+
+# NOT IN THE CONFIG, AND DELIBERATE. A scratch directory this working folder
+# carries and a clone has no reason to.
+# THE RULE IS THE DIRECTORY AND NEVER A FILENAME: this file ships, so a rule
+# naming a file inside a private directory publishes that name in the act of
+# excluding it.
+Claude outputs/
 
 
 # ── CLONED SOURCE THAT BELONGS TO SOMEBODY ELSE ────────────────────────────

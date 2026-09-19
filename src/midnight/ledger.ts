@@ -3888,11 +3888,12 @@ export function signatureProgress(
  * hold a key at a version this read cannot reach, and nothing here can say whether
  * such a key could verify a call — **the ledger-9 apply path is not vendored, the
  * same limit `docs/scope-the-maintenance-list.md` 2.6 records for `IrRemove` and
- * `IrInsert`.** `scripts/measure-proving.mjs:94-108` had already written down that
- * the version cannot be stated on any evidence this project holds, and the first
- * draft of this block did not cite it (rule 23). **Raised by this round's own
- * money-safety pass; the `agree` sentence below says what it cannot see rather
- * than claiming more than it looked at.**
+ * `IrInsert`.** And the version cannot be stated on any evidence this project
+ * holds: the node's `transactionVersion` and this enum's `'v4'` are different
+ * numbering schemes that happen to share a digit, so the coincidence licenses
+ * nothing. **The
+ * `agree` sentence below says what it cannot see rather than claiming more than
+ * it looked at.**
  *
  * **AND THE OPERATIONS MAP IS THE WRONG THING TO CHECK, WHICH IS THE HALF THAT
  * MAKES THIS WORTH BUILDING.** `docs/scope-the-upgrade-path.md:216-231`'s
