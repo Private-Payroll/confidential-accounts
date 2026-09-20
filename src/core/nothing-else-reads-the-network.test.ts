@@ -271,8 +271,56 @@ describe('§1 one reader of the environment, and the scan that notices a second'
      * where they do not, that absence is asserted rather than passed over in
      * silence, so this can never be satisfied by a walk that found nothing.
      */
+    /*
+     * **AND THE ZERO BRANCH EARNS A LITTLE MORE OF ITSELF. A LITTLE - SAY SO.**
+     * The conditional above is right and stays: the launchers do not ship, so an empty list in the
+     * published tree is the absence of a subject rather than a check that is
+     * off. What it could not tell apart was a clone and A WALK THAT BROKE -
+     * `ROOT` resolving somewhere else, or the launchers having moved out of
+     * this directory - both of which also read as zero and were taken as
+     * *this is a clone, carry on*. Launchers HAVE been moving out of this root.
+     *
+     * RED WHEN the walk lands anywhere that is not this repository's root.
+     * Every name checked here is a published one, so the claim holds in both
+     * trees; a test that ships cannot name a path that does not.
+     *
+     * **AND WHAT IT DOES AND DOES NOT REACH IS WRITTEN DOWN RATHER THAN LEFT TO
+     * BE DISCOVERED.** For a `ROOT` outside this repository this can never
+     * report: the source walk above runs from the same `ROOT` and refuses under
+     * 300 files, a failing expectation throws, and nothing here executes. **SO
+     * THE NAMED FAILURE BELOW IS NOT WHAT THIS BUYS.** What it buys is the case
+     * the count above survives: `SOURCE_DIRS` names `contracts/src` rather than
+     * `contracts`, and the walk clears its floor with a whole published
+     * top-level directory missing - so a renamed or vanished `src`, `scripts` or
+     * `contracts` is caught here and nowhere else in this file.
+     *
+     * **AND NEITHER THIS NOR THE BRANCH BELOW CAN SEE A LAUNCHER READ THAT BROKE
+     * WITH THE ROOT INTACT** - the filter spelled `.commands`, or the launchers
+     * moved out of this directory, both of which leave the four names in place
+     * and read as zero. That is the half of the problem this cannot reach from
+     * a file that ships, and it is why the scan belongs beside the launchers.
+     */
+    const rootEntries = readdirSync(ROOT);
+    for (const shipped of ['package.json', 'src', 'scripts', 'contracts']) {
+      expect(
+        rootEntries,
+        `\`${shipped}\` is not at this repository's root: either the walk landed `
+        + 'somewhere that is not the root, in which case a count of zero below means '
+        + 'the read failed rather than that this is a clone, or that directory has been '
+        + 'renamed and the take list and this list are out of step.',
+      ).toContain(shipped);
+    }
     if (COMMANDS.length > 0) expect(COMMANDS.length).toBeGreaterThan(50);
-    else expect(COMMANDS).toEqual([]);
+    else expect(COMMANDS.length).toBe(0);
+    /*
+     * **WHAT THIS STILL CANNOT SEE, SAID OUT LOUD.** A working tree whose
+     * launchers have all moved elsewhere is indistinguishable from a clone
+     * here, because the only evidence that would separate them is a path that
+     * does not ship, and naming one from a published test is the defect this
+     * guard exists to prevent. The scan over the launchers belongs beside the
+     * launchers, where the count can be flat; the claim about them is about
+     * this project's own tooling and not about the software a clone receives.
+     */
     /*
      * RED WHEN the walk stops reaching the places it was widened to. Each of
      * these was outside every claim in this file until it was named.
@@ -531,7 +579,7 @@ describe('§3 the shell hands the value over and no longer decides it', () => {
     /* RED WHEN those scripts stop passing the value, which would make the pin
      * above vacuous rather than satisfied - and skipped, stated, where they are
      * not published at all. The pin itself still runs over whatever is there. */
-    if (COMMANDS.length === 0) expect(withDefaults).toEqual([]);
+    if (COMMANDS.length === 0) expect(withDefaults.length).toBe(0);
     else expect(withDefaults.length).toBeGreaterThan(20);
   });
 });

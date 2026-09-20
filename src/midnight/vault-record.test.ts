@@ -827,6 +827,30 @@ describe('nothing resolves a vault name to a vault outside this module', () => {
      * and there is nothing that could offend. **A tree holding one or two is
      * neither**, and that is the walk breaking rather than a published tree.
      */
+    /*
+     * **AND THE ZERO BRANCH HAS TO EARN ITSELF.** The pair of real states below
+     * is right and stays. What it could not tell apart was a published tree and
+     * A WALK THAT BROKE - `root` resolving elsewhere, or the pickers having
+     * moved out of this directory - both of which read as zero and were taken
+     * as *this is the published tree*. Pickers HAVE been moving out of this
+     * root. RED WHEN the walk lands anywhere that is not this repository's
+     * root; every name checked is a published one, so it holds in both trees.
+     *
+     * **IT CANNOT SEE A PICKER READ THAT BROKE WITH THE ROOT INTACT** - the
+     * filter misspelled, or the pickers moved out - both of which leave the four
+     * names in place and read as zero. Unlike its twin in `src/core/`, this one
+     * is the first assertion in its block and does report; the claim it cannot
+     * make is the one that belongs beside the pickers, not in a file that ships.
+     */
+    for (const shipped of ['package.json', 'src', 'scripts', 'contracts']) {
+      expect(
+        readdirSync(root),
+        `RED WHEN: \`${shipped}\` is not at this repository's root - either the walk `
+        + 'landed somewhere that is not the root, in which case a count of zero below '
+        + 'means the read failed rather than a published tree, or that directory has '
+        + 'been renamed and this list is out of step with the take list.',
+      ).toContain(shipped);
+    }
     expect(
       shell.length === 0 || shell.length > 50,
       `RED WHEN: this directory holds ${shell.length} shell picker(s) -- too few to be the `
