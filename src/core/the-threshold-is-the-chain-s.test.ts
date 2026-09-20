@@ -413,7 +413,7 @@ describe('C377: a burnt approval survives a throw between the chain and the reco
      * rejects, and the signer is told that rather than told they have already
      * approved"* — and until `S52`'s test-coverage pass said so, nothing checked
      * it: a `try { … } catch { }` around the reconcile left the whole file
-     * green. Rule 14 and `C286`, in this round's own new code.
+     * green.
      *
      * The earlier stub could not reach this at all: it cleared itself inside
      * the throw, so the retry's read always succeeded and **the reconcile's
@@ -694,9 +694,6 @@ describe('C378: the record is written before the chain call, so a lost round is 
 
   it('a round the chain never held does not displace the APPROVED round for the same change', async () => {
     /*
-     * **`P2`, THE SECOND OF THIS ROUND'S AUDITOR'S FINDINGS AGAINST ITS OWN
-     * FIX, AND IT IS RULE 37's SHAPE.**
-     *
      * `approvedFor` sorted *newest first: a re-proposal after a failed attempt
      * is the live one*, and that sentence was TRUE precisely because a failed
      * attempt left no record. `C378`'s fix inverts the premise. A governance
@@ -712,7 +709,7 @@ describe('C378: the record is written before the chain call, so a lost round is 
      * paragraph named are the two with NO product route today; the one it
      * drives, `setVaultThreshold`, has one; and `grantAccess`, which has two,
      * was named by nothing and driven by nothing. **The case beneath this one
-     * is `S58`'s and it drives `grantAccess`.**
+     * drives `grantAccess`.**
      *
      * Make `b.createdAt.localeCompare(a.createdAt)` the only sort key again and
      * this case goes red.

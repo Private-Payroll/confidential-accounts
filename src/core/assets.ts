@@ -665,8 +665,7 @@ export const sumAmounts = (xs: readonly bigint[]): bigint => xs.reduce((a, b) =>
 export const MAX_CHANGE_AMOUNT = (1n << 128n) - 1n;
 
 /**
- * **THE SUM A CHANGE COMMITS TO, REFUSED WHERE IT IS BUILT.** `T-205` `P2`,
- * raised to a money finding by `S46`'s money-safety pass.
+ * **THE SUM A CHANGE COMMITS TO, REFUSED WHERE IT IS BUILT.**
  *
  * ── WHY A SECOND SUMMING FUNCTION AND NOT A CHECK INSIDE `sumAmounts` ────────
  *

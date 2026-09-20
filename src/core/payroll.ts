@@ -63,7 +63,7 @@ const offerKeyOf = (token: string): Hex =>
   toHex(sha256Bytes(utf8('midnight-invite-offer:' + token)));
 
 /**
- * **HOW LONG AN OFFER IS AN OFFER.** `X12` §3,
+ * **HOW LONG AN OFFER IS AN OFFER.**
  * `docs/scope-invitations.md` §8 and §9.
  *
  * *"An offer that never expires is a salary waiting for whoever eventually
@@ -121,7 +121,7 @@ const seededAddress = (employeeId: string, network: NetworkName): PayeeAddress =
 };
 
 /**
- * HOW AN INVITE REACHES THE PERSON IT IS FOR. A-10, as corrected.
+ * HOW AN INVITE REACHES THE PERSON IT IS FOR.
  *
  * The token used to be handed back to whoever raised it, and that was the whole
  * hole: an operator holding a bearer token can redeem it themselves with an
@@ -180,7 +180,7 @@ export class RecordingInviteDelivery implements InviteDelivery {
     this.sent.push({ ...to, token, accountId });
   }
   /**
-   * `C30`, found by audit 17 Aug. Hashing the stored token protects the
+   * Hashing the stored token protects the
    * database; it does nothing about this array, which held every raw token for
    * the life of the process with the name and email in the clear beside it —
    * `S-9`'s mapping, unsealed, next to the ciphertext it opens.
@@ -477,7 +477,7 @@ export class PayrollService {
     private proofs: ProofSystem,
     private assets = defaultAssets,
     /**
-     * WHICH NETWORK THIS COMPANY'S MONEY IS ON. A-2.
+     * WHICH NETWORK THIS COMPANY'S MONEY IS ON.
      *
      * Load bearing rather than decoration: `admit` re-parses a handed-over
      * address against THIS, not against the network the handover claims for
@@ -487,7 +487,7 @@ export class PayrollService {
      * nothing further down would have objected.
      */
     private network: NetworkName = 'undeployed',
-    /** How an employee invite reaches the employee. Never the operator. A-10. */
+    /** How an employee invite reaches the employee. Never the operator. */
     private delivery: InviteDelivery = new RecordingInviteDelivery(),
   ) {}
 
@@ -532,7 +532,7 @@ export class PayrollService {
   invite(
     accountId: string, spec: HireSpec, viewingKey: Hex,
     /**
-     * WHO IS MINTING THIS TOKEN. A-10.
+     * WHO IS MINTING THIS TOKEN.
      *
      * Recorded so `admit` can RECORD a handover redeemed by the same person who
      * raised it — as `selfRaised`, visible to an admin. It used to REFUSE; that
@@ -575,7 +575,7 @@ export class PayrollService {
     const { raw, sentTo, ...rest } = this.raise(accountId, spec, viewingKey, createdBy);
     /*
      * **THE RAW TOKEN COMES BACK TO WHOEVER RAISED IT, AND THIS REVERSES
-     * `A-10`. DELIBERATELY, WITH THE ARGUMENT.** `X11` §1,
+     * `A-10`. DELIBERATELY, WITH THE ARGUMENT.**
      * `docs/scope-invitations.md` §4 decision 1, 22 Aug.
      *
      * `A-10` dropped it here, on the reasoning that *the token does not come
@@ -678,7 +678,7 @@ export class PayrollService {
      * The raw token exists here and in the message that carries it, and nowhere
      * else. What is stored is its hash — see `Invite.token` — and the offer is
      * sealed under a key derived from the raw one, so **only the person holding
-     * it can read what they are being offered, and we cannot.** A-7.
+     * it can read what they are being offered, and we cannot.**
      */
     const raw = 'inv_' + nanoid(18);
     const invite: Invite = {
@@ -688,7 +688,7 @@ export class PayrollService {
       createdBy,
       /*
        * **EVERY INVITATION HAS A DEADLINE, AND IT IS SET WHERE ONE IS MADE
-       * RATHER THAN WHERE ONE IS SHOWN.** `X12` §3,
+       * RATHER THAN WHERE ONE IS SHOWN.**
        * `docs/scope-invitations.md` §9: *no invitation without an expiry*. A
        * door that could mint one without a deadline is a door somebody calls.
        */
@@ -739,7 +739,7 @@ export class PayrollService {
     this.store.putInvite(invite);
 
     /*
-     * DELIVERED, NOT RETURNED. A-10.
+     * DELIVERED, NOT RETURNED.
      *
      * The token does not come back to the caller, so an operator cannot redeem
      * it. Everything else in this method is unchanged; this one line is what
@@ -762,7 +762,7 @@ export class PayrollService {
      * exists, **nobody can complete onboarding**: the token reaches no one, the
      * roster entry stays `pending`, and a run refuses to build while anybody is
      * pending. An operator is entitled to be told that at the moment they hire
-     * somebody rather than on payday. `A-12`.
+     * somebody rather than on payday.
      */
     return { employee, sentTo: spec.email, delivered: this.delivery.delivers, raw };
   }
@@ -838,7 +838,7 @@ export class PayrollService {
      * It used to refuse here, and the refusal was right at the
      * time: this route's whole defence is that the record is unavoidably about
      * the CALLER, and until `X8` the only thing making it so was an email read
-     * off their sign-in. A wallet sign-in has none — **and since `PI4b` there
+     * off their sign-in. A wallet sign-in has none — **and there
      * is no other kind of sign-in, so `me.email` is null on every caller that
      * reaches this door.**
      *
@@ -889,8 +889,7 @@ export class PayrollService {
      * involved.
      */
     /*
-     * **THIS DOOR SEALS ON OUR SIDE, AND THAT IS NOT `C160` RETURNING.** `X11`
-     * §7.
+     * **THIS DOOR SEALS ON OUR SIDE, AND THAT IS NOT `C160` RETURNING.**
      *
      * `C160` is about an address travelling to us in a request body. Here there
      * is no request carrying one: the address arrived inside a **signed
@@ -936,7 +935,7 @@ export class PayrollService {
   }
 
   /**
-   * The employee's own device hands over what it made. A-2.
+   * The employee's own device hands over what it made.
    *
    * NO VIEWING KEY IS REQUIRED, and that is the point: an employee must never
    * hold the company's key. So they cannot write into the sealed roster, and
@@ -977,7 +976,7 @@ export class PayrollService {
    */
   /**
    * **THE ONE PLACE AN INVITATION IS JUDGED READABLE, AND IT IS WHERE THE OFFER
-   * IS READ RATHER THAN WHERE IT IS SHOWN.** `X12` §3,
+   * IS READ RATHER THAN WHERE IT IS SHOWN.**
    * `docs/scope-invitations.md` §8.
    *
    * §8: *"Expiry and revocation must be enforced where the offer is READ, not
@@ -1018,7 +1017,7 @@ export class PayrollService {
   }
 
   /**
-   * **AN ADMIN TAKES AN INVITATION BACK.** `X12` §3,
+   * **AN ADMIN TAKES AN INVITATION BACK.**
    * `docs/scope-invitations.md` §8.
    *
    * A hire falls through after the link has been sent and until now there was
@@ -1056,7 +1055,7 @@ export class PayrollService {
     token: string,
     /** Sealed on the invitee's own device. `invite-handover.ts`. */
     handover: SealedHandover,
-    /** Who is redeeming it. The route is authenticated so this is never guessed. A-10. */
+    /** Who is redeeming it. The route is authenticated so this is never guessed. */
     byUserId: string | null = null,
   ): SealedEmployee {
     /* X12 §3 — expired and revoked are refused HERE, not only on the screen
@@ -1137,7 +1136,7 @@ export class PayrollService {
   }
 
   /**
-   * WHAT THE PERSON HOLDING THIS TOKEN IS BEING OFFERED. A-7.
+   * WHAT THE PERSON HOLDING THIS TOKEN IS BEING OFFERED.
    *
    * **No viewing key, and none is possible** — an invitee must never hold the
    * company's. The offer is sealed under a key derived from the raw token, so
@@ -1152,14 +1151,14 @@ export class PayrollService {
    */
   offerFor(token: string): {
     company: string;
-    /** X11 §0. Null when no chain has given this company an address. */
+    /** Null when no chain has given this company an address. */
     companyAddress: string | null;
-    /** X11 §7. What the invitee's own browser seals the handover to. */
+    /** What the invitee's own browser seals the handover to. */
     inboxPublicKey: Hex;
     name: string; title: string; email: string;
     asset: AssetId; baseAmount: bigint; startDate: string;
     /**
-     * X12 §3. **Beside the sealed offer rather than inside it**, because it was
+     * **Beside the sealed offer rather than inside it**, because it was
      * not known when the offer was sealed in the sense that matters: it is the
      * service's own fact about this invitation, and the service is what
      * enforces it. The invitee is shown it so a deadline is something they can
@@ -1189,7 +1188,7 @@ export class PayrollService {
    */
   admit(
     employeeId: string, viewingKey: Hex,
-    /** Which admin is doing this. Recorded on the roster entry. A-10. */
+    /** Which admin is doing this. Recorded on the roster entry. */
     byUserId: string | null = null,
   ): RosterEmployee {
     const rec = this.store.getEmployee(employeeId);
@@ -1202,8 +1201,8 @@ export class PayrollService {
     }
 
     /*
-     * **THE OUTER ENVELOPE IS OURS AND THE INNER ONE IS THE INVITEE'S.** `X11`
-     * §7. One key opens both; `openHandover` checks the inner shape rather than
+     * **THE OUTER ENVELOPE IS OURS AND THE INNER ONE IS THE INVITEE'S.**
+     * One key opens both; `openHandover` checks the inner shape rather than
      * casting it, because what comes out of an envelope is JSON.
      */
     const box = openFromInbox<{
@@ -1520,7 +1519,7 @@ export class PayrollService {
 
       /*
        * **THE CODE THE PAYEE'S OWN WALLET PRODUCED, ENFORCED WHERE THE ROSTER
-       * IS WRITTEN.** `PI4c`, `C21`, `X12` §2, `docs/scope-invitations.md` §5.
+       * IS WRITTEN.** `docs/scope-invitations.md` §5.
        *
        * The invitee's wallet shows a code for the address it is about to
        * disclose; they paste it into the join screen; it travels SEALED inside
@@ -1534,7 +1533,7 @@ export class PayrollService {
        * and it still is — `src/web/accepted-address.ts`, against ciphertext
        * from a route that has nowhere to put a key. This is not that screen. It
        * is `admit`, which has held the opened handover and rebuilt the address
-       * through the decode below for rounds, because it is the step that writes
+       * through the decode below because it is the step that writes
        * the address onto the roster. Hashing a value already in this scope
        * gives this service nothing it did not have on the line below.
        *
@@ -1586,9 +1585,9 @@ export class PayrollService {
      * What comes out of the box is JSON — a shape that looks like an address,
      * not an address. Re-parsing means the value the roster holds came out of a
      * decode like every other one, so a handover carrying two halves that were
-     * never one address cannot get in by being well formed. A-1.
+     * never one address cannot get in by being well formed.
      *
-     * **`payeeOf` SINCE `S12`, AND IT IS THE SAME DECODE.** `C250`, `V-105`.
+     * **`payeeOf` SINCE `S12`, AND IT IS THE SAME DECODE.**
      * The kind is READ off the string the wallet produced rather than asked
      * for, so this door admits a public address without anybody choosing
      * anything. Every check `payeeAddress` made is still made: the platform's
@@ -1733,7 +1732,7 @@ export class PayrollService {
        * which is `S-9` exactly — seal one place, leak it into another.
        */
       name: email,
-      /* `PI4b`: `authHash: ''` and `authSalt: ''` were here, and the empty
+      /* `authHash: ''` and `authSalt: ''` were here, and the empty
        * strings were the tell — a seeded invitee never had a password to hash,
        * and the fields existed only because `User` demanded them. Both are
        * deleted from the type. */
@@ -1819,7 +1818,7 @@ export class PayrollService {
 
   /**
    * **AN ADDRESS THAT COMES BACK OUT OF THE SEAL GOES THROUGH THE SAME DECODE
-   * AS ONE THAT WENT IN.** `A-1`.
+   * AS ONE THAT WENT IN.**
    *
    * `openRecord` returns JSON. `PayeeAddress` is a BRANDED type whose brand is
    * a compile-time symbol, so the object that comes back type-checks as one and
@@ -1842,10 +1841,10 @@ export class PayrollService {
    * was written.
    *
    * **`payeeOf` SINCE `S12`, AND THAT IS THE WIDENING THE PREVIOUS COMMENT
-   * PROMISED.** `C250`, `V-105`. It read `payeeAddress` and said *the day the
+   * PROMISED.** It read `payeeAddress` and said *the day the
    * roster learns about public payees, this line widens deliberately and
    * `RosterEmployee.address` widens with it.* This is that day, and both moved
-   * together in one round rather than one of them being noticed later.
+   * together rather than one of them being noticed later.
    *
    * **A RECORD SEALED BEFORE THIS CHANGE IS UNAFFECTED, AND IT IS PINNED
    * RATHER THAN ASSERTED.** A `shield-addr` through `payeeOf` returns the
@@ -1909,7 +1908,7 @@ export class PayrollService {
 
   /**
    * **THE SEALED DROP BOX ITSELF, FOR THE ONE MACHINE THAT CAN OPEN IT.**
-   * `X12` §2, `docs/scope-invitations.md` §5,
+   * `docs/scope-invitations.md` §5,
    * `docs/how-money-can-be-lost.md` `C21`.
    *
    * §5: the admin's confirmation code is **computed on the ADMIN'S machine, not
@@ -2156,7 +2155,7 @@ export class PayrollService {
     }
     /*
      * **A PAYROLL RUN IS ALWAYS PRIVATE, ASKED HERE AS WELL AS AT THE MONEY.**
-     * `C250`, `movement.ts`.
+     * `movement.ts`.
      *
      * `paymentFactsFor` is the line nothing reaches the chain without, and it
      * is where the rule is load bearing. **This one is earlier and is for the
@@ -2219,7 +2218,7 @@ export class PayrollService {
   }
 
   /**
-   * WHAT THE CHAIN NEEDS, BUILT FROM THE ROSTER AND FROM NOTHING ELSE. A-2.
+   * WHAT THE CHAIN NEEDS, BUILT FROM THE ROSTER AND FROM NOTHING ELSE.
    *
    * This is the function that did not exist, and its absence is why a payee was
    * still "32 bytes somebody typed": nothing in this repo turned a roster into
@@ -2408,7 +2407,7 @@ export class PayrollService {
          * would have nothing to expand. So this stays random, the secret is
          * returned once, and `words` is absent to say so in the type.
          *
-         * **IT IS NOT A GAP THIS ROUND LEFT OPEN BY OVERSIGHT.** Closing it
+         * **IT IS NOT A GAP LEFT OPEN BY OVERSIGHT.** Closing it
          * means an ad hoc payee handing over a public key first, which is an
          * onboarding flow and not a derivation — reported rather than smuggled
          * in. Until then, an ad hoc payslip is exactly what `C135` describes.
@@ -2425,7 +2424,7 @@ export class PayrollService {
 
       // Two layers: seal the slip under a fresh key, wrap that key to the employee.
       /*
-       * THE PAYSLIP CARRIES THE ADDRESS OF RECORD. A-10.
+       * THE PAYSLIP CARRIES THE ADDRESS OF RECORD.
        *
        * The employee cannot read the company's roster — they hold no viewing
        * key, and must not. So the only way they can ever check that the address
@@ -2493,7 +2492,7 @@ export class PayrollService {
    * longer forced by the chain: a proposal's change commitment still names one
    * asset key and nothing opens it. What holds the rule now is
    * `AccountService.oneAssetOf`, which refuses a mixed batch here rather than
-   * at settlement. Rule 27, said out loud.
+   * at settlement.
    *
    * The alternative was a round carrying a fixed-width vector of legs, which
    * taxes every such round with the width of the widest run anybody might ever
@@ -2590,7 +2589,7 @@ export class PayrollService {
      * have surfaced at a vault on payday. A door that cannot raise a payable
      * run and says so costs a refusal; a door that raises an unpayable one
      * costs an approval round from every signer and is discovered by the people
-     * who were meant to be paid. Rule 28.
+     * who were meant to be paid.
      */
     if (!payable) {
       throw new Error(
@@ -3245,8 +3244,7 @@ export class PayrollService {
   ): Promise<Attestation> {
     const run = this.requireRun(runId, viewingKey);
     /*
-     * **THIS GATE CANNOT PASS, AND THE SENTENCE NOW SAYS SO.** `T-217`/`F10`,
-     * Rule 14, and `C178`'s species.
+     * **THIS GATE CANNOT PASS, AND THE SENTENCE NOW SAYS SO.**
      *
      * *"cannot attest an unsettled run"* stood here, and it describes a run —
      * as though settling one were a thing a person could go and do. **Measured:

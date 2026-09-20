@@ -50,7 +50,7 @@ const handedOver = (
 };
 
 /**
- * **THE PAYSLIP KEY IS DERIVED, NOT MINTED AND KEPT.** `docs/NEXT.md` PI2b §2,
+ * **THE PAYSLIP KEY IS DERIVED, NOT MINTED AND KEPT.**
  *
  *
  * ── THE ONE TEST THIS ROUND IS JUDGED ON IS `§4` ──────────────────────────
@@ -92,7 +92,7 @@ const SIGNERS = [
 const A_PAYEE_ADDRESS = payeeAddressFromKeys(
   { coinPublicKey: '41'.repeat(32), encryptionPublicKey: '42'.repeat(32) }, 'undeployed');
 
-/** Somebody with a sign-in of their own, because `admit` requires one. A-11. */
+/** Somebody with a sign-in of their own, because `admit` requires one. */
 const signIn = (store: { putUser: (u: any) => void }, email: string) => {
   const id = 'usr_' + email.replace(/[^a-z0-9]/gi, '_');
   store.putUser({
@@ -121,7 +121,7 @@ describe('§1 — THE DERIVATION IS A PURE FUNCTION OF A WALLET AND A COMPANY', 
      * **THE LOSS IS PAYSLIP READABILITY AND NOT FUNDS, SAID PLAINLY** so that
      * nobody has to deflate this later. It is still permanent.
      *
-     * ── WHERE THESE BYTES CAME FROM — RULE 9 ──────────────────────────────
+     * ── WHERE THESE BYTES CAME FROM ──────────────────────────────
      *
      * **NOT FROM THIS REPOSITORY.** `node:crypto` — OpenSSL, not `@noble` —
      * computed `hkdfSync('sha256', ikm, utf8('midnight-payroll/payslip-wrapping/v1'),
@@ -280,7 +280,7 @@ describe('§1 — THE DERIVATION IS A PURE FUNCTION OF A WALLET AND A COMPANY', 
  * round's test-coverage pass re-measured it recursively and found forty; the
  * conclusion was unchanged and the instrument's stated reach was not.**
  *
- * ── THE NEGATIVE CONTROL — MEASURED, NOT ASSERTED (rule 40, rule 9) ───────
+ * ── THE NEGATIVE CONTROL — MEASURED, NOT ASSERTED ───────
  *
  * **A VECTOR NOBODY HAS WATCHED FAIL IS NOT A VECTOR.** The literals below were
  * checked against a NEUTERED COPY of `midnight-identity` built outside this
@@ -348,8 +348,6 @@ describe('§1 — THE DERIVATION IS A PURE FUNCTION OF A WALLET AND A COMPANY', 
  * Nothing bridges the two at the `unlockKeyFor` level. `§1b.1`'s `5781ec70…`
  * is the one thread that does, at the authority level, and it is why that
  * literal was taken from Identity's table rather than from a run here.
- * **Found by this round's money-safety pass and by its
- * test-coverage pass, separately.**
  */
 
 const VECTOR_COMPANY = 'a1'.repeat(32);
@@ -530,8 +528,7 @@ describe('§1b — A FIXED MNEMONIC AND A FIXED COMPANY GIVE A FIXED KEY, RECORD
       .toBe('6ea2e0b5513f0eebbb40d2036327316736ce11153d187cb828a822f1a2072c37');
 
     /*
-     * **AND FROM THE OTHER SPELLING OF THE SAME WALLET.** Also the
-     * money-safety pass's. `payslipKeypairForWallet` takes
+     * **AND FROM THE OTHER SPELLING OF THE SAME WALLET.** `payslipKeypairForWallet` takes
      * `readonly string[] | string` (`payslip-key.ts:36`) and **every production
      * caller passes the ARRAY** — `payroll.ts:1484-1485` hands it `newWords()`
      * — while every literal above went in as a string. Two different branches
@@ -703,13 +700,13 @@ describe('§2 — NOBODY WRITES THE SECRET DOWN, INCLUDING US', () => {
      * typing a line.
      *
      * **AND THAT IS ONE OF THE TWO ROUTES THAT RETURN AN `EmployeeSecret` TO
-     * THE WIRE.** `S29`, found by its own money-safety pass.
+     * THE WIRE.**
      * `POST /api/accounts/:id/payroll` returns `payroll.createRun`'s result
      * WHOLE — `{ run, secrets: EmployeeSecret[] }` — with no projection between
      * the interface and `res.json`. Nothing leaks there today, because the ad
      * hoc branch that mints a secret sets three fields and `words` is absent by
      * construction; **but a field added to `EmployeeSecret` leaves by that route
-     * on the next deploy with nobody typing anything.** Rule 27, `C286`: the
+     * on the next deploy with nobody typing anything.** `C286`: the
      * property holds because nobody has written the code that would break it.
      * The route is a row; the two assertions below are what this file can hold
      * without one.

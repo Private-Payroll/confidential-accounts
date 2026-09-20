@@ -72,7 +72,7 @@ import type { AssetId } from './assets.js';
 export interface TxRef { ref: string; at: string; }
 
 /*
- * `GENESIS_SIGNER_GENERATION` USED TO BE HERE. M-106 removed the generation.
+ * `GENESIS_SIGNER_GENERATION` USED TO BE HERE.
  *
  * A leaf is `commit(publicKey, blinding)` again — decision 0003's shape, with
  * nothing stamped on it. Removal clears one slot rather than invalidating every
@@ -87,7 +87,7 @@ export interface LedgerRecord {
 }
 
 /**
- * A sealed state, and which viewing key sealed it. K-4.
+ * A sealed state, and which viewing key sealed it.
  *
  * The epoch travels with the ciphertext because **the commitment does not
  * identify it.** It never did: it was taken over the balance, the entry digest
@@ -214,11 +214,11 @@ export interface StateChange {
  * The caller's view of ONE ASSET before a transition.
  *
  * **NO METHOD ON THIS BOUNDARY TAKES ONE ANY MORE.** `C292` removed the calls
- * that did, so this type — whose builder `S52` deleted — has no
+ * that did, so this type has no
  * reader left. Kept as the shape a vault-side view will need; it constrains
  * nothing today.
  *
- * PASSED ACROSS THE BOUNDARY RATHER THAN REMEMBERED, which M-125 forced and
+ * PASSED ACROSS THE BOUNDARY RATHER THAN REMEMBERED,
  * which is an improvement on its own terms. The Midnight implementation used to
  * keep "current" in the device's persisted private state and trust it to still
  * be right; with a balance per asset there was no single current to keep — the
@@ -359,12 +359,12 @@ export interface LedgerStatus {
    *
    * **`SimulatedLedger` ANSWERS 0 FOR EVER AND SAYS SO**: nothing in that class
    * writes `movements` — `settleRound` was its only writer and went with the
-   * balance ledger it belonged to.
-   * So this field is real on the Midnight side and a constant on the
-   * simulated one, which is `LedgerStatus.assets`' shape and is named here so
-   * nobody reads a zero as evidence. The product runs the simulated wiring
-   * (`src/wiring/selection.ts:144`), so **today this number is 0 on the path
-   * the product takes, and the detector cannot run there at all.**
+   * balance ledger it belonged to. So this field is real on the Midnight side
+   * and a constant on the simulated one, which is `LedgerStatus.assets`' shape
+   * and is named here so nobody reads a zero as evidence. The product runs the
+   * simulated wiring (`src/wiring/selection.ts:144`), so **today this number
+   * is 0 on the path the product takes, and the detector cannot run there at
+   * all.**
    */
   movementCount: number;
   /**
@@ -427,7 +427,7 @@ export interface LedgerStatus {
  * `:1362-1382` and splits its two entry points on it.
  *
  * **RULE 27 — WHAT CONSUMES THIS NUMBER, AND THE HONEST ANSWER IS *NOTHING
- * THAT SETTLES ANYTHING*.** `T-218` `P1`, `C367` generalised.
+ * THAT SETTLES ANYTHING*.**
  *
  * The chain side is a straight line with no branches: `thresholds` is read in
  * exactly one place, `thresholdFor` (`compact:1358`); its one caller is
@@ -444,7 +444,7 @@ export interface LedgerStatus {
  * defect. What is left reads it to REPORT and to SET A STATUS: this function,
  * through `approvalsOnChain`, into `approvalRound` — which nothing outside the
  * tests reads — and into `account.ts:460`'s `satisfied`/`short`, which
- * `:2693` turns into `status = 'approved'`. **`T-296`, corrected by `S56`.**
+ * `:2693` turns into `status = 'approved'`.
  *
  * **`T-218` IS CLOSED AND THIS PARAGRAPH IS THE BRANCH THAT CLOSED IT. `S54`
  * CORRECTED THE SENTENCE THAT STOOD HERE**, which said the row stays open and
@@ -737,7 +737,7 @@ export interface Ledger {
   ): Promise<TxRef>;
 
   /**
-   * **RAISES A PAYROLL RUN, AND IT IS A DIFFERENT ACT FROM `propose`.** `C375`,
+   * **RAISES A PAYROLL RUN, AND IT IS A DIFFERENT ACT FROM `propose`.**
    * Mirrors the RUN branch of the merged circuit —
    * `contracts/src/ConfidentialAccount.compact:2119-2156`, reached by
    * `isRun: true`.
@@ -883,7 +883,7 @@ export interface Ledger {
    */
 
   /**
-   * Replaces the ciphertext of the CURRENT state without touching the chain. K-4.
+   * Replaces the ciphertext of the CURRENT state without touching the chain.
    *
    * Rotation re-encrypts what the account already holds. The plaintext — the
    * entry log and its blindings — is unchanged, so there is nothing for the
@@ -993,7 +993,7 @@ export interface WriteInFlight {
   readonly waiting: number;
 }
 
-export type Circuit = /* `T-217`: NONE of the three exists in either `.compact` — measured, zero occurrences in `ConfidentialAccount.compact` and `Vault.compact`; `MidnightProofSystem.prove` throws for all three, and `SimulatedProofSystem` is symmetric so its verifier must BE its prover. */ 'balance-at-least' | 'payroll-total' | 'payment-record';
+export type Circuit = /* NONE of the three exists in either `.compact` — measured, zero occurrences in `ConfidentialAccount.compact` and `Vault.compact`; `MidnightProofSystem.prove` throws for all three, and `SimulatedProofSystem` is symmetric so its verifier must BE its prover. */ 'balance-at-least' | 'payroll-total' | 'payment-record';
 
 export interface ProofSystem {
   prove(circuit: Circuit, publicInputs: Record<string, unknown>, witness: unknown): Promise<Hex>;
@@ -1095,7 +1095,7 @@ const simulatedVaultThresholdPayload = (vault: Hex, newThreshold: number): Hex =
   toHex(sha256(utf8('midnight-accounts:vault-thresh:' + vault + ':' + newThreshold)));
 
 /*
- * `changeKey` STOOD HERE AND `S52` DELETED IT. `T-226` `P3`.
+ * `changeKey` STOOD HERE AND `S52` DELETED IT.
  *
  * Its sole occurrence in the repository was its own definition: `settleRound`
  * was its only caller and went with the balance ledger. It said so in
@@ -1175,7 +1175,7 @@ interface SimAccount {
      * `payloadHash`: it has no salt at spend time. It keeps the vault it was
      * given at propose time and measures the round against that vault's
      * threshold — the same rule, checked the way this layer can check it, and
-     * the same accommodation M-130 already made one field over.
+     * the same accommodation already made one field over.
      */
     vault: Hex;
   }>;
@@ -1224,7 +1224,7 @@ interface SimAccount {
    */
   movements: Set<Hex>;
   /*
-   * One ciphertext per key epoch, not one ciphertext. K-4.
+   * One ciphertext per key epoch, not one ciphertext.
    *
    * The same rule the real blob store keeps, and it is here rather than only
    * there so a test cannot pass against behaviour the file store does not have.
@@ -1301,7 +1301,7 @@ export class SimulatedLedger implements Ledger {
 
   /**
    * **THE SCHEME THIS LEDGER WAS HANDED, SO IDENTITY CAN BE ASSERTED RATHER
-   * THAN ASSUMED.** `T-278` `P2`.
+   * THAN ASSUMED.**
    *
    * The comment above says the pair must match and says it **in a comment and
    * only in a comment**. `S46` closed the product path — `selection.ts:130`
@@ -1413,7 +1413,7 @@ export class SimulatedLedger implements Ledger {
         .sort((x, y) => x.vault.localeCompare(y.vault)),
       signerCount: a.signerLeaves.size,
       /*
-       * **ZERO AND EMPTY, ALWAYS, AND THE FIELDS ARE HERE ANYWAY.** `T-220`,
+       * **ZERO AND EMPTY, ALWAYS, AND THE FIELDS ARE HERE ANYWAY.**
        * `movements` is declared on `SimAccount` and initialised empty at
        * `open` and nothing writes it; retirement is not modelled in this class
        * at all. Reporting them is what makes `LedgerStatus` one shape both
@@ -1777,7 +1777,7 @@ export class SimulatedLedger implements Ledger {
     }
     /*
      * **`Number.isInteger` IS HERE BECAUSE ITS SIBLING HAS IT AND THE TWO
-     * DISAGREED.** `T-225` `P3`. `setVaultThreshold` below refuses a
+     * DISAGREED.** `setVaultThreshold` below refuses a
      * non-integer at BOTH boundaries and `setThreshold` refused it at NEITHER,
      * and `S46` closed the same asymmetry one layer down at
      * `src/midnight/ledger.ts:1293` — leaving this the last of the pair. Six
@@ -1852,7 +1852,7 @@ export class SimulatedLedger implements Ledger {
      * refusal belongs there: a rule only one implementation has is two.
      *
      * **AND NO `noVault()` REFUSAL EITHER, WHICH IS `C368` AND IS DELIBERATE.**
-     * `S55`, rule 27. `compact:1372` says `thresholdFor(noVault())` cannot occur
+     * `compact:1372` says `thresholdFor(noVault())` cannot occur
      * *by construction*; `:2778` inserts whatever key it is handed, so the
      * construction is a CLIENT HABIT — `AccountService.setVaultThreshold`
      * refuses the sentinel on BOTH paths. **Not added here: the
@@ -1865,7 +1865,7 @@ export class SimulatedLedger implements Ledger {
   }
 
   /*
-   * `writeState` STOOD HERE AND `S52` DELETED IT. `T-226` `P3`. Sole
+   * `writeState` STOOD HERE AND `S52` DELETED IT. Sole
    * occurrence in the repository was its own definition.
    *
    * **ITS RULE IS THE PART WORTH KEEPING:** a state transition supersedes
@@ -1965,7 +1965,7 @@ export class SimulatedLedger implements Ledger {
     const p = a.openProposals.get(proposalId);
     if (!p) throw new Error('there is no open proposal with that id');
     /*
-     * **THE BAR IS THE ACCOUNT'S, AND NEVER A VAULT'S.** `C376`, `T-215`,
+     * **THE BAR IS THE ACCOUNT'S, AND NEVER A VAULT'S.**
      * This is the counterpart of the contract's `requireApproved`
      * (`contracts/src/ConfidentialAccount.compact:1407`), which reads
      * `threshold` directly with NO map lookup — and every governance circuit
@@ -2078,7 +2078,7 @@ export class SimulatedLedger implements Ledger {
    */
   private viewDigest(_a: SimAccount): Hex {
     // Over nothing, because there is nothing per-asset on chain any more.
-    // `C292`. Kept as a call rather than inlined so the one definition of
+    // Kept as a call rather than inlined so the one definition of
     // "what an observer sees" stays in `viewDigestOf`.
     return viewDigestOf([]);
   }
@@ -2250,8 +2250,7 @@ export interface CommitmentScheme {
    * submitted, which is what lets an approval be prepared without a round trip.
    */
   /**
-   * **WHAT A PAYROLL RUN IS, BEFORE IT HAS AN IDENTITY.** `V-41`, and it moved
-   * ONTO this interface in `S47` for `C375`.
+   * **WHAT A PAYROLL RUN IS, BEFORE IT HAS AN IDENTITY.**
    *
    * **THE SENTENCE THAT KEPT IT OFF IS QUOTED BELOW AND ITS PREMISE HAS
    * CHANGED, WHICH IS WHY THE MOVE IS NOT A RELAXATION OF THE RULE BUT AN
@@ -2279,7 +2278,7 @@ export interface CommitmentScheme {
   runPayload(root: Hex, payees: bigint, opensAt: bigint, closesAt: bigint): Hex;
   proposalId(payloadHash: Hex, salt: Hex, vault?: Hex): Hex;
   /**
-   * The two reserved sentinels. V-32, V-33.
+   * The two reserved sentinels.
    *
    * `noVault` is what a proposal names when it concerns no vault — governance,
    * and the account's own internal ledger. `allVaults` is the scope every
@@ -2371,7 +2370,7 @@ export interface CommitmentScheme {
 export const SimulatedCommitments: CommitmentScheme = {
   /**
    * **DELIBERATELY NOT THE CONTRACT'S DERIVATION, AND IT MUST NEVER BECOME
-   * IT.** `S32`, and `C328` is why this method exists at all.
+   * IT.**
    *
    * The contract hashes `[tag, sk]` with `persistentHash`; this keys an HMAC
    * with the secret, which is the same construction its siblings below use and
