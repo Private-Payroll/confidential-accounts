@@ -68,8 +68,7 @@ const OTHER_BLINDING = '44'.repeat(32);
 
 /* A stored value no derivation produced, and NOT a repeating one: `de`.repeat(32)
  * has the same sixteen characters in every window, so an assertion that the
- * refusal printed "its first sixteen" could not tell which sixteen it printed.
- * `S33`'s test-coverage pass. */
+ * refusal printed "its first sixteen" could not tell which sixteen it printed. */
 const HAND_BUILT = '0123456789abcdef' + 'fedcba9876543210' + '00112233445566778899aabbccddeeff';
 
 /**
@@ -138,7 +137,7 @@ describe('the stored signer leaf, against the device that has to reproduce it', 
     expect(reading.stored).toBe(stored);
     /* The derived side is asserted against the independent construction rather
      * than merely "not the stored one", which excludes one value out of all of
-     * them. `S33`'s test-coverage pass. */
+     * them. */
     expect(reading.derived).toBe(independentFrom(SIGNING_SECRET, BLINDING));
     expect(() => requireOwnLeaf(reading)).toThrow(/COMPUTES A DIFFERENT LEAF/);
   });
@@ -216,7 +215,7 @@ describe('the stored signer leaf, against the device that has to reproduce it', 
      * dropping `.toLowerCase()` survived every mutation there because every
      * fixture was already lower case, and what it costs on a real record is a
      * present, correct leaf reported as a mismatch — a lockout invented by the
-     * check that exists to prevent one. Rule 28 cuts both ways. */
+     * check that exists to prevent one. */
     const stored = independentFrom(SIGNING_SECRET, BLINDING).toUpperCase();
     expect(stored).not.toBe(independentFrom(SIGNING_SECRET, BLINDING));
 
@@ -245,8 +244,7 @@ describe('the stored signer leaf, against the device that has to reproduce it', 
 
     expect(reading.verdict).toBe('no-seat');
     /* Both fields asserted to a value. `not.toBeNull()` passes for every string
-     * there is, and `signerId` had a fallback nothing read. `S33`'s
-     * test-coverage pass. */
+     * there is, and `signerId` had a fallback nothing read. */
     expect(reading.signerId).toBe('(no seat)');
     expect(reading.derived).toBe(independentFrom(SIGNING_SECRET, BLINDING));
     expect(() => requireOwnLeaf(reading)).not.toThrow();
@@ -272,7 +270,7 @@ describe('the stored signer leaf, against the device that has to reproduce it', 
       /* ANCHORED, and unanchored survives without these two: a keyring entry
        * that CONTAINS 64 hex characters is not one that IS 64 hex characters,
        * and the difference is a named refusal against a raw throw out of
-       * `hexToBytes`. `S33`'s test-coverage pass. */
+       * `hexToBytes`. */
       { signingSecret: '0x' + SIGNING_SECRET, blinding: BLINDING },
       { signingSecret: SIGNING_SECRET + SIGNING_SECRET, blinding: BLINDING },
     ]) {
@@ -310,8 +308,7 @@ describe('the stored signer leaf, against the device that has to reproduce it', 
     /* **EACH VALUE UNDER ITS OWN LABEL**, not merely present somewhere. The two
      * remedies invert with the labels — restore this device's bundle, or
      * replace the seat — so a message that swaps them is `C320`'s confusion
-     * with extra steps, and `toContain` on both halves cannot see it.
-     * `S33`'s test-coverage pass. */
+     * with extra steps, and `toContain` on both halves cannot see it. */
     expect(message).toMatch(new RegExp('roster records\\s+' + stored.slice(0, 16)));
     expect(message).toMatch(new RegExp('device computes\\s+' + reading.derived!.slice(0, 16)));
     /* It denies them rather than being silent about them — `C320`'s rule that a
@@ -349,7 +346,7 @@ describe('the stored signer leaf, against the device that has to reproduce it', 
   });
 
   /* ------------------------------------------------------------------ *
-   * THE CALL SITE — A TYPE, NOT A PIN. `T-118`
+   * THE CALL SITE — A TYPE, NOT A PIN.
    * ------------------------------------------------------------------ */
 
   it('seatOnThisDevice REFUSES a mismatch and returns nothing a session can be built from', () => {
@@ -437,7 +434,7 @@ describe('the stored signer leaf, against the device that has to reproduce it', 
   });
 
   /* ------------------------------------------------------------------ *
-   * THE SCOPE TRAVELS WITH THE SEAT. `T-116`
+   * THE SCOPE TRAVELS WITH THE SEAT.
    * ------------------------------------------------------------------ */
 
   it('a leaf stored under a NON-DEFAULT scope is not reported as a mismatch', () => {

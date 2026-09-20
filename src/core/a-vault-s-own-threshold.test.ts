@@ -83,7 +83,7 @@ const entry = (amount: bigint) => ({
 });
 
 /**
- * **A RUN, WHICH IS THE ONLY ROUND THAT MAY NAME A VAULT.** `C367`, `T-237`,
+ * **A RUN, WHICH IS THE ONLY ROUND THAT MAY NAME A VAULT.**
  *
  *
  * Every case below used to name its vault on a GOVERNANCE round, through
@@ -363,8 +363,7 @@ describe('R5: a vault threshold nobody can meet is refused before anybody signs'
      *
      * **THE MESSAGE HAS TO SAY WHOSE RULE THIS IS**, because a refusal phrased
      * as the chain's is a promise this product cannot keep: a signer calling
-     * the contract directly can still set it. `R4` made that a standing rule
-     * for ceilings and it applies here unchanged.
+     * the contract directly can still set it.
      *
      * **AND THE OTHER HALF OF THE PAIR IS NOW RUN RATHER THAN QUOTED.**
      * *"The contract would take it"* was, until this round, a claim read off

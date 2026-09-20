@@ -82,7 +82,7 @@ export interface User {
    */
   keyBundleVersion?: number;
   /*
-   * **`identityPublicKey` IS DELETED.** `PI4b`, finishing `PI4a`.
+   * **`identityPublicKey` IS DELETED.**
    *
    * The public half of the key a recovery phrase produced, and what made that
    * phrase a way IN rather than merely a way to a set of keys. **`PI4a` deleted
@@ -423,7 +423,7 @@ export interface SealedAccount {
   sealedPolicy: Sealed;
   /**
    * **THE COMPANY'S ACCOUNT CONTRACT ADDRESS. PUBLIC, DURABLE, AND NOT OURS TO
-   * CHOOSE.** `PI2a`, `C136`, `docs/scope-payroll-identity.md` §9.
+   * CHOOSE.** `docs/scope-payroll-identity.md` §9.
    *
    * Sixty-four lower-case hex characters, or null while this company has no
    * contract. The wallet derives the key that opens this company's records from
@@ -533,7 +533,7 @@ export interface StateBlinding {
   assetBlinding: Hex;
   /**
    * The secret every payroll run's per-payee nonces and blindings are derived
-   * from, one generation per key epoch. V-63.
+   * from, one generation per key epoch.
    *
    * **Here rather than on the machine that raises a run**, which is the whole
    * point: a run built on one laptop and payable only from that laptop makes a
@@ -642,7 +642,7 @@ export interface Proposal {
    * `contracts/src/ConfidentialAccount.compact:1358` — so it is not a label. It
    * is also committed INSIDE `chainId` (`proposalIdOf`, `compact:874`), which is
    * what makes the on-chain APPROVAL NULLIFIER collected for one vault worthless at
-   * another: a different id, not a rejected one. **IT WAS NEVER TRUE OF THE SIGNATURE — that is `C397`, and `approvalMessage` (`account.ts`) is where `S45` bound it.**
+   * another: a different id, not a rejected one. **IT WAS NEVER TRUE OF THE SIGNATURE — `approvalMessage` (`account.ts`) is where `S45` bound it.**
    *
    * **SEALED, NOT READABLE, AND THE CONTRACT MAKES THE SAME CHOICE.** The chain
    * learns the vault only when a payment is recorded against the round
@@ -743,7 +743,7 @@ export interface RosterEmployee {
   accountId: string;
   name: string;
   /**
-   * **NULL FOR SOMEBODY WHO IS NOT IDENTIFIED BY AN EMAIL AT ALL.** `X8`,
+   * **NULL FOR SOMEBODY WHO IS NOT IDENTIFIED BY AN EMAIL AT ALL.**
    * `docs/how-money-can-be-lost.md` `C153`.
    *
    * This was a required `string`, and a wallet sign-in has no email — so making
@@ -799,7 +799,7 @@ export interface RosterEmployee {
   /** Null until the employee's own device generates one and sends the public half. */
   wrappingPublicKey: Hex | null;
   /**
-   * WHO HANDED THE ADDRESS OVER, AND WHO ACCEPTED IT ONTO THE ROSTER. A-10.
+   * WHO HANDED THE ADDRESS OVER, AND WHO ACCEPTED IT ONTO THE ROSTER.
    *
    * Sealed with the rest, and recorded because **`admit` is the moment the
    * address of record is set** and it used to leave no trace of itself at all.
@@ -827,8 +827,7 @@ export interface RosterEmployee {
    * One value carrying both keys — who may spend, and who may ever SEE the
    * payment. It is **produced by the employee's own device or their own wallet**
    * and handed over through the account's drop box; there is nowhere in this
-   * product for an operator to type one, and that absence is the feature. `C7`,
-   * `V-78` option 3.
+   * product for an operator to type one, and that absence is the feature.
    *
    * Null until they have handed one over. **Null is not payable** — see `C9`:
    * an address on file is not the same as somebody who can reach what is sent
@@ -841,9 +840,9 @@ export interface RosterEmployee {
    * our database a fact the ledger deliberately does not have.
    *
    * **`Payee` AND NOT `PayeeAddress` SINCE `S12`, AND THE WIDENING IS THE ROUND.**
-   * `C250`, `V-105`. The roster records whichever kind of address a person's
-   * own wallet produced, because `payeeOf` reads the kind off the string and
-   * there is nothing to ask anybody. **It does NOT follow that anybody can be
+   * The roster records whichever kind of address a person's own wallet
+   * produced, because `payeeOf` reads the kind off the string and there is
+   * nothing to ask anybody. **It does NOT follow that anybody can be
    * paid publicly from a run**: `payrollPayee` in `movement.ts` refuses a
    * public payee on the payroll path, so the widening is a door and the refusal
    * is a separate rule sitting behind it. `paymentFactsFor` still returns
@@ -903,7 +902,7 @@ export interface SealedEmployee {
 
 export interface Invite {
   /**
-   * **THE HASH OF THE TOKEN, NOT THE TOKEN.** A-7.
+   * **THE HASH OF THE TOKEN, NOT THE TOKEN.**
    *
    * This used to be the credential itself, sitting in a table any database
    * backup carries. Every audit of this flow has circled the same fact: an
@@ -919,7 +918,7 @@ export interface Invite {
    * An earlier version of this said the raw token exists only in the message
    * sent to the person it is for. It does not — the delivery port holds every
    * token it has been given, in memory, for the life of the process, with the
-   * name and email beside it. That is a real retention and it is `C8`'s, not
+   * name and email beside it. That is a real retention and it is not
    * this field's. **And since the offer is sealed to it, a retained token is no
    * longer just a bearer credential: it is the key to a salary.**
    */
@@ -942,7 +941,7 @@ export interface Invite {
   role?: Role;
   createdAt: string;
   /**
-   * WHO MINTED THIS TOKEN. A-10.
+   * WHO MINTED THIS TOKEN.
    *
    * An invite is a bearer token, and there is no mailer in this product — the
    * operator who creates one delivers it by hand, so they see it. That cannot
@@ -955,7 +954,7 @@ export interface Invite {
    */
   createdBy?: string | null;
   /**
-   * **WHEN THIS OFFER STOPS BEING ONE.** `X12` §3,
+   * **WHEN THIS OFFER STOPS BEING ONE.**
    * `docs/scope-invitations.md` §8 and §9.
    *
    * *"An offer that never expires is a salary waiting for whoever eventually
@@ -972,7 +971,7 @@ export interface Invite {
    */
   expiresAt?: string;
   /**
-   * **WHEN IT WAS TAKEN BACK.** `X12` §3, `docs/scope-invitations.md` §8.
+   * **WHEN IT WAS TAKEN BACK.** `docs/scope-invitations.md` §8.
    *
    * A hire falls through after the link has been sent, and until this there was
    * no way to take it back: the link kept working, and whoever held it could
@@ -982,7 +981,7 @@ export interface Invite {
   revokedAt?: string;
   acceptedAt?: string;
   /*
-   * `acceptedBy` USED TO BE HERE AND WAS A LEAK. Removed 17 Aug, A-11.
+   * `acceptedBy` USED TO BE HERE AND WAS A LEAK.
    *
    * An invite carries `accountId` in the clear — it has to, to be found. Putting
    * the redeeming USER beside it meant one join from `users.name` and
@@ -998,7 +997,7 @@ export interface Invite {
   /** The roster entry this points at. The one copy of everything private. */
   subjectId?: string;
   /**
-   * WHAT THE PERSON IS BEING OFFERED, SEALED TO THE TOKEN ITSELF. A-7.
+   * WHAT THE PERSON IS BEING OFFERED, SEALED TO THE TOKEN ITSELF.
    *
    * An invitee cannot read the roster — it is sealed under the company's viewing
    * key and they must never hold one. So they had nothing to look at before
@@ -1203,9 +1202,8 @@ export interface RunSkip {
   employeeId: string;
   name: string;
   /**
-   * **TWO STATES, NAMED SEPARATELY AND NEVER MERGED.** `A-2`, and it is `B15`'s
-   * lesson: "outstanding" that covers two different situations is how an
-   * operator stops looking.
+   * **TWO STATES, NAMED SEPARATELY AND NEVER MERGED.** "outstanding" that
+   * covers two different situations is how an operator stops looking.
    *
    *   `them`  they have handed nothing over — the invitation is with them
    *   `us`    their drop box is full and an admin has not admitted them
@@ -1304,7 +1302,7 @@ export interface RunPayout {
 
 /** What an auditor receives. Proves a statement without carrying the underlying data. */
 /**
- * A payroll run as the SERVER holds it. S-9, second half.
+ * A payroll run as the SERVER holds it.
  *
  * Sealing the roster closed one table and left this one open: `employees[]` and
  * `total` are a SECOND copy of the same salaries, written when a run is created.
@@ -1387,10 +1385,10 @@ export interface Attestation {
  * it. **That last case is `C382`'s own shape and this record cannot close it**;
  * closing it needs a per-account index of signature digests that survives
  * cancellation, which is a new sealed artefact re-creating exactly the
- * approval history `cancel` erases on purpose. `BACKLOG.md` `T-319`.
+ * approval history `cancel` erases on purpose.
  *
  * **BOUNDED, BECAUSE A MEMBER CAN CAUSE THESE — AND BOTH FIELDS ARE BOUNDED,
- * WHICH THIS SENTENCE DENIED UNTIL `S58`.** `T-335`(3).
+ * WHICH THIS SENTENCE DENIED UNTIL `S58`.**
  * It said *`count` is every attempt ever refused against this round*, and that
  * is FALSE at source: `refuseApproval` returns at `REFUSED_APPROVALS_KEPT`
  * without writing, and the increment sits past that return, so **`count`
@@ -1441,7 +1439,7 @@ export interface Proposal {
    */
   refusedApprovals?: { count: number; recent: RefusedApproval[] };
   /**
-   * **WHEN THIS SERVICE ESTABLISHED THAT THE ROUND IS ON CHAIN.** `C378`,
+   * **WHEN THIS SERVICE ESTABLISHED THAT THE ROUND IS ON CHAIN.**
    * The ledger's own `TxRef.at` when the propose call returned;
    * the moment of the read when a later `confirmRaised` found the round in
    * `openProposals` instead.
@@ -1489,7 +1487,7 @@ export interface Proposal {
    * records are sealed and a migration that guessed a role would be writing
    * the one value this field exists to stop being guessed.
    *
-   * **AND UNDER RULE 27, WHAT MAKES THE STORED ROLE AND THE LIVE ROLE AGREE
+   * **AND WHAT MAKES THE STORED ROLE AND THE LIVE ROLE AGREE
    * TODAY IS THAT NOTHING CAN CHANGE A ROLE.** A role is set at
    * `POST /api/accounts` and at the signer-invite door and nowhere else; there
    * is no demotion door in this product. **The day one exists, a round raised

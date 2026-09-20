@@ -105,14 +105,14 @@ function harness() {
 /**
  * Gives somebody a sign-in, so they can redeem their own invite.
  *
- * A-11: `admit` checks that whoever redeemed the invite is signed in as the
+ * `admit` checks that whoever redeemed the invite is signed in as the
  * person the company said it was hiring. A test that skipped that would be
  * asserting against a roster state the product cannot produce.
  */
 const signIn = (h: { store: { putUser: (u: any) => void } }, email: string, name = email) => {
   const id = 'usr_' + email.replace(/[^a-z0-9]/gi, '_');
   h.store.putUser({
-    /* `PI4b`: `authHash: ''` and `authSalt: ''` were here and the empty strings
+    /* `authHash: ''` and `authSalt: ''` were here and the empty strings
      * were the tell — this fixture never had a password to hash. Both fields
      * are deleted from `User`. */
     id, email, name, keyBundle: null,
@@ -375,7 +375,7 @@ describe('payroll and disclosure', () => {
 
   /**
    * **THE REFUSAL USED TO SAY *"cannot attest an unsettled run"*, AND `S47`
-   * CHANGED THE SENTENCE RATHER THAN THE BEHAVIOUR.** `T-217` `F10`.
+   * CHANGED THE SENTENCE RATHER THAN THE BEHAVIOUR.**
    *
    * That wording describes a RUN, as though settling one were a step somebody
    * could go and take. It is not: `run.status` is assigned in exactly two
@@ -388,7 +388,7 @@ describe('payroll and disclosure', () => {
    * half rather than a string check: the day something assigns `'settled'`,
    * the second expectation goes red and the sentences above it — in
    * `payroll.ts`, in the three routes and on the screen — have to be revisited
-   * in the same round. Rule 14's own instrument.
+   * in the same round.
    */
   it('will not attest a run that has not settled, because nothing can settle one', async () => {
     const s = await setup();
@@ -468,7 +468,7 @@ describe('onboarding', () => {
       .toThrow(/no wrapped key/);
 
     /*
-     * M-69/M-37. Granting access to a LIVE account is an approval round, not a
+     * Granting access to a LIVE account is an approval round, not a
      * single call: the account already has as many signers as its threshold, so
      * one existing signer adding another freely would make the threshold
      * decorative. Propose the signer, reach the threshold, then grant.
@@ -526,7 +526,7 @@ describe('onboarding', () => {
       { coinPublicKey: '31'.repeat(32), encryptionPublicKey: '32'.repeat(32) }, 'undeployed');
 
     /*
-     * ACCEPTING IS NOT BEING ADMITTED. A-2, and it is `C9`'s gate.
+     * ACCEPTING IS NOT BEING ADMITTED.
      *
      * What the employee hands over goes into the account's drop box, sealed to
      * a key they do not hold. They stay pending — an address on file is not the
@@ -1528,7 +1528,7 @@ describe('onboarding', () => {
 
   /**
    * **AN ADDRESS THAT COMES BACK OUT OF THE SEAL IS A PARSED ONE, NOT A REVIVED
-   * OBJECT.** `A-1`.
+   * OBJECT.**
    *
    * `openRecord` returns JSON and `PayeeAddress`'s brand is a compile-time
    * symbol, so what comes back type-checks as an address and, before this, was
@@ -2217,7 +2217,6 @@ describe('the approval round, as the chain enforces it', () => {
   /*
    * ───────────────────────────────────────────────────────────────────────────
    * **WHAT REPLACED `publicView().settlements`, AND WHY A TEST HAD TO.**
-   * `C313`, `C286`, rule 27.
    *
    * `publicView` is the evidence behind *a public observer learns nothing*, and
    * until `S29` it answered with `settlements: []` — an array `settleRound`
@@ -2250,8 +2249,7 @@ describe('the approval round, as the chain enforces it', () => {
   describe('the public observer view carries nothing denominated in money', () => {
     /*
      * **THE ALLOW-LIST IS THE POINT, AND THE FIRST VERSION OF THIS WALKER DID
-     * NOT HAVE ONE.** `S29`, caught by this round's own two auditors, both of
-     * which measured the same hole independently.
+     * NOT HAVE ONE.**
      *
      * It flagged `bigint`, and fields literally named `amount` or `asset`. So
      * it fired on the shape the deleted `settlements` had, and on nothing else:
@@ -2512,7 +2510,7 @@ describe('granting access puts the signer in the on-chain set', () => {
   });
 
   it('refuses to seat a signer on a live account without an approved round', async () => {
-    // M-37. One existing signer adding signers freely makes the threshold
+    // One existing signer adding signers freely makes the threshold
     // decorative: a single stolen key could manufacture as many approvers as it
     // liked, then approve anything M times alone.
     const c = await h.accounts.create('Acme', [THREE_SIGNERS[0]], 1);
@@ -2874,7 +2872,7 @@ describe('M-96: what the ACCOUNTS table leaves in the store', () => {
      */
     const { h, c, blake, pending } = await company();
     /*
-     * A KEYED WRITE STOOD HERE and there is no longer one to make. `C292`,
+     * A KEYED WRITE STOOD HERE and there is no longer one to make.
      * It was `accounts.deposit`, the simplest thing that routed through
      * `sealAccount`, and the account keeps no balance to deposit into.
      *
