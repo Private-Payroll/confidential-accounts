@@ -1,23 +1,23 @@
 /**
  * **THE FIRST TIME THIS PRODUCT'S SERVICE LAYER MEETS A REAL BINDING.**
- * `S43`, board row `2y7e`.
  *
  * ── WHY THIS FILE EXISTS, AND IT IS NOT THE SIXTEEN BYTES ────────────────────
  *
- * `C371` was that `StateChange.salt` came off `newNonce()` at sixteen bytes
- * while `proposalIdOf` argument 3 and `changeCommitmentOf` argument 4 are both
- * `Bytes<32>` and refuse anything else. That is one word to fix. **What it cost
- * was the belief that `AccountService` had ever been exercised against the
- * contract, and it cost the whole of that belief**: `scripts/deploy-preview.ts`
- * never calls `AccountService`, and every test that reaches a real binding
- * hand-builds its own 32-byte constant, so the defect was green everywhere for
- * as long as it existed.
+ * THE DEFECT WAS THAT `StateChange.salt` came off `newNonce()` at sixteen
+ * bytes while `proposalIdOf` argument 3 and `changeCommitmentOf` argument 4
+ * are both `Bytes<32>` and refuse anything else. That is one word to fix.
+ * **What it cost was the belief that `AccountService` had ever been exercised
+ * against the contract, and it cost the whole of that belief**:
+ * `scripts/deploy-preview.ts` never calls `AccountService`, and every test
+ * that reaches a real binding hand-builds its own 32-byte constant, so the
+ * defect was green everywhere for as long as it existed.
  *
  * **THE DISTINCTION THIS FILE IS BUILT ON: NOT ONE VALUE UNDER TEST HERE IS
  * WRITTEN BY THIS FILE.** A test that constructs its own salt proves nothing —
- * that is what every existing test does and it is why `C371` lived. Every
- * `Bytes<32>` below is read off an object `AccountService` produced on the code
- * path a customer's request takes, and then handed to a generated circuit.
+ * that is what every existing test does and it is why the defect lived. Every
+ * `Bytes<32>` below is read off an object `AccountService` produced on the
+ * code path a customer's request takes, and then handed to a generated
+ * circuit.
  * **TWO VALUES ARE THIS FILE'S OWN, AND BOTH ARE NAMED WHERE THEY ARE USED:**
  * the account-level asset blinding (`ACCOUNT_BLINDING` below — not part of a
  * `StateChange`, and unreachable from outside the Midnight private-state
@@ -25,16 +25,15 @@
  * is a statement about the boundary rather than about the service. The entry
  * amount in `aRoundTheProductRaised` is also this file's, and it is not a
  * `Bytes<32>` — it is `changeCommitmentOf` argument 2, a `Uint<128>`, whose
- * range this file does NOT pin. `S43`'s test-coverage pass found that sentence
- * overclaiming with two exceptions where there are three, and it is corrected
- * here rather than argued with.
+ * range this file does NOT pin. That sentence used to claim two exceptions
+ * where there are three, and it is corrected here rather than argued with.
  *
  * ── WHAT WAS DELIBERATELY NOT HERE, AND IS NOW THE LAST TEST ─────────────────
  *
- * `S43` wrote, under this heading: *"the governance payload hash is a SEPARATE
- * defect and this file does not cover it"*. That defect is `C373` and `S44`
- * closed it, so the paragraph is replaced rather than left standing as a
- * warning about something that no longer holds.
+ * This heading used to read: *"the governance payload hash is a SEPARATE
+ * defect and this file does not cover it"*. That defect is closed, so the
+ * paragraph is replaced rather than left standing as a warning about something
+ * that no longer holds.
  *
  * **`AccountService` computed `signerAddPayload` and its three siblings with
  * `src/core/ledger.ts`'s `sha256` and handed the result across the Midnight
@@ -51,8 +50,8 @@
  * `setThreshold`, `amendSigner` and `setVaultThreshold`, at the END of the
  * round, after the approvals and the fees.
  *
- * The first three tests below use a TRANSFER, which is the path that carries no
- * such mismatch: since `C292` removed `execute`, no circuit reopens a transfer
+ * The first three tests below use a TRANSFER, which is the path that carries
+ * no such mismatch: with `execute` gone, no circuit reopens a transfer
  * proposal's payload.
  *
  * ── WHAT IT RUNS ON ──────────────────────────────────────────────────────────
@@ -83,7 +82,10 @@ import {
   PROPOSAL_SALT_BYTES, type Hex,
 } from '../../src/core/crypto.js';
 
-/** The MIDNIGHT scheme, against a simulated ledger. `what-a-signer-is.test.ts:188-191`. */
+/**
+ * The MIDNIGHT scheme, against a simulated ledger.
+ * `what-a-signer-is.test.ts:189-192`.
+ */
 const service = () => new AccountService(
   new FileStore(join(mkdtempSync(join(tmpdir(), 'mn-s43-')), 'db.json')),
   new SimulatedLedger(MidnightCommitments),
@@ -134,8 +136,8 @@ async function aRoundTheProductRaised() {
   /*
    * A blocked proposal never reaches the ledger (`src/core/account.ts:2323`).
    *
-   * **IT DOES NOT MAKE THE ASSERTIONS BELOW VACUOUS, WHICH IS WHAT THIS COMMENT
-   * SAID UNTIL `S43`'S test-coverage pass CHECKED IT** — every value they read is
+   * **IT DOES NOT MAKE THE ASSERTIONS BELOW VACUOUS, WHICH IS WHAT THIS
+   * COMMENT CLAIMED BEFORE ANYBODY CHECKED IT** — every value they read is
    * built at `:2241-2272`, above the `if (!verdict.blocked)` branch, and no
    * test in this file reads the ledger. The guard is kept because a round the
    * product refused to relay is not the round these tests claim to be about,
@@ -164,8 +166,8 @@ async function aRoundTheProductRaised() {
  * So it is read off the ONE argument list the service passes outward. This
  * subclass overrides nothing but the recording — `super.propose` does the work
  * — and it writes no value of its own, which is this file's whole rule.
- * Constructing a change here instead would prove what `C371` proved nothing
- * about: that a test can build a legal one.
+ * Constructing a change here instead would prove only what was already known:
+ * that a test can build a legal one.
  */
 class RecordingLedger extends SimulatedLedger {
   readonly raised: Array<{ payloadHash: Hex; change: StateChange; vault: Hex }> = [];
@@ -181,7 +183,7 @@ class RecordingLedger extends SimulatedLedger {
 describe('the service layer meets the chain', () => {
   it('the salt on a change the SERVICE built is thirty-two bytes, and both bindings take it', async () => {
     /*
-     * **`C371`'S GUARD.** Before `S43` this test failed at
+     * **THE GUARD ON THE SALT'S WIDTH.** Before the fix this test failed at
      * `AccountService.propose` itself — `:2272` calls
      * `MidnightCommitments.proposalId`, which is `pureCircuits.proposalIdOf`,
      * and the binding threw a `typeError` naming argument 3 and `Bytes<32>`
@@ -193,15 +195,14 @@ describe('the service layer meets the chain', () => {
     const { proposal, change } = await aRoundTheProductRaised();
 
     /*
-     * **THE LITERAL, NOT `PROPOSAL_SALT_BYTES`, AND THE DIFFERENCE IS THE WHOLE
-     * VALUE OF THIS LINE.** Against the constant this is the same number on
-     * both sides of an equals — an edit to `PROPOSAL_SALT_BYTES` moves the
-     * salt and the assertion together and the line stays green. `S43`'s
-     * money-safety pass and its test-coverage pass found this independently,
-     * and it matters beyond this file: `2y7g` will mutate that constant, and
-     * against a self-referential assertion the catch belongs to the generated
-     * binding rather than to anything this round wrote. Thirty-two is the
-     * contract's number and is written as the contract's number.
+     * **THE LITERAL, NOT `PROPOSAL_SALT_BYTES`, AND THE DIFFERENCE IS THE
+     * WHOLE VALUE OF THIS LINE.** Against the constant this is the same number
+     * on both sides of an equals — an edit to `PROPOSAL_SALT_BYTES` moves the
+     * salt and the assertion together and the line stays green. It matters
+     * beyond this file: against a self-referential assertion the catch would
+     * belong to the generated binding rather than to anything written here.
+     * Thirty-two is the contract's number and is written as the contract's
+     * number.
      */
     expect(fromHex(change.salt)).toHaveLength(32);
 
@@ -214,11 +215,11 @@ describe('the service layer meets the chain', () => {
     const id = pureCircuits.proposalIdOf(
       fromHex(proposal.digest), fromHex(proposal.vault), fromHex(change.salt));
 
-    /* And the service's own answer is the circuit's, not a second derivation
-     * of it — `M-128`'s rule, asked of a value the service produced. This one
-     * is not a tautology: `MidnightCommitments.proposalId` REORDERS its
-     * arguments into the circuit's positional order
-     * (`src/midnight/commitments.ts:198-201`), and a swap lands here. */
+    /* And the service's own answer is the circuit's, asked of a value the
+     * service produced, and not a second derivation of it. This one is not a
+     * tautology: `MidnightCommitments.proposalId` REORDERS its arguments into
+     * the circuit's positional order (`src/midnight/commitments.ts:198-201`),
+     * and a swap lands here. */
     expect(toHex(id)).toBe(proposal.chainId);
 
     pureCircuits.changeCommitmentOf(
@@ -231,10 +232,10 @@ describe('the service layer meets the chain', () => {
 
   it('and the CONTRACT writes the round under the id the service computed', async () => {
     /*
-     * **THE STRONGER HALF, AND THE ONE THAT WOULD HAVE CAUGHT `C371` EVEN IF
-     * THE WIDTH HAD BEEN LEGAL.** Above, the service's values go into two PURE
-     * circuits. Here the same four values — asset, amount, batch digest, salt —
-     * are loaded into a proposer's device state and driven through the real
+     * **THE STRONGER HALF, AND THE ONE THAT WOULD HAVE CAUGHT THE SALT EVEN IF
+     * ITS WIDTH HAD BEEN LEGAL.** Above, the service's values go into two PURE
+     * circuits. Here the same four values — asset, amount, batch digest, salt
+     * — are loaded into a proposer's device state and driven through the real
      * impure `propose` circuit against real ledger state, and the question
      * asked of the contract is the one that matters: **is the round open under
      * the id the service told its user it would be?**
@@ -265,10 +266,10 @@ describe('the service layer meets the chain', () => {
     const device = {
       ...privateStateFor(9),
       /* **THE SAME BLINDING BOTH HALVES OF THIS FILE USE.** It was
-       * `privateStateFor(9)`'s until `S43`'s test-coverage pass pointed out that
-       * the file then held two different account blindings and never compared
-       * them — so the change commitment the circuit stores could not be checked
-       * against the one the service's own material produces. */
+       * `privateStateFor(9)`'s until it was noticed that the file then held two
+       * different account blindings and never compared them — so the change
+       * commitment the circuit stores could not be checked against the one the
+       * service's own material produces. */
       assetBlinding: fromHex(ACCOUNT_BLINDING),
       secretKey: fromHex(mine.signingSecret),
       blinding: fromHex(mine.blinding),
@@ -282,8 +283,8 @@ describe('the service layer meets the chain', () => {
     /* The SERVICE's vault, not `sim.propose`'s default. The two are the same
      * value today — both are the contract's `noVault()` — so taking the default
      * worked by a coincidence rather than by the test using what the service
-     * chose. `S43`'s test-coverage pass: it was the one argument of four that did
-     * not come from the service. */
+     * chose. It was the one argument of four that did not come from the
+     * service. */
     await sim.as(device).propose(fromHex(proposal.digest), fromHex(proposal.vault));
 
     expect(sim.isOpen(fromHex(proposal.chainId))).toBe(true);
@@ -299,7 +300,7 @@ describe('the service layer meets the chain', () => {
      * because every approval gathered against a disagreeing round is unusable.
      * Without this line a mismatch between the service's asset key, amount or
      * batch digest and the chain's would throw in production and leave this
-     * file green. `S43`'s test-coverage pass found that gap.
+     * file green.
      */
     expect(toHex(sim.ledger.openProposals.lookup(fromHex(proposal.chainId)))).toBe(
       MidnightCommitments.changeCommitment(
@@ -313,15 +314,15 @@ describe('the service layer meets the chain', () => {
 
   it('everything else that change carries into a binding, measured', async () => {
     /*
-     * **THE MEASUREMENT `2y7e` WAS RUN FOR, WRITTEN AS ASSERTIONS SO IT CANNOT
-     * GO STALE.** The brief asked what ELSE this path carries into a binding
-     * and whether each survives, because a second `C371` found after row `3` is
-     * a second redeploy. Every value below is read off the service's change or
-     * its proposal; every width is the one the generated argument check demands
-     * at `contracts/managed/contract/index.js:4207`, `:4221`, `:4228`, `:4247`,
-     * `:4254`, `:4261`.
+     * **THE MEASUREMENT, WRITTEN AS ASSERTIONS SO IT CANNOT GO STALE.** The
+     * question was what ELSE this path carries into a binding and whether each
+     * survives, because a second width mismatch found after the deploy is a
+     * second redeploy. Every value below is read off the service's change or
+     * its proposal; every width is the one the generated argument check
+     * demands at `contracts/managed/contract/index.js:4207`, `:4221`, `:4228`,
+     * `:4247`, `:4254`, `:4261`.
      *
-     * The answer this round got: **the salt was the only one.**
+     * The answer: **the salt was the only one.**
      */
     const { proposal, change } = await aRoundTheProductRaised();
 
@@ -358,27 +359,25 @@ describe('the service layer meets the chain', () => {
      * produces it. **A REAL vault address is measured by nothing, here or
      * anywhere** — `src/core/account.ts:2209-2210` says no product caller
      * passes one, and there is no deploy path that produces one. The day there
-     * is, argument 2 is the next candidate for `C371`'s shape, and this file
-     * did not cover it.
+     * is, argument 2 is the next candidate for the same shape, and this file
+     * does not cover it.
      */
     expect(fromHex(proposal.vault)).toHaveLength(32);
 
     /*
-     * **`changeCommitmentOf` ARGUMENT 2 IS A RANGE, NOT A WIDTH.** `S43` wrote
-     * the gap here rather than covering it, because whether an out-of-range
-     * entry amount is REACHABLE is a question about the entry writers and not
-     * about this boundary. **`S46` had that traced and it is answered below.**
+     * **`changeCommitmentOf` ARGUMENT 2 IS A RANGE, NOT A WIDTH.** The gap was
+     * written here rather than covered, because whether an out-of-range entry
+     * amount is REACHABLE is a question about the entry writers and not about
+     * this boundary. **It has since been traced and it is answered below.**
      */
     expect(typeof change.amount).toBe('bigint');
   });
 
   it('the range is refused where the change is BUILT, not left to the binding', () => {
     /*
-     * **`T-205`, SETTLED. `S46`, and the trace is its money-safety pass's.**
-     *
-     * **THE ANSWER TO `S43`'s QUESTION: over-ceiling was REACHABLE, negative was
-     * not.** The live door is the plug-in one — `POST /api/accounts/:id/plugins`
-     * takes `perProposal` as a string through `parseAmount`
+     * **THE ANSWER: over-ceiling was REACHABLE, negative was not.** The live
+     * door is the plug-in one — `POST /api/accounts/:id/plugins` takes
+     * `perProposal` as a string through `parseAmount`
      * (`src/server/index.ts:1482`), **which imposes no maximum**
      * (`src/core/assets.ts:253-269`), so the only ceiling on the path was a
      * number the same caller set; `POST /api/plugin/propose`
@@ -390,12 +389,13 @@ describe('the service layer meets the chain', () => {
      *
      * **AND THE FAILURE WAS SILENT ON THE WIRING THE PRODUCT RUNS.**
      * `src/wiring/selection.ts:144` selects the simulated scheme, which HMACs
-     * the decimal string (`src/core/ledger.ts:2106-2110`) and takes a bigint of
-     * any magnitude — so the round opens, collects approvals, and names a change
-     * no contract can reproduce. That is `C375`'s state reached through a second
-     * door. On the Midnight wiring it is loud instead, at the `changeAmount`
-     * witness range check (`contracts/managed/contract/index.js:1380`), before
-     * anything is submitted.
+     * the decimal string (`src/core/ledger.ts:2106-2110`) and takes a bigint
+     * of any magnitude — so the round opens, collects approvals, and names a
+     * change no contract can reproduce: an approved round nothing can settle,
+     * reached through a second door. On the Midnight wiring it is loud
+     * instead, at the `changeAmount` witness range check
+     * (`contracts/managed/contract/index.js:1380`), before anything is
+     * submitted.
      *
      * **THE GUARD IS AT THE BUILD SITE, WHICH IS `newProposalSalt`'s SHAPE**
      * (`src/core/crypto.ts:141-146`) — not at either consumer, because by the
@@ -428,7 +428,7 @@ describe('the service layer meets the chain', () => {
 
   it('a sixteen-byte salt is refused by the binding, loudly, naming the argument', async () => {
     /*
-     * **`C371` ITSELF, PINNED — the refusal the product would have met the
+     * **THE DEFECT ITSELF, PINNED — the refusal the product would have met the
      * first time it raised any round on a real chain.**
      *
      * This is the one place in the file that writes its own value, and it
@@ -441,9 +441,9 @@ describe('the service layer meets the chain', () => {
     /*
      * **THE MATCHERS NAME THE ARGUMENT, BECAUSE THIS TEST'S TITLE DOES.**
      * `/Bytes<32>/` alone matches arguments 1, 2 and 3 of `proposalIdOf`
-     * identically — measured by `S43`'s test-coverage pass — so a regression that
-     * narrowed `commit()` instead of the salt would leave this test green
-     * under a name claiming it pinned the salt's refusal.
+     * identically, measured rather than assumed, so a regression that narrowed
+     * `commit()` instead of the salt would leave this test green under a name
+     * claiming it pinned the salt's refusal.
      */
     expect(() => pureCircuits.proposalIdOf(
       fromHex(proposal.digest), fromHex(proposal.vault), randomBytes(16),
@@ -460,7 +460,7 @@ describe('the service layer meets the chain', () => {
   /**
    * A GOVERNANCE ROUND, DRIVEN FROM `AccountService` TO THE CIRCUIT
    * THAT CONSUMES ITS PAYLOAD — WHICH IS THE ONLY PLACE THE DEFECT WAS
-   * VISIBLE.** `S44`, board row `2y7f`.
+   * VISIBLE.**
    *
    * **THE SHAPE OF THIS TEST IS THE FINDING.** The client named what was being
    * approved with `sha256` over a colon-joined string; the contract re-derives
@@ -487,12 +487,12 @@ describe('the service layer meets the chain', () => {
    *    where the round died: approvals collected, fees spent, and
    *    *"that proposal is not for this threshold"*.
    *
-   * **`setThreshold` RATHER THAN `amendSigner`, AND THE BRIEF ALLOWED EITHER.**
+   * **`setThreshold` RATHER THAN `amendSigner`, AND EITHER WOULD HAVE DONE.**
    * Both consume a payload the same way; this one needs no invitation flow to
    * reach, so the test is about the boundary rather than about a fixture.
    * `removeSigner` and `setThreshold` are also the two rounds an account uses
-   * to recover from a lost or compromised signer, which is what makes `C373`
-   * a `P0` on an account holding no money.
+   * to recover from a lost or compromised signer, which is what made this
+   * defect serious even on an account holding no money.
    *
    * **WHICH VALUES COME FROM `AccountService`, NAMED SO NOBODY HAS TO TRACE
    * THEM:** the payload hash (`proposal.digest`), the proposal's id
@@ -500,18 +500,17 @@ describe('the service layer meets the chain', () => {
    * salt, asset, amount and batch digest — every one read off the service's own
    * objects or off the argument list it passed its ledger.
    *
-   * **WHAT THE TEST WRITES ITSELF IS FIVE THINGS, NOT THREE — COUNTED AFTER
-   * `S44`'s test-coverage pass COUNTED IT, WHICH IS THE SAME CORRECTION `S43` HAD
-   * TO MAKE TO THIS FILE'S HEADER.** (1) `NEW_THRESHOLD`, the number the round
-   * is about and the number the circuit is asked for — taking it from the
-   * service would compare the service to itself. (2) The FOUNDING threshold
-   * `1` passed to `create`: if it equalled `NEW_THRESHOLD`,
-   * `account.ts:1200` refuses *"the threshold is already 2"* and the case dies
-   * in its fixture. (3) The two-signer roster, which is what gets past
-   * `account.ts:1192` — the SERVICE-side guard, read off `SimulatedLedger`.
-   * (4) The founding device `privateStateFor(9)`, whose seat plus the one
-   * `seatLeaf` below is what gets past the CONTRACT's guard,
-   * `ConfidentialAccount.compact:2029` — two seats on two different ledgers
+   * **WHAT THE TEST WRITES ITSELF IS FIVE THINGS, NOT THREE — COUNTED RATHER
+   * THAN ESTIMATED, WHICH IS THE SAME CORRECTION THIS FILE'S HEADER NEEDED.**
+   * (1) `NEW_THRESHOLD`, the number the round is about and the number the
+   * circuit is asked for — taking it from the service would compare the
+   * service to itself. (2) The FOUNDING threshold `1` passed to `create`: if
+   * it equalled `NEW_THRESHOLD`, `account.ts:1200` refuses *"the threshold is
+   * already 2"* and the case dies in its fixture. (3) The two-signer roster,
+   * which is what gets past `account.ts:1192` — the SERVICE-side guard, read
+   * off `SimulatedLedger`. (4) The founding device `privateStateFor(9)`, whose
+   * seat plus the one `seatLeaf` below is what gets past the CONTRACT's guard,
+   * `ConfidentialAccount.compact:2025` — two seats on two different ledgers
    * for two different reasons, and only one of them is the service's. (5) The
    * seed `44`.
    */
@@ -526,7 +525,8 @@ describe('the service layer meets the chain', () => {
 
       /* Two signers so the ledger holds two seats: `proposeThresholdChange`
        * refuses a threshold above the seated count (`account.ts:1192`), which
-       * is the M-37 guard read off the chain rather than off our roster. */
+       * is the seat-count guard read off the chain rather than off our
+       * roster. */
       const created = await accounts.create(
         'Northwind Ltd',
         [{ name: 'Ada', role: 'admin' }, { name: 'Blake', role: 'approver' }],
@@ -553,8 +553,9 @@ describe('the service layer meets the chain', () => {
        * Written as the circuit call rather than as
        * `MidnightCommitments.signerThresholdPayload(...)`, which would compare
        * the adapter to itself. This is the one line that would have failed on
-       * the day `C373` was written, and it is the cheapest of the three checks
-       * here — kept because the two below it need a whole chain to say it.
+       * the day the defect was written, and it is the cheapest of the three
+       * checks here — kept because the two below it need a whole chain to say
+       * it.
        */
       expect(proposal.digest)
         .toBe(toHex(pureCircuits.setThresholdPayload(BigInt(NEW_THRESHOLD))));
@@ -588,8 +589,8 @@ describe('the service layer meets the chain', () => {
       /*
        * **HALF TWO: THE CIRCUIT THAT CONSUMES THE PAYLOAD.** `requireApproved`
        * passes first, so a refusal here is about what is being approved and
-       * nothing else. Under `C373` this threw *"that proposal is not for this
-       * threshold"* — with the round open, approved and paid for.
+       * nothing else. Under the defect this threw *"that proposal is not for
+       * this threshold"* — with the round open, approved and paid for.
        */
       await sim.as(device).setThreshold(BigInt(NEW_THRESHOLD), fromHex(proposal.chainId));
 

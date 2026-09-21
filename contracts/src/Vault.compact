@@ -2,7 +2,7 @@ pragma language_version 0.26.0;
 import CompactStandardLibrary;
 
 /*
- * THE VAULT. V-1, V-32, V-41, V-43.
+ * THE VAULT.
  *
  * It holds the money. It decides nothing.
  *
@@ -19,10 +19,10 @@ import CompactStandardLibrary;
  * WHY THE VAULT CALLS THE ACCOUNT AND NEVER THE OTHER WAY ROUND
  *
  * A cross-contract callee may not read a witness — the compiler permits it and
- * the runtime refuses it at execution (V-39, proved rather than read). A vault
- * that holds its coins privately reads a witness to spend one, so the circuits
- * that spend one can never be callees, and the direction of every call here is
- * forced by that rather than chosen.
+ * the runtime refuses it at execution, which is proved rather than read. A
+ * vault that holds its coins privately reads a witness to spend one, so the
+ * circuits that spend one can never be callees, and the direction of every
+ * call here is forced by that rather than chosen.
  *
  * AND THE RULE IS PER CIRCUIT, NOT PER CONTRACT. This paragraph used to end "So
  * a vault can never be a callee", which is a stronger platform claim than the
@@ -33,9 +33,9 @@ import CompactStandardLibrary;
  * `contracts/probe-out-vault4/callee-per-circuit/`. `noteToSpend` is this file's
  * only witness (`:236`) and only `payout` (via `:617`) and `splitNote` (via
  * `:892`) invoke it; every other exported circuit here invokes none and could be
- * a callee today. The direction of the arrows is still right — it is forced for
- * the two circuits that matter — but it is forced for those two, and this
- * paragraph claimed it for all of them. Found by S23's fact check.
+ * a callee today. The direction of the arrows is still right — it is forced
+ * for the two circuits that matter — but it is forced for those two, and this
+ * paragraph claimed it for all of them.
  *
  * The same rule is why `recordPayment` on the account takes so many arguments:
  * everything it checks has to be passed in, and passing it in makes it public.
@@ -45,11 +45,11 @@ import CompactStandardLibrary;
  * ------------------------------------------------------------------------
  * WHY THE ACCOUNT IS PINNED IN LEDGER STATE
  *
- * V-37. Compact cannot create a contract reference, so one arrives from
- * application code. If the account were an ARGUMENT to `payout`, whoever calls
- * the vault would choose which contract it asks whether a payment was approved
- * — and an attacker's contract answers "approved, pay me". The vault would pay,
- * out of a real customer's money, having checked everything correctly.
+ * Compact cannot create a contract reference, so one arrives from application
+ * code. If the account were an ARGUMENT to `payout`, whoever calls the vault
+ * would choose which contract it asks whether a payment was approved — and an
+ * attacker's contract answers "approved, pay me". The vault would pay, out of
+ * a real customer's money, having checked everything correctly.
  *
  * So the account is fixed when the vault is created. IT CANNOT BE REDIRECTED
  * TODAY BECAUSE NO CIRCUIT IN THIS FILE WRITES `account` — the constructor at
@@ -59,17 +59,15 @@ import CompactStandardLibrary;
  * (`midnight-src/compact/test-center/composable/Recursion/Mutual/A.compact:25-27`,
  * asserted at `test-center/ts/composable/mutual-recursion.ts:74-75`).
  *
- * This sentence used to end "and cannot be redirected", which read as a platform
- * limit and was not one. `SC2` §10.1 corrected it in the register on 30 Aug and
- * `C286` is that row; `C286` records the correction as made in BOTH places and
- * it had not reached this file. S23 corrected it here and describes the row that
- * owes — see `docs/corrections.md` and `docs/build-log.md`.
+ * This sentence used to end "and cannot be redirected", which read as a
+ * platform limit and was not one. It was corrected where the platform claim
+ * was first recorded — see `docs/corrections.md` and `docs/build-log.md` —
+ * and that correction had not reached this file until now.
  *
- * A REDIRECT IS THEREFORE A DESIGN QUESTION, NOT A PLATFORM LIMIT, and `SC2`
- * §1.4's four conditions are what one would have to meet. S23 was briefed to
- * build one and REFUSED: conditions 1 and 2 cannot both be met by a vault, on
- * the reading recorded in the build log, and `SC2` §11 item 10 already lists
- * condition 1's mechanism among the claims nothing holds. Until that is settled
+ * A REDIRECT IS THEREFORE A DESIGN QUESTION, NOT A PLATFORM LIMIT, and four
+ * conditions are what one would have to meet. Building one was attempted and
+ * refused: conditions 1 and 2 cannot both be met by a vault, and condition 1's
+ * mechanism is already among the claims nothing holds. Until that is settled
  * this vault is pinned, and the pin is held by an absence rather than a rule.
  *
  * The runtime's own interface check does not cover this: it compares a hash of
@@ -100,12 +98,13 @@ contract Acct {
   ): Bytes<32>;
 
   /*
-   * RETIREMENT, AND WHY THE VAULT IS THE ONE THAT ASKS FOR IT. S6a, scope 3.2.
+   * RETIREMENT, AND WHY THE VAULT IS THE ONE THAT ASKS FOR IT. Scope 3.2.
    *
    * The rule — "a retire round is refused while the vault still holds notes" —
    * is the account's, because the account is the rulebook. The FACT it turns
-   * on lives here: `notes` (`:103`) is this contract's own ledger field and a
-   * contract cannot read another contract's state (PROBE-VAULT-2, `:13-15`).
+   * on lives here: `notes` is this contract's own ledger field, and a contract
+   * cannot read another contract's state, which was probed rather than
+   * assumed.
    *
    * So the check cannot be written where the rule lives, and the scope refuses
    * to let it be written in the client — "a client-side refusal is a
@@ -127,18 +126,18 @@ contract Acct {
 export ledger account: Acct;
 
 /*
- * WHAT THIS VAULT HOLDS: A POOL OF NOTES, AS COMMITMENTS. V-58.
+ * WHAT THIS VAULT HOLDS: A POOL OF NOTES, AS COMMITMENTS.
  *
  * A shielded token is a note, not a balance. Nothing on chain says what a vault
  * holds — only these 32-byte commitments, one per note, and the notes
  * themselves live on the owner's device and arrive by witness when spent.
  *
- * A POOL RATHER THAN ONE NOTE, and the difference is the whole of V-49. One
- * note has to be spent whole and its change taken back, so a hundred payments
- * become a chain: payment 12 cannot be built until 11 has settled, one stuck
- * payment stalls everything behind it, and every hop is another chance to lose
- * the record. **Two payments spending DIFFERENT notes have nothing to say to
- * each other.**
+ * A POOL RATHER THAN ONE NOTE, and the difference is the whole of the design.
+ * One note has to be spent whole and its change taken back, so a hundred
+ * payments become a chain: payment 12 cannot be built until 11 has settled,
+ * one stuck payment stalls everything behind it, and every hop is another
+ * chance to lose the record. **Two payments spending DIFFERENT notes have
+ * nothing to say to each other.**
  *
  * A SET RATHER THAN A MAP, keyed by nothing. A note's commitment already binds
  * its token, so a key would be a second name for something the value already
@@ -147,10 +146,9 @@ export ledger account: Acct;
  * WHAT THIS PUBLISHES. Anybody reading the chain learns how many notes the
  * vault holds. That is why the pool is kept at a FIXED SIZE: a constant is
  * uninformative, where a count that moved with each payroll would be the
- * company's headcount (V-56). Nothing in this contract enforces the constant —
- * it is the owner's maintenance discipline, and the honest place to say so is
- * here rather than in a comment claiming a privacy property the code does not
- * have.
+ * company's headcount. Nothing in this contract enforces the constant — it is
+ * the owner's maintenance discipline, and the honest place to say so is here
+ * rather than in a comment claiming a privacy property the code does not have.
  *
  * THE RISKIEST LINE IN THE PROJECT, still: this is a record of the money that
  * is not the money. If a commitment and the note it describes ever disagree,
@@ -161,7 +159,7 @@ export ledger notes: Set<Bytes<32>>;
 
 /*
  * WHAT THIS VAULT ALSO HOLDS: PUBLIC MONEY, AND THE CHAIN IS THE RECORD OF IT.
- * C245, and `docs/scope-vaults-and-settlement.md` asked for it on 15 August.
+ * `docs/scope-vaults-and-settlement.md` asked for it.
  *
  * NIGHT is an UNSHIELDED token by definition — `nativeToken()` returns
  * `UnshieldedTokenType`, `ledger-v9.d.ts:2683` — and there is no conversion; a
@@ -195,11 +193,12 @@ export ledger notes: Set<Bytes<32>>;
  * chain will not let lie.
  *
  * IT IS COMPLETE, AND THAT IS MEASURED RATHER THAN HOPED. A UTXO's owner is a
- * `UserAddress` and cannot be a contract — `ledger/src/structure.rs:2883-2887`,
- * and `Utxo` at `:2857` says the same — so **nobody can credit this vault's
- * unshielded balance without calling `depositUnshielded`.** There is no
- * unshielded equivalent of C236's *"funded by anybody who learns its address"*:
- * for public money the door is the only way in.
+ * `UserAddress` and cannot be a contract —
+ * `ledger/src/structure.rs:2883-2887`, and `Utxo` at `:2857` says the same —
+ * so **nobody can credit this vault's unshielded balance without calling
+ * `depositUnshielded`.** There is no unshielded equivalent of the shielded
+ * side's *"funded by anybody who learns its address"*: for public money the
+ * door is the only way in.
  *
  * WHAT IT PUBLISHES: which token types this vault has held. Public already —
  * the balance itself is on chain for anybody to read — so this discloses
@@ -320,8 +319,8 @@ export ledger spendingCaps: Map<Bytes<32>, Bytes<32>>;
 witness noteToSpend(token: Bytes<32>, amount: Uint<128>): QualifiedShieldedCoinInfo;
 
 /*
- * "noteBlinding" AND "nextBlinding" USED TO BE HERE. C124, and their removal
- * is the whole of this round's first change.
+ * "noteBlinding" AND "nextBlinding" USED TO BE HERE, and their removal is what
+ * closed an unspendable-deposit hole.
  *
  * Both handed the choice of a note's blinding to whoever built the call.
  * `deposit` went further and took the blinding as an ARGUMENT, so the vault
@@ -333,8 +332,8 @@ witness noteToSpend(token: Bytes<32>, amount: Uint<128>): QualifiedShieldedCoinI
  * It could not be fixed by requiring the depositor to use the owner's secret,
  * because a deposit arrives from OUTSIDE — a customer, a subsidiary, an
  * exchange — and an outsider has no way to hold a vault's secret. Any design
- * that keeps the blinding secret keeps C124 open for every deposit that did
- * not come from the company itself.
+ * that keeps the blinding secret leaves that hole open for every deposit that
+ * did not come from the company itself.
  *
  * So the blinding is DERIVED IN-CIRCUIT from the coin and the vault's own
  * address, by `noteBlindingOf` below, at every point where a note comes into
@@ -355,7 +354,7 @@ constructor(a: Acct) {
  * what is inside it — the recipient, the token and the amount stay in the
  * vault's own arguments, which are private by default.
  *
- * THE PAYEE IS TOLD BY THE PLATFORM, NOT BY THIS CONTRACT. V-77.
+ * THE PAYEE IS TOLD BY THE PLATFORM, NOT BY THIS CONTRACT.
  *
  * A shielded output to a user carries a COIN CIPHERTEXT, attached when the
  * transaction is assembled — `ZswapOutput.new(coin, segment, recipient,
@@ -371,8 +370,8 @@ constructor(a: Acct) {
  *
  * **What is still the client's job:** passing the payee's encryption key in
  * `CallTxOptions.additionalCoinEncPublicKeyMappings` on every payout. It is a
- * transaction option, not a circuit argument, so this contract cannot check it —
- * see V-77.
+ * transaction option, not a circuit argument, so this contract cannot check
+ * it.
  *
  * `persistentCommit` rather than `persistentHash`, and the blinding is not
  * decoration: without it the details are a hash of three guessable values —
@@ -409,11 +408,11 @@ export circuit payoutDetails(
  *
  * So with one details derivation, an approval collected for a shielded payment
  * could be settled through the unshielded circuit — same leaf, account
- * satisfied, `V-64` satisfied — and the money would leave as a UTXO addressed
- * to a `UserAddress` built out of somebody's Zswap coin public key. **That
- * address belongs to nobody, and there is no unshielded burn address and no way
- * back.** The amount would be right, the approval would be real, and the payee
- * would never see it.
+ * satisfied, paid-once satisfied — and the money would leave as a UTXO
+ * addressed to a `UserAddress` built out of somebody's Zswap coin public key.
+ * **That address belongs to nobody, and there is no unshielded burn address
+ * and no way back.** The amount would be right, the approval would be real,
+ * and the payee would never see it.
  *
  * A FOURTH SLOT AND A DOMAIN SEPARATOR MAKE THAT UNREPRESENTABLE rather than
  * discouraged: a commitment over four values is not a commitment over three,
@@ -447,7 +446,7 @@ export circuit heldCommitmentOf(coin: ShieldedCoinInfo, blinding: Bytes<32>): By
 }
 
 /*
- * THE BLINDING OF EVERY NOTE THIS VAULT HOLDS. C124.
+ * THE BLINDING OF EVERY NOTE THIS VAULT HOLDS.
  *
  * A pure function of the coin and the vault's address, and that is the point:
  * a value nobody chooses cannot be chosen badly. Every note this contract
@@ -461,12 +460,12 @@ export circuit heldCommitmentOf(coin: ShieldedCoinInfo, blinding: Bytes<32>): By
  * only where the second argument comes from. The two definitions did not have
  * to be adjusted to meet each other.
  *
- * WHY THE VAULT'S ADDRESS IS IN IT, and it is the same argument M-36 makes for
- * `approvalNullifier` in the account. Without it the commitment is a pure
- * function of the coin alone, so two vaults that ever held the same coin would
- * publish the same 32 bytes and an observer could link them. With it they
- * cannot. It costs nothing: every caller already knows which vault it is
- * talking to.
+ * WHY THE VAULT'S ADDRESS IS IN IT, and it is the same argument
+ * `approvalNullifier` in the account makes for the account's own address.
+ * Without it the commitment is a pure function of the coin alone, so two
+ * vaults that ever held the same coin would publish the same 32 bytes and an
+ * observer could link them. With it they cannot. It costs nothing: every
+ * caller already knows which vault it is talking to.
  *
  * WHAT IS DELIBERATELY GIVEN UP, stated plainly because it is a real property
  * and not a technicality. A blinding is normally secret, and this one is not:
@@ -479,14 +478,13 @@ export circuit heldCommitmentOf(coin: ShieldedCoinInfo, blinding: Bytes<32>): By
  * are not public, so their commitments cannot be recomputed by anybody who was
  * not already holding them.
  *
- * WHAT IT DOES COST is written up as a finding rather than buried here: a
- * stranger who watched a deposit can reconstruct that note and therefore
- * satisfy the pool-membership check in `splitNote`. They cannot move the money
- * out — `splitNote`'s only recipient is this vault, spelled as
- * `kernel.self()` — but they can reshape the pool and force the owner to
- * re-read it from the chain. That is a recoverable failure, and C124 is not;
- * the register's own rule is that between two designs the one that fails
- * recoverably wins.
+ * WHAT IT DOES COST is recorded rather than buried here: a stranger who
+ * watched a deposit can reconstruct that note and therefore satisfy the
+ * pool-membership check in `splitNote`. They cannot move the money out —
+ * `splitNote`'s only recipient is this vault, spelled as `kernel.self()` — but
+ * they can reshape the pool and force the owner to re-read it from the chain.
+ * That is a RECOVERABLE failure, and an unspendable deposit is not; between
+ * two designs the one that fails recoverably wins.
  */
 export circuit noteBlindingOf(vault: Bytes<32>, coin: ShieldedCoinInfo): Bytes<32> {
   /*
@@ -509,7 +507,7 @@ export circuit noteBlindingOf(vault: Bytes<32>, coin: ShieldedCoinInfo): Bytes<3
 }
 
 /*
- * "changeNonceOf" USED TO BE HERE, AND IT WAS WRONG. V-47.
+ * "changeNonceOf" USED TO BE HERE, AND IT WAS WRONG.
  *
  * `sendShielded` gives the change a NEW nonce, so the owner cannot keep their
  * old coin record with a smaller number in it — offer the wrong coin on the
@@ -537,7 +535,7 @@ export circuit noteBlindingOf(vault: Bytes<32>, coin: ShieldedCoinInfo): Bytes<3
  * Money arriving. No approval, by design.
  *
  * Nobody needs permission to be paid, and requiring M signatures to accept a
- * deposit is absurd — the same argument M-67 settled for the account's own
+ * deposit is absurd — the same argument that was settled for the account's own
  * `credit`. A deposit is public on the way in whatever we do, because the
  * sender's transaction is public; what stays private is everything afterwards.
  */
@@ -566,7 +564,7 @@ export circuit deposit(coin: ShieldedCoinInfo): [] {
    * vault holding two notes of a token is the normal case, not a mess to tidy.
    */
   /*
-   * THE BLINDING IS NOT AN ARGUMENT ANY MORE. C124, and this line is the fix.
+   * THE BLINDING IS NOT AN ARGUMENT ANY MORE, and this line is the fix.
    *
    * It used to be `heldCommitmentOf(coin, blinding)` with `blinding` handed in
    * by the depositor. The vault checked the coin and never checked that the
@@ -585,26 +583,25 @@ export circuit deposit(coin: ShieldedCoinInfo): [] {
 }
 
 /*
- * PUBLIC MONEY ARRIVING. C245, and the deliberate near-twin of `deposit`.
+ * PUBLIC MONEY ARRIVING, and the deliberate near-twin of `deposit`.
  *
  * No approval, for `deposit`'s reason: nobody needs permission to be paid.
  *
- * WHAT THE POOL HOLDS FOR THIS DEPOSIT: NOTHING, and the round asked the
- * question in those words. There is no coin to record. `receiveUnshielded`
- * declares an `unshielded_input` on this call, the ledger adds it to this
- * contract's balance when the transaction applies, and that balance is the
- * record — readable off the chain by anybody, including by a company that has
- * lost every device it owns. **A commitment here would be a second name for a
- * number the chain already publishes**, and it is the second name, not the
- * number, that C124 and V-47 were both about.
+ * WHAT THE POOL HOLDS FOR THIS DEPOSIT: NOTHING. There is no coin to record.
+ * `receiveUnshielded` declares an `unshielded_input` on this call, the ledger
+ * adds it to this contract's balance when the transaction applies, and that
+ * balance is the record — readable off the chain by anybody, including by a
+ * company that has lost every device it owns. **A commitment here would be a
+ * second name for a number the chain already publishes**, and it is the second
+ * name, not the number, that both of the blinding failures above were about.
  *
- * SO EVERY OPEN ROW ABOUT THE NOTE MODEL IS ABSENT HERE RATHER THAN SOLVED.
- * `C244` — a note is unspendable until somebody reads its merkle index — cannot
- * arise, because there is no commitment tree and no index to read; `V-93` is
- * the same row from the client's side. `C239` and `C205` are about a change
- * coin and a split's two outputs, and an unshielded send produces neither.
- * `C199`'s crash window between the transaction and the pool write is not here
- * either: the only thing written is the colour, and it is written by this
+ * SO EVERY OPEN QUESTION ABOUT THE NOTE MODEL IS ABSENT HERE RATHER THAN
+ * SOLVED. A note being unspendable until somebody reads its merkle index
+ * cannot arise, because there is no commitment tree and no index to read, on
+ * either side of the boundary. The questions about a change coin and about a
+ * split's two outputs do not arise either, because an unshielded send produces
+ * neither. And the crash window between the transaction and the pool write is
+ * not here: the only thing written is the colour, and it is written by this
  * circuit inside the same transaction that moves the money.
  *
  * WHAT IS WRITTEN, and it is not a balance: the colour, so `retire` can see
@@ -640,7 +637,7 @@ export circuit depositUnshielded(token: Bytes<32>, amount: Uint<128>): [] {
  *   the vault's own address  already public
  *   the run's root           a hash over the payout leaves
  *   the number of payees     the run's size, not its contents
- *   the run's window         the two times it may be paid between (V-67)
+ *   the run's window         the two times it may be paid between
  *   the proposal's salt      spent; see `recordPayment` in the account
  *   this payee's details     a blinded commitment
  *   this payee's nonce       spent with this payment, and useless for any other
@@ -694,9 +691,9 @@ export circuit payout(
    * 2. PAY.
    *
    * Only reached if the account did not refuse. If this fails, the account's
-   * record of this payee having been paid fails with it — that is the atomicity
-   * the whole design rests on, and it is the one property here that a chain
-   * still has to confirm (V-32(b)).
+   * record of this payee having been paid fails with it — that is the
+   * atomicity the whole design rests on, and it is the one property here that
+   * a real chain still has to confirm.
    */
   const coin = noteToSpend(token, amount);
   assert(coin.color == token, "that is not a note of the token being paid");
@@ -715,15 +712,15 @@ export circuit payout(
     nonce: coin.nonce, color: coin.color, value: coin.value
   };
   /*
-   * RECOMPUTED, NOT ASKED FOR. C124's other half.
+   * RECOMPUTED, NOT ASKED FOR, and it is the other half of taking the blinding
+   * out of the caller's hands.
    *
-   * This was `noteBlinding(coin.nonce)` — a witness, so the blinding rule lived
-   * on the device as well as in the contract. Two implementations of the rule
-   * the money depends on is the shape this project has been caught by before
-   * (M-104), and the failure it invites is silent: a device that derives a
-   * blinding a shade differently from the one the note was committed under
-   * cannot spend that note, ever, and nothing says so until a payment is
-   * refused.
+   * This was `noteBlinding(coin.nonce)` — a witness, so the blinding rule
+   * lived on the device as well as in the contract. Two implementations of the
+   * rule the money depends on is a shape that has been paid for before, and
+   * the failure it invites is silent: a device that derives a blinding a shade
+   * differently from the one the note was committed under cannot spend that
+   * note, ever, and nothing says so until a payment is refused.
    */
   const spent = disclose(heldCommitmentOf(
     unqualified, noteBlindingOf(kernel.self().bytes, unqualified)));
@@ -756,10 +753,10 @@ export circuit payout(
    * `nextBlinding(token)` was a witness asked for BEFORE the change coin
    * existed, so a device had to guess what the change's nonce was going to be
    * and blind against the guess. The change's nonce is not derivable — that is
-   * V-47, and it is recorded in this file above `deposit` — so the client did
-   * it with `changeNonceOf`, and a wrong guess commits the change under a
-   * blinding that can never be reproduced. Same shape as C124, on the note the
-   * vault creates for itself on every single payment.
+   * recorded in this file above `deposit` — so the client did it with
+   * `changeNonceOf`, and a wrong guess commits the change under a blinding
+   * that can never be reproduced. The same unspendable-note shape, on the note
+   * the vault creates for itself on every single payment.
    *
    * Derived from the change coin the call actually produced, there is nothing
    * to guess: the coin exists by the time this line runs.
@@ -775,14 +772,14 @@ export circuit payout(
 
 /*
  * ------------------------------------------------------------------------
- * ONE PAYEE OF AN APPROVED RUN, PAID IN PUBLIC MONEY. C245.
+ * ONE PAYEE OF AN APPROVED RUN, PAID IN PUBLIC MONEY.
  *
  * The same product, the same rulebook, the same account call — and about a
  * third of the machinery, because the money is a ledger balance rather than a
  * note.
  *
  * WHY A SECOND CIRCUIT RATHER THAN A BRANCH ON `payout`, and it was measured
- * before it was chosen (`docs/build-log.md`, this round).
+ * before it was chosen (`docs/build-log.md`).
  *
  *   - **The arguments are not the same arguments.** A shielded payment names a
  *     `ZswapCoinPublicKey` and needs a witness to choose the note; this names a
@@ -798,8 +795,9 @@ export circuit payout(
  *     to make them.
  *   - **`payout` is the second-largest circuit in this repository** at 23,940
  *     bytes of zkir. A branch costs no on-chain bytes and does cost rows, on
- *     the circuit least able to spare them — which is what `M-153` says `S11`'s
- *     merges paid for their bytes.
+ *     the circuit least able to spare them. That is the trade the verifier-key
+ *     merges elsewhere took deliberately — rows spent to buy deploy-slot
+ *     bytes — and `payout` is the circuit with the fewest rows to spend.
  *   - **It is the platform's own shape.** The ledger's reference contract holds
  *     both kinds side by side as four separate circuits —
  *     `depositShielded`, `withdrawShielded`, `depositUnshielded`,
@@ -838,13 +836,14 @@ export circuit payoutUnshielded(
 ): [] {
   /*
    * 1. ASK THE ACCOUNT, NAMING OURSELVES — `payout`'s step 1, unchanged, and
-   * that is the point of `V-64` rather than a coincidence.
+   * that is the point of keying the record on the leaf alone rather than a
+   * coincidence.
    *
    * `recordPayment` takes `details` as 32 opaque bytes and records
    * `paidMovementOf(payoutLeaf(details, nonce))`. It never sees a token, a
    * recipient or an amount, so *"this leaf has been paid, once, ever"* is the
    * same fact about the same payee whichever kind of money settles it. The
-   * account is not changed by this round and does not need to be.
+   * account needs no change for it.
    *
    * `unshieldedPayoutDetails` and not `payoutDetails`: read that circuit's
    * comment. A leaf that does not say which kind of money it authorises is an
@@ -871,11 +870,11 @@ export circuit payoutUnshielded(
    *
    * The exact-value read is fixed to the balance at the START of execution and
    * pins it: a transaction built on it fails if the balance has moved by the
-   * time it applies. `V-60` and `V-61` exist so that a hundred payments of one
-   * run settle in the same block — every one of them moves this balance — so a
-   * vault that read the exact value could pay its first payee and no other.
-   * The comparison asks a question whose answer survives the other payments
-   * landing: it stays true while the vault still holds enough.
+   * time it applies. The whole pool design exists so that a hundred payments
+   * of one run settle in the same block — every one of them moves this balance
+   * — so a vault that read the exact value could pay its first payee and no
+   * other. The comparison asks a question whose answer survives the other
+   * payments landing: it stays true while the vault still holds enough.
    *
    * IT IS NOT THE SAFETY PROPERTY, and must not be read as one. The ledger
    * subtracts this call's `unshielded_outputs` from the contract's balance with
@@ -901,10 +900,11 @@ export circuit payoutUnshielded(
    * That is why the recipient is inside the approved leaf: the signers, not
    * this contract, are the check.
    *
-   * THE PAYEE IS NOT TOLD BY ANYTHING, AND DOES NOT NEED TO BE. `V-77`'s
-   * obligation — the client must pass the payee's encryption key so their
-   * wallet can find a shielded coin — has no counterpart here. A UTXO addressed
-   * to their `UserAddress` is public; their wallet finds it by looking.
+   * THE PAYEE IS NOT TOLD BY ANYTHING, AND DOES NOT NEED TO BE. The shielded
+   * side's obligation — the client must pass the payee's encryption key so
+   * their wallet can find a shielded coin — has no counterpart here. A UTXO
+   * addressed to their `UserAddress` is public; their wallet finds it by
+   * looking.
    */
   sendUnshielded(disclose(token), disclose(amount),
     right<ContractAddress, UserAddress>(UserAddress { bytes: disclose(recipient) }));
@@ -920,7 +920,7 @@ export circuit payoutUnshielded(
 
 /*
  * ------------------------------------------------------------------------
- * SPLITTING ONE NOTE INTO TWO, BOTH KEPT. V-56, scope 3.5.
+ * SPLITTING ONE NOTE INTO TWO, BOTH KEPT. Scope 3.5.
  *
  * WHY IT HAS TO EXIST. The pool's size is a privacy property: the count is
  * public, so a constant is uninformative where a moving number is a signal.
@@ -933,12 +933,12 @@ export circuit payoutUnshielded(
  * pool, and the comment above `notes` said so.
  *
  * WHY IT MAKES EXACTLY TWO, and this is the measurement rather than a taste.
- * `REPORT-PROBE-VAULT-9.txt:46-53` priced five shapes in zkir bytes: one send
- * 10,112; two 18,793; four 36,347; a fold over four 45,010 — MORE than writing
- * the four out — and `presplit`, the shape that sends to the vault itself and
- * keeps both halves, 16,375. Against `payout`'s own 22,033 the cheap shape is
- * cheaper than a payment. This circuit is that shape, written out: one send,
- * two inserts, no fold.
+ * Five shapes were priced in zkir bytes: one send 10,112; two 18,793; four
+ * 36,347; a fold over four 45,010 — MORE than writing the four out — and
+ * `presplit`, the shape that sends to the vault itself and keeps both halves,
+ * 16,375. Against `payout`'s own 22,033 the cheap shape is cheaper than a
+ * payment. This circuit is that shape, written out: one send, two inserts, no
+ * fold.
  *
  * AND THE REASON THAT IS THE RIGHT NUMBER RATHER THAN THE CHEAP ONE. A split
  * that yields two notes raises the count by exactly one, so ANY deficit can be
@@ -1005,10 +1005,10 @@ export circuit splitNote(token: Bytes<32>, amount: Uint<128>): [] {
   const spent = disclose(heldCommitmentOf(
     unqualified, noteBlindingOf(self, unqualified)));
   /*
-   * A DIFFERENT MESSAGE FROM `payout`'S, and not for variety. `MUTATE.command`
-   * substitutes fixed strings and refuses a target that appears twice, so two
-   * identical asserts in two circuits are one mutation that cannot be aimed.
-   * They also fail for different reasons a reader would want told apart.
+   * A DIFFERENT MESSAGE FROM `payout`'S, and not for variety. Mutation testing
+   * substitutes fixed strings, so two identical asserts in two circuits are
+   * one target rather than two and neither can be aimed at on its own. They
+   * also fail for different reasons a reader would want told apart.
    */
   assert(notes.member(spent), "that note is not one this vault holds");
   notes.remove(spent);
@@ -1042,7 +1042,7 @@ export circuit splitNote(token: Bytes<32>, amount: Uint<128>): [] {
 
 /*
  * ------------------------------------------------------------------------
- * SAYING THIS VAULT IS DONE WITH A TOKEN. C245.
+ * SAYING THIS VAULT IS DONE WITH A TOKEN.
  *
  * `unshieldedTokens` is what stops `retire` stranding public money, so
  * something has to be able to take a colour out of it — otherwise a vault that
@@ -1091,36 +1091,36 @@ export circuit forgetUnshielded(token: Bytes<32>): [] {
  * only contract that can see this pool is this one, so the refusal can only be
  * written here.
  *
- * AND THE SENTENCE THAT STOOD HERE CLAIMED MORE THAN THAT. `C365`, `P1`, found
- * by `SC5` 2 Sep. It said the scope requires the refusal to be *"the CONTRACT's
- * rather than the client's"*. THAT IS TRUE OF ONE CONTRACT AND FALSE OF THE
- * PAIR, and the difference is the whole finding: the refusal is THIS contract's
- * and the operation is the ACCOUNT's. `ConfidentialAccount.retireVault` is an
- * `export circuit` with neither of the two asserts below — it requires an
- * approved retire proposal for that vault and current membership of `vaults`,
- * and that is all — so whoever holds the salt for a retire round the signers
- * have already approved can call the account DIRECTLY and skip this circuit
- * entirely. The funded vault leaves the registry with the money still inside
- * it. THE TWO ASSERTS BELOW ARE THE REFUSAL ON THE PATH THAT GOES THROUGH THIS
- * CONTRACT, AND THEY ARE ADVISORY ON THE PATH THAT DOES NOT. Rule 27.
+ * AND THE SENTENCE THAT STOOD HERE CLAIMED MORE THAN THAT. It said the scope
+ * requires the refusal to be *"the CONTRACT's rather than the client's"*. THAT
+ * IS TRUE OF ONE CONTRACT AND FALSE OF THE PAIR, and the difference is the
+ * whole of it: the refusal is THIS contract's and the operation is the
+ * ACCOUNT's. `ConfidentialAccount.retireVault` is an `export circuit` with
+ * neither of the two asserts below — it requires an approved retire proposal
+ * for that vault and current membership of `vaults`, and that is all — so
+ * whoever holds the salt for a retire round the signers have already approved
+ * can call the account DIRECTLY and skip this circuit entirely. The funded
+ * vault leaves the registry with the money still inside it. THE TWO ASSERTS
+ * BELOW ARE THE REFUSAL ON THE PATH THAT GOES THROUGH THIS CONTRACT, AND THEY
+ * ARE ADVISORY ON THE PATH THAT DOES NOT.
  *
  * WHAT THAT COSTS IS NOT FROZEN MONEY — `recordPayment` does not consult
  * `vaults`, so a retired vault still pays out an approved run, and the
  * paragraph below says so from the other side. What is destroyed is what the
  * registry IS: the answer to *which vaults are this company's*, for precisely
  * the vault that still holds the money. It is recoverable through `adopt` by a
- * further governed round, if anyone still knows the address, which is why it is
- * a `P1`.
+ * further governed round, if anyone still knows the address, which is why what
+ * is lost is the registry's answer rather than the money.
  *
- * IT IS ACCEPTED AND NOT FIXED, AND THE RULING IS WRITTEN DOWN RATHER THAN
- * REMEMBERED: `docs/accepted-risks.md` section 2, the founder, 2 Sep — *leave
- * it*. THERE IS NO CALLER CHECK TO WRITE. Moving the guard would mean handing
- * the account a fact only this contract can assert — a new argument on
- * `retireVault` — and THE ACCOUNT CANNOT VERIFY WHAT THIS CONTRACT TELLS IT, so
- * the argument would be a claim the account TRUSTS rather than a guard. It
- * would look like a fix and would not be one. It is also not available after
- * row `3`: `contract Acct` above pins both cross-contract signatures by exact
- * shape, so `retireVault`'s arity is frozen the moment any vault is deployed.
+ * IT IS ACCEPTED AND NOT FIXED, AND THE DECISION IS WRITTEN DOWN RATHER THAN
+ * REMEMBERED: `docs/accepted-risks.md` section 2 — *leave it*. THERE IS NO
+ * CALLER CHECK TO WRITE. Moving the guard would mean handing the account a
+ * fact only this contract can assert — a new argument on `retireVault` — and
+ * THE ACCOUNT CANNOT VERIFY WHAT THIS CONTRACT TELLS IT, so the argument would
+ * be a claim the account TRUSTS rather than a guard. It would look like a fix
+ * and would not be one. It is also not available after the next deploy:
+ * `contract Acct` above pins both cross-contract signatures by exact shape, so
+ * `retireVault`'s arity is frozen the moment any vault is deployed.
  *
  * WHAT RETIREMENT DOES NOT DO, and it is deliberate: it does not make this
  * vault unspendable. `recordPayment` does not ask whether a vault is adopted,
@@ -1139,13 +1139,13 @@ export circuit forgetUnshielded(token: Bytes<32>): [] {
  * way, and a signer could already `cancel`.
  *
  * THAT LAST CLAUSE IS TRUE HERE AND IS FALSE IN `recordPayment`, WHICH IS WHY
- * IT IS PINNED RATHER THAN LEFT TO READ AS THE SAME SENTENCE. A retire round is
- * a GOVERNANCE proposal: it has no row in the account's `runWindow`, so
+ * IT IS PINNED RATHER THAN LEFT TO READ AS THE SAME SENTENCE. A retire round
+ * is a GOVERNANCE proposal: it has no row in the account's `runWindow`, so
  * `cancel` is unconditional for it right up to the moment it is consumed. A
  * PAYROLL RUN has one, and `cancel` is refused from the moment its window
  * opens — which is exactly when `recordPayment` becomes possible — so the same
- * words there were false and were corrected as `C364`. See
- * `docs/accepted-risks.md` section 1. `S35d`, rule 14.
+ * words there were false and were corrected. See `docs/accepted-risks.md`
+ * section 1.
  */
 export circuit retire(proposal: Bytes<32>, salt: Bytes<32>): [] {
   /*
@@ -1156,7 +1156,7 @@ export circuit retire(proposal: Bytes<32>, salt: Bytes<32>): [] {
     "this vault still holds notes, and retiring it would strand them");
 
   /*
-   * AND THE OTHER HALF OF WHAT IT HOLDS. C245.
+   * AND THE OTHER HALF OF WHAT IT HOLDS.
    *
    * `notes` is the private side only. A vault holding the company's NIGHT float
    * has an empty note pool and a balance anybody can read off the chain, and
@@ -1165,8 +1165,8 @@ export circuit retire(proposal: Bytes<32>, salt: Bytes<32>): [] {
    * the thing that holds it, which is the stranding this circuit exists to
    * refuse.
    *
-   * A DIFFERENT MESSAGE FROM THE ONE ABOVE, and not for variety: `MUTATE.command`
-   * substitutes fixed strings and refuses an ambiguous target, and the two
+   * A DIFFERENT MESSAGE FROM THE ONE ABOVE, and not for variety: a check that
+   * substitutes fixed strings cannot aim at an ambiguous target, and the two
    * refusals are about different money.
    */
   assert(unshieldedTokens.isEmpty(),

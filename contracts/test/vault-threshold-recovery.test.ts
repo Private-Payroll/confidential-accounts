@@ -43,8 +43,8 @@ import { AccountSimulator, privateStateFor, change, type Change } from './simula
 import { buildPayoutTree, type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
 import { toHex, fromHex } from '../../src/core/crypto.js';
 
-/* The clock and the run's window. V-67, and pinned for the reason the
- * simulator's own comment gives: nothing here measures real time. */
+/* The clock and the run's window, pinned for the reason the simulator's own
+ * comment gives: nothing here measures real time. */
 const VAULT_NOW = 1_800_000_000;
 const WIN_FROM = BigInt(VAULT_NOW - 3_600);
 const WIN_UNTIL = BigInt(VAULT_NOW + 3_600);
@@ -72,7 +72,7 @@ const govChange = (seed: number): Change => change(0n, seed);
 const carrying = (sim: AccountSimulator, d: ReturnType<typeof privateStateFor>, c: Change) =>
   sim.applying(d, c);
 
-describe('S6b: a vault whose threshold nobody can meet is recovered, and pays', () => {
+describe('a vault whose threshold nobody can meet is recovered, and pays', () => {
   let sim: AccountSimulator;
   let vault: Vault<VaultPrivate>;
   let vaultAddr: string;
@@ -285,15 +285,15 @@ describe('S6b: a vault whose threshold nobody can meet is recovered, and pays', 
  * there is none that strands a VAULT permanently.
  *
  * BOTH LINES ARE ALREADY GUARDED ELSEWHERE and deliberately so, for different
- * reasons — `signer-governance.test.ts` asserts the first as M-37 (raising the
- * bar past the seats reopens the bootstrap window) and the second as the
- * account being stranded with its balance inside it. Neither of those tests is
- * about vaults, and neither would survive a rewrite that kept the M-37 argument
+ * reasons — `signer-governance.test.ts` asserts the first (raising the bar
+ * past the seats reopens the bootstrap window) and the second as the account
+ * being stranded with its balance inside it. Neither of those tests is about
+ * vaults, and neither would survive a rewrite that kept the seating argument
  * and dropped the reachability one. This describes the same two asserts as the
  * foundation of §3.8's recovery, which is a claim nothing else in the suite
  * makes.
  */
-describe('S6b: the account\'s own threshold is always reachable, so no vault is stranded forever', () => {
+describe('the account\'s own threshold is always reachable, so no vault is stranded forever', () => {
   const liveAccount = async () => {
     const sim = await AccountSimulator.liveAccount([A, B], 2n);
     sim.at(VAULT_NOW);
@@ -361,7 +361,7 @@ describe('S6b: the account\'s own threshold is always reachable, so no vault is 
     const C = privateStateFor(3);
     const D = privateStateFor(4);
     const sim = await AccountSimulator.liveAccount([A, B], 2n);
-    /* B was seated by a round too, since `S35d` shut the bootstrap window; C
+    /* B was seated by a round too, the bootstrap window being shut; C
      * and D are seated here because this walk needs their seeds and its own
      * `governedRound`, which is the same three steps `liveAccount` runs. */
     sim.at(VAULT_NOW);

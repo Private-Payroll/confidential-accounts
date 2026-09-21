@@ -1,28 +1,28 @@
 /**
- * THE DEVICE DIED MID-CALL. CAN THE MONEY STILL MOVE? `C199`, `C200`, `B1`.
+ * THE DEVICE DIED MID-CALL. CAN THE MONEY STILL MOVE?
  *
  * The vault's pool lives on the owner's device; the chain holds only
  * commitments, which disclose nothing. The pool is written AFTER the
  * transaction — deliberately, because that is the recoverable ordering — so a
  * crash in between leaves the chain holding notes the pool has never heard of.
- * **`replayVault` is what makes that ordering safe**, which is `C199`, and
- * `C200` was that `replayVault` modelled a vault that no longer exists: one
- * coin chained forward, where the contract has held a POOL since `V-58`.
+ * **`replayVault` is what makes that ordering safe**, and it used to model a
+ * vault that no longer exists: one coin chained forward, where the contract
+ * holds a POOL.
  *
  * **THESE TESTS THROW THE POOL AWAY AND THEN PAY FROM WHAT THEY REBUILD.** That
  * is the only evidence that counts: a derivation checked against another
  * derivation proves the two agree and nothing about whether the money moves.
- * `V-47` was exactly that mistake — a plausible nonce derivation that compiled,
- * read well, and was wrong. **A recovered note that cannot be spent is not
- * recovered.**
+ * The change-nonce derivation was exactly that mistake — plausible, it
+ * compiled, it read well, and it was wrong. **A recovered note that cannot be
+ * spent is not recovered.**
  *
  * ------------------------------------------------------------------------
  * THE TWO CRASH WINDOWS, AND WHY ONE MECHANISM ANSWERS BOTH
  *
- *   **W1 — inside the call.** Submitted, outcome unknown. The chain may or may
- *   not hold the new notes; the pool still holds the old ones.
- *   **W2 — after the call, before the pool write.** The chain definitely holds
- *   the new notes; the pool definitely does not.
+ *   **WINDOW ONE — inside the call.** Submitted, outcome unknown. The chain
+ *   may or may not hold the new notes; the pool still holds the old ones.
+ *   **WINDOW TWO — after the call, before the pool write.** The chain
+ *   definitely holds the new notes; the pool definitely does not.
  *
  * A replay that simply applied the history would have to know which window it
  * is in, and it cannot. So the replay proposes **every note the history has
@@ -56,7 +56,7 @@ import { notesNeedingATransaction, whatTheRebuildWrites } from '../../scripts/re
 import { toHex, fromHex, type Hex } from '../../src/core/crypto.js';
 
 /*
- * THE CLOCK AND THE RUN'S WINDOW. `V-67`. Payments assert they fall inside the
+ * THE CLOCK AND THE RUN'S WINDOW. Payments assert they fall inside the
  * window the signers approved, so the account simulator and the vault's circuit
  * context have to agree about the time. Seconds since the Unix epoch.
  */
@@ -80,9 +80,9 @@ const CAROL = bytes(0x0c);
  * **Coin selection is the PRODUCTION ordering**, imported rather than written
  * here: `smallestNoteCovering` picks the smallest note that covers the payment,
  * ties broken by nonce. A test with its own selection would be a second
- * implementation of the thing `B3` is about — two operators picking differently
- * and both half-succeeding — and would also let these tests pass while the
- * client's rule was wrong.
+ * implementation of the thing that matters here — two operators picking
+ * differently and both half-succeeding — and would also let these tests pass
+ * while the client's rule was wrong.
  *
  * **It is the ordering and not the whole decision**, because this witness
  * models the circuit's view of a pool whose notes carry no creating
@@ -272,10 +272,10 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
    * deposit
    * ---------------------------------------------------------------- */
 
-  it('W2, DEPOSIT: the chain took the note, the pool never learned — and it SPENDS', async () => {
+  it('WINDOW TWO, DEPOSIT: the chain took the note, the pool never learned — and it SPENDS', async () => {
     /*
      * The deposit landed and the process died before `pool.save`. The pool knows
-     * about the first note only. This is `C199`'s window at the deposit site,
+     * about the first note only. This is the second window at the deposit site,
      * which is the cheapest of the three to recover because a deposit's coin is
      * the depositor's own record — and public in their transaction besides.
      */
@@ -305,7 +305,7 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
     expect(spentTheRecoveredOne!.value).toBe(100n);
   });
 
-  it('W1, DEPOSIT: the call never landed, so the chain refuses the note and nothing invents it',
+  it('WINDOW ONE, DEPOSIT: the call never landed, so the chain refuses the note and nothing invents it',
     async () => {
       /*
        * The other window: submitted, outcome unknown, and in fact it did not
@@ -1080,10 +1080,10 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
    * payout
    * ---------------------------------------------------------------- */
 
-  it('W2, PAYOUT: the change is on chain, the pool still holds the spent note — and it SPENDS',
+  it('WINDOW TWO, PAYOUT: the change is on chain, the pool still holds the spent note — and it SPENDS',
     async () => {
       /*
-       * **THE WORST OF THE WINDOWS AND THE ONE `C199` NAMES.** The payment
+       * **THE WORST OF THE WINDOWS.** The payment
        * landed: the chain has nullified the note that was spent and holds the
        * change instead. The pool believes it can still spend something the
        * contract has already removed.
@@ -1110,10 +1110,10 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
       expect(r.unexplained).toHaveLength(0);
 
       /*
-       * **AND THE CHANGE NOTE IS SPENT.** If `changeNonceOf` were the almost-right
-       * derivation `V-47` is about, the note would not be in the pool the
-       * contract checks and this fails at "that note is not in this vault's
-       * pool". Nothing else in this file would notice.
+       * **AND THE CHANGE NOTE IS SPENT.** If `changeNonceOf` were the
+       * almost-right derivation it used to be, the note would not be in the
+       * pool the contract checks and this fails at "that note is not in this
+       * vault's pool". Nothing else in this file would notice.
        */
       priv = { notes: asNotes(r.held) };
       const c2 = change(0n, 53);
@@ -1126,7 +1126,7 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
       expect(after).toHaveLength(2);
     });
 
-  it('W1, PAYOUT: recorded but never landed, so the note the pool spent is still the vault\'s',
+  it('WINDOW ONE, PAYOUT: recorded but never landed, so the note the pool spent is still the vault\'s',
     async () => {
       /*
        * The mirror image, and the reason the replay proposes every note that has
@@ -1176,17 +1176,17 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
    * presplit
    * ---------------------------------------------------------------- */
 
-  it('W2, PRESPLIT: BOTH halves are recovered, and one of them SPENDS', async () => {
+  it('WINDOW TWO, PRESPLIT: BOTH halves are recovered, and one of them SPENDS', async () => {
     /*
      * `splitNote` removes one note and inserts two, so a crash after it leaves
      * the pool short by two notes and holding a third the chain has dropped.
      *
-     * **THIS IS THE NEWLY DERIVED VALUE OF THIS ROUND AND IT IS SPENT RATHER
-     * THAN COMPARED.** The piece a split sends to itself takes the SENT
-     * derivation and the remainder takes the CHANGE one — two hashes whose
-     * domains differ by the four characters `/2`, which is precisely the shape
-     * `V-47` cost two days over. Comparing them against each other would prove
-     * nothing; the assertion that matters is the payment at the end.
+     * **THIS VALUE IS SPENT RATHER THAN COMPARED.** The piece a split sends to
+     * itself takes the SENT derivation and the remainder takes the CHANGE one —
+     * two hashes whose domains differ by the four characters `/2`, which is
+     * precisely the shape the change-nonce mistake cost two days over.
+     * Comparing them against each other would prove nothing; the assertion
+     * that matters is the payment at the end.
      */
     const r0 = await vault.impureCircuits.splitNote(ctx('splitNote'), GBP, 300n);
     vaultState = r0.context.callContext.currentQueryContext.state;   // splits SECOND (400)
@@ -1257,13 +1257,13 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
 
   it('A NOTE NOTHING EXPLAINS IS REPORTED AS SUCH, NEVER GUESSED AT', async () => {
     /*
-     * **The one case this round does not recover, and it is a finding rather
-     * than a gap in the code.** `deposit` takes a coin from anybody — that is
-     * the point, nobody needs permission to be paid — so an outsider can put a
-     * note into this vault that the company has no record of. A commitment
-     * discloses nothing, so there is no path from those 32 bytes to a spendable
-     * note. The money is visibly on chain and only the depositor can say what it
-     * is.
+     * **The one case this does not recover, and it is a known limitation
+     * rather than a gap in the code.** `deposit` takes a coin from anybody —
+     * that is the point, nobody needs permission to be paid — so an outsider
+     * can put a note into this vault that the company has no record of. A
+     * commitment discloses nothing, so there is no path from those 32 bytes to
+     * a spendable note. The money is visibly on chain and only the depositor
+     * can say what it is.
      *
      * The right behaviour is to say so, loudly, and never to offer a plausible
      * note in its place: a wrong note is refused at payment time and looks like
@@ -1284,12 +1284,12 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
   it('A PAYEE WHO LOST THEIR PAYSLIP CAN BE SERVED AGAIN, from the payer\'s history alone',
     async () => {
       /*
-       * `B4`, and the backstop `C7` still leans on: a payment built with the
-       * wrong encryption key settles perfectly into a coin the payee's wallet
-       * never shows them. The payee's coin is derived from the note it was paid
-       * out of, so it falls out of the same replay — **and with a pool, "the
-       * note it was paid out of" is a thing the history has to name**, which is
-       * why every spending event carries `spent`.
+       * The backstop for a payslip that never arrived: a payment built with
+       * the wrong encryption key settles perfectly into a coin the payee's
+       * wallet never shows them. The payee's coin is derived from the note it
+       * was paid out of, so it falls out of the same replay — **and with a
+       * pool, "the note it was paid out of" is a thing the history has to
+       * name**, which is why every spending event carries `spent`.
        */
       const c = change(0n, 59);
       const run = await approvedRun([
@@ -1315,7 +1315,7 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
     /*
      * Three derivations exist and no two are the same; two share a domain and
      * differ only by an argument. This pins that neither is quietly standing in
-     * for the other — the failure `V-47` was.
+     * for the other, which is the failure the change nonce was.
      */
     const r = replayVault({
       vault: vaultAddr as Hex,

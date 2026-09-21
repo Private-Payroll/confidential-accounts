@@ -1,10 +1,10 @@
 /**
- * V-32 and V-33: a proposal belongs to a vault, and a payout completes it.
+ * A proposal belongs to a vault, and a payout completes it.
  *
  * These are the properties the vault design rests on, and none of them existed
  * before this change. Each states the thing that must be true and, where there
- * is an attack, plays it and asserts the refusal — the same shape as the M-70
- * tests, which were written as exploits that used to pass.
+ * is an attack, plays it and asserts the refusal — the same shape as the
+ * earlier exploit tests, which were written as attacks that used to pass.
  *
  * The one to read first is "a proposal for one vault is meaningless at
  * another". It is what lets a vault ask this account whether a payment was
@@ -53,7 +53,7 @@ const liveAccount = async (threshold = 2n) => {
  * a single payee is the shortest path to spending one. Runs of many are
  * `payout-runs.test.ts`.
  */
-/* The window every run in this file is approved for. V-67; these tests are
+/* The window every run in this file is approved for; these tests are
  * about thresholds, so the clock is pinned and stays out of the way. */
 const RUN_NOW = 1_800_000_000;
 const RUN_OPENS = BigInt(RUN_NOW - 3_600);
@@ -84,22 +84,22 @@ const approvedFor = async (
 };
 
 /*
- * "V-32: a proposal belongs to exactly one vault" USED TO BE HERE, and its
- * eight tests moved to `payout-runs.test.ts` rather than being deleted.
+ * "a proposal belongs to exactly one vault" USED TO BE HERE, and its eight
+ * tests moved to `payout-runs.test.ts` rather than being deleted.
  *
- * V-41 replaced `claimApproval` — one claim, one proposal — with `recordPayment`,
- * which pays ONE PAYEE of a run and finishes the proposal on the last of them.
- * Every property those tests pinned still holds and is still tested: a run for
- * one vault is meaningless at another, a claim without the salt is refused, a
- * claim below the threshold is refused, a claimant need not be a signer, and
- * the circuit reads nothing from the account's private state.
+ * Runs replaced `claimApproval` — one claim, one proposal — with
+ * `recordPayment`, which pays ONE PAYEE of a run and finishes the proposal on
+ * the last of them. Every property those tests pinned still holds and is still
+ * tested: a run for one vault is meaningless at another, a claim without the
+ * salt is refused, a claim below the threshold is refused, a claimant need not
+ * be a signer, and the circuit reads nothing from the account's private state.
  *
  * They live beside the new ones because the run is now the unit, and splitting
  * "the same rule, one payee at a time" across two files would be two places to
  * look for one answer.
  */
 
-describe('V-33: a threshold per vault', () => {
+describe('a threshold per vault', () => {
   let sim: AccountSimulator;
   beforeEach(async () => { sim = await liveAccount(2n); });
 
@@ -108,7 +108,7 @@ describe('V-33: a threshold per vault', () => {
     const run = await approvedFor(sim, PAYROLL, payload(7), c);
     // Two approvals against an account threshold of two: payable.
     await sim.as(carrying(sim, A, c)).recordPayment(run.claim);
-    // Open until its window shuts — V-67; the payment is what proves it went through.
+    // Open until its window shuts; the payment is what proves it went through.
     expect(sim.ledger.movements.member(
       pureCircuits.paidMovementOf(pureCircuits.payoutLeaf(
         run.claim.details, run.claim.nonce)))).toBe(true);
@@ -153,7 +153,7 @@ describe('V-33: a threshold per vault', () => {
 
   it('refuses a vault threshold change bound to a DIFFERENT proposal', async () => {
     /*
-     * The same defect M-102 pinned for `setThreshold`, in the new circuit: an
+     * The same defect already pinned for `setThreshold`, in the new circuit: an
      * approved proposal is authority for ONE change, not for the circuit that
      * change happens to live in. Without the binding assert, signers approving
      * "raise payroll to three" would be authority for "raise the treasury to
@@ -247,7 +247,7 @@ describe('V-33: a threshold per vault', () => {
   });
 });
 
-describe('V-33: the reserved signer scope', () => {
+describe('the reserved signer scope', () => {
   it('every signer is seated with the all-vaults sentinel, and nothing branches on it', async () => {
     /*
      * The field exists so the leaf's SHAPE is settled while that is free.
@@ -265,7 +265,7 @@ describe('V-33: the reserved signer scope', () => {
 
   /**
    * **THE INERTNESS, CHECKED RATHER THAN CLAIMED.** §3.7 of
-   * `docs/scope-the-vault-system.md`, scheduled with `S6` and written in `S6c`.
+   * `docs/scope-the-vault-system.md`.
    *
    * The test above is named *"and nothing branches on it"* and its body asserts
    * only the first half of that sentence. **A name that promises more than the
@@ -295,7 +295,7 @@ describe('V-33: the reserved signer scope', () => {
    * is not a ban on the identifier — a widened check that also matched comments
    * would fail the day somebody explained the rule.
    */
-  it('V-33: no circuit BRANCHES on signerScope — it only ever feeds the leaf', () => {
+  it('no circuit BRANCHES on signerScope — it only ever feeds the leaf', () => {
     const source = readFileSync(
       new URL('../src/ConfidentialAccount.compact', import.meta.url), 'utf8');
 
@@ -319,7 +319,7 @@ describe('V-33: the reserved signer scope', () => {
      * that happened to be shaped right.
      *
      * **IT SAID THREE AND IT SAYS TWO, AND THAT IS A TIGHTENING. DO NOT PUT
-     * THE THREE BACK.** `C334`, `S35`, and the deleted site is the reason.
+     * THE THREE BACK**, and the deleted site is the reason.
      *
      * The third reader was the CONSTRUCTOR, which derived the DEPLOYING
      * PROCESS'S OWN SEAT from `localSecretKey()`, `signerBlinding()` and
@@ -328,21 +328,21 @@ describe('V-33: the reserved signer scope', () => {
      * `seededBytes(401)` — a published formula in a repository that is going
      * public — so every account this project deployed carried a signer ANY
      * READER COULD BE, holding one permanent approval toward every threshold,
-     * including every `recordPayment` that moves a vault's money. `S35`
-     * deleted it and the founding leaf now ARRIVES as a public argument;
-     * `ConfidentialAccount.compact:1441-1479` is that decision written where
+     * including every `recordPayment` that moves a vault's money. It was
+     * deleted and the founding leaf now ARRIVES as a public argument;
+     * `ConfidentialAccount.compact:1443-1481` is that decision written where
      * the line used to be.
      *
      * So a `signerScope()` reader reappearing outside `signerLeaf(...)` is no
      * longer only the branching question below — it is a circuit deriving a
-     * seat again, which is the `P0` `C334` closed. This count going back UP is
-     * a regression to refuse, not a stale pin to re-point.
+     * seat again, which is the hole that deletion closed. This count going
+     * back UP is a regression to refuse, not a stale pin to re-point.
      */
     expect(lines.map(l => l.at)).toHaveLength(2);
 
     /*
-     * **AND THE OCCURRENCES, NOT ONLY THE LINES.** `S40`, found by this round's
-     * money-safety pass against this round's own comment.
+     * **AND THE OCCURRENCES, NOT ONLY THE LINES**, which the comment above
+     * used to claim without the body checking it.
      *
      * `lines` is a per-LINE filter, so a SECOND reader written onto line 246
      * beside the first raises no count — and the shape check below tests the
@@ -350,7 +350,7 @@ describe('V-33: the reserved signer scope', () => {
      * holding two statements still satisfies. The paragraph above claims a
      * second reader is noticed. **This is the line that makes that claim
      * true**, and without it the comment described a stricter check than the
-     * body performed (rule 14).
+     * body performed.
      *
      * One file over, `scripts/disclose-scan.test.ts` carries the same lesson
      * pointing the other way: it counts SITES rather than lines because

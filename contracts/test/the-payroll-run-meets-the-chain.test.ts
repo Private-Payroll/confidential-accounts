@@ -1,8 +1,7 @@
 /**
- * **THE PRODUCT'S OWN PAYROLL RUN, DRIVEN INTO THE REAL CIRCUITS.** `C375`,
- * `T-213`, board row `2y7d4`.
+ * **THE PRODUCT'S OWN PAYROLL RUN, DRIVEN INTO THE REAL CIRCUITS.**
  *
- * **WHAT THIS FILE EXISTS TO CATCH, AND IT WAS LIVE UNTIL THIS ROUND.**
+ * **WHAT THIS FILE EXISTS TO CATCH, AND IT WAS LIVE FOR A LONG TIME.**
  * `PayrollService.proposeRun` raised every payroll round through
  * `AccountService.propose({kind: 'payroll'})`, whose payload hash is an
  * APPLICATION digest — `commit(canonical({accountId, kind, sealedPayload,
@@ -13,14 +12,15 @@
  * ever; and because the governance branch writes no `runWindow` row, nothing
  * could close it either.
  *
- * **IT IS `S43`'s AND `S44`'s SHAPE AND NOT A UNIT TEST, AND THAT IS THE WHOLE
- * POINT.** `C371` existed precisely because no propose path had ever carried the
- * SERVICE's own value to a REAL binding: everything either compared a value with
- * a second computation of itself, or drove the contract with values the test
- * file wrote. **Not one value under test here is written by this file.** The
- * root and the window are handed to the product through its public door; the
- * proposal id, the digest, the vault and the change salt come back off the
- * SERVICE's own record; and the contract is then asked whether it agrees.
+ * **IT IS AN END-TO-END SHAPE AND NOT A UNIT TEST, AND THAT IS THE WHOLE
+ * POINT.** The salt-width defect existed precisely because no propose path had
+ * ever carried the SERVICE's own value to a REAL binding: everything either
+ * compared a value with a second computation of itself, or drove the contract
+ * with values the test file wrote. **Not one value under test here is written
+ * by this file.** The root and the window are handed to the product through
+ * its public door; the proposal id, the digest, the vault and the change salt
+ * come back off the SERVICE's own record; and the contract is then asked
+ * whether it agrees.
  *
  * **THE SIMULATED LEDGER CANNOT ANSWER THIS QUESTION AND A GREEN RUN THROUGH IT
  * IS NOT EVIDENCE.** It has no `recordPayment`, no block time and its own
@@ -63,7 +63,10 @@ const OPENS = BigInt(NOW - 3_600);
 const CLOSES = BigInt(NOW + 3_600);
 
 
-/** The MIDNIGHT scheme, against a simulated ledger. `the-service-layer-meets-the-chain.test.ts:87`. */
+/**
+ * The MIDNIGHT scheme, against a simulated ledger.
+ * `the-service-layer-meets-the-chain.test.ts:89`.
+ */
 const services = () => {
   const store = new FileStore(join(mkdtempSync(join(tmpdir(), 'mn-s47-')), 'db.json'));
   const registry = registryWithTestPrivateForms();
@@ -159,7 +162,7 @@ async function rebuiltFromTheRecord(
 /**
  * The proposer's device, carrying the SERVICE's material and the SERVICE's
  * change. `proposalSalt` is the field the circuit reads to build the id, and it
- * is the service's — `the-service-layer-meets-the-chain.test.ts:518-530`.
+ * is the service's — `the-service-layer-meets-the-chain.test.ts:517-530`.
  */
 const deviceCarrying = (
   secrets: { signingSecret: Hex; blinding: Hex; scope: Hex }, change: StateChange,
@@ -174,7 +177,7 @@ const deviceCarrying = (
   proposalSalt: fromHex(change.salt),
 });
 
-describe('C375: a payroll run the PRODUCT raised is one a VAULT can pay', () => {
+describe('a payroll run the PRODUCT raised is one a VAULT can pay', () => {
   it('THE HEADLINE: the service\'s own id opens a RUN on chain, and recordPayment accepts it',
     async () => {
       const r = await aRunTheProductRaised();
@@ -182,8 +185,8 @@ describe('C375: a payroll run the PRODUCT raised is one a VAULT can pay', () => 
       /*
        * HALF ZERO, AND IT IS THE CHEAPEST OF THE THREE. The id the service
        * stored is the one the contract's own circuits derive from the four run
-       * parts. Under `C375` this was `proposalIdOf(applicationDigest, …)` and
-       * could not equal it for any input.
+       * parts. Under the defect this was `proposalIdOf(applicationDigest, …)`
+       * and could not equal it for any input.
        */
       const payload = pureCircuits.runPayload(
         fromHex(r.material.run.root), r.material.run.payees, OPENS, CLOSES);
@@ -206,7 +209,7 @@ describe('C375: a payroll run the PRODUCT raised is one a VAULT can pay', () => 
 
       /*
        * **HALF ONE: THE CHAIN OPENED THE ID THE SERVICE WROTE DOWN.** Under
-       * `C375` the service's id named nothing on chain, and every approval
+       * the defect the service's id named nothing on chain, and every approval
        * gathered against it was unusable.
        */
       const id = fromHex(r.proposal.chainId);
@@ -227,7 +230,7 @@ describe('C375: a payroll run the PRODUCT raised is one a VAULT can pay', () => 
        * **HALF TWO: THE CIRCUIT THAT CONSUMES THE PAYLOAD.** `recordPayment`
        * recomputes the id from the run's four parts and the vault and compares
        * it — so a refusal here is about WHAT WAS APPROVED and nothing else.
-       * This is the call a vault makes on payday, and it is the one `C375`
+       * This is the call a vault makes on payday, and it is the one that
        * would have failed after every signature was collected and every fee
        * spent.
        */
@@ -312,7 +315,7 @@ describe('C375: a payroll run the PRODUCT raised is one a VAULT can pay', () => 
     await sim.as(device).propose(fromHex(proposal.digest), fromHex(proposal.vault));
 
     /*
-     * It opens — which is exactly why `C375` survived four audits. The round is
+     * It opens — which is exactly why this survived four audits. The round is
      * live, approvable and billable. What it has NOT got is a window, so it is
      * not a run to `cancel`, not a run to `closeExpiredRun`, and its id is one
      * `recordPayment` can never recompute.
@@ -365,7 +368,7 @@ describe('C375: a payroll run the PRODUCT raised is one a VAULT can pay', () => 
   /**
    * **A RUN AT THE NO-VAULT SENTINEL IS ONE NO VAULT CAN PRESENT.** The vault is
    * folded into the id and `recordPayment` recomputes the id from the vault it
-   * is handed, so `noVault()` builds an id nothing can match — `C375`'s own
+   * is handed, so `noVault()` builds an id nothing can match — the same
    * failure shape one argument along, and refused before a fee.
    */
   it('refuses a run raised at the no-vault sentinel', async () => {

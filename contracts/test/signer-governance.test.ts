@@ -1,20 +1,22 @@
 /**
- * The two contract bugs the Fable audit found, as regression tests.
+ * The two contract bugs an external audit found, as regression tests.
  *
- *   M-37  one compromised signer could add signers freely, which made the
- *         threshold decorative: seat your own signers, then approve alone.
- *   M-36  approval nullifiers were a pure function of (secret key, round), so
- *         the same person approving the same round on two accounts emitted the
- *         same bytes on both, and the accounts could be linked. Since M-128 the
- *         second half of that pair is the PROPOSAL ID rather than a round, and
- *         the leak — and its fix, `kernel.self()` — is unchanged by that.
+ *   THE SEATING HOLE  one compromised signer could add signers freely, which
+ *         made the threshold decorative: seat your own signers, then approve
+ *         alone.
+ *   THE LINKING LEAK  approval nullifiers were a pure function of (secret key,
+ *         round), so the same person approving the same round on two accounts
+ *         emitted the same bytes on both, and the accounts could be linked.
+ *         The second half of that pair is the PROPOSAL ID rather than a round
+ *         now, and the leak — and its fix, `kernel.self()` — is unchanged by
+ *         that.
  *
  * These run the real compiled circuits in process — every assert, nullifier and
  * Merkle check behaves exactly as it will on chain. No proof server, no node.
  *
- * Written against the ACTUAL failure, not the fix. The M-38 lesson: a test
- * written from the same mental model as the fix cannot catch the model being
- * wrong. So each test states the attack and asserts it is refused.
+ * Written against the ACTUAL failure, not the fix, because a test written
+ * from the same mental model as the fix cannot catch the model being wrong.
+ * So each test states the attack and asserts it is refused.
  */
 import { describe, it, expect } from 'vitest';
 import {
@@ -36,11 +38,11 @@ const payload = (n: number) => new Uint8Array(32).fill(n);
  *
  * Seating a signer, dropping one or moving the threshold moves no money, so the
  * asset and the amount are beside the point — but every proposal commits to a
- * change, and its SALT became load-bearing in a way it never was under the round
- * design. The id the chain files a proposal under is `proposalIdOf(payload,
- * salt)`, so the device that proposes and the device that later spends the
- * proposal must both carry this salt or the governance circuit will not
- * recognise its own proposal.
+ * change, and its SALT became load-bearing in a way it never was under the
+ * round design. The id the chain files a proposal under is
+ * `proposalIdOf(payload, salt)`, so the device that proposes and the device
+ * that later spends the proposal must both carry this salt or the governance
+ * circuit will not recognise its own proposal.
  */
 const govChange = (seed: number): Change => change(0n, seed);
 
@@ -71,11 +73,11 @@ const proposeGov = async (
 const liveAccount = async (threshold = 2n) =>
   AccountSimulator.liveAccount([A, B], threshold);
 
-describe('M-37: adding a signer needs the threshold once the account is live', () => {
+describe('adding a signer needs the threshold once the account is live', () => {
   it('bootstrap is bounded — there is no unapproved seating, from the first seat onward', async () => {
     /*
      * **THIS TEST USED TO PROVE THE BOOTSTRAP WINDOW HAD AN EDGE. IT NOW PROVES
-     * THERE IS NO WINDOW.** `S35d`, `C340` + `C343`.
+     * THERE IS NO WINDOW.**
      *
      * What it was: `create(A, 2n)` gave one seat against a bar of two, so A
      * could seat B alone — allowed, because an account that cannot reach its own
@@ -90,17 +92,18 @@ describe('M-37: adding a signer needs the threshold once the account is live', (
      * INCLUDING THE SECOND. The proof is written out in the constructor beside
      * `threshold = 1` and in `docs/company-accounts.md` section 10a.
      *
-     * **THE NAME IS KEPT AND IT IS STILL EXACT.** `MUTATE.command` scores the
-     * gate mutation against this test: swapped to `threshold < size`, the gate
-     * is FALSE at one seat and one approval, the free branch is entered, and the
-     * bare `addSigner` below SUCCEEDS. So this still discriminates the gate's
+     * **THE NAME IS KEPT AND IT IS STILL EXACT.** The gate mutation is scored
+     * against this test: swapped to `threshold < size`, the gate is FALSE at
+     * one seat and one approval, the free branch is entered, and the bare
+     * `addSigner` below SUCCEEDS. So this still discriminates the gate's
      * spelling from every other line, which is the only thing that was ever in
      * danger.
      *
-     * The refusal READS as `M-128` made it read: `addSigner` looks the named id
-     * up in `openProposals` rather than testing a `proposalOpen` flag, so "no
-     * approved proposal behind this" sounds like "there is no open proposal with
-     * that id". `ZERO_32` is in no account's map.
+     * The refusal READS the way several open proposals made it read:
+     * `addSigner` looks the named id up in `openProposals` rather than testing
+     * a `proposalOpen` flag, so "no approved proposal behind this" sounds like
+     * "there is no open proposal with that id". `ZERO_32` is in no account's
+     * map.
      */
     const sim = await AccountSimulator.create(A);
     expect(sim.ledger.signerLeaves.size()).toBe(1n);
@@ -146,11 +149,11 @@ describe('M-37: adding a signer needs the threshold once the account is live', (
      * Consumed exactly as execute() consumes one, so a single approved addition
      * cannot be replayed to seat a second signer.
      *
-     * The round counter that used to record the consumption is gone; it
-     * only ever meant "something closed the account's one proposal", and with
+     * The round counter that used to record the consumption is gone; it only
+     * ever meant "something closed the account's one proposal", and with
      * several open at once a global counter could not say which. A proposal is
-     * consumed by BOTH of its map entries going away, and the replay it existed
-     * to prevent is asserted directly on the line after.
+     * consumed by BOTH of its map entries going away, and the replay it
+     * existed to prevent is asserted directly on the line after.
      */
     expect(sim.isOpen(id)).toBe(false);
     expect(sim.approvalsFor(id)).toBe(-1n);
@@ -205,7 +208,7 @@ describe('M-37: adding a signer needs the threshold once the account is live', (
   });
 });
 
-describe('M-36: the same signer approving the same proposal on two accounts', () => {
+describe('the same signer approving the same proposal on two accounts', () => {
   /** Every nullifier this account has ever burned, as they appear on chain. */
   const nullifiersOf = (sim: AccountSimulator): string[] =>
     [...(sim.ledger.approvals as any)].map((n: Uint8Array) => Buffer.from(n).toString('hex'));
@@ -213,12 +216,12 @@ describe('M-36: the same signer approving the same proposal on two accounts', ()
   /**
    * The nullifier ONE approval burned, isolated from the fixture's.
    *
-   * **`approvals` IS APPEND-ONLY AND THE FIXTURE NOW WRITES TO IT.** `S35d`:
+   * **`approvals` IS APPEND-ONLY AND THE FIXTURE NOW WRITES TO IT.**
    * `liveAccount` seats the second signer and raises the threshold through
    * approved rounds, so three nullifiers are already there before a test acts.
    * `closeProposal` never removes from this set. Reading `[0]` would therefore
    * read a FIXTURE approval and the test would be measuring something it did
-   * not perform — still red under the `M-36` mutation, by luck, and green for
+   * not perform — still red under the linking mutation, by luck, and green for
    * the wrong reason ever after.
    */
   const nullifierAdded = async (sim: AccountSimulator, act: () => Promise<unknown>) => {
@@ -281,12 +284,12 @@ describe('M-36: the same signer approving the same proposal on two accounts', ()
     /*
      * This used to be "the next round", and the mechanism moved underneath it.
      *
-     * Cancelling rotated the round and burned every approval on the account, and
-     * the property was that the same signer could then approve again. M-128
-     * removed the round: a nullifier binds to the proposal id, cancelling burns
+     * Cancelling rotated the round and burned every approval on the account,
+     * and the property was that the same signer could then approve again. The
+     * round is gone: a nullifier binds to the proposal id, cancelling burns
      * nothing at all, and a second proposal is simply a second, unrelated
-     * nullifier. Same property — a signer is not spent by having approved once —
-     * asserted against the mechanism that carries it now.
+     * nullifier. Same property — a signer is not spent by having approved once
+     * — asserted against the mechanism that carries it now.
      */
     const sim = await liveAccount();
     const one = await proposeGov(sim, A, govChange(53), payload(6));
@@ -299,7 +302,7 @@ describe('M-36: the same signer approving the same proposal on two accounts', ()
   });
 });
 
-describe('M-83: the same signer cannot be added twice', () => {
+describe('the same signer cannot be added twice', () => {
   /*
    * Found 13 Aug while working out what an interrupted `addSigner` may safely
    * retry, and it turned out not to be a job problem at all.
@@ -318,17 +321,17 @@ describe('M-83: the same signer cannot be added twice', () => {
    * quietly taken. It seated B unilaterally and then tried to seat B again on
    * the same path. Since the constructor stopped taking a threshold there is no
    * such path: `signerLeaves.size() < threshold` is false from birth, so every
-   * seating goes through `requireApproved`, and a rewrite of that test would be
-   * `'refuses a duplicate on the approved path too'` below with different
-   * words — two tests asserting one thing, which is `M-104` in a test file.
+   * seating goes through `requireApproved`, and a rewrite of that test would
+   * be `'refuses a duplicate on the approved path too'` below with different
+   * words — two tests asserting one thing, which is the duplicate-rule failure
+   * arriving in a test file.
    *
    * **WHAT IS NOT LOST: THE GUARD IS STILL HOISTED AND STILL LOAD-BEARING.**
    * `closeProposal` stops one approved proposal being replayed; it does not
    * stop TWO different approved proposals both naming B. That is what the
    * hoisted `assert(!signerLeaves.member(...))` refuses and what the two tests
-   * below cover. The hoisting itself — `M-83`'s actual decision — is now a
-   * decision about a branch that cannot be reached, and that is written where
-   * the guard is.
+   * below cover. The hoisting itself is now a decision about a branch that
+   * cannot be reached, and that is written where the guard is.
    */
 
   it('THE ACCOUNT-KILLER: two people cannot fill a signer set', async () => {
@@ -353,16 +356,16 @@ describe('M-83: the same signer cannot be added twice', () => {
      *
      * No attacker. One button pressed twice.
      *
-     * ── AND THAT DAMAGE MODEL IS THE COUNTER'S, WHICH S35c DELETED ──────────
+     * ── AND THAT DAMAGE MODEL IS THE COUNTER'S, AND THE COUNTER IS GONE ────
      *
-     * Found by S35c's test-coverage pass against S35c's own change. The killer above
-     * ran through `signerCount`: a duplicate INFLATED it, so bootstrapping ended
-     * early at a number larger than the people behind it. The seat count is
-     * `signerLeaves.size()` now, and a `Set` insert of a value already present
-     * is IDEMPOTENT — so with the guard removed the count would stay at two,
-     * bootstrapping would stay open, and every count assertion below would still
-     * pass. **Operation (c) closed that killer by construction and left this
-     * test asserting a weaker thing than its name.**
+     * The killer above ran through `signerCount`: a duplicate INFLATED it, so
+     * bootstrapping ended early at a number larger than the people behind it.
+     * The seat count is `signerLeaves.size()` now, and a `Set` insert of a
+     * value already present is IDEMPOTENT — so with the guard removed the
+     * count would stay at two, bootstrapping would stay open, and every count
+     * assertion below would still pass. **Operation (c) closed that killer by
+     * construction and left this test asserting a weaker thing than its
+     * name.**
      *
      * WHAT THE GUARD STILL PREVENTS: the TREE holding one person in two slots
      * while the set holds them once — which is what would let a removal clear
@@ -441,22 +444,23 @@ describe('M-83: the same signer cannot be added twice', () => {
   });
 });
 
-describe('K-4: what the contract does when a signer is removed off chain', () => {
+describe('what the contract does when a signer is removed off chain', () => {
   /*
    * NOT a regression test. This one records something the contract CANNOT do,
    * measured against the real compiled circuits, because the alternative was to
    * assume it from reading `signers: HistoricMerkleTree` and be wrong about the
    * most important claim in the product.
    *
-   * K-4 changes the locks: new viewing key, everything re-sealed, the departing
-   * signer's wrapped copy dropped. That is genuinely all it can do off chain,
-   * because nobody can be un-taught a key they already hold.
+   * Removing a signer off chain changes the locks: new viewing key, everything
+   * re-sealed, the departing signer's wrapped copy dropped. That is genuinely
+   * all it can do off chain, because nobody can be un-taught a key they
+   * already hold.
    *
-   * What it does NOT do is take their AUTHORITY away. Every circuit begins with
-   * `requireSigner()`, which proves a Merkle path into `signers` — an
+   * What it does NOT do is take their AUTHORITY away. Every circuit begins
+   * with `requireSigner()`, which proves a Merkle path into `signers` — an
    * append-only tree with no removal circuit, whose `checkRoot` accepts any
-   * historic root on purpose (M-13: a path taken before other signers joined
-   * has to stay valid). So a removed signer keeps every power they had.
+   * historic root on purpose, because a path taken before other signers joined
+   * has to stay valid. So a removed signer keeps every power they had.
    */
 
   /*
@@ -495,15 +499,16 @@ describe('K-4: what the contract does when a signer is removed off chain', () =>
 
   it('an approval publishes nothing that identifies which signer made it', async () => {
     /*
-     * THE GUARD RAIL FOR M-99, and the reason the obvious revocation design is
-     * wrong.
+     * THE GUARD RAIL FOR THE ANONYMITY OF AN APPROVAL, and the reason the
+     * obvious revocation design is wrong.
      *
      * The tempting fix is a `revoked` set of leaves checked inside
      * `requireSigner()`. Membership in a Compact `Set` requires disclosing the
      * element — so every circuit would publish the CALLER'S LEAF, and every
      * leaf is already public in `signerLeaves`. Approvals would name the
-     * approver. That is M-36 again, by a different route, and it would trade
-     * the property this whole contract exists for in exchange for revocation.
+     * approver — the linking leak again, by a different route, and it would
+     * trade the property this whole contract exists for in exchange for
+     * revocation.
      *
      * This test fails the moment anything starts disclosing the acting leaf.
      */
@@ -539,15 +544,16 @@ describe('K-4: what the contract does when a signer is removed off chain', () =>
     /*
      * And the nullifier the approval did publish is none of those things.
      *
-     * **THE DIFFERENCE, NOT THE TOTAL, AND `S35d` IS WHY.** `approvals` is
-     * append-only — `closeProposal` clears `openProposals`, `approvalCounts`
-     * and `runWindow` and never this set — so it holds every nullifier the
-     * account has ever burned. That was one until the fixture stopped using the
-     * bootstrap window: `liveAccount` now seats `FB` and raises the threshold
-     * through approved rounds, and each of those approvals burns a nullifier
-     * before this test starts. **A test that counts the whole set is a test
-     * whose fixture can silently change what it asserts**, which is what
-     * happened here — so it counts what THIS approval added.
+     * **THE DIFFERENCE, NOT THE TOTAL, AND THE FIXTURE IS WHY.** `approvals`
+     * is append-only — `closeProposal` clears `openProposals`,
+     * `approvalCounts` and `runWindow` and never this set — so it holds every
+     * nullifier the account has ever burned. That was one until the fixture
+     * stopped using the bootstrap window: `liveAccount` now seats `FB` and
+     * raises the threshold through approved rounds, and each of those
+     * approvals burns a nullifier before this test starts. **A test that
+     * counts the whole set is a test whose fixture can silently change what it
+     * asserts**, which is what happened here — so it counts what THIS approval
+     * added.
      */
     const nullifiers = () => [...(sim.ledger.approvals as any)].map((n: Uint8Array) => hex(n));
     const publishedBefore = new Set(nullifiersBefore);
@@ -564,8 +570,8 @@ describe('K-4: what the contract does when a signer is removed off chain', () =>
      * was recorded before there was a fix. It is inverted rather than deleted
      * so the two facts stay attached: the behaviour above is what the contract
      * does when a signer is dropped off chain only, and the circuit below is
-     * the thing that makes dropping them mean something. Since S11 the circuit
-     * is `amendSigner` with `removing` true — the removal lives there, merged
+     * the thing that makes dropping them mean something. The circuit is
+     * `amendSigner` with `removing` true — the removal lives there, merged
      * with seating, not gone.
      */
     const sim = await removedSignerAccount();
@@ -573,7 +579,7 @@ describe('K-4: what the contract does when a signer is removed off chain', () =>
   });
 });
 
-describe('M-106: the slot the whole design rests on', () => {
+describe('slotOf: reading a signer\'s slot back out of their membership path', () => {
   /*
    * `slotOf` reconstructs a signer's position from the left/right flags in
    * their membership path. The probe proved that COMPILES. Nothing had ever run
@@ -630,8 +636,8 @@ describe('M-106: the slot the whole design rests on', () => {
     const sim = await AccountSimulator.create(A2);
     const people = [privateStateFor(2), privateStateFor(3), privateStateFor(4)];
     expect(sim.slotOf(A2)).toBe(0n);
-    /* Seated through approved rounds since `S35d`; the APPEND ORDER is what
-     * this test reads and it is unchanged by how the seating is authorised. */
+    /* Seated through approved rounds; the APPEND ORDER is what this test
+     * reads and it is unchanged by how the seating is authorised. */
     const seated = [A2];
     for (const [i, p] of people.entries()) {
       await sim.seatSigner(p, [...seated], 220 + i);
@@ -641,7 +647,7 @@ describe('M-106: the slot the whole design rests on', () => {
   });
 });
 
-describe('M-106: removing a signer by clearing one slot', () => {
+describe('removing a signer by clearing one slot', () => {
   const FA = privateStateFor(1);
   const FB = privateStateFor(2);
   const FC = privateStateFor(3);
@@ -673,7 +679,7 @@ describe('M-106: removing a signer by clearing one slot', () => {
     return { id, c };
   };
 
-  it('a removed signer can no longer approve — the thing K-4 alone could not do', async () => {
+  it('a removed signer can no longer approve — what off-chain removal cannot do', async () => {
     const sim = await threeSigners();
 
     // C approves first, so a refusal afterwards cannot be "C never could".
@@ -696,11 +702,11 @@ describe('M-106: removing a signer by clearing one slot', () => {
 
   it('NOBODY ELSE IS TOUCHED — the survivors keep their slots and their leaves', async () => {
     /*
-     * The whole of M-106 in one assertion. The design it replaces advanced a
-     * generation stamped on every leaf and re-seated every survivor, so a
-     * removal rewrote the entire signer set and any mistake in the list was
-     * unrecoverable. Here the survivors are expected to be bit-for-bit where
-     * they were.
+     * The whole of the slot design in one assertion. The design it replaces
+     * advanced a generation stamped on every leaf and re-seated every
+     * survivor, so a removal rewrote the entire signer set and any mistake in
+     * the list was unrecoverable. Here the survivors are expected to be
+     * bit-for-bit where they were.
      */
     const sim = await threeSigners();
     const before = {
@@ -784,7 +790,7 @@ describe('M-106: removing a signer by clearing one slot', () => {
       const seatId = await proposeGov(sim, FA, seat, pureCircuits.signerAddPayload(leafD));
       await sim.as(FA).approve(seatId);
       await sim.as(FB).approve(seatId);
-      // The proposal id is the SECOND argument since M-128; reuse is the third.
+      // The proposal id is the SECOND argument; reuse is the third.
       await sim.as(carrying(sim, FA, seat)).addSigner(leafD, seatId, true);
 
       // The new signer took the slot the old one left, rather than a fresh one.
@@ -816,7 +822,7 @@ describe('M-106: removing a signer by clearing one slot', () => {
 
   it('refuses to remove somebody the signers did not approve removing', async () => {
     // The approved proposal names one leaf. Swapping it at the last moment would
-    // remove a different person with the same approvals behind it. M-69's
+    // remove a different person with the same approvals behind it. That
     // lesson: the thing being approved has to be part of what is approved.
     const sim = await threeSigners();
     const { id, c } = await removalApproved(sim, sim.leafOf(FC));
@@ -854,8 +860,8 @@ describe('M-106: removing a signer by clearing one slot', () => {
 
   it('AND THEREFORE a removal can never reopen the bootstrap window', async () => {
     /*
-     * The M-37 trap the previous design warned about under "do not decrement
-     * the seat count naively", stated as the damage rather than as the rule.
+     * The trap the previous design warned about under "do not decrement the
+     * seat count naively", stated as the damage rather than as the rule.
      *
      * `addSigner` lets one signer seat another unilaterally exactly while
      * `signerLeaves.size() < threshold`. A removal that dropped the count below the
@@ -865,15 +871,16 @@ describe('M-106: removing a signer by clearing one slot', () => {
      * cannot reopen; this asserts the consequence, in case the two conditions
      * ever drift apart.
      *
-     * **AND SINCE `S35d` THE WINDOW WAS NEVER OPEN, WHICH MAKES THIS TEST
-     * WEAKER AND WORTH KEEPING ANYWAY.** The constructor founds at one seat and
-     * one approval, so `size < threshold` is false from birth and no removal
-     * could reopen a window that never existed. What this still discriminates
-     * is the REMOVAL FLOOR's spelling: invert it and the removal below succeeds,
-     * and the count assertion after it fails. That is the mutation
-     * `MUTATE.command` scores against `'refuses to strand the account below its
-     * own threshold'`, and this test states the property in words for either
-     * half — which is why it is not the expectation for either row.
+     * **AND THE WINDOW HAS NEVER BEEN OPEN SINCE THE CONSTRUCTOR STOPPED
+     * TAKING A THRESHOLD, WHICH MAKES THIS TEST WEAKER AND WORTH KEEPING
+     * ANYWAY.** The constructor founds at one seat and one approval, so `size
+     * < threshold` is false from birth and no removal could reopen a window
+     * that never existed. What this still discriminates is the REMOVAL FLOOR's
+     * spelling: invert it and the removal below succeeds, and the count
+     * assertion after it fails. That is the mutation scored against `'refuses
+     * to strand the account below its own threshold'`, and this test states
+     * the property in words for either half — which is why it is not the
+     * expectation for either row.
      */
     const sim = await AccountSimulator.liveAccount([FA, FB, FC], 3n);
     expect(sim.ledger.signerLeaves.size()).toBe(3n);
@@ -916,7 +923,7 @@ describe('M-106: removing a signer by clearing one slot', () => {
         .rejects.toThrow(/not a usable signer leaf/);
       // Withdrawn for tidiness rather than necessity. Cancelling used to be what
       // freed the account for the next attempt, because it could hold one
-      // proposal; since M-128 an abandoned proposal blocks nothing.
+      // proposal; an abandoned proposal blocks nothing.
       await sim.as(FA).cancel(id);
     }
   });
@@ -965,7 +972,7 @@ describe('M-106: removing a signer by clearing one slot', () => {
        * B carries the PROPOSER'S salt as well as their own path. That is not a
        * contrivance — the proposal salt travels between signers inside the
        * sealed payload (decision 0002), so every approver legitimately holds
-       * it, and since M-128 it is also what derives the proposal's public id.
+       * it, and it is also what derives the proposal's public id.
        * Without it this test would stop at the proposal-commitment check and
        * never reach the line it exists to exercise.
        */
@@ -1035,7 +1042,7 @@ describe('M-106: removing a signer by clearing one slot', () => {
   });
 });
 
-describe('M-102: changing the threshold, against the compiled circuits', () => {
+describe('changing the threshold, against the compiled circuits', () => {
   /*
    * The threshold used to be a `sealed` ledger field — writable once, in the
    * constructor — so the product's `setThreshold` moved our own copy and
@@ -1107,7 +1114,7 @@ describe('M-102: changing the threshold, against the compiled circuits', () => {
     expect(sim.approvalsFor(next)).toBe(3n);
   });
 
-  it('THE M-37 HOLE THIS FEATURE OPENS: the threshold may not exceed the signers', async () => {
+  it('THE HOLE THIS FEATURE OPENS: the threshold may not exceed the signers', async () => {
     /*
      * The one that is not obvious, and the reason this circuit needed designing
      * rather than writing.
@@ -1115,17 +1122,18 @@ describe('M-102: changing the threshold, against the compiled circuits', () => {
      * `addSigner` treats `signerLeaves.size() < threshold` as "this account is still
      * being set up" and lets ONE signer seat another unilaterally. So raising
      * the threshold above the number of seated signers hands that power back —
-     * M-37 reopened three months after it was closed, through a feature that
-     * looks like it only ever makes the account stricter.
+     * the seating hole reopened months after it was closed, through a feature
+     * that looks like it only ever makes the account stricter.
      *
-     * **AND SINCE `S35d` THIS ASSERT IS THE ONLY WAY THE HOLE COULD BE OPENED
-     * AT ALL, WHICH MAKES IT MORE LOAD-BEARING RATHER THAN LESS.** The
-     * constructor founds every account at one seat and one approval, and the
-     * only other writers of the two quantities `addSigner`'s gate compares are
-     * that gate's own branches, each of which asserts the floor. So
-     * `signerLeaves.size() < threshold` is unreachable — UNLESS this line goes,
-     * at which point one approved round to a big number reopens the free branch
-     * on any account. It stopped being one guard of two and became the guard.
+     * **AND THIS ASSERT IS NOW THE ONLY WAY THE HOLE COULD BE OPENED AT ALL,
+     * WHICH MAKES IT MORE LOAD-BEARING RATHER THAN LESS.** The constructor
+     * founds every account at one seat and one approval, and the only other
+     * writers of the two quantities `addSigner`'s gate compares are that
+     * gate's own branches, each of which asserts the floor. So
+     * `signerLeaves.size() < threshold` is unreachable — UNLESS this line
+     * goes, at which point one approved round to a big number reopens the free
+     * branch on any account. It stopped being one guard of two and became the
+     * guard.
      */
     const sim = await threeSigners();
     const { id, c } = await changeApproved(sim, 4n, [TA, TB]);
@@ -1134,10 +1142,11 @@ describe('M-102: changing the threshold, against the compiled circuits', () => {
     expect(sim.ledger.threshold).toBe(2n);
 
     /*
-     * And the window really is still shut. Two ways at it, because M-128 gave
-     * the attacker a second one: the threshold proposal is still open and fully
-     * approved, so A can NAME it — and the domain separator refuses it. Then it
-     * is cancelled and A has nothing to name at all.
+     * And the window really is still shut. Two ways at it, because several
+     * open proposals give the attacker a second one: the threshold proposal is
+     * still open and fully approved, so A can NAME it — and the domain
+     * separator refuses it. Then it is cancelled and A has nothing to name at
+     * all.
      */
     await expect(sim.as(carrying(sim, TA, c)).addSigner(sim.leafOf(TD), id))
       .rejects.toThrow(/not for this signer/);

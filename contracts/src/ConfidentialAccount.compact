@@ -18,14 +18,14 @@ import CompactStandardLibrary;
  *                                            signer approved, not which one
  *   The payload is public                    Only a commitment to the payload
  *   The balance is public                    This account holds no balance at
- *                                            all — see C292 below
+ *                                            all — see below
  *   The threshold is public                  The threshold is public here too
  *
  * What stays public on purpose: the threshold, the number of approvals so far,
  * and the fact that a proposal exists. Those are what make the account
  * auditable, and hiding them would break the product rather than improve it.
  *
- * C292: THE ACCOUNT KEEPS NO BOOKS OF ITS OWN.
+ * THE ACCOUNT KEEPS NO BOOKS OF ITS OWN.
  *
  * It never could hold money — there is no receive and no send operation
  * anywhere in this file, and there never was one. What it used to keep was a
@@ -49,9 +49,9 @@ import CompactStandardLibrary;
  * ------------------------------------------------------------------ */
 
 /*
- * The signer set: one SLOT per signer. M-106.
+ * The signer set: one SLOT per signer.
  *
- * A PLAIN MerkleTree, deliberately, and this line is the whole of M-106.
+ * A PLAIN MerkleTree, deliberately. This one declaration is the whole change.
  *
  * It used to be a `HistoricMerkleTree`, which accepts any root it has ever
  * held. That is what made removal impossible: a removed signer could always
@@ -93,10 +93,10 @@ export ledger signers: MerkleTree<10, Bytes<32>>;
 /*
  * Every approval ever given, as nullifiers. Never cleared.
  *
- * NOT "approvals for the open proposal", which is what this was until M-128,
- * and the difference is the whole of that change. A nullifier used to be
- * `H(domain, self, ROUND, sk)` and the set was wiped whenever the round moved —
- * which is exactly what made an account able to hold only one proposal at a
+ * NOT "approvals for the open proposal", which is what this was before, and
+ * the difference is the whole of that change. A nullifier used to be
+ * `H(domain, self, ROUND, sk)` and the set was wiped whenever the round moved
+ * — which is exactly what made an account able to hold only one proposal at a
  * time. It is now `H(domain, self, PROPOSAL, sk)`, so a signer's approval of
  * the March payroll and their approval of a vendor invoice are unrelated
  * values, both can exist, and neither expires because the other settled.
@@ -110,7 +110,8 @@ export ledger signers: MerkleTree<10, Bytes<32>>;
 export ledger approvals: Set<Bytes<32>>;
 
 /*
- * THE OPEN PROPOSALS. M-128, and this map is the change that entry asked for.
+ * THE OPEN PROPOSALS, one entry each, and this map is what makes them open at
+ * the same time.
  *
  * WHAT WAS HERE BEFORE: `proposal: Bytes<32>`, `proposalOpen: Boolean`,
  * `proposedChange: Bytes<32>` and `approvalCount: Counter` — one of each,
@@ -118,11 +119,12 @@ export ledger approvals: Set<Bytes<32>>;
  * invoice had to queue behind one another, and `cancel` existed largely so that
  * one stuck proposal could not wedge the account.
  *
- * **That was an artefact of binding nullifiers to a global round counter, not a
- * requirement.** The round was standing in for "which proposal this approval is
- * for". Binding to the proposal itself answers the same question directly and
- * removes the queue — decision 0005 says as much in passing ("the sequencing is
- * an artefact rather than a requirement") and then keeps the round anyway.
+ * **That was an artefact of binding nullifiers to a global round counter, not
+ * a requirement.** The round was standing in for "which proposal this approval
+ * is for". Binding to the proposal itself answers the same question directly
+ * and removes the queue — decision 0005 says as much in passing ("the
+ * sequencing is an artefact rather than a requirement") and then keeps the
+ * round anyway.
  *
  * Keyed by the proposal's own blinded commitment, which is already unique
  * (`persistentCommit(payloadHash, freshSalt)`) and already the value approvals
@@ -149,12 +151,11 @@ export ledger openProposals: Map<Bytes<32>, Bytes<32>>;
 export ledger approvalCounts: Map<Bytes<32>, Uint<64>>;
 
 /*
- * EVERY PAYMENT THIS ACCOUNT HAS EVER RECORDED, one marker per payee.
- * M-128, replacing `entriesCommitment`.
+ * EVERY PAYMENT THIS ACCOUNT HAS EVER RECORDED, one marker per payee. It
+ * replaced `entriesCommitment`.
  *
  * *"as blinded commitments"* stood in this line and went with the sentence
- * below it — `C310`, `S32`. Nothing in this set is blinded; see the entry
- * paragraph.
+ * below it. Nothing in this set is blinded; see the entry paragraph.
  *
  * The entry log used to be a running digest — `H(previous, batch)` — committed
  * to one ledger field. Append-only by construction, which was the property
@@ -169,20 +170,19 @@ export ledger approvalCounts: Map<Bytes<32>, Uint<64>>;
  * chain's implied ORDER — and the chain already records order better, in the
  * block heights of the transactions themselves.
  *
- * EACH ENTRY IS `paidMovementOf(leaf)`. `C310`, corrected in `S32`.
+ * EACH ENTRY IS `paidMovementOf(leaf)`.
  *
  * The sentence that stood here said each entry was the same blinded change
  * commitment the proposal was approved against. IT WAS NOT TRUE OF ANY ENTRY IN
  * THIS SET. The only write is `recordPayment`, `movements.insert(paidMovementOf(
  * leaf))` — a `persistentHash` of a padded tag and ONE PAYOUT LEAF. The change
  * commitment goes to `openProposals` in `propose` and reaches this set never.
- * Three rounds copied the false sentence out of here before `S29` traced it
+ * The false sentence was copied out of here three times before it was traced
  * back, which is why the correction is written rather than the line deleted.
  *
- * AND THE ENTRY IS NOT CLOSED BY ANYTHING IN THIS FILE. Rule 27, and it is said
- * in full because the plausible wrong answer has already been written here once
- * and a second one was caught in the same round by `money-safety-auditor`
- * before it left the session.
+ * AND THE ENTRY IS NOT CLOSED BY ANYTHING IN THIS FILE. It is said in full
+ * because the plausible wrong answer has already been written here once, and a
+ * second one was caught before it shipped.
  *
  * `paidMovementOf` has no blinding and neither does `payoutLeaf`; both are
  * `persistentHash`. AND THE WHOLE PREIMAGE IS PUBLIC: `recordPayment` takes
@@ -192,8 +192,8 @@ export ledger approvalCounts: Map<Bytes<32>, Uint<64>>;
  * entry can recompute the entry from its parts. `payoutLeaf` states it in its
  * own words: *"what a completed payment publishes is that payee's own spent
  * secret."* The nonce is load-bearing for a DIFFERENT property — it stops a
- * watcher claiming an UNPAID payee's leaf off a merkle sibling, V-43 — and it
- * hides nothing about a payee already paid.
+ * watcher claiming an UNPAID payee's leaf off a merkle sibling — and it hides
+ * nothing about a payee already paid.
  *
  * WHAT HIDES THE PAYEE, THE ASSET AND THE AMOUNT IS ONE LINE IN THE OTHER
  * CONTRACT: `payoutDetails` in `Vault.compact` commits to the recipient, the
@@ -217,8 +217,7 @@ export ledger movements: Set<Bytes<32>>;
 /*
  * M in M of N. Public so anyone can audit the rule the account runs under.
  *
- * NOT `sealed` any more. M-102, and the reason is worth keeping here rather
- * than only in the backlog.
+ * NOT `sealed` any more, and the reason is worth keeping here.
  *
  * `sealed` means writable once, in the constructor — so the threshold was fixed
  * at deploy and no circuit could move it. The product had a `setThreshold` that
@@ -231,7 +230,7 @@ export ledger movements: Set<Bytes<32>>;
 export ledger threshold: Uint<64>;
 
 /*
- * A THRESHOLD PER VAULT, overriding the account-wide one above. V-33.
+ * A THRESHOLD PER VAULT, overriding the account-wide one above.
  *
  * Two signatures to release payroll, four to touch the treasury, is an ordinary
  * thing for a finance team to want. It lives HERE rather than in each vault
@@ -243,15 +242,15 @@ export ledger threshold: Uint<64>;
  * So a new vault inherits the account's threshold and needs no setup, and the
  * map holds only the vaults somebody deliberately gave their own rule.
  *
- * This costs one lookup per approval and nothing else. It is cheap only because
- * M-128 already made proposals independent: each carries its own count, so
+ * This costs one lookup per approval and nothing else. It is cheap only
+ * because proposals are already independent: each carries its own count, so
  * "how many does THIS one need" is a question about one entry rather than a
  * global the whole account shares.
  */
 export ledger thresholds: Map<Bytes<32>, Uint<64>>;
 
 /*
- * WHICH VAULTS ARE THIS COMPANY'S. S6a, scope 3.2.
+ * WHICH VAULTS ARE THIS COMPANY'S. Scope 3.2.
  *
  * THE GAP THIS CLOSES, and it is a recovery gap rather than a security one.
  * Creating a vault is deploying a contract, and nothing consents to that: the
@@ -267,8 +266,8 @@ export ledger thresholds: Map<Bytes<32>, Uint<64>>;
  * recording — one that has been FUNDED and has never PAID. A company whose
  * device, whose database and whose supplier have all disappeared could read its
  * paying vaults off the chain and would have no way to learn about the funded
- * one. That is C127's shape exactly, and it is why this list is on chain rather
- * than in sealed data.
+ * one. That is the gap, and it is why this list is on chain rather than in
+ * sealed data.
  *
  * A SET AND NOT A SECOND USE OF `thresholds`. Letting the threshold map double
  * as the registry would cost no contract change and would work — and it would
@@ -287,15 +286,16 @@ export ledger thresholds: Map<Bytes<32>, Uint<64>>;
 export ledger vaults: Set<Bytes<32>>;
 
 /*
- * A RUN'S WINDOW — the earliest and latest times its payments may happen. V-67.
+ * A RUN'S WINDOW — the earliest and latest times its payments may happen.
  *
- * THIS REPLACES A COUNTER OF UNPAID PAYEES, and the replacement is the whole of
- * V-61. The counter was decremented by every payment of a run so the last one
- * could close the proposal. That is a read-modify-write of a single map entry
- * performed by every payment of the same run, and Midnight rejects the second
- * transaction to read a value another transaction writes (`popeq`, §E.6b). **So
- * the mechanism that recorded a run finishing serialised the very payments the
- * pool design made parallel** — the case the whole design exists for.
+ * THIS REPLACES A COUNTER OF UNPAID PAYEES, and the replacement is the whole
+ * change. The counter was decremented by every payment of a run so the last
+ * one could close the proposal. That is a read-modify-write of a single map
+ * entry performed by every payment of the same run, and Midnight rejects the
+ * second transaction to read a value another transaction writes (`popeq`,
+ * §E.6b). **So the mechanism that recorded a run finishing serialised the very
+ * payments the pool design made parallel** — the case the whole design exists
+ * for.
  *
  * The window replaces it by removing the question. Payments assert the block
  * time lies inside it; block-time predicates read the block context rather than
@@ -312,10 +312,10 @@ export ledger vaults: Set<Bytes<32>>;
  * and never again — so payments, which never read it, cannot contend on it.
  *
  * WHAT AN OBSERVER LEARNS: that a run is scheduled between two dates. The
- * run's existence and size were already public; its schedule now is too, which
- * is the same class of leak as V-6 and is recorded there rather than hidden.
+ * run's existence and size were already public; its schedule now is too. It is
+ * an accepted leak rather than a hidden one.
  *
- * ONE MAP AND NOT TWO. S35c, operation (w) of `docs/company-accounts.md` §9.
+ * ONE MAP AND NOT TWO. Operation (w) of `docs/company-accounts.md` §9.
  *
  * `runStart` and `runEnd` were two `Map<Bytes<32>, Uint<64>>` in two slots
  * until the layout was fixed for ever. They are ONE THING — a run's window —
@@ -326,8 +326,8 @@ export ledger vaults: Set<Bytes<32>>;
  * THAT ABSENCE IS LOAD-BEARING, AND IT IS WHY THIS IS A MAP RATHER THAN A PAIR
  * OF NUMBERS ON EVERY PROPOSAL. `cancel` and `closeExpiredRun` each tell a run
  * from a governance proposal by asking whether this map HAS a row — `member`,
- * never a stored number compared against zero. `C359` is filed for the version
- * that compares: a sentinel `closesAt == 0` written sloppily makes
+ * never a stored number compared against zero. The version that compares is
+ * the dangerous one: a sentinel `closesAt == 0` written sloppily makes
  * `blockTimeGte(0)` always true, and `closeExpiredRun` — the one circuit any
  * stranger may call — would close any open GOVERNANCE proposal, destroying a
  * signer removal that was one approval short at one transaction each.
@@ -337,15 +337,16 @@ export ledger vaults: Set<Bytes<32>>;
  * AND WHAT THE MERGE DELIBERATELY DID NOT TAKE. `openProposals` and
  * `approvalCounts` are keyed by the same id and were NOT folded in with it,
  * because `approve` rewrites the record it is in — and a window inside that
- * record is a window `approve` can silently reset. That is register row `B5`
- * reopened, and `B5` is closed by exactly one line in `cancel` whose condition
- * is that `propose` is the only writer of this map. `approve` must never gain
- * access to a window and `recordPayment` must never read one.
+ * record is a window `approve` can silently reset. What holds that shut is
+ * exactly one line in `cancel` whose condition is that `propose` is the only
+ * writer of this map. `approve` must never gain access to a window and
+ * `recordPayment` must never read one.
  *
  * NOTHING ELSE GOES IN `Window`. It holds `opensAt` and `closesAt` and that is
- * all it will ever hold. A completion flag is the obvious third field and it is
- * V-61 rebuilt: completion is DERIVED from `movements`, so there is no
- * completion flag anybody can set wrongly. Read the paragraph above.
+ * all it will ever hold. A completion flag is the obvious third field and it
+ * is the unpaid counter rebuilt: completion is DERIVED from `movements`, so
+ * there is no completion flag anybody can set wrongly. Read the paragraph
+ * above.
  */
 struct Window {
   opensAt: Uint<64>;
@@ -354,22 +355,20 @@ struct Window {
 export ledger runWindow: Map<Bytes<32>, Window>;
 
 /*
- * Every leaf currently seated, so the same signer cannot be added twice. M-83.
+ * Every leaf currently seated, so the same signer cannot be added twice.
  *
- * AND SINCE S35c IT IS ALSO THE SEATED COUNT — operation (c) of
+ * AND IT IS ALSO THE SEATED COUNT — operation (c) of
  * `docs/company-accounts.md` §9. A `signerCount: Counter` stood in the slot
- * above this one and held the same number. `signerLeaves.size()` is an ON-CHAIN
- * read, not a TypeScript-only one — `midnight-ledger.ss:643` declares `size` a
- * `read` returning `Uint64` and marks only the ITERATOR `js-only` — so the
- * counter was a second public field that meant what this one already means, and
- * the failure shape this project keeps recording is two of those drifting apart.
- * The comment below said so before the counter was deleted.
+ * above this one and held the same number. `signerLeaves.size()` is an
+ * ON-CHAIN read, not a TypeScript-only one — `midnight-ledger.ss:643` declares
+ * `size` a `read` returning `Uint64` and marks only the ITERATOR `js-only` —
+ * so the counter was a second public field that meant what this one already
+ * means, and the failure shape that keeps recurring is two of those drifting
+ * apart. The comment below said so before the counter was deleted.
  *
- * WHAT THE DELETION CHANGED ABOUT M-83, AND IT CHANGED WHAT THE GUARD BELOW IS
- * FOR. Found by S35c's own `money-safety-auditor`, against S35c's own first
- * draft of this paragraph, which claimed the opposite.
+ * WHAT THE DELETION CHANGED, AND IT CHANGED WHAT THE GUARD BELOW IS FOR.
  *
- * M-83's ACCOUNT-KILLER RAN THROUGH THE COUNTER, AND OPERATION (c) CLOSES IT BY
+ * THE ACCOUNT-KILLER RAN THROUGH THE COUNTER, AND OPERATION (c) CLOSES IT BY
  * CONSTRUCTION. Seating one leaf twice INFLATED `signerCount` past the number of
  * people who could actually approve, so bootstrapping ended early and a third
  * real person could never be seated — the account could never gather its own
@@ -405,17 +404,17 @@ export ledger runWindow: Map<Bytes<32>, Window>;
  * seating and falls with an unseating.
  *
  * AND IT DOES NOT HOLD *EXACTLY* WHAT THE TREE HOLDS. This line said that it
- * did until S35c's own `money-safety-auditor` read it. The tree also holds
- * `vacantSlot()` markers, which this set never holds, so the two agree about
- * real signers and about nothing else. The residue is named rather than papered
- * over: `amendSigner`'s removal branch proves TREE membership and then removes
- * from this SET without asserting the leaf was in it, so an approved removal of
- * `vacantSlot()` re-stamps an already-vacant slot, no-ops here, passes the floor
- * and burns the round reporting success. **Under the deleted counter that same
- * call DECREMENTED — desynchronising the number every M-37 comparison reads, and
- * repeatably. `Set.remove` of an absent value is a no-op, so operation (c) made
- * that desync unreachable and left a silent no-op in its place.** One assert
- * here would close what is left; it is a `BACKLOG` row rather than this round's.
+ * did, and it was wrong. The tree also holds `vacantSlot()` markers, which
+ * this set never holds, so the two agree about real signers and about nothing
+ * else. The residue is named rather than papered over: `amendSigner`'s removal
+ * branch proves TREE membership and then removes from this SET without
+ * asserting the leaf was in it, so an approved removal of `vacantSlot()`
+ * re-stamps an already-vacant slot, no-ops here, passes the floor and burns
+ * the round reporting success. **Under the deleted counter that same call
+ * DECREMENTED — desynchronising the number every threshold comparison reads,
+ * and repeatably. `Set.remove` of an absent value is a no-op, so operation (c)
+ * made that desync unreachable and left a silent no-op in its place.** One
+ * assert here would close what is left, and it is not closed today.
  *
  * Storing the leaves discloses nothing new. Seating already discloses each one,
  * and a leaf is blinded — H(publicKey, blinding) — so it identifies nobody
@@ -424,46 +423,47 @@ export ledger runWindow: Map<Bytes<32>, Window>;
 export ledger signerLeaves: Set<Bytes<32>>;
 
 /* ------------------------------------------------------------------ *
- * THE FOUR RESERVED SLOTS. S35c, `docs/company-accounts.md` §9 ruling 4.
+ * THE FOUR RESERVED SLOTS. `docs/company-accounts.md` §9 ruling 4.
  *
  * READ THIS BEFORE READING ANY OF THEM, AND BEFORE ADDING A FIFTEENTH FIELD.
  *
  * A DEPLOYED CONTRACT'S MACHINERY CAN BE REPLACED. ITS STORAGE CAN NEVER BE
  * ADDED TO. Circuits are replaceable at the same address with the state intact
- * (`SC6`, `docs/scope-the-upgrade-path.md`); a ledger field is fixed at
- * construction and no update, upgrade or maintenance operation can add one. The
- * only way to gain a field is a new contract at a new address — which for a
- * company means new vaults, every note moved, every signer re-seated and every
- * payee's key material re-issued. So these four are declared NOW, empty, for
- * features that are designed LATER.
+ * (`docs/scope-the-upgrade-path.md`); a ledger field is fixed at construction
+ * and no update, upgrade or maintenance operation can add one. The only way to
+ * gain a field is a new contract at a new address — which for a company means
+ * new vaults, every note moved, every signer re-seated and every payee's key
+ * material re-issued. So these four are declared NOW, empty, for features that
+ * are designed LATER.
  *
  * THREE OF THE FOUR ARE DECLARATIONS AND NOTHING ELSE, AND THAT IS THE POINT.
  * `proposalHolds`, `successor` and `signerRoles` have no circuit in this file
- * and must not be given one by a round that is not the round designing the
- * feature. Storage is permanent and circuits are not, so a circuit written now
- * for an unspecified feature spends deploy bytes on a guess. `retiredAt` is the
- * exception because its feature IS specified — `C213` — and it is live work.
+ * and must not be given one until the feature itself is designed. Storage is
+ * permanent and circuits are not, so a circuit written now for an unspecified
+ * feature spends deploy bytes on a guess. `retiredAt` is the exception because
+ * its feature IS specified, and it is live work.
  *
- * WHY ALL FOUR ARE ON CHAIN, WHICH IS THE FOUNDER'S OWN TEST, 2 Sep: anything
- * meant to STOP something cannot live on our server, because our server is not
- * in the path — a signer can call this contract directly. Anything that only
- * RECORDS may be off-chain, unless it is needed precisely when we are gone.
- * The hold and the roles STOP. The retirement log and the successor pointer are
- * both needed exactly when we are gone.
+ * WHY ALL FOUR ARE ON CHAIN, AND IT IS ONE TEST: anything meant to STOP
+ * something cannot live on our server, because our server is not in the path —
+ * a signer can call this contract directly. Anything that only RECORDS may be
+ * off-chain, unless it is needed precisely when we are gone. The hold and the
+ * roles STOP. The retirement log and the successor pointer are both needed
+ * exactly when we are gone.
  *
  * AND SLOT 14 STAYS EMPTY. It is the guard's margin and it is NOT inventory.
- * `T-170`: SIXTEEN top-level declarations COMPILE — they do not refuse — and
- * they reshape every field's path (`C357`, measured: 1 `newArray()` at fifteen,
- * 3 at sixteen). The only thing that says no is a guard `S38` wrote for this
+ * SIXTEEN top-level declarations COMPILE — they do not refuse — and they
+ * reshape every field's path (measured: 1 `newArray()` at fifteen, 3 at
+ * sixteen). The only thing that says no is a guard written for this
  * repository, which is not the toolchain, so it is not in a fork and not in a
  * customer's copy. At 15/15 one careless `export ledger` line produces an
  * artifact that looks successful and matches nothing anybody already holds.
- * FOURTEEN IS THE WORKING CEILING. A fifteenth field is the founder's to add.
+ * FOURTEEN IS THE WORKING CEILING, AND A FIFTEENTH FIELD IS A DECISION TO TAKE
+ * DELIBERATELY.
  * ------------------------------------------------------------------ */
 
 /*
- * WHICH VAULTS THIS ACCOUNT HAS RETIRED. `C213`, and the only reserved field
- * this round also writes.
+ * WHICH VAULTS THIS ACCOUNT HAS RETIRED, and the only reserved field that is
+ * also written.
  *
  * WHY IT IS THE ACCOUNT'S. `retireVault` and `vaults` are both this contract's,
  * so a record of what was retired belongs beside the registry it was removed
@@ -471,7 +471,7 @@ export ledger signerLeaves: Set<Bytes<32>>;
  * supplier have all gone — the same recovery argument that put `vaults` on
  * chain in the first place — which is why it is not a row in our database.
  *
- * WHAT THE VALUE IS, AND IT IS NOT A DATE. RULE 9.
+ * WHAT THE VALUE IS, AND IT IS NOT A DATE.
  *
  * `Uint<64>` was chosen so that a retirement TIME can be stored one day. It
  * cannot be stored today: THERE IS NO WAY TO READ THE BLOCK TIME IN A CIRCUIT.
@@ -493,26 +493,26 @@ export ledger signerLeaves: Set<Bytes<32>>;
  * `Uint<64>` and not a `Set` because the TYPE is the half that can never be
  * changed and a real time can be written into it by a later circuit, which can.
  *
- * AND IT ANSWERS *EVER RETIRED*, NOT *IS RETIRED*. Found by S35c's own
- * `money-safety-auditor`, against S35c's own new field. NOTHING REMOVES FROM
- * THIS MAP, and `adopt` refuses only current membership of `vaults` — so a vault
+ * AND IT ANSWERS *EVER RETIRED*, NOT *IS RETIRED*. NOTHING REMOVES FROM THIS
+ * MAP, and `adopt` refuses only current membership of `vaults` — so a vault
  * that is retired and then adopted again sits in `vaults` AND in here at the
  * same time, with nothing distinguishing the two states. `Vault.retire` writes
  * no vault state at all, so a retired vault is not disabled either: it can be
- * funded and it can still pay. **A recovering party reading this map as a STATUS
- * would skip a live vault, and a recovering party is exactly who this field is
- * for.** `vaults` still holds the truth. It is `C213`'s own shape — *a map that
- * only grows, keyed by a thing that can be destroyed* — and it is written down
- * here rather than fixed here: clearing the row in `adopt` is a second decision,
- * and a circuit is the half that can still be added after the deploy.
+ * funded and it can still pay. **A recovering party reading this map as a
+ * STATUS would skip a live vault, and a recovering party is exactly who this
+ * field is for.** `vaults` still holds the truth. It is a known shape — *a map
+ * that only grows, keyed by a thing that can be destroyed* — and it is written
+ * down here rather than fixed here: clearing the row in `adopt` is a second
+ * decision, and a circuit is the half that can still be added after the
+ * deploy.
  *
  * WHAT IT PUBLISHES, SAID BECAUSE EVERY OTHER PUBLIC FIELD IN THIS FILE SAYS
- * IT: the set of vault addresses this account has ever retired, permanently and
- * in CURRENT state. Retirement used to leave no trace outside transaction
+ * IT: the set of vault addresses this account has ever retired, permanently
+ * and in CURRENT state. Retirement used to leave no trace outside transaction
  * history. The retire transaction was already public and `vaults` already
- * publishes the live set, so the marginal leak is small — but it is a leak, it
- * is `C356`'s subject, and a field that can never be removed should not be the
- * one field here whose disclosure cost went unstated.
+ * publishes the live set, so the marginal leak is small — but it is a leak,
+ * and a field that can never be removed should not be the one field here whose
+ * disclosure cost went unstated.
  */
 export ledger retiredAt: Map<Bytes<32>, Uint<64>>;
 
@@ -530,8 +530,8 @@ export ledger retiredAt: Map<Bytes<32>, Uint<64>>;
  * slot rather than a member of a proposal record.
  *
  * DO NOT WRITE ITS CIRCUIT AS A CONVENIENCE. A hold that stops a payment is a
- * money-safety decision with its own round; the field is here so that round has
- * somewhere to put it.
+ * money-safety decision of its own; the field is here so that decision has
+ * somewhere to land.
  */
 export ledger proposalHolds: Map<Bytes<32>, Uint<64>>;
 
@@ -544,25 +544,25 @@ export ledger proposalHolds: Map<Bytes<32>, Uint<64>>;
  *
  * NOTHING IN THIS FILE WRITES IT, AND FOR NO OTHER REASON. It is not zero
  * because the platform keeps it zero; it is zero because no circuit here
- * assigns it. That is the same shape as `Vault.compact`'s `account`, which is
- * `C286`'s standing warning: a sentence that reads as a guarantee when what
+ * assigns it. That is the same shape as `Vault.compact`'s `account`, and the
+ * standing warning is the same: a sentence that reads as a guarantee when what
  * holds it is an absence.
  *
  * SO "NO SETTER" IS A FACT ABOUT TODAY AND NOT A PROMISE ABOUT TOMORROW.
- * `C360`: *field NO, setter YES* — a setter is ADDABLE AFTER DEPLOY by whoever
- * holds the maintenance authority, because circuits are replaceable and this
- * field is not. Anyone reasoning about who can redirect a company's successor
- * is reasoning about the maintenance authority, not about this declaration.
+ * *Field NO, setter YES* — a setter is ADDABLE AFTER DEPLOY by whoever holds
+ * the maintenance authority, because circuits are replaceable and this field
+ * is not. Anyone reasoning about who can redirect a company's successor is
+ * reasoning about the maintenance authority, not about this declaration.
  */
 export ledger successor: Bytes<32>;
 
 /*
  * WHAT EACH SIGNER MAY DO. RESERVED. DECLARED ONLY — no circuit reads or writes
- * it. `C125`.
+ * it.
  *
  * Every signer is equal today. The `signerScope` witness below already carries
- * the idea of a per-signer restriction — which VAULTS a signer may act on, V-33
- * — and it is deliberately a private value inside the signer's own leaf, which
+ * the idea of a per-signer restriction — which VAULTS a signer may act on —
+ * and it is deliberately a private value inside the signer's own leaf, which
  * nothing branches on. This field is the OTHER half of the same subject and it
  * is a different one: a public, governed permission the contract can read on a
  * path, rather than a private scope baked into a seat. It is on chain because
@@ -574,8 +574,8 @@ export ledger successor: Bytes<32>;
  * Cold: it would be written by governance and read on the paths a signer acts.
  *
  * DO NOT DESIGN IT HERE. Which rights exist, and whether a role can be reduced
- * below what a threshold assumes, are the questions — and they are `C125`'s
- * round's, not a layout round's.
+ * below what a threshold assumes, are the questions, and they belong with the
+ * feature rather than with the layout.
  */
 export ledger signerRoles: Map<Bytes<32>, Uint<64>>;
 
@@ -611,16 +611,16 @@ witness signerPath(leaf: Bytes<32>): MerkleTreePath<10, Bytes<32>>;
  * their signing key. Without it they cannot reproduce their own leaf and
  * cannot act on the account, so it is exactly as precious as the key itself.
  *
- * M-106 restored decision 0003 here. Under the generation design a removal
- * re-seated every survivor, and a survivor's new leaf needs their blinding — so
- * the blindings had to be collected into the sealed roster, where 0003 says they
- * should never be. Slots do not re-seat anybody, so this value is back where it
- * belongs: on one device, held by one person, and nowhere else.
+ * Decision 0003 was restored here. Under the generation design a removal
+ * re-seated every survivor, and a survivor's new leaf needs their blinding —
+ * so the blindings had to be collected into the sealed roster, where 0003 says
+ * they should never be. Slots do not re-seat anybody, so this value is back
+ * where it belongs: on one device, held by one person, and nowhere else.
  */
 witness signerBlinding(): Bytes<32>;
 
 /*
- * WHICH VAULTS THIS SIGNER MAY ACT ON. Reserved, not yet enforced. V-33.
+ * WHICH VAULTS THIS SIGNER MAY ACT ON. Reserved, not yet enforced.
  *
  * Nothing reads this to make a decision today. Every signer is seated with
  * `allVaults()` and no circuit branches on it. It exists because it is part of
@@ -639,18 +639,18 @@ witness signerBlinding(): Bytes<32>;
 witness signerScope(): Bytes<32>;
 
 /*
- * WHICH ASSET this call concerns. M-125.
+ * WHICH ASSET this call concerns.
  *
- * The asset's code, padded to 32 bytes — `GBP`, `USDC`, `ETH`. There is nothing
- * secret about the existence of the euro (decision D10, and the registry is a
- * plaintext table), so this value is not sensitive in itself. What is sensitive
- * is the PAIRING of an asset with an account, which is why it never reaches the
- * chain in the clear and only ever appears inside `assetKeyOf`.
+ * The asset's code, padded to 32 bytes — `GBP`, `USDC`, `ETH`. There is
+ * nothing secret about the existence of the euro — the registry is a plaintext
+ * table — so this value is not sensitive in itself. What is sensitive is the
+ * PAIRING of an asset with an account, which is why it never reaches the chain
+ * in the clear and only ever appears inside `assetKeyOf`.
  */
 witness assetId(): Bytes<32>;
 
 /*
- * The account's asset blinding factor. M-125.
+ * The account's asset blinding factor.
  *
  * NOT a per-signer secret, and the difference from `signerBlinding` matters.
  * A signer's blinding lives on one device because it stands for one person. This
@@ -670,7 +670,7 @@ witness assetBlinding(): Bytes<32>;
 witness proposalSalt(): Bytes<32>;
 
 /*
- * THE CHANGE a proposal makes, rather than the state it results in. M-71.
+ * THE CHANGE a proposal makes, rather than the state it results in.
  *
  * The contract used to bind the absolute next state, which meant a deposit
  * arriving mid-round silently invalidated approvals already given — the
@@ -678,11 +678,11 @@ witness proposalSalt(): Bytes<32>;
  * instead lets the same approval apply to whatever the account holds when it
  * finally settles.
  *
- * They are supplied by the proposer's device at propose time, and re-derived by
- * whoever presents the approved proposal at a vault. They travel between the two
- * inside the sealed payload, which is how every other shared secret moves
- * (decision 0002). Since M-125 the ASSET travels with them, for the same reason
- * and by the same route.
+ * They are supplied by the proposer's device at propose time, and re-derived
+ * by whoever presents the approved proposal at a vault. They travel between
+ * the two inside the sealed payload, which is how every other shared secret
+ * moves (decision 0002). The ASSET travels with them, for the same reason and
+ * by the same route.
  */
 
 /** How much leaves the account. Private: a public Uint<128> would publish it. */
@@ -717,39 +717,38 @@ export circuit signerPublicKey(sk: Bytes<32>): Bytes<32> {
  * This is the difference between the signer set being private and merely
  * looking private.
  *
- * M-106 took the generation parameter back out. It existed because a
+ * The generation parameter was taken back out. It existed because a
  * HistoricMerkleTree cannot forget, so the only way to invalidate one signer's
  * leaf was to invalidate every leaf at once. A slot can be cleared on its own,
  * so nothing has to be stamped.
  *
- * THE DOMAIN SEPARATOR, AND IT IS NOT DECORATION. `C317`, `S32`.
+ * THE DOMAIN SEPARATOR, AND IT IS NOT DECORATION.
  *
  * Without it this circuit and `proposalIdOf` were THE SAME FUNCTION up to a
  * permutation of their arguments. Both were `persistentCommit<Vector<2,
  * Bytes<32>>>` over a two-vector with the third argument as the opening, so
- * `signerLeaf(X, Y, Z)` and `proposalIdOf(X, Z, Y)` returned the same 32 bytes:
- * a signer's leaf and a proposal's id were one value under a relabelling of
- * three arguments. FOURTEEN other places in this file already pad a
- * `"midnight-accounts:"` tag — counted in `S32`, and the brief that named four
- * said there might be more — so the project knew the rule and these two are
- * where it was missed.
+ * `signerLeaf(X, Y, Z)` and `proposalIdOf(X, Z, Y)` returned the same 32
+ * bytes: a signer's leaf and a proposal's id were one value under a
+ * relabelling of three arguments. FOURTEEN other places in this file already
+ * pad a `"midnight-accounts:"` tag — counted, not estimated — so the rule was
+ * known and these two are where it was missed.
  *
- * NOTHING IN THE CONTRACT STOPPED IT — rule 27, `C286`. It was unreachable only
- * because a caller would have had to control a signer's blinding and a
- * proposal's salt at once, and the witnesses that supply them are per-device.
- * That is a property held by who holds what, not by a check, and this register
- * has been wrong about that kind before.
+ * NOTHING IN THE CONTRACT STOPPED IT. It was unreachable only because a caller
+ * would have had to control a signer's blinding and a proposal's salt at once,
+ * and the witnesses that supply them are per-device. That is a property held
+ * by who holds what, not by a check, and this repository has been wrong about
+ * that kind before.
  *
  * THE TAG IS THE FIRST ELEMENT AND THE VECTOR WIDENS TO THREE, which is
- * `unshieldedPayoutDetails`'s answer to `C246` in the vault, in this contract's
- * own style.
+ * `unshieldedPayoutDetails`'s answer in the vault, in this contract's own
+ * style.
  *
- * **AND IT IS THE TAG THAT SEPARATES THEM, NOT THE WIDTH — said plainly because
- * the first draft of this comment credited the width and `money-safety-auditor`
- * refused it in the same round.** Both circuits are now three-vectors, so the
- * width tells them apart from nothing; two distinct padded ASCII strings in the
- * same position is the whole of it, and that is injective because padding
- * distinct strings of at most 32 bytes to 32 bytes is.
+ * **AND IT IS THE TAG THAT SEPARATES THEM, NOT THE WIDTH — said plainly
+ * because the first draft of this comment credited the width and that was
+ * wrong.** Both circuits are now three-vectors, so the width tells them apart
+ * from nothing; two distinct padded ASCII strings in the same position is the
+ * whole of it, and that is injective because padding distinct strings of at
+ * most 32 bytes to 32 bytes is.
  *
  * WHAT THE WIDTH DOES COST IS WORTH KNOWING: THE THREE-VECTOR FAMILY WAS
  * ALREADY OCCUPIED WHEN THESE TWO JOINED IT, AND ONE OF THE TWO OCCUPANTS HAS
@@ -782,8 +781,8 @@ export circuit signerPublicKey(sk: Bytes<32>): Bytes<32> {
  *
  * THE SIGNATURE DOES NOT MOVE AND THE VALUE DOES. Every caller compiles
  * unchanged; every leaf ever computed under the old body is a different 32
- * bytes. That is only free because board row `3` redeploys this account and no
- * real money is on the old one.
+ * bytes. That is only free because this account is redeployed before it holds
+ * real money.
  */
 export circuit signerLeaf(pk: Bytes<32>, blinding: Bytes<32>, scope: Bytes<32>): Bytes<32> {
   return persistentCommit<Vector<3, Bytes<32>>>(
@@ -791,22 +790,22 @@ export circuit signerLeaf(pk: Bytes<32>, blinding: Bytes<32>, scope: Bytes<32>):
 }
 
 /*
- * WHICH ASSET A CHANGE NAMES. M-125.
+ * WHICH ASSET A CHANGE NAMES.
  *
- * It is the first field of `changeCommitmentOf`, and since C292 that is the only
- * place it appears: the account keeps no balance map for it to index.
+ * It is the first field of `changeCommitmentOf`, and that is the only place it
+ * appears: the account keeps no balance map for it to index.
  *
- * **AND SINCE C292 NOTHING OPENS THAT COMMITMENT AT SETTLEMENT.** `execute` was
- * its only reader. `propose` still computes and stores it, `requireApproved`
- * still returns it and `recordPayment` still hands it back — and the vault
- * assigns it and does not read it. So do not read the sentence that used to
- * stand here, that this is what stops a run approved in dollars being presented
- * as the same integer of something else. THAT OUTCOME STILL HOLDS AND SOMETHING
- * ELSE HOLDS IT: the token is inside `payoutDetails`, which is inside the leaf,
- * which is inside the approved root, which is inside the proposal's id. C246's
- * separator is the enforcer; this commitment is written and never opened. A
- * property enforced by one thing while a comment names another is one refactor
- * from being enforced by nothing — C286, rule 27.
+ * **AND NOTHING OPENS THAT COMMITMENT AT SETTLEMENT.** `execute` was its only
+ * reader. `propose` still computes and stores it, `requireApproved` still
+ * returns it and `recordPayment` still hands it back — and the vault assigns
+ * it and does not read it. So do not read the sentence that used to stand
+ * here, that this is what stops a run approved in dollars being presented as
+ * the same integer of something else. THAT OUTCOME STILL HOLDS AND SOMETHING
+ * ELSE HOLDS IT: the token is inside `payoutDetails`, which is inside the
+ * leaf, which is inside the approved root, which is inside the proposal's id.
+ * The separator inside `payoutDetails` is the enforcer; this commitment is
+ * written and never opened. A property enforced by one thing while a comment
+ * names another is one refactor from being enforced by nothing.
  *
  * Exactly the same construction as `signerLeaf`, for exactly the same reason,
  * and it is worth naming the parallel rather than leaving it to be noticed: a
@@ -837,18 +836,18 @@ export circuit assetKeyOf(asset: Bytes<32>, blinding: Bytes<32>): Bytes<32> {
  * proposal's own blinding factor is reused — the two commitments belong to the
  * same proposal and cover different shapes, so there is nothing to separate.
  *
- * THE ASSET IS THE FIRST FIELD AND IT IS NEW. M-125. Without it this commitment
- * says "500,000 minor units leave, appending this batch" and does not say of
- * what — so a run approved to pay a month of dollar salaries would authorise
- * moving the same integer of ether, and whoever presented the proposal at a
- * vault would choose which.
+ * THE ASSET IS THE FIRST FIELD AND IT IS NEW. Without it this commitment says
+ * "500,000 minor units leave, appending this batch" and does not say of what —
+ * so a run approved to pay a month of dollar salaries would authorise moving
+ * the same integer of ether, and whoever presented the proposal at a vault
+ * would choose which.
  *
  * THAT IS THE REASON THE FIELD IS HERE AND IT IS NOT WHAT ENFORCES IT TODAY.
- * C292 deleted the only circuit that opened this commitment, so the asset in it
- * is written and never compared. What refuses the substitution now is C246's
+ * The only circuit that opened this commitment was deleted, so the asset in it
+ * is written and never compared. What refuses the substitution now is the
  * separator inside `payoutDetails`. Stated rather than left to be assumed,
- * because four witnesses and two `persistentCommit`s in the most-called circuit
- * are being paid for a value nobody reads.
+ * because four witnesses and two `persistentCommit`s in the most-called
+ * circuit are being paid for a value nobody reads.
  *
  * THE DOMAIN SEPARATOR, AND WHY IT ARRIVED LATE. Read `signerLeaf` above first.
  *
@@ -900,27 +899,28 @@ export circuit changeCommitmentOf(
 }
 
 /*
- * WHAT THE CHAIN CALLS A PROPOSAL. M-128.
+ * WHAT THE CHAIN CALLS A PROPOSAL.
  *
  * `commit(payloadHash, salt)` — blinded, so the chain learns nothing about what
  * is being proposed; unique, because the salt is fresh on every proposal, so
  * two identical payrolls in the same month are two different proposals and an
  * approval of one is not an approval of the other.
  *
- * EXPORTED, and that is the point of it existing as a named circuit rather than
- * being written inline four times. The CLIENT has to compute this id — a
+ * EXPORTED, and that is the point of it existing as a named circuit rather
+ * than being written inline four times. The CLIENT has to compute this id — a
  * signer's device needs it to approve, and the proposer needs it before the
  * transaction is submitted — and the governance circuits recompute it to check
  * that the proposal they were handed really is the one committing to their
- * payload. NINE call sites in this file and one definition — counted in `S32`,
- * not carried forward: the sentence here said five, which was true when it was
- * written and has not been since the vault rounds. Decision 0004 records what
- * it cost the last time a commitment scheme was written out more than once.
+ * payload. NINE call sites in this file and one definition, counted rather
+ * than carried forward: the sentence here said five, which was true when it
+ * was written and stopped being true once the vaults arrived. Decision 0004
+ * records what it cost the last time a commitment scheme was written out more
+ * than once.
  *
- * THE DOMAIN SEPARATOR. `C317`, `S32`. Read `signerLeaf` above for what it is
- * for: this circuit and that one were the same function up to a permutation of
- * their arguments, and each now pads its own tag into a three-vector so neither
- * can produce the other's output. The tag differs; nothing else about this
+ * THE DOMAIN SEPARATOR. Read `signerLeaf` above for what it is for: this
+ * circuit and that one were the same function up to a permutation of their
+ * arguments, and each now pads its own tag into a three-vector so neither can
+ * produce the other's output. The tag differs; nothing else about this
  * derivation does, and the signature does not move — so every call site here
  * and in the client compiles unchanged and every id changes value.
  */
@@ -934,7 +934,7 @@ export circuit proposalIdOf(
 }
 
 /*
- * One approval per signer PER PROPOSAL. M-128.
+ * One approval per signer PER PROPOSAL.
  *
  * BOUND TO THE PROPOSAL, not to a global round counter, and that single change
  * is what lets an account hold more than one proposal at a time.
@@ -954,7 +954,7 @@ export circuit proposalIdOf(
  * approving two different proposals emits two unlinkable values, because the
  * proposal commitments differ.
  *
- * M-36: the account's own address is in the hash, and has to be.
+ * THE ACCOUNT'S OWN ADDRESS IS IN THE HASH, and has to be.
  *
  * Without it the nullifier is a pure function of (secret key, proposal), so the
  * same signer approving the same payload on the payroll account and on the
@@ -993,12 +993,13 @@ export circuit signerAddPayload(newSignerLeaf: Bytes<32>): Bytes<32> {
  * separated from an ordinary payload: an approval to add must not double as an
  * approval to remove.
  *
- * M-106 shrank this to the departing leaf alone. Under the generation design it
- * had to commit to the survivor list as well, because the caller supplied that
- * list and the contract could not check it — wrong leaves would have seated a
- * signer set nobody could prove membership in, and it would have looked like a
- * successful removal. Nothing is supplied any more: the slot is derived from a
- * proof, and no survivor is touched, so there is no list to get wrong.
+ * The payload shrank to the departing leaf alone. Under the generation design
+ * it had to commit to the survivor list as well, because the caller supplied
+ * that list and the contract could not check it — wrong leaves would have
+ * seated a signer set nobody could prove membership in, and it would have
+ * looked like a successful removal. Nothing is supplied any more: the slot is
+ * derived from a proof, and no survivor is touched, so there is no list to get
+ * wrong.
  */
 export circuit removeSignerPayload(removedLeaf: Bytes<32>): Bytes<32> {
   return persistentHash<Vector<2, Bytes<32>>>([
@@ -1007,7 +1008,7 @@ export circuit removeSignerPayload(removedLeaf: Bytes<32>): Bytes<32> {
 }
 
 /*
- * What the signers approve when they change the threshold. M-102.
+ * What the signers approve when they change the threshold.
  *
  * Domain separated from the add and remove payloads for the same reason those
  * are separated from a payment: an approval to pay a supplier, to seat a
@@ -1021,7 +1022,7 @@ export circuit setThresholdPayload(newThreshold: Uint<64>): Bytes<32> {
 }
 
 /*
- * What a vacated slot holds. M-106, and it exists because of a wrong guess.
+ * What a vacated slot holds, and it exists because of a wrong guess.
  *
  * The first version of this design used `default<Bytes<32>>` as the empty
  * marker and had `addSigner` prove a slot held it. That cannot work, and the
@@ -1037,12 +1038,12 @@ export circuit setThresholdPayload(newThreshold: Uint<64>): Bytes<32> {
  * than a hash of anything: it has to identify nobody, and it must be a value no
  * `persistentCommit` will ever produce, which a padded ASCII constant is.
  *
- * Exported so the CLIENT uses the contract's own definition when it looks for a
- * free slot. A TypeScript copy of this constant would be a shared rule written
- * twice, which is the M-104 shape and this project's oldest failure.
+ * Exported so the CLIENT uses the contract's own definition when it looks for
+ * a free slot. A TypeScript copy of this constant would be a shared rule
+ * written twice, which is the oldest failure shape here.
  */
 /*
- * "EVERY VAULT" — the scope every signer is seated with today. V-33.
+ * "EVERY VAULT" — the scope every signer is seated with today.
  *
  * A constant rather than zero bytes, for the reason `vacantSlot` is: a sentinel
  * that could also arise by accident is not a sentinel. This one is a hash of a
@@ -1054,7 +1055,7 @@ export circuit allVaults(): Bytes<32> {
 }
 
 /*
- * "NO VAULT" — what a proposal names when it concerns no vault at all. V-32.
+ * "NO VAULT" — what a proposal names when it concerns no vault at all.
  *
  * Governance proposals — adding a signer, removing one, moving a threshold —
  * move no money and belong to no vault, but they still need a value in the slot
@@ -1069,14 +1070,14 @@ export circuit noVault(): Bytes<32> {
 }
 
 /*
- * What signers approve when they set one vault's threshold. V-33.
+ * What signers approve when they set one vault's threshold.
  *
  * Same shape and same reason as `setThresholdPayload`: what reaches the chain
  * is a commitment, and the payload is what the signers' devices show them
  * before they agree to it.
  */
 /*
- * A PAYROLL RUN'S PAYLOAD. V-41, V-43.
+ * A PAYROLL RUN'S PAYLOAD.
  *
  * The payload hash of a proposal that pays people. It binds two things the
  * account must be able to trust later and cannot otherwise recover:
@@ -1090,11 +1091,10 @@ export circuit noVault(): Bytes<32> {
  * the account a root and a count; recomputing this payload and finding it
  * produces the approved proposal's id is what proves neither was invented. A
  * `payees` taken as a `propose` argument and kept in a map would be the same
- * number in two places, which is M-104 and which this contract has paid for
- * before.
+ * number in two places, which this contract has paid for before.
  */
 /*
- * THE RECORD THAT ONE PAYEE OF ONE RUN HAS BEEN PAID. V-41, X-9.
+ * THE RECORD THAT ONE PAYEE OF ONE RUN HAS BEEN PAID.
  *
  * Exported, and that is the point of it existing separately rather than being
  * three lines inside `recordPayment`. The product has to answer "who is still
@@ -1107,8 +1107,8 @@ export circuit noVault(): Bytes<32> {
  * somebody unpaid who has been paid, or paid who has not. So the client calls
  * this circuit and there is one definition, checked by `one-definition.test.ts`.
  *
- * PER PAYEE AND NOT PER PROPOSAL. V-64, and the difference is what makes a
- * retry safe.
+ * PER PAYEE AND NOT PER PROPOSAL, and the difference is what makes a retry
+ * safe.
  *
  * This used to hash the proposal alongside the leaf, so a payment was unique
  * WITHIN a run. That is fine until stragglers have to be retried, which is the
@@ -1138,7 +1138,7 @@ export circuit paidMovementOf(leaf: Bytes<32>): Bytes<32> {
 }
 
 /*
- * WHAT THE SIGNERS APPROVE WHEN THEY APPROVE A RUN. V-41, V-67.
+ * WHAT THE SIGNERS APPROVE WHEN THEY APPROVE A RUN.
  *
  * The root fixes who is paid what; the payee count fixes the run's size; and
  * `from`/`until` fix WHEN — the window outside which no payment may happen.
@@ -1166,21 +1166,21 @@ export circuit runPayload(
 }
 
 /*
- * ONE PAYEE'S LEAF. V-43, and the nonce is the whole of why this exists.
+ * ONE PAYEE'S LEAF, and the nonce is the whole of why this exists.
  *
  * A leaf commits to a payment. The obvious shape is a hash of the payment's
  * details and nothing else — and it is WRONG, for a reason that only appears
  * once a run has more than one payee.
  *
- * A claim must disclose its merkle path, because a cross-contract callee cannot
- * read a witness (V-38) and everything it checks must therefore be an argument.
- * **The level-0 sibling in a merkle path IS the neighbouring leaf's hash.** So
- * the first payment of a run publishes a leaf value for a payee who has not
- * been paid yet, along with the root and the path to it. If quoting a leaf were
- * enough to claim it, anyone watching the chain could mark the rest of the
- * payroll paid — and the account could not refuse them, because a contract
- * cannot see its caller. No money would be stolen; the run would simply become
- * unpayable and have to be proposed and approved again.
+ * A claim must disclose its merkle path, because a cross-contract callee
+ * cannot read a witness and everything it checks must therefore be an
+ * argument. **The level-0 sibling in a merkle path IS the neighbouring leaf's
+ * hash.** So the first payment of a run publishes a leaf value for a payee who
+ * has not been paid yet, along with the root and the path to it. If quoting a
+ * leaf were enough to claim it, anyone watching the chain could mark the rest
+ * of the payroll paid — and the account could not refuse them, because a
+ * contract cannot see its caller. No money would be stolen; the run would
+ * simply become unpayable and have to be proposed and approved again.
  *
  * So a claim proves KNOWLEDGE OF THE PREIMAGE instead of quoting the hash. The
  * `nonce` is a per-payee secret; `details` is the vault's own commitment to who
@@ -1188,8 +1188,8 @@ export circuit runPayload(
  * neither of its parts, so it buys an attacker nothing.
  *
  * What a completed payment publishes is that payee's own spent secret — the
- * same argument that makes V-38 safe, one payee at a time instead of one run at
- * a time.
+ * same argument that lets `recordPayment` take the run's salt as a public
+ * argument, one payee at a time instead of one run at a time.
  *
  * The account never learns who was paid: `details` is a hash and stays one.
  */
@@ -1221,7 +1221,7 @@ export circuit vacantSlot(): Bytes<32> {
 }
 
 /*
- * What the signers approve when they adopt a vault. S6a, scope 3.2.
+ * What the signers approve when they adopt a vault. Scope 3.2.
  *
  * Domain separated from every other payload for the reason `setThresholdPayload`
  * gives: an approval to seat a signer, to change a threshold or to pay a
@@ -1248,7 +1248,7 @@ export circuit retireVaultPayload(vault: Bytes<32>): Bytes<32> {
 }
 
 /*
- * Which slot a membership path leads to. M-106.
+ * Which slot a membership path leads to.
  *
  * `MerkleTreePath` carries no index — the compiler said so when the probe asked
  * for one. It does carry a `goes_left` flag per level, and those flags ARE the
@@ -1299,7 +1299,8 @@ export circuit slotOf(path: MerkleTreePath<10, Bytes<32>>): Uint<64> {
  * NOTE WHAT IS ABSENT: no call to `slotOf`. The slot names the signer. This
  * circuit runs at the head of every ordinary action, so deriving the slot here
  * would publish which signer performed each one — the same defect, by a
- * different route, as the `revoked`-Set design decision 0010 rejected.
+ * different route, as the one the `revoked`-Set design of decision 0010 was
+ * rejected for.
  */
 circuit requireSigner(): Bytes<32> {
   const sk = localSecretKey();
@@ -1327,12 +1328,12 @@ circuit requireSigner(): Bytes<32> {
 /*
  * EVERY WITNESS IS READ EXACTLY ONCE PER CIRCUIT, INTO A `const`, AND ANY
  * HELPER TAKES THAT CONST AS AN ARGUMENT RATHER THAN CALLING THE WITNESS
- * ITSELF. M-127.
+ * ITSELF.
  *
- * The circuits this was written for are gone with the balance ledger (C292).
- * The rule is kept because it governs every witness read that is left —
- * `propose` reads `changeAmount` and `changeBatchDigest` once each — and
- * because what it cost to learn is the part worth keeping.
+ * The circuits this was written for are gone with the balance ledger. The rule
+ * is kept because it governs every witness read that is left — `propose` reads
+ * `changeAmount` and `changeBatchDigest` once each — and because what it cost
+ * to learn is the part worth keeping.
  *
  * This looks like a style rule and it is a soundness one. A witness call is a
  * read from the caller's own private state, and the caller is the party with
@@ -1343,10 +1344,10 @@ circuit requireSigner(): Bytes<32> {
  *     stateCommitment = disclose(stateCommitmentOf(nextBalance(), ...));
  *
  * checks one value and commits a DIFFERENT one, and the executor picks the
- * account's next balance while passing every assert — which is M-70 reopened,
- * silently, by a repeated function call. The version of this contract that
- * settled on Stagenet reads `nextBalance()` and `nextEntriesDigest()` twice
- * each in exactly that shape.
+ * account's next balance while passing every assert — a hole reopened silently
+ * by a repeated function call. The version of this contract that settled on
+ * Stagenet reads `nextBalance()` and `nextEntriesDigest()` twice each in
+ * exactly that shape.
  *
  * Whether the compiler common-subexpression-eliminates witness reads is not
  * documented anywhere we can read, and "it produced the right answer in
@@ -1361,21 +1362,22 @@ circuit requireSigner(): Bytes<32> {
  * way. `recordPayment` deliberately does not — a run ends by time, not by a
  * payment; see the note there.
  *
- * ONE COPY, which fixes M-126 — three of the five callers it had then used to
- * leave `proposedChange` behind — and it is now doing more work than that, because closing a proposal
- * has to remove exactly its two map entries and nobody else's.
+ * ONE COPY — three of the five callers it had then used to leave
+ * `proposedChange` behind — and it is now doing more work than that, because
+ * closing a proposal has to remove exactly its two map entries and nobody
+ * else's.
  *
  * NOTE WHAT IS NOT HERE ANY MORE: no round increment and no wiping of the
- * approval set. Both existed because approvals were bound to a global round, so
- * closing anything invalidated every approval on the account. Approvals bind to
- * their own proposal now, so closing one leaves every other proposal exactly as
- * it was — which is the whole of M-128.
+ * approval set. Both existed because approvals were bound to a global round,
+ * so closing anything invalidated every approval on the account. Approvals
+ * bind to their own proposal now, so closing one leaves every other proposal
+ * exactly as it was, and that is the whole of the change.
  */
 circuit closeProposal(proposal: Bytes<32>): [] {
   openProposals.remove(proposal);
   approvalCounts.remove(proposal);
   /*
-   * And its window, if it had one. V-67, and ONE map since S35c.
+   * And its window, if it had one, from the one map that holds them.
    *
    * `remove` on an absent key is not an error, so governance proposals — which
    * have no window — cost ONE no-op here rather than a branch, where before the
@@ -1383,10 +1385,10 @@ circuit closeProposal(proposal: Bytes<32>): [] {
    * they happened, and its schedule does not, because it is spent.
    *
    * AND THIS LINE IS WHY A GENERATED WRITER COUNT FOR `runWindow` WILL READ
-   * EIGHT AND MEAN ONE. `T-169`: the generated column counts a REMOVAL as a
-   * write, and every circuit that closes a proposal inlines this one. `propose`
-   * is the only VALUE-writer of `runWindow`, which is the property `cancel`
-   * rests on — read the four circuit bodies before believing the column.
+   * EIGHT AND MEAN ONE: such a column counts a REMOVAL as a write, and every
+   * circuit that closes a proposal inlines this one. `propose` is the only
+   * VALUE-writer of `runWindow`, which is the property `cancel` rests on —
+   * read the four circuit bodies before believing the column.
    */
   runWindow.remove(proposal);
 }
@@ -1401,7 +1403,7 @@ circuit closeProposal(proposal: Bytes<32>): [] {
  * whole contract rests on and it was previously written out five times.
  */
 /*
- * How many approvals THIS proposal needs. V-33.
+ * How many approvals THIS proposal needs.
  *
  * The vault's own threshold if somebody set one, otherwise the account's.
  * Absence meaning "inherit" is what lets a new vault work with no setup, and
@@ -1415,10 +1417,10 @@ circuit thresholdFor(vault: Bytes<32>): Uint<64> {
 /*
  * TWO ENTRY POINTS, AND THE SPLIT IS PAID FOR IN PROVING TIME.
  *
- * The first version had one circuit taking a vault and looking its threshold up
- * every time. Compiling it showed what that cost: `setThreshold` grew 26% and
- * the account's own spend circuit 15%, while `approve` — which does not go
- * through here — grew 2%. That circuit is gone (C292); the measurement is kept
+ * The first version had one circuit taking a vault and looking its threshold
+ * up every time. Compiling it showed what that cost: `setThreshold` grew 26%
+ * and the account's own spend circuit 15%, while `approve` — which does not go
+ * through here — grew 2%. That circuit is gone; the measurement is kept
  * because it is why the split exists.
  * Governance was paying for a map lookup it can never use.
  *
@@ -1491,13 +1493,13 @@ circuit requireApprovedForVault(proposal: Bytes<32>, vault: Bytes<32>): Bytes<32
   /*
    * `<` and not `.lessThan()`, and the difference is not cosmetic.
    *
-   * The old `approvalCount`, and `signerCount` until S35c deleted it, were
-   * `Counter`s — an ADT with methods. A count read out of a
-   * `Map<Bytes<32>, Uint<64>>` is a plain number and has none, and the compiler
-   * says so in as many words: *expected left-hand side of . to have an ADT or
-   * contract type, received Uint<64>*. Both spellings mean the same thing; only
-   * one of them exists here. `Set.size()` answers a plain `Uint<64>` too, which
-   * is why the three M-37 comparisons now read the same way this one does.
+   * The old `approvalCount`, and `signerCount` until it was deleted, were
+   * `Counter`s — an ADT with methods. A count read out of a `Map<Bytes<32>,
+   * Uint<64>>` is a plain number and has none, and the compiler says so in as
+   * many words: *expected left-hand side of . to have an ADT or contract type,
+   * received Uint<64>*. Both spellings mean the same thing; only one of them
+   * exists here. `Set.size()` answers a plain `Uint<64>` too, which is why the
+   * three threshold comparisons now read the same way this one does.
    */
   assert(!(approvalCounts.lookup(proposal) < thresholdFor(vault)), "not enough approvals yet");
   return openProposals.lookup(proposal);
@@ -1516,7 +1518,7 @@ circuit requireApproved(proposal: Bytes<32>): Bytes<32> {
 }
 
 /*
- * Proves a slot has been vacated, and answers which slot it is. M-106.
+ * Proves a slot has been vacated, and answers which slot it is.
  *
  * The other half of the slot mechanism, and the reason slots can be REUSED.
  * Without reuse the tree would bound the number of ADDITIONS an account can
@@ -1544,7 +1546,7 @@ circuit takeVacatedSlot(): Uint<64> {
  * ------------------------------------------------------------------ */
 
 /*
- * THE FOUNDING SIGNER IS NAMED, NOT MANUFACTURED. C334, 31 Aug.
+ * THE FOUNDING SIGNER IS NAMED, NOT MANUFACTURED.
  *
  * THIS USED TO READ `localSecretKey()`, `signerBlinding()` and `signerScope()`
  * and seat the leaf it derived from them — so the account's first seat belonged
@@ -1561,15 +1563,13 @@ circuit takeVacatedSlot(): Uint<64> {
  * operation `amendSigner` performs with the same kind of value: a `Bytes<32>`
  * leaf handed in, guarded, disclosed and inserted.
  *
- * **WHAT THAT IS AND IS NOT, SAID HERE RATHER THAN CLAIMED (RULE 14).** It is a
- * property of THIS CONTRACT: the seat is an argument, so the deployer's own
- * material is irrelevant to it and no reader of this repository can be the
- * founder. It is NOT yet a property of the client: `AccountService.create`
- * still mints every founding signer's key in the process that deploys
- * (`src/core/account.ts`), which is `C330`'s question and board `4a`'s, and
- * `C11`'s 17-Aug amendment already records it. **A round that reads this
- * paragraph as "the secret is on the founder's device" has read a plan, not the
- * code.** `money-safety-auditor`, `S35`.
+ * **WHAT THAT IS AND IS NOT, SAID HERE RATHER THAN CLAIMED.** It is a property
+ * of THIS CONTRACT: the seat is an argument, so the deployer's own material is
+ * irrelevant to it and no reader of this repository can be the founder. It is
+ * NOT yet a property of the client: `AccountService.create` still mints every
+ * founding signer's key in the process that deploys (`src/core/account.ts`),
+ * and that gap is open rather than closed. **Anyone who reads this paragraph
+ * as "the secret is on the founder's device" has read a plan, not the code.**
  *
  * "THE DEPLOYER HAS NO SEAT" IS NOT "THERE IS NO SEAT", and the difference is
  * the whole account. `amendSigner` opens with `requireSigner()`, so an account
@@ -1600,50 +1600,45 @@ constructor(foundingLeaf: Bytes<32>) {
    * and they cost two comparisons.
    *
    * SPELLED AGAINST `foundingLeaf` AND NOT `newSignerLeaf`, WHICH IS A
-   * REQUIREMENT AND NOT A PREFERENCE. `MUTATE.command` finds its targets by
-   * FIXED STRING and refuses the whole run with `ambiguous target` when one
-   * appears twice — `MUTATE.command:1451` counts them and `:1500-1507`
-   * refuses. Re-anchored TWICE by `S35d`: the pair that stood here pointed at
-   * two unrelated mutation entries (`C366`), and this round's own edits to
-   * `MUTATE.command` then moved the replacement. The mutation "the
-   * vacancy marker may be seated as a signer" targets `amendSigner`'s copy of
-   * the second line verbatim. Two identical spellings would close the door that
-   * proves these guards are load-bearing.
+   * REQUIREMENT AND NOT A PREFERENCE. `amendSigner` carries the same pair of
+   * guards over its own leaf. The two copies are deliberately spelled
+   * differently so that either can be named on its own; make them read alike
+   * and there is no longer any way to refer to one without the other, which is
+   * what the checks that prove these guards are load-bearing rely on.
    */
   assert(foundingLeaf != default<Bytes<32>>, "that is not a usable signer leaf");
   assert(foundingLeaf != vacantSlot(), "that is not a usable signer leaf");
   /*
-   * AND THE NUMBER THAT USED TO ARRIVE BESIDE IT DOES NOT ARRIVE ANY MORE.
-   * `C340` and `C343` together, `P0`, board `2y6b`. Ruled by the founder 2 Sep;
-   * the ruling and the reasoning kept against it are `docs/company-accounts.md`
+   * AND THE NUMBER THAT USED TO ARRIVE BESIDE IT DOES NOT ARRIVE ANY MORE. The
+   * decision and the reasoning kept against it are `docs/company-accounts.md`
    * section 10.
    *
-   * THE CONSTRUCTOR TOOK A THRESHOLD AND `S35b` PUT A FLOOR UNDER IT. The floor
+   * THE CONSTRUCTOR TOOK A THRESHOLD AND A FLOOR WAS PUT UNDER IT. The floor
    * was right about the failure and too weak for it. `requireApproved` asserts
-   * `!(approvalCounts.lookup(proposal) < threshold)`; at zero that reads
-   * `!(0 < 0)` and PASSES, with nobody having approved anything, and a vault
-   * with no threshold of its own inherits the account's — so an account founded
-   * at zero was one where `recordPayment` moved a vault's money on a proposal
-   * no signer voted for. That is `C340`.
+   * `!(approvalCounts.lookup(proposal) < threshold)`; at zero that reads `!(0
+   * < 0)` and PASSES, with nobody having approved anything, and a vault with
+   * no threshold of its own inherits the account's — so an account founded at
+   * zero was one where `recordPayment` moved a vault's money on a proposal no
+   * signer voted for.
    *
-   * A FLOOR STILL LEAVES THE KNOB, AND THE OTHER END OF IT IS `C343`. Nothing
-   * bounded the value from above. An account could be founded needing fifty
-   * approvals while seating one signer: `setThreshold` is the only way down and
-   * it is itself behind `requireApproved`, so such an account is FROZEN FOR
-   * EVER and, until it is, UNILATERAL FOR EVER at the same time.
+   * A FLOOR STILL LEAVES THE KNOB, AND THE OTHER END OF IT IS THE CEILING.
+   * Nothing bounded the value from above. An account could be founded needing
+   * fifty approvals while seating one signer: `setThreshold` is the only way
+   * down and it is itself behind `requireApproved`, so such an account is
+   * FROZEN FOR EVER and, until it is, UNILATERAL FOR EVER at the same time.
    *
-   * SO THE ARGUMENT IS GONE RATHER THAN GUARDED, AND BOTH ROWS CLOSE WITHOUT A
-   * CEILING ASSERT BEING WRITTEN. Every account is founded one signer, one
-   * approval, and the number is raised afterwards through the ordinary approval
-   * path — which is the same reasoning that removed the parameter's original
-   * purpose, and the same shape as `C363` two circuits below: make the bad
-   * value UNREPRESENTABLE rather than REFUSED.
+   * SO THE ARGUMENT IS GONE RATHER THAN GUARDED, AND BOTH FAILURES CLOSE
+   * WITHOUT A CEILING ASSERT BEING WRITTEN. Every account is founded one
+   * signer, one approval, and the number is raised afterwards through the
+   * ordinary approval path — which is the same reasoning that removed the
+   * parameter's original purpose, and the same shape as the guard two circuits
+   * below: make the bad value UNREPRESENTABLE rather than REFUSED.
    *
    * AND THIS LINE SHUTS THE BOOTSTRAP WINDOW FOR EVER, WHICH IS THE LARGEST
-   * THING THE DELETION DOES AND WAS NOT IN THE RULING AS RECORDED.
-   * `docs/company-accounts.md` section 10a, added 2 Sep after `S35d` derived it
-   * and the founder ruled on it in those terms: *adding your first colleague
-   * becomes three steps instead of one, permanently.* He said yes.
+   * THING THE DELETION DOES AND WAS NOT PART OF THE DECISION AS RECORDED.
+   * `docs/company-accounts.md` section 10a states it in those terms: *adding
+   * your first colleague becomes three steps instead of one, permanently.* It
+   * was accepted on that understanding.
    *
    * WHAT SHUTS IT IS NOT AN ASSERT. THERE IS NO LINE TO DELETE AND NO GUARD TO
    * WEAKEN — the state that opens the window is one NO WRITER CAN PRODUCE, and
@@ -1668,30 +1663,30 @@ constructor(foundingLeaf: Bytes<32>) {
    * rather than left to be re-derived.
    *
    * SO `amendSigner`'s FREE BRANCH IS DEAD CODE AND ITS GATE IS ALWAYS TRUE.
-   * A round reading that circuit must be able to see this without deriving it
+   * Anyone reading that circuit must be able to see this without deriving it
    * again, so the gate carries a pointer back to this paragraph. What it means
    * in practice: EVERY SEAT AFTER THE FIRST IS AN APPROVED PROPOSAL, including
    * the second. The founder raises it and approves it alone at their own
-   * threshold of one — three transactions where there was one — and no seat can
-   * be taken on this account without a proposal behind it, ever.
+   * threshold of one — three transactions where there was one — and no seat
+   * can be taken on this account without a proposal behind it, ever.
    *
    * WHAT THAT COSTS AND WHAT IT BUYS, BOTH. It costs the founding cohort two
-   * extra transactions per seat, permanently, and it retires `M-37`'s
-   * complement as a live safety property: the two comparisons at points 3 and 4
-   * above still hold the invariant, but the failure they were written to
-   * prevent — a removal reopening the window — is now unreachable from any
+   * extra transactions per seat, permanently, and it retires the bootstrap
+   * gate's complement as a live safety property: the two comparisons at points
+   * 3 and 4 above still hold the invariant, but the failure they were written
+   * to prevent — a removal reopening the window — is now unreachable from any
    * state. It buys the removal of the only branch in this contract that could
-   * seat a signer with no approved proposal behind it. That branch was
-   * `M-37`'s original defect, guarded ever since; it is now absent rather than
-   * guarded, which is the same trade `C363` makes two circuits below and the
-   * same trade the deletion of this argument makes.
+   * seat a signer with no approved proposal behind it. That branch was the
+   * defect that made the threshold decorative, guarded ever since; it is now
+   * absent rather than guarded, which is the same trade the guard two circuits
+   * below makes and the same trade the deletion of this argument makes.
    *
-   * AND `threshold` IS ASSIGNED FROM A LITERAL BELOW, WITH NO `disclose` ON IT.
-   * That is not an oversight: a literal is public already. `threshold` was the
-   * only ledger field this constructor set from a caller's value, so it is also
-   * the only `disclose` the deletion takes with it — two of them, this
+   * AND `threshold` IS ASSIGNED FROM A LITERAL BELOW, WITH NO `disclose` ON
+   * IT. That is not an oversight: a literal is public already. `threshold` was
+   * the only ledger field this constructor set from a caller's value, so it is
+   * also the only `disclose` the deletion takes with it — two of them, this
    * argument's assert and its assignment. `scripts/disclose-scan.test.ts` pins
-   * that count and `S35d` moved it.
+   * that count.
    */
   const seatedLeaf = disclose(foundingLeaf);
   /*
@@ -1706,10 +1701,10 @@ constructor(foundingLeaf: Bytes<32>) {
   signerLeaves.insert(seatedLeaf);
   threshold = 1;
   /*
-   * NOTHING ELSE IS INITIALISED, and every absence is deliberate. M-125, M-128.
+   * NOTHING ELSE IS INITIALISED, and every absence is deliberate.
    *
-   * THERE IS NO BALANCE MAP TO INITIALISE. C292: the account keeps no books of
-   * its own. It never held money — this contract has no receive and no send
+   * THERE IS NO BALANCE MAP TO INITIALISE. The account keeps no books of its
+   * own. It never held money — this contract has no receive and no send
    * operation of any kind — and the map that stood for what it held is gone
    * along with the circuit that spent from it. Money is held by a vault and
    * every payment out is recorded in `movements` by `recordPayment`.
@@ -1718,9 +1713,9 @@ constructor(foundingLeaf: Bytes<32>) {
    * account has no proposals open and has paid nobody. There is no round to
    * set, because there is no round any more.
    *
-   * AND THERE IS NO COUNTER TO INCREMENT. S35c, operation (c). `signerCount` is
-   * gone; `signerLeaves.size()` is the same number and it is read on chain, so
-   * the `signerLeaves.insert` above IS the count going to one.
+   * AND THERE IS NO COUNTER TO INCREMENT. `signerCount` is gone;
+   * `signerLeaves.size()` is the same number and it is read on chain, so the
+   * `signerLeaves.insert` above IS the count going to one.
    *
    * THE FOUR RESERVED FIELDS ARE NOT INITIALISED HERE EITHER, and three of them
    * are not written anywhere in this file at all. That is the point of them —
@@ -1731,11 +1726,11 @@ constructor(foundingLeaf: Bytes<32>) {
 /*
  * Adds a signer, into a free slot.
  *
- * M-37: this used to require one existing signer and nothing else, which made
- * the threshold decorative. A single compromised signer could add as many
- * signers of their own as they liked and then approve anything M times by
- * themselves. Every other guarantee in this contract sits on top of "M distinct
- * authorised people agreed", and one stolen key was enough to manufacture that.
+ * This used to require one existing signer and nothing else, which made the
+ * threshold decorative. A single compromised signer could add as many signers
+ * of their own as they liked and then approve anything M times by themselves.
+ * Every other guarantee in this contract sits on top of "M distinct authorised
+ * people agreed", and one stolen key was enough to manufacture that.
  *
  * The rationale for the old behaviour was real but did not carry the weight put
  * on it: adding a signer grants no reading power, because the viewing key is
@@ -1756,16 +1751,16 @@ constructor(foundingLeaf: Bytes<32>) {
  * The bootstrap window is genuinely open: whoever deploys can seat the first
  * `threshold` signers unilaterally. That is the same trust as choosing the
  * threshold in the first place, it is bounded, and it is visible on chain in
- * `signerLeaves` — which is the field that answers how many are seated since
- * S35c deleted the counter that used to. Beyond it, adding a signer is exactly
+ * `signerLeaves` — which is the field that answers how many are seated, now
+ * that the counter that used to is gone. Beyond it, adding a signer is exactly
  * as hard as spending.
  *
- * M-106: the SEATING is now one piece of code below both paths rather than a
- * copy inside each. Two copies of a seating rule with one of them missing a
- * line is precisely how M-83 happened.
+ * THE SEATING is now one piece of code below both paths rather than a copy
+ * inside each. Two copies of a seating rule with one of them missing a line is
+ * precisely how the duplicate-seat defect happened.
  */
 /*
- * Removes a signer, by clearing their one slot. M-106.
+ * Removes a signer, by clearing their one slot.
  *
  * NOBODY ELSE IS TOUCHED, and that is the whole change. The previous version
  * advanced a generation stamped on every leaf and re-seated every survivor from
@@ -1785,25 +1780,24 @@ constructor(foundingLeaf: Bytes<32>) {
  * clean success.
  */
 /*
- * ONE CIRCUIT FOR SEATING AND UNSEATING. S11.
+ * ONE CIRCUIT FOR SEATING AND UNSEATING.
  *
- * `addSigner` and `removeSigner` were separate exported circuits until S11
+ * `addSigner` and `removeSigner` were separate exported circuits until it was
  * measured that eleven verifier keys are the most one deploy can carry — the
  * per-extrinsic ceiling is ~65% of the block, not the 75% class total
  * (`scripts/dispatch-ceiling.ts`) — and the account needed `adopt` and
- * `recordPayment` on chain more than it needed two entry points for one
- * tree. Seating and unseating are the same sparse-tree operation in opposite
- * directions, so they now share one verifier key, parameterised by
- * `removing`.
+ * `recordPayment` on chain more than it needed two entry points for one tree.
+ * Seating and unseating are the same sparse-tree operation in opposite
+ * directions, so they now share one verifier key, parameterised by `removing`.
  *
  * NOTHING IS WEAKENED, AND THE PROOF IS MECHANICAL: the two branch bodies
  * below are the old circuits' bodies VERBATIM — same asserts, same messages,
- * same order, same indentation (each body keeps its original two-space
- * indent, inside the branch, ON PURPOSE: every mutation in `MUTATE.command`
- * that targeted a line of `addSigner` or `removeSigner` must keep targeting
- * the same bytes) — plus two mutations that target the one thing that is
- * new, the `removing` discriminator itself. The doc comments above the old
- * circuits stand above this one, unchanged, one per branch.
+ * same order, same indentation (each body keeps its original two-space indent,
+ * inside the branch, ON PURPOSE: every mutation that targeted a line of
+ * `addSigner` or `removeSigner` must keep targeting the same bytes) — plus two
+ * mutations that target the one thing that is new, the `removing`
+ * discriminator itself. The doc comments above the old circuits stand above
+ * this one, unchanged, one per branch.
  *
  * `removing` is public (`disclose`d to branch on it), which discloses
  * nothing the split circuits did not: WHICH entry point a transaction called
@@ -1818,7 +1812,7 @@ export circuit amendSigner(
    */
   leaf: Bytes<32>,
   /*
-   * WHICH approved proposal authorises this. M-128.
+   * WHICH approved proposal authorises this.
    *
    * It used to be "the" open proposal, because there could only be one. With
    * several open at once the caller has to name the one they are spending, and
@@ -1885,7 +1879,7 @@ export circuit amendSigner(
    */
   signers.insertIndex(vacantSlot(), disclose(slotOf(path)));
   /*
-   * AND THIS LINE IS NOW THE DECREMENT. S35c, operation (c).
+   * AND THIS LINE IS NOW THE DECREMENT.
    *
    * `signerCount.decrement(1)` stood directly under it until the counter was
    * deleted. The seated count is `signerLeaves.size()`, so taking the leaf out
@@ -1903,41 +1897,40 @@ export circuit amendSigner(
    * Refusing here is the difference between a rejected transaction and a dead
    * company.
    *
-   * IT ALSO KEEPS THE BOOTSTRAP WINDOW SHUT, which is the M-37 trap this file's
+   * IT ALSO KEEPS THE BOOTSTRAP WINDOW SHUT, which is the trap this file's
    * predecessor warned about under "do not decrement the seat count naively".
    * `addSigner` opens that window exactly when `signerLeaves.size() <
    * threshold`, and this assert is its precise complement, so a removal can
    * never reopen it. The two conditions must stay complements: weaken this one
    * and a removal hands the next single signer the power to seat their own.
    *
-   * BOTH HALVES WERE RESPELLED TOGETHER BY S35c's OPERATION (c), AND THAT IS
-   * THE MOST DANGEROUS THING THAT ROUND DID. They are forty lines apart, in
-   * different branches of this one circuit, and their correctness is a
-   * RELATIONSHIP between them rather than a property of either — so getting one
-   * and not the other hands one signer the account. `!signerCount.lessThan(x)`
-   * became `!(signerLeaves.size() < x)` because `Set.size()` answers a plain
+   * BOTH HALVES WERE RESPELLED TOGETHER WHEN THE COUNTER WENT, AND THAT WAS
+   * THE MOST DANGEROUS PART OF IT. They are forty lines apart, in different
+   * branches of this one circuit, and their correctness is a RELATIONSHIP
+   * between them rather than a property of either — so getting one and not the
+   * other hands one signer the account. `!signerCount.lessThan(x)` became
+   * `!(signerLeaves.size() < x)` because `Set.size()` answers a plain
    * `Uint<64>` and a plain number has no `.lessThan()` method;
    * `requireApprovedForVault` records the same substitution and the compiler's
    * own words for refusing the other spelling.
    *
-   * WHAT ENFORCES THE COMPLEMENT NOW, NAMED AS RULE 27 REQUIRES: NOTHING IN THE
-   * LANGUAGE DOES, AND NO COMMENT ENFORCES ANYTHING. It is held by two tests and
-   * two mutations and by nothing else.
+   * WHAT ENFORCES THE COMPLEMENT NOW, NAMED RATHER THAN ASSUMED: NOTHING IN
+   * THE LANGUAGE DOES, AND NO COMMENT ENFORCES ANYTHING. It is held by two
+   * tests and two mutations and by nothing else.
    *
    * AND THE TWO TESTS ARE NOT THE PAIR A READER WOULD GUESS. In
-   * `signer-governance.test.ts`, *"bootstrap is bounded"* goes red only when the
-   * GATE is weakened, and *"refuses to strand the account below its own
-   * threshold"* only when THIS assert is — those two DISCRIMINATE.
-   * *"AND THEREFORE a removal can never reopen the bootstrap window"* is the
-   * test that states the property in words, and it goes red for EITHER half: it
-   * proves the complement holds and says nothing about which half broke. S35c's
-   * first draft of this paragraph named it as this assert's own test; S35c's
-   * `test-auditor` traced both mutations and found otherwise, and under rule 14
-   * that draft was a wrong claim about what a check proved.
+   * `signer-governance.test.ts`, *"bootstrap is bounded"* goes red only when
+   * the GATE is weakened, and *"refuses to strand the account below its own
+   * threshold"* only when THIS assert is — those two DISCRIMINATE. *"AND
+   * THEREFORE a removal can never reopen the bootstrap window"* is the test
+   * that states the property in words, and it goes red for EITHER half: it
+   * proves the complement holds and says nothing about which half broke. The
+   * first draft of this paragraph named that last one as this assert's own
+   * test, and tracing both mutations showed otherwise.
    *
-   * In `MUTATE.command` one mutation weakens each comparison INDEPENDENTLY of
-   * the other, each naming its discriminating test. This paragraph is a pointer
-   * to the enforcers and is not one of them.
+   * One mutation weakens each comparison INDEPENDENTLY of the other, each
+   * naming its discriminating test. This paragraph is a pointer to the
+   * enforcers and is not one of them.
    */
   assert(!(signerLeaves.size() < threshold),
     "that would leave fewer signers than the threshold, and the account could never approve again");
@@ -1966,44 +1959,45 @@ export circuit amendSigner(
 
   /*
    * Before either path, because both can be replayed and only one of them used
-   * to notice. M-83.
+   * to notice.
    *
    * The approved path already closes the round, so a replay there fails on
    * `proposalOpen`. The bootstrap path had nothing, and a duplicate insert put
    * a second seat in the tree for one person. Checked once, here, rather than
    * in the branch that happened to be missing it.
    *
-   * AND WHAT A DUPLICATE COSTS CHANGED WHEN S35c DELETED THE COUNTER — the
-   * damage this line prevents is NOT the damage `M-83` was filed for, and
-   * saying so is the point. Under `signerCount` a duplicate INFLATED the count
-   * past the people behind it, which at 3 of N and above left the account
-   * unable to reach its own threshold, permanently. `signerLeaves.size()` is
-   * the count now and a `Set` insert of a present value is IDEMPOTENT, so that
-   * outcome is unreachable however this line is written. What is left, and what
-   * this line is for today, is the TREE holding one person in two slots while
-   * the set holds them once: a removal then clears one of those slots and that
-   * person keeps approving from the other while the set says they are gone. The
-   * declaration of `signerLeaves` carries the same paragraph, because a reader
-   * arrives at these two lines from either direction.
+   * AND WHAT A DUPLICATE COSTS CHANGED WHEN THE COUNTER WENT — the damage this
+   * line prevents is NOT the damage it was originally written for, and saying
+   * so is the point. Under `signerCount` a duplicate INFLATED the count past
+   * the people behind it, which at 3 of N and above left the account unable to
+   * reach its own threshold, permanently. `signerLeaves.size()` is the count
+   * now and a `Set` insert of a present value is IDEMPOTENT, so that outcome
+   * is unreachable however this line is written. What is left, and what this
+   * line is for today, is the TREE holding one person in two slots while the
+   * set holds them once: a removal then clears one of those slots and that
+   * person keeps approving from the other while the set says they are gone.
+   * The declaration of `signerLeaves` carries the same paragraph, because a
+   * reader arrives at these two lines from either direction.
    */
   assert(!signerLeaves.member(disclose(newSignerLeaf)), "that signer is already on this account");
 
   /*
-   * THE BOOTSTRAP GATE, AND THE OTHER HALF OF M-37's COMPLEMENT. Its pair is the
+   * THE BOOTSTRAP GATE, AND THE OTHER HALF OF THE COMPLEMENT. Its pair is the
    * floor assert in the removal branch above, and neither line means anything
-   * read on its own. S35c respelled both of them in one operation; the paragraph
-   * above that assert says what holds them together and what does not.
+   * read on its own. Both were respelled in one operation; the paragraph above
+   * that assert says what holds them together and what does not.
    *
-   * AND SINCE S35d THIS CONDITION IS ALWAYS TRUE AND THE FREE BRANCH BELOW IS
-   * DEAD. DO NOT RE-DERIVE THAT — the proof is written out in the constructor,
-   * beside `threshold = 1`, and it is `docs/company-accounts.md` section 10a.
-   * In one sentence: the constructor opens at one seat and a threshold of one,
-   * and the only other writers of those two quantities are the two branches of
-   * this circuit and `setThreshold`, each of which asserts
-   * `!(signerLeaves.size() < …)` — so `signerLeaves.size() >= threshold` holds
-   * from birth and `signerLeaves.size() < threshold` can never be true.
+   * AND SINCE THE FOUNDING THRESHOLD ARGUMENT WENT, THIS CONDITION IS ALWAYS
+   * TRUE AND THE FREE BRANCH BELOW IS DEAD. DO NOT RE-DERIVE THAT — the proof
+   * is written out in the constructor, beside `threshold = 1`, and it is
+   * `docs/company-accounts.md` section 10a. In one sentence: the constructor
+   * opens at one seat and a threshold of one, and the only other writers of
+   * those two quantities are the two branches of this circuit and
+   * `setThreshold`, each of which asserts `!(signerLeaves.size() < …)` — so
+   * `signerLeaves.size() >= threshold` holds from birth and
+   * `signerLeaves.size() < threshold` can never be true.
    *
-   * WHAT IS ENFORCED HERE, NAMED AS RULE 27 REQUIRES: NOTHING. This line
+   * WHAT IS ENFORCED HERE, NAMED RATHER THAN ASSUMED: NOTHING. This line
    * enforces nothing any more, because the state it discriminates on is
    * unreachable. The property *no seat is taken without an approved proposal*
    * is held by the CONSTRUCTOR'S `threshold = 1` and by the two floor asserts,
@@ -2013,12 +2007,12 @@ export circuit amendSigner(
    * and hoisting `requireApproved` would read cleaner and would make the
    * account's safety depend on nobody ever restoring a founding threshold
    * argument — the two are the same line of defence and this branch is the one
-   * that says so out loud. `MUTATE.command` still weakens this comparison and
-   * that mutation is still caught, because the mutation changes the reachable
-   * state rather than the dead one: swapped, the gate is FALSE at one seat and
-   * one approval, and a bare `addSigner` seats a second signer with nobody
-   * voting. The mutation door therefore still proves this line load-bearing
-   * AGAINST THE SPELLING, which is the only thing that was ever in danger.
+   * that says so out loud. A mutation that weakens this comparison is still
+   * caught, because it changes the reachable state rather than the dead one:
+   * swapped, the gate is FALSE at one seat and one approval, and a bare
+   * `addSigner` seats a second signer with nobody voting. So this line is
+   * still proved load-bearing AGAINST THE SPELLING, which is the only thing
+   * that was ever in danger.
    */
   if (!(signerLeaves.size() < threshold)) {
     // Live account: the addition has to be an approved proposal of its own.
@@ -2040,13 +2034,14 @@ export circuit amendSigner(
   /*
    * Seated. Two ways in, and everything that DECIDES anything is above this
    * point — the duplicate guard, the bootstrap-or-approved gate, the round.
-   * Only the tree write differs, which is deliberate: M-83 was a seating rule
-   * copied into two branches with one of them missing a line.
+   * Only the tree write differs, which is deliberate: the duplicate-seat
+   * defect was a seating rule copied into two branches with one of them
+   * missing a line.
    *
    * Disclosing the slot number in the reuse path is safe, and is not the same
    * act as disclosing a caller's slot: a vacated slot belongs to nobody. The
-   * leaf going into it is disclosed on the same line and is blinded, exactly as
-   * it was before M-106.
+   * leaf going into it is disclosed on the same line and is blinded, exactly
+   * as it was before slots were reusable.
    *
    * `disclose(intoVacatedSlot)` is required and is not noise. EVERY parameter
    * of a circuit is private until it is disclosed — even one the caller chose
@@ -2067,7 +2062,7 @@ export circuit amendSigner(
 }
 
 /*
- * Changes M in M of N. M-102.
+ * Changes M in M of N.
  *
  * BOTH DIRECTIONS NEED THE CURRENT THRESHOLD, and nothing more. An earlier
  * version of this circuit demanded unanimity to LOWER the threshold, on the
@@ -2099,14 +2094,15 @@ export circuit amendSigner(
  * makes.
  *
  * THE HOLE THIS CIRCUIT WOULD OTHERWISE OPEN, and it is not obvious.
- * `addSigner` treats `signerLeaves.size() < threshold` as "this account is still
- * being set up" and lets ONE signer seat another unilaterally (M-37). Raising the
- * threshold above the number of seated signers would therefore hand any single
- * signer that power back — M-37 reopened by a route that did not exist when
- * M-37 was closed. Refusing `newThreshold > signerLeaves.size()` is what stops
- * it, and that line is as load-bearing as the floor in `removeSigner`.
+ * `addSigner` treats `signerLeaves.size() < threshold` as "this account is
+ * still being set up" and lets ONE signer seat another unilaterally. Raising
+ * the threshold above the number of seated signers would therefore hand any
+ * single signer that power back, by a route that did not exist when the
+ * original hole was closed. Refusing `newThreshold > signerLeaves.size()` is
+ * what stops it, and that line is as load-bearing as the floor in
+ * `removeSigner`.
  *
- * IT IS A THIRD READING OF THE SAME NUMBER AND NOT A THIRD HALF OF M-37's
+ * IT IS A THIRD READING OF THE SAME NUMBER AND NOT A THIRD HALF OF THE
  * COMPLEMENT, and the distinction is worth keeping: the complement is the pair
  * inside `amendSigner`. This assert guards the OTHER route to the same hole —
  * moving the bar rather than moving the seats — and it has always had its own
@@ -2127,7 +2123,7 @@ export circuit setThreshold(newThreshold: Uint<64>, proposal: Bytes<32>): [] {
   assert(disclose(newThreshold) > 0, "the threshold must be at least one");
 
   /*
-   * The M-37 guard described above. Without it, raising the threshold past the
+   * The guard described above. Without it, raising the threshold past the
    * number of seated signers reopens the bootstrap window and one signer can
    * seat their own.
    */
@@ -2156,14 +2152,14 @@ export circuit setThreshold(newThreshold: Uint<64>, proposal: Bytes<32>): [] {
  *
  * NOTE WHAT IS NOT DISCLOSED HERE, because it is the one place multi-asset
  * could have leaked and does not: the asset key is computed and fed into
- * `changeCommitmentOf` as a private value, and since C292 it is never disclosed
- * anywhere — there is no public map left for it to index. Disclosing it at
- * PROPOSE time would have told an observer which asset a run concerns while
- * the round was still open, which is a live signal about a pending payment and
- * is worth nothing to anyone but a watcher.
+ * `changeCommitmentOf` as a private value, and it is never disclosed anywhere
+ * — there is no public map left for it to index. Disclosing it at PROPOSE time
+ * would have told an observer which asset a run concerns while the round was
+ * still open, which is a live signal about a pending payment and is worth
+ * nothing to anyone but a watcher.
  */
 /*
- * A PAYROLL RUN, RAISED WITH ITS WINDOW. V-67.
+ * A PAYROLL RUN, RAISED WITH ITS WINDOW.
  *
  * A sibling of `propose` rather than an argument to it, and the reason is that
  * `propose` takes its payload as an opaque hash — deliberately, so the account
@@ -2183,25 +2179,25 @@ export circuit setThreshold(newThreshold: Uint<64>, proposal: Bytes<32>): [] {
  * without an off-by-one at midnight.
  */
 /*
- * ONE CIRCUIT FOR BOTH KINDS OF PROPOSAL. S11.
+ * ONE CIRCUIT FOR BOTH KINDS OF PROPOSAL.
  *
- * `propose` and `proposeRun` were siblings until S11 measured that eleven
- * verifier keys are the most one deploy can carry (`scripts/
- * dispatch-ceiling.ts`). The difference between them was never the RULE —
- * both open a proposal at zero approvals under a fresh salt — it was the
- * payload's shape: governance hands an opaque hash, a run is built from its
- * parts so the stored window provably belongs to the approved id. That is a
- * parameter, so it is now `isRun`.
+ * `propose` and `proposeRun` were siblings until it was measured that eleven
+ * verifier keys are the most one deploy can carry
+ * (`scripts/dispatch-ceiling.ts`). The difference between them was never the
+ * RULE — both open a proposal at zero approvals under a fresh salt — it was
+ * the payload's shape: governance hands an opaque hash, a run is built from
+ * its parts so the stored window provably belongs to the approved id. That is
+ * a parameter, so it is now `isRun`.
  *
  * NOTHING IS WEAKENED, AND THE PROOF IS MECHANICAL: the two branch bodies
  * below are the old circuits' bodies VERBATIM — same asserts, same messages,
- * same order, same indentation, kept so every mutation in `MUTATE.command`
- * that targeted them still targets the same bytes — plus one new mutation on
- * the `isRun` discriminator itself. The old doc comments stand above this
- * one, one per branch. The opacity argument that made `proposeRun` a sibling
- * rather than an argument still holds and is unchanged by the merge: the
- * opaque path still learns nothing about a governance payload, and the run
- * path still builds its payload itself from the parts.
+ * same order, same indentation, kept so every mutation that targeted them
+ * still targets the same bytes — plus one new mutation on the `isRun`
+ * discriminator itself. The old doc comments stand above this one, one per
+ * branch. The opacity argument that made `proposeRun` a sibling rather than an
+ * argument still holds and is unchanged by the merge: the opaque path still
+ * learns nothing about a governance payload, and the run path still builds its
+ * payload itself from the parts.
  *
  * `isRun` is public (`disclose`d to branch on it), which discloses nothing
  * the split circuits did not: WHICH entry point a transaction called was
@@ -2233,10 +2229,11 @@ export circuit propose(
 
   /*
    * A RUN NAMES THE VAULT THAT WILL PAY IT, AND THIS IS THE LINE THAT MAKES
-   * THAT TRUE RATHER THAN MERELY PROMISED IN THREE TYPESCRIPT FILES. `S48`,
-   * 3 Sep, board row `2y7d5`. It is `C363`'s MIRROR: `:2319` below says a
-   * governance proposal names NO vault; this says a run names ONE. Together
-   * they are the whole of what this circuit can check about a proposal's kind.
+   * THAT TRUE RATHER THAN MERELY PROMISED IN THREE TYPESCRIPT FILES. It is the
+   * MIRROR of the assert in the governance branch below: that one says a
+   * governance proposal names NO vault, and this says a run names ONE.
+   * Together they are the whole of what this circuit can check about a
+   * proposal's kind.
    *
    * WHAT IT REFUSES. A run raised at `noVault()`. Such a run is well formed in
    * every other respect — it takes an `openProposals` row, an `approvalCounts`
@@ -2246,53 +2243,51 @@ export circuit propose(
    * `:772`), and `noVault()` is the hash of a domain string no address can
    * equal (`:1014-1016`), so the id a vault recomputes can never be this one.
    *
-   * SAID AT ITS TRUE SIZE, BECAUSE THE OBVIOUS WORDING OVERCLAIMS AND THIS
-   * ROUND'S OWN FIRST DRAFT DID. THIS IS NOT `C375`'s FAILURE. `C375`'s round
-   * is raised through the GOVERNANCE branch below, which writes NO window — so
-   * `closeExpiredRun` refuses it for ever (`:2518`) and `cancel` fails open
-   * (`:2469-2470`). A run refused HERE has a window row: it is cancellable before it
-   * opens, sweepable after it closes, and its payees are payable from a fresh
-   * run, because leaves are keyed on the run id (`src/midnight/run-keys.ts:123-124`).
-   * WHAT IT COSTS IS A BURNT FEE AND A WASTED APPROVAL ROUND. That is `C367`'s
-   * shape — a silent no-op made into a refusal — not `C375`'s. Found by this
-   * round's `money-safety-auditor`, against this round's own sentence.
+   * SAID AT ITS TRUE SIZE, BECAUSE THE OBVIOUS WORDING OVERCLAIMS. THIS IS NOT
+   * THE STRANDED-RUN FAILURE. A run raised through the GOVERNANCE branch below
+   * writes NO window, so `closeExpiredRun` refuses it for ever and `cancel`
+   * fails open. A run refused HERE has a window row: it is cancellable before
+   * it opens, sweepable after it closes, and its payees are payable from a
+   * fresh run, because leaves are keyed on the run id
+   * (`src/midnight/run-keys.ts:123-124`). WHAT IT COSTS IS A BURNT FEE AND A
+   * WASTED APPROVAL ROUND — a silent no-op made into a refusal, and nothing
+   * worse than that.
    *
-   * SO WHY IT IS HERE AT ALL, AND THE ANSWER IS RULE 27 RATHER THAN SEVERITY.
-   * THREE TypeScript sites refuse this sequence and two of them say IN THEIR
-   * OWN WORDS that the contract does not — `src/midnight/ledger.ts:834-857`
-   * (*"the contract's run branch takes the vault OPAQUE — it asserts nothing
-   * about it"*), `src/core/ledger.ts:1294-1308` and `src/core/account.ts:2447-2452`.
-   * A client habit is not an enforcer; that sentence is `C368`'s and `C286`'s,
-   * and `C363` is the precedent for paying one comparison to turn a stated
-   * invariant into a checked one. AND THIS IS THE LAST EDIT THIS FILE TAKES
-   * BEFORE THE LEDGER LAYOUT FREEZES, so an invariant left to the client here
-   * is left to the client for ever.
+   * SO WHY IT IS HERE AT ALL, AND THE ANSWER IS ABOUT WHAT ENFORCES THE
+   * INVARIANT RATHER THAN ABOUT SEVERITY. THREE TypeScript sites refuse this
+   * sequence and two of them say IN THEIR OWN WORDS that the contract does not
+   * — `src/midnight/ledger.ts:834-857` (*"the contract's run branch takes the
+   * vault OPAQUE — it asserts nothing about it"*),
+   * `src/core/ledger.ts:1294-1308` and `src/core/account.ts:2447-2452`. A
+   * client habit is not an enforcer, and one comparison is a cheap price for
+   * turning a stated invariant into a checked one. AND THIS IS THE LAST EDIT
+   * THIS FILE TAKES BEFORE THE LEDGER LAYOUT FREEZES, so an invariant left to
+   * the client here is left to the client for ever.
    *
    * IT REFUSES NOTHING THE PRODUCT DOES AND TURNS NO TEST RED, MEASURED RATHER
    * THAN ASSUMED: all three client doors above already refuse it before a fee,
    * and every `proposeRun` call site under `contracts/test/` passes an explicit
-   * non-sentinel vault. `contracts/test/simulator.ts:654` DEFAULTS an omitted
+   * non-sentinel vault. `contracts/test/simulator.ts:659` DEFAULTS an omitted
    * vault to the sentinel and no caller omits one — a harness path to exactly
    * this proposal that has never been walked.
    *
    * WHAT IT DOES NOT BUY, NAMED SO NOBODY BUILDS ON IT. It refuses ONE VALUE,
    * not a class. Any other 32 bytes that is not a deployed vault is equally
-   * unpayable, and `thresholdFor` returns the ACCOUNT threshold for every value
-   * not seated in `thresholds` (`:1359`), so such a run reaches
-   * `movements.insert` at the account's own bar exactly as this one would. The
-   * contract cannot tell a vault address from arbitrary bytes, and it
-   * deliberately does not consult `vaults` on the spend path (`:2848-2857`).
-   * `noVault()` is the one value it can name.
+   * unpayable, and `thresholdFor` returns the ACCOUNT threshold for every
+   * value not seated in `thresholds`, so such a run reaches `movements.insert`
+   * at the account's own bar exactly as this one would. The contract cannot
+   * tell a vault address from arbitrary bytes, and it deliberately does not
+   * consult `vaults` on the spend path. `noVault()` is the one value it can
+   * name.
    *
-   * THE OTHER POSITION, WRITTEN BECAUSE RULE 20 ASKS FOR IT AND NEITHER MARKED
-   * CORRECT. `assert(vaults.member(disclose(vault)), ...)` would close the
-   * sentinel AND arbitrary bytes for the same one-change budget. Against it: it
-   * is a ledger READ rather than a comparison against a value this circuit
-   * already instantiates; it makes raising a run depend on an adopt ordering
-   * nothing in the product enforces yet; and IT IS NOT EVEN STRICTLY STRONGER,
-   * because `adopt` refuses only a vault already adopted (`:2819`) and nothing
-   * anywhere stops `noVault()` itself being adopted. Named for the founder,
-   * not built by this round.
+   * THE OTHER POSITION, WRITTEN DOWN AND NEITHER MARKED CORRECT.
+   * `assert(vaults.member(disclose(vault)), ...)` would close the sentinel AND
+   * arbitrary bytes for the same one-change budget. Against it: it is a ledger
+   * READ rather than a comparison against a value this circuit already
+   * instantiates; it makes raising a run depend on an adopt ordering nothing
+   * in the product enforces yet; and IT IS NOT EVEN STRICTLY STRONGER, because
+   * `adopt` refuses only a vault already adopted and nothing anywhere stops
+   * `noVault()` itself being adopted. Recorded here rather than built.
    */
   assert(disclose(vault) != noVault(), "a run must name the vault that will pay it");
 
@@ -2309,26 +2304,26 @@ export circuit propose(
   approvalCounts.insert(id, 0);
   /*
    * THE ONLY WRITE OF A RUN'S WINDOW ANYWHERE IN THIS CONTRACT. Two inserts
-   * became one when S35c merged `runStart` and `runEnd`; the property that
-   * matters is unchanged and it is the one `B5` is closed by. Nothing but this
-   * line puts a window on chain, and the governance branch below writes none —
-   * so a governance proposal has NO ROW in `runWindow` at all, which is what
-   * `cancel` and `closeExpiredRun` read.
+   * became one when `runStart` and `runEnd` were merged; the property that
+   * matters is unchanged. Nothing but this line puts a window on chain, and
+   * the governance branch below writes none — so a governance proposal has NO
+   * ROW in `runWindow` at all, which is what `cancel` and `closeExpiredRun`
+   * read.
    *
-   * AND THAT IS NOW TRUE IN BOTH DIRECTIONS, WHICH IT WAS NOT UNTIL C363.
-   * "Only this line writes a window" is not the same claim as "every id a
-   * payment will accept has one", and it was the second that `cancel` and
+   * AND THAT IS NOW TRUE IN BOTH DIRECTIONS, WHICH IT WAS NOT ALWAYS. "Only
+   * this line writes a window" is not the same claim as "every id a payment
+   * will accept has one", and it was the second that `cancel` and
    * `closeExpiredRun` were relying on. The branch below could mint a run's
-   * exact id with no window row until it was made to refuse a vault; the assert
-   * that refuses it is what makes THIS sentence a fact about every proposal
-   * rather than about the ones raised honestly. S35d, rule 27.
+   * exact id with no window row until it was made to refuse a vault; the
+   * assert that refuses it is what makes THIS sentence a fact about every
+   * proposal rather than about the ones raised honestly.
    */
   runWindow.insert(id, Window { opensAt: disclose(opensAt), closesAt: disclose(closesAt) });
   } else {
 
   /*
    * A GOVERNANCE PROPOSAL NAMES NO VAULT, AND THIS IS THE LINE THAT MAKES THAT
-   * TRUE RATHER THAN MERELY STATED. C363, P0, found by SC5, 2 Sep.
+   * TRUE RATHER THAN MERELY STATED.
    *
    * WHAT WAS AVAILABLE WITHOUT IT, AND IT WAS AVAILABLE TO ANY SINGLE SIGNER.
    * `runPayload` is an EXPORTED PURE circuit, so any caller evaluates it off
@@ -2345,30 +2340,27 @@ export circuit propose(
    * properly. `cancel` did notice, and FAILED OPEN: its guard is
    * `runWindow.member(id) ? blockTimeLt(...) : true`, so a missing row yields
    * `true` and the cancel is unconditional. Sixty payees paid, the proposal
-   * cancelled, the remaining forty never payable from it — which is `V-52`
-   * verbatim, the failure `B5` closed on 1 Sep, reached again by a second route
-   * to the same id.
+   * cancelled, the remaining forty never payable from it — the half-paid-run
+   * failure, reached again by a second route to the same id.
    *
-   * AND `B5`'s CLOSURE WAS VERIFIED IN THE WRONG DIRECTION, WHICH IS WHY
-   * NOBODY SAW IT. The property that was pinned is that this circuit is the
-   * only value-writer of `runWindow`. That is still true and it is not the
-   * property `cancel` needs. What `cancel` needs is that EVERY ID A VAULT CAN
-   * BE PAID AGAINST HAS A WINDOW ROW, and until this assert nothing anywhere
-   * asserted it.
+   * AND THAT FAILURE'S FIRST FIX WAS VERIFIED IN THE WRONG DIRECTION, WHICH IS
+   * WHY NOBODY SAW THE SECOND ROUTE. The property that was pinned is that this
+   * circuit is the only value-writer of `runWindow`. That is still true and it
+   * is not the property `cancel` needs. What `cancel` needs is that EVERY ID A
+   * VAULT CAN BE PAID AGAINST HAS A WINDOW ROW, and until this assert nothing
+   * anywhere asserted it.
    *
    * SAID IN THAT NARROW FORM DELIBERATELY, AND THE BROAD FORM IS FALSE. "Every
    * id `recordPayment` will accept has a window row" is NOT what this assert
    * buys, because `recordPayment`'s `forVault` is a caller-chosen argument
    * rather than something the chain reads: a signer calling it directly with
    * `noVault()` can still complete an id that has no window row. That costs no
-   * money — no vault can ever pay against such an id — and it is the `C364`
-   * burn, which is ruled accepted, reached by a longer road than the one
-   * already open. THE LINE THAT MATTERS IS THE ONE ABOUT VAULTS, and writing
-   * the broad form here would license somebody to build on an unreachability
-   * that does not hold. Found by this round's `money-safety-auditor`, against
-   * this round's own new sentence.
+   * money — no vault can ever pay against such an id — and it is the accepted
+   * fee burn, reached by a longer road than the one already open. THE LINE
+   * THAT MATTERS IS THE ONE ABOUT VAULTS, and writing the broad form here
+   * would license somebody to build on an unreachability that does not hold.
    *
-   * WHAT ENFORCES THE INVARIANT NOW, NAMED AS RULE 27 REQUIRES: THIS LINE, AND
+   * WHAT ENFORCES THE INVARIANT NOW, NAMED RATHER THAN ASSUMED: THIS LINE, AND
    * NOTHING ELSE DOES. With it, a governance-branch id can only ever be
    * `proposalIdOf(h, noVault(), salt)`. A vault hands `recordPayment` its own
    * `kernel.self().bytes` and `noVault()` is the hash of a domain string that
@@ -2388,8 +2380,8 @@ export circuit propose(
    * governance proposal: no vault can pay it, and `cancel` removes it
    * unconditionally. It is NOT reachable by `closeExpiredRun`'s permissionless
    * sweep — but neither is any other governance proposal, by design, so that
-   * was never a thing this assert closed and an earlier draft of this paragraph
-   * was wrong to say so. `money-safety-auditor`, `S35d`.
+   * was never a thing this assert closed and an earlier draft of this
+   * paragraph was wrong to say so.
    *
    * IT REFUSES NOTHING THIS PRODUCT DOES, AND THAT WAS READ AT SOURCE RATHER
    * THAN ASSUMED. Every governance consumer in this file already recomputes its
@@ -2397,16 +2389,16 @@ export circuit propose(
    * `setVaultThreshold`, `adopt` and `retireVault` — so an id raised with
    * anything else was already unusable by all six of them.
    *
-   * WHAT IT COSTS, STATED BECAUSE RULE 20 ASKS FOR THE OTHER POSITION TOO: one
+   * WHAT IT COSTS, STATED BECAUSE THE OTHER POSITION IS WORTH HAVING TOO: one
    * comparison on a circuit that is already the largest in this contract, and
    * it forecloses raising a VAULT-SCOPED proposal through the opaque branch.
    *
    * AND SOMETHING DOES WANT THAT SHAPE — AN EARLIER DRAFT OF THIS PARAGRAPH
    * SAID NOTHING DID AND WAS FALSE AT SOURCE. `Accounts.propose` carries an
    * optional `vault`, documented as *"WHICH VAULT'S MONEY THIS ROUND REACHES
-   * INTO"* (`R5`, `C172`), and the boundary threads it into this branch
-   * verbatim. `src/core/a-vault-s-own-threshold.test.ts` exercises it with two
-   * real vaults.
+   * INTO"*, and the boundary threads it into this branch verbatim.
+   * `src/core/a-vault-s-own-threshold.test.ts` exercises it with two real
+   * vaults.
    *
    * WHAT THAT FEATURE HAS EVER DONE ON CHAIN IS NOTHING, AND THIS ASSERT MAKES
    * THAT AUDIBLE RATHER THAN CAUSING IT. A vault-scoped GOVERNANCE id is
@@ -2418,14 +2410,12 @@ export circuit propose(
    * no-op becomes a refusal, and the refusal is the honest one** — but it will
    * arrive as a failed transaction after a fee unless the boundary refuses it
    * first, which is the convention `proposeRun`'s two mirrored asserts already
-   * set and which this round did not build. `S35d` names it as a finding.
-   * Found by this round's `money-safety-auditor`.
+   * set and which is not built here.
    */
   assert(disclose(vault) == noVault(), "a governance proposal cannot name a vault");
 
   /*
-   * NO "a proposal is already open" ASSERT. M-128, and its absence is the
-   * feature.
+   * NO "a proposal is already open" ASSERT, and its absence is the feature.
    *
    * This used to be `assert(!proposalOpen, ...)`, which meant an admin could not
    * raise a vendor invoice while payroll was collecting signatures. Several
@@ -2438,7 +2428,7 @@ export circuit propose(
   const salt = proposalSalt();
 
   /*
-   * M-71. Record the change, not the outcome.
+   * Record the change, not the outcome.
    *
    * Computed from witnesses rather than taken as an argument, so nothing extra
    * is disclosed: the proposer's device already holds all three, and only their
@@ -2462,7 +2452,7 @@ export circuit propose(
    * value approvals bind to, so there is no second identifier to keep in step.
    */
   /*
-   * THE VAULT IS PART OF THE PROPOSAL'S IDENTITY. V-32.
+   * THE VAULT IS PART OF THE PROPOSAL'S IDENTITY.
    *
    * Not a field beside it — inside the commitment that names it. So an approval
    * raised for the payroll vault is not a rejected id at the treasury vault, it
@@ -2493,7 +2483,7 @@ export circuit propose(
  * from the same signer because the nullifier is already burned.
  *
  * `proposal` is an argument now, where it used to be implicit in "the open
- * one". That is the visible half of M-128: a signer approving the March payroll
+ * one". That is the visible half of it: a signer approving the March payroll
  * and a signer approving a vendor invoice are two independent acts, in either
  * order, and neither is invalidated by the other settling.
  */
@@ -2528,7 +2518,7 @@ export circuit cancel(proposal: Bytes<32>): [] {
   assert(openProposals.member(id), "there is no open proposal with that id");
 
   /*
-   * A RUN CANNOT BE CANCELLED ONCE ITS WINDOW HAS OPENED. V-52, V-67.
+   * A RUN CANNOT BE CANCELLED ONCE ITS WINDOW HAS OPENED.
    *
    * The failure this closes is a signer cancelling a half-paid run: sixty
    * people are paid, the proposal closes, and the remaining forty can never be
@@ -2543,21 +2533,20 @@ export circuit cancel(proposal: Bytes<32>): [] {
    * run but time.
    *
    * `runWindow.member` is false for governance proposals, which keep the old
-   * unconditional behaviour — AND WHAT MAKES THAT SAFE IS NOT THIS LINE.
-   * Read as a guard it fails OPEN: no row yields `true` and the cancel is
+   * unconditional behaviour — AND WHAT MAKES THAT SAFE IS NOT THIS LINE. Read
+   * as a guard it fails OPEN: no row yields `true` and the cancel is
    * unconditional. It is sound only because a missing row cannot belong to
    * anything a VAULT will be paid against, and the enforcer of THAT is the
-   * assert in
-   * `propose`'s governance branch refusing a vault — `C363`, added by `S35d`
-   * after `SC5` found that until it existed this ternary reopened `V-52` to any
-   * single signer. Weaken that assert and this line stops protecting anybody,
-   * silently, and nothing here will say so.
+   * assert in `propose`'s governance branch refusing a vault. Until that
+   * assert existed this ternary was open to any single signer. Weaken it and
+   * this line stops protecting anybody, silently, and nothing here will say
+   * so.
    *
-   * WHAT THIS DOES NOT TAKE AWAY. Stopping a live run needs no on-chain action:
-   * every payment must present that payee's secret nonce, and those exist only
-   * with the operator, so they stop a run by not submitting it. Nobody else can
-   * submit for them. That is a better brake than a circuit, and it is why this
-   * restriction costs the product nothing (V-63).
+   * WHAT THIS DOES NOT TAKE AWAY. Stopping a live run needs no on-chain
+   * action: every payment must present that payee's secret nonce, and those
+   * exist only with the operator, so they stop a run by not submitting it.
+   * Nobody else can submit for them. That is a better brake than a circuit,
+   * and it is why this restriction costs the product nothing.
    */
   /*
    * A TERNARY AND NOT `||`, deliberately. `thresholdFor` proves this shape
@@ -2566,10 +2555,11 @@ export circuit cancel(proposal: Bytes<32>): [] {
    * a lookup of an absent key would be reached rather than skipped.
    */
   /*
-   * AND IT IS A `member()` CALL, NOT A COMPARISON AGAINST ZERO. `C359`, and it
-   * survived S35c's merge deliberately. A governance proposal has no row in
-   * `runWindow` at all; the day somebody rewrites this as `opensAt == 0` the
-   * absence stops being the test and a written number starts being it.
+   * AND IT IS A `member()` CALL, NOT A COMPARISON AGAINST ZERO, and it
+   * survived the merge of the two window maps deliberately. A governance
+   * proposal has no row in `runWindow` at all; the day somebody rewrites this
+   * as `opensAt == 0` the absence stops being the test and a written number
+   * starts being it.
    */
   assert(runWindow.member(id) ? blockTimeLt(runWindow.lookup(id).opensAt) : true,
          "that run has already started; it can no longer be cancelled");
@@ -2578,7 +2568,7 @@ export circuit cancel(proposal: Bytes<32>): [] {
 }
 
 /*
- * TIDYING UP A RUN WHOSE WINDOW HAS PASSED. V-67.
+ * TIDYING UP A RUN WHOSE WINDOW HAS PASSED.
  *
  * Under the window rule nothing closes a run at the moment its last payee is
  * paid — completion is derived rather than asserted — so a finished run stays
@@ -2603,22 +2593,21 @@ export circuit closeExpiredRun(proposal: Bytes<32>): [] {
   assert(openProposals.member(id), "there is no open proposal with that id");
   /*
    * THE `member()` CALL THAT MAKES THIS CIRCUIT SAFE TO LEAVE PERMISSIONLESS.
-   * `C359`. Read the paragraph above first, then this one.
+   * Read the paragraph above first, then this one.
    *
    * The only thing standing between a stranger and an open GOVERNANCE proposal
    * is that a governance proposal has no row in `runWindow`. WHAT ENFORCES
    * THAT, NAMED IN THE RIGHT DIRECTION: the run branch's `runWindow.insert` is
-   * the only value-writer of the map and the governance branch writes none — so
-   * governance implies no row, and nothing this round did changed that.
-   * `C363`'s assert enforces the CONVERSE, which is what `cancel` needs and
+   * the only value-writer of the map and the governance branch writes none, so
+   * governance implies no row. The assert that refuses a vault in the
+   * governance branch enforces the CONVERSE, which is what `cancel` needs and
    * this circuit does not; an earlier draft of this sentence credited it here
-   * and pointed a reader at the wrong line. `money-safety-auditor`, `S35d`.
-   * Written instead as
-   * `closesAt == 0`, `blockTimeGte(0)` is always true and any stranger could
-   * close a signer removal that was one approval short, at one transaction
-   * each — and governance proposals are the only way signers are amended and
-   * thresholds moved. S35c merged the two window maps and kept this a
-   * `member()` call for exactly that reason. IT MUST STAY ONE.
+   * and pointed a reader at the wrong line. Written instead as `closesAt ==
+   * 0`, `blockTimeGte(0)` is always true and any stranger could close a signer
+   * removal that was one approval short, at one transaction each — and
+   * governance proposals are the only way signers are amended and thresholds
+   * moved. The merge of the two window maps kept this a `member()` call for
+   * exactly that reason. IT MUST STAY ONE.
    */
   assert(runWindow.member(id), "that is not a run");
   assert(blockTimeGte(runWindow.lookup(id).closesAt), "the payment window for this run has not closed yet");
@@ -2626,7 +2615,7 @@ export circuit closeExpiredRun(proposal: Bytes<32>): [] {
 }
 
 /*
- * THE CIRCUIT A VAULT CALLS. V-32.
+ * THE CIRCUIT A VAULT CALLS.
  *
  * This is the whole interface between the account that decides and the vault
  * that holds the money, and its shape is a correction to a worse earlier
@@ -2643,7 +2632,7 @@ export circuit closeExpiredRun(proposal: Bytes<32>): [] {
  * has enough approvals for ITS VAULT, and that THIS PAYEE is one the signers
  * approved — then records that payee as paid and hands back what the run
  * authorised. The vault pays. One transaction per payee, so a five-person
- * company pays for five (V-41).
+ * company pays for five.
  *
  * ATOMICITY IS THE GUARANTEE. If the payment fails, the transaction reverts and
  * this completion reverts with it — so "completed" and "paid" cannot disagree.
@@ -2656,17 +2645,16 @@ export circuit closeExpiredRun(proposal: Bytes<32>): [] {
  * proof `addSigner` already uses, and the salt travels in the sealed payload to
  * the people meant to act on it.
  *
- * AND WHY THE SALT IS AN ARGUMENT HERE, WHERE EVERY OTHER CIRCUIT READS IT FROM
- * THE `proposalSalt()` WITNESS. V-38, and it is the one place in this contract
+ * AND WHY THE SALT IS AN ARGUMENT HERE, WHERE EVERY OTHER CIRCUIT READS IT
+ * FROM THE `proposalSalt()` WITNESS. It is the one place in this contract
  * where a private value is deliberately made public.
  *
  * A cross-contract callee is proved by whoever builds the transaction, and the
- * caller cannot furnish this contract's witnesses — the vault does not have our
- * private state and must not. Compact 0.33's own limitations say a callee "must
- * not invoke a witness" for exactly that reason. `PROBE-VAULT-5.command` proved
- * the COMPILER does not enforce it (its `contract implements` check is real —
- * five negative controls were refused — and it accepts a witness-reading callee
- * anyway).
+ * caller cannot furnish this contract's witnesses — the vault does not have
+ * our private state and must not. Compact 0.33's own limitations say a callee
+ * "must not invoke a witness" for exactly that reason. The COMPILER does not
+ * enforce it: its `contract implements` check is real, and five negative
+ * controls were refused by it, but it accepts a witness-reading callee anyway.
  *
  * THE RUNTIME DOES ENFORCE IT, and this is no longer a precaution. Executed
  * offline by `scripts/cross-contract-spike.ts`:
@@ -2695,21 +2683,21 @@ export circuit closeExpiredRun(proposal: Bytes<32>): [] {
  * contract holds no secret key and sits in no signer tree, so it could never
  * satisfy it. The proof of possession above is what stands in its place.
  *
- * AND WHAT THAT COSTS, STATED CORRECTLY. `C364`, `P0`. The paragraph that
- * stood here said this grants nothing new "because the salt is held by the
- * signers and a signer can already `cancel`", and that the proposal "is lost
- * and must be raised again". BOTH HALVES ARE FALSE, and each was made false
- * somewhere else while nobody re-read this. `SC5`, 2 Sep. What is true:
+ * AND WHAT THAT COSTS, STATED CORRECTLY. The paragraph that stood here said
+ * this grants nothing new "because the salt is held by the signers and a
+ * signer can already `cancel`", and that the proposal "is lost and must be
+ * raised again". BOTH HALVES ARE FALSE, and each was made false somewhere else
+ * while nobody re-read this. What is true:
  *
- * A SIGNER CANNOT ALREADY `cancel`, NOT INSIDE THE WINDOW, NOT SINCE 1 Sep.
+ * A SIGNER CANNOT ALREADY `cancel`, NOT INSIDE THE WINDOW, NOT ANY MORE.
  * `cancel` is refused once `opensAt` has passed and this circuit is refused
- * before it. THE TWO POWERS ARE EXACTLY DISJOINT IN TIME, so there is no moment
- * at which one substitutes for the other and the equivalence that paragraph
- * rested on describes a contract that no longer exists.
+ * before it. THE TWO POWERS ARE EXACTLY DISJOINT IN TIME, so there is no
+ * moment at which one substitutes for the other and the equivalence that
+ * paragraph rested on describes a contract that no longer exists.
  *
  * AND WHAT IS LOST IS NOT THE PROPOSAL — IT IS THE PAYEE. `movements` is keyed
- * on the LEAF ALONE, deliberately (`V-64`, and the paragraph at step 3 below
- * says why), and NO CIRCUIT ANYWHERE REMOVES FROM IT. `closeProposal` clears
+ * on the LEAF ALONE, deliberately, and the paragraph at step 3 below says why;
+ * and NO CIRCUIT ANYWHERE REMOVES FROM IT. `closeProposal` clears
  * `openProposals`, `approvalCounts` and `runWindow` and nothing else. So the
  * burn is PER PAYEE AND PERMANENT: one signer, alone, with no approval from
  * anybody, can rebuild every payee's secrets from the account's payout seed —
@@ -2722,24 +2710,24 @@ export circuit closeExpiredRun(proposal: Bytes<32>): [] {
  * THE MONEY IS NOT STOLEN — IT STAYS IN THE VAULT. What is destroyed is the
  * run, and those people must be paid from a fresh one.
  *
- * THIS IS ACCEPTED AND NOT FIXED, AND THE RULING IS WRITTEN DOWN RATHER THAN
- * REMEMBERED: `docs/accepted-risks.md` section 1, the founder, 2 Sep — *accept
- * and detect*. IT CANNOT BE REMOVED FROM HERE. This circuit's whole
- * authorisation is knowledge of its arguments because its only caller is a
- * contract, and a contract on Midnight cannot see who called it and cannot read
- * another contract's state.
+ * THIS IS ACCEPTED AND NOT FIXED, AND THE DECISION IS WRITTEN DOWN RATHER THAN
+ * REMEMBERED: `docs/accepted-risks.md` section 1 — *accept and detect*. IT
+ * CANNOT BE REMOVED FROM HERE. This circuit's whole authorisation is knowledge
+ * of its arguments because its only caller is a contract, and a contract on
+ * Midnight cannot see who called it and cannot read another contract's state.
  *
  * WHAT DETECTS IT: the vault's `payments` counter counts ACTUAL payouts and
  * `movements` counts COMPLETIONS. Under normal operation they agree; after a
  * burn they diverge, and the divergence is readable off chain by anyone, with
  * no new circuit. **Nothing in the product reads them against each other
- * today**, which is a fact about today and not a mechanism — rule 27.
+ * today**, which is a fact about today and not a mechanism.
  *
  * AND THE FIX A READER WILL REACH FOR IS A MONEY LOSS. Keying `movements` on
- * `(leaf, proposal)` confines the burn to one proposal and UN-DOES `V-64`: the
- * leaf-alone key is what lets a retry run be submitted while the first is still
- * live with whichever-lands-first winning. Re-key it and BOTH land and THE
- * PAYEE IS PAID TWICE. `docs/accepted-risks.md` names it first for that reason.
+ * `(leaf, proposal)` confines the burn to one proposal and undoes the
+ * leaf-alone key, which is what lets a retry run be submitted while the first
+ * is still live with whichever-lands-first winning. Re-key it and BOTH land
+ * and THE PAYEE IS PAID TWICE. `docs/accepted-risks.md` names it first for
+ * that reason.
  */
 export circuit recordPayment(
   proposal: Bytes<32>,
@@ -2769,9 +2757,9 @@ export circuit recordPayment(
    *     finished early or made never to finish
    *
    * The salt is public from the first claim onward. That is safe here for a
-   * reason that is not the V-38 one and is worth keeping distinct: what stops
-   * a watcher claiming the REST of the run is not the salt, it is that every
-   * leaf needs its own preimage. See `payoutLeaf`.
+   * reason that is not the cross-contract one and is worth keeping distinct:
+   * what stops a watcher claiming the REST of the run is not the salt, it is
+   * that every leaf needs its own preimage. See `payoutLeaf`.
    */
   assert(
     disclose(proposalIdOf(
@@ -2780,12 +2768,12 @@ export circuit recordPayment(
     "that is not this proposal, or you were not given it");
 
   /*
-   * 1a. INSIDE THE APPROVED WINDOW. V-67, and this is what replaced a counter.
+   * 1a. INSIDE THE APPROVED WINDOW, and this is what replaced a counter.
    *
    * `blockTimeGte`/`blockTimeLt` read the BLOCK's context rather than this
    * contract's state, so they compile to no `popeq` on a ledger field and two
-   * payments of the same run never contend on them. That is the entire reason a
-   * hundred payments of one run can settle together (V-60, V-61).
+   * payments of the same run never contend on them. That is the entire reason
+   * a hundred payments of one run can settle together.
    *
    * The bounds came through `runPayload` above, so they are the ones the signers
    * approved rather than ones the caller chose — which is why this assert can be
@@ -2793,8 +2781,8 @@ export circuit recordPayment(
    *
    * A run therefore ends by TIME and by nothing else. Nobody can end it early,
    * which is how the half-paid cancel disappears rather than being guarded
-   * against (V-52); and after it closes, who was paid is final, which is what
-   * makes a retry run safe to build.
+   * against; and after it closes, who was paid is final, which is what makes a
+   * retry run safe to build.
    */
   assert(blockTimeGte(disclose(opensAt)), "that run has not started yet");
   assert(blockTimeLt(disclose(closesAt)), "the payment window for this run has closed");
@@ -2804,8 +2792,9 @@ export circuit recordPayment(
   /*
    * 2. THIS PAYEE BELONGS TO THAT RUN.
    *
-   * The leaf is recomputed from its parts, never taken as given — that is the
-   * whole of V-43. `merkleTreePathRoot` answers with a `MerkleTreeDigest`
+   * The leaf is recomputed from its parts, never taken as given, and that is
+   * the whole of why `payoutLeaf` takes a preimage rather than a hash — read
+   * its comment. `merkleTreePathRoot` answers with a `MerkleTreeDigest`
    * wrapping a Field rather than 32 bytes, which is why the cast is here and
    * not an oversight: the account holds no tree to ask, only a root that
    * arrived inside an approved commitment, so the two are compared directly.
@@ -2816,7 +2805,7 @@ export circuit recordPayment(
          "that payee is not in the approved run");
 
   /*
-   * 3. PAID ONCE, IN ANY RUN. V-64.
+   * 3. PAID ONCE, IN ANY RUN.
    *
    * The record is the LEAF alone — not the leaf and the proposal — so this
    * payment can happen once, ever. That is what lets a retry run reuse the
@@ -2824,9 +2813,9 @@ export circuit recordPayment(
    * is still live: whichever lands first wins, and the other is refused here.
    *
    * It is also the record the product reads to answer "who is still
-   * outstanding" (X-9) — on chain, so no status column of ours can disagree
-   * with it. `movements` is a set of independent inserts and commutes, so this
-   * line is not a contention point (§E.6b).
+   * outstanding" — on chain, so no status column of ours can disagree with it.
+   * `movements` is a set of independent inserts and commutes, so this line is
+   * not a contention point (§E.6b).
    */
   const movement = disclose(paidMovementOf(leaf));
   assert(!movements.member(movement), "that payment has already been made");
@@ -2839,12 +2828,12 @@ export circuit recordPayment(
    * being payable when its window shuts; whether it finished is derived from
    * `movements` against the run's leaves, by whoever is asking.
    *
-   * The V-32 rule — that an approved payment completes its proposal rather
-   * than leaving it open for housekeeping — is not abandoned, it is satisfied
+   * The rule that an approved payment completes its proposal rather than
+   * leaving it open for housekeeping is not abandoned, it is satisfied
    * differently: the proposal is not left open awaiting a decision, it expires
-   * on a schedule the signers themselves approved. `closeExpiredRun` sweeps the
-   * row afterwards and asserts nothing about completeness, because it cannot
-   * know and neither can any circuit at a hundred payees.
+   * on a schedule the signers themselves approved. `closeExpiredRun` sweeps
+   * the row afterwards and asserts nothing about completeness, because it
+   * cannot know and neither can any circuit at a hundred payees.
    *
    * The `payees` count stays in the payload and stays bound into the id even
    * though nothing counts down against it. It is what tells a client how many
@@ -2855,7 +2844,7 @@ export circuit recordPayment(
 }
 
 /*
- * Gives one vault its own approval threshold, or changes it. V-33.
+ * Gives one vault its own approval threshold, or changes it.
  *
  * Governance, so it needs the account's own threshold behind it — the same
  * machinery as `setThreshold`, applied to one vault instead of the account.
@@ -2949,7 +2938,7 @@ export circuit setVaultThreshold(
 }
 
 /*
- * ADOPTING A VAULT. S6a, scope 3.2. Read the note above `vaults` first.
+ * ADOPTING A VAULT. Scope 3.2. Read the note above `vaults` first.
  *
  * A governed round, at the ACCOUNT's own threshold, exactly as
  * `setVaultThreshold` is and for the same reason: this is a change to the
@@ -2991,7 +2980,7 @@ export circuit adopt(vault: Bytes<32>, proposal: Bytes<32>): [] {
 }
 
 /*
- * RETIRING ONE. S6a, scope 3.2.
+ * RETIRING ONE. Scope 3.2.
  *
  * CALLED BY THE VAULT, NOT BY A SIGNER, and the direction is forced rather than
  * chosen. The round must be refused while the vault still holds notes, that
@@ -3016,10 +3005,10 @@ export circuit adopt(vault: Bytes<32>, proposal: Bytes<32>): [] {
  *
  * AND WHAT THIS DELIBERATELY DOES NOT DO: nothing anywhere consults `vaults`
  * before authorising a payment. `recordPayment` does not, and adding the check
- * there was considered and rejected in this round. A retired or never-adopted
- * vault can still pay out a run its signers approved. The reason is the rule at
- * the top of `docs/how-money-can-be-lost.md`: a membership check on the spend
- * path turns "the round that adopted this vault was raised against the wrong
+ * there was considered and rejected. A retired or never-adopted vault can
+ * still pay out a run its signers approved. The reason is the rule at the top
+ * of `docs/how-money-can-be-lost.md`: a membership check on the spend path
+ * turns "the round that adopted this vault was raised against the wrong
  * address" into money that cannot be moved, and this list exists to help a
  * company FIND its money rather than to stand between the company and it.
  * Refusing to FUND an unadopted vault is the product's job, and that refusal
@@ -3039,22 +3028,21 @@ export circuit retireVault(
   assert(vaults.member(forVault), "this account has not adopted that vault");
   vaults.remove(forVault);
   /*
-   * AND THE RETIREMENT IS RECORDED. `C213`, and it is the whole of what this
-   * round builds on that row.
+   * AND THE RETIREMENT IS RECORDED, which is the whole of what `retiredAt` is
+   * for.
    *
    * The value is a marker and not a date — read the declaration of `retiredAt`
    * for why a circuit cannot know the time, and where the date actually lives.
    *
    * WHAT THIS DOES NOT CLOSE, SAID HERE RATHER THAN LEFT TO BE ASSUMED.
-   * `C213`'s *done when* has two halves and this is one of them. The other is
-   * that `thresholds` STILL HAS NO REMOVAL PATH (`SC2` §2.6):
-   * `setVaultThreshold` inserts and nothing anywhere removes, so a vault
-   * retired here leaves its per-vault threshold behind — a governing number for
-   * an address the account has just declared it no longer runs, which
-   * `thresholdFor` would hand straight back if that address were ever adopted
-   * again. **THE STALE ROW SURVIVES THIS CHANGE.** It is not fixed here because
-   * a removal is a decision about what re-adoption should mean, and this round
-   * was scoped to the layout.
+   * Retiring a vault has two halves and this is one of them. The other is that
+   * `thresholds` STILL HAS NO REMOVAL PATH: `setVaultThreshold` inserts and
+   * nothing anywhere removes, so a vault retired here leaves its per-vault
+   * threshold behind — a governing number for an address the account has just
+   * declared it no longer runs, which `thresholdFor` would hand straight back
+   * if that address were ever adopted again. **THE STALE ROW SURVIVES.** It is
+   * not fixed here because a removal is a decision about what re-adoption
+   * should mean.
    */
   retiredAt.insert(forVault, 1);
   closeProposal(id);

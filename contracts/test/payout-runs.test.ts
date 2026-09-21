@@ -1,5 +1,5 @@
 /**
- * V-41 and V-43: a payroll run, paid one payee at a time.
+ * A payroll run, paid one payee at a time.
  *
  * The design chosen: signers approve ONE proposal covering a whole run, and
  * the vault pays each person by proving that person belongs to it. Five
@@ -46,7 +46,7 @@ const runOf = (n: number, seed = 0): PayoutLeafInput[] =>
   }));
 
 /*
- * A FIXED CLOCK, AND EVERY TEST RUNS ON IT. V-67.
+ * A FIXED CLOCK, AND EVERY TEST RUNS ON IT.
  *
  * A run's payments assert they fall inside an approved window, so these tests
  * have to control the time rather than inherit it. Seconds since the Unix
@@ -103,7 +103,7 @@ const claimFor = (
   path: run.tree.pathFor(i),
 });
 
-describe('V-41: a run is paid one payee at a time', () => {
+describe('a run is paid one payee at a time', () => {
   let sim: AccountSimulator;
   beforeEach(async () => { sim = await liveAccount(); });
 
@@ -118,7 +118,7 @@ describe('V-41: a run is paid one payee at a time', () => {
     }
 
     /*
-     * V-61/V-67. THE PROPOSAL IS STILL OPEN, AND THAT IS THE CHANGE.
+     * THE PROPOSAL IS STILL OPEN, AND THAT IS THE CHANGE.
      *
      * It used to close on the fifth payment, by decrementing a per-run counter
      * — which is a read-modify-write of one map entry done by every payment of
@@ -146,8 +146,8 @@ describe('V-41: a run is paid one payee at a time', () => {
 
   it('a payment before the window opens is refused, and works once it does', async () => {
     /*
-     * V-67. This is what makes a scheduled payroll possible: six months
-     * approved in one sitting, and month four cannot be paid in month one.
+     * This is what makes a scheduled payroll possible: six months approved in
+     * one sitting, and month four cannot be paid in month one.
      */
     const c = govChange(31);
     const payments = runOf(1);
@@ -190,9 +190,9 @@ describe('V-41: a run is paid one payee at a time', () => {
   it('A RETRY RUN CAN PAY A STRAGGLER WHILE THE ORIGINAL IS STILL OPEN, AND CANNOT DOUBLE-PAY',
     async () => {
     /*
-     * V-64, and the reason a payment's record is its leaf rather than the leaf
-     * and the proposal together. Without this, the same person exists twice —
-     * once under each run — and both can settle.
+     * The reason a payment's record is its leaf rather than the leaf and the
+     * proposal together. Without this, the same person exists twice — once
+     * under each run — and both can settle.
      */
     const c = govChange(33);
     const payments = runOf(4);
@@ -244,7 +244,7 @@ describe('V-41: a run is paid one payee at a time', () => {
     await sim.as(carrying(sim, A, c)).recordPayment(claimFor(run, payments, PAYROLL, c, 2));
   });
 
-  it('RETRYING A HALF-FINISHED RUN IS SAFE, which is what X-9 depends on', async () => {
+  it('RETRYING A HALF-FINISHED RUN IS SAFE, which a status report depends on', async () => {
     /*
      * The operator's laptop closes after two of four payments. Somebody resumes
      * from another device and, not knowing where it got to, retries all four.
@@ -287,10 +287,10 @@ describe('V-41: a run is paid one payee at a time', () => {
 
   it('a started run cannot be cancelled, so nobody strands the unpaid', async () => {
     /*
-     * V-52, closed by V-67. A signer cancelling a half-paid run leaves the
-     * remaining payees unable to be paid from it — no money lost, and a payroll
-     * that half happened. The boundary is the WINDOW OPENING rather than the
-     * approval threshold, so a run approved for next month stays changeable.
+     * A signer cancelling a half-paid run leaves the remaining payees unable
+     * to be paid from it — no money lost, and a payroll that half happened. The
+     * boundary is the WINDOW OPENING rather than the approval threshold, so a
+     * run approved for next month stays changeable.
      */
     const c = govChange(35);
     const payments = runOf(3);
@@ -323,10 +323,10 @@ describe('V-41: a run is paid one payee at a time', () => {
 
   it('A GOVERNANCE PROPOSAL IS NOT A RUN AND NO STRANGER MAY SWEEP IT', async () => {
     /*
-     * `C359`, AND IT IS THE PROPERTY S35c's MERGE OF `runStart` AND `runEnd`
-     * TURNS ON. Nothing tested it before S35c, which is exactly why it is here:
-     * the guard was an absence in a field that no longer exists on its own, and
-     * an untested absence is one refactor away from being a number.
+     * THIS IS THE PROPERTY THE MERGE OF `runStart` AND `runEnd` TURNS ON.
+     * Nothing tested it before that merge, which is exactly why it is here:
+     * the guard was an absence in a field that no longer exists on its own,
+     * and an untested absence is one refactor away from being a number.
      *
      * `closeExpiredRun` is DELIBERATELY PERMISSIONLESS — the only circuit in the
      * contract any stranger may call — and what makes that safe is that a
@@ -406,7 +406,7 @@ describe('V-41: a run is paid one payee at a time', () => {
   });
 });
 
-describe('V-43: what a watcher learns from one payment', () => {
+describe('what a watcher learns from one payment', () => {
   let sim: AccountSimulator;
   beforeEach(async () => { sim = await liveAccount(); });
 
@@ -479,7 +479,7 @@ describe('V-43: what a watcher learns from one payment', () => {
   it('the payee COUNT cannot be swapped either, so a run cannot be misreported', async () => {
     /*
      * The count is inside the payload the proposal id is computed from. Nothing
-     * counts down against it any more (V-67), but it is still what tells a
+     * counts down against it any more, but it is still what tells a
      * client how many leaves a run has — so a run approved at one size and
      * reported at another would be a dashboard lying about who is owed.
      */
@@ -505,12 +505,12 @@ describe('V-43: what a watcher learns from one payment', () => {
   });
 });
 
-describe('V-41: the tree the client builds', () => {
+describe('the tree the client builds', () => {
   it('agrees with the contract about what a leaf is', () => {
     /*
      * The client builds the tree the signers approve; the contract recomputes
-     * each leaf when it is claimed. Two derivations of one rule is M-104, so
-     * this pins that there is only one.
+     * each leaf when it is claimed. Two derivations of one rule is the oldest
+     * failure here, so this pins that there is only one.
      */
     const p = runOf(1, 300)[0];
     expect(payoutLeafOf(p)).toBe(
@@ -519,7 +519,7 @@ describe('V-41: the tree the client builds', () => {
 
   it('refuses a run where two payees share a leaf, which is a reused nonce', () => {
     /*
-     * B10. The account cannot tell two identical leaves apart — from where it
+     * The account cannot tell two identical leaves apart — from where it
      * stands they are the same payment — so it refuses the second as a replay
      * and one person is silently unpayable. Caught before anybody signs.
      */
@@ -549,9 +549,9 @@ describe('V-41: the tree the client builds', () => {
 
 /**
  * THE SECOND ROUTE TO A RUN'S PROPOSAL ID, AND THE ONE LINE THAT
- * CLOSES IT.** `P0`, found 2 Sep by `SC5`, closed by `S35d`.
+ * CLOSES IT.**
  *
- * ── THE FAILURE, WHICH IS `V-52` REACHED FROM A NEW DIRECTION ────────────
+ * ── THE FAILURE, WHICH IS THE HALF-PAID RUN REACHED FROM A NEW DIRECTION ─
  *
  * `propose` has two branches. The RUN branch builds the payload itself from the
  * parts and writes a `runWindow` row. The GOVERNANCE branch takes an opaque
@@ -569,16 +569,16 @@ describe('V-41: the tree the client builds', () => {
  * `cancel` did notice and **failed open**: its guard is
  * `runWindow.member(id) ? blockTimeLt(…) : true`, so a missing row cancels
  * unconditionally. Sixty payees paid, the proposal cancelled, **the remaining
- * forty never payable from it** — which is `V-52` verbatim, the failure `B5`
- * closed on 1 Sep, available again to any single signer.
+ * forty never payable from it** — the half-paid run exactly, available again
+ * to any single signer.
  *
  * ── WHAT PINS IT, AND WHAT THIS BLOCK IS FOR ─────────────────────────────
  *
  * One assert in the governance branch:
  * `assert(disclose(vault) == noVault(), "a governance proposal cannot name a
- * vault")`. **`MUTATE.command` deletes it and the first test below must go
- * red** — that is the whole reason this block exists, and without it the line
- * that closes a live `P0` would be pinned by nothing at all.
+ * vault")`. **A mutation deletes it and the first test below must go red** —
+ * that is the whole reason this block exists, and without it the line that
+ * closes a live money-path hole would be pinned by nothing at all.
  *
  * The other three are not decoration. A refusal that refused everything would
  * satisfy the first test and break the product, so the second proves the
@@ -588,7 +588,7 @@ describe('V-41: the tree the client builds', () => {
  * than described, so a future change that gives governance a window row breaks
  * a test instead of a guarantee.
  */
-describe('C363: a run cannot be raised through the governance branch', () => {
+describe('a run cannot be raised through the governance branch', () => {
   let sim: AccountSimulator;
   beforeEach(async () => { sim = await liveAccount(); });
 
@@ -653,9 +653,9 @@ describe('C363: a run cannot be raised through the governance branch', () => {
 });
 
 /**
- * **A RUN NAMES THE VAULT THAT WILL PAY IT.** Board row `2y7d5`,
- * 3 Sep. The mirror of the block above: `C363` made the governance branch refuse
- * a vault, this makes the run branch refuse the ABSENCE of one.
+ * **A RUN NAMES THE VAULT THAT WILL PAY IT.** The mirror of the block above:
+ * that one made the governance branch refuse a vault, and this makes the run
+ * branch refuse the ABSENCE of one.
  *
  * **WHAT THE ASSERT IS FOR.** A run raised at `noVault()` is well formed in every
  * other respect — it takes its `openProposals`, `approvalCounts` and `runWindow`
@@ -664,14 +664,14 @@ describe('C363: a run cannot be raised through the governance branch', () => {
  * `disclose(kernel.self().bytes)` (`:599`, `:772`) and `noVault()` is the hash of
  * a domain string no address can equal.
  *
- * **THIS IS NOT `C375`'s OWN FAILURE AND THE BLOCK SAYS SO SO THAT NOBODY READS
- * IT AS ONE.** `C375`'s round is raised through the GOVERNANCE branch, which
+ * **THIS IS NOT THE STRANDED-RUN FAILURE AND THE BLOCK SAYS SO SO THAT NOBODY
+ * READS IT AS ONE.** That one is raised through the GOVERNANCE branch, which
  * writes no window; a run refused here has one, so it is cancellable and
- * sweepable. What this costs is a burnt fee and a wasted approval round —
- * `C367`'s shape. What it is worth is rule 27: three TypeScript sites refused
- * this sequence and NOTHING on chain did.
+ * sweepable. What this costs is a burnt fee and a wasted approval round. What
+ * it is worth is that three TypeScript sites refused this sequence and NOTHING
+ * on chain did.
  */
-describe('C375/S48: a run cannot be raised at the no-vault sentinel', () => {
+describe('a run cannot be raised at the no-vault sentinel', () => {
   let sim: AccountSimulator;
   beforeEach(async () => { sim = await liveAccount(); });
 
@@ -697,10 +697,11 @@ describe('C375/S48: a run cannot be raised at the no-vault sentinel', () => {
 
   it('and the harness default is the same call: an OMITTED vault is refused too', async () => {
     /*
-     * `contracts/test/simulator.ts:654` defaults an omitted vault to `NO_VAULT`.
-     * No caller in this repository omits one, so that line is a path to exactly
-     * the proposal above that has never been walked. It is walked here, because
-     * a default nothing exercises is a default nothing notices changing.
+     * `contracts/test/simulator.ts:659` defaults an omitted vault to
+     * `NO_VAULT`. No caller in this repository omits one, so that line is a
+     * path to exactly the proposal above that has never been walked. It is
+     * walked here, because a default nothing exercises is a default nothing
+     * notices changing.
      */
     const tree = buildPayoutTree(runOf(2, 80));
     const c = govChange(151);
@@ -738,27 +739,25 @@ describe('C375/S48: a run cannot be raised at the no-vault sentinel', () => {
 });
 
 /**
- * **THE ROOT THAT COMES BACK THIRTY-ONE BYTES.** `P1`, found 2 Sep by
- * `MUTATE.command`'s baseline, fixed by `S41`.
+ * **THE ROOT THAT COMES BACK THIRTY-ONE BYTES.**
  *
  * ── THE DEFECT ───────────────────────────────────────────────────────────
  *
  * `rehash().root()` hands back a FIELD ELEMENT and the runtime encodes one
  * MINIMALLY. A root whose top byte is zero — **about one run in 256** — arrived
  * thirty-one bytes long, and both places in `payout-tree.ts` that turned that
- * value into bytes took it as it came. `MUTATE.command` hit it because `S35d`
- * added the first fixture in this repository that ever produced one.
+ * value into bytes took it as it came. A mutation run hit it, because a
+ * fixture had just been added that produced one for the first time.
  *
- * ── AND IT IS LOUD, WHICH IS NOT WHAT THE ROW SAID ───────────────────────
+ * ── AND IT IS LOUD, WHICH IS NOT HOW IT WAS FIRST DESCRIBED ──────────────
  *
- * **`C369`'s register row and `S41`'s brief both describe a QUIET half** in
- * which a short root reaches `recordPayment`'s
- * `merkleTreePathRoot(path) == root` and is silently read as *"that payee is
- * not in the approved run"*. **It cannot reach it.** Every generated binding
- * checks the length before the circuit runs — `recordPayment`'s at
- * `contracts/managed/contract/index.js:610` — so the run cannot be raised and
- * could not be claimed if it were. The last test below pins that, and
- * the *quiet half* is a state this system cannot reach.
+ * **IT WAS FIRST DESCRIBED AS HAVING A QUIET HALF** in which a short root
+ * reaches `recordPayment`'s `merkleTreePathRoot(path) == root` and is silently
+ * read as *"that payee is not in the approved run"*. **It cannot reach it.**
+ * Every generated binding checks the length before the circuit runs —
+ * `recordPayment`'s at `contracts/managed/contract/index.js:610` — so the run
+ * cannot be raised and could not be claimed if it were. The last test below
+ * pins that, and the *quiet half* is a state this system cannot reach.
  *
  * ── SO WHAT IS THIS BLOCK ACTUALLY GUARDING ──────────────────────────────
  *
@@ -773,19 +772,19 @@ describe('C375/S48: a run cannot be raised at the no-vault sentinel', () => {
  * ── AND WHY THE INPUTS ARE WRITTEN OUT ───────────────────────────────────
  *
  * Every fixture in this repository is deterministic, and none had produced a
- * zero top byte until `S35d` added `runOf(3, 50)`. **A one-in-256 defect over a
+ * zero top byte until `runOf(3, 50)` was added. **A one-in-256 defect over a
  * fixed corpus is invisible until the corpus moves** — so this block does not
  * lean on a corpus. Its inputs are written out by value and it ASSERTS the
  * properties it depends on, because a fixture that quietly stops having one is
  * a test that quietly stops testing.
  */
-describe('C369: a run whose root has a zero top byte', () => {
+describe('a run whose root has a zero top byte', () => {
   let sim: AccountSimulator;
   beforeEach(async () => { sim = await liveAccount(); });
 
   /**
    * **PINNED BY VALUE, AND HERE IS HOW IT WAS FOUND**, so the next person can
-   * do it again. `S41` enumerated three-payee runs whose details and nonces are
+   * do it again. Three-payee runs were enumerated whose details and nonces are
    * a counter written big-endian into the last four bytes of thirty-two —
    * `details = n, n+1, n+2` and `nonce = n+1e6, n+2e6, n+3e6` — over
    * `n = 0…3999`, and collected every `n` whose root came back sixty-two hex
@@ -845,14 +844,14 @@ describe('C369: a run whose root has a zero top byte', () => {
 
   it('AND AT THE OTHER SITE: rootOfLeaves pads it the same way, byte for byte', () => {
     /*
-     * V-72. `rootOfLeaves` starts from the hashes and exists to prove a status
-     * view describes the run it thinks it does.
+     * `rootOfLeaves` starts from the hashes and exists to prove a status view
+     * describes the run it thinks it does.
      *
      * **THE LENGTH ASSERTION IS THE ONE THAT FAILS, NOT THE EQUALITY**, and
      * they are adjacent for that reason. Under the defect BOTH sites computed
      * short and agreed with each other perfectly — that agreement is what let
-     * `C369` live. Dropping the length line as redundant would leave a
-     * tautology behind.
+     * it live. Dropping the length line as redundant would leave a tautology
+     * behind.
      */
     const tree = buildPayoutTree(ZERO_TOP_BYTE);
     expect(rootOfLeaves(tree.leaves)).toHaveLength(64);
@@ -896,7 +895,7 @@ describe('C369: a run whose root has a zero top byte', () => {
      * Without this, a change that mangled full-length roots while leaving short
      * ones alone would be caught only by the `runOf`-built runs elsewhere in
      * this file — which is exactly the corpus coupling the preamble above
-     * argues against. Found by this round's test-coverage pass.
+     * argues against.
      */
     const c = govChange(152);
     const run = await approvedRun(sim, PAYROLL, ORDINARY, c);
@@ -911,8 +910,8 @@ describe('C369: a run whose root has a zero top byte', () => {
 
   it('THE CORRECTION: a short root is refused at BOTH doors, so no quiet path ever existed', async () => {
     /*
-     * **THIS PINS A CLAIM THE REGISTER ROW GOT WRONG.** `C369` and this round's
-     * brief both say a thirty-one-byte root reaches
+     * **THIS PINS A CLAIM THAT WAS FIRST RECORDED WRONG.** The defect was
+     * written up as one where a thirty-one-byte root reaches
      * `merkleTreePathRoot(path) == root` and is silently misread. Every
      * generated binding checks the length first — so `runPayload` refuses, and
      * `recordPayment` refuses in the same way rather than paying attention to

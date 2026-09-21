@@ -1,5 +1,5 @@
 /**
- * S6a: WHICH VAULTS ARE THIS COMPANY'S, AND WHEN ONE STOPS BEING.
+ * WHICH VAULTS ARE THIS COMPANY'S, AND WHEN ONE STOPS BEING.
  *
  * The gap this closes is a recovery gap rather than a security one, and the
  * distinction is the reason the tests below assert what they do.
@@ -70,7 +70,7 @@ const govChange = (seed: number): Change => change(0n, seed);
 const carrying = (sim: AccountSimulator, d: ReturnType<typeof privateStateFor>, c: Change) =>
   sim.applying(d, c);
 
-describe('S6a: an account keeps a register of its own vaults', () => {
+describe('an account keeps a register of its own vaults', () => {
   let sim: AccountSimulator;
   let vault: Vault<VaultPrivate>;
   let vaultAddr: string;
@@ -236,7 +236,7 @@ describe('S6a: an account keeps a register of its own vaults', () => {
     expect(sim.isOpen(id)).toBe(false);
 
     /*
-     * AND THE RETIREMENT IS RECORDED. `C213`, built by S35c.
+     * AND THE RETIREMENT IS RECORDED.
      *
      * The account keeps its own log of what it retired, because the company
      * that needs it is one whose device, database and supplier have all gone —
@@ -254,10 +254,10 @@ describe('S6a: an account keeps a register of its own vaults', () => {
     expect(sim.ledger.retiredAt.member(vaultBytes())).toBe(true);
   });
 
-  it('C213 IS HALF CLOSED: the retirement is logged and the STALE THRESHOLD SURVIVES', async () => {
+  it('RETIREMENT IS HALF BUILT: the retirement is logged and the STALE THRESHOLD SURVIVES', async () => {
     /*
      * WRITTEN AS AN ASSERTION RATHER THAN A SENTENCE IN A DOCUMENT, because
-     * `C213`'s *done when* has two halves and S35c built one of them.
+     * retiring a vault has two halves and only one of them is built.
      *
      * `setVaultThreshold` inserts into `thresholds` and NOTHING ANYWHERE
      * REMOVES. So a retired vault keeps its own governing
@@ -285,7 +285,7 @@ describe('S6a: an account keeps a register of its own vaults', () => {
     const c3 = govChange(96);
     await retire(await retirementRound(vaultBytes(), c3), c3);
 
-    // The half S35c built.
+    // The half that is built.
     expect(sim.adopted(vaultBytes())).toBe(false);
     expect(sim.ledger.retiredAt.member(vaultBytes())).toBe(true);
 
@@ -355,7 +355,7 @@ describe('S6a: an account keeps a register of its own vaults', () => {
   it('A RETIRED VAULT CAN STILL PAY, and that is the decision rather than an oversight',
     async () => {
     /*
-     * Nothing on the spend path consults `vaults`, deliberately. The register
+     * Nothing on the spend path consults `vaults`, deliberately. The list
      * answers "which vaults are this company's" for somebody who has lost
      * everything else; making it an access check would turn a governance
      * mistake — a round raised against the wrong address, a vault retired in

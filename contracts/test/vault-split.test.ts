@@ -1,5 +1,5 @@
 /**
- * S6a: THE VAULT DIVIDES ONE OF ITS OWN NOTES AND KEEPS BOTH HALVES.
+ * THE VAULT DIVIDES ONE OF ITS OWN NOTES AND KEEPS BOTH HALVES.
  *
  * The pool's size is a privacy property — the count is public, so a constant is
  * uninformative where a moving number is a signal — and before this circuit
@@ -10,9 +10,9 @@
  *
  * **The one to read first is "a half of a split really SPENDS".** Everything
  * else here checks that the contract wrote what it meant to write; that one
- * checks that what it wrote can be moved again. The register's rule is explicit
- * about the difference — *never ship a derivation of a value the money depends
- * on without a test that spends the result* — and V-47 is in it because a
+ * checks that what it wrote can be moved again. The rule is explicit about
+ * the difference — *never ship a derivation of a value the money depends on
+ * without a test that spends the result* — and it is there because a
  * derivation that compiled and read plausibly was wrong.
  *
  * Every note here is committed under a blinding the CONTRACT derives
@@ -89,7 +89,7 @@ const heldBy = (
   coin: { nonce: Uint8Array; color: Uint8Array; value: bigint },
 ) => vaultCircuits.heldCommitmentOf(coin, vaultCircuits.noteBlindingOf(addr, coin));
 
-describe('S6a: a vault splits one of its own notes', () => {
+describe('a vault splits one of its own notes', () => {
   let sim: AccountSimulator;
   let vault: Vault<VaultPrivate>;
   let vaultAddr: string;
@@ -138,7 +138,7 @@ describe('S6a: a vault splits one of its own notes', () => {
     const r = await split(GBP, 300n);
 
     /*
-     * The count is the property §3.5 is about: one in, two out, so any deficit
+     * The count is the property under test: one in, two out, so any deficit
      * can be closed exactly by repeating this. A four-way split would move the
      * count in threes and could never land on sixteen from twelve.
      */
@@ -256,7 +256,7 @@ describe('S6a: a vault splits one of its own notes', () => {
   it('the blinding is a function of the coin AND of the vault, not of either alone', () => {
     /*
      * Two vaults that ever held the same coin must not publish the same bytes —
-     * M-36's argument for putting the account's address inside
+     * the same argument that puts the account's address inside
      * `approvalNullifier`, one contract along. And two different coins in one
      * vault must not either.
      */

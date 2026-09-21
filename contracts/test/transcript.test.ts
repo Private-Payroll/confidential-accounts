@@ -1,6 +1,5 @@
 /**
- * THE INSTRUMENT THAT READS WHAT A TRANSACTION PUBLISHES. `S50`, board row
- * `2y9f0`, `C389` `P1`.
+ * THE INSTRUMENT THAT READS WHAT A TRANSACTION PUBLISHES.
  *
  * `contracts/test/transcript.ts` is the instrument and its header carries the
  * mechanism. This file is its SELF-TEST and its first real use, and it is
@@ -9,15 +8,15 @@
  *   1. the runtime really does hand a test a transcript, measured;
  *   2. the instrument can FIND things — the positive control, without which an
  *      absence check is green for no reason;
- *   3. the founder's three priorities over a real cross-contract payout;
- *   4. `SC14`'s worked example: what a LEDGER READ does to the transcript;
+ *   3. the three privacy priorities, over a real cross-contract payout;
+ *   4. the worked example: what a LEDGER READ does to the transcript;
  *   5. the PLANTED LEAK, and the instrument going red on it.
  *
- * **THE ACCEPTANCE BAR IS `CHECK-BOARD.command`'s: a check is not real until
- * its first run is clean on correct code and RED on a deliberate leak.** §5 is
- * that plant. It is a real compiled circuit call — nothing is stubbed and no
- * operation is hand-built — and the leak it produces is the exact shape `C389`
- * describes: a private value in a LEDGER READ's argument position.
+ * **THE ACCEPTANCE BAR: a check is not real until its first run is clean on
+ * correct code and RED on a deliberate leak.** §5 is that plant. It is a real
+ * compiled circuit call — nothing is stubbed and no operation is hand-built —
+ * and the leak it produces is the exact shape that matters: a private value in
+ * a LEDGER READ's argument position.
  *
  * **NOTHING HERE CLAIMS THE CONTRACT LEAKS.** §3 measures the account's payout
  * path CLEAN on two of the three priorities and says plainly why the third is
@@ -66,11 +65,10 @@ const vaultWitnesses = {
 };
 const govChange = (seed: number): Change => change(0n, seed);
 
-describe('S50 §1 — the runtime hands a test the public transcript of a real circuit call', () => {
+describe('§1 — the runtime hands a test the public transcript of a real circuit call', () => {
   /*
-   * THE MEASUREMENT THE ROUND'S BRIEF SAID WOULD OUTRANK EVERYTHING ELSE IF IT
-   * CAME OUT THE OTHER WAY. It did not: the field is populated, on the calls
-   * this repository's tests already make, with no new plumbing.
+   * THE MEASUREMENT EVERYTHING ELSE HERE DEPENDS ON. The field is populated,
+   * on the calls this repository's tests already make, with no new plumbing.
    *
    * `proof-data.d.ts:13` declares it, `circuit-context.d.ts:124` threads it,
    * and `contracts/managed/contract/index.js:323` finalises it. This asserts
@@ -87,10 +85,10 @@ describe('S50 §1 — the runtime hands a test the public transcript of a real c
     expect(t.calls).toHaveLength(1);
     expect(t.calls[0]!.circuitId).toBe('propose');
     /*
-     * NOT `toBe(22)`. A pin on the op count is a number nothing certifies and
-     * this repository has `T-247` and `T-255` as two separate rulings against
-     * hand-written counts beside instruments. What matters is that there is a
-     * transcript with ledger operations in it.
+     * NOT `toBe(22)`. A pin on the op count is a number nothing certifies, and
+     * hand-written counts beside instruments have been ruled against here
+     * twice. What matters is that there is a transcript with ledger operations
+     * in it.
      */
     expect(t.opCount).toBeGreaterThan(0);
     expect(t.calls[0]!.tags).toContain('member');
@@ -98,7 +96,7 @@ describe('S50 §1 — the runtime hands a test the public transcript of a real c
   });
 });
 
-describe('S50 §2 — the positive control: the instrument can find what IS published', () => {
+describe('§2 — the positive control: the instrument can find what IS published', () => {
   /*
    * **WITHOUT THIS, EVERY ABSENCE ASSERTION BELOW IS WORTHLESS.**
    * `scripts/cross-contract-spike.ts:144` hand-builds an EMPTY
@@ -119,9 +117,10 @@ describe('S50 §2 — the positive control: the instrument can find what IS publ
     });
 
     /*
-     * A run's window is PUBLIC and is meant to be: `C356`, ruled accepted for
-     * v1 — the amount, the recipient and the asset are private; the run TIMING
-     * is not. So this is the right thing to demand the instrument can see.
+     * A run's window is PUBLIC and is meant to be, and that was accepted
+     * deliberately for v1 — the amount, the recipient and the asset are
+     * private; the run TIMING is not. So this is the right thing to demand the
+     * instrument can see.
      */
     tape.last.assertPublishes({
       'the moment the run window opens': WIN_FROM,
@@ -145,7 +144,7 @@ describe('S50 §2 — the positive control: the instrument can find what IS publ
   });
 });
 
-describe('S50 §3 — the founder\'s three priorities, over a real cross-contract payout', () => {
+describe('§3 — the three privacy priorities, over a real cross-contract payout', () => {
   /*
    * THE CALL IS THE PRODUCT'S OWN MONEY PATH, NOT A FIXTURE SHAPED LIKE ONE: a
    * vault pays one payee of an approved run by calling into the account, both
@@ -153,7 +152,7 @@ describe('S50 §3 — the founder\'s three priorities, over a real cross-contrac
    * `vault-payout.test.ts` is where that arrangement is established and
    * explained; this borrows it to read the other channel.
    *
-   * The three, in the founder's own words:
+   * The three, in the words they were set in:
    *   "how much is the company paying out"  — COVERED, §3a
    *   "who is it paying to"                 — COVERED, §3b
    *   "how many payouts is it issuing"      — NOT COVERED, §3c, and why
@@ -245,7 +244,7 @@ describe('S50 §3 — the founder\'s three priorities, over a real cross-contrac
       'the payee being paid': ALICE,
       'another payee of the same run': BOB,
       'a third payee of the same run': CAROL,
-      // and the asset, which the founder's list treats as part of "how much".
+      // and the asset, which that list treats as part of "how much".
       'the token being paid in': GBP,
     });
   });
@@ -287,12 +286,12 @@ describe('S50 §3 — the founder\'s three priorities, over a real cross-contrac
      * **AND THE SENTENCE THAT ABSENCE ALONE WOULD LET A READER GET WRONG.**
      * The leaf is not published; a DOMAIN-SEPARATED, UNBLINDED HASH OF IT is —
      * `paidMovementOf(leaf) = persistentHash(["…:paid:", leaf])`,
-     * `ConfidentialAccount.compact:1082-1085`, inserted into `movements`.
+     * `ConfidentialAccount.compact:1083-1086`, inserted into `movements`.
      * **So anyone who can reconstruct a candidate leaf can confirm from public
      * data that that payment happened, and by design every signer can**
      * (the accepted privacy position rests on that). An instrument that reported
      * only "the leaf is absent" would be telling the truth and leaving a reader
-     * with a false impression, which is what §5 of the build log is about.
+     * with a false impression.
      */
     transcript.assertPublishes({
       'the movement, which is an unblinded hash of the payout leaf':
@@ -302,11 +301,11 @@ describe('S50 §3 — the founder\'s three priorities, over a real cross-contrac
 
   it('and BOTH contract addresses are published, which absence claims must not obscure', async () => {
     /*
-     * `C356` already rules that which contract a transaction calls is public on
-     * Midnight. This is that fact, measured for the first time rather than
+     * It is already accepted that which contract a transaction calls is public
+     * on Midnight. This is that fact, measured for the first time rather than
      * read: the cross-contract call publishes the callee's address, and the
-     * vault publishes its own. A privacy document may say the payee is private;
-     * it may not say the transaction is unattributable to a company.
+     * vault publishes its own. A privacy document may say the payee is
+     * private; it may not say the transaction is unattributable to a company.
      */
     const { transcript } = await payAlice(govChange(55));
     transcript.assertPublishes({
@@ -330,13 +329,14 @@ describe('S50 §3 — the founder\'s three priorities, over a real cross-contrac
      *     claim at this width is unreadable without opening the op, which is
      *     why `Published` carries its op index and kind.
      *
-     * (2) **THE COUNT IS NOT A SINGLE-TRANSACTION FACT.** `C356`, ruled
-     *     accepted for v1: the payout COUNT and the run TIMING are public and
-     *     the headcount is inferable from settlement transactions. A run of
-     *     three payees is three `recordPayment` transactions on chain. **No
-     *     instrument that reads one transaction's transcript can see that, and
-     *     an instrument that reported this priority GREEN would be making
-     *     precisely the claim `C356` says is false.**
+     * (2) **THE COUNT IS NOT A SINGLE-TRANSACTION FACT**, and that was
+     *     accepted deliberately for v1: the payout COUNT and the run TIMING
+     *     are public and the headcount is inferable from settlement
+     *     transactions. A run of three payees is three `recordPayment`
+     *     transactions on chain. **No instrument that reads one transaction's
+     *     transcript can see that, and an instrument that reported this
+     *     priority GREEN would be claiming exactly what the accepted position
+     *     says is false.**
      *
      * So this test asserts the measurement it can make — that the count is not
      * pushed as a value by these two circuits — and refuses the claim it
@@ -344,11 +344,10 @@ describe('S50 §3 — the founder\'s three priorities, over a real cross-contrac
      */
     const three = transcript.occurrences(3n);
     /*
-     * **THIS LINE FIRST, AND IT IS NOT DECORATION.** Without it both assertions
-     * below pass over an empty result set and the comment above them claims a
-     * collision the test never required to exist — `C238`/`C263`'s shape, a
-     * check that cannot fail, in the file whose whole subject is checks that
-     * cannot fail.
+     * **THIS LINE FIRST, AND IT IS NOT DECORATION.** Without it both
+     * assertions below pass over an empty result set and the comment above
+     * them claims a collision the test never required to exist — a check that
+     * cannot fail, in the file whose whole subject is checks that cannot fail.
      */
     expect(three.length).toBeGreaterThan(0);
     const asValue = three.filter((p) => p.kind === 'push');
@@ -358,49 +357,48 @@ describe('S50 §3 — the founder\'s three priorities, over a real cross-contrac
   });
 });
 
-describe('S50 §4 — SC14\'s worked example: what a LEDGER READ does to the transcript', () => {
+describe('§4 — the worked example: what a LEDGER READ does to the transcript', () => {
   /*
-   * **THE CASE THAT MOVED THIS ROW TO THE FRONT** — and the framing needs one
-   * correction before the measurement, because `S50`'s brief and `SC16` do not
-   * agree and rule 20 says `SC16` is the source.
+   * **THE CASE THAT MADE THIS WORTH MEASURING** — and the framing needs one
+   * correction first.
    *
-   * **`SC16` DID NOT LEAVE `assert(vaults.member(disclose(vault)), …)` OPEN AS
-   * A NEUTRAL ALTERNATIVE.** The recommendation on record was
-   * *"RECOMMENDATION: COMPILE `S48`'s ASSERT AS IT STANDS. BUILD NEITHER HALF
-   * OF THE PAIR"*, and its reason is that nothing in this system can satisfy
-   * the check: no product code and no door has ever adopted a vault, so the
-   * assert would refuse every run this system can raise. **The publicity cost
-   * measured below is one input to a question `SC16` had already answered *not
-   * now* on grounds this round does not touch.**
+   * **`assert(vaults.member(disclose(vault)), …)` IS NOT A NEUTRAL ALTERNATIVE
+   * THAT WAS LEFT OPEN.** The recommendation on record was to compile the
+   * assert that shipped as it stands and to build neither half of the pair,
+   * and its reason is that nothing in this system can satisfy the membership
+   * check: no product code and no door has ever adopted a vault, so the assert
+   * would refuse every run this system can raise. **The publicity cost
+   * measured below is one input to a question already answered *not now*, on
+   * grounds nothing here touches.**
    *
-   * What `S49` §3 warned about still stands and is what the measurement is
-   * for: a round reading `C388`'s reasoning would conclude such a check
-   * publishes nothing because it writes no ledger field.
+   * The warning that prompted it still stands, and it is what the measurement
+   * is for: a reader could conclude such a check publishes nothing because it
+   * writes no ledger field.
    *
    * **IT DOES NOT NEED TO BE BUILT TO BE MEASURED, BECAUSE THE SHIPPING
-   * CONTRACT ALREADY CONTAINS ONE.** `ConfidentialAccount.compact:1359` —
+   * CONTRACT ALREADY CONTAINS ONE.** `ConfidentialAccount.compact:1360` —
    * `thresholds.member(vault) ? thresholds.lookup(vault) : threshold` — is a
    * ledger read on the run's vault, reached by `recordPayment` through
    * `requireApprovedForVault`, and `contracts/managed/contract/index.js:1617-1633`
    * compiles it to `dup / idx(6n) / push(cell(vault)) / member / popeq`.
    *
-   * So `SC14` can weigh the membership check's PUBLICITY by measurement:
+   * So the membership check's PUBLICITY can be weighed by measurement:
    * `recordPayment` publishes the vault id today, `propose` does not, and
    * adding `vaults.member(disclose(vault))` to `propose` would put the same
    * five operations into `propose`'s transcript.
    *
-   * **THE LAST STEP OF THAT IS AN INFERENCE AND IS WRITTEN AS ONE — RULE 9.**
-   * What is measured is `thresholds.member(vault)` inside `recordPayment`.
-   * That `vaults.member(…)` inside `propose` would compile the same way follows
-   * from both being `Set.member` on a `Bytes<32>`; it has not been compiled and
-   * rule 1 forbids a session to compile it.
+   * **THE LAST STEP OF THAT IS AN INFERENCE AND IS WRITTEN AS ONE.** What is
+   * measured is `thresholds.member(vault)` inside `recordPayment`. That
+   * `vaults.member(…)` inside `propose` would compile the same way follows
+   * from both being `Set.member` on a `Bytes<32>`; it has not been compiled
+   * here.
    *
    * **AND THE SHAPE OF THE NEW DISCLOSURE, WHICH IS NOT THE SAME AS THE OLD
    * ONE:** `propose` publishing the vault id links a run to a vault AT RAISE
    * TIME — before any settlement, including for runs later cancelled and never
-   * paid. `C356` accepts the vault address being visible on SETTLEMENT
-   * transactions. Those are different disclosures and `SC14` needs the
-   * difference stated, not the ops count.
+   * paid. What was accepted is the vault address being visible on SETTLEMENT
+   * transactions. Those are different disclosures, and the difference is what
+   * matters rather than the ops count.
    */
   it('a ledger read pushes its argument into the transcript verbatim and writes nothing', async () => {
     const sim = await AccountSimulator.liveAccount([A, B], 2n);
@@ -440,8 +438,8 @@ describe('S50 §4 — SC14\'s worked example: what a LEDGER READ does to the tra
     expect(t.calls[0]!.tags).toContain('member');
 
     /*
-     * THE SECOND HALF, AND IT IS THE WHOLE OF `C389`: THE EXISTING GUARD RAIL
-     * CANNOT SEE IT. `signer-governance.test.ts:496` counts occurrences in
+     * THE SECOND HALF, AND IT IS THE WHOLE POINT: THE EXISTING GUARD RAIL
+     * CANNOT SEE IT. `signer-governance.test.ts:500` counts occurrences in
      * `JSON.stringify(sim.ledger, …)` before and after an action. Run that
      * method here, over the same value, across the same call — and it reports
      * no change, because the read stored nothing.
@@ -452,13 +450,13 @@ describe('S50 §4 — SC14\'s worked example: what a LEDGER READ does to the tra
     expect(occurrences(after, hex(VAULT))).toBe(occurrences(before, hex(VAULT)));
   });
 
-  it('and `propose` does NOT read the vault today, which is the number SC14 needs', async () => {
+  it('and `propose` does NOT read the vault today, which is the other half of the measurement', async () => {
     /*
      * The other half of the measurement, and the one that makes it a decision
-     * rather than a warning: `propose`'s transcript carries no vault id, so the
-     * membership check `SC16` weighed would ADD one. Rule 42a: a value, not a
-     * verdict — what the change costs in publicity is measured here; whether to
-     * make it is `SC14`'s and the founder's.
+     * rather than a warning: `propose`'s transcript carries no vault id, so
+     * the membership check would ADD one. A value, not a verdict — what the
+     * change costs in publicity is measured here; whether to make it is
+     * somebody else's call.
      */
     const sim = await AccountSimulator.liveAccount([A], 1n);
     sim.at(NOW);
@@ -478,34 +476,33 @@ describe('S50 §4 — SC14\'s worked example: what a LEDGER READ does to the tra
   });
 });
 
-describe('S50 §5 — THE SENSITIVITY CONTROL: the instrument goes red, and what that does and does not prove', () => {
+describe('§5 — THE SENSITIVITY CONTROL: the instrument goes red, and what that does and does not prove', () => {
   /*
    * **A PRIVACY INSTRUMENT THAT HAS NEVER GONE RED IS ONE NOBODY CAN TRUST**,
-   * and this project has `C302`, `C286` and rule 27 as three separate names for
-   * that failure. So the instrument is made to go red here, permanently, on a
-   * real compiled circuit call — nothing stubbed, no hand-built operation.
+   * and that failure has been met here under three different names. So the
+   * instrument is made to go red here, permanently, on a real compiled circuit
+   * call — nothing stubbed, no hand-built operation.
    *
-   * **AND THE HONEST LABEL, WHICH IS THIS ROUND'S money-safety pass's AND
-   * NOT MINE. THIS IS A SENSITIVITY CONTROL AND NOT A DEMONSTRATED LEAK.**
-   * The value put into the ledger read's argument is the VAULT IDENTIFIER, and
-   * the vault identifier is PUBLIC by the founder's own ruling — `C356`, 1 Sep:
-   * the vault address of payouts is accepted public for v1, and which contract
-   * a transaction calls is public on Midnight anyway. On every real path that
-   * argument is `disclose(kernel.self().bytes)`, the vault's own address; a
-   * vault cannot put anything else there. So this test names one constant twice
-   * and calls one of the names private.
+   * **AND THE HONEST LABEL: THIS IS A SENSITIVITY CONTROL AND NOT A
+   * DEMONSTRATED LEAK.** The value put into the ledger read's argument is the
+   * VAULT IDENTIFIER, and the vault identifier is accepted PUBLIC: the vault
+   * address of payouts is public for v1, and which contract a transaction
+   * calls is public on Midnight anyway. On every real path that argument is
+   * `disclose(kernel.self().bytes)`, the vault's own address; a vault cannot
+   * put anything else there. So this test names one constant twice and calls
+   * one of the names private.
    *
    * **WHAT IT THEREFORE PROVES, EXACTLY:** the instrument can see a 32-byte
    * value carried into the public transcript by a ledger read's argument, and
    * the ledger-state guard rail cannot see the same value on the same call.
    * **WHAT IT DOES NOT PROVE: that this contract can leak a private value.**
    *
-   * **AND NO PLANT A SESSION MAY BUILD COULD PROVE THAT**, which is worth
-   * writing down rather than leaving as a gap: the contract is BYTE-IDENTICAL
-   * between §3's green run and this red one, because rule 1 forbids a round to
-   * touch `.compact` or recompile. A mutation-based control is the missing one
-   * and `MUTATE.command` cannot supply it — it mutates only the two `.compact`
-   * files, which is `T-189`'s standing subject.
+   * **AND NO PLANT BUILT THIS WAY COULD PROVE THAT**, which is worth writing
+   * down rather than leaving as a gap: the contract is BYTE-IDENTICAL between
+   * §3's green run and this red one, because nothing here touches `.compact`
+   * or recompiles. A mutation-based control is the missing one, and the
+   * mutation checks cannot supply it because they mutate only the two
+   * `.compact` files.
    */
   const plantedLeak = async () => {
     const sim = await AccountSimulator.liveAccount([A, B], 2n);
@@ -525,7 +522,7 @@ describe('S50 §5 — THE SENSITIVITY CONTROL: the instrument goes red, and what
     await sim.as(sim.applying(B, c)).approve(id);
 
     const tape = Transcript.watch(sim.contract).clear();
-    /* The ledger channel, read exactly the way `signer-governance.test.ts:496`
+    /* The ledger channel, read exactly the way `signer-governance.test.ts:500`
      * reads it — same stringifier, same before/after occurrence count. */
     const publicState = () => JSON.stringify(sim.ledger, (_k, v) =>
       (v instanceof Uint8Array ? hex(v) : typeof v === 'bigint' ? String(v) : v));
@@ -557,13 +554,13 @@ describe('S50 §5 — THE SENSITIVITY CONTROL: the instrument goes red, and what
     expect(caught!.message).toMatch(/recordPayment op \d+ as a push/);
   });
 
-  it('and the LEDGER-STATE guard rail stays green on the same call — which is C389', async () => {
+  it('and the LEDGER-STATE guard rail stays green on the same call', async () => {
     /*
-     * **THE POINT OF THE WHOLE ROUND, IN ONE ASSERTION.** The leaked value
-     * never enters ledger state, so the method `signer-governance.test.ts:496`
+     * **THE POINT OF THIS WHOLE FILE, IN ONE ASSERTION.** The leaked value
+     * never enters ledger state, so the method `signer-governance.test.ts:500`
      * uses — counting occurrences in `JSON.stringify(sim.ledger, …)` — reports
-     * nothing wrong. Two channels; a claim needs both; and until this file only
-     * one of them was ever read.
+     * nothing wrong. Two channels; a claim needs both; and until this file
+     * only one of them was ever read.
      */
     const { sim, transcript, before, after, leaked } = await plantedLeak();
 
@@ -577,8 +574,8 @@ describe('S50 §5 — THE SENSITIVITY CONTROL: the instrument goes red, and what
     expect(occurrences(after, hex(leaked))).toBe(occurrences(before, hex(leaked)));
 
     /*
-     * **AND THE REASON IT REPORTS NOTHING IS WORSE THAN THE CHANNEL, WHICH IS A
-     * FINDING THIS ROUND DID NOT GO LOOKING FOR AND DOES NOT FIX.**
+     * **AND THE REASON IT REPORTS NOTHING IS WORSE THAN THE CHANNEL, WHICH IS
+     * RECORDED HERE RATHER THAN FIXED HERE.**
      *
      * `JSON.stringify(sim.ledger, …)` renders EVERY container field as `{}`.
      * `signers`, `signerLeaves`, `openProposals`, `movements`, `vaults`,
@@ -587,14 +584,14 @@ describe('S50 §5 — THE SENSITIVITY CONTROL: the instrument goes red, and what
      * signer's leaf, though `signerLeaves` holds both.
      *
      * So the before/after occurrence counts at
-     * `contracts/test/signer-governance.test.ts:536` and `:1031` compare 0 with
+     * `contracts/test/signer-governance.test.ts:541` and `:1038` compare 0 with
      * 0 for every identifying value, and cannot go red for the thing they are
      * written to catch.
      *
      * **THE TWO SITES ARE NOT EQUALLY BAD AND THE FINDING MUST SAY SO.**
-     * `:536`'s test has a half that is NOT vacuous — `:552-557` iterates
+     * `:541`'s test has a half that is NOT vacuous — `:558-563` iterates
      * `sim.ledger.approvals` directly rather than stringifying it, and that
-     * half is real. **`:1031`'s test has no such half: its closing line
+     * half is real. **`:1038`'s test has no such half: its closing line
      * `expect(after).not.toContain(hex(sim.publicKeyOf(FA)))` asserts a public
      * key is missing from 290 characters of `{}`. That site is vacuous end to
      * end.**
@@ -604,18 +601,18 @@ describe('S50 §5 — THE SENSITIVITY CONTROL: the instrument goes red, and what
      * still move it. **For the identifying values those tests name, leaves and
      * public keys, it is 0 against 0.**
      *
-     * **NOTHING LEAKS AND NOTHING IS BEING FIXED HERE.** `S50`'s brief forbids
-     * rewriting that guard rail and it is right to: it checks a real channel
-     * and its second half checks it correctly. This is recorded, at the place a
-     * later round will meet it, as a measurement — `C302`, `C286` and rule 27's
-     * shape on the OTHER channel from the one this round was convened for.
+     * **NOTHING LEAKS AND NOTHING IS BEING FIXED HERE.** That guard rail is
+     * not rewritten, and rightly: it checks a real channel and its second half
+     * checks it correctly. This is recorded, at the place whoever comes next
+     * will meet it, as a measurement — the same guard-with-a-stale-reason
+     * shape, on the OTHER channel.
      */
     expect(before).toBe(after);
     expect(before).not.toContain(hex(sim.leafOf(A)));
   });
 });
 
-describe('S50 §6 — THE DEFECT THE AUDITOR FOUND IN THIS INSTRUMENT, PINNED', () => {
+describe('§6 — THE DEFECT FOUND IN THIS INSTRUMENT, PINNED', () => {
   /*
    * **THE FIRST VERSION OF `transcript.ts` REPORTED "NOT PUBLISHED" FOR ROUGHLY
    * ONE PAYEE IN 256, AND REPORTED IT GREEN.**
@@ -624,22 +621,21 @@ describe('S50 §6 — THE DEFECT THE AUDITOR FOUND IN THIS INSTRUMENT, PINNED', 
    * (`node_modules/@midnight-ntwrk/compact-runtime/dist/compact-types.js:409-414`)
    * strips TRAILING ZERO BYTES, and `_descriptor_0`
    * (`contracts/managed/contract/index.js:4`) is that type on every 32-byte
-   * `push` — including the `push(cell(vault))` at `:1617-1633` this round's
-   * worked example is built on. The needle was built at full width. A payee key
-   * ending in `0x00` therefore reached the transcript as 31 bytes, missed a
-   * 32-byte needle, and `assertAbsent` returned green over a value sitting in
-   * plain sight.
+   * `push` — including the `push(cell(vault))` the worked example above is
+   * built on. The needle was built at full width. A payee key ending in `0x00`
+   * therefore reached the transcript as 31 bytes, missed a 32-byte needle, and
+   * `assertAbsent` returned green over a value sitting in plain sight.
    *
    * **THE LOUD DIRECTION WAS SAFE AND THE QUIET ONE WAS NOT**, which is the
    * whole reason it survived: `assertPublishes` fails when it cannot find
-   * something; `assertAbsent` succeeds. That is `C286`'s and rule 27's shape,
-   * inside the instrument built to catch it.
+   * something; `assertAbsent` succeeds. A guard that only ever fails loudly,
+   * inside the instrument built to catch exactly that.
    *
-   * **IT IS `C369` ON THE OTHER SIDE OF THE SAME RUNTIME, AT THE SAME ODDS**, and
-   * `C369`'s own sentence is why nothing found it: a 1-in-256 defect on a
-   * deterministic corpus is invisible until the corpus moves. Every needle in
-   * this file is `bytes(0x0a)`, `bytes(0x9b)`, `bytes(0xa1)` — repeated
-   * constants that can never exhibit it.
+   * **IT IS THE SAME DEFECT AS ONE ALREADY MET ON THE OTHER SIDE OF THIS
+   * RUNTIME, AT THE SAME ODDS**, and the reason nothing found it is the same:
+   * a 1-in-256 defect on a deterministic corpus is invisible until the corpus
+   * moves. Every needle in this file is `bytes(0x0a)`, `bytes(0x9b)`,
+   * `bytes(0xa1)` — repeated constants that can never exhibit it.
    *
    * **SO THE VALUE HERE IS CONSTRUCTED AND NOT HOPED FOR**, and it is pinned at
    * BOTH ends: the encoding is what the VM writes, and the instrument finds it.
@@ -695,20 +691,19 @@ describe('S50 §6 — THE DEFECT THE AUDITOR FOUND IN THIS INSTRUMENT, PINNED', 
   });
 });
 
-describe('S50 §7 — the tape keeps the whole call tree, not the entry circuit', () => {
+describe('§7 — the tape keeps the whole call tree, not the entry circuit', () => {
   /*
-   * **THE SECOND DEFECT THE AUDITOR FOUND, AND IT WAS LATENT RATHER THAN
-   * LIVE.** `Tape` recorded `trace[trace.length - 1]`, which by the SDK's own
-   * depth-first ordering (`circuit-context.d.ts:81-85`) is the ROOT call alone,
-   * while the comment above it claimed it held *"this call and everything under
-   * it"*. Every callee was dropped.
+   * **THE SECOND DEFECT FOUND HERE, AND IT WAS LATENT RATHER THAN LIVE.**
+   * `Tape` recorded `trace[trace.length - 1]`, which by the SDK's own
+   * depth-first ordering (`circuit-context.d.ts:81-85`) is the ROOT call
+   * alone, while the comment above it claimed it held *"this call and
+   * everything under it"*. Every callee was dropped.
    *
    * Nothing was wrong today — §3 reads the returned context directly and every
-   * other `Tape` use is a single-contract call. **It would have failed GREEN the
-   * first time a round watched a vault through a payout**, which is the obvious
-   * next use of this instrument and the reason it is pinned now rather than
-   * filed. `C286`'s shape again: a guard whose written reason no longer matches
-   * its behaviour.
+   * other `Tape` use is a single-contract call. **It would have failed GREEN
+   * the first time anyone watched a vault through a payout**, which is the
+   * obvious next use of this instrument and the reason it is pinned now rather
+   * than left. A guard whose written reason no longer matches its behaviour.
    */
   it('one watched cross-contract payout hands back BOTH contracts\' transcripts', async () => {
     const sim = await AccountSimulator.liveAccount([A, B], 2n);
