@@ -7,7 +7,7 @@ import { SimulatedCommitments } from '../../src/core/ledger.js';
 import { toHex } from '../../src/core/crypto.js';
 
 /**
- * M-14: the seam.
+ * The seam.
  *
  * The client computes commitments in TypeScript. The contract checks them in a
  * circuit. If those two ever disagree, nothing fails loudly: attestations stop
@@ -61,8 +61,8 @@ describe('commitment schemes agree with the contract', () => {
    */
   beforeAll(async () => {
     /* One founding signer at a threshold of one, which is the only shape a
-     * constructor produces since `S35d`. Blake is seated below by an approved
-     * round — the bootstrap window this used to rely on is shut. */
+     * constructor produces. Blake is seated below by an approved round — the
+     * bootstrap window this used to rely on is shut. */
     sim = await AccountSimulator.create(ada);
   });
 
@@ -75,9 +75,9 @@ describe('commitment schemes agree with the contract', () => {
   });
 
   /*
-   * `produces the same balance commitment as the contract` STOOD HERE. `C292`,
-   * It pinned `MidnightCommitments.balanceCommitment` against the
-   * contract's `balanceCommitmentOf`; both are gone with the balance.
+   * `produces the same balance commitment as the contract` STOOD HERE. It
+   * pinned `MidnightCommitments.balanceCommitment` against the contract's
+   * `balanceCommitmentOf`; both are gone with the balance.
    *
    * DELETED RATHER THAN REWRITTEN, because the scheme it compared no longer
    * exists on either side. The rule it enforced — decision 0004, one definition
@@ -102,7 +102,8 @@ describe('commitment schemes agree with the contract', () => {
   it('produces a leaf the contract accepts for a real approval', async () => {
     /*
      * The end-to-end claim: a signer added using a CLIENT-computed leaf can
-     * actually approve. This is the assertion that would have caught M-12.
+     * actually approve. This is the assertion that would have caught the
+     * client/circuit mismatch.
      *
      * It was vacuous for months. Every call here is async since the 0.18
      * migration, and the last line read
@@ -120,7 +121,7 @@ describe('commitment schemes agree with the contract', () => {
     );
     /*
      * SEATED THROUGH AN APPROVED ROUND, AND THE LEAF IS STILL THE CLIENT'S.
-     * `S35d` shut the bootstrap window, so this is `propose` → `approve` →
+     * The bootstrap window is shut, so this is `propose` → `approve` →
      * `amendSigner` where it was one call. **What this test is about is
      * unchanged**: the leaf handed to the chain is the one
      * `MidnightCommitments.signerLeaf` computed, not one derived here, and the
@@ -212,23 +213,23 @@ describe('commitment schemes agree with the contract', () => {
  * satisfy it, whatever the client does.
  *
  * These are the tests those two mutations are pointed at. If one of them is
- * ever weakened, `MUTATE.command` reports the money rule as uncertified.
+ * ever weakened, the money rule is reported as uncertified.
  *
- * **AND FROM `S29` THERE ARE FOUR MUTATIONS, NOT TWO.** The two above
- * replace an argument; the two added beside them SWAP two same-typed arguments,
- * which no property in this describe can catch — see the fixed vectors at the
- * foot of this file, which are what those two are pointed at.
+ * **AND THERE ARE FOUR MUTATIONS, NOT TWO.** The two above replace an
+ * argument; the two beside them SWAP two same-typed arguments, which no
+ * property in this describe can catch — see the fixed vectors at the foot of
+ * this file, which are what those two are pointed at.
  *
- * **AND WHAT THEY PIN IS THE CIRCUIT, NOT A SETTLEMENT.** Rule 27, before
- * anybody reads a `CAUGHT` here as more than it is. `C292` deleted the only
- * circuit that opened a change commitment, so nothing on chain compares the
- * asset inside one to anything; the comment above `changeCommitmentOf` in
+ * **AND WHAT THEY PIN IS THE CIRCUIT, NOT A SETTLEMENT** — said before anybody
+ * reads a `CAUGHT` here as more than it is. The only circuit that opened a
+ * change commitment is gone, so nothing on chain compares the asset inside one
+ * to anything; the comment above `changeCommitmentOf` in
  * `ConfidentialAccount.compact` says so itself and names what DOES refuse a
- * dollar run presented as ether — `C246`'s
- * separator inside `payoutDetails`, which is inside the leaf, inside the
- * approved root, inside the proposal's id. These four tests hold the commitment
- * schemes to naming what they claim to name. They do not hold a settlement, and
- * a comment here that said they did would be the next `C286`.
+ * dollar run presented as ether — the separator inside `payoutDetails`, which
+ * is inside the leaf, inside the approved root, inside the proposal's id.
+ * These four tests hold the commitment schemes to naming what they claim to
+ * name. They do not hold a settlement, and a comment here that said they did
+ * would be the next stale guarantee.
  */
 describe('what a commitment names, which no mirror can check', () => {
   /*
@@ -282,8 +283,8 @@ describe('what a commitment names, which no mirror can check', () => {
      * change commitment could not tell them apart.
      *
      * NOT a claim that this is what refuses a dollar payment against a pound
-     * approval. Nothing opens the commitment since `C292`; `C246`'s separator
-     * inside `payoutDetails` is the enforcer.
+     * approval. Nothing opens the commitment any more; the separator inside
+     * `payoutDetails` is the enforcer.
      */
     const blinding = b(10);
     const keys = ['GBP', 'USD', 'EUR', 'JPY'].map(
@@ -300,10 +301,10 @@ describe('what a commitment names, which no mirror can check', () => {
      * states both halves of its own position in that circuit's own comment in
      * `ConfidentialAccount.compact`: the field is there so that *"a run
      * approved to pay a month of dollar salaries"* cannot authorise *"the same
-     * integer of ether"* — **and that is NOT what enforces it today.** `C292`
-     * deleted the only circuit that opened this commitment, so the asset in it
-     * is written and never compared, and `C246`'s separator refuses the
-     * substitution instead.
+     * integer of ether"* — **and that is NOT what enforces it today.** The
+     * only circuit that opened this commitment is gone, so the asset in it is
+     * written and never compared, and the separator inside `payoutDetails`
+     * refuses the substitution instead.
      *
      * So this test does not claim the settlement rule. It claims the narrower
      * thing that is actually true and that nothing else checked: two changes
@@ -312,8 +313,8 @@ describe('what a commitment names, which no mirror can check', () => {
      * asset key produces one value for both — four witnesses and two
      * `persistentCommit`s paid for a field that names nothing.
      *
-     * RULE 27, in its own words: this held until now because nobody had written
-     * the code that would break it.
+     * NAMED RATHER THAN ASSUMED: this held until now because nobody had
+     * written the code that would break it.
      */
     const amount = 20_000n, batch = b(6), salt = b(7);
     const commitments = [b(20), b(70), b(120), b(170)].map(
@@ -330,7 +331,7 @@ describe('what a commitment names, which no mirror can check', () => {
      * The asset is the field with a mutation behind it; it is not the only
      * field a signer is trusting. Amount, batch and salt each get the same
      * treatment, so that a later change which drops one of THEM is caught here
-     * rather than becoming the next `C306`.
+     * rather than becoming the next silent second copy.
      */
     const KEY = b(20), AMOUNT = 20_000n, BATCH = b(6), SALT = b(7);
     const base = toHex(pureCircuits.changeCommitmentOf(KEY, AMOUNT, BATCH, SALT));
@@ -355,7 +356,7 @@ describe('what a commitment names, which no mirror can check', () => {
    * of the preimage.** A circuit that bound the blinding where it means to bind
    * the asset — or the batch where it means to bind the asset key — is still an
    * injective function of its argument tuple, so it passes all four without
-   * reading a single argument correctly. `MUTATE.command` had no mutation of
+   * reading a single argument correctly. The mutation set had no mutation of
    * that shape either: its ninety-four rows replace a value or duplicate one,
    * and both of those COLLAPSE two inputs to one output, which is exactly what
    * injectivity does catch.
@@ -374,12 +375,12 @@ describe('what a commitment names, which no mirror can check', () => {
    * what catch that; properties are not."*
    *
    * **WHERE THESE NUMBERS CAME FROM.** Read off `pureCircuits` in
-   * `contracts/managed/contract/index.js` on 31 Aug 2026, once, and written down
-   * — rule 9. They are not derived, predicted or copied from a report. **A
-   * change to either circuit changes them**, and that is the point: a
-   * recompile that moves one of these is a recompile that changed what a
-   * signer's approval names, and it has to be read and re-pinned deliberately
-   * rather than re-derived by the test itself.
+   * `contracts/managed/contract/index.js` once, and written down. They are not
+   * derived, predicted or copied from anywhere. **A change to either circuit
+   * changes them**, and that is the point: a recompile that moves one of these
+   * is a recompile that changed what a signer's approval names, and it has to
+   * be read and re-pinned deliberately rather than re-derived by the test
+   * itself.
    *
    * **WHAT IS STILL UNPINNED, SO NOBODY READS THIS AS MORE THAN IT IS.**
    * `signerLeaf(pk, blinding, scope)`, `proposalIdOf(payloadHash, vault, salt)`,
@@ -393,21 +394,20 @@ describe('what a commitment names, which no mirror can check', () => {
    * replaced it is an assertion over the body's own source text, which catches
    * a transposition and cannot catch a change in the primitive underneath.
    *
-   * **AND THE FIRST TWO COLLIDED EXACTLY UNTIL `S32`.** Both were
+   * **AND THE FIRST TWO USED TO COLLIDE EXACTLY.** Both were
    * `persistentCommit<Vector<2, Bytes<32>>>` over a two-vector with the third
    * argument as the opening, and NEITHER carried a domain separator, where
    * `runPayload` and `payoutLeaf` both pad a `"midnight-accounts:…"` tag.
-   * Measured 31 Aug off the live circuit by `S29`'s test-coverage pass:
-   * `signerLeaf(X, Y, Z)` and `proposalIdOf(X, Z, Y)` returned THE SAME 32
-   * BYTES, so a signer leaf and a proposal id were one value under a
-   * relabelling of three arguments. **`S32` made the `.compact` edit** — each
-   * now pads its own tag into a three-vector.
+   * Measured off the live circuit: `signerLeaf(X, Y, Z)` and `proposalIdOf(X,
+   * Z, Y)` returned THE SAME 32 BYTES, so a signer leaf and a proposal id were
+   * one value under a relabelling of three arguments. **The `.compact` edit
+   * that fixed it** makes each pad its own tag into a three-vector.
    *
    * **THEY ARE STILL UNPINNED AND THAT IS A DEBT, NOT A CLOSURE.** The
-   * separators are asserted below by their SOURCE TEXT and by the property they
-   * buy; neither is a fixed vector, because a vector for the new bodies cannot
-   * be read without a recompile and no session may run one — rule 9. What is
-   * owed, and where it goes, is at the foot of this file.
+   * separators are asserted below by their SOURCE TEXT and by the property
+   * they buy; neither is a fixed vector, because a vector for the new bodies
+   * cannot be read without a recompile. What is owed, and where it goes, is at
+   * the foot of this file.
    * ───────────────────────────────────────────────────────────────────────────
    */
   describe('AND IT READS THEM IN THE RIGHT ORDER — the fixed vectors', () => {
@@ -425,13 +425,12 @@ describe('what a commitment names, which no mirror can check', () => {
     const KEY = b(2), BATCH = b(3), SALT = b(4);
     /*
      * **THE TOP BIT OF THE `Uint<128>` IS SET, AND THAT IS THE WHOLE REASON FOR
-     * THE SHAPE OF THIS NUMBER.** `S29`, caught by this round's own
-     * test-coverage pass before it reached a report.
+     * THE SHAPE OF THIS NUMBER.**
      *
      * It was `12345678901234567890n`, under a comment claiming it used the
-     * whole field. **That value is 64 bits wide**, and the auditor measured
-     * what that costs: masking the amount to its low 64 bits left the
-     * commitment BYTE-IDENTICAL, so a narrowing of `amount` from `Uint<128>` to
+     * whole field. **That value is 64 bits wide**, and what that costs was
+     * measured: masking the amount to its low 64 bits left the commitment
+     * BYTE-IDENTICAL, so a narrowing of `amount` from `Uint<128>` to
      * `Uint<64>` round-tripped the vector unchanged. **A vector that a real
      * narrowing survives pins less than its comment says.**
      *
@@ -515,8 +514,8 @@ describe('what a commitment names, which no mirror can check', () => {
       /*
        * **AND THE AMOUNT REALLY IS 128 BITS, WATCHED RATHER THAN ASSERTED IN A
        * COMMENT.** Masking it to its low 64 bits must move the answer. When
-       * this vector's amount was 64 bits wide it did not, and only an auditor
-       * running the mask noticed.
+       * this vector's amount was 64 bits wide it did not, and only running the
+       * mask showed it.
        */
       expect(toHex(pureCircuits.changeCommitmentOf(
         KEY, AMOUNT & ((1n << 64n) - 1n), BATCH, SALT))).not.toBe(base);
@@ -536,36 +535,35 @@ describe('what a commitment names, which no mirror can check', () => {
    * ───────────────────────────────────────────────────────────────────────────
    * THE SIGNER LEAF AND THE PROPOSAL ID WERE ONE FUNCTION.
    *
-   * Until this round `signerLeaf(pk, blinding, scope)` and
-   * `proposalIdOf(payloadHash, vault, salt)` were both
-   * `persistentCommit<Vector<2, Bytes<32>>>([first, second], third)` and neither
-   * padded a tag, so they were THE SAME FUNCTION up to a permutation of their
-   * arguments: `signerLeaf(X, Y, Z)` and `proposalIdOf(X, Z, Y)` were the same
-   * 32 bytes. A signer's leaf and a proposal's id are the two values that decide
-   * WHO MAY APPROVE A PAYMENT and WHAT THEY APPROVED, and nothing in the
-   * contract kept them apart. What kept them apart was that a caller would have
-   * had to hold a signer's blinding and a proposal's salt at once, and the
-   * witnesses that supply them are per-device — a property held by who holds
-   * what, not by a check. Rule 27.
+   * `signerLeaf(pk, blinding, scope)` and `proposalIdOf(payloadHash, vault,
+   * salt)` used to be both `persistentCommit<Vector<2, Bytes<32>>>([first,
+   * second], third)` and neither padded a tag, so they were THE SAME FUNCTION
+   * up to a permutation of their arguments: `signerLeaf(X, Y, Z)` and
+   * `proposalIdOf(X, Z, Y)` were the same 32 bytes. A signer's leaf and a
+   * proposal's id are the two values that decide WHO MAY APPROVE A PAYMENT and
+   * WHAT THEY APPROVED, and nothing in the contract kept them apart. What kept
+   * them apart was that a caller would have had to hold a signer's blinding
+   * and a proposal's salt at once, and the witnesses that supply them are
+   * per-device — a property held by who holds what, not by a check.
    *
    * **WHY THREE TESTS AND NOT ONE PINNED VECTOR.**
    *
-   * A vector is what the `C311` block above uses and it is the stronger
-   * instrument. It cannot be written here yet: the separators change both
-   * bodies, so the numbers are whatever the NEXT compile produces, and no
-   * session may run `COMPILE-CONTRACT.command` — rule 1. Writing a value that no
-   * instrument read would be rule 9's exact failure. So the vectors are OWED,
-   * named at the foot of this file, and what stands in the meantime is:
+   * A vector is what the block above uses and it is the stronger instrument.
+   * It cannot be written here yet: the separators change both bodies, so the
+   * numbers are whatever the NEXT compile produces, and nothing here may run
+   * the compiler. Writing a value no instrument read would be exactly the
+   * failure this repository refuses. So the vectors are OWED, named at the
+   * foot of this file, and what stands in the meantime is:
    *
    *   1. and 2. THE SOURCE TEXT of each body, one test each. These are what
-   *      `MUTATE.command` scores, and the reason is measured rather than
-   *      argued. A mutation that strips ONE separator moves only that circuit's
-   *      value, and every mirror and every behavioural test in this repository
-   *      takes BOTH sides of the comparison from the contract — so both sides
-   *      move together and the suite stays green while the protection is gone.
-   *      `one-definition.test.ts:32-40` and `MUTATE.command:240-257` record
-   *      exactly that happening to `assetKeyOf` and `changeCommitmentOf`: two
-   *      mutations broke the contract and all 232 tests stayed green, twice.
+   *      the mutations are scored against, and the reason is measured rather
+   *      than argued. A mutation that strips ONE separator moves only that
+   *      circuit's value, and every mirror and every behavioural test in this
+   *      repository takes BOTH sides of the comparison from the contract — so
+   *      both sides move together and the suite stays green while the
+   *      protection is gone. `one-definition.test.ts:30-37` records exactly
+   *      that happening to `assetKeyOf` and `changeCommitmentOf`: two
+   *      mutations broke the contract and the whole suite stayed green, twice.
    *      `assetKeyOf` still has its vector and `changeCommitmentOf` no longer
    *      does — its separator moved the value the same way these two moved —
    *      so three of the four have no vector now, and a source
@@ -576,21 +574,21 @@ describe('what a commitment names, which no mirror can check', () => {
    *   3. THE PROPERTY the separators buy, from the circuits themselves. This one
    *      does NOT carry a mutation and must not be given one: it goes red only
    *      when BOTH separators are gone, so either single-separator mutation
-   *      would be scored SURVIVED against it — an expectation naming a test that
-   *      cannot fail for that line. `C307` is the row for what that costs.
+   *      would be scored SURVIVED against it — an expectation naming a test
+   *      that cannot fail for that line.
    * ───────────────────────────────────────────────────────────────────────────
    */
-  describe('C317: a signer leaf and a proposal id are different families', () => {
+  describe('a signer leaf and a proposal id are different families', () => {
     it('signerLeaf pads its own domain tag into the commitment', () => {
       const body = bodyOf(codeOf(), 'signerLeaf');
       expect(body, 'signerLeaf has lost its domain separator. Without it signerLeaf(X, Y, Z) '
         + 'and proposalIdOf(X, Z, Y) are the same 32 bytes, so a signer leaf and a proposal id '
-        + 'are one value under a relabelling — C317. Nothing else in this suite goes red for '
+        + 'are one value under a relabelling. Nothing else in this suite goes red for '
         + 'this: every behavioural test takes both sides from the contract, so the collision '
         + 'returns silently.')
         .toContain('pad(32, "midnight-accounts:signer-leaf:")');
       expect(body, 'signerLeaf commits over a two-vector again, which is the shape that '
-        + 'collided with proposalIdOf. C317.')
+        + 'collided with proposalIdOf.')
         .toContain('persistentCommit<Vector<3, Bytes<32>>>');
     });
 
@@ -598,10 +596,10 @@ describe('what a commitment names, which no mirror can check', () => {
       const body = bodyOf(codeOf(), 'proposalIdOf');
       expect(body, 'proposalIdOf has lost its domain separator. Without it proposalIdOf(X, Z, Y) '
         + 'and signerLeaf(X, Y, Z) are the same 32 bytes, so a proposal id and a signer leaf are '
-        + 'one value under a relabelling — C317. Nothing else in this suite goes red for this.')
+        + 'one value under a relabelling. Nothing else in this suite goes red for this.')
         .toContain('pad(32, "midnight-accounts:proposal-id:")');
       expect(body, 'proposalIdOf commits over a two-vector again, which is the shape that '
-        + 'collided with signerLeaf. C317.')
+        + 'collided with signerLeaf.')
         .toContain('persistentCommit<Vector<3, Bytes<32>>>');
     });
 
@@ -617,8 +615,8 @@ describe('what a commitment names, which no mirror can check', () => {
      * (`midnight-vault:`) so they cannot collide with these, but that is an
      * argument and not a check.
      *
-     * `MUTATE.command`'s adopt/retire row reddens this test as well as its own,
-     * deliberately — it replaces one tag with another. Noted so a report naming
+     * The adopt/retire mutation reddens this test as well as its own,
+     * deliberately — it replaces one tag with another. Noted so a result naming
      * this test beside that mutation is not read as a mis-scored catch.
      */
     it('no two domain tags in the account contract are the same string', () => {
@@ -645,7 +643,7 @@ describe('what a commitment names, which no mirror can check', () => {
       for (const [p, v, s] of permutations) {
         expect(toHex(pureCircuits.proposalIdOf(p, v, s)),
           'a proposal id equals a signer leaf under a permutation of the same three '
-          + 'arguments. That is C317: the two circuits decide who may approve a payment and '
+          + 'arguments. The two circuits decide who may approve a payment and '
           + 'what was approved, and a value that is both is a value neither check can rely on.')
           .not.toBe(leaf);
       }
@@ -678,11 +676,10 @@ describe('what a commitment names, which no mirror can check', () => {
  * this circuit is scored by a source assertion rather than by a value.
  *
  * WHY IT IS NOT HERE: the vector is whatever the recompiled circuit returns,
- * and a session may not run `COMPILE-CONTRACT.command` — rule 1. A number
- * written without an instrument reading it is rule 9's failure, so the number
- * is refused rather than guessed.
+ * and nothing here may run the compiler. A number written without an
+ * instrument reading it is refused rather than guessed.
  *
- * WHO CLOSES IT AND HOW. After board row `3`'s recompile, read off
+ * WHO CLOSES IT AND HOW. After the next recompile, read off
  * `contracts/managed/contract/index.js` — the same source and the same method
  * as the two vectors above, whose provenance is recorded at the head of that
  * block — with three distinct 32-byte inputs in which no two arguments are
@@ -698,7 +695,7 @@ describe('what a commitment names, which no mirror can check', () => {
  *     pureCircuits.changeCommitmentOf(KEY, AMOUNT, BATCH, SALT)  → owed
  *
  * then add each as an `it` beside the two in *"AND IT READS THEM IN THE RIGHT
- * ORDER"*, and point the two `C317` mutations in `MUTATE.command` at those
- * titles instead of at the source-text ones.
+ * ORDER"*, and point the two domain-separator mutations at those titles
+ * instead of at the source-text ones.
  * ─────────────────────────────────────────────────────────────────────────────
  */

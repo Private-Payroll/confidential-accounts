@@ -1,5 +1,5 @@
 /**
- * THE WHOLE PRODUCT, END TO END, OFFLINE. V-32, V-41, V-43, V-44.
+ * THE WHOLE PRODUCT, END TO END, OFFLINE.
  *
  * A vault pays one payee of an approved run by calling its account, and the
  * account authorises that one payee. Two contracts, one transaction, no node
@@ -8,13 +8,13 @@
  * WHY THIS CAN RUN AT ALL, since it was filed for weeks as needing a chain:
  * `createCircuitContext` takes a `ContractStateProvider`, which is the only
  * thing a cross-contract call needs that a simulator has not got. Supply one
- * that answers with the account's state and the call executes in this process
- * (V-39).
+ * that answers with the account's state and the call executes in this
+ * process.
  *
  * WHAT IT STILL CANNOT ANSWER, and the distinction matters: whether a FAILURE
  * in the vault reverts the account's record of the payment. Here both live in
  * one circuit context that is discarded together; on chain that is a question
- * about guaranteed and fallible transaction segments. V-32(b) stays open.
+ * about guaranteed and fallible transaction segments, and that stays open.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
@@ -35,7 +35,7 @@ import { changeCoinOf } from '../../src/midnight/vault-coins.js';
 import { toHex, fromHex } from '../../src/core/crypto.js';
 
 /*
- * THE CLOCK AND THE RUN'S WINDOW. V-67.
+ * THE CLOCK AND THE RUN'S WINDOW.
  *
  * Payments assert they fall inside the window the signers approved, so both the
  * account simulator and the vault's own circuit context have to agree about the
@@ -60,11 +60,10 @@ const BOB = bytes(0x0b);
 /**
  * The vault's private state: which coin it can spend, and nothing else.
  *
- * IT USED TO CARRY TWO BLINDINGS and no longer carries any. S6a derives a
- * note's blinding in-circuit from the coin and the vault's address, so there is
- * no blinding for a device to hold, to choose, or to get wrong — which is the
- * whole of C124. A test that still supplied one would be testing a contract
- * this is not.
+ * IT USED TO CARRY TWO BLINDINGS and no longer carries any. A note's blinding
+ * is derived in-circuit from the coin and the vault's address, so there is no
+ * blinding for a device to hold, to choose, or to get wrong. A test that still
+ * supplied one would be testing a contract this is not.
  */
 interface VaultPrivate {
   coin: { nonce: Uint8Array; color: Uint8Array; value: bigint; mt_index: bigint };
@@ -125,7 +124,7 @@ describe('a vault pays one payee of an approved run', () => {
     vault = new Vault<VaultPrivate>(vaultWitnesses as never);
     vaultAddr = sampleContractAddress() as never as string;
 
-    /* The vault is married to THIS account when it is created. V-37. */
+    /* The vault is married to THIS account when it is created. */
     const init = await vault.initialState(
       createConstructorContext({} as VaultPrivate, BLOCK),
       { bytes: Uint8Array.from(Buffer.from(String(sim.address), 'hex')) } as never);
@@ -176,8 +175,8 @@ describe('a vault pays one payee of an approved run', () => {
      * …and the ACCOUNT wrote its own state during the call, which is the claim
      * that was filed for weeks as needing a chain.
      *
-     * What it wrote is the PAYMENT, not a completion. V-67: the proposal stays
-     * open until its window shuts, because a run ends by time and completion is
+     * What it wrote is the PAYMENT, not a completion: the proposal stays open
+     * until its window shuts, because a run ends by time and completion is
      * derived from the payments rather than asserted by the contract. So the
      * evidence a payment happened is the movement, and that is exactly what the
      * product reads.
@@ -261,7 +260,7 @@ describe('a vault pays one payee of an approved run', () => {
 
     /*
      * THE CHANGE COIN HAS A NEW NONCE, and reading it correctly is what keeps
-     * the money spendable. V-47.
+     * the money spendable.
      *
      * It is READ from the call's Zswap outputs, not derived: `sendShielded`
      * hashes a new nonce under a domain the standard library's `evolveNonce`
@@ -321,8 +320,9 @@ describe('a vault pays one payee of an approved run', () => {
 
   it('REFUSES TO SPEND THE SAME NOTE TWICE, which is the pool\'s whole safety property', async () => {
     /*
-     * V-58, and it had no test until 16 Aug — found by a mutation that deleted
-     * `notes.remove(spent)` and was not caught by the test named for it.
+     * The pool had no test for this for a long time — found by a mutation that
+     * deleted `notes.remove(spent)` and was not caught by the test named for
+     * it.
      *
      * The vault takes the note it spends from a WITNESS, which is untrusted
      * input by the language's own warning. Nothing stops an operator's device
@@ -361,7 +361,7 @@ describe('a vault pays one payee of an approved run', () => {
     expect(vaultLedger(vaultState as never).payments).toBe(1n);
   });
 
-  it('V-63, END TO END: a run built from the ACCOUNT\'S SEED pays, and a second admin finishes it',
+  it('END TO END: a run built from the ACCOUNT\'S SEED pays, and a second admin finishes it',
     async () => {
     /*
      * The proof that the derivation is not merely self-consistent: the leaves
@@ -431,7 +431,7 @@ describe('a vault pays one payee of an approved run', () => {
     expect(vaultLedger(vaultState as never).payments).toBe(3n);
   });
 
-  it('V-63 + V-64: a rebuilt RETRY run cannot pay somebody the original already paid', async () => {
+  it('a rebuilt RETRY run cannot pay somebody the original already paid', async () => {
     /*
      * The two fixes meeting. B rebuilds the run, retries the stragglers — and
      * the person A already paid is refused, because a retry reuses the original
@@ -536,7 +536,7 @@ describe('a vault pays one payee of an approved run', () => {
     expect(hex(one)).not.toBe(hex(other));
 
     /*
-     * S6a: THIS TEST NOW PLAYS WHAT ITS NAME SAYS, which it could not before.
+     * THIS TEST NOW PLAYS WHAT ITS NAME SAYS, which it could not before.
      *
      * The blinding used to be a number a caller chose, so the strongest thing
      * available was that two DIFFERENT blindings give different bytes — true of

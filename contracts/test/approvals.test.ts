@@ -1,5 +1,5 @@
 /**
- * V-66: raising a proposal is not approving it, and nothing may say otherwise.
+ * Raising a proposal is not approving it, and nothing may say otherwise.
  */
 import { describe, it, expect } from 'vitest';
 import {
@@ -16,7 +16,7 @@ const PAYROLL = new Uint8Array(32).fill(0xa1);
 const carrying = (sim: AccountSimulator, d: ReturnType<typeof privateStateFor>, c: Change) =>
   sim.applying(d, c);
 
-describe('V-66: a proposal is raised unapproved', () => {
+describe('a proposal is raised unapproved', () => {
   it('THE CHAIN AGREES: raising a run leaves it at zero approvals, not one', async () => {
     /*
      * The fact the whole entry rests on, taken from the contract rather than

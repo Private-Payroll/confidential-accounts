@@ -54,7 +54,7 @@ export const aTreeThatFindsAPath = (found: SignerPath = PINNED_PATH): unknown =>
  * What each witness takes after the context.
  *
  * **EXHAUSTIVE OVER THE WITNESS MAP BY CONSTRUCTION, AND THAT IS THE HALF THAT
- * SURVIVES THE ROUND THAT ADDS A WITNESS.** A driver that guessed would hand
+ * SURVIVES A CHANGE THAT ADDS A WITNESS.** A driver that guessed would hand
  * `undefined` to the one witness that takes an argument and then report a green
  * result about a call that never happened. A tenth witness does not compile
  * until somebody says how to call it; a witness that takes nothing still needs

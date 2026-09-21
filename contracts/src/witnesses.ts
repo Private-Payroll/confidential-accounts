@@ -46,14 +46,14 @@ export interface AccountPrivateState {
    * nobody, and as precious as the signing key: without it the signer cannot
    * reproduce their own leaf and cannot act on the account.
    *
-   * M-106 put this back where decision 0003 says it belongs. The generation
+   * This was put back where decision 0003 says it belongs. The generation
    * design re-seated every survivor on a removal, and a survivor's new leaf
    * needs their blinding, so the blindings had to be gathered into the sealed
    * roster. Slots re-seat nobody, so nothing off this device needs it again.
    */
   blinding: Uint8Array;
   /**
-   * WHICH VAULTS THIS SIGNER MAY ACT ON. Reserved, not yet enforced. V-33.
+   * WHICH VAULTS THIS SIGNER MAY ACT ON. Reserved, not yet enforced.
    *
    * Every signer is seated with `ALL_VAULTS` and no circuit branches on it
    * today. It is here because it is part of the signer's LEAF, and a leaf's
@@ -100,8 +100,8 @@ export interface AccountPrivateState {
   proposalSalt: Uint8Array;
   /**
    * The change a proposal makes: how much of `assetId` leaves, and a digest of
-   * the entries it appends. M-71, and since M-125 the asset is part of what the
-   * signers approve rather than something an executor chose.
+   * the entries it appends. The asset is part of what the signers approve
+   * rather than something an executor chose.
    *
    * READ AT ONE END OF A ROUND NOW, NOT BOTH. The proposer committed to them
    * and `execute` was checked against that commitment; `execute` went with the
@@ -118,7 +118,7 @@ export interface AccountPrivateState {
    * A membership path captured earlier.
    *
    * Normally null, and the path is derived from the tree on demand. Set it to
-   * replay a path taken before the tree moved on — which since M-106 is a path
+   * replay a path taken before the tree moved on — which is now a path
    * that must STOP verifying, because `signers` is a plain MerkleTree and only
    * its current root is accepted. It is also how a test plays a forged path.
    *
@@ -166,7 +166,7 @@ export const ALL_VAULTS: Uint8Array = pureCircuits.allVaults();
 
 /**
  * What a proposal names when it concerns no vault — governance, and the
- * account's own internal ledger. V-32.
+ * account's own internal ledger.
  */
 export const NO_VAULT: Uint8Array = pureCircuits.noVault();
 

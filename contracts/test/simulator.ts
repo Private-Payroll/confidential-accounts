@@ -5,7 +5,7 @@
  * the same logic the circuit will, against a real ledger state, which means
  * every assertion, every nullifier and every Merkle check behaves here exactly
  * as it will on chain. What it does not test is the proof: that the circuit
- * is satisfiable and that the verifier accepts it. That is M-2 and M-3.
+ * is satisfiable and that the verifier accepts it.
  *
  * Pattern taken from midnightntwrk/example-bboard.
  *
@@ -55,12 +55,13 @@ import {
  * Thirty-two zero bytes.
  *
  * **IT WAS THE FILLER `addSigner` TOOK ON THE BOOTSTRAP PATH, AND THAT PATH IS
- * GONE.** `S35d`: the constructor takes no threshold, so no account is ever in
- * the state that opened the free branch and every seating names a real
- * proposal. What the constant is for now is naming NO proposal — a value
- * `persistentCommit` can never produce, so it is in no account's `openProposals`
- * — which is exactly what the tests that assert an unapproved seating is refused
- * need to hand in. It is also `propose`'s unread `root` on the governance path.
+ * GONE.** The constructor takes no threshold, so no account is ever in the
+ * state that opened the free branch and every seating names a real proposal.
+ * What the constant is for now is naming NO proposal — a value
+ * `persistentCommit` can never produce, so it is in no account's
+ * `openProposals` — which is exactly what the tests that assert an unapproved
+ * seating is refused need to hand in. It is also `propose`'s unread `root` on
+ * the governance path.
  */
 export const ZERO_32 = new Uint8Array(32);
 
@@ -129,7 +130,7 @@ export const privateStateFor = (
   secretKey: bytes(seed),
   blinding: bytes(seed + 400),
   /*
-   * Every signer is seated with ALL_VAULTS. V-33.
+   * Every signer is seated with ALL_VAULTS.
    *
    * From the contract's own circuit rather than a constant here, for the same
    * reason VACANT_SLOT is: two sides computing a sentinel separately is two
@@ -161,7 +162,7 @@ export const privateStateFor = (
  * it. A fresh one is a different change and the round can never settle.
  */
 export interface Change {
-  /** Which asset moves. Part of what the signers approve, since M-125. */
+  /** Which asset moves. Part of what the signers approve. */
   asset: Uint8Array;
   amount: bigint;
   batch: Uint8Array;
@@ -221,15 +222,14 @@ export class AccountSimulator {
    *                  themselves would hand over
    *
    * **PASS THEM APART AND THE DEPLOYING DEVICE IS NOT A SIGNER**, which is the
-   * property `C334` is about and which no test could express while the two were
+   * property that matters and which no test could express while the two were
    * the same value by construction. `what-a-signer-is.test.ts` does exactly
    * that.
    *
-   * **THE THRESHOLD ARGUMENT IS GONE, AND IT WAS THE SECOND OF THREE.** `S35d`,
-   * `C340` + `C343`, ruled by the founder 2 Sep. The constructor takes no
-   * threshold and sets `threshold = 1`, so **every account this factory makes
-   * is one seat at one approval** and there is no `create(x, 2n)` state to ask
-   * for any more.
+   * **THE THRESHOLD ARGUMENT IS GONE, AND IT WAS THE SECOND OF THREE.** The
+   * constructor takes no threshold and sets `threshold = 1`, so **every
+   * account this factory makes is one seat at one approval** and there is no
+   * `create(x, 2n)` state to ask for any more.
    *
    * **WHICH MEANS THE BOOTSTRAP WINDOW IS SHUT AND `addSigner(leaf, ZERO_32)`
    * NO LONGER SEATS ANYBODY.** That call was how nearly every fixture in this
@@ -312,9 +312,9 @@ export class AccountSimulator {
    * **THE PROPOSING DEVICE AND THE AMENDING DEVICE MUST CARRY THE SAME SALT.**
    * `propose` commits to it and `amendSigner` recomputes
    * `proposalIdOf(signerAddPayload(leaf), noVault(), proposalSalt())` from the
-   * witness, so a device that proposed under one salt and amended under another
-   * fails to recognise its own proposal. That is `M-128`, and `applying` is how
-   * a device is handed a round's salt here.
+   * witness, so a device that proposed under one salt and amended under
+   * another fails to recognise its own proposal. `applying` is how a device is
+   * handed a round's salt here.
    */
   async seatSigner(
     who: AccountPrivateState,
@@ -371,7 +371,7 @@ export class AccountSimulator {
 
   /**
    * THE BLOCK TIME THIS SIMULATOR IS RUNNING AT, in seconds since the Unix
-   * epoch. V-67.
+   * epoch.
    *
    * A run's payments assert they fall inside an approved window, so a test that
    * could not move the clock could only ever test "now" — and the two failures
@@ -432,7 +432,7 @@ export class AccountSimulator {
   }
 
   /**
-   * This account's state, in the shape a CROSS-CONTRACT CALL needs. V-39.
+   * This account's state, in the shape a CROSS-CONTRACT CALL needs.
    *
    * A `ContractStateProvider` hands the runtime a `ContractState`, because the
    * runtime asks it for `operation(circuitId)` to check the callee's deployed
@@ -478,9 +478,10 @@ export class AccountSimulator {
 
   /** What actually goes in the tree: the blinded commitment. */
   leafOf(state: AccountPrivateState): Uint8Array {
-    // A signer's leaf no longer moves. Under M-99 it was stamped with the
-    // account's generation, so a removal changed everybody's; M-106 clears one
-    // slot instead, so a leaf is the same value for the life of the signer.
+    // A signer's leaf no longer moves. It used to be stamped with the
+    // account's generation, so a removal changed everybody's; the slot design
+    // clears one slot instead, so a leaf is the same value for the life of the
+    // signer.
     return leafOfDevice(state);
   }
 
@@ -518,7 +519,7 @@ export class AccountSimulator {
     return this.ledger.approvalCounts.member(id) ? this.ledger.approvalCounts.lookup(id) : -1n;
   }
 
-  /** Is this proposal open? Presence IS the answer since M-128. */
+  /** Is this proposal open? Presence IS the answer. */
   isOpen(id: Uint8Array): boolean {
     return this.ledger.openProposals.member(id);
   }
@@ -570,8 +571,8 @@ export class AccountSimulator {
    * about; see the argument's comment in the contract.
    */
   addSigner(leaf: Uint8Array, proposal: Uint8Array = ZERO_32, intoVacatedSlot = false) {
-    /* `amendSigner` with `removing` false — the S11 merge. The method keeps its
-     * name because seating is still its own act everywhere above the ABI. */
+    /* `amendSigner` with `removing` false. The method keeps its name because
+     * seating is still its own act everywhere above the ABI. */
     return this.run('amendSigner',
       (c) => this.contract.impureCircuits.amendSigner(c, leaf, proposal, intoVacatedSlot, false));
   }
@@ -613,9 +614,9 @@ export class AccountSimulator {
   }
 
   /**
-   * What a vault calls to pay ONE PAYEE of an approved run. V-41, V-43.
+   * What a vault calls to pay ONE PAYEE of an approved run.
    *
-   * **Every argument, and not one witness.** V-38: a cross-contract callee is
+   * **Every argument, and not one witness.** A cross-contract callee is
    * proved by whoever built the transaction, and the vault does not hold this
    * account's private state. That is also what makes the tests here honest —
    * a wrong salt, a wrong nonce or somebody else's path is handed over
@@ -639,7 +640,11 @@ export class AccountSimulator {
         args.salt, args.details, args.nonce, args.path as never));
   }
 
-  /** Raises a payroll run with its window. V-67. An OMITTED `vault` defaults to `NO_VAULT` DELIBERATELY, and `payout-runs.test.ts:698` is the case that walks it — `T-248`. */
+  /**
+   * Raises a payroll run with its window. An OMITTED `vault` defaults to
+   * `NO_VAULT` DELIBERATELY, and `payout-runs.test.ts:698` is the case that
+   * walks it.
+   */
   proposeRun(args: {
     root: Uint8Array;
     payees: bigint;
@@ -654,7 +659,7 @@ export class AccountSimulator {
         args.vault ?? NO_VAULT));
   }
 
-  /** Sweeps a run whose window has closed. Permissionless by design. V-67. */
+  /** Sweeps a run whose window has closed. Permissionless by design. */
   closeExpiredRun(proposal: Uint8Array) {
     return this.run('closeExpiredRun',
       (c) => this.contract.impureCircuits.closeExpiredRun(c, proposal));
@@ -663,18 +668,18 @@ export class AccountSimulator {
   /**
    * A run's approved window, or undefined if that id is not a run.
    *
-   * This replaced `unpaid()`, which read a counter of outstanding payees. There
-   * is no such counter any more — it serialised every payment of a run (V-61) —
+   * This replaced `unpaid()`, which read a counter of outstanding payees.
+   * There is no such counter any more — it serialised every payment of a run —
    * so "how far along is this run" is answered from `movements` by
    * `runStatus`, not from the account. See `run-status.ts`.
    */
   runWindow(proposal: Uint8Array): { from: bigint; until: bigint } | undefined {
     /*
-     * ONE MAP SINCE S35c. `runStart` and `runEnd` were two fields; `runWindow`
-     * holds an `{ opensAt, closesAt }` record per run, and a governance proposal
-     * still has NO ROW AT ALL rather than a pair of zeros — which is the
-     * property `cancel` and `closeExpiredRun` rest on, so this keeps answering
-     * `undefined` for one.
+     * ONE MAP, NOT TWO. `runStart` and `runEnd` were two fields; `runWindow`
+     * holds an `{ opensAt, closesAt }` record per run, and a governance
+     * proposal still has NO ROW AT ALL rather than a pair of zeros — which is
+     * the property `cancel` and `closeExpiredRun` rest on, so this keeps
+     * answering `undefined` for one.
      */
     const key = Buffer.from(proposal).toString('hex');
     for (const [k, v] of this.ledger.runWindow) {
@@ -724,7 +729,7 @@ export class AccountSimulator {
    * `changeCommitmentOf` binds all four.
    *
    * A fifth thing, `credited`, ADDED value on the way in for `credit`'s
-   * callers; S23 shed that circuit and S25 deleted its callers.
+   * callers; that circuit and its callers are both gone.
    */
   applying(device: AccountPrivateState, c: Change) {
     return {

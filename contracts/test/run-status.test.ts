@@ -33,7 +33,7 @@ const PAYROLL = new Uint8Array(32).fill(0xa1);
 
 const govChange = (seed: number): Change => change(0n, seed);
 
-/* The clock and the run's window. V-67. Seconds since the Unix epoch. */
+/* The clock and the run's window. Seconds since the Unix epoch. */
 const NOW = 1_800_000_000;
 const OPENS = BigInt(NOW - 3_600);
 const CLOSES = BigInt(NOW + 3_600);
@@ -54,7 +54,7 @@ describe('a run reports its progress from the chain', () => {
   let c: Change;
 
   /*
-   * The proposal id, rebuilt the way the CONTRACT builds it. V-72.
+   * The proposal id, rebuilt the way the CONTRACT builds it.
    *
    * `runPayload` then `proposalId` — both the contract's own, composed here and
    * passed in rather than reimplemented. Hand `runStatus` a set of leaves that
@@ -147,7 +147,7 @@ describe('a run reports its progress from the chain', () => {
   it('REFUSES TO REPORT ON LEAVES THAT ARE NOT THIS RUN\'S, rather than answering about another payroll',
     async () => {
     /*
-     * V-72, and it replaces a weaker check V-61 removed.
+     * This replaces a weaker check that went with the unpaid counter.
      *
      * The old version cross-checked our count of outstanding payees against the
      * account's own count and shouted when they disagreed. That count is gone.
@@ -199,7 +199,7 @@ describe('a run reports its progress from the chain', () => {
 
   it('SKIPPED AND FAILED ARE DIFFERENT THINGS, and the difference is ours to hold', async () => {
     /*
-     * V-68. Two people left the company and are deliberately not being paid;
+     * Two people left the company and are deliberately not being paid;
      * one more simply has not gone through. All three are unpaid leaves on
      * chain and the chain cannot tell them apart — so an operator who sees
      * "3 outstanding" assumes it is the two leavers plus one and stops looking.
@@ -224,7 +224,7 @@ describe('a run reports its progress from the chain', () => {
 
   it('A FAILED PAYMENT IS NEVER A SKIP, which is how somebody goes unpaid for a month', async () => {
     /*
-     * V-68's whole point. Two leavers were skipped on purpose; one employee's
+     * The whole point. Two leavers were skipped on purpose; one employee's
      * payment has been refused four times. All three are unpaid leaves on
      * chain and the chain cannot tell them apart.
      *
@@ -322,8 +322,8 @@ describe('a run reports its progress from the chain', () => {
 
   it('SAYS SO LOUDLY when the window has closed with people still owed', async () => {
     /*
-     * V-67's honest cost, and the one state an operator must not miss: nothing
-     * can pay these people from this run any more.
+     * The window's honest cost, and the one state an operator must not miss:
+     * nothing can pay these people from this run any more.
      */
     await payOne(0);
     await payOne(1);
@@ -349,7 +349,8 @@ describe('a run reports its progress from the chain', () => {
     const s = status();
     expect(s.complete).toBe(true);
     expect(describeRun(s)).toBe('all 5 paid');
-    // The proposal stays open until its window shuts. V-67; completion is ours to derive.
+    // The proposal stays open until its window shuts; completion is ours to
+    // derive.
     expect(sim.isOpen(id)).toBe(true);
   });
 

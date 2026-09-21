@@ -1,20 +1,18 @@
 /**
  * ONE DEFINITION. The mechanical answer to this project's oldest failure.
  *
- * Eleven times now, a rule has been written twice and the copies have drifted:
- * M-50, M-55, M-58, M-61, M-65, M-72, M-75, M-97, M-104, and the two before
- * those that started the list. Every previous fix was "be more careful", and
- * being more careful has never once worked — the backlog says so in as many
- * words.
+ * Eleven times now, a rule has been written twice and the copies have drifted.
+ * Every previous fix was "be more careful", and being more careful has never
+ * once worked.
  *
- * The worst instance, M-104, could not have been caught by care at all. The
- * signer generation was chained one way inside the contract and another way in
+ * The worst instance could not have been caught by care at all. The signer
+ * generation was chained one way inside the contract and another way in
  * TypeScript. Both copies were correct in isolation, the typechecker could not
  * see across the language boundary, and the SIMULATION agreed with itself
  * because one function served both sides of it. On chain it would have seated
- * every surviving signer at a generation the contract never adopted: an account
- * with money in it and nobody able to prove membership. Not the person removed
- * — everybody.
+ * every surviving signer at a generation the contract never adopted: an
+ * account with money in it and nobody able to prove membership. Not the person
+ * removed — everybody.
  *
  * So this file is not another rule. It is a check that fails.
  *
@@ -29,24 +27,24 @@
  *
  * Point 2 is the whole value. Point 1 is a test; point 2 is a ratchet.
  *
- * WHAT POINT 1 IS NOT, AND THIS FILE SAID OTHERWISE UNTIL `S28`. `C306`,
- * It is not a check between two implementations of a rule. Every
- * `mirrored` entry's client side calls the contract's own generated function.
- * **RE-ANCHORED AND COMPLETED BY `S44`** — it named four lines, three of which
- * had drifted, and there are ten mirrored entries. Each anchor below is the
- * adapter's SIGNATURE line and the `pureCircuits.*` call is the line under it,
- * which is the convention the four original anchors used:
+ * WHAT POINT 1 IS NOT, AND THIS FILE SAID OTHERWISE FOR A LONG TIME. It is not
+ * a check between two implementations of a rule. Every `mirrored` entry's
+ * client side calls the contract's own generated function. The anchors below
+ * were re-checked and completed: an earlier note named four lines, three of
+ * which had drifted, and there are ten mirrored entries. Each anchor below is
+ * the adapter's SIGNATURE line and the `pureCircuits.*` call is the line under
+ * it, which is the convention the four original anchors used:
  * `src/midnight/commitments.ts:99`, `:116`, `:130`, `:198`, `:204`, `:262`,
  * `:266`, `:295`, `:299`, and `src/midnight/payout-tree.ts:161`. So BOTH SIDES
  * OF EVERY MIRROR ARE THE CIRCUIT. Change the circuit's body and the two sides
  * move together and the mirror stays green. Measured, not suspected: two
- * mutations of these very circuits scored `SURVIVED` on 31 Aug with all 232
- * tests passing.
+ * mutations of these very circuits SURVIVED with the whole suite passing.
  *
  * What a mirror genuinely pins is the ADAPTER — that the TypeScript wrapper
  * passes the right arguments, in the right order, in the right encoding, to
- * the right circuit. That is real, it is what M-104 would have needed, and it
- * is worth every line here. It is not a check on what the circuit computes.
+ * the right circuit. That is real, it is what the signer-generation drift
+ * would have needed, and it is worth every line here. It is not a check on
+ * what the circuit computes.
  *
  * WHAT THE CIRCUIT COMPUTES IS PINNED IN
  * `contracts/test/commitments.test.ts`, under *what a commitment names, which
@@ -99,10 +97,10 @@ const SCHEMES: Entry[] = [
     circuit: 'signerLeaf',
     mirrored: () => ({
       /*
-       * Three arguments since V-33. The scope is passed EXPLICITLY on both
-       * sides rather than left to each default, because this test exists to
-       * prove the two schemes agree — and two defaults that happen to match
-       * would prove only that they happen to match today.
+       * Three arguments since the signer scope arrived. The scope is passed
+       * EXPLICITLY on both sides rather than left to each default, because
+       * this test exists to prove the two schemes agree — and two defaults
+       * that happen to match would prove only that they happen to match today.
        */
       fromContract: hex(pureCircuits.signerLeaf(PK, BLINDING, pureCircuits.allVaults())),
       fromClient: MidnightCommitments.signerLeaf(
@@ -115,13 +113,14 @@ const SCHEMES: Entry[] = [
      * gone for two different reasons worth keeping apart.
      *
      * `stateCommitmentOf` committed to a balance and an entry digest together,
-     * which was right while an account had one balance. M-125 split it into
-     * `balanceCommitmentOf` per asset, because one combined commitment would
-     * mean moving dollars rewrote the commitment covering the euro balance.
-     * `C292` then removed the balance entirely, and `balanceCommitmentOf` with
-     * it — see the note further down where its row stood.
+     * which was right while an account had one balance. Multi-asset split it
+     * into `balanceCommitmentOf` per asset, because one combined commitment
+     * would mean moving dollars rewrote the commitment covering the euro
+     * balance. The balance was then removed entirely, and
+     * `balanceCommitmentOf` with it — see the note further down where its row
+     * stood.
      *
-     * `appendEntries` chained the entry log, and M-128 deleted the chain: to
+     * `appendEntries` chained the entry log, and the chain was deleted: to
      * append to it you had to prove its current value, so two settlements
      * conflicted even when they moved different money. The chain holds an
      * append-only set of movement commitments now, and there is no shared rule
@@ -135,8 +134,8 @@ const SCHEMES: Entry[] = [
   },
   /*
    * `balanceCommitmentOf` STOOD HERE, mirrored against
-   * `MidnightCommitments.balanceCommitment`. `C292`, `S26` removed both sides:
-   * the account keeps no balance, so there is no scheme left to keep in step.
+   * `MidnightCommitments.balanceCommitment`. Both sides went when the account
+   * stopped keeping a balance, so there is no scheme left to keep in step.
    *
    * The reason it was here survives and is worth restating, because it is what
    * this whole file is for: decision 0004 records THREE definitions of one
@@ -145,8 +144,8 @@ const SCHEMES: Entry[] = [
    */
   {
     /*
-     * MIRRORED SINCE M-125, where it was `contractOnly` before, and the change
-     * of category is the point rather than a detail.
+     * MIRRORED SINCE MULTI-ASSET, where it was `contractOnly` before, and the
+     * change of category is the point rather than a detail.
      *
      * The old note said "the chain recomputes it from witnesses at execute
      * time; the client never produces the commitment itself". That stopped
@@ -175,7 +174,7 @@ const SCHEMES: Entry[] = [
     circuit: 'proposalIdOf',
     mirrored: () => ({
       /*
-       * The VAULT is passed explicitly on both sides since V-32.
+       * The VAULT is passed explicitly on both sides.
        *
        * Both schemes default it to `noVault()`, and relying on those defaults
        * here would make this test agree by coincidence rather than by
@@ -188,7 +187,8 @@ const SCHEMES: Entry[] = [
   },
   {
     /*
-     * M-104's `generationAfter` USED TO BE HERE, and M-106 deleted the rule.
+     * `generationAfter` USED TO BE HERE, and the rule it belonged to was
+     * deleted.
      *
      * It is worth one line rather than a silent absence: it was the most
      * expensive near-miss in this file's history — chained one way in the
@@ -210,11 +210,12 @@ const SCHEMES: Entry[] = [
     contractOnly:
       'a fixed marker a removal writes into the slot it frees. The client does not RECOMPUTE ' +
       'it — witnesses.ts reads it straight off pureCircuits, because a copy of this constant ' +
-      'in TypeScript is a shared value written twice and that is exactly M-104.',
+      'in TypeScript is a shared value written twice.',
   },
   {
     /*
-     * **THIS WAS `contractOnly` UNTIL `S34`, AND THE NOTE WAS WRONG BY THEN.**
+     * **THIS WAS `contractOnly` FOR A LONG TIME, AND THE NOTE WAS WRONG BY THE
+     * END.**
      *
      *
      * It said the client *holds the result rather than recomputing it*. It did
@@ -237,18 +238,18 @@ const SCHEMES: Entry[] = [
   },
   {
     /*
-     * **MIRRORED SINCE `S44`. IT WAS `contractOnly` UNTIL THEN AND THE NOTE WAS
-     * TRUE OF THE SIMULATED SCHEME AND SILENT ABOUT THE MIDNIGHT ONE — WHICH IS
-     * THE GAP `C373` LIVED IN.**
+     * **MIRRORED NOW. IT WAS `contractOnly` UNTIL THE MIDNIGHT SPELLING WAS
+     * WRITTEN, AND THE NOTE WAS TRUE OF THE SIMULATED SCHEME AND SILENT ABOUT
+     * THE MIDNIGHT ONE — WHICH IS THE GAP THE SECOND COPY LIVED IN.**
      *
      * There are still two client spellings and that has not changed: the
      * simulated scheme keeps its own `sha256`, deliberately, and decision 0004
      * is why (`core/` cannot import generated Midnight code). What was missing
      * was the MIDNIGHT spelling — there was none, so `AccountService` used the
-     * simulated one on both wirings and named its governance rounds with a hash
-     * the contract has never computed. `propose` takes the payload hash as an
-     * opaque argument, so the round was raised, approved and paid for, and
-     * `amendSigner` refused at the end.
+     * simulated one on both wirings and named its governance rounds with a
+     * hash the contract has never computed. `propose` takes the payload hash
+     * as an opaque argument, so the round was raised, approved and paid for,
+     * and `amendSigner` refused at the end.
      *
      * So this entry now carries BOTH halves, and they are separate assertions:
      * the Midnight adapter EQUALS the circuit (here), and the simulated scheme
@@ -263,9 +264,9 @@ const SCHEMES: Entry[] = [
   },
   {
     /*
-     * V-32/V-33's two SENTINELS, and they are `contractOnly` for the same
-     * reason `vacantSlot` is: `src/midnight/commitments.ts` reads both straight
-     * off `pureCircuits` rather than recomputing them, so there is no second
+     * THE TWO SENTINELS, and they are `contractOnly` for the same reason
+     * `vacantSlot` is: `src/midnight/commitments.ts` reads both straight off
+     * `pureCircuits` rather than recomputing them, so there is no second
      * Midnight-side copy to drift.
      *
      * `core/ledger.ts` DOES hold its own values for these, and deliberately —
@@ -278,7 +279,7 @@ const SCHEMES: Entry[] = [
     contractOnly:
       'the scope every signer carries unless narrowed. midnight/commitments.ts reads it off ' +
       'pureCircuits rather than recomputing it; core/ledger.ts holds a deliberately separate ' +
-      'simulated sentinel (decision 0004).',
+      'simulated sentinel.',
   },
   {
     circuit: 'noVault',
@@ -289,7 +290,7 @@ const SCHEMES: Entry[] = [
   },
   {
     /*
-     * V-41. The client BUILDS the tree the signers approve and the contract
+     * The client BUILDS the tree the signers approve and the contract
      * RECOMPUTES each leaf as it is claimed, so this is the most load-bearing
      * mirrored entry in the file: two derivations would produce a payroll that
      * collects approvals, costs a fee, and then cannot pay anybody.
@@ -322,15 +323,15 @@ const SCHEMES: Entry[] = [
   },
   {
     /*
-     * V-41. Bound into the proposal id, so a claim proves the root AND the
-     * payee count are the approved ones. The client computes it to raise the
+     * Bound into the proposal id, so a claim proves the root AND the payee
+     * count are the approved ones. The client computes it to raise the
      * proposal; the contract recomputes it on every claim.
      */
     /*
-     * **THIS ENTRY WAS `contractOnly` UNTIL `S47`, AND ITS SENTENCE WAS TRUE
-     * WHEN WRITTEN AND FALSE AFTERWARDS.** It read: *"the client calls
-     * this circuit rather than deriving the payload a second way — there is no
-     * TypeScript copy to disagree with."*
+     * **THIS ENTRY WAS `contractOnly`, AND ITS SENTENCE WAS TRUE WHEN WRITTEN
+     * AND FALSE AFTERWARDS.** It read: *"the client calls this circuit rather
+     * than deriving the payload a second way — there is no TypeScript copy to
+     * disagree with."*
      *
      * **WHAT CHANGED IS NOT THE MIDNIGHT SIDE.** `MidnightCommitments.runPayload`
      * is still one line calling this circuit and must stay that way — a second
@@ -339,9 +340,9 @@ const SCHEMES: Entry[] = [
      * typed to the `Ledger` boundary could raise a payroll run at all and every
      * one the product raised went through the GOVERNANCE door carrying a
      * payload hash `recordPayment` can never reproduce. `SimulatedLedger` now
-     * raises runs, so a simulated spelling exists — deliberately different, like
-     * the four governance payloads `S44` moved across, and asserted to differ
-     * below.
+     * raises runs, so a simulated spelling exists — deliberately different,
+     * like the four governance payloads that moved across with it, and
+     * asserted to differ below.
      */
     circuit: 'runPayload',
     mirrored: () => ({
@@ -371,21 +372,21 @@ const SCHEMES: Entry[] = [
   },
   {
     /*
-     * **THIS ENTRY SAID *NO CLIENT COPY EXISTS AT ALL — NOT A DIFFERENT SCHEME,
-     * NONE*, AND IT WAS FALSE WHEN IT WAS WRITTEN.** `T-203`, found by `S43`,
-     * fixed here. `src/core/ledger.ts` held one and `src/core/account.ts:1392`
-     * called it, and `src/core/account.ts:1455` called it again to find the
-     * approved round.
+     * **THIS ENTRY SAID *NO CLIENT COPY EXISTS AT ALL — NOT A DIFFERENT
+     * SCHEME, NONE*, AND IT WAS FALSE WHEN IT WAS WRITTEN.**
+     * `src/core/ledger.ts` held one and `src/core/account.ts:1392` called it,
+     * and `src/core/account.ts:1455` called it again to find the approved
+     * round.
      *
-     * **AND IT WAS WORSE THAN A STALE SENTENCE BECAUSE IT INSTRUCTED.** It told
-     * the next round it was safe to mirror this circuit in TypeScript, which is
-     * exactly what had already been done and exactly what produced `C373`.
-     * Fixing the defect and leaving the instruction is how the defect returns,
-     * so the two land in the same round.
+     * **AND IT WAS WORSE THAN A STALE SENTENCE BECAUSE IT INSTRUCTED.** It
+     * said it was safe to mirror this circuit in TypeScript, which is exactly
+     * what had already been done and exactly what produced the unchecked
+     * second copy. Fixing the defect and leaving the instruction is how the
+     * defect returns, so the two are fixed together.
      *
-     * What is true after `S44`: both schemes carry this payload, the simulated
-     * one as its own deliberately-different `sha256` and the Midnight one as a
-     * call to this circuit — asserted here, and asserted to differ below. A
+     * What is true now: both schemes carry this payload, the simulated one as
+     * its own deliberately-different `sha256` and the Midnight one as a call
+     * to this circuit — asserted here, and asserted to differ below. A
      * vault-threshold round is reachable through `SimulatedLedger` as well as
      * through the contract, which is why it belongs on `CommitmentScheme`
      * rather than on `RunCommitments` (`src/midnight/commitments.ts:58-67` is
@@ -407,16 +408,16 @@ const SCHEMES: Entry[] = [
   },
   {
     /*
-     * **NO CLIENT COPY, AND `S44` CHECKED IT RATHER THAN INHERITING IT:**
-     * `grep` of `src/` returns no `adoptVaultPayload` outside `scripts/` and
-     * the contract's own tests, and `src/core/account.ts` raises no adopt
-     * round. So this stays `contractOnly` — a mirror for a caller that does not
-     * exist would be a definition invented to fill a table, which is the rule
-     * at `src/midnight/commitments.ts:58-67`.
+     * **NO CLIENT COPY, AND THAT WAS CHECKED RATHER THAN INHERITED:** `grep`
+     * of `src/` returns no `adoptVaultPayload` outside `scripts/` and the
+     * contract's own tests, and `src/core/account.ts` raises no adopt round.
+     * So this stays `contractOnly` — a mirror for a caller that does not exist
+     * would be a definition invented to fill a table, which is the rule at
+     * `src/midnight/commitments.ts:58-67`.
      *
-     * **THE DAY AN ADOPT ROUND IS BUILT IT NEEDS `C373`'s TREATMENT, AND THE
-     * PATTERN IS NOW IN THIS FILE RATHER THAN IN A SENTENCE:** add the method
-     * to `CommitmentScheme`, implement it in `MidnightCommitments` as one line
+     * **THE DAY AN ADOPT ROUND IS BUILT IT NEEDS THE SAME TREATMENT, AND THE
+     * PATTERN IS IN THIS FILE RATHER THAN IN A SENTENCE:** add the method to
+     * `CommitmentScheme`, implement it in `MidnightCommitments` as one line
      * that calls this circuit, keep the simulated side separate, and turn this
      * entry into a `mirrored` one like the four above. A second derivation in
      * TypeScript would let a company approve one vault's adoption on their
@@ -432,14 +433,14 @@ const SCHEMES: Entry[] = [
   },
   {
     /*
-     * S6a, and one degree more dangerous than its twin. A retirement round is
-     * raised on a device and CLAIMED by the vault, which passes the salt back
-     * in as a public argument — so a client that derived this payload a second
-     * way would raise rounds the vault cannot complete, and the failure would
+     * One degree more dangerous than its twin. A retirement round is raised on
+     * a device and CLAIMED by the vault, which passes the salt back in as a
+     * public argument — so a client that derived this payload a second way
+     * would raise rounds the vault cannot complete, and the failure would
      * appear at the vault rather than where the mistake was made.
      *
-     * **NO CLIENT COPY, CHECKED BY `S44` THE SAME WAY ITS TWIN WAS**, and the
-     * same instruction: when a retire round is built, mirror it as the four
+     * **NO CLIENT COPY, CHECKED THE SAME WAY ITS TWIN WAS**, and the same
+     * instruction: when a retire round is built, mirror it as the four
      * governance payloads above are mirrored.
      */
     circuit: 'retireVaultPayload',
@@ -482,62 +483,58 @@ describe('one definition: the contract and the client agree', () => {
   });
 
   /**
-   * ── THE RATCHET, THE OTHER WAY ROUND. `T-208`, `S46`, board row `2y7f2` ────
+   * ── THE RATCHET, THE OTHER WAY ROUND ──────────────────────────────────────
    *
    * **THE ONE ABOVE RUNS FROM THE COMPILED ARTIFACT TO THE REGISTRY. NOTHING
    * RAN THE OTHER WAY, AND THE COST OF THAT IS MEASURED RATHER THAN FEARED:
-   * THIS FILE'S `contractOnly` NOTES HAVE BEEN FALSE THREE TIMES AND TWO OF
-   * THOSE WERE `P0`s.** `C328` — the note said the client held the result while
-   * `account.ts` and `App.tsx` passed an ed25519 key into `signerLeaf`. `T-203`
-   * / `C373` — the note said no client copy existed at all while
-   * `src/core/ledger.ts:856` held one that `account.ts:1392` and `:1455`
-   * called. And the add/remove/threshold notes were true of the SIMULATED
-   * scheme and silent about the Midnight one, which is the gap `C373` lived in.
-   * **Each was found by a person, and this is the file written to find them.**
+   * THIS FILE'S `contractOnly` NOTES HAVE BEEN FALSE THREE TIMES, AND TWICE
+   * THE MONEY WAS REACHABLE.** Once the note said the client held the result
+   * while `account.ts` and `App.tsx` passed an ed25519 key into `signerLeaf`.
+   * Once it said no client copy existed at all while `src/core/ledger.ts:856`
+   * held one that `account.ts:1392` and `:1455` called. And the
+   * add/remove/threshold notes were true of the SIMULATED scheme and silent
+   * about the Midnight one, which is the gap that second copy lived in. **Each
+   * was found by a person, and this is the file written to find them.**
    *
    * **WHAT THIS DOES.** Every member of `CommitmentScheme` — read as DATA off
-   * both implementations, never off `Function.prototype.toString` (rule 41,
-   * The same artifact gives two different answers under `tsx` and
-   * under `vitest`, so a binding is not a fact) — is declared here against the
-   * circuit it derives and HOW — mirrored, a pass-through that reads the
+   * both implementations, never off `Function.prototype.toString`, because the
+   * same artifact gives two different answers under `tsx` and under `vitest`,
+   * so a binding read that way is not a fact — is declared here against the
+   * circuit it derives and HOW: mirrored, a pass-through that reads the
    * circuit, or no derivation at all. Three assertions close the loop, and the
    * FIRST is the ratchet: **add a method to either scheme and this file is red
    * until it is declared.**
    *
-   * **AND `contractOnly` DOES NOT MEAN *NO SCHEME MEMBER*, WHICH `S46` READ
-   * WRONG ON ITS FIRST PASS AND ITS OWN AUDITOR CAUGHT.** It means no second
-   * DERIVATION: `noVault` and `allVaults` are `contractOnly` AND are scheme
-   * members, because the Midnight side reads them off `pureCircuits` and the
-   * simulated side holds a deliberately separate sentinel. Seven entries are
-   * `contractOnly`; five of them no scheme touches, and those five are the list
-   * the third assertion pins.
+   * **AND `contractOnly` DOES NOT MEAN *NO SCHEME MEMBER*, WHICH IS AN EASY
+   * MISREADING AND HAS BEEN MADE.** It means no second DERIVATION: `noVault`
+   * and `allVaults` are `contractOnly` AND are scheme members, because the
+   * Midnight side reads them off `pureCircuits` and the simulated side holds a
+   * deliberately separate sentinel. Seven entries are `contractOnly`; five of
+   * them no scheme touches, and those five are the list the third assertion
+   * pins.
    *
-   * **AND `S44`'s TWO `'(checked by grep, S44)'` NOTES ARE GONE, WHICH WAS HALF
-   * OF `T-208`.** A rule-42a value with no instrument behind it, in the one
-   * file whose job is to be an instrument. What replaced them is the sentence
-   * this table lets a reader check.
+   * **AND THE TWO HAND-CHECKED `(checked by grep)` NOTES ARE GONE.** They were
+   * values with no instrument behind them, in the one file whose job is to be
+   * an instrument. What replaced them is the sentence this table lets a reader
+   * check.
    *
    * ── WHAT IT STILL CANNOT SEE, WRITTEN HERE RATHER THAN LEFT TO ROT A FOURTH
-   *    TIME. `T-277` ───────────────────────────────────────────────────────
+   * TIME ──
    *
-   * **THIS READS METHOD NAMES ON THE TWO SCHEME OBJECTS. `C373`'s SECOND COPY
-   * WAS NOT ON A SCHEME.** It was a module-scope function in
+   * **THIS READS METHOD NAMES ON THE TWO SCHEME OBJECTS. THE SECOND COPY THAT
+   * COST THE MOST WAS NOT ON A SCHEME.** It was a module-scope function in
    * `src/core/ledger.ts:856` (`simulatedVaultThresholdPayload`), called
-   * directly, **and it was named
-   * `vaultThresholdPayload` while the circuit is `setVaultThresholdPayload`** —
-   * so a grep for the circuit's name would not have found it either, which is
-   * the point `T-208` makes about why the obvious fix does not work.
-   * (`src/core/ledger.ts:856`, read at source by `S46`; `T-208`'s own citation
-   * of `:789` predates `S44`'s move and is stale. `T-279`.)
+   * directly, **and it was named `vaultThresholdPayload` while the circuit is
+   * `setVaultThresholdPayload`** — so a grep for the circuit's name would not
+   * have found it either, which is why the obvious fix does not work.
    *
-   * **SO THE HONEST CLAIM THIS FILE NOW MAKES IS NARROWER THAN *NO SECOND COPY
+   * **SO THE HONEST CLAIM THIS FILE MAKES IS NARROWER THAN *NO SECOND COPY
    * EXISTS*. IT IS *NO SECOND COPY EXISTS ON A SCHEME*.** A derivation written
    * at module scope, in a screen, or in a service is invisible to every
    * assertion in this file, and the only reason that is survivable today is
-   * that `S44` moved the four governance payloads behind
-   * `CommitmentScheme` — which is a fact about where the code happens to be,
-   * not an enforcer. Rule 27, and it is filed as `T-277` rather than claimed
-   * as covered.
+   * that the four governance payloads sit behind `CommitmentScheme` — which is
+   * a fact about where the code happens to be, not an enforcer. It is recorded
+   * rather than claimed as covered.
    */
   const NO_CIRCUIT = null;
 
@@ -554,17 +551,17 @@ describe('one definition: the contract and the client agree', () => {
    *     correct: the Midnight member reads the value straight off
    *     `pureCircuits` rather than recomputing it, and the simulated member
    *     holds a deliberately separate value (decision 0004). **A member being
-   *     present is NOT evidence of a second derivation**, which is the reading
-   *     `S46` got wrong first and its own auditor caught.
+   *     present is NOT evidence of a second derivation**, which is a reading
+   *     that has been got wrong before.
    *   · `NO_CIRCUIT` — not a derivation at all, with the reason beside it.
    *
    * **AND `NO_CIRCUIT` IS A SELF-CERTIFIED EXEMPTION, SAID PLAINLY BECAUSE THE
-   * ALTERNATIVE IS A READER ASSUMING IT IS NOT.** This round's test-coverage pass
-   * added a real derivation to both schemes, declared it `NO_CIRCUIT` with the
-   * words *"internal helper"*, and every assertion below stayed green. Nothing
-   * inside a repository can tell a helper from a derivation; **what this table
-   * buys is that somebody had to WRITE the four words, in this file, next to
-   * the header that says what it costs to write them falsely.**
+   * ALTERNATIVE IS A READER ASSUMING IT IS NOT.** A real derivation was added
+   * to both schemes, declared `NO_CIRCUIT` with the words *"internal helper"*,
+   * and every assertion below stayed green. Nothing inside a repository can
+   * tell a helper from a derivation; **what this table buys is that somebody
+   * had to WRITE the four words, in this file, next to the header that says
+   * what it costs to write them falsely.**
    */
   const SCHEME_MEMBERS: {
     method: string; circuit: string | null; kind: 'mirrored' | 'passthrough' | 'none'; why?: string;
@@ -612,7 +609,7 @@ describe('one definition: the contract and the client agree', () => {
      *
      * Both objects, separately, because an interface has no runtime shape and
      * a member added to one implementation and not the other is exactly the
-     * asymmetry the add/remove/threshold notes hid before `S44`.
+     * asymmetry the add/remove/threshold notes used to hide.
      */
     const declared = SCHEME_MEMBERS.map(m => m.method).sort();
     expect(Object.keys(SimulatedCommitments).sort()).toEqual(declared);
@@ -652,22 +649,22 @@ describe('one definition: the contract and the client agree', () => {
 
   it('no two members claim the same circuit — a second copy under a second name', () => {
     /*
-     * **FOUND BY THIS ROUND'S test-coverage pass, AGAINST THIS ROUND'S OWN CHANGE,
-     * AND IT IS `C373`'s SHAPE GETTING BACK IN.** A member called `secondLeaf`
-     * added to both schemes and declared `{ circuit: 'signerLeaf', kind:
-     * 'mirrored' }` passed all three tests above: the mirror assertions iterate
-     * `SCHEMES` by CIRCUIT (`:455-466`), so a circuit gets one mirror test no
-     * matter how many members claim it, and nothing ever calls `secondLeaf`.
+     * **THIS IS THE UNCHECKED-SECOND-COPY SHAPE GETTING BACK IN, ONE LAYER
+     * DOWN.** A member called `secondLeaf` added to both schemes and declared
+     * `{ circuit: 'signerLeaf', kind: 'mirrored' }` passed all three tests
+     * above: the mirror assertions iterate `SCHEMES` by CIRCUIT, so a circuit
+     * gets one mirror test no matter how many members claim it, and nothing
+     * ever calls `secondLeaf`.
      *
-     * `C373`'s copy was a second derivation under a name that was not the
-     * circuit's. This is that, one layer in.
+     * The copy that cost the most was a second derivation under a name that
+     * was not the circuit's. This is that, one layer in.
      */
     const claimed = SCHEME_MEMBERS.filter(m => m.kind === 'mirrored').map(m => m.circuit);
     expect(
       [...new Set(claimed)].sort(),
       'two scheme members name the same circuit as a mirror. Only one of them can be the '
       + 'client side that this file\'s mirrored entry actually calls; the other is a second '
-      + 'copy with nothing checking it, which is C373.',
+      + 'copy with nothing checking it.',
     ).toEqual([...claimed].sort());
   });
 
@@ -675,14 +672,14 @@ describe('one definition: the contract and the client agree', () => {
     /*
      * **THIS IS THE ASSERTION THAT MAKES `adoptVaultPayload` AND
      * `retireVaultPayload`'s NOTES TRUE RATHER THAN CLAIMED**, and it is what
-     * replaced `S44`'s two `'(checked by grep, S44)'` hand-assertions.
+     * replaced the two `(checked by grep)` hand-assertions.
      *
      * Both notes say *no method on either scheme derives this*. That sentence
      * is now READ: the set below is every `contractOnly` circuit that no member
      * of either scheme names. **Write a scheme method for either of them and
      * this set shrinks and this test goes red** — which is the one thing
      * nothing did before, and which the file's header records as having been
-     * false three times, twice at `P0`.
+     * false three times, twice with the money reachable.
      *
      * The other three are here because they are the same fact about the same
      * question, and a list that named only the two would be a list somebody
@@ -702,13 +699,12 @@ describe('one definition: the contract and the client agree', () => {
   });
 
   /**
-   * **THE FOUR SIMULATED GOVERNANCE PAYLOADS, PINNED TO FIXED HEX.** `S44`,
-   * found by its own test-coverage pass against its own change.
+   * **THE FOUR SIMULATED GOVERNANCE PAYLOADS, PINNED TO FIXED HEX.**
    *
-   * `S44` moved these four bodies from module scope in `src/core/ledger.ts`
-   * behind `SimulatedCommitments`, and wrote down that they are byte-for-byte
-   * the ones that stood there — which is a rule-14 truth claim and had no
-   * instrument behind it. **NOTHING IN THIS REPOSITORY PINNED THEIR VALUES.**
+   * These four bodies were moved from module scope in `src/core/ledger.ts`
+   * behind `SimulatedCommitments`, and it was written down that they are
+   * byte-for-byte the ones that stood there — a claim with no instrument
+   * behind it. **NOTHING IN THIS REPOSITORY PINNED THEIR VALUES.**
    * `AccountService` and `SimulatedLedger` both compute them through
    * `this.commitments`, so both sides of every governance check move together:
    * changing `'midnight-accounts:vault-thresh:'` to anything else, or
@@ -720,21 +716,22 @@ describe('one definition: the contract and the client agree', () => {
    *
    * Fixed vectors are the only thing that catches it, for the same reason
    * `commitments.test.ts` uses them for `assetKeyOf` and `changeCommitmentOf`:
-   * a value compared with a second computation of itself is `C306`.
+   * a value compared with a second computation of itself proves nothing.
    */
   /**
-   * **THE TWO RUN PAYLOADS MUST NEVER AGREE.** `C375`, `S47` — the same rule
-   * `what-a-signer-is.test.ts:253` already pins for `signerPublicKey` and the
+   * **THE TWO RUN PAYLOADS MUST NEVER AGREE** — the same rule
+   * `what-a-signer-is.test.ts:255` already pins for `signerPublicKey` and the
    * four governance payloads: a commitment is only ever checked against the
    * scheme that made it, and a simulated value that a chain would accept is a
    * simulation that can sign for the real thing.
    *
-   * **AND EVERY ARGUMENT IS CARRIED, ON BOTH SIDES.** `T-116`'s lesson: the
-   * mirror above samples ONE tuple, so an adapter that dropped `closesAt` — or
-   * a simulated spelling that folded `payees` and `opensAt` into one string
-   * without a separator — is green in it. Two runs with one payload is two runs
-   * with one id, and the second is refused as already open while the first is
-   * paid against a window nobody approved.
+   * **AND EVERY ARGUMENT IS CARRIED, ON BOTH SIDES**, which is a lesson this
+   * repository has already paid for: the mirror above samples ONE tuple, so an
+   * adapter that dropped `closesAt` — or a simulated spelling that folded
+   * `payees` and `opensAt` into one string without a separator — is green in
+   * it. Two runs with one payload is two runs with one id, and the second is
+   * refused as already open while the first is paid against a window nobody
+   * approved.
    */
   it('the run payload differs between the schemes and carries all four arguments', () => {
     const r = hex(ROOT);
@@ -762,10 +759,10 @@ describe('one definition: the contract and the client agree', () => {
   });
 
   /**
-   * **THE ADAPTERS PASS THE ARGUMENTS THEY ARE GIVEN, NOT A CONSTANT.** `S44`,
-   * and the shape is `what-a-signer-is.test.ts:213`'s, which is where this
-   * repository already learned that a mirror sampled at ONE value proves the
-   * value and not the parameter.
+   * **THE ADAPTERS PASS THE ARGUMENTS THEY ARE GIVEN, NOT A CONSTANT.** The
+   * shape is `what-a-signer-is.test.ts:214`'s, which is where this repository
+   * already learned that a mirror sampled at ONE value proves the value and
+   * not the parameter.
    *
    * The mirrors above call `vaultThresholdPayload` exactly once, at threshold
    * `2` against one vault. An adapter rewritten to ignore either argument —
@@ -811,7 +808,7 @@ describe('one definition: the contract and the client agree', () => {
     expect(SimulatedCommitments.signerRemovePayload(hex(LEAF)))
       .not.toBe(hex(pureCircuits.removeSignerPayload(LEAF)));
     /*
-     * **THE OTHER TWO, ADDED BY `S44`.** All four governance payloads are on
+     * **THE OTHER TWO.** All four governance payloads are on
      * `CommitmentScheme` now, so all four have a simulated implementation that
      * must stay apart from the contract's — and the two added here are the two
      * whose names differ, so this also fails if somebody "unifies" them by

@@ -1,5 +1,5 @@
 /**
- * V-63: A RUN BELONGS TO THE ACCOUNT, NOT TO THE LAPTOP THAT RAISED IT.
+ * A RUN BELONGS TO THE ACCOUNT, NOT TO THE LAPTOP THAT RAISED IT.
  *
  * The worked example this file exists to make impossible:
  * A raises a fifty-person payroll, B and C approve it, A's laptop dies, and
@@ -36,14 +36,14 @@ const staff = (n: number): PaymentFacts[] =>
 
 /*
  * The vault's own circuits, passed in. Never reimplemented here — see
- * `DetailsOf` — and BOTH of them since `S6k`, because `buildRun` now derives a
+ * `DetailsOf` — and BOTH of them are passed, because `buildRun` derives a
  * leaf by the payee's own kind rather than by the caller's single choice
  *. Every payee in this file is shielded, so only that half is
  * exercised; the pair is required by the type, which is the point.
  */
 const detailsOf = vaultDetails;
 
-describe('V-63: a run is derived, not generated', () => {
+describe('a run is derived, not generated', () => {
   it('THE ONE THAT MATTERS: a second admin rebuilds a run byte for byte, with no contact with the first', () => {
     /*
      * Two calls standing in for two machines. Nothing is passed between them
@@ -117,7 +117,7 @@ describe('V-63: a run is derived, not generated', () => {
     expect(all.size).toBe(40);
   });
 
-  it('KNOWING PAID PAYEES\' NONCES GIVES NOTHING AWAY, which is what V-43 rests on', () => {
+  it('KNOWING PAID PAYEES\' NONCES GIVES NOTHING AWAY, which is what stops a watcher claiming the next payee', () => {
     /*
      * A payment publishes its payee's nonce. If the schedule leaked, one paid
      * employee would hand a watcher the rest of the payroll's secrets — and a

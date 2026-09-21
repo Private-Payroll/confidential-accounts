@@ -1,5 +1,5 @@
 /**
- * V-74: THE CLIENT'S OWN VAULT STATE, AGAINST THE REAL CONTRACT.
+ * THE CLIENT'S OWN VAULT STATE, AGAINST THE REAL CONTRACT.
  *
  * `vault-notes.test.ts` proves the rules agree with themselves. This proves
  * they agree with the chain — which is the only agreement that matters, because
@@ -76,7 +76,7 @@ const CAROL = bytes(0x0c);
 const carrying = (sim: AccountSimulator, d: ReturnType<typeof privateStateFor>, c: Change) =>
   sim.applying(d, c);
 
-describe('V-74: a vault driven by the client\'s own note pool', () => {
+describe('a vault driven by the client\'s own note pool', () => {
   let sim: AccountSimulator;
   let vault: Vault<VaultNotes>;
   let vaultAddr: string;
@@ -94,8 +94,8 @@ describe('V-74: a vault driven by the client\'s own note pool', () => {
     provider() as never, undefined, undefined, NOW, BLOCK);
 
   /**
-   * **THE VAULT'S STATE, PLUS WHAT THE CHAIN SAYS IT HOLDS IN PUBLIC MONEY.
-   * `C248`, `T-41`, AND THIS BLOCK IS THE ROUND'S REQUIRED DECLARATION.**
+   * **THE VAULT'S STATE, PLUS WHAT THE CHAIN SAYS IT HOLDS IN PUBLIC
+   * MONEY.**
    *
    * `unshieldedBalanceGte` reads `CallContext.balance`, and the runtime fills
    * it **only when it is handed a real `ContractState`** —
@@ -113,7 +113,7 @@ describe('V-74: a vault driven by the client\'s own note pool', () => {
    *     nonetheless given a balance that COMFORTABLY COVERS the payment —
    *     through this helper — so that a refusal cannot possibly be the balance's.
    *     **If the domain separation were removed, those payments would succeed**,
-   *     which is exactly what `S6j` watched happen at the contract level.
+   *     which is exactly what was watched happening at the contract level.
    *   · The mixed-run test needs the assert to PASS, so it states a balance and
    *     the balance it states is not applied by anything. **That is a second
    *     model of the ledger's arithmetic**, in the sense `CLAUDE.md` warns
@@ -121,9 +121,9 @@ describe('V-74: a vault driven by the client\'s own note pool', () => {
    *     `unshieldedOutputs`, which is what the ledger actually subtracts
    *     (`semantics.rs:1408-1435`) — and not on any balance.
    *
-   * **THE SIMULATOR STILL HAS THE HOLE.** `T-41` stays open: nothing here fixes
-   * `AccountSimulator`, and a test that asked a balance question through `ctx`
-   * would still pass for the wrong reason.
+   * **THE SIMULATOR STILL HAS THE HOLE**, and it stays open: nothing here
+   * fixes `AccountSimulator`, and a test that asked a balance question through
+   * `ctx` would still pass for the wrong reason.
    */
   const chainSays = (balances: Array<[Uint8Array, bigint]> = []) => {
     const cs = new ocrt.ContractState();
@@ -157,7 +157,7 @@ describe('V-74: a vault driven by the client\'s own note pool', () => {
   });
 
   /**
-   * A deposit. The client supplies the coin and nothing else — S6a; the
+   * A deposit. The client supplies the coin and nothing else; the
    * commitment's blinding is the contract's own derivation, which is why this
    * file no longer has to agree with it about anything.
    */
@@ -202,13 +202,13 @@ describe('V-74: a vault driven by the client\'s own note pool', () => {
      * payment where the assumption was wrong.
      */
     /*
-     * **AND THE CHANGE IS READ OUT OF THE CALL, NOT DERIVED.** `C239`, taken by
+     * **AND THE CHANGE IS READ OUT OF THE CALL, NOT DERIVED**, taken by
      *
      *
      * This line used to hand `afterPayment` an index and let it compute the
      * change note's nonce with `changeNonceOf`. It is now the coin the circuit
      * actually produced, read from the call's own Zswap local state — which is
-     * what `V-47` says the answer is: *the change coin is an OUTPUT of the
+     * what the answer actually is: *the change coin is an OUTPUT of the
      * transaction*.
      *
      * **THIS TEST IS THE PROOF THE READ SPENDS**, not merely that it parses:
@@ -313,25 +313,26 @@ describe('V-74: a vault driven by the client\'s own note pool', () => {
     expect(vaultLedger(vaultState as never).payments).toBe(0n);
   });
   /* ------------------------------------------------------------------ *
-   * C246 AT THE CLIENT, WHERE THE LEAF IS ACTUALLY BUILT.
+   * KIND SEPARATION AT THE CLIENT, WHERE THE LEAF IS ACTUALLY BUILT.
    * ------------------------------------------------------------------ */
 
   /**
-   * **THE ROUND'S SECOND JOB, AND THE ONE THAT LOSES MONEY IF IT IS WRONG.**
+   * **THE SECOND JOB, AND THE ONE THAT LOSES MONEY IF IT IS WRONG.**
    *
    * `contracts/test/vault-unshielded.test.ts` proves both directions at the
    * CONTRACT level, with leaves hand-built from `vaultCircuits.payoutDetails`
    * and `vaultCircuits.unshieldedPayoutDetails` by the test itself. **That is
    * not the same claim as this file's.** The client is what builds a run's
    * leaves in production, `buildRun` is where the derivation is chosen, and
-   * until this round it chose ONE for the whole run (`V-103`). So these tests
-   * drive `buildRun` and assert against the real compiled circuits.
+   * until recently it chose ONE for the whole run. So these tests drive
+   * `buildRun` and assert against the real compiled circuits.
    *
    * **EVERY PAYEE BELOW IS BUILT FROM THE SAME 32 BYTES**, `ALICE`, in the two
    * key spaces. A `ZswapCoinPublicKey` and a `UserAddress` of the same bytes
    * are indistinguishable to everything downstream of the address type — that
-   * is the whole of `C246` — so a fixture using different bytes would let these
-   * pass because the values differed rather than because the KIND did.
+   * is the whole of the separation — so a fixture using different bytes would
+   * let these pass because the values differed rather than because the KIND
+   * did.
    */
   const publicAlice = () => unshieldedPayeeFor(ALICE, 'undeployed');
   const privateAlice = () => payeeFor(ALICE, 'undeployed');
@@ -366,8 +367,7 @@ describe('V-74: a vault driven by the client\'s own note pool', () => {
 
     /*
      * AND EACH IS THE VAULT'S OWN CIRCUIT'S ANSWER, not this file's. One
-     * definition — `M-104`, and `one-definition.test.ts` is where copies are
-     * policed.
+     * definition, and `one-definition.test.ts` is where copies are policed.
      */
     expect(run.payments[0].details).toBe(toHex(vaultCircuits.payoutDetails(
       ALICE, GBP, 100n, fromHex(run.secrets[0].blinding))));
@@ -462,7 +462,6 @@ describe('V-74: a vault driven by the client\'s own note pool', () => {
 
   /**
    * **THE HALF THAT IS EASY TO LEAVE OUT: a retry keeps each payee's kind.**
-   * `V-64`.
    *
    * `buildRetryRun` reuses the ORIGINAL secrets, which is what stops a retry
    * being a second payment. It also reuses the original `payments` — the
@@ -480,7 +479,8 @@ describe('V-74: a vault driven by the client\'s own note pool', () => {
     const retry = buildRetryRun(run, [1, 0]);
 
     expect(retry.facts.map(f => f.payee.kind)).toEqual(['unshielded', 'shielded']);
-    /* Byte for byte the originals, in the new order — which is why V-64 holds. */
+    /* Byte for byte the originals, in the new order, which is why paid-once
+     * still holds. */
     expect(retry.payments[0].details).toBe(run.payments[1].details);
     expect(retry.payments[1].details).toBe(run.payments[0].details);
   });

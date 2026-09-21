@@ -39,7 +39,7 @@ describe('confidential account contract', () => {
   /**
    * Ada deploys. The account holds nothing and cannot.
    *
-   * **THE `threshold` ARGUMENT WENT WITH THE CONSTRUCTOR'S.** `S35d`, `C340` +
+   * **THE `threshold` ARGUMENT WENT WITH THE CONSTRUCTOR'S.**
    * Every account is founded one seat at one approval; `addSigners`
    * below seats the rest through approved rounds and takes the threshold up
    * afterwards, which is what a founder now does on chain.
@@ -86,24 +86,25 @@ describe('confidential account contract', () => {
 
   it('deploys with the founding signer as its only seat and keeping no books', async () => {
     /*
-     * **THE TITLE SAID "THE DEPLOYER" UNTIL `C334`, AND IT WAS ACCURATE.** The
+     * **THE TITLE SAID "THE DEPLOYER" AND IT WAS ACCURATE THEN.** The
      * constructor derived its one seat from the DEPLOYING device's witnesses.
      * It takes the founder's leaf as a public argument now and calls none of
      * them, so the count below is unchanged and what it counts is not: this is
      * a seat that belongs to a person, not to a process.
      *
      * Whose seat it is, and that the deploying device does not get one, is
-     * `what-a-signer-is.test.ts`'s `C334` block — it needs two different
-     * devices, and `deploy()` here is a founder deploying for themselves.
+     * `what-a-signer-is.test.ts`'s founding-seat block — it needs two
+     * different devices, and `deploy()` here is a founder deploying for
+     * themselves.
      */
     /*
      * **ONE SEAT AND A THRESHOLD OF ONE, AND THE SECOND NUMBER IS NO LONGER A
-     * CHOICE.** `S35d`, `C340` + `C343`. The constructor took the threshold as
-     * an argument and this line read `2n` because `deploy()` asked for two.
-     * Every account is now founded one-signer, one-approval, so the pair below
-     * is the ONLY state a constructor can produce — which is what makes a
-     * founding threshold of zero, and a founding threshold above the seat
-     * count, unrepresentable rather than refused.
+     * CHOICE.** The constructor took the threshold as an argument and this
+     * line read `2n` because `deploy()` asked for two. Every account is now
+     * founded one-signer, one-approval, so the pair below is the ONLY state a
+     * constructor can produce — which is what makes a founding threshold of
+     * zero, and a founding threshold above the seat count, unrepresentable
+     * rather than refused.
      */
     expect(sim.ledger.threshold).toBe(1n);
     expect(sim.ledger.signerLeaves.size()).toBe(1n);
@@ -143,8 +144,8 @@ describe('confidential account contract', () => {
   });
 
   it('does not publish who the signers are', async () => {
-    // Two more signers, seated through approved rounds — since `S35d` there is
-    // no bootstrap window and no other way. This test is about what the ledger
+    // Two more signers, seated through approved rounds — there is no
+    // bootstrap window and no other way. This test is about what the ledger
     // reveals, not about how signers are authorised; the governance path has
     // its own tests in signer-governance.test.ts.
     await deploy();
@@ -189,8 +190,8 @@ describe('confidential account contract', () => {
     await addSigners(blake);
     const id = await propose(new Uint8Array(32));
     // The blinding factor is as precious as the key. Without it Blake cannot
-    // reproduce his own leaf, so he cannot prove membership. K-2 recovery has
-    // to cover this too, not just the signing key.
+    // reproduce his own leaf, so he cannot prove membership. Recovery has to
+    // cover this too, not just the signing key.
     const amnesiac = { ...blake, blinding: new Uint8Array(32).fill(9) };
     await expect(sim.as(amnesiac as any).approve(id)).rejects.toThrow();
   });
@@ -220,19 +221,17 @@ describe('confidential account contract', () => {
     /*
      * THE COUNTER ITSELF, WHICH NOTHING WAS TESTING ON PURPOSE.
      *
-     * `MUTATE.command`'s `approving a proposal does not count` deletes the one
-     * increment in `approve`. On 31 Aug it scored `WRONG TEST`: its named
-     * expectation was *one approval short is refused*, which approves once
-     * against a threshold of two and asserts a REFUSAL — and a counter stuck at
-     * zero refuses too, with the same message. The mutation made refusals
-     * strictly more likely and the test that was supposed to pin the line
-     * passed.
+     * The mutation `approving a proposal does not count` deletes the one
+     * increment in `approve`. It scored WRONG TEST: its named expectation was
+     * *one approval short is refused*, which approves once against a threshold
+     * of two and asserts a REFUSAL — and a counter stuck at zero refuses too,
+     * with the same message. The mutation made refusals strictly more likely
+     * and the test that was supposed to pin the line passed.
      *
      * **AND 110 OTHER TESTS WENT RED, ACROSS FOURTEEN FILES**, none of them
-     * about the counter — read off `REPORT-MUTATE.txt` entry [22], which prints
-     * `Tests 110 failed | 122 passed (232)`. The brief and `T-69` both said
-     * *ten*, inherited from `S27`; the instrument's own output is on disk and
-     * says otherwise.
+     * about the counter — read off the mutation run's own output, which prints
+     * `Tests 110 failed | 122 passed (232)`. It had been recorded elsewhere as
+     * *ten*; the instrument's own output says otherwise.
      *
      * The correction cuts against this test rather than for it: the line was
      * guarded by accident far more heavily than anybody thought. That does not
@@ -362,9 +361,9 @@ describe('confidential account contract', () => {
 
   it('cancels one proposal without touching another', async () => {
     /*
-     * M-128, and impossible before it. `cancel` rotated the round, which burned
-     * every approval on the account — so withdrawing a bad proposal cost the
-     * signatures already collected on a good one.
+     * Impossible while an account had one proposal. `cancel` rotated the
+     * round, which burned every approval on the account — so withdrawing a bad
+     * proposal cost the signatures already collected on a good one.
      */
     await addSigners(blake);
     const first = change(0n, 41);
@@ -383,14 +382,14 @@ describe('confidential account contract', () => {
   /* ---------------- the tree is plain, not historic ---------------- */
 
   /*
-   * M-13 USED TO BE ASSERTED HERE THE OTHER WAY UP, and the reason it flipped
-   * is worth keeping attached to the test rather than only in a decision doc.
+   * THIS USED TO BE ASSERTED THE OTHER WAY UP, and the reason it flipped is
+   * worth keeping attached to the test rather than only in a decision doc.
    *
    * `signers` was a HistoricMerkleTree, which accepts any root it has ever
    * held, and this test asserted that a membership proof taken before other
    * signers joined still verified afterwards. That property is also exactly
    * what made a removed signer unremovable: they could always point at a tree
-   * that still contained them. M-106 made the tree plain, so only its current
+   * that still contained them. The tree is plain now, so only its current
    * root is accepted — and the cost is this: a cached proof stops verifying
    * once the membership changes.
    *
@@ -406,7 +405,7 @@ describe('confidential account contract', () => {
      * Blake's device caches its path now.
      *
      * **HELD IN A LOCAL AND NOT WRITTEN ONTO `blake`, AND THAT IS LOAD-BEARING
-     * SINCE `S35d`.** Every line below passes the pin in explicitly, so the
+     * NOW.** Every line below passes the pin in explicitly, so the
      * assignment onto the shared device object was only storage — and it is now
      * storage with a side effect. Seating Cleo is an approved round, and that
      * round's approvals are made AS blake by the fixture; with a stale pin on

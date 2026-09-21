@@ -2,7 +2,7 @@
  * ONE VAULT, BOTH KINDS OF MONEY, SIDE BY SIDE.
  *
  * NIGHT is an UNSHIELDED token by definition — `nativeToken()` returns
- * `UnshieldedTokenType` — and until this round `Vault.compact` was `receiveShielded`,
+ * `UnshieldedTokenType` — and `Vault.compact` used to be `receiveShielded`,
  * `sendShielded` and a pool of Zswap commitments from end to end. So the vault could
  * not hold the asset the product launches with. These tests drive the three circuits
  * that close that, against the real compiled contract.
@@ -218,7 +218,7 @@ describe('a vault holds public money as well as private', () => {
 
     /* The vault counted it… */
     expect(vaultLedger(r.context.callContext.currentQueryContext.state as never).payments).toBe(1n);
-    /* …and the ACCOUNT recorded the leaf, which is V-64 working unchanged. */
+    /* …and the ACCOUNT recorded the leaf, paid-once working unchanged. */
     const acct = accountLedger(r.context.queryContexts[sim.address as never].state as never);
     expect(acct.movements.member(
       pureCircuits.paidMovementOf(fromHex(run.tree.leaves[0])))).toBe(true);
@@ -292,7 +292,7 @@ describe('a vault holds public money as well as private', () => {
       .rejects.toThrow(/does not hold enough of that token/i);
   });
 
-  it('pays a payee once, ever — V-64 is about the payee and not about the token', async () => {
+  it('pays a payee once, ever', async () => {
     const c = govChange(76);
     adopt(await vault.impureCircuits.depositUnshielded(
       ctxFor('depositUnshielded', chainSays()), NIGHT, 500n) as never);

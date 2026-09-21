@@ -1,10 +1,9 @@
 /**
  * WHAT A TRANSACTION PUBLISHES, AS OPPOSED TO WHAT THE LEDGER ENDS UP HOLDING.
- * `C389` `P1`, board row `2y9f0`.
  *
  * **THE GAP THIS EXISTS TO CLOSE.** Every privacy claim this project has ever
  * checked mechanically has been checked over ledger STATE.
- * `contracts/test/signer-governance.test.ts:496` — the one guard rail written
+ * `contracts/test/signer-governance.test.ts:500` — the one guard rail written
  * for this class — counts occurrences in `JSON.stringify(sim.ledger, …)` before
  * and after an action. That is correct about the channel it reads, and it is
  * half of what a Midnight transaction publishes.
@@ -16,7 +15,7 @@
  * that diffs ledger state, and it passes straight through the only guard rail
  * that exists. Measured, at source, in the shipping contract:
  *
- *   `contracts/src/ConfidentialAccount.compact:1359`
+ *   `contracts/src/ConfidentialAccount.compact:1360`
  *       `return thresholds.member(vault) ? thresholds.lookup(vault) : threshold;`
  *   compiles to (`contracts/managed/contract/index.js:1617-1633`)
  *       `queryLedgerState(context, partialProofData,
@@ -73,7 +72,7 @@
  *    is believed, which is why every occurrence carries its op index and kind.
  *    **And a value published in DERIVED form is invisible here and always will
  *    be: `recordPayment` does not publish a payout leaf, it publishes
- *    `paidMovementOf(leaf)` (`ConfidentialAccount.compact:1082-1085`), a
+ *    `paidMovementOf(leaf)` (`ConfidentialAccount.compact:1083-1086`), a
  *    domain-separated UNBLINDED hash of it — measured present in the very
  *    transcript where the leaf is measured absent.**
  *
@@ -86,9 +85,10 @@
  * STRIPS TRAILING ZERO BYTES on the way into the transcript. So a payee key
  * ending in `0x00` — one in 256 — was published as 31 bytes, missed by a
  * 32-byte needle, and reported ABSENT. Measured, not argued: `transcript.test.ts`
- * §6 constructs such a payee and pins it at both ends. **It is `C369` on the
- * other side of the same runtime, at the same odds, and every fixture in this
- * repository is a repeated constant that can never exhibit it.**
+ * §6 constructs such a payee and pins it at both ends. **It is the same
+ * minimal-encoding defect met on the other side of this runtime, at the same
+ * odds, and every fixture in this repository is a repeated constant that can
+ * never exhibit it.**
  */
 import type { CircuitContext } from '@midnight-ntwrk/compact-runtime';
 
@@ -183,7 +183,7 @@ const fieldsOf = (av: any): string[] =>
  * A `push` does not always carry a bare cell: `map` and `array` shapes nest,
  * and a nested value is no less published for being nested. **A walker that
  * only looked at `cell` would be a check that goes green because it did not
- * look**, which is this round's named failure mode.
+ * look**, which is the failure mode this instrument is built against.
  */
 const fromStateValue = (sv: any, into: string[]): void => {
   if (!sv || typeof sv !== 'object') return;
@@ -232,7 +232,7 @@ const readCall = (cpd: any): CallTranscript => {
  * THE INSTRUMENT.
  *
  * **IT IS THE SAME SHAPE AS THE GUARD RAIL IT EXTENDS AND NOT A REPLACEMENT FOR
- * IT.** `signer-governance.test.ts:496` reads `sim.ledger`; this reads
+ * IT.** `signer-governance.test.ts:500` reads `sim.ledger`; this reads
  * `context.callProofDataTrace`. Two channels, two instruments, and a privacy
  * claim needs both.
  */
@@ -293,10 +293,10 @@ export class Transcript {
   }
 
   /**
-   * **THE ASSERTION THE ROUND IS FOR.** Every named value must be absent from
-   * the public transcript. The message names the value by the founder's own
-   * words and points at the op, because a privacy failure that reports
-   * `expected 1 to be 0` teaches nobody anything.
+   * **THE ASSERTION THIS INSTRUMENT IS FOR.** Every named value must be absent
+   * from the public transcript. The message names the value in the words the
+   * privacy priority was set in and points at the op, because a privacy failure
+   * that reports `expected 1 to be 0` teaches nobody anything.
    */
   assertAbsent(secrets: Record<string, Secret>): void {
     const bad: string[] = [];
@@ -313,7 +313,7 @@ export class Transcript {
         bad.join('\n') +
         `\n  (transcript: ${this.calls.map((c) => `${c.circuitId}=${c.opCount} ops`).join(', ')})\n` +
         '  A value in a ledger READ argument reaches the transcript verbatim and writes no\n' +
-        '  ledger field, so signer-governance.test.ts:496 cannot see this. C389.');
+        '  ledger field, so signer-governance.test.ts:500 cannot see this.');
     }
   }
 
@@ -370,9 +370,10 @@ export class Tape {
          * circuit alone and every callee is dropped. An earlier version of this
          * line did exactly that while the comment above it claimed otherwise —
          * latent, because every `Tape` use today is single-contract, and it
-         * would have failed GREEN the first time a round watched a vault
-         * through a payout. `C286`'s shape. `transcript.test.ts` §7 requires
-         * two calls back from one watched cross-contract call.
+         * would have failed GREEN the first time anybody watched a vault
+         * through a payout — a guard whose written reason had stopped matching
+         * its behaviour. `transcript.test.ts` §7 requires two calls back from
+         * one watched cross-contract call.
          */
         const t = out?.context?.callProofDataTrace;
         if (Array.isArray(t) && t.length > 0) this.calls.push([...t]);
