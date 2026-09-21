@@ -19,10 +19,10 @@ import { randomBytes, toHex, type Hex } from './crypto.js';
  * The memory implementation below is per process. Two API processes behind a
  * load balancer will issue a challenge on one and fail to find it on the other,
  * and a restart forgets every outstanding one — both of which look to a person
- * like their recovery phrase was rejected. Sessions had exactly this problem and
- * grew a Postgres implementation behind the same interface; **this needs the
- * same before it runs on more than one process**, and it is an interface for
- * that reason rather than a class. `A-19`.
+ * like their recovery phrase was rejected. Sessions had exactly this problem
+ * and grew a Postgres implementation behind the same interface; **this needs
+ * the same before it runs on more than one process**, and it is an interface
+ * for that reason rather than a class.
  */
 export interface ChallengeStore {
   /** A fresh value bound to whoever asked for it. */

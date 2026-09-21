@@ -26,7 +26,6 @@ import type { User } from './types.js';
 
 /**
  * **A PERSON CAN BE RECORDED AS A PUBLIC PAYEE, AND A PAYROLL RUN REFUSES ONE.**
- * `S12`, `C250`, `C255`, `V-105`.
  *
  * Two rules that look like one and are not, which is why they are pinned in one
  * file where a reader can see them side by side:
@@ -41,9 +40,9 @@ import type { User } from './types.js';
  *   the code rather than warned about, with no flag anywhere that relaxes it.
  *
  * **THE SECOND RULE IS WHAT MAKES THE FIRST ONE SAFE.** Widening the door
- * without it would be this round shipping the exact failure it exists to
- * prevent, so the tests below that DELETE the refusal in spirit — a run drawn,
- * a run's money built — are the ones worth reading first.
+ * without it would ship the exact failure it exists to prevent, so the tests
+ * below that DELETE the refusal in spirit — a run drawn, a run's money built —
+ * are the ones worth reading first.
  */
 
 const NETWORK = 'undeployed' as const;
@@ -52,7 +51,7 @@ const NETWORK = 'undeployed' as const;
  * A ROSTER ADDRESS AS THE OLD CODE WROTE IT, FROZEN AS TEXT.
  *
  * A literal rather than a derivation, because the property under test is that a
- * record sealed BEFORE this round still reads. A fixture recomputed by today's
+ * record sealed BEFORE this change still reads. A fixture recomputed by today's
  * code cannot fail the way yesterday's record could.
  */
 const OLD_SHIELDED = 'mn_shield-addr_undeployed15xs6rgdp5xs6rgdp5xs6rgdp5xs6rgdp5xs6rgdp'
@@ -98,7 +97,7 @@ const SIGNERS = [
   { name: 'Cleo', role: 'approver' as const },
 ];
 
-describe('S12 — the door, the refusal, and the record', () => {
+describe('the door, the refusal, and the record', () => {
   let h: ReturnType<typeof harness>;
   beforeEach(() => { h = harness(); });
 
@@ -113,10 +112,10 @@ describe('S12 — the door, the refusal, and the record', () => {
 
   it('§1 A PUBLIC ADDRESS IS HANDED OVER, ADMITTED AND READ BACK, WITH ITS KIND NEVER ASKED FOR', async () => {
     /*
-     * **THE WHOLE OF `C250`'s DOOR, THROUGH THE ORDINARY INVITE FLOW.** Nothing
-     * here names a kind: the company invites somebody, a device hands over a
-     * string, and `admit` decodes it. The kind on the record came out of the
-     * type segment the platform put in the address.
+     * **THE WHOLE DOOR, THROUGH THE ORDINARY INVITE FLOW.** Nothing here names
+     * a kind: the company invites somebody, a device hands over a string, and
+     * `admit` decodes it. The kind on the record came out of the type segment
+     * the platform put in the address.
      */
     const { account, viewingKey } = await company();
     const vendor = unshieldedPayeeFor('c3'.repeat(32), NETWORK);
@@ -146,16 +145,17 @@ describe('S12 — the door, the refusal, and the record', () => {
 
   it('§1 A COMPANY RECORDS ITS OWN PUBLIC ADDRESS THROUGH THE SAME DOOR', async () => {
     /*
-     * **`C255`'s WITHDRAWAL, AT THE POINT IT WAS BLOCKED.** The row says a
-     * withdrawal is a one-payee run to the company's own address and that
-     * `C250` was the only thing in its way. This is that block coming off: a
-     * member records the company's own public address and it is admitted.
+     * **A WITHDRAWAL, AT THE POINT IT WAS BLOCKED.** A withdrawal is a
+     * one-payee run to the company's own address, and the door's refusal of
+     * public addresses was the only thing in its way. This is that block
+     * coming off: a member records the company's own public address and it is
+     * admitted.
      *
      * **WHAT IT DOES NOT SHOW IS THAT A WITHDRAWAL IS BUILDABLE**, and the
-     * round reports why rather than forcing it. The entry this produces is a
+     * test reports why rather than forcing it. The entry this produces is a
      * roster EMPLOYEE — a name, a salary, a payslip key, a place in every
      * future run — and §2 refuses every run that draws it. The company's own
-     * address belongs in a payee book, which is `S12b`.
+     * address belongs in a payee book and not on the roster.
      */
     const { account, viewingKey } = await company();
     const me = signIn(h.store, 'founder@acme.example', 'usr_founder');
@@ -209,9 +209,9 @@ describe('S12 — the door, the refusal, and the record', () => {
      * `paymentFactsFor` is the last thing standing in front of.
      *
      * The address is swapped through `putPerson`, which is how the neighbouring
-     * `C9` test reaches a roster state `admit` cannot produce. The point is not
-     * that the product can produce it; it is that the refusal does not depend
-     * on the product being unable to.
+     * test reaches a roster state `admit` cannot produce. The point is not that
+     * the product can produce it; it is that the refusal does not depend on the
+     * product being unable to.
      */
     const { account, viewingKey } = await company();
     const a = h.payroll.hireDirect(account.id, {
@@ -346,10 +346,10 @@ describe('S12 — the door, the refusal, and the record', () => {
 
   it('§3 PRIVATE IS REFUSED FOR AN ASSET WITH NO PRIVATE FORM, AND THE REASON IS THE MESSAGE', () => {
     /*
-     * `C234`'s shape is an interface implying an operation the settlement
+     * The shape to avoid is an interface implying an operation the settlement
      * cannot perform, and offering private money that does not exist yet is
-     * exactly that. The reason travels in the refusal so `S12b` has something
-     * true to put on the screen rather than a red border.
+     * exactly that. The reason travels in the refusal so the screen has
+     * something true to show rather than a red border.
      */
     expect(() => transferOf({
       accountId: 'acct_1',
@@ -406,8 +406,7 @@ describe('S12 — the door, the refusal, and the record', () => {
   it('§3 A PUBLIC TRANSFER TO SOMEBODY ON THE ROSTER IS REFUSED, WHICH IS THE OTHER HALF OF THE RULE', () => {
     /*
      * **`payrollPayee` IS WRITTEN ON THE SHAPE OF A RUN AND THE RULE IS ABOUT
-     * WHO THE PAYEE IS.** Found by a money-safety pass on this round, before
-     * `S12b` built a screen on this type.
+     * WHO THE PAYEE IS.**
      *
      * A bonus, an expense or a correction raised as a one-off transfer to an
      * employee's own address publishes them, with every check in the round
@@ -461,17 +460,17 @@ describe('S12 — the door, the refusal, and the record', () => {
   });
 
   /* ──────────────────────────────────────────────────────────────────────
-   * §4 A ROSTER SEALED BEFORE THIS CHANGE STILL READS
+   * §4 A ROSTER SEALED BEFORE PUBLIC PAYEES EXISTED STILL READS
    * ────────────────────────────────────────────────────────────────────── */
 
-  it('§4 A ROSTER SEALED BEFORE THIS ROUND STILL READS, AND STILL PAYS', async () => {
+  it('§4 A ROSTER SEALED BEFORE PUBLIC PAYEES EXISTED STILL READS, AND STILL PAYS', async () => {
     /*
      * **THE FIXTURE IS TEXT FROM BEFORE THE CHANGE, NOT A VALUE TODAY'S CODE
      * DERIVED.** `open` used to call `payeeAddress`, which refused anything but
      * a `shield-addr`; it calls `payeeOf` now. A `shield-addr` through `payeeOf`
      * returns the shielded kind because the kind comes from the type segment,
      * and the seal already carries the bech32 and the network this line
-     * re-parses. Pinned rather than asserted, as `S12` asks.
+     * re-parses. Pinned rather than asserted.
      */
     const { account, viewingKey } = await company();
     const a = h.payroll.hireDirect(account.id, {
@@ -484,7 +483,7 @@ describe('S12 — the door, the refusal, and the record', () => {
       ...raw,
       sealed: sealRecord('payroll', raw.accountId, {
         ...secrets,
-        /* Exactly the JSON the pre-`S12` roster wrote, address and all. */
+        /* Exactly the JSON the old roster wrote, address and all. */
         address: {
           kind: 'shielded',
           bech32: OLD_SHIELDED,
@@ -511,10 +510,10 @@ describe('S12 — the door, the refusal, and the record', () => {
 
   it('§5 A PUBLIC ADDRESS HAS A STABLE FINGERPRINT, AND IT IS NOT THE PRIVATE ONE', () => {
     /*
-     * `C250` asked for this to be ESTABLISHED rather than assumed to carry
-     * over. `addressFingerprint` hashes the address string, so it is
-     * kind-agnostic by construction and `Identity/` does not change. **That is
-     * the claim, and this is the pin.**
+     * This is ESTABLISHED here rather than assumed to carry over.
+     * `addressFingerprint` hashes the address string, so it is kind-agnostic
+     * by construction and `Identity/` does not change. **That is the claim, and
+     * this is the pin.**
      *
      * The two addresses below are built from DIFFERENT bytes and would be
      * different fingerprints whatever the function did; the assertion that
@@ -540,8 +539,8 @@ describe('S12 — the door, the refusal, and the record', () => {
      * The code the payee's own device showed them travels sealed inside the
      * handover; `admit` recomputes it from the address that actually arrived,
      * and the admin's own machine recomputes it from the same ciphertext
-     * (`accepted-address.ts`, `C160`). **All three now agree on a public
-     * address**, which is what "established for the other kind" has to mean.
+     * (`accepted-address.ts`). **All three now agree on a public address**,
+     * which is what "established for the other kind" has to mean.
      */
     const { account, viewingKey } = await company();
     const vendor = unshieldedPayeeFor('c3'.repeat(32), NETWORK);
@@ -591,14 +590,14 @@ describe('S12 — the door, the refusal, and the record', () => {
   });
 
   /* ──────────────────────────────────────────────────────────────────────
-   * §5b THE OBSTACLE `C255` ASKED ABOUT, DRIVEN RATHER THAN REASONED ABOUT
+   * §5b THE OBSTACLE TO A WITHDRAWAL, DRIVEN RATHER THAN REASONED ABOUT
    * ────────────────────────────────────────────────────────────────────── */
 
   it('§5b THE ROSTER TREATS A PUBLIC PAYEE AS A PERSON, AND ONE MEMBER GETS ONE ENTRY', async () => {
     /*
-     * **`S12` ASKED WHETHER A COMPANY'S OWN ADDRESS CAN GO THROUGH THIS DOOR,
-     * AND SAID NOT TO FORCE IT IF SOMETHING ASSUMES A PAYEE IS A PERSON. THIS
-     * IS THE ANSWER, RUN RATHER THAN READ.**
+     * **CAN A COMPANY'S OWN ADDRESS GO THROUGH THIS DOOR, WHEN SOMETHING
+     * DOWNSTREAM ASSUMES A PAYEE IS A PERSON? THIS IS THE ANSWER, RUN RATHER
+     * THAN READ.**
      *
      * `admit`'s one-payable-entry-per-person cap keys on the sign-in
      * that set the address. **A member who is already a payee cannot record a
@@ -606,9 +605,8 @@ describe('S12 — the door, the refusal, and the record', () => {
      * company's own account, and the refusal is correct: for a PERSON, two
      * payable entries are two salaries.
      *
-     * **So the company's own address is not a roster entry**, and `S12b`'s
-     * payee book is where it belongs. Reported rather than forced, exactly as
-     * the round asked.
+     * **So the company's own address is not a roster entry**, and a payee book
+     * is where it belongs. Reported here rather than forced past.
      */
     const { account, viewingKey } = await company();
     const me = signIn(h.store, 'founder@acme.example', 'usr_founder');
@@ -644,7 +642,7 @@ describe('S12 — the door, the refusal, and the record', () => {
      * fingerprints. No second-address feature is built here.
      *
      * The refusal's own message points at an operation that does not exist,
-     * which is filed as copy rather than repaired in this round.
+     * which is a wording defect rather than a behaviour one.
      */
     const { account, viewingKey } = await company();
     const a = h.payroll.hireDirect(account.id, {
@@ -671,10 +669,10 @@ describe('S12 — the door, the refusal, and the record', () => {
      * door is that its leaf matches the public derivation and not the private
      * one, against the compiled contract's own circuits.
      *
-     * `C246`'s hazard is that both derivations take 32 bytes and neither can
-     * tell which key space they came from. The two below are the SAME bytes in
-     * the two spaces, which is why the leaves differing means the separation
-     * held rather than that the inputs differed.
+     * The hazard is that both derivations take 32 bytes and neither can tell
+     * which key space they came from. The two below are the SAME bytes in the
+     * two spaces, which is why the leaves differing means the separation held
+     * rather than that the inputs differed.
      */
     const bytes = 'c3'.repeat(32);
     const vendor = unshieldedPayeeFor(bytes, NETWORK);
@@ -718,10 +716,10 @@ describe('S12 — the door, the refusal, and the record', () => {
 
   it('§6 A TRANSFER BECOMES A ONE-PAYEE RUN, ON CIRCUITS THAT ALREADY EXIST', () => {
     /*
-     * `C255`, verified at the client. `recordPayment` never checks who the
-     * recipient is, so a transfer needs no circuit of its own: it is a run with
-     * one payee. `transferFacts` is the one call that turns the record into
-     * what `buildRun` takes, so a screen assembles no fields of its own.
+     * Verified at the client. `recordPayment` never checks who the recipient
+     * is, so a transfer needs no circuit of its own: it is a run with one
+     * payee. `transferFacts` is the one call that turns the record into what
+     * `buildRun` takes, so a screen assembles no fields of its own.
      */
     const t = publicTransfer();
     const facts = transferFacts(t);

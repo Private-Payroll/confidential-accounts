@@ -660,7 +660,7 @@ describe('onboarding', () => {
     expect(h.payroll.admit(other.employee.id, viewingKey, founder).selfRaised).toBe(false);
   });
 
-  it('REFUSES A VIEWING KEY THAT IS NOT THIS ACCOUNT\'S, before it seals anything — C25', async () => {
+  it('REFUSES A VIEWING KEY THAT IS NOT THIS ACCOUNT\'S, before it seals anything', async () => {
     /*
      * RESTORED 17 Aug, with four others, after one splice of this file deleted
      * five tests at once. The guards all survived; their only coverage did not,
@@ -759,7 +759,7 @@ describe('onboarding', () => {
     expect(() => unseal(stored.offer!, stored.token)).toThrow();
   });
 
-  it('AN INVITE WRITTEN BEFORE TOKENS WERE HASHED STILL WORKS — C27', async () => {
+  it('AN INVITE WRITTEN BEFORE TOKENS WERE HASHED STILL WORKS', async () => {
     /*
      * `getInvite` hashes its argument. A row written by the previous version is
      * keyed by the raw token, so without a migration it could never be found
@@ -865,7 +865,7 @@ describe('onboarding', () => {
     expect(() => h.payroll.offerFor(token)).toThrow(/already used/);
   });
 
-  it('AND THE DELIVERY FORGETS THE RAW TOKEN ONCE THE HANDOVER IS ADMITTED — C30', async () => {
+  it('AND THE DELIVERY FORGETS THE RAW TOKEN ONCE THE HANDOVER IS ADMITTED', async () => {
     /*
      * Hashing the stored token protects the DATABASE. The delivery port held
      * every raw token for the life of the process with the name, the email and
@@ -964,7 +964,7 @@ describe('onboarding', () => {
     expect(h.payroll.paymentFactsFor(run.id, viewingKey)[0].payee.bech32).toBe(me.address!.bech32);
   });
 
-  it('A REFUSED HANDOVER PUTS THE INVITATION BACK — C23', async () => {
+  it('A REFUSED HANDOVER PUTS THE INVITATION BACK', async () => {
     /*
      * The check cannot run where the employee is (`acceptInvite` holds no
      * viewing key, which is the point of sealing the roster), so it runs at
@@ -1039,7 +1039,7 @@ describe('onboarding', () => {
     expect(JSON.stringify(h.store.getEmployee(employee.id))).not.toContain(dana);
   });
 
-  it('A MEMBER CANNOT MINT GHOST PAYEES UNDER THEIR OWN EMAIL — C26', async () => {
+  it('A MEMBER CANNOT MINT GHOST PAYEES UNDER THEIR OWN EMAIL', async () => {
     /*
      * The reproduction, kept. Removing the raiser refusal made this free: a
      * member raises an ordinary invite carrying THEIR OWN sign-in email under
@@ -1075,7 +1075,7 @@ describe('onboarding', () => {
       .toHaveLength(1);
   });
 
-  it('AND THE SOCKPUPPET IS NO LONGER REFUSED BY AN EMAIL — it is RECORDED — C21', async () => {
+  it('AND THE SOCKPUPPET IS NO LONGER REFUSED BY AN EMAIL — it is RECORDED', async () => {
     /*
      * **THIS TEST USED TO ASSERT THE OPPOSITE, AND THE REVERSAL IS THE HONEST
      * READING RATHER THAN A WEAKENING.**
@@ -1183,7 +1183,7 @@ describe('onboarding', () => {
       .toThrow(/already payable on this account/);
   });
 
-  it('AND A HANDOVER FROM AN ACCOUNT THAT NO LONGER EXISTS IS REFUSED, NOT BURNT — C28', async () => {
+  it('AND A HANDOVER FROM AN ACCOUNT THAT NO LONGER EXISTS IS REFUSED, NOT BURNT', async () => {
     /*
      * The last of admit's five exits, and the one nothing reached: the user id
      * sealed into the handover resolves to nobody, so there is nothing to check
@@ -1208,7 +1208,7 @@ describe('onboarding', () => {
     expect(h.payroll.offerFor(token).name).toBe('Dana');
   });
 
-  it('AND THE CAP REFUSES WITHOUT BURNING THE INVITE — C28', async () => {
+  it('AND THE CAP REFUSES WITHOUT BURNING THE INVITE', async () => {
     /*
      * The cap is the refusal an admin is most likely to hit by accident: one
      * person invited twice, or invited after adding themselves. It is also the
@@ -1263,7 +1263,7 @@ describe('onboarding', () => {
     })).toThrow(/an employee is invited/);
   });
 
-  it('FAILS CLOSED when it cannot tell who set the address — C16\'s lesson, one file over', async () => {
+  it('FAILS CLOSED when it cannot tell who set the address — absence is not provenance', async () => {
     /*
      * The first version disabled itself on a missing id and admitted anyway.
      * Not knowing who set the address of record is exactly when to refuse: a
@@ -1283,7 +1283,7 @@ describe('onboarding', () => {
       .toThrow(/raised before the product recorded who raised it/);
   });
 
-  it('AND REFUSING DOES NOT STRAND THEM — every exit puts the handover back — C28', async () => {
+  it('AND REFUSING DOES NOT STRAND THEM — every exit puts the handover back', async () => {
     /*
      * The put-back was wired to ONE of admit's five refusals, the email
      * mismatch, because that was the one being fixed. The others left the drop
@@ -1451,7 +1451,7 @@ describe('onboarding', () => {
     expect(() => h.payroll.admit(employee.id, viewingKey, 'usr_admin')).toThrow(/undeployed/);
   });
 
-  it('REFUSES TO PAY AN ACTIVE PERSON WHO SOMEHOW HAS NO ADDRESS — C9, defence in depth', async () => {
+  it('REFUSES TO PAY AN ACTIVE PERSON WHO SOMEHOW HAS NO ADDRESS — defence in depth', async () => {
     /*
      * `admit` cannot produce this state, which is exactly why the check is
      * worth having: a record restored from an older version, or written by a
@@ -1474,10 +1474,10 @@ describe('onboarding', () => {
 
   it('names the two pending states separately, because they wait on different people', async () => {
     /*
-     * B15's lesson, one step earlier. "Outstanding" that covers two situations
-     * is how an operator stops looking: somebody who has handed nothing over is
-     * waiting on THEM, somebody whose drop box is full is waiting on US, and an
-     * admin who cannot tell the difference cannot act on either.
+     * "Outstanding" that covers two situations is how an operator stops
+     * looking: somebody who has handed nothing over is waiting on THEM,
+     * somebody whose drop box is full is waiting on US, and an admin who cannot
+     * tell the difference cannot act on either.
      */
     const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2);
     const theirs = h.payroll.invite(account.id, {
@@ -1578,7 +1578,7 @@ describe('onboarding', () => {
     expect(h.payroll.paymentFactsFor(run.id, viewingKey)[0].payee.kind).toBe('shielded');
   });
 
-  it('REFUSES TO PAY SOMEBODY WHO CANNOT REACH IT — C9, and it names them', async () => {
+  it('REFUSES TO PAY SOMEBODY WHO CANNOT REACH IT — and it names them', async () => {
     const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2);
     h.payroll.hireDirect(account.id, {
       name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
@@ -1785,7 +1785,7 @@ describe('identity', () => {
    * is the one value a derived seat still stores, so the membership it recorded
    * became unreachable.
    */
-  it('A CLIENT CAN WRITE THE BUNDLE IT JUST READ — the round trip, C41', async () => {
+  it('A CLIENT CAN WRITE THE BUNDLE IT JUST READ — the round trip', async () => {
     /*
      * Reproduces what a real client does and nothing else: arrive with a
      * bundle, then save something. That was refused for ever, and no test
@@ -1812,7 +1812,7 @@ describe('identity', () => {
       .not.toThrow();
   });
 
-  it('A KEY BUNDLE WRITE THAT DID NOT SEE THE LAST ONE IS REFUSED — C40', async () => {
+  it('A KEY BUNDLE WRITE THAT DID NOT SEE THE LAST ONE IS REFUSED', async () => {
     const { user, encKey } = await enrol('ada@acme.co');
     const seal1 = seal(JSON.stringify({ from: 'laptop' }), encKey);
     const seal2 = seal(JSON.stringify({ from: 'phone' }), encKey);
@@ -1922,7 +1922,7 @@ describe('identity', () => {
 
   /* ---------------- signing out, and sessions across instances ---------- */
 
-  it('THE ONE S-3 IS ABOUT: signing out ends the session on the server', async () => {
+  it('signing out ends the session on the server', async () => {
     const { user, session } = await enrol('ada@acme.co');
     expect(await h.identity.verify(session.token)).toBe(user.id);
 
@@ -1961,7 +1961,7 @@ describe('identity', () => {
     expect(await h.identity.verify(here.token)).toBe(user.id);
   });
 
-  it('THE ONE M-118 IS ABOUT: a session id is not a licence to end a stranger\'s session', async () => {
+  it('a session id is not a licence to end a stranger\'s session, through the service', async () => {
     // A token is 32 random bytes and is its own authority. An id is twelve
     // characters of a hash, shown on a screen. Only one of them is a credential.
     const { user: ada } = await enrol('ada@acme.co');
@@ -1991,7 +1991,7 @@ describe('identity', () => {
     expect(await h.identity.verify(session.token)).toBe(user.id);
   });
 
-  it('S-4: a second instance sharing the store honours the same sessions', async () => {
+  it('a second instance sharing the store honours the same sessions', async () => {
     /*
      * Two IdentityServices over one session store stand in for two server
      * processes. This could not pass before: the token was signed with a
@@ -2660,7 +2660,7 @@ describe('granting access puts the signer in the on-chain set', () => {
   });
 });
 
-describe('S-9 follow-up: what a RUN leaves in the store', () => {
+describe('what a RUN leaves in the store', () => {
   it('a settled run must not leave salaries in the runs table either', async () => {
     /*
      * Checking a claim I made rather than assuming it.
@@ -2695,7 +2695,7 @@ describe('S-9 follow-up: what a RUN leaves in the store', () => {
   });
 });
 
-describe('S-8: what the proposals table leaves in the store', () => {
+describe('what the proposals table leaves in the store', () => {
   it('holds no summary, no proposer and no per-signer approval list', async () => {
     /*
      * The sharpest item in the whole exercise.
@@ -2742,7 +2742,7 @@ describe('S-8: what the proposals table leaves in the store', () => {
   });
 });
 
-describe('M-96: what the ACCOUNTS table leaves in the store', () => {
+describe('what the ACCOUNTS table leaves in the store', () => {
   /*
    * The other half of the same question, and the last table.
    *
@@ -3026,7 +3026,7 @@ describe('M-96: what the ACCOUNTS table leaves in the store', () => {
   });
 });
 
-describe('K-4: changing the locks', () => {
+describe('changing the locks', () => {
   /*
    * Removing a signer does not un-teach them a key they already hold, so
    * removal means rotation: a new viewing key, everything re-sealed under it,
@@ -3189,10 +3189,10 @@ describe('K-4: changing the locks', () => {
   });
 });
 
-describe('M-99: removing a signer', () => {
+describe('removing a signer', () => {
   /*
-   * K-4 changes the locks, which stops a departing signer READING. This is the
-   * other half: stopping them ACTING.
+   * Changing the locks stops a departing signer READING. This is the other
+   * half: stopping them ACTING.
    *
    * Each signer holds a SLOT in the tree, and removing somebody clears that one
    * slot. Nobody else is touched, nothing is recomputed, and nobody is ever
@@ -3215,7 +3215,7 @@ describe('M-99: removing a signer', () => {
     return h.accounts.removeSigner(c.account.id, c.viewingKey, c.secrets[2].signerId);
   }
 
-  it('the removed signer can no longer act on chain, which K-4 alone could not do', async () => {
+  it('the removed signer can no longer act on chain, which changing the locks alone could not do', async () => {
     const { h, c, cleo } = await threeSigners();
     expect((await h.accounts.ledgerStatus(c.account.id))!.signerCount).toBe(3);
 
@@ -3463,7 +3463,7 @@ describe('M-99: removing a signer', () => {
      */
   });
 
-  it('A ROUND SURVIVES ITS PROPOSER BEING REMOVED, AND THE NEXT APPROVAL DOES NOT THROW — `C377`, `T-286`, `S58`', async () => {
+  it('A ROUND SURVIVES ITS PROPOSER BEING REMOVED, AND THE NEXT APPROVAL DOES NOT THROW', async () => {
     /*
      * **THE SEQUENCE HAS NO FAILURE IN IT, WHICH IS WHY THIS IS A ROW AND NOT
      * AN EDGE CASE.** Cleo raises a round; Cleo is removed by a properly
@@ -3519,7 +3519,7 @@ describe('M-99: removing a signer', () => {
       .rejects.toThrow(/already approved/);
   });
 
-  it('AND THE SAME THROUGH A GOVERNANCE DOOR, WHICH IS THE HALF THE FIRST DRAFT MISSED — `T-286`, `S58`', async () => {
+  it('AND THE SAME THROUGH A GOVERNANCE DOOR, WHICH IS THE HALF THE FIRST DRAFT MISSED', async () => {
     /*
      * **A MONEY-SAFETY PASS FOUND THAT THE CASE ABOVE COVERED TWO PROPOSE DOORS
      * OF SIX**, and the four it did not cover are the GOVERNANCE doors — where

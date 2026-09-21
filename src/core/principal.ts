@@ -2,8 +2,8 @@ import type { Hex } from './crypto.js';
 import type { PayeeAddress } from '../midnight/payee-address.js';
 
 /**
- * **NO PRODUCT PATH REACHES THIS FILE, AND THE ROWS ITS FUNCTIONS CARRY ARE NOT
- * ENFORCED HERE.** `T-227` `P2`, found 3 Sep by `SC10b`, written down by `S55`.
+ * **NO PRODUCT PATH REACHES THIS FILE, AND THE RULES ITS FUNCTIONS CARRY ARE
+ * NOT ENFORCED HERE.**
  *
  * **MEASURED, by grep across `src/`, `scripts/` and `contracts/` for every name
  * this module exports** — `admitRuleFor`, `AUTHORITY_KINDS`, `carriesAuthority`,
@@ -12,26 +12,23 @@ import type { PayeeAddress } from '../midnight/payee-address.js';
  * `Rung`: **the only importer in this repository is `principal.test.ts`.** Zero
  * product call sites, for all of them.
  *
- * **SO TWO REGISTER ROWS BELOW ARE ASSERTED HERE AND ENFORCED SOMEWHERE ELSE,
- * WHICH IS THE WHOLE OF WHY THIS PARAGRAPH EXISTS (rule 27, `C286`):**
+ * **SO TWO RULES BELOW ARE ASSERTED HERE AND ENFORCED SOMEWHERE ELSE, WHICH IS
+ * THE WHOLE OF WHY THIS PARAGRAPH EXISTS:**
  *
- *   - **`C11`** — *a principal on rung 1 may exist and may not hold money* — is
+ *   - *A principal on rung 1 may exist and may not hold money* is
  *     `mayHoldMoney` below, and nothing in the product calls it.
- *   - **`C9`** is `payableAddress` below, and **the product enforces `C9`
- *     somewhere else entirely**: `paymentFactsFor` (`src/core/payroll.ts:1877`),
- *     whose own header says *"`C9` is enforced here rather than assumed"*. **Two
+ *   - *Being payable means more than having an address on file* is
+ *     `payableAddress` below, and **the product enforces it somewhere else
+ *     entirely**: `paymentFactsFor` (`src/core/payroll.ts:1877`), whose own
+ *     header says the rule is *"enforced here rather than assumed"*. **Two
  *     implementations of one rule, and the product runs the other one.**
  *
  * **ITS 27 TESTS PROVE THIS MODULE IS INTERNALLY CONSISTENT AND PROVE NOTHING
- * ABOUT THE PRODUCT.** A round that reads `principal.test.ts` green and
- * concludes the ladder and the money gate are live is reading a file with no
- * callers. `A-5` is the row that would wire it.
- *
- * **THIS BLOCK IS AT THE TOP AND IT MOVED LINES IN A CITED FILE.** The
- * re-anchor list to TRUE CURRENT LINES is in `S55`'s build-log account.
+ * ABOUT THE PRODUCT.** Reading `principal.test.ts` green and concluding the
+ * ladder and the money gate are live is reading a file with no callers.
  */
 /**
- * A PRINCIPAL. A-1, and the shape decision behind it.
+ * A PRINCIPAL, and the shape decision behind it.
  *
  * A company and a person are the SAME KIND OF THING with different numbers in
  * them: a set of factors, a rule for how many are needed, and one address.
@@ -67,13 +64,13 @@ import type { PayeeAddress } from '../midnight/payee-address.js';
 export type FactorKind =
   /** Secrets derived from an argon2id stretch of a password. Exists today. */
   | 'password'
-  /** Secrets generated on, and never leaving, one device. K-3. */
+  /** Secrets generated on, and never leaving, one device. */
   | 'device'
-  /** Secrets unlocked by WebAuthn PRF. K-1, sequenced AFTER recovery. */
+  /** Secrets unlocked by WebAuthn PRF. Sequenced AFTER recovery. */
   | 'passkey'
   /** A wallet the person already has. Supplies VALUE keys only — never authority. */
   | 'wallet'
-  /** A durable secret the person placed somewhere themselves. K-2. */
+  /** A durable secret the person placed somewhere themselves. */
   | 'recovery-code';
 
 export interface Factor {
@@ -88,9 +85,9 @@ export interface Factor {
   wrappingPublicKey: Hex;
   /*
    * THE BLINDING FACTOR IS NOT HERE, and putting it here would be a mistake
-   * this repo has already made once and undone (M-99, then M-106). It lives on
-   * the device and nowhere else: whoever holds a blinding plus a leaf holds the
-   * leaf-to-person mapping that blinding the tree exists to destroy.
+   * this repo has already made once and undone. It lives on the device and
+   * nowhere else: whoever holds a blinding plus a leaf holds the leaf-to-person
+   * mapping that blinding the tree exists to destroy.
    */
 }
 
@@ -116,7 +113,7 @@ export interface Principal {
   rules: Rules;
   /**
    * Where money reaches them. `null` until their own device or wallet produces
-   * one — **never chosen for them by whoever is paying.** A-2.
+   * one — **never chosen for them by whoever is paying.**
    */
   address: PayeeAddress | null;
 }
@@ -285,7 +282,7 @@ export function securityRung(p: Principal): Rung {
 }
 
 /**
- * C11 — THE GROWTH LOOP MANUFACTURES ONE-DEVICE COMPANIES, and this is the gate.
+ * THE GROWTH LOOP MANUFACTURES ONE-DEVICE COMPANIES, and this is the gate.
  *
  * A vendor who is paid creates their own company in two clicks, which is the
  * point. What that produces is one signer, a rule of one, one device, holding
@@ -297,13 +294,13 @@ export function securityRung(p: Principal): Rung {
  * and gating the click that makes one taxes the loop at its weakest moment for
  * no safety at all.
  *
- * NOT YET WIRED INTO COMPANY CREATION — that is A-5, and this is the definition
- * it will use rather than a second copy of the rule.
+ * NOT YET WIRED INTO COMPANY CREATION, and this is the definition it will use
+ * rather than a second copy of the rule.
  */
 export const mayHoldMoney = (p: Principal): boolean => securityRung(p) >= 2;
 
 /**
- * C9 — BEING PAYABLE MEANS MORE THAN HAVING AN ADDRESS ON FILE.
+ * BEING PAYABLE MEANS MORE THAN HAVING AN ADDRESS ON FILE.
  *
  * An employee can have an address and no working way in: the password was never
  * set, the invite was never finished, the device that made the seed was wiped
@@ -315,26 +312,26 @@ export const mayHoldMoney = (p: Principal): boolean => securityRung(p) >= 2;
  */
 export function payableAddress(p: Principal): PayeeAddress {
   /*
-   * THIS DOES NOT HOLD C9, AND SAYING SO IS THE POINT.
+   * THIS DOES NOT HOLD THE RULE ABOVE, AND SAYING SO IS THE POINT.
    *
    * The first version checked `factors.length > 0` — a condition `principal()`
    * already refuses, so it could never fail. A guard that looks like protection
    * and is not is worse than an honest absence of one, because the next reader
-   * takes it for the answer to C9 and stops looking.
+   * takes it for the answer and stops looking.
    *
-   * C9 is a payee who has an address and no WORKING way in: the password was
-   * never set, the invite was never finished, the device that made the seed was
-   * wiped that afternoon. A factor count cannot see any of those, and neither
-   * can this function — it does not know whether the address is self-custodied
-   * (a wallet they already had, in which case they can always reach it) or
-   * derived by us (in which case a dead factor means the money settles
-   * irreversibly into an address whose secrets nobody holds).
+   * The case is a payee who has an address and no WORKING way in: the password
+   * was never set, the invite was never finished, the device that made the seed
+   * was wiped that afternoon. A factor count cannot see any of those, and
+   * neither can this function — it does not know whether the address is
+   * self-custodied (a wallet they already had, in which case they can always
+   * reach it) or derived by us (in which case a dead factor means the money
+   * settles irreversibly into an address whose secrets nobody holds).
    *
-   * **What closes C9 is knowing where the address came from and whether a
-   * factor has ever been used**, and that arrives with onboarding — A-2.
+   * **Closing the gap needs knowing where the address came from and whether a
+   * factor has ever been used**, and that arrives with onboarding.
    */
   check(p.address !== null,
     `${p.id} has no address yet. It has to come from their own device or wallet — `
-    + 'an address typed in on their behalf is the failure C7 exists for');
+    + 'an address typed in on their behalf can pay them into a coin they can never see');
   return p.address!;
 }

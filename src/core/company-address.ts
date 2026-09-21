@@ -5,7 +5,7 @@ import type { DataStore } from './store.js';
  * FROM THE SESSION.** `docs/NEXT.md` PI2a §2, `docs/scope-payroll-identity.md`
  * §9.
  *
- * ── THE ONE DANGEROUS LINE IN THE ROUND, AND THIS FILE IS IT ──────────────
+ * ── THE ONE DANGEROUS LINE IN THIS DESIGN, AND THIS FILE IS IT ────────────
  *
  * The wallet takes the ASKING SITE's address from the browser, so a page cannot
  * claim to be somebody else. **It cannot do that for the company.** The company
@@ -23,8 +23,8 @@ import type { DataStore } from './store.js';
  * and states why it is not a nicety: `Purposes.Seat` is keyed by a company
  * number the product assigns, and *"if payroll ever lets a caller supply that
  * number, the same attack arrives by the front door and needs no grinding at
- * all — it just asks."* W2 ground two origins onto one 31-bit index in eighty-
- * one minutes to make that point the hard way.
+ * all — it just asks."* Two origins were ground onto one 31-bit index in
+ * eighty-one minutes to make that point the hard way.
  *
  * ── THE SHAPE OF THE RULE IS THE ARGUMENT LIST ────────────────────────────
  *
@@ -49,10 +49,10 @@ import type { DataStore } from './store.js';
 const COMPANY_ADDRESS = /^[0-9a-fA-F]{64}$/u;
 
 /**
- * **THE ONE DELIBERATE WAY PAST THE `C140` REFUSAL, AND IT IS NOT A
+ * **THE ONE DELIBERATE WAY PAST THE PROVENANCE REFUSAL, AND IT IS NOT A
  * PARAMETER.**
  *
- * `PI2a`'s rule is that this function has nowhere to put a claimed company,
+ * The rule above is that this function has nowhere to put a claimed company,
  * and a fourth argument saying *serve me anyway* would be that rule undone by
  * the same door — a route one refactor away from forwarding a request field
  * into it. **An environment variable cannot arrive in a request.** It is set by
@@ -100,9 +100,8 @@ export class NoCompanyAddress extends Error {
  * THE COMPANY THIS SESSION MAY OPEN, NAMED BY ITS OWN ADDRESS ON THE CHAIN.
  *
  * Returns the canonical lower-case spelling, because that is what the wallet
- * derives from and what `readRelease` compares — `C137`, and both sides fold
- * before they compare so that two spellings of one company can never become two
- * keys.
+ * derives from and what `readRelease` compares. Both sides fold before they
+ * compare, so that two spellings of one company can never become two keys.
  */
 export function companyForSession(
   store: DataStore, userId: string, accountId: string,
@@ -139,22 +138,22 @@ export function companyForSession(
    * The check above tests the SHAPE, and `SimulatedLedger` mints that shape on
    * purpose — thirty-two random bytes spelled exactly as a contract address is
    * spelled. So the shape check passes for a company that has never been near a
-   * chain, and `PI2a`'s refusal, which is correct and well argued, could never
+   * chain, and the refusal above, which is correct and well argued, could never
    * once fire. The record now carries where its address came from, written by
    * the ledger that assigned it, and this is the line that reads it.
    *
-   * **ABSENT IS NOT `'chain'`.** Every company created before `PI2b` has no
-   * source recorded and there is no way to establish one after the fact.
-   * Reading absence as a chain's would wave through exactly the records nothing
-   * can vouch for.
+   * **ABSENT IS NOT `'chain'`.** Every company created before the source field
+   * existed has no source recorded and there is no way to establish one after
+   * the fact. Reading absence as a chain's would wave through exactly the
+   * records nothing can vouch for.
    *
    * **WHAT IS AT STAKE IS NOT THIS CALL.** A key derived from an invented
    * number is not wrong today — it is all test data and no company has ever
    * been deployed. It is wrong on the day one IS: either the real address
    * replaces the invented one and everything sealed under the old one stops
-   * opening, which is `C127` on a scheduled date, or the invented one is kept
-   * for ever and the company's identity is a number our own server made up,
-   * which is the thing `C136` was decided to avoid.
+   * opening, or the invented one is kept for ever and the company's identity is
+   * a number our own server made up, which is exactly what taking the identity
+   * from the chain was chosen to avoid.
    */
   if (rec.addressSource !== 'chain' && !inDevelopment()) {
     throw new NoCompanyAddress(
@@ -171,19 +170,17 @@ export function companyForSession(
 /**
  * **THE SAME ADDRESS, FOR SOMEBODY WHO IS NOT A MEMBER YET.** `docs/NEXT.md`
  *
- *
  * ── WHY AN INVITEE NEEDS IT AT ALL ────────────────────────────────────────
  *
  * The key that opens an employee's payslips is `payslipKeypairFrom(companyKey)`
  * and **the wallet derives that company key from the company's own contract
- * address** (`W3`, `C136`). So an invitee accepting an offer has to name the
- * company to their wallet — and `companyForSession` above cannot serve them,
- * because the whole point of an invitation is that they are not on the account.
+ * address**. So an invitee accepting an offer has to name the company to their
+ * wallet — and `companyForSession` above cannot serve them, because the whole
+ * point of an invitation is that they are not on the account.
  *
- * **THE ANSWER IS NOT A SECOND KEY PATH.** `X11` §0 forbids one by name, and it
- * would be the wrong thing anyway: a payslip key that an invitee derives one
- * way and a member derives another is a payslip that stops opening the day
- * somebody is promoted.
+ * **THE ANSWER IS NOT A SECOND KEY PATH.** It would be the wrong thing anyway:
+ * a payslip key that an invitee derives one way and a member derives another
+ * is a payslip that stops opening the day somebody is promoted.
  *
  * ── SO IT TRAVELS IN THE SEALED OFFER, AND HERE IS WHY THAT IS SAFE ───────
  *
@@ -198,7 +195,7 @@ export function companyForSession(
  * company to ask about buys an interceptor nothing they could not read off the
  * chain.
  *
- * ── AND `C140`'s GATE IS THE SAME GATE ────────────────────────────────────
+ * ── AND THE PROVENANCE GATE IS THE SAME GATE ──────────────────────────────
  *
  * `null` rather than a throw, because an invitation must still be raisable for
  * a company that is not deployed — that is every company today. What must NOT

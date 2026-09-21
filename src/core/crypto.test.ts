@@ -27,7 +27,7 @@ import {
 import type { Hex, Sealed } from './crypto.js';
 
 /**
- * **`src/core/crypto.ts` — KNOWN-ANSWER VECTORS. `T-197`.**
+ * **`src/core/crypto.ts` — KNOWN-ANSWER VECTORS.**
  *
  * ── WHY THIS FILE EXISTS, AND WHY IT IS NOT A ROUND-TRIP FILE ────────────────
  *
@@ -46,7 +46,7 @@ import type { Hex, Sealed } from './crypto.js';
  * the four named above each have a test below that reddens on it — named, so a
  * reader can check the claim rather than take it.
  *
- * ── WHERE EVERY VECTOR CAME FROM — RULE 9 ────────────────────────────────────
+ * ── WHERE EVERY VECTOR CAME FROM ─────────────────────────────────────────────
  *
  * **NO VECTOR IN THIS FILE WAS PRODUCED BY THE CODE UNDER TEST.** That is the
  * whole point of it, so each one says its source in the test that uses it, and
@@ -66,22 +66,21 @@ import type { Hex, Sealed } from './crypto.js';
  *     was measured for those: they are the sentence, written as an assertion.
  *
  * **RFC 8032 TEST 2 AND NOT TEST 1, AND THE REASON IS A CORRECTION RATHER THAN
- * A JUDGEMENT ABOUT THE RFC.** `S46` first wrote here that TEST 1 *"did not
- * reproduce under OpenSSL"*. **That was false, and this round's own
- * test-coverage pass demonstrated it**: TEST 1 reproduces exactly, and what did not
- * reproduce was `S46`'s transcription of its SEED — the last eight bytes were
- * wrong. **A sentence saying a published
+ * A JUDGEMENT ABOUT THE RFC.** This file once said TEST 1 *"did not reproduce
+ * under OpenSSL"*. **That was false, and measuring it showed so**: TEST 1
+ * reproduces exactly, and what did not reproduce was a transcription of its
+ * SEED — the last eight bytes were wrong. **A sentence saying a published
  * standard's test vector is untrustworthy is the worst thing to leave in the
- * file future rounds will read for what a known-answer vector means here**, so
- * it is written out rather than quietly deleted. TEST 2 is what is used and it
+ * file a reader will come to for what a known-answer vector means here**, so it
+ * is written out rather than quietly deleted. TEST 2 is what is used and it
  * reproduced exactly — public key and signature both.
  *
  * ── WHAT THIS FILE STILL DOES NOT COVER ──────────────────────────────────────
  *
  * The generators are asserted for WIDTH and for freshness, not for entropy
  * quality: nothing here can tell a good CSPRNG from a bad one, and a test that
- * claimed to would be `C286`'s shape. What it catches is a narrowing or a
- * constant, which is what `T-195` is about.
+ * claimed to would be asserting something it cannot check. What it catches is
+ * a narrowing or a constant.
  */
 
 /* ── THE VECTORS, ALL OF THEM, IN ONE PLACE ──────────────────────────────── */
@@ -119,8 +118,8 @@ const APPROVAL_SIGNATURE: Hex =
 /**
  * A different signer's public key, for the wrong-signer case: OpenSSL's Ed25519
  * public key of the seed `'20'.repeat(32)`. **The seed is written down because a
- * constant nobody can re-derive is a constant nobody can check** — this round's
- * test-coverage pass had to recover it by search, which is rule 9's point exactly.
+ * constant nobody can re-derive is a constant nobody can check** — it once had
+ * to be recovered by search.
  */
 const OTHER_SEED: Hex = '20'.repeat(32);
 const OTHER_PUBLIC: Hex = '4ed32f63bf35f0eeefcb25f28a2e1fbdc873ae2835671b0c9460f5f12e4556a8';
@@ -168,10 +167,10 @@ describe('crypto.ts: fixed vectors, because a round trip agrees with itself', ()
      *
      * **WHY IT IS SAFE TODAY AND WHY THAT IS A HABIT RATHER THAN A GUARANTEE.**
      * Every `commit(...)` in this repository passes `''` or a hex salt
-     * (`crypto.ts:114-124` names the six call sites and `S43` measured them),
-     * and `':'` cannot occur in hex. **Nothing enforces it** — rule 27, and it
-     * is filed as `T-276` rather than fixed here, because a length-prefixed
-     * preimage moves every digest this product has ever written.
+     * (`crypto.ts:114-124` names the six call sites), and `':'` cannot occur in
+     * hex. **Nothing enforces it**, and it is not fixed here, because a
+     * length-prefixed preimage moves every digest this product has ever
+     * written.
      */
     expect(commit('b', 'a:c')).toBe(commit('c:b', 'a'));
   });
@@ -236,7 +235,7 @@ describe('crypto.ts: fixed vectors, because a round trip agrees with itself', ()
 
   it('wrapKey\'s EPHEMERAL IS FRESH PER CALL — freezing it is worse than freezing an IV', () => {
     /*
-     * **FOUND BY THIS ROUND'S test-coverage pass, AGAINST THIS ROUND'S OWN FILE.**
+     * **NOTHING ELSE IN THIS FILE NOTICES A FROZEN EPHEMERAL SECRET.**
      * `crypto.ts:251` draws a fresh x25519 secret per wrap. Replace it with a
      * constant and **every assertion in this file still passed** — including
      * the two known-answer ones above, because they supply the ephemeral as
@@ -333,9 +332,9 @@ describe('crypto.ts: fixed vectors, because a round trip agrees with itself', ()
 
   it('sign reproduces RFC 8032 §7.1 TEST 2 exactly, and signingPublicKeyOf its public key', () => {
     /*
-     * **`verify` WAS IMPORTED BY NO TEST FILE IN THIS REPOSITORY** (`SC9`
-     * `F5`), though it is the gate at `src/core/account.ts:2564`. This is the
-     * first, and it is a published vector rather than a pair of our own calls.
+     * **`verify` WAS IMPORTED BY NO TEST FILE IN THIS REPOSITORY**, though it
+     * is the gate at `src/core/account.ts:2564`. This is the first, and it is a
+     * published vector rather than a pair of our own calls.
      *
      * SOURCE: RFC 8032 §7.1 TEST 2 — seed, public key, one-byte message `r`
      * and signature all verbatim from the RFC; OpenSSL reproduced the public
@@ -365,9 +364,9 @@ describe('crypto.ts: fixed vectors, because a round trip agrees with itself', ()
      * `crypto.ts:85-89` catches everything and returns `false`. That is the
      * right answer for a gate — a signature that cannot be parsed is not a
      * signature — but it is also the shape that hides a caller passing the
-     * wrong argument, and `SC9` `F5` records that the money path is guarded
-     * end to end at `src/server/approval-signature.test.ts:254`, `:288`
-     * **while the swallowing catch itself was not**. It is now.
+     * wrong argument. The money path is guarded end to end at
+     * `src/server/approval-signature.test.ts:254`, `:288` **while the
+     * swallowing catch itself was not**. It is now.
      */
     expect(verify(APPROVAL_MESSAGE, 'not hex at all', APPROVAL_PUBLIC)).toBe(false);
     expect(verify(APPROVAL_MESSAGE, '', APPROVAL_PUBLIC)).toBe(false);
@@ -382,8 +381,8 @@ describe('crypto.ts: fixed vectors, because a round trip agrees with itself', ()
      * `crypto.ts:56-59` derives a bundle-proof keypair as
      * `sha256('midnight-bundle-proof:' + symmetricKey)`. The label is the
      * whole of the domain separation — change it and every stored proof public
-     * key stops matching the key it names, silently, on the path `C35`
-     * describes (a device removal re-wrapping to a planted row).
+     * key stops matching the key it names, silently, on the path a device
+     * removal takes when it re-wraps to a row an attacker put there.
      *
      * SOURCE: OpenSSL's `sha256('midnight-bundle-proof:' + <the key below>)`
      * for the secret, and OpenSSL's Ed25519 public key of that secret.
@@ -391,8 +390,8 @@ describe('crypto.ts: fixed vectors, because a round trip agrees with itself', ()
      * **AND IT HAS NO CALLER** — `SC9` `Q3`,
      * `docs/scope-the-money-path.md:153-155`: a live security mechanism
      * described in the present tense with nothing invoking it. That is not
-     * fixed here and is not this row's; the vector exists so that whoever wires
-     * it up cannot change the label on the way.
+     * fixed here; the vector exists so that whoever wires it up cannot change
+     * the label on the way.
      */
     const symmetric: Hex = '0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0';
     expect(proofKeypairFor(symmetric)).toEqual({
@@ -426,11 +425,11 @@ describe('crypto.ts: fixed vectors, because a round trip agrees with itself', ()
     expect(canonical({ z: { y: 1, x: 2 }, a: 3 })).toBe('{"a":3,"z":{"x":2,"y":1}}');
   });
 
-  it('canonical DROPS an absent key and writes null inside an array — M-97, pinned', () => {
+  it('canonical DROPS an absent key and writes null inside an array', () => {
     /*
-     * `crypto.ts:265-279` records this as `M-97`, the tenth instance of this
-     * project's one-rule-two-copies failure and **the first where the copies
-     * had genuinely drifted in behaviour**. It had no regression test.
+     * `crypto.ts:265-279` records the tenth instance of this project's
+     * one-rule-two-copies failure and **the first where the copies had
+     * genuinely drifted in behaviour**. It had no regression test.
      *
      * The failure it prevents: an unset optional field serialising to the bare
      * text `undefined`, which is not JSON, so a sealed record fails to open
@@ -523,48 +522,48 @@ describe('crypto.ts: fixed vectors, because a round trip agrees with itself', ()
     expect(fromHex('')).toHaveLength(0);
 
     /*
-     * **AND THE DECODE HALF, WHICH NOTHING IN THIS REPOSITORY TESTED.** Found
-     * by this round's test-coverage pass: replacing `crypto.ts:21`'s `TextDecoder`
-     * with a byte-per-character loop passed every other assertion here and
-     * every `unseal` in the repository, because every sealed fixture anywhere
-     * is ASCII. A payslip sealed for `Müller` comes back `MÃ¼ller` and the
-     * suite is green. The seal is the only door onto `fromUtf8`, so this goes
-     * through it.
+     * **AND THE DECODE HALF, WHICH NOTHING IN THIS REPOSITORY TESTED.**
+     * Replacing `crypto.ts:21`'s `TextDecoder` with a byte-per-character loop
+     * passed every other assertion here and every `unseal` in the repository,
+     * because every sealed fixture anywhere is ASCII. A payslip sealed for
+     * `Müller` comes back `MÃ¼ller` and the suite is green. The seal is the
+     * only door onto `fromUtf8`, so this goes through it.
      */
     const k = newSymmetricKey();
     expect(unseal(seal('a £ and an é', k), k)).toBe('a £ and an é');
   });
 
   /* ──────────────────────────────────────────────────────────────────────
-   * THE GENERATORS — `T-195`, AND THE WIDTH NOTHING ON THE PAYOUT PATH CHECKS
+   * THE GENERATORS — THE WIDTH NOTHING ON THE PAYOUT PATH CHECKS
    * ────────────────────────────────────────────────────────────────────── */
 
   it('THE PAYOUT SEED IS THIRTY-TWO BYTES, ASSERTED HERE BECAUSE NOTHING ELSE ASSERTS IT', () => {
     /*
-     * **`T-195` `P1`, AND THIS TEST IS THE WHOLE OF IT.**
+     * **NOTHING ON THE PAYOUT PATH CHECKS THIS WIDTH, AND THIS TEST IS THE
+     * WHOLE OF THE CHECK.**
      * `docs/scope-the-money-path.md:417-438`, `F3`.
      *
      * `newBlinding()` (`crypto.ts:213`) is the account's payout seed at
      * `src/core/account.ts:763` (creation) and `:1821` (rotate).
      * `src/midnight/run-keys.ts:124` expands it with HKDF, **which accepts any
      * IKM length and returns 32 bytes regardless** — so at any seed width every
-     * run key, every `V-43` per-payee nonce and every blinding stays
-     * well-formed and self-consistent, and the contract sees a hash and cannot
-     * tell a strong one from a weak one. **A narrowing is invisible on chain.**
+     * run key, every per-payee nonce and every blinding stays well-formed and
+     * self-consistent, and the contract sees a hash and cannot tell a strong
+     * one from a weak one. **A narrowing is invisible on chain.**
      *
      * **WHAT REDDENED A NARROWING BEFORE THIS LINE EXISTED WAS AN ACCIDENT ON
      * SOMEBODY ELSE'S PATH:** `src/core/signer-leaf.ts:223`'s `HEX64`, reached
      * through `src/web/accept-seat.test.ts:128` → `:141-143` — the SIGNER
      * blinding, a different consumer of the same function. The obvious refactor
      * (a dedicated `newPayoutSeed()`) removes that guard and nothing else goes
-     * red. **This is the check of its own, and rule 27 is why it is written
-     * where the seed is MADE rather than where it is used** — `S46` put the
-     * refusal in `newBlinding` itself (`crypto.ts:213-226`), the shape
-     * `newProposalSalt` above it already uses, and this is what pins it.
+     * red. **This is the check of its own, and it is written where the seed is
+     * MADE rather than where it is used** — the refusal sits in `newBlinding`
+     * itself (`crypto.ts:213-226`), the shape `newProposalSalt` above it
+     * already uses, and this is what pins it.
      *
      * **IF SOMEBODY DOES SPLIT THIS INTO `newPayoutSeed()`, THIS TEST MOVES
      * WITH IT.** A split that leaves the assertion on `newBlinding` alone puts
-     * the payout seed back where `F3` found it.
+     * the payout seed back where it started: unpinned.
      */
     expect(BLINDING_BYTES).toBe(32);
     for (let i = 0; i < 8; i++) {
@@ -576,11 +575,11 @@ describe('crypto.ts: fixed vectors, because a round trip agrees with itself', ()
     expect(draws.size).toBe(32);
     expect(newBlinding()).not.toBe('00'.repeat(32));
     /*
-     * **A ZERO-PADDED NARROWING IS THE FORM A WIDTH CHECK CANNOT SEE**, found
-     * by this round's test-coverage pass: `new Uint8Array(32)` with 16 random bytes
-     * written into the front is 32 bytes wide and passed everything above.
-     * This is a SHAPE check and not an entropy check — it catches padding at
-     * either end and nothing subtler, which is all a test can honestly claim.
+     * **A ZERO-PADDED NARROWING IS THE FORM A WIDTH CHECK CANNOT SEE**:
+     * `new Uint8Array(32)` with 16 random bytes written into the front is 32
+     * bytes wide and passed everything above. This is a SHAPE check and not an
+     * entropy check — it catches padding at either end and nothing subtler,
+     * which is all a test can honestly claim.
      */
     for (let i = 0; i < 8; i++) {
       const seed = newBlinding();
@@ -589,14 +588,14 @@ describe('crypto.ts: fixed vectors, because a round trip agrees with itself', ()
     }
   });
 
-  it('the proposal salt is thirty-two bytes and its own constant says so — C371', () => {
+  it('the proposal salt is thirty-two bytes and its own constant says so', () => {
     /*
-     * `C371` was a sixteen-byte salt against two `Bytes<32>` arguments. The
-     * refusal lives in `newProposalSalt` (`crypto.ts:160-171`) and its own
-     * comment (`:147-156`) says plainly that it cannot fail against today's
-     * body and is a tripwire against an EDIT. This pins the constant it reads,
-     * so a hand-written width in the generator is a red test rather than a
-     * refused governance round.
+     * A sixteen-byte salt against two `Bytes<32>` arguments is the failure this
+     * guards. The refusal lives in `newProposalSalt` (`crypto.ts:160-171`) and
+     * its own comment (`:147-156`) says plainly that it cannot fail against
+     * today's body and is a tripwire against an EDIT. This pins the constant it
+     * reads, so a hand-written width in the generator is a red test rather than
+     * a refused governance round.
      */
     expect(PROPOSAL_SALT_BYTES).toBe(32);
     for (let i = 0; i < 8; i++) {
@@ -607,11 +606,11 @@ describe('crypto.ts: fixed vectors, because a round trip agrees with itself', ()
 
   it('the symmetric key is thirty-two bytes, and AES would refuse it if it were not', () => {
     /*
-     * `SC9` `F3` names this one explicitly as **not** unpinned — AES-GCM
-     * refuses a bad key width and `sealed-records.test.ts` dies immediately —
-     * and says so *"so a later round does not add it"*. It is asserted anyway,
-     * one line, because the reason it is safe lives in another file and a
-     * reader of this one should not have to find it.
+     * This one is explicitly **not** unpinned — AES-GCM refuses a bad key
+     * width and `sealed-records.test.ts` dies immediately — and it was written
+     * down as safe so that nobody would add a check for it. It is asserted
+     * anyway, one line, because the reason it is safe lives in another file and
+     * a reader of this one should not have to find it.
      */
     const key = newSymmetricKey();
     expect(key).toMatch(/^[0-9a-f]{64}$/);
@@ -630,14 +629,14 @@ describe('crypto.ts: fixed vectors, because a round trip agrees with itself', ()
     expect(w.secret).toMatch(/^[0-9a-f]{64}$/);
     expect(w.publicKey).toMatch(/^[0-9a-f]{64}$/);
     /* An x25519 keypair is not an ed25519 one, and the two must never be
-     * swapped: `C328` was exactly that confusion one type over. */
+     * swapped: that confusion has happened one type over. */
     expect(w.publicKey).not.toBe(signingPublicKeyOf(w.secret));
     /*
      * **AND THE WRAPPING PAIR IS A MATCHED PAIR, WHICH THE LINE ABOVE DOES NOT
-     * SAY.** test-coverage pass, this round: a `newWrappingKeypair` returning a
-     * public half derived from a DIFFERENT secret satisfies `not.toBe` and
-     * passed everything here. `vault-pool.test.ts:44` catches it elsewhere; the
-     * test named *matched pairs* should catch it itself.
+     * SAY.** A `newWrappingKeypair` returning a public half derived from a
+     * DIFFERENT secret satisfies `not.toBe` and passed everything here.
+     * `vault-pool.test.ts:44` catches it elsewhere; the test named *matched
+     * pairs* should catch it itself.
      */
     expect(unwrapKey(wrapKey('x', w.publicKey), w.secret)).toBe('x');
     expect(newSigningKeypair().secret).not.toBe(newSigningKeypair().secret);

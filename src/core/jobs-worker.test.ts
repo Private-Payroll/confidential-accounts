@@ -316,9 +316,9 @@ describe('the reason the queue lives on one side only', () => {
 describe('the drain guard survives the boundary', () => {
   it('reports a store that is not saving progress rather than hanging', async () => {
     /*
-     * M-80 across a thread. In a Worker this failure is invisible from the page
-     * — the thread just spins — so the error reaching the host is the only way
-     * anyone finds out.
+     * The drain guard, across a thread. In a Worker this failure is invisible
+     * from the page — the thread just spins — so the error reaching the host is
+     * the only way anyone finds out.
      */
     const stuck: Job = {
       id: 'job_stuck', accountId: 'acc_1', kind: 'approve', signerId: 'sgn_1',

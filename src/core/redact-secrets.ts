@@ -1,7 +1,7 @@
 /**
  * REMOVING A SECRET FROM A LINE OF TEXT BEFORE ANYTHING KEEPS IT.
  *
- * ── THE ROW THIS EXISTS FOR ──────────────────────────────────────────────
+ * ── WHAT THIS EXISTS FOR ─────────────────────────────────────────────────
  *
  * The wallet SDK prints its own seed phrase into every log it writes, at INFO,
  * in the shape `Your wallet seed is: 39aebaeb…`. Thirty-eight files on this
@@ -9,7 +9,7 @@
  * cannot be fixed by choosing not to write it — the only place it can be
  * stopped is between the text and the file.
  *
- * `X4` adds a second way for text to reach a file: the browser error sink posts
+ * The browser error sink is a second way for text to reach a file: it posts
  * what a page said, and the service appends it to `logs/REPORT-WEB-CONSOLE.txt`.
  * **An error message can carry anything** — a key, a seed, a session token, a
  * password typed into the wrong field, an address. So the text is put through
@@ -40,12 +40,12 @@
  * line that prints a seed prints the address beside it, and a report that keeps
  * one half of that pair invites somebody to keep the other.
  *
- * **AND AS OF `X10`, NO RULE BELOW ERRS THE OTHER WAY.** `C148`: the seed
- * phrase rule matched in lower case only, so one capital letter anywhere in
- * twenty-four words switched it off and the whole phrase was kept. It was the
- * single exception to the paragraph above and it was found by running the
- * file's own adversarial cases against it rather than by reading it. What that
- * rule now costs is written beside it.
+ * **AND NO RULE BELOW ERRS THE OTHER WAY.** The seed phrase rule matched in
+ * lower case only, so one capital letter anywhere in twenty-four words switched
+ * it off and the whole phrase was kept. It was the single exception to the
+ * paragraph above and it was found by running the file's own adversarial cases
+ * against it rather than by reading it. What that rule now costs is written
+ * beside it.
  */
 
 /** Longer than this and a message is truncated rather than persisted whole. */
@@ -70,11 +70,11 @@ const SECRET_NAMES =
 
 const RULES: ReadonlyArray<readonly [RegExp, string]> = [
   /*
-   * THE SDK'S OWN LINE, FIRST AND BY NAME. `C145` quotes it exactly:
+   * THE SDK'S OWN LINE, FIRST AND BY NAME. It arrives in this shape:
    *   INFO (18260): Your wallet seed is: 39aebaeb…
    * The generic rules below would catch the hex anyway; this one is here so the
-   * report says WHICH secret was removed, and so the row has a rule that names
-   * it rather than a rule that happens to cover it.
+   * report says WHICH secret was removed, and so there is a rule that names it
+   * rather than a rule that happens to cover it.
    */
   [/(wallet seed is:?)\s*\S+/gi, '$1 <redacted:seed>'],
 
@@ -97,9 +97,9 @@ const RULES: ReadonlyArray<readonly [RegExp, string]> = [
    * prints in lower case. **The case that does not exist yet is a person's**:
    * the sink exists to catch what a PERSON's browser said, a phrase reaches it
    * by being typed or pasted into the wrong field, and a phone keyboard
-   * capitalises the first word without being asked. `X10` sends more text to
-   * disk than has ever been sent before — every refusal body — so this closes
-   * in the same round rather than after it.
+   * capitalises the first word without being asked. More text now reaches disk
+   * than ever before — every refusal body — so this was closed when the sink
+   * was added rather than left for later.
    *
    * **WHAT THE OVER-REDACTION COSTS, SAID OUT LOUD:** twelve consecutive short
    * title-case words in an error message now go too. That is a redacted

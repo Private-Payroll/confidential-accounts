@@ -520,10 +520,10 @@ export interface AccountOpening {
   /**
    * The account's asset blinding, generated once and never rotated.
    *
-   * Not rotated by K-4 and this is the one exception to "rotation re-seals
-   * everything": every change commitment already approved names its asset as
-   * `assetKeyOf(assetId, this)`, so changing it would make a run one signature
-   * from settling impossible to present at a vault.
+   * Not rotated when the locks change and this is the one exception to
+   * "rotation re-seals everything": every change commitment already approved
+   * names its asset as `assetKeyOf(assetId, this)`, so changing it would make a
+   * run one signature from settling impossible to present at a vault.
    */
   assetBlinding: Hex;
   sealedState: SealedStateAt;
@@ -1895,7 +1895,7 @@ export class SimulatedLedger implements Ledger {
       throw new Error(
         `no sealed state for "${accountId}" at key epoch ${keyEpoch}. The account record and ` +
           'the state store disagree about which viewing key is current, which is what a ' +
-          'half-finished rotation looks like. See K-4.',
+          'half-finished rotation looks like.',
       );
     }
     return { commitment: this.viewDigest(a), sealedState, updatedAt: a.updatedAt };

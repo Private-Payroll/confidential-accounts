@@ -13,10 +13,10 @@ import type { User } from './types.js';
  * `flush` was a single `writeFileSync`, which truncates and then writes. A crash
  * or a full disk part way through left a file that is not valid JSON, and the
  * constructor parses eagerly — **so the next start failed for every account, not
- * for the one being written.** `C36`, found by audit 17 Aug.
+ * for the one being written.**
  */
 
-/* `PI4b`: `authHash: 'aa'` and `authSalt: 'bb'` were here. This file is about
+/* `authHash: 'aa'` and `authSalt: 'bb'` were here. This file is about
  * whether a write that fails leaves the file readable; the two fields were
  * padding a type that no longer has them. */
 const user = (id: string): User => ({
@@ -27,11 +27,10 @@ const user = (id: string): User => ({
 /**
  * ROOT IGNORES DIRECTORY PERMISSIONS, so this test cannot fail a write as root.
  *
- * Found by the test auditor rather than by a red run: under a CI image with no
- * `USER` set, `chmod 0500` does not stop the write and the test fails on
- * CORRECT code. Skipping is not the same as passing and is said out loud here —
- * **a suite run as root does not check this property at all**, and the fix is
- * the CI user, not this file.
+ * Under a CI image with no `USER` set, `chmod 0500` does not stop the write and
+ * the test fails on CORRECT code. Skipping is not the same as passing and is
+ * said out loud here — **a suite run as root does not check this property at
+ * all**, and the fix is the CI user, not this file.
  */
 const canBlockWrites = (process.getuid?.() ?? 0) !== 0;
 

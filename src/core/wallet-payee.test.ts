@@ -15,12 +15,12 @@ import { PAYEE_PURPOSE, payeeAsk } from './wallet-payee-ask.js';
  * **TAKING A RECEIVING ADDRESS FROM A WALLET.** `docs/NEXT.md` X8 §2,
  * `docs/how-money-can-be-lost.md` `C153`.
  *
- * `X7`'s screen took the address as pasted text. **Replacing the box with a
- * button that forwards whatever the wallet said would be the same door with the
- * box hidden**, so every assertion below is about what this side refuses to
- * believe — and the disclosures it is handed are minted by the WALLET'S OWN
- * `mint`, from the wallet's own package, so what is being checked is the real
- * message and not a fixture shaped like one.
+ * The screen this replaces took the address as pasted text. **Replacing the box
+ * with a button that forwards whatever the wallet said would be the same door
+ * with the box hidden**, so every assertion below is about what this side
+ * refuses to believe — and the disclosures it is handed are minted by the
+ * WALLET'S OWN `mint`, from the wallet's own package, so what is being checked
+ * is the real message and not a fixture shaped like one.
  */
 
 const ORIGIN = 'https://payroll.example';
@@ -88,7 +88,7 @@ const refusedWith = async (
   throw new Error('it was not refused');
 };
 
-describe('X8 §2 — the address comes from the wallet, and this side judges it', () => {
+describe('the address comes from the wallet, and this side judges it', () => {
   it('THE ASK NAMES A THING AND NEVER AN ANSWER, and the wallet parses it', () => {
     /*
      * **THE CROSS-REPOSITORY EDGE, WALKED RATHER THAN ASSUMED.** The ask is
@@ -116,7 +116,7 @@ describe('X8 §2 — the address comes from the wallet, and this side judges it'
     const given = await issued();
     const got = await take(disclose([derivedSend(shielded(SLOT))], given), given);
     expect(got.address.bech32).toBe(shielded(SLOT));
-    /* `A-1`, `C7` — one decode, both halves, and neither can be supplied. */
+    /* One decode, both halves, and neither can be supplied. */
     const address = privatePayee(got.address);
     expect(address.coinPublicKey).toMatch(/^[0-9a-f]{64}$/);
     expect(address.encryptionPublicKey).toMatch(/^[0-9a-f]{64}$/);
@@ -127,11 +127,11 @@ describe('X8 §2 — the address comes from the wallet, and this side judges it'
 
   it('AN ADDRESS SOMEBODY TYPED IS NOT ONE THE WALLET WORKED OUT', async () => {
     /*
-     * **THIS IS `C153`'s PASTED BOX, ARRIVING WITH A SIGNATURE ROUND IT.**
+     * **THIS IS THE PASTED BOX AGAIN, ARRIVING WITH A SIGNATURE ROUND IT.**
      *
      * The value is a perfectly good shielded address of the very subwallet that
      * signed — everything else about the message is correct — and it is marked
-     * `self`, which means a person typed it. Accepting it would keep `X7`'s
+     * `self`, which means a person typed it. Accepting it would keep that
      * precedent alive with wallet chrome around it, and harder to argue with
      * for being signed.
      */
@@ -148,14 +148,13 @@ describe('X8 §2 — the address comes from the wallet, and this side judges it'
 
   it('AND A PUBLIC ADDRESS IS ADMITTED, WITH ITS KIND READ OFF THE STRING', async () => {
     /*
-     * **THIS TEST USED TO ASSERT THE OPPOSITE, AND THE REVERSAL IS `S12`.**
-     * `C250`, `V-105`.
+     * **THIS TEST USED TO ASSERT THE OPPOSITE.**
      *
      * It read *AND AN UNSHIELDED ADDRESS IS NOT A PAYEE ADDRESS* and expected
-     * `not-a-payee-address`, because until this round the only thing anybody
-     * could be paid was a private address. **A company paying its own public
-     * address is a real movement** and a vendor may want public
-     * settlement, so this door takes either.
+     * `not-a-payee-address`, because the only thing anybody could be paid used
+     * to be a private address. **A company paying its own public address is a
+     * real movement** and a vendor may want public settlement, so this door
+     * takes either.
      *
      * **NOBODY IS ASKED WHICH KIND IT IS.** The type segment the platform put
      * in the string decides, so a screen cannot offer the question and an

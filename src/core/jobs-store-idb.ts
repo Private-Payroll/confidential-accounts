@@ -1,5 +1,5 @@
 /**
- * IndexedDB, which is the store the browser actually gets. Decision 0008, M-79.
+ * IndexedDB, which is the store the browser actually gets. Decision 0008.
  *
  * `WebStorageKeyValue` exists in `jobs-store.ts` and is deliberately labelled as
  * NOT the recommended browser backend: `localStorage` is capped at a few

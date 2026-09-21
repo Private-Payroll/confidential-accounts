@@ -393,7 +393,7 @@ export interface PendingSignerPayload {
 export interface SealedAccount {
   id: string;
   createdAt: string;
-  /** Which viewing key sealed this. Advances on rotation (K-4). */
+  /** Which viewing key sealed this. Advances on rotation. */
   keyEpoch: number;
   /** Public on chain. Written from the sealed policy, which is the one copy. */
   threshold: number;
@@ -521,11 +521,12 @@ export interface StateBlinding {
   /**
    * The account's asset blinding. Constant for the life of the account.
    *
-   * NOT rotated by K-4, and this is the one exception to "rotation re-seals
-   * everything". Every change commitment a signer has already approved names
-   * its asset as `assetKeyOf(assetId, this)`, so changing it would make a run
-   * one signature from settling impossible to present at a vault. Rotation
-   * changes who can READ the blinding; it must not change the blinding.
+   * NOT rotated when the locks change, and this is the one exception to
+   * "rotation re-seals everything". Every change commitment a signer has
+   * already approved names its asset as `assetKeyOf(assetId, this)`, so
+   * changing it would make a run one signature from settling impossible to
+   * present at a vault. Rotation changes who can READ the blinding; it must not
+   * change the blinding.
    */
   assetBlinding: Hex;
   /**
@@ -870,7 +871,7 @@ export interface SealedEmployee {
   id: string;
   accountId: string;
   /**
-   * THE DROP BOX. A-2, and the same construction as a pending signer's.
+   * THE DROP BOX, and the same construction as a pending signer's.
    *
    * The employee has no viewing key and must never have one, so they cannot
    * write into the sealed roster themselves. They post here instead — sealed to
@@ -892,7 +893,7 @@ export interface SealedEmployee {
   wrappingPublicKey: Hex | null;
   /** Operational, and needed to filter a run without opening every record. */
   status: 'active' | 'pending' | 'leaver';
-  /** Which viewing key sealed this. Advances on rotation (K-4). */
+  /** Which viewing key sealed this. Advances on rotation. */
   keyEpoch: number;
   /** name, email, title, salary, currency, startDate. Nothing else. */
   sealed: Sealed;

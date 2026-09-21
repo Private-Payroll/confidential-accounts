@@ -1,11 +1,11 @@
 /**
- * **THE TEST IS THE DELIVERABLE OF `C325`, NOT THE FIX.**
+ * **THE TEST IS THE DELIVERABLE HERE, NOT THE FIX.**
  *
  * The property: a stored `Signer.leafCommitment` that disagrees with the leaf
  * the owning device computes is REFUSED, in its own sentence, distinguishable
  * from the two neighbouring states it is not.
  *
- * **`C306` IS WHY THE EXPECTED VALUES DO NOT COME THROUGH THE CODE UNDER TEST.**
+ * **THE EXPECTED VALUES DELIBERATELY DO NOT COME THROUGH THE CODE UNDER TEST.**
  * A test whose two sides both come from the same function passes for every
  * value of that function, and it cost two money rules their only guard. So:
  *
@@ -19,10 +19,10 @@
  *     this repository produced.
  *
  * **AND THE INDEPENDENT IMPLEMENTATION IS ALSO A GUARD, DELIBERATELY.** If a
- * later round moves `SimulatedCommitments.signerLeaf`, `agrees on a seat this
- * device really owns` goes red — which is precisely the alarm `C325` exists
- * for. `S32` moved the CONTRACT's `signerLeaf` and nothing anywhere went red,
- * and that silence is the whole row.
+ * later change moves `SimulatedCommitments.signerLeaf`, `agrees on a seat this
+ * device really owns` goes red — which is precisely the alarm this file exists
+ * to raise. The CONTRACT's `signerLeaf` was moved once with nothing anywhere
+ * going red, and that silence is the reason.
  *
  * ---
  *
@@ -39,8 +39,8 @@
  *     non-default one is reproduced rather than reported as a mismatch.
  *
  *   · **THE SOURCE PIN OVER `src/web/App.tsx` IS DELETED, NOT DOUBLED.**
- *     It asserted that `openAccount` called the check exactly once,
- *     and `S34` found the fourth defeat its own comment predicted: `loadDemo`
+ *     It asserted that `openAccount` called the check exactly once, and then
+ *     the fourth defeat its own comment predicted turned up: `loadDemo`
  *     built a session without entering `openAccount` at all, so a second door
  *     into the product skipped the refusal with the pin green. What replaces it
  *     is `seatOnThisDevice`, whose result `Session` requires and whose brand is
@@ -91,8 +91,8 @@ const ALL_VAULTS = bytesToHex(sha256(new TextEncoder().encode('midnight-accounts
  *
  *   signerPublicKey(sk) = hmac(sha256, sk, "simulated-signer-pk")
  *
- * Deliberately unlike the contract's `persistentHash([tag, sk])` — `S32`'s rule
- * that the simulated scheme must never agree with the chain's.
+ * Deliberately unlike the contract's `persistentHash([tag, sk])` — the
+ * simulated scheme must never agree with the chain's.
  */
 const independentPk = (secretHex: string): string =>
   bytesToHex(hmac(sha256, hexToBytes(secretHex), new TextEncoder().encode('simulated-signer-pk')));
@@ -143,8 +143,7 @@ describe('the stored signer leaf, against the device that has to reproduce it', 
   });
 
   it('refuses a leaf that agrees for 62 of its 64 characters', () => {
-    /* `C320`'s test-coverage pass finding, applied here before an auditor has to:
-     * a comparison that reads one character passes every fixture that differs
+    /* A comparison that reads one character passes every fixture that differs
      * everywhere. This one differs in the last two. */
     const real = independentFrom(SIGNING_SECRET, BLINDING);
     const nearly = real.slice(0, 62) + (real.endsWith('00') ? '11' : '00');
@@ -157,11 +156,11 @@ describe('the stored signer leaf, against the device that has to reproduce it', 
 
   it('REFUSES when the blinding on this device is not the one the leaf was built from', () => {
     /* **THE REALISTIC CASE, AND EVERY OTHER TEST HERE VARIES THE STORED SIDE.**
-     * `S33`'s test-coverage pass mutated the derivation to ignore `device.blinding`
-     * entirely and thirteen tests stayed green, because one device was used
-     * throughout. A blinding restored from the wrong backup, or lost and
-     * replaced, is what `C325` is actually about: the record is right, the
-     * device is not, and the seat is dead either way. */
+     * Mutating the derivation to ignore `device.blinding` entirely once left
+     * thirteen tests green, because one device was used throughout. A blinding
+     * restored from the wrong backup, or lost and replaced, is what this check
+     * is actually about: the record is right, the device is not, and the seat
+     * is dead either way. */
     const stored = independentFrom(SIGNING_SECRET, BLINDING);
     const restoredWrong = { signingSecret: SIGNING_SECRET, blinding: OTHER_BLINDING };
 
@@ -186,9 +185,9 @@ describe('the stored signer leaf, against the device that has to reproduce it', 
   });
 
   it('refuses a roster substituted whole, because the key is DERIVED and not read', () => {
-    /* `C323`: a check that compares two stored claims agrees with a record
-     * that was replaced in its entirety. The stored leaf here is a real leaf —
-     * a STRANGER'S — computed over this device's own blinding, so only a check
+    /* A check that compares two stored claims agrees with a record that was
+     * replaced in its entirety. The stored leaf here is a real leaf — a
+     * STRANGER'S — computed over this device's own blinding, so only a check
      * that derives the public key from THIS device's secret can tell. */
     const strangers = independentFrom(STRANGER_SECRET, BLINDING);
 
@@ -211,11 +210,10 @@ describe('the stored signer leaf, against the device that has to reproduce it', 
   });
 
   it('agrees on a stored leaf recorded in UPPER case', () => {
-    /* `S31`'s test-coverage pass finding, applied here before an auditor has to:
-     * dropping `.toLowerCase()` survived every mutation there because every
-     * fixture was already lower case, and what it costs on a real record is a
-     * present, correct leaf reported as a mismatch — a lockout invented by the
-     * check that exists to prevent one. */
+    /* Dropping `.toLowerCase()` once survived every mutation elsewhere because
+     * every fixture was already lower case, and what it costs on a real record
+     * is a present, correct leaf reported as a mismatch — a lockout invented by
+     * the check that exists to prevent one. */
     const stored = independentFrom(SIGNING_SECRET, BLINDING).toUpperCase();
     expect(stored).not.toBe(independentFrom(SIGNING_SECRET, BLINDING));
 
@@ -225,7 +223,7 @@ describe('the stored signer leaf, against the device that has to reproduce it', 
     expect(() => requireOwnLeaf(reading)).not.toThrow();
   });
 
-  it('says no-stored-leaf for a signer created before M-13, and does not refuse', () => {
+  it('says no-stored-leaf for a signer created before leaves were recorded, and does not refuse', () => {
     const reading = ownLeafReading(seatWith(null), device, SimulatedCommitments);
 
     expect(reading.verdict).toBe('no-stored-leaf');
@@ -238,8 +236,9 @@ describe('the stored signer leaf, against the device that has to reproduce it', 
   it('says no-seat when the roster holds no signer with this id, and does not refuse', () => {
     /* `App.tsx` finds the seat by id and can miss — a removed signer, a stale
      * keyring entry. Calling that "no stored leaf" would tell somebody their
-     * seat predates M-13 when the truth is they have no seat, and the two have
-     * different remedies. `refFor` says "not a signer on this account". */
+     * seat predates recorded leaves when the truth is they have no seat, and
+     * the two have different remedies. `refFor` says "not a signer on this
+     * account". */
     const reading = ownLeafReading(undefined, device, SimulatedCommitments);
 
     expect(reading.verdict).toBe('no-seat');
@@ -262,7 +261,7 @@ describe('the stored signer leaf, against the device that has to reproduce it', 
     /* An entry exists for this seat and it cannot produce a leaf. That is a
      * device holding a seat it can never prove — `disagrees` arriving by the
      * other door — and passing it would show an active signer whose every
-     * approval fails inside a proof, which is M-69's defect. */
+     * approval fails inside a proof: the defect, not the safe state. */
     for (const held of [
       { signingSecret: '', blinding: BLINDING },
       { signingSecret: SIGNING_SECRET, blinding: 'not-hex' },
@@ -307,18 +306,19 @@ describe('the stored signer leaf, against the device that has to reproduce it', 
     expect(message).toContain('sgn_abcdefghij');
     /* **EACH VALUE UNDER ITS OWN LABEL**, not merely present somewhere. The two
      * remedies invert with the labels — restore this device's bundle, or
-     * replace the seat — so a message that swaps them is `C320`'s confusion
-     * with extra steps, and `toContain` on both halves cannot see it. */
+     * replace the seat — so a message that swaps them is one refusal mistaken
+     * for its neighbour with extra steps, and `toContain` on both halves cannot
+     * see it. */
     expect(message).toMatch(new RegExp('roster records\\s+' + stored.slice(0, 16)));
     expect(message).toMatch(new RegExp('device computes\\s+' + reading.derived!.slice(0, 16)));
-    /* It denies them rather than being silent about them — `C320`'s rule that a
-     * refusal which could be mistaken for its neighbour is the defect. */
+    /* It denies them rather than being silent about them, because a refusal
+     * which could be mistaken for its neighbour is the defect. */
     expect(message).toContain('NOT the case of no keys being saved for this company');
     expect(message).toContain('this seat has no leaf');
     /* And it does not promise a door that does not exist. */
     expect(message).toMatch(/NO DOOR THAT REPAIRS A RECORDED LEAF IN PLACE/);
-    /* Rule 19: it names a door that resolves it, and says plainly when neither
-     * door applies rather than sending somebody to one that cannot work. */
+    /* It names a door that resolves it, and says plainly when neither door
+     * applies rather than sending somebody to one that cannot work. */
     expect(message).toMatch(/restoring the key bundle/);
     expect(message).toMatch(/IF EVERY DEVICE ON THIS ACCOUNT REPORTS THIS/);
     expect(message).toMatch(/NOTHING WAS PROVED, NOTHING WAS SUBMITTED AND NOTHING WAS WRITTEN/);
@@ -327,12 +327,12 @@ describe('the stored signer leaf, against the device that has to reproduce it', 
   it('survives the redaction every shown error goes through', () => {
     /*
      * **THE SIXTEEN CHARACTERS ARE LOAD-BEARING AND NOTHING SAID SO.**
-     * Every sentence this application shows goes through
-     * `shownError`, which redacts any run of 32-or-more hex characters before
-     * a person or a report sees it. A refusal printing 32 — never mind the
-     * whole 64 — reaches the screen as `<redacted:hex>` and tells the person
-     * nothing, which is the exact opposite of a refusal that says which case
-     * they are in. Measured by `S33`'s test-coverage pass, pinned here.
+     * Every sentence this application shows goes through `shownError`, which
+     * redacts any run of 32-or-more hex characters before a person or a report
+     * sees it. A refusal printing 32 — never mind the whole 64 — reaches the
+     * screen as `<redacted:hex>` and tells the person nothing, which is the
+     * exact opposite of a refusal that says which case they are in. Measured,
+     * and pinned here.
      */
     const stored = HAND_BUILT;
     const reading = ownLeafReading(seatWith(stored), device, SimulatedCommitments);
@@ -355,11 +355,11 @@ describe('the stored signer leaf, against the device that has to reproduce it', 
      * DELETED RATHER THAN LEFT BESIDE IT.**
      *
      * The pin asserted that `openAccount` called the check exactly once, with
-     * the text stripped of comments. It could not see semantics: its own
-     * round's test-coverage pass defeated the first version three ways with the
-     * text intact, and `S34` found the fourth without looking — `loadDemo`
-     * built a `Session` without entering `openAccount`, so the pin counted
-     * calls in one function while a second door skipped the refusal entirely.
+     * the text stripped of comments. It could not see semantics: the first
+     * version was defeated three ways with the text intact, and a fourth turned
+     * up without anyone looking — `loadDemo` built a `Session` without entering
+     * `openAccount`, so the pin counted calls in one function while a second
+     * door skipped the refusal entirely.
      *
      * What is asserted here instead is the thing the screen cannot get around:
      * `Session.seat` is a `SeatOnThisDevice`, its brand is a symbol
@@ -378,8 +378,8 @@ describe('the stored signer leaf, against the device that has to reproduce it', 
   it('seatOnThisDevice carries the verdict for the four states that are allowed to pass', () => {
     /* It is not a claim that the seat can act — `refFor` is what refuses at the
      * moment of acting, and locking somebody out of READING their own company
-     * would be the new lockout `C325`'s round existed to avoid. So the token
-     * says which of the four a person is in rather than asserting one. */
+     * would be the very lockout this check exists to avoid. So the token says
+     * which of the four a person is in rather than asserting one. */
     const owned = independentFrom(SIGNING_SECRET, BLINDING);
     expect(seatOnThisDevice(seatWith(owned), device, SimulatedCommitments).verdict).toBe('agrees');
     expect(seatOnThisDevice(seatWith(null), device, SimulatedCommitments).verdict)
@@ -395,11 +395,11 @@ describe('the stored signer leaf, against the device that has to reproduce it', 
    * THE PUBLIC HALF IS THE SCHEME'S AND NOT THE CURVE'S.
    * ------------------------------------------------------------------ */
 
-  it('does NOT compute the leaf the old writers wrote, which is the whole of C328', () => {
+  it('does NOT compute the leaf the old writers wrote', () => {
     /*
-     * **THE REGRESSION GUARD FOR THE DEFECT THIS ROUND EXISTS TO FIX.**
+     * **THE REGRESSION GUARD FOR THE DEFECT THIS FILE EXISTS TO CATCH.**
      *
-     * Until `S34` both product writers passed `ed25519.getPublicKey(sk)` as the
+     * Both product writers used to pass `ed25519.getPublicKey(sk)` as the
      * public half, while the contract's `requireSigner()` looks for a leaf over
      * `signerPublicKey(sk)` — a domain-separated hash of the SECRET. Different,
      * uncorrelated 32 bytes, so every seat this product had written was one no
@@ -439,13 +439,12 @@ describe('the stored signer leaf, against the device that has to reproduce it', 
 
   it('a leaf stored under a NON-DEFAULT scope is not reported as a mismatch', () => {
     /*
-     * **`T-116`'s *Done when*, and the day it was written for.** `S33` left a
-     * note in `signer-leaf.ts` saying the check derived under the scheme's
-     * `allVaults()` default because both writers passed two arguments, and that
-     * **nothing would go red the day a writer passed one explicitly** — the
-     * first seat written under a per-vault scope would be a seat its own device
-     * could not reproduce, and the check would invent the lockout it exists to
-     * prevent.
+     * **THE DAY THIS WAS WRITTEN FOR.** The check used to derive under the
+     * scheme's `allVaults()` default because both writers passed two arguments,
+     * and **nothing would have gone red the day a writer passed one
+     * explicitly** — the first seat written under a per-vault scope would be a
+     * seat its own device could not reproduce, and the check would invent the
+     * lockout it exists to prevent.
      *
      * The scope now travels with the device's material, from the same place the
      * writer took it. This is the assertion that it does.
@@ -455,8 +454,8 @@ describe('the stored signer leaf, against the device that has to reproduce it', 
 
     const stored = independentFrom(SIGNING_SECRET, BLINDING, PER_VAULT);
     /* It really is a different leaf — otherwise this test would pass for a
-     * derivation that dropped the scope entirely, which is `S33`'s
-     * test-coverage pass finding about the blinding, one argument along. */
+     * derivation that dropped the scope entirely, which is the same defect
+     * already found for the blinding, one argument along. */
     expect(stored).not.toBe(independentFrom(SIGNING_SECRET, BLINDING));
 
     const scoped = { signingSecret: SIGNING_SECRET, blinding: BLINDING, scope: PER_VAULT };
@@ -476,11 +475,11 @@ describe('the stored signer leaf, against the device that has to reproduce it', 
     expect(() => requireOwnLeaf(reading)).toThrow(/COMPUTES A DIFFERENT LEAF/);
   });
 
-  it('an absent scope means allVaults(), which is what every seat before S34 was made under', () => {
-    /* A bundle sealed before `S34` has no scope field. Reading a missing value
-     * as anything but the scheme's default would report every one of those
-     * seats as a mismatch — the same invented lockout, arriving on an upgrade
-     * instead of on a feature. */
+  it('an absent scope means allVaults(), which is what every seat before the scope existed was made under', () => {
+    /* A bundle sealed before the scope existed has no scope field. Reading a
+     * missing value as anything but the scheme's default would report every one
+     * of those seats as a mismatch — the same invented lockout, arriving on an
+     * upgrade instead of on a feature. */
     const stored = independentFrom(SIGNING_SECRET, BLINDING, ALL_VAULTS);
     expect(ownLeafReading(seatWith(stored), device, SimulatedCommitments).verdict).toBe('agrees');
     expect(ownLeafReading(
@@ -494,18 +493,19 @@ describe('the stored signer leaf, against the device that has to reproduce it', 
 
   it('derives what SimulatedCommitments derives, by a route that does not call it', () => {
     /* The two sides of this one are the scheme and a reimplementation of its
-     * documented construction. It is the guard `S32` did not have: a round that
-     * moves the client derivation turns this red, and every leaf already stored
-     * under the old one is unreproducible from that moment.
+     * documented construction. It is the guard that was missing the last time
+     * a derivation moved: a change that moves the client derivation turns this
+     * red, and every leaf already stored under the old one is unreproducible
+     * from that moment.
      *
      * The CONTRACT's `signerLeaf` has no pinned vector and is not pinned here
-     * either — reading it needs the live circuit, which is not a session's
-     * (`contracts/test/commitments.test.ts:583`, and it is owed there). */
+     * either — reading it needs the live circuit, which is out of reach from
+     * here (`contracts/test/commitments.test.ts:583`, and it is owed there). */
     const pk = SimulatedCommitments.signerPublicKey(SIGNING_SECRET);
     expect(SimulatedCommitments.signerLeaf(pk, BLINDING)).toBe(independentLeaf(pk, BLINDING));
-    /* And with the third argument passed, which is what both writers do since
-     * The defaulted and the explicit call must be the same value or
-     * every seat written before this round is unreproducible. */
+    /* And with the third argument passed, which is what both writers now do.
+     * The defaulted and the explicit call must be the same value or every seat
+     * written before the third argument existed is unreproducible. */
     expect(SimulatedCommitments.signerLeaf(pk, BLINDING, SimulatedCommitments.allVaults()))
       .toBe(independentLeaf(pk, BLINDING));
   });

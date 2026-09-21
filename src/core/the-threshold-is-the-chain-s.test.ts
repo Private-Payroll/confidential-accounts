@@ -10,8 +10,8 @@ import { sign, newSigningKeypair, newWrappingKeypair } from './crypto.js';
 import type { Account } from './types.js';
 
 /**
- * **R4 — THE BAR AND THE COUNT BOTH COME FROM THE LEDGER, AND NOT KNOWING IS
- * ITS OWN ANSWER.**
+ * **THE BAR AND THE COUNT BOTH COME FROM THE LEDGER, AND NOT KNOWING IS ITS OWN
+ * ANSWER.**
  *
  * Two claims are under test here and they fail in opposite directions, which is
  * why they are in one file:
@@ -33,32 +33,30 @@ import type { Account } from './types.js';
  * this service asks, that it asks once, and that it has no path left by which
  * a local number can answer instead.
  *
- * ── WHAT `S28` REWROTE, AND WHAT IT COULD NOT GET BACK. ──
+ * ── WHAT THE REWRITE COULD NOT GET BACK. ──
  *
- * This file was moved out whole by `C292`/`S26` and its five tests went with
- * it. `T-59`'s finding was that the deletion took things whose subject was
- * never the account balance: the register calls it *"the danger is deleting one
- * that was testing something else"*, materialised. Every test below was
- * survivable by dropping ONE `deposit` line, which is what `fundedAccount` did
- * and what `openAccountAt2of3` does instead.
+ * This file was moved out whole and its five tests went with it. The deletion
+ * took things whose subject was never the account balance, which is the danger
+ * in deleting a test: deleting one that was testing something else. Every test
+ * below was survivable by dropping ONE `deposit` line, which is what
+ * `fundedAccount` did and what `openAccountAt2of3` does instead.
  *
  * **WHAT DOES NOT COME BACK IS THE SECOND WITNESS.** Each test used to end by
  * calling `AccountService.execute` and reading its refusal — *"cannot tell
  * whether this round has reached its threshold"* against *"proposal is open,
  * not approved"*, two different sentences for two different situations.
- * `C292` deleted `execute`, and that sentence now exists nowhere in `src/`. So
+ * `execute` was deleted, and that sentence now exists nowhere in `src/`. So
  * the distinction is asserted where it is still observable — on the
  * `approvalRound` the service records — and NOT at a refusal, because there is
  * no longer a call that refuses.
  *
- * **THE HONEST COST OF THAT, STATED RATHER THAN LEFT TO BE FOUND** (rule 27):
- * the outcome is recorded correctly and nothing downstream is yet obliged to
- * act on it. `src/web/App.tsx` renders `p.approvals.length` against
- * `account.policy.threshold` — the two numbers `R4` removed from the decision —
- * so a company looking at a screen during a chain outage is still shown "1 of
- * 2" and an enabled Approve button. **That is `C304`'s stated failure standing
- * today at the screen layer, and no test here can reach it.** It is a screen,
- * and screens are not this round.
+ * **THE HONEST COST OF THAT, STATED RATHER THAN LEFT TO BE FOUND:** the outcome
+ * is recorded correctly and nothing downstream is yet obliged to act on it.
+ * `src/web/App.tsx` renders `p.approvals.length` against
+ * `account.policy.threshold` — the two numbers removed from the decision — so a
+ * company looking at a screen during a chain outage is still shown "1 of 2" and
+ * an enabled Approve button. **That failure stands today at the screen layer,
+ * and no test here can reach it.**
  */
 
 /** Ada proposes and approves; Blake and Cleo approve. Threshold 2 of 3. */
@@ -126,13 +124,13 @@ const entry = (amount: bigint) => ({
  * No test in this file ever read that balance: the amounts below are what a
  * proposal SAYS it moves, and a proposal says that whether or not anything is
  * there. Renamed rather than left with a name that describes a deposit nobody
- * makes — `T-58`'s first file is what a stale helper name costs.
+ * makes, because a stale helper name is read as a true description of it.
  */
 async function openAccountAt2of3(h: ReturnType<typeof harness>) {
   return h.accounts.create('Acme', THREE, 2);
 }
 
-describe('R4: a small payment is still a payment', () => {
+describe('a small payment is still a payment', () => {
   it('needs the full threshold at one penny, which is as small as it gets', async () => {
     const h = harness();
     const { account, viewingKey, secrets } = await openAccountAt2of3(h);
@@ -166,10 +164,9 @@ describe('R4: a small payment is still a payment', () => {
      * `Policy.threshold` is what `evaluatePolicy` used to compare against, and
      * it is the field an operator could reach. The ledger was opened at 2 and
      * stays at 2; the sealed policy is edited to 1 by somebody holding the
-     * viewing key, which is precisely the authority `C121` and `C171` are
-     * about. One approval must still not be enough — and the recorded outcome
-     * must report `threshold: 2`, the ledger's, not the 1 sitting in our own
-     * record.
+     * viewing key. One approval must still not be enough — and the recorded
+     * outcome must report `threshold: 2`, the ledger's, not the 1 sitting in
+     * our own record.
      *
      * The `execute` refusal that closed this test is gone with the circuit.
      * What survives is stronger than it looks: `threshold: 2` in the outcome is
@@ -202,7 +199,7 @@ describe('R4: a small payment is still a payment', () => {
   });
 });
 
-describe('R4: "we do not know" is not "not enough approvals"', () => {
+describe('"we do not know" is not "not enough approvals"', () => {
   /** Drives a round to the ledger's full threshold. Returns the last proposal seen. */
   async function twoApprovals(h: ReturnType<typeof harness>) {
     const { account, viewingKey, secrets } = await openAccountAt2of3(h);
@@ -277,7 +274,7 @@ describe('R4: "we do not know" is not "not enough approvals"', () => {
 });
 
 /**
- * THE APPROVAL IS BURNT ON CHAIN BEFORE ANYTHING DURABLE
+ * **THE APPROVAL IS BURNT ON CHAIN BEFORE ANYTHING DURABLE
  * IS WRITTEN, AND A THROW IN BETWEEN LOSES IT.**
  *
  * This file already owns the case where the status read ANSWERS BADLY — `null`,
@@ -289,7 +286,7 @@ describe('R4: "we do not know" is not "not enough approvals"', () => {
  * the chain has already burnt.
  *
  * **WHY THE SIGNER CANNOT SIMPLY TRY AGAIN, WHICH IS THE HALF THAT MAKES IT
- * `P1`.** The retry reads the durable record, finds no approval of theirs,
+ * PERMANENT.** The retry reads the durable record, finds no approval of theirs,
  * passes the guard, and calls `ledger.approve` a second time — where the chain
  * refuses on the nullifier it already holds
  * (`src/core/ledger.ts:1498`, *"you have already approved this proposal"*).
@@ -297,7 +294,7 @@ describe('R4: "we do not know" is not "not enough approvals"', () => {
  * changes it.**
  *
  * **THE FIX IS A REORDER AND NOT A RETRY, AND BOTH HALVES ARE ASSERTED BELOW.**
- * `R6`'s rule is stated two files over — *"an operation with two halves is one
+ * The rule is stated two files over — *"an operation with two halves is one
  * transaction or it refuses"* (`src/core/ledger.ts:1511`) — and the two
  * halves here are *this signature counts* and *this round now stands at N of
  * M*. Only the second needs the chain read. So the first is written the instant
@@ -312,7 +309,7 @@ describe('R4: "we do not know" is not "not enough approvals"', () => {
  * died at the chain and never reached a re-read. The two halves of this fix are
  * one mechanism, which is why they are one test file.
  */
-describe('C377: a burnt approval survives a throw between the chain and the record', () => {
+describe('a burnt approval survives a throw between the chain and the record', () => {
   /**
    * A ledger whose `status` throws exactly once, on the call the test arms it
    * for, and works before and after.
@@ -351,7 +348,7 @@ describe('C377: a burnt approval survives a throw between the chain and the reco
 
   it('keeps the approval when the status read throws, so the retry is not refused for ever', async () => {
     /*
-     * `C377`'s first half in one sequence. Blake's approval is burnt on chain;
+     * The first half in one sequence. Blake's approval is burnt on chain;
      * the read after it throws; `approve` rejects. **The assertion that matters
      * is taken from the STORE afterwards** — a fresh read through
      * `listProposals`, not the object the call was working on, because an
@@ -379,13 +376,13 @@ describe('C377: a burnt approval survives a throw between the chain and the reco
      * end of the round.** The reconcile runs first and the record catches up to
      * the two approvals the chain has held all along.
      *
-     * **THE MESSAGE IS ANCHORED, AND `S52`'s test-coverage pass IS WHY.** An
-     * unanchored `/already approved/` also matches the LEDGER's *"you have
-     * already approved this proposal"* (`src/core/ledger.ts:1498`) — which is
-     * what the pre-fix code threw, from the chain, having reached it precisely
-     * because the record held nothing. So the loose form passed against the
-     * defect and the assertion was decorative. `^…$` is what makes it the
-     * SERVICE's refusal, reached from a record that now knows.
+     * **THE MESSAGE IS ANCHORED, AND THE LOOSE FORM IS WHY.** An unanchored
+     * `/already approved/` also matches the LEDGER's *"you have already
+     * approved this proposal"* (`src/core/ledger.ts:1498`) — which is what the
+     * pre-fix code threw, from the chain, having reached it precisely because
+     * the record held nothing. So the loose form passed against the defect and
+     * the assertion was decorative. `^…$` is what makes it the SERVICE's
+     * refusal, reached from a record that now knows.
      */
     const { n, bend } = node();
     const h = harness(bend);
@@ -411,9 +408,8 @@ describe('C377: a burnt approval survives a throw between the chain and the reco
      * **THE CLAIM THIS PINS IS ONE `approve` MAKES IN ITS OWN WORDS** — *"AND
      * IT DOES NOT SWALLOW A THROW. If the chain is still unreachable this
      * rejects, and the signer is told that rather than told they have already
-     * approved"* — and until `S52`'s test-coverage pass said so, nothing checked
-     * it: a `try { … } catch { }` around the reconcile left the whole file
-     * green.
+     * approved"* — and nothing checked it until this case was written: a
+     * `try { … } catch { }` around the reconcile left the whole file green.
      *
      * The earlier stub could not reach this at all: it cleared itself inside
      * the throw, so the retry's read always succeeded and **the reconcile's
@@ -448,11 +444,10 @@ describe('C377: a burnt approval survives a throw between the chain and the reco
     /*
      * **THE GATE, BOTH CONJUNCTS, AND A READ COUNT IS WHAT MAKES THEM
      * VISIBLE.** The reconcile is gated on *this signer has already approved*
-     * AND *the round still reads open*. `S52`'s test-coverage pass measured that
-     * dropping the second conjunct left every test green, so nothing held it
-     * down — and a reconcile that ran on every call would put a SECOND chain
-     * read into every ordinary approval, which is `R4`'s one-read rule broken
-     * quietly.
+     * AND *the round still reads open*. Dropping the second conjunct was
+     * measured to leave every test green, so nothing held it down — and a
+     * reconcile that ran on every call would put a SECOND chain read into every
+     * ordinary approval, which is the one-read rule broken quietly.
      *
      * Two approvals, satisfied, so the round is `approved` and not `open`.
      * Blake asks again: he is refused, and the chain is not asked.
@@ -498,11 +493,11 @@ describe('C377: a burnt approval survives a throw between the chain and the reco
 
 
 /**
- * AND IT IS `C377`'s SHAPE WITH THE HALVES THE OTHER WAY ROUND,
+ * **AND IT IS THE SHAPE ABOVE WITH THE HALVES THE OTHER WAY ROUND,
  * WHICH IS WHY IT LIVES BESIDE IT.**
  *
- * `C377` is the burn landing and the record not: the chain half is
- * irrecoverable, so `S52` moved the write up against it and added a reconcile
+ * There the burn lands and the record does not: the chain half is
+ * irrecoverable, so the write was moved up against it and a reconcile added
  * whose trigger is the retrying signer.
  *
  * **HERE THE IRRECOVERABLE HALF IS THE OTHER ONE.** A chain round can be raised
@@ -512,12 +507,12 @@ describe('C377: a burnt approval survives a throw between the chain and the reco
  * FIRST, and what may be lost is the CONFIRMATION — which the chain can be
  * asked for, and which `approve` and `cancel` do ask for.
  *
- * **AND `S52`'s RECONCILE COULD NOT HAVE BEEN COPIED**: its trigger is a signer
+ * **AND THAT RECONCILE COULD NOT HAVE BEEN COPIED**: its trigger is a signer
  * whose nullifier is burnt and who must therefore come back. A proposer who
  * lost the write need never come back, and if they do, `newProposalSalt()`
  * gives them a different id and a second live round.
  */
-describe('C378: the record is written before the chain call, so a lost round is never invisible', () => {
+describe('the record is written before the chain call, so a lost round is never invisible', () => {
   /**
    * A service whose `propose` throws the FIRST time and passes through after
    * that, with a switch for whether the real call is made before the throw.
@@ -553,8 +548,8 @@ describe('C378: the record is written before the chain call, so a lost round is 
 
   it('keeps the proposal when the chain call throws, and says the chain has not confirmed it', async () => {
     /*
-     * **THIS IS THE ASSERTION THE ROW IS.** Before `S55` the write came after
-     * the call, so this rejection left *a proposal paid for, live on chain, and
+     * **THIS IS THE ASSERTION THAT MATTERS.** The write used to come after the
+     * call, so this rejection left *a proposal paid for, live on chain, and
      * with no durable record of any kind — the product cannot list it, approve
      * it or cancel it*. Delete the first `putProposal` in `AccountService.raise`
      * and `listProposals` below is empty again.
@@ -624,9 +619,6 @@ describe('C378: the record is written before the chain call, so a lost round is 
 
   it('REFUSES to cancel when the ledger did not answer, rather than clearing consent on a guess', async () => {
     /*
-     * **`P1`, FOUND BY THIS ROUND'S money-safety pass AGAINST THIS ROUND'S
-     * OWN FIX, BEFORE IT WAS WRITTEN UP.**
-     *
      * The first draft of `chainHolds` read `status?.openProposals` and returned
      * on a `null`. **`null` IS NOT ABSENCE.** `SimulatedLedger.status` answers
      * `null` for an account it does not hold — after a restart that is EVERY
@@ -637,14 +629,14 @@ describe('C378: the record is written before the chain call, so a lost round is 
      * Read as absence, `cancel` took the local-only branch: the record became
      * `cancelled` and its `approvals` were CLEARED, while the chain went on
      * holding the round open with those approvals still counted. **A signer who
-     * withdrew would have had no record anywhere that they had.** That is
-     * `C382`'s injury reached by an operator action rather than by an attack,
-     * and it was a state the old order could not produce — the pre-`S55`
-     * `cancel` called `ledger.cancel` unconditionally and a chain that did not
-     * hold the round refused, leaving the record open and retryable.
+     * withdrew would have had no record anywhere that they had.** That injury
+     * is reached by an operator action rather than by an attack, and it was a
+     * state the old order could not produce — the earlier `cancel` called
+     * `ledger.cancel` unconditionally and a chain that did not hold the round
+     * refused, leaving the record open and retryable.
      *
-     * `R4`'s distinction, which this boundary already draws everywhere else:
-     * *it is not there* and *we could not find out* are different facts.
+     * The distinction this boundary already draws everywhere else: *it is not
+     * there* and *we could not find out* are different facts.
      */
     const store = new FileStore(join(mkdtempSync(join(tmpdir(), 'mn-c378-silent-')), 'db.json'));
     const inner: Ledger = new SimulatedLedger(SimulatedCommitments);
@@ -696,20 +688,19 @@ describe('C378: the record is written before the chain call, so a lost round is 
     /*
      * `approvedFor` sorted *newest first: a re-proposal after a failed attempt
      * is the live one*, and that sentence was TRUE precisely because a failed
-     * attempt left no record. `C378`'s fix inverts the premise. A governance
+     * attempt left no record. The new order inverts the premise. A governance
      * digest is a pure function of the change, so the phantom collides with the
      * genuinely approved round for the same change, carries a later
      * `createdAt`, and would be handed to the ledger — pointing an apply door at
      * an id no chain holds, with no screen able to say which row is which.
      *
-     * **THIS PARAGRAPH NAMED TWO CALLERS AND THE CASE BELOW DRIVES A THIRD,
-     * WHICH IS `T-332` AND IS CORRECTED HERE.** `approvedFor` has FOUR
-     * callers — `grantAccess`, `setThreshold`, `setVaultThreshold` and
-     * `removeSigner` — and every one is order-dependent. The two this
-     * paragraph named are the two with NO product route today; the one it
-     * drives, `setVaultThreshold`, has one; and `grantAccess`, which has two,
-     * was named by nothing and driven by nothing. **The case beneath this one
-     * drives `grantAccess`.**
+     * **THIS PARAGRAPH NAMED TWO CALLERS, THE CASE BELOW DRIVES A THIRD, AND
+     * THE COUNT IS CORRECTED HERE.** `approvedFor` has FOUR callers —
+     * `grantAccess`, `setThreshold`, `setVaultThreshold` and `removeSigner` —
+     * and every one is order-dependent. The two this paragraph named are the
+     * two with NO product route today; the one it drives, `setVaultThreshold`,
+     * has one; and `grantAccess`, which has two, was named by nothing and
+     * driven by nothing. **The case beneath this one drives `grantAccess`.**
      *
      * Make `b.createdAt.localeCompare(a.createdAt)` the only sort key again and
      * this case goes red.
@@ -763,7 +754,7 @@ describe('C378: the record is written before the chain call, so a lost round is 
       .toEqual([{ vault: VAULT, threshold: 2 }]);
   });
 
-  it('and `grantAccess` reaches the APPROVED round too, not the phantom — `T-332`, `S58`', async () => {
+  it('and `grantAccess` reaches the APPROVED round too, not the phantom', async () => {
     /*
      * **THE CALLER WITH TWO PRODUCT ROUTES, AND IT WAS THE ONE NOTHING DROVE.**
      * The case above drives `setVaultThreshold`; the description above

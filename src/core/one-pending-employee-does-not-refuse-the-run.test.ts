@@ -1,8 +1,7 @@
 /**
- * **ONE PENDING EMPLOYEE MUST NOT REFUSE THE WHOLE PAYROLL RUN.** `T-650`,
- * board row `4a2`, and it is the founder's own question: *why should an
- * employee who has been sent an invite and is pending be able to freeze the
- * entire payroll?*
+ * **ONE PENDING EMPLOYEE MUST NOT REFUSE THE WHOLE PAYROLL RUN.** Why should
+ * an employee who has been sent an invite and is pending be able to freeze the
+ * entire payroll?
  *
  * ── WHAT EACH ASSERTION HERE IS FOR ─────────────────────────────────────────
  *
@@ -16,14 +15,14 @@
  *   3  the skip is RECORDED, through `run-skips.ts`, so somebody unpaid at the
  *      end of the month is a decision with a name on it rather than a gap
  *
- * **THE TWO THE BRIEF NAMES ARE `6` AND `7` IN
- * THE CORPUS OF DELIBERATE DEFECTS** — the run helping itself to an
- * acknowledgement nobody gave, and the two pending reasons collapsing into one.
- * Each `it` below cites its corpus entry by NUMBER AND BY BINDING, because a
- * number alone drifts silently: the first draft of this file cited `1` and `2`
- * for defects that are `6` and `7`, and a test audit caught it. A run that
- * silently drops people while the suite stays green is the exact shape this
- * project has paid for before.
+ * **THE TWO THIS FILE WAS WRITTEN FOR ARE `6` AND `7` IN THE CORPUS OF
+ * DELIBERATE DEFECTS** — the run helping itself to an acknowledgement nobody
+ * gave, and the two pending reasons collapsing into one. Each `it` below cites
+ * its corpus entry by NUMBER AND BY BINDING, because a number alone drifts
+ * silently: the first draft of this file cited `1` and `2` for defects that
+ * are `6` and `7`, and the mistake was caught. A run that silently drops
+ * people while the suite stays green is the exact shape this project has paid
+ * for before.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtempSync } from 'node:fs';
@@ -59,7 +58,7 @@ function harness() {
   return { store, accounts, payroll, invites };
 }
 
-/** The invitee's own device seals the handover; a test has to seal too. `X11` §7. */
+/** The invitee's own device seals the handover; a test has to seal too. */
 const handedOver = (
   h: { store: DataStore },
   token: string,
@@ -81,7 +80,7 @@ const handedOver = (
 const someAddress = (byte: string) => payeeAddressFromKeys(
   { coinPublicKey: byte.repeat(32), encryptionPublicKey: byte.repeat(32) }, 'undeployed');
 
-describe('one pending employee does not refuse the whole run — T-650', () => {
+describe('one pending employee does not refuse the whole run', () => {
   let h: ReturnType<typeof harness>;
   beforeEach(() => { h = harness(); });
 
@@ -151,10 +150,10 @@ describe('one pending employee does not refuse the whole run — T-650', () => {
    * ── 3. THE TWO REASONS STAY TWO ───────────────────────────────────────────
    *
    * RED IF: the two groups are described in the same words — corpus mutation
-   * **7**, THE TWO PENDING STATES STAY TWO IN THE REFUSAL. `A-2`, `B15`. The
-   * record's half of the same split is watched by the case further down and by
-   * corpus mutation **4**; **either half can break while the other stays
-   * perfect**, which is why there are two mutations and two assertions.
+   * **7**, THE TWO PENDING STATES STAY TWO IN THE REFUSAL. The record's half of
+   * the same split is watched by the case further down and by corpus mutation
+   * **4**; **either half can break while the other stays perfect**, which is
+   * why there are two mutations and two assertions.
    */
   it('NAMES WHICH OF THE TWO THINGS IS WRONG WITH EACH PERSON, NEVER ONE WORD FOR BOTH', async () => {
     const { account, viewingKey } = await company();
@@ -225,7 +224,7 @@ describe('one pending employee does not refuse the whole run — T-650', () => {
      * **THE TWO REASONS ARE STILL TWO IN THE RECORD, AND THIS IS THE SECOND
      * PLACE THAT IS PINNED.** The refusal sentence is one; a mutation could
      * leave the sentence alone and collapse the record, and the report a person
-     * reads a month later is the record. `B15`.
+     * reads a month later is the record.
      */
     expect(skips.people.map(p => p.waiting)).toEqual(['them', 'us']);
 
@@ -285,21 +284,21 @@ describe('one pending employee does not refuse the whole run — T-650', () => {
   });
 
   /*
-   * ── 11. THE LIMIT THIS ROUND LEAVES, PINNED RATHER THAN DESCRIBED ─────────
+   * ── 11. THE LIMIT THAT REMAINS, PINNED RATHER THAN DESCRIBED ──────────────
    *
-   * `T-342` is not closed and this says so in a way that fails if somebody
-   * quietly assumes otherwise. The run's register is indexed over PEOPLE WITH
-   * NO LEAF and identified by the run's id; `runStatus`'s is indexed over a
-   * leg's payout leaves and identified by the proposal id it was raised under.
-   * **Handing one to the other is REFUSED and not misread**, which is the
-   * property that makes leaving them unjoined safe.
+   * The two registers are not joined, and this says so in a way that fails if
+   * somebody quietly assumes otherwise. The run's register is indexed over
+   * PEOPLE WITH NO LEAF and identified by the run's id; `runStatus`'s is
+   * indexed over a leg's payout leaves and identified by the proposal id it
+   * was raised under. **Handing one to the other is REFUSED and not misread**,
+   * which is the property that makes leaving them unjoined safe.
    */
   it('IS REFUSED BY THE REPORTING READER RATHER THAN MISREAD AS A LEG\'S SKIPS', async () => {
     /*
      * **ONE PERSON SKIPPED AND TWO PAID, ON PURPOSE.**
      *
-     * The first draft of this case skipped two and paid two, and a test audit
-     * was right about what that cost: `registerFor(decisions, run.id, 2)` then
+     * The first draft of this case skipped two and paid two, and that quietly
+     * cost this case its point: `registerFor(decisions, run.id, 2)` then
      * RETURNS the register, because the count it compares happens to match. The
      * count guard was being exercised against the literal `5`, a number no
      * caller would ever pass, while the number a real leg-reporting caller

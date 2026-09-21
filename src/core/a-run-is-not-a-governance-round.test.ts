@@ -1,7 +1,6 @@
 /**
  * **THE `Ledger` BOUNDARY CAN RAISE A PAYROLL RUN, AND A RUN IS NOT A
- * GOVERNANCE ROUND WITH A DIFFERENT NAME.** `C375`, `T-213`, board row
- * `2y7d4`.
+ * GOVERNANCE ROUND WITH A DIFFERENT NAME.**
  *
  * **WHY THIS FILE EXISTS BESIDE `contracts/test/the-payroll-run-meets-the-chain.test.ts`
  * RATHER THAN INSTEAD OF IT.** That file is the one that matters: it drives the
@@ -12,10 +11,10 @@
  * the ledger the product actually runs on tells the two kinds of round apart,
  * and refuses the four ways a run can be built that nobody could ever pay.
  *
- * **AND IT EXISTS BECAUSE `runWindows` HAD NO READER.** `S47`'s own
- * money-safety pass measured that the window write could be deleted with
- * the whole suite staying green — so the distinction was held up by the comment
- * asserting it. Rule 27, and the reason `runWindowOf` was added.
+ * **AND IT EXISTS BECAUSE `runWindows` HAD NO READER.** It was measured that
+ * the window write could be deleted with the whole suite staying green — so
+ * the distinction was held up by the comment asserting it. That is the reason
+ * `runWindowOf` was added.
  */
 import { describe, it, expect } from 'vitest';
 import {
@@ -53,7 +52,7 @@ const anAccount = async () => {
   return { ledger, by };
 };
 
-describe('C375: the boundary raises a run, and a run carries a window', () => {
+describe('the boundary raises a run, and a run carries a window', () => {
   it('THE DISTINCTION: a run gets a window row, a governance round gets none', async () => {
     const { ledger, by } = await anAccount();
 
@@ -67,7 +66,7 @@ describe('C375: the boundary raises a run, and a run carries a window', () => {
      * branch is the ONLY writer of `runWindow`
      * (`contracts/src/ConfidentialAccount.compact:2156`) and the governance
      * branch writes none at all — which is what `cancel` and `closeExpiredRun`
-     * read, and what `C375` was the absence of at this layer.
+     * read, and what this layer used to lack.
      */
     const g = change();
     const payload = toHex(randomBytes(32));
@@ -83,8 +82,8 @@ describe('C375: the boundary raises a run, and a run carries a window', () => {
     const raised = await ledger.proposeRun('acct', run(), c, by);
 
     /*
-     * Derived independently from the scheme, which is the whole of `C375`: the
-     * id has to be one `recordPayment` can recompute from the run's four parts.
+     * Derived independently from the scheme, which is the whole point: the id
+     * has to be one `recordPayment` can recompute from the run's four parts.
      * Under the governance door it was folded from an APPLICATION digest and
      * could not be.
      */
@@ -106,8 +105,7 @@ describe('C375: the boundary raises a run, and a run carries a window', () => {
    * THEN NEVER PAID.** Two mirror the contract's own asserts (`:2126`,
    * `:2127`); the millisecond ceiling and the vault sentinel have no contract
    * counterpart and are refused here anyway, because a guard one implementation
-   * of this boundary has and the other does not is the permissive direction —
-   * `T-215`'s species.
+   * of this boundary has and the other does not is the permissive direction.
    */
   it.each([
     ['a run with no payees', { payees: 0n }, /at least one payee/],

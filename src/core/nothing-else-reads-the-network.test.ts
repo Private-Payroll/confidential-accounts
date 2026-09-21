@@ -17,8 +17,8 @@ import { NETWORK_IDS } from './networks.js';
  *
  * Patching twenty-eight call sites leaves twenty-eight places that have to keep
  * agreeing. **This file is the thing worth more than the edits**: it fails on
- * the DAY a twenty-ninth appears, in the round that writes it, rather than in
- * whatever round afterwards notices two answers disagreeing.
+ * the DAY a twenty-ninth appears, in the change that writes it, rather than
+ * whenever somebody later notices two answers disagreeing.
  *
  * ── HOW IT IS KNOWN TO WORK ───────────────────────────────────────────────
  *
@@ -138,8 +138,8 @@ export const writesAnEndpoint = (sources: Sources): string[] =>
  *
  * These are diagnostic doors, and pointing one at a local indexer is what the
  * variable is for. So the answer is not to forbid it but to make it VISIBLE:
- * the set is written down, and a new one turns this red in the round that adds
- * it rather than being found later by somebody wondering which indexer a
+ * the set is written down, and a new one turns this red in the change that
+ * adds it rather than being found later by somebody wondering which indexer a
  * measurement was taken against.
  */
 const AN_ENDPOINT_OVERRIDE = /process\s*\.\s*env\s*\.\s*MIDNIGHT_(?:NODE|INDEXER)[A-Z_]*URL/;
@@ -338,7 +338,7 @@ describe('§1 one reader of the environment, and the scan that notices a second'
 
   it('NOTHING BUT THE RESOLVER READS `MIDNIGHT_NETWORK_ID`', () => {
     /* RED WHEN a door reads the environment for a network again. That is the
-     * defect this round exists to remove. */
+     * defect this file exists to catch. */
     expect(readsTheEnvironment(THE_REPOSITORY)).toEqual([]);
     /* RED WHEN a door reads it inside the TypeScript it writes to disk and
      * runs, which no search over `.ts` files can see. */

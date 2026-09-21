@@ -4,16 +4,16 @@ import { REQUEST_SCHEMA } from 'midnight-identity/profile/request';
  * **ASKING THE WALLET FOR THE KEY THAT OPENS A COMPANY — this side's half.**
  * `docs/NEXT.md` PI2a §1, `docs/scope-payroll-identity.md` §9b.
  *
- * ── WHAT THIS ROUND IS, IN ONE PARAGRAPH ──────────────────────────────────
+ * ── WHAT THIS FILE IS, IN ONE PARAGRAPH ───────────────────────────────────
  *
  * A password did two jobs here: it let a person in, and it made the key that
- * opened their sealed bundle. `PI1` replaced the first with a wallet sign-in
- * and could not replace the second, because **a signature is not a key** and
- * nothing the wallet exported handed one out. That was reported rather than
- * worked around, and it is `C129`. The wallet's `W2`/`W3` rounds built the
- * missing half — a third kind of ask, `unlock`, which derives a key for one
- * company and releases it after a press on the wallet's own screen. This file
- * and `src/web/wallet-unlock.ts` are the other end of it.
+ * opened their sealed bundle. The first was replaced with a wallet sign-in and
+ * the second could not be, because **a signature is not a key** and nothing
+ * the wallet exported handed one out. That was reported rather than worked
+ * around. The wallet side then built the missing half — a third kind of ask,
+ * `unlock`, which derives a key for one company and releases it after a press
+ * on the wallet's own screen. This file and `src/web/wallet-unlock.ts` are the
+ * other end of it.
  *
  * ── THE ASK CARRIES NO ORIGIN AND NO ATTRIBUTES, AND HAS NOWHERE TO PUT ONE ─
  *
@@ -46,11 +46,11 @@ export const UNLOCK_KIND = 'unlock' as const;
 /**
  * THE WIRE SHAPE OF AN UNLOCK, BUILT HERE SO ONE PLACE OWNS IT.
  *
- * `company` travels WHOLE — all sixty-four characters. `W2` ground two origins
- * onto one 31-bit index in 2.86 billion tries on a single core, and the rule it
- * bought applies to every identifier that reaches a key: **a selector narrower
- * than the thing it selects can be ground.** Nothing here shortens, folds or
- * hashes the address.
+ * `company` travels WHOLE — all sixty-four characters. Two origins were ground
+ * onto one 31-bit index in 2.86 billion tries on a single core, and the rule
+ * that demonstration bought applies to every identifier that reaches a key: **a
+ * selector narrower than the thing it selects can be ground.** Nothing here
+ * shortens, folds or hashes the address.
  */
 export interface UnlockAsk {
   readonly schema: typeof REQUEST_SCHEMA;

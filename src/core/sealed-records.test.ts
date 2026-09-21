@@ -1,5 +1,5 @@
 /**
- * The lock. M-90, and the fix for S-8 and S-9.
+ * The lock.
  *
  * Written as the properties a customer is actually being sold — "our provider
  * cannot read our payroll", "letting the bookkeeper see the rules does not show
@@ -89,7 +89,7 @@ describe('sealing and opening', () => {
   });
 });
 
-describe('changing the locks (K-4)', () => {
+describe('changing the locks', () => {
   const recordsFor = (vk: string): SealedRecord[] => [
     { id: 'e1', keyEpoch: 0, sealed: sealRecord('payroll', ACCOUNT, STAFF[0], vk) },
     { id: 'e2', keyEpoch: 0, sealed: sealRecord('payroll', ACCOUNT, STAFF[1], vk) },
@@ -123,8 +123,8 @@ describe('changing the locks (K-4)', () => {
   it('returns a new set without destroying the old one', async () => {
     /*
      * A caller that cannot write the new set must still have the old. This is
-     * the M-74 ordering rule: an account half-rotated is worse than one not
-     * rotated at all.
+     * the ordering rule: an account half-rotated is worse than one not rotated
+     * at all.
      */
     const oldKey = newSymmetricKey();
     const before = recordsFor(oldKey);
@@ -148,7 +148,7 @@ describe('the cache fingerprint', () => {
 
 describe('what the server would hold', () => {
   /*
-   * THE DETECTOR ITSELF, PINNED. `C29`, found by audit 17 Aug.
+   * THE DETECTOR ITSELF, PINNED.
    *
    * Every "the server cannot read a salary" assertion in this repo is a
    * substring search over `redactHex`'s output, so the detector's threshold is
@@ -156,9 +156,10 @@ describe('what the server would hold', () => {
    * hex characters to 24 to stop a 12-byte `iv` showing up. That blinded every
    * one of those assertions to any 24-to-31 character lowercase-hex plaintext,
    * and no test noticed, because nothing tested the detector. **A guard whose
-   * failure mode is to disable itself is not a guard** — `C16`, in a test file.
+   * failure mode is to disable itself is not a guard**, and that is as true in
+   * a test file as in the product.
    */
-  it('THE LEAK DETECTOR REDACTS SECRETS AND LEAVES PLAINTEXT VISIBLE — C29', () => {
+  it('THE LEAK DETECTOR REDACTS SECRETS AND LEAVES PLAINTEXT VISIBLE', () => {
     /* Short fixed-width secrets go by NAME, which is what the `iv` needed. */
     expect(redactHex({ iv: 'a'.repeat(24) })).not.toContain('a'.repeat(24));
     expect(redactHex({ nonce: 'b'.repeat(24), tag: 'c'.repeat(32) }))
@@ -183,8 +184,8 @@ describe('what the server would hold', () => {
      *
      * `leaks no individual salary to a public observer` serialises the
      * blockchain's public view and asserts no salary appears. That is a correct
-     * test of what the CHAIN leaks, and it is why S-9 survived: the name reads
-     * as "everyone" when it means "the chain".
+     * test of what the CHAIN leaks, and it is why the salary leak survived: the
+     * name reads as "everyone" when it means "the chain".
      *
      * This one serialises what WE would store. It is the claim a customer
      * actually cares about: our payroll provider cannot see what we pay people.
@@ -197,7 +198,7 @@ describe('what the server would hold', () => {
     }));
 
     /*
-     * `redactHex`, NOT `JSON.stringify`. T-12, and the reason is in that file:
+     * `redactHex`, NOT `JSON.stringify`, and the reason is in that file:
      * ciphertext is hex, every decimal digit is a hex digit, so searching a raw
      * serialisation for a salary fails on correct code about one run in a
      * hundred and twenty. It did, twice, before anybody read the failure.

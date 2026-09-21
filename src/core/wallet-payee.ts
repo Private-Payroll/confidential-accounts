@@ -12,15 +12,14 @@ import { RECEIVING_ADDRESS } from './wallet-payee-ask.js';
  *
  * ── WHY THIS IS ON THE SERVER AND NOT IN THE PAGE ─────────────────────────
  *
- * `X7`'s screen took the address as typed text, and the field comes out this
- * round. **Replacing a text box with a button that forwards whatever the wallet
- * said would be the same door with the box hidden**: the server would still be
- * accepting an address chosen by whatever code is running in that tab. So the
- * signature is checked HERE, where the record is written, for the reason
+ * The screen this replaces took the address as typed text, and the field comes
+ * out with it. **Replacing a text box with a button that forwards whatever the
+ * wallet said would be the same door with the box hidden**: the server would
+ * still be accepting an address chosen by whatever code is running in that tab.
+ * So the signature is checked HERE, where the record is written, for the reason
  * `wallet-identity.ts` gives about sign-in — *a check made by the thing being
  * persuaded is not a check* — and for the reason the page cannot do it anyway:
- * verifying reaches `ledger-v9`, which is the ten megabytes of WebAssembly
- * `C149` is about.
+ * verifying reaches `ledger-v9`, which is ten megabytes of WebAssembly.
  *
  * ── THE BINDINGS, AND EVERY ONE IS SOMETHING THIS DEPLOYMENT HOLDS ────────
  *
@@ -35,15 +34,15 @@ import { RECEIVING_ADDRESS } from './wallet-payee-ask.js';
  * 3. **THE ADDRESS THAT SIGNED IS RECOMPUTED FROM THE KEY.** `payload.address`
  *    is never the authority.
  * 4. **AND THE VALUE IS ONE THE WALLET WORKED OUT, NOT ONE SOMEBODY TYPED.**
- *    See below — it is the whole point of the round and it is a refusal.
+ *    See below — it is the whole point of this door and it is a refusal.
  *
  * ── WHAT THIS BUYS AND WHAT IT DOES NOT, MEASURED ─────────────────────────
  *
  * **What it buys:** nobody can put an address on a payroll record by typing it.
  * The value arrives inside a signature made by the subwallet whose address it
- * is, over a nonce this deployment issued, for this origin — which is `A-2`,
- * *the payee produces the address themselves*, holding for the first time on a
- * door that is not `acceptInvite`.
+ * is, over a nonce this deployment issued, for this origin — *the payee
+ * produces the address themselves*, holding for the first time on a door that
+ * is not `acceptInvite`.
  *
  * **What it does NOT buy, said rather than left to be found:** nothing here can
  * check that the shielded address disclosed and the key that signed are one
@@ -68,7 +67,8 @@ export type PayeeFailure =
   | 'address-not-the-signers'
   /* The five in the middle are the wallet's own `VerdictFailure` values, passed
    * through unchanged so a refusal keeps the name the code that made it gave
-   * it. `C63` is the row about matching on sentences instead. */
+   * it. Matching on the sentence instead of the name is the mistake this
+   * avoids. */
   | 'wrong-schema'
   | 'origin-mismatch'
   | 'nonce-mismatch'
@@ -119,11 +119,11 @@ export interface PayeeFromWallet {
   /**
    * Parsed and rebuilt from its own string, like every other address here.
    *
-   * **`Payee` SINCE `S12`: EITHER KIND, AND THE WALLET'S STRING SAYS WHICH.**
-   * Nothing here asks a person which kind of address they are handing
-   * over, because the address already says. Whether the person may then be paid
-   * from a PAYROLL run is a different question, answered by `movement.ts` on
-   * the payroll path and not at this door.
+   * **`Payee` IS EITHER KIND, AND THE WALLET'S STRING SAYS WHICH.** Nothing
+   * here asks a person which kind of address they are handing over, because the
+   * address already says. Whether the person may then be paid from a PAYROLL
+   * run is a different question, answered by `movement.ts` on the payroll path
+   * and not at this door.
    */
   readonly address: Payee;
   /** The subwallet that signed, as the wallet writes it. Bech32, unshielded. */
@@ -214,14 +214,15 @@ export async function payeeFromWallet(
   }
 
   /*
-   * **THE VALUE MUST BE ONE THE WALLET WORKED OUT, AND THIS IS THE WHOLE ROUND
-   * IN ONE REFUSAL.** `packages/identity/src/profile/model.ts`'s third assertion arm.
+   * **THE VALUE MUST BE ONE THE WALLET WORKED OUT, AND THIS IS THE WHOLE OF IT
+   * IN ONE REFUSAL.** `packages/identity/src/profile/model.ts`'s third
+   * assertion arm.
    *
-   * `by: 'self'` means a person typed it. **That is exactly what `X7`'s pasted
-   * box was**, and accepting it here would leave the precedent alive with a
-   * wallet's chrome around it — an address somebody typed into a field,
-   * signed, and therefore harder to argue with. `by: 'issuer'` is worse: an
-   * address is not a fact anybody signs on somebody else's behalf.
+   * `by: 'self'` means a person typed it. **That is exactly what the pasted box
+   * was**, and accepting it here would leave that precedent alive with a
+   * wallet's chrome around it — an address somebody typed into a field, signed,
+   * and therefore harder to argue with. `by: 'issuer'` is worse: an address is
+   * not a fact anybody signs on somebody else's behalf.
    *
    * **THE COST, STATED:** a wallet that computes the address correctly but
    * labels it `self` is refused. That is the intended strictness — the label is
@@ -244,22 +245,21 @@ export async function payeeFromWallet(
   }
 
   /*
-   * **REBUILT FROM ITS OWN STRING RATHER THAN TRUSTED.** `A-1`. What
-   * arrived is text; `payeeOf` is the platform's checksum, the address TYPE and
-   * the network, exactly as `payeeAddress` was — it is the same decode, and the
+   * **REBUILT FROM ITS OWN STRING RATHER THAN TRUSTED.** What arrived is text;
+   * `payeeOf` is the platform's checksum, the address TYPE and the network,
+   * exactly as `payeeAddress` was — it is the same decode, and the
    * rebuild-rather-than-trust rule is unchanged rather than relaxed.
    *
-   * **WHAT CHANGED IN `S12` IS WHICH TYPES ARE PAYEES, NOT HOW HARD THEY ARE
-   * CHECKED.** This line used to refuse an `mn_addr_` BY NAME. It no longer
-   * does, because a company paying its own public address is a real movement
-   * and because a vendor may want public settlement. **A third type is
-   * still refused naming both** — `payeeOf` throws on a `mn_dust_`, which is
-   * not a payee at all.
+   * **WHAT CHANGED IS WHICH TYPES ARE PAYEES, NOT HOW HARD THEY ARE CHECKED.**
+   * This line used to refuse an `mn_addr_` BY NAME. It no longer does, because
+   * a company paying its own public address is a real movement and because a
+   * vendor may want public settlement. **A third type is still refused naming
+   * both** — `payeeOf` throws on a `mn_dust_`, which is not a payee at all.
    *
    * **AND THE EMPLOYEE IS NOT EXPOSED BY THIS.** Being recordable is not being
    * payable from a payroll run: `payrollPayee` refuses a public payee where a
    * run is drawn and where its payment facts are built. Widening here without
-   * that refusal would be the mistake this round is written to avoid.
+   * that refusal would be the mistake this file is written to avoid.
    */
   let address: Payee;
   try {

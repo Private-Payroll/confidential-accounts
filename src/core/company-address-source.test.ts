@@ -10,17 +10,16 @@ import { NoCompanyAddress, companyForSession } from './company-address.js';
  *
  * ── WHAT THIS FILE IS FOR, AND WHY IT IS NOT A FIELD TEST ─────────────────
  *
- * `PI2a` built a refusal that is correct, well argued and names `C136` as its
- * reason: a company with no chain address is told so rather than handed a
- * substitute. **It could never once fire.** `SimulatedLedger` gives every
- * company `toHex(randomBytes(32))` — sixty-four lower-case hex characters,
- * deliberately indistinguishable from what a chain assigns — and the guard
- * checks the shape.
+ * A refusal was built that is correct, well argued and gives its reason: a
+ * company with no chain address is told so rather than handed a substitute.
+ * **It could never once fire.** `SimulatedLedger` gives every company
+ * `toHex(randomBytes(32))` — sixty-four lower-case hex characters, deliberately
+ * indistinguishable from what a chain assigns — and the guard checks the shape.
  *
- * So the deliverable of that item is not the field. It is **the mutation that
- * makes a simulated address indistinguishable again, and the assertion that
- * dies when it does.** Two deliberate defects between them are the two
- * ways to put it back; the tests below are what notices.
+ * So the deliverable is not the field. It is **the mutation that makes a
+ * simulated address indistinguishable again, and the assertion that dies when
+ * it does.** Two deliberate defects between them are the two ways to put it
+ * back; the tests below are what notices.
  *
  * ── AND THE POINT IS THAT IT CAN TELL, NOT THAT IT STOPS ──────────────────
  *
@@ -63,7 +62,7 @@ describe('§1 — THE LEDGER SAYS WHERE THE ADDRESS CAME FROM, IN THE SAME VALUE
 
     /*
      * BOTH HALVES ASSERTED TOGETHER, and the first is what makes the second
-     * matter. If the shape check could tell these apart, `C140` would not
+     * matter. If the shape check could tell these apart, the problem would not
      * exist and neither would this file.
      */
     expect(assigned?.value).toMatch(/^[0-9a-f]{64}$/);
@@ -84,14 +83,14 @@ describe('§1 — THE LEDGER SAYS WHERE THE ADDRESS CAME FROM, IN THE SAME VALUE
   it('AND THE SOURCE SURVIVES A RE-SEAL — dropping it is dropping the guard', async () => {
     /*
      * `save()` rebuilds the stored record from an opened account on every
-     * write. `PI2a` learned this the expensive way with `contractAddress`; the
+     * write. This was learned the expensive way with `contractAddress`; the
      * source sits beside it and is dropped by the same line if that line
      * forgets it.
      *
      * **PUT THERE INDEPENDENTLY OF THE WRITE PATH BEING TESTED**, for the
-     * reason `PI2a`'s first version of this test was wrong: comparing the
-     * re-sealed record against the stored one compares two values the mutated
-     * line produced, and agrees just as happily when it writes nothing.
+     * reason an earlier version of this test was wrong: comparing the re-sealed
+     * record against the stored one compares two values the mutated line
+     * produced, and agrees just as happily when it writes nothing.
      */
     const { store, accounts } = world();
     const made = await accounts.create('Acme', ada, 1);
@@ -131,8 +130,8 @@ describe('§2 — A COMPANY WHOSE ADDRESS NO CHAIN ASSIGNED IS REFUSED BY NAME',
     const { store, accounts } = world();
     const made = await accounts.create('Acme', ada, 1);
     /* What a deployment writes: the address the chain gave, marked as the
-     * chain's. Upper-cased here because `C137` folds and two spellings of one
-     * company must never become two keys. */
+     * chain's. Upper-cased here because the answer folds case and two spellings
+     * of one company must never become two keys. */
     store.putAccount({
       ...store.getAccount(made.account.id)!,
       contractAddress: DEPLOYED.toUpperCase(), addressSource: 'chain',
@@ -141,14 +140,14 @@ describe('§2 — A COMPANY WHOSE ADDRESS NO CHAIN ASSIGNED IS REFUSED BY NAME',
     expect(companyForSession(store, 'usr_1', made.account.id)).toBe(DEPLOYED);
   });
 
-  it('AN ACCOUNT FROM BEFORE THIS ROUND IS REFUSED, BECAUSE NOBODY CAN SAY WHAT IT WAS',
+  it('AN ACCOUNT FROM BEFORE THIS FIELD EXISTED IS REFUSED, BECAUSE NOBODY CAN SAY WHAT IT WAS',
     async () => {
       /*
-       * **ABSENT IS NOT `'chain'`.** Every company created before `PI2b` has no
-       * source recorded, and there is no way to establish one afterwards.
-       * Reading absence as a chain's would wave through exactly the records
-       * nothing can vouch for — a guard that disables itself where it cannot
-       * see, which is `C16`'s lesson.
+       * **ABSENT IS NOT `'chain'`.** Every company created before this field
+       * existed has no source recorded, and there is no way to establish one
+       * afterwards. Reading absence as a chain's would wave through exactly the
+       * records nothing can vouch for — a guard that disables itself where it
+       * cannot see.
        */
       const { store, accounts } = world();
       const made = await accounts.create('Acme', ada, 1);
@@ -165,7 +164,7 @@ describe('§2 — A COMPANY WHOSE ADDRESS NO CHAIN ASSIGNED IS REFUSED BY NAME',
        * ORDER MATTERS AND IS ASSERTED. The membership answer must come first,
        * or the new refusal tells a stranger that an account id exists and what
        * kind of address it has — enumeration by reading the difference, which
-       * is the thing `PI2a`'s shared 404 was for.
+       * is the thing the shared 404 is for.
        */
       const { store, accounts } = world();
       const made = await accounts.create('Acme', ada, 1);
@@ -198,8 +197,8 @@ describe('§3 — DEVELOPMENT KEEPS WORKING, DELIBERATELY AND NOT BY DEFAULT', (
 
   it('IT IS NOT A PARAMETER, SO NO REQUEST CAN REACH IT', () => {
     /*
-     * `PI2a`'s rule expressed where it cannot be forgotten: this function takes
-     * a store, a user and an account, and there is no fourth argument. A flag
+     * The rule expressed where it cannot be forgotten: this function takes a
+     * store, a user and an account, and there is no fourth argument. A flag
      * saying *serve me anyway* as an argument would be one refactor from a
      * route forwarding a request field into it.
      */

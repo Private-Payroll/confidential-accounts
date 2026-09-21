@@ -131,7 +131,7 @@ describe('§10 step 1 — THE WALLET IS THE ACCOUNT', () => {
     expect(Object.keys(u).sort()).toEqual(
       ['createdAt', 'email', 'id', 'keyBundle', 'keyBundleVersion', 'name', 'walletKey']);
     expect(JSON.stringify(u)).not.toMatch(/authHash|authSalt|password|argon/i);
-    /* `A-11`'s argument: the address itself is not on the row, only its hash. */
+    /* The address itself is not on the row, only its hash. */
     expect(u.walletKey).toBe(walletKeyOf(addressOf(SLOT)));
     expect(JSON.stringify(u)).not.toContain(addressOf(SLOT));
   });
@@ -213,8 +213,8 @@ describe('BINDING 1 — THE ORIGIN IS OURS, AND IT IS OBSERVED RATHER THAN CLAIM
   it('AND A LOCAL DEVELOPMENT ORIGIN IS ACCEPTED IN A DEVELOPMENT BUILD, AND ONLY THERE',
     () => {
       /*
-       * **`X1`.** `http://localhost:5173` was refused for the same reason the
-       * wallet refused it, and for the first time a person can click the
+       * `http://localhost:5173` was refused for the same reason the wallet
+       * refused it, and for the first time a person can click the
        * wallet-to-payroll flow through end to end. **The exception is exact and
        * it is gated**: `usableOrigin` is the wallet's own check, imported, so
        * this deployment enforces the rule the wallet enforces rather than a
@@ -342,7 +342,7 @@ describe('BINDING 3 — THE ADDRESS IS RECOMPUTED FROM THE KEY THAT SIGNED', () 
  * offered to a deployment holding the value THIS repository resolved. The
  * literal below is the third party: move either side and it dies here, by name.
  */
-describe('C151 — ONE NETWORK, AND SOMETHING FAILS IF THE TWO EVER DISAGREE', () => {
+describe('ONE NETWORK, AND SOMETHING FAILS IF THE TWO EVER DISAGREE', () => {
   const onNetwork = (slot: number, network: NetworkName): string => addressOfVerifyingKey(
     signatureVerifyingKey({
       tag: 'schnorr',
@@ -380,9 +380,9 @@ describe('C151 — ONE NETWORK, AND SOMETHING FAILS IF THE TWO EVER DISAGREE', (
   it('WATCHED FAILING: THE WALK-THROUGH ITSELF — a payroll on another network refuses '
     + 'a sign-in that is perfectly good', async () => {
     /*
-     * `C151` reproduced, with no browser and nobody pressing anything: the same
-     * key, the same signature, one deployment configured for `preview` and a
-     * wallet compiled for `stagenet`.
+     * The network mismatch reproduced, with no browser and nobody pressing
+     * anything: the same key, the same signature, one deployment configured for
+     * `preview` and a wallet compiled for `stagenet`.
      */
     const wallet = new WalletIdentityService(
       new MemoryStore(), new MemorySessionStore(), new MemoryRateLimiter(),
@@ -422,7 +422,7 @@ describe('C151 — ONE NETWORK, AND SOMETHING FAILS IF THE TWO EVER DISAGREE', (
 /* ------------------- what the refusal tells the person ------------------- */
 
 /**
- * **THE MESSAGE THAT SENT A PERSON TO THE WRONG PLACE.** `C151`, second half.
+ * **THE MESSAGE THAT SENT A PERSON TO THE WRONG PLACE.**
  *
  * *"the key is what says who you are, and the two do not agree"* — accurate
  * about what the code saw, wrong about what had happened, and it points at a
@@ -434,7 +434,7 @@ describe('C151 — ONE NETWORK, AND SOMETHING FAILS IF THE TWO EVER DISAGREE', (
  * **BOTH ARE STILL REFUSED, WITH THE SAME CODE.** These check words, never a
  * verdict.
  */
-describe('C151 — THE REFUSAL SAYS WHETHER THE TWO DIFFER ONLY BY NETWORK', () => {
+describe('THE REFUSAL SAYS WHETHER THE TWO DIFFER ONLY BY NETWORK', () => {
   const onNetwork = (slot: number, network: NetworkName): string => addressOfVerifyingKey(
     signatureVerifyingKey({
       tag: 'schnorr',
@@ -554,7 +554,7 @@ describe('A SIGN-IN CARRIES NOTHING ABOUT A PERSON', () => {
 
 /**
  * **THIS BLOCK USED TO PROVE THE OPPOSITE, AND THE DECISION WENT THE OTHER
- * WAY.** `C155`, `C131`, `docs/scope-v1-data-model.md` D4.
+ * WAY.** `docs/scope-v1-data-model.md` D4.
  *
  * It held `refuseReusedSubwallet` up against two companies and required a
  * throw. The rule it was written for — *one subwallet, one employer* — was
@@ -563,11 +563,12 @@ describe('A SIGN-IN CARRIES NOTHING ABOUT A PERSON', () => {
  * company: `null` is a company that does not exist yet, so nothing filtered
  * the list and any wallet user already on any account was refused.
  *
- * **D4 SAYS *ALREADY TRUE*, AND FOR A WALLET SIGN-IN IT NEVER HAD BEEN.** So
- * these say the fact D4 records, from the side that can see both memberships:
- * one wallet, two companies, both real, neither refused. The concern the old
- * rule existed for lives in the wallet now, which is the only side that can see
- * every use of a slot rather than only the ones that come with a seat.
+ * **THE DATA MODEL SAYS *ALREADY TRUE*, AND FOR A WALLET SIGN-IN IT NEVER HAD
+ * BEEN.** So these say the fact it records, from the side that can see both
+ * memberships: one wallet, two companies, both real, neither refused. The
+ * concern the old rule existed for lives in the wallet now, which is the only
+ * side that can see every use of a slot rather than only the ones that come
+ * with a seat.
  */
 describe('§3 — ONE WALLET MAY CREATE AND BELONG TO AS MANY COMPANIES AS IT LIKES', () => {
   const aWalletPerson = async () => {
@@ -631,9 +632,9 @@ describe('§3 — ONE WALLET MAY CREATE AND BELONG TO AS MANY COMPANIES AS IT LI
   it('NOTHING IN THIS REPOSITORY REFUSES A REUSED SUBWALLET ANY MORE', async () => {
     /*
      * **THE ABSENCE, ASSERTED.** A deletion leaves no code to fail when
-     * somebody writes it again, and `C155` is the second time this exact
-     * refusal has been removed — `C131` took the warning out and this check
-     * survived it, silently, refusing the one case nobody meant to refuse.
+     * somebody writes it again, and this is the second time this exact refusal
+     * has been removed — the first removal took the warning out and left this
+     * check standing, silently, refusing the one case nobody meant to refuse.
      *
      * So the file is gone and this is what notices it coming back. It reads
      * the tree rather than an import, because an import of a file that does
@@ -648,27 +649,25 @@ describe('§3 — ONE WALLET MAY CREATE AND BELONG TO AS MANY COMPANIES AS IT LI
 
 /* ------------------------------------------------------------------------ */
 
-describe('S-2 — THE DOOR THAT COUNTS IS THIS ONE NOW', () => {
+describe('THE DOOR THAT COUNTS IS THIS ONE NOW', () => {
   /**
    * **WHAT MOVED HERE, AND WHY IT HAD TO MOVE RATHER THAN BE DELETED.**
-   * `PI4b`, S-2.
    *
-   * `core.test.ts` held *"THE ONE S-2 IS ABOUT: login itself counts, so no
-   * route can forget to"*. The lesson behind it is this project's, not a
-   * general one: **S-2's limiter sat finished and uncalled for a day**, which
-   * is the same as not having one, so the count was put INSIDE the only
-   * function that checks a credential and the argument was made a required
-   * constructor parameter.
+   * `core.test.ts` held *"login itself counts, so no route can forget to"*. The
+   * lesson behind it is this project's, not a general one: **the limiter sat
+   * finished and uncalled for a day**, which is the same as not having one, so
+   * the count was put INSIDE the only function that checks a credential and the
+   * argument was made a required constructor parameter.
    *
    * `login` is deleted and those tests went with it. **The lesson did not go
    * anywhere.** This is the door that answers strangers now, and it is where
    * the count has to be — so it is asserted here, at the same level, rather
-   * than left as a property nothing watches. Deleting a system and not
-   * checking what replaced it is how a round leaves a hole where a feature was.
+   * than left as a property nothing watches. Deleting a system and not checking
+   * what replaced it is how a hole is left where a feature was.
    *
    * `server.test.ts`'s HTTP half — *429 with `Retry-After`, not 400* — is
    * carried by `invitations.test.ts` §6, over the same limiter and the same
-   * class, on a bucket this round does not touch.
+   * class, on a bucket these tests do not touch.
    */
   const metered = (max: number): World => {
     const store = new MemoryStore();

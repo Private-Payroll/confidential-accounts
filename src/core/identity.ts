@@ -13,12 +13,12 @@ import type { SessionStore, SessionSummary } from './sessions.js';
  * `replaceKeyBundle`, `timingSafeEqual`, `authHash` and `authSalt` were here.
  * **A password did two jobs and only one of them was letting you in:** it also
  * produced the key that unsealed a person's keyring. That is why deleting it
- * had to wait — `C129` — and `PI2a` built the half that replaces it, so the
- * key now comes from the person's own wallet, for one company, after a press
- * on the wallet's own screen. It is different per company, it is never stored,
- * and it can be made again from their seed. **A password could be phished,
- * reused and typed into the wrong page, and a second way to prove who you are
- * is a second thing to steal.**
+ * had to wait until the half that replaces it was built, so the key now comes
+ * from the person's own wallet, for one company, after a press on the wallet's
+ * own screen. It is different per company, it is never stored, and it can be
+ * made again from their seed. **A password could be phished, reused and typed
+ * into the wrong page, and a second way to prove who you are is a second thing
+ * to steal.**
  *
  * **WHAT IS LEFT IS SESSIONS AND THE SEALED BUNDLE.** Who you are is settled by
  * `WalletIdentityService`; this holds the session that follows from it and the
@@ -69,10 +69,10 @@ export class StaleKeyBundle extends Error {
  * Thrown when the limiter refuses. Carries the wait so a route can send it.
  *
  * **DECLARED HERE AND THROWN BY THE WALLET SIGN-IN**, which is the only door
- * that counts attempts since `PI4b` deleted the password. It stays in this file
+ * that counts attempts now that the password is deleted. It stays in this file
  * because `WalletIdentityService` and both server builds already import it from
- * here, and moving a live exception between files is churn a deletion round has
- * no business spending.
+ * here, and moving a live exception between files is churn a deletion has no
+ * business spending.
  */
 export class TooManyAttempts extends Error {
   constructor(public retryAfterSeconds: number) {
@@ -90,7 +90,7 @@ export class IdentityService {
   /* ---------------- what used to be recovery ---------------- */
 
   /*
-   * **THE RECOVERY FLOW IS DELETED.** `PI4a`, and the proof is in
+   * **THE RECOVERY FLOW IS DELETED**, and the proof is in
    * `docs/reports/PI4a-proof-of-death.md` rather than in this comment.
    *
    * `setPasswordWithSeed`, `recoveryChallenge` and `recoverWithSeed` were
@@ -108,7 +108,7 @@ export class IdentityService {
    * cannot"*.
    *
    * `challenges.ts` STAYS. `WalletIdentityService` uses the same store for the
-   * sign-in nonce, so it is reachable and is not this round's to take.
+   * sign-in nonce, so it is reachable and was not deleted with the rest.
    */
 
   /* ---------------- what used to be registration and login ---------------- */
@@ -158,7 +158,7 @@ export class IdentityService {
     return userId;
   }
 
-  /** S-3, the whole point: this actually ends the session. */
+  /** The whole point: this actually ends the session. */
   async signOut(token: string): Promise<void> {
     await this.sessions.revoke(token);
   }
@@ -179,7 +179,7 @@ export class IdentityService {
     return this.sessions.list(userId, { current: currentToken });
   }
 
-  /** Ends one listed session by its id. Scoped to the owner — see M-118. */
+  /** Ends one listed session by its id. Scoped to the owner. */
   async endSession(userId: string, id: string): Promise<boolean> {
     return this.sessions.revokeSession(userId, id);
   }
@@ -200,7 +200,7 @@ export class IdentityService {
     const user = this.user(userId);
     const current = user.keyBundleVersion ?? 0;
     /*
-     * REFUSES A WRITE THAT DID NOT SEE THE LAST ONE. `C40`, found by audit.
+     * REFUSES A WRITE THAT DID NOT SEE THE LAST ONE.
      *
      * Read-modify-write over the whole bundle, with no version, meant the
      * second of two devices erased the first and nothing noticed — and the
@@ -231,6 +231,7 @@ export class IdentityService {
    * `signOutEverywhere` is above and `POST /api/me/sessions/others/revoke`
    * reaches it, so a person who thinks a device is compromised still has the
    * one action that helped. `updateKeyBundle` is what writes a bundle now, and
-   * it moves the version, which is what `C40` asked of every writer.
+   * it moves the version, which is what the refusal above requires of every
+   * writer.
    */
 }

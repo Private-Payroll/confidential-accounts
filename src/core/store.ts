@@ -72,10 +72,10 @@ export const inviteKeyOf = (token: string): string =>
  * silently making every returning person a new person.
  *
  * **THE ADDRESS ITSELF IS NEVER STORED.** `wallet-identity.ts` has the reason
- * in full: `memberUserIds` is outside the envelope, so a plaintext address on
- * a user row would read as *this on-chain identity holds a seat on this
- * company*, which is what `RosterEmployee.address` is sealed to hide and what
- * `A-11` removed `Invite.acceptedBy` for one join less than.
+ * in full: `memberUserIds` is outside the envelope, so a plaintext address on a
+ * user row would read as *this on-chain identity holds a seat on this company*,
+ * which is what `RosterEmployee.address` is sealed to hide and what
+ * `Invite.acceptedBy` was removed for one join less than.
  *
  * NORMALISED BY TRIMMING AND NOTHING ELSE. Bech32 is case-significant here
  * because the address is produced by a codec rather than typed by a person, and
@@ -172,7 +172,7 @@ export class MemoryStore {
   getAccount(id: string) { return this.data.accounts[id] ?? null; }
   listAccounts() { return Object.values(this.data.accounts); }
 
-  /* Proposals are stored SEALED. S-8: approvals[].signerId is the deanonymised
+  /* Proposals are stored SEALED: approvals[].signerId is the deanonymised
    * version of the nullifiers the chain deliberately blinds. */
   putProposal(p: SealedProposal) { this.data.proposals[p.id] = p; this.observe(p); this.flush(); }
   getProposal(id: string) { return this.data.proposals[id] ?? null; }
@@ -180,7 +180,7 @@ export class MemoryStore {
     return Object.values(this.data.proposals).filter(p => p.accountId === accountId);
   }
 
-  /* Runs are stored SEALED. S-9: the amounts live here as well as on the roster. */
+  /* Runs are stored SEALED: the amounts live here as well as on the roster. */
   putRun(r: SealedRun) { this.data.runs[r.id] = r; this.observe(r); this.flush(); }
   getRun(id: string) { return this.data.runs[id] ?? null; }
   listRuns(accountId: string) {
@@ -210,7 +210,7 @@ export class MemoryStore {
    */
   putInvite(i: Invite) { this.data.invites[i.token] = i; this.flush(); }
   /**
-   * Looked up by the HASH of the token. A-7.
+   * Looked up by the HASH of the token.
    *
    * The caller passes the raw token; nothing here ever stores one. A database
    * backup therefore carries no usable invite, which is what `sessions.ts`
@@ -220,7 +220,7 @@ export class MemoryStore {
     const hashed = this.data.invites[inviteKeyOf(token)];
     if (hashed) return hashed;
     /*
-     * A ROW WRITTEN BEFORE INVITES WERE HASHED. `C27`, found by audit.
+     * A ROW WRITTEN BEFORE INVITES WERE HASHED.
      *
      * Without this, every invite outstanding at the moment of an upgrade became
      * unfindable — while `listInvites` went on serving it to the admin screen as
@@ -287,7 +287,7 @@ export class MemoryStore {
   getAttestation(id: string) { return this.data.attestations[id] ?? null; }
 
   /**
-   * The flip, and the only reason this method exists. K-4.
+   * The flip, and the only reason this method exists.
    *
    * A rotation re-seals every record an account owns under a new viewing key.
    * Written one `put` at a time it would go through `flush` once per record,
@@ -298,9 +298,9 @@ export class MemoryStore {
    *
    * So it is one call that writes everything and flushes once. `FileStore`
    * rewrites the whole file, so on this implementation the swap is as atomic as
-   * the filesystem allows; under Postgres (I-1) it becomes one transaction, and
-   * this signature is what makes that a change of one method rather than of
-   * every caller.
+   * the filesystem allows; under Postgres it becomes one transaction, and this
+   * signature is what makes that a change of one method rather than of every
+   * caller.
    *
    * The shielded state is NOT here, because it is not ours — it lives behind
    * the ledger and is written first, alongside the old epoch rather than over

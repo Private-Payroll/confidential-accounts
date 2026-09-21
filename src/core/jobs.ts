@@ -2,12 +2,12 @@
  * Approvals as durable jobs. Decision 0008.
  *
  * Everything a signer does — propose, approve, cancel — is slow and can fail
- * halfway. This sentence named `execute` and `credit` until `C292` deleted
- * both; nothing about the argument depended on which circuits they were.
- * Proving takes seconds at best and ~108 seconds against the
- * single-threaded WASM prover, and settlement adds ~23 seconds of block
- * time that no amount of engineering removes. So no version of this product
- * gets to treat "click approve" as a function call that returns.
+ * halfway, and the argument does not depend on which circuits are involved; the
+ * list once named two that have since been deleted. Proving takes seconds at
+ * best and ~108 seconds against the single-threaded WASM prover, and settlement
+ * adds ~23 seconds of block time that no amount of engineering removes. So no
+ * version of this product gets to treat "click approve" as a function call that
+ * returns.
  *
  * WHY THIS EXISTS EVEN IF PROVING GETS FAST. All five properties below are
  * about correctness or about the ~23s we can never remove, not about the 108s
@@ -66,7 +66,7 @@ export const isTerminal = (s: JobState): boolean => TERMINAL.includes(s);
 /**
  * What the job is trying to do. Mirrors the circuits, so nothing is invented.
  *
- * `credit` WAS HERE AND IS GONE: S23 shed the circuit, and nothing ever
+ * `credit` WAS HERE AND IS GONE: the circuit was shed, and nothing ever
  * enqueued that kind.
  *
  * `execute` FOLLOWED IT. The circuit it named spent the

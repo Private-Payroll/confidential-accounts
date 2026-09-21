@@ -9,8 +9,8 @@ import { AccountService, openAccount, sealAccount } from './account.js';
 import type { Account } from './types.js';
 
 /**
- * **X19 — THE GUARDS AGAINST STRANDING AN ACCOUNT STOP TRUSTING OUR OWN
- * NUMBER, AND A GUARD THAT CANNOT READ THE CHAIN REFUSES.**
+ * **THE GUARDS AGAINST STRANDING AN ACCOUNT STOP TRUSTING OUR OWN NUMBER,
+ * AND A GUARD THAT CANNOT READ THE CHAIN REFUSES.**
  *
  * Three sites, one class. `departing()` and the multi-removal guard refuse a
  * removal that would leave too few signers; `proposeThresholdChange` refuses a
@@ -31,13 +31,13 @@ import type { Account } from './types.js';
  *    value in our stored copy from the one the ledger holds, and requires the
  *    outcome to follow the ledger's. Both directions appear: a refusal our copy
  *    would not have made, and a permission our copy would have refused.
- * 2. **"We do not know" must not become "go ahead".** `R4` established that a
- *    status we cannot read is a third outcome; in an approval, not knowing means
- *    not proceeding. **In a guard the conservative direction is the opposite
- *    one** — a guard that permits a removal because it could not reach the chain
- *    has failed in exactly the direction that strands the account. All three
- *    refuse, each naming which silence it hit, and none of those refusals is
- *    phrased like the one that says the account WOULD be stranded.
+ * 2. **"We do not know" must not become "go ahead".** A status we cannot read
+ *    is a third outcome; in an approval, not knowing means not proceeding.
+ *    **In a guard the conservative direction is the opposite one** — a guard
+ *    that permits a removal because it could not reach the chain has failed in
+ *    exactly the direction that strands the account. All three refuse, each
+ *    naming which silence it hit, and none of those refusals is phrased like
+ *    the one that says the account WOULD be stranded.
  *
  * **These tests can only be as good as `SimulatedLedger`,** which runs in this
  * process. They do not show that a chain refused anything. They show that these
@@ -93,7 +93,7 @@ function harness(bend?: Bend) {
  * This is how our copy is made to disagree with the chain WITHOUT touching the
  * chain: the ledger goes on holding what it was opened with, and the sealed
  * record — the only thing an operator can reach — says something else. It is
- * precisely the authority `C121` describes, and the drift `C177` is about.
+ * precisely the authority a key holder has, and the drift under test here.
  */
 function editAccount(
   h: ReturnType<typeof harness>,
@@ -107,12 +107,12 @@ function editAccount(
   h.store.putAccount(sealAccount(account, viewingKey, rec.pendingSigners, rec.keyEpoch));
 }
 
-describe('X19: the bar and the seats are the ledger\'s, and our copy cannot move either', () => {
+describe('the bar and the seats are the ledger\'s, and our copy cannot move either', () => {
   it('refuses a removal our stale copy of the threshold would have allowed', async () => {
     /*
      * **SITE 1 — `departing()`.** The ledger is opened at 3 of 3 and stays
      * there. Our sealed copy is edited to 2, which is drift in the dangerous
-     * direction and the whole of `C177`.
+     * direction.
      *
      * Removing Cleo leaves two signers. Against the contract's 3 that is a
      * stranded account; against our 2 it reads as exactly enough. The refusal
@@ -199,9 +199,9 @@ describe('X19: the bar and the seats are the ledger\'s, and our copy cannot move
     /*
      * **THE SAME SITE, THE OTHER DIRECTION, AND THE SECOND READ OF OUR COPY IN
      * THAT METHOD.** `docs/how-money-can-be-lost.md` names `:867` — the
-     * "already that number" check — as the third site where the round's own
-     * heading names the seated count above it. Both were ours; both are the
-     * ledger's now, and this is the one that shows the second.
+     * "already that number" check — as the third site, where the heading above
+     * it names the seated count. Both were ours; both are the ledger's now, and
+     * this is the one that shows the second.
      *
      * The contract is at 3 and our copy says 2. Lowering the threshold to 2 is
      * a real change that a stale copy calls "already 2" and refuses — a round
@@ -241,7 +241,7 @@ describe('X19: the bar and the seats are the ledger\'s, and our copy cannot move
   });
 });
 
-describe('X19: a guard that cannot read the chain refuses, and says which silence it hit', () => {
+describe('a guard that cannot read the chain refuses, and says which silence it hit', () => {
   it('refuses a removal when the boundary throws, without saying the account would be stranded', async () => {
     /*
      * **SITE 1, AND THE REASON THE MESSAGES ARE DIFFERENT.** The ledger here
@@ -278,7 +278,7 @@ describe('X19: a guard that cannot read the chain refuses, and says which silenc
     /*
      * **SITE 2, AND A DIFFERENT SILENCE.** `null` is not "no signers": an
      * account the boundary cannot find and an account with nobody in it are
-     * different facts, and the first is our ignorance. `R4` drew that line for
+     * different facts, and the first is our ignorance. That line was drawn for
      * approvals; this is the same line drawn for the guard.
      */
     let broken = true;
@@ -312,8 +312,8 @@ describe('X19: a guard that cannot read the chain refuses, and says which silenc
      * there is nothing there to be conservative about.
      *
      * The same harness refuses the removal above, at the site that does guard
-     * something. Both facts are the round, and they are only consistent because
-     * "guard" means the operation that removes somebody.
+     * something. Both facts stand together, and they are only consistent
+     * because "guard" means the operation that removes somebody.
      */
     const h = harness(() => { throw new Error('indexer unreachable'); });
     const c = await h.accounts.create('Northwind Ltd', THREE, 2);

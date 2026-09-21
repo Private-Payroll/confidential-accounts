@@ -48,7 +48,7 @@ import { NETWORKS, type NetworkName } from '../midnight/network.js';
 /* ------------------------------ the ask ---------------------------------- */
 
 /**
- * **THE ASK MOVED OUT OF THIS FILE, AND THAT IS THE WHOLE OF `C149`'s REPAIR.**
+ * **THE ASK MOVED OUT OF THIS FILE, AND THAT IS THE WHOLE REPAIR.**
  * `docs/NEXT.md` X5 §2.
  *
  * `signInAsk` builds a plain object and touches nothing. It was the ONLY thing
@@ -96,8 +96,7 @@ export type SignInFailure =
  *
  * Every one of these means the same thing to the caller — you are not signed
  * in — and the `code` exists so a test can name which binding did the refusing
- * rather than matching on a sentence. `C63` is the row about the second half of
- * that.
+ * rather than matching on a sentence.
  */
 export class WalletSignInError extends Error {
   readonly code: SignInFailure;
@@ -410,7 +409,7 @@ export class WalletIdentityService {
    * any: §10 step 1 is *nothing about profiles*. What is written is a HASH of
    * the address and nothing else, so the row cannot be joined to anything.
    *
-   * ── WHY THE ADDRESS ITSELF IS NOT STORED, AND IT IS `A-11`'s ARGUMENT ────
+   * ── WHY THE ADDRESS ITSELF IS NOT STORED ─────────────────────────────────
    *
    * `memberUserIds` sits outside the envelope on every account, in the clear.
    * A user row carrying a subwallet address beside it would therefore read as
@@ -419,8 +418,8 @@ export class WalletIdentityService {
    * one-slot-per-employer design produces, that is exactly the fact
    * `RosterEmployee.address` is sealed to hide: *which on-chain identity a
    * given company pays, which the chain itself does not reveal, because the
-   * payments are shielded.* `A-11` removed `Invite.acceptedBy` for one join
-   * less than this one.
+   * payments are shielded.* `Invite.acceptedBy` was removed for one join less
+   * than this one.
    *
    * So the stored value is `sha256(address)`, the same construction and the
    * same reason as `inviteKeyOf`. **What that buys and what it does not:** a
@@ -428,7 +427,7 @@ export class WalletIdentityService {
    * companies; somebody holding a candidate address can still CONFIRM one. An
    * address is a public value by design, so confirmability cannot be removed
    * here — and removing it is `docs/scope-server-trust.md`'s job rather than
-   * this round's.
+   * this file's.
    *
    * **THE VERIFYING KEY IS NOT STORED EITHER, FOR THE SAME REASON.** The
    * address is `addressOfVerifyingKey(key)`, so keeping the key would be
@@ -440,10 +439,10 @@ export class WalletIdentityService {
       id: 'usr_' + nanoid(12),
       email: null,
       name: '',
-      /* `PI4b`: `authSalt`, `authHash` and `identityPublicKey` were set to
-       * `null` here and are deleted from `User`. Nothing on this path ever set
-       * them to anything else — a wallet account never had a password — so the
-       * three lines were the last writers of three fields nothing reads. */
+      /* `authSalt`, `authHash` and `identityPublicKey` were set to `null` here
+       * and are deleted from `User`. Nothing on this path ever set them to
+       * anything else — a wallet account never had a password — so the three
+       * lines were the last writers of three fields nothing reads. */
       keyBundle: null,
       keyBundleVersion: 0,
       walletKey: walletKeyOf(address),

@@ -16,8 +16,8 @@ import { toHex, utf8, type WrappingKeypair } from './crypto.js';
  * **BUT THE PAYROLL PAGE NOW NEEDS THE DERIVATION TOO** — a founder making
  * themselves payable derives their own payslip keypair in the browser — and
  * importing it from there put twenty-four ledger modules and a 10 MB `.wasm`
- * asset back into the page's module graph. **That is `C149` exactly**: four
- * rounds of a blank page in every real browser, from one small function
+ * asset back into the page's module graph. **That is a failure this project has
+ * already had**: a blank page in every real browser, from one small function
  * imported across a file that had the wallet SDK behind it. Measured, not
  * feared: `no-wasm-in-the-page.test.ts` went red the moment the import was
  * added and green again on this split.
@@ -39,45 +39,44 @@ import { toHex, utf8, type WrappingKeypair } from './crypto.js';
  * not a recovery, not another client, not us. The payslips stay intact, stay
  * sealed, and are gone.
  *
- * ── AND THE REGISTER'S PREMISE IS NOT WHAT THE CODE DOES ──────────────────
+ * ── AND IT IS KEPT NOWHERE, WHICH IS EASY TO GET WRONG ────────────────────
  *
- * `C135` says the employee's key is *"kept in our database in the user's sealed
- * bundle (`types.ts:61-62`)"*. **It is not, and nothing else keeps it either.**
- * `types.ts:61-62` is the keyring bundle, which holds a SIGNER's wrapping
- * secret — the one that unwraps the account viewing key. The employee's payslip
- * secret appears in `EmployeeSecret` (`payroll.ts:181-185`), is handed back once
- * by the seed, and is written to no store, no column and no bundle: grep
- * `wrappingSecret` across `src/` and every hit is a signer's, a test's, or the
- * demo's React state.
+ * The employee's key has been taken to be *"kept in our database in the user's
+ * sealed bundle (`types.ts:61-62`)"*. **It is not, and nothing else keeps it
+ * either.** `types.ts:61-62` is the keyring bundle, which holds a SIGNER's
+ * wrapping secret — the one that unwraps the account viewing key. The
+ * employee's payslip secret appears in `EmployeeSecret` (`payroll.ts:181-185`),
+ * is handed back once by the seed, and is written to no store, no column and no
+ * bundle: grep `wrappingSecret` across `src/` and every hit is a signer's, a
+ * test's, or the demo's React state.
  *
- * **THAT IS WORSE THAN THE ROW SAYS, NOT BETTER.** The row describes a key kept
- * somewhere fragile. The truth is that there is nowhere at all — no employee
+ * **AND THAT IS WORSE THAN IT SOUNDS, NOT BETTER.** A key kept somewhere
+ * fragile would at least be somewhere. There is nowhere at all — no employee
  * keyring exists — so the key is handed over once and survives only in whatever
- * the person's browser was holding at the time. `C135`'s conclusion is reached
- * by a shorter road than the one it describes.
+ * the person's browser was holding at the time.
  *
  * ── WHAT IT IS DERIVED FROM, AND WHAT IT IS DELIBERATELY NOT ──────────────
  *
- * **FROM THE KEY THE WALLET ALREADY RELEASES FOR THAT COMPANY, AND FROM
- * NOTHING ELSE.** `unlock.ts:92-101` in the wallet says this round's input was
- * built to be fit for it: thirty-two bytes of HKDF-SHA256, a pure function of a
- * seed and a chain-assigned address, recomputable on any device and after any
- * recovery, stored nowhere.
+ * **FROM THE KEY THE WALLET ALREADY RELEASES FOR THAT COMPANY, AND FROM NOTHING
+ * ELSE.** `unlock.ts:92-101` in the wallet says that input was built to be fit
+ * for it: thirty-two bytes of HKDF-SHA256, a pure function of a seed and a
+ * chain-assigned address, recomputable on any device and after any recovery,
+ * stored nowhere.
  *
  * **THE EMPLOYEE ID IS NOT AN INGREDIENT, AND THAT IS THE ONE DECISION HERE
- * WORTH ARGUING.** It is the obvious thing to add and it would be `C136` one
- * level down. `emp_` ids are OURS TO MINT: re-invite somebody, rebuild a
- * roster, migrate a store, and the id moves — and every payslip sealed under the
- * old one becomes unopenable, which is `C127` with a person's whole pay history
- * inside it. **Nothing this side invents may reach this derivation.** So one
- * person has ONE payslip key per company, for as long as the company exists,
- * and every slip they were ever issued opens with it.
+ * WORTH ARGUING.** It is the obvious thing to add, and it would reintroduce one
+ * level down exactly the loss this file exists to rule out. `emp_` ids are OURS
+ * TO MINT: re-invite somebody, rebuild a roster, migrate a store, and the id
+ * moves — and every payslip sealed under the old one becomes unopenable, with a
+ * person's whole pay history inside it. **Nothing this side invents may reach
+ * this derivation.** So one person has ONE payslip key per company, for as long
+ * as the company exists, and every slip they were ever issued opens with it.
  *
  * **THE ORIGIN IS NOT AN INGREDIENT EITHER**, because it is not one upstream:
  * `unlock.ts` gates on the origin and derives from the company. So the same
  * person reaching the same company from a self-hosted client gets the same
- * payslip key, which is `C127` expressed as a derivation and the entire reason
- * the parent was changed in `W3`.
+ * payslip key, which keeps every payslip openable from any client and is the
+ * entire reason the parent was changed.
  *
  * ── AND IT IS NOT THE KEY IT COMES FROM ───────────────────────────────────
  *

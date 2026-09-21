@@ -262,8 +262,8 @@ describe('§2 — A RELEASE IS CHECKED HERE, BECAUSE NO SERVER EVER SEES IT', ()
 
 describe('§2 — THE COMPANY COMES FROM THE SESSION, NEVER FROM THE REQUEST', () => {
   /*
-   * **EVERY COMPANY IN THIS BLOCK IS A SIMULATED ONE, AND FROM `PI2b` THAT
-   * HAS TO BE SAID OUT LOUD.**
+   * **EVERY COMPANY IN THIS BLOCK IS A SIMULATED ONE, AND SINCE AN ADDRESS NO
+   * CHAIN ASSIGNED IS REFUSED, THAT HAS TO BE SAID OUT LOUD.**
    *
    * `SimulatedLedger` mints an address shaped exactly like a chain's, so
    * `companyForSession` now refuses it unless the process was started to
@@ -289,12 +289,11 @@ describe('§2 — THE COMPANY COMES FROM THE SESSION, NEVER FROM THE REQUEST', (
     /*
      * Asserted against the ledger rather than against a shape. A value that
      * merely LOOKS like a contract address is exactly what minting one on this
-     * side would produce, and `C136` is the row about why that is not the same
-     * thing at all.
+     * side would produce, which is not the same thing at all.
      */
-    /* `PI2b`: the ledger answers with the address AND where it came from, so
-     * the value to compare against is `.value`. The claim is unchanged — this
-     * address is the ledger's own and was not minted on this side. */
+    /* The ledger answers with the address AND where it came from, so the value
+     * to compare against is `.value`. The claim is unchanged — this address is
+     * the ledger's own and was not minted on this side. */
     expect(made.account.contractAddress).toBe((await ledger.address(made.account.id))?.value);
     expect(made.account.contractAddress).toMatch(/^[0-9a-f]{64}$/);
     expect(companyForSession(store, 'usr_1', made.account.id))
@@ -325,7 +324,8 @@ describe('§2 — THE COMPANY COMES FROM THE SESSION, NEVER FROM THE REQUEST', (
   it('A COMPANY WITH NO ADDRESS REFUSES BY NAME RATHER THAN SUBSTITUTING ONE', async () => {
     const { store, accounts } = world();
     const made = await accounts.create('Acme', [{ name: 'Ada', role: 'admin', userId: 'usr_1' }], 1);
-    /* A company created before `PI2a`, or on a ledger with no contract for it. */
+    /* A company created before this field existed, or on a ledger with no
+     * contract for it. */
     store.putAccount({ ...store.getAccount(made.account.id)!, contractAddress: null });
 
     try {
@@ -342,7 +342,7 @@ describe('§2 — THE COMPANY COMES FROM THE SESSION, NEVER FROM THE REQUEST', (
      * `save()` rebuilds the stored record from an opened account on every
      * write. A readable field that does not round-trip is written once and
      * dropped by the next roster edit — and this one is what the key is derived
-     * from, so dropping it is `C127` with a smaller radius.
+     * from, so dropping it loses every payslip that was sealed under it.
      */
     const { store, accounts } = world();
     const made = await accounts.create('Acme', [{ name: 'Ada', role: 'admin', userId: 'usr_1' }], 1);
@@ -365,7 +365,7 @@ describe('§2 — THE COMPANY COMES FROM THE SESSION, NEVER FROM THE REQUEST', (
 
 describe('§3 — THE KEY IS IN NO LOG, NO URL AND NO STORED FIELD', () => {
   /**
-   * **THE GREP THE ROUND ASKED FOR, RUN OVER THE SOURCE THAT HANDLES THE KEY.**
+   * **A GREP RUN OVER THE SOURCE THAT HANDLES THE KEY.**
    *
    * A runtime capture (in `keyring.test`-shaped form below) proves what one
    * journey did; this proves the shape of every journey. Both are here because
@@ -396,8 +396,8 @@ describe('§3 — THE KEY IS IN NO LOG, NO URL AND NO STORED FIELD', () => {
 
   it('and the key is not put in the URL, because the URL is built from an account id', () => {
     const keyring = sourceOf('../web/keyring.ts');
-    /* The one request this round adds. Its path carries an account id and its
-     * body is not sent at all. */
+    /* The one request the unlock path adds. Its path carries an account id and
+     * its body is not sent at all. */
     expect(keyring).toContain('await api(`/api/accounts/${accountId}/unlock`');
     expect(keyring).not.toMatch(/api\(`[^`]*\$\{ek\}/);
   });
@@ -414,7 +414,7 @@ describe('§3 — AND THE SAME THING PROVED BY WATCHING, NOT BY READING', () => 
    * them**, in neither its raw nor its hex spelling.
    *
    * A source grep says the code has no line that would send it. This says the
-   * journey did not send it, which is the claim the round actually makes.
+   * journey did not send it, which is the claim actually being made.
    */
   it('THE SERVER IS NEVER HANDED THE RELEASED KEY, in any spelling', async () => {
     const ask = parseAsk(keyringAsk({
