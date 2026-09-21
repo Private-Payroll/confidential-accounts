@@ -58,10 +58,10 @@ export async function seedDemo(
    */
   throw new Error(
     'the demo cannot be seeded, and nothing has been created: it funded the company by ' +
-      'depositing into the account, and the account no longer keeps a balance (C292). Two ' +
+      'depositing into the account, and the account no longer keeps a balance. Two ' +
       'months of settled payroll were spent out of that balance. Both need vault payroll — ' +
-      'funding a vault and paying a run from it — which is not built. This is deliberate ' +
-      'and is the accepted cost of taking the bytes at the redeploy rather than a later one.',
+      'funding a vault and paying a run from it — which is not built. ' +
+      'This is deliberate.',
   );
 
   // eslint-disable-next-line no-unreachable
@@ -75,7 +75,7 @@ export async function seedDemo(
   const { account, viewingKey, secrets } = created;
 
   /*
-   * WHAT THE SEEDER DID, KEPT SO THE ROUND THAT REBUILDS IT ON VAULTS HAS IT.
+   * WHAT THE SEEDER DID, KEPT SO THE REBUILD ON VAULTS HAS IT.
    *
    * It funded the company here — `accounts.deposit(…, 480_000_00n, 'Monument
    * Bank')` — and then settled two months of payroll by spending that balance.
@@ -160,19 +160,18 @@ export async function seedDemo(
  *
  * **THIS COVERS THIS ROUTE AND NOT THE OTHER ONE.**
  * `POST /api/accounts/:id/payroll` returns `PayrollService.createRun`'s result
- * whole, `secrets: EmployeeSecret[]` included, with no projection in between —
- * `S29`, found by its money-safety pass. Nothing leaks there today only
- * because the branch that mints a secret sets three fields.
+ * whole, `secrets: EmployeeSecret[]` included, with no projection in between.
+ * Nothing leaks there today only because the branch that mints a secret sets
+ * three fields.
  *
  * **AND IT IS A FUNCTION RATHER THAN AN EXPRESSION INSIDE `seedDemo` BECAUSE
  * THE RULE HAS TO BE TESTABLE WITHOUT SEEDING.** `seedDemo` refuses as its
- * first statement, so a test that reaches this projection
- * through it cannot run at all — which left `payslip-key.test.ts` deliberately
- * red for a round. `S28` wrote the three ways out with none marked correct;
- * this is (a), and it changes what crosses the wire in exactly no way: the same
- * four fields, in the same order, from the same inputs. `payslip-key.test.ts`
- * now drives this directly, against a real `hireDirect` payload with real
- * words in it.
+ * first statement, so a test that reaches this projection through it cannot
+ * run at all — which left `payslip-key.test.ts` deliberately red. Making it a
+ * function changes what crosses the wire in exactly no way: the same four
+ * fields, in the same order, from the same inputs. `payslip-key.test.ts` now
+ * drives this directly, against a real `hireDirect` payload with real words in
+ * it.
  */
 export function seededEmployeesForHttp(
   hired: ReadonlyArray<{ employee: RosterEmployee; secret: EmployeeSecret }>,

@@ -14,9 +14,9 @@
  * is a guessing oracle the way login was; what a limit buys them is that an
  * attempt is BOUNDED and therefore visible.
  *
- * **THE WORD `METERED` IS DOING REAL WORK AND WAS MISSING UNTIL `S58`.**
- * This sentence said *the one door that answers a stranger*, flat, and
- * that is FALSE at source: **twelve routes in `src/server/index.ts` carry no
+ * **THE WORD `METERED` IS DOING REAL WORK AND USED TO BE MISSING.** This
+ * sentence once said *the one door that answers a stranger*, flat, and that is
+ * FALSE at source: **twelve routes in `src/server/index.ts` carry no
  * `authed`**, ten of them wrapped by `wrap` and two registered bare. Read as
  * written it says the unauthenticated surface is one endpoint wide and metered,
  * when it is twelve wide and one of them is metered.
@@ -24,14 +24,14 @@
  * ONE MECHANISM, A SCOPE PER DOOR. Each is the same bucket with a different
  * `scope`, so there is one rule to get right rather than one per caller.
  *
- * ATOMICITY IS THE WHOLE THING. A limiter that reads, adds one, and writes
- * back can be defeated by sending the requests concurrently: every request
- * reads 4, every request writes 5, and a hundred attempts count as one. That
- * is not a theoretical race — it is the first thing an attacker tries, and it
- * is exactly why this could not be built on the JSON store, where I-1 records
- * that concurrent writes interleave and lose data. The Postgres implementation
- * therefore does the increment IN THE DATABASE, in a single statement, and
- * returns the resulting count. Nothing reads-then-writes.
+ * ATOMICITY IS THE WHOLE THING. A limiter that reads, adds one, and writes back
+ * can be defeated by sending the requests concurrently: every request reads 4,
+ * every request writes 5, and a hundred attempts count as one. That is not a
+ * theoretical race — it is the first thing an attacker tries, and it is exactly
+ * why this could not be built on the JSON store, where concurrent writes are
+ * known to interleave and lose data. The Postgres implementation therefore does
+ * the increment IN THE DATABASE, in a single statement, and returns the
+ * resulting count. Nothing reads-then-writes.
  */
 
 /** What a caller needs to know: may this attempt proceed, and if not, for how long. */
@@ -57,23 +57,23 @@ export interface LimitPolicy {
  * like a script, and a script working from one address must not be invisible
  * because each thing it touched only saw two attempts.
  *
- * **THE `email` BUCKET IS DELETED.** It counted attempts per account on
- * the way into `login`, and `login` was the only thing that ever recorded on it
- * or cleared it. **A bucket nothing fills is a limit that reads as protection
- * and is not one**, which is the same failure S-2 was written against from the
- * other side: back then the limiter existed and the route did not call it.
+ * **THE `email` BUCKET IS DELETED.** It counted attempts per account on the way
+ * into `login`, and `login` was the only thing that ever recorded on it or
+ * cleared it. **A bucket nothing fills is a limit that reads as protection and
+ * is not one**, which is the same failure from the other side: a limiter that
+ * existed and a route that never called it.
  */
 /**
  * **WHAT AN UNKNOWN SCOPE IS COUNTED UNDER.**
  *
  * Both implementations fall back to this when `policy[scope]` is absent, so a
  * scope name with a typo in it is METERED rather than waved through. It used to
- * be `DEFAULT_POLICY.email`, which this round deleted — **and these are that
- * bucket's numbers on purpose**: falling back to one of the remaining scopes
- * would have changed the unknown-scope ceiling as a side effect of a deletion,
- * and falling back to the most generous one would turn a typo into a quiet
- * removal of the limit. Named rather than borrowed, so the next person to
- * change a scope's numbers does not move this without meaning to.
+ * be `DEFAULT_POLICY.email`, which was deleted — **and these are that bucket's
+ * numbers on purpose**: falling back to one of the remaining scopes would have
+ * changed the unknown-scope ceiling as a side effect of a deletion, and falling
+ * back to the most generous one would turn a typo into a quiet removal of the
+ * limit. Named rather than borrowed, so the next person to change a scope's
+ * numbers does not move this without meaning to.
  */
 export const FALLBACK_POLICY: LimitPolicy = { max: 10, windowSeconds: 15 * 60 };
 
@@ -89,12 +89,12 @@ export const DEFAULT_POLICY: Record<string, LimitPolicy> = {
    * `docs/scope-invitations.md` §8.
    *
    * `GET /api/invites/:token/offer` is the one door in this product that
-   * answers a stranger AND COUNTS THE ANSWER, and `X11` is the round that makes
-   * it reachable by a real screen for the first time. **It is not the only
-   * unauthenticated door — `T-235`.** Twelve routes carry no `authed`;
-   * what is unique here is the meter, which is what the paragraph was always
-   * about and what it did not say. The scope's own words: *"about a hundred
-   * bits of token is the only thing between a guesser and a salary."*
+   * answers a stranger AND COUNTS THE ANSWER, and it was made reachable by a
+   * real screen for the first time. **It is not the only unauthenticated
+   * door.** Twelve routes carry no `authed`; what is unique here is the meter,
+   * which is what the paragraph was always about and what it did not say. The
+   * scope's own words: *"about a hundred bits of token is the only thing
+   * between a guesser and a salary."*
    *
    * **A HUNDRED BITS IS NOT GUESSABLE, SO THIS IS DEPTH RATHER THAN URGENCY**
    * — said plainly rather than dressed up. `nanoid(18)` over a 64-character
@@ -103,17 +103,17 @@ export const DEFAULT_POLICY: Record<string, LimitPolicy> = {
    * therefore visible: an endpoint nobody can hammer is an endpoint whose
    * traffic means something.
    *
-   * **AND IT IS KEYED ON THE CALLER, NEVER ON THE TOKEN.** `X11` §6 is
-   * explicit and the reason is arithmetic: a limit per token lets one guesser
-   * walk the whole space at one attempt per token for ever, because every
-   * guess is a different bucket. The bucket has to be the thing that does not
-   * change between guesses, and that is who is asking.
+   * **AND IT IS KEYED ON THE CALLER, NEVER ON THE TOKEN.** The reason is
+   * arithmetic: a limit per token lets one guesser walk the whole space at one
+   * attempt per token for ever, because every guess is a different bucket. The
+   * bucket has to be the thing that does not change between guesses, and that
+   * is who is asking.
    *
    * Lower than `ip`, and it used to be described as higher than `email`, which
-   * `PI4b` deleted with the login it counted. An invitee re-reads their own
-   * offer a few times — they open the link, they sign in, they come back — and
-   * an office shares an address. Thirty in a quarter of an hour is generous
-   * for both and useless to a script.
+   * was deleted with the login it counted. An invitee re-reads their own offer
+   * a few times — they open the link, they sign in, they come back — and an
+   * office shares an address. Thirty in a quarter of an hour is generous for
+   * both and useless to a script.
    */
   'invite-offer': { max: 30, windowSeconds: 15 * 60 },
 };
@@ -199,8 +199,8 @@ export interface SqlRunner {
  * `INSERT … ON CONFLICT DO UPDATE SET attempts = login_attempts.attempts + 1
  * RETURNING attempts` is one statement. Postgres takes a row lock for the
  * duration, so a hundred concurrent requests produce the numbers 1 to 100 and
- * not a hundred 1s. **This single line is the difference between a rate
- * limiter and something shaped like one**, and it is why S-2 waited for a real
+ * not a hundred 1s. **This single line is the difference between a rate limiter
+ * and something shaped like one**, and it is why the limiter waited for a real
  * database rather than being bolted onto the JSON store.
  */
 export class PostgresRateLimiter implements RateLimiter {

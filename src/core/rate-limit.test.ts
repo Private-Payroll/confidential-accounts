@@ -1,5 +1,5 @@
 /**
- * S-2, tested against a REAL Postgres rather than a mock.
+ * The rate limiter, tested against a REAL Postgres rather than a mock.
  *
  * A mock would prove the SQL string is what this file expects it to be, which
  * is not the claim. The claim is that a hundred simultaneous login attempts
@@ -59,11 +59,11 @@ for (const [name, make, run] of implementations) {
      * **THE SCOPE THESE RUN ON CHANGED AND THE MECHANISM DID NOT.**
      *
      * They were written against `email`, which was the scope `login` counted
-     * on, and this round deleted both. **They were never tests about a
-     * password** — every one of them is about the bucket: what it counts, what
-     * it keeps apart, and when it forgets. So they are pointed at a scope that
-     * has a caller, and the numbers come from the policy rather than being
-     * written out, exactly as before.
+     * on, and both were deleted. **They were never tests about a password** —
+     * every one of them is about the bucket: what it counts, what it keeps
+     * apart, and when it forgets. So they are pointed at a scope that has a
+     * caller, and the numbers come from the policy rather than being written
+     * out, exactly as before.
      */
     const SCOPE = 'invite-offer';
     const POLICY = DEFAULT_POLICY[SCOPE];
@@ -101,10 +101,10 @@ for (const [name, make, run] of implementations) {
       expect((await rl.record('ip', '198.51.100.7')).allowed).toBe(true);
     });
 
-    it('AND AN UNKNOWN SCOPE IS METERED RATHER THAN WAVED THROUGH — PI4b', async () => {
+    it('AND AN UNKNOWN SCOPE IS METERED RATHER THAN WAVED THROUGH', async () => {
       /*
-       * The fallback used to be `DEFAULT_POLICY.email`, and this round deleted
-       * that bucket. **A scope with a typo in it must not become an unlimited
+       * The fallback used to be `DEFAULT_POLICY.email`, and that bucket was
+       * deleted. **A scope with a typo in it must not become an unlimited
        * door**, which is what `?? undefined` or a fallback to the most generous
        * policy would have made it — so the fallback is named, and this is what
        * notices if it stops existing.
@@ -175,9 +175,9 @@ withDb('THE ONE THAT MATTERS: concurrent attempts each get their own number', ()
     const rl = new PostgresRateLimiter(sql);
     const now = new Date('2026-08-14T11:00:00Z');
 
-    /* `PI4b`: this ran on `email`, which was a scope until this round deleted
-     * it. The claim is about the INCREMENT, not about which door — so it runs
-     * on one that has a caller. */
+    /* This ran on `email`, which was a scope that no longer exists. The claim
+     * is about the INCREMENT, not about which door — so it runs on one that
+     * has a caller. */
     const results = await Promise.all(
       Array.from({ length: 100 }, () => rl.record('invite-offer', 'flood@example.com', now)),
     );
@@ -222,7 +222,6 @@ withDb('THE ONE THAT MATTERS: concurrent attempts each get their own number', ()
 
 /**
  * **THE CENSUS BEHIND THE SENTENCE, SO THE SENTENCE STOPS BEING PROSE.**
- * `T-235`, `S58`, rule 27.
  *
  * `rate-limit.ts` said `GET /api/invites/:token/offer` *is the one door in this
  * product that answers a stranger*. That is false at source and had been for
@@ -231,13 +230,13 @@ withDb('THE ONE THAT MATTERS: concurrent attempts each get their own number', ()
  * narrowed to say so.
  *
  * **A CORRECTED SENTENCE WITH NOTHING BEHIND IT GOES STALE THE SAME WAY THE
- * FIRST ONE DID**, which is the whole of `T-235`'s complaint, so the numbers
- * are asserted here rather than asserted in a comment. This test reads the
- * route table as TEXT — it is a census, not behaviour — and it goes red when a
- * thirteenth unauthenticated route is added or when the metering moves, which
- * is exactly when somebody should re-read that paragraph.
+ * FIRST ONE DID**, so the numbers are asserted here rather than asserted in a
+ * comment. This test reads the route table as TEXT — it is a census, not
+ * behaviour — and it goes red when a thirteenth unauthenticated route is
+ * added or when the metering moves, which is exactly when somebody should
+ * re-read that paragraph.
  */
-describe('T-235: the unauthenticated surface, counted rather than described', () => {
+describe('the unauthenticated surface, counted rather than described', () => {
   const server = readFileSync('src/server/index.ts', 'utf8');
   const routes = server.split('\n')
     .map((line, i) => ({ line, at: i + 1 }))
@@ -269,7 +268,7 @@ describe('T-235: the unauthenticated surface, counted rather than described', ()
     /*
      * The half a census cannot check is whether the prose still matches it.
      * This is the cheapest thing that fails when somebody restores the old
-     * wording — and the old wording is what `T-235` was opened about.
+     * wording.
      */
     const doc = readFileSync('src/core/rate-limit.ts', 'utf8');
     expect(doc).toContain('the one METERED door');

@@ -86,10 +86,10 @@ export const privacyOf = (p: Payee): Privacy =>
  * **WHICH LEDGER LINE A MOVEMENT WRITES.**
  *
  * One function rather than a string at each call site, because the misfiling
- * this round exists to prevent is exactly a transfer written into the log as a
- * payroll, where an auditor reading it in a year sees somebody's salary.
- * `deposit` and `withdrawal` are `EntryKind`'s other two and are not movements
- * a company raises through this door.
+ * this guards against is exactly a transfer written into the log as a payroll,
+ * where an auditor reading it in a year sees somebody's salary. `deposit` and
+ * `withdrawal` are `EntryKind`'s other two and are not movements a company
+ * raises through this door.
  *
  * It compiles only while every `MovementKind` is also an `EntryKind`, which is
  * the property worth holding: the two vocabularies cannot drift apart without
@@ -99,7 +99,6 @@ export const entryKindOf = (m: MovementKind): EntryKind => m;
 
 /**
  * **A PAYROLL RUN CANNOT CONTAIN A PUBLIC PAYEE. REFUSED, NOT WARNED ABOUT.**
- * `C250`, scoped 29 August.
  *
  * ── WHY A REFUSAL AND NOT A CONFIRMATION ─────────────────────────────────
  *
@@ -118,11 +117,11 @@ export const entryKindOf = (m: MovementKind): EntryKind => m;
  *
  * ── WHAT IT ALSO PREVENTS, WHICH IS WORTH KNOWING ────────────────────────
  *
- * `C255`'s withdrawal is a one-payee run to the company's own public address.
- * Because this refusal sits on the payroll path, **a withdrawal cannot be built
- * as a payroll run at all**, so it cannot reach payroll history as somebody's
- * salary. That is the misfiling the row is most worried about, closed by a
- * refusal written for something else.
+ * A withdrawal is a one-payee run to the company's own public address. Because
+ * this refusal sits on the payroll path, **a withdrawal cannot be built as a
+ * payroll run at all**, so it cannot reach payroll history as somebody's
+ * salary. That is the misfiling most worth worrying about, closed by a refusal
+ * written for something else.
  *
  * ── AND IT DOES NOT SAY "PAYROLL IS ALWAYS PRIVATE" ──────────────────────
  *
@@ -151,7 +150,7 @@ export function payrollPayee(name: string, payee: Payee): PayeeAddress {
  *
  * A vendor, a supplier, a contractor, or the company's own account. It is not a
  * payroll run and must never be presented as one: its own history, its own
- * screen, its own ledger line. `S12b` builds that surface against this type.
+ * screen, its own ledger line. Any surface for it is built against this type.
  *
  * **Approved at the vault's threshold like any other movement, and that is
  * `recordPayment`'s doing rather than this file's.** The contract checks the
@@ -225,8 +224,7 @@ export interface TransferSpec {
   readonly createdBy: string;
   /**
    * **THE ADDRESSES ON THIS ACCOUNT'S PAYROLL ROSTER. REQUIRED, NEVER
-   * DEFAULTED.** `C250`, and it is the half of the rule `payrollPayee` cannot
-   * reach.
+   * DEFAULTED.** It is the half of the rule `payrollPayee` cannot reach.
    *
    * `payrollPayee` is written on the shape of a RUN. The rule is about WHO the
    * payee is: *no employee is ever disclosed publicly.* Those are not the same
@@ -252,9 +250,9 @@ export interface TransferSpec {
  * 1. **The choice and the address must agree.** See `Transfer.privacy`.
  * 2. **Private is refused for an asset that has no private form.**
  *    `privateForm` answers it and the reason travels in the message, so a
- *    screen has something true to show rather than a red border. `C234`'s
- *    shape is an interface implying an operation the settlement cannot
- *    perform, and offering private money that does not exist yet is that.
+ *    screen has something true to show rather than a red border. The failure
+ *    shape is an interface implying an operation the settlement cannot perform,
+ *    and offering private money that does not exist yet is exactly that.
  * 3. **An amount is a positive whole number in the smallest unit**, which is
  *    `assets.ts`'s first rule enforced rather than assumed at a new door.
  */
@@ -284,7 +282,8 @@ export function transferOf(spec: TransferSpec): Transfer {
    * reimbursed to an employee is a real transfer and not a salary, so refusing
    * it would refuse an ordinary thing a company does. **A private transfer to
    * an employee does file a payment to them outside payroll history**, and
-   * whether that is right is reported rather than decided in this round.
+   * whether that is right is recorded as an open question rather than decided
+   * here.
    */
   if (spec.privacy === 'public'
     && spec.employees.some(e => e.bech32 === spec.payee.bech32)) {
@@ -330,8 +329,8 @@ export function transferOf(spec: TransferSpec): Transfer {
  * `[transferFacts(t)]`, approved and paid on circuits that already exist. No
  * new circuit, no contract change, no redeploy.
  *
- * **HERE RATHER THAN AT THE SCREEN**, so `S12b` has one call rather than three
- * fields to assemble.
+ * **HERE RATHER THAN AT THE SCREEN**, so a screen has one call to make rather
+ * than three fields to assemble.
  *
  * **AND THE TOKEN IS THE LEDGER'S, NOT THE ASSET CODE.** A vault holds money by
  * the ledger's token type and pays out of the token it is handed, and this

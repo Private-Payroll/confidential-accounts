@@ -60,15 +60,14 @@ export function proofKeypairFor(symmetricKey: Hex): SigningKeypair {
 
 /**
  * THE PUBLIC HALF OF A SIGNING SECRET, DERIVED FROM THE SECRET AND NOT READ
- * OFF A RECORD. `C325`, and `C323` is why it is a derivation.
+ * OFF A RECORD.
  *
  * `newSigningKeypair` above is the only other place this line is written, and
  * there it is the pair being MADE. This is the same line asked of a secret that
  * already exists, which is a different question and the only one a device can
- * use to check a record about itself: `C323` is the row for a check that
- * compared two stored claims and never derived from the material, and a leaf
- * check built the same way would agree with a roster that had been substituted
- * wholesale.
+ * use to check a record about itself: a check that compares two stored claims
+ * and never derives from the material is the hazard, and a leaf check built
+ * that way would agree with a roster that had been substituted wholesale.
  *
  * There is deliberately no wrapping twin. Nothing asks that question yet, and a
  * helper with no caller is a second definition waiting for one.
@@ -94,33 +93,33 @@ export function commit(plaintext: string, nonce: Hex): Hex {
   return toHex(sha256(utf8(nonce + ':' + plaintext)));
 }
 
-/* `newNonce` — sixteen bytes, no callers — STOOD HERE. Deleted by `S44`. `T-204`, below. */
+/* `newNonce` — sixteen bytes, no callers — STOOD HERE. Why it went is below. */
 export const newSymmetricKey = (): Hex => toHex(randomBytes(32));
 
 /**
  * THE PROPOSAL'S SALT. THIRTY-TWO BYTES, BECAUSE A CIRCUIT ARGUMENT SAYS SO.
  *
+ * **SEPARATE FROM `newNonce`, WHICH STOOD ABOVE UNTIL IT WAS DELETED.** It was
+ * DECLARED as `commit`'s nonce (`:93-95`), where the width is nobody's
+ * business: the value is concatenated into a string and hashed, so every width
+ * works and none is required. It was ALSO the proposal salt, at five sites in
+ * `src/core/account.ts`, and there the width is a contract's business. One
+ * generator answering to two rules is the mistake, and the sentence for it is
+ * the one `src/midnight/commitments.ts:294` still carries — *the safest shared
+ * rule is the one that does not exist.* Widening `newNonce` would have been
+ * that mistake with a green suite; this function is the other answer.
  *
- * **SEPARATE FROM `newNonce`, WHICH STOOD ABOVE UNTIL `S44` DELETED IT.**
- * It was DECLARED as `commit`'s nonce (`:93-95`), where the width is
- * nobody's business: the value is concatenated into a string and hashed, so
- * every width works and none is required. It was ALSO the proposal salt, at
- * five sites in `src/core/account.ts`, and there the width is a contract's
- * business. One generator answering to two rules is `M-106`, whose sentence
- * `src/midnight/commitments.ts:294` still carries — *the safest shared rule is
- * the one that does not exist.* Widening `newNonce` would have been that
- * mistake with a green suite; this function is the other answer.
- *
- * **AND THE `commit` HALF WAS A DECLARATION RATHER THAN A CALL, WHICH `S43`
- * MEASURED AND WHICH `C371`'S ROW AND `SC9` BOTH STATE THE OTHER WAY.** Every
- * `commit(...)` in this repository passes `''` as its nonce — `account.ts:1097`,
- * `:1208`, `:1394`, `:1568`, `:1994`, `:2252`, and no others. So `S43`'s five
- * sites were its ONLY callers and it was left exported, untested, and SIXTEEN
- * BYTES WIDE in the file every key on the money path comes from. `S44` grepped
- * the repository again — one definition, no import, no call — and deleted it.
- * **The position against, written out: it is one line and removing it fixes no
- * failure.** The answer is that the next person who needed a nonce would have
- * found a sixteen-byte one first, which is exactly how `C371` got its width.
+ * **AND THE `commit` HALF WAS A DECLARATION RATHER THAN A CALL, THOUGH IT WAS
+ * WRITTEN DOWN THE OTHER WAY ROUND UNTIL SOMEBODY MEASURED IT.** Every
+ * `commit(...)` in this repository passes `''` as its nonce —
+ * `account.ts:1097`, `:1208`, `:1394`, `:1568`, `:1994`, `:2252`, and no
+ * others. So the five proposal-salt sites were its ONLY callers and it was left
+ * exported, untested, and SIXTEEN BYTES WIDE in the file every key on the money
+ * path comes from. The repository was grepped again — one definition, no
+ * import, no call — and it was deleted. **The position against, written out: it
+ * is one line and removing it fixes no failure.** The answer is that the next
+ * person who needed a nonce would have found a sixteen-byte one first, which is
+ * exactly how the salt got sixteen bytes in the first place.
  *
  * **WHAT READS IT, AND WHY THIRTY-TWO.** It is `StateChange.salt`
  * (`src/core/ledger.ts:197-209`): `proposalIdOf(payloadHash, vault, salt)` is
@@ -139,17 +138,17 @@ export const newSymmetricKey = (): Hex => toHex(randomBytes(32));
  * 32-byte constant.
  *
  * **THE ASSERT IS HERE, WHERE THE SALT IS MADE, AND NOT AT EITHER CONSUMER.**
- * A width checked where it is used is `C371` again with a better error message:
- * by then the value is already wrong and already travelling, and there are two
- * consumers to remember. Checked here, a salt that leaves this function is a
- * salt the chain will take.
+ * A width checked where it is used is the same failure with a better error
+ * message: by then the value is already wrong and already travelling, and
+ * there are two consumers to remember. Checked here, a salt that leaves this
+ * function is a salt the chain will take.
  *
  * **IT CANNOT FAIL AGAINST THE BODY DIRECTLY ABOVE IT, AND THAT IS SAID PLAINLY
  * RATHER THAN LEFT TO BE FOUND.** `randomBytes(PROPOSAL_SALT_BYTES)` is that
  * many bytes by construction, so today the check passes by arithmetic. What it
  * catches is an EDIT to this function — a hand-written width, a swap back to
  * `randomBytes(16)`, a different generator — which is exactly the change that
- * reintroduces `C371` and exactly the mutation `2y7g` should carry. A check
+ * puts a short salt back and exactly the mutation `2y7g` should carry. A check
  * that cannot fail against today's code and does fail against tomorrow's edit
  * is a tripwire; `contracts/test/one-definition.test.ts:770` is this
  * repository's precedent for labelling one as such rather than claiming more
@@ -164,7 +163,7 @@ export const newProposalSalt = (): Hex => {
       `a proposal salt is ${PROPOSAL_SALT_BYTES} bytes and this one is ${salt.length}. ` +
         'It is the third argument of proposalIdOf and the fourth of changeCommitmentOf, both ' +
         'Bytes<32>, which refuse any other length — so a salt of this width is a governance ' +
-        'round and a payroll run that cannot be raised at all. C371.',
+        'round and a payroll run that cannot be raised at all.',
     );
   }
   return toHex(salt);
@@ -178,7 +177,7 @@ export const newProposalSalt = (): Hex => {
  * Anything that backs up or recovers a signing key must cover this too.
  *
  * **AND IT IS ALSO THE ACCOUNT'S PAYOUT SEED, WHICH IS A SECOND JOB AND THE
- * REASON THE WIDTH IS CHECKED HERE. `T-195`, `SC9` `F3`.**
+ * REASON THE WIDTH IS CHECKED HERE.**
  *
  * `AccountService.create` (at the `payoutSeeds` genesis entry) and the key
  * rotation beside it both take a payout seed off this function — named rather
@@ -186,17 +185,16 @@ export const newProposalSalt = (): Hex => {
  * and had been since before anything moved: `:763` is the `threshold` field and
  * `:1821` is prose in a block comment. `runKeyOf` expands the seed with HKDF —
  * **which accepts any IKM length and returns 32 bytes regardless.** So at any
- * seed width every run key, every `V-43` per-payee nonce and every blinding
- * stays well-formed and self-consistent, and the contract sees a hash and
- * cannot tell a strong one from a weak one. **A narrowing here is invisible on
- * chain and invisible in every derivation downstream of it.**
+ * seed width every run key, every per-payee nonce and every blinding stays
+ * well-formed and self-consistent, and the contract sees a hash and cannot
+ * tell a strong one from a weak one. **A narrowing here is invisible on chain
+ * and invisible in every derivation downstream of it.**
  *
  * **WHAT REDDENED A NARROWING BEFORE THIS CHECK EXISTED WAS AN ACCIDENT ON
  * SOMEBODY ELSE'S PATH** — `src/core/signer-leaf.ts:223`'s `HEX64`, reached
  * through `src/web/accept-seat.test.ts:128`, which is the SIGNER blinding: a
- * different consumer of the same function. Rule 27 and `C286` say that has to
- * be written in those words, and `SC9` wrote them. This is the check of its
- * own that replaces the accident.
+ * different consumer of the same function. This is the check of its own that
+ * replaces the accident.
  *
  * **IT CANNOT FAIL AGAINST THE BODY BESIDE IT, SAID PLAINLY RATHER THAN LEFT
  * TO BE FOUND** — the same sentence `newProposalSalt` above carries, for the
@@ -206,10 +204,10 @@ export const newProposalSalt = (): Hex => {
  * generator. `contracts/test/one-definition.test.ts:770` is this
  * repository's precedent for labelling a tripwire as one.
  *
- * **AND IF THIS IS EVER SPLIT INTO A DEDICATED `newPayoutSeed()` — which is
- * the fix `SC9` `F3` names — THE SPLIT CARRIES THIS CHECK WITH IT.** A split
- * that leaves the assertion here alone puts the payout seed back exactly where
- * `F3` found it, with nothing on its own path checking anything.
+ * **AND IF THIS IS EVER SPLIT INTO A DEDICATED `newPayoutSeed()`, THE SPLIT
+ * CARRIES THIS CHECK WITH IT.** A split that leaves the assertion here alone
+ * puts the payout seed back where it started, with nothing on its own path
+ * checking anything.
  */
 export const BLINDING_BYTES = 32;
 
@@ -250,9 +248,9 @@ export function unseal(sealed: Sealed, key: Hex): string {
  * This is how a viewing key reaches a signer without ever being transmitted in
  * clear, and that is the overwhelmingly common use — hence the name. The
  * parameter is a plain `string` rather than a `Hex` because the mechanism never
- * cared what it carried: M-96 seals a JSON payload to an account's inbox with
- * the identical construction, and a second copy of this ECDH would have been one
- * more rule written twice.
+ * cared what it carried: a JSON payload is sealed to an account's inbox with
+ * the identical construction, and a second copy of this ECDH would have been
+ * one more rule written twice.
  */
 export function wrapKey(plaintext: string, recipientPublicKey: Hex): { ephemeral: Hex } & Sealed {
   const eph = x25519.utils.randomSecretKey();
@@ -281,7 +279,7 @@ export function unwrapKey(wrapped: { ephemeral: Hex } & Sealed, recipientSecret:
  * which hash the string and never parse it: the output was malformed and
  * deterministic, so nothing complained. sealed-records.ts had its own second
  * copy that used `JSON.stringify` and therefore did not have the bug, and
- * merging the two is what surfaced it. M-97, and the tenth instance of this
+ * merging the two is what surfaced it. This is the tenth instance of this
  * project's one-rule-two-copies failure — the first where the copies had
  * genuinely drifted apart in behaviour.
  *

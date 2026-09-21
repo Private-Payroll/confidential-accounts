@@ -1,16 +1,16 @@
 /**
  * The redactor, on its own.
  *
- * The round's real deliverable is the test that greps the sink's own report —
- * `src/server/web-console-sink.test.ts`. This file is the layer beneath it:
- * the shapes, one at a time, including the two that must NOT be touched,
- * because a redactor that eats stack traces is a redactor somebody switches off.
+ * The proof that matters is the test that greps the sink's own report —
+ * `src/server/web-console-sink.test.ts`. This file is the layer beneath it: the
+ * shapes, one at a time, including the two that must NOT be touched, because a
+ * redactor that eats stack traces is a redactor somebody switches off.
  */
 import { describe, it, expect } from 'vitest';
 import { redactSecrets, MAX_MESSAGE } from './redact-secrets.js';
 
 describe('removing a secret from a line of text', () => {
-  it('THE LINE C145 IS ABOUT: the SDK printing its own seed', () => {
+  it('THE LINE THE RULE EXISTS FOR: the SDK printing its own seed', () => {
     const line = 'INFO (18260): Your wallet seed is: '
       + '39aebaeb0a2f4c1d8e7b6a5940312233445566778899aabbccddeeff00112233';
     const out = redactSecrets(line);
@@ -29,15 +29,15 @@ describe('removing a secret from a line of text', () => {
   });
 
   /*
-   * `C148`, and the two cases the row names. Both of these were written to disk
-   * IN FULL by the rule this suite shipped with: it read `[a-z]` without `i`,
-   * so `above Absent` ended the run of lower-case words and the whole phrase
-   * survived. The words are a working wallet in either shape.
+   * Both of the cases below were written to disk IN FULL by the rule this suite
+   * shipped with: it read `[a-z]` without `i`, so `above Absent` ended the run
+   * of lower-case words and the whole phrase survived. The words are a working
+   * wallet in either shape.
    *
    * The defect this pair answers takes the flag back off, and these are the
    * two tests that have to die when it does.
    */
-  it('C148: a phrase with ONE capitalised word in it, which a phone keyboard produces', () => {
+  it('a phrase with ONE capitalised word in it, which a phone keyboard produces', () => {
     const phrase = 'abandon ability able about above Absent absorb abstract '
       + 'absurd abuse access accident account accuse achieve acid acoustic '
       + 'acquire across act action actor actress';
@@ -47,7 +47,7 @@ describe('removing a secret from a line of text', () => {
     expect(out).not.toContain('Absent');
   });
 
-  it('C148: and a phrase in capitals, which is the same wallet', () => {
+  it('and a phrase in capitals, which is the same wallet', () => {
     const phrase = 'ABANDON ABILITY ABLE ABOUT ABOVE ABSENT ABSORB ABSTRACT '
       + 'ABSURD ABUSE ACCESS ACCIDENT ACCOUNT ACCUSE ACHIEVE ACID';
     const out = redactSecrets(`pasted ${phrase} into the wrong field`);
@@ -67,7 +67,7 @@ describe('removing a secret from a line of text', () => {
     expect(out).toBe('<redacted:seed-phrase>');
   });
 
-  it('C148: and what the over-redaction costs — twelve short title-case words', () => {
+  it('and what the over-redaction costs — twelve short title-case words', () => {
     // The header's own example, pinned so the price is a fact rather than a
     // prediction. This is ordinary text in an error message and it goes.
     const prose = 'Could Not Open The Record For This Person Upon That Run Today';

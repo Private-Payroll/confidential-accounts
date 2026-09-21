@@ -22,10 +22,10 @@
  * WHAT THIS DELIBERATELY DOES NOT DO.
  *
  * It does not stop us WITHHOLDING a record — we host the ciphertext, so we can
- * refuse to serve it (decision 0002, S-7). It does not stop us serving an OLD
- * one; that needs a commitment on chain. And it does not hide access
- * patterns: sizes, counts and timing are still ours to see. Each of those is a
- * separate piece of work, and none of them is fixed by encryption.
+ * refuse to serve it (decision 0002). It does not stop us serving an OLD one;
+ * that needs a commitment on chain. And it does not hide access patterns:
+ * sizes, counts and timing are still ours to see. Each of those is a separate
+ * piece of work, and none of them is fixed by encryption.
  *
  * What it does do is make it impossible for us — or anyone who reaches our
  * database — to read what is inside.
@@ -170,7 +170,7 @@ export const openFromInbox = <T>(
  *
  * THE POINT OF THIS TYPE IS WHAT IT LEAVES OUT. There is no field for a name, a
  * salary or a policy, so writing one in the clear is not an oversight that
- * review has to catch — it does not compile. That is what makes S-8 and S-9 stay
+ * review has to catch — it does not compile. That is what makes the fix stay
  * fixed rather than get fixed once and drift back.
  *
  * The three fields that remain readable are Tier 4: an id to route on, an epoch
@@ -179,13 +179,13 @@ export const openFromInbox = <T>(
  */
 export interface SealedRecord {
   id: string;
-  /** Which viewing key this was sealed under. See `rotate` in K-4. */
+  /** Which viewing key this was sealed under. See `rotate`. */
   keyEpoch: number;
   sealed: Sealed;
 }
 
 /**
- * Re-seals every record under a new viewing key. K-4.
+ * Re-seals every record under a new viewing key.
  *
  * Removing a signer does not un-teach them a key they already hold, so removal
  * means changing the locks. This is the pure half of that: the ordering — write

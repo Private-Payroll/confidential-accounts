@@ -536,10 +536,10 @@ describe('§2 - A SECOND COMPANY, SAVED BESIDE THE FIRST', () => {
 describe('§3 - NO PASSWORD, ANYWHERE ON THIS JOURNEY', () => {
   it('NOT ONE REQUEST CARRIES AUTH MATERIAL', async () => {
     /*
-     * **THE WHOLE REASON `PI3` EXISTED, AND WHAT `PI4b` COULD THEN DO.** While
+     * **WHY THE PASSWORD COULD NOT BE DELETED UNTIL THIS PASSED.** While
      * creating a company was the one thing only a password could do, the
-     * password could not be deleted and `C129` stayed open. Proved by watching
-     * rather than by reading: every byte this tab handed the server, searched.
+     * password had to stay. Proved by watching rather than by reading: every
+     * byte this tab handed the server, searched.
      *
      * **IT IS A WEAKER TEST THAN IT WAS AND A STRONGER CLAIM.** When it was
      * written, a password path existed alongside this one and the point was
@@ -566,9 +566,9 @@ describe('§3 - NO PASSWORD, ANYWHERE ON THIS JOURNEY', () => {
      * The rule expressed where it cannot be forgotten.
      *
      * **THE SLICE IS NO LONGER NECESSARY AND IS KEPT ON PURPOSE.** It read:
-     * *`keyring.ts` as a whole still derives auth material — the password path
-     * is not deleted this round — so the assertion is about THIS function's own
-     * source.* `PI4b` deleted `register`, `signIn` and `derive`, so the whole
+     * *`keyring.ts` as a whole still derived auth material when this was
+     * written, so the assertion is about THIS function's own source.*
+     * `register`, `signIn` and `derive` have since been deleted, so the whole
      * file would now pass this. **Widening it to the file would be a different
      * test with the same name**: this one says the CREATION PATH has nowhere to
      * put a password, which stays worth saying the day somebody adds a fallback
@@ -594,8 +594,8 @@ describe('§3 - NO PASSWORD, ANYWHERE ON THIS JOURNEY', () => {
      * rule, and it is not a loophole — the header above this function explains
      * at length what a password used to be able to do here and why this path
      * never had a fallback to one, and a test that forbade the WORD would
-     * forbid saying so. It matters more since `PI4b`, not less: the history is
-     * the only place the reason survives.
+     * forbid saying so. It matters more now that the password path is gone, not
+     * less: the history is the only place the reason survives.
      */
     const code = path.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
     expect(code).toContain('export async function createCompanyWithWallet');

@@ -12,7 +12,7 @@ import { UNLOCK_PURPOSE, UNLOCK_WINDOW_MS, unlockAsk } from './wallet-unlock.js'
  * why any thirty-two bytes are a usable x25519 secret — lives in
  * `payslip-key-derive.ts` and is re-exported here unchanged. **It was split out
  * rather than copied**, because this file imports the wallet's root barrel and
- * the payroll page cannot: `C149`, and that file's header has the measurement.
+ * the payroll page cannot. That file's header has the measurement.
  */
 export { payslipKeypairFrom } from './payslip-key-derive.js';
 

@@ -3,13 +3,13 @@ import { REQUEST_SCHEMA } from 'midnight-identity/profile/request';
  * **THE ATTRIBUTE'S NAME COMES FROM THE WALLET'S OWN VOCABULARY.**
  *
  * It was going to be a string literal here, on the grounds that importing the
- * registry to reach one word is what `C149` is about — but `attributes.ts`
- * imports `definition.ts` and nothing else, so it costs the page nothing, and
- * `no-wasm-in-the-page.test.ts` is what proves that rather than this comment.
- * **One spelling, owned by the side that owns the vocabulary**, so a rename
- * there is a typecheck failure here rather than a request that quietly asks for
- * nothing. This is one of the two cross-repository edges this round adds; the
- * other is the export that makes it reachable.
+ * registry to reach one word is the kind of weight the page must not carry —
+ * but `attributes.ts` imports `definition.ts` and nothing else, so it costs
+ * the page nothing, and `no-wasm-in-the-page.test.ts` is what proves that
+ * rather than this comment. **One spelling, owned by the side that owns the
+ * vocabulary**, so a rename there is a typecheck failure here rather than a
+ * request that quietly asks for nothing. This import is one of two
+ * cross-repository edges; the other is the export that makes it reachable.
  */
 import { RECEIVING_ADDRESS } from 'midnight-identity/profile/attributes';
 
@@ -18,15 +18,15 @@ import { RECEIVING_ADDRESS } from 'midnight-identity/profile/attributes';
  * `docs/NEXT.md` X8 §2, `docs/how-money-can-be-lost.md` `C153`,
  * `docs/scope-payroll-identity.md` §10 step 2.
  *
- * ── WHAT THIS ROUND IS, IN ONE PARAGRAPH ──────────────────────────────────
+ * ── WHAT THIS FILE IS, IN ONE PARAGRAPH ───────────────────────────────────
  *
- * `X7` built the screen that makes a founder payable and ran into a wall: the
- * wallet had no way to hand over a receiving address, so **the screen took one
- * as PASTED TEXT.** That was safe on that one door because the person pasting
- * and the person being paid are the same by construction — and it is a
- * precedent that must not spread to any door where they are not, which is every
- * other door money enters by. The wallet's `X8` round added the
- * attribute; this file is the ask that reaches it.
+ * The screen that makes a founder payable ran into a wall: the wallet had no
+ * way to hand over a receiving address, so **the screen took one as PASTED
+ * TEXT.** That was safe on that one door because the person pasting and the
+ * person being paid are the same by construction — and it is a precedent that
+ * must not spread to any door where they are not, which is every other door
+ * money enters by. The wallet side added the attribute; this file is the ask
+ * that reaches it.
  *
  * ── IT IS A DISCLOSURE, AND NOT A KIND OF ITS OWN ─────────────────────────
  *

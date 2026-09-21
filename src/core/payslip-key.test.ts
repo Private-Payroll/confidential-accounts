@@ -21,7 +21,7 @@ import type { Hex } from './crypto.js';
 import type { PayeeAddress } from '../midnight/payee-address.js';
 
 /**
- * **X11 §7 — THE INVITEE'S OWN DEVICE SEALS, SO A TEST HAS TO SEAL TOO.**
+ * **THE INVITEE'S OWN DEVICE SEALS, SO A TEST HAS TO SEAL TOO.**
  *
  * `acceptInvite` has nowhere to put a plain address any more: it takes a blob
  * the service cannot open, sealed to the account's inbox public key. That key
@@ -41,9 +41,9 @@ const handedOver = (
     {
       wrappingPublicKey: parts.wrappingPublicKey,
       address: parts.address.bech32,
-      /* X12 §2 — the code the invitee read off their own wallet. Null here:
-       * these tests are about what the SERVICE does with a handover, and the
-       * comparison the code exists for is made on an admin's screen. */
+      /* The code the invitee read off their own wallet. Null here: these tests
+       * are about what the SERVICE does with a handover, and the comparison
+       * the code exists for is made on an admin's screen. */
       confirmation: parts.confirmation ?? null,
     },
     account.inboxPublicKey);
@@ -53,7 +53,7 @@ const handedOver = (
  * **THE PAYSLIP KEY IS DERIVED, NOT MINTED AND KEPT.**
  *
  *
- * ── THE ONE TEST THIS ROUND IS JUDGED ON IS `§4` ──────────────────────────
+ * ── THE ONE TEST THIS FILE EXISTS FOR IS `§4` ─────────────────────────────
  *
  * *A person on a new device opens payslips issued before that device existed.*
  * Everything above it is the apparatus that makes that sentence mean something:
@@ -62,13 +62,14 @@ const handedOver = (
  *
  * ── AND WHAT IS DELIBERATELY NOT HERE ─────────────────────────────────────
  *
- * **Not one assertion about payslip SEALING was written, moved or reworded by
- * this round.** `core.test.ts` holds those — that an employee opens exactly one
- * slip, that another employee's secret does not, that the account viewing key
- * is nowhere near the path — and they pass unchanged against a key that is now
- * derived rather than random, which is the strongest available evidence that
- * the guarantee left this round exactly as it found it. `§3` below adds the
- * negatives that are about the DERIVATION specifically, and adds no others.
+ * **Not one assertion about payslip SEALING was written, moved or reworded
+ * when the key became derived.** `core.test.ts` holds those — that an employee
+ * opens exactly one slip, that another employee's secret does not, that the
+ * account viewing key is nowhere near the path — and they pass unchanged
+ * against a key that is now derived rather than random, which is the strongest
+ * available evidence that the guarantee is exactly what it was. `§3` below
+ * adds the negatives that are about the DERIVATION specifically, and adds no
+ * others.
  */
 
 const ORIGIN = 'https://payroll.example';
@@ -107,8 +108,7 @@ const signIn = (store: { putUser: (u: any) => void }, email: string) => {
 describe('§1 — THE DERIVATION IS A PURE FUNCTION OF A WALLET AND A COMPANY', () => {
   it('THE DERIVATION IS PINNED TO FIXED BYTES — the salt is not a thing anyone may tidy', () => {
     /*
-     * **`T-196` `P1`, `SC9` `F4`. THE ONE ASSERTION IN THIS FILE THAT IS
-     * NOT SELF-REFERENTIAL.**
+     * **THE ONE ASSERTION IN THIS FILE THAT IS NOT SELF-REFERENTIAL.**
      *
      * Every other relation §1 pins — determinism, host-independence,
      * distinctness, not-the-parent-key, the length refusal — **stays true when
@@ -159,7 +159,8 @@ describe('§1 — THE DERIVATION IS A PURE FUNCTION OF A WALLET AND A COMPANY', 
   it('THE SAME WORDS AND THE SAME COMPANY GIVE THE SAME KEY, EVERY TIME', () => {
     /*
      * **THIS IS A DETERMINISM TEST AND IT IS NOT A RECORDED VECTOR. LABELLED
-     * SO, BECAUSE BEING MISTAKEN FOR ONE IS HOW `C404` SURVIVED.**
+     * SO, BECAUSE BEING MISTAKEN FOR ONE IS HOW A MISSING RECORDED VECTOR
+     * SURVIVED.**
      *
      * The input is `newWords()` — RANDOM, freshly generated on every run — so
      * there is no recorded value anywhere in it and there cannot be. It asserts
@@ -168,7 +169,7 @@ describe('§1 — THE DERIVATION IS A PURE FUNCTION OF A WALLET AND A COMPANY', 
      * would break. **It says nothing whatever about WHICH key comes out**, and
      * it stays green while `unlockKeyFor` returns entirely different bytes from
      * the ones every payslip already issued was sealed to. `§1b` is the test
-     * that does not. `C404`.
+     * that does not.
      */
     const words = newWords();
     expect(payslipKeypairForWallet(words, 'a1'.repeat(32), ORIGIN).secret)
@@ -177,10 +178,11 @@ describe('§1 — THE DERIVATION IS A PURE FUNCTION OF A WALLET AND A COMPANY', 
 
   it('THE HOST IS NOT AN INGREDIENT — a self-hosted client derives the same key', () => {
     /*
-     * The property the whole design rests on, and the reason `W3` changed what
-     * the parent is derived from. A key that moved with the host would mean a
-     * customer's copy of their own data opens at our address and nowhere else,
-     * which is `C127` reopened by the mechanism meant to serve it.
+     * The property the whole design rests on, and the reason the parent is
+     * derived from the wallet and the company and not from the host. A key
+     * that moved with the host would mean a customer's copy of their own data
+     * opens at our address and nowhere else — self-hosting defeated by the
+     * very mechanism meant to serve it.
      */
     const words = newWords();
     expect(payslipKeypairForWallet(words, 'a1'.repeat(32), ELSEWHERE).secret)
@@ -220,8 +222,7 @@ describe('§1 — THE DERIVATION IS A PURE FUNCTION OF A WALLET AND A COMPANY', 
 /* ======================================================================== */
 
 /**
- * **§1b — THE RECORDED DERIVATION VECTOR.** `C404` `P0`, board `D-1f`.
- * The vector it records is the one pinned below.
+ * **§1b — THE RECORDED DERIVATION VECTOR.**
  *
  * ── WHAT WAS MISSING, AND WHY §1 ABOVE DID NOT COVER IT ───────────────────
  *
@@ -267,8 +268,8 @@ describe('§1 — THE DERIVATION IS A PURE FUNCTION OF A WALLET AND A COMPANY', 
  * phrase of our own for one reason: **Identity's recorded vectors use exactly
  * this phrase** (`packages/identity/src/keys/derivation.portability.test.ts:2,:41-42`),
  * so the two repositories pin ONE vector and a disagreement between them is a
- * comparison rather than two unrelated numbers. It is not `newWords()` and
- * nothing in this round generated it.
+ * comparison rather than two unrelated numbers. It is not `newWords()` and it
+ * was not generated here.
  *
  * **MEASURED, NOT ASSUMED, BEFORE IT WAS WRITTEN HERE: it holds nothing.** All
  * **forty** files under `.midnight/` — the whole tree, `params/` and `sealed/`
@@ -276,19 +277,19 @@ describe('§1 — THE DERIVATION IS A PURE FUNCTION OF A WALLET AND A COMPANY', 
  * for its BIP-39 entropy and for its 64-byte stretched seed. **Zero hits**, and
  * no `.command` and nothing in `scripts/` derives a wallet from it. The
  * project's own wallet comes from `.midnight/wallet.seed`
- * (`ADDRESS.command:67`). **The count in this paragraph said TWENTY until this
- * round's test-coverage pass re-measured it recursively and found forty; the
- * conclusion was unchanged and the instrument's stated reach was not.**
+ * (`ADDRESS.command:67`). **The count in this paragraph said TWENTY until it
+ * was re-measured recursively: the first search did not descend. The conclusion
+ * was unchanged.**
  *
  * ── THE NEGATIVE CONTROL — MEASURED, NOT ASSERTED ───────
  *
- * **A VECTOR NOBODY HAS WATCHED FAIL IS NOT A VECTOR.** The literals below were
- * checked against a NEUTERED COPY of `midnight-identity` built outside this
- * repository — copies of `packages/identity/lib` and of this tree's own
- * `core/` files in a scratch directory, so **nothing in the working tree was
- * mutated to prove this** (rule 40, `C401`). A control run over pristine copies
- * reproduced all four literals exactly; then three changes of the kind `C404`
- * names:
+ * **A VECTOR NOBODY HAS WATCHED FAIL IS NOT A VECTOR.** The literals below
+ * were checked against a DELIBERATELY BROKEN COPY of `midnight-identity` built
+ * outside this repository — copies of `packages/identity/lib` and of this
+ * tree's own `core/` files in a scratch directory, so **nothing in the working
+ * tree was mutated to prove this**. A control run over pristine copies
+ * reproduced all four literals exactly; then three changes of the kind this
+ * block exists to catch:
  *
  *   · `UNLOCK_SALT` `…/unlock/v2` → `…/v3` (a salt tidy) — **`§1b.2` and
  *     `§1b.3` both fail. `§1b.1` stays green**, which is the localisation
@@ -298,8 +299,7 @@ describe('§1 — THE DERIVATION IS A PURE FUNCTION OF A WALLET AND A COMPANY', 
  *     `derivation.ts`) — **all four fail**, `§1b.1` included, because that
  *     change is above the identity rather than below it.
  *
- * **AND THREE MORE, AFTER THE TWO AUDITS, EACH AIMED AT A LINE ADDED BECAUSE
- * OF THEM:**
+ * **AND THREE MORE, EACH AIMED AT A LINE THOSE THREE CAUSED TO BE ADDED:**
  *
  *   · `phraseOf`'s `normalize`/`trim`/`toLowerCase`/whitespace collapse deleted
  *     (`derivation.ts:410-412`) — **only the denormalised-words line in `§1b.1`
@@ -319,20 +319,20 @@ describe('§1 — THE DERIVATION IS A PURE FUNCTION OF A WALLET AND A COMPANY', 
  *
  * **AND THE RESULT THAT WAS WORTH MORE THAN THE THREE PASSES: THE RELATION
  * TEST STAYED GREEN UNDER ALL THREE.** It compared two live computations, so a
- * derivation that moved moved both. **Both of this round's auditors then probed
- * it further and independently reached the same verdict** — the test-coverage pass
- * with eight mutations including a stubbed `payslip-key.ts:57`, the
- * money-safety pass by algebra — **and `§1b.4` was rewritten because of
+ * derivation that moved moved both. **Two further probes reached the same
+ * verdict independently** — one by eight mutations including a stubbed
+ * `payslip-key.ts:57`, one by algebra — **and `§1b.4` was rewritten because of
  * it.** What is there now is literal-in, literal-out; the relation is kept
  * beneath it, labelled as adding no detection. **The literals are the whole of
- * the drift guarantee** — which is exactly the mistake `C404` is, one level
- * down, and it is written here so nobody makes it again by deleting a literal
- * that "the relation already covers".
+ * the drift guarantee** — believing otherwise is a determinism comparison
+ * mistaken for a recorded vector, one level down, and it is written here so
+ * nobody makes it again by deleting a literal that "the relation already
+ * covers".
  *
- * **THE LIMIT OF THAT CONTROL, STATED:** a neutered copy proves each assertion
- * compares the value it claims to compare, and that a change of that shape
- * moves it. **It does not prove that a future change to the real package would
- * take that path**, and nothing in a test file can.
+ * **THE LIMIT OF THAT CONTROL, STATED:** a deliberately broken copy proves
+ * each assertion compares the value it claims to compare, and that a change of
+ * that shape moves it. **It does not prove that a future change to the real
+ * package would take that path**, and nothing in a test file can.
  *
  * ── AND THE OTHER LIMIT: THIS PINS `packages/identity/lib`, NOT ITS `src` ─────
  *
@@ -359,19 +359,18 @@ const VECTOR_COMPANY = 'a1'.repeat(32);
  * duplication to production is `§1b.2` and `§1b.3` JOINTLY, not `§1b.4`** —
  * a `vectorAsk` that drifted breaks its own literal at `§1b.2`, and a
  * production ask that drifted in a way that reached the key breaks `§1b.3`'s.
- * **THIS PARAGRAPH NAMED `§1b.4` UNTIL BOTH OF THIS ROUND'S AUDITORS MEASURED
- * IT SEPARATELY AND FOUND IT GREEN THROUGH AN ASK DRIFT** — a changed `nonce`
- * and a changed `rdns` were each probed. The correction is kept visible rather
- * than tidied away, because the sentence that stood here is exactly the kind a
- * later round quotes as a reason to delete a literal.
+ * **THIS PARAGRAPH NAMED `§1b.4` UNTIL IT WAS MEASURED TWICE, SEPARATELY, AND
+ * FOUND GREEN THROUGH AN ASK DRIFT** — a changed `nonce` and a changed `rdns`
+ * were each probed. The correction is kept visible rather than tidied away,
+ * because the sentence that stood here is exactly the kind that gets quoted
+ * later as a reason to delete a literal.
  *
  * **WHAT IS STILL NOT PINNED, SAID PLAINLY:** a production ask whose `nonce`,
  * `rdns`, `name` or `purpose` drifts from this one is caught by NOTHING here,
  * because none of those four reaches `unlockKeyFor`. That is a real gap and it
  * is small: those fields are the conversation's, and a key that moved with them
  * could not open yesterday's payslip, which is what `payslip-key.ts:43-48`
- * already says. Closing it needs `payslip-key.ts` to export its ask builder,
- * and this round may not change that file.
+ * already says. Closing it needs `payslip-key.ts` to export its ask builder.
  *
  * Neither `nonce` nor `expiresAt` reaches `unlockKeyFor` — `unlock.ts:310-317`
  * uses the identity and the company and nothing else — which is what makes any
@@ -413,13 +412,13 @@ describe('§1b — A FIXED MNEMONIC AND A FIXED COMPANY GIVE A FIXED KEY, RECORD
      * DENORMALISED FOR THAT SENTENCE TO MEAN ANYTHING.**
      *
      * This line read `identityFromWords(TEST_MNEMONIC).words.join(' ')` until
-     * this round's test-coverage pass measured it: `TEST_MNEMONIC` is already
-     * lower-case, single-spaced and clean, so `phraseOf`
-     * (`packages/identity/src/keys/derivation.ts:410-412`) is the identity function on
-     * it — **the assertion stayed GREEN with NFKD, `trim`, `toLowerCase` and
-     * whitespace collapse all deleted.** Upper-cased, double-spaced and padded,
-     * it is green on the code as it stands and red with those removed, which is
-     * the difference between a check and a shape.
+     * it was measured: `TEST_MNEMONIC` is already lower-case, single-spaced
+     * and clean, so `phraseOf`
+     * (`packages/identity/src/keys/derivation.ts:410-412`) is the identity
+     * function on it — **the assertion stayed GREEN with NFKD, `trim`,
+     * `toLowerCase` and whitespace collapse all deleted.** Upper-cased,
+     * double-spaced and padded, it is green on the code as it stands and red
+     * with those removed, which is the difference between a check and a shape.
      */
     expect(identityFromWords(
       `  ${TEST_MNEMONIC.toUpperCase().split(' ').join('  ')} \n`,
@@ -450,9 +449,9 @@ describe('§1b — A FIXED MNEMONIC AND A FIXED COMPANY GIVE A FIXED KEY, RECORD
      *
      * ── WHERE THIS ONE NUMBER CAME FROM, AND IT IS NOT THIS REPOSITORY ────
      *
-     * **RULE 9.** Every other literal in `§1b` was read off THIS code running
-     * — stated plainly above and not dressed up as anything else. **This one
-     * was not.** It is copied from Identity's own recorded vector table —
+     * Every other literal in `§1b` was read off THIS code running — stated
+     * plainly above and not dressed up as anything else. **This one was not.**
+     * It is copied from Identity's own recorded vector table —
      * `packages/identity/src/keys/derivation.portability.test.ts:279`, the `unlock`
      * entry at index `0` — where it is computed for this same phrase by an
      * INDEPENDENT walk (`@scure/bip32` and `@noble/hashes` driven directly at
@@ -496,28 +495,29 @@ describe('§1b — A FIXED MNEMONIC AND A FIXED COMPANY GIVE A FIXED KEY, RECORD
     });
 
     /*
-     * **THE SAME LITERAL FROM THE OTHER SPELLING OF THE SAME COMPANY.** Found
-     * by this round's money-safety pass, and it is `C404`'s own thesis
-     * turned on `C137`: the fold that makes two spellings of one company one
-     * key is pinned by `packages/identity/src/profile/unlock.test.ts:253` — **and
-     * since the merge this suite DOES run that file**: `vitest.config.ts:108`
-     * collects `packages/identity/src/**` alongside `src/**`, and the comment
-     * above that line says why. **This line is still worth carrying**, because
-     * that one pins the fold inside the library and this one pins the KEY a
-     * payslip is opened with, which is the thing a company loses.
-     * `VECTOR_COMPANY` is already lower-case, so **no literal above moves when
-     * the fold goes.** This line is what dies instead.
+     * **THE SAME LITERAL FROM THE OTHER SPELLING OF THE SAME COMPANY.** It is
+     * this block's own thesis applied to the case fold: the fold that makes
+     * two spellings of one company one key is pinned by
+     * `packages/identity/src/profile/unlock.test.ts:253` — **and since the
+     * merge this suite DOES run that file**: `vitest.config.ts:108` collects
+     * `packages/identity/src/**` alongside `src/**`, and the comment above
+     * that line says why. **This line is still worth carrying**, because that
+     * one pins the fold inside the library and this one pins the KEY a payslip
+     * is opened with, which is the thing a company loses. `VECTOR_COMPANY` is
+     * already lower-case, so **no literal above moves when the fold goes.**
+     * This line is what dies instead.
      *
      * ── AND EXACTLY WHEN IT DIES, MEASURED RATHER THAN ASSUMED ───────────
      *
-     * **THE FOLD IS DOUBLED, WHICH THE AUDIT DID NOT SAY AND THE MEASUREMENT
-     * DID.** It happens twice on this path: `parseAsk` folds the company as it
-     * freezes the ask (`packages/identity/src/profile/request.ts:826`), and `companyOf`
-     * folds again inside `unlockKeyFor` (`unlock.ts:299`). Against neutered
-     * copies outside this repository: **removing EITHER one alone leaves this
-     * line GREEN; removing BOTH turns it RED.** So what this assertion buys is
-     * not a guard on one line — it is a guard on the PROPERTY surviving, and it
-     * is the only thing in payroll that would notice the property going.
+     * **THE FOLD IS DOUBLED, WHICH ONLY MEASUREMENT SHOWED.** It happens twice
+     * on this path: `parseAsk` folds the company as it freezes the ask
+     * (`packages/identity/src/profile/request.ts:826`), and `companyOf` folds
+     * again inside `unlockKeyFor` (`unlock.ts:299`). Against deliberately
+     * broken copies outside this repository: **removing EITHER one alone
+     * leaves this line GREEN; removing BOTH turns it RED.** So what this
+     * assertion buys is not a guard on one line — it is a guard on the
+     * PROPERTY surviving, and it is the only thing in payroll that would
+     * notice the property going.
      *
      * It matters because payroll's folding is not uniform: `keyring.ts` and
      * `Join.tsx` both take a company that `company-address.ts` has already
@@ -534,13 +534,14 @@ describe('§1b — A FIXED MNEMONIC AND A FIXED COMPANY GIVE A FIXED KEY, RECORD
      * — while every literal above went in as a string. Two different branches
      * of `phraseOf` (`derivation.ts:361-364`), one recorded path.
      *
-     * **AND WHAT THIS LINE IS NOT: A WATCHED FAILURE.** No neutering was found
-     * that reds it and leaves the string spelling green — `validateMnemonic`
-     * (`derivation.ts:387`) gates every route, so the realistic mutations of
-     * the array branch (`join('')`, a reorder, `String(words)`) produce an
-     * invalid phrase and throw `not-a-recovery-phrase` LOUDLY rather than
-     * deriving a different key. **This is coverage of a shape, not a guard, and
-     * it is written down as one** — which is why it is a line and not a section.
+     * **AND WHAT THIS LINE IS NOT: A WATCHED FAILURE.** No deliberate break
+     * was found that reds it and leaves the string spelling green —
+     * `validateMnemonic` (`derivation.ts:387`) gates every route, so the
+     * realistic mutations of the array branch (`join('')`, a reorder,
+     * `String(words)`) produce an invalid phrase and throw
+     * `not-a-recovery-phrase` LOUDLY rather than deriving a different key.
+     * **This is coverage of a shape, not a guard, and it is written down as
+     * one** — which is why it is a line and not a section.
      */
     expect(payslipKeypairForWallet(TEST_MNEMONIC.split(' '), VECTOR_COMPANY, ORIGIN).secret)
       .toBe('6ea2e0b5513f0eebbb40d2036327316736ce11153d187cb828a822f1a2072c37');
@@ -558,14 +559,13 @@ describe('§1b — A FIXED MNEMONIC AND A FIXED COMPANY GIVE A FIXED KEY, RECORD
      * FINDING RATHER THAN THE FIX.** What stood here asserted
      * `payslipKeypairFrom(unlockKeyFor(…))` equals `payslipKeypairForWallet(…)`
      * — both sides computed live from the same mnemonic through the same code,
-     * so a derivation that moved moved both. **This round's test-coverage pass
-     * probed it eight ways and it was GREEN in all eight, including one that
-     * replaced `payslip-key.ts:57` with a hard-coded return so the product
-     * function derived nothing at all.** The money-safety pass reached the
-     * same conclusion by algebra, independently. **An assertion nobody has
-     * watched fail is the class `§2`'s own note below records this file
-     * shipping once already** — the `S29` regex that could not match the value
-     * it was looking for.
+     * so a derivation that moved moved both. **It was probed eight ways and
+     * was GREEN in all eight, including one that replaced `payslip-key.ts:57`
+     * with a hard-coded return so the product function derived nothing at
+     * all.** The same conclusion was reached independently by algebra. **An
+     * assertion nobody has watched fail is the class `§2`'s own note below
+     * records this file shipping once already** — the regex that could not
+     * match the value it was looking for.
      *
      * **WHAT THIS ONE IS MEASURED TO CATCH:** payroll's own `PAYSLIP_SALT`
      * moving (`payslip-key-derive.ts:103`), which reds it and `§1b.3` together
@@ -604,9 +604,9 @@ describe('§2 — NOBODY WRITES THE SECRET DOWN, INCLUDING US', () => {
 
     /*
      * ASSERTED AGAINST THE DERIVATION, NOT AGAINST A SHAPE. A random secret is
-     * 64 hex characters too — which is exactly why `C140` exists one level up —
-     * so the only claim worth making is that this key is what those words and
-     * that company produce.
+     * 64 hex characters too — which is exactly what makes a shape assertion
+     * worthless here — so the only claim worth making is that this key is what
+     * those words and that company produce.
      */
     expect(secret.words).toBeDefined();
     expect(secret.wrappingSecret).toBe(
@@ -649,8 +649,8 @@ describe('§2 — NOBODY WRITES THE SECRET DOWN, INCLUDING US', () => {
      * **AND THE WORDS, AS A PHRASE RATHER THAN ONE AT A TIME.** A BIP-39 word
      * list contains `name`, `asset`, `type`, `index` and `credit`, every
      * one of which is a legitimate key in this store — so asserting word by
-     * word is a test that fails at random on correct code, which is M-101
-     * wearing different clothes. The whole phrase cannot collide with anything.
+     * word is a test that fails at random on correct code. The whole phrase
+     * cannot collide with anything.
      */
     expect(raw).not.toContain(secret.words!.join(' '));
   });
@@ -671,17 +671,15 @@ describe('§2 — NOBODY WRITES THE SECRET DOWN, INCLUDING US', () => {
 
   /*
    * ──────────────────────────────────────────────────────────────────────────
-   * **THIS TEST WAS RED ON PURPOSE FOR ONE ROUND, AND `S29` TOOK OPTION (a).**
+   * **THIS TEST DRIVES THE PROJECTION DIRECTLY, NOT `seedDemo`.**
    *
+   * The assertion is about a property OF the projection `seedDemo` returns,
+   * and `seedDemo` refuses as its first statement, so a test that reached the
+   * projection through it could not run at all. The projection was extracted
+   * into a callable of its own and that is what is driven below.
    *
-   * `S28` could not close it: the assertion is about a property OF the
-   * projection `seedDemo` returns, `seedDemo` refuses as its first statement
-   *, and a tests-only round may not edit `src/core/demo.ts`.
-   * It wrote three ways out with none marked correct (rule 20). (a) was
-   * *extract the projection into a callable of its own and drive that*.
-   *
-   * **THAT IS WHAT THIS NOW DOES, AND THE RULE IS UNCHANGED RATHER THAN
-   * LOWERED.** `seededEmployeesForHttp` is the same four fields, listed and not
+   * **AND THE RULE IS UNCHANGED RATHER THAN LOWERED.**
+   * `seededEmployeesForHttp` is the same four fields, listed and not
    * spread, from the same inputs; nothing about what crosses the wire moved.
    * What moved is that the rule can be asserted without seeding a company that
    * cannot be seeded — and the input below is a REAL `hireDirect` payload with
@@ -691,11 +689,11 @@ describe('§2 — NOBODY WRITES THE SECRET DOWN, INCLUDING US', () => {
    */
   it('THE SEED\'S HTTP PAYLOAD CARRIES NO MNEMONIC — a wallet is not a wrapping secret', async () => {
     /*
-     * **`C45`, AND THE SIZE OF THE SECRET IS THE WHOLE POINT.** `/api/demo/seed`
-     * already hands back every signer's secrets, which is what makes the demo
-     * walkable alone. A wrapping secret opens payslips; **a mnemonic is a whole
-     * wallet, that person's money keys included.** `seededEmployeesForHttp`
-     * lists the fields it returns instead of spreading them, so a new secret on
+     * **THE SIZE OF THE SECRET IS THE WHOLE POINT.** `/api/demo/seed` already
+     * hands back every signer's secrets, which is what makes the demo walkable
+     * alone. A wrapping secret opens payslips; **a mnemonic is a whole wallet,
+     * that person's money keys included.** `seededEmployeesForHttp` lists the
+     * fields it returns instead of spreading them, so a new secret on
      * `EmployeeSecret` cannot leave THROUGH THIS PROJECTION without somebody
      * typing a line.
      *
@@ -706,10 +704,10 @@ describe('§2 — NOBODY WRITES THE SECRET DOWN, INCLUDING US', () => {
      * the interface and `res.json`. Nothing leaks there today, because the ad
      * hoc branch that mints a secret sets three fields and `words` is absent by
      * construction; **but a field added to `EmployeeSecret` leaves by that route
-     * on the next deploy with nobody typing anything.** `C286`: the
-     * property holds because nobody has written the code that would break it.
-     * The route is a row; the two assertions below are what this file can hold
-     * without one.
+     * on the next deploy with nobody typing anything.** The property holds
+     * because nobody has written the code that would break it. Guarding that
+     * route needs a projection it does not have; the two assertions below are
+     * what this file can hold without one.
      */
     const h = world();
     const { account, viewingKey } = await h.accounts.create('Acme', SIGNERS, 1);
@@ -723,18 +721,15 @@ describe('§2 — NOBODY WRITES THE SECRET DOWN, INCLUDING US', () => {
      * payload that never held the secret passes perfectly, and because the
      * probe has to be the shape the secret would really arrive in.
      *
-     * **AND THE FIRST ONE FAILED THE ROUND THAT WROTE IT, WHICH IS WHY IT IS
-     * HERE.** `S29`; the register row is described in `BACKLOG.md` for the
-     * controller and is deliberately not numbered here (rule 16). The assertion
-     * this test carried until now was
+     * **AND THE FIRST ONE CAUGHT A PROBE THAT COULD NOT FIRE, WHICH IS WHY IT
+     * IS HERE.** The assertion this test carried until now was
      * `expect(body).not.toMatch(/\b(?:[a-z]{3,8} ){11,}[a-z]{3,8}\b/)` — a
      * space-separated phrase. **`words` is a string ARRAY**, so a `...e.secret`
      * would put `"words":["dove","radar",…]` into the body and that regex would
      * not match one character of it. The rule was held by
      * `not.toHaveProperty('words')` alone; the phrase probe was decorative and
-     * had been quoted as evidence for a round. The control below is what says
-     * so: it fails if the probe cannot find the secret when the secret IS
-     * there.
+     * had been quoted as evidence. The control below is what says so: it fails
+     * if the probe cannot find the secret when the secret IS there.
      *
      * The phrase form is kept as well, because a future field that joins the
      * words is the other way this leaves — and both forms are now controlled.
@@ -754,8 +749,8 @@ describe('§2 — NOBODY WRITES THE SECRET DOWN, INCLUDING US', () => {
      * **THE FIELD LIST ITSELF, ASSERTED.** Without this the "somebody has to
      * type a line" half of the rule is watched by nothing: adding a fifth field
      * to the LISTED projection leaves every other assertion here green, which
-     * this round's test-coverage pass measured. Now an addition has to be read and
-     * re-approved rather than merely typed.
+     * was measured. Now an addition has to be read and re-approved rather than
+     * merely typed.
      */
     expect(Object.keys(employees[0]).sort())
       .toEqual(['employeeId', 'name', 'title', 'wrappingSecret']);
@@ -775,11 +770,11 @@ describe('§2 — NOBODY WRITES THE SECRET DOWN, INCLUDING US', () => {
 
   it('AN AD HOC PAYEE STILL GETS A MINTED KEY, AND THE TYPE SAYS SO', async () => {
     /*
-     * **THE ONE PLACE `C135` IS STILL TRUE, PINNED SO IT CANNOT SPREAD
-     * QUIETLY.** An ad hoc run pays somebody with no roster entry, so there is
-     * no handover, no wallet and nothing to derive from. The secret is returned
-     * once and `words` is ABSENT — which is the difference being visible in the
-     * type rather than in a comment.
+     * **THE ONE PLACE THE EMPLOYER STILL MINTS THE KEY, PINNED SO IT CANNOT
+     * SPREAD QUIETLY.** An ad hoc run pays somebody with no roster entry, so
+     * there is no handover, no wallet and nothing to derive from. The secret is
+     * returned once and `words` is ABSENT — which is the difference being
+     * visible in the type rather than in a comment.
      */
     const h = world();
     const { account, viewingKey } = await h.accounts.create('Acme', SIGNERS, 1);
@@ -797,9 +792,9 @@ describe('§3 — THE KEY OPENS THIS PERSON\'S PAYSLIP AND NOTHING ELSE OPENS IT
   it('A COMPANY\'S OWN KEYS DO NOT OPEN A PAYSLIP — not the viewing key, not a signer\'s',
     async () => {
       /*
-       * **THE ONE THAT MATTERS.** Decided 23 Aug: the architecture stands as
-       * it is. The employer holds the viewing key that opens the
-       * roster, the runs and the policy, and it must not open one payslip.
+       * **THE ONE THAT MATTERS, AND THE ARCHITECTURE STANDS AS IT IS.** The
+       * employer holds the viewing key that opens the roster, the runs and the
+       * policy, and it must not open one payslip.
        * **AND NOTHING BREAKS IT ON PURPOSE.** These assertions are the only
        * thing holding it: a wrap to any key but the payee's dies here.
        */
@@ -900,7 +895,7 @@ describe('§4 — A NEW DEVICE OPENS PAYSLIPS ISSUED BEFORE IT EXISTED', () => {
   it('A WALLET REBUILT FROM ITS WORDS ALONE OPENS A PAYSLIP ISSUED BEFORE THAT DEVICE EXISTED',
     async () => {
       /*
-       * **THE TEST THIS ROUND IS JUDGED ON.** It is the whole difference
+       * **THE TEST THIS FILE EXISTS FOR.** It is the whole difference
        * between a derived key and a stored one, and it is written as the
        * sequence it really is rather than as two derivations compared.
        *

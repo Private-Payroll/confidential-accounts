@@ -243,7 +243,6 @@ export default defineConfig({
      */
     env: {
       REFUSAL_LOG: './logs/REPORT-REFUSALS-FROM-TESTS.txt',
-      APP_ORIGIN: process.env.APP_ORIGIN ?? 'http://localhost:5173',
     },
   },
 });

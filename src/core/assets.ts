@@ -269,8 +269,8 @@ export const SEED_ASSETS: readonly Asset[] = Object.freeze([
  *
  * **A FUNCTION AND NOT A LIST AT A CALL SITE**, because the answer changes for
  * every asset at once on the day the converter is deployed, and a screen that
- * hardcoded it would go on saying no afterwards. `S12b` renders the unavailable
- * side of the private/public toggle from this, with `why` on the screen, so a
+ * hardcoded it would go on saying no afterwards. The unavailable side of the
+ * private/public toggle is rendered from this, with `why` on the screen, so a
  * customer learns the product will do this and does not yet — rather than
  * concluding it never will.
  *
@@ -660,7 +660,8 @@ export const sumAmounts = (xs: readonly bigint[]): bigint => xs.reduce((a, b) =>
  * the standalone build working and it is stated at `src/wiring/selection.ts:84-93`
  * — and the value has to be readable from `core/` because that is where a
  * change is BUILT. `src/midnight/commitments.ts:42` now reads it from here
- * rather than declaring its own; a copy would be `M-104` for the eleventh time.
+ * rather than declaring its own; a second copy of the value would be the
+ * eleventh time a duplicated constant has cost this project.
  */
 export const MAX_CHANGE_AMOUNT = (1n << 128n) - 1n;
 
@@ -692,9 +693,9 @@ export const MAX_CHANGE_AMOUNT = (1n << 128n) - 1n;
  * `src/wiring/selection.ts:144` selects the simulated scheme, whose
  * `changeCommitment` HMACs the decimal string (`src/core/ledger.ts:2106-2110`)
  * and takes a bigint of any magnitude. The round opens, collects approvals, and
- * names a change no contract can ever reproduce — `C375`'s state reached
- * through a second door. On the Midnight wiring it is loud instead, at the
- * witness range check, before anything is submitted.
+ * names a change no contract can ever reproduce: approvals spent on a round
+ * that can never be paid, reached through a second door. On the Midnight wiring
+ * it is loud instead, at the witness range check, before anything is submitted.
  *
  * **THE GUARD THAT SHOULD HAVE CAUGHT IT EXISTS AND IS DEAD CODE**, which is
  * why this is a new function rather than a call to that one: `checkAmount`
@@ -702,7 +703,7 @@ export const MAX_CHANGE_AMOUNT = (1n << 128n) - 1n;
  * is `MidnightCommitments.changeCommitment` (`:219-222`), **which nothing in
  * `src/` calls** — `MidnightLedger` reaches `pureCircuits` directly
  * (`src/midnight/ledger.ts:1672`). A tested guard on a path the product does
- * not take is rule 27 inverted, and it is filed as `T-281`.
+ * not take proves nothing about the product.
  *
  * **A NEGATIVE IS ALREADY REFUSED TWICE AND NEITHER REFUSAL IS PINNED** —
  * `parseAmount`'s regex (`:255`) and `src/core/plugins.ts:311`. It is refused
@@ -715,14 +716,14 @@ export const sumChangeAmount = (xs: readonly bigint[], what: string): bigint => 
     throw new Error(
       `${what} sums to ${total}, which is negative. A change commitment's amount is the ` +
         'contract\'s Uint<128> and cannot represent it, so this round would be approved and ' +
-        'then impossible to settle. T-205.',
+        'then impossible to settle.',
     );
   }
   if (total > MAX_CHANGE_AMOUNT) {
     throw new Error(
       `${what} sums to ${total}, which does not fit the contract's Uint<128>. The largest ` +
         `amount a change can carry is ${MAX_CHANGE_AMOUNT}. A round raised above it collects ` +
-        'approvals and can never be settled by any payment. T-205.',
+        'approvals and can never be settled by any payment.',
     );
   }
   return total;

@@ -1,5 +1,5 @@
 /**
- * S-3 and S-4, written as the failures rather than as the feature.
+ * These tests are written as the failures rather than as the feature.
  *
  * The old sessions were signed blobs with no server-side record, so the two
  * tests that matter are the two things that design could not do: end a session
@@ -39,7 +39,7 @@ for (const [name, make, run] of implementations) {
       expect(await s.resolve(token)).toBe('usr_1');
     });
 
-    it('THE ONE S-3 IS ABOUT: signing out actually ends the session', async () => {
+    it('signing out actually ends the session', async () => {
       /*
        * Under the old design this was impossible. The token was self-contained
        * and valid until it expired, so "sign out" dropped it client-side and
@@ -65,7 +65,7 @@ for (const [name, make, run] of implementations) {
 
     it('signs out everywhere, and can keep the session doing the asking', async () => {
       // "Sign out my other devices". It used to be described as the useful
-      // half of a password change; `PI4b` deleted the other half and this is a
+      // half of a password change; the other half was deleted and this is a
       // door of its own.
       const s = make();
       const a = await s.issue('usr_1');
@@ -134,7 +134,7 @@ for (const [name, make, run] of implementations) {
       expect(JSON.stringify(live)).not.toContain(b.token);
     });
 
-    it('M-118: a session in the list can actually be signed out, by its id', async () => {
+    it('a session in the list can actually be signed out, by its id', async () => {
       /*
        * The list existed before this did, which made it a screen full of rows
        * with nothing behind them: `revoke` took a token, and the browser
@@ -152,7 +152,7 @@ for (const [name, make, run] of implementations) {
       expect(await s.resolve(here.token)).toBe('usr_1'); // and only the phone
     });
 
-    it('THE ONE M-118 IS ABOUT: a session id is not a licence to end a stranger\'s session', async () => {
+    it('a session id is not a licence to end a stranger\'s session', async () => {
       /*
        * A token is 32 random bytes and is its own authority. An id is twelve
        * characters of a hash, shown on a screen and copied into a URL — so if
@@ -195,12 +195,12 @@ describe('what is stored is not what is handed out', () => {
      * A database backup must not be a stack of working sessions — the same
      * reason a password was never stored here, back when there was one.
      *
-     * M-117: THE EXPECTED VALUE IS COMPUTED HERE, WITH NODE'S OWN SHA-256,
-     * NOT WITH THE MODULE'S `tokenHash`. The first version of this test used
-     * `tokenHash` on both sides, so it asserted only that the store had called
-     * the same function the test called — replacing that function with one
-     * that stored the token itself left the test green. An oracle that moves
-     * with the code under test is not an oracle.
+     * THE EXPECTED VALUE IS COMPUTED HERE, WITH NODE'S OWN SHA-256, NOT WITH
+     * THE MODULE'S `tokenHash`. The first version of this test used `tokenHash`
+     * on both sides, so it asserted only that the store had called the same
+     * function the test called — replacing that function with one that stored
+     * the token itself left the test green. An oracle that moves with the code
+     * under test is not an oracle.
      */
     const s = new MemorySessionStore();
     const { token } = await s.issue('usr_1');
@@ -223,15 +223,15 @@ describe('what is stored is not what is handed out', () => {
   });
 });
 
-describe('M-119: a session token has to be unguessable', () => {
+describe('a session token has to be unguessable', () => {
   /*
-   * Stated as the attack: S-2's limiter guards the door somebody signs in at,
-   * because checking what arrives there is expensive — it guarded `POST /login`
-   * and since `PI4b` it guards the wallet sign-in. It does NOT guard presenting
-   * a session token, because checking one is a single indexed lookup and
-   * throttling that would throttle every logged-in request. So a predictable
-   * token is an unthrottled way past the sign-in the limiter was built to
-   * protect.
+   * Stated as the attack: the rate limiter guards the door somebody signs
+   * in at, because checking what arrives there is expensive — it guarded
+   * `POST /login` and now guards the wallet sign-in. It does NOT guard
+   * presenting a session token, because checking one is a single indexed
+   * lookup and throttling that would throttle every logged-in request. So a
+   * predictable token is an unthrottled way past the sign-in the limiter was
+   * built to protect.
    *
    * The suite noticed all-zero tokens before this test existed — several tests
    * went red for unrelated reasons — but nothing NAMED the property, so the
@@ -280,7 +280,7 @@ describe('M-119: a session token has to be unguessable', () => {
   });
 });
 
-(DB ? describe : describe.skip)('S-4: sessions outlive a restart', () => {
+(DB ? describe : describe.skip)('sessions outlive a restart', () => {
   it('a session issued by one instance resolves on another', async () => {
     /*
      * The old design could not do this and nobody noticed, because it failed

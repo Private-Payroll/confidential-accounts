@@ -13,9 +13,9 @@ import type { Shape } from './store.js';
  *
  * Almost everything in here is ciphertext, but not all of it: a plug-in's
  * spending allowance and a plug-in event's amount are readable by design, and
- * since M-125 both are bigints. `JSON.stringify` throws on a bigint — which is
- * the loud failure bigint was chosen for, and it would fire on the write that
- * records an installation rather than on the read that misinterprets it. Pretty
+ * both are bigints. `JSON.stringify` throws on a bigint — which is the loud
+ * failure bigint was chosen for, and it would fire on the write that records
+ * an installation rather than on the read that misinterprets it. Pretty
  * printing goes with it, which is a real loss for a file meant to be inspected
  * and a small one next to a store that cannot save an installation.
  */
@@ -24,7 +24,7 @@ export class FileStore extends MemoryStore {
     super();
     /*
      * A FILE WRITTEN BEFORE A COLLECTION EXISTED IS MISSING THAT COLLECTION,
-     * AND THE NEXT WRITE TO IT THROWS. `C27`, one layer lower.
+     * AND THE NEXT WRITE TO IT THROWS.
      *
      * `devices` arrived after this file format did. A store loaded from a file
      * older than that has no `devices` key at all, so the first `putDevice`
@@ -33,9 +33,9 @@ export class FileStore extends MemoryStore {
      * fixes it for every collection that will ever be added, rather than for
      * this one.
      *
-     * It goes HERE and not in a migration script for the reason `C27` cost us
-     * once already: **this file is also what somebody restores from a backup.**
-     * A one-shot migration fixes the deploy and not the restore.
+     * It goes HERE and not in a migration script, for a reason this project has
+     * already paid for once: **this file is also what somebody restores from a
+     * backup.** A one-shot migration fixes the deploy and not the restore.
      */
     this.data = existsSync(path)
       ? { ...emptyShape(), ...parseCanonical<Shape>(readFileSync(path, 'utf8')) }
@@ -43,7 +43,7 @@ export class FileStore extends MemoryStore {
     this.flush();
   }
   /**
-   * WRITE BESIDE, THEN RENAME. `C36`, found by audit 17 Aug.
+   * WRITE BESIDE, THEN RENAME.
    *
    * This was one `writeFileSync`, which truncates and then writes. A crash or a
    * full disk part way through leaves a file that is not valid JSON — and the

@@ -1,5 +1,5 @@
 /**
- * Sessions that can actually be revoked. S-3, and the storage half of S-4.
+ * Sessions that can actually be revoked.
  *
  * WHAT WAS WRONG. A session was a signed blob: `base64url({uid, exp}).hmac`.
  * The server verified the tag, read the user id out of the payload, and held no
@@ -22,13 +22,14 @@
  * stack of working sessions. Same reason a password is never stored, and it
  * costs one sha256 per request.
  *
- * WHY THIS RETIRES S-4 RATHER THAN WORKING AROUND IT. The old secret defaulted
- * to a fresh random value on boot, which silently invalidated every session on
- * every restart — a stateless token cannot be verified without the key that
- * signed it, and a signed-out user looks exactly like an expired one, so
- * nobody noticed. A random token checked against a row does not care what the
- * process knows: restart it and the sessions are still there. `SESSION_SECRET`
- * is now unused by sessions and the constructor no longer takes one.
+ * WHY THE RESTART PROBLEM IS RETIRED, NOT WORKED AROUND. The old secret
+ * defaulted to a fresh random value on boot, which silently invalidated every
+ * session on every restart — a stateless token cannot be verified without the
+ * key that signed it, and a signed-out user looks exactly like an expired one,
+ * so nobody noticed. A random token checked against a row does not care what
+ * the process knows: restart it and the sessions are still there.
+ * `SESSION_SECRET` is now unused by sessions and the constructor no longer
+ * takes one.
  */
 import { sha256 } from '@noble/hashes/sha2.js';
 import { randomBytes, toHex } from './crypto.js';

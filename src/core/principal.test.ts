@@ -127,7 +127,7 @@ describe('meeting the rules', () => {
 });
 
 describe('the ladder, and the gate on money', () => {
-  it('one device is rung 1, and rung 1 may not hold money — C11', () => {
+  it('one device is rung 1, and rung 1 may not hold money', () => {
     const p = one();
     expect(securityRung(p)).toBe(1);
     expect(mayHoldMoney(p)).toBe(false);
@@ -203,7 +203,7 @@ describe('a factor that cannot act does not count as one', () => {
   });
 });
 
-describe('payable means more than having an address — C9', () => {
+describe('payable means more than having an address', () => {
   const addr = payeeFor(new Uint8Array(32).fill(0x21), 'undeployed');
 
   it('hands over the address when there is one and a way in', () => {

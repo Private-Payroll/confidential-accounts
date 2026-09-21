@@ -37,7 +37,7 @@ import { sealToInbox, openFromInbox } from './sealed-records.js';
  * loosening**: the checks happen on the invitee's device through
  * `midnight-identity/wallet/address-shape` before this is called, and `admit`
  * still rebuilds the value through the real `payeeAddress()` from this very
- * string, exactly as it always has (`A-1`, `C7`).
+ * string, exactly as it always has.
  */
 
 /** The version of this shape. Inside the envelope, never beside it. */
@@ -57,8 +57,8 @@ export interface InviteHandover {
    */
   readonly address: string;
   /**
-   * **X12 §2 — THE CODE THE PERSON READ OFF THEIR OWN WALLET AND TYPED INTO
-   * THE PAGE.** `../../docs/how-money-can-be-lost.md` `C21`,
+   * **THE CODE THE PERSON READ OFF THEIR OWN WALLET AND TYPED INTO THE PAGE.**
+   * `../../docs/how-money-can-be-lost.md` `C21`,
    * `../../docs/scope-invitations.md` §5.
    *
    * It is a fingerprint of the address the WALLET showed, carried here so the
@@ -73,9 +73,9 @@ export interface InviteHandover {
    * **AND IT MAY BE `null`.** `addSelfAsPayee` walks this same shape with no
    * page, no second party and nobody to confirm anything with — there is no
    * code because there was never a comparison to make. A blank standing in for
-   * one would be `X8`'s own lesson from the email field: two absences that
-   * compare equal. So the screen that shows the comparison says *no code was
-   * given* rather than showing an empty box that looks like a match.
+   * one would repeat the email field's lesson: two absences that compare equal.
+   * So the screen that shows the comparison says *no code was given* rather
+   * than showing an empty box that looks like a match.
    */
   readonly confirmation: string | null;
 }
@@ -95,7 +95,7 @@ export const sealHandover = (
   schema: HANDOVER_SCHEMA,
   wrappingPublicKey: parts.wrappingPublicKey,
   address: parts.address,
-  /* X12 §2. Named on the parameter rather than defaulted, so the one door that
+  /* Named on the parameter rather than defaulted, so the one door that
    * legitimately has no code — a member adding themselves — has to say so
    * rather than forget to. */
   confirmation: parts.confirmation,
@@ -107,7 +107,7 @@ export const sealHandover = (
  * What comes out of an envelope is JSON: a shape that looks like a handover,
  * not a handover. Every field is checked here so that nothing downstream throws
  * a `TypeError` out of a property access — the same rule `wallet-payee.ts`'s
- * `asResponse` is written to, and `C63`'s reason for it.
+ * `asResponse` is written to, and for the same reason.
  */
 export function openHandover(
   sealed: SealedHandover, accountId: string, viewingKey: Hex,
@@ -133,8 +133,7 @@ export function openHandover(
       + 'could ever be opened by them.');
   }
   /*
-   * **X12 §2 — ABSENT AND `null` ARE ONE ANSWER HERE, AND THE SCHEMA DID NOT
-   * MOVE.**
+   * **ABSENT AND `null` ARE ONE ANSWER HERE, AND THE SCHEMA DID NOT MOVE.**
    *
    * A handover sealed before this field existed carries no code, and neither
    * does one from `addSelfAsPayee`. Both mean *there is no code to compare*,

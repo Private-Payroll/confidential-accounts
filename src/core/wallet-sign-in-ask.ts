@@ -16,9 +16,9 @@ import { REQUEST_SCHEMA } from 'midnight-identity/profile/request';
  * `@midnightntwrk/ledger-v9`, which is WebAssembly. **The browser wanted one
  * function out of all of that**: `signInAsk`, which builds a plain object and
  * touches nothing. An import is all-or-nothing, so the page loaded the chain to
- * reach it, and `C149` is what that cost — a blank page in every real browser
- * while 908 tests stayed green, because tests run in Node and Node loads
- * WebAssembly by a different path than a browser does.
+ * reach it, and the cost was a blank page in every real browser while 908 tests
+ * stayed green, because tests run in Node and Node loads WebAssembly by a
+ * different path than a browser does.
  *
  * ── THE RULE THIS FILE EXISTS TO KEEP ─────────────────────────────────────
  *

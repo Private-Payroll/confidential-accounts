@@ -224,8 +224,8 @@ describe('§3 there is no way to answer the question differently without editing
 
   it('THE REGISTRY READS NO ENVIRONMENT, NO BUILD FLAG AND NO HOSTNAME', () => {
     /*
-     * RED WHEN any of these appears in the registry. The brief for this row is
-     * that the refusal cannot be walked past by a configuration value; a single
+     * RED WHEN any of these appears in the registry. The requirement is that
+     * the refusal cannot be walked past by a configuration value; a single
      * `process.env` in this file would be exactly that, whatever it was added
      * for.
      */

@@ -40,11 +40,12 @@ import type { User } from './types.js';
  * simulated is the sealing**: every seal, wrap and refusal below is production
  * code with production keys.
  *
- * What is NOT simulated and could not be is the founder's EMAIL. `X7` §1 says
- * the founder has signed in with their wallet; a wallet sign-in has no email,
- * and `addSelfAsPayee` refuses one by name. So the founder here signs
- * in the way the product supports TODAY — with an email — and the wall that
- * puts in front of a wallet-signed-in founder is reported, not worked around.
+ * What is NOT simulated and could not be is the founder's EMAIL. The journey
+ * this file stands for has the founder signed in with their wallet; a wallet
+ * sign-in has no email, and `addSelfAsPayee` refuses one by name. So the
+ * founder here signs in the way the product supports TODAY — with an email —
+ * and the wall that puts in front of a wallet-signed-in founder is reported,
+ * not worked around.
  */
 
 const ORIGIN = 'https://payroll.example';
@@ -167,14 +168,15 @@ describe('a founder pays themselves — the first end-to-end money path', () => 
   });
 
   /**
-   * **THE WALL `X7` RAN INTO, AND IT IS DOWN.**
+   * **THE WALL A WALLET-ONLY FOUNDER RAN INTO, AND IT IS DOWN.**
    *
-   * `X7` described a founder who signed in with their WALLET and pinned the
-   * refusal instead of working around it: `addSelfAsPayee`'s defence was that
-   * the email on the record was the caller's own, and a wallet sign-in has
-   * none. **The repair was never a check** — it was the type. `RosterEmployee.
-   * email` is `string | null`, null means *nothing ever asked them for one*,
-   * and the cap keys on the sign-in that set the address instead.
+   * A founder who signed in with their WALLET used to be refused here, and the
+   * refusal was pinned rather than worked around: `addSelfAsPayee`'s defence
+   * was that the email on the record was the caller's own, and a wallet sign-in
+   * has none. **The repair was never a check** — it was the type.
+   * `RosterEmployee.email` is `string | null`, null means *nothing ever asked
+   * them for one*, and the cap keys on the sign-in that set the address
+   * instead.
    *
    * **THE EMPTY STRING IS STILL WRONG AND IS STILL PINNED**, one test down.
    */
@@ -247,12 +249,11 @@ describe('a founder pays themselves — the first end-to-end money path', () => 
 
   it('§3 AND TWO DIFFERENT WALLET SIGN-INS ARE TWO PEOPLE, NOT ONE', async () => {
     /*
-     * **THE OTHER DIRECTION, AND IT IS THE ONE A BLANK WOULD HAVE BROKEN.**
-     * `X7` pinned that an empty string inverts the cap: two absences compare
-     * equal, so the SECOND wallet founder on a company would have been refused
-     * as a duplicate of the first, and the first would have read as somebody
-     * else. Null never meets null here — the cap compares two emails only when
-     * both records have one.
+     * **THE OTHER DIRECTION, AND IT IS THE ONE A BLANK WOULD HAVE BROKEN.** An
+     * empty string inverts the cap: two absences compare equal, so the SECOND
+     * wallet founder on a company would have been refused as a duplicate of the
+     * first, and the first would have read as somebody else. Null never meets
+     * null here — the cap compares two emails only when both records have one.
      */
     const first = await walletFounder('usr_wallet_one', 'a1');
     const { account, viewingKey, company: addr, words } = first;
@@ -280,7 +281,7 @@ describe('a founder pays themselves — the first end-to-end money path', () => 
       .toHaveLength(2);
   });
 
-  it('§3 AND AN EMPTY STRING IS NOT AN EMAIL — `X7`\'s pin, kept', async () => {
+  it('§3 AND AN EMPTY STRING IS NOT AN EMAIL', async () => {
     /*
      * **A BLANK INVERTS THE CAP, AND THE PLACE IT IS REFUSED IS NOT A CHECK IN
      * `addSelfAsPayee`.** The email on the record is read off the caller's own

@@ -61,8 +61,8 @@ describe('the lease: two tabs cannot work one job', () => {
   it('a second worker is refused a job the first is holding', async () => {
     /*
      * RED WHEN: `mayClaim` answers `true` for a lease another owner holds -
-     * which is the state before this round, where there was no lease at all
-     * and every worker's answer to *may I work this* was yes.
+     * which is the earlier state, where there was no lease at all and every
+     * worker's answer to *may I work this* was yes.
      */
     const store = new MemoryJobStore();
     const first = new JobQueue(runner(), opts(store, { owner: 'tab-one' }));
@@ -471,9 +471,9 @@ describe('a thrown submit is unknown, not failed', () => {
   it('keeps `submitting`, because that is what is true on chain', async () => {
     /*
      * RED WHEN: `step`'s catch sets `job.state = 'failed'` unconditionally,
-     * which is what it did before this round. `failed` is terminal, so
-     * `recover` - the one thing in this system that can ask the chain what
-     * happened - was never reached on the one path that needs it.
+     * which is what it used to do. `failed` is terminal, so `recover` - the one
+     * thing in this system that can ask the chain what happened - was never
+     * reached on the one path that needs it.
      */
     const store = new MemoryJobStore();
     const q = new JobQueue(

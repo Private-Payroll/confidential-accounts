@@ -17,11 +17,11 @@ import { payslipKeypairForWallet } from './payslip-key.js';
  * **THE ORIGIN THE SEED'S STAND-IN WALLET IS ASKED AT, AND IT IS NOT AN
  * INGREDIENT.**
  *
- * `unlock.ts` gates on the origin and derives from the company alone
- * (`W3`), so this value cannot change a single byte of any key. It exists
- * because the wallet refuses to answer an origin it cannot make sense of, and
- * something has to be passed. **A test asserts that two different origins give
- * the same key**, which is what keeps this from quietly becoming load bearing.
+ * `unlock.ts` gates on the origin and derives from the company alone, so this
+ * value cannot change a single byte of any key. It exists because the wallet
+ * refuses to answer an origin it cannot make sense of, and something has to be
+ * passed. **A test asserts that two different origins give the same key**,
+ * which is what keeps this from quietly becoming load bearing.
  */
 const SEED_WALLET_ORIGIN = 'https://payroll.example';
 import type { AssetId } from './assets.js';
@@ -815,11 +815,11 @@ export class PayrollService {
      * The first version took the payee's name, email, salary AND address as
      * request-body fields and checked exactly one thing: that the caller was on
      * the account. It then admitted under `self`, which skips every refusal
-     * `admit` has — the raiser-is-not-redeemer negative and the `A-11` email
-     * positive both. **So one authenticated call produced an active, immediately
-     * payable roster entry bearing somebody else's name and the CALLER's
-     * address, repeatably, at any amount.** Reproduced by audit the turn it
-     * shipped: three fabricated payees, all paying one address, suite green.
+     * `admit` has — the raiser-is-not-redeemer negative and the email positive
+     * both. **So one authenticated call produced an active, immediately payable
+     * roster entry bearing somebody else's name and the CALLER's address,
+     * repeatably, at any amount.** Reproduced by audit the turn it shipped:
+     * three fabricated payees, all paying one address, suite green.
      *
      * That is the same attack at a strictly lower price — no mailbox, no
      * registration, no token, no second sign-in — reached through the very flow
@@ -948,8 +948,7 @@ export class PayrollService {
    * **The address is produced here or not at all**, on the invite path — and
    * `addSelfAsPayee` is the one other place a payee address enters, where the
    * caller and the payee are the same person by construction rather than by
-   * assertion. Nowhere can an operator supply an address for SOMEBODY
-   * ELSE, which is what `V-78` option 3 asks for.
+   * assertion. Nowhere can an operator supply an address for SOMEBODY ELSE.
    *
    * They stay `pending` until an admin admits them. That step is not ceremony:
    * an address on file is not the same as somebody who can reach what is sent
@@ -1317,9 +1316,9 @@ export class PayrollService {
        * which is a different situation with a different remedy — and the
        * remedy it offered, *"re-invite them"*, mints a SECOND pending entry
        * beside the first and freezes the account twice. `createdBy` arrived
-       * with `A-10`; every invite written before it is missing this field
-       * permanently and no migration can invent it. So it is refused, and the
-       * only exit that actually works is said out loud.
+       * later; every invite written before it is missing this field permanently
+       * and no migration can invent it. So it is refused, and the only exit
+       * that actually works is said out loud.
        */
       if (!invite.createdBy) {
         putBack();
@@ -1713,8 +1712,8 @@ export class PayrollService {
     /*
      * The seed gives the employee a sign-in of their own, because the real path
      * requires one: `admit` checks that whoever redeemed the invite is signed in
-     * as the person the company said it was hiring (A-11). A seed that skipped
-     * that would build roster entries the product cannot produce, and every test
+     * as the person the company said it was hiring. A seed that skipped that
+     * would build roster entries the product cannot produce, and every test
      * standing on it would be testing a state that does not exist.
      */
     const seedUser: User = {
@@ -2057,10 +2056,10 @@ export class PayrollService {
     // escrowing someone's salary data because they have not set up yet is worse
     // than a delay. What an admin gets now is a way to say they have read it.
     /*
-     * TWO PENDING STATES, NAMED SEPARATELY. A-2, and it is B15's lesson applied
-     * one step earlier: "outstanding" that covers two different situations is
-     * how an operator stops looking. Somebody who has handed nothing over is
-     * waiting on THEM; somebody whose drop box is full is waiting on US.
+     * TWO PENDING STATES, NAMED SEPARATELY: "outstanding" that covers two
+     * different situations is how an operator stops looking. Somebody who has
+     * handed nothing over is waiting on THEM; somebody whose drop box is full
+     * is waiting on US.
      */
     const pending = asked.filter(e => e.status === 'pending');
     /*
@@ -2231,8 +2230,7 @@ export class PayrollService {
    *
    * **There is no parameter here through which an address could be supplied.**
    * Each one comes from the payee's own sealed roster entry, which they put
-   * there themselves. `V-78` option 3, and it is the whole reason identity was
-   * sequenced ahead of the chain work.
+   * there themselves.
    *
    * **THE RULE IS ENFORCED HERE RATHER THAN ASSUMED.** Three refusals, each
    * naming the person and what is actually wrong, because a payment settles
@@ -3273,7 +3271,7 @@ export class PayrollService {
       throw new Error(
         `run ${run.id} is ${run.status}, and no run in this product can be anything else: ` +
           'a payroll total is proved from a run a VAULT has paid, and the vault payment path ' +
-          'is not built (C292 removed the only path that settled a run). Nothing assigns ' +
+          'is not built (the only path that ever settled a run was removed). Nothing assigns ' +
           "'settled' anywhere in this product, so this is not waiting on a step you can take. " +
           'Selective disclosure returns with vault settlement.',
       );
@@ -3347,7 +3345,7 @@ export class PayrollService {
     this.assets.require(asset);
     throw new Error(
       `account ${accountId} cannot attest solvency in ${asset}: this account holds no balance ` +
-        'at all. It is an authority over a vault, not a holder of money (C292), so there is ' +
+        'at all. It is an authority over a vault, not a holder of money, so there is ' +
         'nothing here to prove a threshold against. Proving what a VAULT holds is a different ' +
         'statement and is not built.',
     );
@@ -3379,7 +3377,7 @@ export class PayrollService {
        */
       throw new Error(
         `there is no attestation ${attestationId}, and there is none with any id: issuing one ` +
-          'requires a run a vault has paid, and the vault payment path is not built (C292). ' +
+          'requires a run a vault has paid, and the vault payment path is not built. ' +
           'This is not a proof that failed to verify — no proof was ever issued.',
       );
     }

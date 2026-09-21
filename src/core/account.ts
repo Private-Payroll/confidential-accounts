@@ -1374,7 +1374,7 @@ export class AccountService {
         `the threshold cannot exceed the ${seated} signers the ledger holds seats for on ` +
           'this account. Above it, the contract treats the account as still being set up ' +
           'and one signer could seat their own. Add the signers first, then raise the ' +
-          'threshold. M-37.' + seatingDrift(account, seating),
+          'threshold.' + seatingDrift(account, seating),
       );
     }
     if (newThreshold === onChain.threshold) {
@@ -2367,7 +2367,7 @@ export class AccountService {
     if (!s.leafCommitment) {
       throw new Error(
         `signer "${s.name}" has no leaf commitment and is not in the on-chain signer set, ` +
-          'so they cannot act on this account. They predate M-13 and must be re-added.',
+          'so they cannot act on this account. They predate stored leaf commitments and must be re-added.',
       );
     }
     return { signerId: s.id, leaf: s.leafCommitment };
