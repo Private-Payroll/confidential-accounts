@@ -235,7 +235,7 @@ describe('R5: the bar is the vault\'s own, and absence inherits the account\'s',
     expect(two.approvalRound).toEqual({ state: 'satisfied', approvals: 2, threshold: 2 });
 
     /*
-     * A THIRD CHECK STOOD HERE and is deleted with the thing it called. `C292`,
+     * A THIRD CHECK STOOD HERE and is deleted with the thing it called.
      * It settled the round through `accounts.execute` and asserted the
      * proposal reached `executed` — the ledger agreeing at 2 as well as our
      * record, which was the point of asserting it twice over.
@@ -444,7 +444,7 @@ describe('R5: a governance round is judged by the ACCOUNT\'s threshold, never a 
    * with the id and the seats.
    *
    * **IT WAS `governanceRoundNaming` AND IT RAISED THE ROUND THROUGH
-   * `SimulatedLedger.propose` WITH A VAULT. THAT ROUND CANNOT EXIST.** `C367`,
+   * `SimulatedLedger.propose` WITH A VAULT. THAT ROUND CANNOT EXIST.**
    * `contracts/src/ConfidentialAccount.compact:2319` asserts
    * `vault == noVault()` on the governance branch and this layer now mirrors
    * it, so the setup these three cases were built on is a state the chain

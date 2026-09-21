@@ -7,7 +7,7 @@ import { sha256 as sha256Bytes } from '@noble/hashes/sha2.js';
 import { inviteKeyOf } from './store.js';
 import { companyAddressForOffer } from './company-address.js';
 import { newWords } from 'midnight-identity';
-/* `PI4c` — the code the payee's wallet produced, checked where the roster is
+/* The code the payee's wallet produced, checked where the roster is
  * written. Same function the admin's browser runs, one module, so the two
  * sides of the comparison cannot drift apart. */
 import { addressFingerprint, FingerprintError } from 'midnight-identity/profile/fingerprint';
@@ -180,14 +180,14 @@ export class RecordingInviteDelivery implements InviteDelivery {
     this.sent.push({ ...to, token, accountId });
   }
   /**
-   * Hashing the stored token protects the
-   * database; it does nothing about this array, which held every raw token for
-   * the life of the process with the name and email in the clear beside it —
-   * `S-9`'s mapping, unsealed, next to the ciphertext it opens.
+   * Hashing the stored token protects the database; it does nothing about this
+   * array, which held every raw token for the life of the process with the name
+   * and email in the clear beside it — the whole mapping, unsealed, next to the
+   * ciphertext it opens.
    *
    * Forgetting on admit is a narrowing, not a fix: an invite that is never
-   * redeemed is still held for ever, and the token still travels in a URL
-   * path. Both are on the register rather than claimed closed here.
+   * redeemed is still held for ever, and the token still travels in a URL path.
+   * Both are recorded elsewhere rather than claimed closed here.
    */
   forget(email: string): void {
     const same = email.trim().toLowerCase();
@@ -437,13 +437,13 @@ export interface EmployeeSecret {
    */
   wrappingSecret: Hex;
   /**
-   * **WHAT THE SECRET ABOVE IS DERIVED FROM, AND THE WHOLE OF `C135`'s FIX.**
+   * **WHAT THE SECRET ABOVE IS DERIVED FROM, AND THE WHOLE OF THE FIX.**
    *
    * The person's own wallet. Given back by the seed because the seed is
    * standing in for eight people's devices and has to hold what each of them
-   * would hold — see `hireDirect`'s header, and `C13`. **A real employee's
-   * words never reach this server**, and nothing in this product persists this
-   * field: it is returned once, exactly as `wrappingSecret` always was.
+   * would hold — see `hireDirect`'s header. **A real employee's words never
+   * reach this server**, and nothing in this product persists this field: it is
+   * returned once, exactly as `wrappingSecret` always was.
    *
    * A random key has to be kept and a kept key can be lost. This one is a pure
    * function of twenty-four words and a chain address, so a person who still
@@ -451,11 +451,11 @@ export interface EmployeeSecret {
    *
    * **ABSENT MEANS THE SECRET ABOVE IS A RANDOM NUMBER THAT NOTHING CAN WORK
    * OUT AGAIN**, and that is not a formality — it is the one remaining place
-   * `C135` is still true. An AD HOC run pays somebody with no roster entry,
-   * so there is no wallet to derive from and `createRun` mints one
-   * (`payroll.ts`, the `else` branch below). The field is optional so that
-   * the difference is visible in the type rather than in a comment: **a secret
-   * with no words beside it is a secret somebody has to keep.**
+   * the old hazard is still live. An AD HOC run pays somebody with no roster
+   * entry, so there is no wallet to derive from and `createRun` mints one
+   * (`payroll.ts`, the `else` branch below). The field is optional so that the
+   * difference is visible in the type rather than in a comment: **a secret with
+   * no words beside it is a secret somebody has to keep.**
    */
   words?: string[];
 }
@@ -537,8 +537,9 @@ export class PayrollService {
      * Recorded so `admit` can RECORD a handover redeemed by the same person who
      * raised it — as `selfRaised`, visible to an admin. It used to REFUSE; that
      * refusal asked about the wrong person, and its price was a second flow for
-     * founders, which became `C24`. Nullable rather than optional so a call site that has no user
-     * — a seed, a test — has to say so out loud instead of forgetting.
+     * founders, which became a hole of its own. Nullable rather than optional
+     * so a call site that has no user — a seed, a test — has to say so out loud
+     * instead of forgetting.
      */
     createdBy: string | null = null,
   ): {
@@ -574,19 +575,19 @@ export class PayrollService {
     }
     const { raw, sentTo, ...rest } = this.raise(accountId, spec, viewingKey, createdBy);
     /*
-     * **THE RAW TOKEN COMES BACK TO WHOEVER RAISED IT, AND THIS REVERSES
-     * `A-10`. DELIBERATELY, WITH THE ARGUMENT.**
+     * **THE RAW TOKEN COMES BACK TO WHOEVER RAISED IT, AND THIS REVERSES AN
+     * EARLIER DECISION. DELIBERATELY, WITH THE ARGUMENT.**
      * `docs/scope-invitations.md` §4 decision 1, 22 Aug.
      *
-     * `A-10` dropped it here, on the reasoning that *the token does not come
-     * back to the caller, so an operator cannot redeem it*. That reasoning
-     * assumed a MAILER — a channel that reaches the employee without passing
-     * through the admin's hands. **There is no mailer and there is not going to
-     * be one. Decided 22 Aug:** the admin is hiring this person and already
-     * holds their email in their own systems, so we produce a link and they
-     * send it. **So we never learn the employee's email address at
-     * all** — not in a column, not in a provider's logs, not in a bounce report
-     * — which is a stronger property than sending it carefully.
+     * It was dropped here on the reasoning that *the token does not come back
+     * to the caller, so an operator cannot redeem it*. That reasoning assumed a
+     * MAILER — a channel that reaches the employee without passing through the
+     * admin's hands. **There is no mailer and there is not going to be one.
+     * Decided 22 Aug:** the admin is hiring this person and already holds their
+     * email in their own systems, so we produce a link and they send it. **So
+     * we never learn the employee's email address at all** — not in a column,
+     * not in a provider's logs, not in a bounce report — which is a stronger
+     * property than sending it carefully.
      *
      * A channel that requires the admin to hold the link and a rule that
      * forbids the admin from holding the link cannot both stand. Until today
@@ -597,21 +598,21 @@ export class PayrollService {
      * ── WHAT THIS COSTS, MEASURED RATHER THAN WAVED AT ───────────────────
      *
      * An operator holding a raw token can redeem it themselves. **That is
-     * `C21`, it is already open, and it has already been reproduced end to
-     * end** — an operator types the employee's email at hire time, registers a
-     * second identity at a mailbox they own, redeems with an address they hold,
-     * and admits; every refusal passes, because the operator controls BOTH
-     * sides of the only positive check in the flow. This line does not create
-     * that capability and does not widen it: it removes one step from an attack
-     * that costs one throwaway address and one registration either way.
+     * already open, and it has already been reproduced end to end** — an
+     * operator types the employee's email at hire time, registers a second
+     * identity at a mailbox they own, redeems with an address they hold, and
+     * admits; every refusal passes, because the operator controls BOTH sides of
+     * the only positive check in the flow. This line does not create that
+     * capability and does not widen it: it removes one step from an attack that
+     * costs one throwaway address and one registration either way.
      *
      * **AND IT WAS NEVER TRUE THAT THE PROCESS DID NOT HOLD ONE.**
      * `RecordingInviteDelivery` keeps every raw token it is given, in memory,
      * for the life of the process, with the name and the email in the clear
-     * beside it — `C8`. The rule this reverses was already only a rule about
-     * which VARIABLE held it.
+     * beside it. The rule this reverses was already only a rule about which
+     * VARIABLE held it.
      *
-     * ── WHAT DOES NOT CHANGE, AND IS WHAT THE ROUND'S FIRST RULE MEANS ───
+     * ── WHAT DOES NOT CHANGE, AND IT IS THE FIRST RULE OF THIS FLOW ──────
      *
      * **No operator-side control OPENS an invitation.** The button that did was
      * deleted on 17 Aug and is not coming back — not behind a flag, not "for
@@ -695,23 +696,22 @@ export class PayrollService {
       expiresAt: new Date(Date.now() + INVITATION_LIFETIME_MS).toISOString(),
       subjectId: employee.id,
       /*
-       * **X11 §0 — THE OFFER NAMES THE COMPANY TWICE, AND THE SECOND ONE IS
-       * NOT A LABEL.**
+       * **THE OFFER NAMES THE COMPANY TWICE, AND THE SECOND ONE IS NOT A
+       * LABEL.**
        *
        * `company` is a NAME, for a person to read. **`companyAddress` is the
        * company's own account contract address**, and it is here because the
        * key that opens this person's payslips is
        * `payslipKeypairFrom(companyKey)` and the wallet derives that company
-       * key from the address and from nothing else (`W3`, `C136`). An invitee
-       * is by definition not a member, so `companyForSession` cannot serve
-       * them and `POST /api/accounts/:id/unlock` is shut to them — **and
-       * inventing a second key path for invitees is what `X11` §0 forbids by
-       * name.** It travels here or the invitee derives a key nobody else can
-       * reproduce, which is `C135`.
+       * key from the address and from nothing else. An invitee is by definition
+       * not a member, so `companyForSession` cannot serve them and `POST
+       * /api/accounts/:id/unlock` is shut to them — **and inventing a second
+       * key path for invitees is forbidden by name.** It travels here or the
+       * invitee derives a key nobody else can reproduce.
        *
-       * **`inboxPublicKey` is here for the same round's other half.** `X11`
-       * §7 moves the sealing of the receiving address onto the invitee's own
-       * device, and a browser cannot seal to an inbox it has not been given.
+       * **`inboxPublicKey` is here for the other half of the same change.** The
+       * sealing of the receiving address moved onto the invitee's own device,
+       * and a browser cannot seal to an inbox it has not been given.
        * `sealed-records.ts` says of this value, in its own words, *"Safe to
        * store and serve in the clear"* — it seals and cannot open, and opening
        * needs the account's viewing key, which no invitee ever holds.
@@ -724,8 +724,9 @@ export class PayrollService {
        * the capability they belong to.
        *
        * `companyAddress` is null when this company has no address a chain
-       * assigned. That is `C140`'s gate, unchanged and in the same words: the
-       * refusal arrives on the invitee's screen rather than stopping a hire.
+       * assigned. That is the address gate, unchanged and in the same words:
+       * the refusal arrives on the invitee's screen rather than stopping a
+       * hire.
        */
       offer: seal(canonical({
         company: this.accounts.open(accountId, viewingKey).name,
@@ -752,7 +753,8 @@ export class PayrollService {
      * redeemed inside the same call and never leaves the method. Calling the
      * delivery with a null address would put a raw invite token into the
      * delivery port's memory — beside no name and no mailbox — for a
-     * conversation that has no second party. `C8`'s retention, for nothing.
+     * conversation that has no second party. Raw-token retention, bought for
+     * nothing.
      */
     if (spec.email !== null) {
       this.delivery.send({ email: spec.email, name: spec.name }, raw, accountId);
@@ -794,9 +796,9 @@ export class PayrollService {
      */
     spec: HireSpec, viewingKey: Hex,
     /**
-     * `Payee` since `S12`. A member adding their own address, or a company
-     * recording its own, hands over whatever their wallet produced, and the
-     * string says which kind it is.
+     * `Payee` rather than `PayeeAddress`. A member adding their own address, or
+     * a company recording its own, hands over whatever their wallet produced,
+     * and the string says which kind it is.
      */
     handover: { wrappingPublicKey: Hex; address: Payee },
   ): RosterEmployee {
@@ -819,48 +821,47 @@ export class PayrollService {
      * address, repeatably, at any amount.** Reproduced by audit the turn it
      * shipped: three fabricated payees, all paying one address, suite green.
      *
-     * That is `C21` at a strictly lower price — no mailbox, no registration, no
-     * token, no second sign-in — reached through the flow the register cites as
-     * the safe alternative to `C21`. **A door built to remove an exception
-     * became the exception with a route in front of it.**
+     * That is the same attack at a strictly lower price — no mailbox, no
+     * registration, no token, no second sign-in — reached through the very flow
+     * that was cited as the safe alternative to it. **A door built to remove an
+     * exception became the exception with a route in front of it.**
      *
      * Two things hold it now. **The record is about the CALLER**, because
      * everything identifying on it is read off their own sign-in and never off
-     * the body — the email when they have one (`X8`: `null` when they do not),
-     * and the sign-in itself, which lands on the entry as `handedOverBy`. And
-     * one payable entry per person: a second call cannot mint a second payee
-     * under the same identity, whichever of the two identifies them.
+     * the body — the email when they have one (`null` when they do not), and
+     * the sign-in itself, which lands on the entry as `handedOverBy`. And one
+     * payable entry per person: a second call cannot mint a second payee under
+     * the same identity, whichever of the two identifies them.
      */
     const me = this.store.getUser(userId);
     if (!me) throw new Error('that sign-in no longer exists');
     /*
      * **A WALLET SIGN-IN CAN BE MADE PAYABLE, AND THIS IS WHERE IT CHANGED.**
-     * It used to refuse here, and the refusal was right at the
-     * time: this route's whole defence is that the record is unavoidably about
-     * the CALLER, and until `X8` the only thing making it so was an email read
-     * off their sign-in. A wallet sign-in has none — **and there
-     * is no other kind of sign-in, so `me.email` is null on every caller that
-     * reaches this door.**
+     * It used to refuse here, and the refusal was right at the time: this
+     * route's whole defence is that the record is unavoidably about the CALLER,
+     * and the only thing making it so used to be an email read off their
+     * sign-in. A wallet sign-in has none — **and there is no other kind of
+     * sign-in, so `me.email` is null on every caller that reaches this door.**
      *
      * **THE EMPTY STRING IS STILL REFUSED, AND IT IS NOT REFUSED HERE — THERE
-     * IS NOWHERE LEFT TO WRITE ONE.** `X7` pinned a test saying a blank inverts
-     * the cap: an empty email compares equal to another empty one, so two
-     * people read as one person and one person reads as somebody else. The fix
-     * is not a check, it is the TYPE: `RosterEmployee.email` is
-     * `string | null`, `null` means *nothing ever asked them for one*, and
-     * `admit`'s cap never compares two absences.
+     * IS NOWHERE LEFT TO WRITE ONE.** A test pins that a blank inverts the cap:
+     * an empty email compares equal to another empty one, so two people read as
+     * one person and one person reads as somebody else. The fix is not a check,
+     * it is the TYPE: `RosterEmployee.email` is `string | null`, `null` means
+     * *nothing ever asked them for one*, and `admit`'s cap never compares two
+     * absences.
      *
      * **SO WHAT IDENTIFIES THE PERSON INSTEAD, AND WHY IT CANNOT BE TWO
      * PEOPLE.** The user's own row. A `User` is created once per credential.
      * This used to name two halves — `register` refusing a second row for one
      * email address, and a wallet sign-in finding its row by
-     * `getUserByWalletKey`. **`PI4b` deleted the first half along with the
-     * password, and the surviving half is the stronger one:**
-     * `getUserByWalletKey` is `sha256` of the subwallet address the signature
-     * was verified against, and **only somebody holding that subwallet's
-     * spending key can produce a signature that resolves to that row**, so one
-     * id is never two people. The email half rested on a uniqueness check; this
-     * one rests on a key nobody else has.
+     * `getUserByWalletKey`. **The first half went with the password, and the
+     * surviving half is the stronger one:** `getUserByWalletKey` is `sha256` of
+     * the subwallet address the signature was verified against, and **only
+     * somebody holding that subwallet's spending key can produce a signature
+     * that resolves to that row**, so one id is never two people. The email
+     * half rested on a uniqueness check; this one rests on a key nobody else
+     * has.
      *
      * **AND THE HONEST OTHER DIRECTION: one person may be two ids.** Two
      * subwallets are two rows, and an email account beside a wallet account is
@@ -889,9 +890,10 @@ export class PayrollService {
      * involved.
      */
     /*
-     * **THIS DOOR SEALS ON OUR SIDE, AND THAT IS NOT `C160` RETURNING.**
+     * **THIS DOOR SEALS ON OUR SIDE, AND THAT IS NOT THE OLD HAZARD
+     * RETURNING.**
      *
-     * `C160` is about an address travelling to us in a request body. Here there
+     * That hazard is an address travelling to us in a request body. Here there
      * is no request carrying one: the address arrived inside a **signed
      * disclosure** which `payeeFromWallet` verified at the route, because the
      * value is being written onto a company's roster by somebody who is already
@@ -919,7 +921,8 @@ export class PayrollService {
         this.accounts.require(accountId).inboxPublicKey),
       userId);
     /*
-     * THE SAME `admit`, WITH THE SAME CHECKS. No bypass — that bypass was `C24`.
+     * THE SAME `admit`, WITH THE SAME CHECKS. No bypass — a bypass here once
+     * let an active payable entry be created under anybody's name for one POST.
      *
      * What is left of this method is convenience, not authority: it walks the
      * ordinary three steps in one call, for the one case where the person
@@ -948,13 +951,13 @@ export class PayrollService {
    * assertion. Nowhere can an operator supply an address for SOMEBODY
    * ELSE, which is what `V-78` option 3 asks for.
    *
-   * They stay `pending` until an admin admits them. That step is not ceremony —
-   * it is `C9`: an address on file is not the same as somebody who can reach
-   * what is sent to it, and a payment settles irreversibly the moment it lands.
+   * They stay `pending` until an admin admits them. That step is not ceremony:
+   * an address on file is not the same as somebody who can reach what is sent
+   * to it, and a payment settles irreversibly the moment it lands.
    */
   /*
-   * **X11 §7 — THERE IS NOWHERE HERE TO PUT A PLAIN ADDRESS, AND THAT IS THE
-   * WHOLE OF `C160`.**
+   * **THERE IS NOWHERE HERE TO PUT A PLAIN ADDRESS, AND THAT IS THE WHOLE OF
+   * THE FIX.**
    *
    * This took `{ wrappingPublicKey, address: PayeeAddress }` and sealed it. The
    * route above it parsed a bech32 STRING off a request body to build that
@@ -990,11 +993,12 @@ export class PayrollService {
    * `offerFor` alone would refuse to SHOW an expired offer to the one person
    * entitled to see it while still letting anybody ACCEPT it.
    *
-   * **IT FAILS CLOSED ON A MISSING DEADLINE.** An invitation with no `expiresAt`
-   * predates the field and cannot acquire one — no migration can invent when an
-   * offer was meant to lapse — and §9 refuses an invitation without an expiry
-   * by name. So it is refused, with the exit said out loud, in the shape `C28`
-   * argues for: not knowing is precisely when to refuse.
+   * **IT FAILS CLOSED ON A MISSING DEADLINE.** An invitation with no
+   * `expiresAt` predates the field and cannot acquire one — no migration can
+   * invent when an offer was meant to lapse — and §9 refuses an invitation
+   * without an expiry by name. So it is refused, with the exit said out loud,
+   * in the shape every other exit here takes: not knowing is precisely when to
+   * refuse.
    */
   private readableInvite(token: string): Invite {
     const invite = this.store.getInvite(token);
@@ -1029,7 +1033,7 @@ export class PayrollService {
    *
    * **IT DOES ONE THING.** The roster entry is not touched: withdrawing the
    * PERSON is `setStatus`, it is a separate control on the same row, and the
-   * lifecycle §8 describes is explicitly not this round's. What this does is
+   * lifecycle §8 describes is explicitly not this method's. What this does is
    * make the link dead, everywhere it is read.
    */
   revokeInvite(employeeId: string): Invite {
@@ -1058,7 +1062,7 @@ export class PayrollService {
     /** Who is redeeming it. The route is authenticated so this is never guessed. */
     byUserId: string | null = null,
   ): SealedEmployee {
-    /* X12 §3 — expired and revoked are refused HERE, not only on the screen
+    /* Expired and revoked are refused HERE, not only on the screen
      * that showed the offer. A stale link that can still be spent is a stale
      * link that works. */
     const invite = this.readableInvite(token);
@@ -1123,13 +1127,13 @@ export class PayrollService {
      * `admit`, NOT HERE. Moved 17 Aug, found by audit.
      *
      * It existed to be READ before accepting, so dropping it on accept looked
-     * like hygiene — one standing copy of a salary rather than two, which is
-     * `S-9`'s shape. But a handover can be REFUSED, and the refusal PUTS THE
-     * INVITATION BACK so the person can hand over again from the right
-     * sign-in. Dropping the offer here made that retry a blank screen: the
-     * invite reopens and `offerFor` throws for the rest of its life, because
-     * only the holder of the raw token could re-seal it and we do not hold it.
-     * **A put-back that restores half of what it took is `C17`'s shape again.**
+     * like hygiene — one standing copy of a salary rather than two. But a
+     * handover can be REFUSED, and the refusal PUTS THE INVITATION BACK so the
+     * person can hand over again from the right sign-in. Dropping the offer
+     * here made that retry a blank screen: the invite reopens and `offerFor`
+     * throws for the rest of its life, because only the holder of the raw token
+     * could re-seal it and we do not hold it. **A put-back that restores half
+     * of what it took is a half-fix, and this project has shipped one before.**
      */
     this.store.putInvite(invite);
     return this.store.getEmployee(employee.id)!;
@@ -1212,7 +1216,7 @@ export class PayrollService {
 
     /*
      * THE PERSON WHO RAISED THE INVITE MAY NEVER BE THE PERSON WHO REDEEMED IT.
-     * A-10, with no exception — decided 17 Aug.
+     * With no exception — decided 17 Aug.
      *
      * The first version of this had one, for "an account with a single member,
      * which has nobody to defraud". Two things were wrong with it. It measured
@@ -1232,9 +1236,9 @@ export class PayrollService {
      *
      * AND IT FAILS CLOSED. The first version disabled itself when it could not
      * establish who redeemed the invite — a missing `createdBy`, a missing
-     * `acceptedBy`, a missing invite record — which is `C16`'s lesson from the
-     * same day, one file over: **a guard whose failure mode is to disable itself
-     * is not a guard.** Not knowing who set the address of record is precisely
+     * `acceptedBy`, a missing invite record — which is the lesson from the same
+     * day, one file over: **a guard whose failure mode is to disable itself is
+     * not a guard.** Not knowing who set the address of record is precisely
      * when to refuse.
      */
     const invite = this.store.listInvites(rec.accountId)
@@ -1247,15 +1251,15 @@ export class PayrollService {
     const acceptedBy = box.byUserId ?? null;
 
     /*
-     * EVERY REFUSAL PUTS THE HANDOVER BACK. `C28`, found by audit 17 Aug, and
-     * it is the fourth time this shape has been paid for.
+     * EVERY REFUSAL PUTS THE HANDOVER BACK. Found by audit 17 Aug, and it is
+     * the fourth time this shape has been paid for.
      *
-     * `C23` wired the put-back to ONE of this method's five refusals — the
-     * email mismatch — because that was the one being fixed. The other four
-     * left the drop box full and the invite spent, and **there is no route that
-     * re-opens an invite or empties a box.** A run refuses to build while
-     * anybody is `pending`, so any one of them froze the WHOLE account's
-     * payroll behind one person, permanently.
+     * The put-back was wired to ONE of this method's five refusals — the email
+     * mismatch — because that was the one being fixed. The other four left the
+     * drop box full and the invite spent, and **there is no route that re-opens
+     * an invite or empties a box.** A run refuses to build while anybody is
+     * `pending`, so any one of them froze the WHOLE account's payroll behind
+     * one person, permanently.
      *
      * Refusing and stranding are different things. This method's job is to
      * refuse; leaving the person unrecoverable is not part of it.
@@ -1273,9 +1277,8 @@ export class PayrollService {
           + 'than admitting it.');
       }
       /*
-       * **X12 §3 — A WITHDRAWN INVITATION CANNOT BE ADMITTED, AND THIS IS THE
-       * THIRD PLACE IT IS ENFORCED ON PURPOSE.** `docs/scope-invitations.md`
-       * §8.
+       * **A WITHDRAWN INVITATION CANNOT BE ADMITTED, AND THIS IS THE THIRD
+       * PLACE IT IS ENFORCED ON PURPOSE.** `docs/scope-invitations.md` §8.
        *
        * §8 says expiry and revocation are enforced where the offer is READ. The
        * two reading doors are `offerFor` and `acceptInvite`, and both go
@@ -1340,24 +1343,24 @@ export class PayrollService {
        *
        * **What the refusal bought:** an operator attacking somebody else had to
        * register a sockpuppet rather than redeem as themselves. One step. It
-       * never stopped the attack — `C21` lets an operator type their own address
-       * as the employee's either way, and the sockpuppet costs one free
+       * never stopped the attack — an operator can type their own address as
+       * the employee's either way, and the sockpuppet costs one free
        * registration.
        *
        * **What it cost:** a second flow, so a founder could get on their own
-       * payroll. That flow became `C24` — an active, immediately payable entry
-       * under anybody's name for the price of one POST, which is cheaper than
-       * the attack this refusal was slowing down. **A guard whose price is a
-       * parallel authorisation surface is not worth a speed bump**, and this
-       * repo's history says authorisation complexity is where the money holes
-       * live.
+       * payroll. That flow became a hole of its own — an active, immediately
+       * payable entry under anybody's name for the price of one POST, which is
+       * cheaper than the attack this refusal was slowing down. **A guard whose
+       * price is a parallel authorisation surface is not worth a speed bump**,
+       * and this repo's history says authorisation complexity is where the
+       * money holes live.
        *
        * The information is not lost, only the refusal: it lands on the roster
        * entry as `selfRaised`, where an admin reviewing can see it.
        */
 
       /*
-       * **THE POSITIVE, AND `PI4c` DELETED THE ONE THAT USED TO BE HERE.**
+       * **THE POSITIVE, AND THE ONE THAT USED TO BE HERE IS DELETED.**
        * `docs/how-money-can-be-lost.md` `C21`.
        *
        * Everything above proves a NEGATIVE, or proves who was involved: an
@@ -1376,12 +1379,12 @@ export class PayrollService {
        * evidence in the flow. Name a mailbox you own, sign in there, redeem,
        * admit: every refusal passed. Reproduced end to end by audit.
        *
-       * **AND IT HAD STOPPED LETTING ANYBODY BE HIRED AT ALL.** `PI4b` deleted
-       * the password, so a real invitee signs in with a wallet and a wallet
+       * **AND IT HAD STOPPED LETTING ANYBODY BE HIRED AT ALL.** The password
+       * was deleted, so a real invitee signs in with a wallet and a wallet
        * sign-in carries no email — which this comparison read as *there is
        * nothing to check them against* and refused. A check that refuses every
-       * real person and passes the operator attacking them is not a weak
-       * check; it is one pointing the wrong way.
+       * real person and passes the operator attacking them is not a weak check;
+       * it is one pointing the wrong way.
        *
        * ── WHAT REPLACED IT ───────────────────────────────────────────────
        *
@@ -1403,27 +1406,27 @@ export class PayrollService {
 
       /*
        * ONE PAYABLE ENTRY PER PERSON, CHECKED WHERE SOMEBODY BECOMES PAYABLE.
-       * `C26`, found by audit 17 Aug — and it is the price the raiser refusal
-       * had been quietly paying.
+       * Found by audit 17 Aug — and it is the price the raiser refusal had been
+       * quietly paying.
        *
-       * This cap lived in `addSelfAsPayee` alone. `admit` never consulted it, so
-       * once the raiser refusal was removed a member could raise an ordinary
+       * This cap lived in `addSelfAsPayee` alone. `admit` never consulted it,
+       * so once the raiser refusal was removed a member could raise an ordinary
        * employee invite carrying **their own sign-in email** under any name and
        * any salary, redeem it themselves, admit, and repeat — every refusal
        * passing, because the only positive asks whether the redeemer is the
        * email on the record and the record says the member. **Reproduced by the
-       * auditor: three payees, one address, £27,000, suite green.**
+       * audit: three payees, one address, £27,000, suite green.**
        *
        * Here it covers both doors, because both come through `admit`.
        */
       /*
-       * **X8 — WHAT THE CAP KEYS ON, AND WHY IT CANNOT BE TWO PEOPLE.**
+       * **WHAT THE CAP KEYS ON, AND WHY IT CANNOT BE TWO PEOPLE.**
        * `docs/NEXT.md` X8 §3.
        *
        * It keyed on the email alone, which cannot serve somebody who has none —
-       * and `X7` pinned a test saying the obvious repair, a blank, INVERTS it:
-       * two absences compare equal, so every wallet-signed-in person on an
-       * account would read as the same person, and none of them as themselves.
+       * and a test pins that the obvious repair, a blank, INVERTS it: two
+       * absences compare equal, so every wallet-signed-in person on an account
+       * would read as the same person, and none of them as themselves.
        *
        * **SO IT KEYS ON THE PERSON, AND A PERSON IS THE SIGN-IN THAT SET THE
        * ADDRESS.** `handedOverBy` is that sign-in, sealed onto the entry at
@@ -1433,21 +1436,21 @@ export class PayrollService {
        * company addressed.
        *
        * **WHY ONE ID IS NEVER TWO PEOPLE.** A `User` row is created once per
-       * credential. This used to rest on two halves; `PI4b` deleted `register`
-       * and with it the refusal of a second row for one email, **and the half
-       * that remains is the one that never needed a check**: a wallet sign-in
-       * resolves to its row by `sha256` of the address the signature was
-       * verified against, which only the holder of that subwallet's spending
-       * key can produce.
+       * credential. This used to rest on two halves; `register` went with the
+       * password, and with it the refusal of a second row for one email, **and
+       * the half that remains is the one that never needed a check**: a wallet
+       * sign-in resolves to its row by `sha256` of the address the signature
+       * was verified against, which only the holder of that subwallet's
+       * spending key can produce.
        *
        * **AND THE EMAIL IS STILL A KEY, FOR THE ROWS THAT PREDATE THE OTHER
-       * ONE.** `handedOverBy` arrived with `A-10`; every entry admitted before
-       * it carries `null` there for ever and no migration can invent one. The
-       * two are not two spellings of one fact that could disagree — they are
-       * two ways of RECOGNISING the same person, and either one matching is a
+       * ONE.** `handedOverBy` arrived later; every entry admitted before it
+       * carries `null` there for ever and no migration can invent one. The two
+       * are not two spellings of one fact that could disagree — they are two
+       * ways of RECOGNISING the same person, and either one matching is a
        * clash. **A cap that fires on more is never the failure; a cap that
-       * fires on less is one person paid twice.** Both absences are guarded,
-       * so no two nulls and no two blanks ever meet.
+       * fires on less is one person paid twice.** Both absences are guarded, so
+       * no two nulls and no two blanks ever meet.
        */
       const isTheSamePerson = (p: RosterEmployee): boolean => (
         (p.handedOverBy !== null && p.handedOverBy === acceptedBy)
@@ -1460,8 +1463,8 @@ export class PayrollService {
         putBack();
         /*
          * **IT USED TO SAY *"change the address on that record"*, AND NOTHING
-         * IN THIS PRODUCT CAN.** Found by a product-copy pass on `S12`, by
-         * reading every writer of a roster address rather than the message.
+         * IN THIS PRODUCT CAN.** Found by a product-copy pass, by reading every
+         * writer of a roster address rather than the message.
          *
          * `admit` is the only line that writes one, and it refuses an entry
          * that has already been admitted. `raise` writes `null`. `setStatus`
@@ -1474,10 +1477,10 @@ export class PayrollService {
          * `status === 'active'`, so a leaver frees the cap and the person can
          * be added again at their new address.
          *
-         * **AND THAT IS THE TWO-FINGERPRINTS COST, SAID WHERE IT IS PAID.**
-         * One person holds one address, so changing how somebody is paid is a
+         * **AND THAT IS THE TWO-FINGERPRINTS COST, SAID WHERE IT IS PAID.** One
+         * person holds one address, so changing how somebody is paid is a
          * re-admission rather than an edit, and their payslips before and after
-         * sit under two `addressFingerprint` values. `C250`, answered in
+         * sit under two `addressFingerprint` values, which is answered in
          * `a-payroll-run-is-always-private.test.ts` §5b.
          */
         throw new Error(
@@ -1488,8 +1491,8 @@ export class PayrollService {
       }
 
       /*
-       * **X8 — A RECORD WITH NO EMAIL IS ONE THE PAYEE MADE FOR THEMSELVES, AND
-       * ITS POSITIVE IS A DIFFERENT SENTENCE.**
+       * **A RECORD WITH NO EMAIL IS ONE THE PAYEE MADE FOR THEMSELVES, AND ITS
+       * POSITIVE IS A DIFFERENT SENTENCE.**
        *
        * A record with no email was never addressed to anybody: the only door
        * that writes one is `addSelfAsPayee` — `invite` refuses a spec with no
@@ -1528,12 +1531,12 @@ export class PayrollService {
        * same code is computed from the address that ACTUALLY ARRIVED. **Two
        * codes, both derived from an address and from nothing else.**
        *
-       * **WHY THIS IS NOT `C160` RETURNING THROUGH A SIDE DOOR.** §5's rule is
-       * that the fingerprint an ADMIN reads is computed on the admin's machine,
-       * and it still is — `src/web/accepted-address.ts`, against ciphertext
-       * from a route that has nowhere to put a key. This is not that screen. It
-       * is `admit`, which has held the opened handover and rebuilt the address
-       * through the decode below because it is the step that writes
+       * **WHY THIS IS NOT THE OLD HAZARD RETURNING BY A SIDE DOOR.** §5's rule
+       * is that the fingerprint an ADMIN reads is computed on the admin's
+       * machine, and it still is — `src/web/accepted-address.ts`, against
+       * ciphertext from a route that has nowhere to put a key. This is not that
+       * screen. It is `admit`, which has held the opened handover and rebuilt
+       * the address through the decode below because it is the step that writes
        * the address onto the roster. Hashing a value already in this scope
        * gives this service nothing it did not have on the line below.
        *
@@ -1541,21 +1544,21 @@ export class PayrollService {
        * and sealed somebody ELSE'S address: every other check passes, the
        * envelope is well formed, the roster entry is right in every field — and
        * the code cannot be recomputed without the wallet, so it does not match
-       * and nobody becomes payable. Before `PI4c` that mismatch reached a
-       * screen and an admin who clicked admit anyway was obeyed.
+       * and nobody becomes payable. That mismatch used to reach a screen, and
+       * an admin who clicked admit anyway was obeyed.
        *
-       * **WHAT IT DOES NOT PROVE, UNCHANGED AND STILL `C21`'s:** somebody
-       * accepting their own invitation pastes their own matching code. The
-       * codes agreeing means the address that arrived is the one the wallet
-       * showed. It has never meant the right person was invited.
+       * **WHAT IT DOES NOT PROVE, AND THAT IS UNCHANGED:** somebody accepting
+       * their own invitation pastes their own matching code. The codes agreeing
+       * means the address that arrived is the one the wallet showed. It has
+       * never meant the right person was invited.
        *
        * **`null` IS NOT A MISMATCH.** `addSelfAsPayee` walks this shape with no
        * page, no second party and nothing to confirm, and a drop box sealed
        * before the field existed carries none either. A blank standing in for a
-       * code would be `X8`'s own lesson — two absences that compare equal — so
-       * the screen says *no code was given* and the admin confirms another way.
-       * **This is absence, not disagreement**, and it is the one door in this
-       * product that can produce it.
+       * code would repeat the same lesson — two absences that compare equal —
+       * so the screen says *no code was given* and the admin confirms another
+       * way. **This is absence, not disagreement**, and it is the one door in
+       * this product that can produce it.
        */
       if (handover.confirmation !== null) {
         /* A string that is not address-shaped cannot have a code, and refusing
@@ -1587,12 +1590,12 @@ export class PayrollService {
      * decode like every other one, so a handover carrying two halves that were
      * never one address cannot get in by being well formed.
      *
-     * **`payeeOf` SINCE `S12`, AND IT IS THE SAME DECODE.**
-     * The kind is READ off the string the wallet produced rather than asked
-     * for, so this door admits a public address without anybody choosing
-     * anything. Every check `payeeAddress` made is still made: the platform's
-     * Bech32m checksum, the address type, and the network. What changed is that
-     * two types are payees instead of one, and a third is still refused naming
+     * **`payeeOf` RATHER THAN `payeeAddress`, AND IT IS THE SAME DECODE.** The
+     * kind is READ off the string the wallet produced rather than asked for, so
+     * this door admits a public address without anybody choosing anything.
+     * Every check `payeeAddress` made is still made: the platform's Bech32m
+     * checksum, the address type, and the network. What changed is that two
+     * types are payees instead of one, and a third is still refused naming
      * both.
      *
      * **THE EMPLOYEE IS NOT EXPOSED BY THIS DOOR OPENING.** `payrollPayee`
@@ -1642,12 +1645,13 @@ export class PayrollService {
    * exactly what `invite()` exists to avoid.
    *
    * **IT SAID "not reachable from the API" AND THAT WAS FALSE.** `POST
-   * /api/demo/seed` is authenticated and nothing more, and `seedDemo` calls this
-   * eight times. So the product can mint roster entries that are `active`, carry
-   * a well-formed address, and pass every check in `paymentFactsFor` — while
-   * **nobody on earth holds the spending key for them.** The only thing between
-   * that and lost money today is that the server still runs `SimulatedLedger`.
-   * `C13`, and it needs to be refusable by construction rather than by a comment.
+   * /api/demo/seed` is authenticated and nothing more, and `seedDemo` calls
+   * this eight times. So the product can mint roster entries that are `active`,
+   * carry a well-formed address, and pass every check in `paymentFactsFor` —
+   * while **nobody on earth holds the spending key for them.** The only thing
+   * between that and lost money today is that the server still runs
+   * `SimulatedLedger`. That needs to be refusable by construction rather than
+   * by a comment.
    */
   hireDirect(accountId: string, spec: HireSpec, viewingKey: Hex): { employee: RosterEmployee; secret: EmployeeSecret } {
     /*
@@ -1658,8 +1662,8 @@ export class PayrollService {
      * builds the seeded person a SIGN-IN of their own — which is an email
      * account, because `admit` checks a redeemer against the email the company
      * addressed. A null here would put an empty string in a user row and hand
-     * every other blank row the same identity, which is the one thing `X8` is
-     * written against. Refused by name rather than coerced.
+     * every other blank row the same identity, which is the one thing the
+     * keying rule is written against. Refused by name rather than coerced.
      */
     if (spec.email === null || spec.email.trim() === '') {
       throw new Error(
@@ -1680,12 +1684,12 @@ export class PayrollService {
      * alone. `payslip-key.ts` argues the derivation; this is its one caller in
      * product code.
      *
-     * **THE DISHONESTY OF THE SEED IS UNCHANGED AND IS NOT THIS ROUND'S.** The
+     * **THE DISHONESTY OF THE SEED IS UNCHANGED AND IS NOT THIS METHOD'S.** The
      * words are minted HERE, on the employer's server, so the employer holds
-     * them — which is exactly what `invite()` exists to prevent and what
-     * `C13` is about. A real employee's wallet is theirs and its words never
-     * reach us; only `wrappingPublicKey` does. What the seed buys is that the
-     * whole flow can be walked without eight browsers.
+     * them — which is exactly what `invite()` exists to prevent and what the
+     * hazard above is about. A real employee's wallet is theirs and its words
+     * never reach us; only `wrappingPublicKey` does. What the seed buys is that
+     * the whole flow can be walked without eight browsers.
      */
     const company = this.store.getAccount(accountId)?.contractAddress;
     if (!company) {
@@ -1729,7 +1733,7 @@ export class PayrollService {
        * NOT `spec.name`. The name on a company's roster is the COMPANY's record
        * and is sealed; the name on a person's own account is theirs and is not.
        * Copying one into the other puts a sealed value in an unsealed table,
-       * which is `S-9` exactly — seal one place, leak it into another.
+       * which is the failure exactly — seal one place, leak it into another.
        */
       name: email,
       /* `authHash: ''` and `authSalt: ''` were here, and the empty
@@ -1751,7 +1755,7 @@ export class PayrollService {
         {
           wrappingPublicKey: wk.publicKey,
           address: seededAddress(employee.id, this.network).bech32,
-          /* X12 §2. The seed's dishonesty is unchanged and is not this round's:
+          /* The seed's dishonesty is unchanged and is not this method's to fix:
            * this address was made HERE rather than on anybody's device, so
            * there is no wallet that showed a code and nobody to compare one
            * with. A code minted beside it would be the seed confirming its own
@@ -1778,8 +1782,8 @@ export class PayrollService {
    * without opening it; everything a person would call private goes inside.
    */
   /**
-   * REFUSES A KEY THAT IS NOT THIS ACCOUNT'S, BEFORE ANYTHING IS SEALED WITH IT.
-   * `C25`, found by audit 17 Aug.
+   * REFUSES A KEY THAT IS NOT THIS ACCOUNT'S, BEFORE ANYTHING IS SEALED WITH
+   * IT. Found by audit 17 Aug.
    *
    * The viewing key arrives in a request body and was never checked. Seal one
    * roster entry under a stale or wrong key — a client holding an old key after
@@ -1826,12 +1830,12 @@ export class PayrollService {
    * says there is *"deliberately no way to make a `PayeeAddress` that skipped"*
    * the parse, and across this boundary that had quietly stopped being true.
    *
-   * **It was harmless until this round and is not any more.** Every field a
+   * **It was harmless until recently and is not any more.** Every field a
    * caller read — `bech32`, `coinPublicKey`, `encryptionPublicKey` — was in the
-   * sealed record, so a revived payee behaved like a parsed one. `S6k` added
-   * `kind`, which is not in a record sealed before it and **is the field that
-   * decides which door a payment leaves by**. A roster sealed
-   * yesterday would hand `buildRun` a payee with no kind.
+   * sealed record, so a revived payee behaved like a parsed one. Then `kind`
+   * was added, which is not in a record sealed before it and **is the field
+   * that decides which door a payment leaves by**. A roster sealed yesterday
+   * would hand `buildRun` a payee with no kind.
    *
    * **The failure that would have been is loud rather than silent** — indexing
    * the details circuits by `undefined` throws where a run is BUILT, before
@@ -1840,8 +1844,8 @@ export class PayrollService {
    * the kind is present and agrees with the bytes beside it, whenever the record
    * was written.
    *
-   * **`payeeOf` SINCE `S12`, AND THAT IS THE WIDENING THE PREVIOUS COMMENT
-   * PROMISED.** It read `payeeAddress` and said *the day the
+   * **`payeeOf` RATHER THAN `payeeAddress`, AND THAT IS THE WIDENING THE
+   * PREVIOUS COMMENT PROMISED.** It read `payeeAddress` and said *the day the
    * roster learns about public payees, this line widens deliberately and
    * `RosterEmployee.address` widens with it.* This is that day, and both moved
    * together rather than one of them being noticed later.
@@ -1853,11 +1857,12 @@ export class PayrollService {
    * this line re-parses.
    *
    * **TWO FIXTURES, BECAUSE THERE ARE TWO OLD SHAPES AND ONE COMMENT CLAIMING
-   * BOTH WOULD BE A `C221` MIRROR.** `a-payroll-run-is-always-private.test.ts`
-   * §4 seals a pre-`S12` record, which HAS a `kind` because `S6k` added one;
-   * `core.test.ts`'s *A ROSTER ADDRESS SEALED WITHOUT A KIND COMES BACK WITH
-   * ONE* seals a pre-`S6k` record, which has none. The stored `kind` is thrown
-   * away either way: everything below is rebuilt from `bech32`.
+   * BOTH WOULD BE HALF FALSE.** `a-payroll-run-is-always-private.test.ts` §4
+   * seals a record from before the widening, which HAS a `kind` because `kind`
+   * came first; `core.test.ts`'s *A ROSTER ADDRESS SEALED WITHOUT A KIND COMES
+   * BACK WITH ONE* seals one from before `kind`, which has none. The stored
+   * `kind` is thrown away either way: everything below is rebuilt from
+   * `bech32`.
    *
    * **Parsed at the address's OWN recorded network, not this service's.**
    * `payeeOf` checks the network segment inside the string against the one it
@@ -1950,13 +1955,13 @@ export class PayrollService {
    * interface, by making the control explicit rather than a toggle. The
    * service still permitted it.
    *
-   * **NOTHING WAS EVER PAID THAT WAY**: a run refuses by name for a person
-   * with no address (`payroll.ts`, *"has no address. It has to come from their
-   * own device or wallet"*), so the hole was caught downstream and money was
-   * safe. That is why `C156` is not a money hole and why the row says so. It is
-   * still a door that answers *yes* to a question only `admit` may answer, and
-   * `X11` builds the control that does it properly — so this is the same turn
-   * to close the door beside it.
+   * **NOTHING WAS EVER PAID THAT WAY**: a run refuses by name for a person with
+   * no address (`payroll.ts`, *"has no address. It has to come from their own
+   * device or wallet"*), so the hole was caught downstream and money was safe.
+   * That is why this is not a money hole, and it is recorded as not being one.
+   * It is still a door that answers *yes* to a question only `admit` may
+   * answer, and the control that does it properly is being built elsewhere — so
+   * this is the same turn to close the door beside it.
    *
    * **`leaver` IS UNGUARDED AND MUST STAY THAT WAY.** Withdrawing a pending
    * person is the only exit from an invitation that can never be admitted
@@ -2229,8 +2234,8 @@ export class PayrollService {
    * there themselves. `V-78` option 3, and it is the whole reason identity was
    * sequenced ahead of the chain work.
    *
-   * **`C9` is enforced here rather than assumed.** Three refusals, each naming
-   * the person and what is actually wrong, because a payment settles
+   * **THE RULE IS ENFORCED HERE RATHER THAN ASSUMED.** Three refusals, each
+   * naming the person and what is actually wrong, because a payment settles
    * irreversibly the moment it lands and the failure it produces — money in an
    * address whose secrets nobody holds — is not recoverable by anybody.
    */
@@ -2239,8 +2244,8 @@ export class PayrollService {
    *
    * A vault holds both kinds of money and `payout-tree.ts` carries the kind per
    * payee. **This path produces private ones only**, and that is still true
-   * after `S12` — but it is true for a DIFFERENT REASON than it was, and the
-   * difference is the whole round.
+   * after the widening — but it is true for a DIFFERENT REASON than it was, and
+   * the difference is the whole point.
    *
    * **IT USED TO BE TRUE BY ACCIDENT.** A roster address arrived through
    * `payeeAddress`, which refused anything but a `shield-addr`, so no public
@@ -2407,10 +2412,10 @@ export class PayrollService {
          * would have nothing to expand. So this stays random, the secret is
          * returned once, and `words` is absent to say so in the type.
          *
-         * **IT IS NOT A GAP LEFT OPEN BY OVERSIGHT.** Closing it
-         * means an ad hoc payee handing over a public key first, which is an
-         * onboarding flow and not a derivation — reported rather than smuggled
-         * in. Until then, an ad hoc payslip is exactly what `C135` describes.
+         * **IT IS NOT A GAP LEFT OPEN BY OVERSIGHT.** Closing it means an ad
+         * hoc payee handing over a public key first, which is an onboarding
+         * flow and not a derivation — reported rather than smuggled in. Until
+         * then, an ad hoc payslip is exactly the hazard described above.
          */
         const wk = newWrappingKeypair();
         publicKey = wk.publicKey;
@@ -2496,8 +2501,7 @@ export class PayrollService {
    *
    * The alternative was a round carrying a fixed-width vector of legs, which
    * taxes every such round with the width of the widest run anybody might ever
-   * make and reintroduces exactly the static cap M-106 spent a redeploy
-   * removing.
+   * make and reintroduces exactly the static cap a redeploy was spent removing.
    *
    * `asset` may be omitted only when the run has one, which keeps the common
    * case a one-argument call and makes the ambiguous case impossible to write
@@ -2568,8 +2572,8 @@ export class PayrollService {
     }));
 
     /*
-     * **THIS CALLED `this.accounts.propose({kind: 'payroll'})` AND THAT WAS
-     * `C375`, A `P0`.**
+     * **THIS CALLED `this.accounts.propose({kind: 'payroll'})` AND THAT WAS A
+     * RUN THAT COULD NEVER BE PAID.**
      *
      * That door's payload hash is an APPLICATION digest — `commit(canonical(
      * {accountId, kind, sealedPayload, proposedBy}), '')`,
@@ -3259,11 +3263,11 @@ export class PayrollService {
      * TOO** — the store can never hold a row. `SimulatedProofSystem` is wired
      * live and both of its methods are dead in the shipped product.
      *
-     * **NOT REMOVED, AND THE REASON IS RULE 22b RATHER THAN RELUCTANCE:** the
-     * statement is real and is what a vault-settled run will prove. What is
-     * corrected is the claim — a refusal names the door that resolves it
-     * (rule 19), and when there is no door the honest refusal says that
-     * instead of naming a step nobody can take.
+     * **NOT REMOVED, AND THE REASON IS NOT RELUCTANCE:** the statement is real
+     * and is what a vault-settled run will prove. What is corrected is the
+     * claim — a refusal names the door that resolves it, and when there is no
+     * door the honest refusal says that instead of naming a step nobody can
+     * take.
      */
     if (run.status !== 'settled') {
       throw new Error(
@@ -3322,17 +3326,16 @@ export class PayrollService {
    * This read `state.balances[asset]` and proved it was at least `threshold`.
    * The account keeps no balance, so the only honest answer this could give is
    * "at least zero", and issuing an attestation saying an account HOLDS an
-   * amount when it holds nothing is the exact failure `rule 14` and `rule 29`
-   * exist to prevent — a signed claim about money, from a system with no money
-   * in it.
+   * amount when it holds nothing is exactly the failure to avoid — a signed
+   * claim about money, from a system with no money in it.
    *
-   * **REMOVING THE FEATURE IS NOT THIS ROUND'S TO DO.** The brief reserves
-   * `attestSolvency` and its screen for a round of their own, and reserving
-   * them is not the same as leaving them issuing a true-by-vacuity attestation
-   * — which is what this would do if it were left reading a field that is gone.
-   * So the method refuses and the screen is untouched, for that round to take
-   * whole. When solvency comes back it is the VAULT's holding that is proved,
-   * which is a different statement over a different commitment.
+   * **REMOVING THE FEATURE IS NOT THIS METHOD'S TO DO.** `attestSolvency` and
+   * its screen are reserved for work of their own, and reserving them is not
+   * the same as leaving them issuing a true-by-vacuity attestation — which is
+   * what this would do if it were left reading a field that is gone. So the
+   * method refuses and the screen is untouched, for that work to take whole.
+   * When solvency comes back it is the VAULT's holding that is proved, which is
+   * a different statement over a different commitment.
    */
   async attestSolvency(
     accountId: string,

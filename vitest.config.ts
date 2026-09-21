@@ -226,6 +226,24 @@ export default defineConfig({
      * temporary directory, because a test that greps this report has to grep
      * one it made.
      */
-    env: { REFUSAL_LOG: './logs/REPORT-REFUSALS-FROM-TESTS.txt' },
+    /*
+     * AND THE SUITE DECLARES THE ORIGIN IT SIGNS AGAINST, RATHER THAN HOPING
+     * A FILE OUTSIDE THE REPOSITORY SUPPLIES IT.
+     *
+     * A wallet signature names an origin, so the server refuses a sign-in with
+     * 503 unless it knows its own. `npm run dev` passes that value inline; the
+     * suite never did, and the only other place it was written down was a local
+     * env file that is not in the repository. So eight HTTP tests passed or
+     * failed depending on which shell happened to start them, and on a clean
+     * checkout - anybody's first run, and CI - they fail.
+     *
+     * A real value in the environment still wins. This is the floor, and it is
+     * the same value the dev script has always used, so the suite signs against
+     * the origin it is served from either way. It is not a secret.
+     */
+    env: {
+      REFUSAL_LOG: './logs/REPORT-REFUSALS-FROM-TESTS.txt',
+      APP_ORIGIN: process.env.APP_ORIGIN ?? 'http://localhost:5173',
+    },
   },
 });
