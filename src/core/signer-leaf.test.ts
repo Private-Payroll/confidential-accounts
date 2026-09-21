@@ -26,7 +26,7 @@
  *
  * ---
  *
- * **WHAT `S34` CHANGED HERE, AND THE SOURCE PIN THAT IS GONE.** `C328`,
+ * **WHAT CHANGED HERE, AND THE SOURCE PIN THAT IS GONE.**
  *
  *
  *   · The public half is no longer an ed25519 key. The contract reads
@@ -326,7 +326,7 @@ describe('the stored signer leaf, against the device that has to reproduce it', 
 
   it('survives the redaction every shown error goes through', () => {
     /*
-     * **THE SIXTEEN CHARACTERS ARE LOAD-BEARING AND NOTHING SAID SO.** `C145`,
+     * **THE SIXTEEN CHARACTERS ARE LOAD-BEARING AND NOTHING SAID SO.**
      * Every sentence this application shows goes through
      * `shownError`, which redacts any run of 32-or-more hex characters before
      * a person or a report sees it. A refusal printing 32 — never mind the
@@ -392,7 +392,7 @@ describe('the stored signer leaf, against the device that has to reproduce it', 
   });
 
   /* ------------------------------------------------------------------ *
-   * THE PUBLIC HALF IS THE SCHEME'S AND NOT THE CURVE'S. `C328`
+   * THE PUBLIC HALF IS THE SCHEME'S AND NOT THE CURVE'S.
    * ------------------------------------------------------------------ */
 
   it('does NOT compute the leaf the old writers wrote, which is the whole of C328', () => {

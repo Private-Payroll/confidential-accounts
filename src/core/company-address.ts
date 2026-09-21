@@ -79,7 +79,7 @@ export type CompanyFailure =
   /** A real company of yours that has no contract, so it has no address. */
   | 'company-not-on-a-chain'
   /**
-   * A real company of yours whose address **no chain ever assigned**. `PI2b`,
+   * A real company of yours whose address **no chain ever assigned**.
    * A separate code from `company-not-on-a-chain` on purpose: that
    * one means *nothing is there*, this one means *something is there and we
    * made it up*, and only the second is a thing a developer may deliberately

@@ -6,7 +6,7 @@ import type { SessionStore, SessionSummary } from './sessions.js';
  * Identity, built on the same assumption as the rest of the product: the server
  * is not trusted with anything that decrypts.
  *
- * **THERE IS NO PASSWORD ANY MORE, AND NOTHING HERE IS DISABLED.** `PI4b`,
+ * **THERE IS NO PASSWORD ANY MORE, AND NOTHING HERE IS DISABLED.**
  *
  *
  * `deriveAuthMaterial`, `KDF`, `register`, `login`, `hashAuth`,

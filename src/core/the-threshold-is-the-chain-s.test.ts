@@ -121,7 +121,7 @@ const entry = (amount: bigint) => ({
 });
 
 /*
- * **IT WAS `fundedAccount` AND THE FUNDING IS GONE, NOT THE SUBJECT.** `C292`,
+ * **IT WAS `fundedAccount` AND THE FUNDING IS GONE, NOT THE SUBJECT.**
  * It deposited 10,000.00 into the account's own book before returning.
  * No test in this file ever read that balance: the amounts below are what a
  * proposal SAYS it moves, and a proposal says that whether or not anything is
