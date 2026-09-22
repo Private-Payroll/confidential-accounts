@@ -3,889 +3,121 @@ pragma language_version 0.26.0;
 import CompactStandardLibrary;
 
 /*
- * Confidential account: M of N approval over shielded state.
+ * THE ACCOUNT. An M-of-N rulebook that decides what a company's vaults may pay.
  *
- * The on-chain half of what src/core/account.ts does in TypeScript. What is
- * different here, and the reason this is worth building rather than porting a
- * Safe, is what an observer of the chain can learn:
+ * Signers are blinded leaves in a Merkle tree, so the chain holds a root and
+ * never a list of who they are. A signer proves membership without saying
+ * which one they are, and an approval is a nullifier: it shows a distinct
+ * signer agreed without naming them. The threshold, the approvals so far and
+ * the existence of each proposal are public on purpose.
  *
- *   Gnosis Safe on any transparent chain     This contract
- *   ------------------------------------     -------------------------------
- *   Every owner address is public            Signers are leaves in a Merkle
- *                                            tree; only the root is on chain
- *   Every approval names its signer          An approval is a nullifier. It
- *                                            proves a distinct authorised
- *                                            signer approved, not which one
- *   The payload is public                    Only a commitment to the payload
- *   The balance is public                    This account holds no balance at
- *                                            all — see below
- *   The threshold is public                  The threshold is public here too
+ * It holds no money and can neither receive nor send any. A vault calls
+ * `recordPayment` to ask whether one payee of an approved run may be paid, and
+ * the account records that payee as paid, so no payee leaf is paid twice.
  *
- * What stays public on purpose: the threshold, the number of approvals so far,
- * and the fact that a proposal exists. Those are what make the account
- * auditable, and hiding them would break the product rather than improve it.
+ * It refuses a signer-only call from anyone else, a second approval from one
+ * signer, a proposal short of its threshold, a payment outside its run's
+ * window or not in its run, a payee leaf already paid, and any change that
+ * leaves fewer signers than the account threshold.
  *
- * THE ACCOUNT KEEPS NO BOOKS OF ITS OWN.
- *
- * It never could hold money — there is no receive and no send operation
- * anywhere in this file, and there never was one. What it used to keep was a
- * map from a blinded asset key to a commitment to a balance, and a circuit that
- * spent from it. Both are gone, along with the tree of settled proposals that
- * only that circuit wrote to. Nothing on this contract creates, holds or moves
- * value.
- *
- * WHAT THIS ACCOUNT IS, ENTIRELY: an authority. It decides, by M of N, what a
- * VAULT is allowed to pay, and it records in `movements` which payments were
- * made so the same payee cannot be paid twice for the same run. Money is held
- * by the vault. `recordPayment` is the only circuit a vault calls, and it is
- * the only place a payment is recorded.
- *
- * SO THE MAP OF ASSET COUNTS IS ALSO GONE. An observer no longer learns how
- * many distinct assets are involved, because nothing on chain says so.
+ * Why each piece is shaped this way: docs/design/the-account-contract.md
  */
 
-/* ------------------------------------------------------------------ *
- * state
- * ------------------------------------------------------------------ */
-
-/*
- * The signer set: one SLOT per signer.
- *
- * A PLAIN MerkleTree, deliberately. This one declaration is the whole change.
- *
- * It used to be a `HistoricMerkleTree`, which accepts any root it has ever
- * held. That is what made removal impossible: a removed signer could always
- * point at a tree that still contained them, so the only way to invalidate them
- * was to invalidate EVERYBODY — stamp a generation on every leaf, advance it,
- * and re-seat every survivor from a statically sized list in one transaction.
- * That list was a hard cap on the approver set, and its width was a cost every
- * removal paid whether an account had three signers or sixteen.
- *
- * A plain tree makes each signer's position their own. Removal clears one slot
- * and nobody else is touched. Measured on the compiled circuits before it was
- * built:
- *
- *     circuit                                  zkir bytes
- *     removeSigner, re-seating 16 survivors       135,167
- *     approve                                      12,392
- *     vacate one slot                              10,264
- *     take an empty slot                           10,251
- *
- * 13x cheaper, the cap disappears, and removal stops being the most expensive
- * circuit in the contract — it becomes cheaper than approving a payment.
- *
- * WHAT IT COSTS, and it is accepted rather than overlooked. A plain tree changes
- * root whenever the membership changes, so a membership change invalidates
- * proofs already in flight. In practice that is almost free: `addSigner` and
- * `removeSigner` each consume the account's one open proposal and bump the
- * round, and a round bump already invalidated every in-flight approval under the
- * historic tree too. The case that genuinely changes is any signer-authenticated
- * call being proven while a membership change settles — rare, refused rather than
- * mis-applied, and retried by the durable-job layer (decision 0008).
- *
- * Depth 10 gives 1024 slots. DO NOT DEEPEN IT to buy more: depth is the length
- * of the membership proof, which is checked on every single transaction, so a
- * deeper tree taxes all of them forever. Slots are reused instead — see
- * `addSigner`.
- */
+// The signer set: one slot per signer, each holding a blinded leaf.
 export ledger signers: MerkleTree<10, Bytes<32>>;
 
-/*
- * Every approval ever given, as nullifiers. Never cleared.
- *
- * NOT "approvals for the open proposal", which is what this was before, and
- * the difference is the whole of that change. A nullifier used to be
- * `H(domain, self, ROUND, sk)` and the set was wiped whenever the round moved
- * — which is exactly what made an account able to hold only one proposal at a
- * time. It is now `H(domain, self, PROPOSAL, sk)`, so a signer's approval of
- * the March payroll and their approval of a vendor invoice are unrelated
- * values, both can exist, and neither expires because the other settled.
- *
- * It grows forever, deliberately. A burned nullifier is what stops a signer
- * approving the same proposal twice, so it has to outlive the proposal. Growth
- * is signers x proposals: three signers and sixty payments a year is under two
- * hundred entries annually, at 32 bytes each. That is the cost of removing the
- * queue and it is not close to a constraint.
- */
+// Every approval ever given, as nullifiers. Never cleared.
 export ledger approvals: Set<Bytes<32>>;
 
-/*
- * THE OPEN PROPOSALS, one entry each, and this map is what makes them open at
- * the same time.
- *
- * WHAT WAS HERE BEFORE: `proposal: Bytes<32>`, `proposalOpen: Boolean`,
- * `proposedChange: Bytes<32>` and `approvalCount: Counter` — one of each,
- * because an account could have exactly one proposal open. Payroll and a vendor
- * invoice had to queue behind one another, and `cancel` existed largely so that
- * one stuck proposal could not wedge the account.
- *
- * **That was an artefact of binding nullifiers to a global round counter, not
- * a requirement.** The round was standing in for "which proposal this approval
- * is for". Binding to the proposal itself answers the same question directly
- * and removes the queue — decision 0005 says as much in passing ("the
- * sequencing is an artefact rather than a requirement") and then keeps the
- * round anyway.
- *
- * Keyed by the proposal's own blinded commitment, which is already unique
- * (`persistentCommit(payloadHash, freshSalt)`) and already the value approvals
- * bind to. The value is the commitment to the change it authorises.
- *
- * WHAT AN OBSERVER LEARNS THAT THEY DID NOT BEFORE: how many proposals an
- * account has open at once, rather than whether it has one. That is a coarse
- * activity signal in the same class as the seat count — a count, not a subject.
- * Judged worth it for removing a queue from the middle of the product.
- */
+// The open proposals, by id, each with its change commitment.
 export ledger openProposals: Map<Bytes<32>, Bytes<32>>;
 
-/*
- * How many approvals each open proposal has. Public, like the threshold, and
- * for the same reason: "how many of the M have agreed" is what makes M of N
- * auditable while it is happening.
- *
- * A second map rather than a struct value, and that IS the shape this project
- * keeps recording as a failure — so note what makes it safe here: both maps are
- * written in exactly two places, `propose` (which creates both entries) and
- * `closeProposal` (which removes both), and there is no third. If a struct
- * value compiles, this should become one entry.
- */
+// How many approvals each open proposal has. Public.
 export ledger approvalCounts: Map<Bytes<32>, Uint<64>>;
 
-/*
- * EVERY PAYMENT THIS ACCOUNT HAS EVER RECORDED, one marker per payee. It
- * replaced `entriesCommitment`.
- *
- * *"as blinded commitments"* stood in this line and went with the sentence
- * below it. Nothing in this set is blinded; see the entry paragraph.
- *
- * The entry log used to be a running digest — `H(previous, batch)` — committed
- * to one ledger field. Append-only by construction, which was the property
- * wanted, and it had a consequence nobody had needed to care about while only
- * one thing could settle at a time: **to append you must first prove the
- * current value.** Two settlements prepared against the same log therefore
- * conflicted even when they moved different money, and the second was refused
- * for a reason that had nothing to do with it.
- *
- * A set is append-only too, and inserting into one does not require reading it.
- * So two unrelated payments no longer contend at all. What is lost is the
- * chain's implied ORDER — and the chain already records order better, in the
- * block heights of the transactions themselves.
- *
- * EACH ENTRY IS `paidMovementOf(leaf)`.
- *
- * The sentence that stood here said each entry was the same blinded change
- * commitment the proposal was approved against. IT WAS NOT TRUE OF ANY ENTRY IN
- * THIS SET. The only write is `recordPayment`, `movements.insert(paidMovementOf(
- * leaf))` — a `persistentHash` of a padded tag and ONE PAYOUT LEAF. The change
- * commitment goes to `openProposals` in `propose` and reaches this set never.
- * The false sentence was copied out of here three times before it was traced
- * back, which is why the correction is written rather than the line deleted.
- *
- * AND THE ENTRY IS NOT CLOSED BY ANYTHING IN THIS FILE. It is said in full
- * because the plausible wrong answer has already been written here once, and a
- * second one was caught before it shipped.
- *
- * `paidMovementOf` has no blinding and neither does `payoutLeaf`; both are
- * `persistentHash`. AND THE WHOLE PREIMAGE IS PUBLIC: `recordPayment` takes
- * `details` and `nonce` as ARGUMENTS, cross-contract arguments must be
- * disclosed — that circuit says so about its own `salt` — and the vault passes
- * both through `disclose`. So anyone reading the transaction that inserted an
- * entry can recompute the entry from its parts. `payoutLeaf` states it in its
- * own words: *"what a completed payment publishes is that payee's own spent
- * secret."* The nonce is load-bearing for a DIFFERENT property — it stops a
- * watcher claiming an UNPAID payee's leaf off a merkle sibling — and it hides
- * nothing about a payee already paid.
- *
- * WHAT HIDES THE PAYEE, THE ASSET AND THE AMOUNT IS ONE LINE IN THE OTHER
- * CONTRACT: `payoutDetails` in `Vault.compact` commits to the recipient, the
- * token and the amount UNDER A BLINDING, and `unshieldedPayoutDetails` is the
- * same with a domain tag. `details` is the only closed layer, and a blinding is
- * what closes it. Replace that commitment with a hash and every settlement
- * discloses who was paid, in what, and how much — the rest of the preimage is
- * already on chain, and the recipient set and the token set are both small
- * enough to enumerate. Nothing in THIS file would notice, and no test covers
- * what a settlement publishes.
- *
- * AND IT IS A VALUE ALREADY COMPUTED RATHER THAN A SECOND SCHEME. A key holder
- * enumerates this set and checks every movement in the sealed blob appears in
- * it — which catches an operator dropping a line from the audit trail, the
- * thing the chained digest existed to prevent. That works because the blob
- * holds the leaves and `paidMovementOf` is exported: the client recomputes the
- * contract's own circuit rather than a copy of it.
- */
+// One marker per payee ever paid, in any run. Nothing removes from it.
 export ledger movements: Set<Bytes<32>>;
 
-/*
- * M in M of N. Public so anyone can audit the rule the account runs under.
- *
- * NOT `sealed` any more, and the reason is worth keeping here.
- *
- * `sealed` means writable once, in the constructor — so the threshold was fixed
- * at deploy and no circuit could move it. The product had a `setThreshold` that
- * wrote our own copy and nothing else, which meant it could tell a customer
- * their account needed three approvals while the chain went on settling at two.
- * That is the dangerous direction for a lie to run in: it claims MORE safety
- * than exists. The method was deleted, and the honest version is `setThreshold`
- * below — an approved round, on chain, with the same guarantees as a spend.
- */
+// M in M of N, for the account and for every vault without its own. Public.
 export ledger threshold: Uint<64>;
 
-/*
- * A THRESHOLD PER VAULT, overriding the account-wide one above.
- *
- * Two signatures to release payroll, four to touch the treasury, is an ordinary
- * thing for a finance team to want. It lives HERE rather than in each vault
- * because the account is already the single authority on who may do what, and
- * every rule moved into a vault makes the contract that holds the money bigger
- * and harder to audit — and the vault is the only contract that can lose it.
- *
- * A MAP RATHER THAN A FIELD PER VAULT, and absence means "use the account's".
- * So a new vault inherits the account's threshold and needs no setup, and the
- * map holds only the vaults somebody deliberately gave their own rule.
- *
- * This costs one lookup per approval and nothing else. It is cheap only
- * because proposals are already independent: each carries its own count, so
- * "how many does THIS one need" is a question about one entry rather than a
- * global the whole account shares.
- */
+// Per-vault thresholds. A vault with no row uses the account's.
 export ledger thresholds: Map<Bytes<32>, Uint<64>>;
 
-/*
- * WHICH VAULTS ARE THIS COMPANY'S. Scope 3.2.
- *
- * THE GAP THIS CLOSES, and it is a recovery gap rather than a security one.
- * Creating a vault is deploying a contract, and nothing consents to that: the
- * account never learns of it, and anyone may deploy a vault naming anyone's
- * account. **That is not a theft hole** — to spend, a proposal must exist whose
- * id was computed with that vault inside it, and only a seated signer can raise
- * one, so a stranger's vault naming your account can never spend anything. What
- * it can do is exist, and be paid into.
- *
- * Every vault that has ever PAID is already on chain by name: `Vault.compact`
- * discloses `kernel.self().bytes` to `recordPayment` as a public argument. So
- * the chain already records every vault except the one that most needs
- * recording — one that has been FUNDED and has never PAID. A company whose
- * device, whose database and whose supplier have all disappeared could read its
- * paying vaults off the chain and would have no way to learn about the funded
- * one. That is the gap, and it is why this list is on chain rather than in
- * sealed data.
- *
- * A SET AND NOT A SECOND USE OF `thresholds`. Letting the threshold map double
- * as the registry would cost no contract change and would work — and it would
- * force a row for every vault even where its threshold equals the account's,
- * which is precisely what absence-means-inherit above was chosen to avoid. Two
- * facts, two fields.
- *
- * WHAT THIS PUBLISHES: how many vaults a company runs, and their addresses.
- * Accepted deliberately — `scope-vaults-and-settlement.md:129` had already
- * taken that decision and scope 3.2 confirms it. The addresses were public
- * anyway for any vault that has paid; the count is the new part.
- *
- * IT IS A REGISTRY AND NOT AN ACCESS CHECK, and `recordPayment` deliberately
- * does not consult it. See `retireVault`.
- */
+// The vaults this account has adopted: a register for recovery, not an access check.
 export ledger vaults: Set<Bytes<32>>;
 
-/*
- * A RUN'S WINDOW — the earliest and latest times its payments may happen.
- *
- * THIS REPLACES A COUNTER OF UNPAID PAYEES, and the replacement is the whole
- * change. The counter was decremented by every payment of a run so the last
- * one could close the proposal. That is a read-modify-write of a single map
- * entry performed by every payment of the same run, and Midnight rejects the
- * second transaction to read a value another transaction writes (`popeq`,
- * §E.6b). **So the mechanism that recorded a run finishing serialised the very
- * payments the pool design made parallel** — the case the whole design exists
- * for.
- *
- * The window replaces it by removing the question. Payments assert the block
- * time lies inside it; block-time predicates read the block context rather than
- * contract state, so every payment in a block sees the same answer and none of
- * them contend. **Completion stops being asserted by the chain and becomes
- * DERIVED from the payments it recorded** — the same principle as reading
- * `movements` instead of a status column, one level up. There is no completion
- * flag, so there is no completion flag anybody can set wrongly.
- *
- * WHY THIS IS STORED AT ALL, when the window is already bound into the
- * proposal's id and passed to every payment. `cancel` needs to know whether a
- * run's window has opened, and a cancel that took the window as an argument
- * would be trusting the canceller's word for it. Written once by `propose`
- * and never again — so payments, which never read it, cannot contend on it.
- *
- * WHAT AN OBSERVER LEARNS: that a run is scheduled between two dates. The
- * run's existence and size were already public; its schedule now is too. It is
- * an accepted leak rather than a hidden one.
- *
- * ONE MAP AND NOT TWO. Operation (w) of `docs/company-accounts.md` §9.
- *
- * `runStart` and `runEnd` were two `Map<Bytes<32>, Uint<64>>` in two slots
- * until the layout was fixed for ever. They are ONE THING — a run's window —
- * with one value-writer (`propose`), one heat, and, the coordinate that
- * permitted the merge, THE SAME ABSENCE: a governance proposal had no row in
- * either of them, and has no row in this one.
- *
- * THAT ABSENCE IS LOAD-BEARING, AND IT IS WHY THIS IS A MAP RATHER THAN A PAIR
- * OF NUMBERS ON EVERY PROPOSAL. `cancel` and `closeExpiredRun` each tell a run
- * from a governance proposal by asking whether this map HAS a row — `member`,
- * never a stored number compared against zero. The version that compares is
- * the dangerous one: a sentinel `closesAt == 0` written sloppily makes
- * `blockTimeGte(0)` always true, and `closeExpiredRun` — the one circuit any
- * stranger may call — would close any open GOVERNANCE proposal, destroying a
- * signer removal that was one approval short at one transaction each.
- * Governance proposals are the only way an account's signers are ever amended.
- * NEITHER GUARD MAY BECOME A COMPARISON AGAINST ZERO.
- *
- * AND WHAT THE MERGE DELIBERATELY DID NOT TAKE. `openProposals` and
- * `approvalCounts` are keyed by the same id and were NOT folded in with it,
- * because `approve` rewrites the record it is in — and a window inside that
- * record is a window `approve` can silently reset. What holds that shut is
- * exactly one line in `cancel` whose condition is that `propose` is the only
- * writer of this map. `approve` must never gain access to a window and
- * `recordPayment` must never read one.
- *
- * NOTHING ELSE GOES IN `Window`. It holds `opensAt` and `closesAt` and that is
- * all it will ever hold. A completion flag is the obvious third field and it
- * is the unpaid counter rebuilt: completion is DERIVED from `movements`, so
- * there is no completion flag anybody can set wrongly. Read the paragraph
- * above.
- */
+// When a run may be paid: from `opensAt`, and before `closesAt`.
 struct Window {
   opensAt: Uint<64>;
   closesAt: Uint<64>;
 }
+
+// Each run's window. A governance proposal has no row, and `cancel` relies on that.
 export ledger runWindow: Map<Bytes<32>, Window>;
 
-/*
- * Every leaf currently seated, so the same signer cannot be added twice.
- *
- * AND IT IS ALSO THE SEATED COUNT — operation (c) of
- * `docs/company-accounts.md` §9. A `signerCount: Counter` stood in the slot
- * above this one and held the same number. `signerLeaves.size()` is an
- * ON-CHAIN read, not a TypeScript-only one — `midnight-ledger.ss:643` declares
- * `size` a `read` returning `Uint64` and marks only the ITERATOR `js-only` —
- * so the counter was a second public field that meant what this one already
- * means, and the failure shape that keeps recurring is two of those drifting
- * apart. The comment below said so before the counter was deleted.
- *
- * WHAT THE DELETION CHANGED, AND IT CHANGED WHAT THE GUARD BELOW IS FOR.
- *
- * THE ACCOUNT-KILLER RAN THROUGH THE COUNTER, AND OPERATION (c) CLOSES IT BY
- * CONSTRUCTION. Seating one leaf twice INFLATED `signerCount` past the number of
- * people who could actually approve, so bootstrapping ended early and a third
- * real person could never be seated — the account could never gather its own
- * threshold again. A `Set` insert of a value already present is IDEMPOTENT, so
- * the count can no longer overstate at all: creator + B + B leaves this set at
- * two, the bootstrap window stays open, and a third distinct person is seated
- * normally. Nothing in this contract counts tree slots.
- *
- * SO THE GUARD BELOW IS UNCHANGED AND WHAT IT PREVENTS IS DIFFERENT — and
- * saying so is the point, because a reader deciding whether that line is
- * load-bearing needs the reason that is true now rather than the one that was
- * true while the counter existed. What it still prevents: a tree holding one
- * person in TWO slots, where a removal clears one of them and leaves that
- * person still able to prove membership and approve while this set says they
- * are gone. That is the two-things-that-must-agree class rather than the
- * unreachable-threshold one, and it is still worth a line.
- *
- * A Merkle tree will happily hold the same leaf in two slots, and the bootstrap
- * path of `addSigner` had nothing in front of it. Seat the same leaf twice and
- * the account holds two seats for one person — and because approvals are
- * nullified per SECRET KEY rather than per leaf, that person still only ever
- * approves once.
- *
- * At 3 of N, bootstrapping creator + B + B put three seats in the tree with two
- * people in them, and the account can then never gather three approvals. It is
- * not an error state; it simply never approves anything again, and every vault
- * that named it as its authority is stuck with it.
- * Not reachable at 2 of N, where the first insert ends bootstrapping. No
- * attacker is needed: one button pressed twice is enough.
- *
- * CURRENTLY seated, not ever-seated: `removeSigner` takes the departing leaf
- * back out. That is what lets this set stand in for a count: it rises with a
- * seating and falls with an unseating.
- *
- * AND IT DOES NOT HOLD *EXACTLY* WHAT THE TREE HOLDS. This line said that it
- * did, and it was wrong. The tree also holds `vacantSlot()` markers, which
- * this set never holds, so the two agree about real signers and about nothing
- * else. The residue is named rather than papered over: `amendSigner`'s removal
- * branch proves TREE membership and then removes from this SET without
- * asserting the leaf was in it, so an approved removal of `vacantSlot()`
- * re-stamps an already-vacant slot, no-ops here, passes the floor and burns
- * the round reporting success. **Under the deleted counter that same call
- * DECREMENTED — desynchronising the number every threshold comparison reads,
- * and repeatably. `Set.remove` of an absent value is a no-op, so operation (c)
- * made that desync unreachable and left a silent no-op in its place.** One
- * assert here would close what is left, and it is not closed today.
- *
- * Storing the leaves discloses nothing new. Seating already discloses each one,
- * and a leaf is blinded — H(publicKey, blinding) — so it identifies nobody
- * without a secret that lives on one device.
- */
+// Every leaf currently seated. Its size is the number of signers.
 export ledger signerLeaves: Set<Bytes<32>>;
 
-/* ------------------------------------------------------------------ *
- * THE FOUR RESERVED SLOTS. `docs/company-accounts.md` §9 ruling 4.
- *
- * READ THIS BEFORE READING ANY OF THEM, AND BEFORE ADDING A FIFTEENTH FIELD.
- *
- * A DEPLOYED CONTRACT'S MACHINERY CAN BE REPLACED. ITS STORAGE CAN NEVER BE
- * ADDED TO. Circuits are replaceable at the same address with the state intact
- * (`docs/scope-the-upgrade-path.md`); a ledger field is fixed at construction
- * and no update, upgrade or maintenance operation can add one. The only way to
- * gain a field is a new contract at a new address — which for a company means
- * new vaults, every note moved, every signer re-seated and every payee's key
- * material re-issued. So these four are declared NOW, empty, for features that
- * are designed LATER.
- *
- * THREE OF THE FOUR ARE DECLARATIONS AND NOTHING ELSE, AND THAT IS THE POINT.
- * `proposalHolds`, `successor` and `signerRoles` have no circuit in this file
- * and must not be given one until the feature itself is designed. Storage is
- * permanent and circuits are not, so a circuit written now for an unspecified
- * feature spends deploy bytes on a guess. `retiredAt` is the exception because
- * its feature IS specified, and it is live work.
- *
- * WHY ALL FOUR ARE ON CHAIN, AND IT IS ONE TEST: anything meant to STOP
- * something cannot live on our server, because our server is not in the path —
- * a signer can call this contract directly. Anything that only RECORDS may be
- * off-chain, unless it is needed precisely when we are gone. The hold and the
- * roles STOP. The retirement log and the successor pointer are both needed
- * exactly when we are gone.
- *
- * AND SLOT 14 STAYS EMPTY. It is the guard's margin and it is NOT inventory.
- * SIXTEEN top-level declarations COMPILE — they do not refuse — and they
- * reshape every field's path (measured: 1 `newArray()` at fifteen, 3 at
- * sixteen). The only thing that says no is a guard written for this
- * repository, which is not the toolchain, so it is not in a fork and not in a
- * customer's copy. At 15/15 one careless `export ledger` line produces an
- * artifact that looks successful and matches nothing anybody already holds.
- * FOURTEEN IS THE WORKING CEILING, AND A FIFTEENTH FIELD IS A DECISION TO TAKE
- * DELIBERATELY.
- * ------------------------------------------------------------------ */
-
-/*
- * WHICH VAULTS THIS ACCOUNT HAS RETIRED, and the only reserved field that is
- * also written.
- *
- * WHY IT IS THE ACCOUNT'S. `retireVault` and `vaults` are both this contract's,
- * so a record of what was retired belongs beside the registry it was removed
- * from. And it is wanted exactly when the company's device, database and
- * supplier have all gone — the same recovery argument that put `vaults` on
- * chain in the first place — which is why it is not a row in our database.
- *
- * WHAT THE VALUE IS, AND IT IS NOT A DATE.
- *
- * `Uint<64>` was chosen so that a retirement TIME can be stored one day. It
- * cannot be stored today: THERE IS NO WAY TO READ THE BLOCK TIME IN A CIRCUIT.
- * Compact exposes `blockTimeLt`, `blockTimeGte`, `blockTimeGt` and
- * `blockTimeLte` and nothing that answers *what time is it*
- * (`docs/midnight/01-compact-language-and-stdlib.md:1087` — *"There is no
- * `kernel.blockTime()`… a read would bind the proof to an exact timestamp"*).
- * The alternative — taking a time as an ARGUMENT — is the caller's word for it,
- * and this circuit's caller is the VAULT, so it would be a number nobody
- * measured travelling through a contract that cannot check it. **A number an
- * instrument did not read off something is a refusal, so this field records
- * THAT a vault was retired and not WHEN.**
- *
- * WHERE THE DATE ACTUALLY LIVES: in the block that carries the write. The row
- * appearing is timestamped by the chain whether or not the value says so, and
- * that timestamp is the one nobody had to be trusted for.
- *
- * SO THE FIELD IS PRESENCE-AS-FACT AND THE VALUE IS A MARKER. The type is
- * `Uint<64>` and not a `Set` because the TYPE is the half that can never be
- * changed and a real time can be written into it by a later circuit, which can.
- *
- * AND IT ANSWERS *EVER RETIRED*, NOT *IS RETIRED*. NOTHING REMOVES FROM THIS
- * MAP, and `adopt` refuses only current membership of `vaults` — so a vault
- * that is retired and then adopted again sits in `vaults` AND in here at the
- * same time, with nothing distinguishing the two states. `Vault.retire` writes
- * no vault state at all, so a retired vault is not disabled either: it can be
- * funded and it can still pay. **A recovering party reading this map as a
- * STATUS would skip a live vault, and a recovering party is exactly who this
- * field is for.** `vaults` still holds the truth. It is a known shape — *a map
- * that only grows, keyed by a thing that can be destroyed* — and it is written
- * down here rather than fixed here: clearing the row in `adopt` is a second
- * decision, and a circuit is the half that can still be added after the
- * deploy.
- *
- * WHAT IT PUBLISHES, SAID BECAUSE EVERY OTHER PUBLIC FIELD IN THIS FILE SAYS
- * IT: the set of vault addresses this account has ever retired, permanently
- * and in CURRENT state. Retirement used to leave no trace outside transaction
- * history. The retire transaction was already public and `vaults` already
- * publishes the live set, so the marginal leak is small — but it is a leak,
- * and a field that can never be removed should not be the one field here whose
- * disclosure cost went unstated.
- */
+// The four fields below were reserved before deploy; only `retiredAt` is ever written.
+// Every vault this account has ever retired. The value is a marker, not a date.
 export ledger retiredAt: Map<Bytes<32>, Uint<64>>;
 
-/*
- * A HOLD ON A PROPOSAL. RESERVED. DECLARED ONLY — no circuit reads or writes it.
- *
- * The feature this is for does not exist and is not designed here: a way for
- * some party to stop an approved proposal settling. It is on chain because it
- * STOPS something, and anything that stops something cannot live on our server,
- * which is not in the path between a signer and this contract.
- *
- * `Map<Bytes<32>, Uint<64>>` — keyed by proposal id like everything else that
- * concerns a proposal, with a number rather than a flag so that *how many holds*
- * or *until when* is expressible without a second field. Hot, so it is its own
- * slot rather than a member of a proposal record.
- *
- * DO NOT WRITE ITS CIRCUIT AS A CONVENIENCE. A hold that stops a payment is a
- * money-safety decision of its own; the field is here so that decision has
- * somewhere to land.
- */
+// Reserved for holding a proposal. Declared only: no circuit reads or writes it.
 export ledger proposalHolds: Map<Bytes<32>, Uint<64>>;
 
-/*
- * THE SUCCESSOR. RESERVED. DECLARED ONLY, AND THERE IS NO SETTER.
- *
- * What it is for: the address a company's records point at after this account
- * is replaced. Needed precisely when we are gone, which is why it is on chain
- * and not ours to hold.
- *
- * NOTHING IN THIS FILE WRITES IT, AND FOR NO OTHER REASON. It is not zero
- * because the platform keeps it zero; it is zero because no circuit here
- * assigns it. That is the same shape as `Vault.compact`'s `account`, and the
- * standing warning is the same: a sentence that reads as a guarantee when what
- * holds it is an absence.
- *
- * SO "NO SETTER" IS A FACT ABOUT TODAY AND NOT A PROMISE ABOUT TOMORROW.
- * *Field NO, setter YES* — a setter is ADDABLE AFTER DEPLOY by whoever holds
- * the maintenance authority, because circuits are replaceable and this field
- * is not. Anyone reasoning about who can redirect a company's successor is
- * reasoning about the maintenance authority, not about this declaration.
- */
+// Reserved for a replacement account's address. No circuit writes it.
 export ledger successor: Bytes<32>;
 
-/*
- * WHAT EACH SIGNER MAY DO. RESERVED. DECLARED ONLY — no circuit reads or writes
- * it.
- *
- * Every signer is equal today. The `signerScope` witness below already carries
- * the idea of a per-signer restriction — which VAULTS a signer may act on —
- * and it is deliberately a private value inside the signer's own leaf, which
- * nothing branches on. This field is the OTHER half of the same subject and it
- * is a different one: a public, governed permission the contract can read on a
- * path, rather than a private scope baked into a seat. It is on chain because
- * permissions STOP things, and our server is not in the path.
- *
- * `Map<Bytes<32>, Uint<64>>` — keyed by the SIGNER LEAF, which is what this
- * contract already knows a signer by and which identifies nobody off chain, with
- * a number so permissions can be a bit set rather than one field per right.
- * Cold: it would be written by governance and read on the paths a signer acts.
- *
- * DO NOT DESIGN IT HERE. Which rights exist, and whether a role can be reduced
- * below what a threshold assumes, are the questions, and they belong with the
- * feature rather than with the layout.
- */
+// Reserved for per-signer permissions. Declared only: no circuit reads or writes it.
 export ledger signerRoles: Map<Bytes<32>, Uint<64>>;
 
-/* ------------------------------------------------------------------ *
- * witnesses
- *
- * Implemented in TypeScript. This is the boundary where private state enters
- * the circuit, and nothing that crosses it is written to the chain.
- * ------------------------------------------------------------------ */
-
-/** The signer's own secret. Never disclosed, only ever hashed. */
+// The signer's secret key, from their own device. Never disclosed.
 witness localSecretKey(): Bytes<32>;
 
-/*
- * A path to a leaf in the signer tree.
- *
- * Used three ways, and they are one mechanism rather than three:
- *
- *   signerPath(myLeaf)              prove I am a signer, without saying which
- *   signerPath(departingLeaf)       prove which slot a removal clears
- *   signerPath(vacantSlot())        prove a slot is EMPTY, to seat someone in it
- *
- * The third is the one that makes slots reusable, and it is deliberately the
- * same call: proving a slot holds the empty value is exactly proving a slot
- * holds your leaf, with a different value. One rule applied twice.
- */
+// A path in the signer tree: to the caller's leaf, a departing leaf, or a vacated slot.
 witness signerPath(leaf: Bytes<32>): MerkleTreePath<10, Bytes<32>>;
 
-/*
- * The blinding factor that hides this signer's identity in the tree.
- *
- * Generated on the joining signer's device, sent to nobody, and kept alongside
- * their signing key. Without it they cannot reproduce their own leaf and
- * cannot act on the account, so it is exactly as precious as the key itself.
- *
- * Decision 0003 was restored here. Under the generation design a removal
- * re-seated every survivor, and a survivor's new leaf needs their blinding —
- * so the blindings had to be collected into the sealed roster, where 0003 says
- * they should never be. Slots do not re-seat anybody, so this value is back
- * where it belongs: on one device, held by one person, and nowhere else.
- */
+// The blinding that hides this signer's leaf. Held on their device only.
 witness signerBlinding(): Bytes<32>;
 
-/*
- * WHICH VAULTS THIS SIGNER MAY ACT ON. Reserved, not yet enforced.
- *
- * Nothing reads this to make a decision today. Every signer is seated with
- * `allVaults()` and no circuit branches on it. It exists because it is part of
- * the SIGNER'S LEAF, and a leaf's shape cannot be changed later without
- * removing and re-seating every signer on the account — the one operation on a
- * live account holding money that must never be forced.
- *
- * Deciding its shape now costs 32 bytes inside a commitment. Deciding it later
- * costs a migration of the one thing that must never go wrong.
- *
- * When per-vault signer sets are actually wanted, this becomes a commitment to
- * the set of vaults the signer may act on, the seating circuits start issuing
- * real values, and one assert is added. Signers seated before that carry the
- * all-vaults sentinel and keep working, so nothing migrates.
- */
+// Which vaults this signer may act on. Part of the leaf; nothing checks it yet.
 witness signerScope(): Bytes<32>;
 
-/*
- * WHICH ASSET this call concerns.
- *
- * The asset's code, padded to 32 bytes — `GBP`, `USDC`, `ETH`. There is
- * nothing secret about the existence of the euro — the registry is a plaintext
- * table — so this value is not sensitive in itself. What is sensitive is the
- * PAIRING of an asset with an account, which is why it never reaches the chain
- * in the clear and only ever appears inside `assetKeyOf`.
- */
+// The asset a proposal concerns. Only ever used inside a blinded commitment.
 witness assetId(): Bytes<32>;
 
-/*
- * The account's asset blinding factor.
- *
- * NOT a per-signer secret, and the difference from `signerBlinding` matters.
- * A signer's blinding lives on one device because it stands for one person. This
- * one stands for the account: every signer has to derive the same key for the
- * same asset or a change one of them approved would name a different asset from
- * the one another of them reads. So it lives in the sealed shielded state, under
- * the account viewing key, and every signer can compute the same key.
- *
- * Generated once, when the account is created, and carried through rotation
- * unchanged — rotating it would make every change commitment already approved
- * name an asset no signer can reproduce, so approvals in flight would become
- * unspendable.
- */
+// The account's blinding for asset keys, the same for every signer.
 witness assetBlinding(): Bytes<32>;
 
-/** Blinding factor for the proposal commitment. */
+// The fresh salt that blinds a proposal's id.
 witness proposalSalt(): Bytes<32>;
 
-/*
- * THE CHANGE a proposal makes, rather than the state it results in.
- *
- * The contract used to bind the absolute next state, which meant a deposit
- * arriving mid-round silently invalidated approvals already given — the
- * approved result was computed before the money existed. Binding the change
- * instead lets the same approval apply to whatever the account holds when it
- * finally settles.
- *
- * They are supplied by the proposer's device at propose time, and re-derived
- * by whoever presents the approved proposal at a vault. They travel between
- * the two inside the sealed payload, which is how every other shared secret
- * moves (decision 0002). The ASSET travels with them, for the same reason and
- * by the same route.
- */
-
-/** How much leaves the account. Private: a public Uint<128> would publish it. */
+// The amount recorded in a proposal's change commitment. Private.
 witness changeAmount(): Uint<128>;
 
-/** Digest over the entries this change appends to the log. */
+// A digest over the entries a proposal's change appends.
 witness changeBatchDigest(): Bytes<32>;
 
-/* ------------------------------------------------------------------ *
- * helpers
- * ------------------------------------------------------------------ */
-
-/*
- * A signer's public identity. Domain separated so the same device secret used
- * with another Midnight contract produces an unrelated identity, which stops
- * cross-contract correlation of the same human.
- */
+// A signer's public identity: a domain-tagged hash of their secret key.
 export circuit signerPublicKey(sk: Bytes<32>): Bytes<32> {
   return persistentHash<Vector<2, Bytes<32>>>([
     pad(32, "midnight-accounts:signer:pk:"), sk
   ]);
 }
 
-/*
- * A signer's leaf in the tree.
- *
- * A commitment, not the public key. Seating publishes whatever it is given, so
- * if the leaf were `signerPublicKey(sk)` an observer could reconstruct the
- * entire signer set from transaction history, and could test any guessed
- * identity against the tree. Blinding makes the published value inert.
- *
- * This is the difference between the signer set being private and merely
- * looking private.
- *
- * The generation parameter was taken back out. It existed because a
- * HistoricMerkleTree cannot forget, so the only way to invalidate one signer's
- * leaf was to invalidate every leaf at once. A slot can be cleared on its own,
- * so nothing has to be stamped.
- *
- * THE DOMAIN SEPARATOR, AND IT IS NOT DECORATION.
- *
- * Without it this circuit and `proposalIdOf` were THE SAME FUNCTION up to a
- * permutation of their arguments. Both were `persistentCommit<Vector<2,
- * Bytes<32>>>` over a two-vector with the third argument as the opening, so
- * `signerLeaf(X, Y, Z)` and `proposalIdOf(X, Z, Y)` returned the same 32
- * bytes: a signer's leaf and a proposal's id were one value under a
- * relabelling of three arguments. FOURTEEN other places in this file already
- * pad a `"midnight-accounts:"` tag — counted, not estimated — so the rule was
- * known and these two are where it was missed.
- *
- * NOTHING IN THE CONTRACT STOPPED IT. It was unreachable only because a caller
- * would have had to control a signer's blinding and a proposal's salt at once,
- * and the witnesses that supply them are per-device. That is a property held
- * by who holds what, not by a check, and this repository has been wrong about
- * that kind before.
- *
- * THE TAG IS THE FIRST ELEMENT AND THE VECTOR WIDENS TO THREE, which is
- * `unshieldedPayoutDetails`'s answer in the vault, in this contract's own
- * style.
- *
- * **AND IT IS THE TAG THAT SEPARATES THEM, NOT THE WIDTH — said plainly
- * because the first draft of this comment credited the width and that was
- * wrong.** Both circuits are now three-vectors, so the width tells them apart
- * from nothing; two distinct padded ASCII strings in the same position is the
- * whole of it, and that is injective because padding distinct strings of at
- * most 32 bytes to 32 bytes is.
- *
- * WHAT THE WIDTH DOES COST IS WORTH KNOWING: THE THREE-VECTOR FAMILY WAS
- * ALREADY OCCUPIED WHEN THESE TWO JOINED IT, AND ONE OF THE TWO OCCUPANTS HAS
- * SINCE BEEN MOVED OUT OF IT.
- *
- * `changeCommitmentOf` below was `persistentCommit<Vector<3, Bytes<32>>>(
- * [assetKey, …], salt)` with no tag of its own. What held it apart from these
- * two was preimage resistance: `assetKey` is only ever `assetKeyOf(...)`, a
- * `persistentCommit` output, and `vacantSlot` below records why a padded ASCII
- * constant is not one. THAT IS AN ASSUMPTION ABOUT WHAT CALLERS PASS AND NOT A
- * PROPERTY OF THE DERIVATION — both of this contract's own call sites happen
- * to pass an asset key, and nothing in the circuit requires it. It now pads its
- * own tag and commits over four, so the separation is a property of the
- * derivation and holds whatever a caller passes.
- *
- * ONE UNTAGGED NEIGHBOUR REMAINS AND IT IS NOT THIS CONTRACT'S. The vault's
- * `payoutDetails` is `([recipient, token, amount], blinding)` and carries no
- * tag. Name what stops a tagged derivation from equalling an untagged one of
- * the same shape, because it is not a check: here it is an INTEGER WIDTH, and
- * the slot it acts on is the THIRD one. That commitment's third element is a
- * `Uint<128>` cast to bytes; to equal a value from this family the element it
- * lands against would have to be under 2^128. For a proposal id that element is
- * the vault, an address nobody chooses, so the constraint holds. FOR A SIGNER
- * LEAF IT IS `scope`, WHICH IS WITNESS-SUPPLIED, so the same sentence is
- * weaker there than it reads and is written down here rather than left to be
- * discovered. `payoutDetails` carries no tag and its first element IS caller
- * chosen, so no preimage argument covers it either. A range constraint,
- * written down as a rule nowhere else and pinned by no test, and the contract
- * that could retire it is not this one.
- *
- * THE SIGNATURE DOES NOT MOVE AND THE VALUE DOES. Every caller compiles
- * unchanged; every leaf ever computed under the old body is a different 32
- * bytes. That is only free because this account is redeployed before it holds
- * real money.
- */
+// A signer's leaf: their key and scope, domain-tagged and committed under their blinding.
 export circuit signerLeaf(pk: Bytes<32>, blinding: Bytes<32>, scope: Bytes<32>): Bytes<32> {
   return persistentCommit<Vector<3, Bytes<32>>>(
     [pad(32, "midnight-accounts:signer-leaf:"), pk, scope], blinding);
 }
 
-/*
- * WHICH ASSET A CHANGE NAMES.
- *
- * It is the first field of `changeCommitmentOf`, and that is the only place it
- * appears: the account keeps no balance map for it to index.
- *
- * **AND NOTHING OPENS THAT COMMITMENT AT SETTLEMENT.** `execute` was its only
- * reader. `propose` still computes and stores it, `requireApproved` still
- * returns it and `recordPayment` still hands it back — and the vault assigns
- * it and does not read it. So do not read the sentence that used to stand
- * here, that this is what stops a run approved in dollars being presented as
- * the same integer of something else. THAT OUTCOME STILL HOLDS AND SOMETHING
- * ELSE HOLDS IT: the token is inside `payoutDetails`, which is inside the
- * leaf, which is inside the approved root, which is inside the proposal's id.
- * The separator inside `payoutDetails` is the enforcer; this commitment is
- * written and never opened. A property enforced by one thing while a comment
- * names another is one refactor from being enforced by nothing.
- *
- * Exactly the same construction as `signerLeaf`, for exactly the same reason,
- * and it is worth naming the parallel rather than leaving it to be noticed: a
- * signer's identity is public information that must not be linkable to an
- * account, and so is an asset's. Keying the map by the plain code would publish
- * that this company runs payroll in euros, and — worse — would give every
- * account holding euros the SAME key, so accounts could be grouped by the
- * currencies they share without breaking a single commitment. That is still
- * true of a change commitment even though there is no map any more.
- *
- * Blinded, both problems go. Two accounts holding USDC have unrelated keys
- * because their blindings differ, and an observer holding the list of every
- * asset code in the world can test none of them.
- *
- * Deterministic, which it has to be: the same asset must produce the same key
- * every time, or the id a vault recomputes in `recordPayment` would not be the
- * id the signers approved.
- */
+// An asset's key for this account: the asset committed under the account's blinding.
 export circuit assetKeyOf(asset: Bytes<32>, blinding: Bytes<32>): Bytes<32> {
   return persistentCommit<Bytes<32>>(asset, blinding);
 }
 
-/*
- * What the signers are actually approving: AN ASSET, an amount, and a batch of
- * entries.
- *
- * Committed rather than stored, so the chain learns none of the three. The
- * proposal's own blinding factor is reused — the two commitments belong to the
- * same proposal and cover different shapes, so there is nothing to separate.
- *
- * THE ASSET IS THE FIRST FIELD AND IT IS NEW. Without it this commitment says
- * "500,000 minor units leave, appending this batch" and does not say of what —
- * so a run approved to pay a month of dollar salaries would authorise moving
- * the same integer of ether, and whoever presented the proposal at a vault
- * would choose which.
- *
- * THAT IS THE REASON THE FIELD IS HERE AND IT IS NOT WHAT ENFORCES IT TODAY.
- * The only circuit that opened this commitment was deleted, so the asset in it
- * is written and never compared. What refuses the substitution now is the
- * separator inside `payoutDetails`. Stated rather than left to be assumed,
- * because four witnesses and two `persistentCommit`s in the most-called
- * circuit are being paid for a value nobody reads.
- *
- * THE DOMAIN SEPARATOR, AND WHY IT ARRIVED LATE. Read `signerLeaf` above first.
- *
- * This derivation sat in the same three-vector family as `signerLeaf` and
- * `proposalIdOf` and carried no tag of its own. Nothing in the CIRCUIT kept it
- * out of their outputs; what did was that its first element is only ever an
- * asset key, and an asset key is a `persistentCommit` output rather than a
- * padded ASCII constant. That is a statement about the two call sites this
- * contract happens to have, not about the function — the circuit is exported,
- * its first argument is an ordinary `Bytes<32>`, and a third call site written
- * later would owe the assumption nothing.
- *
- * A PROPERTY HELD BY WHO PASSES WHAT IS THE KIND THAT ONE REFACTOR REMOVES,
- * AND THIS ONE HAD ALREADY THINNED ONCE: the circuit that opened this
- * commitment at settlement was deleted, so the value is written and never
- * compared today. Nothing is exploitable while nothing reads it. That is the
- * weakest possible thing to rely on permanently, and permanent is what this
- * derivation becomes at the redeploy — after it, every leaf ever computed
- * under this body is a value real money depends on.
- *
- * SO THE TAG IS THE FIRST ELEMENT AND THE VECTOR WIDENS TO FOUR, which is the
- * shape `unshieldedPayoutDetails` already uses in the vault. Two distinct
- * padded ASCII strings in the same position cannot produce each other, because
- * padding distinct strings of at most 32 bytes to 32 bytes is injective, and
- * no tag in EITHER contract is repeated — the vault's two carry their own
- * `midnight-vault:` prefix, and saying "this contract" would have scoped the
- * claim to one file while naming a neighbour in the other. The width is not
- * what does the work —
- * read `signerLeaf` for why — but it costs nothing to be out of a crowded
- * family as well as tagged.
- *
- * THE SIGNATURE DOES NOT MOVE AND THE VALUE DOES. All four arguments keep
- * their names, types and order, so both call sites in this contract, the
- * client's wrapper and every mirror compile unchanged; every change
- * commitment ever computed under the old body becomes a different 32 bytes.
- * That is free only while the account is redeployed and no real money sits on
- * the old one, which is why this edit is made now and could not be made later.
- */
+// A proposal's change (asset, amount, batch), committed under its salt. Stored, never opened.
 export circuit changeCommitmentOf(
   assetKey: Bytes<32>,
   amount: Uint<128>,
@@ -898,32 +130,7 @@ export circuit changeCommitmentOf(
   );
 }
 
-/*
- * WHAT THE CHAIN CALLS A PROPOSAL.
- *
- * `commit(payloadHash, salt)` — blinded, so the chain learns nothing about what
- * is being proposed; unique, because the salt is fresh on every proposal, so
- * two identical payrolls in the same month are two different proposals and an
- * approval of one is not an approval of the other.
- *
- * EXPORTED, and that is the point of it existing as a named circuit rather
- * than being written inline four times. The CLIENT has to compute this id — a
- * signer's device needs it to approve, and the proposer needs it before the
- * transaction is submitted — and the governance circuits recompute it to check
- * that the proposal they were handed really is the one committing to their
- * payload. NINE call sites in this file and one definition, counted rather
- * than carried forward: the sentence here said five, which was true when it
- * was written and stopped being true once the vaults arrived. Decision 0004
- * records what it cost the last time a commitment scheme was written out more
- * than once.
- *
- * THE DOMAIN SEPARATOR. Read `signerLeaf` above for what it is for: this
- * circuit and that one were the same function up to a permutation of their
- * arguments, and each now pads its own tag into a three-vector so neither can
- * produce the other's output. The tag differs; nothing else about this
- * derivation does, and the signature does not move — so every call site here
- * and in the client compiles unchanged and every id changes value.
- */
+// A proposal's id: its payload and its vault, committed under a fresh salt.
 export circuit proposalIdOf(
   payloadHash: Bytes<32>,
   vault: Bytes<32>,
@@ -933,223 +140,51 @@ export circuit proposalIdOf(
     [pad(32, "midnight-accounts:proposal-id:"), payloadHash, vault], salt);
 }
 
-/*
- * One approval per signer PER PROPOSAL.
- *
- * BOUND TO THE PROPOSAL, not to a global round counter, and that single change
- * is what lets an account hold more than one proposal at a time.
- *
- * The round was only ever standing in for "which proposal is this approval
- * for". It answered that by making sure there was only ever one — so payroll
- * and a vendor invoice queued behind each other, an approval given to one was
- * burned by the other settling, and `cancel` existed largely so a stuck
- * proposal could not wedge the account. Binding to the proposal answers the
- * same question directly: a signer's approval of the March payroll and their
- * approval of an invoice are unrelated values, and neither expires because the
- * other settled.
- *
- * Everything the round binding bought is kept. Nobody else can generate it,
- * because it needs the secret key. The same signer cannot approve the same
- * proposal twice, because the nullifier is already burned. And the same signer
- * approving two different proposals emits two unlinkable values, because the
- * proposal commitments differ.
- *
- * THE ACCOUNT'S OWN ADDRESS IS IN THE HASH, and has to be.
- *
- * Without it the nullifier is a pure function of (secret key, proposal), so the
- * same signer approving the same payload on the payroll account and on the
- * treasury account would emit the SAME 32 bytes on both. Anyone reading the
- * chain could then link accounts by their shared signers and, over time, rebuild
- * the membership graph this contract exists to hide — without ever breaking a
- * commitment or a proof.
- *
- * `kernel.self()` is the contract's own address, so that cannot happen. This
- * cannot be retrofitted: nullifiers already on chain stay linkable forever.
- */
+// One signer's approval of one proposal here. Unlinkable across proposals and accounts.
 circuit approvalNullifier(sk: Bytes<32>, proposal: Bytes<32>): Bytes<32> {
   return persistentHash<Vector<4, Bytes<32>>>([
     pad(32, "midnight-accounts:approval:"), kernel.self().bytes, proposal, sk
   ]);
 }
 
-/*
- * What a proposal must commit to for `addSigner` to accept it.
- *
- * Domain separated from an ordinary payroll payload on purpose. Without the
- * separator, a proposal approved to pay salaries would be a valid authorisation
- * to add a signer, since both are just "a commitment the signers approved".
- * The thing being approved has to be part of what is approved.
- */
+// What signers approve to seat a leaf.
 export circuit signerAddPayload(newSignerLeaf: Bytes<32>): Bytes<32> {
   return persistentHash<Vector<2, Bytes<32>>>([
     pad(32, "midnight-accounts:add-signer:"), newSignerLeaf
   ]);
 }
 
-/*
- * What the signers approve when they remove somebody.
- *
- * Domain separated from `signerAddPayload` for the same reason that one is
- * separated from an ordinary payload: an approval to add must not double as an
- * approval to remove.
- *
- * The payload shrank to the departing leaf alone. Under the generation design
- * it had to commit to the survivor list as well, because the caller supplied
- * that list and the contract could not check it — wrong leaves would have
- * seated a signer set nobody could prove membership in, and it would have
- * looked like a successful removal. Nothing is supplied any more: the slot is
- * derived from a proof, and no survivor is touched, so there is no list to get
- * wrong.
- */
+// What signers approve to unseat a leaf.
 export circuit removeSignerPayload(removedLeaf: Bytes<32>): Bytes<32> {
   return persistentHash<Vector<2, Bytes<32>>>([
     pad(32, "midnight-accounts:remove-signer:"), removedLeaf
   ]);
 }
 
-/*
- * What the signers approve when they change the threshold.
- *
- * Domain separated from the add and remove payloads for the same reason those
- * are separated from a payment: an approval to pay a supplier, to seat a
- * signer, or to drop one must not double as an approval to change the rule that
- * governs all three.
- */
+// What signers approve to change the account threshold.
 export circuit setThresholdPayload(newThreshold: Uint<64>): Bytes<32> {
   return persistentHash<Vector<2, Bytes<32>>>([
     pad(32, "midnight-accounts:set-threshold:"), newThreshold as Field as Bytes<32>
   ]);
 }
 
-/*
- * What a vacated slot holds, and it exists because of a wrong guess.
- *
- * The first version of this design used `default<Bytes<32>>` as the empty
- * marker and had `addSigner` prove a slot held it. That cannot work, and the
- * runtime says so in four words: **the signer tree is SPARSE.** Only indices
- * that have actually been written exist in it. `pathForLeaf` on an untouched
- * index fails outright with "invalid index into sparse merkle tree", and where
- * a path can be built at all it does not verify, because the tree's notion of
- * an absent leaf is not "a leaf whose value is zero".
- *
- * So emptiness has to be WRITTEN rather than assumed. A removal stamps this
- * value into the slot it clears, which makes the slot a real entry with a real
- * path — findable, provable, and reusable. It is a fixed byte string rather
- * than a hash of anything: it has to identify nobody, and it must be a value no
- * `persistentCommit` will ever produce, which a padded ASCII constant is.
- *
- * Exported so the CLIENT uses the contract's own definition when it looks for
- * a free slot. A TypeScript copy of this constant would be a shared rule
- * written twice, which is the oldest failure shape here.
- */
-/*
- * "EVERY VAULT" — the scope every signer is seated with today.
- *
- * A constant rather than zero bytes, for the reason `vacantSlot` is: a sentinel
- * that could also arise by accident is not a sentinel. This one is a hash of a
- * domain string, so no commitment can produce it and no real vault-set
- * commitment can collide with it.
- */
+// The scope every signer is seated with today: every vault.
 export circuit allVaults(): Bytes<32> {
   return persistentHash<Bytes<32>>(pad(32, "midnight-accounts:scope:all"));
 }
 
-/*
- * "NO VAULT" — what a proposal names when it concerns no vault at all.
- *
- * Governance proposals — adding a signer, removing one, moving a threshold —
- * move no money and belong to no vault, but they still need a value in the slot
- * because a proposal's identity now commits to the vault it is for. This is
- * that value.
- *
- * The same reasoning as NO_ASSET in src/core/assets.ts: a reserved name is
- * honest where a real one would put a claim in the ledger that is not true.
- */
+// The vault a governance proposal names: a hash no vault address can equal.
 export circuit noVault(): Bytes<32> {
   return persistentHash<Bytes<32>>(pad(32, "midnight-accounts:vault:none"));
 }
 
-/*
- * What signers approve when they set one vault's threshold.
- *
- * Same shape and same reason as `setThresholdPayload`: what reaches the chain
- * is a commitment, and the payload is what the signers' devices show them
- * before they agree to it.
- */
-/*
- * A PAYROLL RUN'S PAYLOAD.
- *
- * The payload hash of a proposal that pays people. It binds two things the
- * account must be able to trust later and cannot otherwise recover:
- *
- *   `root`   the merkle root over the run's payout leaves — what the signers
- *            actually approved, one leaf per person
- *   `payees` how many leaves there are, which is what tells the account when
- *            the run is finished rather than merely started
- *
- * BOTH ARE BOUND HERE RATHER THAN STORED, and that is the point. A claim hands
- * the account a root and a count; recomputing this payload and finding it
- * produces the approved proposal's id is what proves neither was invented. A
- * `payees` taken as a `propose` argument and kept in a map would be the same
- * number in two places, which this contract has paid for before.
- */
-/*
- * THE RECORD THAT ONE PAYEE OF ONE RUN HAS BEEN PAID.
- *
- * Exported, and that is the point of it existing separately rather than being
- * three lines inside `recordPayment`. The product has to answer "who is still
- * outstanding" — after a crash, on another device, with our database unavailable
- * or wrong — and the only honest answer comes from the chain: for each payee of
- * a run, is this value in `movements`?
- *
- * A client that computed it its own way would be the same rule written twice,
- * and the failure would be the worst kind: a dashboard confidently reporting
- * somebody unpaid who has been paid, or paid who has not. So the client calls
- * this circuit and there is one definition, checked by `one-definition.test.ts`.
- *
- * PER PAYEE AND NOT PER PROPOSAL, and the difference is what makes a retry
- * safe.
- *
- * This used to hash the proposal alongside the leaf, so a payment was unique
- * WITHIN a run. That is fine until stragglers have to be retried, which is the
- * ordinary case: the operator's connection dies at payee 40 of 50 and the other
- * ten need paying. A retry run contains those ten leaves — and under a
- * per-proposal record those are DIFFERENT records from the originals, **so the
- * same person could be paid once under each run** if the first is still live.
- *
- * The only defence would be forbidding a retry until the original window
- * expired, which forces short windows, which brings back the stranding cliff
- * the window was meant to survive. **A safe retry and a generous window are the
- * same design decision.**
- *
- * A leaf already contains a fresh per-payee nonce (see `payoutLeaf`), so it is
- * unique by construction and hashing it alone means A GIVEN PAYMENT CAN HAPPEN
- * AT MOST ONCE, EVER, IN ANY RUN. A retry reuses the original leaves; whichever
- * transaction lands first wins and the other is refused, which is what a bank
- * does with a duplicate instruction.
- *
- * It fails CLOSED: two genuinely different payments that shared a leaf would
- * see the second refused rather than duplicated. That direction is the safe one,
- * and `buildPayoutTree` already refuses duplicate leaves within a run.
- */
+// The record that a payee was paid. Keyed on the leaf alone, so once in any run.
 export circuit paidMovementOf(leaf: Bytes<32>): Bytes<32> {
   return persistentHash<Vector<2, Bytes<32>>>([
     pad(32, "midnight-accounts:paid:"), leaf]);
 }
 
-/*
- * WHAT THE SIGNERS APPROVE WHEN THEY APPROVE A RUN.
- *
- * The root fixes who is paid what; the payee count fixes the run's size; and
- * `from`/`until` fix WHEN — the window outside which no payment may happen.
- *
- * The window is in here rather than beside the proposal for the same reason the
- * vault is inside the proposal's id: a value the signers approved and a value
- * somebody supplies later are different things, and only the first can be
- * checked. Recomputing this payload proves the window is the approved one.
- *
- * Times are seconds since the Unix epoch, matching the block-time predicates.
- */
+// What signers approve for a run: its root, its payee count and its window.
 export circuit runPayload(
   root: Bytes<32>,
   payees: Uint<64>,
@@ -1165,116 +200,43 @@ export circuit runPayload(
   ]);
 }
 
-/*
- * ONE PAYEE'S LEAF, and the nonce is the whole of why this exists.
- *
- * A leaf commits to a payment. The obvious shape is a hash of the payment's
- * details and nothing else — and it is WRONG, for a reason that only appears
- * once a run has more than one payee.
- *
- * A claim must disclose its merkle path, because a cross-contract callee
- * cannot read a witness and everything it checks must therefore be an
- * argument. **The level-0 sibling in a merkle path IS the neighbouring leaf's
- * hash.** So the first payment of a run publishes a leaf value for a payee who
- * has not been paid yet, along with the root and the path to it. If quoting a
- * leaf were enough to claim it, anyone watching the chain could mark the rest
- * of the payroll paid — and the account could not refuse them, because a
- * contract cannot see its caller. No money would be stolen; the run would
- * simply become unpayable and have to be proposed and approved again.
- *
- * So a claim proves KNOWLEDGE OF THE PREIMAGE instead of quoting the hash. The
- * `nonce` is a per-payee secret; `details` is the vault's own commitment to who
- * is being paid, what, and how much. A sibling hash yields the leaf's VALUE and
- * neither of its parts, so it buys an attacker nothing.
- *
- * What a completed payment publishes is that payee's own spent secret — the
- * same argument that lets `recordPayment` take the run's salt as a public
- * argument, one payee at a time instead of one run at a time.
- *
- * The account never learns who was paid: `details` is a hash and stays one.
- */
+// One payee's leaf: the vault's blinded details and a per-payee secret nonce.
 export circuit payoutLeaf(details: Bytes<32>, nonce: Bytes<32>): Bytes<32> {
   return persistentHash<Vector<3, Bytes<32>>>([
     pad(32, "midnight-accounts:payee:"), details, nonce]);
 }
 
+// What signers approve to set one vault's threshold.
 export circuit setVaultThresholdPayload(vault: Bytes<32>, newThreshold: Uint<64>): Bytes<32> {
   return persistentHash<Vector<3, Bytes<32>>>([
-    /*
-     * 31 bytes, not 34. `pad(32, ...)` refuses a string that is already longer
-     * than the field it pads into, and the obvious spelling —
-     * "midnight-accounts:vault-threshold:" — is 34. The sibling
-     * "midnight-accounts:set-threshold:" is exactly 32 and fits by one byte,
-     * which is why this was easy to get wrong.
-     *
-     * Domain strings only have to be DISTINCT, not descriptive to the last
-     * character. This one is still unmistakable and it fits.
-     */
+    // Shortened to fit 32 bytes.
     pad(32, "midnight-accounts:vault-thresh:"),
     vault,
     newThreshold as Field as Bytes<32>,
   ]);
 }
 
+// What a removal writes into a slot, so the slot can be proved empty and reused.
 export circuit vacantSlot(): Bytes<32> {
   return pad(32, "midnight-accounts:vacant-slot:");
 }
 
-/*
- * What the signers approve when they adopt a vault. Scope 3.2.
- *
- * Domain separated from every other payload for the reason `setThresholdPayload`
- * gives: an approval to seat a signer, to change a threshold or to pay a
- * supplier must not double as an approval to declare a contract to be this
- * company's. The vault's address is the whole of what is being agreed.
- */
+// What signers approve to adopt a vault.
 export circuit adoptVaultPayload(vault: Bytes<32>): Bytes<32> {
   return persistentHash<Vector<2, Bytes<32>>>([
     pad(32, "midnight-accounts:adopt-vault:"), vault
   ]);
 }
 
-/*
- * And what they approve when they retire one.
- *
- * Separated from `adoptVaultPayload` for the same reason that one is separated
- * from the rest: an approval to adopt must not double as an approval to retire,
- * and the two payloads differ in nothing but this string.
- */
+// What signers approve to retire a vault.
 export circuit retireVaultPayload(vault: Bytes<32>): Bytes<32> {
   return persistentHash<Vector<2, Bytes<32>>>([
     pad(32, "midnight-accounts:retire-vault:"), vault
   ]);
 }
 
-/*
- * Which slot a membership path leads to.
- *
- * `MerkleTreePath` carries no index — the compiler said so when the probe asked
- * for one. It does carry a `goes_left` flag per level, and those flags ARE the
- * slot number in binary: at each level, going left is a 0 bit and going right is
- * a 1. Level 0 sits nearest the leaf and carries the least significant bit.
- *
- * DERIVED, NEVER ACCEPTED AS AN ARGUMENT, and that is the security of it. The
- * flags are inputs to `merkleTreePathRoot`, so a caller who flips one changes
- * the root and fails `checkRoot`. The slot is therefore bound to the same proof
- * that binds the leaf. A slot passed in as an argument would be bound to
- * nothing, and a wrong one would clear a different person's slot — the contract
- * would remove a signer nobody voted to remove, and it would look like success.
- *
- * IT IS ALSO A NAME. The slot number identifies the signer holding it, so
- * `requireSigner` MUST NEVER CALL THIS. Every ordinary action — propose,
- * approve, cancel — has to stay unlinkable, and disclosing a caller's
- * slot would name the approver as surely as disclosing their leaf. Only
- * `removeSigner` (which already names the leaf being removed, because that is
- * what was approved) and `addSigner` (which names an EMPTY slot, belonging to
- * nobody) may use it. The guard-rail test pins this.
- */
+// The slot a path leads to, read from its left-right flags.
 export circuit slotOf(path: MerkleTreePath<10, Bytes<32>>): Uint<64> {
-  /*
-   * Written out rather than looped, because Compact has no mutable locals. A
-   * loop would unroll to exactly this, so nothing is lost but the shape.
-   */
   return (
     (path.path[0].goes_left ? 0 : 1) +
     (path.path[1].goes_left ? 0 : 2) +
@@ -1289,35 +251,13 @@ export circuit slotOf(path: MerkleTreePath<10, Bytes<32>>): Uint<64> {
   ) as Uint<64>;
 }
 
-/*
- * Proves the caller is one of the N without revealing which one.
- *
- * Only the computed root is disclosed. Disclosing the leaf, or asserting on a
- * Set instead, would name the signer and give away exactly what this contract
- * exists to protect.
- *
- * NOTE WHAT IS ABSENT: no call to `slotOf`. The slot names the signer. This
- * circuit runs at the head of every ordinary action, so deriving the slot here
- * would publish which signer performed each one — the same defect, by a
- * different route, as the one the `revoked`-Set design of decision 0010 was
- * rejected for.
- */
+// Proves the caller is a signer without saying which. Refuses anyone else.
 circuit requireSigner(): Bytes<32> {
   const sk = localSecretKey();
   const leaf = signerLeaf(signerPublicKey(sk), signerBlinding(), signerScope());
   const path = signerPath(leaf);
 
-  /*
-   * Bind the path to the caller.
-   *
-   * Without this line the leaf is unbound and this is an authentication
-   * bypass, not a subtlety. `merkleTreePathRoot` derives the root from
-   * `path.leaf`, which arrives from a witness, and a witness is whatever the
-   * caller says it is. `pk` would be computed and then used for nothing but a
-   * lookup, so anyone holding any real member's path could approve as them.
-   *
-   * A test caught this. The circuit compiled fine without it.
-   */
+  // The path must lead to the caller's own leaf.
   assert(path.leaf == leaf, "that membership path is not yours");
 
   const root = merkleTreePathRoot<10, Bytes<32>>(path);
@@ -1325,214 +265,33 @@ circuit requireSigner(): Bytes<32> {
   return sk;
 }
 
-/*
- * EVERY WITNESS IS READ EXACTLY ONCE PER CIRCUIT, INTO A `const`, AND ANY
- * HELPER TAKES THAT CONST AS AN ARGUMENT RATHER THAN CALLING THE WITNESS
- * ITSELF.
- *
- * The circuits this was written for are gone with the balance ledger. The rule
- * is kept because it governs every witness read that is left — `propose` reads
- * `changeAmount` and `changeBatchDigest` once each — and because what it cost
- * to learn is the part worth keeping.
- *
- * This looks like a style rule and it is a soundness one. A witness call is a
- * read from the caller's own private state, and the caller is the party with
- * the incentive. If the compiler does not fold two calls to the same witness
- * into one read, then
- *
- *     assert(nextBalance() == balance - amount, ...);
- *     stateCommitment = disclose(stateCommitmentOf(nextBalance(), ...));
- *
- * checks one value and commits a DIFFERENT one, and the executor picks the
- * account's next balance while passing every assert — a hole reopened silently
- * by a repeated function call. The version of this contract that settled on
- * Stagenet reads `nextBalance()` and `nextEntriesDigest()` twice each in
- * exactly that shape.
- *
- * Whether the compiler common-subexpression-eliminates witness reads is not
- * documented anywhere we can read, and "it produced the right answer in
- * testing" is not evidence — an honest prover returns the same value twice, so
- * a test cannot tell the two compilers apart. Reading once removes the question
- * instead of answering it, and costs nothing.
- */
-
-/*
- * Closes one proposal. `cancel`, `closeExpiredRun`, `amendSigner`,
- * `setThreshold`, `setVaultThreshold`, `adopt` and `retireVault` all end this
- * way. `recordPayment` deliberately does not — a run ends by time, not by a
- * payment; see the note there.
- *
- * ONE COPY — three of the five callers it had then used to leave
- * `proposedChange` behind — and it is now doing more work than that, because
- * closing a proposal has to remove exactly its two map entries and nobody
- * else's.
- *
- * NOTE WHAT IS NOT HERE ANY MORE: no round increment and no wiping of the
- * approval set. Both existed because approvals were bound to a global round,
- * so closing anything invalidated every approval on the account. Approvals
- * bind to their own proposal now, so closing one leaves every other proposal
- * exactly as it was, and that is the whole of the change.
- */
+// Closes one proposal: its entry, its count and its window, if it has one.
 circuit closeProposal(proposal: Bytes<32>): [] {
   openProposals.remove(proposal);
   approvalCounts.remove(proposal);
-  /*
-   * And its window, if it had one, from the one map that holds them.
-   *
-   * `remove` on an absent key is not an error, so governance proposals — which
-   * have no window — cost ONE no-op here rather than a branch, where before the
-   * merge they cost two. A run that ends leaves its payments behind, because
-   * they happened, and its schedule does not, because it is spent.
-   *
-   * AND THIS LINE IS WHY A GENERATED WRITER COUNT FOR `runWindow` WILL READ
-   * EIGHT AND MEAN ONE: such a column counts a REMOVAL as a write, and every
-   * circuit that closes a proposal inlines this one. `propose` is the only
-   * VALUE-writer of `runWindow`, which is the property `cancel` rests on —
-   * read the four circuit bodies before believing the column.
-   */
   runWindow.remove(proposal);
 }
 
-/*
- * Proves a proposal is open and has reached the threshold, and returns the
- * change it authorises.
- *
- * One copy, called by every governance circuit and by `recordPayment` through
- * `requireApprovedForVault`, because
- * "enough distinct authorised people agreed to THIS" is the single rule the
- * whole contract rests on and it was previously written out five times.
- */
-/*
- * How many approvals THIS proposal needs.
- *
- * The vault's own threshold if somebody set one, otherwise the account's.
- * Absence meaning "inherit" is what lets a new vault work with no setup, and
- * what keeps the map holding only deliberate exceptions rather than a row per
- * vault that mostly repeats the same number.
- */
+// A vault's own threshold if it has one, otherwise the account's.
 circuit thresholdFor(vault: Bytes<32>): Uint<64> {
   return thresholds.member(vault) ? thresholds.lookup(vault) : threshold;
 }
 
-/*
- * TWO ENTRY POINTS, AND THE SPLIT IS PAID FOR IN PROVING TIME.
- *
- * The first version had one circuit taking a vault and looking its threshold
- * up every time. Compiling it showed what that cost: `setThreshold` grew 26%
- * and the account's own spend circuit 15%, while `approve` — which does not go
- * through here — grew 2%. That circuit is gone; the measurement is kept
- * because it is why the split exists.
- * Governance was paying for a map lookup it can never use.
- *
- * It can never use it because governance proposals name `noVault()`, and no
- * vault address can equal `noVault()` — it is the hash of a domain string. So
- * the lookup a governance circuit would perform is one no VAULT can ever have
- * seated, and removing it removes nothing a vault could reach.
- *
- * WHAT THAT SENTENCE MUST NOT BE STRETCHED INTO, SAID HERE BECAUSE AN EARLIER
- * DRAFT OF IT WAS AND THE STRETCHED VERSION IS FALSE AT SOURCE. It said
- * `noVault()` "is never a key in `thresholds`", and therefore that
- * `thresholdFor(noVault())` is the account threshold "by construction". IT IS
- * NOT, AND NOTHING IN THIS CONTRACT MAKES IT SO. `setVaultThreshold` seats
- * whatever 32 bytes it is handed; its only guard refuses a threshold of zero,
- * never a key. `noVault()` is 32 bytes like any other and can be seated at any
- * number a governed round chooses, and once seated it cannot be removed —
- * there is no `remove` on that map anywhere in this file.
- *
- * WHAT ACTUALLY HOLDS IT, NAMED BECAUSE IT IS NOT A CHECK, AND STATED IN FULL
- * BECAUSE A SHORTER VERSION OF THIS PARAGRAPH WAS WRONG IN A WAY THAT READ
- * REASSURINGLY.
- *
- * Seating that key needs a proposal carried at the ACCOUNT'S OWN FULL
- * THRESHOLD. That bounds where the road STARTS and nothing further — read to
- * the end of this block before taking it for a bound on the road.
- *
- * IT IS NOT TRUE THAT NOBODY CAN PRESENT THE KEY AFTERWARDS. `recordPayment`
- * takes the vault as an ARGUMENT and this contract constrains it with nothing:
- * a contract here cannot see its caller, so what makes a real vault hand its
- * own address is the vault's own code and not anything on this side. Anyone
- * can call `recordPayment` with any 32 bytes, including a key that has been
- * seated.
- *
- * WHAT SUCH A CALL CAN AND CANNOT DO, AND THE SECOND HALF IS THE PART THAT
- * MATTERS. It moves no money — this contract holds none, and no vault will
- * pay against a key it does not hold. But `recordPayment` is what records a
- * payee as paid, and that record is permanent: nothing in this file removes
- * from `movements`, and a payee written there can never be paid out of that
- * run. So a seated key lowers the bar on the one circuit that can burn a
- * payee without moving anything.
- *
- * THAT IS A LIMIT THIS CONTRACT ALREADY HAS AND THIS IS A SECOND ROAD INTO IT,
- * NOT A NEW ONE. `recordPayment` carries no signer check by design — its only
- * caller is a contract, and a contract holds no key and sits in no tree — so
- * its whole authorisation is knowledge of its arguments, and every signer can
- * reconstruct those by design. A seated key changes how many approvals that
- * road needs; it does not create the road.
- *
- * AND THE FAR END OF THAT ROAD NEEDS NO APPROVAL OF THE CALLER'S OWN, WHICH IS
- * WHY THE SENTENCE ABOUT WHERE IT STARTS IS NOT A SENTENCE ABOUT WHERE IT
- * ENDS. The approvals `requireApprovedForVault` counts belong to a run the
- * signers raised and approved for their own reasons, gathered before anyone
- * reached for this. On that road whoever presents the arguments gathers
- * nothing; on the seated road what they gather is the seated number. So the
- * full-threshold requirement bounds the seating and bounds nothing after it,
- * and an earlier draft of this paragraph said "both ends" and was wrong twice
- * over — once about this end, and once about the seated end, whose bar is
- * whatever number the row was seated at.
- *
- * SO THE HONEST WORD FOR THE GUARANTEE IS THAT, AND NOT "BY CONSTRUCTION".
- *
- * So governance uses `requireApproved`, which reads the account threshold
- * directly; only `recordPayment` — the one circuit that genuinely concerns a
- * vault — pays for the lookup.
- *
- * Behaviour is identical. This is the same rule, not a weaker one.
- */
+// Refuses unless the proposal is open and has the vault's threshold. Returns its change.
 circuit requireApprovedForVault(proposal: Bytes<32>, vault: Bytes<32>): Bytes<32> {
   assert(openProposals.member(proposal), "there is no open proposal with that id");
-  /*
-   * `<` and not `.lessThan()`, and the difference is not cosmetic.
-   *
-   * The old `approvalCount`, and `signerCount` until it was deleted, were
-   * `Counter`s — an ADT with methods. A count read out of a `Map<Bytes<32>,
-   * Uint<64>>` is a plain number and has none, and the compiler says so in as
-   * many words: *expected left-hand side of . to have an ADT or contract type,
-   * received Uint<64>*. Both spellings mean the same thing; only one of them
-   * exists here. `Set.size()` answers a plain `Uint<64>` too, which is why the
-   * three threshold comparisons now read the same way this one does.
-   */
   assert(!(approvalCounts.lookup(proposal) < thresholdFor(vault)), "not enough approvals yet");
   return openProposals.lookup(proposal);
 }
 
-/*
- * The account's own threshold, for everything that concerns no vault.
- *
- * Every governance circuit lands here. It is `requireApprovedForVault` with the
- * lookup that cannot matter removed — see the note above.
- */
+// Refuses unless the proposal is open and has the account's threshold. Returns its change.
 circuit requireApproved(proposal: Bytes<32>): Bytes<32> {
   assert(openProposals.member(proposal), "there is no open proposal with that id");
   assert(!(approvalCounts.lookup(proposal) < threshold), "not enough approvals yet");
   return openProposals.lookup(proposal);
 }
 
-/*
- * Proves a slot has been vacated, and answers which slot it is.
- *
- * The other half of the slot mechanism, and the reason slots can be REUSED.
- * Without reuse the tree would bound the number of ADDITIONS an account can
- * ever make rather than the number of signers it can hold — the same trap as
- * the tree-exhaustion defect the re-seating design had, in a new place.
- *
- * It is `requireSigner`'s membership proof with the vacancy marker in place of
- * your leaf: prove the tree really holds `vacantSlot()` at this position, and
- * the position is free to take. The same mechanism, twice.
- *
- * Nothing private is disclosed. A vacated slot belongs to nobody, so its number
- * names nobody — unlike a caller's slot, which is why `requireSigner` may not
- * derive one.
- */
+// Proves a slot holds the vacancy marker, and returns which slot it is.
 circuit takeVacatedSlot(): Uint<64> {
   const path = signerPath(vacantSlot());
   assert(path.leaf == vacantSlot(), "that slot has not been vacated");
@@ -1541,309 +300,22 @@ circuit takeVacatedSlot(): Uint<64> {
   return slotOf(path);
 }
 
-/* ------------------------------------------------------------------ *
- * lifecycle
- * ------------------------------------------------------------------ */
-
-/*
- * THE FOUNDING SIGNER IS NAMED, NOT MANUFACTURED.
- *
- * THIS USED TO READ `localSecretKey()`, `signerBlinding()` and `signerScope()`
- * and seat the leaf it derived from them — so the account's first seat belonged
- * to whatever process ran the deploy. On the only deploy path that exists that
- * process's secret was `seededBytes(1)` and its blinding `seededBytes(401)`,
- * a published formula in a repository that is going public: every account this
- * project deployed would carry a signer that ANY READER COULD BE, from any
- * machine, for ever, holding one permanent approval toward every threshold —
- * including every `recordPayment` that moves a vault's money.
- *
- * The leaf now ARRIVES. It is public, it is the founder's, and this circuit
- * calls none of the three identity witnesses — so **nothing this contract does
- * can derive a seat from whoever submitted the deploy.** It is the same
- * operation `amendSigner` performs with the same kind of value: a `Bytes<32>`
- * leaf handed in, guarded, disclosed and inserted.
- *
- * **WHAT THAT IS AND IS NOT, SAID HERE RATHER THAN CLAIMED.** It is a property
- * of THIS CONTRACT: the seat is an argument, so the deployer's own material is
- * irrelevant to it and no reader of this repository can be the founder. It is
- * NOT yet a property of the client: `AccountService.create` still mints every
- * founding signer's key in the process that deploys (`src/core/account.ts`),
- * and that gap is open rather than closed. **Anyone who reads this paragraph
- * as "the secret is on the founder's device" has read a plan, not the code.**
- *
- * "THE DEPLOYER HAS NO SEAT" IS NOT "THERE IS NO SEAT", and the difference is
- * the whole account. `amendSigner` opens with `requireSigner()`, so an account
- * born with zero signers can NEVER have one added — it is dead on arrival,
- * permanently, along with every vault that named it as its authority and every
- * coin in them. The constructor seats exactly one, and it is the founder's.
- *
- * WHAT NO LONGER READS A WITNESS HERE STILL READS ONE EVERYWHERE ELSE:
- * `requireSigner` calls all three on every governed circuit. The witnesses are
- * not removed and `AccountPrivateState` is not narrowed; the constructor simply
- * stops being a place a secret is needed.
- */
+// Seats one founding signer, whose leaf is passed in, at a threshold of one.
 constructor(foundingLeaf: Bytes<32>) {
-  /*
-   * THE TWO VALUES A LEAF MAY NEVER BE, AND THIS IS THE FIRST TIME THE
-   * CONSTRUCTOR COULD BE HANDED ONE.
-   *
-   * `amendSigner` has carried both guards since it was written and the reasons
-   * are unchanged and are written out there in full: `vacantSlot()` is the
-   * marker a removal writes, so seating it would make a real signer's position
-   * look free and let the next addition take it — removing them with nobody
-   * voting to; and an all-zero leaf is what an uninitialised caller sends, so a
-   * signer seated under one cannot be told apart from a mistake.
-   *
-   * NOTHING CHECKED THEM HERE BEFORE BECAUSE NOTHING COULD SUPPLY THEM — the
-   * leaf was derived in-circuit and a `persistentCommit` output is neither
-   * value. A PUBLIC ARGUMENT IS ATTACKER-CHOSEN. Both asserts belong here now
-   * and they cost two comparisons.
-   *
-   * SPELLED AGAINST `foundingLeaf` AND NOT `newSignerLeaf`, WHICH IS A
-   * REQUIREMENT AND NOT A PREFERENCE. `amendSigner` carries the same pair of
-   * guards over its own leaf. The two copies are deliberately spelled
-   * differently so that either can be named on its own; make them read alike
-   * and there is no longer any way to refer to one without the other, which is
-   * what the checks that prove these guards are load-bearing rely on.
-   */
+  // Neither zero nor the vacancy marker may be seated.
   assert(foundingLeaf != default<Bytes<32>>, "that is not a usable signer leaf");
   assert(foundingLeaf != vacantSlot(), "that is not a usable signer leaf");
-  /*
-   * AND THE NUMBER THAT USED TO ARRIVE BESIDE IT DOES NOT ARRIVE ANY MORE. The
-   * decision and the reasoning kept against it are `docs/company-accounts.md`
-   * section 10.
-   *
-   * THE CONSTRUCTOR TOOK A THRESHOLD AND A FLOOR WAS PUT UNDER IT. The floor
-   * was right about the failure and too weak for it. `requireApproved` asserts
-   * `!(approvalCounts.lookup(proposal) < threshold)`; at zero that reads `!(0
-   * < 0)` and PASSES, with nobody having approved anything, and a vault with
-   * no threshold of its own inherits the account's — so an account founded at
-   * zero was one where `recordPayment` moved a vault's money on a proposal no
-   * signer voted for.
-   *
-   * A FLOOR STILL LEAVES THE KNOB, AND THE OTHER END OF IT IS THE CEILING.
-   * Nothing bounded the value from above. An account could be founded needing
-   * fifty approvals while seating one signer: `setThreshold` is the only way
-   * down and it is itself behind `requireApproved`, so such an account is
-   * FROZEN FOR EVER and, until it is, UNILATERAL FOR EVER at the same time.
-   *
-   * SO THE ARGUMENT IS GONE RATHER THAN GUARDED, AND BOTH FAILURES CLOSE
-   * WITHOUT A CEILING ASSERT BEING WRITTEN. Every account is founded one
-   * signer, one approval, and the number is raised afterwards through the
-   * ordinary approval path — which is the same reasoning that removed the
-   * parameter's original purpose, and the same shape as the guard two circuits
-   * below: make the bad value UNREPRESENTABLE rather than REFUSED.
-   *
-   * AND THIS LINE SHUTS THE BOOTSTRAP WINDOW FOR EVER, WHICH IS THE LARGEST
-   * THING THE DELETION DOES AND WAS NOT PART OF THE DECISION AS RECORDED.
-   * `docs/company-accounts.md` section 10a states it in those terms: *adding
-   * your first colleague becomes three steps instead of one, permanently.* It
-   * was accepted on that understanding.
-   *
-   * WHAT SHUTS IT IS NOT AN ASSERT. THERE IS NO LINE TO DELETE AND NO GUARD TO
-   * WEAKEN — the state that opens the window is one NO WRITER CAN PRODUCE, and
-   * the proof is that there are only four writers of the two quantities it
-   * compares. `amendSigner`'s free branch is entered exactly when
-   * `signerLeaves.size() < threshold`. Every writer of either side:
-   *
-   *   1. THIS CONSTRUCTOR — seats one leaf and sets `threshold = 1`. Opens at
-   *      1 and 1, so the comparison is false at birth.
-   *   2. `amendSigner`, ADD BRANCH — `signerLeaves.insert`. Only grows the set
-   *      and never touches `threshold`.
-   *   3. `amendSigner`, REMOVE BRANCH — `signerLeaves.remove`, then asserts
-   *      `!(signerLeaves.size() < threshold)` against what is actually left.
-   *   4. `setThreshold` — asserts `!(signerLeaves.size() < newThreshold)`
-   *      before assigning, so the threshold can never pass the seat count.
-   *
-   * `signerLeaves.size() >= threshold` therefore holds at creation and is
-   * preserved by all three of the others, so `signerLeaves.size() < threshold`
-   * IS FALSE FROM BIRTH AND CANNOT BECOME TRUE. Nothing anywhere else assigns
-   * `threshold` or inserts into or removes from `signerLeaves`; that is the
-   * whole proof and it is four lines of `grep`, which is why it is written out
-   * rather than left to be re-derived.
-   *
-   * SO `amendSigner`'s FREE BRANCH IS DEAD CODE AND ITS GATE IS ALWAYS TRUE.
-   * Anyone reading that circuit must be able to see this without deriving it
-   * again, so the gate carries a pointer back to this paragraph. What it means
-   * in practice: EVERY SEAT AFTER THE FIRST IS AN APPROVED PROPOSAL, including
-   * the second. The founder raises it and approves it alone at their own
-   * threshold of one — three transactions where there was one — and no seat
-   * can be taken on this account without a proposal behind it, ever.
-   *
-   * WHAT THAT COSTS AND WHAT IT BUYS, BOTH. It costs the founding cohort two
-   * extra transactions per seat, permanently, and it retires the bootstrap
-   * gate's complement as a live safety property: the two comparisons at points
-   * 3 and 4 above still hold the invariant, but the failure they were written
-   * to prevent — a removal reopening the window — is now unreachable from any
-   * state. It buys the removal of the only branch in this contract that could
-   * seat a signer with no approved proposal behind it. That branch was the
-   * defect that made the threshold decorative, guarded ever since; it is now
-   * absent rather than guarded, which is the same trade the guard two circuits
-   * below makes and the same trade the deletion of this argument makes.
-   *
-   * AND `threshold` IS ASSIGNED FROM A LITERAL BELOW, WITH NO `disclose` ON
-   * IT. That is not an oversight: a literal is public already. `threshold` was
-   * the only ledger field this constructor set from a caller's value, so it is
-   * also the only `disclose` the deletion takes with it — two of them, this
-   * argument's assert and its assignment. `scripts/disclose-scan.test.ts` pins
-   * that count.
-   */
   const seatedLeaf = disclose(foundingLeaf);
-  /*
-   * Appended, which on an empty tree is slot 0.
-   *
-   * `insert` rather than `insertIndex(…, 0)` deliberately: append is what moves
-   * the tree's own high-water mark, and the sparse tree will not address an
-   * index above it. Writing index 0 directly worked, but it made the first
-   * seating a different operation from every later one for no gain.
-   */
   signers.insert(seatedLeaf);
   signerLeaves.insert(seatedLeaf);
   threshold = 1;
-  /*
-   * NOTHING ELSE IS INITIALISED, and every absence is deliberate.
-   *
-   * THERE IS NO BALANCE MAP TO INITIALISE. The account keeps no books of its
-   * own. It never held money — this contract has no receive and no send
-   * operation of any kind — and the map that stood for what it held is gone
-   * along with the circuit that spent from it. Money is held by a vault and
-   * every payment out is recorded in `movements` by `recordPayment`.
-   *
-   * `openProposals` and `movements` start empty for the original reason: a new
-   * account has no proposals open and has paid nobody. There is no round to
-   * set, because there is no round any more.
-   *
-   * AND THERE IS NO COUNTER TO INCREMENT. `signerCount` is gone;
-   * `signerLeaves.size()` is the same number and it is read on chain, so the
-   * `signerLeaves.insert` above IS the count going to one.
-   *
-   * THE FOUR RESERVED FIELDS ARE NOT INITIALISED HERE EITHER, and three of them
-   * are not written anywhere in this file at all. That is the point of them —
-   * see their declarations.
-   */
 }
 
-/*
- * Adds a signer, into a free slot.
- *
- * This used to require one existing signer and nothing else, which made the
- * threshold decorative. A single compromised signer could add as many signers
- * of their own as they liked and then approve anything M times by themselves.
- * Every other guarantee in this contract sits on top of "M distinct authorised
- * people agreed", and one stolen key was enough to manufacture that.
- *
- * The rationale for the old behaviour was real but did not carry the weight put
- * on it: adding a signer grants no reading power, because the viewing key is
- * re-wrapped off chain and the chain never holds it. True — and irrelevant to
- * this attack, which is about *approving*, not reading.
- *
- * So there are two paths, and the account's own size decides which:
- *
- *   signerLeaves.size()       the account cannot yet reach its own threshold,
- *     < threshold             so requiring it would deadlock the account at
- *                             creation. One signer may add, and this is the
- *                             only window where that is true.
- *
- *   otherwise                 the addition must itself be an approved proposal,
- *                             committing to this exact leaf, with the full
- *                             threshold behind it.
- *
- * The bootstrap window is genuinely open: whoever deploys can seat the first
- * `threshold` signers unilaterally. That is the same trust as choosing the
- * threshold in the first place, it is bounded, and it is visible on chain in
- * `signerLeaves` — which is the field that answers how many are seated, now
- * that the counter that used to is gone. Beyond it, adding a signer is exactly
- * as hard as spending.
- *
- * THE SEATING is now one piece of code below both paths rather than a copy
- * inside each. Two copies of a seating rule with one of them missing a line is
- * precisely how the duplicate-seat defect happened.
- */
-/*
- * Removes a signer, by clearing their one slot.
- *
- * NOBODY ELSE IS TOUCHED, and that is the whole change. The previous version
- * advanced a generation stamped on every leaf and re-seated every survivor from
- * a fixed-width list, because a HistoricMerkleTree accepts any root it has ever
- * held and the only way to invalidate one leaf was to invalidate all of them.
- * `signers` is a plain tree now, so clearing a slot is enough: the leaf a
- * removed signer can still compute sits in no tree the contract will accept.
- *
- * NOBODY IS IDENTIFIED. `removedLeaf` is a blinded commitment that was already
- * published when they were seated, and it is what the signers approved. The
- * caller proves membership through `requireSigner` exactly as they would to
- * approve a payment — disclosing the root and nothing else.
- *
- * THE SLOT IS DERIVED FROM THE PROOF, not supplied. See `slotOf`: a supplied
- * slot would be bound to nothing, and a wrong one would clear a different
- * person's slot, removing a signer nobody voted to remove while looking like a
- * clean success.
- */
-/*
- * ONE CIRCUIT FOR SEATING AND UNSEATING.
- *
- * `addSigner` and `removeSigner` were separate exported circuits until it was
- * measured that eleven verifier keys are the most one deploy can carry — the
- * per-extrinsic ceiling is ~65% of the block, not the 75% class total
- * (`scripts/dispatch-ceiling.ts`) — and the account needed `adopt` and
- * `recordPayment` on chain more than it needed two entry points for one tree.
- * Seating and unseating are the same sparse-tree operation in opposite
- * directions, so they now share one verifier key, parameterised by `removing`.
- *
- * NOTHING IS WEAKENED, AND THE PROOF IS MECHANICAL: the two branch bodies
- * below are the old circuits' bodies VERBATIM — same asserts, same messages,
- * same order, same indentation (each body keeps its original two-space indent,
- * inside the branch, ON PURPOSE: every mutation that targeted a line of
- * `addSigner` or `removeSigner` must keep targeting the same bytes) — plus two
- * mutations that target the one thing that is new, the `removing`
- * discriminator itself. The doc comments above the old circuits stand above
- * this one, unchanged, one per branch.
- *
- * `removing` is public (`disclose`d to branch on it), which discloses
- * nothing the split circuits did not: WHICH entry point a transaction called
- * was always visible on chain.
- */
+// Seats a signer, or unseats one when `removing` is true. Needs a signer as caller.
 export circuit amendSigner(
-  /*
-   * The leaf being seated (`removing` false) or unseated (`removing` true) —
-   * `newSignerLeaf` / `removedLeaf` of the circuits this one replaces, bound
-   * back to those names at the top of each branch so each body reads, and
-   * mutates, exactly as it did.
-   */
   leaf: Bytes<32>,
-  /*
-   * WHICH approved proposal authorises this.
-   *
-   * It used to be "the" open proposal, because there could only be one. With
-   * several open at once the caller has to name the one they are spending, and
-   * naming it is safe: the id is public, and `requireApproved` still checks it
-   * is open, has reached the threshold, and commits to this exact leaf.
-   *
-   * Ignored on the bootstrap path, where there is no proposal to name.
-   */
   proposal: Bytes<32>,
-  /*
-   * Whether to take a slot a removal freed, rather than appending a new one.
-   *
-   * IT HAS TO BE ASKED, and the reason is a property of the runtime rather than
-   * a choice. The signer tree is SPARSE: an index that has never been written
-   * does not exist in it, so there is no path to a fresh slot and no way to
-   * prove one is empty. Appending is therefore its own operation, and the tree
-   * itself guarantees the slot it lands on is free. Reuse is the other
-   * operation, and it proves the slot holds `vacantSlot()`.
-   *
-   * Public, and it leaks nothing: which slot a signer lands in is visible in
-   * the tree either way. Getting it wrong is harmless in both directions — ask
-   * to reuse when nothing has been vacated and the proof fails; append when a
-   * slot was free and one slot is wasted.
-   */
-  /*
-   * Ignored on the removal path, exactly as `proposal` is ignored on the
-   * bootstrap path: a circuit's arity is fixed, so the branch that does not
-   * read it is simply not taken.
-   */
   intoVacatedSlot: Boolean,
-  /* Which direction. Public, like the choice between two entry points was. */
   removing: Boolean,
 ): [] {
   requireSigner();
@@ -1858,200 +330,44 @@ export circuit amendSigner(
     "that proposal is not for this removal"
   );
 
-  /*
-   * Locate the departing signer's slot, the same way `requireSigner` locates
-   * the caller's: prove the tree holds this leaf, then read the position out of
-   * the flags the proof already bound.
-   */
+  // The departing leaf must be in the tree; its path gives its slot.
   const path = signerPath(removedLeaf);
   assert(path.leaf == removedLeaf, "that path is not for the leaf being removed");
   assert(signers.checkRoot(disclose(merkleTreePathRoot<10, Bytes<32>>(path))),
     "that signer is not on this account");
 
-  /*
-   * The slot is STAMPED VACANT, not reset to the default.
-   *
-   * `insertIndexDefault` was the first attempt and it is the wrong primitive
-   * here: it would leave a slot the tree cannot distinguish from one that was
-   * never written, and a never-written slot has no path, so nobody could ever
-   * prove the slot was free and reuse it. Writing a marker keeps the slot a
-   * real entry with a real path.
-   */
+  // Stamped vacant rather than cleared, so the slot can be reused.
   signers.insertIndex(vacantSlot(), disclose(slotOf(path)));
-  /*
-   * AND THIS LINE IS NOW THE DECREMENT.
-   *
-   * `signerCount.decrement(1)` stood directly under it until the counter was
-   * deleted. The seated count is `signerLeaves.size()`, so taking the leaf out
-   * of the set IS the count coming down — and the floor assert below reads the
-   * result, exactly as it read the decremented counter before.
-   */
   signerLeaves.remove(disclose(removedLeaf));
 
-  /*
-   * Checked after the removal, against what is actually left.
-   *
-   * Below the threshold the account can never approve anything again —
-   * including a proposal to add somebody back — so it is finished, and so is
-   * every vault that named it as its authority, with the money still in them.
-   * Refusing here is the difference between a rejected transaction and a dead
-   * company.
-   *
-   * IT ALSO KEEPS THE BOOTSTRAP WINDOW SHUT, which is the trap this file's
-   * predecessor warned about under "do not decrement the seat count naively".
-   * `addSigner` opens that window exactly when `signerLeaves.size() <
-   * threshold`, and this assert is its precise complement, so a removal can
-   * never reopen it. The two conditions must stay complements: weaken this one
-   * and a removal hands the next single signer the power to seat their own.
-   *
-   * BOTH HALVES WERE RESPELLED TOGETHER WHEN THE COUNTER WENT, AND THAT WAS
-   * THE MOST DANGEROUS PART OF IT. They are forty lines apart, in different
-   * branches of this one circuit, and their correctness is a RELATIONSHIP
-   * between them rather than a property of either — so getting one and not the
-   * other hands one signer the account. `!signerCount.lessThan(x)` became
-   * `!(signerLeaves.size() < x)` because `Set.size()` answers a plain
-   * `Uint<64>` and a plain number has no `.lessThan()` method;
-   * `requireApprovedForVault` records the same substitution and the compiler's
-   * own words for refusing the other spelling.
-   *
-   * WHAT ENFORCES THE COMPLEMENT NOW, NAMED RATHER THAN ASSUMED: NOTHING IN
-   * THE LANGUAGE DOES, AND NO COMMENT ENFORCES ANYTHING. It is held by two
-   * tests and two mutations and by nothing else.
-   *
-   * AND THE TWO TESTS ARE NOT THE PAIR A READER WOULD GUESS. In
-   * `signer-governance.test.ts`, *"bootstrap is bounded"* goes red only when
-   * the GATE is weakened, and *"refuses to strand the account below its own
-   * threshold"* only when THIS assert is — those two DISCRIMINATE. *"AND
-   * THEREFORE a removal can never reopen the bootstrap window"* is the test
-   * that states the property in words, and it goes red for EITHER half: it
-   * proves the complement holds and says nothing about which half broke. The
-   * first draft of this paragraph named that last one as this assert's own
-   * test, and tracing both mutations showed otherwise.
-   *
-   * One mutation weakens each comparison INDEPENDENTLY of the other, each
-   * naming its discriminating test. This paragraph is a pointer to the
-   * enforcers and is not one of them.
-   */
+  // Refuses a removal that leaves fewer signers than the threshold.
   assert(!(signerLeaves.size() < threshold),
     "that would leave fewer signers than the threshold, and the account could never approve again");
 
-  // Consume it exactly as the addSigner branch does, so one approved removal
-  // cannot be replayed.
   closeProposal(id);
   } else {
   const newSignerLeaf = leaf;
 
-  /*
-   * Two values a leaf may never be.
-   *
-   * `vacantSlot()` is the marker a removal writes, so seating it would make a
-   * real signer's position look free and let the next addition take it —
-   * removing them with nobody voting to. Zero is refused alongside it because
-   * an all-zero leaf is what an uninitialised caller sends, and a signer seated
-   * under one cannot be told apart from a mistake.
-   *
-   * Neither can arise honestly: a `persistentCommit` output will not be zero
-   * and will not be a padded ASCII string. This is against a caller who
-   * supplies one on purpose, and it costs two comparisons.
-   */
+  // Neither zero nor the vacancy marker may be seated.
   assert(newSignerLeaf != default<Bytes<32>>, "that is not a usable signer leaf");
   assert(newSignerLeaf != vacantSlot(), "that is not a usable signer leaf");
 
-  /*
-   * Before either path, because both can be replayed and only one of them used
-   * to notice.
-   *
-   * The approved path already closes the round, so a replay there fails on
-   * `proposalOpen`. The bootstrap path had nothing, and a duplicate insert put
-   * a second seat in the tree for one person. Checked once, here, rather than
-   * in the branch that happened to be missing it.
-   *
-   * AND WHAT A DUPLICATE COSTS CHANGED WHEN THE COUNTER WENT — the damage this
-   * line prevents is NOT the damage it was originally written for, and saying
-   * so is the point. Under `signerCount` a duplicate INFLATED the count past
-   * the people behind it, which at 3 of N and above left the account unable to
-   * reach its own threshold, permanently. `signerLeaves.size()` is the count
-   * now and a `Set` insert of a present value is IDEMPOTENT, so that outcome
-   * is unreachable however this line is written. What is left, and what this
-   * line is for today, is the TREE holding one person in two slots while the
-   * set holds them once: a removal then clears one of those slots and that
-   * person keeps approving from the other while the set says they are gone.
-   * The declaration of `signerLeaves` carries the same paragraph, because a
-   * reader arrives at these two lines from either direction.
-   */
+  // One leaf, one seat.
   assert(!signerLeaves.member(disclose(newSignerLeaf)), "that signer is already on this account");
 
-  /*
-   * THE BOOTSTRAP GATE, AND THE OTHER HALF OF THE COMPLEMENT. Its pair is the
-   * floor assert in the removal branch above, and neither line means anything
-   * read on its own. Both were respelled in one operation; the paragraph above
-   * that assert says what holds them together and what does not.
-   *
-   * AND SINCE THE FOUNDING THRESHOLD ARGUMENT WENT, THIS CONDITION IS ALWAYS
-   * TRUE AND THE FREE BRANCH BELOW IS DEAD. DO NOT RE-DERIVE THAT — the proof
-   * is written out in the constructor, beside `threshold = 1`, and it is
-   * `docs/company-accounts.md` section 10a. In one sentence: the constructor
-   * opens at one seat and a threshold of one, and the only other writers of
-   * those two quantities are the two branches of this circuit and
-   * `setThreshold`, each of which asserts `!(signerLeaves.size() < …)` — so
-   * `signerLeaves.size() >= threshold` holds from birth and
-   * `signerLeaves.size() < threshold` can never be true.
-   *
-   * WHAT IS ENFORCED HERE, NAMED RATHER THAN ASSUMED: NOTHING. This line
-   * enforces nothing any more, because the state it discriminates on is
-   * unreachable. The property *no seat is taken without an approved proposal*
-   * is held by the CONSTRUCTOR'S `threshold = 1` and by the two floor asserts,
-   * and it would be broken by changing any of those and not by touching this.
-   *
-   * IT IS KEPT RATHER THAN DELETED, AND THAT IS A DECISION. Deleting the gate
-   * and hoisting `requireApproved` would read cleaner and would make the
-   * account's safety depend on nobody ever restoring a founding threshold
-   * argument — the two are the same line of defence and this branch is the one
-   * that says so out loud. A mutation that weakens this comparison is still
-   * caught, because it changes the reachable state rather than the dead one:
-   * swapped, the gate is FALSE at one seat and one approval, and a bare
-   * `addSigner` seats a second signer with nobody voting. So this line is
-   * still proved load-bearing AGAINST THE SPELLING, which is the only thing
-   * that was ever in danger.
-   */
+  // Always true: signers never fall below the threshold, so every later seat needs a proposal.
   if (!(signerLeaves.size() < threshold)) {
-    // Live account: the addition has to be an approved proposal of its own.
     const id = disclose(proposal);
     requireApproved(id);
-    // The approved proposal has to be for THIS leaf. Without this line any
-    // approved proposal would authorise adding anyone, which is the same hole
-    // in a different place.
     assert(
       disclose(proposalIdOf(signerAddPayload(newSignerLeaf), noVault(), proposalSalt()) == proposal),
       "that proposal is not for this signer"
     );
 
-    // Consume it exactly as the removal branch does, so one approved addition
-    // cannot be replayed to add a second signer.
     closeProposal(id);
   }
 
-  /*
-   * Seated. Two ways in, and everything that DECIDES anything is above this
-   * point — the duplicate guard, the bootstrap-or-approved gate, the round.
-   * Only the tree write differs, which is deliberate: the duplicate-seat
-   * defect was a seating rule copied into two branches with one of them
-   * missing a line.
-   *
-   * Disclosing the slot number in the reuse path is safe, and is not the same
-   * act as disclosing a caller's slot: a vacated slot belongs to nobody. The
-   * leaf going into it is disclosed on the same line and is blinded, exactly
-   * as it was before slots were reusable.
-   *
-   * `disclose(intoVacatedSlot)` is required and is not noise. EVERY parameter
-   * of a circuit is private until it is disclosed — even one the caller chose
-   * openly — so branching on it and then writing to the ledger tells the
-   * compiler that the branch taken is observable, and it refuses to let that
-   * happen silently. It is the same check that made the rejected `revoked`-Set
-   * design impossible, working correctly: there the value it would have forced
-   * us to declare was WHICH SIGNER was acting. Here it is which of two seating
-   * routes was used, which the resulting tree shows anyway.
-   */
+  // Into a vacated slot, or appended.
   if (disclose(intoVacatedSlot)) {
     signers.insertIndex(disclose(newSignerLeaf), disclose(takeVacatedSlot()));
   } else {
@@ -2061,53 +377,7 @@ export circuit amendSigner(
   }
 }
 
-/*
- * Changes M in M of N.
- *
- * BOTH DIRECTIONS NEED THE CURRENT THRESHOLD, and nothing more. An earlier
- * version of this circuit demanded unanimity to LOWER the threshold, on the
- * grounds that lowering degrades the account permanently rather than merely
- * spending what is in it. **That guard was theatre, and the reason is worth
- * keeping so nobody re-adds it.**
- *
- * M colluding signers can already reach total, permanent control WITHOUT
- * touching the threshold, by removing everybody else one at a time. In a
- * 2-of-5, two colluders remove the other three — each removal needs two
- * approvals, which they have, and each passes the floor check because the count
- * never drops below the threshold. The account ends as 2-of-2 with the two of
- * them in it. That is the same outcome as lowering to 1, it is permanent in the
- * same way, and it needs only the threshold.
- *
- * So a stricter rule on lowering does not close the route; it closes one of two
- * doors into the same room. **A guard that looks like protection and is not is
- * worse than an honest absence of one** — it invites people to reason as though
- * the threshold cannot be weakened by M signers, when it can.
- *
- * The cost of the extra rule was real, too: unanimity means one lost key blocks
- * a legitimate change until that signer is removed by governance surgery.
- *
- * What actually protects this operation is the same thing that protects a
- * spend: M distinct authorised people agreed, the payload is domain separated
- * so an approval to pay cannot be spent as an approval to change the rule, and
- * the threshold is one of the few values deliberately PUBLIC on chain — so a
- * change to it is more visible to an auditor than any payment this account
- * makes.
- *
- * THE HOLE THIS CIRCUIT WOULD OTHERWISE OPEN, and it is not obvious.
- * `addSigner` treats `signerLeaves.size() < threshold` as "this account is
- * still being set up" and lets ONE signer seat another unilaterally. Raising
- * the threshold above the number of seated signers would therefore hand any
- * single signer that power back, by a route that did not exist when the
- * original hole was closed. Refusing `newThreshold > signerLeaves.size()` is
- * what stops it, and that line is as load-bearing as the floor in
- * `removeSigner`.
- *
- * IT IS A THIRD READING OF THE SAME NUMBER AND NOT A THIRD HALF OF THE
- * COMPLEMENT, and the distinction is worth keeping: the complement is the pair
- * inside `amendSigner`. This assert guards the OTHER route to the same hole —
- * moving the bar rather than moving the seats — and it has always had its own
- * mutation and its own test.
- */
+// Changes the threshold under an approved proposal. Refuses zero, or more than the signers.
 export circuit setThreshold(newThreshold: Uint<64>, proposal: Bytes<32>): [] {
   requireSigner();
 
@@ -2118,177 +388,33 @@ export circuit setThreshold(newThreshold: Uint<64>, proposal: Bytes<32>): [] {
     "that proposal is not for this threshold"
   );
 
-  // An account of nobody, or one that needs no agreement at all, is not an
-  // account. One is the floor; below it there is no M of N left to audit.
   assert(disclose(newThreshold) > 0, "the threshold must be at least one");
 
-  /*
-   * The guard described above. Without it, raising the threshold past the
-   * number of seated signers reopens the bootstrap window and one signer can
-   * seat their own.
-   */
   assert(!(signerLeaves.size() < disclose(newThreshold)),
     "the threshold cannot exceed the number of signers, or one signer could seat their own");
 
   threshold = disclose(newThreshold);
 
-  /*
-   * Consume it exactly as addSigner and removeSigner do.
-   *
-   * NOTE WHAT THIS NO LONGER DOES: it does not invalidate any other proposal.
-   * Under the round design, changing the threshold burned every approval on the
-   * account — including approvals given to a payment that was one signature from
-   * settling. Every other proposal now keeps its approvals and is measured
-   * against the NEW threshold when it settles, which is the honest reading of
-   * "the account now requires three".
-   */
   closeProposal(disclose(proposal));
 }
 
-/*
- * Opens a proposal. The chain receives a commitment to the payload, never the
- * payload, so an observer learns that this account proposed something and
- * nothing else.
- *
- * NOTE WHAT IS NOT DISCLOSED HERE, because it is the one place multi-asset
- * could have leaked and does not: the asset key is computed and fed into
- * `changeCommitmentOf` as a private value, and it is never disclosed anywhere
- * — there is no public map left for it to index. Disclosing it at PROPOSE time
- * would have told an observer which asset a run concerns while the round was
- * still open, which is a live signal about a pending payment and is worth
- * nothing to anyone but a watcher.
- */
-/*
- * A PAYROLL RUN, RAISED WITH ITS WINDOW.
- *
- * A sibling of `propose` rather than an argument to it, and the reason is that
- * `propose` takes its payload as an opaque hash — deliberately, so the account
- * never learns what a governance proposal or a run contains. That opacity is
- * exactly what stops it recording a window it cannot verify.
- *
- * So this circuit builds the run's payload ITSELF from the parts. The id it
- * produces therefore provably belongs to a run with these bounds, and the
- * stored window cannot disagree with the approved one. **That is the only way
- * `cancel` can be trusted to know whether a run has started.**
- *
- * NOT A REPLACEMENT FOR `propose`. Governance keeps the opaque path; it has no
- * window today, and giving it one is a separate decision rather than a detail.
- *
- * `until` is exclusive and `from` inclusive — the same convention as the
- * predicates that enforce them, so a window can be stated as a day boundary
- * without an off-by-one at midnight.
- */
-/*
- * ONE CIRCUIT FOR BOTH KINDS OF PROPOSAL.
- *
- * `propose` and `proposeRun` were siblings until it was measured that eleven
- * verifier keys are the most one deploy can carry
- * (`scripts/dispatch-ceiling.ts`). The difference between them was never the
- * RULE — both open a proposal at zero approvals under a fresh salt — it was
- * the payload's shape: governance hands an opaque hash, a run is built from
- * its parts so the stored window provably belongs to the approved id. That is
- * a parameter, so it is now `isRun`.
- *
- * NOTHING IS WEAKENED, AND THE PROOF IS MECHANICAL: the two branch bodies
- * below are the old circuits' bodies VERBATIM — same asserts, same messages,
- * same order, same indentation, kept so every mutation that targeted them
- * still targets the same bytes — plus one new mutation on the `isRun`
- * discriminator itself. The old doc comments stand above this one, one per
- * branch. The opacity argument that made `proposeRun` a sibling rather than an
- * argument still holds and is unchanged by the merge: the opaque path still
- * learns nothing about a governance payload, and the run path still builds its
- * payload itself from the parts.
- *
- * `isRun` is public (`disclose`d to branch on it), which discloses nothing
- * the split circuits did not: WHICH entry point a transaction called was
- * always visible on chain, and `runWindow` gaining an entry says it anyway.
- */
+// Opens a proposal at zero approvals: a run built from its parts, or a governance payload.
 export circuit propose(
-  /* The opaque payload commitment. Read only when `isRun` is false. */
   payloadHash: Bytes<32>,
-  /* The run's parts, exactly `proposeRun`'s. Read only when `isRun` is true. */
   root: Bytes<32>,
   payees: Uint<64>,
   opensAt: Uint<64>,
   closesAt: Uint<64>,
-  /* Which kind. Public, like the choice between two entry points was. */
   isRun: Boolean,
   vault: Bytes<32>,
 ): [] {
   requireSigner();
 
   if (disclose(isRun)) {
-
-  /*
-   * A run with no payees can never be completed and a backwards window can
-   * never be entered. Both would collect approvals and settle nothing, so they
-   * are refused here rather than discovered on payday.
-   */
+  // A run needs payees, a window that opens before it closes, and a vault other than `noVault()`.
   assert(disclose(payees) > 0, "a run with no payees");
   assert(disclose(opensAt) < disclose(closesAt), "a run window ends before it opens");
 
-  /*
-   * A RUN NAMES THE VAULT THAT WILL PAY IT, AND THIS IS THE LINE THAT MAKES
-   * THAT TRUE RATHER THAN MERELY PROMISED IN THREE TYPESCRIPT FILES. It is the
-   * MIRROR of the assert in the governance branch below: that one says a
-   * governance proposal names NO vault, and this says a run names ONE.
-   * Together they are the whole of what this circuit can check about a
-   * proposal's kind.
-   *
-   * WHAT IT REFUSES. A run raised at `noVault()`. Such a run is well formed in
-   * every other respect — it takes an `openProposals` row, an `approvalCounts`
-   * row and a `runWindow` row, it collects approvals and it costs a fee — AND
-   * NO VAULT CAN EVER PAY IT. A vault presents ITSELF: both payout paths hand
-   * `recordPayment` `disclose(kernel.self().bytes)` (`Vault.compact:599` and
-   * `:772`), and `noVault()` is the hash of a domain string no address can
-   * equal (`:1014-1016`), so the id a vault recomputes can never be this one.
-   *
-   * SAID AT ITS TRUE SIZE, BECAUSE THE OBVIOUS WORDING OVERCLAIMS. THIS IS NOT
-   * THE STRANDED-RUN FAILURE. A run raised through the GOVERNANCE branch below
-   * writes NO window, so `closeExpiredRun` refuses it for ever and `cancel`
-   * fails open. A run refused HERE has a window row: it is cancellable before
-   * it opens, sweepable after it closes, and its payees are payable from a
-   * fresh run, because leaves are keyed on the run id
-   * (`src/midnight/run-keys.ts:123-124`). WHAT IT COSTS IS A BURNT FEE AND A
-   * WASTED APPROVAL ROUND — a silent no-op made into a refusal, and nothing
-   * worse than that.
-   *
-   * SO WHY IT IS HERE AT ALL, AND THE ANSWER IS ABOUT WHAT ENFORCES THE
-   * INVARIANT RATHER THAN ABOUT SEVERITY. THREE TypeScript sites refuse this
-   * sequence and two of them say IN THEIR OWN WORDS that the contract does not
-   * — `src/midnight/ledger.ts:834-857` (*"the contract's run branch takes the
-   * vault OPAQUE — it asserts nothing about it"*),
-   * `src/core/ledger.ts:1294-1308` and `src/core/account.ts:2447-2452`. A
-   * client habit is not an enforcer, and one comparison is a cheap price for
-   * turning a stated invariant into a checked one. AND THIS IS THE LAST EDIT
-   * THIS FILE TAKES BEFORE THE LEDGER LAYOUT FREEZES, so an invariant left to
-   * the client here is left to the client for ever.
-   *
-   * IT REFUSES NOTHING THE PRODUCT DOES AND TURNS NO TEST RED, MEASURED RATHER
-   * THAN ASSUMED: all three client doors above already refuse it before a fee,
-   * and every `proposeRun` call site under `contracts/test/` passes an explicit
-   * non-sentinel vault. `contracts/test/simulator.ts:659` DEFAULTS an omitted
-   * vault to the sentinel and no caller omits one — a harness path to exactly
-   * this proposal that has never been walked.
-   *
-   * WHAT IT DOES NOT BUY, NAMED SO NOBODY BUILDS ON IT. It refuses ONE VALUE,
-   * not a class. Any other 32 bytes that is not a deployed vault is equally
-   * unpayable, and `thresholdFor` returns the ACCOUNT threshold for every
-   * value not seated in `thresholds`, so such a run reaches `movements.insert`
-   * at the account's own bar exactly as this one would. The contract cannot
-   * tell a vault address from arbitrary bytes, and it deliberately does not
-   * consult `vaults` on the spend path. `noVault()` is the one value it can
-   * name.
-   *
-   * THE OTHER POSITION, WRITTEN DOWN AND NEITHER MARKED CORRECT.
-   * `assert(vaults.member(disclose(vault)), ...)` would close the sentinel AND
-   * arbitrary bytes for the same one-change budget. Against it: it is a ledger
-   * READ rather than a comparison against a value this circuit already
-   * instantiates; it makes raising a run depend on an adopt ordering nothing
-   * in the product enforces yet; and IT IS NOT EVEN STRICTLY STRONGER, because
-   * `adopt` refuses only a vault already adopted and nothing anywhere stops
-   * `noVault()` itself being adopted. Recorded here rather than built.
-   */
   assert(disclose(vault) != noVault(), "a run must name the vault that will pay it");
 
   const salt = proposalSalt();
@@ -2302,171 +428,17 @@ export circuit propose(
 
   openProposals.insert(id, change);
   approvalCounts.insert(id, 0);
-  /*
-   * THE ONLY WRITE OF A RUN'S WINDOW ANYWHERE IN THIS CONTRACT. Two inserts
-   * became one when `runStart` and `runEnd` were merged; the property that
-   * matters is unchanged. Nothing but this line puts a window on chain, and
-   * the governance branch below writes none — so a governance proposal has NO
-   * ROW in `runWindow` at all, which is what `cancel` and `closeExpiredRun`
-   * read.
-   *
-   * AND THAT IS NOW TRUE IN BOTH DIRECTIONS, WHICH IT WAS NOT ALWAYS. "Only
-   * this line writes a window" is not the same claim as "every id a payment
-   * will accept has one", and it was the second that `cancel` and
-   * `closeExpiredRun` were relying on. The branch below could mint a run's
-   * exact id with no window row until it was made to refuse a vault; the
-   * assert that refuses it is what makes THIS sentence a fact about every
-   * proposal rather than about the ones raised honestly.
-   */
+  // The only place a window is written.
   runWindow.insert(id, Window { opensAt: disclose(opensAt), closesAt: disclose(closesAt) });
   } else {
-
-  /*
-   * A GOVERNANCE PROPOSAL NAMES NO VAULT, AND THIS IS THE LINE THAT MAKES THAT
-   * TRUE RATHER THAN MERELY STATED.
-   *
-   * WHAT WAS AVAILABLE WITHOUT IT, AND IT WAS AVAILABLE TO ANY SINGLE SIGNER.
-   * `runPayload` is an EXPORTED PURE circuit, so any caller evaluates it off
-   * chain, and both branches of this circuit take their salt from the same
-   * `proposalSalt()` witness. So a signer calling this branch with
-   * `payloadHash = runPayload(root, payees, opensAt, closesAt)` and a real
-   * vault produced an id BIT-IDENTICAL to the one the run branch above would
-   * have produced, with the same `openProposals` row and the same
-   * `approvalCounts` row — and NO ROW IN `runWindow` AT ALL.
-   *
-   * `recordPayment` did not notice, and paid. It recomputes the id the same
-   * way and reads the run's bounds FROM ITS OWN ARGUMENTS rather than from the
-   * ledger, so every payment settled exactly as it would for a run raised
-   * properly. `cancel` did notice, and FAILED OPEN: its guard is
-   * `runWindow.member(id) ? blockTimeLt(...) : true`, so a missing row yields
-   * `true` and the cancel is unconditional. Sixty payees paid, the proposal
-   * cancelled, the remaining forty never payable from it — the half-paid-run
-   * failure, reached again by a second route to the same id.
-   *
-   * AND THAT FAILURE'S FIRST FIX WAS VERIFIED IN THE WRONG DIRECTION, WHICH IS
-   * WHY NOBODY SAW THE SECOND ROUTE. The property that was pinned is that this
-   * circuit is the only value-writer of `runWindow`. That is still true and it
-   * is not the property `cancel` needs. What `cancel` needs is that EVERY ID A
-   * VAULT CAN BE PAID AGAINST HAS A WINDOW ROW, and until this assert nothing
-   * anywhere asserted it.
-   *
-   * SAID IN THAT NARROW FORM DELIBERATELY, AND THE BROAD FORM IS FALSE. "Every
-   * id `recordPayment` will accept has a window row" is NOT what this assert
-   * buys, because `recordPayment`'s `forVault` is a caller-chosen argument
-   * rather than something the chain reads: a signer calling it directly with
-   * `noVault()` can still complete an id that has no window row. That costs no
-   * money — no vault can ever pay against such an id — and it is the accepted
-   * fee burn, reached by a longer road than the one already open. THE LINE
-   * THAT MATTERS IS THE ONE ABOUT VAULTS, and writing the broad form here
-   * would license somebody to build on an unreachability that does not hold.
-   *
-   * WHAT ENFORCES THE INVARIANT NOW, NAMED RATHER THAN ASSUMED: THIS LINE, AND
-   * NOTHING ELSE DOES. With it, a governance-branch id can only ever be
-   * `proposalIdOf(h, noVault(), salt)`. A vault hands `recordPayment` its own
-   * `kernel.self().bytes` and `noVault()` is the hash of a domain string that
-   * no address can equal, so NO VAULT CAN EVER SATISFY
-   * `requireApprovedForVault` FOR A GOVERNANCE ID. The failure stops being
-   * GUARDED and becomes UNREPRESENTABLE — which is why the fix is one assert
-   * here rather than a window check added to `cancel` and a second one added to
-   * `closeExpiredRun`, two places whose agreement nobody would have written
-   * down either.
-   *
-   * AND ONE SMALLER THING CLOSES WITH IT, STATED PRECISELY BECAUSE THE OBVIOUS
-   * WORDING OVERCLAIMS. The run branch's two sanity asserts — no payees, and a
-   * backwards window — were bypassed by the same route, and a proposal built
-   * that way collected approvals and settled nothing. They are not bypassable
-   * ON A PAYABLE ID any more. The same malformed payload can still be raised
-   * through this branch with `noVault()`, and what it then IS is an ordinary
-   * governance proposal: no vault can pay it, and `cancel` removes it
-   * unconditionally. It is NOT reachable by `closeExpiredRun`'s permissionless
-   * sweep — but neither is any other governance proposal, by design, so that
-   * was never a thing this assert closed and an earlier draft of this
-   * paragraph was wrong to say so.
-   *
-   * IT REFUSES NOTHING THIS PRODUCT DOES, AND THAT WAS READ AT SOURCE RATHER
-   * THAN ASSUMED. Every governance consumer in this file already recomputes its
-   * id with `noVault()` — `amendSigner` in both branches, `setThreshold`,
-   * `setVaultThreshold`, `adopt` and `retireVault` — so an id raised with
-   * anything else was already unusable by all six of them.
-   *
-   * WHAT IT COSTS, STATED BECAUSE THE OTHER POSITION IS WORTH HAVING TOO: one
-   * comparison on a circuit that is already the largest in this contract, and
-   * it forecloses raising a VAULT-SCOPED proposal through the opaque branch.
-   *
-   * AND SOMETHING DOES WANT THAT SHAPE — AN EARLIER DRAFT OF THIS PARAGRAPH
-   * SAID NOTHING DID AND WAS FALSE AT SOURCE. `Accounts.propose` carries an
-   * optional `vault`, documented as *"WHICH VAULT'S MONEY THIS ROUND REACHES
-   * INTO"*, and the boundary threads it into this branch verbatim.
-   * `src/core/a-vault-s-own-threshold.test.ts` exercises it with two real
-   * vaults.
-   *
-   * WHAT THAT FEATURE HAS EVER DONE ON CHAIN IS NOTHING, AND THIS ASSERT MAKES
-   * THAT AUDIBLE RATHER THAN CAUSING IT. A vault-scoped GOVERNANCE id is
-   * consumable by no circuit in this file: every governance consumer recomputes
-   * with `noVault()` and so matches nothing, and the one circuit that reads a
-   * vault's own threshold is `recordPayment`, which requires the run payload.
-   * So the round it raises could be approved and then spent by nobody. Those
-   * tests are green because they run against the simulated ledger. **A silent
-   * no-op becomes a refusal, and the refusal is the honest one** — but it will
-   * arrive as a failed transaction after a fee unless the boundary refuses it
-   * first, which is the convention `proposeRun`'s two mirrored asserts already
-   * set and which is not built here.
-   */
+  // A governance proposal names no vault, so no vault can ever be paid against it.
   assert(disclose(vault) == noVault(), "a governance proposal cannot name a vault");
-
-  /*
-   * NO "a proposal is already open" ASSERT, and its absence is the feature.
-   *
-   * This used to be `assert(!proposalOpen, ...)`, which meant an admin could not
-   * raise a vendor invoice while payroll was collecting signatures. Several
-   * proposals now sit open at once and are approved independently — the only
-   * thing that ever refuses is two of them reaching for the same money, and that
-   * refusal happens at settlement, where it is a double spend being prevented
-   * rather than a queue being enforced.
-   */
 
   const salt = proposalSalt();
 
-  /*
-   * Record the change, not the outcome.
-   *
-   * Computed from witnesses rather than taken as an argument, so nothing extra
-   * is disclosed: the proposer's device already holds all three, and only their
-   * blinded commitment reaches the chain.
-   *
-   * Note what is deliberately NOT asserted: that the proposer's view of the
-   * money is current. A change is relative, so it does not depend on any
-   * balance at all — which is what lets a deposit into the VAULT land
-   * mid-approval without invalidating anything, and what lets two proposals be
-   * written against the same holding and settle in either order.
-   */
   const change = disclose(changeCommitmentOf(
     assetKeyOf(assetId(), assetBlinding()), changeAmount(), changeBatchDigest(), salt));
 
-  /*
-   * The proposal's id is its own blinded commitment.
-   *
-   * Unique by construction, because `salt` is fresh on every proposal — so two
-   * identical payrolls in the same month are two different ids, and a signer's
-   * approval of one is not an approval of the other. It is also already the
-   * value approvals bind to, so there is no second identifier to keep in step.
-   */
-  /*
-   * THE VAULT IS PART OF THE PROPOSAL'S IDENTITY.
-   *
-   * Not a field beside it — inside the commitment that names it. So an approval
-   * raised for the payroll vault is not a rejected id at the treasury vault, it
-   * is a MEANINGLESS one: recomputing the id there produces different bytes and
-   * matches nothing.
-   *
-   * That is what lets a vault ask this account whether a payment was approved
-   * without the account needing to know who is asking — which matters, because
-   * a contract on Midnight cannot see its caller. The scoping lives in the
-   * identity rather than in an access check that cannot be written.
-   *
-   * `noVault()` for anything that concerns no vault: governance, and the
-   * account's own internal ledger.
-   */
   const id = disclose(proposalIdOf(payloadHash, disclose(vault), salt));
   assert(!openProposals.member(id), "that proposal is already open");
 
@@ -2475,18 +447,7 @@ export circuit propose(
   }
 }
 
-/*
- * Approves one proposal.
- *
- * The observer sees that proposal's count rise by one and a nullifier appear.
- * They cannot tell which signer it was, and they cannot forge a second approval
- * from the same signer because the nullifier is already burned.
- *
- * `proposal` is an argument now, where it used to be implicit in "the open
- * one". That is the visible half of it: a signer approving the March payroll
- * and a signer approving a vendor invoice are two independent acts, in either
- * order, and neither is invalidated by the other settling.
- */
+// Adds the caller's approval to one open proposal. Refuses a second from the same signer.
 export circuit approve(proposal: Bytes<32>): [] {
   const sk = requireSigner();
   const id = disclose(proposal);
@@ -2499,236 +460,28 @@ export circuit approve(proposal: Bytes<32>): [] {
   approvalCounts.insert(id, (approvalCounts.lookup(id) + 1) as Uint<64>);
 }
 
-/*
- * Withdraws one proposal.
- *
- * It used to exist largely because the account could hold only one proposal, so
- * a single one that would never reach its threshold wedged everything. That is
- * no longer true — an abandoned proposal now blocks nothing — but withdrawing
- * one is still worth having, so a stale item does not sit in the queue looking
- * actionable, and so its slot in the public map goes away.
- *
- * The nullifiers of anyone who already approved stay burned. That is correct
- * and costs nothing: this proposal is dead, and a re-proposal takes a fresh
- * salt and is therefore a different id with different nullifiers.
- */
+// Withdraws an open proposal. Needs a signer; refuses a run once its window has opened.
 export circuit cancel(proposal: Bytes<32>): [] {
   requireSigner();
   const id = disclose(proposal);
   assert(openProposals.member(id), "there is no open proposal with that id");
 
-  /*
-   * A RUN CANNOT BE CANCELLED ONCE ITS WINDOW HAS OPENED.
-   *
-   * The failure this closes is a signer cancelling a half-paid run: sixty
-   * people are paid, the proposal closes, and the remaining forty can never be
-   * paid from it. No money is lost and forty people are unpaid, which is not a
-   * distinction anybody on payroll appreciates.
-   *
-   * **The boundary is the window opening, not the approval threshold**, and the
-   * difference matters for scheduled payroll: six months approved in one sitting
-   * must stay changeable, and month four has to be cancellable right up until
-   * the moment it can start paying. Before the window opens no payment can have
-   * happened, so cancelling strands nobody; after it opens, nothing may end the
-   * run but time.
-   *
-   * `runWindow.member` is false for governance proposals, which keep the old
-   * unconditional behaviour — AND WHAT MAKES THAT SAFE IS NOT THIS LINE. Read
-   * as a guard it fails OPEN: no row yields `true` and the cancel is
-   * unconditional. It is sound only because a missing row cannot belong to
-   * anything a VAULT will be paid against, and the enforcer of THAT is the
-   * assert in `propose`'s governance branch refusing a vault. Until that
-   * assert existed this ternary was open to any single signer. Weaken it and
-   * this line stops protecting anybody, silently, and nothing here will say
-   * so.
-   *
-   * WHAT THIS DOES NOT TAKE AWAY. Stopping a live run needs no on-chain
-   * action: every payment must present that payee's secret nonce, and those
-   * exist only with the operator, so they stop a run by not submitting it.
-   * Nobody else can submit for them. That is a better brake than a circuit,
-   * and it is why this restriction costs the product nothing.
-   */
-  /*
-   * A TERNARY AND NOT `||`, deliberately. `thresholdFor` proves this shape
-   * compiles and behaves; `||` with a ledger lookup on its right-hand side is
-   * untested here, and a circuit has no short-circuit evaluation to rely on —
-   * a lookup of an absent key would be reached rather than skipped.
-   */
-  /*
-   * AND IT IS A `member()` CALL, NOT A COMPARISON AGAINST ZERO, and it
-   * survived the merge of the two window maps deliberately. A governance
-   * proposal has no row in `runWindow` at all; the day somebody rewrites this
-   * as `opensAt == 0` the absence stops being the test and a written number
-   * starts being it.
-   */
   assert(runWindow.member(id) ? blockTimeLt(runWindow.lookup(id).opensAt) : true,
          "that run has already started; it can no longer be cancelled");
 
   closeProposal(id);
 }
 
-/*
- * TIDYING UP A RUN WHOSE WINDOW HAS PASSED.
- *
- * Under the window rule nothing closes a run at the moment its last payee is
- * paid — completion is derived rather than asserted — so a finished run stays
- * in the open map until somebody sweeps it. This is that sweep.
- *
- * **DELIBERATELY PERMISSIONLESS, AND THE REASONING SHOULD BE CHECKED RATHER
- * THAN TAKEN ON TRUST.** It is the only circuit here that any stranger may call.
- * All it can do is remove a proposal whose window has already closed — an
- * authorisation that is already dead, because every payment asserts the same
- * bound. So it can neither pay anybody, prevent a payment that was still
- * possible, nor close anything a signer could still have used. Requiring a
- * signer would mean an account whose signers have all left keeps a growing map
- * of expired rows forever, which is a worse property than a stranger being
- * allowed to take out the rubbish.
- *
- * It does not record that the run FINISHED, because it cannot know: a run whose
- * window passed with three payees unpaid closes exactly the same way. What was
- * paid is in `movements`, permanently, and that is the only honest source.
- */
+// Anyone may close a run whose window has passed. A governance proposal is not a run.
 export circuit closeExpiredRun(proposal: Bytes<32>): [] {
   const id = disclose(proposal);
   assert(openProposals.member(id), "there is no open proposal with that id");
-  /*
-   * THE `member()` CALL THAT MAKES THIS CIRCUIT SAFE TO LEAVE PERMISSIONLESS.
-   * Read the paragraph above first, then this one.
-   *
-   * The only thing standing between a stranger and an open GOVERNANCE proposal
-   * is that a governance proposal has no row in `runWindow`. WHAT ENFORCES
-   * THAT, NAMED IN THE RIGHT DIRECTION: the run branch's `runWindow.insert` is
-   * the only value-writer of the map and the governance branch writes none, so
-   * governance implies no row. The assert that refuses a vault in the
-   * governance branch enforces the CONVERSE, which is what `cancel` needs and
-   * this circuit does not; an earlier draft of this sentence credited it here
-   * and pointed a reader at the wrong line. Written instead as `closesAt ==
-   * 0`, `blockTimeGte(0)` is always true and any stranger could close a signer
-   * removal that was one approval short, at one transaction each — and
-   * governance proposals are the only way signers are amended and thresholds
-   * moved. The merge of the two window maps kept this a `member()` call for
-   * exactly that reason. IT MUST STAY ONE.
-   */
   assert(runWindow.member(id), "that is not a run");
   assert(blockTimeGte(runWindow.lookup(id).closesAt), "the payment window for this run has not closed yet");
   closeProposal(id);
 }
 
-/*
- * THE CIRCUIT A VAULT CALLS.
- *
- * This is the whole interface between the account that decides and the vault
- * that holds the money, and its shape is a correction to a worse earlier
- * design.
- *
- * The first version was a read — "did this reach its threshold?" — after which
- * the vault paid and the proposal was left open for `cancel` to tidy up later.
- * That is a leak with housekeeping bolted on: a paid proposal that still looks
- * unpaid, and a second record in the vault to stop it being paid twice, which
- * is one fact written in two places and the defect this project has paid for
- * more than any other.
- *
- * IT IS A WRITE. The vault calls it; this circuit proves the proposal is open,
- * has enough approvals for ITS VAULT, and that THIS PAYEE is one the signers
- * approved — then records that payee as paid and hands back what the run
- * authorised. The vault pays. One transaction per payee, so a five-person
- * company pays for five.
- *
- * ATOMICITY IS THE GUARANTEE. If the payment fails, the transaction reverts and
- * this completion reverts with it — so "completed" and "paid" cannot disagree.
- * Nothing needs to reconcile them because they are the same event.
- *
- * WHY THE SALT IS REQUIRED. Proposal ids are public the moment they are raised.
- * Without proof of possession, anyone watching the chain could call this and
- * burn an approval without paying — the payment would then need re-proposing
- * and re-approving, for nothing. Recomputing the id from the salt is the same
- * proof `addSigner` already uses, and the salt travels in the sealed payload to
- * the people meant to act on it.
- *
- * AND WHY THE SALT IS AN ARGUMENT HERE, WHERE EVERY OTHER CIRCUIT READS IT
- * FROM THE `proposalSalt()` WITNESS. It is the one place in this contract
- * where a private value is deliberately made public.
- *
- * A cross-contract callee is proved by whoever builds the transaction, and the
- * caller cannot furnish this contract's witnesses — the vault does not have
- * our private state and must not. Compact 0.33's own limitations say a callee
- * "must not invoke a witness" for exactly that reason. The COMPILER does not
- * enforce it: its `contract implements` check is real, and five negative
- * controls were refused by it, but it accepts a witness-reading callee anyway.
- *
- * THE RUNTIME DOES ENFORCE IT, and this is no longer a precaution. Executed
- * offline by `scripts/cross-contract-spike.ts`:
- *
- *     Cross-contract callee '4549…' invoked witness 'proposalSalt'
- *
- * A witness here would compile, deploy, and throw the first time a vault tried
- * to pay anybody.
- *
- * Taking it as an argument costs one thing and it is worth naming precisely:
- * cross-contract arguments must be disclosed, so THE SALT BECOMES PUBLIC AT
- * CLAIM TIME. That is not a leak of anything that still matters. The claim
- * consumes the proposal in the same transaction, so a spent salt cannot be
- * replayed; the payload hash was already public; and the salt alone never let
- * anybody approve or cancel — those need a signer's key. What it
- * proves is possession at the moment of claiming, which is all it was ever for.
- *
- * WHY NO CALLER CHECK. There is none to write: a contract cannot see who called
- * it, and it cannot read another contract's state. The vault is bound into the
- * proposal's identity instead, which is stronger — a proposal for another vault
- * does not fail an access check here, it simply is not this id.
- *
- * AND WHY NO `requireSigner()`, which is the line a reader will look for.
- *
- * It would break the circuit for its only caller: a VAULT is a contract, and a
- * contract holds no secret key and sits in no signer tree, so it could never
- * satisfy it. The proof of possession above is what stands in its place.
- *
- * AND WHAT THAT COSTS, STATED CORRECTLY. The paragraph that stood here said
- * this grants nothing new "because the salt is held by the signers and a
- * signer can already `cancel`", and that the proposal "is lost and must be
- * raised again". BOTH HALVES ARE FALSE, and each was made false somewhere else
- * while nobody re-read this. What is true:
- *
- * A SIGNER CANNOT ALREADY `cancel`, NOT INSIDE THE WINDOW, NOT ANY MORE.
- * `cancel` is refused once `opensAt` has passed and this circuit is refused
- * before it. THE TWO POWERS ARE EXACTLY DISJOINT IN TIME, so there is no
- * moment at which one substitutes for the other and the equivalence that
- * paragraph rested on describes a contract that no longer exists.
- *
- * AND WHAT IS LOST IS NOT THE PROPOSAL — IT IS THE PAYEE. `movements` is keyed
- * on the LEAF ALONE, deliberately, and the paragraph at step 3 below says why;
- * and NO CIRCUIT ANYWHERE REMOVES FROM IT. `closeProposal` clears
- * `openProposals`, `approvalCounts` and `runWindow` and nothing else. So the
- * burn is PER PAYEE AND PERMANENT: one signer, alone, with no approval from
- * anybody, can rebuild every payee's secrets from the account's payout seed —
- * which every signer holds, by design, so a run does not die with whoever
- * raised it — and mark a whole approved run complete without a coin moving.
- * Afterwards every `Vault.payout` is refused "that payment has already been
- * made", `cancel` is refused because the window has opened, and every
- * instrument in this product reads the chain and reports the run finished.
- *
- * THE MONEY IS NOT STOLEN — IT STAYS IN THE VAULT. What is destroyed is the
- * run, and those people must be paid from a fresh one.
- *
- * THIS IS ACCEPTED AND NOT FIXED, AND THE DECISION IS WRITTEN DOWN RATHER THAN
- * REMEMBERED: `docs/accepted-risks.md` section 1 — *accept and detect*. IT
- * CANNOT BE REMOVED FROM HERE. This circuit's whole authorisation is knowledge
- * of its arguments because its only caller is a contract, and a contract on
- * Midnight cannot see who called it and cannot read another contract's state.
- *
- * WHAT DETECTS IT: the vault's `payments` counter counts ACTUAL payouts and
- * `movements` counts COMPLETIONS. Under normal operation they agree; after a
- * burn they diverge, and the divergence is readable off chain by anyone, with
- * no new circuit. **Nothing in the product reads them against each other
- * today**, which is a fact about today and not a mechanism.
- *
- * AND THE FIX A READER WILL REACH FOR IS A MONEY LOSS. Keying `movements` on
- * `(leaf, proposal)` confines the burn to one proposal and undoes the
- * leaf-alone key, which is what lets a retry run be submitted while the first
- * is still live with whichever-lands-first winning. Re-key it and BOTH land
- * and THE PAYEE IS PAID TWICE. `docs/accepted-risks.md` names it first for
- * that reason.
- */
+// Records one payee of an approved run as paid. No caller check: the run and its salt stand in.
 export circuit recordPayment(
   proposal: Bytes<32>,
   vault: Bytes<32>,
@@ -2744,181 +497,35 @@ export circuit recordPayment(
   const id = disclose(proposal);
   const forVault = disclose(vault);
 
-  /*
-   * 1. THE PROPOSAL, AND WHAT IT APPROVED.
-   *
-   * Recomputing the id from the run's payload proves three things at once, and
-   * it is worth naming them separately because each would otherwise need its
-   * own check and its own place to be forgotten:
-   *
-   *   - the caller holds the proposal's SALT, not merely its public id
-   *   - the ROOT is the one the signers approved, not one invented afterwards
-   *   - the PAYEE COUNT is the approved one, so a run cannot be declared
-   *     finished early or made never to finish
-   *
-   * The salt is public from the first claim onward. That is safe here for a
-   * reason that is not the cross-contract one and is worth keeping distinct:
-   * what stops a watcher claiming the REST of the run is not the salt, it is
-   * that every leaf needs its own preimage. See `payoutLeaf`.
-   */
+  // The arguments must recompute this proposal's id, which needs its salt.
   assert(
     disclose(proposalIdOf(
       runPayload(disclose(root), disclose(payees), disclose(opensAt), disclose(closesAt)),
       forVault, disclose(salt)) == id),
     "that is not this proposal, or you were not given it");
 
-  /*
-   * 1a. INSIDE THE APPROVED WINDOW, and this is what replaced a counter.
-   *
-   * `blockTimeGte`/`blockTimeLt` read the BLOCK's context rather than this
-   * contract's state, so they compile to no `popeq` on a ledger field and two
-   * payments of the same run never contend on them. That is the entire reason
-   * a hundred payments of one run can settle together.
-   *
-   * The bounds came through `runPayload` above, so they are the ones the signers
-   * approved rather than ones the caller chose — which is why this assert can be
-   * trusted and why the window is inside the payload rather than beside it.
-   *
-   * A run therefore ends by TIME and by nothing else. Nobody can end it early,
-   * which is how the half-paid cancel disappears rather than being guarded
-   * against; and after it closes, who was paid is final, which is what makes a
-   * retry run safe to build.
-   */
+  // Only inside the approved window.
   assert(blockTimeGte(disclose(opensAt)), "that run has not started yet");
   assert(blockTimeLt(disclose(closesAt)), "the payment window for this run has closed");
 
+  // With this vault's threshold of approvals.
   const change = requireApprovedForVault(id, forVault);
 
-  /*
-   * 2. THIS PAYEE BELONGS TO THAT RUN.
-   *
-   * The leaf is recomputed from its parts, never taken as given, and that is
-   * the whole of why `payoutLeaf` takes a preimage rather than a hash — read
-   * its comment. `merkleTreePathRoot` answers with a `MerkleTreeDigest`
-   * wrapping a Field rather than 32 bytes, which is why the cast is here and
-   * not an oversight: the account holds no tree to ask, only a root that
-   * arrived inside an approved commitment, so the two are compared directly.
-   */
+  // The payee must be a leaf of the approved run.
   const leaf = payoutLeaf(details, nonce);
   assert(path.leaf == leaf, "that path is not for this payee");
   assert(merkleTreePathRoot<16, Bytes<32>>(path).field as Bytes<32> == root,
          "that payee is not in the approved run");
 
-  /*
-   * 3. PAID ONCE, IN ANY RUN.
-   *
-   * The record is the LEAF alone — not the leaf and the proposal — so this
-   * payment can happen once, ever. That is what lets a retry run reuse the
-   * original leaves for whoever was missed and be submitted while the first run
-   * is still live: whichever lands first wins, and the other is refused here.
-   *
-   * It is also the record the product reads to answer "who is still
-   * outstanding" — on chain, so no status column of ours can disagree with it.
-   * `movements` is a set of independent inserts and commutes, so this line is
-   * not a contention point (§E.6b).
-   */
+  // Once ever, in any run.
   const movement = disclose(paidMovementOf(leaf));
   assert(!movements.member(movement), "that payment has already been made");
   movements.insert(movement);
 
-  /*
-   * 4. NOTHING HAPPENS AT THE END, AND THAT IS THE DESIGN.
-   *
-   * There is no counter to decrement and no proposal to close. A run stops
-   * being payable when its window shuts; whether it finished is derived from
-   * `movements` against the run's leaves, by whoever is asking.
-   *
-   * The rule that an approved payment completes its proposal rather than
-   * leaving it open for housekeeping is not abandoned, it is satisfied
-   * differently: the proposal is not left open awaiting a decision, it expires
-   * on a schedule the signers themselves approved. `closeExpiredRun` sweeps
-   * the row afterwards and asserts nothing about completeness, because it
-   * cannot know and neither can any circuit at a hundred payees.
-   *
-   * The `payees` count stays in the payload and stays bound into the id even
-   * though nothing counts down against it. It is what tells a client how many
-   * leaves a run has, and dropping it would let a run be approved for one size
-   * and reported at another.
-   */
   return change;
 }
 
-/*
- * Gives one vault its own approval threshold, or changes it.
- *
- * Governance, so it needs the account's own threshold behind it — the same
- * machinery as `setThreshold`, applied to one vault instead of the account.
- *
- * NOT BOUNDED BY THE SIGNER COUNT the way `setThreshold` is. That check exists
- * because an account-wide threshold above the number of signers reopens the
- * bootstrap window, and a vault has no bootstrap window: a vault threshold
- * nobody can meet makes that vault unspendable, which is recoverable by
- * lowering it, rather than dangerous.
- *
- * AND IT DOES NOT CHECK THAT `vault` IS A VAULT. That is deliberate and the
- * whole of what this circuit will and will not refuse is written out here,
- * because the missing check is the first thing a reader reaches for.
- *
- * WHAT IT REFUSES: a threshold of zero, below, which would authorise anything
- * at that key for ever. WHAT IT DOES NOT: anything about the key itself. Any
- * 32 bytes can be seated at any non-zero number, including bytes no vault will
- * ever present and including the sentinel this contract uses to mean "no
- * vault". A row, once seated, has no way out — nothing in this file removes
- * from this map — so the number can be moved afterwards but the exception
- * cannot be given up, and a vault that gets its own bar stops inheriting the
- * account's for ever.
- *
- * THE OBVIOUS GUARD WAS CONSIDERED AND REFUSED, AND THE REASON IS WRITTEN DOWN
- * SO IT IS NOT PROPOSED A THIRD TIME. Refusing the sentinel here closes ONE
- * value out of 2^256. Every other value that is not a deployed vault reaches
- * exactly the same place, is seated exactly as easily, and is refused by
- * nothing — so the guard would name the one case a reader thinks of and leave
- * the class it belongs to untouched, which reads as protection and is not.
- *
- * WHAT THE SEATED ROW THEN COSTS, AND IT IS NOT NOTHING. Seating any key at
- * all needs a proposal carried at the account's own full threshold, so the
- * road starts where the account is already held. But two things follow that an
- * earlier draft of this paragraph got wrong, and both are written out because
- * the wrong version read like a reason not to worry.
- *
- * FIRST, THE KEY CAN BE PRESENTED. The one reader of this map takes its key
- * from `recordPayment`'s ARGUMENT, which this contract constrains with
- * nothing: a contract here cannot see its caller, so a real vault handing its
- * own address is the vault's property and not this contract's. Anyone may call
- * `recordPayment` with a seated key. No money moves — this contract holds none
- * — but `recordPayment` is what writes a payee into `movements`, permanently,
- * and a payee written there is unpayable from that run for ever. A seated row
- * lowers the approval bar on exactly that circuit. It is a second road into a
- * limit this contract already has rather than a new door, and it is not a
- * harmless one.
- *
- * SECOND, IT IS NOT REVERSIBLE THE WAY THE ACCOUNT'S OWN BAR IS. Raising the
- * account threshold afterwards restores nothing here: a seated key stops
- * inheriting for ever, and only another governed round can re-set its number.
- * So this is not a party degrading a bar they already control — it is a
- * permanent divorce from the bar they control, granted in one round.
- *
- * NONE OF WHICH ARGUES FOR THE SENTINEL GUARD, AND THAT IS THE POINT. Every
- * sentence above is equally true of any other 32 bytes no vault will present,
- * and the guard would refuse exactly one of them.
- *
- * WHAT WOULD CHANGE THE ANSWER, AND IT IS SCOPED TO THE SENTINEL BECAUSE THAT
- * IS THE QUESTION THIS BLOCK IS ABOUT: a reader of this map that a caller who
- * is NOT a vault can reach and that moves value on the answer.
- *
- * SAID THAT WAY ON PURPOSE. The broad form — "a reader of this map that moves
- * value" — reads as though the map never gates money, and the opposite is what
- * the map is FOR: a vault's payout calls the account first and pays only if it
- * was not refused, so a vault seated at one approval pays at one approval, in
- * the same transaction, today. That is the feature. What is absent is a reader
- * a non-vault caller can reach that moves value.
- *
- * AND THAT ABSENCE IS NOT WHY THE SENTINEL GOES UNGUARDED. It is contingent,
- * and a later circuit could end it. The reason is the one above: the guard
- * would refuse one value out of 2^256 while every other key no vault will
- * present is seated and reached identically. That reason is structural and
- * survives the absence ending, which is why it is the one to read.
- */
+// Sets one vault's threshold under an approved proposal. Refuses zero; the vault need not be adopted.
 export circuit setVaultThreshold(
   vault: Bytes<32>,
   newThreshold: Uint<64>,
@@ -2937,27 +544,7 @@ export circuit setVaultThreshold(
   closeProposal(id);
 }
 
-/*
- * ADOPTING A VAULT. Scope 3.2. Read the note above `vaults` first.
- *
- * A governed round, at the ACCOUNT's own threshold, exactly as
- * `setVaultThreshold` is and for the same reason: this is a change to the
- * rulebook rather than a movement of one vault's money, so it answers to the
- * rule that governs the rulebook. `noVault()` in the id for that reason — a
- * proposal that named the vault in its vault slot would be measured against the
- * VAULT's threshold, which is the wrong number for a decision the vault has no
- * standing in.
- *
- * The vault's identity is bound into the payload instead, so an approval to
- * adopt one vault is not an approval to adopt another.
- *
- * ADOPTION IS THE ACCOUNT'S ALONE and no vault is called, which is worth saying
- * because `retire` below is not. There is nothing to ask a vault here: the
- * account is recording a decision about a name, and a vault that does not exist
- * yet, or that is not listening, must not be able to block a company from
- * writing down what it intends to fund. Retirement is the other way round
- * because it turns on a fact only the vault holds.
- */
+// Adds a vault to the register under an approved proposal. Refuses one already there.
 export circuit adopt(vault: Bytes<32>, proposal: Bytes<32>): [] {
   requireSigner();
   const id = disclose(proposal);
@@ -2967,53 +554,12 @@ export circuit adopt(vault: Bytes<32>, proposal: Bytes<32>): [] {
     "that proposal does not authorise adopting this vault");
   requireApproved(id);
 
-  /*
-   * Refused rather than treated as a no-op. `Set.insert` of something already
-   * present would succeed silently and burn the round, and the two cases mean
-   * different things: adopting twice is a mistake in whoever raised the
-   * proposal, and a mistake that reports success is how a company ends up
-   * believing it adopted a DIFFERENT vault.
-   */
   assert(!vaults.member(disclose(vault)), "this account has already adopted that vault");
   vaults.insert(disclose(vault));
   closeProposal(id);
 }
 
-/*
- * RETIRING ONE. Scope 3.2.
- *
- * CALLED BY THE VAULT, NOT BY A SIGNER, and the direction is forced rather than
- * chosen. The round must be refused while the vault still holds notes, that
- * refusal must be the contract's rather than the client's, and the fact it
- * turns on — the size of the vault's own `notes` set — cannot be read from
- * here: a contract cannot read another contract's state. So the vault checks
- * what only it can see and then calls this, which checks what only the account
- * can see. `Vault.compact`'s `retire` is the other half and carries the same
- * note.
- *
- * NO `requireSigner()`, and it is the line a reader will look for. It is the
- * same answer `recordPayment` gives at length: the caller is a CONTRACT, which
- * holds no secret key and sits in no signer tree, so it could never satisfy one
- * — and a cross-contract callee may not read a witness in any case, which is
- * measured rather than assumed (`scripts/cross-contract-spike.ts`). Recomputing
- * the id from the salt stands in its place, exactly as it does there: it proves
- * possession of something only the signers were given.
- *
- * THE SALT BECOMES PUBLIC at that moment. It authorises nothing on its own —
- * approving, executing and cancelling all need a signer's key — and the round
- * it completes is one the signers already approved.
- *
- * AND WHAT THIS DELIBERATELY DOES NOT DO: nothing anywhere consults `vaults`
- * before authorising a payment. `recordPayment` does not, and adding the check
- * there was considered and rejected. A retired or never-adopted vault can
- * still pay out a run its signers approved. The reason is the rule at the top
- * of `docs/how-money-can-be-lost.md`: a membership check on the spend path
- * turns "the round that adopted this vault was raised against the wrong
- * address" into money that cannot be moved, and this list exists to help a
- * company FIND its money rather than to stand between the company and it.
- * Refusing to FUND an unadopted vault is the product's job, and that refusal
- * costs nothing when it is wrong.
- */
+// Unregisters a vault and marks it retired, on an approved proposal and its salt. No caller check.
 export circuit retireVault(
   proposal: Bytes<32>,
   vault: Bytes<32>,
@@ -3027,23 +573,6 @@ export circuit retireVault(
   requireApproved(id);
   assert(vaults.member(forVault), "this account has not adopted that vault");
   vaults.remove(forVault);
-  /*
-   * AND THE RETIREMENT IS RECORDED, which is the whole of what `retiredAt` is
-   * for.
-   *
-   * The value is a marker and not a date — read the declaration of `retiredAt`
-   * for why a circuit cannot know the time, and where the date actually lives.
-   *
-   * WHAT THIS DOES NOT CLOSE, SAID HERE RATHER THAN LEFT TO BE ASSUMED.
-   * Retiring a vault has two halves and this is one of them. The other is that
-   * `thresholds` STILL HAS NO REMOVAL PATH: `setVaultThreshold` inserts and
-   * nothing anywhere removes, so a vault retired here leaves its per-vault
-   * threshold behind — a governing number for an address the account has just
-   * declared it no longer runs, which `thresholdFor` would hand straight back
-   * if that address were ever adopted again. **THE STALE ROW SURVIVES.** It is
-   * not fixed here because a removal is a decision about what re-adoption
-   * should mean.
-   */
   retiredAt.insert(forVault, 1);
   closeProposal(id);
 }

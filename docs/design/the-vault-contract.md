@@ -1,0 +1,1013 @@
+# The vault contract
+
+This is part of a payroll product on the Midnight network. A company's account contract decides, by M-of-N signer approval, what may be paid; its vault contracts hold the money and pay only what the account approves.
+
+This document holds the reasoning behind the vault contract, `contracts/src/Vault.compact`. The source file keeps the code and a short line above each circuit saying what it does and what it refuses. Why each piece is shaped the way it is lives here, under the name of the circuit, field or witness it belongs to.
+
+Everything here refers to the contract by name. Where a passage belongs to one step inside a circuit, its heading quotes the line of code it sits beside. The vault's counterpart, which decides who may authorise a payment, is described in [the account contract](the-account-contract.md). Much of this document explains a design by what it replaced: passages that say 'used to', 'the first version' or 'formerly' describe earlier versions, not the contract as it stands. Where a passage says 'this file', it means the contract source. A capitalised opening marks the claim a paragraph makes; the text beneath it is the reasoning.
+
+## What the vault is
+
+### The vault as a whole
+
+THE VAULT.
+
+It holds the money. It decides nothing.
+
+Every rule about WHO may authorise a payment lives in the account contract,
+and nothing in this file duplicates one. That separation is the point of
+having two contracts rather than one: an account is a rulebook that outlives
+any particular pot of money, and a vault is a pot of money that answers to a
+rulebook it cannot argue with.
+
+Deliberately small. This is the only contract in the system that can lose the
+money, so it has to be readable in one sitting by somebody a customer hires.
+
+WHY THE VAULT CALLS THE ACCOUNT AND NEVER THE OTHER WAY ROUND
+
+A cross-contract callee may not read a witness — the compiler permits it and
+the runtime refuses it at execution, which is proved rather than read. A
+vault that holds its coins privately reads a witness to spend one, so the
+circuits that spend one can never be callees, and the direction of every
+call here is forced by that rather than chosen.
+
+AND THE RULE IS PER CIRCUIT, NOT PER CONTRACT. The runtime's refusal fires when a callee circuit INVOKES a witness, not when its contract declares one; the check is in the Compact runtime's cross-contract call code (`@midnight-ntwrk/compact-runtime` 0.19.0). `noteToSpend` is this contract's only witness, and only `payout` and `splitNote` invoke it; every other exported circuit here invokes none and could be a callee today. The direction of the calls is still right, because it is forced for the two circuits that matter, but it is forced for those two and not for every circuit here.
+
+The same rule is why `recordPayment` on the account takes so many arguments:
+everything it checks has to be passed in, and passing it in makes it public.
+Which of those values may safely become public is the subject of most of
+this document.
+
+WHY THE ACCOUNT IS PINNED IN LEDGER STATE
+
+Compact cannot create a contract reference, so one arrives from application
+code. If the account were an ARGUMENT to `payout`, whoever calls the vault
+would choose which contract it asks whether a payment was approved — and an
+attacker's contract answers "approved, pay me". The vault would pay, out of
+a real customer's money, having checked everything correctly.
+
+So the account is fixed when the vault is created. IT CANNOT BE REDIRECTED
+TODAY BECAUSE NO CIRCUIT IN THIS FILE WRITES `account` — the constructor is
+the only assignment — AND FOR NO OTHER REASON. The platform
+permits the write: a circuit MAY rewrite a contract-typed ledger field and
+the write reaches persisted state, which the Foundation compiles and asserts
+(in the Compact compiler's own composable mutual-recursion tests).
+
+A REDIRECT IS THEREFORE A DESIGN QUESTION, NOT A PLATFORM LIMIT. A way to redirect a vault was designed and refused, because a vault cannot meet every condition a safe redirect needs. Until that is settled this vault is pinned, and the pin is held by an absence rather than a rule.
+
+The runtime's own interface check does not cover this: it compares a hash of
+the deployed verifier key, so it catches a target running DIFFERENT CODE, and
+an attacker deploying the same account contract with themselves as its only
+signer passes it.
+
+## What the vault may ask its account
+
+### `contract Acct`
+
+The account this vault belongs to. Set once, at creation, never again.
+
+`recordPayment` and `retireVault` are declared, and nothing else. A contract
+type is satisfied structurally, so declaring less is not a loophole: it is the
+whole interface this vault is allowed to use, written down where a reader can
+see its size. The section below on `retireVault` says why it is two and not
+one.
+
+### `retireVault`, as the vault sees it
+
+RETIREMENT, AND WHY THE VAULT IS THE ONE THAT ASKS FOR IT.
+
+The rule — "a retire round is refused while the vault still holds notes" —
+is the account's, because the account is the rulebook. The FACT it turns
+on lives here: `notes` is this contract's own ledger field, and a contract
+cannot read another contract's state, which was probed rather than
+assumed.
+
+So the check cannot be written where the rule lives, and the design refuses
+to let it be written in the client — "a client-side refusal is a
+client-side refusal". The only remaining place it can be the CONTRACT's is
+here, in the contract that can see the pool, calling the account that owns
+the rule. The direction is forced exactly as `recordPayment`'s is.
+
+This grows the interface a vault is allowed to use from one circuit to
+two, which is the cost, and it is stated rather than hidden: whoever reads
+`contract Acct` is reading the whole of what a vault may do to an account.
+
+## State
+
+### `notes`
+
+WHAT THIS VAULT HOLDS: A POOL OF NOTES, AS COMMITMENTS.
+
+A shielded token is a note, not a balance. Nothing on chain says what a vault
+holds — only these 32-byte commitments, one per note, and the notes
+themselves live on the owner's device and arrive by witness when spent.
+
+A POOL RATHER THAN ONE NOTE, and the difference is the whole of the design.
+One note has to be spent whole and its change taken back, so a hundred
+payments become a chain: payment 12 cannot be built until 11 has settled,
+one stuck payment stalls everything behind it, and every hop is another
+chance to lose the record. **Two payments spending DIFFERENT notes have
+nothing to say to each other.**
+
+A SET RATHER THAN A MAP, keyed by nothing. A note's commitment already binds
+its token, so a key would be a second name for something the value already
+says — and choosing one would mean choosing what an observer gets to see.
+
+WHAT THIS PUBLISHES. Anybody reading the chain learns how many notes the
+vault holds. That is why the pool is kept at a FIXED SIZE: a constant is
+uninformative, where a count that moved with each payroll would be the
+company's headcount. Nothing in this contract enforces the constant — it is
+the owner's maintenance discipline, and the honest place to say so is here
+rather than in a comment claiming a privacy property the code does not have.
+
+THE RISKIEST LINE IN THE PROJECT, still: this is a record of the money that
+is not the money. If a commitment and the note it describes ever disagree,
+that note is unspendable. What changed with the pool is the BLAST RADIUS —
+one bad record now costs one note rather than the treasury.
+
+### `unshieldedTokens`
+
+WHAT THIS VAULT ALSO HOLDS: PUBLIC MONEY, AND THE CHAIN IS THE RECORD OF IT.
+
+NIGHT is an UNSHIELDED token by definition — `nativeToken()` returns
+`UnshieldedTokenType` in the ledger's own type declarations — and there is no conversion; a
+token's type is fixed at creation. So a vault that only spoke Zswap could not
+hold the asset this product launches with, and the pool above is half of what
+the design specifies: *"Each vault holds both public and private money, side by
+side. There is no such thing as a 'private vault' or a 'public vault'."*
+
+THIS SET IS NOT A BALANCE, AND THAT IS THE WHOLE POINT.
+
+An unshielded balance is the LEDGER's own number, kept per contract per
+colour in `ContractState.balance` and moved only by the declared effects of a
+contract call: `unshielded_inputs` are added and `unshielded_outputs` are
+subtracted with `checked_sub`, and an underflow is
+`TransactionInvalid::BalanceCheckOutOfBounds`, measured in the ledger's own
+source, `ledger/src/semantics.rs` in midnightntwrk/midnight-ledger 8.2.0-rc.1. **The chain therefore refuses,
+by itself, to let this vault send public money it does not have.**
+
+So there is NO NOTE, NO NONCE, NO COMMITMENT, NO MERKLE INDEX and NO POOL on
+this side, and this contract keeps NO SECOND COPY OF THE AMOUNT. The design's
+own warning — *"its own record of what it holds, versus what it actually
+holds, is two records of one fact"* — says that copy is unavoidable for
+private coins because the chain will not tell us. Here the chain will tell
+us, so keeping one would be manufacturing the hazard rather than accepting it.
+
+WHAT IT IS: the set of colours this vault has been credited with, so that
+`retire` can refuse to strand public money exactly as it already refuses to
+strand notes. `notes.isEmpty()` says nothing about a NIGHT balance, and
+without this a vault holding the company's whole fee float would retire
+clean. A colour leaves the set only through `forgetUnshielded`, which the
+chain will not let lie.
+
+IT IS COMPLETE, AND THAT IS MEASURED RATHER THAN HOPED. A UTXO's owner is a
+`UserAddress` and cannot be a contract —
+`ledger/src/structure.rs` in midnightntwrk/midnight-ledger 8.2.0-rc.1, and the definition of `Utxo` says the same,
+so **nobody can credit this vault's unshielded balance without calling
+`depositUnshielded`.** There is no unshielded equivalent of the shielded
+side's *"funded by anybody who learns its address"*: for public money the
+door is the only way in.
+
+WHAT IT PUBLISHES: which token types this vault has held. Public already —
+the balance itself is on chain for anybody to read — so this discloses
+nothing the ledger does not.
+
+### `payments`
+
+How many payments this vault has made. Public, and deliberately so: it is the
+one number an auditor can check without any key at all, and it says nothing
+about who was paid or how much.
+
+## Reserved storage
+
+### Why a field is reserved now
+
+RESERVED STORAGE. ONE FIELD, DECLARED AND NOTHING ELSE.
+
+A DEPLOYED CONTRACT'S MACHINERY CAN BE REPLACED. ITS STORAGE CAN NEVER BE
+ADDED TO. A circuit can be swapped at the same address with the state
+intact; a ledger field is fixed when the contract is constructed, and no
+update, upgrade or maintenance operation can add one. The only way to gain a
+field is a new contract at a new address, which for a company means new
+vaults, every note moved, every signer re-seated and every payee's key
+material re-issued. So the one below is declared now, empty, for a feature
+that is designed later.
+
+NO CIRCUIT IN THIS FILE READS OR WRITES IT, and none must be given one except
+by the work that designs the feature itself: storage is permanent and
+circuits are not, so a circuit written now for an unspecified feature spends
+deploy bytes on a guess.
+
+FOUR OTHER FIELDS WERE CONSIDERED FOR THIS SAME MOMENT AND WERE CUT. THAT WAS
+DELIBERATE AND THE REASON IS STRUCTURAL, SO NOBODY LATER READS THE ABSENCE AS
+AN OVERSIGHT AND "FIXES" IT WITH A CONTRACT NOBODY CAN MIGRATE TO. They were
+a record of retirements, a hold on a proposal, a successor address, and a
+per-signer permission map.
+
+WHY NONE OF THE FOUR COULD EVER HAVE BEEN WRITTEN. `contract Acct` above is
+the whole of what a vault may ask an account, and BOTH of its circuits are
+calls this contract makes OUTWARD. Nothing calls inward. Each answers one
+operation-specific question and performs that operation's own side effect —
+was this PAYMENT approved, and was this RETIREMENT approved — and neither
+answers "did the signers approve this" in general. NO SIGNER'S IDENTITY
+CROSSES THAT BOUNDARY IN EITHER DIRECTION. So a circuit here that placed a
+hold, seated a role or named a successor would have nothing to check its
+caller against, and a value the caller simply asserts is a claim this
+contract would be TRUSTING rather than a guard — the objection `retire` below
+already makes about handing the account a fact only this contract can see.
+There is no inbound governed write path into this contract, and no later
+circuit creates one. Those three fields would have been storage that nothing
+could ever fill.
+
+AND THE FOURTH IS A DIFFERENT REASON: THE ACCOUNT ALREADY RECORDS RETIREMENTS.
+A contract cannot read another contract's state, so the same fact written in
+both places could never be reconciled on chain and neither copy would be
+authoritative — a company would get two answers from the two places it is
+entitled to ask. Every rule about who may authorise a payment belongs to the
+account, as the top of this file says, and a record of what the account
+retired belongs beside the registry it was removed from.
+
+THE ONE BELOW IS THE ONE THIS CONTRACT CAN ACTUALLY ENFORCE, and the same
+structure is why: it is written on the path this contract already
+authorises, out of values it already holds.
+
+### `spendingCaps`
+
+HOW MUCH THIS VAULT MAY SPEND IN A PERIOD. RESERVED. DECLARED ONLY.
+
+WHY IT IS THE VAULT'S AND NOT THE ACCOUNT'S: the vault is the thing that
+holds the money and initiates the payment, so it is the only place a cap can
+be checked at the moment it is spent. Everything such a check needs — the
+amount, the token, and this vault's own address — is already an argument of
+the circuits that pay, and their authorisation has already crossed the
+boundary for that payment by the time the check would run.
+
+`Bytes<32>` per vault, and the type deliberately does not decide the design.
+A running total kept in the clear would publish how much the company pays
+out, which is the first thing this product is supposed to keep. Thirty-two
+bytes hold a commitment to a running total and a period instead, and a later
+circuit can prove a payment stays under the cap without the total ever being
+readable on chain. They also hold a plain total, cast, if the recoverable
+design is preferred once somebody prices both — though that cast can fail at
+run time, so the plain form puts a new way for a payment to abort on the
+money path and the committed form does not.
+
+AND THE COST OF THE COMMITTED FORM, WHICH IS NOT A DETAIL: a commitment is
+opened by a value kept off chain. A running total nobody can reproduce is a
+cap that can never be satisfied again, and unlike a note that cannot be
+opened, that stops every payment this vault will ever make rather than one.
+Whoever builds the circuit owes a way for any signer to rebuild the opening,
+not one device — and owes it before the cap is switched on, not after.
+
+WHAT IT WOULD PUBLISH ONCE A CIRCUIT WRITES IT: in the committed form,
+nothing but the fact that this vault has a cap at all. In the plain form,
+how much the company pays out.
+
+## Choosing a note
+
+### `noteToSpend`
+
+The coin this vault is about to spend, and the blinding that commits to it.
+
+A witness, because the coin is private. The vault is the ROOT contract in
+every transaction it takes part in, so it may read witnesses — see the note
+at the top about why it can never be a callee.
+
+WHICH NOTE TO SPEND, chosen on the device rather than by the contract.
+
+Coin selection is the owner's problem and the owner's information: which
+notes they hold, which are already promised to a payment being built
+elsewhere, which they would rather keep whole. A contract that chose would
+need to see the pool's contents, and the pool's contents are exactly what it
+must not see.
+
+The contract's job is to refuse a bad choice, not to make a good one — the
+note must be in the pool, of the right token, and big enough.
+
+### Why a note's blinding is derived rather than supplied
+
+"noteBlinding" AND "nextBlinding" USED TO BE HERE, and their removal is what
+closed an unspendable-deposit hole.
+
+Both handed the choice of a note's blinding to whoever built the call.
+`deposit` went further and took the blinding as an ARGUMENT, so the vault
+wrote down whatever it was given without ever checking that anybody could
+produce that number again. A deposit made under a blinding the owner cannot
+reproduce is a commitment describing a note nobody can open: the money is
+visibly on chain and permanently unspendable.
+
+It could not be fixed by requiring the depositor to use the owner's secret,
+because a deposit arrives from OUTSIDE — a customer, a subsidiary, an
+exchange — and an outsider has no way to hold a vault's secret. Any design
+that keeps the blinding secret leaves that hole open for every deposit that
+did not come from the company itself.
+
+So the blinding is DERIVED IN-CIRCUIT from the coin and the vault's own
+address, by `noteBlindingOf` below, at every point where a note comes into
+existence and at the one point where a note is spent. Nobody chooses it,
+nobody stores it, and there is no second implementation of the rule to
+disagree with this one.
+
+## Derivations
+
+### `payoutDetails`
+
+A payment's private details, folded into 32 bytes.
+
+This is what the vault hands the account instead of the payee. The account
+checks that this value's leaf belongs to the approved run and never learns
+what is inside it — the recipient, the token and the amount stay in the
+vault's own arguments, which are private by default.
+
+THE PAYEE IS TOLD BY THE PLATFORM, NOT BY THIS CONTRACT.
+
+A shielded output to a user carries a COIN CIPHERTEXT, attached when the
+transaction is assembled — `ZswapOutput.new(coin, segment, recipient,
+encryptionPublicKey)` — so the payee's own wallet finds the coin and keeps it
+in history for good, with no help from us. midnight-js REFUSES to build the
+transaction if the payee's encryption key cannot be resolved, so a contract
+cannot silently pay somebody a coin they will never find.
+
+An earlier version of this file carried an encrypted payslip in an emitted
+event and bound the payee's encryption key into these details. It cost 77,292
+zkir on the circuit that runs once per person, and it was solving a problem
+the platform already solves. Deleted rather than refined.
+
+**What is still the client's job:** passing the payee's encryption key in
+`CallTxOptions.additionalCoinEncPublicKeyMappings` on every payout. It is a
+transaction option, not a circuit argument, so this contract cannot check
+it.
+
+`persistentCommit` rather than `persistentHash`, and the blinding is not
+decoration: without it the details are a hash of three guessable values —
+an address anyone can read off the chain, a token type there are few of, and
+an amount somebody may know — so a watcher could confirm a guess about who
+was paid what. With it they cannot.
+
+### `unshieldedPayoutDetails`
+
+THE SAME THING FOR PUBLIC MONEY, AND IT IS DELIBERATELY A DIFFERENT NUMBER.
+
+WHY THIS EXISTS AT ALL, because reusing `payoutDetails` would have been one
+circuit fewer and it loses money.
+
+A run's leaf is `payoutLeaf(details, nonce)` and the account authorises the
+LEAF. `recordPayment` never sees the recipient, the token or the amount — it
+takes `details` as 32 opaque bytes, which is why it works identically for
+both kinds (see `payoutUnshielded`). **But that also means the leaf does not
+say WHICH KIND OF MONEY it authorises**, and the 32 bytes of a recipient do
+not say either: `ZswapCoinPublicKey` and `UserAddress` are both
+`{ bytes: Bytes<32> }` and live in different key spaces. Neither does the
+token: at the kernel a token type is `Either<Bytes<32>, Bytes<32>>`, the side
+choosing shielded or unshielded, so **the same 32 bytes name a shielded and
+an unshielded token at once.**
+
+So with one details derivation, an approval collected for a shielded payment
+could be settled through the unshielded circuit — same leaf, account
+satisfied, paid-once satisfied — and the money would leave as a UTXO
+addressed to a `UserAddress` built out of somebody's Zswap coin public key.
+**That address belongs to nobody, and there is no unshielded burn address
+and no way back.** The amount would be right, the approval would be real,
+and the payee would never see it.
+
+A FOURTH SLOT AND A DOMAIN SEPARATOR MAKE THAT UNREPRESENTABLE rather than
+discouraged: a commitment over four values is not a commitment over three,
+so a leaf built for one kind cannot satisfy the other and the account refuses
+it by the path check it already has. Nothing about the shielded derivation
+moves — `payoutDetails` above is byte-for-byte what it was, so every run
+already approved stays valid.
+
+### `heldCommitmentOf`
+
+What the chain holds for a coin this vault owns.
+
+Over the UNQUALIFIED coin — nonce, colour and value — and not the qualified
+one, which is the same coin plus its index in the chain's merkle tree. The
+index is not known when a deposit arrives and changes as the tree grows, so
+committing to it would produce a record that stops matching the coin it
+describes. What identifies the money is the nonce, the token and the amount.
+
+### `noteBlindingOf`
+
+THE BLINDING OF EVERY NOTE THIS VAULT HOLDS.
+
+A pure function of the coin and the vault's address, and that is the point:
+a value nobody chooses cannot be chosen badly. Every note this contract
+commits to — a deposit from outside, the change from a payment, either half
+of a split — is committed under this, and the one place a note is spent
+recomputes it here rather than asking a witness for it.
+
+WHY IT AGREES WITH `heldCommitmentOf` RATHER THAN REPLACING IT. The
+commitment is still `persistentCommit(coin, blinding)`, unchanged and still
+over the UNQUALIFIED coin, for the reason given above it. What changed is
+only where the second argument comes from. The two definitions did not have
+to be adjusted to meet each other.
+
+WHY THE VAULT'S ADDRESS IS IN IT, and it is the same argument
+`approvalNullifier` in the account makes for the account's own address.
+Without it the commitment is a pure function of the coin alone, so two
+vaults that ever held the same coin would publish the same 32 bytes and an
+observer could link them. With it they cannot. It costs nothing: every
+caller already knows which vault it is talking to.
+
+WHAT IS DELIBERATELY GIVEN UP, stated plainly because it is a real property
+and not a technicality. A blinding is normally secret, and this one is not:
+anybody who knows a coin and the vault holding it can compute the commitment.
+For a DEPOSIT that costs nothing, because the deposit already discloses the
+coin (see `deposit` below) and inserts the commitment in the same public
+transaction — the link was public before this change and is public after it.
+For CHANGE and for the halves of a SPLIT it costs nothing either, because
+those coins are outputs of a shielded transaction: their nonces and values
+are not public, so their commitments cannot be recomputed by anybody who was
+not already holding them.
+
+WHAT IT DOES COST is recorded rather than buried here: a stranger who
+watched a deposit can reconstruct that note and therefore satisfy the
+pool-membership check in `splitNote`. They cannot move the money out —
+`splitNote`'s only recipient is this vault, spelled as `kernel.self()` — but
+they can reshape the pool and force the owner to re-read it from the chain.
+That is a RECOVERABLE failure, and an unspendable deposit is not; between
+two designs the one that fails recoverably wins.
+
+#### `noteBlindingOf`, at `return persistentHash<Vector<5, Bytes<32>>>([ pad( …`
+
+Flattened rather than hashed as a struct. `persistentCommit` over a whole
+struct is measured to compile and this would
+almost certainly do the same — but writing the three fields out says, at
+the place a reader will look, exactly what a note's identity is: its
+nonce, its token and its amount. Nothing else is in here, and nothing that
+changes over a note's life is: the merkle index the chain assigns is not a
+field of `ShieldedCoinInfo` and must not be, for the reason
+`heldCommitmentOf` gives.
+
+### Why a change coin's nonce is read rather than derived
+
+"changeNonceOf" USED TO BE HERE, AND IT WAS WRONG.
+
+`sendShielded` gives the change a NEW nonce, so the owner cannot keep their
+old coin record with a smaller number in it — offer the wrong coin on the
+next payment and the commitment does not match, which is the money becoming
+unspendable. That much was right, and a test found it.
+
+The fix attempted here was a circuit deriving that nonce with `evolveNonce`.
+**It does not produce the same value**, and the generated code says why: the
+change nonce is hashed under the domain `midnight:kernel:nonce_evolve/2`
+with the nonce alone, while `evolveNonce` uses `midnight:kernel:nonce_evolve`
+with an index as well. Two different functions with almost the same name.
+
+THE ANSWER IS NOT TO DERIVE IT AT ALL. The change coin is an OUTPUT of the
+transaction, and it is in the call's own Zswap local state — nonce, colour,
+value — addressed to the vault. The owner's device reads it there, which is
+how any wallet learns about a coin it has just received. `changeCoinOf` in
+`src/midnight/vault-coins.ts` is that read, and `vault-payout.test.ts` pays
+twice from one deposit to prove the coin it hands back really spends.
+
+A derivation that is nearly right is worse than none: it would have been
+used, and it would have failed on the second payment of a real payroll.
+
+## Money in
+
+### `deposit`
+
+Money arriving. No approval, by design.
+
+Nobody needs permission to be paid, and requiring M signatures to accept a
+deposit is absurd — the same argument that was settled for the account's own
+`credit`. A deposit is public on the way in whatever we do, because the
+sender's transaction is public; what stays private is everything afterwards.
+
+#### `deposit`, at `receiveShielded(disclose(coin));`
+
+`disclose` on the coin, and the compiler's reason for demanding it is worth
+keeping rather than paraphrasing:
+
+```text
+the call to receiveShielded might disclose a link between a coin
+receive and the coin with the commitment given by a hash of the
+witness value
+```
+
+It is LINKABILITY, not the amount becoming public. Receiving publishes a
+commitment, so somebody who already knew this coin can tell it arrived
+here. A deposit is a public act anyway — the sender's own transaction says
+so — which is why this is acknowledged rather than worked around.
+
+#### `deposit`, at `notes.insert(disclose(heldCommitmentOf(coin, …`
+
+The received coin becomes spendable at a known index, which is what makes
+it QUALIFIED. The witness supplies that form on the next spend; what is
+committed here is the coin as received.
+
+A deposit adds ONE note to the pool. It does not merge with anything: the
+vault holding two notes of a token is the normal case, not a mess to tidy.
+
+THE BLINDING IS NOT AN ARGUMENT ANY MORE, and this line is the fix.
+
+It used to be `heldCommitmentOf(coin, blinding)` with `blinding` handed in
+by the depositor. The vault checked the coin and never checked that the
+blinding was one anybody could produce again — so a deposit under any
+other number wrote a commitment describing a note that can never be
+opened, and the money was visibly on chain and permanently stuck. Nothing
+refused it; there was nothing to refuse, because a free parameter has no
+wrong value.
+
+Derived, the failure is not discouraged, it is UNREPRESENTABLE: the
+argument that could carry a bad value does not exist. An outside depositor
+needs to know nothing about this vault but its address, which they must
+know anyway to pay it.
+
+### `depositUnshielded`
+
+PUBLIC MONEY ARRIVING, and the deliberate near-twin of `deposit`.
+
+No approval, for `deposit`'s reason: nobody needs permission to be paid.
+
+WHAT THE POOL HOLDS FOR THIS DEPOSIT: NOTHING. There is no coin to record.
+`receiveUnshielded` declares an `unshielded_input` on this call, the ledger
+adds it to this contract's balance when the transaction applies, and that
+balance is the record — readable off the chain by anybody, including by a
+company that has lost every device it owns. **A commitment here would be a
+second name for a number the chain already publishes**, and it is the second
+name, not the number, that both of the blinding failures above were about.
+
+SO EVERY OPEN QUESTION ABOUT THE NOTE MODEL IS ABSENT HERE RATHER THAN
+SOLVED. A note being unspendable until somebody reads its merkle index
+cannot arise, because there is no commitment tree and no index to read, on
+either side of the boundary. The questions about a change coin and about a
+split's two outputs do not arise either, because an unshielded send produces
+neither. And the crash window between the transaction and the pool write is
+not here: the only thing written is the colour, and it is written by this
+circuit inside the same transaction that moves the money.
+
+WHAT IS WRITTEN, and it is not a balance: the colour, so `retire` can see
+that this vault has public money to strand. See `unshieldedTokens`.
+
+A ZERO DEPOSIT IS REFUSED. It moves nothing and would seat a colour in the
+set that `retire` then blocks on and `forgetUnshielded` has to clear — a way
+to jam a vault's retirement for free, by anybody, since a deposit needs no
+approval.
+
+#### `depositUnshielded`, at `receiveUnshielded(disclose(token), disclose(amount));`
+
+`disclose`, and it costs nothing to admit: an unshielded transfer is a
+public UTXO spend on the way in whatever this contract says about it. The
+colour and the amount are on chain in the sender's own transaction.
+
+## Money out
+
+### `payout`
+
+ONE PAYEE OF AN APPROVED RUN.
+
+The whole product in one circuit: prove somebody authorised this exact
+payment, then make it, in one transaction, so nothing paid here was
+unauthorised.
+
+THE CONVERSE IS NOT GUARANTEED AND IT IS A RULED RISK. The account's
+`recordPayment` can be reached without this circuit, so a payee can be marked
+paid with no coin moving. That is a known and accepted limit of a contract
+that cannot see who called it. This vault's `payments` counter is what makes
+the divergence readable.
+
+WHAT BECOMES PUBLIC, stated exactly, because the answer is not "nothing" and
+a reader deserves the list rather than reassurance:
+
+```text
+the proposal id          already public from the moment it was raised
+the vault's own address  already public
+the run's root           a hash over the payout leaves
+the number of payees     the run's size, not its contents
+the run's window         the two times it may be paid between
+the proposal's salt      spent; see `recordPayment` in the account
+this payee's details     a blinded commitment
+this payee's nonce       spent with this payment, and useless for any other
+the merkle path          hashes
+```
+
+NOT public: who was paid, in what token, or how much. Those are arguments to
+THIS circuit, and arguments to a vault's own exported circuit are private
+unless disclosed. They are never disclosed.
+
+#### `payout`, at `const details = payoutDetails(recipient, token, …`
+
+1. ASK THE ACCOUNT, NAMING OURSELVES.
+
+`kernel.self()` rather than an argument, and the difference is a security
+property rather than a style: a proposal is raised FOR a particular vault
+and its id is computed with that vault inside it, so a vault that named
+some other vault here would simply fail to recompute the id. It cannot
+spend another vault's approvals even if somebody hands it one.
+
+The account refuses if the proposal is not open, has not reached this
+vault's threshold, is not this run, or if this payee has been paid already.
+None of those checks are repeated here — one rule, one place.
+
+#### `payout`, at `const coin = noteToSpend(token, amount);`
+
+2. PAY.
+
+Only reached if the account did not refuse. If this fails, the account's
+record of this payee having been paid fails with it — that is the
+atomicity the whole design rests on, and it is the one property here that
+a real chain still has to confirm.
+
+#### `payout`, at `const unqualified = ShieldedCoinInfo {`
+
+The note offered must be one the chain says this vault holds, and it is
+SPENT — removed from the pool — before anything is sent.
+
+Without the membership check the witness could offer any note at all, and a
+witness is untrusted input by the language's own warning rather than a
+value this contract chose. Without the removal the same note could be
+offered to two payments.
+
+#### `payout`, at `const spent = disclose(heldCommitmentOf(unqualified, …`
+
+RECOMPUTED, NOT ASKED FOR, and it is the other half of taking the blinding
+out of the caller's hands.
+
+This was `noteBlinding(coin.nonce)` — a witness, so the blinding rule
+lived on the device as well as in the contract. Two implementations of the
+rule the money depends on is a shape that has been paid for before, and
+the failure it invites is silent: a device that derives a blinding a shade
+differently from the one the note was committed under cannot spend that
+note, ever, and nothing says so until a payment is refused.
+
+#### `payout`, at `if (disclose(result.change.is_some)) {`
+
+3. KEEP THE CHANGE, AND COMMIT TO IT.
+
+`sendShielded` hands the change back as a `Maybe` and the contract must
+manage it. A vault that dropped it would lose the difference between what
+it held and what it paid, silently, on every payment.
+
+WHAT THIS LEAKS, and the pool made it smaller: whether there WAS change.
+An observer sees the pool's count go down by one and back up, or just
+down — so they learn a note was spent exactly, not what it was worth or who
+received it. With one note per token this said "the pot is empty"; with a
+pool it says "one of sixteen notes came out even", which is close to
+nothing.
+
+AND THE CHANGE IS COMMITTED UNDER THE SAME DERIVATION, which closes a
+second way to lose money that was never written down as one.
+
+`nextBlinding(token)` was a witness asked for BEFORE the change coin
+existed, so a device had to guess what the change's nonce was going to be
+and blind against the guess. The change's nonce is not derivable — that is
+recorded under "Why a change coin's nonce is read rather than derived" — so the client did it with
+`changeNonceOf`, and a wrong guess commits the change under a blinding
+that can never be reproduced. The same unspendable-note shape, on the note
+the vault creates for itself on every single payment.
+
+Derived from the change coin the call actually produced, there is nothing
+to guess: the coin exists by the time this line runs.
+
+### `payoutUnshielded`
+
+ONE PAYEE OF AN APPROVED RUN, PAID IN PUBLIC MONEY.
+
+The same product, the same rulebook, the same account call — and about a
+third of the machinery, because the money is a ledger balance rather than a
+note.
+
+WHY A SECOND CIRCUIT RATHER THAN A BRANCH ON `payout`, and it was measured
+before it was chosen.
+
+- **The arguments are not the same arguments.** A shielded payment names a
+  `ZswapCoinPublicKey` and needs a witness to choose the note; this names a
+  `UserAddress`, reads no witness, and has no note to choose. A branch
+  would carry both sets on every call and let a caller select the wrong
+  one with a boolean — a way to lose money that an entry-point name does
+  not have.
+- **The recipient `Either` is REVERSED between the two.** Shielded is
+  `Either<ZswapCoinPublicKey, ContractAddress>` with the user on the LEFT;
+  unshielded is `Either<ContractAddress, UserAddress>` with the user on the
+  RIGHT. Two opposite conventions inside one circuit, one of them selected
+  at run time, is a mistake waiting to be made in a file whose job is not
+  to make them.
+- **`payout` is the largest circuit in this vault** at 23,939 bytes of
+  zkir, and the third largest in the repository behind the account's
+  `amendSigner` at 66,641 and `propose` at 26,356. A branch costs no on-chain bytes and does cost rows, on
+  the circuit least able to spare them. That is the trade the verifier-key
+  merges elsewhere took deliberately — rows spent to buy deploy-slot
+  bytes — and `payout` is the circuit with the fewest rows to spend.
+- **It is the platform's own shape.** The ledger's reference contract holds
+  both kinds side by side as four separate circuits —
+  `depositShielded`, `withdrawShielded`, `depositUnshielded`,
+  `withdrawUnshielded`, in `ledger/tests/token-vault.compact` in midnightntwrk/midnight-ledger 8.2.0-rc.1.
+
+WHAT BECOMES PUBLIC, and the honest list is LONGER than `payout`'s by one
+line that matters more than all the others:
+
+```text
+everything `payout` publishes, for the same reasons — the proposal id, this
+vault's address, the run's root, its payee count, its window, the salt, the
+blinded details, the payee's nonce and the merkle path
+```
+
+```text
+AND THE AMOUNT AND THE RECIPIENT, because an unshielded send IS a public
+UTXO. `disclose` is not a choice this circuit makes; the transfer is
+visible on chain whatever the circuit says.
+```
+
+SO THIS CIRCUIT DOES NOT KEEP A PAYMENT PRIVATE AND MUST NOT BE SOLD AS IF IT
+DID. What it keeps is everything the account keeps: that this payment belongs
+to an approved run, who approved it, the roster it came from, the payslip,
+and every other payee's amount. A watcher sees a UTXO of some size leave this
+vault for some address; the payroll it belongs to stays sealed.
+
+#### `payoutUnshielded`, at `const details = unshieldedPayoutDetails(recipient, …`
+
+1. ASK THE ACCOUNT, NAMING OURSELVES — `payout`'s step 1, unchanged, and
+that is the point of keying the record on the leaf alone rather than a
+coincidence.
+
+`recordPayment` takes `details` as 32 opaque bytes and records
+`paidMovementOf(payoutLeaf(details, nonce))`. It never sees a token, a
+recipient or an amount, so *"this leaf has been paid, once, ever"* is the
+same fact about the same payee whichever kind of money settles it. The
+account needs no change for it.
+
+`unshieldedPayoutDetails` and not `payoutDetails`: read that circuit's
+comment. A leaf that does not say which kind of money it authorises is an
+approval that can be spent through the wrong door.
+
+#### `payoutUnshielded`, at `assert(unshieldedBalanceGte(disclose(token), …`
+
+2. REFUSE EARLY IF THE MONEY IS NOT THERE.
+
+`unshieldedBalanceGte` AND NEVER `unshieldedBalance`, and the difference
+decides whether a payroll can settle at all.
+
+The exact-value read is fixed to the balance at the START of execution and
+pins it: a transaction built on it fails if the balance has moved by the
+time it applies. The whole pool design exists so that a hundred payments
+of one run settle in the same block — every one of them moves this balance
+— so a vault that read the exact value could pay its first payee and no
+other. The comparison asks a question whose answer survives the other
+payments landing: it stays true while the vault still holds enough.
+
+IT IS NOT THE SAFETY PROPERTY, and must not be read as one. The ledger
+subtracts this call's `unshielded_outputs` from the contract's balance with
+`checked_sub` and refuses the whole transaction on underflow
+(`ledger/src/semantics.rs` in midnightntwrk/midnight-ledger 8.2.0-rc.1), so a vault CANNOT overspend whether this assert
+exists or not. What this buys is a refusal in words, before a proof is
+built, instead of a rejected transaction with a ledger error on it.
+
+#### `payoutUnshielded`, at `sendUnshielded(disclose(token), disclose(amount),`
+
+3. PAY.
+
+`right<ContractAddress, UserAddress>` — a PERSON. The unshielded `Either`
+puts the contract on the left and the user on the right, which is the
+opposite way round from the shielded one two circuits up. Written out
+rather than passed in, so no argument can flip it.
+
+NOBODY VALIDATES THIS ADDRESS AND NOBODY CAN. An unshielded send to an
+address nobody holds the key for removes the money permanently, and there
+is no unshielded burn address to distinguish a mistake from an intention.
+That is why the recipient is inside the approved leaf: the signers, not
+this contract, are the check.
+
+THE PAYEE IS NOT TOLD BY ANYTHING, AND DOES NOT NEED TO BE. The shielded
+side's obligation — the client must pass the payee's encryption key so
+their wallet can find a shielded coin — has no counterpart here. A UTXO
+addressed to their `UserAddress` is public; their wallet finds it by
+looking.
+
+#### `payoutUnshielded`, at `payments.increment(1);`
+
+The colour stays in the set. This payment may have emptied the vault of it
+and may not, and asking would mean reading the exact balance — the read
+that pins a transaction to a number that is about to move. `retire` clears
+it deliberately, through `forgetUnshielded`.
+
+## Housekeeping
+
+### `splitNote`
+
+SPLITTING ONE NOTE INTO TWO, BOTH KEPT.
+
+WHY IT HAS TO EXIST. The pool's size is a privacy property: the count is
+public, so a constant is uninformative where a moving number is a signal.
+`payout` removes one note and puts the change back, so the count falls by
+exactly one every time a note is spent EXACTLY and is otherwise unchanged;
+`deposit` raises it by one. A pool that has drifted from sixteen to twelve
+therefore cannot be restored by anything the contract could do before this
+circuit: deposit adds a note from outside, and nothing divided one from
+inside. Until this existed the product had no business claiming a fixed-size
+pool, and the `notes` section says so.
+
+WHY IT MAKES EXACTLY TWO, and this is the measurement rather than a taste.
+Five shapes were priced in zkir bytes: one send 10,112; two 18,793; four
+36,347; a fold over four 45,010 — MORE than writing the four out — and
+`presplit`, the shape that sends to the vault itself and keeps both halves,
+16,375. Against `payout`'s own 23,939 the cheap shape is cheaper than a
+payment. This circuit is that shape, written out: one send, two inserts, no
+fold.
+
+AND THE REASON THAT IS THE RIGHT NUMBER RATHER THAN THE CHEAP ONE. A split
+that yields two notes raises the count by exactly one, so ANY deficit can be
+closed exactly — twelve to sixteen is four calls, fifteen to sixteen is one.
+A fixed four-way fan-out costs more than twice as much and can only move the
+count in threes, which cannot land on sixteen from twelve at all. The
+property being bought is a FIXED size, not a large one, so a shape that
+cannot hit the number exactly does not buy it.
+
+WHY IT IS NOT GOVERNED, and the answer is in the recipient rather than in a
+check. The only address this circuit can pay is `kernel.self()`, written
+here and not reachable from any argument, so no approval is being skipped:
+there is no version of this call that moves money out of the vault. The
+account is not asked because there is nothing for it to authorise. The design
+requires it to run unattended after every run — a privacy property
+maintained by a person is not maintained — and a governed round per top-up
+would guarantee it never happens.
+
+WHAT IT PUBLISHES: that a split happened, and the count going up by one.
+Not the amounts, not the token, not which note. Deliberately NOT part of
+`payments`: that counter is the one number an auditor can check with no key,
+and housekeeping inflating it would make it mean something else.
+
+WHEN NOT TO CALL IT — the client's rule rather than the
+contract's: never during a run, and never in the same transaction as a
+payment. A top-up in the same block as a payment ties the two together and
+hands an observer the link the pool exists to break.
+
+#### `splitNote`, at `const coin = noteToSpend(token, amount);`
+
+The same coin selection as `payout`, and it must be: which notes exist is
+the owner's information and the contract's job is to refuse a bad choice
+rather than to make a good one.
+
+#### `splitNote`, at `assert(amount < coin.value,`
+
+STRICTLY BIGGER, not "big enough". A split of a note into the whole of
+itself produces no change, so the second insert below would have nothing
+to write and the vault would come out of it with the same one note it went
+in with, having paid a fee. `payout` says `!(value < amount)` because
+paying a note out exactly is a real thing to want; splitting one exactly
+is not.
+
+#### `splitNote`, at `const self = disclose(kernel.self().bytes);`
+
+Read once. `kernel.self()` is the vault's own address and it is what makes
+this pool's commitments this pool's — see `noteBlindingOf`.
+
+#### `splitNote`, at `const unqualified = ShieldedCoinInfo {`
+
+THE NOTE OFFERED MUST BE ONE THE CHAIN SAYS THIS VAULT HOLDS, and it is
+removed before anything is sent — exactly `payout`'s order and for exactly
+`payout`'s reason. A witness is untrusted input, and without the removal
+the same note could be offered twice.
+
+#### `splitNote`, at `assert(notes.member(spent), "that note is not one …`
+
+A DIFFERENT MESSAGE FROM `payout`'S, and not for variety. Mutation testing
+substitutes fixed strings, so two identical asserts in two circuits are
+one target rather than two and neither can be aimed at on its own. They
+also fail for different reasons a reader would want told apart.
+
+#### `splitNote`, at `const result = sendShielded(disclose(coin),`
+
+TO OURSELVES. `right<...>(kernel.self())` is the contract-address side of
+the recipient, where `payout` takes the `left` side with a user's coin
+public key. That single word is the whole difference between this circuit
+and a payment, which is why it is a constant and never an argument.
+
+#### `splitNote`, at `notes.insert(disclose(heldCommitmentOf(result.sent, …`
+
+The piece that was asked for.
+
+#### `splitNote`, at `assert(result.change.is_some, "a split produced no …`
+
+And the remainder. The size check above already guarantees it exists, so
+this assert is the one that cannot fire — and it stays, because the
+alternative to asserting is an `if` whose false branch silently drops the
+larger half of the note. A "cannot happen" that would lose money if it did
+is worth a constraint.
+
+### `forgetUnshielded`
+
+SAYING THIS VAULT IS DONE WITH A TOKEN.
+
+`unshieldedTokens` is what stops `retire` stranding public money, so
+something has to be able to take a colour out of it — otherwise a vault that
+once held a pound of NIGHT and has since paid all of it out could never be
+retired, and a governance decision would be blocked by a balance of zero.
+
+IT CANNOT LIE, AND THAT IS WHY THE SET IS SAFE TO SHRINK. The removal is
+guarded by the ledger's own balance, not by anything this contract or its
+client believes: `unshieldedBalanceLte(token, 0)` is *"the chain says I hold
+none of this"*, and the chain re-checks it when the transaction applies. So
+the set can only ever lose a colour the vault genuinely has none of.
+
+`unshieldedBalanceLte(…, 0)` RATHER THAN `unshieldedBalance(…) == 0`, for
+`payoutUnshielded`'s reason: the exact-value read pins the transaction to a
+balance that a payment landing in the same block would move, and this call is
+the one most likely to be built right after a run.
+
+NOT GOVERNED, and the argument is `splitNote`'s. There is no version of this
+call that moves money: it writes one entry out of a set and cannot send, mint
+or receive anything. What it can do is unblock a retirement, and retirement
+is itself a governed round the account decides.
+
+A COLOUR THE VAULT NEVER HELD IS A NO-OP, not an error. `Set.remove` of an
+absent member leaves the set as it was, and refusing would mean a second
+lookup to say nothing useful.
+
+### `retire`
+
+RETIREMENT. Read `contract Acct` above before this.
+
+A deployed contract cannot be destroyed and may hold money, so the product's
+word is RETIRE and never DELETE: a governed round removes this vault from
+the account's `vaults` set, the product stops offering it as a destination,
+and the vault and everything in it stay exactly as reachable as they were.
+Nothing here touches `notes`, `payments` or `account`.
+
+WHY THE REFUSAL IS HERE AND THE RULE IS THERE. Retiring a vault that still
+holds money is the same shape as stranding an account: the money stays on
+chain and the company's rulebook stops naming the thing that holds it. The
+only contract that can see this pool is this one, so the refusal can only be
+written here.
+
+AND THAT REFUSAL IS *"the CONTRACT's rather than the client's"* FOR ONE CONTRACT AND NOT FOR THE PAIR, and the difference is the
+whole of it: the refusal is THIS contract's and the operation is the
+ACCOUNT's. `ConfidentialAccount.retireVault` is an `export circuit` with
+neither of the two asserts below — it requires an approved retire proposal
+for that vault and current membership of `vaults`, and that is all — so
+whoever holds the salt for a retire round the signers have already approved
+can call the account DIRECTLY and skip this circuit entirely. The funded
+vault leaves the registry with the money still inside it. THE TWO ASSERTS
+BELOW ARE THE REFUSAL ON THE PATH THAT GOES THROUGH THIS CONTRACT, AND THEY
+ARE ADVISORY ON THE PATH THAT DOES NOT.
+
+WHAT THAT COSTS IS NOT FROZEN MONEY — `recordPayment` does not consult
+`vaults`, so a retired vault still pays out an approved run, and the
+paragraph below says so from the other side. What is destroyed is what the
+registry IS: the answer to *which vaults are this company's*, for precisely
+the vault that still holds the money. It is recoverable through `adopt` by a
+further governed round, if anyone still knows the address, which is why what
+is lost is the registry's answer rather than the money.
+
+IT IS ACCEPTED AND NOT FIXED, AND THE DECISION IS WRITTEN DOWN RATHER THAN
+REMEMBERED: it is an accepted risk — *leave it*. THERE IS NO
+CALLER CHECK TO WRITE. Moving the guard would mean handing the account a
+fact only this contract can assert — a new argument on `retireVault` — and
+THE ACCOUNT CANNOT VERIFY WHAT THIS CONTRACT TELLS IT, so the argument would
+be a claim the account TRUSTS rather than a guard. It would look like a fix
+and would not be one. It is also not available after the next deploy:
+`contract Acct` above pins both cross-contract signatures by exact shape, so
+`retireVault`'s arity is frozen the moment any vault is deployed.
+
+WHAT RETIREMENT DOES NOT DO, and it is deliberate: it does not make this
+vault unspendable. `recordPayment` does not ask whether a vault is adopted,
+so a retired vault can still pay out an approved run exactly as before. The
+`vaults` set is a REGISTRY — the answer to "which vaults are this company's",
+readable off the chain by somebody who has lost everything else — and not an
+access check. Making it one would turn a governance mistake into frozen
+money, which is the failure this whole document exists to prevent.
+
+THE SALT IS AN ARGUMENT AND BECOMES PUBLIC, exactly as it does in
+`recordPayment`, and for the same reason: a cross-contract callee may not
+read a witness, so the account cannot reach its own `proposalSalt()` when it
+is called from here. What that gives away is possession at the moment of
+claiming. Whoever holds the salt can complete a retire round the signers
+already approved, and can do nothing else with it — no money moves either
+way, and a signer could already `cancel`.
+
+THAT LAST CLAUSE IS TRUE HERE AND IS FALSE IN `recordPayment`, WHICH IS WHY
+IT IS PINNED RATHER THAN LEFT TO READ AS THE SAME SENTENCE. A retire round
+is a GOVERNANCE proposal: it has no row in the account's `runWindow`, so
+`cancel` is unconditional for it right up to the moment it is consumed. A
+PAYROLL RUN has one, and `cancel` is refused from the moment its window
+opens — which is exactly when `recordPayment` becomes possible — so the same
+words would be false there. The account document's `recordPayment` section says what is true there.
+
+#### `retire`, at `assert(notes.isEmpty(),`
+
+`isEmpty` and not `size() == 0`. The set's own emptiness answer, so no
+arithmetic sits between the question and the fact.
+
+#### `retire`, at `assert(unshieldedTokens.isEmpty(),`
+
+AND THE OTHER HALF OF WHAT IT HOLDS.
+
+`notes` is the private side only. A vault holding the company's NIGHT float
+has an empty note pool and a balance anybody can read off the chain, and
+before this line it retired clean — the money staying exactly as reachable
+as the retirement passage above promises, and the company's rulebook no longer naming
+the thing that holds it, which is the stranding this circuit exists to
+refuse.
+
+A DIFFERENT MESSAGE FROM THE ONE ABOVE, and not for variety: a check that
+substitutes fixed strings cannot aim at an ambiguous target, and the two
+refusals are about different money.
+
+#### `retire`, at `disclose(kernel.self().bytes),`
+
+`kernel.self()` rather than an argument, and it is the same security
+property `payout` names: a retire proposal's id is computed with this
+vault inside its payload, so a vault naming another vault here simply
+fails to recompute the id. One vault cannot retire another.
