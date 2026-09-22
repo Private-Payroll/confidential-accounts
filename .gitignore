@@ -382,9 +382,18 @@ docs/vaults.md
 # honoured from the first commit because the fresh `init` was built from the
 # take list.
 #
-# docs/design/ is a GENERATED OUTPUT DIRECTORY rather than written
-# documentation. Everything under it is derived from the compiled contracts,
-# and edges.json is 199 KB of machine JSON that records a count of internal files.
+# docs/design/ is a GENERATED OUTPUT DIRECTORY with TWO WRITTEN EXCEPTIONS.
+# circuits.md, edges.json, ledger-fields.md and modules.md are derived from the
+# compiled contracts, and edges.json is 199 KB of machine JSON that records a
+# count of internal files. the-account-contract.md and the-vault-contract.md are
+# WRITTEN BY HAND, hold the prose that came out of the two contract sources, and
+# are named on the take list, so they ship.
+#
+# THE RULE BELOW EXCLUDES THE CONTENTS AND NOT THE DIRECTORY, AND THAT IS THE
+# WHOLE POINT. Written `docs/design/`, git never descends into the directory and
+# a `!` line under it does nothing at all - the take list and this file would
+# then contradict each other, which is what was caught on 12 Sep with
+# docs/design/edges.json and on 13 Sep with packages/identity/lib/wallet/network.js.
 #
 # docs/handoff/ is six documents written for an internal successor — "You are
 # picking up a system that moves other people's salaries" — that CITE
@@ -394,7 +403,9 @@ docs/vaults.md
 #
 # BOTH ARE KEPT ON DISK BECAUSE BOTH ARE USED HERE: the generated design
 # output is the working copy of a derived description, and docs/handoff/ is the map a person reads.
-docs/design/
+docs/design/*
+!docs/design/the-account-contract.md
+!docs/design/the-vault-contract.md
 docs/design/edges.json
 docs/handoff/
 
