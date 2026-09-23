@@ -29,6 +29,11 @@ export interface RaiseOrderOnTheWire {
   readonly order: Extract<GovernedCallOrder, { circuit: 'propose' }>;
 }
 
+/** A retry written down and not yet sent: its proposal, and the people it pays as positions in the leg. */
+export interface RetryOrderOnTheWire extends RaiseOrderOnTheWire {
+  readonly indices: ReadonlyArray<number>;
+}
+
 /** The parts of a proposal this module reads. */
 export interface RoundOnThePage {
   readonly id: string;
@@ -58,6 +63,16 @@ export interface GovernedCallService {
   raiseOrder(runId: string, body: { viewingKey: string; asset?: string }): Promise<RaiseOrderOnTheWire>;
   sendRaise(runId: string, body: {
     viewingKey: string; asset?: string; tx: string; version: typeof DEVICE_RAISE_VERSION; checked: string;
+  }): Promise<RoundOnThePage>;
+  /** What a retry of some of one leg's people will ask its vault to pay, in the shape `legPayments` answers. */
+  retryPayments(runId: string, body: { viewingKey: string; asset?: string; indices: number[] }): Promise<LegPaymentsOnTheWire>;
+  raiseRetry(runId: string, body: {
+    viewingKey: string; asset?: string; indices: number[]; vault: string; opensAt: string; closesAt: string; onDevice: true;
+    version: typeof DEVICE_RAISE_VERSION; checked: string;
+  }): Promise<{ proposal: RoundOnThePage; order: RetryOrderOnTheWire | null }>;
+  retryOrder(runId: string, body: { viewingKey: string; asset?: string; proposalId: string }): Promise<RetryOrderOnTheWire>;
+  sendRetry(runId: string, body: {
+    viewingKey: string; asset?: string; proposalId: string; tx: string; version: typeof DEVICE_RAISE_VERSION; checked: string;
   }): Promise<RoundOnThePage>;
   callState(accountId: string): Promise<AccountCallChainOnTheWire & { readonly account: string }>;
   approve(proposalId: string, body: { signerId: string; signature: string; viewingKey: string; tx: string }): Promise<RoundOnThePage>;
@@ -166,17 +181,25 @@ export async function sendRaiseFromDevice(
   const checked = await refuseALegTheVaultCannotPay(doors, {
     runId: input.runId, viewingKey: input.viewingKey, ...asked, vault: order.order.run.vault,
   });
+  return buildAndSend(doors, order, input.viewingKey, (tx) => service.sendRaise(input.runId, {
+    viewingKey: input.viewingKey, ...asked, tx, version: DEVICE_RAISE_VERSION, checked,
+  }));
+}
+
+/** Builds and proves what the service wrote down, hands it to `send`, and waits for the chain to hold it. */
+async function buildAndSend(
+  doors: GovernedCallDoors, order: RaiseOrderOnTheWire, viewingKey: string,
+  send: (tx: string) => Promise<RoundOnThePage>,
+): Promise<RoundOnThePage> {
   doors.progress?.('reading-the-chain');
-  const chain = await service.callState(doors.accountId);
+  const chain = await doors.service.callState(doors.accountId);
   doors.progress?.('building');
   const { tx } = await doors.builder.governedCall({
     account: chain.account, order: order.order, material: doors.material, chain,
   });
   doors.progress?.('sending');
-  const sent = await service.sendRaise(input.runId, {
-    viewingKey: input.viewingKey, ...asked, tx, version: DEVICE_RAISE_VERSION, checked,
-  });
-  return waitFor(doors, 'this proposal', order.proposalId, input.viewingKey, (r) => Boolean(r.raisedAt), sent);
+  const sent = await send(tx);
+  return waitFor(doors, 'this proposal', order.proposalId, viewingKey, (r) => Boolean(r.raisedAt), sent);
 }
 
 /** A raise also needs to know what the vault holds privately, which only this device can read. */
@@ -204,6 +227,17 @@ async function refuseALegTheVaultCannotPay(
   const leg = await doors.service.legPayments(input.runId, {
     viewingKey: input.viewingKey, ...(input.asset === undefined ? {} : { asset: input.asset }),
   });
+  return refusePaymentsTheVaultCannotPay(doors, leg, input);
+}
+
+/**
+ * **THE CHECK ITSELF, OVER WHATEVER PAYMENTS THE SERVICE HANDED OVER** - a
+ * leg's, or a retry's. The digest returned is over exactly what was handed
+ * over, in its order.
+ */
+async function refusePaymentsTheVaultCannotPay(
+  doors: RaiseDoors, leg: LegPaymentsOnTheWire, input: { asset?: string; vault: string },
+): Promise<string> {
   if (input.asset !== undefined && leg.asset !== input.asset) {
     throw new Error(`the company answered for its ${leg.asset} payments when ${input.asset} is being raised. `
       + 'Nothing was raised and no fee was spent.');
@@ -251,6 +285,99 @@ export async function raiseRunOnDevice(
     runId: input.runId, viewingKey: input.viewingKey, order: raised.order,
     chosen: { vault: input.vault, opensAt: input.opensAt, closesAt: input.closesAt },
     ...(input.asset === undefined ? {} : { asset: input.asset }),
+  });
+}
+
+/**
+ * **WHO A RETRY OF A STOPPED RUN PAYS: THE PEOPLE THE RUN HAS NOT PAID, AND
+ * NOBODY ELSE.** Read from the run's own payment view, as positions in the leg.
+ * A person the account records as paid is never named, and neither is one a
+ * person decided not to pay. Nothing is offered when the view could not say who
+ * was paid, or could not prove its people are this run's: a retry chosen from an
+ * answer about another payroll would be a retry of the wrong people.
+ */
+export function unpaidToRetry(view: {
+  readonly answered: boolean;
+  readonly status?: {
+    readonly verified: boolean;
+    readonly outstanding: ReadonlyArray<{ readonly index: number; readonly state: string }>;
+  };
+}): number[] {
+  if (!view.answered || !view.status?.verified) return [];
+  return view.status.outstanding
+    .filter((p) => p.state === 'failed' || p.state === 'unsent')
+    .map((p) => p.index)
+    .sort((a, b) => a - b);
+}
+
+const refuseAnOrderThatIsNotThisRetry = (order: RetryOrderOnTheWire, indices: ReadonlyArray<number>): void => {
+  if (order.indices.length !== indices.length || order.indices.some((i, at) => i !== indices[at])) {
+    throw new Error('the retry on record pays other people than the ones chosen on this page. Reload the run and choose '
+      + 'again. Nothing was built or sent.');
+  }
+};
+
+/**
+ * **A RETRY WRITTEN DOWN AND NOT YET SENT, BUILT AND SENT FROM THIS DEVICE.**
+ * The vault is checked here for exactly the retry's payments right before the
+ * send, every time, as a leg's are.
+ */
+export async function sendRetryFromDevice(
+  doors: RaiseDoors,
+  input: {
+    runId: string; viewingKey: string; asset?: string; proposalId: string; order?: RetryOrderOnTheWire;
+    chosen?: { indices: ReadonlyArray<number>; vault: string; opensAt: string; closesAt: string };
+  },
+): Promise<RoundOnThePage> {
+  const { service } = doors;
+  const asked = input.asset === undefined ? {} : { asset: input.asset };
+  const order = input.order ?? await service.retryOrder(input.runId, {
+    viewingKey: input.viewingKey, ...asked, proposalId: input.proposalId,
+  });
+  if (order.proposalId !== input.proposalId) {
+    throw new Error('the retry this device was handed is not the one on record. Reload the page and try again. Nothing '
+      + 'was built or sent.');
+  }
+  refuseAnOrderThatIsNotThisRaise(order, input.chosen);
+  if (input.chosen !== undefined) refuseAnOrderThatIsNotThisRetry(order, input.chosen.indices);
+  doors.progress?.('checking-the-vault');
+  const checked = await refusePaymentsTheVaultCannotPay(doors, await service.retryPayments(input.runId, {
+    viewingKey: input.viewingKey, ...asked, indices: [...order.indices],
+  }), { ...asked, vault: order.order.run.vault });
+  return buildAndSend(doors, order, input.viewingKey, (tx) => service.sendRetry(input.runId, {
+    viewingKey: input.viewingKey, ...asked, proposalId: order.proposalId, tx, version: DEVICE_RAISE_VERSION, checked,
+  }));
+}
+
+/**
+ * **A RETRY OF SOME OF ONE LEG'S PEOPLE, RAISED FROM THIS DEVICE.** Their
+ * payments are checked against the vault's notes here first; the service then
+ * writes the retry down under every rule a retry has, and this device builds,
+ * proves and sends it. A device that stops part way leaves a retry that raising
+ * the same people again sends as itself.
+ */
+export async function raiseRetryOnDevice(
+  doors: RaiseDoors,
+  input: {
+    runId: string; viewingKey: string; asset?: string; indices: ReadonlyArray<number>;
+    vault: string; opensAt: string; closesAt: string;
+  },
+): Promise<RoundOnThePage> {
+  const asked = input.asset === undefined ? {} : { asset: input.asset };
+  const indices = [...input.indices];
+  doors.progress?.('checking-the-vault');
+  const checked = await refusePaymentsTheVaultCannotPay(doors, await doors.service.retryPayments(input.runId, {
+    viewingKey: input.viewingKey, ...asked, indices,
+  }), { ...asked, vault: input.vault });
+  doors.progress?.('writing-down');
+  const raised = await doors.service.raiseRetry(input.runId, {
+    viewingKey: input.viewingKey, ...asked, indices, vault: input.vault, opensAt: input.opensAt, closesAt: input.closesAt,
+    onDevice: true, version: DEVICE_RAISE_VERSION, checked,
+  });
+  if (raised.order === null) return raised.proposal;
+  return sendRetryFromDevice(doors, {
+    runId: input.runId, viewingKey: input.viewingKey, ...asked, proposalId: raised.order.proposalId, order: raised.order,
+    chosen: { indices, vault: input.vault, opensAt: input.opensAt, closesAt: input.closesAt },
   });
 }
 
@@ -306,6 +433,10 @@ export const governedCallServiceFor = (api: Api): GovernedCallService => {
     raiseRun: (runId, body) => post(`${run(runId)}/propose`, body),
     raiseOrder: (runId, body) => post(`${run(runId)}/raise-order`, body),
     sendRaise: (runId, body) => marked(() => post(`${run(runId)}/raise-send`, body)),
+    retryPayments: (runId, body) => post(`${run(runId)}/retry-payments`, body),
+    raiseRetry: (runId, body) => post(`${run(runId)}/retry`, body),
+    retryOrder: (runId, body) => post(`${run(runId)}/retry-order`, body),
+    sendRetry: (runId, body) => marked(() => post(`${run(runId)}/retry-send`, body)),
     callState: (accountId) => api(`/api/accounts/${encodeURIComponent(accountId)}/call-state`),
     approve: (proposalId, body) => marked(() => post(`${proposal(proposalId)}/approve`, body)),
     standing: (proposalId, body) => post(`${proposal(proposalId)}/standing`, body),

@@ -23,7 +23,7 @@ import type { Marked } from '../core/provenance.js';
 import { AuthScreen, AccountPicker, WALLET_ORIGIN } from './Auth.js';
 import { VaultPanel } from './VaultPanel.js';
 import { PayoutPanel } from './PayoutPanel.js';
-import { RaiseLeg, approveFromThisDevice, sendRunFromThisDevice, stageWords } from './GovernedCallControls.js';
+import { RaiseLeg, RetryUnpaid, approveFromThisDevice, sendRunFromThisDevice, stageWords } from './GovernedCallControls.js';
 import type { GovernedStage } from './governed-call-on-device.js';
 import { MaintenancePanel } from './MaintenancePanel.js';
 import { WalletWaiting } from './wallet-waiting.js';
@@ -846,7 +846,11 @@ function Screens({ commitments }: { commitments: CommitmentScheme }) {
  * The service answers in a shape that makes that impossible to get wrong: when
  * it cannot say, there is no count in the body to draw.
  */
-function RunPaymentsCard({ runId, viewingKey }: { runId: string; viewingKey: string }) {
+function RunPaymentsCard({ runId, viewingKey, retry }: {
+  runId: string; viewingKey: string;
+  /** What a retry of this run's unpaid people is raised with. Absent where the run has more than one leg. */
+  retry?: { account: Account; me: SignerSecrets; asset: string; act: Act; busy: boolean };
+}) {
   const [view, setView] = useState<RunPayments | null>(null);
   const [failed, setFailed] = useState('');
 
@@ -952,12 +956,13 @@ function RunPaymentsCard({ runId, viewingKey }: { runId: string; viewingKey: str
 
         {/*
           * The one state nobody may miss: the window has closed with people
-          * still owed, and nothing can pay them from this run any more.
+          * still owed, and this run's window cannot pay them any more. A retry
+          * with a window of its own can.
           */}
         {st.stranded.length > 0 && <div className="err" style={{ marginTop: 14 }}>
           The payment window has closed with {st.stranded.length}{' '}
-          {st.stranded.length === 1 ? 'person' : 'people'} still owed. They cannot be paid from
-          this run at all now — they need a new one.
+          {st.stranded.length === 1 ? 'person' : 'people'} still owed. This run's window cannot pay
+          them any more: retry them with a new window.
         </div>}
       </div>
 
@@ -993,6 +998,10 @@ function RunPaymentsCard({ runId, viewingKey }: { runId: string; viewingKey: str
 
       <div className="bd">
         <div className="hint">{view.sentence}</div>
+        {/* **THE WAY A STOPPED RUN IS FINISHED.** Only the people this view
+            says are unpaid, and only when it has proved they are this run's. */}
+        {retry && <RetryUnpaid account={retry.account} me={retry.me} runId={runId} asset={retry.asset}
+          viewingKey={viewingKey as Hex} view={view} act={retry.act} busy={retry.busy} />}
       </div>
     </div>
   );
@@ -1458,7 +1467,8 @@ function RunDetail({ run, proposals, account, session, me, busy, onBack, act }: 
         </div>
       </div>
 
-      <RunPaymentsCard runId={run.id} viewingKey={session.viewingKey} />
+      <RunPaymentsCard runId={run.id} viewingKey={session.viewingKey}
+        {...(legs.length === 1 ? { retry: { account, me, asset: legs[0]!, act, busy } } : {})} />
 
       <div className="card">
         <div className="hd"><h3>Recipients</h3><span className="sub">visible to signers only</span></div>

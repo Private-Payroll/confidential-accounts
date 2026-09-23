@@ -2814,11 +2814,12 @@ export class PayrollService {
    */
   async proposeRetry(
     runId: string, viewingKey: Hex, proposedBy: string, payable: RetryMaterial | null, asset?: AssetId,
+    how?: { onDevice: true },
   ) {
     const run = this.requireRun(runId, viewingKey);
     const release = this.holdTheLeg(run, legOf(run, asset));
     try {
-      return await this.raiseARetry(runId, viewingKey, proposedBy, payable, asset);
+      return await this.raiseARetry(runId, viewingKey, proposedBy, payable, asset, how);
     } finally {
       release();
     }
@@ -2834,6 +2835,13 @@ export class PayrollService {
      */
     payable: RetryMaterial | null,
     asset?: AssetId,
+    /**
+     * **THE SIGNER'S DEVICE SENDS THE RETRY**, exactly as it sends a leg: the
+     * retry and its proposal are written down as they otherwise are, nothing is
+     * sent from this process, and `retryRaiseOrderOf` is what the device builds
+     * from. Every rule above and below is asked the same either way.
+     */
+    how?: { onDevice: true },
   ) {
     const run = this.requireRun(runId, viewingKey);
     const leg = legOf(run, asset);
@@ -2990,6 +2998,7 @@ export class PayrollService {
       payments: indices.map(i => recorded.facts[i]!),
       proposedBy,
       ...(again !== undefined ? { again } : {}),
+      ...(how?.onDevice ? { onDevice: true as const } : {}),
     });
 
     const afterRaising = this.requireRun(runId, viewingKey);
@@ -3675,6 +3684,106 @@ export class PayrollService {
       },
       half: await this.accounts.raiseHalfOf(proposalId, viewingKey),
       paymentsChecked: paymentsCheckedDigest(payout.facts.map(f => [f.payee.kind, f.token, f.amount] as const)),
+    };
+  }
+
+  /**
+   * **WHAT A RETRY OF SOME OF ONE LEG'S PEOPLE WILL ASK ITS VAULT TO PAY, FOR
+   * A SIGNER'S DEVICE TO CHECK AGAINST THE VAULT'S NOTES BEFORE IT ASKS FOR THE
+   * RETRY.** Read off the leg's own record and never off the roster, because a
+   * retry pays each person the payment the leg was raised with: the same facts
+   * the retry is raised against, in the order it names them. Each is a kind, a
+   * token and an amount, and nothing else.
+   *
+   * It says nothing about whether a retry naming these people may be raised;
+   * the retry itself asks that, every time.
+   */
+  retryPaymentsAsked(runId: string, viewingKey: Hex, indices: readonly number[], asset?: AssetId): {
+    asset: AssetId;
+    payments: Array<{ kind: 'shielded' | 'unshielded'; token: string; amount: bigint }>;
+  } {
+    const run = this.requireRun(runId, viewingKey);
+    const leg = legOf(run, asset);
+    const recorded = run.payout?.[leg];
+    if (!recorded) {
+      throw new Error(
+        `the ${leg} leg of run ${run.id} has not been raised, so there is nobody on it to retry. `
+        + 'Raise the leg first.');
+    }
+    return {
+      asset: leg,
+      payments: indices.map(i => {
+        const f = Number.isInteger(i) ? recorded.facts[i] : undefined;
+        if (!f) {
+          throw new Error(
+            `this run pays ${recorded.facts.length} people in ${leg}, so there is no person #${Number(i) + 1} on it to `
+            + 'retry. Reload the run and choose again.');
+        }
+        return { kind: f.payee.kind, token: f.token, amount: f.amount };
+      }),
+    };
+  }
+
+  /**
+   * **A RETRY OF EXACTLY THESE PEOPLE THAT IS WRITTEN DOWN AND HAS NOT
+   * REACHED THE CHAIN**, with the window and vault it was written down with.
+   * A signer's device writes a retry down before it sends it, so a device that
+   * stopped in between leaves one; retrying the same people again sends that
+   * one as itself rather than raising a second round over the same leaves.
+   * `null` when there is none.
+   */
+  unsentRetryOf(runId: string, viewingKey: Hex, indices: number[], asset?: AssetId): {
+    proposalId: string; opensAt: bigint; closesAt: bigint; vault: Hex;
+  } | null {
+    const run = this.requireRun(runId, viewingKey);
+    const leg = raisedLegOf(run, asset);
+    for (const r of (leg ? run.payout?.[leg]?.retries : undefined) ?? []) {
+      if (r.proposalId === undefined || !sameList(r.originalIndices, indices)) continue;
+      const written = this.accounts.requireProposal(r.proposalId, viewingKey);
+      if (written.status === 'open' && !written.raisedAt) {
+        return { proposalId: r.proposalId, opensAt: r.opensAt, closesAt: r.closesAt, vault: r.vault };
+      }
+    }
+    return null;
+  }
+
+  /**
+   * **WHAT A SIGNER'S DEVICE BUILDS A RETRY'S PROPOSAL FROM, WHILE IT IS
+   * WRITTEN DOWN AND NOT YET SENT.** The retry is found by the proposal it was
+   * written down as, among this leg's own retries, and its run is read back off
+   * that record - never from the caller. `indices` are the people it pays, as
+   * positions in the leg, so the device can check them against the vault again
+   * before every send.
+   *
+   * `null` when this leg has no retry written down as that proposal, or the
+   * chain already holds it.
+   */
+  async retryRaiseOrderOf(runId: string, viewingKey: Hex, proposalId: string, asset?: AssetId): Promise<{
+    proposalId: string;
+    chainId: Hex;
+    run: { root: Hex; payees: bigint; opensAt: bigint; closesAt: bigint; vault: Hex };
+    half: RaiseHalf;
+    indices: number[];
+    /** The digest of the retry's payments, over what a device is handed to check them. */
+    paymentsChecked: string;
+  } | null> {
+    const run = this.requireRun(runId, viewingKey);
+    const leg = raisedLegOf(run, asset);
+    const payout = leg ? run.payout?.[leg] : undefined;
+    const retry = payout?.retries?.find(r => r.proposalId === proposalId);
+    if (!leg || !payout || !retry) return null;
+    const raised = this.accounts.requireProposal(proposalId, viewingKey);
+    if (raised.raisedAt) return null;
+    return {
+      proposalId,
+      chainId: raised.chainId,
+      run: { root: retry.root, payees: retry.payees, opensAt: retry.opensAt, closesAt: retry.closesAt, vault: retry.vault },
+      half: await this.accounts.raiseHalfOf(proposalId, viewingKey),
+      indices: [...retry.originalIndices],
+      paymentsChecked: paymentsCheckedDigest(retry.originalIndices.map(i => {
+        const f = payout.facts[i]!;
+        return [f.payee.kind, f.token, f.amount] as const;
+      })),
     };
   }
 

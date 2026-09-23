@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
-  approveOnDevice, governedCallServiceFor, nothingWasSentBy, raiseRunOnDevice, SentAndNotYetSeen, sendRaiseFromDevice,
-  type GovernedCallService, type LegPaymentsOnTheWire, type RaiseDoors, type RaiseOrderOnTheWire, type RoundOnThePage,
+  approveOnDevice, governedCallServiceFor, nothingWasSentBy, raiseRetryOnDevice, raiseRunOnDevice, SentAndNotYetSeen,
+  sendRaiseFromDevice, sendRetryFromDevice,
+  type GovernedCallService, type LegPaymentsOnTheWire, type RaiseDoors, type RaiseOrderOnTheWire, type RetryOrderOnTheWire,
+  type RoundOnThePage,
 } from './governed-call-on-device.js';
 import { deviceVaultHoldings, type PoolNote } from './device-vault-holdings.js';
 import { paymentsFitNotes } from './vault-builder.js';
@@ -20,6 +22,12 @@ const ORDER: RaiseOrderOnTheWire = {
     half: { assetId: '44'.repeat(32), assetBlinding: '55'.repeat(32), proposalSalt: '66'.repeat(32), changeAmount: '1', changeBatchDigest: '77'.repeat(32) },
     proposal: 'cc'.repeat(32),
   },
+};
+/* A retry of the leg's second and third people, written down and not yet sent. */
+const RETRY_ORDER: RetryOrderOnTheWire = {
+  ...ORDER, proposalId: 'prp_r', chainId: 'cd'.repeat(32),
+  order: { ...ORDER.order, run: { ...ORDER.order.run, payees: '2' }, proposal: 'cd'.repeat(32) },
+  indices: [1, 2],
 };
 /* The vault's private money, as this device's pool records it and the chain holds it. */
 const TOKEN = testPrivateToken('GBP') as Hex;
@@ -54,6 +62,18 @@ const aDevice = (over: Partial<GovernedCallService> & {
     raiseOrder: async (runId) => { log.push(`order ${runId}`); return ORDER; },
     sendRaise: async (runId, body) => {
       log.push(`send-raise ${runId} ${body.tx} ${body.version} ${body.checked}`); return round({ txRef: 't1' });
+    },
+    retryPayments: async (runId, body) => {
+      checks += 1; log.push(`retry-payments ${runId} ${JSON.stringify(body)}`);
+      return { asset: LEG.asset, payments: body.indices.map((i) => LEG.payments[i]!) };
+    },
+    raiseRetry: async (runId, body) => {
+      log.push(`retry ${runId} ${JSON.stringify(body)}`);
+      return { proposal: round({ id: 'prp_r' }), order: { ...RETRY_ORDER, indices: body.indices } };
+    },
+    retryOrder: async (runId, body) => { log.push(`retry-order ${runId} ${body.proposalId}`); return RETRY_ORDER; },
+    sendRetry: async (runId, body) => {
+      log.push(`send-retry ${runId} ${body.proposalId} ${body.tx} ${body.version} ${body.checked}`); return round({ id: 'prp_r', txRef: 't2' });
     },
     callState: async (id) => { log.push(`state ${id}`); return { account: 'ac'.repeat(32), blockHash: 'b', accountState: 'AS', parameters: 'PP' }; },
     approve: async (id, body) => { log.push(`approve ${id} ${body.signature} ${body.tx}`); return round(); },
@@ -416,5 +436,96 @@ describe('EVERY SEND IS CHECKED AGAINST THE VAULT ON THIS DEVICE FIRST, AND SAYS
     expect(bodies[0]!.version).toBe(DEVICE_RAISE_VERSION);
     expect(bodies[0]!.checked).toBe(paymentsCheckedDigest([['shielded', TOKEN, '12345'], ['unshielded', 'ab'.repeat(32), '5']]));
     expect(bodies[0]!.checked).not.toBe(CHECKED);
+  });
+});
+
+describe('A STOPPED RUN IS RETRIED FROM THIS DEVICE, WITH THE VAULT CHECKED FOR EXACTLY THE RETRY', () => {
+  const RETRY = { runId: 'run_1', viewingKey: 'vk', asset: 'GBP', indices: [1, 2], vault: '99'.repeat(32), opensAt: '1', closesAt: '2' };
+  /* The digest of the retry's two payments, which is not the digest of the leg's three. */
+  const RETRY_CHECKED = paymentsCheckedDigest(LEG.payments.slice(1).map((p) => [p.kind, p.token, p.amount] as const));
+  const serviceCalls = (log: string[]) => log.filter((l) => /^(retry|retry-order|send-retry|state|build|standing) /u.test(l));
+
+  it('checks the vault for the retry\'s payments, has it written down with the version and that digest, checks again, builds and sends it', async () => {
+    const d = aDevice({ standings: [round({ id: 'prp_r', raisedAt: 'now' })] });
+    const done = await raiseRetryOnDevice(d.doors, RETRY);
+    expect(done.raisedAt).toBe('now');
+    expect(RETRY_CHECKED).not.toBe(CHECKED);
+    /* RED WHEN: the order changes - above all, a retry written down or sent before the vault is checked for it on this device. */
+    expect(d.log).toEqual([
+      'stage checking-the-vault',
+      'retry-payments run_1 {"viewingKey":"vk","asset":"GBP","indices":[1,2]}',
+      `vault read ${'99'.repeat(32)}`, `vault read ${'99'.repeat(32)}`,
+      'stage writing-down',
+      `retry run_1 {"viewingKey":"vk","asset":"GBP","indices":[1,2],"vault":"${'99'.repeat(32)}","opensAt":"1","closesAt":"2",`
+        + `"onDevice":true,"version":${DEVICE_RAISE_VERSION},"checked":"${RETRY_CHECKED}"}`,
+      /* RED WHEN: the send rides on the check made before the retry was written down. */
+      'stage checking-the-vault',
+      'retry-payments run_1 {"viewingKey":"vk","asset":"GBP","indices":[1,2]}',
+      `vault read ${'99'.repeat(32)}`, `vault read ${'99'.repeat(32)}`,
+      'stage reading-the-chain', 'state acc_1',
+      'stage building', `build propose for ${'ac'.repeat(32)} on AS`,
+      'stage sending', `send-retry run_1 prp_r TX-propose ${DEVICE_RAISE_VERSION} ${RETRY_CHECKED}`,
+      'stage waiting-for-the-chain', 'standing prp_r',
+    ]);
+    /* RED WHEN: the leg's payments are checked instead of the retry's. */
+    expect(d.log.filter((l) => l.startsWith('leg-payments'))).toEqual([]);
+  });
+
+  it('4. A RETRY THE VAULT CANNOT PAY IS REFUSED ON THIS DEVICE BEFORE THE COMPANY IS ASKED ANYTHING', async () => {
+    /* Enough for one of the two people this retry pays, and not for both. */
+    const short = aDevice({ pool: [note(1, 15_000n)] });
+    const refused = await raiseRetryOnDevice(short.doors, RETRY).catch((e) => e);
+    /* RED WHEN: the device check is skipped for a retry, or runs after the company writes the retry down. */
+    expect(refused?.name).toBe('VaultCannotPayThisProposal');
+    expect(refused?.why).toBe('short');
+    expect(refused?.asked).toBe(20_000n);
+    expect(String(refused?.message)).toMatch(/Nothing was raised and no fee was spent\./u);
+    expect(serviceCalls(short.log)).toEqual([]);
+
+    /* A vault emptied between the write-down and the send sends nothing. */
+    const emptied = aDevice({ poolAtCheck: [PLENTY, [note(1, 100n)]] });
+    const late = await raiseRetryOnDevice(emptied.doors, RETRY).catch((e) => e);
+    /* RED WHEN: the send of a retry goes out on the check made before it was written down. */
+    expect(late?.why).toBe('short');
+    expect(emptied.log.filter((l) => l.startsWith('retry '))).toHaveLength(1);
+    expect(emptied.log.filter((l) => /^(state|build|send-retry) /u.test(l))).toEqual([]);
+  });
+
+  it('A RETRY SENT AGAIN IS CHECKED AGAINST THE VAULT FOR THE PEOPLE IT WAS WRITTEN DOWN WITH', async () => {
+    const d = aDevice({ standings: [round({ id: 'prp_r', raisedAt: 'now' })] });
+    await sendRetryFromDevice(d.doors, { runId: 'run_1', viewingKey: 'vk', asset: 'GBP', proposalId: 'prp_r' });
+    /* RED WHEN: sending a retry again checks anything but the people the written-down retry pays. */
+    expect(d.log.filter((l) => !l.startsWith('stage') && !l.startsWith('vault read'))).toEqual([
+      'retry-order run_1 prp_r', 'retry-payments run_1 {"viewingKey":"vk","asset":"GBP","indices":[1,2]}',
+      'state acc_1', `build propose for ${'ac'.repeat(32)} on AS`,
+      `send-retry run_1 prp_r TX-propose ${DEVICE_RAISE_VERSION} ${RETRY_CHECKED}`, 'standing prp_r',
+    ]);
+  });
+
+  it('A RETRY IS BUILT ONLY IF WHAT THE COMPANY WROTE DOWN PAYS THE PEOPLE, THE VAULT AND THE WINDOW CHOSEN HERE', async () => {
+    for (const [why, order] of [
+      ['other people', { ...RETRY_ORDER, indices: [0, 1] }],
+      ['one more person', { ...RETRY_ORDER, indices: [0, 1, 2] }],
+      ['another vault', { ...RETRY_ORDER, order: { ...RETRY_ORDER.order, run: { ...RETRY_ORDER.order.run, vault: '98'.repeat(32) } } }],
+      ['another window', { ...RETRY_ORDER, order: { ...RETRY_ORDER.order, run: { ...RETRY_ORDER.order.run, opensAt: '0' } } }],
+      ['a raise of another proposal', { ...RETRY_ORDER, order: { ...RETRY_ORDER.order, proposal: 'dd'.repeat(32) } }],
+    ] as const) {
+      const d = aDevice({ raiseRetry: async () => ({ proposal: round(), order: order as RetryOrderOnTheWire }) });
+      /* RED WHEN: the device builds a retry of whoever the company names rather than who was chosen here. */
+      await expect(raiseRetryOnDevice(d.doors, RETRY), why).rejects.toThrow(/Nothing was built or sent/u);
+      expect(d.log.filter((l) => /^(build|send)/u.test(l)), why).toEqual([]);
+    }
+  });
+
+  it('6. NOTHING A RETRY FROM THIS DEVICE SENDS THE COMPANY CARRIES A NOTE, THE POOL OR A BALANCE', async () => {
+    const d = aDevice({ standings: [round({ id: 'prp_r', raisedAt: 'now' })] });
+    await raiseRetryOnDevice(d.doors, RETRY);
+    const toTheCompany = d.log.filter((l) => /^(retry|retry-payments|retry-order|send-retry|standing) /u.test(l)).join('\n');
+    /* RED WHEN: a retry's request gains a note, the pool, a balance or the vault's holdings. */
+    for (const n of PLENTY) {
+      expect(toTheCompany).not.toContain(n.nonce);
+      expect(toTheCompany).not.toContain(n.value.toString());
+    }
+    expect(toTheCompany).not.toMatch(/nonce|pool|balance|held|notes/u);
   });
 });
