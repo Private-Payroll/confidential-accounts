@@ -7,6 +7,7 @@ import type { BalanceState, StopBalance } from '../chain/balance.js';
 import { BalanceEnginesContext } from '../chain/balance-context.js';
 import { shortUnshielded } from '../chain/unshielded.js';
 import { dustFromSpecks, exactSpecks, exactStars, nightFromStars } from '../chain/amount.js';
+import { otherTokenLines, shortColour, smallestUnits } from '../chain/shielded-tokens.js';
 import { ownedAddressFor } from '../accounts/owned-address.js';
 import type { OwnedAddress } from '../accounts/owned-address.js';
 import { hrefOf } from '../routes.js';
@@ -553,18 +554,41 @@ function BalanceLine({ kind, title, hero, state, owner }: {
           <p className="m-0 mt-1 text-xs text-muted">
             Exactly {exact(state.night)}, as of {asClock(state.asOf)}.
           </p>
+          {kind === 'shielded' && state.others !== undefined
+            && otherTokenLines(state.others).map(([colour, amount]) => (
+              /* EVERY OTHER PRIVATE TOKEN THIS WALLET HOLDS, one plain line each,
+               * after NIGHT's. The wallet has no name and no scale for these, so
+               * the amount is in the token's smallest unit and the token is named
+               * by its colour: short, with the whole colour beside it. Only held
+               * tokens get a line; there is no zero line for a token not held. */
+              <p key={colour} className="m-0 mt-1 text-sm text-ink" data-token={colour}>
+                {smallestUnits(amount)} of token{' '}
+                <span className="font-mono" title={colour}>{shortColour(colour)}</span>
+                <span className="block break-all font-mono text-xs text-faint">{colour}</span>
+              </p>
+            ))}
+          {kind === 'shielded' && state.others === undefined && (
+            /* A SAVED FIGURE FROM BEFORE OTHER TOKENS WERE RECORDED. It knows
+             * NIGHT and nothing else, so it says that, rather than showing no
+             * other token as if there were none. */
+            <p className="m-0 mt-1 text-xs text-muted" data-others="not-recorded">
+              Other private tokens are not recorded in this saved figure. A completed
+              check of this wallet&rsquo;s balance reads them.
+            </p>
+          )}
           {kind === 'shielded' && (
-            /* THE PRIVATE BALANCE LINE, and the copy is the
-             * point of it. It will read zero for a long time: this ledger has no
-             * shield door, so shielded value is minted by contracts and nothing
-             * can send it to a standalone wallet yet. The sentence has to be
-             * honest about the mechanism without implying money may arrive that
-             * cannot — **zero is a true answer to it.** */
+            /* THE PRIVATE BALANCE LINE, and the copy is the point of it. Private
+             * value on this ledger is minted by a contract; there is no step that
+             * moves public NIGHT in. A mint writes its amount into the public
+             * record even though the coin it makes is private, so the sentence
+             * says so rather than calling everything on this line private from
+             * the start. A zero is what the last completed read found. */
             <p className="m-0 mt-1 text-xs text-faint">
-              Money sent to you privately appears here. Nothing can send it yet: on this
-              ledger private value is minted by a contract rather than moved in through a
-              door, so a zero here is the true answer and not a wallet that has stopped
-              looking.
+              Money sent to you privately appears here: NIGHT above, and any other
+              token on its own line, in that token&rsquo;s smallest unit. Private value on
+              this ledger is minted by a contract, and the amount of a mint is public on
+              the chain even though the coin it makes is private. A zero here is what the
+              last completed check found, not a wallet that has stopped looking.
             </p>
           )}
           {kind === 'dust' && state.night === 0n && (

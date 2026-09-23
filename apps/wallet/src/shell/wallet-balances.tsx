@@ -5,6 +5,10 @@ import { coinPublicKeyOf } from '../chain/balance.js';
 import type { StopBalance } from '../chain/balance.js';
 import { BalanceEnginesContext } from '../chain/balance-context.js';
 import { nightFromStars } from '../chain/amount.js';
+import {
+  holdsAnyOther, otherTokenLines, shortColour, smallestUnits,
+} from '../chain/shielded-tokens.js';
+import type { OtherTokens } from '../chain/shielded-tokens.js';
 import { loadWalletCheckpoint } from '../accounts/storage.js';
 import { openWalletId } from '../accounts/wallets-held.js';
 import { WALLET_ACCOUNTS } from '../accounts/subwallets.js';
@@ -56,7 +60,12 @@ export const asMoment = (ms: number): string =>
 export type WalletBalanceRow =
   | { readonly kind: 'unknown' }
   | { readonly kind: 'checking' }
-  | { readonly kind: 'known'; readonly night: bigint; readonly asOf: number }
+  /* `others` is every other private token the slot held at `asOf`, or absent
+   * when the figure did not record them. Absent is not none. */
+  | {
+    readonly kind: 'known'; readonly night: bigint; readonly asOf: number;
+    readonly others?: OtherTokens;
+  }
   | { readonly kind: 'failed' };
 
 export type WalletBalanceRows = Readonly<Record<number, WalletBalanceRow>>;
@@ -78,9 +87,14 @@ export type WalletBalanceRows = Readonly<Record<number, WalletBalanceRow>>;
  * be holding money. Ranking an unknown as funded would fill the preview with
  * every slot; ranking it as empty and then calling the preview complete is the
  * lie. The sentence is what covers it, and the sentence stays.
+ *
+ * NIGHT IS ONE TOKEN AMONG THE ONES A SLOT CAN HOLD. A slot holding only some
+ * other private token holds money, and it earns its place in the preview
+ * exactly as a NIGHT balance does. The question asked of each amount is still
+ * the same one: is it more than nothing.
  */
 export const holdsMoney = (row: WalletBalanceRow): boolean =>
-  row.kind === 'known' && row.night > 0n;
+  row.kind === 'known' && (row.night > 0n || holdsAnyOther(row.others));
 
 /**
  * THE CHANGE EVENT — the same shape, and the same reason, as `shell/wallets.ts`
@@ -138,6 +152,13 @@ function mergeStored(
   }
   return next;
 }
+
+/** A known row, carrying the other tokens only when they were recorded, so an
+ * unrecorded figure never turns into "holds no other token" on the way. */
+const knownRow = (night: bigint, asOf: number, others: OtherTokens | undefined): WalletBalanceRow =>
+  (others === undefined
+    ? { kind: 'known', night, asOf }
+    : { kind: 'known', night, asOf, others });
 
 export const rowFor = (rows: WalletBalanceRows, account: number): WalletBalanceRow =>
   rows[account] ?? { kind: 'unknown' };
@@ -202,7 +223,7 @@ export function useWalletBalances(identity: Identity, changed = 0): {
         const checkpoint = await loadWalletCheckpoint(
           coinPublicKeyOf(identity, account), account, walletId);
         loaded[account] = checkpoint
-          ? { kind: 'known', night: checkpoint.night, asOf: checkpoint.asOf }
+          ? knownRow(checkpoint.night, checkpoint.asOf, checkpoint.others)
           : { kind: 'unknown' };
       }
       if (!stale) setRows((now) => mergeStored(now, loaded));
@@ -221,7 +242,7 @@ export function useWalletBalances(identity: Identity, changed = 0): {
         setTimeout(() => stopCurrent.current?.(), 0);
       };
       stopCurrent.current = engines.shielded(identity, account, (state) => {
-        if (state.name === 'synced') finish({ kind: 'known', night: state.night, asOf: state.asOf });
+        if (state.name === 'synced') finish(knownRow(state.night, state.asOf, state.others));
         else if (state.name === 'failed') finish({ kind: 'failed' });
       });
     });
@@ -267,20 +288,26 @@ export function WalletBalanceCell({ row }: { readonly row: WalletBalanceRow }): 
           couldn&rsquo;t check — not a zero
         </span>
       )}
-      {/* `whitespace-nowrap` REMOVED, AND IT WAS THE OVERFLOW.
-        * This is the longest thing either surface prints on one row: an amount,
-        * the kind of money and the moment, forty-odd characters with no
-        * opportunity to break. Held unbreakable it set a minimum width that the
-        * switcher's dialog could not go below, and the dialog scrolled sideways
-        * rather than the line wrapping (`shell/switcher.tsx`, the right column).
-        * The WORDS are untouched — all four sentences are still the ones
-        * the design allows, and the amount still names the kind of
-        * money it read and the moment it was true of. Only the line
-        * break is new: `break-words` lets it wrap inside whatever column it is
-        * given, on the switcher's rows and on Home's preview alike. */}
+      {/* THE ROW'S FIGURE: the NIGHT amount, the kind of money and the moment,
+        * then one segment per other private token held (its smallest-unit
+        * amount and short colour, the whole colour on the segment), or
+        * "other private tokens not recorded" when the figure did not record
+        * them. The wallet has no name and no scale for those tokens. The line
+        * has no fixed length, so it is `break-words` and never
+        * `whitespace-nowrap`: an unbreakable line set a minimum width the
+        * switcher's dialog could not go below (`shell/switcher.tsx`, the
+        * right column), and the dialog scrolled sideways. */}
       {row.kind === 'known' && (
         <span className="text-xs break-words text-muted">
           {nightFromStars(row.night)} tNIGHT shielded &middot; {asMoment(row.asOf)}
+          {row.others === undefined
+            ? <> &middot; other private tokens not recorded</>
+            : otherTokenLines(row.others).map(([colour, amount]) => (
+              <span key={colour} data-token={colour}>
+                {' '}&middot; {smallestUnits(amount)} of token{' '}
+                <span title={colour}>{shortColour(colour)}</span>
+              </span>
+            ))}
         </span>
       )}
     </>

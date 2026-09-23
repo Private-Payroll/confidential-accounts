@@ -21,6 +21,9 @@ import { describe, it, expect } from 'vitest';
 
 import { readFileSync } from 'node:fs';
 import { amountFromText, parseTestTokenRecord, theMintedCoin, testTokenFile } from './mint-test-token.js';
+import {
+  TEST_SETTLEMENT_ASSET, TEST_SETTLEMENT_MINTED_ON, testAssetsFor,
+} from '../src/core/assets.js';
 
 describe('the amount, and the unit it is in', () => {
   it('takes a whole number of the smallest unit', () => {
@@ -30,13 +33,37 @@ describe('the amount, and the unit it is in', () => {
 
   it('refuses a decimal point rather than interpreting it', () => {
     /*
-     * The token has no declared decimal places at all — a probe mints it and
-     * nothing anywhere says what a unit of it means. A door that took `5.5`
-     * would be inventing a scale, which is `fund-vault.ts`'s refusal with one
-     * fewer excuse.
+     * The door takes whole smallest units. The registry does declare a scale
+     * for the test asset, and the refusal says so; converting a figure with a
+     * point is still the person's to do, never the door's to guess.
+     * RED WHEN the refusal stops saying the unit is the smallest unit, as a
+     * whole number, with no point.
      */
     expect(() => amountFromText('5.5')).toThrow(/digits and nothing else/i);
-    expect(() => amountFromText('5.5')).toThrow(/no decimal places/i);
+    expect(() => amountFromText('5.5'))
+      .toThrow(/smallest unit, as a whole number, and never a decimal point/i);
+  });
+
+  it('states the same scale the asset registry declares for the test asset', () => {
+    /*
+     * The refusal's decimal places and whole-unit figure are read against the
+     * registry's own row, not against a copy of it.
+     * RED WHEN the refusal says the token has no scale, or names a number of
+     * decimal places or a whole-unit figure the registry does not declare.
+     */
+    const [row] = testAssetsFor(TEST_SETTLEMENT_MINTED_ON[0]!);
+    expect(row?.code).toBe(TEST_SETTLEMENT_ASSET);
+    const decimals = row!.decimals;
+    expect(() => amountFromText('5.5')).toThrow(`with ${decimals} decimal places`);
+    expect(() => amountFromText('5.5')).toThrow(`is ${10n ** BigInt(decimals)} here`);
+    expect(() => amountFromText('5.5')).not.toThrow(/no decimal places|nothing declares a scale/i);
+    /* RED WHEN the refusal states the scale as if every mint were that asset:
+     * the door is asked before it knows which colour it will mint. */
+    expect(() => amountFromText('5.5')).toThrow(/at the colour it names/);
+    expect(() => amountFromText('5.5')).toThrow(/any other colour is a\s+token with no declared scale/);
+    const source = readFileSync(new URL('./mint-test-token.ts', import.meta.url), 'utf8');
+    expect(source).not.toMatch(/nothing anywhere declares a scale/i);
+    expect(source).toContain(`${decimals} decimal places, for the one`);
   });
 
   it('refuses an empty answer rather than defaulting', () => {

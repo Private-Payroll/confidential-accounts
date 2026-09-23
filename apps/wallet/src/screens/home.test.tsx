@@ -535,11 +535,11 @@ describe('naming is what creates an account', () => {
 });
 
 describe('the private balance line is honest about the mechanism', () => {
-  it('says money sent privately appears there, and that nothing can send it yet', () => {
-    /* It will read zero for a long time, because this ledger
-     * has no shield door and shielded value is minted by contracts. The
-     * sentence has to be honest about that without implying money may arrive
-     * that cannot — **zero is a true answer to it.** */
+  it('says money sent privately appears there, and does not say that nothing can send it', () => {
+    /* Private value on this ledger is minted by contracts rather than moved in
+     * through a door, and a contract-minted token can be sent to this wallet
+     * and is shown on its own line. So the sentence names the mechanism and
+     * where such money appears, and no longer claims nothing can send it. */
     const secret = newSecret();
     const engine: BalanceEngine = (_identity, _account, tell) => {
       tell({ name: 'synced', night: 0n, asOf: Date.now() });
@@ -558,5 +558,9 @@ describe('the private balance line is honest about the mechanism', () => {
     expect(line.textContent).toMatch(/minted by a contract/);
     /* It must not promise arrivals. */
     expect(line.textContent).not.toMatch(/will arrive|on its way|check back/i);
+    /* RED WHEN the sentence says again that nothing can send private money
+     * here, which is false once a contract-minted token can be. */
+    expect(line.textContent).not.toMatch(/nothing can send it/i);
+    expect(line.textContent).toMatch(/any other\s+token on its own line/);
   });
 });

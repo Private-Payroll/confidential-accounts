@@ -24,8 +24,12 @@ import {
   VIEWING_KEY_FIELD, mentionsViewingKey,
 } from '../../scripts/viewing-key-tripwire.mjs';
 import {
-  GIVE_UP_AFTER_MS, QUIET_AFTER_MS, coinPublicKeyOf, walletFor, walletRestoredFrom, withOwnClock,
+  GIVE_UP_AFTER_MS, QUIET_AFTER_MS, coinPublicKeyOf, syncedFromBalances, syncedFromCheckpoint,
+  walletFor, walletRestoredFrom, withOwnClock,
 } from './balance.js';
+import { shieldedToken } from '@midnightntwrk/ledger-v9';
+import { toBase64Url } from 'midnight-identity/passkey/bytes';
+import { shortColour, smallestUnits } from './shielded-tokens.js';
 import type { BalanceEngine, BalanceState } from './balance.js';
 import { BalanceEnginesContext } from './balance-context.js';
 import type { BalanceEngines } from './balance-context.js';
@@ -34,7 +38,9 @@ import { dustFromSpecks, exactSpecks, exactStars, nightFromStars } from './amoun
 import {
   forgetWalletCheckpoints, loadWalletCheckpoint, saveWalletCheckpoint,
 } from '../accounts/storage.js';
-import { ORIGINAL_SLOT, forgetOpenWallet, openWallet } from '../accounts/wallets-held.js';
+import {
+  ORIGINAL_SLOT, checkpointKeyFor, forgetOpenWallet, openWallet, sealKeyFor,
+} from '../accounts/wallets-held.js';
 import { Home } from '../screens/home.js';
 
 /*
@@ -1092,5 +1098,284 @@ describe('a wallet switch mid-flight does not move where the work lands', () => 
       [...document.querySelectorAll('[data-wallet-preview-row]')]
         .map((row) => row.getAttribute('data-account')),
     ).toEqual(['3', '5', '7', '9', '11']));
+  });
+});
+
+/*
+ * ════════════════════════════════════════════════════════════════════════════
+ * THE WALLET SHOWS EVERY PRIVATE TOKEN IT HOLDS, NOT ONLY NIGHT.
+ *
+ * The SDK's shielded state is one map of every token the wallet owns, keyed by
+ * colour. Reading one key out of it showed a wallet paid in any other token as
+ * holding nothing. These pin the whole map from the SDK's state to the screen:
+ * the state, the saved checkpoint, the wallet list and the home screen.
+ * ════════════════════════════════════════════════════════════════════════════
+ */
+describe('every private token the wallet holds, from the SDK to the screen', () => {
+  /* A colour invented for the test. The wallet has no registry of token
+   * names, so the only thing a screen can know about it is what is here. */
+  const TOKEN = '7e'.repeat(32);
+  const SECOND = '3c'.repeat(32);
+  const NIGHT_RAW = shieldedToken().raw;
+
+  const tokenLine = (container: HTMLElement, colour: string): Element | null =>
+    container.querySelector(`[data-kind="shielded"] [data-token="${colour}"]`);
+
+  /** A checkpoint sealed exactly as the wallet sealed one before other tokens
+   * were recorded: the same four fields, the same key, the same record. Written
+   * here field by field so the old shape does not depend on today's writer. */
+  const sealOldShape = async (
+    coinPublicKey: string, account: number,
+    old: { serialized: string; night: bigint; asOf: number },
+  ): Promise<void> => {
+    /* Any save makes the compartment's sealing key; then the entry is replaced. */
+    await saveWalletCheckpoint(coinPublicKey, account, { ...old }, HERE);
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const open = indexedDB.open('midnight-identity', 1);
+      open.onsuccess = () => resolve(open.result);
+      open.onerror = () => reject(open.error);
+    });
+    const get = (key: string): Promise<unknown> => new Promise((resolve, reject) => {
+      const request = db.transaction('keys', 'readonly').objectStore('keys').get(key);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const key = (await get(sealKeyFor(HERE))) as CryptoKey;
+    const record = (await get(checkpointKeyFor(HERE))) as {
+      perAccount: Record<string, { coinPublicKey: string; iv: string; sealed: string }>;
+    };
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const plain = new TextEncoder().encode(JSON.stringify({
+      coinPublicKey, serialized: old.serialized, night: old.night.toString(), asOf: old.asOf,
+    }));
+    const sealed = new Uint8Array(await crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv }, key, plain as BufferSource));
+    record.perAccount[String(account)] = {
+      coinPublicKey, iv: toBase64Url(iv), sealed: toBase64Url(sealed),
+    };
+    await new Promise<void>((resolve, reject) => {
+      const request = db.transaction('keys', 'readwrite').objectStore('keys')
+        .put(record, checkpointKeyFor(HERE));
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
+    db.close();
+  };
+
+  it('the state a completed sync makes carries the whole map, NIGHT as itself', () => {
+    const synced = syncedFromBalances(
+      { [NIGHT_RAW]: 1_234_567n, [TOKEN]: 5_000n, [SECOND]: 0n }, 42);
+    /* RED WHEN NIGHT is read from anything but its own key. */
+    expect(synced.night).toBe(1_234_567n);
+    /* RED WHEN the state goes back to one key and drops the rest, or keeps a
+     * zero, or lists NIGHT a second time as "another token". */
+    expect(synced.others).toEqual({ [TOKEN]: 5_000n });
+    expect(synced.asOf).toBe(42);
+  });
+
+  it('1. a wallet holding NIGHT and another token shows both, each with its own amount', () => {
+    const fake = fakeEngine();
+    const { container } = renderHome(newSecret(), { shielded: fake.engine });
+    fireEvent.click(screen.getByText('Check the balance'));
+    fake.emit({ name: 'synced', night: 1_234_567n, asOf: Date.now(), others: { [TOKEN]: 5_000n } });
+    /* RED WHEN NIGHT's figure is lost or taken from the other token. */
+    expect(bigBalanceOf(container, 'shielded')).toContain('1.234567');
+    expect(bigBalanceOf(container, 'shielded')).toContain('tNIGHT');
+    /* RED WHEN the other token has no line, or its amount is divided, or it is
+     * not named by its colour, short and whole. */
+    const line = tokenLine(container, TOKEN);
+    expect(line?.textContent).toContain(`${smallestUnits(5_000n)} of token`);
+    /* Read as digits, so the check holds in every locale's grouping. */
+    expect(line?.textContent?.split(' of token')[0]?.replace(/\D/gu, '')).toBe('5000');
+    expect(line?.textContent).toContain(shortColour(TOKEN));
+    expect(line?.textContent).toContain(TOKEN);
+    expect(line?.textContent).not.toMatch(/tNIGHT|STARs/);
+  });
+
+  it('6. NIGHT\'s line is unchanged by other tokens beside it: same unit, same exact figure', () => {
+    const lineOf = (others?: Record<string, bigint>): [string | null, string | null] => {
+      cleanup();
+      const fake = fakeEngine();
+      const { container } = renderHome(newSecret(), { shielded: fake.engine });
+      fireEvent.click(screen.getByText('Check the balance'));
+      fake.emit(others === undefined
+        ? { name: 'synced', night: 1_234_567n, asOf: 1_700_000_000_000 }
+        : { name: 'synced', night: 1_234_567n, asOf: 1_700_000_000_000, others });
+      const exact = [...container.querySelectorAll('[data-kind="shielded"] p')]
+        .find((p) => /^Exactly /.test(p.textContent ?? ''));
+      return [bigBalanceOf(container, 'shielded'), exact?.textContent ?? null];
+    };
+    const alone = lineOf();
+    /* RED WHEN another token's amount changes NIGHT's big figure or its exact
+     * line in any way. */
+    expect(lineOf({ [TOKEN]: 5_000n, [SECOND]: 9n })).toEqual(alone);
+    expect(alone[0]).toMatch(/^1\.234567 tNIGHT$/);
+    expect(alone[1]).toMatch(/^Exactly 1,234,567 STARs, as of /);
+  });
+
+  it('2. a wallet holding only another token shows it, and the list counts it as holding money', async () => {
+    const fake = fakeEngine();
+    const { container } = renderHome(newSecret(), { shielded: fake.engine });
+    fireEvent.click(screen.getByText('Check the balance'));
+    fake.emit({ name: 'synced', night: 0n, asOf: Date.now(), others: { [TOKEN]: 5_000n } });
+    /* RED WHEN a wallet with no NIGHT shows none of what it does hold. */
+    expect(tokenLine(container, TOKEN)?.textContent)
+      .toContain(`${smallestUnits(5_000n)} of token`);
+    cleanup();
+
+    /* The list. Account 9 holds only the other token and cannot reach the
+     * first three by slot order; account 11 is checked and holds nothing. */
+    const secret = newSecret();
+    const identity = identityFromSecret(secret);
+    await saveWalletCheckpoint(coinPublicKeyOf(identity, 9), 9, {
+      serialized: 'x', night: 0n, others: { [TOKEN]: 5_000n }, asOf: Date.now(),
+    }, HERE);
+    await saveWalletCheckpoint(coinPublicKeyOf(identity, 11), 11, {
+      serialized: 'x', night: 0n, others: {}, asOf: Date.now(),
+    }, HERE);
+    render(
+      <BalanceEnginesContext.Provider value={{ shielded: inert, unshielded: inert, dust: inert }}>
+        <Home identity={identity} secret={secret} />
+      </BalanceEnginesContext.Provider>,
+    );
+    const previewed = (): string[] =>
+      [...document.querySelectorAll('[data-wallet-preview-row]')]
+        .map((row) => row.getAttribute('data-account') ?? '');
+    /* RED WHEN `holdsMoney` asks about NIGHT alone: 9 ranks as empty and the
+     * preview is 0, 2, 3. */
+    await waitFor(() => expect(previewed()).toEqual(['0', '2', '9']));
+    const row9 = document.querySelector('[data-wallet-preview-row][data-account="9"]');
+    /* RED WHEN the row drops the token it holds. */
+    expect(row9?.querySelector(`[data-token="${TOKEN}"]`)?.textContent)
+      .toContain(`${smallestUnits(5_000n)} of token ${shortColour(TOKEN)}`);
+  });
+
+  it('2, live. a slot checked from the list shows the token it holds and ranks as holding money', async () => {
+    /* The list's own check, not a saved checkpoint: each slot answers at
+     * once, and only account 9 holds anything, and only the other token. */
+    const auto: BalanceEngine = (_identity, account, tell) => {
+      tell(account === 9
+        ? { name: 'synced', night: 0n, asOf: Date.now(), others: { [TOKEN]: 5_000n } }
+        : { name: 'synced', night: 0n, asOf: Date.now(), others: {} });
+      return () => {};
+    };
+    renderHome(newSecret(), { shielded: auto });
+    openEveryWallet();
+    revealEverySlot();
+    await waitFor(() =>
+      expect(document.querySelectorAll('[data-wallet-balance-row]')).toHaveLength(11));
+    fireEvent.click(screen.getByText('Check all 11 wallets'));
+    const panel = document.querySelector('[role="dialog"]') as HTMLElement;
+    /* RED WHEN the live answer drops the other tokens on the way to the row. */
+    await waitFor(() => expect(
+      panel.querySelector(`[data-wallet-balance-row][data-account="9"] [data-token="${TOKEN}"]`)
+        ?.textContent,
+    ).toContain(`${smallestUnits(5_000n)} of token`));
+    /* RED WHEN a live answer holding only another token ranks as empty. */
+    await waitFor(() => expect(
+      [...document.querySelectorAll('[data-wallet-preview-row]')]
+        .map((row) => row.getAttribute('data-account')),
+    ).toContain('9'));
+  });
+
+  it('"not recorded" is said on the private line only, never on the public or DUST card', () => {
+    const shielded = fakeEngine();
+    const unshielded = fakeEngine();
+    const dust = fakeEngine();
+    const { container } = renderHome(newSecret(), {
+      shielded: shielded.engine, unshielded: unshielded.engine, dust: dust.engine,
+    });
+    fireEvent.click(screen.getByText('Check the balance'));
+    /* None of the three carries `others`: the public and DUST engines never do. */
+    unshielded.emit({ name: 'synced', night: 5n, asOf: Date.now() });
+    dust.emit({ name: 'synced', night: 5n, asOf: Date.now() });
+    shielded.emit({ name: 'synced', night: 5n, asOf: Date.now() });
+    const said = [...container.querySelectorAll('[data-others="not-recorded"]')];
+    /* RED WHEN the note appears on a card whose engine never records other
+     * tokens, where "a completed check reads them" would never come true. */
+    expect(said).toHaveLength(1);
+    expect(said[0]!.closest('[data-kind]')?.getAttribute('data-kind')).toBe('shielded');
+  });
+
+  it('3. a token the wallet holds none of is not shown as a zero line', () => {
+    const fake = fakeEngine();
+    const { container } = renderHome(newSecret(), { shielded: fake.engine });
+    fireEvent.click(screen.getByText('Check the balance'));
+    /* A recorded map with a zero in it, as a careless producer might hand over. */
+    fake.emit({ name: 'synced', night: 3n, asOf: Date.now(), others: { [TOKEN]: 0n } });
+    /* RED WHEN a zero amount earns a line. */
+    expect(tokenLine(container, TOKEN)).toBeNull();
+    expect(container.querySelectorAll('[data-kind="shielded"] [data-token]')).toHaveLength(0);
+    /* And a recorded map is not "not recorded". */
+    expect(container.querySelector('[data-others="not-recorded"]')).toBeNull();
+  });
+
+  it('4. a checkpoint in the old shape loads, shows its NIGHT, and invents no zero for anything else', async () => {
+    const secret = newSecret();
+    const identity = identityFromSecret(secret);
+    const mine = coinPublicKeyOf(identity, 3);
+    await sealOldShape(mine, 3, {
+      serialized: 'x', night: 2_500_000n, asOf: new Date(2026, 7, 18, 9, 30).getTime(),
+    });
+    const loaded = await loadWalletCheckpoint(mine, 3, HERE);
+    /* RED WHEN the old record no longer loads, or its NIGHT moves. */
+    expect(loaded?.night).toBe(2_500_000n);
+    /* RED WHEN absence is read as an empty map: "holds no other token". */
+    expect(loaded && 'others' in loaded).toBe(false);
+    const state = syncedFromCheckpoint(loaded!);
+    expect('others' in state).toBe(false);
+
+    /* The home screen, shown the state the engine makes from it. */
+    const fake = fakeEngine();
+    const { container } = renderHome(secret, { shielded: fake.engine });
+    fireEvent.click(screen.getByText('Check the balance'));
+    fake.emit(state);
+    expect(bigBalanceOf(container, 'shielded')).toContain('2.5');
+    /* RED WHEN the screen shows no line and no word, which reads as none. */
+    expect(container.querySelector('[data-others="not-recorded"]')?.textContent)
+      .toMatch(/not recorded/);
+    expect(container.querySelectorAll('[data-kind="shielded"] [data-token]')).toHaveLength(0);
+
+    /* And the list row for the same slot. */
+    const row = await waitFor(() => {
+      const found = [...document.querySelectorAll('[data-wallet-preview-row][data-account="3"]')];
+      expect(found).toHaveLength(1);
+      expect(found[0]!.textContent).toMatch(/2\.5 tNIGHT shielded ·/);
+      return found[0]!;
+    });
+    expect(row.textContent).toMatch(/other private tokens not recorded/);
+    expect(row.textContent).not.toMatch(/\b0 of token/);
+  });
+
+  it('5. a new checkpoint round-trips every token, and is sealed as before', async () => {
+    const identity = identityFromSecret(newSecret());
+    const mine = coinPublicKeyOf(identity, 0);
+    const CP = {
+      serialized: '{"fake":"snapshot"}', night: 123_456n, asOf: 1_700_000_000_000,
+      others: { [TOKEN]: 18_446_744_073_709_551_615n, [SECOND]: 7n },
+    };
+    await saveWalletCheckpoint(mine, 0, CP, HERE);
+    /* RED WHEN a token, a digit, or NIGHT is lost on the way through. */
+    expect(await loadWalletCheckpoint(mine, 0, HERE)).toEqual(CP);
+    /* RED WHEN the token map is written beside the sealed blob instead of in it. */
+    const raw = await new Promise<unknown>((resolve, reject) => {
+      const open = indexedDB.open('midnight-identity', 1);
+      open.onsuccess = () => {
+        const request = open.result.transaction('keys', 'readonly')
+          .objectStore('keys').get(checkpointKeyFor(HERE));
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      };
+      open.onerror = () => reject(open.error);
+    });
+    const flattened = JSON.stringify(raw);
+    expect(flattened).not.toContain(TOKEN);
+    expect(flattened).not.toContain('18446744073709551615');
+    const entry = (raw as { perAccount: Record<string, { sealed: string }> }).perAccount['0']!;
+    const decoded = new TextDecoder().decode(
+      Uint8Array.from(atob(entry.sealed.replace(/-/gu, '+').replace(/_/gu, '/')),
+        (c) => c.charCodeAt(0)));
+    expect(decoded).not.toContain(TOKEN);
+    expect(decoded).not.toContain('others');
   });
 });
