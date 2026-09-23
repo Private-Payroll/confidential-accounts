@@ -18,6 +18,7 @@
  */
 import { assets as theAssets, type AssetId, type AssetRegistry } from '../core/assets.js';
 import { refuseWhatTheVaultCannotPay, type PaymentAsked, type VaultHoldings } from '../core/vault-holdings.js';
+import { DEVICE_RAISE_VERSION, paymentsCheckedDigest } from '../core/device-raise.js';
 import type { SignerMaterial, GovernedCallOrder } from './governed-call-builder.js';
 import type { AccountCallChainOnTheWire, VaultBuilderClient } from './vault-worker-client.js';
 
@@ -52,9 +53,12 @@ export interface GovernedCallService {
   legPayments(runId: string, body: { viewingKey: string; asset?: string }): Promise<LegPaymentsOnTheWire>;
   raiseRun(runId: string, body: {
     viewingKey: string; asset?: string; vault: string; opensAt: string; closesAt: string; onDevice: true;
+    version: typeof DEVICE_RAISE_VERSION; checked: string;
   }): Promise<{ proposal: RoundOnThePage; order: RaiseOrderOnTheWire | null }>;
   raiseOrder(runId: string, body: { viewingKey: string; asset?: string }): Promise<RaiseOrderOnTheWire>;
-  sendRaise(runId: string, body: { viewingKey: string; asset?: string; tx: string }): Promise<RoundOnThePage>;
+  sendRaise(runId: string, body: {
+    viewingKey: string; asset?: string; tx: string; version: typeof DEVICE_RAISE_VERSION; checked: string;
+  }): Promise<RoundOnThePage>;
   callState(accountId: string): Promise<AccountCallChainOnTheWire & { readonly account: string }>;
   approve(proposalId: string, body: { signerId: string; signature: string; viewingKey: string; tx: string }): Promise<RoundOnThePage>;
   standing(proposalId: string, body: { viewingKey: string }): Promise<RoundOnThePage>;
@@ -139,9 +143,15 @@ const waitFor = async (
   throw new SentAndNotYetSeen(what, now);
 };
 
-/** Builds the proposal the service wrote down, sends it, and waits for the chain to hold it. */
+/**
+ * Builds the proposal the service wrote down, sends it, and waits for the chain
+ * to hold it. **The vault is checked on this device first, every time** - a
+ * first send and a send again alike - because a proposal written down days ago
+ * is paid from the vault as it is now. The send carries the digest of what was
+ * checked, and the service refuses it unless that is the proposal it wrote down.
+ */
 export async function sendRaiseFromDevice(
-  doors: GovernedCallDoors,
+  doors: RaiseDoors,
   input: {
     runId: string; viewingKey: string; asset?: string; order?: RaiseOrderOnTheWire;
     /** What the person chose, when this device is raising the leg now: the order must describe exactly that. */
@@ -152,6 +162,10 @@ export async function sendRaiseFromDevice(
   const asked = input.asset === undefined ? {} : { asset: input.asset };
   const order = input.order ?? await service.raiseOrder(input.runId, { viewingKey: input.viewingKey, ...asked });
   refuseAnOrderThatIsNotThisRaise(order, input.chosen);
+  doors.progress?.('checking-the-vault');
+  const checked = await refuseALegTheVaultCannotPay(doors, {
+    runId: input.runId, viewingKey: input.viewingKey, ...asked, vault: order.order.run.vault,
+  });
   doors.progress?.('reading-the-chain');
   const chain = await service.callState(doors.accountId);
   doors.progress?.('building');
@@ -159,7 +173,9 @@ export async function sendRaiseFromDevice(
     account: chain.account, order: order.order, material: doors.material, chain,
   });
   doors.progress?.('sending');
-  const sent = await service.sendRaise(input.runId, { viewingKey: input.viewingKey, ...asked, tx });
+  const sent = await service.sendRaise(input.runId, {
+    viewingKey: input.viewingKey, ...asked, tx, version: DEVICE_RAISE_VERSION, checked,
+  });
   return waitFor(doors, 'this proposal', order.proposalId, input.viewingKey, (r) => Boolean(r.raisedAt), sent);
 }
 
@@ -179,11 +195,12 @@ const DIGITS = /^[0-9]+$/u;
  * this device and nowhere else, so this is the one place the question can be
  * answered; the service asks the rest. A refusal writes nothing and spends
  * nothing. The only thing that goes to the service to ask it is what it already
- * had: the run, the leg and the viewing key.
+ * had: the run, the leg and the viewing key. What comes back is the digest of
+ * the payments checked, which is all the service is told about the check.
  */
 async function refuseALegTheVaultCannotPay(
   doors: RaiseDoors, input: { runId: string; viewingKey: string; asset?: string; vault: string },
-): Promise<void> {
+): Promise<string> {
   const leg = await doors.service.legPayments(input.runId, {
     viewingKey: input.viewingKey, ...(input.asset === undefined ? {} : { asset: input.asset }),
   });
@@ -206,6 +223,7 @@ async function refuseALegTheVaultCannotPay(
     payees: BigInt(payments.length),
     payments,
   }, ['shielded']);
+  return paymentsCheckedDigest(leg.payments.map((p) => [p.kind, p.token, p.amount] as const));
 }
 
 /**
@@ -220,11 +238,12 @@ export async function raiseRunOnDevice(
   input: { runId: string; viewingKey: string; asset?: string; vault: string; opensAt: string; closesAt: string },
 ): Promise<RoundOnThePage> {
   doors.progress?.('checking-the-vault');
-  await refuseALegTheVaultCannotPay(doors, input);
+  const checked = await refuseALegTheVaultCannotPay(doors, input);
   doors.progress?.('writing-down');
   const raised = await doors.service.raiseRun(input.runId, {
     viewingKey: input.viewingKey, vault: input.vault, opensAt: input.opensAt, closesAt: input.closesAt,
     ...(input.asset === undefined ? {} : { asset: input.asset }), onDevice: true,
+    version: DEVICE_RAISE_VERSION, checked,
   });
   /* A proposal the chain already holds - one raised before and seen since - has nothing to send. */
   if (raised.order === null) return raised.proposal;

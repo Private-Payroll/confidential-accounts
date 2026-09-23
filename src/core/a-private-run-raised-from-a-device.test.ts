@@ -22,6 +22,7 @@ import { SEED_ASSETS, StaticAssetRegistry, type LedgerForm } from './assets.js';
 import type { PaymentAsked, VaultHoldings } from './vault-holdings.js';
 import { FileStore } from './store-file.js';
 import { toHex } from './crypto.js';
+import { paymentsCheckedDigest } from './device-raise.js';
 
 const VAULT = toHex(new Uint8Array(32).fill(0xa1));
 const PUBLIC_GBP = testPrivateToken('public GBP');
@@ -155,5 +156,29 @@ describe('A PAYROLL RUN WITH PRIVATE PAYEES, RAISED', () => {
     const eur = await two.payroll.legPaymentsAsked(two.runId, two.viewingKey, 'EUR');
     expect(eur.asset).toBe('EUR');
     expect(eur.payments).toEqual([{ kind: 'shielded', token: testPrivateToken('EUR'), amount: 7_00n }]);
+  });
+
+  it('A LEG WRITTEN DOWN IS TOLD AS IT WAS WRITTEN, WHATEVER THE ROSTER SAYS SINCE, AND ITS DIGEST IS THE ONE A SEND IS COMPARED WITH', async () => {
+    const c = await aCompany();
+    const before = await c.payroll.legPaymentsAsked(c.runId, c.viewingKey);
+    const round = await c.raise({ onDevice: true });
+    /* The roster moves after the write-down: one person on the run is marked a leaver. */
+    const run = c.payroll.requireRun(c.runId, c.viewingKey);
+    c.payroll.setStatus(run.employees[0]!.id, 'leaver', c.viewingKey);
+    await expect(c.payroll.runMaterialInputs(c.runId, c.viewingKey)).rejects.toThrow(/leaver, not active/u);
+    /* RED WHEN: a device about to send a written-down proposal is told the roster as it is now - it then checks one set of payments and the service sends another, or it cannot send at all. */
+    const after = await c.payroll.legPaymentsAsked(c.runId, c.viewingKey);
+    expect(after).toEqual(before);
+    const order = (await c.payroll.raiseOrderOf(c.runId, c.viewingKey))!;
+    /*
+     * RED WHEN: the digest a send is compared with is not of the payments written down. This
+     * fixture's payments are alike, so their ORDER is pinned by the served-route test of a send,
+     * whose payees are paid different amounts.
+     */
+    expect(order.paymentsChecked).toBe(paymentsCheckedDigest(after.payments.map((p) => [p.kind, p.token, p.amount] as const)));
+
+    /* Withdrawn, the leg is raised afresh from the roster, so that is what a device is told. */
+    await c.accounts.cancel(round.id, c.viewingKey);
+    await expect(c.payroll.legPaymentsAsked(c.runId, c.viewingKey)).rejects.toThrow(/leaver, not active/u);
   });
 });

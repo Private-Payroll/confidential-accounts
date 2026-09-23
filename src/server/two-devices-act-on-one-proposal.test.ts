@@ -217,7 +217,7 @@ const apiAs = (who: keyof typeof USERS) => async (path: string, init?: RequestIn
 
 const aDevice = (who: keyof typeof USERS, company: { account: string }, signer: string) => {
   const stages: string[] = [];
-  const doors: import('../web/governed-call-on-device.js').GovernedCallDoors = {
+  const doors: import('../web/governed-call-on-device.js').RaiseDoors = {
     service: {
       ...device.governedCallServiceFor(apiAs(who)),
       callState: async () => ({ account: 'ac'.repeat(32), blockHash: 'b', accountState: 'AS', parameters: 'PP' }),
@@ -228,6 +228,8 @@ const aDevice = (who: keyof typeof USERS, company: { account: string }, signer: 
       }),
     },
     material: { signingSecret: '11'.repeat(32), blinding: '22'.repeat(32), scope: '33'.repeat(32) },
+    /* The device's read of the vault is a stand-in too: every send asks it first, and here it can pay. */
+    holdings: aVaultHolding(), assets: registryWithTestPrivateForms(),
     accountId: company.account,
     progress: (s) => stages.push(s),
     sleep: async () => {}, waitMs: 40, everyMs: 1,

@@ -1356,7 +1356,7 @@ function RunDetail({ run, proposals, account, session, me, busy, onBack, act }: 
   });
   const sendAgain = (asset: AssetId) => act(async () => {
     try {
-      await sendRunFromThisDevice(account, run.id, asset, session.viewingKey, setStage);
+      await sendRunFromThisDevice(account, me, run.id, asset, session.viewingKey, setStage);
     } finally {
       setStage(null);
     }

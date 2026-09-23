@@ -43,6 +43,10 @@ import type { Hex } from '../core/crypto.js';
 import { payeeAddress } from '../midnight/payee-address.js';
 import { theNetwork } from '../midnight/network.js';
 import { NothingWasSent, saysNothingWasSent } from '../core/jobs.js';
+import {
+  DEVICE_RAISE_VERSION, DIGEST_SHAPE, RAISE_IS_NOT_WHAT_WAS_CHECKED, RAISE_NAMES_NOTHING_CHECKED,
+  SEND_IS_NOT_WHAT_WAS_CHECKED, paymentsCheckedDigest, reloadThePage,
+} from '../core/device-raise.js';
 import { runPayments } from '../midnight/run-status.js';
 import { buildRun, rootOfLeaves } from '../midnight/payout-tree.js';
 import { vaultDetailsOf } from '../midnight/vault-details.js';
@@ -1496,7 +1500,28 @@ app.post('/api/runs/:id/propose', authed, ownsRun, wrap(async (req, res) => {
      * and the answer carries what the device builds it from.
      */
     onDevice: z.literal(true).optional(),
+    /*
+     * **WHICH PAGE CHECKED IT, AND WHAT IT CHECKED.** A raise the device sends
+     * is not checked for its private money here, because only the device can
+     * read the vault's notes. So it names the version of the page that did the
+     * check, and the digest of the payments it checked - a kind, a token and an
+     * amount each, exactly what `/leg-payments` handed it - and both are
+     * compared below before anything is written down.
+     */
+    version: z.unknown().optional(),
+    checked: z.string().regex(DIGEST_SHAPE, 'the payments checked are a digest of sixty-four hexadecimal characters').optional(),
   }).parse(req.body);
+
+  /*
+   * **A PAGE THAT IS NOT THE CURRENT VERSION IS NOT TRUSTED TO HAVE CHECKED
+   * ANYTHING.** Refused before a single read, so nothing is written down.
+   */
+  if (b.onDevice && b.version !== DEVICE_RAISE_VERSION) {
+    throw new Error(reloadThePage(b.version, 'Nothing was written down.'));
+  }
+  if (b.onDevice && b.checked === undefined) {
+    throw new Error(RAISE_NAMES_NOTHING_CHECKED);
+  }
 
   /*
    * **THE RUN'S MATERIAL IS BUILT HERE AND NOT INSIDE THE SERVICE**, because
@@ -1518,6 +1543,18 @@ app.post('/api/runs/:id/propose', authed, ownsRun, wrap(async (req, res) => {
     vault: b.vault,
     epoch: inputs.epoch,
   });
+
+  /*
+   * **WHAT IS RAISED IS WHAT THE DEVICE CHECKED.** The payments are rebuilt
+   * here from the run, and the run may have changed since the device asked for
+   * them - a salary corrected, a person added. A mismatch is refused before the
+   * proposal is written down. A leg that is already proposed is refused as
+   * that first, because raising again cannot change it.
+   */
+  if (b.onDevice) payroll.refuseRaisingAProposedLeg(String(req.params.id), b.viewingKey, b.asset);
+  if (b.onDevice && paymentsCheckedDigest(material.facts.map(f => [f.payee.kind, f.token, f.amount] as const)) !== b.checked) {
+    throw new Error(RAISE_IS_NOT_WHAT_WAS_CHECKED);
+  }
 
   /*
    * The account is resolved from the RUN and not from the URL - this route is
@@ -1591,12 +1628,23 @@ app.post('/api/runs/:id/leg-payments', authed, ownsRun, wrap(async (req, res) =>
 app.post('/api/runs/:id/raise-send', authed, ownsRun, async (req, res) => {
   const b = z.object({
     viewingKey: z.string(), asset: assetCode.optional(), tx: z.string().min(1).max(1_000_000),
+    /* Which page checked the vault right before this send, and the digest of what it checked. */
+    version: z.unknown().optional(),
+    checked: z.string().optional(),
   }).strict().safeParse(req.body ?? {});
   if (!b.success) {
     res.status(400).json({ nothingWasSent: true, error: 'this request does not carry a proposal to send. Nothing was sent.' });
     return;
   }
   await answerASend(req, res, async () => {
+    /*
+     * **ONLY A PAGE OF THE CURRENT VERSION SENDS**, because only that page
+     * checks the vault on the device right before every send, a send again
+     * included.
+     */
+    if (b.data.version !== DEVICE_RAISE_VERSION) {
+      throw new NothingWasSent(reloadThePage(b.data.version, 'Nothing was sent.'));
+    }
     /* Everything before the send is a refusal that sent nothing, and is marked so. */
     let order: Awaited<ReturnType<typeof payroll.raiseOrderOf>>;
     let by: string;
@@ -1610,6 +1658,10 @@ app.post('/api/runs/:id/raise-send', authed, ownsRun, async (req, res) => {
     }
     if (order === null) {
       throw new NothingWasSent('this run has no proposal written down that is waiting to be sent to the chain. Nothing was sent.');
+    }
+    /* What is sent is what the device checked just now: the payments of the proposal written down. */
+    if (b.data.checked !== order.paymentsChecked) {
+      throw new NothingWasSent(SEND_IS_NOT_WHAT_WAS_CHECKED);
     }
     return accounts.sendRaise(order.proposalId, b.data.viewingKey, new Uint8Array(Buffer.from(b.data.tx, 'base64')), by);
   });

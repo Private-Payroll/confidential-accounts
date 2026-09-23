@@ -392,6 +392,7 @@ const legOf = (run: PayrollRun, asset: AssetId | undefined): AssetId => {
 import type { AccountService, PayrollRound, RaiseHalf } from './account.js';
 import type { ProofSystem, RunProposal } from './ledger.js';
 import type { DataStore } from './store.js';
+import { paymentsCheckedDigest } from './device-raise.js';
 
 export interface EmployeeSpec {
   name: string;
@@ -3526,12 +3527,40 @@ export class PayrollService {
     asset: AssetId;
     payments: Array<{ kind: 'shielded' | 'unshielded'; token: string; amount: bigint }>;
   }> {
-    const leg = legOf(this.requireRun(runId, viewingKey), asset);
-    const { facts } = await this.runMaterialInputs(runId, viewingKey, leg);
+    const run = this.requireRun(runId, viewingKey);
+    const leg = legOf(run, asset);
+    /*
+     * **A LEG WITH A PROPOSAL WRITTEN DOWN ASKS FOR WHAT WAS WRITTEN DOWN.** A
+     * proposal is sent as it was written, so the device checks the payments that
+     * will be sent, not the roster as it stands now; a roster edited since would
+     * otherwise have the device check one set and the service send another.
+     */
+    const facts = this.writtenDownFactsOf(run, leg, viewingKey)
+      ?? (await this.runMaterialInputs(runId, viewingKey, leg)).facts;
     return {
       asset: leg,
       payments: facts.map(f => ({ kind: f.payee.kind, token: f.token, amount: f.amount })),
     };
+  }
+
+  /**
+   * **THE REFUSAL A RAISE GIVES FOR A LEG ALREADY PROPOSED, ASKED ON ITS OWN.**
+   * A caller that compares anything about the raise first asks this before, so
+   * a leg that cannot be raised at all is told so, rather than told something
+   * about the raise that raising again would not change.
+   */
+  refuseRaisingAProposedLeg(runId: string, viewingKey: Hex, asset?: AssetId): void {
+    const run = this.requireRun(runId, viewingKey);
+    this.refuseALegThatIsProposed(run, legOf(run, asset), viewingKey);
+  }
+
+  /** The payments of the proposal this leg is written down as, unless it has none or it was withdrawn. */
+  private writtenDownFactsOf(run: PayrollRun, leg: AssetId, viewingKey: Hex): PaymentFacts[] | undefined {
+    const pointed = run.proposalIds[leg];
+    const payout = run.payout?.[leg];
+    if (!pointed || !payout) return undefined;
+    if (this.accounts.requireProposal(pointed, viewingKey).status === 'cancelled') return undefined;
+    return payout.facts;
   }
 
   /**
@@ -3628,6 +3657,8 @@ export class PayrollService {
     chainId: Hex;
     run: { root: Hex; payees: bigint; opensAt: bigint; closesAt: bigint; vault: Hex };
     half: RaiseHalf;
+    /** The digest of the payments written down, over what a device is handed to check them. */
+    paymentsChecked: string;
   } | null> {
     const run = this.requireRun(runId, viewingKey);
     const leg = raisedLegOf(run, asset);
@@ -3643,6 +3674,7 @@ export class PayrollService {
         root: payout.root, payees: payout.payees, opensAt: payout.opensAt, closesAt: payout.closesAt, vault: payout.vault,
       },
       half: await this.accounts.raiseHalfOf(proposalId, viewingKey),
+      paymentsChecked: paymentsCheckedDigest(payout.facts.map(f => [f.payee.kind, f.token, f.amount] as const)),
     };
   }
 

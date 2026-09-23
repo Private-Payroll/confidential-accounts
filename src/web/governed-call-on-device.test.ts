@@ -8,6 +8,7 @@ import { paymentsFitNotes } from './vault-builder.js';
 import { registryWithTestPrivateForms, testPrivateToken } from '../testing/assets.js';
 import type { Hex } from '../core/crypto.js';
 import { SEED_ASSETS, StaticAssetRegistry } from '../core/assets.js';
+import { DEVICE_RAISE_VERSION, paymentsCheckedDigest } from '../core/device-raise.js';
 
 /* The page's side, over a service and a worker that write down what they were asked, in order. */
 const material = { signingSecret: '11'.repeat(32), blinding: '22'.repeat(32), scope: '33'.repeat(32) };
@@ -30,29 +31,38 @@ const LEG: LegPaymentsOnTheWire = {
   asset: 'GBP', payments: [0, 1, 2].map(() => ({ kind: 'shielded', token: TOKEN, amount: '10000' })),
 };
 const PLENTY = [note(1, 1_000_000n)];
+/* The digest of LEG's payments, as the service computes it over what it raises or sends. */
+const CHECKED = paymentsCheckedDigest(LEG.payments.map((p) => [p.kind, p.token, p.amount] as const));
 
 const round = (over: Partial<RoundOnThePage> = {}): RoundOnThePage => ({ id: 'prp_1', chainId: 'cc'.repeat(32), status: 'open', ...over });
 
 const aDevice = (over: Partial<GovernedCallService> & {
   standings?: RoundOnThePage[]; buildFails?: Error;
   pool?: PoolNote[]; chainNotes?: string[]; fitFails?: Error;
+  /** The pool as each check finds it, first check first; the last one stands for every later check. */
+  poolAtCheck?: PoolNote[][];
 } = {}) => {
   const log: string[] = [];
   const standings = [...(over.standings ?? [])];
-  const pool = over.pool ?? PLENTY;
+  let checks = 0;
+  const poolNow = (): PoolNote[] => (over.poolAtCheck
+    ? over.poolAtCheck[Math.min(checks, over.poolAtCheck.length) - 1] ?? over.poolAtCheck[0]!
+    : over.pool ?? PLENTY);
   const service: GovernedCallService = {
-    legPayments: async (runId, body) => { log.push(`leg-payments ${runId} ${JSON.stringify(body)}`); return LEG; },
+    legPayments: async (runId, body) => { checks += 1; log.push(`leg-payments ${runId} ${JSON.stringify(body)}`); return LEG; },
     raiseRun: async (runId, body) => { log.push(`raise ${runId} ${JSON.stringify(body)}`); return { proposal: round(), order: ORDER }; },
     raiseOrder: async (runId) => { log.push(`order ${runId}`); return ORDER; },
-    sendRaise: async (runId, body) => { log.push(`send-raise ${runId} ${body.tx}`); return round({ txRef: 't1' }); },
+    sendRaise: async (runId, body) => {
+      log.push(`send-raise ${runId} ${body.tx} ${body.version} ${body.checked}`); return round({ txRef: 't1' });
+    },
     callState: async (id) => { log.push(`state ${id}`); return { account: 'ac'.repeat(32), blockHash: 'b', accountState: 'AS', parameters: 'PP' }; },
     approve: async (id, body) => { log.push(`approve ${id} ${body.signature} ${body.tx}`); return round(); },
     standing: async (id) => { log.push(`standing ${id}`); return standings.shift() ?? round(); },
     ...over,
   };
   const holdings = deviceVaultHoldings({
-    chain: async (vault) => { log.push(`vault read ${vault}`); return { onChain: true, notes: over.chainNotes ?? pool.map(committed) }; },
-    pool: async () => pool,
+    chain: async (vault) => { log.push(`vault read ${vault}`); return { onChain: true, notes: over.chainNotes ?? poolNow().map(committed) }; },
+    pool: async () => poolNow(),
     heldCommitmentOf: async (_vault, n) => committed(n),
     paymentsFit: async (notes, payments) => {
       if (over.fitFails) throw over.fitFails;
@@ -90,10 +100,15 @@ describe('RAISING A LEG FROM THIS DEVICE', () => {
       'leg-payments run_1 {"viewingKey":"vk","asset":"GBP"}',
       `vault read ${'99'.repeat(32)}`, `vault read ${'99'.repeat(32)}`,
       'stage writing-down',
-      `raise run_1 {"viewingKey":"vk","vault":"${'99'.repeat(32)}","opensAt":"1","closesAt":"2","asset":"GBP","onDevice":true}`,
+      `raise run_1 {"viewingKey":"vk","vault":"${'99'.repeat(32)}","opensAt":"1","closesAt":"2","asset":"GBP","onDevice":true,`
+        + `"version":${DEVICE_RAISE_VERSION},"checked":"${CHECKED}"}`,
+      /* RED WHEN: the vault is not checked again right before the send, after the proposal is written down. */
+      'stage checking-the-vault',
+      'leg-payments run_1 {"viewingKey":"vk","asset":"GBP"}',
+      `vault read ${'99'.repeat(32)}`, `vault read ${'99'.repeat(32)}`,
       'stage reading-the-chain', 'state acc_1',
       'stage building', `build propose for ${'ac'.repeat(32)} on AS`,
-      'stage sending', 'send-raise run_1 TX-propose',
+      'stage sending', `send-raise run_1 TX-propose ${DEVICE_RAISE_VERSION} ${CHECKED}`,
       'stage waiting-for-the-chain', 'standing prp_1', 'standing prp_1',
     ]);
   });
@@ -113,9 +128,12 @@ describe('RAISING A LEG FROM THIS DEVICE', () => {
     expect(d.log.filter((l) => l.startsWith('send'))).toEqual([]);
     const again = aDevice({ standings: [round({ raisedAt: 'now' })] });
     await sendRaiseFromDevice(again.doors, { runId: 'run_1', viewingKey: 'vk', asset: 'GBP' });
-    /* RED WHEN: sending again asks for anything but the proposal already written down. */
+    /* RED WHEN: sending again asks for anything but the proposal already written down and what its vault can pay. */
     expect(again.log.filter((l) => !l.startsWith('stage'))).toEqual([
-      'order run_1', 'state acc_1', `build propose for ${'ac'.repeat(32)} on AS`, 'send-raise run_1 TX-propose', 'standing prp_1',
+      'order run_1', 'leg-payments run_1 {"viewingKey":"vk","asset":"GBP"}',
+      `vault read ${'99'.repeat(32)}`, `vault read ${'99'.repeat(32)}`,
+      'state acc_1', `build propose for ${'ac'.repeat(32)} on AS`,
+      `send-raise run_1 TX-propose ${DEVICE_RAISE_VERSION} ${CHECKED}`, 'standing prp_1',
     ]);
   });
 
@@ -191,13 +209,15 @@ describe('APPROVING FROM THIS DEVICE', () => {
     const service = governedCallServiceFor(api);
     /* RED WHEN: the mark is dropped - a refusal then reads as maybe sent, and a failure at the send as nothing sent. */
     expect(nothingWasSentBy(await service.approve('p 1', { signerId: 's', signature: 'S', viewingKey: 'vk', tx: 'T' }).catch((e) => e))).toBe(true);
-    expect(nothingWasSentBy(await service.sendRaise('r1', { viewingKey: 'vk', tx: 'T' }).catch((e) => e))).toBe(false);
+    expect(nothingWasSentBy(await service.sendRaise('r1', {
+      viewingKey: 'vk', tx: 'T', version: DEVICE_RAISE_VERSION, checked: 'ab'.repeat(32),
+    }).catch((e) => e))).toBe(false);
     await service.callState('acc 1');
     await service.standing('p 1', { viewingKey: 'vk' });
     /* RED WHEN: a key travels in an address rather than a body, or an id is not escaped. */
     expect(calls).toEqual([
       'POST /api/proposals/p%201/approve {"signerId":"s","signature":"S","viewingKey":"vk","tx":"T"}',
-      'POST /api/runs/r1/raise-send {"viewingKey":"vk","tx":"T"}',
+      `POST /api/runs/r1/raise-send {"viewingKey":"vk","tx":"T","version":${DEVICE_RAISE_VERSION},"checked":"${'ab'.repeat(32)}"}`,
       'GET /api/accounts/acc%201/call-state ',
       'POST /api/proposals/p%201/standing {"viewingKey":"vk"}',
     ]);
@@ -257,8 +277,8 @@ describe('THE VAULT\'S PRIVATE MONEY IS ASKED ON THIS DEVICE BEFORE THE COMPANY 
     /* RED WHEN: this device asks itself about public money it cannot read - every run with a public payee is then refused here. */
     expect((await raiseRunOnDevice(d.doors, { ...RAISE, asset: 'NIGHT' })).raisedAt).toBe('now');
     expect(d.log.filter((l) => l.startsWith('vault read'))).toEqual([]);
-    /* RED WHEN: the device check is skipped outright - the raise above then says nothing about it. */
-    expect(asked).toEqual(['run_1 {"viewingKey":"vk","asset":"NIGHT"}']);
+    /* RED WHEN: the device check is skipped outright, before the write-down or before the send. */
+    expect(asked).toEqual(Array(2).fill('run_1 {"viewingKey":"vk","asset":"NIGHT"}'));
     expect(d.log[0]).toBe('stage checking-the-vault');
   });
 
@@ -330,8 +350,12 @@ describe('THE VAULT\'S PRIVATE MONEY IS ASKED ON THIS DEVICE BEFORE THE COMPANY 
     expect(sent).not.toContain((987_654_321n + 123_456_789n).toString());
     expect(sent).not.toMatch(/notes|nonce|pool|balance|held/u);
     /* And the raise itself carries exactly what it did before this device read its pool. */
-    expect(Object.keys(JSON.parse(bodies[1]!)).sort()).toEqual(['asset', 'closesAt', 'onDevice', 'opensAt', 'runId', 'vault', 'viewingKey']);
-    expect(vaultReads).toEqual([`vault read ${'99'.repeat(32)}`, `vault read ${'99'.repeat(32)}`]);
+    expect(Object.keys(JSON.parse(bodies[1]!)).sort()).toEqual(
+      ['asset', 'checked', 'closesAt', 'onDevice', 'opensAt', 'runId', 'vault', 'version', 'viewingKey']);
+    /* And the send carries only the version and the digest beside the proven transaction. */
+    const sendBody = bodies.map((b) => JSON.parse(b.startsWith('{') ? b : '{}')).find((b) => 'tx' in b);
+    expect(Object.keys(sendBody).sort()).toEqual(['asset', 'checked', 'runId', 'tx', 'version', 'viewingKey']);
+    expect(vaultReads).toEqual(Array(4).fill(`vault read ${'99'.repeat(32)}`));
   });
 
   it('asks the company for what the leg pays over its own route, with the viewing key in the body', async () => {
@@ -343,5 +367,54 @@ describe('THE VAULT\'S PRIVATE MONEY IS ASKED ON THIS DEVICE BEFORE THE COMPANY 
     await service.legPayments('r 1', { viewingKey: 'vk', asset: 'GBP' });
     /* RED WHEN: the key travels in an address, or the run id is not escaped. */
     expect(calls).toEqual(['POST /api/runs/r%201/leg-payments {"viewingKey":"vk","asset":"GBP"}']);
+  });
+});
+
+describe('EVERY SEND IS CHECKED AGAINST THE VAULT ON THIS DEVICE FIRST, AND SAYS WHICH PAGE CHECKED WHAT', () => {
+  const RAISE = { runId: 'run_1', viewingKey: 'vk', asset: 'GBP', vault: '99'.repeat(32), opensAt: '1', closesAt: '2' };
+  const builtOrSent = (log: string[]) => log.filter((l) => /^(state|build|send-raise) /u.test(l));
+
+  it('4. A SEND AGAIN OF A WRITTEN-DOWN PROPOSAL CHECKS THE VAULT FIRST, AND A VAULT THAT CAN NO LONGER PAY IS REFUSED BEFORE ANYTHING IS BUILT OR SENT', async () => {
+    const d = aDevice({ pool: [note(1, 29_999n)] });
+    const refused = await sendRaiseFromDevice(d.doors, { runId: 'run_1', viewingKey: 'vk', asset: 'GBP' }).catch((e) => e);
+    /* RED WHEN: a send again goes out on the check made when the proposal was written down, days before. */
+    expect(refused?.name).toBe('VaultCannotPayThisProposal');
+    expect(refused?.why).toBe('short');
+    expect(String(refused?.message)).toMatch(/Nothing was raised and no fee was spent\./u);
+    expect(builtOrSent(d.log)).toEqual([]);
+    /* The vault asked about is the one the written-down proposal names, and it is asked before the chain is read. */
+    expect(d.log.filter((l) => !l.startsWith('stage')).slice(0, 2)).toEqual(['order run_1', 'leg-payments run_1 {"viewingKey":"vk","asset":"GBP"}']);
+    expect(d.log).toContain(`vault read ${ORDER.order.run.vault}`);
+    expect(d.log).toContain('stage checking-the-vault');
+  });
+
+  it('4b. A FIRST SEND IS CHECKED AGAIN AFTER THE PROPOSAL IS WRITTEN DOWN, SO A VAULT EMPTIED IN BETWEEN SENDS NOTHING', async () => {
+    const d = aDevice({ poolAtCheck: [PLENTY, [note(1, 100n)]] });
+    const refused = await raiseRunOnDevice(d.doors, RAISE).catch((e) => e);
+    /* RED WHEN: the first send rides on the check made before the write-down. */
+    expect(refused?.why).toBe('short');
+    expect(d.log.filter((l) => l.startsWith('raise '))).toHaveLength(1);
+    expect(builtOrSent(d.log)).toEqual([]);
+  });
+
+  it('4c. THE SEND NAMES THIS PAGE\'S VERSION AND THE DIGEST OF EXACTLY WHAT THIS CHECK WAS HANDED', async () => {
+    /* A private payment and a public one, so the kind of each is part of what is digested at this call site. */
+    const other: LegPaymentsOnTheWire = { asset: 'GBP', payments: [
+      { kind: 'shielded', token: TOKEN, amount: '12345' }, { kind: 'unshielded', token: 'ab'.repeat(32), amount: '5' },
+    ] };
+    const both = new StaticAssetRegistry(SEED_ASSETS.map((a) => (a.code === 'GBP'
+      ? { ...a, ledger: { shielded: TOKEN, unshielded: 'ab'.repeat(32) } } : a)));
+    const bodies: Array<{ version: number; checked: string }> = [];
+    const d = aDevice({
+      standings: [round({ raisedAt: 'now' })],
+      legPayments: async () => other,
+      sendRaise: async (_r, body) => { bodies.push(body); return round({ txRef: 't1' }); },
+    });
+    await sendRaiseFromDevice({ ...d.doors, assets: both }, { runId: 'run_1', viewingKey: 'vk', asset: 'GBP' });
+    /* RED WHEN: the send carries no version, a stale one, or a digest of anything but the payments this check was handed - kind included. */
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]!.version).toBe(DEVICE_RAISE_VERSION);
+    expect(bodies[0]!.checked).toBe(paymentsCheckedDigest([['shielded', TOKEN, '12345'], ['unshielded', 'ab'.repeat(32), '5']]));
+    expect(bodies[0]!.checked).not.toBe(CHECKED);
   });
 });
