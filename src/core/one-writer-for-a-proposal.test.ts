@@ -54,6 +54,11 @@ type Ada = 0; type Blake = 1;
 async function aCompany(opts: { threshold: number }) {
   const store = new FileStore(join(mkdtempSync(join(tmpdir(), 'mn-one-writer-')), 'db.json'));
   const ledger = new SimulatedLedger(MidnightCommitments);
+  /*
+   * A DOUBLE, NAMED: the simulated ledger records no payments and answers that it cannot say who was
+   * paid, and a retry is refused until that can be said. Here the account records nobody paid.
+   */
+  Object.assign(ledger, { paidAmong: async () => ({ known: true, paid: [] }) });
   /** Every transaction a device handed to the door, in order: which call, and whose device built it. */
   const sent: Array<{ circuit: string; by: string }> = [];
   /** What the door does with the next call; the default lands it on the chain at once. */

@@ -23,7 +23,7 @@
  * the earlier one; a chain that will not answer is not guessed about; and a
  * repeat nobody confirmed is not raised.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -45,6 +45,16 @@ const VAULT = toHex(new Uint8Array(32).fill(0xa1));
 const NOW = Math.floor(Date.now() / 1000);
 const OPENS = BigInt(NOW + 60);
 const CLOSES = BigInt(NOW + 86_400);
+
+/**
+ * THIS MACHINE'S CLOCK, MOVED PAST THE LEG'S WINDOW. A retry is raised only once the leg's own
+ * proposal can no longer pay anybody, which is when its window has closed. Put back after each test.
+ */
+const afterTheLegsWindow = () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime((Number(CLOSES) + 60) * 1000);
+};
+afterEach(() => { vi.useRealTimers(); });
 
 type Fault = 'none' | 'land-then-throw' | 'throw-before-sending';
 
@@ -68,6 +78,11 @@ const services = () => {
         };
       }
       if (prop === 'status' && control.dark) return async () => null;
+      /*
+       * A DOUBLE, NAMED: the simulated ledger records no payments and answers that it cannot say who
+       * was paid, and a retry is refused until that can be said. Here it answers that nobody was.
+       */
+      if (prop === 'paidAmong') return async () => ({ known: true, paid: [] });
       return typeof value === 'function' ? value.bind(target) : value;
     },
   });
@@ -329,8 +344,9 @@ describe('a raise that threw after the network had it', () => {
       rebuild, indices: [1], opensAt: OPENS, closesAt: CLOSES + 7_200n, vault: VAULT,
       detailsOf: vaultDetails,
     });
+    afterTheLegsWindow();
     r.control.fault = 'land-then-throw';
-    await expect(r.payroll.proposeRetry(r.run.id, r.viewingKey, r.by, retry)).rejects.toThrow();
+    await expect(r.payroll.proposeRetry(r.run.id, r.viewingKey, r.by, retry)).rejects.toThrow(/socket closed after sending/);
     const written = r.roundsOf(r.run.id).filter(x => x.retry);
     expect(written).toHaveLength(1);
     /* RED WHEN an attempt whose raise never returned is counted as one that can still pay somebody. */

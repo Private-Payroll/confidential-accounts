@@ -48,7 +48,7 @@ import {
   SEND_IS_NOT_WHAT_WAS_CHECKED, paymentsCheckedDigest, reloadThePage,
 } from '../core/device-raise.js';
 import { runPayments } from '../midnight/run-status.js';
-import { buildRun, rootOfLeaves } from '../midnight/payout-tree.js';
+import { buildRun, buildRetryRun, rootOfLeaves } from '../midnight/payout-tree.js';
 import { vaultDetailsOf } from '../midnight/vault-details.js';
 import { assemblePrivatePayments } from '../midnight/private-payment-wire.js';
 import { runMaterialFor, retryMaterialFor } from '../midnight/run-material.js';
@@ -1908,10 +1908,43 @@ app.post('/api/runs/:id/payments', authed, ownsRun, wrap(async (req, res) => {
  *
  * **A POST FOR A READ**, for the reason the payment view above gives: the
  * viewing key travels in the body and never in an address.
+ *
+ * **AND AN APPROVED RETRY ON THE LEG IS PAID THROUGH THE SAME DOOR**, named by
+ * the proposal it was raised as. Its order is read off the retry as it was
+ * written onto the leg, its payments are the leg's own payments for only the
+ * people it names, each with the leaf they already had, and each is reported
+ * against their position in the leg.
  */
 app.post('/api/runs/:id/private-payments', authed, ownsRun, wrap(async (req, res) => {
-  const b = z.object({ viewingKey: z.string(), asset: assetCode.optional() }).parse(req.body ?? {});
+  const b = z.object({
+    viewingKey: z.string(), asset: assetCode.optional(), proposalId: z.string().min(1).optional(),
+  }).parse(req.body ?? {});
   const run = payroll.requireRun(String(req.params.id), b.viewingKey);
+  if (b.proposalId !== undefined) {
+    const retry = payroll.retryPaymentOrderOf(run.id, b.viewingKey as Hex, b.proposalId, b.asset, rootOfLeaves);
+    const rebuilt = await payroll.payoutRebuildOf(run.id, b.viewingKey, b.asset);
+    if (retry === null || rebuilt === null) {
+      res.status(409).json({
+        error: 'this run has no retry on the chain raised as that proposal, so there is nothing a vault can pay '
+          + 'against it: either it is not a retry on this run, or it has not been sent yet and can be paid once it '
+          + 'has been sent and approved. Reload the run and choose again.',
+      });
+      return;
+    }
+    const whole = buildRun(rebuilt.seeds, rebuilt.identity, rebuilt.facts, await vaultDetailsOf());
+    const paidAmongThem = await ledger.paidAmong(run.accountId, retry.leaves);
+    const assembledRetry = assemblePrivatePayments({
+      order: retry.order, leaves: retry.leaves, window: retry.window, idFrom: retry.idFrom,
+      built: buildRetryRun(whole, retry.indices), facts: retry.indices.map((i) => rebuilt.facts[i]!),
+      paid: paidAmongThem?.known ? new Set(paidAmongThem.paid) : null, indices: retry.indices,
+    });
+    if ('refusal' in assembledRetry) {
+      res.status(409).json({ error: assembledRetry.refusal });
+      return;
+    }
+    res.json(assembledRetry.order);
+    return;
+  }
   const order = payroll.privatePaymentOrderOf(run.id, b.viewingKey, b.asset);
   const material = payroll.payoutMaterialOf(run.id, b.viewingKey, { asset: b.asset, rootOf: rootOfLeaves });
   const rebuild = await payroll.payoutRebuildOf(run.id, b.viewingKey, b.asset);
