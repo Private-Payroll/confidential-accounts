@@ -33,6 +33,10 @@ export type VaultAsk =
   | { id: number; network: string; ask: 'commitments'; vault: string; coin: CoinOnTheWire }
   | { id: number; network: string; ask: 'choose-note'; notes: readonly NoteOnTheWire[]; token: string; amount: string }
   | {
+    id: number; network: string; ask: 'payments-fit'; notes: readonly NoteOnTheWire[];
+    payments: ReadonlyArray<{ token: string; amount: string }>;
+  }
+  | {
     id: number; network: string; ask: 'after-payment'; notes: readonly NoteOnTheWire[];
     spent: string; amount: string; change: NoteOnTheWire | null; createdIn: string | null;
   }
@@ -62,6 +66,7 @@ export type VaultAnswer =
   | Answered<'deposit', { tx: string }>
   | Answered<'commitments', { output: string; held: string }>
   | Answered<'choose-note', { note: NoteOnTheWire }>
+  | Answered<'payments-fit', { fits: true }>
   | Answered<'after-payment', { notes: NoteOnTheWire[] }>
   | Answered<'confirm-payment', { confirmation: PaymentConfirmation }>
   | Answered<'payout', { tx: string; spent: string; change: NoteOnTheWire | null }>
@@ -78,6 +83,8 @@ export interface VaultBuilderClient {
   deposit(input: { vault: string; coin: CoinOnTheWire; state: string }): Promise<{ tx: string }>;
   commitments(input: { vault: string; coin: CoinOnTheWire }): Promise<{ output: string; held: string }>;
   chooseNote(input: { notes: readonly NoteOnTheWire[]; token: string; amount: string }): Promise<NoteOnTheWire>;
+  /** Returns when the notes can make every payment in turn; refuses with the first they cannot. */
+  paymentsFit(input: { notes: readonly NoteOnTheWire[]; payments: ReadonlyArray<{ token: string; amount: string }> }): Promise<void>;
   afterPayment(input: {
     notes: readonly NoteOnTheWire[]; spent: string; amount: string; change: NoteOnTheWire | null; createdIn: string | null;
   }): Promise<NoteOnTheWire[]>;
@@ -143,6 +150,7 @@ export function vaultBuilderOver(worker: WorkerLike, network: string): VaultBuil
       return { output: a.output, held: a.held };
     },
     chooseNote: async (input) => (await ask({ ask: 'choose-note', ...input })).note,
+    paymentsFit: async (input) => { await ask({ ask: 'payments-fit', ...input }); },
     afterPayment: async (input) => (await ask({ ask: 'after-payment', ...input })).notes,
     confirmPayment: async (input) => (await ask({ ask: 'confirm-payment', ...input })).confirmation,
     payout: async (input) => {

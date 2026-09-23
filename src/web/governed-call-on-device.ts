@@ -16,6 +16,8 @@
  * signer; **the screen does not yet say the first of the three any differently
  * from any other failure.**
  */
+import { assets as theAssets, type AssetId, type AssetRegistry } from '../core/assets.js';
+import { refuseWhatTheVaultCannotPay, type PaymentAsked, type VaultHoldings } from '../core/vault-holdings.js';
 import type { SignerMaterial, GovernedCallOrder } from './governed-call-builder.js';
 import type { AccountCallChainOnTheWire, VaultBuilderClient } from './vault-worker-client.js';
 
@@ -36,8 +38,18 @@ export interface RoundOnThePage {
   readonly approvalRound?: { readonly state: string; readonly approvals?: number };
 }
 
+/**
+ * What raising one leg will ask its vault to pay, as the service hands it over:
+ * a kind, a token and an amount per payment, and nothing about who is paid.
+ */
+export interface LegPaymentsOnTheWire {
+  readonly asset: string;
+  readonly payments: ReadonlyArray<{ readonly kind: string; readonly token: string; readonly amount: string }>;
+}
+
 /** What this module asks of the company's service. */
 export interface GovernedCallService {
+  legPayments(runId: string, body: { viewingKey: string; asset?: string }): Promise<LegPaymentsOnTheWire>;
   raiseRun(runId: string, body: {
     viewingKey: string; asset?: string; vault: string; opensAt: string; closesAt: string; onDevice: true;
   }): Promise<{ proposal: RoundOnThePage; order: RaiseOrderOnTheWire | null }>;
@@ -48,7 +60,7 @@ export interface GovernedCallService {
   standing(proposalId: string, body: { viewingKey: string }): Promise<RoundOnThePage>;
 }
 
-export type GovernedStage = 'writing-down' | 'reading-the-chain' | 'building' | 'sending' | 'waiting-for-the-chain';
+export type GovernedStage = 'checking-the-vault' | 'writing-down' | 'reading-the-chain' | 'building' | 'sending' | 'waiting-for-the-chain';
 
 export interface GovernedCallDoors {
   readonly service: GovernedCallService;
@@ -151,15 +163,64 @@ export async function sendRaiseFromDevice(
   return waitFor(doors, 'this proposal', order.proposalId, input.viewingKey, (r) => Boolean(r.raisedAt), sent);
 }
 
+/** A raise also needs to know what the vault holds privately, which only this device can read. */
+export interface RaiseDoors extends GovernedCallDoors {
+  /** The vault's private money, read from the pool this device opens. */
+  readonly holdings: VaultHoldings;
+  /** The asset rows the payments are checked against. The product's own when not given. */
+  readonly assets?: AssetRegistry;
+}
+
+const DIGITS = /^[0-9]+$/u;
+
 /**
- * **ONE LEG OF A RUN, RAISED FROM THIS DEVICE.** The service writes the proposal
- * down first, so a device that stops part way leaves a proposal that can be sent
- * again with `sendRaiseFromDevice`, never a second proposal over the same people.
+ * **WHETHER THE VAULT CAN PAY THIS LEG'S PRIVATE PAYMENTS, ASKED HERE BEFORE THE
+ * SERVICE IS ASKED TO WRITE ANYTHING DOWN.** The vault's notes are opened on
+ * this device and nowhere else, so this is the one place the question can be
+ * answered; the service asks the rest. A refusal writes nothing and spends
+ * nothing. The only thing that goes to the service to ask it is what it already
+ * had: the run, the leg and the viewing key.
+ */
+async function refuseALegTheVaultCannotPay(
+  doors: RaiseDoors, input: { runId: string; viewingKey: string; asset?: string; vault: string },
+): Promise<void> {
+  const leg = await doors.service.legPayments(input.runId, {
+    viewingKey: input.viewingKey, ...(input.asset === undefined ? {} : { asset: input.asset }),
+  });
+  if (input.asset !== undefined && leg.asset !== input.asset) {
+    throw new Error(`the company answered for its ${leg.asset} payments when ${input.asset} is being raised. `
+      + 'Nothing was raised and no fee was spent.');
+  }
+  const payments = leg.payments.map((p, at): PaymentAsked => {
+    const kind = p.kind;
+    if ((kind !== 'shielded' && kind !== 'unshielded') || !DIGITS.test(String(p.amount))) {
+      throw new Error(`payment ${at + 1} on this run came back from the company in a shape this device cannot `
+        + 'check. Nothing was raised and no fee was spent.');
+    }
+    return { payee: { kind }, token: String(p.token), amount: BigInt(p.amount) };
+  });
+  await refuseWhatTheVaultCannotPay(doors.holdings, {
+    vault: input.vault,
+    asset: (doors.assets ?? theAssets).require(leg.asset as AssetId),
+    total: payments.reduce((a, p) => a + p.amount, 0n),
+    payees: BigInt(payments.length),
+    payments,
+  }, ['shielded']);
+}
+
+/**
+ * **ONE LEG OF A RUN, RAISED FROM THIS DEVICE.** Its private payments are
+ * checked against the vault's notes here first. The service then writes the
+ * proposal down, so a device that stops part way leaves a proposal that can be
+ * sent again with `sendRaiseFromDevice`, never a second proposal over the same
+ * people.
  */
 export async function raiseRunOnDevice(
-  doors: GovernedCallDoors,
+  doors: RaiseDoors,
   input: { runId: string; viewingKey: string; asset?: string; vault: string; opensAt: string; closesAt: string },
 ): Promise<RoundOnThePage> {
+  doors.progress?.('checking-the-vault');
+  await refuseALegTheVaultCannotPay(doors, input);
   doors.progress?.('writing-down');
   const raised = await doors.service.raiseRun(input.runId, {
     viewingKey: input.viewingKey, vault: input.vault, opensAt: input.opensAt, closesAt: input.closesAt,
@@ -222,6 +283,7 @@ export const governedCallServiceFor = (api: Api): GovernedCallService => {
   const run = (id: string) => `/api/runs/${encodeURIComponent(id)}`;
   const proposal = (id: string) => `/api/proposals/${encodeURIComponent(id)}`;
   return {
+    legPayments: (runId, body) => post(`${run(runId)}/leg-payments`, body),
     raiseRun: (runId, body) => post(`${run(runId)}/propose`, body),
     raiseOrder: (runId, body) => post(`${run(runId)}/raise-order`, body),
     sendRaise: (runId, body) => marked(() => post(`${run(runId)}/raise-send`, body)),

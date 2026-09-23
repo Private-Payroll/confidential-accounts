@@ -8,6 +8,9 @@ import {
   type GovernedCallDoors, type GovernedStage,
 } from './governed-call-on-device.js';
 import { startVaultBuilder, type VaultBuilderClient } from './vault-worker-client.js';
+import { SealedNotePool } from '../midnight/vault-pool.js';
+import { deviceVaultHoldings } from './device-vault-holdings.js';
+import { deviceRecordsFor, rosterOf, vaultServiceFor } from './vault-page-doors.js';
 
 /**
  * **RAISING A RUN'S LEG AND APPROVING A PROPOSAL, FROM THIS DEVICE.**
@@ -19,6 +22,7 @@ import { startVaultBuilder, type VaultBuilderClient } from './vault-worker-clien
  */
 
 const STAGE_WORDS: Record<GovernedStage, string> = {
+  'checking-the-vault': 'checking on this device that the vault can pay it',
   'writing-down': 'writing the proposal down',
   'reading-the-chain': 'reading the company account from the chain',
   building: 'building and proving on this device',
@@ -42,6 +46,31 @@ const doorsFor = async (account: Account, progress: (s: GovernedStage) => void):
   accountId: account.id,
   progress,
 });
+
+/**
+ * **WHAT THE VAULT HOLDS PRIVATELY, READ HERE.** The pool is opened with this
+ * signer's own key, compared with the notes the chain holds for the vault, and
+ * walked through the payments in the page's background thread. None of it is
+ * sent anywhere.
+ */
+const holdingsFor = (
+  account: Account, me: { signerId: string; signingSecret: Hex; wrappingSecret: Hex }, builder: VaultBuilderClient,
+) => {
+  const roster = rosterOf(account);
+  const records = deviceRecordsFor(me.signingSecret, roster.filers, () => keyring.currentUser()?.id ?? null);
+  const pool = new SealedNotePool(records('pool'), { signerId: me.signerId, wrappingSecret: me.wrappingSecret }, roster.signers);
+  const wire = (n: { nonce: Hex; token: Hex; value: bigint; createdIn?: Hex }) => ({
+    nonce: n.nonce, token: n.token, value: n.value.toString(), ...(n.createdIn === undefined ? {} : { createdIn: n.createdIn }),
+  });
+  return deviceVaultHoldings({
+    chain: (vault) => vaultServiceFor(keyring.api, account.id).chain(vault),
+    pool: async (vault) => (await pool.load(vault)).notes,
+    heldCommitmentOf: async (vault, note) => (await builder.commitments({ vault, coin: wire(note) })).held,
+    paymentsFit: (notes, payments) => builder.paymentsFit({
+      notes: notes.map(wire), payments: payments.map((p) => ({ token: p.token, amount: p.amount.toString() })),
+    }),
+  });
+};
 
 /** One approval, from this device: the signature made with the keyring, the approval proved in the background thread. */
 export async function approveFromThisDevice(
@@ -69,8 +98,9 @@ const nowInSeconds = () => Math.floor(Date.now() / 1000);
  * be paid in. The vault is folded into what the signers approve, so it is
  * chosen from a list and never typed.
  */
-export function RaiseLeg({ account, runId, asset, viewingKey, act, busy }: {
-  account: Account; runId: string; asset: string; viewingKey: Hex;
+export function RaiseLeg({ account, me, runId, asset, viewingKey, act, busy }: {
+  account: Account; me: { signerId: string; signingSecret: Hex; wrappingSecret: Hex };
+  runId: string; asset: string; viewingKey: Hex;
   act: (fn: () => Promise<void>) => Promise<void>; busy: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -100,7 +130,8 @@ export function RaiseLeg({ account, runId, asset, viewingKey, act, busy }: {
 
   const raise = () => act(async () => {
     try {
-      await raiseRunOnDevice(await doorsFor(account, setStage), {
+      const doors = await doorsFor(account, setStage);
+      await raiseRunOnDevice({ ...doors, holdings: holdingsFor(account, me, await theBuilder()) }, {
         runId, viewingKey, asset, vault, opensAt: seconds(opens, false), closesAt: seconds(closes, true),
       });
     } finally {

@@ -366,6 +366,9 @@ const NOT_AN_ASSET_BECOMING_A_TOKEN: Record<string, { count: number; why: string
   'scripts/fund-vault.ts colour': { count: 1, why: 'the ledger\'s own native token, read from the ledger at run time' },
   'scripts/measure-call-cost.ts toHex(GBP)': { count: 1, why: 'a colour a measurement mints for itself, never a payment' },
   'src/midnight/vault-journal.ts token': { count: 1, why: 'the colour read off a journal line this reader has already checked is a coin, carried into the coin proposed to the chain' },
+  'src/web/device-vault-holdings.ts p.token as Hex': { count: 1, why: 'the token the service already read off the asset\'s row for this payment, carried into the question the worker is asked' },
+  'src/web/governed-call-on-device.ts String(p.token)': { count: 1, why: 'the token the service already read off the asset\'s row for this payment, carried into the check the device runs' },
+  'src/web/vault-builder.ts p.token as Hex': { count: 1, why: 'a payment\'s token as it arrived over the wire, checked as 64 hex characters and carried into the notes walk' },
   'scripts/record-a-notes-transaction.ts target.token as Hex': { count: 1, why: 'the token of the note already in the pool, put back into the commitment so it can be compared with the one the chain holds' },
 };
 

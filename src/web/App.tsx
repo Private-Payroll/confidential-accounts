@@ -1432,7 +1432,7 @@ function RunDetail({ run, proposals, account, session, me, busy, onBack, act }: 
                           the proposal is built and proved here with this signer's own
                           keys; the company's service writes it down first and
                           pays the fee. */}
-                      {!proposal && <RaiseLeg account={account} runId={run.id} asset={asset}
+                      {!proposal && <RaiseLeg account={account} me={me} runId={run.id} asset={asset}
                         viewingKey={session.viewingKey} act={act} busy={busy} />}
                       {/* A proposal written down that the chain does not show yet: sent (again), as itself.
                           The service sends one a device already sent only when the chain says it does not

@@ -3512,6 +3512,29 @@ export class PayrollService {
   }
 
   /**
+   * **WHAT RAISING ONE LEG WILL ASK ITS VAULT TO PAY, FOR A SIGNER'S DEVICE TO
+   * CHECK AGAINST THE VAULT'S NOTES BEFORE IT ASKS FOR THE RAISE.**
+   *
+   * The same payments the raise is checked against, from the same inputs its
+   * material is built from, so the device asks about the proposal that will
+   * actually be raised. Each payment is its payee's kind, its token and its
+   * amount, and nothing else: no address, and none of the seeds the inputs are
+   * gathered with. A private payment can only be checked where the vault's pool
+   * is opened, which is the device, and this is what the device needs to ask.
+   */
+  async legPaymentsAsked(runId: string, viewingKey: Hex, asset?: AssetId): Promise<{
+    asset: AssetId;
+    payments: Array<{ kind: 'shielded' | 'unshielded'; token: string; amount: bigint }>;
+  }> {
+    const leg = legOf(this.requireRun(runId, viewingKey), asset);
+    const { facts } = await this.runMaterialInputs(runId, viewingKey, leg);
+    return {
+      asset: leg,
+      payments: facts.map(f => ({ kind: f.payee.kind, token: f.token, amount: f.amount })),
+    };
+  }
+
+  /**
    * **WHAT ONE LEG OF A RUN WAS RAISED AGAINST, READ BACK OFF THE RECORD.**
    *
    * A payment view is built against a run's payout LEAVES and the window its

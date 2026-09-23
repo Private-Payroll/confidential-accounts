@@ -31,6 +31,7 @@ const builder = (log: string[]): VaultBuilderClient => ({
   deposit: async () => { log.push('build deposit'); return { tx: 'P' }; },
   commitments: async (i) => ({ output: 'aa'.repeat(32), held: i.coin.nonce === 'ee'.repeat(32) ? 'bb'.repeat(32) : `h${i.coin.nonce.slice(1)}` }),
   chooseNote: async (i) => { log.push('choose'); return chooseNoteForPayment(i); },
+  paymentsFit: async () => { throw new Error('a payment out never asks whether a run fits'); },
   afterPayment: async (i) => poolAfterPayment(i),
   confirmPayment: async (i) => confirmPayment(i),
   payout: async (i) => {
