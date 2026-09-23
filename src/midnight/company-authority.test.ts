@@ -138,7 +138,7 @@ describe('ONE REFUSAL FOR EVERY REPLACEMENT OF A CONTRACT\'S RULES', () => {
   it('NO SHIPPING FILE MAKES A REPLACEMENT OF A CONTRACT\'S RULES ANYWHERE BUT THE ONE PLACE', () => {
     /* RED WHEN: any file the product ships constructs `ReplaceAuthority` itself - reverting `committeeReplacement`
      * or `buildMaintenanceInstruction` to their own construction turns this count to two or more - or names the
-     * class in code anywhere but the two files that declare its shape, which is how an alias would reach it.
+     * class in code anywhere but the three files that declare its shape, which is how an alias would reach it.
      * WHAT IT CANNOT SEE: a name assembled at run time. It reads source text, and says so. */
     const roots = ['src', 'scripts', 'packages/identity/src', 'apps/wallet/src'];
     const hits: string[] = [];
@@ -175,13 +175,13 @@ describe('ONE REFUSAL FOR EVERY REPLACEMENT OF A CONTRACT\'S RULES', () => {
       }
     };
     for (const r of roots) nameWalk(join(REPO, r));
-    expect(named.sort()).toEqual(['src/midnight/ledger.ts', 'src/midnight/vault-committee.ts']);
+    expect(named.sort()).toEqual(['src/midnight/authority-replacement.ts', 'src/midnight/ledger.ts', 'src/midnight/vault-committee.ts']);
     expect(sdk).toEqual([]);
     expect(hits).toHaveLength(1);
-    expect(hits[0]).toMatch(/^src\/midnight\/ledger\.ts:/);
-    const ledgerText = readFileSync(join(REPO, 'src/midnight/ledger.ts'), 'utf8');
+    expect(hits[0]).toMatch(/^src\/midnight\/authority-replacement\.ts:/);
+    const builderText = readFileSync(join(REPO, 'src/midnight/authority-replacement.ts'), 'utf8');
     const at = Number(hits[0]!.split(':')[1]);
-    const before = ledgerText.split('\n').slice(0, at).join('\n');
+    const before = builderText.split('\n').slice(0, at).join('\n');
     expect(before.lastIndexOf('export function replaceAuthorityOf')).toBeGreaterThan(before.lastIndexOf('\nexport function '));
   });
 });

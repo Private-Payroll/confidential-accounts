@@ -31,7 +31,7 @@
  *
  * Imports nothing that loads WebAssembly: the ledger's classes are handed in.
  */
-import { authorityValueRefusals, replaceAuthorityOf, type MaintenanceRefusal } from './ledger.js';
+import { authorityValueRefusals, replaceAuthorityOf, type MaintenanceRefusal } from './authority-replacement.js';
 
 export interface CommitteeKey {
   readonly tag: string;
