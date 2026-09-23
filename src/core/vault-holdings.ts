@@ -140,9 +140,19 @@ const DEPOSIT = "through the vault's own deposit";
  * proposal is raised can spend the money on something else before the proposal
  * is paid. That is decided at the moment of payment, where the vault refuses a
  * payment it cannot make.
+ *
+ * **`readFor` IS WHICH FORMS OF MONEY THIS READER CAN ANSWER FOR**, both when
+ * it is omitted. A vault's private money is readable only where its note pool
+ * is opened, which is a signer's device, and its public money is readable by
+ * anybody. So the two halves of one proposal can be asked by two readers in two
+ * places, each through this same function: steps 1 and 2 are always asked of
+ * every payment, and steps 3 and 4 only of the payments in the forms named.
+ * The two forms are held apart - notes and a contract balance - so a payment in
+ * one never draws on the other, and asking them separately loses nothing.
  */
 export async function refuseWhatTheVaultCannotPay(
   reader: VaultHoldings, proposal: ProposalAsks,
+  readFor: ReadonlyArray<LedgerForm> = ['shielded', 'unshielded'],
 ): Promise<void> {
   const { asset, vault } = proposal;
   const cannot = (
@@ -169,7 +179,7 @@ export async function refuseWhatTheVaultCannotPay(
     }
     if (a?.of === 'contradicted') {
       return cannot(
-        `this service's record of the vault's private notes disagrees with the chain (${String(a.why)}), `
+        `the record of the vault's private notes disagrees with the chain (${String(a.why)}), `
         + 'so the vault has no balance a proposal can be raised against. Unless a deposit or a payment '
         + 'was still being written down when the vault was read, trying again does not change that: the '
         + 'record is rebuilt from the chain and the vault\'s payment history first, and no screen does '
@@ -241,7 +251,9 @@ export async function refuseWhatTheVaultCannotPay(
       + `would approve ${formatAmount(proposal.total, asset)} ${asset.code}.`, 'not-the-proposal');
   }
 
+  const read = new Set(readFor);
   for (const { form, token, amount } of asks.values()) {
+    if (!read.has(form)) continue;
     const what = `of ${asset.code} ${inForm(form)}`;
     const answer = await ask(() => reader.held(vault, form, token), what, form, amount);
     if (answer?.of !== 'held' || typeof answer.amount !== 'bigint' || answer.amount < 0n) {
@@ -256,11 +268,14 @@ export async function refuseWhatTheVaultCannotPay(
     }
   }
 
+  const asked = proposal.payments.filter(p => read.has(p.payee.kind));
+  if (asked.length === 0) return;
+  const askedSum = asked.reduce((a, p) => a + p.amount, 0n);
   const what = `of ${asset.code}`;
-  const fit = await ask(() => reader.fits(vault, proposal.payments), what, null, sum);
+  const fit = await ask(() => reader.fits(vault, asked), what, null, askedSum);
   if (fit?.of === 'fits') return;
   if (fit?.of === 'does-not-fit') {
-    const privately = proposal.payments.some(p => p.payee.kind === 'shielded');
+    const privately = asked.some(p => p.payee.kind === 'shielded');
     const reason = String(fit.why).replace(/[.\s]+$/, '');
     throw cannot(privately
       ? `the vault holds enough ${asset.code} in total, but its notes cannot make each payment in turn `
@@ -269,7 +284,7 @@ export async function refuseWhatTheVaultCannotPay(
         + `Deposit those ${DEPOSIT}, then raise the proposal again.`
       : `the vault cannot make each payment in turn (${reason}). Read what it holds again, then raise `
         + 'the proposal again.',
-      'does-not-fit', null, null, sum);
+      'does-not-fit', null, null, askedSum);
   }
-  throw notAnAnswer(fit, what, null, sum);
+  throw notAnAnswer(fit, what, null, askedSum);
 }

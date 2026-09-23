@@ -12,7 +12,7 @@
  * origin and sends nothing anywhere.
  */
 import {
-  buildCommitteeHandover, buildDeposit, buildPayout, buildVaultDeploy, chooseNoteForPayment, confirmPayment,
+  buildCommitteeHandover, buildDeposit, buildPayout, buildVaultDeploy, chooseNoteForPayment, confirmPayment, paymentsFitNotes,
   poolAfterPayment,
   type VaultBuilderDeps,
 } from './vault-builder.js';
@@ -163,6 +163,10 @@ export const answerVaultAsk = async (
     case 'choose-note': {
       const note = chooseNoteForPayment({ notes: ask.notes, token: ask.token, amount: ask.amount });
       return { id: ask.id, ok: true, ask: 'choose-note', note };
+    }
+    case 'payments-fit': {
+      paymentsFitNotes({ notes: ask.notes, payments: ask.payments });
+      return { id: ask.id, ok: true, ask: 'payments-fit', fits: true };
     }
     case 'after-payment': {
       const notes = poolAfterPayment({

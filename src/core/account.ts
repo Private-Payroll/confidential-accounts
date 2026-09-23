@@ -3977,10 +3977,26 @@ export class AccountService {
             'a round that pays somebody has to name the asset it pays in, and this one names none. '
             + 'Nothing was raised and no fee was spent.');
         }
+        /*
+         * **A ROUND A SIGNER'S DEVICE SENDS HAS HAD ITS PRIVATE MONEY ASKED ON
+         * THAT DEVICE, WHICH IS THE ONLY PLACE IT CAN BE.** The vault's note pool
+         * is opened with a signer's own key and never reaches this service, so
+         * no reader here can say what the vault holds privately. This service
+         * still asks everything it can: every payment against the asset's row,
+         * the payments against the proposal, and the vault's public money. A
+         * round this service sends itself is asked about both forms here, and a
+         * private payment on it is refused, because nothing asked on a device.
+         *
+         * **THIS IS NOT WHAT KEEPS THE MONEY.** The vault refuses a payment it
+         * cannot make, at payment, so no answer here can pay more than the
+         * vault holds. A device that answers wrongly costs its company the fees
+         * for a round the vault cannot pay in full: the raise, every approval,
+         * and a run that stops at the first payment the vault refuses.
+         */
         await refuseWhatTheVaultCannotPay(this.holdings, {
           vault: pays.vault, asset: this.assets.require(pays.asset), total: pays.total,
           payees: pays.payees, payments: pays.payments,
-        });
+        }, call === THE_DEVICE_SENDS ? ['unshielded'] : ['shielded', 'unshielded']);
       }
       /*
        * **A RECORD THAT ALREADY EXISTS IS WRITTEN AS IT IS NOW, AND ONLY IF IT

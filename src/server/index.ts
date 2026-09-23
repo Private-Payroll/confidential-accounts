@@ -293,19 +293,19 @@ const proofs = chosen.createProofSystem();
  * be able to see a chain, and the wrong answer for one that can. This process
  * resolved a deployment, so it can.
  *
- * **AND IT CHANGES NOTHING FOR A PAYROLL RUN TODAY, WHICH IS SAID HERE RATHER
- * THAN DISCOVERED.** The reader answers public money. Every payee on every run
- * this product can raise is private, so every such round is still refused - in
- * different words. What this closes is the half a service can have, and what it
- * leaves open is named where the reader is built.
+ * **IT DOES NOT ANSWER PRIVATE MONEY, AND A PAYROLL RUN IS ALL PRIVATE.** The
+ * reader answers public money only. A private payment is checked on the
+ * signer's device that raises the proposal, against the vault's pool that device
+ * opens, before it asks for the raise; this service then asks only about the
+ * public money on that round. A round this service would send itself is still
+ * asked about both, so a private payment on it is refused, as before.
  *
  * **WHAT IT WIDENS, EXACTLY.** A reader that answers nothing refuses every
  * round that moves money. This one refuses on what the chain says, so a round
  * whose payees are all PUBLIC and whose total the vault's public balance covers
- * is now raised where it was previously stopped. That is the intended change
- * and it is the only one. Every other answer - the chain unreadable, a record
- * that disagrees with it, a read that failed, a private balance this service
- * cannot see - is still a refusal to raise.
+ * is now raised where it was previously stopped. Every other answer this
+ * reader gives - the chain unreadable, a read that failed, a private balance
+ * this service cannot see - is still a refusal to raise.
  *
  * The asset registry is named rather than skipped because the reader is the
  * argument after it and there is no way to pass the fifth without the fourth.
@@ -1564,6 +1564,22 @@ app.post('/api/runs/:id/raise-order', authed, ownsRun, wrap(async (req, res) => 
     return;
   }
   res.json(order);
+}));
+
+/*
+ * **WHAT ONE LEG OF A RUN WILL ASK ITS VAULT TO PAY**, for the signer's device
+ * to check against the vault's notes before it asks for the raise. Each payment
+ * is a kind, a token and an amount: no address, no seed, and nothing about the
+ * vault's notes, which this service cannot read. The viewing key travels in the
+ * body.
+ */
+app.post('/api/runs/:id/leg-payments', authed, ownsRun, wrap(async (req, res) => {
+  const b = z.object({ viewingKey: z.string(), asset: assetCode.optional() }).strict().parse(req.body ?? {});
+  const asked = await payroll.legPaymentsAsked(String(req.params.id), b.viewingKey as Hex, b.asset);
+  res.json({
+    asset: asked.asset,
+    payments: asked.payments.map(p => ({ kind: p.kind, token: p.token, amount: p.amount.toString() })),
+  });
 }));
 
 /*

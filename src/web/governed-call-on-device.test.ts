@@ -1,8 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import {
   approveOnDevice, governedCallServiceFor, nothingWasSentBy, raiseRunOnDevice, SentAndNotYetSeen, sendRaiseFromDevice,
-  type GovernedCallDoors, type GovernedCallService, type RaiseOrderOnTheWire, type RoundOnThePage,
+  type GovernedCallService, type LegPaymentsOnTheWire, type RaiseDoors, type RaiseOrderOnTheWire, type RoundOnThePage,
 } from './governed-call-on-device.js';
+import { deviceVaultHoldings, type PoolNote } from './device-vault-holdings.js';
+import { paymentsFitNotes } from './vault-builder.js';
+import { registryWithTestPrivateForms, testPrivateToken } from '../testing/assets.js';
+import type { Hex } from '../core/crypto.js';
+import { SEED_ASSETS, StaticAssetRegistry } from '../core/assets.js';
 
 /* The page's side, over a service and a worker that write down what they were asked, in order. */
 const material = { signingSecret: '11'.repeat(32), blinding: '22'.repeat(32), scope: '33'.repeat(32) };
@@ -15,12 +20,28 @@ const ORDER: RaiseOrderOnTheWire = {
     proposal: 'cc'.repeat(32),
   },
 };
+/* The vault's private money, as this device's pool records it and the chain holds it. */
+const TOKEN = testPrivateToken('GBP') as Hex;
+const note = (n: number, value: bigint): PoolNote => ({
+  nonce: n.toString(16).padStart(64, '0') as Hex, token: TOKEN, value, createdIn: 'ee'.repeat(32) as Hex,
+});
+const committed = (n: PoolNote) => `c${n.nonce.slice(1)}`;
+const LEG: LegPaymentsOnTheWire = {
+  asset: 'GBP', payments: [0, 1, 2].map(() => ({ kind: 'shielded', token: TOKEN, amount: '10000' })),
+};
+const PLENTY = [note(1, 1_000_000n)];
+
 const round = (over: Partial<RoundOnThePage> = {}): RoundOnThePage => ({ id: 'prp_1', chainId: 'cc'.repeat(32), status: 'open', ...over });
 
-const aDevice = (over: Partial<GovernedCallService> & { standings?: RoundOnThePage[]; buildFails?: Error } = {}) => {
+const aDevice = (over: Partial<GovernedCallService> & {
+  standings?: RoundOnThePage[]; buildFails?: Error;
+  pool?: PoolNote[]; chainNotes?: string[]; fitFails?: Error;
+} = {}) => {
   const log: string[] = [];
   const standings = [...(over.standings ?? [])];
+  const pool = over.pool ?? PLENTY;
   const service: GovernedCallService = {
+    legPayments: async (runId, body) => { log.push(`leg-payments ${runId} ${JSON.stringify(body)}`); return LEG; },
     raiseRun: async (runId, body) => { log.push(`raise ${runId} ${JSON.stringify(body)}`); return { proposal: round(), order: ORDER }; },
     raiseOrder: async (runId) => { log.push(`order ${runId}`); return ORDER; },
     sendRaise: async (runId, body) => { log.push(`send-raise ${runId} ${body.tx}`); return round({ txRef: 't1' }); },
@@ -29,8 +50,20 @@ const aDevice = (over: Partial<GovernedCallService> & { standings?: RoundOnThePa
     standing: async (id) => { log.push(`standing ${id}`); return standings.shift() ?? round(); },
     ...over,
   };
-  const doors: GovernedCallDoors = {
-    service,
+  const holdings = deviceVaultHoldings({
+    chain: async (vault) => { log.push(`vault read ${vault}`); return { onChain: true, notes: over.chainNotes ?? pool.map(committed) }; },
+    pool: async () => pool,
+    heldCommitmentOf: async (_vault, n) => committed(n),
+    paymentsFit: async (notes, payments) => {
+      if (over.fitFails) throw over.fitFails;
+      paymentsFitNotes({
+        notes: notes.map((n) => ({ nonce: n.nonce, token: n.token, value: n.value.toString(), createdIn: n.createdIn! })),
+        payments: payments.map((p) => ({ token: p.token, amount: p.amount.toString() })),
+      });
+    },
+  });
+  const doors: RaiseDoors = {
+    service, holdings, assets: registryWithTestPrivateForms(),
     builder: {
       governedCall: async (input) => {
         log.push(`build ${input.order.circuit} for ${input.account} on ${input.chain.accountState}`);
@@ -53,6 +86,9 @@ describe('RAISING A LEG FROM THIS DEVICE', () => {
     expect(done.raisedAt).toBe('now');
     /* RED WHEN: the order changes - above all, a build or a send before the proposal is written down. */
     expect(d.log).toEqual([
+      'stage checking-the-vault',
+      'leg-payments run_1 {"viewingKey":"vk","asset":"GBP"}',
+      `vault read ${'99'.repeat(32)}`, `vault read ${'99'.repeat(32)}`,
       'stage writing-down',
       `raise run_1 {"viewingKey":"vk","vault":"${'99'.repeat(32)}","opensAt":"1","closesAt":"2","asset":"GBP","onDevice":true}`,
       'stage reading-the-chain', 'state acc_1',
@@ -165,5 +201,147 @@ describe('APPROVING FROM THIS DEVICE', () => {
       'GET /api/accounts/acc%201/call-state ',
       'POST /api/proposals/p%201/standing {"viewingKey":"vk"}',
     ]);
+  });
+});
+
+describe('THE VAULT\'S PRIVATE MONEY IS ASKED ON THIS DEVICE BEFORE THE COMPANY IS ASKED TO WRITE A RAISE DOWN', () => {
+  const RAISE = { runId: 'run_1', viewingKey: 'vk', asset: 'GBP', vault: '99'.repeat(32), opensAt: '1', closesAt: '2' };
+  const serviceCalls = (log: string[]) => log.filter((l) => /^(raise|order|send|state|approve|standing) /u.test(l));
+
+  it('1. A RUN THE POOL CANNOT PAY IS REFUSED HERE, AND THE COMPANY IS NEVER ASKED TO RAISE IT', async () => {
+    const short = aDevice({ pool: [note(1, 15_000n)] });
+    const refused = await raiseRunOnDevice(short.doors, RAISE).catch((e) => e);
+    /* RED WHEN: the device check is gone, or runs after the raise - the company then writes down a run the vault cannot pay. */
+    expect(refused?.name).toBe('VaultCannotPayThisProposal');
+    expect(refused?.why).toBe('short');
+    expect(refused?.held).toBe(15_000n);
+    expect(refused?.asked).toBe(30_000n);
+    expect(String(refused?.message)).toMatch(/Nothing was raised and no fee was spent\./u);
+    expect(serviceCalls(short.log)).toEqual([]);
+
+    /* Enough in total, and no single note can make the second payment: a question about notes, not a sum. */
+    const split = aDevice({
+      pool: [note(1, 20_000n), note(2, 10_000n)],
+      legPayments: async () => ({ asset: 'GBP', payments: [0, 1].map(() => ({ kind: 'shielded', token: TOKEN, amount: '15000' })) }),
+    });
+    const unfit = await raiseRunOnDevice(split.doors, RAISE).catch((e) => e);
+    /* RED WHEN: the notes are not walked payment by payment - the run is raised and stops halfway on payday. */
+    expect(unfit?.why).toBe('does-not-fit');
+    expect(String(unfit?.message)).toMatch(/payment 2 of 2 cannot be made out of this vault/u);
+    expect(serviceCalls(split.log)).toEqual([]);
+  });
+
+  it('2. A POOL THAT DISAGREES WITH THE CHAIN IS NAMED AS A DISAGREEMENT, NEVER READ AS A BALANCE', async () => {
+    for (const [why, chainNotes] of [
+      ['a recorded note the chain does not hold', ['c' + 'f'.repeat(63)]],
+      ['a note the chain holds that the pool does not record', [committed(PLENTY[0]!), 'c' + 'f'.repeat(63)]],
+    ] as const) {
+      const d = aDevice({ chainNotes: [...chainNotes] });
+      const refused = await raiseRunOnDevice(d.doors, RAISE).catch((e) => e);
+      /* RED WHEN: the pool is summed without being compared with the chain, in either direction. */
+      expect(refused?.why, why).toBe('contradicted');
+      expect(String(refused?.message), why).toMatch(/disagrees with the chain/u);
+      expect(serviceCalls(d.log), why).toEqual([]);
+    }
+  });
+
+  it('A PUBLIC PAYMENT IS LEFT TO THE COMPANY, WHICH CAN READ PUBLIC MONEY, AND NOT REFUSED HERE', async () => {
+    const asked: string[] = [];
+    const d = aDevice({
+      standings: [round({ raisedAt: 'now' })],
+      legPayments: async (runId, body) => {
+        asked.push(`${runId} ${JSON.stringify(body)}`);
+        return { asset: 'NIGHT', payments: [{ kind: 'unshielded', token: '0'.repeat(64), amount: '5' }] };
+      },
+    });
+    /* RED WHEN: this device asks itself about public money it cannot read - every run with a public payee is then refused here. */
+    expect((await raiseRunOnDevice(d.doors, { ...RAISE, asset: 'NIGHT' })).raisedAt).toBe('now');
+    expect(d.log.filter((l) => l.startsWith('vault read'))).toEqual([]);
+    /* RED WHEN: the device check is skipped outright - the raise above then says nothing about it. */
+    expect(asked).toEqual(['run_1 {"viewingKey":"vk","asset":"NIGHT"}']);
+    expect(d.log[0]).toBe('stage checking-the-vault');
+  });
+
+  it('THE PRIVATE HALF OF A RUN THAT ALSO PAYS PUBLICLY IS STILL ASKED HERE', async () => {
+    const mixed = aDevice({
+      pool: [note(1, 5_000n)],
+      legPayments: async () => ({ asset: 'GBP', payments: [
+        { kind: 'shielded', token: TOKEN, amount: '10000' },
+        { kind: 'unshielded', token: 'ab'.repeat(32), amount: '5' },
+      ] }),
+    });
+    /* GBP given a public token too, so one payment on the leg can be public. */
+    const both = new StaticAssetRegistry(SEED_ASSETS.map((a) => (a.code === 'GBP'
+      ? { ...a, ledger: { shielded: TOKEN, unshielded: 'ab'.repeat(32) } } : a)));
+    const refused = await raiseRunOnDevice({ ...mixed.doors, assets: both }, RAISE).catch((e) => e);
+    /* RED WHEN: a leg with any public payment skips the device check - its private half is then checked nowhere. */
+    expect(refused?.why).toBe('short');
+    expect(refused?.form).toBe('shielded');
+    expect(serviceCalls(mixed.log)).toEqual([]);
+  });
+
+  it('WHAT THE COMPANY SAYS THE LEG PAYS IS CHECKED FOR BEING THIS LEG, AND FOR A SHAPE THIS DEVICE CAN READ', async () => {
+    for (const [why, answer] of [
+      /* A leg the device could pass on its own terms, so only the asset being another's refuses it. */
+      ['another asset\'s leg', { asset: 'NIGHT', payments: [{ kind: 'unshielded', token: '0'.repeat(64), amount: '5' }] }],
+      ['a kind that is neither private nor public', { asset: 'GBP', payments: [{ kind: 'Shielded', token: TOKEN, amount: '10000' }] }],
+      ['an amount that is not a whole number', { asset: 'GBP', payments: [{ kind: 'shielded', token: TOKEN, amount: '1e4' }] }],
+    ] as const) {
+      const d = aDevice({ legPayments: async () => answer as LegPaymentsOnTheWire });
+      /* RED WHEN: the device checks payments other than the leg being raised, or skips one it cannot read. */
+      await expect(raiseRunOnDevice(d.doors, RAISE), why).rejects.toThrow(/Nothing was raised and no fee was spent/u);
+      expect(serviceCalls(d.log), why).toEqual([]);
+    }
+  });
+
+  it('A FAILURE TO ASK IS NOT SAID AS MONEY SHORT', async () => {
+    const d = aDevice({ fitFails: new Error('the part of this page that builds vault transactions did not start.') });
+    const refused = await raiseRunOnDevice(d.doors, RAISE).catch((e) => e);
+    /* RED WHEN: any error from the walk becomes "deposit more" - a person then moves money to fix a page that did not load. */
+    expect(refused?.why).toBe('failed');
+    expect(String(refused?.message)).not.toMatch(/Deposit/u);
+    expect(serviceCalls(d.log)).toEqual([]);
+  });
+
+  it('6. NOTHING THIS DEVICE SENDS THE COMPANY CARRIES A NOTE, THE POOL OR A BALANCE', async () => {
+    /* Values that appear nowhere but in this vault's pool, so any of them reaching a body is a leak. */
+    const secretNotes = [note(0xabc, 987_654_321n), note(0xdef, 123_456_789n)];
+    const bodies: string[] = [];
+    const d = aDevice({
+      pool: secretNotes,
+      standings: [round({ raisedAt: 'now' })],
+      legPayments: async (runId, body) => { bodies.push(JSON.stringify({ runId, ...body })); return LEG; },
+      raiseRun: async (runId, body) => { bodies.push(JSON.stringify({ runId, ...body })); return { proposal: round(), order: ORDER }; },
+      raiseOrder: async (runId, body) => { bodies.push(JSON.stringify({ runId, ...body })); return ORDER; },
+      sendRaise: async (runId, body) => { bodies.push(JSON.stringify({ runId, ...body })); return round({ txRef: 't1' }); },
+      callState: async (id) => { bodies.push(id); return { account: 'ac'.repeat(32), blockHash: 'b', accountState: 'AS', parameters: 'PP' }; },
+      standing: async (id, body) => { bodies.push(JSON.stringify({ id, ...body })); return round({ raisedAt: 'now' }); },
+    });
+    await raiseRunOnDevice(d.doors, RAISE);
+    const vaultReads = d.log.filter((l) => l.startsWith('vault read'));
+    const sent = [...bodies, ...vaultReads].join('\n');
+    /* RED WHEN: a note, its nonce, its value, the pool's total or anything the pool holds reaches the company. */
+    for (const n of secretNotes) {
+      expect(sent).not.toContain(n.nonce);
+      expect(sent).not.toContain(n.nonce.replace(/^0+/u, ''));
+      expect(sent).not.toContain(n.value.toString());
+      expect(sent).not.toContain(committed(n));
+    }
+    expect(sent).not.toContain((987_654_321n + 123_456_789n).toString());
+    expect(sent).not.toMatch(/notes|nonce|pool|balance|held/u);
+    /* And the raise itself carries exactly what it did before this device read its pool. */
+    expect(Object.keys(JSON.parse(bodies[1]!)).sort()).toEqual(['asset', 'closesAt', 'onDevice', 'opensAt', 'runId', 'vault', 'viewingKey']);
+    expect(vaultReads).toEqual([`vault read ${'99'.repeat(32)}`, `vault read ${'99'.repeat(32)}`]);
+  });
+
+  it('asks the company for what the leg pays over its own route, with the viewing key in the body', async () => {
+    const calls: string[] = [];
+    const service = governedCallServiceFor(async (path: string, init?: RequestInit) => {
+      calls.push(`${init?.method ?? 'GET'} ${path} ${init?.body ?? ''}`);
+      return LEG;
+    });
+    await service.legPayments('r 1', { viewingKey: 'vk', asset: 'GBP' });
+    /* RED WHEN: the key travels in an address, or the run id is not escaped. */
+    expect(calls).toEqual(['POST /api/runs/r%201/leg-payments {"viewingKey":"vk","asset":"GBP"}']);
   });
 });
