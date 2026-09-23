@@ -1687,7 +1687,25 @@ app.post('/api/runs/:id/retry', authed, ownsRun, wrap(async (req, res) => {
     vault: z.string(),
     opensAt: z.string().regex(/^[0-9]+$/, 'a window bound is whole seconds since the Unix epoch'),
     closesAt: z.string().regex(/^[0-9]+$/, 'a window bound is whole seconds since the Unix epoch'),
+    /*
+     * **THE SIGNER'S DEVICE BUILDS AND SENDS THE RETRY, HAVING CHECKED THE
+     * VAULT FOR EXACTLY ITS PAYMENTS.** As for a leg: it names the version of the
+     * page that checked and the digest of what it checked - what
+     * `/retry-payments` handed it for these people - and both are compared below
+     * before anything is written down.
+     */
+    onDevice: z.literal(true).optional(),
+    version: z.unknown().optional(),
+    checked: z.string().regex(DIGEST_SHAPE, 'the payments checked are a digest of sixty-four hexadecimal characters').optional(),
   }).parse(req.body);
+
+  /* A page that is not the current version is not trusted to have checked anything. Refused before a single read. */
+  if (b.onDevice && b.version !== DEVICE_RAISE_VERSION) {
+    throw new Error(reloadThePage(b.version, 'Nothing was written down.'));
+  }
+  if (b.onDevice && b.checked === undefined) {
+    throw new Error(RAISE_NAMES_NOTHING_CHECKED);
+  }
 
   const rebuild = await payroll.payoutRebuildOf(String(req.params.id), b.viewingKey, b.asset);
   if (!rebuild) {
@@ -1702,11 +1720,130 @@ app.post('/api/runs/:id/retry', authed, ownsRun, wrap(async (req, res) => {
     closesAt: BigInt(b.closesAt),
     vault: b.vault,
   });
-  res.json(await payroll.proposeRetry(
+  /*
+   * **WHAT IS RAISED IS WHAT THE DEVICE CHECKED**: the leg's own payments for
+   * the people this retry pays, in the retry's own order.
+   */
+  if (b.onDevice) {
+    const asked = payroll.retryPaymentsAsked(String(req.params.id), b.viewingKey as Hex, material.originalIndices, b.asset);
+    if (paymentsCheckedDigest(asked.payments.map(p => [p.kind, p.token, p.amount] as const)) !== b.checked) {
+      throw new Error(RAISE_IS_NOT_WHAT_WAS_CHECKED);
+    }
+    /*
+     * **A RETRY OF THESE PEOPLE A DEVICE WROTE DOWN AND DID NOT SEND IS SENT AS
+     * ITSELF.** Raising it again would be a second round over the same leaves:
+     * a second fee, a second set of approvals, and a round that can never
+     * complete. It is handed back to be sent, with the window and vault it was
+     * written down with, or refused if the person chose others.
+     */
+    const unsent = payroll.unsentRetryOf(String(req.params.id), b.viewingKey as Hex, material.originalIndices, b.asset);
+    if (unsent) {
+      if (unsent.vault.toLowerCase() !== b.vault.toLowerCase()
+          || unsent.opensAt !== BigInt(b.opensAt) || unsent.closesAt !== BigInt(b.closesAt)) {
+        throw new Error(
+          `a retry of these people is already written down, for the window ${unsent.opensAt} to ${unsent.closesAt} `
+          + `at vault ${unsent.vault}, and has not reached the chain. Retry them with that window and that vault to `
+          + 'send it, or withdraw it first. Nothing was written down.');
+      }
+      res.json({
+        proposal: accounts.requireProposal(unsent.proposalId, b.viewingKey as Hex),
+        order: retryOrderOnTheWire(await payroll.retryRaiseOrderOf(String(req.params.id), b.viewingKey, unsent.proposalId, b.asset)),
+      });
+      return;
+    }
+  }
+  const proposal = await payroll.proposeRetry(
     String(req.params.id), b.viewingKey,
     accounts.seatOf(rebuild.identity.accountId, b.viewingKey as Hex, req.userId!),
-    material, b.asset));
+    material, b.asset, b.onDevice ? { onDevice: true } : undefined);
+  if (!b.onDevice) {
+    res.json(proposal);
+    return;
+  }
+  res.json({
+    proposal,
+    order: retryOrderOnTheWire(await payroll.retryRaiseOrderOf(String(req.params.id), b.viewingKey, proposal.id, b.asset)),
+  });
 }));
+
+/** What a device builds a written-down retry from, every value a string; `null` when there is nothing to send. */
+const retryOrderOnTheWire = (o: Awaited<ReturnType<typeof payroll.retryRaiseOrderOf>>) => (o === null ? null : {
+  ...raiseOrderOnTheWire({ ...o })!,
+  indices: o.indices,
+});
+
+/*
+ * **WHAT A RETRY OF SOME OF ONE LEG'S PEOPLE WILL ASK ITS VAULT TO PAY**, for
+ * the signer's device to check against the vault's notes before it asks for
+ * the retry, and again before every send. A kind, a token and an amount per
+ * payment, as `/leg-payments` answers for a leg. The viewing key travels in the
+ * body.
+ */
+app.post('/api/runs/:id/retry-payments', authed, ownsRun, wrap(async (req, res) => {
+  const b = z.object({
+    viewingKey: z.string(), asset: assetCode.optional(), indices: z.array(z.number().int().min(0)).min(1),
+  }).strict().parse(req.body ?? {});
+  const asked = payroll.retryPaymentsAsked(String(req.params.id), b.viewingKey as Hex, b.indices, b.asset);
+  res.json({
+    asset: asked.asset,
+    payments: asked.payments.map(p => ({ kind: p.kind, token: p.token, amount: p.amount.toString() })),
+  });
+}));
+
+/*
+ * **THE PROPOSAL A RETRY IS WRITTEN DOWN AS, FOR THE SIGNER'S DEVICE TO
+ * BUILD** - again, after a device that raised it did not get as far as sending
+ * it. Found by its proposal among this leg's own retries.
+ */
+app.post('/api/runs/:id/retry-order', authed, ownsRun, wrap(async (req, res) => {
+  const b = z.object({ viewingKey: z.string(), asset: assetCode.optional(), proposalId: z.string().min(1) })
+    .strict().parse(req.body ?? {});
+  const order = retryOrderOnTheWire(await payroll.retryRaiseOrderOf(String(req.params.id), b.viewingKey, b.proposalId, b.asset));
+  if (order === null) {
+    res.status(409).json({ error: 'this run has no retry written down as that proposal waiting to be sent: it has been sent already, or withdrawn. Reload the run to see who is still unpaid.' });
+    return;
+  }
+  res.json(order);
+}));
+
+/*
+ * **THE RETRY A SIGNER'S DEVICE BUILT, SENT**, through the same door as a
+ * leg's: only from a page of the current version, and only when what the
+ * device just checked is the retry written down.
+ */
+app.post('/api/runs/:id/retry-send', authed, ownsRun, async (req, res) => {
+  const b = z.object({
+    viewingKey: z.string(), asset: assetCode.optional(), proposalId: z.string().min(1), tx: z.string().min(1).max(1_000_000),
+    version: z.unknown().optional(),
+    checked: z.string().optional(),
+  }).strict().safeParse(req.body ?? {});
+  if (!b.success) {
+    res.status(400).json({ nothingWasSent: true, error: 'this request does not carry a retry to send. Reload the page and retry from it. Nothing was sent.' });
+    return;
+  }
+  await answerASend(req, res, async () => {
+    if (b.data.version !== DEVICE_RAISE_VERSION) {
+      throw new NothingWasSent(reloadThePage(b.data.version, 'Nothing was sent.'));
+    }
+    let order: Awaited<ReturnType<typeof payroll.retryRaiseOrderOf>>;
+    let by: string;
+    try {
+      const run = payroll.requireRun(String(req.params.id), b.data.viewingKey);
+      by = accounts.seatOf(run.accountId, b.data.viewingKey as Hex, req.userId!);
+      order = await payroll.retryRaiseOrderOf(String(req.params.id), b.data.viewingKey, b.data.proposalId, b.data.asset);
+    } catch (e: any) {
+      if (saysNothingWasSent(e)) throw e;
+      throw new NothingWasSent(`${String(e?.message ?? e).replace(/\.\s*$/u, '')}. Nothing was sent.`);
+    }
+    if (order === null) {
+      throw new NothingWasSent('this run has no retry written down as that proposal waiting to be sent: it has been sent already, or withdrawn. Reload the run to see who is still unpaid. Nothing was sent.');
+    }
+    if (b.data.checked !== order.paymentsChecked) {
+      throw new NothingWasSent(SEND_IS_NOT_WHAT_WAS_CHECKED);
+    }
+    return accounts.sendRaise(order.proposalId, b.data.viewingKey, new Uint8Array(Buffer.from(b.data.tx, 'base64')), by);
+  });
+});
 
 /*
  * **WHO HAS BEEN PAID ON THIS RUN — OR WHY NOBODY CAN SAY.**
