@@ -4,8 +4,9 @@ import type { Hex } from '../core/crypto.js';
 import type { Account, Proposal } from '../core/types.js';
 import * as keyring from './keyring.js';
 import {
-  approveOnDevice, governedCallServiceFor, raiseRetryOnDevice, raiseRunOnDevice, sendRaiseFromDevice, unpaidToRetry,
-  type GovernedCallDoors, type GovernedStage, type RaiseDoors,
+  approveOnDevice, governedCallServiceFor, mayWithdraw, pendingRetries, raiseRetryOnDevice, raiseRunOnDevice,
+  sendRaiseFromDevice, sendRetryFromDevice, unpaidToRetry, withdrawRound,
+  type GovernedCallDoors, type GovernedStage, type PendingRetry, type RaiseDoors, type RetryOnTheLeg, type RoundStanding,
 } from './governed-call-on-device.js';
 import { startVaultBuilder, type VaultBuilderClient } from './vault-worker-client.js';
 import { SealedNotePool } from '../midnight/vault-pool.js';
@@ -183,14 +184,47 @@ export function RaiseLeg({ account, me, runId, asset, viewingKey, act, busy }: {
 }
 
 /**
+ * **WITHDRAW A ROUND**, offered only where the company will do it: a round only
+ * written down, or one the chain holds whose window has not opened. What it
+ * withdraws is shown beside it.
+ */
+export function WithdrawRound({ round, opensAt, viewingKey, act, busy, now, withdraw }: {
+  round: RoundStanding; opensAt: bigint | string | number | undefined; viewingKey: string;
+  act: (fn: () => Promise<void>) => Promise<void>; busy: boolean;
+  /** Seconds since the Unix epoch. This machine's clock when not given. */
+  now?: () => number;
+  /** The company's withdraw. This page's own when not given. */
+  withdraw?: (proposalId: string, viewingKey: string) => Promise<unknown>;
+}) {
+  if (!mayWithdraw(round, opensAt, (now ?? nowInSeconds)())) return null;
+  const go = withdraw ?? ((id: string, key: string) => withdrawRound(keyring.api, id, key));
+  return <button className="btn sm ghost" disabled={busy} data-withdraw-round={round.id}
+    title="Withdrawing cannot be undone. Approvals given so far are lost."
+    onClick={() => { void act(async () => { await go(round.id, viewingKey); }); }}>Withdraw</button>;
+}
+
+const PENDING_WORDS: Record<PendingRetry['kind'], string> = {
+  untold: 'written down, but sending it did not finish',
+  unsent: 'written down and not sent',
+  'sent-unseen': 'sent, and not yet seen on the chain',
+};
+
+const when = (s: bigint | string | number) =>
+  `${new Date(Number(String(s)) * 1000).toISOString().slice(0, 16).replace('T', ' ')} UTC`;
+
+/**
  * **RETRY THE PEOPLE A STOPPED RUN DID NOT PAY.** Offered only when the run's
  * payment view says who was paid and has proved its people are this run's, the
- * run's window has closed, and nothing sent can still pay them; it names only
+ * run's window has closed, and nothing can still pay them; it names only
  * those people. Their payments are checked
  * against the vault on this device before the company is asked to write the
  * retry down, and the retry is built, proved and sent here.
+ *
+ * **A RETRY NOT YET SEEN ON CHAIN COVERS ITS PEOPLE**, so they are not offered
+ * again. That retry is shown instead, with what sends it: sent from this device
+ * as itself, with the window and vault it was written down with.
  */
-export function RetryUnpaid({ account, me, runId, asset, viewingKey, view, act, busy, doors, listVaults }: {
+export function RetryUnpaid({ account, me, runId, asset, viewingKey, view, act, busy, doors, listVaults, retries, rounds, now, withdraw }: {
   account: Account; me: { signerId: string; signingSecret: Hex; wrappingSecret: Hex };
   runId: string; asset?: string; viewingKey: Hex;
   view: Parameters<typeof unpaidToRetry>[0];
@@ -198,36 +232,99 @@ export function RetryUnpaid({ account, me, runId, asset, viewingKey, view, act, 
   /** The device's doors. This page's own when not given. */
   doors?: (progress: (s: GovernedStage) => void) => Promise<RaiseDoors>;
   listVaults?: () => Promise<string[]>;
+  /** The retries written onto this leg, and the rounds they were written down as. */
+  retries?: ReadonlyArray<RetryOnTheLeg>;
+  rounds?: ReadonlyArray<RoundStanding>;
+  /** Seconds since the Unix epoch. This machine's clock when not given. */
+  now?: () => number;
+  withdraw?: (proposalId: string, viewingKey: string) => Promise<unknown>;
 }) {
   const [open, setOpen] = useState(false);
   const [stage, setStage] = useState<GovernedStage | null>(null);
-  const indices = unpaidToRetry(view);
-  if (indices.length === 0) return null;
+  const at = (now ?? nowInSeconds)();
+  const pending = pendingRetries(retries ?? [], rounds ?? [], at);
+  /* On chain and not yet open: nothing to send, and it can still be withdrawn. */
+  const unopened = (retries ?? []).flatMap((r) => {
+    const round = r.proposalId === undefined ? undefined : (rounds ?? []).find((x) => x.id === r.proposalId);
+    return round?.raisedAt && mayWithdraw(round, r.opensAt, at) ? [{ retry: r, round }] : [];
+  });
+  const indices = unpaidToRetry(view, pending.flatMap((p) => p.retry.originalIndices));
+  if (indices.length === 0 && pending.length === 0 && unopened.length === 0) return null;
+  const withAsset = asset === undefined ? {} : { asset };
+
+  const deviceDoors = async () => (doors ? doors(setStage)
+    : { ...(await doorsFor(account, setStage)), holdings: holdingsFor(account, me, await theBuilder()) });
 
   const retry = (choice: { vault: string; opensAt: string; closesAt: string }) => act(async () => {
     try {
-      const d = doors ? await doors(setStage)
-        : { ...(await doorsFor(account, setStage)), holdings: holdingsFor(account, me, await theBuilder()) };
-      await raiseRetryOnDevice(d, { runId, viewingKey, ...(asset === undefined ? {} : { asset }), indices, ...choice });
+      await raiseRetryOnDevice(await deviceDoors(), { runId, viewingKey, ...withAsset, indices, ...choice });
     } finally {
       setStage(null);
     }
   });
 
+  const send = (p: PendingRetry) => act(async () => {
+    try {
+      const d = await deviceDoors();
+      if (p.kind === 'untold') {
+        await raiseRetryOnDevice(d, {
+          runId, viewingKey, ...withAsset, indices: [...p.retry.originalIndices], vault: p.retry.vault,
+          opensAt: String(p.retry.opensAt), closesAt: String(p.retry.closesAt),
+        });
+      } else {
+        await sendRetryFromDevice(d, { runId, viewingKey, ...withAsset, proposalId: p.retry.proposalId! });
+      }
+    } finally {
+      setStage(null);
+    }
+  });
+
+  const who = (xs: ReadonlyArray<number>) => `#${[...xs].sort((a, b) => a - b).map((i) => i + 1).join(', #')}`;
+
   return (
     <div className="stack" data-retry-unpaid style={{ marginTop: 14 }}>
-      <div className="hint">
-        {indices.length} {indices.length === 1 ? 'person' : 'people'} on this run {indices.length === 1 ? 'is' : 'are'} not
-        paid (#{indices.map((i) => i + 1).join(', #')}) and this run's window has closed. The retry pays only them,
-        each with the same payment as before, and the account refuses a payment already made, so nobody is paid twice.
-        A retry is its own approval round, with its own fees.
-      </div>
-      {!open
-        ? <div><button className="btn sm pri" disabled={busy} onClick={() => setOpen(true)} data-retry-open>
-          Retry the unpaid</button></div>
-        : <VaultAndWindow listVaults={listVaults ?? (() => vaultsOf(account))} busy={busy} stage={stage}
-          go={(choice) => { void retry(choice); }} goWords="Retry from this device" onCancel={() => setOpen(false)}
-          attr="data-retry-send" />}
+      {pending.map((p) => (
+        <div key={p.retry.proposalId ?? who(p.retry.originalIndices)} className="inline" data-pending-retry={p.kind}>
+          <div className="hint">
+            A retry of {who(p.retry.originalIndices)}, payable {when(p.retry.opensAt)} to {when(p.retry.closesAt)}, is{' '}
+            {PENDING_WORDS[p.kind]}. Until its window closes these people cannot go on another retry. Nobody on it
+            is paid until it is approved and paid from the Vault page.
+            {p.round && mayWithdraw(p.round, p.retry.opensAt, at)
+              && ' Withdraw it to choose again. Withdrawing cannot be undone, and approvals given so far are lost.'}
+          </div>
+          <button className="btn sm pri" disabled={busy} onClick={() => { void send(p); }} data-send-retry>
+            {p.kind === 'sent-unseen' ? 'Send to the chain again' : 'Send to the chain'}</button>
+          {p.round && <WithdrawRound round={p.round} opensAt={p.retry.opensAt} viewingKey={viewingKey}
+            act={act} busy={busy} {...(now ? { now } : {})} {...(withdraw ? { withdraw } : {})} />}
+        </div>
+      ))}
+      {unopened.map(({ retry: r, round: x }) => (
+        <div key={x.id} className="inline" data-unopened-retry>
+          <div className="hint">
+            A retry of {who(r.originalIndices)}, payable {when(r.opensAt)} to {when(r.closesAt)}, is on the chain and
+            its window has not opened. It can be paid once its signers approve it and its window opens. Withdraw it to
+            choose again. Withdrawing cannot be undone, and approvals given so far are lost.
+          </div>
+          <WithdrawRound round={x} opensAt={r.opensAt} viewingKey={viewingKey} act={act} busy={busy}
+            now={() => at} {...(withdraw ? { withdraw } : {})} />
+        </div>
+      ))}
+      {stage && !open && <div className="hint" data-raise-stage>Now: {stageWords(stage)}…</div>}
+      {indices.length > 0 && <>
+        <div className="hint">
+          {indices.length} {pending.length + unopened.length > 0 ? 'more ' : ''}{indices.length === 1 ? 'person' : 'people'} on this
+          run {indices.length === 1 ? 'is' : 'are'} not
+          paid (#{indices.map((i) => i + 1).join(', #')}) and this run's window has closed. The retry pays only them,
+          each with the same payment as before, and the account refuses a payment already made, so nobody is paid twice.
+          A retry is its own approval round, with its own fees.
+        </div>
+        {!open
+          ? <div><button className="btn sm pri" disabled={busy} onClick={() => setOpen(true)} data-retry-open>
+            Retry the unpaid</button></div>
+          : <VaultAndWindow listVaults={listVaults ?? (() => vaultsOf(account))} busy={busy} stage={stage}
+            go={(choice) => { void retry(choice); }} goWords="Retry from this device" onCancel={() => setOpen(false)}
+            attr="data-retry-send" />}
+      </>}
     </div>
   );
 }
