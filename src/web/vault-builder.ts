@@ -27,7 +27,9 @@
  */
 import { committeeReplacement, type Committee } from '../midnight/vault-committee.js';
 import type { Hex } from '../core/crypto.js';
-import { afterPayment, noteToSpend, paymentsFit, withIndexRead, witnessesOver, type Note } from '../midnight/vault-notes.js';
+import {
+  afterPayment, noteToSpend, paymentsFitAnswer, withIndexRead, witnessesOver, type Note, type PaymentsFitAnswer,
+} from '../midnight/vault-notes.js';
 import { changeCoinOf, type VaultCoin } from '../midnight/vault-coins.js';
 import {
   establishCreatingTransaction, indexForSpend, theTransactionTheseEventsAreFrom, vaultNoteCommitment,
@@ -215,20 +217,22 @@ export function chooseNoteForPayment(
 /**
  * **WHETHER THESE NOTES CAN MAKE THESE PAYMENTS, ONE AT A TIME**, by the one
  * walk every such question is answered by, through the same choice of note a
- * payment makes. Returns when they can; refuses with the first payment that
- * cannot be made. It reads the notes it is handed and nothing else.
+ * payment makes. Answers `fits`, or `does-not-fit` naming the first payment
+ * that cannot be made; a payment it cannot read is refused, because that is a
+ * failure to ask and not an answer about the notes. It reads the notes it is
+ * handed and nothing else.
  */
 export function paymentsFitNotes(input: {
   readonly notes: readonly NoteOnTheWire[];
   readonly payments: ReadonlyArray<{ readonly token: string; readonly amount: string }>;
-}): void {
+}): PaymentsFitAnswer {
   const payments = input.payments.map((p) => {
     if (!HEX64.test(p.token) || !DIGITS.test(p.amount)) {
       throw new Error('a payment names no token or amount a note could cover, so the notes were not walked.');
     }
     return { token: p.token as Hex, amount: BigInt(p.amount) };
   });
-  paymentsFit({ notes: input.notes.map(noteFromWire) }, payments);
+  return paymentsFitAnswer({ notes: input.notes.map(noteFromWire) }, payments);
 }
 
 /**

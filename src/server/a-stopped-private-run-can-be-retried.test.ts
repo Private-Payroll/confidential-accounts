@@ -216,7 +216,7 @@ const retryPayments = async (c: Company, indices: number[]) => {
   return r.body as { asset: string; payments: Array<{ kind: string; token: string; amount: string }> };
 };
 const digestOf = (payments: Array<{ kind: string; token: string; amount: string }>) =>
-  paymentsCheckedDigest(payments.map((p) => [p.kind, p.token, p.amount] as const));
+  paymentsCheckedDigest(payments);
 const retryBody = (c: Company, more: Record<string, unknown>) =>
   ({ viewingKey: c.viewingKey, indices: UNPAID, vault: VAULT, ...WINDOW, ...more });
 /** The retries written down on the company's own record of the run, as the store now holds it. */
@@ -432,10 +432,13 @@ describe('A RETRY WRITTEN DOWN ON A DEVICE IS SENT ONLY FROM THE CURRENT PAGE, A
     const r = await post(`/api/runs/${c.runId}/retry-order`, { viewingKey: c.viewingKey, proposalId: c.retryId });
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     /* RED WHEN: the order starts carrying the payments, or anything about who is paid. */
-    expect(Object.keys(r.body).sort()).toEqual(['chainId', 'indices', 'order', 'proposalId']);
+    expect(Object.keys(r.body).sort()).toEqual(['chainId', 'indices', 'order', 'paymentsChecked', 'proposalId']);
     expect(r.body.indices).toEqual(UNPAID);
+    const checked = digestOf((await retryPayments(c, UNPAID)).payments);
+    /* RED WHEN: the digest the order carries is not the digest of what the device is handed to check - the device then refuses a good send. */
+    expect(r.body.paymentsChecked).toBe(checked);
     const built = Buffer.from(JSON.stringify({ signer: c.signer, order: r.body.order })).toString('base64');
-    const ok = await send({ ...c }, { tx: built, version: DEVICE_RAISE_VERSION, checked: digestOf((await retryPayments(c, UNPAID)).payments) });
+    const ok = await send({ ...c }, { tx: built, version: DEVICE_RAISE_VERSION, checked });
     /* RED WHEN: the digest of what the device is handed for a retry is not the retry's own. */
     expect(ok.status, JSON.stringify(ok.body)).toBe(200);
     expect(sent).toEqual(['propose']);

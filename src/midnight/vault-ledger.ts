@@ -46,6 +46,7 @@ import {
 } from './note-index.js';
 import { assertVaultLedgerIsThisBuilds } from './vault-ledger-shape.js';
 import { commitmentForNote } from './vault-recovery.js';
+import { poolAgainstChain } from './pool-against-chain.js';
 import { isALostPoolRace } from './vault-pool.js';
 import {
   noVaultOutputHistory, claimNewDepositCoin,
@@ -2048,11 +2049,18 @@ export class VaultLedger {
     const commitmentOf = (n: Note): Hex =>
       commitmentForNote(pureCircuits, vaultAddress as Hex, n);
 
-    const missing = notes.filter((n) => !onChain.member(fromHex(commitmentOf(n))));
-    const held = BigInt(notes.length);
-    const chainHolds = onChain.size();
+    /*
+     * **WHICH ANSWER IT IS, DECIDED WHERE A SIGNER'S DEVICE DECIDES IT TOO.**
+     * The comparison is `poolAgainstChain`; what is here is how this client
+     * reads the chain and how it words each answer for an operator.
+     */
+    const verdict = poolAgainstChain(
+      notes.map((n) => ({ note: n, commitment: commitmentOf(n) })),
+      { has: (c) => onChain.member(fromHex(c as Hex)), size: onChain.size() },
+    );
 
-    if (missing.length > 0) {
+    if (verdict.of === 'pool-claims-more') {
+      const { missing } = verdict;
       /*
        * WE BELIEVE IN MONEY THE CHAIN WILL NOT HONOUR. Every one of these notes
        * would be offered to a payment and refused, so the amount is exactly the
@@ -2067,7 +2075,8 @@ export class VaultLedger {
         `Unknown to the chain: ${missing.map((n) => n.nonce).join(', ')}`);
     }
 
-    if (chainHolds !== held) {
+    if (verdict.of === 'counts-differ') {
+      const { chainHolds, poolHolds: held } = verdict;
       /*
        * THE OTHER DIRECTION, AND IT IS `C199`'s WINDOW. Every note we hold is
        * on chain, and the chain holds more — so a note reached the vault that

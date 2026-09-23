@@ -63,6 +63,14 @@ export interface VaultChain {
   serialize(state: unknown): Uint8Array;
   /** The vault's note commitments now, lower-case hex. */
   notesOf(state: unknown): readonly Hex[];
+  /**
+   * **RETURNS ONLY WHEN THE STATE IS A LEDGER OF THE SHAPE THIS BUILD'S VAULT
+   * HAS**, and refuses, saying how it differs, when it is not. A field is read
+   * off a ledger by its position, so a vault of another shape answers the
+   * question about its notes out of whichever field is in that place. Absent
+   * where this deployment cannot tell, and then the notes are not vouched for.
+   */
+  ledgerIsThisBuilds?(state: unknown): Promise<void>;
   /** What the vault's ledger holds, read through the vault's own compiled ledger. */
   startingLedgerOf(state: unknown): VaultStartingLedger;
   /** Every output the chain has ever created for the vault. */
@@ -498,6 +506,24 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
     const notFundable = refusal !== null || company === null || committee === null
       ? null
       : (await whyNotFunded(record.vault, read, committee, company.address, state, undefined, either))?.why ?? null;
+    /*
+     * **WHETHER THE NOTES BELOW WERE READ OFF A LEDGER OF THIS BUILD'S SHAPE**,
+     * said beside them. A signer's device compares its own record of the notes
+     * with them, and does so only when they were.
+     */
+    let notesFromThisBuild = false;
+    let notesWhy: string | undefined;
+    if (deps.chain.ledgerIsThisBuilds === undefined) {
+      notesWhy = 'this service is not set up to check how a vault is laid out, so it does not vouch for which notes '
+        + 'the vault holds. Whoever runs the service turns that check on';
+    } else {
+      try {
+        await deps.chain.ledgerIsThisBuilds(state);
+        notesFromThisBuild = true;
+      } catch (e) {
+        notesWhy = (e as Error)?.message ?? String(e);
+      }
+    }
     let everCreated: string[];
     try {
       everCreated = [...await deps.chain.everCreated(record.vault)];
@@ -510,6 +536,8 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
       onChain: true,
       state: toBase64(deps.chain.serialize(state)),
       notes: deps.chain.notesOf(state),
+      notesFromThisBuild,
+      ...(notesWhy === undefined ? {} : { notesWhy }),
       everCreated,
       authority: read.state === 'read'
         ? { committee: read.authority.committee, threshold: read.authority.threshold, counter: String(read.authority.counter), shape: read.authority.shape }

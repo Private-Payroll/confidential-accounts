@@ -14,21 +14,6 @@ import { DEVICE_RAISE_VERSION, paymentsCheckedDigest } from '../core/device-rais
 
 /* The page's side, over a service and a worker that write down what they were asked, in order. */
 const material = { signingSecret: '11'.repeat(32), blinding: '22'.repeat(32), scope: '33'.repeat(32) };
-const ORDER: RaiseOrderOnTheWire = {
-  proposalId: 'prp_1', chainId: 'cc'.repeat(32),
-  order: {
-    circuit: 'propose',
-    run: { root: '88'.repeat(32), payees: '3', opensAt: '1', closesAt: '2', vault: '99'.repeat(32) },
-    half: { assetId: '44'.repeat(32), assetBlinding: '55'.repeat(32), proposalSalt: '66'.repeat(32), changeAmount: '1', changeBatchDigest: '77'.repeat(32) },
-    proposal: 'cc'.repeat(32),
-  },
-};
-/* A retry of the leg's second and third people, written down and not yet sent. */
-const RETRY_ORDER: RetryOrderOnTheWire = {
-  ...ORDER, proposalId: 'prp_r', chainId: 'cd'.repeat(32),
-  order: { ...ORDER.order, run: { ...ORDER.order.run, payees: '2' }, proposal: 'cd'.repeat(32) },
-  indices: [1, 2],
-};
 /* The vault's private money, as this device's pool records it and the chain holds it. */
 const TOKEN = testPrivateToken('GBP') as Hex;
 const note = (n: number, value: bigint): PoolNote => ({
@@ -40,8 +25,30 @@ const LEG: LegPaymentsOnTheWire = {
 };
 const PLENTY = [note(1, 1_000_000n)];
 /* The digest of LEG's payments, as the service computes it over what it raises or sends. */
-const CHECKED = paymentsCheckedDigest(LEG.payments.map((p) => [p.kind, p.token, p.amount] as const));
+const CHECKED = paymentsCheckedDigest(LEG.payments);
 
+const ORDER: RaiseOrderOnTheWire = {
+  proposalId: 'prp_1', chainId: 'cc'.repeat(32),
+  order: {
+    circuit: 'propose',
+    run: { root: '88'.repeat(32), payees: '3', opensAt: '1', closesAt: '2', vault: '99'.repeat(32) },
+    half: { assetId: '44'.repeat(32), assetBlinding: '55'.repeat(32), proposalSalt: '66'.repeat(32), changeAmount: '1', changeBatchDigest: '77'.repeat(32) },
+    proposal: 'cc'.repeat(32),
+  },
+  paymentsChecked: CHECKED,
+};
+/* The proposal written down for another set of payments than LEG's: its count of payees and its digest follow them. */
+const orderPaying = (payments: LegPaymentsOnTheWire['payments']): RaiseOrderOnTheWire => ({
+  ...ORDER, order: { ...ORDER.order, run: { ...ORDER.order.run, payees: String(payments.length) } },
+  paymentsChecked: paymentsCheckedDigest(payments),
+});
+/* A retry of the leg's second and third people, written down and not yet sent. */
+const RETRY_ORDER: RetryOrderOnTheWire = {
+  ...ORDER, proposalId: 'prp_r', chainId: 'cd'.repeat(32),
+  order: { ...ORDER.order, run: { ...ORDER.order.run, payees: '2' }, proposal: 'cd'.repeat(32) },
+  indices: [1, 2],
+  paymentsChecked: paymentsCheckedDigest(LEG.payments.slice(1)),
+};
 const round = (over: Partial<RoundOnThePage> = {}): RoundOnThePage => ({ id: 'prp_1', chainId: 'cc'.repeat(32), status: 'open', ...over });
 
 const aDevice = (over: Partial<GovernedCallService> & {
@@ -69,7 +76,10 @@ const aDevice = (over: Partial<GovernedCallService> & {
     },
     raiseRetry: async (runId, body) => {
       log.push(`retry ${runId} ${JSON.stringify(body)}`);
-      return { proposal: round({ id: 'prp_r' }), order: { ...RETRY_ORDER, indices: body.indices } };
+      return {
+        proposal: round({ id: 'prp_r' }),
+        order: { ...RETRY_ORDER, indices: body.indices, paymentsChecked: paymentsCheckedDigest(body.indices.map((i) => LEG.payments[i]!)) },
+      };
     },
     retryOrder: async (runId, body) => { log.push(`retry-order ${runId} ${body.proposalId}`); return RETRY_ORDER; },
     sendRetry: async (runId, body) => {
@@ -81,12 +91,12 @@ const aDevice = (over: Partial<GovernedCallService> & {
     ...over,
   };
   const holdings = deviceVaultHoldings({
-    chain: async (vault) => { log.push(`vault read ${vault}`); return { onChain: true, notes: over.chainNotes ?? poolNow().map(committed) }; },
+    chain: async (vault) => { log.push(`vault read ${vault}`); return { onChain: true, notesFromThisBuild: true, notes: over.chainNotes ?? poolNow().map(committed) }; },
     pool: async () => poolNow(),
     heldCommitmentOf: async (_vault, n) => committed(n),
     paymentsFit: async (notes, payments) => {
       if (over.fitFails) throw over.fitFails;
-      paymentsFitNotes({
+      return paymentsFitNotes({
         notes: notes.map((n) => ({ nonce: n.nonce, token: n.token, value: n.value.toString(), createdIn: n.createdIn! })),
         payments: payments.map((p) => ({ token: p.token, amount: p.amount.toString() })),
       });
@@ -293,6 +303,7 @@ describe('THE VAULT\'S PRIVATE MONEY IS ASKED ON THIS DEVICE BEFORE THE COMPANY 
         asked.push(`${runId} ${JSON.stringify(body)}`);
         return { asset: 'NIGHT', payments: [{ kind: 'unshielded', token: '0'.repeat(64), amount: '5' }] };
       },
+      raiseRun: async () => ({ proposal: round(), order: orderPaying([{ kind: 'unshielded', token: '0'.repeat(64), amount: '5' }]) }),
     });
     /* RED WHEN: this device asks itself about public money it cannot read - every run with a public payee is then refused here. */
     expect((await raiseRunOnDevice(d.doors, { ...RAISE, asset: 'NIGHT' })).raisedAt).toBe('now');
@@ -428,13 +439,14 @@ describe('EVERY SEND IS CHECKED AGAINST THE VAULT ON THIS DEVICE FIRST, AND SAYS
     const d = aDevice({
       standings: [round({ raisedAt: 'now' })],
       legPayments: async () => other,
+      raiseOrder: async () => orderPaying(other.payments),
       sendRaise: async (_r, body) => { bodies.push(body); return round({ txRef: 't1' }); },
     });
     await sendRaiseFromDevice({ ...d.doors, assets: both }, { runId: 'run_1', viewingKey: 'vk', asset: 'GBP' });
     /* RED WHEN: the send carries no version, a stale one, or a digest of anything but the payments this check was handed - kind included. */
     expect(bodies).toHaveLength(1);
     expect(bodies[0]!.version).toBe(DEVICE_RAISE_VERSION);
-    expect(bodies[0]!.checked).toBe(paymentsCheckedDigest([['shielded', TOKEN, '12345'], ['unshielded', 'ab'.repeat(32), '5']]));
+    expect(bodies[0]!.checked).toBe(paymentsCheckedDigest([{ kind: 'shielded', token: TOKEN, amount: '12345' }, { kind: 'unshielded', token: 'ab'.repeat(32), amount: '5' }]));
     expect(bodies[0]!.checked).not.toBe(CHECKED);
   });
 });
@@ -442,7 +454,7 @@ describe('EVERY SEND IS CHECKED AGAINST THE VAULT ON THIS DEVICE FIRST, AND SAYS
 describe('A STOPPED RUN IS RETRIED FROM THIS DEVICE, WITH THE VAULT CHECKED FOR EXACTLY THE RETRY', () => {
   const RETRY = { runId: 'run_1', viewingKey: 'vk', asset: 'GBP', indices: [1, 2], vault: '99'.repeat(32), opensAt: '1', closesAt: '2' };
   /* The digest of the retry's two payments, which is not the digest of the leg's three. */
-  const RETRY_CHECKED = paymentsCheckedDigest(LEG.payments.slice(1).map((p) => [p.kind, p.token, p.amount] as const));
+  const RETRY_CHECKED = paymentsCheckedDigest(LEG.payments.slice(1));
   const serviceCalls = (log: string[]) => log.filter((l) => /^(retry|retry-order|send-retry|state|build|standing) /u.test(l));
 
   it('checks the vault for the retry\'s payments, has it written down with the version and that digest, checks again, builds and sends it', async () => {

@@ -25,6 +25,7 @@ import {
   thresholdFor,
 } from './ledger.js';
 import { storedSignerLeaf } from './signer-leaf.js';
+import { payrollRoundOf } from './retry-cover.js';
 import {
   noVaultHoldingsReader, refuseWhatTheVaultCannotPay,
   type PaymentAsked, type VaultHoldings,
@@ -4224,15 +4225,8 @@ export class AccountService {
   payrollRoundsOf(accountId: string, viewingKey: Hex): PayrollRound[] {
     const rounds: PayrollRound[] = [];
     for (const p of this.listProposals(accountId, viewingKey)) {
-      if (p.kind !== 'payroll') continue;
-      const payload = parseCanonical<{ runId?: unknown; retry?: unknown; __change: StateChange }>(
-        unseal(p.sealedPayload, viewingKey));
-      if (typeof payload.runId !== 'string') continue;
-      rounds.push({
-        id: p.id, runId: payload.runId, asset: payload.__change.asset, status: p.status,
-        ...(p.raisedAt ? { raisedAt: p.raisedAt } : {}), chainId: p.chainId,
-        ...(Array.isArray(payload.retry) ? { retry: payload.retry as number[] } : {}),
-      });
+      const round = payrollRoundOf(p, viewingKey);
+      if (round !== null) rounds.push(round);
     }
     return rounds;
   }

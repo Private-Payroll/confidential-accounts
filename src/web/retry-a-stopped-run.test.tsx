@@ -8,7 +8,7 @@ import { unpaidToRetry, type GovernedCallService, type RaiseDoors, type RoundOnT
 import { deviceVaultHoldings, type PoolNote } from './device-vault-holdings.js';
 import { paymentsFitNotes } from './vault-builder.js';
 import { registryWithTestPrivateForms, testPrivateToken } from '../testing/assets.js';
-import { DEVICE_RAISE_VERSION } from '../core/device-raise.js';
+import { DEVICE_RAISE_VERSION, paymentsCheckedDigest } from '../core/device-raise.js';
 
 /*
  * The control a person retries a stopped run with, rendered against a payment
@@ -105,6 +105,7 @@ const aDevice = () => {
         proposal: round(),
         order: {
           proposalId: 'prp_r', chainId: 'cd'.repeat(32), indices: body.indices,
+          paymentsChecked: paymentsCheckedDigest(body.indices.map(() => ({ kind: 'shielded', token: TOKEN, amount: '1000' }))),
           order: {
             circuit: 'propose' as const, proposal: 'cd'.repeat(32),
             run: { root: '88'.repeat(32), payees: String(body.indices.length), opensAt: body.opensAt, closesAt: body.closesAt, vault: body.vault },
@@ -120,11 +121,11 @@ const aDevice = () => {
   const doors: RaiseDoors = {
     service,
     holdings: deviceVaultHoldings({
-      chain: async () => ({ onChain: true, notes: POOL.map(committed) }),
+      chain: async () => ({ onChain: true, notesFromThisBuild: true, notes: POOL.map(committed) }),
       pool: async () => POOL,
       heldCommitmentOf: async (_v, n) => committed(n),
       paymentsFit: async (notes, payments) => {
-        paymentsFitNotes({
+        return paymentsFitNotes({
           notes: notes.map((n) => ({ nonce: n.nonce, token: n.token, value: n.value.toString(), createdIn: n.createdIn! })),
           payments: payments.map((p) => ({ token: p.token, amount: p.amount.toString() })),
         });

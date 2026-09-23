@@ -165,8 +165,7 @@ export const answerVaultAsk = async (
       return { id: ask.id, ok: true, ask: 'choose-note', note };
     }
     case 'payments-fit': {
-      paymentsFitNotes({ notes: ask.notes, payments: ask.payments });
-      return { id: ask.id, ok: true, ask: 'payments-fit', fits: true };
+      return { id: ask.id, ok: true, ask: 'payments-fit', answer: paymentsFitNotes({ notes: ask.notes, payments: ask.payments }) };
     }
     case 'after-payment': {
       const notes = poolAfterPayment({

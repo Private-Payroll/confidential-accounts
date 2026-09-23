@@ -283,6 +283,29 @@ export const choosingANoteToSpend = (notes: readonly Note[], token: Hex, amount:
 };
 
 /**
+ * **WHY NO NOTE CAN MAKE A PAYMENT, IN WORDS**, for every choice that is not
+ * `chosen`. One sentence per reason, used by the refusal a payment gives and by
+ * the answer the walk below gives, so the two never say it differently.
+ */
+const whyNoNote = (
+  choice: Exclude<NoteChoice, { of: 'chosen' }>, token: Hex, amount: bigint,
+): string => {
+  if (choice.of === 'no-notes-of-token') return `this vault holds no notes of ${token}`;
+  if (choice.of === 'none-covers') {
+    return `no single note covers ${amount}: the largest is ${choice.largest} and the pool holds `
+      + `${choice.held} across ${choice.count} notes. Merge them first — a payment cannot.`;
+  }
+  const which = choice.notes.map((n) => `${n.nonce} (${n.value})`).join(', ');
+  return `no note this vault can spend covers ${amount}. `
+    + `${choice.notes.length === 1 ? 'One note does' : `${choice.notes.length} notes do`}: ${which}. `
+    + `${choice.notes.length === 1 ? 'It does not record' : 'None of them records'} which transaction `
+    + 'created it with a hash a spend can read, so a payment cannot read its place in the chain\'s '
+    + 'commitment tree. The money is still on chain and still the vault\'s. Name the transaction '
+    + 'that paid it in to recordCreatingTransaction, or rebuild the pool so the chain is asked, and '
+    + 'pay again.';
+};
+
+/**
  * The note a payment of `amount` in `token` spends, or a refusal that says
  * which of the three reasons it is and what resolves it. See
  * `choosingANoteToSpend`, which is where the decision is.
@@ -290,23 +313,7 @@ export const choosingANoteToSpend = (notes: readonly Note[], token: Hex, amount:
 export const noteToSpend = (notes: readonly Note[], token: Hex, amount: bigint): Note => {
   const choice = choosingANoteToSpend(notes, token, amount);
   if (choice.of === 'chosen') return choice.note;
-  if (choice.of === 'no-notes-of-token') {
-    throw new Error(`this vault holds no notes of ${token}`);
-  }
-  if (choice.of === 'none-covers') {
-    throw new Error(
-      `no single note covers ${amount}: the largest is ${choice.largest} and the pool holds `
-      + `${choice.held} across ${choice.count} notes. Merge them first — a payment cannot.`);
-  }
-  const which = choice.notes.map((n) => `${n.nonce} (${n.value})`).join(', ');
-  throw new Error(
-    `no note this vault can spend covers ${amount}. `
-    + `${choice.notes.length === 1 ? 'One note does' : `${choice.notes.length} notes do`}: ${which}. `
-    + `${choice.notes.length === 1 ? 'It does not record' : 'None of them records'} which transaction `
-    + 'created it with a hash a spend can read, so a payment cannot read its place in the chain\'s '
-    + 'commitment tree. The money is still on chain and still the vault\'s. Name the transaction '
-    + 'that paid it in to recordCreatingTransaction, or rebuild the pool so the chain is asked, and '
-    + 'pay again.');
+  throw new Error(whyNoNote(choice, token, amount));
 };
 
 /**
@@ -439,8 +446,9 @@ export const afterPayment = (
  * — a vault holding two notes of 60 cannot pay 100 — so a pool whose TOTAL
  * covers a run can still stop halfway through it, and a run that stops halfway
  * has failed at the only thing it was for. This walks the payments in the order
- * they will be made, through the SAME `noteToSpend` the payment path uses, so
- * what it answers is what the run will do rather than a number beside it.
+ * they will be made, through the SAME choice of note `noteToSpend` makes for
+ * the payment path, so what it answers is what the run will do rather than a
+ * number beside it.
  *
  * **IT MODELS VALUES AND NOT NONCES, AND THAT CANNOT CHANGE THE ANSWER.** A
  * change note's nonce is not knowable before the payment is made — that is
@@ -455,12 +463,12 @@ export const afterPayment = (
  * affordability check that skipped it would be answering out of bookkeeping
  * nothing had checked — which is the whole of `C198`.
  */
-export const paymentsFit = (
+export const paymentsFitAnswer = (
   state: VaultNotes,
   payments: ReadonlyArray<{ token: Hex; amount: bigint }>,
-): void => {
+): PaymentsFitAnswer => {
   let notes: readonly Note[] = state.notes;
-  payments.forEach((p, i) => {
+  for (const [i, p] of payments.entries()) {
     /*
      * **AND THE NOTE IT WOULD SPEND IS ONE A PAYMENT CAN SPEND, BECAUSE THE SAME
      * FUNCTION DECIDES BOTH.** This used to choose with one rule and then ask a
@@ -469,14 +477,17 @@ export const paymentsFit = (
      * not pay. The change this walk puts back does not exist yet, and is marked
      * as a note a payment can spend on the assumption `WILL_BE_RECORDED` states.
      */
-    let chosen: Note;
-    try {
-      chosen = noteToSpend(notes, p.token, p.amount);
-    } catch (cause) {
-      throw new Error(
-        `payment ${i + 1} of ${payments.length} cannot be made out of this vault: `
-        + `${(cause as Error).message}`);
+    const choice = choosingANoteToSpend(notes, p.token, p.amount);
+    if (choice.of !== 'chosen') {
+      return {
+        of: 'does-not-fit',
+        payment: i + 1,
+        payments: payments.length,
+        why: `payment ${i + 1} of ${payments.length} cannot be made out of this vault: `
+          + whyNoNote(choice, p.token, p.amount),
+      };
     }
+    const chosen = choice.note;
     const rest = notes.filter((n) => n.nonce !== chosen.nonce);
     const kept = chosen.value - p.amount;
     notes = kept === 0n
@@ -491,7 +502,26 @@ export const paymentsFit = (
         nonce: `sim:${i}` as Hex, token: chosen.token, value: kept, index: 0n,
         createdIn: WILL_BE_RECORDED,
       }];
-  });
+  }
+  return { of: 'fits' };
+};
+
+/**
+ * **THE ANSWER THE WALK GIVES, TYPED**, so whoever asked can tell a run the
+ * notes cannot make from a failure to ask without reading a sentence. It is
+ * plain data, so it crosses into and out of a page's background thread as it is.
+ */
+export type PaymentsFitAnswer =
+  | { readonly of: 'fits' }
+  | { readonly of: 'does-not-fit'; readonly payment: number; readonly payments: number; readonly why: string };
+
+/** The same walk, refusing with its reason when the notes cannot make the payments. */
+export const paymentsFit = (
+  state: VaultNotes,
+  payments: ReadonlyArray<{ token: Hex; amount: bigint }>,
+): void => {
+  const answer = paymentsFitAnswer(state, payments);
+  if (answer.of === 'does-not-fit') throw new Error(answer.why);
 };
 
 /**

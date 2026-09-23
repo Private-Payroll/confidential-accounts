@@ -31,16 +31,23 @@ import { startVaultBuilder, type VaultBuilderClient } from './vault-worker-clien
  */
 /**
  * **A RETRY IS PAYABLE ONCE ITS SIGNERS HAVE APPROVED IT ON CHAIN, AND NOT
- * BEFORE.** One written down and not sent, sent and not yet seen, still
- * collecting approvals, or withdrawn has nothing a vault can pay against, and
- * the company or the chain refuses it.
+ * BEFORE, AND THE CHAIN DECIDES.** It is offered when the chain holds it and
+ * either this company's record says it is approved or, while the record still
+ * says it is open, the chain's own count of its approvals, last read, has
+ * reached its threshold. An approval that reached the chain and was not written
+ * down here would otherwise hide a retry the chain will pay; the vault asks the
+ * chain again when it pays. One written down and not sent, sent and not yet
+ * seen, still collecting approvals, withdrawn, or stopped by the company's
+ * policy is not offered.
  */
 export const isPayableRetry = (
-  retry: { proposalId?: string }, rounds: ReadonlyArray<{ id: string; status: string; raisedAt?: string }>,
+  retry: { proposalId?: string },
+  rounds: ReadonlyArray<{ id: string; status: string; raisedAt?: string; approvalRound?: { readonly state: string } }>,
 ): boolean => {
   if (retry.proposalId === undefined) return false;
   const round = rounds.find((r) => r.id === retry.proposalId);
-  return round !== undefined && round.status === 'approved' && Boolean(round.raisedAt);
+  if (round === undefined || !round.raisedAt) return false;
+  return round.status === 'approved' || (round.status === 'open' && round.approvalRound?.state === 'satisfied');
 };
 
 export function PayoutPanel({ account, me, viewingKey, runs, proposals }: {
@@ -49,7 +56,7 @@ export function PayoutPanel({ account, me, viewingKey, runs, proposals }: {
   viewingKey: Hex;
   runs: readonly PayrollRun[];
   /** The company's rounds, read for whether each retry has been approved. */
-  proposals: ReadonlyArray<{ id: string; status: string; raisedAt?: string }>;
+  proposals: ReadonlyArray<{ id: string; status: string; raisedAt?: string; approvalRound?: { readonly state: string } }>;
 }) {
   /* Each leg's own round, and after it every approved retry on the leg, each a round a vault pays on its own. */
   const payable = runs.flatMap((run) => Object.keys(run.payout ?? {}).sort()

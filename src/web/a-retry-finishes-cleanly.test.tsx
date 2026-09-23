@@ -49,7 +49,7 @@ type RoundOnThePage = import('./governed-call-on-device.js').RoundOnThePage;
 const { deviceVaultHoldings } = await import('./device-vault-holdings.js');
 const { paymentsFitNotes } = await import('./vault-builder.js');
 const { registryWithTestPrivateForms, testPrivateToken } = await import('../testing/assets.js');
-const { DEVICE_RAISE_VERSION } = await import('../core/device-raise.js');
+const { DEVICE_RAISE_VERSION, paymentsCheckedDigest } = await import('../core/device-raise.js');
 const { SEED_ASSETS } = await import('../core/assets.js');
 /* The product's own private asset, for the page's own wiring, which checks against the product's own rows. */
 const PRIVATE = SEED_ASSETS.find((a) => a.ledger.shielded !== null)!;
@@ -82,6 +82,17 @@ const retryOf = (over: { proposalId?: string; originalIndices?: number[]; opensA
 });
 const roundOf = (over: Partial<{ id: string; status: string; raisedAt: string; txRef: string }> = {}) =>
   ({ id: 'prp_u', status: 'open', ...over });
+/*
+ * A retry round written down for #3 and #5 whose raise never answered, so the run does not point at it: its
+ * people are read out of its sealed payload with the viewing key, as the company reads them.
+ */
+const { seal, canonical } = await import('../core/crypto.js');
+const untoldRoundOf = (over: Partial<{ status: string; people: number[]; runId: string; asset: string }> = {}) => ({
+  id: 'prp_t', status: over.status ?? 'open', kind: 'payroll', chainId: 'ce'.repeat(32),
+  sealedPayload: seal(canonical({
+    runId: over.runId ?? 'run_1', retry: over.people ?? [2, 4], __change: { asset: over.asset ?? 'GBP' },
+  }), 'aa'.repeat(32) as Hex),
+});
 
 const account = { id: 'acc_1', name: 'Northwind', signers: [] } as unknown as Account;
 const me = { signerId: 'sgn_1', signingSecret: '11'.repeat(32) as Hex, wrappingSecret: '22'.repeat(32) as Hex };
@@ -91,8 +102,13 @@ TOKEN_HEX.pool = PRIVATE_POOL;
 const committed = (n: PoolNote) => `c${n.nonce.slice(1)}`;
 const round = (over: Partial<RoundOnThePage> = {}): RoundOnThePage => ({ id: 'prp_u', chainId: 'cd'.repeat(32), status: 'open', ...over });
 
-const orderFor = (proposalId: string, indices: number[], w: { vault: string; opensAt: string; closesAt: string }) => ({
-  proposalId, chainId: 'cd'.repeat(32), indices,
+/* The digest of what the retry-payments doubles answer for these people: one payment of 1000 each, in `token`. */
+const checkedFor = (indices: number[], token: string = TOKEN) =>
+  paymentsCheckedDigest(indices.map(() => ({ kind: 'shielded', token, amount: '1000' })));
+const orderFor = (
+  proposalId: string, indices: number[], w: { vault: string; opensAt: string; closesAt: string }, token: string = TOKEN,
+) => ({
+  proposalId, chainId: 'cd'.repeat(32), indices, paymentsChecked: checkedFor(indices, token),
   order: {
     circuit: 'propose' as const, proposal: 'cd'.repeat(32),
     run: { root: '88'.repeat(32), payees: String(indices.length), opensAt: w.opensAt, closesAt: w.closesAt, vault: w.vault },
@@ -125,11 +141,11 @@ const aDevice = () => {
   const doors: RaiseDoors = {
     service,
     holdings: deviceVaultHoldings({
-      chain: async () => ({ onChain: true, notes: POOL.map(committed) }),
+      chain: async () => ({ onChain: true, notesFromThisBuild: true, notes: POOL.map(committed) }),
       pool: async () => POOL,
       heldCommitmentOf: async (_v, n) => committed(n),
       paymentsFit: async (notes, payments) => {
-        paymentsFitNotes({
+        return paymentsFitNotes({
           notes: notes.map((n) => ({ nonce: n.nonce, token: n.token, value: n.value.toString(), createdIn: n.createdIn! })),
           payments: payments.map((p) => ({ token: p.token, amount: p.amount.toString() })),
         });
@@ -165,12 +181,14 @@ describe('1. PEOPLE AN UNSENT RETRY COVERS ARE NOT OFFERED RETRY, AND THAT RETRY
 
   it('counts a retry as covering exactly while the company would', () => {
     const r = (over: Parameters<typeof retryOf>[0]) => retryOf(over);
-    const kinds = (retries: ReturnType<typeof retryOf>[], rounds: ReturnType<typeof roundOf>[]) =>
-      pendingRetries(retries, rounds, NOW).map((p) => p.kind);
+    const kinds = (
+      retries: ReturnType<typeof retryOf>[], rounds: ReturnType<typeof roundOf>[],
+      legRounds: Array<{ id: string; status: string; retry?: number[] }> = [],
+    ) => pendingRetries(retries, rounds, NOW, legRounds).map((p) => p.kind);
     /* RED WHEN: any of the three not-yet-on-chain states is not recognised, or is named as another. */
     expect(kinds([r({})], [roundOf()])).toEqual(['unsent']);
     expect(kinds([r({})], [roundOf({ txRef: 'tx_1' })])).toEqual(['sent-unseen']);
-    expect(kinds([r({ proposalId: undefined })], [])).toEqual(['untold']);
+    expect(kinds([r({ proposalId: undefined })], [], [{ id: 'prp_t', status: 'open', retry: [2, 4] }])).toEqual(['untold']);
     /* RED WHEN: a retry seen on chain, withdrawn, stopped, or past its window is still shown as waiting to be sent. */
     expect(kinds([r({})], [roundOf({ raisedAt: 'then' })])).toEqual([]);
     expect(kinds([r({})], [roundOf({ status: 'cancelled' })])).toEqual([]);
@@ -196,7 +214,7 @@ describe('1. PEOPLE AN UNSENT RETRY COVERS ARE NOT OFFERED RETRY, AND THAT RETRY
   });
 
   it('sends a retry whose raise did not answer by raising exactly its people with its own window and vault', async () => {
-    const d = renderRetry({ retries: [retryOf({ proposalId: undefined })], rounds: [] });
+    const d = renderRetry({ retries: [retryOf({ proposalId: undefined })], rounds: [untoldRoundOf()] });
     expect(document.querySelector('[data-pending-retry="untold"]')).not.toBeNull();
     await act(async () => { fireEvent.click(document.querySelector('[data-send-retry]')!); });
     await d.settled();
@@ -339,13 +357,13 @@ describe('6. THE PAGE\'S REAL RETRY CONTROL IS RENDERED AND REACHES THE DEVICE P
       calls.push({ url, body });
       const json = (v: unknown) => new Response(JSON.stringify(v), { status: 200 });
       if (url === '/api/accounts/acc_1/vaults') return json([{ vault: VAULT }]);
-      if (url === `/api/accounts/acc_1/vaults/${VAULT}/chain`) return json({ onChain: true, notes: PRIVATE_POOL.map(committed) });
+      if (url === `/api/accounts/acc_1/vaults/${VAULT}/chain`) return json({ onChain: true, notesFromThisBuild: true, notes: PRIVATE_POOL.map(committed) });
       if (url.endsWith('/retry-payments')) {
         return json({
           asset: PRIVATE.code, payments: body.indices.map(() => ({ kind: 'shielded', token: PRIVATE.ledger.shielded, amount: '1000' })),
         });
       }
-      if (url.endsWith('/retry')) return json({ proposal: round(), order: orderFor('prp_u', body.indices, body) });
+      if (url.endsWith('/retry')) return json({ proposal: round(), order: orderFor('prp_u', body.indices, body, PRIVATE.ledger.shielded!) });
       if (url === '/api/accounts/acc_1/call-state') return json({ account: 'ac'.repeat(32), blockHash: 'b', accountState: 'AS', parameters: 'PP' });
       if (url.endsWith('/retry-send')) return json(round({ txRef: 't' }));
       if (url.endsWith('/standing')) return json(round({ raisedAt: 'now' }));

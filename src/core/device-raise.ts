@@ -32,8 +32,29 @@ import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
  */
 export const DEVICE_RAISE_VERSION = 1 as const;
 
-/** One payment as it was checked: its payee's kind, its token and its amount. */
-export type PaymentChecked = readonly [kind: string, token: string, amount: string | bigint];
+/**
+ * **ONE PAYMENT AS IT IS CHECKED: ITS PAYEE'S KIND, ITS TOKEN AND ITS AMOUNT,
+ * AND NOTHING ELSE.** The one shape the payments are handed to a device in,
+ * checked in, and digested in. Every side builds it with `paymentChecked`,
+ * sends it with `paymentsOnTheWire` and digests it with `paymentsCheckedDigest`,
+ * all three below, so the shape is written in this file and nowhere else.
+ */
+export interface PaymentChecked<K extends string = string, A extends string | bigint = string | bigint> {
+  readonly kind: K;
+  readonly token: string;
+  readonly amount: A;
+}
+
+/** A payment the run records, as it is checked: its payee's kind, its token and its amount. */
+export const paymentChecked = <K extends string>(
+  f: { readonly payee: { readonly kind: K }; readonly token: string; readonly amount: bigint },
+): PaymentChecked<K, bigint> => ({ kind: f.payee.kind, token: f.token, amount: f.amount });
+
+/** The payments as they cross to a device: the amount written as decimal digits, because a wire carries no bigint. */
+export const paymentsOnTheWire = <K extends string>(
+  payments: ReadonlyArray<PaymentChecked<K>>,
+): Array<PaymentChecked<K, string>> =>
+  payments.map((p) => ({ kind: p.kind, token: p.token, amount: String(p.amount) }));
 
 const DOMAIN = 'device-raise/payments-checked/1\n';
 
@@ -48,7 +69,7 @@ const DOMAIN = 'device-raise/payments-checked/1\n';
  */
 export function paymentsCheckedDigest(payments: Iterable<PaymentChecked>): string {
   const rows: string[][] = [];
-  for (const [kind, token, amount] of payments) {
+  for (const { kind, token, amount } of payments) {
     const whole = typeof amount === 'bigint' ? amount : /^[0-9]+$/u.test(amount) ? BigInt(amount) : null;
     if (whole === null || whole < 0n) {
       throw new Error(`a payment amount of ${String(amount)} is not a whole number, so the payments cannot be compared.`);
@@ -79,6 +100,15 @@ export const RAISE_IS_NOT_WHAT_WAS_CHECKED = 'the run changed after this device 
 /** A device send whose payments are not the proposal written down. */
 export const SEND_IS_NOT_WHAT_WAS_CHECKED = 'the proposal written down for this run is not what this device checked '
   + 'against the vault just now. Send it again, so the device checks what will be sent. Nothing was sent.';
+
+/**
+ * A proposal written down whose payments are not the ones the company hands a
+ * device to check, refused on the device before the vault is checked or
+ * anything is built.
+ */
+export const WRITTEN_DOWN_IS_NOT_WHAT_IS_CHECKED = 'the payments on this run now are not the payments in the proposal written '
+  + 'down for it, so this device did not build it. Nothing was sent. Reload the page and send it again. If this comes '
+  + 'back, the run changed after the proposal was written down: withdraw the proposal and raise the run again.';
 
 /**
  * **THE SENTENCE A PAGE THAT IS NOT THE CURRENT VERSION IS REFUSED WITH.** It
