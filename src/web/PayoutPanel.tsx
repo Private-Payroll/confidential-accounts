@@ -29,19 +29,35 @@ import { startVaultBuilder, type VaultBuilderClient } from './vault-worker-clien
  * signer is not told, and the account refuses a second payment to the same
  * person whoever sends it.
  */
-export function PayoutPanel({ account, me, viewingKey, runs }: {
+/**
+ * **A RETRY IS PAYABLE ONCE ITS SIGNERS HAVE APPROVED IT ON CHAIN, AND NOT
+ * BEFORE.** One written down and not sent, sent and not yet seen, still
+ * collecting approvals, or withdrawn has nothing a vault can pay against, and
+ * the company or the chain refuses it.
+ */
+export const isPayableRetry = (
+  retry: { proposalId?: string }, rounds: ReadonlyArray<{ id: string; status: string; raisedAt?: string }>,
+): boolean => {
+  if (retry.proposalId === undefined) return false;
+  const round = rounds.find((r) => r.id === retry.proposalId);
+  return round !== undefined && round.status === 'approved' && Boolean(round.raisedAt);
+};
+
+export function PayoutPanel({ account, me, viewingKey, runs, proposals }: {
   account: Account;
   me: { signerId: string; signingSecret: Hex; wrappingSecret: Hex };
   viewingKey: Hex;
   runs: readonly PayrollRun[];
+  /** The company's rounds, read for whether each retry has been approved. */
+  proposals: ReadonlyArray<{ id: string; status: string; raisedAt?: string }>;
 }) {
-  /* Each leg's own round, and after it every retry on the leg, each a round a vault pays on its own. */
+  /* Each leg's own round, and after it every approved retry on the leg, each a round a vault pays on its own. */
   const payable = runs.flatMap((run) => Object.keys(run.payout ?? {}).sort()
     .filter((asset) => run.proposalIds[asset] !== undefined)
     .flatMap((asset) => [
       { key: `${run.id}:${asset}`, run, asset, retry: undefined as { proposalId: string; indices: number[] } | undefined },
       ...(run.payout?.[asset]?.retries ?? [])
-        .filter((r) => r.proposalId !== undefined)
+        .filter((r) => isPayableRetry(r, proposals))
         .map((r) => ({
           key: `${run.id}:${asset}:${r.proposalId}`, run, asset,
           retry: { proposalId: r.proposalId!, indices: [...r.originalIndices] },

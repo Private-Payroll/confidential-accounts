@@ -311,14 +311,103 @@ export function unpaidToRetry(view: {
     readonly phase?: string;
     readonly stranded?: ReadonlyArray<{ readonly index: number; readonly state: string }>;
   };
-}): number[] {
+},
+/**
+ * People a retry not yet seen on chain already covers: written down and not
+ * sent, sent and not yet seen, or whose raise did not answer. The view counts
+ * only retries the chain holds, so it still lists these people as stranded;
+ * the company refuses a second retry over them while that one's window is
+ * open. They are not offered here - their own retry is, to be sent.
+ */
+covered: ReadonlyArray<number> = []): number[] {
   if (!view.answered || !view.status?.verified) return [];
   if (view.status.phase !== 'closed') return [];
+  const taken = new Set(covered);
   return (view.status.stranded ?? [])
-    .filter((p) => p.state === 'failed' || p.state === 'unsent')
+    .filter((p) => (p.state === 'failed' || p.state === 'unsent') && !taken.has(p.index))
     .map((p) => p.index)
     .sort((a, b) => a - b);
 }
+
+/** A retry written onto a leg, as the page reads it off the run. */
+export interface RetryOnTheLeg {
+  readonly originalIndices: ReadonlyArray<number>;
+  readonly opensAt: bigint | string | number;
+  readonly closesAt: bigint | string | number;
+  readonly vault: string;
+  /** Absent when the retry was written onto the leg and its raise never answered. */
+  readonly proposalId?: string;
+}
+
+/** The parts of a round the page reads to decide what may be done with it. */
+export interface RoundStanding {
+  readonly id: string;
+  readonly status: string;
+  readonly raisedAt?: string;
+  readonly txRef?: string;
+}
+
+const seconds = (s: bigint | string | number): bigint => BigInt(String(s));
+
+/**
+ * **A RETRY NOT YET SEEN ON CHAIN, AND WHAT SENDS IT.** One of three:
+ *
+ *   `untold`       written onto the leg, and its raise never answered. It is
+ *                  sent by raising exactly the same people with its window and
+ *                  vault, which the company sends as itself.
+ *   `unsent`       written down and never sent.
+ *   `sent-unseen`  sent from a device and not yet seen on chain. Sent again as
+ *                  itself; the chain takes it once.
+ *
+ * Each covers its people until its window closes, exactly as the company
+ * counts it. A retry withdrawn, stopped by policy, seen on chain, or whose
+ * window has closed is none of these. A retry whose round this page cannot
+ * find is left out: nothing here can say what would send it.
+ */
+export interface PendingRetry {
+  readonly kind: 'untold' | 'unsent' | 'sent-unseen';
+  readonly retry: RetryOnTheLeg;
+  readonly round?: RoundStanding;
+}
+
+export function pendingRetries(
+  retries: ReadonlyArray<RetryOnTheLeg>, rounds: ReadonlyArray<RoundStanding>, nowInSeconds: number,
+): PendingRetry[] {
+  const now = BigInt(Math.floor(nowInSeconds));
+  const pending: PendingRetry[] = [];
+  for (const retry of retries) {
+    if (now >= seconds(retry.closesAt)) continue;
+    if (retry.proposalId === undefined) {
+      pending.push({ kind: 'untold', retry });
+      continue;
+    }
+    const round = rounds.find((r) => r.id === retry.proposalId);
+    /* Withdrawn, stopped by policy, or seen on chain: nothing here to send. */
+    if (!round || round.raisedAt || round.status !== 'open') continue;
+    pending.push({ kind: round.txRef ? 'sent-unseen' : 'unsent', retry, round });
+  }
+  return pending;
+}
+
+/**
+ * **WHETHER THE COMPANY WILL WITHDRAW THIS PROPOSAL.** A round only written down
+ * is withdrawn here. One the chain holds is withdrawn only before its window
+ * opens, which the chain enforces. One a device sent and the chain does not
+ * show yet is not withdrawn: it may still arrive, so it is sent again instead.
+ * A round settled or already withdrawn has nothing to withdraw.
+ */
+export function mayWithdraw(
+  round: RoundStanding, opensAt: bigint | string | number | undefined, nowInSeconds: number,
+): boolean {
+  if (round.status !== 'open' && round.status !== 'approved' && round.status !== 'blocked') return false;
+  if (round.status === 'blocked') return true;
+  if (!round.raisedAt) return !round.txRef;
+  return opensAt !== undefined && BigInt(Math.floor(nowInSeconds)) < seconds(opensAt);
+}
+
+/** Withdraws a round through the company's service. The viewing key travels in the body. */
+export const withdrawRound = (api: Api, proposalId: string, viewingKey: string): Promise<RoundOnThePage> =>
+  api(`/api/proposals/${encodeURIComponent(proposalId)}/cancel`, { method: 'POST', body: JSON.stringify({ viewingKey }) });
 
 const refuseAnOrderThatIsNotThisRetry = (order: RetryOrderOnTheWire, indices: ReadonlyArray<number>): void => {
   if (order.indices.length !== indices.length || order.indices.some((i, at) => i !== indices[at])) {

@@ -12,7 +12,7 @@ import { seatOnThisDevice, type SeatOnThisDevice } from '../core/signer-leaf.js'
 import { acceptSeatOnThisDevice } from './accept-seat.js';
 import { assets, formatAmount, parseAmount, subtotals, type Asset, type AssetId } from '../core/assets.js';
 import type {
-  Account, Attestation, Installation, Invite, PayrollRun, PluginEvent, PluginManifest,
+  Account, Attestation, Installation, Invite, PayrollRun, PluginEvent, PluginManifest, RunPayout,
   Proposal, RosterEmployee, SealedAccount, SealedProposal, SealedRun, ShieldedEntry,
   ShieldedState, Signer,
 } from '../core/types.js';
@@ -23,7 +23,7 @@ import type { Marked } from '../core/provenance.js';
 import { AuthScreen, AccountPicker, WALLET_ORIGIN } from './Auth.js';
 import { VaultPanel } from './VaultPanel.js';
 import { PayoutPanel } from './PayoutPanel.js';
-import { RaiseLeg, RetryUnpaid, approveFromThisDevice, sendRunFromThisDevice, stageWords } from './GovernedCallControls.js';
+import { RaiseLeg, RetryUnpaid, WithdrawRound, approveFromThisDevice, sendRunFromThisDevice, stageWords } from './GovernedCallControls.js';
 import type { GovernedStage } from './governed-call-on-device.js';
 import { MaintenancePanel } from './MaintenancePanel.js';
 import { WalletWaiting } from './wallet-waiting.js';
@@ -807,7 +807,7 @@ function Screens({ commitments }: { commitments: CommitmentScheme }) {
             pending={pending} account={s.account} session={s} me={me} busy={busy}
             runs={runs} act={act} />}
 
-          {page === 'vault' && <Vault account={s.account} me={me} viewingKey={s.viewingKey as Hex} runs={runs} />}
+          {page === 'vault' && <Vault account={s.account} me={me} viewingKey={s.viewingKey as Hex} runs={runs} proposals={proposals} />}
 
           {page === 'apps' && <Apps session={s} me={me} busy={busy} act={act} />}
 
@@ -848,8 +848,15 @@ function Screens({ commitments }: { commitments: CommitmentScheme }) {
  */
 function RunPaymentsCard({ runId, viewingKey, retry }: {
   runId: string; viewingKey: string;
-  /** What a retry of this run's unpaid people is raised with. Absent where the run has more than one leg. */
-  retry?: { account: Account; me: SignerSecrets; asset: string; act: Act; busy: boolean };
+  /**
+   * What a retry of this run's unpaid people is raised with, and the retries
+   * already written onto the leg with their rounds. Absent where the run has
+   * more than one leg.
+   */
+  retry?: {
+    account: Account; me: SignerSecrets; asset: string; act: Act; busy: boolean;
+    retries: NonNullable<RunPayout['retries']>; rounds: Proposal[];
+  };
 }) {
   const [view, setView] = useState<RunPayments | null>(null);
   const [failed, setFailed] = useState('');
@@ -962,7 +969,10 @@ function RunPaymentsCard({ runId, viewingKey, retry }: {
         {st.stranded.length > 0 && <div className="err" style={{ marginTop: 14 }}>
           The payment window has closed with {st.stranded.length}{' '}
           {st.stranded.length === 1 ? 'person' : 'people'} still owed. This run's window cannot pay
-          them any more: retry them with a new window.
+          them any more.{' '}
+          {!retry ? 'Retrying is not offered here for a run paid in more than one currency.'
+            : st.verified ? 'Retry them below with a window of its own.'
+            : 'Retrying is not offered until these people are proved to be this run\'s. Reload the run to try again.'}
         </div>}
       </div>
 
@@ -1001,7 +1011,8 @@ function RunPaymentsCard({ runId, viewingKey, retry }: {
         {/* **THE WAY A STOPPED RUN IS FINISHED.** Only the people this view
             says are unpaid, and only when it has proved they are this run's. */}
         {retry && <RetryUnpaid account={retry.account} me={retry.me} runId={runId} asset={retry.asset}
-          viewingKey={viewingKey as Hex} view={view} act={retry.act} busy={retry.busy} />}
+          viewingKey={viewingKey as Hex} view={view} act={retry.act} busy={retry.busy}
+          retries={retry.retries} rounds={retry.rounds} />}
       </div>
     </div>
   );
@@ -1022,17 +1033,18 @@ function RunPaymentsCard({ runId, viewingKey, retry }: {
  * not offered, with the reason - because a control that is missing is a control
  * nobody can ask about.
  */
-function Vault({ account, me, viewingKey, runs }: {
+function Vault({ account, me, viewingKey, runs, proposals }: {
   account: Account;
   me: { signerId: string; signingSecret: Hex; wrappingSecret: Hex };
   viewingKey: Hex;
   runs: PayrollRun[];
+  proposals: Proposal[];
 }) {
   return (
     <div className="stack">
       <VaultPanel account={account} me={me} />
 
-      <PayoutPanel account={account} me={me} viewingKey={viewingKey} runs={runs} />
+      <PayoutPanel account={account} me={me} viewingKey={viewingKey} runs={runs} proposals={proposals} />
 
       {/*
         * **NOT DRAWN AT ALL, AND SAYING SO IS THE POINT.** A spending cap that
@@ -1451,8 +1463,14 @@ function RunDetail({ run, proposals, account, session, me, busy, onBack, act }: 
                       {proposal && proposal.status === 'open' && !proposal.raisedAt &&
                         <button className="btn sm" disabled={busy} data-send-round
                           onClick={() => sendAgain(asset)}>{proposal.txRef ? 'Send to the chain again' : 'Send to the chain'}</button>}
+                      {/* Withdrawn only where the company will: written down and never sent, or held by
+                          the chain with its window not yet open. */}
+                      {proposal && <WithdrawRound round={proposal} opensAt={run.payout?.[asset]?.opensAt}
+                        viewingKey={session.viewingKey} act={act} busy={busy} />}
                       {proposal && proposal.status === 'executed' && <span className="chip ok">settled</span>}
-                      {proposal && proposal.status !== 'executed' && approvals < need &&
+                      {proposal && proposal.status === 'cancelled' && <span className="chip off" data-round-withdrawn>
+                        withdrawn: nothing on this proposal can be paid</span>}
+                      {proposal && proposal.status !== 'executed' && proposal.status !== 'cancelled' && approvals < need &&
                         <button className="btn sm pri" onClick={() => approve(proposal)} disabled={busy || mine}>
                           {mine ? 'You have signed' : `Approve as ${me.name}`}</button>}
                       {/* Nothing here at the threshold: the Settle control was
@@ -1468,7 +1486,9 @@ function RunDetail({ run, proposals, account, session, me, busy, onBack, act }: 
       </div>
 
       <RunPaymentsCard runId={run.id} viewingKey={session.viewingKey}
-        {...(legs.length === 1 ? { retry: { account, me, asset: legs[0]!, act, busy } } : {})} />
+        {...(legs.length === 1 ? { retry: {
+          account, me, asset: legs[0]!, act, busy, retries: run.payout?.[legs[0]!]?.retries ?? [], rounds: proposals,
+        } } : {})} />
 
       <div className="card">
         <div className="hd"><h3>Recipients</h3><span className="sub">visible to signers only</span></div>

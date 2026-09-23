@@ -38,7 +38,7 @@ import { payrollPayee } from './movement.js';
 import type { NetworkName } from '../midnight/network.js';
 import type { ShieldedPaymentFacts, PaymentFacts } from '../midnight/payout-tree.js';
 import type { RunInputs } from '../midnight/run-status.js';
-import { emptyRegister, decide } from '../midnight/run-skips.js';
+import { emptyRegister, decide, registerFor, skippedIndices } from '../midnight/run-skips.js';
 import type { RunMaterial, RetryMaterial } from '../midnight/run-material.js';
 import type { PayoutSeed } from '../midnight/run-keys.js';
 
@@ -3047,6 +3047,12 @@ export class PayrollService {
    *    ledger that cannot say refuses the retry: *cannot say* is not *nobody*.
    *    The answer is used only to refuse. What stops a second payment is the
    *    account, which refuses a leaf it has already paid.
+   *
+   * And before all four, **ANYBODY THE RUN MARKED NOT TO BE PAID**: a person
+   * the run's own record of who it left out names, by the decision in force
+   * for them. Matched by the person, because that record is kept over the
+   * people left out rather than over the leg's leaves. A record that is not
+   * this run's refuses the retry rather than being read as nobody.
    */
   private async refuseARetryOverPeopleCovered(
     run: PayrollRun, leg: AssetId, legRound: Proposal, indices: readonly number[], leaves: readonly Hex[],
@@ -3059,6 +3065,18 @@ export class PayrollService {
     const when = (s: bigint) => `${new Date(Number(s) * 1000).toISOString().slice(0, 16).replace('T', ' ')} UTC`;
     const named = new Set(indices);
     const stopped = (p: Proposal) => p.status === 'cancelled' || p.status === 'blocked';
+
+    if (run.skips) {
+      const register = registerFor(run.skips.decisions, run.id, run.skips.people.length);
+      const notToPay = new Set(skippedIndices(register).map((i) => run.skips!.people[i]!.employeeId));
+      const onTheLeg = legEmployees(run, leg);
+      const marked = indices.filter((i) => notToPay.has(onTheLeg[i]!.id));
+      if (marked.length > 0) {
+        throw new Error(
+          `${people(marked)} ${isAre(marked)} marked on run ${run.id} as not to be paid, by a decision on record. A retry `
+          + 'pays only people the run meant to pay, so none was raised. Nothing was written down.');
+      }
+    }
 
     if (!stopped(legRound) && nowInSeconds < recorded.closesAt) {
       throw new Error(
