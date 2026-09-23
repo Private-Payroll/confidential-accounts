@@ -71,6 +71,22 @@ export default defineConfig({
    */
   worker: { format: 'es', plugins: () => [wasm()] },
   /*
+   * **THE WORKERS ARE ENTRIES OF THE DEPENDENCY SCAN, AS WELL AS THE PAGE.**
+   *
+   * The development server prepares every dependency it can find before the
+   * page loads, by following imports out from the pages in its root. It does
+   * not follow `new Worker(new URL(...))`, so everything only a worker imports
+   * is met for the first time when that worker starts - and the server then
+   * prepares it and RELOADS THE PAGE, which throws away whatever the person had
+   * done on it, an unlocked company included. Naming each worker here puts
+   * its imports in the first scan, so starting it changes nothing.
+   *
+   * Listing entries replaces the default of every page in the root, so the page
+   * is named too. A production build does not do this at all; it is the
+   * development server only, and it is where the product is tried by hand.
+   */
+  optimizeDeps: { entries: ['index.html', 'vault-worker-entry.ts', 'proving-worker-entry.ts'] },
+  /*
    * **NOTHING MAY FRAME THIS APPLICATION.** It frames the person's wallet, and the
    * wallet answers it because it is the top of the tab; this page inside a
    * stranger's would put a stranger around both. `frame-ancestors` is honoured
