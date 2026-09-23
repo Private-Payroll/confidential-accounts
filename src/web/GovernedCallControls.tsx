@@ -82,11 +82,13 @@ export async function approveFromThisDevice(
   });
 }
 
-/** A proposal written down and not yet sent: sent again from this device. */
+/** A proposal written down and not yet sent: sent again from this device, with the vault checked here first. */
 export async function sendRunFromThisDevice(
-  account: Account, runId: string, asset: string, viewingKey: Hex, progress: (s: GovernedStage) => void,
+  account: Account, me: { signerId: string; signingSecret: Hex; wrappingSecret: Hex },
+  runId: string, asset: string, viewingKey: Hex, progress: (s: GovernedStage) => void,
 ): Promise<void> {
-  await sendRaiseFromDevice(await doorsFor(account, progress), { runId, viewingKey, asset });
+  const doors = await doorsFor(account, progress);
+  await sendRaiseFromDevice({ ...doors, holdings: holdingsFor(account, me, await theBuilder()) }, { runId, viewingKey, asset });
 }
 
 const DAY = 86_400;
