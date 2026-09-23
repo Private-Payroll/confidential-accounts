@@ -455,6 +455,18 @@ export async function payPrivatelyFromCompanyVault(
       + 'Where the cause is that a signer joined or left, or the threshold changed, since the vault was handed over, '
       + 'its committee cannot be changed from this product yet, and no payment out of it is made until it can.');
   }
+  /*
+   * **AND THE WHOLE QUESTION THE SERVICE ASKS BEFORE IT SENDS, NOT HALF OF IT.**
+   * The committee holding the vault is what opening the record waits on; the
+   * service also refuses a payment out while the company's account is not
+   * held by its committee, and it says so here, before the pool is opened, a
+   * line is written or two minutes are spent proving a payment it would not
+   * send.
+   */
+  if (view.fundable !== true) {
+    throw new Error('No payment can be made out of this vault yet, so none was prepared or recorded. Nothing was '
+      + `sent.${view.why ? ` Reason: ${view.why}` : ''}`);
+  }
   const me = { signerId: doors.me.signerId, wrappingSecret: doors.me.wrappingSecret };
   const pool = new SealedNotePool(doors.records('pool'), me, doors.signers);
   const loaded = await pool.load(vault);

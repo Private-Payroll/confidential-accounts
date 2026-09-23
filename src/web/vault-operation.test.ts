@@ -263,7 +263,7 @@ describe('A PRIVATE PAYMENT OUT', () => {
     const records = (r: WireRecord) => s.get(r) ?? s.set(r, new MemorySealedPoolStore()).get(r)!;
     await new SealedNotePool(records('pool'), { signerId: 'ada', wrappingSecret: wrapping.secret }, signers)
       .create(VAULT, { notes: [note as never] });
-    const held = view({ heldByCommittee: true, notes: chainNotes });
+    const held = view({ heldByCommittee: true, fundable: true, notes: chainNotes });
     const doors = (over: Partial<VaultService> = {}, views = [held]) => ({
       ...pacing, now: () => NOW, me, myRecordsKey: 'ff'.repeat(32), records, signers,
       service: serviceFrom(views, log, over), builder: builder(log),
@@ -387,6 +387,33 @@ describe('A PRIVATE PAYMENT OUT', () => {
     expect(e.message).toMatch(/cannot be changed from this product yet/);
     expect(t.log).toEqual([]);
     expect(await t.journal()).toEqual([]);
+  });
+
+  it('A VAULT THE SERVICE WOULD NOT PAY OUT OF IS NOT OPENED HERE, AND NOTHING IS WRITTEN OR PROVED', async () => {
+    /*
+     * The committee holds the vault, and the company's account is still held by
+     * the key it was created with, so the service refuses the payment when it
+     * arrives. RED WHEN: the `fundable` check is removed or moved below the
+     * journal line - the pool is then opened, a note chosen and a line written
+     * for a payment that could never be sent.
+     */
+    const t = await setUp();
+    const notVouched = view({
+      heldByCommittee: true, fundable: false, notes: [`h${NOTE.nonce.slice(1)}`],
+      why: 'this company\'s account is still held by the temporary key it was created with.',
+    });
+    /* RED WHEN: the check moves below opening the pool - this door's records are then read at all. */
+    const unopened = { ...t.doors({}, [notVouched]), records: () => { throw new Error('the pool was opened'); } };
+    const e = await payPrivatelyFromCompanyVault(unopened as never, order()).catch((x) => x);
+    expect(e.message).toMatch(/^No payment can be made out of this vault yet/);
+    expect(e.message).toMatch(/still held by the temporary key it was created with/);
+    expect(e.message).toMatch(/Nothing was sent\./);
+    expect(t.log).toEqual([]);
+    expect(await t.journal()).toEqual([]);
+    /* RED WHEN: a view that says nothing about the account is read as fundable. */
+    const unsaid = view({ heldByCommittee: true, notes: [`h${NOTE.nonce.slice(1)}`] });
+    await expect(payPrivatelyFromCompanyVault(t.doors({}, [unsaid]), order())).rejects.toThrow(/^No payment can be made out of this vault yet/);
+    expect(t.log).toEqual([]);
   });
 
   it('A NOTE THAT DOES NOT NAME ITS TRANSACTION IS NOT SPENT, AND NOTHING IS WRITTEN OR SENT', async () => {

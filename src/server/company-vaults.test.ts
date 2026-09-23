@@ -33,6 +33,9 @@ const ACCOUNTS = new Set([hex(0xc0), hex(0xc1)]);
 let accountAuthority: unknown;
 let accountKeys: (c: string) => Uint8Array;
 let accountUnreachable = false;
+/* How many times the vault's state has been read in this test, and which of those reads the indexer does not answer. */
+let vaultReads = 0;
+let vaultReadFails: (n: number) => boolean = () => false;
 let handoverDep: CompanyVaultDeps['account']['handover'];
 let serviceKey: { tag: string; value: string } | undefined;
 let acc1Threshold = 2;
@@ -70,6 +73,8 @@ beforeEach(async () => {
   accountAuthority = { committee: [key(1), key(2)], threshold: 2, counter: 1n };
   accountKeys = vkOf;
   accountUnreachable = false;
+  vaultReads = 0;
+  vaultReadFails = () => false;
   handoverDep = undefined;
   serviceKey = undefined;
   acc1Threshold = 2;
@@ -111,6 +116,8 @@ beforeEach(async () => {
             operations: () => ACCOUNT_CIRCUITS, operation: (c: string) => ({ verifierKey: accountKeys(c) }),
           };
         }
+        vaultReads += 1;
+        if (vaultReadFails(vaultReads)) throw new Error('the indexer did not answer');
         return {
           maintenanceAuthority: authority, serialize: () => new Uint8Array([7]),
           operations: () => CIRCUITS, operation: (c: string) => ({ verifierKey: circuitKeys(c) }),
@@ -281,6 +288,54 @@ describe('A VAULT\'S ROUTES', () => {
     expect(sent).toEqual([]);
     pinnedNow = hex(0xc0);
     expect((await call('/api/accounts/acc_1/vaults', 'ada')).body.rows[0].state).toBe('held-by-committee');
+  });
+
+  /*
+   * **A HICCUP BETWEEN TWO READS IS NOT AN ALARM.** The list reads who holds
+   * the vault, then reads the vault's state for everything else the gate asks.
+   * When the second read fails, the chain has not said anything is wrong with
+   * the vault: the screen shows that it could not be asked, and the doors still
+   * refuse. RED WHEN: a failed state read is answered as a refusal about the
+   * vault rather than put to the gate as a read that went unanswered.
+   */
+  it('A STATE READ THAT FAILS AFTER THE RULES WERE READ SHOWS AS UNKNOWN, NOT AS AN ALARM, AND STILL SENDS NOTHING', async () => {
+    await give('ada', 1); await give('bo', 2);
+    store.putCompanyVault({ accountId: 'acc_1', vault: VAULT, deployedAt: '', deployRef: 'r', intended: { committee: [key(1), key(2)], threshold: 2 } });
+    authority = { committee: [key(1), key(2)], threshold: 2, counter: 1n };
+    expect((await call('/api/accounts/acc_1/vaults', 'ada')).body.rows[0].state).toBe('held-by-committee');
+    /* Every second read of the vault fails: the rules are read, the state that follows is not. */
+    vaultReads = 0;
+    vaultReadFails = (n) => n % 2 === 0;
+    const rows = (await call('/api/accounts/acc_1/vaults', 'ada')).body.rows;
+    expect(rows).toEqual([expect.objectContaining({ vault: VAULT, state: 'unknown', why: expect.stringMatching(/could not be asked/) })]);
+    vaultReads = 0;
+    const refused = await call(`/api/accounts/acc_1/vaults/${VAULT}/deposit`, 'ada', 'POST', { tx: 'AAAA' });
+    expect(refused).toMatchObject({ status: 409, body: { nothingWasSent: true } });
+    expect(refused.body.error).toMatch(/could not be asked/);
+    vaultReads = 0;
+    const unpaid = await call(`/api/accounts/acc_1/vaults/${VAULT}/payout`, 'ada', 'POST', { tx: '3Q==' });
+    expect(unpaid).toMatchObject({ status: 409, body: { nothingWasSent: true } });
+    expect(unpaid.body.error).toMatch(/^this service pays no fee for a payment out of this vault: /);
+    expect(sent).toEqual([]);
+  });
+
+  /*
+   * **THE VIEW A DEVICE READS BEFORE A PAYMENT OUT SPEAKS OF BOTH DIRECTIONS.**
+   * The device quotes it to a person paying out, and the service refuses a
+   * payment out on the same gate. RED WHEN: the view's reason is worded for
+   * money going in alone.
+   */
+  it('THE CHAIN VIEW\'S REASON IS TRUE OF A PAYMENT OUT AS WELL AS A DEPOSIT', async () => {
+    await give('ada', 1); await give('bo', 2);
+    store.putCompanyVault({ accountId: 'acc_1', vault: VAULT, deployedAt: '', deployRef: 'r', intended: { committee: [key(1), key(2)], threshold: 2 } });
+    const notHeld = await call(`/api/accounts/acc_1/vaults/${VAULT}/chain`, 'ada');
+    expect(notHeld.body).toMatchObject({ heldByCommittee: false, fundable: false });
+    expect(notHeld.body.why).toMatch(/^no money goes into or out of this vault: /);
+    authority = { committee: [key(1), key(2)], threshold: 2, counter: 1n };
+    accountAuthority = { committee: [key(1), key(2)], threshold: 2, counter: 4n };
+    const unvouched = await call(`/api/accounts/acc_1/vaults/${VAULT}/chain`, 'ada');
+    expect(unvouched.body).toMatchObject({ heldByCommittee: true, fundable: false });
+    expect(unvouched.body.why).toMatch(/^no money goes into or out of this vault: /);
   });
 
   it('a deployment that cannot send says so, and a send that may have landed is not marked as nothing sent', async () => {

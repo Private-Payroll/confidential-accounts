@@ -158,7 +158,7 @@ import { SealedDepositJournal } from './vault-journal.js';
 import { testTokenFile, parseTestTokenRecord } from './mint-test-token.js';
 import { assertVaultIsMarriedToTheDeployedAccount } from './fund-vault.js';
 import { explainNodeError, NODE_ERROR_CODES } from './node-errors.js';
-import { keysThisMachineHolds, refusalToFund } from './funding-gate.js';
+import { keysThisMachineHolds, refusalToFund, thisBuildsVerifierKeys } from './funding-gate.js';
 import { testEnvironmentFor, startEnvironment } from './test-environment.js';
 import { bringUpWallet } from './wallet-bringup.js';
 import { saveDustState } from './dust-wallet.js';
@@ -1233,54 +1233,25 @@ async function main(): Promise<DepositVerdict> {
    */
   {
     const L: any = await import('@midnightntwrk/ledger-v9');
-    const { ledger: vaultLedgerOf } = await import('../contracts/managed-vault/contract/index.js');
     /*
-     * **READ FROM THE CHAIN, NOT FROM THE RECORD.** The record's own
-     * `accountAddress` is what this machine believes; what decides where the
-     * money is paid out is the account the vault's ledger actually pins.
+     * **EVERY FACT IS READ FROM THE CHAIN BY THE GATE'S OWN ENTRY POINT, AND
+     * NOT FROM THE RECORD.** The record's `accountAddress` is what this machine
+     * believes; the account the vault's ledger pins, who holds each contract's
+     * rules, and whether each runs the circuits this build compiled are what
+     * decide where the money is paid out, and `refusalToFund` reads all of them.
      */
-    /*
-     * **THE READ IS OUTSIDE THE CATCH, AND THAT IS THE POINT.** A provider that
-     * cannot be asked is not an answer about this contract: it stops the door
-     * here, loudly, rather than becoming *its state cannot be read as a
-     * vault's*, which reads as a permanent fact about the address and sends a
-     * person to change it. Only the DECODE is caught, because a state that will
-     * not decode as a vault's really is this contract not being one.
-     */
-    const onChain = await providers.publicDataProvider.queryContractState(entry.contractAddress);
-    let pinnedAccount: string | null = null;
-    if (onChain !== null && onChain !== undefined) {
-      try {
-        const bytes = (vaultLedgerOf as never as (d: unknown) => { account: { bytes: Uint8Array } })(onChain.data)
-          .account.bytes;
-        pinnedAccount = !(bytes instanceof Uint8Array) || bytes.length !== 32
-          ? null
-          : Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
-      } catch { pinnedAccount = null; }
-    }
     const refusal = await refusalToFund({
       vault: entry.contractAddress,
       vaultName: VAULT_NAME,
       account: entry.accountAddress,
-      pinnedAccount,
       readState: (a) => providers.publicDataProvider.queryContractState(a),
       held: keysThisMachineHolds(ROOT, STATE_DIR, VAULT_NAME, (k) => L.signatureVerifyingKey(k)),
-      /*
-       * **NOT READ AT THIS DOOR, AND SAID SO RATHER THAN DEFAULTED.** The
-       * verifying keys these compare against are built by a separate job that
-       * costs a minute and a hundred megabytes, and this tool does not build
-       * them. A contract at this address that is not this build's vault passes
-       * here and is refused by the product's own door.
-       */
-      vaultCircuits: null,
-      accountCircuits: null,
+      verifierKeys: thisBuildsVerifierKeys(ROOT),
     });
     if (refusal !== null) throw new Error(refusal);
     good('the chain says neither this vault nor the account it pays out on is held by a key this machine keeps,');
-    good('  that each has been changed exactly once, and that this vault pins that account.');
-    note('  NOT checked here: that either runs the circuits this build compiled. This tool does not build');
-    note('  the verifying keys that would answer it, so a contract at this address that is not this build\'s');
-    note('  vault passes this door. The product\'s own door reads them.');
+    good('  that each has been changed exactly once and runs the circuits this build compiled,');
+    good('  and that this vault pins that account.');
   }
 
   const tx = await ledger.deposit(

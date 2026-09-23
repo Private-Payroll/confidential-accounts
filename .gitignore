@@ -460,3 +460,9 @@ docs/decisions/
 # for, so that a mis-edited list cannot make it remove the wrong thing.
 # src/standalone/
 # vite.standalone.config.ts
+
+# .mg36-decisions/ holds about 77 MB of saved analysis output - pickles and JSONL
+# produced while measuring stale file:line references across this tree. It is
+# deliberately NOT under .midnight/, because the tooling copies that directory on
+# every run and 77 MB inside it made each copy 91 MB and filled the disk.
+.mg36-decisions/
