@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   DEVICE_RAISE_VERSION, DIGEST_SHAPE, RAISE_IS_NOT_WHAT_WAS_CHECKED, RAISE_NAMES_NOTHING_CHECKED,
-  SEND_IS_NOT_WHAT_WAS_CHECKED, paymentsCheckedDigest, reloadThePage, type PaymentChecked,
+  SEND_IS_NOT_WHAT_WAS_CHECKED, WRITTEN_DOWN_IS_NOT_WHAT_IS_CHECKED, paymentsCheckedDigest, reloadThePage, type PaymentChecked,
 } from './device-raise.js';
 import { redactSecrets } from './redact-secrets.js';
 
@@ -13,7 +13,7 @@ import { redactSecrets } from './redact-secrets.js';
  */
 const A = 'ab'.repeat(32);
 const Z = '0'.repeat(64);
-const TWO: PaymentChecked[] = [['shielded', A, '100'], ['unshielded', Z, 5n]];
+const TWO: PaymentChecked[] = [{ kind: 'shielded', token: A, amount: '100' }, { kind: 'unshielded', token: Z, amount: 5n }];
 
 describe('THE DIGEST OF THE PAYMENTS CHECKED', () => {
   it('is the sha-256 of a fixed domain and the rows, derived independently of this module', () => {
@@ -30,9 +30,9 @@ describe('THE DIGEST OF THE PAYMENTS CHECKED', () => {
   it('changes with every field of every payment, with the order and with the count', () => {
     const base = paymentsCheckedDigest(TWO);
     for (const [why, other] of [
-      ['a kind', [['unshielded', A, '100'], TWO[1]!]],
-      ['a token', [['shielded', 'cd'.repeat(32), '100'], TWO[1]!]],
-      ['an amount', [['shielded', A, '101'], TWO[1]!]],
+      ['a kind', [{ kind: 'unshielded', token: A, amount: '100' }, TWO[1]!]],
+      ['a token', [{ kind: 'shielded', token: 'cd'.repeat(32), amount: '100' }, TWO[1]!]],
+      ['an amount', [{ kind: 'shielded', token: A, amount: '101' }, TWO[1]!]],
       ['the order', [TWO[1]!, TWO[0]!]],
       ['one fewer', [TWO[0]!]],
       ['one more', [...TWO, TWO[1]!]],
@@ -46,14 +46,14 @@ describe('THE DIGEST OF THE PAYMENTS CHECKED', () => {
   it('reads one amount written as a string or a bigint, with or without leading zeroes, and one token in either case, as the same', () => {
     const base = paymentsCheckedDigest(TWO);
     /* RED WHEN: a string and a bigint of one amount digest apart - the page sends strings and the service holds bigints. */
-    expect(paymentsCheckedDigest([['shielded', A, 100n], ['unshielded', Z, '5']])).toBe(base);
-    expect(paymentsCheckedDigest([['shielded', A.toUpperCase(), '0100'], ['unshielded', Z, '005']])).toBe(base);
+    expect(paymentsCheckedDigest([{ kind: 'shielded', token: A, amount: 100n }, { kind: 'unshielded', token: Z, amount: '5' }])).toBe(base);
+    expect(paymentsCheckedDigest([{ kind: 'shielded', token: A.toUpperCase(), amount: '0100' }, { kind: 'unshielded', token: Z, amount: '005' }])).toBe(base);
   });
 
   it('refuses an amount that is not a whole number rather than digesting it', () => {
     for (const amount of ['1e4', '-5', '1.5', '', ' 5', -5n]) {
       /* RED WHEN: a malformed amount is digested - two different readings of it could then agree. */
-      expect(() => paymentsCheckedDigest([['shielded', A, amount]]), String(amount)).toThrow(/not a whole number/u);
+      expect(() => paymentsCheckedDigest([{ kind: 'shielded', token: A, amount }]), String(amount)).toThrow(/not a whole number/u);
     }
   });
 });
@@ -73,7 +73,7 @@ describe('THE SENTENCE A PAGE OF ANOTHER VERSION IS REFUSED WITH', () => {
 describe('EVERY REFUSAL HERE REACHES THE REFUSAL LOG AS WRITTEN', () => {
   it('none is taken for a recovery phrase and hidden', () => {
     for (const sentence of [
-      RAISE_NAMES_NOTHING_CHECKED, RAISE_IS_NOT_WHAT_WAS_CHECKED, SEND_IS_NOT_WHAT_WAS_CHECKED,
+      RAISE_NAMES_NOTHING_CHECKED, RAISE_IS_NOT_WHAT_WAS_CHECKED, SEND_IS_NOT_WHAT_WAS_CHECKED, WRITTEN_DOWN_IS_NOT_WHAT_IS_CHECKED,
       reloadThePage(undefined, 'Nothing was written down.'), reloadThePage(0, 'Nothing was sent.'),
     ]) {
       /* RED WHEN: a sentence runs twelve short words together - the log then shows a redaction where the reason should be. */

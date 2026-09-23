@@ -239,7 +239,7 @@ beforeEach(() => { sent.length = 0; paidLeaves.clear(); });
 const deviceRetry = async (c: Company, indices: number[], window: { opensAt: string; closesAt: string } = WINDOW) => {
   const asked = await post(`/api/runs/${c.runId}/retry-payments`, { viewingKey: c.viewingKey, indices });
   expect(asked.status, JSON.stringify(asked.body)).toBe(200);
-  const checked = paymentsCheckedDigest(asked.body.payments.map((p: any) => [p.kind, p.token, p.amount] as const));
+  const checked = paymentsCheckedDigest(asked.body.payments);
   return post(`/api/runs/${c.runId}/retry`, {
     viewingKey: c.viewingKey, indices, vault: VAULT, ...window, onDevice: true, version: DEVICE_RAISE_VERSION, checked,
   });

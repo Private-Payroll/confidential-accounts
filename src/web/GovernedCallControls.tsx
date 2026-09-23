@@ -5,13 +5,14 @@ import type { Account, Proposal } from '../core/types.js';
 import * as keyring from './keyring.js';
 import {
   approveOnDevice, governedCallServiceFor, mayWithdraw, pendingRetries, raiseRetryOnDevice, raiseRunOnDevice,
-  sendRaiseFromDevice, sendRetryFromDevice, unpaidToRetry, withdrawRound,
+  roundsOfTheLeg, sendRaiseFromDevice, sendRetryFromDevice, unpaidToRetry, withdrawRound,
   type GovernedCallDoors, type GovernedStage, type PendingRetry, type RaiseDoors, type RetryOnTheLeg, type RoundStanding,
 } from './governed-call-on-device.js';
 import { startVaultBuilder, type VaultBuilderClient } from './vault-worker-client.js';
 import { SealedNotePool } from '../midnight/vault-pool.js';
 import { deviceVaultHoldings } from './device-vault-holdings.js';
 import { deviceRecordsFor, rosterOf, vaultServiceFor } from './vault-page-doors.js';
+import { sameList, untoldRetryRounds } from '../core/retry-cover.js';
 
 /**
  * **RAISING A RUN'S LEG AND APPROVING A PROPOSAL, FROM THIS DEVICE.**
@@ -94,6 +95,38 @@ export async function sendRunFromThisDevice(
 
 const DAY = 86_400;
 const nowInSeconds = () => Math.floor(Date.now() / 1000);
+
+/** The longest wait a browser's timer holds; a later moment is waited for in steps of this. */
+const LONGEST_TIMER_MS = 2 ** 31 - 1;
+
+/**
+ * **THE CLOCK, READ AGAIN WHEN THE NEXT MOMENT A DECISION TURNS ON ARRIVES.**
+ * Seconds since the Unix epoch, from `now`. The component is drawn again at the
+ * first of `moments` still ahead, so a control offered only before a window
+ * opens, or a retry that covers its people only until its window closes, is
+ * decided again as that moment passes, without a reload.
+ */
+export function useSecondsNow(
+  now: () => number, moments: ReadonlyArray<bigint | string | number | undefined>,
+): number {
+  const [fired, redraw] = useState(0);
+  const at = now();
+  const next = moments
+    .map((m) => (m === undefined ? Number.NaN : Number(String(m))))
+    .filter((m) => Number.isFinite(m) && m > at)
+    .reduce((a, b) => Math.min(a, b), Number.POSITIVE_INFINITY);
+  /*
+   * Set again after every firing, not only when the moment changes: a timer
+   * runs on elapsed time and this reads the machine's clock, so one that fires
+   * a little before the clock reaches the moment waits again rather than stops.
+   */
+  useEffect(() => {
+    if (!Number.isFinite(next)) return undefined;
+    const timer = setTimeout(() => redraw((n) => n + 1), Math.min(Math.max((next - at) * 1000, 0), LONGEST_TIMER_MS));
+    return () => clearTimeout(timer);
+  }, [next, at, fired]);
+  return at;
+}
 
 /** This company's vaults, as the service lists them. */
 const vaultsOf = async (account: Account): Promise<string[]> =>
@@ -186,7 +219,8 @@ export function RaiseLeg({ account, me, runId, asset, viewingKey, act, busy }: {
 /**
  * **WITHDRAW A ROUND**, offered only where the company will do it: a round only
  * written down, or one the chain holds whose window has not opened. What it
- * withdraws is shown beside it.
+ * withdraws is shown beside it. It is taken away when the window opens, on a
+ * page left open as much as on one just drawn.
  */
 export function WithdrawRound({ round, opensAt, viewingKey, act, busy, now, withdraw }: {
   round: RoundStanding; opensAt: bigint | string | number | undefined; viewingKey: string;
@@ -196,7 +230,8 @@ export function WithdrawRound({ round, opensAt, viewingKey, act, busy, now, with
   /** The company's withdraw. This page's own when not given. */
   withdraw?: (proposalId: string, viewingKey: string) => Promise<unknown>;
 }) {
-  if (!mayWithdraw(round, opensAt, (now ?? nowInSeconds)())) return null;
+  const at = useSecondsNow(now ?? nowInSeconds, [opensAt]);
+  if (!mayWithdraw(round, opensAt, at)) return null;
   const go = withdraw ?? ((id: string, key: string) => withdrawRound(keyring.api, id, key));
   return <button className="btn sm ghost" disabled={busy} data-withdraw-round={round.id}
     title="Withdrawing cannot be undone. Approvals given so far are lost."
@@ -241,15 +276,25 @@ export function RetryUnpaid({ account, me, runId, asset, viewingKey, view, act, 
 }) {
   const [open, setOpen] = useState(false);
   const [stage, setStage] = useState<GovernedStage | null>(null);
-  const at = (now ?? nowInSeconds)();
-  const pending = pendingRetries(retries ?? [], rounds ?? [], at);
+  const at = useSecondsNow(now ?? nowInSeconds, (retries ?? []).flatMap((r) => [r.opensAt, r.closesAt]));
+  const legRounds = roundsOfTheLeg(rounds ?? [], viewingKey, runId, asset);
+  const pending = pendingRetries(retries ?? [], rounds ?? [], at, legRounds);
+  /*
+   * A retry round written down that no entry on the leg names exactly still
+   * covers its people, as the company counts it, though nothing here can send
+   * it: it is shown with what withdraws it.
+   */
+  const strays = untoldRetryRounds(retries ?? [], legRounds, BigInt(at)).filter((u) =>
+    !pending.some((p) => p.kind === 'untold' && sameList(p.retry.originalIndices, u.people)));
   /* On chain and not yet open: nothing to send, and it can still be withdrawn. */
   const unopened = (retries ?? []).flatMap((r) => {
     const round = r.proposalId === undefined ? undefined : (rounds ?? []).find((x) => x.id === r.proposalId);
     return round?.raisedAt && mayWithdraw(round, r.opensAt, at) ? [{ retry: r, round }] : [];
   });
-  const indices = unpaidToRetry(view, pending.flatMap((p) => p.retry.originalIndices));
-  if (indices.length === 0 && pending.length === 0 && unopened.length === 0) return null;
+  const indices = unpaidToRetry(view, [
+    ...pending.flatMap((p) => p.retry.originalIndices), ...strays.flatMap((u) => u.people),
+  ]);
+  if (indices.length === 0 && pending.length === 0 && unopened.length === 0 && strays.length === 0) return null;
   const withAsset = asset === undefined ? {} : { asset };
 
   const deviceDoors = async () => (doors ? doors(setStage)
@@ -306,13 +351,26 @@ export function RetryUnpaid({ account, me, runId, asset, viewingKey, view, act, 
             choose again. Withdrawing cannot be undone, and approvals given so far are lost.
           </div>
           <WithdrawRound round={x} opensAt={r.opensAt} viewingKey={viewingKey} act={act} busy={busy}
-            now={() => at} {...(withdraw ? { withdraw } : {})} />
+            {...(now ? { now } : {})} {...(withdraw ? { withdraw } : {})} />
         </div>
       ))}
+      {strays.map(({ round: x, people }) => {
+        const standing = (rounds ?? []).find((r) => r.id === x.id);
+        return (
+          <div key={x.id} className="inline" data-untold-round={x.id}>
+            <div className="hint">
+              A retry of {who(people)} is written down and may still reach the chain. Until it is withdrawn these people
+              cannot go on another retry. Withdrawing cannot be undone, and approvals given so far are lost.
+            </div>
+            {standing && <WithdrawRound round={standing} opensAt={undefined} viewingKey={viewingKey} act={act} busy={busy}
+              {...(now ? { now } : {})} {...(withdraw ? { withdraw } : {})} />}
+          </div>
+        );
+      })}
       {stage && !open && <div className="hint" data-raise-stage>Now: {stageWords(stage)}…</div>}
       {indices.length > 0 && <>
         <div className="hint">
-          {indices.length} {pending.length + unopened.length > 0 ? 'more ' : ''}{indices.length === 1 ? 'person' : 'people'} on this
+          {indices.length} {pending.length + unopened.length + strays.length > 0 ? 'more ' : ''}{indices.length === 1 ? 'person' : 'people'} on this
           run {indices.length === 1 ? 'is' : 'are'} not
           paid (#{indices.map((i) => i + 1).join(', #')}) and this run's window has closed. The retry pays only them,
           each with the same payment as before, and the account refuses a payment already made, so nobody is paid twice.

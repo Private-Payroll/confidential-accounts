@@ -18,8 +18,12 @@
  */
 import { assets as theAssets, type AssetId, type AssetRegistry } from '../core/assets.js';
 import { refuseWhatTheVaultCannotPay, type PaymentAsked, type VaultHoldings } from '../core/vault-holdings.js';
-import { DEVICE_RAISE_VERSION, paymentsCheckedDigest } from '../core/device-raise.js';
+import {
+  DEVICE_RAISE_VERSION, WRITTEN_DOWN_IS_NOT_WHAT_IS_CHECKED, paymentsCheckedDigest, type PaymentChecked,
+} from '../core/device-raise.js';
 import type { SignerMaterial, GovernedCallOrder } from './governed-call-builder.js';
+import type { Hex, Sealed } from '../core/crypto.js';
+import { payrollRoundOf, sameList, untoldRetryRounds } from '../core/retry-cover.js';
 import type { AccountCallChainOnTheWire, VaultBuilderClient } from './vault-worker-client.js';
 
 /** A proposal written down and not yet sent, as the service hands it to the device that builds it. */
@@ -27,6 +31,8 @@ export interface RaiseOrderOnTheWire {
   readonly proposalId: string;
   readonly chainId: string;
   readonly order: Extract<GovernedCallOrder, { circuit: 'propose' }>;
+  /** The digest of the payments the proposal written down pays, taken as `paymentsCheckedDigest` takes it. */
+  readonly paymentsChecked: string;
 }
 
 /** A retry written down and not yet sent: its proposal, and the people it pays as positions in the leg. */
@@ -50,7 +56,7 @@ export interface RoundOnThePage {
  */
 export interface LegPaymentsOnTheWire {
   readonly asset: string;
-  readonly payments: ReadonlyArray<{ readonly kind: string; readonly token: string; readonly amount: string }>;
+  readonly payments: ReadonlyArray<PaymentChecked<string, string>>;
 }
 
 /** What this module asks of the company's service. */
@@ -179,7 +185,7 @@ export async function sendRaiseFromDevice(
   refuseAnOrderThatIsNotThisRaise(order, input.chosen);
   doors.progress?.('checking-the-vault');
   const checked = await refuseALegTheVaultCannotPay(doors, {
-    runId: input.runId, viewingKey: input.viewingKey, ...asked, vault: order.order.run.vault,
+    runId: input.runId, viewingKey: input.viewingKey, ...asked, vault: order.order.run.vault, order,
   });
   return buildAndSend(doors, order, input.viewingKey, (tx) => service.sendRaise(input.runId, {
     viewingKey: input.viewingKey, ...asked, tx, version: DEVICE_RAISE_VERSION, checked,
@@ -222,7 +228,8 @@ const DIGITS = /^[0-9]+$/u;
  * the payments checked, which is all the service is told about the check.
  */
 async function refuseALegTheVaultCannotPay(
-  doors: RaiseDoors, input: { runId: string; viewingKey: string; asset?: string; vault: string },
+  doors: RaiseDoors,
+  input: { runId: string; viewingKey: string; asset?: string; vault: string; order?: RaiseOrderOnTheWire },
 ): Promise<string> {
   const leg = await doors.service.legPayments(input.runId, {
     viewingKey: input.viewingKey, ...(input.asset === undefined ? {} : { asset: input.asset }),
@@ -234,9 +241,15 @@ async function refuseALegTheVaultCannotPay(
  * **THE CHECK ITSELF, OVER WHATEVER PAYMENTS THE SERVICE HANDED OVER** - a
  * leg's, or a retry's. The digest returned is over exactly what was handed
  * over, in its order.
+ *
+ * **AND, WHEN A PROPOSAL IS WRITTEN DOWN, AGAINST THAT PROPOSAL.** Its digest
+ * must be the digest of these payments, and its count of payees is the count
+ * the payments are checked against, so what is checked is what will be built
+ * and sent. Before anything is written down there is no proposal yet, and the
+ * service compares what it writes down with the digest this returns.
  */
 async function refusePaymentsTheVaultCannotPay(
-  doors: RaiseDoors, leg: LegPaymentsOnTheWire, input: { asset?: string; vault: string },
+  doors: RaiseDoors, leg: LegPaymentsOnTheWire, input: { asset?: string; vault: string; order?: RaiseOrderOnTheWire },
 ): Promise<string> {
   if (input.asset !== undefined && leg.asset !== input.asset) {
     throw new Error(`the company answered for its ${leg.asset} payments when ${input.asset} is being raised. `
@@ -250,14 +263,25 @@ async function refusePaymentsTheVaultCannotPay(
     }
     return { payee: { kind }, token: String(p.token), amount: BigInt(p.amount) };
   });
+  const checked = paymentsCheckedDigest(leg.payments);
+  let payees = BigInt(payments.length);
+  if (input.order !== undefined) {
+    if (checked !== String(input.order.paymentsChecked)) throw new Error(WRITTEN_DOWN_IS_NOT_WHAT_IS_CHECKED);
+    if (!DIGITS.test(String(input.order.order.run.payees))) {
+      throw new Error('the proposal written down for this run does not say how many people it pays, so this device cannot '
+        + 'check it. Nothing was built or sent. Reload the page and send it again. If this comes back, withdraw the '
+        + 'proposal and raise the run again.');
+    }
+    payees = BigInt(input.order.order.run.payees);
+  }
   await refuseWhatTheVaultCannotPay(doors.holdings, {
     vault: input.vault,
     asset: (doors.assets ?? theAssets).require(leg.asset as AssetId),
     total: payments.reduce((a, p) => a + p.amount, 0n),
-    payees: BigInt(payments.length),
+    payees,
     payments,
   }, ['shielded']);
-  return paymentsCheckedDigest(leg.payments.map((p) => [p.kind, p.token, p.amount] as const));
+  return checked;
 }
 
 /**
@@ -345,6 +369,36 @@ export interface RoundStanding {
   readonly status: string;
   readonly raisedAt?: string;
   readonly txRef?: string;
+  /** What a round's sealed payload is opened from, to read which run, leg and people it is for. */
+  readonly kind?: string;
+  readonly chainId?: string;
+  readonly sealedPayload?: Sealed;
+}
+
+/**
+ * **THE ROUNDS WRITTEN DOWN FOR ONE RUN'S LEG, WITH THE PEOPLE EACH RETRY
+ * PAYS**, read out of each round's sealed payload with the account's viewing
+ * key exactly as the company reads them. A round this page holds no payload
+ * for, or cannot open, is left out: it covers nobody here, and the company,
+ * which opens every round, refuses a retry over its people all the same.
+ */
+export function roundsOfTheLeg(
+  rounds: ReadonlyArray<RoundStanding>, viewingKey: string, runId: string, asset?: string,
+): Array<{ readonly id: string; readonly status: string; readonly retry?: readonly number[] }> {
+  return rounds.flatMap((r) => {
+    if (r.kind === undefined || r.chainId === undefined || r.sealedPayload === undefined) return [];
+    let opened: ReturnType<typeof payrollRoundOf>;
+    try {
+      opened = payrollRoundOf({
+        id: r.id, kind: r.kind, status: r.status, chainId: r.chainId as Hex, sealedPayload: r.sealedPayload,
+        ...(r.raisedAt ? { raisedAt: r.raisedAt } : {}),
+      }, viewingKey as Hex);
+    } catch {
+      return [];
+    }
+    if (opened === null || opened.runId !== runId || (asset !== undefined && opened.asset !== asset)) return [];
+    return [opened];
+  });
 }
 
 const seconds = (s: bigint | string | number): bigint => BigInt(String(s));
@@ -352,9 +406,13 @@ const seconds = (s: bigint | string | number): bigint => BigInt(String(s));
 /**
  * **A RETRY NOT YET SEEN ON CHAIN, AND WHAT SENDS IT.** One of three:
  *
- *   `untold`       written onto the leg, and its raise never answered. It is
- *                  sent by raising exactly the same people with its window and
- *                  vault, which the company sends as itself.
+ *   `untold`       written onto the leg, and its raise never answered, with a
+ *                  round written down for exactly those people that can still
+ *                  reach the chain (`untoldRetryRounds`, as the company reads
+ *                  it). It is sent by raising exactly the same people with its
+ *                  window and vault, which the company sends as itself. One
+ *                  whose round was withdrawn, stopped, or never written down
+ *                  covers nobody, and its people are offered again.
  *   `unsent`       written down and never sent.
  *   `sent-unseen`  sent from a device and not yet seen on chain. Sent again as
  *                  itself; the chain takes it once.
@@ -372,13 +430,16 @@ export interface PendingRetry {
 
 export function pendingRetries(
   retries: ReadonlyArray<RetryOnTheLeg>, rounds: ReadonlyArray<RoundStanding>, nowInSeconds: number,
+  /** The rounds written down for this run's leg, with the people each retry pays: `roundsOfTheLeg`. */
+  legRounds: ReadonlyArray<{ readonly id: string; readonly status: string; readonly retry?: readonly number[] }>,
 ): PendingRetry[] {
   const now = BigInt(Math.floor(nowInSeconds));
+  const untold = untoldRetryRounds(retries, legRounds, now);
   const pending: PendingRetry[] = [];
   for (const retry of retries) {
     if (now >= seconds(retry.closesAt)) continue;
     if (retry.proposalId === undefined) {
-      pending.push({ kind: 'untold', retry });
+      if (untold.some((u) => sameList(u.people, retry.originalIndices))) pending.push({ kind: 'untold', retry });
       continue;
     }
     const round = rounds.find((r) => r.id === retry.proposalId);
@@ -442,7 +503,7 @@ export async function sendRetryFromDevice(
   doors.progress?.('checking-the-vault');
   const checked = await refusePaymentsTheVaultCannotPay(doors, await service.retryPayments(input.runId, {
     viewingKey: input.viewingKey, ...asked, indices: [...order.indices],
-  }), { ...asked, vault: order.order.run.vault });
+  }), { ...asked, vault: order.order.run.vault, order });
   return buildAndSend(doors, order, input.viewingKey, (tx) => service.sendRetry(input.runId, {
     viewingKey: input.viewingKey, ...asked, proposalId: order.proposalId, tx, version: DEVICE_RAISE_VERSION, checked,
   }));

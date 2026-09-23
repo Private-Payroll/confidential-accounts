@@ -45,6 +45,8 @@ let payoutState: CompanyVaultDeps['chain']['payoutState'];
 let eventsOf: CompanyVaultDeps['chain']['eventsOf'];
 let accountCallState: CompanyVaultDeps['chain']['accountCallState'];
 let asked: string[];
+/* Whether the vault's ledger is this build's shape, as the chain reader answers it; `undefined` for a reader with no such check. */
+let ledgerIsThisBuilds: CompanyVaultDeps['chain']['ledgerIsThisBuilds'];
 const vkOf = (c: string) => new TextEncoder().encode(`vk:${c}`);
 const aDeploy = () => ({
   intents: new Map([[1, { actions: [{
@@ -91,6 +93,7 @@ beforeEach(async () => {
     return { blockHash: 'B', accountState: 'YQ==', parameters: 'cA==' };
   };
   pinnedNow = hex(0xc0);
+  ledgerIsThisBuilds = async () => {};
   sendVault = async (_a, what) => { sent.push(what); return { ref: 'r', at: 'now', transactionHash: 'h' }; };
   const app = express();
   app.use(companyVaultRoutes({
@@ -124,7 +127,8 @@ beforeEach(async () => {
         };
       },
       serialize: (s) => (s as { serialize(): Uint8Array }).serialize(),
-      notesOf: () => [],
+      notesOf: () => [hex(0x5a)],
+      get ledgerIsThisBuilds() { return ledgerIsThisBuilds; },
       startingLedgerOf: () => ({ account: pinnedNow, notes: 0n, unshieldedTokens: 0n, payments: 0n, spendingCaps: 0n }),
       everCreated: async () => new Set(),
       get payoutState() { return payoutState; },
@@ -741,5 +745,39 @@ describe('A PRIVATE PAYMENT OUT OF A VAULT', () => {
     eventsOf = async () => { throw Object.assign(new Error('not yet'), { name: 'NoteIndexUnreadable' }); };
     expect(await call(`/api/accounts/acc_1/vaults/${VAULT}/events/${tx}`, 'ada'))
       .toMatchObject({ status: 503, body: { error: 'not yet', kind: 'NoteIndexUnreadable' } });
+  });
+});
+
+describe('THE VAULT\'S NOTES ARE VOUCHED FOR ONLY WHEN READ OFF A LEDGER OF THIS BUILD\'S SHAPE', () => {
+  const view = async () => {
+    store.putCompanyVault({ accountId: 'acc_1', vault: VAULT, deployedAt: '', deployRef: 'r', intended: { committee: [key(1), key(2)], threshold: 2 } });
+    return call(`/api/accounts/acc_1/vaults/${VAULT}/chain`, 'ada');
+  };
+
+  it('says so beside the notes when the ledger is this build\'s', async () => {
+    const v = await view();
+    /* RED WHEN: the view stops saying whether its notes were read off this build's ledger - a device then cannot tell. */
+    expect(v.status).toBe(200);
+    expect(v.body).toMatchObject({ notes: [hex(0x5a)], notesFromThisBuild: true });
+    expect(v.body.notesWhy).toBeUndefined();
+  });
+
+  it('says not, and why, when the ledger is another shape, and keeps the rest of the view', async () => {
+    ledgerIsThisBuilds = async () => { throw new Error('this vault\'s ledger holds 4 fields where this build\'s holds 5'); };
+    const v = await view();
+    /* RED WHEN: a ledger of another shape is vouched for - a device then compares its record with some other field. */
+    expect(v.status).toBe(200);
+    expect(v.body.notesFromThisBuild).toBe(false);
+    expect(v.body.notesWhy).toMatch(/holds 4 fields where this build's holds 5/u);
+    /* RED WHEN: the whole view is refused - handing a vault over and depositing read it too, and they gate on shape themselves. */
+    expect(v.body).toMatchObject({ onChain: true, notes: [hex(0x5a)] });
+  });
+
+  it('does not vouch when the chain reader has no way to check', async () => {
+    ledgerIsThisBuilds = undefined;
+    const v = await view();
+    /* RED WHEN: a reader that cannot check is read as one that checked. */
+    expect(v.body.notesFromThisBuild).toBe(false);
+    expect(v.body.notesWhy).toMatch(/not set up to check how a vault is laid out.*Whoever runs the service turns that check on$/su);
   });
 });

@@ -11,6 +11,7 @@ import type { AuthorityRead } from '../midnight/ledger.js';
 import type { MaintenanceAuthorityChoice } from '../midnight/partial-contract.js';
 import type { Committee } from '../midnight/vault-committee.js';
 import { buildAccountHandover, type AccountHandoverLedger } from '../midnight/company-authority.js';
+import { assertVaultLedgerIsThisBuilds } from '../midnight/vault-ledger-shape.js';
 
 /**
  * **WHAT THE COMPANY-VAULT ROUTES READ, FROM THE INDEXER THIS DEPLOYMENT NAMES.**
@@ -50,6 +51,8 @@ export async function vaultChainFromTheIndexer(indexer: { url: string; wsUrl: st
     contractState: async (address) => (await provider.queryContractState(address)) ?? null,
     serialize: (state) => (state as { serialize(): Uint8Array }).serialize(),
     notesOf: (state) => [...readLedger(asRuntime(state).data).notes].map(hex),
+    /* The gate the vault client reads the same notes behind, over the state as the reader above takes it. */
+    ledgerIsThisBuilds: (state) => assertVaultLedgerIsThisBuilds(asRuntime(state)),
     startingLedgerOf: (state) => {
       const ledger = readLedger(asRuntime(state).data);
       if (!(ledger.account.bytes instanceof Uint8Array) || ledger.account.bytes.length !== 32) throw new Error('not a vault\'s state');

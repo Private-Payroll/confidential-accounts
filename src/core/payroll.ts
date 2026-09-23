@@ -389,10 +389,11 @@ const legOf = (run: PayrollRun, asset: AssetId | undefined): AssetId => {
   if (!legs.includes(leg)) throw new Error(`this run pays nobody in ${leg}`);
   return leg;
 };
-import type { AccountService, PayrollRound, RaiseHalf } from './account.js';
+import type { AccountService, RaiseHalf } from './account.js';
 import type { ProofSystem, RunProposal } from './ledger.js';
 import type { DataStore } from './store.js';
-import { paymentsCheckedDigest } from './device-raise.js';
+import { paymentChecked, paymentsCheckedDigest, type PaymentChecked } from './device-raise.js';
+import { isLiveRound, sameList, untoldRetryRounds } from './retry-cover.js';
 
 export interface EmployeeSpec {
   name: string;
@@ -3104,21 +3105,16 @@ export class PayrollService {
         + ' Nothing was written down.');
     }
 
-    const told = new Set((recorded.retries ?? []).map((r) => r.proposalId).filter(Boolean));
-    for (const r of this.accounts.payrollRoundsOf(run.accountId, viewingKey)) {
-      if (r.runId !== run.id || r.asset !== leg || r.retry === undefined || !isLiveRound(r)) continue;
-      if (told.has(r.id) || r.id === again) continue;
-      const windows = (recorded.retries ?? [])
-        .filter((x) => x.proposalId === undefined && sameList(x.originalIndices, r.retry!))
-        .map((x) => x.closesAt);
-      const closesAt = windows.length ? windows.reduce((a, b) => (a > b ? a : b)) : undefined;
-      if (closesAt !== undefined && nowInSeconds >= closesAt) continue;
-      const shared = r.retry.filter((i) => named.has(i));
+    /* Clause 3, as `untoldRetryRounds` decides it, which is what the page reads too. */
+    const legRounds = this.accounts.payrollRoundsOf(run.accountId, viewingKey)
+      .filter((r) => r.runId === run.id && r.asset === leg);
+    for (const { round: r, people: onIt, closesAt } of untoldRetryRounds(recorded.retries ?? [], legRounds, nowInSeconds, again)) {
+      const shared = onIt.filter((i) => named.has(i));
       if (shared.length === 0) continue;
       throw new Error(
         `${people(shared)} ${isAre(shared)} on retry ${r.id} of the ${leg} leg of run ${run.id}, whose raise did not `
         + 'answer and which may be on chain. Retry exactly '
-        + `${people(r.retry)} again with its window and vault to send it as itself`
+        + `${people(onIt)} again with its window and vault to send it as itself`
         + (closesAt !== undefined ? `, or retry them once its window closes at ${when(closesAt)}.` : '.')
         + ' Nothing was written down.');
     }
@@ -3664,7 +3660,7 @@ export class PayrollService {
    */
   async legPaymentsAsked(runId: string, viewingKey: Hex, asset?: AssetId): Promise<{
     asset: AssetId;
-    payments: Array<{ kind: 'shielded' | 'unshielded'; token: string; amount: bigint }>;
+    payments: Array<PaymentChecked<'shielded' | 'unshielded', bigint>>;
   }> {
     const run = this.requireRun(runId, viewingKey);
     const leg = legOf(run, asset);
@@ -3678,7 +3674,7 @@ export class PayrollService {
       ?? (await this.runMaterialInputs(runId, viewingKey, leg)).facts;
     return {
       asset: leg,
-      payments: facts.map(f => ({ kind: f.payee.kind, token: f.token, amount: f.amount })),
+      payments: facts.map(paymentChecked),
     };
   }
 
@@ -3813,7 +3809,7 @@ export class PayrollService {
         root: payout.root, payees: payout.payees, opensAt: payout.opensAt, closesAt: payout.closesAt, vault: payout.vault,
       },
       half: await this.accounts.raiseHalfOf(proposalId, viewingKey),
-      paymentsChecked: paymentsCheckedDigest(payout.facts.map(f => [f.payee.kind, f.token, f.amount] as const)),
+      paymentsChecked: paymentsCheckedDigest(payout.facts.map(paymentChecked)),
     };
   }
 
@@ -3830,7 +3826,7 @@ export class PayrollService {
    */
   retryPaymentsAsked(runId: string, viewingKey: Hex, indices: readonly number[], asset?: AssetId): {
     asset: AssetId;
-    payments: Array<{ kind: 'shielded' | 'unshielded'; token: string; amount: bigint }>;
+    payments: Array<PaymentChecked<'shielded' | 'unshielded', bigint>>;
   } {
     const run = this.requireRun(runId, viewingKey);
     const leg = legOf(run, asset);
@@ -3849,7 +3845,7 @@ export class PayrollService {
             `this run pays ${recorded.facts.length} people in ${leg}, so there is no person #${Number(i) + 1} on it to `
             + 'retry. Reload the run and choose again.');
         }
-        return { kind: f.payee.kind, token: f.token, amount: f.amount };
+        return paymentChecked(f);
       }),
     };
   }
@@ -3914,10 +3910,7 @@ export class PayrollService {
       run: { root: retry.root, payees: retry.payees, opensAt: retry.opensAt, closesAt: retry.closesAt, vault: retry.vault },
       half: await this.accounts.raiseHalfOf(proposalId, viewingKey),
       indices: [...retry.originalIndices],
-      paymentsChecked: paymentsCheckedDigest(retry.originalIndices.map(i => {
-        const f = payout.facts[i]!;
-        return [f.payee.kind, f.token, f.amount] as const;
-      })),
+      paymentsChecked: paymentsCheckedDigest(retry.originalIndices.map(i => paymentChecked(payout.facts[i]!))),
     };
   }
 
@@ -4206,10 +4199,6 @@ const contentOf = (people: Array<{ name: string; asset: AssetId; amount: bigint 
       : a[2] < b[2] ? -1 : a[2] > b[2] ? 1 : 0));
 
 /** A round that is not withdrawn and was not stopped by this company's own policy may be on chain. */
-const isLiveRound = (r: PayrollRound): boolean => r.status !== 'cancelled' && r.status !== 'blocked';
-
-const sameList = (a: number[], b: number[]): boolean =>
-  a.length === b.length && a.every((x, i) => x === b[i]);
 
 const isThisRetry = (r: RunRetry, m: RetryMaterial): boolean =>
   sameList(r.originalIndices, m.originalIndices) && r.root === m.run.root

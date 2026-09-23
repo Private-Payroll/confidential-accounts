@@ -175,7 +175,7 @@ describe('A PAYROLL RUN WITH PRIVATE PAYEES, RAISED', () => {
      * fixture's payments are alike, so their ORDER is pinned by the served-route test of a send,
      * whose payees are paid different amounts.
      */
-    expect(order.paymentsChecked).toBe(paymentsCheckedDigest(after.payments.map((p) => [p.kind, p.token, p.amount] as const)));
+    expect(order.paymentsChecked).toBe(paymentsCheckedDigest(after.payments));
 
     /* Withdrawn, the leg is raised afresh from the roster, so that is what a device is told. */
     await c.accounts.cancel(round.id, c.viewingKey);

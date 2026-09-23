@@ -45,7 +45,7 @@ import { theNetwork } from '../midnight/network.js';
 import { NothingWasSent, saysNothingWasSent } from '../core/jobs.js';
 import {
   DEVICE_RAISE_VERSION, DIGEST_SHAPE, RAISE_IS_NOT_WHAT_WAS_CHECKED, RAISE_NAMES_NOTHING_CHECKED,
-  SEND_IS_NOT_WHAT_WAS_CHECKED, paymentsCheckedDigest, reloadThePage,
+  SEND_IS_NOT_WHAT_WAS_CHECKED, paymentChecked, paymentsCheckedDigest, paymentsOnTheWire, reloadThePage,
 } from '../core/device-raise.js';
 import { runPayments } from '../midnight/run-status.js';
 import { buildRun, buildRetryRun, rootOfLeaves } from '../midnight/payout-tree.js';
@@ -1552,7 +1552,7 @@ app.post('/api/runs/:id/propose', authed, ownsRun, wrap(async (req, res) => {
    * that first, because raising again cannot change it.
    */
   if (b.onDevice) payroll.refuseRaisingAProposedLeg(String(req.params.id), b.viewingKey, b.asset);
-  if (b.onDevice && paymentsCheckedDigest(material.facts.map(f => [f.payee.kind, f.token, f.amount] as const)) !== b.checked) {
+  if (b.onDevice && paymentsCheckedDigest(material.facts.map(paymentChecked)) !== b.checked) {
     throw new Error(RAISE_IS_NOT_WHAT_WAS_CHECKED);
   }
 
@@ -1585,6 +1585,8 @@ const raiseOrderOnTheWire = (o: Awaited<ReturnType<typeof payroll.raiseOrderOf>>
     half: o.half,
     proposal: o.chainId,
   },
+  /* The digest of the payments this proposal pays, so the device that builds it can refuse other payments than it checked. */
+  paymentsChecked: o.paymentsChecked,
 });
 
 /*
@@ -1615,7 +1617,7 @@ app.post('/api/runs/:id/leg-payments', authed, ownsRun, wrap(async (req, res) =>
   const asked = await payroll.legPaymentsAsked(String(req.params.id), b.viewingKey as Hex, b.asset);
   res.json({
     asset: asked.asset,
-    payments: asked.payments.map(p => ({ kind: p.kind, token: p.token, amount: p.amount.toString() })),
+    payments: paymentsOnTheWire(asked.payments),
   });
 }));
 
@@ -1726,7 +1728,7 @@ app.post('/api/runs/:id/retry', authed, ownsRun, wrap(async (req, res) => {
    */
   if (b.onDevice) {
     const asked = payroll.retryPaymentsAsked(String(req.params.id), b.viewingKey as Hex, material.originalIndices, b.asset);
-    if (paymentsCheckedDigest(asked.payments.map(p => [p.kind, p.token, p.amount] as const)) !== b.checked) {
+    if (paymentsCheckedDigest(asked.payments) !== b.checked) {
       throw new Error(RAISE_IS_NOT_WHAT_WAS_CHECKED);
     }
     /*
@@ -1786,7 +1788,7 @@ app.post('/api/runs/:id/retry-payments', authed, ownsRun, wrap(async (req, res) 
   const asked = payroll.retryPaymentsAsked(String(req.params.id), b.viewingKey as Hex, b.indices, b.asset);
   res.json({
     asset: asked.asset,
-    payments: asked.payments.map(p => ({ kind: p.kind, token: p.token, amount: p.amount.toString() })),
+    payments: paymentsOnTheWire(asked.payments),
   });
 }));
 

@@ -5,6 +5,7 @@
  */
 import type { Committee } from '../midnight/vault-committee.js';
 import type { PrivatePaymentOnTheWire, PrivatePaymentOrderOnTheWire } from '../midnight/private-payment-wire.js';
+import type { PaymentsFitAnswer } from '../midnight/vault-notes.js';
 import type { EventOnTheWire, NoteOnTheWire, PaymentConfirmation } from './vault-builder.js';
 import type { GovernedCallOrder, SignerMaterial } from './governed-call-builder.js';
 
@@ -66,7 +67,7 @@ export type VaultAnswer =
   | Answered<'deposit', { tx: string }>
   | Answered<'commitments', { output: string; held: string }>
   | Answered<'choose-note', { note: NoteOnTheWire }>
-  | Answered<'payments-fit', { fits: true }>
+  | Answered<'payments-fit', { answer: PaymentsFitAnswer }>
   | Answered<'after-payment', { notes: NoteOnTheWire[] }>
   | Answered<'confirm-payment', { confirmation: PaymentConfirmation }>
   | Answered<'payout', { tx: string; spent: string; change: NoteOnTheWire | null }>
@@ -83,8 +84,11 @@ export interface VaultBuilderClient {
   deposit(input: { vault: string; coin: CoinOnTheWire; state: string }): Promise<{ tx: string }>;
   commitments(input: { vault: string; coin: CoinOnTheWire }): Promise<{ output: string; held: string }>;
   chooseNote(input: { notes: readonly NoteOnTheWire[]; token: string; amount: string }): Promise<NoteOnTheWire>;
-  /** Returns when the notes can make every payment in turn; refuses with the first they cannot. */
-  paymentsFit(input: { notes: readonly NoteOnTheWire[]; payments: ReadonlyArray<{ token: string; amount: string }> }): Promise<void>;
+  /**
+   * Whether the notes can make every payment in turn: `fits`, or `does-not-fit`
+   * naming the first they cannot. Refuses only when it could not ask.
+   */
+  paymentsFit(input: { notes: readonly NoteOnTheWire[]; payments: ReadonlyArray<{ token: string; amount: string }> }): Promise<PaymentsFitAnswer>;
   afterPayment(input: {
     notes: readonly NoteOnTheWire[]; spent: string; amount: string; change: NoteOnTheWire | null; createdIn: string | null;
   }): Promise<NoteOnTheWire[]>;
@@ -150,7 +154,7 @@ export function vaultBuilderOver(worker: WorkerLike, network: string): VaultBuil
       return { output: a.output, held: a.held };
     },
     chooseNote: async (input) => (await ask({ ask: 'choose-note', ...input })).note,
-    paymentsFit: async (input) => { await ask({ ask: 'payments-fit', ...input }); },
+    paymentsFit: async (input) => (await ask({ ask: 'payments-fit', ...input })).answer,
     afterPayment: async (input) => (await ask({ ask: 'after-payment', ...input })).notes,
     confirmPayment: async (input) => (await ask({ ask: 'confirm-payment', ...input })).confirmation,
     payout: async (input) => {
