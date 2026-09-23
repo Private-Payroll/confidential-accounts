@@ -270,11 +270,19 @@ let provingSeconds: number | null = null;
 /**
  * The amount, as a whole number of the token's smallest unit.
  *
- * **NO DECIMAL POINT, FOR `fund-vault.ts`'s REASON AND ONE OF ITS OWN.** That
- * door refuses a point because how many decimal places NIGHT has has never been
- * measured against the chain. This token has no decimal places at all: it is a
- * test asset minted by a probe, and nothing anywhere declares a scale for it.
- * A door that accepted `5.5` here would be inventing one.
+ * **WHOLE SMALLEST UNITS, AND NEVER A DECIMAL POINT.** `fund-vault.ts` refuses
+ * a point because how many decimal places NIGHT has has never been measured
+ * against the chain. The asset registry (`src/core/assets.ts`, `testAssetsFor`)
+ * does declare a scale for the test asset: 6 decimal places, for the one
+ * colour it names, on stagenet. When this run mints that colour, one whole
+ * unit is 1,000,000 of the smallest units this door takes. A mint of any other
+ * colour (a minter deployed afresh, or another network) is a token the
+ * registry declares no scale for, and this door is asked for the amount before
+ * it knows which colour it will mint. Either way it takes the count of
+ * smallest units and nothing else, because that count is what the mint
+ * circuit mints. Turning a figure with a point into that count is the
+ * person's to do, with the scale in front of them, and never this door's to
+ * guess.
  *
  * Exported so `mint-test-token.test.ts` can drive every refusal without a
  * chain.
@@ -291,8 +299,10 @@ export function amountFromText(text: string): bigint {
     throw new Error(
       `"${trimmed}" is not an amount this door will take. It wants digits and nothing else: ` +
       'no point, no separators, no sign, no exponent.\n' +
-      'THIS TOKEN HAS NO DECIMAL PLACES. It is minted by a probe contract for this test and ' +
-      'nothing declares a scale for it, so a door that accepted a point would be inventing one.');
+      'THIS DOOR TAKES THE TOKEN\'S SMALLEST UNIT, AS A WHOLE NUMBER, AND NEVER A DECIMAL POINT. ' +
+      'The asset registry lists the stagenet test asset, at the colour it names, with 6 decimal ' +
+      'places, so one whole unit of that token is 1000000 here. A mint of any other colour is a ' +
+      'token with no declared scale. Write the count of smallest units.');
   }
   const amount = BigInt(trimmed);
   if (amount <= 0n) {

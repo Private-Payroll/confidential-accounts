@@ -6,6 +6,10 @@ import type { Secret } from 'midnight-identity/keys/derivation';
 /* The fixed set, so `saveLastUsedWallet` refuses exactly what the
  * interface refuses. `subwallets.ts` imports nothing, so this is acyclic. */
 import { isWalletAccount } from './subwallets.js';
+/* How a checkpoint's other tokens are written and read back.
+ * `shielded-tokens.ts` imports nothing, so this is acyclic. */
+import { otherTokensFromStored, otherTokensToStored } from '../chain/shielded-tokens.js';
+import type { OtherTokens } from '../chain/shielded-tokens.js';
 /* Which compartment a record is in. `wallets-held.ts` imports
  * nothing from this file, so this is acyclic, exactly as `subwallets.ts` is. */
 import {
@@ -443,6 +447,10 @@ export interface WalletCheckpoint {
   readonly serialized: string;
   /** tNIGHT in smallest units at `asOf` — the last established number. */
   readonly night: bigint;
+  /** Every other private token held at `asOf`, sealed with the rest. Absent
+   * on a checkpoint written before other tokens were recorded, and absent is
+   * read as "not recorded", never as "none". */
+  readonly others?: OtherTokens;
   /** The moment the number was true of. Part of what makes it honest. */
   readonly asOf: number;
 }
@@ -490,6 +498,7 @@ export async function saveWalletCheckpoint(
     coinPublicKey,
     serialized: checkpoint.serialized,
     night: checkpoint.night.toString(),
+    ...(checkpoint.others === undefined ? {} : { others: otherTokensToStored(checkpoint.others) }),
     asOf: checkpoint.asOf,
   }));
   const sealed = new Uint8Array(await crypto.subtle.encrypt(
@@ -528,12 +537,19 @@ export async function loadWalletCheckpoint(
       key, fromBase64Url(entry.sealed) as BufferSource);
     const parsed = JSON.parse(new TextDecoder().decode(plain)) as {
       coinPublicKey: string; serialized: string; night: string; asOf: number;
+      others?: unknown;
     };
     /* The sealed copy names its wallet too; AES-GCM authenticated it, and
      * this check makes a mismatched outer label a null rather than a lie. */
     if (parsed.coinPublicKey !== coinPublicKey) return null;
     if (typeof parsed.serialized !== 'string' || !Number.isFinite(parsed.asOf)) return null;
-    return { serialized: parsed.serialized, night: BigInt(parsed.night), asOf: parsed.asOf };
+    /* A checkpoint saved before other tokens were recorded has no `others`
+     * and loads as NIGHT only; a damaged map throws and is no checkpoint. */
+    const others = otherTokensFromStored(parsed.others);
+    const night = BigInt(parsed.night);
+    return others === undefined
+      ? { serialized: parsed.serialized, night, asOf: parsed.asOf }
+      : { serialized: parsed.serialized, night, others, asOf: parsed.asOf };
   } catch {
     return null;
   }

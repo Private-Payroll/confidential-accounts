@@ -7,9 +7,12 @@ import { ZswapSecretKeys, shieldedToken } from '@midnightntwrk/ledger-v9';
 import type { Identity } from 'midnight-identity';
 import { INDEXER_HTTP_URL, INDEXER_WS_URL, NETWORK } from '../config.js';
 import { loadWalletCheckpoint, saveWalletCheckpoint } from '../accounts/storage.js';
+import type { WalletCheckpoint } from '../accounts/storage.js';
 import { openWalletId } from '../accounts/wallets-held.js';
 import { isWalletAccount } from '../accounts/subwallets.js';
 import { describeFailure } from '../lib/failure-text.js';
+import { splitShielded } from './shielded-tokens.js';
+import type { OtherTokens } from './shielded-tokens.js';
 
 /**
  * THE WALLET LEARNS WHAT IT HOLDS.
@@ -62,8 +65,20 @@ export type BalanceState =
   | { readonly name: 'connecting'; readonly quietMs?: number }
   /** Events are arriving; the balance is not yet a fact. */
   | { readonly name: 'syncing'; readonly applied: bigint; readonly highest: bigint }
-  /** Established at `asOf` — freshly, or from a sealed checkpoint. */
-  | { readonly name: 'synced'; readonly night: bigint; readonly asOf: number }
+  /** Established at `asOf` — freshly, or from a sealed checkpoint.
+   *
+   * `night` is the line's own amount in its own smallest unit: STARs of
+   * shielded NIGHT, STARs of unshielded NIGHT, or SPECKs of DUST, depending on
+   * which engine reports it.
+   *
+   * `others` is set by the shielded engine only: every other private token the
+   * wallet holds (`shielded-tokens.ts`). It is absent when the figure did not
+   * record them, as a checkpoint from an older version of the wallet did not,
+   * and absent never means none. */
+  | {
+    readonly name: 'synced'; readonly night: bigint; readonly asOf: number;
+    readonly others?: OtherTokens;
+  }
   /** The indexer could not be reached or the sync died. NOT a zero. */
   | { readonly name: 'failed'; readonly message: string };
 
@@ -130,6 +145,34 @@ export function walletRestoredFrom(serialized: string): RunningShieldedWallet {
 /** The shielded native token — tNIGHT — as the balances record keys it. */
 const NIGHT_RAW = shieldedToken().raw;
 
+type Synced = Extract<BalanceState, { name: 'synced' }>;
+
+/**
+ * THE NUMBER A COMPLETED SYNC ESTABLISHES, read from the SDK's whole balance
+ * map: NIGHT in STARs, and every other private token the wallet holds
+ * (`splitShielded`).
+ */
+export const syncedFromBalances = (
+  balances: Readonly<Record<string, bigint>>, asOf: number,
+): Synced => {
+  const { night, others } = splitShielded(balances, NIGHT_RAW);
+  return { name: 'synced', night, asOf, others };
+};
+
+/**
+ * THE NUMBER A SAVED CHECKPOINT SHOWS, WITH ITS OLD MOMENT. A checkpoint from
+ * an older version of the wallet recorded NIGHT only, so its state carries no
+ * `others`, and the screen says they were not recorded rather than showing
+ * none. The live sync that follows replaces it with the whole map.
+ */
+export const syncedFromCheckpoint = (checkpoint: WalletCheckpoint): Synced =>
+  (checkpoint.others === undefined
+    ? { name: 'synced', night: checkpoint.night, asOf: checkpoint.asOf }
+    : {
+      name: 'synced', night: checkpoint.night, asOf: checkpoint.asOf,
+      others: checkpoint.others,
+    });
+
 /**
  * The raw engine: checkpoint-first, then the SDK wallet's own state stream,
  * translated into the sentences above; never invents a number.
@@ -178,7 +221,7 @@ const startBalanceRaw: BalanceEngine = (identity, account, onState) => {
     if (stopped) return;
     if (checkpoint) {
       numberShown = true;
-      tell({ name: 'synced', night: checkpoint.night, asOf: checkpoint.asOf });
+      tell(syncedFromCheckpoint(checkpoint));
     }
     try {
       try {
@@ -195,14 +238,14 @@ const startBalanceRaw: BalanceEngine = (identity, account, onState) => {
           const progress = state.progress;
           if (progress.isConnected && progress.isStrictlyComplete()) {
             numberShown = true;
-            const night = state.balances[NIGHT_RAW] ?? 0n;
-            const asOf = Date.now();
-            tell({ name: 'synced', night, asOf });
+            const synced = syncedFromBalances(state.balances, Date.now());
+            const { night, others, asOf } = synced;
+            tell(synced);
             /* The checkpoint that makes the NEXT open cheap — sealed, and a
              * failure to write is a failure to cache, nothing more. */
             try {
               void saveWalletCheckpoint(coinPublicKey, account, {
-                serialized: state.serialize(), night, asOf,
+                serialized: state.serialize(), night, others, asOf,
               }, walletId).catch(() => {});
             } catch { /* serialisation refused; the next sync tries again */ }
             return;
