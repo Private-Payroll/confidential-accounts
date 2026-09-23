@@ -45,13 +45,17 @@ export const vaultServiceFor = (api: Api, accountId: string): VaultService => {
 
 /**
  * **ONE APPROVED LEG'S PAYMENTS, AS THE SERVICE REBUILT THEM FROM THE RUN THE
- * COMPANY APPROVED.** The viewing key travels in the body, never in an address.
+ * COMPANY APPROVED** - or, naming the proposal a retry on it was raised as,
+ * that retry's payments and nobody else's. The viewing key travels in the
+ * body, never in an address.
  */
 export const privatePaymentsFor = (
-  api: Api, runId: string, viewingKey: Hex, asset?: string,
+  api: Api, runId: string, viewingKey: Hex, asset?: string, retry?: string,
 ): Promise<PrivatePaymentOrderOnTheWire> => api(`/api/runs/${encodeURIComponent(runId)}/private-payments`, {
   method: 'POST',
-  body: JSON.stringify(asset === undefined ? { viewingKey } : { viewingKey, asset }),
+  body: JSON.stringify({
+    viewingKey, ...(asset === undefined ? {} : { asset }), ...(retry === undefined ? {} : { proposalId: retry }),
+  }),
 });
 
 /** Gives this signer's three public vault keys, once; the service keeps the first set. */

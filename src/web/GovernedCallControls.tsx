@@ -184,8 +184,9 @@ export function RaiseLeg({ account, me, runId, asset, viewingKey, act, busy }: {
 
 /**
  * **RETRY THE PEOPLE A STOPPED RUN DID NOT PAY.** Offered only when the run's
- * payment view says who was paid and has proved its people are this run's; it
- * names only the people that view reports unpaid. Their payments are checked
+ * payment view says who was paid and has proved its people are this run's, the
+ * run's window has closed, and nothing sent can still pay them; it names only
+ * those people. Their payments are checked
  * against the vault on this device before the company is asked to write the
  * retry down, and the retry is built, proved and sent here.
  */
@@ -217,7 +218,7 @@ export function RetryUnpaid({ account, me, runId, asset, viewingKey, view, act, 
     <div className="stack" data-retry-unpaid style={{ marginTop: 14 }}>
       <div className="hint">
         {indices.length} {indices.length === 1 ? 'person' : 'people'} on this run {indices.length === 1 ? 'is' : 'are'} not
-        paid (#{indices.map((i) => i + 1).join(', #')}). If the run has stopped, retry them. The retry pays only them,
+        paid (#{indices.map((i) => i + 1).join(', #')}) and this run's window has closed. The retry pays only them,
         each with the same payment as before, and the account refuses a payment already made, so nobody is paid twice.
         A retry is its own approval round, with its own fees.
       </div>

@@ -24,7 +24,7 @@
  * drives `AccountSimulator` - the compiled account contract with every assert
  * live - with the values the product wrote down.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -56,11 +56,28 @@ const CLOSES = BigInt(NOW + 3_600);
 const RETRY_OPENS = BigInt(NOW - 60);
 const RETRY_CLOSES = BigInt(NOW + 86_400);
 
+/**
+ * THIS MACHINE'S CLOCK, MOVED PAST THE LEG'S WINDOW. A retry is raised only once the leg's own
+ * proposal can no longer pay anybody, which is when its window has closed. Put back after each test.
+ */
+const afterTheLegsWindow = () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime((Number(CLOSES) + 60) * 1000);
+};
+afterEach(() => { vi.useRealTimers(); });
+
 const services = () => {
   const store = new FileStore(join(mkdtempSync(join(tmpdir(), 'mn-retry-')), 'db.json'));
   const registry = registryWithTestPrivateForms();
-  const accounts = new AccountService(
-    store, new SimulatedLedger(MidnightCommitments), MidnightCommitments, registry, aVaultHolding());
+  const ledger = new SimulatedLedger(MidnightCommitments);
+  /*
+   * A DOUBLE, NAMED: the simulated ledger records no payments and answers that it cannot say who was
+   * paid, and a retry is refused until that can be said. Here it answers that nobody was - a read that
+   * has not seen a payment the chain holds, which is the case where the chain's own refusal of a leaf
+   * paid once already is all that stands between a person and a second payment.
+   */
+  Object.assign(ledger, { paidAmong: async () => ({ known: true, paid: [] }) });
+  const accounts = new AccountService(store, ledger, MidnightCommitments, registry, aVaultHolding());
   const payroll = new PayrollService(store, accounts, new SimulatedProofSystem(), registry);
   return { store, accounts, payroll };
 };
@@ -119,6 +136,7 @@ describe('a retry lives on the leg it retries', () => {
     const before = r.payroll.requireRun(r.run.id, r.viewingKey);
 
     const retry = await retryFromTheRecord(r.payroll, r.run.id, r.viewingKey, [0, 2]);
+    afterTheLegsWindow();
     const raised = await r.payroll.proposeRetry(r.run.id, r.viewingKey, r.by, retry);
 
     const after = r.payroll.requireRun(r.run.id, r.viewingKey);
@@ -170,6 +188,7 @@ describe('a retry lives on the leg it retries', () => {
       const retry = await retryFromTheRecord(r.payroll, r.run.id, r.viewingKey, [0, 2]);
       /* RED WHEN the retry's leaves stop being the leg's own leaves for those people. */
       expect(retry.leaves).toEqual([r.material.leaves[0], r.material.leaves[2]]);
+      afterTheLegsWindow();
       const raised = await r.payroll.proposeRetry(r.run.id, r.viewingKey, r.by, retry);
       const retryChange = changeOf(raised.sealedPayload, r.viewingKey);
       const retryDevice = deviceCarrying(r.created.secrets[0]!, retryChange);
@@ -272,6 +291,7 @@ describe('a retry lives on the leg it retries', () => {
   it('does not report a person as beyond reach while a raised retry still covers them', async () => {
     const r = await aRaisedLeg();
     const retry = await retryFromTheRecord(r.payroll, r.run.id, r.viewingKey, [2]);
+    afterTheLegsWindow();
     await r.payroll.proposeRetry(r.run.id, r.viewingKey, r.by, retry);
 
     const inputs = r.payroll.payoutMaterialOf(r.run.id, r.viewingKey)!;
@@ -294,6 +314,7 @@ describe('a retry lives on the leg it retries', () => {
   it('does not count a withdrawn retry as one that can still pay anybody', async () => {
     const r = await aRaisedLeg();
     const retry = await retryFromTheRecord(r.payroll, r.run.id, r.viewingKey, [2]);
+    afterTheLegsWindow();
     const raised = await r.payroll.proposeRetry(r.run.id, r.viewingKey, r.by, retry);
     expect(r.payroll.payoutMaterialOf(r.run.id, r.viewingKey)!.retries).toHaveLength(1);
 

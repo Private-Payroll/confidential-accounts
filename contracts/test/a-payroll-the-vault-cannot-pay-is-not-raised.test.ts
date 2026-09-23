@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -31,6 +31,16 @@ const NOW = Math.floor(Date.now() / 1000);
 const OPENS = BigInt(NOW + 60);
 const CLOSES = BigInt(NOW + 86_400);
 
+/**
+ * THIS MACHINE'S CLOCK, MOVED PAST THE LEG'S WINDOW. A retry is raised only once the leg's own
+ * proposal can no longer pay anybody, which is when its window has closed. Put back after each test.
+ */
+const afterTheLegsWindow = () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime((Number(CLOSES) + 60) * 1000);
+};
+afterEach(() => { vi.useRealTimers(); });
+
 type Fault = 'none' | 'throw-before-sending';
 
 const services = (opts: { registry?: AssetRegistry } = {}) => {
@@ -49,6 +59,11 @@ const services = (opts: { registry?: AssetRegistry } = {}) => {
           return value.apply(target, args);
         };
       }
+      /*
+       * A DOUBLE, NAMED: the simulated ledger records no payments and answers that it cannot say who
+       * was paid, and a retry is refused until that can be said. Here it answers that nobody was.
+       */
+      if (prop === 'paidAmong') return async () => ({ known: true, paid: [] });
       return typeof value === 'function' ? value.bind(target) : value;
     },
   });
@@ -174,6 +189,7 @@ describe('a payroll round the vault cannot pay', () => {
       rebuild, indices: [1], opensAt: OPENS, closesAt: CLOSES + 7_200n, vault: VAULT,
       detailsOf: vaultDetails,
     });
+    afterTheLegsWindow();
     r.vault.holds = 99_99n;
     /* RED WHEN a retry is raised without its payments being checked, or with the whole leg's. */
     await expect(r.payroll.proposeRetry(r.run.id, r.viewingKey, r.by, retry))

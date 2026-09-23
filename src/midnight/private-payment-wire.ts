@@ -99,6 +99,13 @@ export function assemblePrivatePayments(input: {
   readonly facts: readonly PaymentFacts[];
   /** The leaves the account records paid, or `null` when this deployment cannot say. */
   readonly paid: ReadonlySet<string> | null;
+  /**
+   * **FOR A RETRY: EACH PAYMENT'S POSITION IN THE LEG IT RETRIES**, in the
+   * retry's tree order, so every payment is reported against the person the
+   * leg numbers it as. Absent for a leg's own round, whose tree order is the
+   * leg's.
+   */
+  readonly indices?: readonly number[];
 }): { readonly order: PrivatePaymentOrderOnTheWire } | { readonly refusal: string } {
   const { order, built } = input;
   const leaves = built.tree.leaves;
@@ -108,7 +115,8 @@ export function assemblePrivatePayments(input: {
     && built.tree.payees === order.payees
     && input.facts.length === leaves.length
     && input.idFrom([...leaves], input.window) === order.proposal;
-  if (!same) {
+  const positions = input.indices;
+  if (!same || (positions !== undefined && positions.length !== leaves.length)) {
     return {
       refusal: 'the payments this run would make now are not the ones its signers approved, so nothing is '
         + 'offered to pay. Nothing was sent.',
@@ -123,7 +131,7 @@ export function assemblePrivatePayments(input: {
   const payments = input.facts.map((fact, i): PrivatePaymentOnTheWire => {
     const args = built.payeeArgs(i);
     return {
-      index: i,
+      index: positions === undefined ? i : positions[i]!,
       payee: fact.payee.bech32,
       token: args.token,
       amount: args.amount.toString(),

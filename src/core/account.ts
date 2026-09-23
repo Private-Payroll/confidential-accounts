@@ -18,7 +18,7 @@ import {
 } from './sealed-records.js';
 import type {
   Ledger, CommitmentScheme, StateView,
-  StateChange, SignerRef, LedgerStatus, SealedStateAt, RunProposal,
+  StateChange, SignerRef, LedgerStatus, SealedStateAt, RunProposal, PaymentsAmong,
 } from './ledger.js';
 import {
   /* the four governance payloads STOOD HERE. `CommitmentScheme` methods now. */
@@ -4193,6 +4193,17 @@ export class AccountService {
     return new Error(
       mismatch + replay + (replayOf ? ' and the attempt has been recorded here.' : ''),
     );
+  }
+
+  /**
+   * **WHICH OF THESE PAYOUT LEAVES THE ACCOUNT RECORDS AS PAID, ASKED OF THE
+   * LEDGER.** A read and nothing else: the ledger's own answer is handed back
+   * unchanged, including `known: false` from a ledger that does not record
+   * payments and `null` for an account it does not hold. A caller deciding who
+   * may be paid again has to treat both as *cannot say*, never as *nobody*.
+   */
+  paidAmong(accountId: string, leaves: Hex[]): Promise<PaymentsAmong | null> {
+    return this.ledger.paidAmong(accountId, leaves);
   }
 
   /**

@@ -35,9 +35,18 @@ export function PayoutPanel({ account, me, viewingKey, runs }: {
   viewingKey: Hex;
   runs: readonly PayrollRun[];
 }) {
+  /* Each leg's own round, and after it every retry on the leg, each a round a vault pays on its own. */
   const payable = runs.flatMap((run) => Object.keys(run.payout ?? {}).sort()
     .filter((asset) => run.proposalIds[asset] !== undefined)
-    .map((asset) => ({ key: `${run.id}:${asset}`, run, asset })));
+    .flatMap((asset) => [
+      { key: `${run.id}:${asset}`, run, asset, retry: undefined as { proposalId: string; indices: number[] } | undefined },
+      ...(run.payout?.[asset]?.retries ?? [])
+        .filter((r) => r.proposalId !== undefined)
+        .map((r) => ({
+          key: `${run.id}:${asset}:${r.proposalId}`, run, asset,
+          retry: { proposalId: r.proposalId!, indices: [...r.originalIndices] },
+        })),
+    ]));
   const [chosen, setChosen] = useState('');
   const [order, setOrder] = useState<PrivatePaymentOrderOnTheWire | null>(null);
   const [stage, setStage] = useState<VaultStage | null>(null);
@@ -60,7 +69,7 @@ export function PayoutPanel({ account, me, viewingKey, runs }: {
     const found = payable.find((p) => p.key === key);
     if (!found) return;
     try {
-      setOrder(await privatePaymentsFor(keyring.api, found.run.id, viewingKey, found.asset));
+      setOrder(await privatePaymentsFor(keyring.api, found.run.id, viewingKey, found.asset, found.retry?.proposalId));
     } catch (e: any) {
       setErr(String(e?.message ?? e));
     }
@@ -109,7 +118,8 @@ export function PayoutPanel({ account, me, viewingKey, runs }: {
         <div className="field"><label>Run</label>
           <select value={chosen} onChange={(e) => { void load(e.target.value); }} disabled={busy} data-payout-run>
             <option value="">{payable.length === 0 ? 'No run has been raised yet' : 'Choose a run'}</option>
-            {payable.map((p) => <option key={p.key} value={p.key}>{p.run.period} — {p.asset}</option>)}
+            {payable.map((p) => <option key={p.key} value={p.key}>{p.run.period} — {p.asset}
+              {p.retry && `, retry of #${p.retry.indices.map((i) => i + 1).join(', #')}`}</option>)}
           </select></div>
         {order && (
           <table data-payout-people>

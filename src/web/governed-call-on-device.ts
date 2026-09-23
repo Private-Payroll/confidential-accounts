@@ -295,16 +295,26 @@ export async function raiseRunOnDevice(
  * person decided not to pay. Nothing is offered when the view could not say who
  * was paid, or could not prove its people are this run's: a retry chosen from an
  * answer about another payroll would be a retry of the wrong people.
+ *
+ * **AND ONLY WHEN THE RETRY CAN BE RAISED: NOBODY WHILE THE RUN'S WINDOW HAS NOT
+ * CLOSED, AND NOBODY A SENT RETRY CAN STILL PAY.** While the run's own round can
+ * still pay them a retry would be a second round over the same people, and so
+ * would a retry over people another retry on the chain still covers; the
+ * company refuses both. So the people offered are the view's `stranded` - owed,
+ * with nothing left that can pay them - and none of its `outstanding` beyond.
  */
 export function unpaidToRetry(view: {
   readonly answered: boolean;
   readonly status?: {
     readonly verified: boolean;
     readonly outstanding: ReadonlyArray<{ readonly index: number; readonly state: string }>;
+    readonly phase?: string;
+    readonly stranded?: ReadonlyArray<{ readonly index: number; readonly state: string }>;
   };
 }): number[] {
   if (!view.answered || !view.status?.verified) return [];
-  return view.status.outstanding
+  if (view.status.phase !== 'closed') return [];
+  return (view.status.stranded ?? [])
     .filter((p) => p.state === 'failed' || p.state === 'unsent')
     .map((p) => p.index)
     .sort((a, b) => a - b);

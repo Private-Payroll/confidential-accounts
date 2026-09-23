@@ -26,7 +26,7 @@ import { payslipKeypairForWallet } from './payslip-key.js';
 const SEED_WALLET_ORIGIN = 'https://payroll.example';
 import type { AssetId } from './assets.js';
 import { assets as defaultAssets, subtotals, formatAmount, ledgerTokenOf } from './assets.js';
-import type { Account, Employee, PayrollRun, SealedRun, ShieldedEntry, Attestation, RosterEmployee, SealedEmployee, Invite, User, RunSkip, RunSkips, RunRetry, RunRepeatRecord, RunPayout } from './types.js';
+import type { Account, Employee, PayrollRun, SealedRun, ShieldedEntry, Attestation, RosterEmployee, SealedEmployee, Invite, User, RunSkip, RunSkips, RunRetry, RunRepeatRecord, RunPayout, Proposal } from './types.js';
 import { sealRecord, openRecord, sealToInbox, openFromInbox } from './sealed-records.js';
 import {
   sealHandover, openHandover, type SealedHandover,
@@ -2808,9 +2808,13 @@ export class PayrollService {
    * proposal it was raised as is written afterwards. A retry whose raise threw
    * is raised again as the same round, exactly as a leg is.
    *
-   * **IT DOES NOT ASK WHO HAS BEEN PAID, AND DOES NOT NEED TO.** Naming somebody
-   * the first round already paid costs a line in the tree and nothing else: the
-   * account refuses their leaf a second time.
+   * **IT NAMES ONLY PEOPLE NOBODY HAS PAID AND NOTHING ELSE CAN STILL PAY, AND
+   * IT IS REFUSED, NEVER NARROWED, WHEN IT NAMES ANYONE ELSE.** The account
+   * would refuse a paid person's leaf a second time, so this is not what stops
+   * a second payment; it is what stops a round that can never complete - a
+   * second fee, a second set of approvals, and a window that, once open, cannot
+   * be withdrawn. It is asked here, under the leg's hold, so two requests
+   * cannot both find the same people free. See `refuseARetryOverPeopleCovered`.
    */
   async proposeRetry(
     runId: string, viewingKey: Hex, proposedBy: string, payable: RetryMaterial | null, asset?: AssetId,
@@ -2967,6 +2971,7 @@ export class PayrollService {
     if (again !== undefined) {
       this.accounts.refuseRaisingADifferentRound(run.accountId, again, viewingKey, payable.run, leg);
     }
+    await this.refuseARetryOverPeopleCovered(run, leg, legRound, indices, payable.leaves, again, viewingKey);
 
     const beforeRaising = this.requireRun(runId, viewingKey);
     const leg0 = beforeRaising.payout?.[leg];
@@ -3009,6 +3014,113 @@ export class PayrollService {
       this.putRun(afterRaising, viewingKey);
     }
     return proposal;
+  }
+
+  /**
+   * **A RETRY MAY NAME ONLY PEOPLE NOBODY HAS PAID AND NO OTHER ROUND CAN STILL
+   * PAY.** Called under the leg's hold, before anything about the retry is
+   * written down, so a refusal writes nothing. Each clause refuses the whole
+   * retry and names the people it is about, so the person choosing can choose
+   * again; none of them drops somebody and raises the rest.
+   *
+   * A round stops counting once its window has closed, whatever else is true
+   * of it: nothing can be paid against a round outside its window, and a round
+   * whose window has opened can no longer be withdrawn, so counting it for
+   * longer would leave its people unretryable for ever. Windows are compared
+   * with this machine's clock, which is approximate: a clock that runs fast
+   * lets a retry through while another round could still pay the same people
+   * on chain. The account records a payment by its leaf and the retry reuses
+   * each person's leaf, so what that costs is a second fee and a round that
+   * cannot complete, never a second payment.
+   *
+   * 1. **THE LEG'S OWN ROUND, WHILE ITS WINDOW IS OPEN**, unless it was
+   *    withdrawn or stopped by policy. It can still pay every one of them.
+   * 2. **ANOTHER RETRY ON THIS LEG THAT NAMES ANY OF THE SAME PEOPLE**, neither
+   *    withdrawn nor stopped by policy, while its window is open - sent, sent
+   *    from a device and not yet seen on chain, or only written down.
+   * 3. **A RETRY ROUND WRITTEN DOWN FOR THIS LEG THAT THE RUN WAS NEVER TOLD
+   *    ABOUT** - its raise threw after the proposal was written - naming any of the
+   *    same people, other than the one this raise is sending again as itself.
+   *    Its window is read off the retries written onto the leg for the same
+   *    people; with none to read, it counts until it is withdrawn.
+   * 4. **ANYBODY THE ACCOUNT RECORDS AS PAID**, asked of the ledger by leaf. A
+   *    ledger that cannot say refuses the retry: *cannot say* is not *nobody*.
+   *    The answer is used only to refuse. What stops a second payment is the
+   *    account, which refuses a leaf it has already paid.
+   */
+  private async refuseARetryOverPeopleCovered(
+    run: PayrollRun, leg: AssetId, legRound: Proposal, indices: readonly number[], leaves: readonly Hex[],
+    again: string | undefined, viewingKey: Hex,
+  ): Promise<void> {
+    const recorded = run.payout![leg]!;
+    const nowInSeconds = BigInt(Math.floor(Date.now() / 1000));
+    const people = (xs: readonly number[]) => `#${[...xs].sort((a, b) => a - b).map((i) => i + 1).join(', #')}`;
+    const isAre = (xs: readonly number[]) => (xs.length === 1 ? 'is' : 'are');
+    const when = (s: bigint) => `${new Date(Number(s) * 1000).toISOString().slice(0, 16).replace('T', ' ')} UTC`;
+    const named = new Set(indices);
+    const stopped = (p: Proposal) => p.status === 'cancelled' || p.status === 'blocked';
+
+    if (!stopped(legRound) && nowInSeconds < recorded.closesAt) {
+      throw new Error(
+        `the ${leg} leg of run ${run.id} can still pay everybody on it until ${when(recorded.closesAt)}, when its `
+        + 'window closes. A retry now would be a second round over the same people. Retry whoever it has not paid '
+        + 'once its window has closed. Nothing was written down.');
+    }
+
+    for (const r of recorded.retries ?? []) {
+      if (r.proposalId === undefined || nowInSeconds >= r.closesAt) continue;
+      const round = this.accounts.requireProposal(r.proposalId, viewingKey);
+      if (stopped(round)) continue;
+      const shared = r.originalIndices.filter((i) => named.has(i));
+      if (shared.length === 0) continue;
+      const until = when(r.closesAt);
+      throw new Error(
+        `${people(shared)} ${isAre(shared)} already on retry ${r.proposalId} of the ${leg} leg of run ${run.id}, `
+        + (round.raisedAt
+          ? `which can still pay them until ${until}. Retry them once its window has closed.`
+          : round.txRef
+            ? `which was sent from a device and is not yet seen on chain. Send it again by retrying exactly `
+              + `${people(r.originalIndices)} with its window and vault, or retry them once its window closes at ${until}.`
+            : `which is written down and has not been sent. Send it by retrying exactly ${people(r.originalIndices)} `
+              + `with its window and vault, or retry them once its window closes at ${until}.`)
+        + ' Nothing was written down.');
+    }
+
+    const told = new Set((recorded.retries ?? []).map((r) => r.proposalId).filter(Boolean));
+    for (const r of this.accounts.payrollRoundsOf(run.accountId, viewingKey)) {
+      if (r.runId !== run.id || r.asset !== leg || r.retry === undefined || !isLiveRound(r)) continue;
+      if (told.has(r.id) || r.id === again) continue;
+      const windows = (recorded.retries ?? [])
+        .filter((x) => x.proposalId === undefined && sameList(x.originalIndices, r.retry!))
+        .map((x) => x.closesAt);
+      const closesAt = windows.length ? windows.reduce((a, b) => (a > b ? a : b)) : undefined;
+      if (closesAt !== undefined && nowInSeconds >= closesAt) continue;
+      const shared = r.retry.filter((i) => named.has(i));
+      if (shared.length === 0) continue;
+      throw new Error(
+        `${people(shared)} ${isAre(shared)} on retry ${r.id} of the ${leg} leg of run ${run.id}, whose raise did not `
+        + 'answer and which may be on chain. Retry exactly '
+        + `${people(r.retry)} again with its window and vault to send it as itself`
+        + (closesAt !== undefined ? `, or retry them once its window closes at ${when(closesAt)}.` : '.')
+        + ' Nothing was written down.');
+    }
+
+    const among = await this.accounts.paidAmong(run.accountId, [...leaves]);
+    if (among === null || !among.known) {
+      throw new Error(
+        'who has been paid on this run cannot be told: the ledger this service is wired to '
+        + `${among === null ? 'does not show this account' : 'does not record payments'}. A retry names only people `
+        + 'nobody has paid, so none is raised until that can be said. Try again once the ledger answers. '
+        + 'Nothing was written down.');
+    }
+    const paid = new Set(among.paid.map((h) => h.toLowerCase()));
+    const already = indices.filter((_, at) => paid.has(leaves[at]!.toLowerCase()));
+    if (already.length > 0) {
+      throw new Error(
+        `${people(already)} ${already.length === 1 ? 'has' : 'have'} already been paid, as the account records. A retry `
+        + 'names only people nobody has paid. Reload the run and retry whoever it still shows unpaid. '
+        + 'Nothing was written down.');
+    }
   }
 
   /**
@@ -3730,15 +3842,19 @@ export class PayrollService {
    * A signer's device writes a retry down before it sends it, so a device that
    * stopped in between leaves one; retrying the same people again sends that
    * one as itself rather than raising a second round over the same leaves.
-   * `null` when there is none.
+   * `null` when there is none. A retry whose window has closed is not one: it
+   * can never pay anybody, so sending it would only spend a fee, and the people
+   * on it may be retried with a window of their own.
    */
   unsentRetryOf(runId: string, viewingKey: Hex, indices: number[], asset?: AssetId): {
     proposalId: string; opensAt: bigint; closesAt: bigint; vault: Hex;
   } | null {
     const run = this.requireRun(runId, viewingKey);
     const leg = raisedLegOf(run, asset);
+    const nowInSeconds = BigInt(Math.floor(Date.now() / 1000));
     for (const r of (leg ? run.payout?.[leg]?.retries : undefined) ?? []) {
       if (r.proposalId === undefined || !sameList(r.originalIndices, indices)) continue;
+      if (nowInSeconds >= r.closesAt) continue;
       const written = this.accounts.requireProposal(r.proposalId, viewingKey);
       if (written.status === 'open' && !written.raisedAt) {
         return { proposalId: r.proposalId, opensAt: r.opensAt, closesAt: r.closesAt, vault: r.vault };
@@ -3807,6 +3923,64 @@ export class PayrollService {
       payees: payout.payees,
       opensAt: payout.opensAt,
       closesAt: payout.closesAt,
+    };
+  }
+
+  /**
+   * **WHAT A VAULT IS HANDED TO PAY ONE APPROVED RETRY ON A LEG**, in the shape
+   * `privatePaymentOrderOf` answers for the leg's own round, beside what the
+   * retry's payments are checked against before anything is offered to pay.
+   *
+   * Everything is read off the retry as it was written onto the leg and the
+   * proposal it was raised as - its root, count, window and vault, and that
+   * round's salt and identity - never off the request. `indices` are the
+   * people it pays, as positions in the leg, in the retry's own tree order, and
+   * `leaves` are the leg's own leaves for them: the retry pays each person with
+   * the leaf they already had, which is why the account can pay each of them
+   * once whichever round reaches them first.
+   *
+   * `null` when this leg has no retry raised as that proposal, or the chain was
+   * never seen to hold it: a round with no raise has no identity a vault could
+   * present. Approval is not asked here; the vault asks the account.
+   */
+  retryPaymentOrderOf(
+    runId: string, viewingKey: Hex, proposalId: string, asset: AssetId | undefined,
+    /** The payout tree's own root function, passed in for the reason `payoutMaterialOf` gives. */
+    rootOf: (leaves: Hex[]) => Hex,
+  ): {
+    order: {
+      asset: AssetId; vault: Hex; proposal: Hex; salt: Hex;
+      root: Hex; payees: bigint; opensAt: bigint; closesAt: bigint;
+    };
+    indices: number[];
+    leaves: Hex[];
+    window: { from: bigint; until: bigint };
+    idFrom: (leaves: Hex[], w: { from: bigint; until: bigint }) => Hex;
+  } | null {
+    const run = this.requireRun(runId, viewingKey);
+    const leg = raisedLegOf(run, asset);
+    const payout = leg ? run.payout?.[leg] : undefined;
+    const retry = payout?.retries?.find((r) => r.proposalId === proposalId);
+    if (!leg || !payout || !retry) return null;
+    const raised = this.accounts.requireProposal(proposalId, viewingKey);
+    if (!raised.raisedAt) return null;
+    return {
+      order: {
+        asset: leg,
+        vault: retry.vault,
+        proposal: raised.chainId,
+        salt: this.accounts.runSaltOf(proposalId, viewingKey),
+        root: retry.root,
+        payees: retry.payees,
+        opensAt: retry.opensAt,
+        closesAt: retry.closesAt,
+      },
+      indices: [...retry.originalIndices],
+      leaves: retry.originalIndices.map((i) => payout.leaves[i]!),
+      window: { from: retry.opensAt, until: retry.closesAt },
+      idFrom: (leaves, w) => this.accounts.runProposalIdFrom(proposalId, viewingKey, {
+        root: rootOf(leaves), payees: BigInt(leaves.length), opensAt: w.from, closesAt: w.until,
+      }),
     };
   }
 

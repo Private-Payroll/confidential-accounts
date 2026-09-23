@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildPayoutTree, buildRun } from './payout-tree.js';
+import { buildPayoutTree, buildRetryRun, buildRun } from './payout-tree.js';
 import { assemblePrivatePayments, pathFromWire, pathToWire } from './private-payment-wire.js';
 import { payeeFor, unshieldedPayeeFor } from '../testing/payees.js';
 import { vaultDetails } from '../testing/vault-details.js';
@@ -93,6 +93,22 @@ describe('ONE APPROVED LEG\'S PAYMENTS, AS THE SERVICE HANDS THEM TO A DEVICE', 
     expect(assemblePrivatePayments(input({ order: { ...input().order, proposal: 'ff'.repeat(32) } }))).toEqual({ refusal: expect.stringMatching(refused) });
     expect(assemblePrivatePayments(input({ window: { from: 100n, until: 201n } }))).toEqual({ refusal: expect.stringMatching(refused) });
     expect(assemblePrivatePayments(input({ facts: facts.slice(0, 1) }))).toEqual({ refusal: expect.stringMatching(refused) });
+  });
+
+  it('A RETRY\'S PAYMENTS ARE REPORTED AGAINST EACH PERSON\'S POSITION IN THE LEG, AND A LIST OF POSITIONS OF ANOTHER LENGTH IS REFUSED', () => {
+    const retry = buildRetryRun(built, [1]);
+    const retryInput = input({
+      built: retry, facts: [facts[1]!], leaves: retry.tree.leaves, indices: [1],
+      order: { ...input().order, root: retry.tree.root, payees: 1n, proposal: idFrom(retry.tree.leaves, window) },
+    });
+    const out = assemblePrivatePayments(retryInput);
+    if ('refusal' in out) throw new Error(out.refusal);
+    /* RED WHEN: a retry's payment is numbered by its place in the retry's tree - the screen then names the leg's first person. */
+    expect(out.order.payments.map((p) => [p.index, p.leaf])).toEqual([[1, built.tree.leaves[1]]]);
+    expect(pathFromWire(out.order.payments[0]!.path)).toEqual(retry.payeeArgs(0).path);
+    /* RED WHEN: positions that do not match the payments one for one are accepted - a payment is then labelled as somebody else, or as nobody. */
+    expect(assemblePrivatePayments({ ...retryInput, indices: [1, 0] })).toEqual({ refusal: expect.stringMatching(/not the ones its signers approved/) });
+    expect(assemblePrivatePayments({ ...retryInput, indices: [] })).toEqual({ refusal: expect.stringMatching(/not the ones its signers approved/) });
   });
 
   it('REFUSES A LEG THAT NAMES A PUBLIC ADDRESS, EVEN ONE THE SIGNERS APPROVED', () => {
