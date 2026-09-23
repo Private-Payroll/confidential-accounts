@@ -2,8 +2,26 @@ import { existsSync, readFileSync } from 'node:fs';
 import { authorityFileIn } from '../src/midnight/authority-file.js';
 import { vaultAuthorityFile } from '../src/midnight/vault-record.js';
 import { readContractAuthority, type ContractStateReader } from '../src/midnight/ledger.js';
-import { refusalToPutMoneyIn } from '../src/wiring/vault-submission.js';
+import { circuitsRefusal, refusalToPutMoneyIn } from '../src/wiring/vault-submission.js';
 import type { CommitteeKey } from '../src/midnight/vault-committee.js';
+import { DEPLOYED_CIRCUITS } from '../src/midnight/deferral.js';
+import { NotAVaultsState, vaultAccountFromTheIndexer } from '../src/server/vault-records-authority.js';
+import { accountVerifierKeysIn, vaultVerifierKeysIn } from '../src/server/vault-chain.js';
+
+/** Every circuit's verifying key as this build compiled it, loaded when first asked. */
+export type VerifierKeys = () => Promise<ReadonlyMap<string, Uint8Array>>;
+
+/**
+ * **THIS BUILD'S VERIFYING KEYS, THE VAULT'S AND THE ACCOUNT'S, READ FROM THE
+ * BUILD'S OWN ARTEFACTS UNDER `root`** by the same two readers the product's
+ * server uses, so an operator door and the product compare a contract against
+ * the same bytes. They are small files the build has already written; reading
+ * them builds nothing.
+ */
+export const thisBuildsVerifierKeys = (root: string): { vault: VerifierKeys; account: VerifierKeys } => ({
+  vault: vaultVerifierKeysIn(root),
+  account: accountVerifierKeysIn(root),
+});
 
 /**
  * **NO OPERATOR TOOL FUNDS A VAULT WHOSE RULES ARE STILL A KEY THIS MACHINE
@@ -50,13 +68,14 @@ export function keysThisMachineHolds(
  * committee. It asks the stricter structural question instead, which is what
  * `committee: null` means to the gate.
  *
- * **WHAT THIS DOOR DOES NOT READ, STATED HERE RATHER THAN LEFT TO BE NOTICED:**
- * neither the vault's circuits nor the account's are read by an operator tool,
- * because the verifying keys they compare against are built by a separate job
- * and cost a minute and a hundred megabytes. Those two conditions are passed as
- * `null`, which the gate reads as *this build's*. **A vault at an address that
- * is not this build's vault therefore passes this door and is refused by the
- * product's**, and nothing here closes that.
+ * **EVERY FACT IT HANDS THE GATE IS READ HERE, FROM THE CHAIN, AND NONE IS
+ * THE CALLER'S TO STATE.** Who holds each contract's rules; each contract's
+ * circuits against the verifying keys this build compiled; and the account the
+ * vault's own ledger pins, read by the same reader the product's records route
+ * uses. A caller cannot pass *this build's* for a contract nobody compared.
+ *
+ * Each address is read once and every fact about it comes from that one
+ * answer, so two facts about one contract are never two moments of it.
  */
 export async function refusalToFund(input: {
   readonly vault: string;
@@ -66,39 +85,70 @@ export async function refusalToFund(input: {
   readonly readState: ContractStateReader;
   readonly held: readonly CommitteeKey[];
   /**
-   * **THE ACCOUNT THE VAULT'S LEDGER PINS, READ FROM THE CHAIN.** `null` when
-   * the state at that address cannot be read as a vault's, which is a refusal.
-   * Required, and never defaulted to the account being asked about: comparing a
-   * value with itself is a condition that cannot fail, and it read as a
-   * condition that was being run.
+   * **THIS BUILD'S VERIFYING KEYS, FOR THE VAULT'S CIRCUITS AND THE ACCOUNT'S.**
+   * Required: a door that cannot say what this build compiled cannot say a
+   * contract runs it. `thisBuildsVerifierKeys(root)` is what the scripts pass.
    */
-  readonly pinnedAccount: string | null;
-  /**
-   * **THE CALLER'S READING OF THE VAULT'S CIRCUITS AGAINST THIS BUILD'S**,
-   * `null` only when the caller has read them and they are this build's.
-   *
-   * Required rather than optional, so that a door which does not read them has
-   * to say so at its own call site instead of inheriting a pass. **AN OPERATOR
-   * TOOL PASSES `null` WITHOUT READING**, and that is a gap, not a check: see
-   * the note at each call site.
-   */
-  readonly vaultCircuits: string | null;
-  /** The same for the account's circuits. */
-  readonly accountCircuits: string | null;
+  readonly verifierKeys: { readonly vault: VerifierKeys; readonly account: VerifierKeys };
 }): Promise<string | null> {
+  const what = `vault '${input.vaultName}' is not funded`;
+  const asked = new Map<string, Promise<unknown>>();
+  const readOnce: ContractStateReader = (address) => {
+    let answer = asked.get(address);
+    if (answer === undefined) {
+      answer = Promise.resolve().then(() => input.readState(address));
+      asked.set(address, answer);
+    }
+    return answer;
+  };
   const [vault, account] = await Promise.all([
-    readContractAuthority(input.readState, input.vault),
-    readContractAuthority(input.readState, input.account),
+    readContractAuthority(readOnce, input.vault),
+    readContractAuthority(readOnce, input.account),
   ]);
+
+  let vaultKeys: ReadonlyMap<string, Uint8Array>;
+  let accountKeys: ReadonlyMap<string, Uint8Array>;
+  try {
+    [vaultKeys, accountKeys] = await Promise.all([input.verifierKeys.vault(), input.verifierKeys.account()]);
+  } catch (e) {
+    return `${what}: this build's verifying keys could not be read (${(e as Error)?.message ?? String(e)}), `
+      + 'so it cannot check that this vault and its account run this build\'s circuits. '
+      + 'Build both contracts with their proving keys, then run this again. Nothing was sent.';
+  }
+  /* A state that could not be fetched has no circuits to read; the gate has already refused on who holds it. */
+  const stateOf = async (address: string): Promise<unknown> => {
+    try { return await readOnce(address); } catch { return null; }
+  };
+
+  /*
+   * **THE PIN, READ BY THE READER THE PRODUCT'S RECORDS ROUTE USES, OVER THE
+   * SAME ANSWER.** A state that is not a vault's is `null`, which the gate
+   * refuses. A chain that could not be asked is never turned into *not a
+   * vault*: it is already the vault's rules read as unanswered, which the gate
+   * refuses first, and if the vault's rules were read it is thrown.
+   */
+  let pinnedAccount: string | null;
+  try {
+    pinnedAccount = await vaultAccountFromTheIndexer(
+      { queryContractState: readOnce as (address: string) => Promise<{ data: unknown } | null> },
+    )(input.vault as never);
+  } catch (e) {
+    if (!(e instanceof NotAVaultsState) && vault.state === 'read') throw e;
+    pinnedAccount = null;
+  }
+
   return refusalToPutMoneyIn({
     label: input.vaultName,
-    what: `vault '${input.vaultName}' is not funded`,
+    what,
     vault,
-    vaultCircuits: input.vaultCircuits,
-    pinnedAccount: input.pinnedAccount,
+    vaultCircuits: circuitsRefusal(await stateOf(input.vault), vaultKeys, what),
+    pinnedAccount,
     companyAccount: input.account,
     account,
-    accountCircuits: input.accountCircuits,
+    accountCircuits: circuitsRefusal(
+      await stateOf(input.account), accountKeys,
+      `${what}, because of the account it pays out on`,
+      DEPLOYED_CIRCUITS, 'the account\'s'),
     committee: null,
     heldHere: input.held,
   })?.why ?? null;

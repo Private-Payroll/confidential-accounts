@@ -264,13 +264,23 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
     what = 'no money goes into this vault',
     /* The narrower question a device's handover waits on: the vault alone, never a door carrying money. */
     asFar: typeof refusalToPutMoneyIn = refusalToPutMoneyIn,
-  ): Promise<{ why: string; heldByOthers: boolean; accountNotReady?: AccountNotReady } | null> => {
+  ): Promise<{ why: string; heldByOthers: boolean; accountNotReady?: AccountNotReady; vaultRead: AuthorityRead } | null> => {
     let now = state;
+    let vaultRead = read;
     if (now === undefined) {
       try {
         now = await deps.chain.contractState(vault);
       } catch (e) {
-        return { why: `the chain could not be read for this vault (${(e as Error)?.message ?? e}). Nothing was sent.`, heldByOthers: false };
+        /*
+         * **A READ THAT WENT UNANSWERED IS A FACT THE GATE IS GIVEN, NOT A
+         * REFUSAL WRITTEN HERE.** The rules read a moment ago are not what the
+         * chain says now, so the vault is put to the gate as a chain that could
+         * not be asked, and the caller is handed that read back: a screen then
+         * shows a question that could not be answered, not an alarm about the
+         * vault.
+         */
+        vaultRead = { state: 'unreachable', address: vault, why: `the chain could not be asked: ${(e as Error)?.message ?? e}` };
+        now = null;
       }
     }
     let pinned: string | null;
@@ -283,7 +293,7 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
     const facts: FundingFacts = {
       label: vault,
       what,
-      vault: read,
+      vault: vaultRead,
       vaultCircuits: circuitsRefusal(now, await deps.verifierKeys(), 'this vault is not funded'),
       pinnedAccount: pinned,
       companyAccount: companyAddress,
@@ -292,7 +302,8 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
       account: acc.read,
       accountCircuits: acc.circuits,
     };
-    return asFar(facts);
+    const refused = asFar(facts);
+    return refused === null ? null : { ...refused, vaultRead };
   };
 
   const txFrom = (req: express.Request, res: express.Response): Uint8Array | null => {
@@ -379,14 +390,15 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
     const accountFacts = company === null || committee === null ? undefined : await accountFactsOf(company.address);
     for (const v of deps.store.listCompanyVaults(account.id)) {
       const read = await authorityOf(v.vault);
-      const refused: { why: string; heldByOthers: boolean; accountNotReady?: AccountNotReady } | null =
+      const refused: { why: string; heldByOthers: boolean; accountNotReady?: AccountNotReady; vaultRead?: AuthorityRead } | null =
         company === null || committee === null
           ? { why: why ?? 'this company has no committee yet.', heldByOthers: true }
           : await whyNotFunded(v.vault, read, committee, company.address, undefined, accountFacts);
       out.push({
         vault: v.vault,
         deployedAt: v.deployedAt,
-        state: vaultState(read, refused),
+        /* Where the vault stands, from the read the gate was given. */
+        state: vaultState(refused?.vaultRead ?? read, refused),
         why: refused?.why ?? null,
       });
     }
@@ -473,13 +485,19 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
      * gate, the account included, and every door that carries money asks that
      * one.
      */
+    /*
+     * **IN WORDS TRUE OF BOTH DIRECTIONS.** A device reads this view before a
+     * deposit and before a payment out, and the service refuses both on this
+     * same gate, so a person paying out is never told only about money going in.
+     */
+    const either = 'no money goes into or out of this vault';
     const refusal = company === null || committee === null
       ? why
       : (await whyNotFunded(
-        record.vault, read, committee, company.address, state, undefined, undefined, asFarAsTheVault))?.why ?? null;
+        record.vault, read, committee, company.address, state, undefined, either, asFarAsTheVault))?.why ?? null;
     const notFundable = refusal !== null || company === null || committee === null
       ? null
-      : (await whyNotFunded(record.vault, read, committee, company.address, state))?.why ?? null;
+      : (await whyNotFunded(record.vault, read, committee, company.address, state, undefined, either))?.why ?? null;
     let everCreated: string[];
     try {
       everCreated = [...await deps.chain.everCreated(record.vault)];

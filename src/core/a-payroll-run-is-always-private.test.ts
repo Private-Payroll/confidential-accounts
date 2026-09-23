@@ -385,6 +385,20 @@ describe('the door, the refusal, and the record', () => {
      */
     expect(assets.all().filter(a => privateForm(a).of === 'available').map(a => a.code))
       .toEqual(['TESTUSD']);
+    /*
+     * **AND THE ANSWER IS THE ROW'S, NOT A NAME'S.** Every asset above has the
+     * same answer whether it is read off the row or off a list naming the one
+     * test asset, so the loop above cannot tell them apart. The same assets
+     * with their private form changed can. RED WHEN: whether an asset has a
+     * private form is decided by anything but its own row - a list of codes, a
+     * test asset named, or a second field beside the ledger identity.
+     */
+    for (const asset of assets.all()) {
+      const gained = { ...asset, ledger: { ...asset.ledger, shielded: 'e1'.repeat(32) } };
+      const lost = { ...asset, ledger: { ...asset.ledger, shielded: null } };
+      expect(privateForm(gained).of, `${asset.code} with a private token`).toBe('available');
+      expect(privateForm(lost).of, `${asset.code} without one`).toBe('not-yet');
+    }
     expect(privateForm(assets.require('NIGHT'))).toEqual({
       of: 'not-yet',
       why: "NIGHT can only be sent publicly today, which puts the recipient's address and "
