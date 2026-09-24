@@ -173,10 +173,12 @@ describe('EVERY BROWSER BUILD IN THIS REPOSITORY', () => {
 
   it('THE PAYROLL PAGE IS WALKED THROUGH BOTH ITS WORKERS AND INTO THE VAULT BUILDER', () => {
     /* A walk that stopped at the page would pass the refusal above for the wrong reason.
-     * RED WHEN: workers stop being followed - the two worker entries vanish from `entries` and the vault
+     * RED WHEN: workers stop being followed - the worker entries vanish from `entries` and the vault
      * builder and its committee rule vanish from `files`. */
     const g = byName('payroll');
-    expect(g.entries).toEqual(['src/web/main.tsx', 'src/web/proving-worker-entry.ts', 'src/web/vault-worker-entry.ts']);
+    expect(g.entries).toEqual([
+      'src/web/main.tsx', 'src/web/proving-worker-entry.ts', 'src/web/vault-worker-entry.ts', 'src/web/payslip-worker-entry.ts',
+    ]);
     expect(g.files).toEqual(expect.arrayContaining(['src/web/vault-builder.ts', 'src/midnight/vault-committee.ts', 'src/midnight/authority-replacement.ts']));
     /* RED WHEN: `midnight-identity`, linked into `node_modules` from this repository, stops being followed -
      * the page is served its built `lib/` files and they would go unexamined. */

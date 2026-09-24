@@ -102,6 +102,8 @@ interface Built {
   readonly wasmModules: readonly string[];
   readonly wasmAssets: readonly string[];
   readonly moduleCount: number;
+  /** Every module the page's own graph loaded, relative to the repository. */
+  readonly modules: readonly string[];
   /** Every emitted file name, so a separate worker bundle can be found. */
   readonly emitted: readonly string[];
   /** The entry chunk's text, for asking what the PAGE itself reaches. */
@@ -158,6 +160,7 @@ const built = async (root: string): Promise<Built> => {
       .map(id => id.replace(REPO, '').replace(/^.*node_modules[/\\]/, '')),
     wasmAssets: readdirSync(assets).filter(name => name.endsWith('.wasm')),
     moduleCount: modules.size,
+    modules: [...modules].map(id => id.replace(REPO, '').replace(/\\/g, '/')),
   };
 };
 
@@ -311,6 +314,30 @@ describe('WebAssembly and the payroll page', () => {
         + 'thing it is being asked to prove')
         .toBe(true);
     });
+
+  /**
+   * **THE PAYSLIPS PAGE READS ITS COMPANY'S CONTRACT ON A THREAD OF ITS OWN.**
+   * The indexer reader reaches the wallet SDK's ledger, which is the package
+   * that blanked this page, so the reader and everything it imports live in
+   * the payslip reader's worker and the page carries that worker's address and
+   * nothing of its graph.
+   */
+  it('THE PAYSLIP READER: the page carries its address, and none of the indexer reader', { timeout: 180_000 }, async () => {
+    const page = await built(join('src', 'web'));
+    /* RED WHEN anything the page loads imports the reader or the worker's own modules. */
+    expect(page.modules.filter(id =>
+      /src\/web\/(public-data|recorded-payments|payslip-worker-entry)\.ts|midnight-js-indexer-public-data-provider/.test(id)),
+    'the page itself now loads the indexer reader, which reaches the package that left this page blank')
+      .toEqual([]);
+    /* The page does load the side that talks to the worker, so the control is not vacuous. */
+    expect(page.modules.some(id => id.endsWith('src/web/payslip-worker-client.ts'))).toBe(true);
+    const worker = page.emitted.filter(name => name.startsWith('payslip-worker-entry'));
+    expect(worker, 'the page no longer builds the payslip reader').toHaveLength(1);
+    expect(page.entryText.includes(worker[0]!), 'the page does not start the payslip reader').toBe(true);
+    /* And the worker reaches the reader, or there is nothing on that thread to read with. */
+    expect(readFileSync(join(REPO, 'src', 'web', 'payslip-worker-entry.ts'), 'utf8'))
+      .toMatch(/from '\.\/public-data\.js'/);
+  });
 
   it('THE ONE THAT KEEPS THE PAGE LOADABLE: the build handles WebAssembly at a target that '
     + 'can carry it, so the day the page is handed the contract\'s own scheme it is not a '

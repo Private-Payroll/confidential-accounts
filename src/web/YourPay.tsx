@@ -5,14 +5,16 @@ import type { OpenedPayslip } from '../core/payslip-open.js';
 import * as keyring from './keyring.js';
 import { shownError } from './shown-error.js';
 import { WALLET_ORIGIN } from './Auth.js';
-import { askWalletToUnlock } from './wallet-unlock.js';
+import { askWalletToUnlockAndWhereItReads } from './wallet-unlock.js';
 import { openWalletDialog } from './wallet-sign-in.js';
 import { walletInThisPage } from './wallet-frame.js';
 import { US_TO_A_WALLET } from './Join.js';
 import {
   fetchMyPayslips, payslipAddressesFor, rememberedCompanies, rememberCompany, tidyCompanyAddress,
-  paymentsOnTheChain, type OnTheChain, type Fetch,
+  paymentsOnTheChain, type OnTheChain, type MyPayslips,
 } from './my-payslips.js';
+import { payslipReader, type ChainReader } from './payslip-worker-client.js';
+import type { WalletIndexer } from 'midnight-identity/profile/unlock';
 
 export { YOUR_PAY_PATH } from './my-payslips.js';
 
@@ -49,15 +51,20 @@ export function paymentWords(p: Pick<OpenedPayslip, 'status' | 'settledAt' | 'wi
 /**
  * **THE WORDS FOR ONE PAYSLIP, WHEN THE CHAIN WAS ASKED ABOUT IT.** A run
  * written by a rehearsal ledger moved no money and says so whatever else is
- * known; otherwise what the company's record of completed payments says is
- * what is said, and without an answer the run's own facts are. "Not yet" appears only when the company's
- * record of completed payments was read and does not hold this payment.
+ * known; otherwise what this device read of the company's record of completed
+ * payments is what is said, and without an answer the run's own facts are.
+ * "Not yet" appears only when that record was read, does not hold this
+ * payment, and the payment can still be made.
+ *
+ * **"RECORDED AS PAID", NOT "PAID".** The record is the company's account
+ * saying the payment was made; the money reaching the payee is shown by their
+ * own wallet, and `PAID_MEANS` says so under the table.
  */
 export function paidWords(
   p: Pick<OpenedPayslip, 'status' | 'settledAt' | 'wiring'>, chain: OnTheChain | undefined,
 ): { paid: string; onChain: string } {
   if (p.wiring === 'simulated' || chain === undefined) return paymentWords(p);
-  if (chain === 'paid') return { paid: 'Paid', onChain: 'Yes' };
+  if (chain === 'paid') return { paid: 'Recorded as paid', onChain: 'Yes' };
   if (chain === 'not-yet') return { paid: 'Not yet', onChain: 'Not yet' };
   return { paid: 'Cannot tell', onChain: 'Not known' };
 }
@@ -65,15 +72,19 @@ export function paidWords(
 /** What a row says about payment. */
 export type PaymentWords = ReturnType<typeof paidWords>;
 
+/** The sentence under the table, word for word as it was ruled. */
+export const PAID_MEANS = 'Paid means the company\'s account records your payment as made. Check that the '
+  + 'amount reached your wallet\'s private balance.';
+
 /**
- * The words for every slip, keyed by run: the company's record asked once per
- * company for the slips that carry a receipt, and the run's own facts for the
- * rest. Every slip handed in has an entry.
+ * The words for every slip, keyed by run: the company's record read by this
+ * device once per company for the slips that carry a receipt, and the run's
+ * own facts for the rest. Every slip handed in has an entry.
  */
 export async function wordsForSlips(
-  slips: OpenedPayslip[], fetcher?: Fetch,
+  slips: OpenedPayslip[], reader: ChainReader | null, indexer: WalletIndexer | null, nowSeconds?: number,
 ): Promise<Map<string, PaymentWords>> {
-  const chain = await paymentsOnTheChain(slips, fetcher);
+  const chain = await paymentsOnTheChain(slips, reader, indexer, nowSeconds);
   return new Map(slips.map(s => [s.runId, paidWords(s, chain.get(s.runId))]));
 }
 
@@ -86,6 +97,47 @@ const amountOf = (p: OpenedPayslip): string => {
 
 const short = (address: string | null): string =>
   address ? `${address.slice(0, 8)}…${address.slice(-6)}` : 'none';
+
+/** What the wallet hands back for one company address: its key, and where it reads the chain. */
+export type Release = (address: string) => Promise<{ key: Uint8Array; indexer: WalletIndexer | null }>;
+
+/**
+ * **EVERY ADDRESS OPENED, AND WHETHER EACH SLIP WAS PAID READ BY THIS DEVICE.**
+ *
+ * Each address on its own, so one the wallet refuses, or one that is not
+ * answered, does not hide the payslips of every other. The indexer is the one
+ * the wallet named with its key; every answer is from the same wallet. The
+ * reader is this page's own worker, so whether a slip was paid is read from
+ * the company's contract through that indexer and is never asked of this
+ * application's service.
+ *
+ * @param opened how one address's slips are fetched and opened; injectable so
+ *   the whole of this can be driven without a wallet or a service.
+ */
+export async function openAndRead(
+  addresses: Iterable<string>, release: Release,
+  opened: (keys: ReturnType<typeof payslipKeypairFrom>, address: string) => Promise<MyPayslips>
+    = (keys, address) => fetchMyPayslips(keys, address),
+  reader: ChainReader = payslipReader(),
+): Promise<{ found: OpenedPayslip[]; words: Map<string, PaymentWords>; notOpened: number; missed: string[] }> {
+  const found: OpenedPayslip[] = [];
+  let notOpened = 0;
+  const missed: string[] = [];
+  let indexer: WalletIndexer | null = null;
+  for (const address of addresses) {
+    try {
+      const released = await release(address);
+      indexer ??= released.indexer;
+      const mine = await opened(payslipKeypairFrom(released.key), address);
+      found.push(...mine.opened);
+      notOpened += mine.unopened;
+    } catch (e) {
+      missed.push(`${short(address)}: ${shownError(e, 'opening payslips for one company address')}`);
+    }
+  }
+  found.sort((a, b) => (a.period < b.period ? 1 : a.period > b.period ? -1 : 0));
+  return { found, words: await wordsForSlips(found, reader, indexer), notOpened, missed };
+}
 
 /**
  * **YOUR PAYSLIPS, OPENED WITH YOUR OWN WALLET.**
@@ -134,6 +186,7 @@ export function YourPay({ onBack }: { onBack: () => void }) {
       dialog = openWalletDialog(host, WALLET_ORIGIN);
       stopShowing = keyring.showWaitingFor(dialog);
       dialog.moreThanOneAsk();
+      const asking = dialog;
 
       /* Every address each company's slips were sealed under, so a company
        * that has moved still opens the slips from before it did. */
@@ -143,28 +196,15 @@ export function YourPay({ onBack }: { onBack: () => void }) {
         for (const a of [company, ...named]) addresses.add(a);
       }
 
-      /* Each address on its own, so one the wallet refuses, or one that is not
-       * answered, does not hide the payslips of every other. */
-      const found: OpenedPayslip[] = [];
-      let notOpened = 0;
-      const missed: string[] = [];
-      for (const address of addresses) {
-        try {
-          const companyKey = await askWalletToUnlock(host, WALLET_ORIGIN, {
-            company: address,
-            atOrigin: window.location.origin,
-            name: US_TO_A_WALLET.name,
-            rdns: US_TO_A_WALLET.rdns,
-          }, dialog);
-          const mine = await fetchMyPayslips(payslipKeypairFrom(companyKey), address);
-          found.push(...mine.opened);
-          notOpened += mine.unopened;
-        } catch (e) {
-          missed.push(`${short(address)}: ${shownError(e, 'opening payslips for one company address')}`);
-        }
-      }
-      found.sort((a, b) => (a.period < b.period ? 1 : a.period > b.period ? -1 : 0));
-      setWords(await wordsForSlips(found));
+      const walletOrigin = WALLET_ORIGIN;
+      const opened = await openAndRead(addresses, (address) => askWalletToUnlockAndWhereItReads(host, walletOrigin, {
+        company: address,
+        atOrigin: window.location.origin,
+        name: US_TO_A_WALLET.name,
+        rdns: US_TO_A_WALLET.rdns,
+      }, asking));
+      const { found, notOpened, missed } = opened;
+      setWords(opened.words);
       setSlips(found);
       setUnopened(notOpened);
       if (missed.length > 0) {
@@ -221,12 +261,6 @@ export function YourPay({ onBack }: { onBack: () => void }) {
                 </p>))
             : <PayslipTable slips={slips} words={words} />
         )}
-        {slips !== null && slips.length > 0 && (
-          <p className="authsub">
-            This lists your payslips. Money that reached you shows in your wallet's private
-            balance.
-          </p>
-        )}
         {unopened > 0 && (
           <div className="err" data-unopened>
             {unopened} payslip{unopened === 1 ? '' : 's'} sent to you did not open with the key from
@@ -241,29 +275,32 @@ export function YourPay({ onBack }: { onBack: () => void }) {
   );
 }
 
-/** The payslips, one row each, with the words already worked out for each. */
+/** The payslips, one row each, with the words already worked out for each, and what "paid" means under them. */
 export function PayslipTable({ slips, words }: {
   slips: OpenedPayslip[]; words: Map<string, PaymentWords>;
 }) {
   return (
-    <table data-payslips>
-      <thead><tr>
-        <th>Period</th><th>Amount</th><th>Paid</th><th>On the chain</th><th>Company address</th>
-      </tr></thead>
-      <tbody>
-        {slips.map(s => {
-          const w = words.get(s.runId) ?? paymentWords(s);
-          return (
-            <tr key={s.runId} data-payslip={s.runId}>
-              <td>{s.period}</td>
-              <td>{amountOf(s)}</td>
-              <td>{w.paid}</td>
-              <td>{w.onChain}</td>
-              <td title={s.issuedBy ?? ''}>{short(s.issuedBy)}</td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
+    <>
+      <table data-payslips>
+        <thead><tr>
+          <th>Period</th><th>Amount</th><th>Paid</th><th>On the chain</th><th>Company address</th>
+        </tr></thead>
+        <tbody>
+          {slips.map(s => {
+            const w = words.get(s.runId) ?? paymentWords(s);
+            return (
+              <tr key={s.runId} data-payslip={s.runId}>
+                <td>{s.period}</td>
+                <td>{amountOf(s)}</td>
+                <td>{w.paid}</td>
+                <td>{w.onChain}</td>
+                <td title={s.issuedBy ?? ''}>{short(s.issuedBy)}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <p className="authsub" data-paid-means>{PAID_MEANS}</p>
+    </>
   );
 }

@@ -85,7 +85,7 @@ export default defineConfig({
    * is named too. A production build does not do this at all; it is the
    * development server only, and it is where the product is tried by hand.
    */
-  optimizeDeps: { entries: ['index.html', 'vault-worker-entry.ts', 'proving-worker-entry.ts'] },
+  optimizeDeps: { entries: ['index.html', 'vault-worker-entry.ts', 'proving-worker-entry.ts', 'payslip-worker-entry.ts'] },
   /*
    * **NOTHING MAY FRAME THIS APPLICATION.** It frames the person's wallet, and the
    * wallet answers it because it is the top of the tab; this page inside a

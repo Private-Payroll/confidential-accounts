@@ -2071,12 +2071,13 @@ app.post('/api/payslips', wrap(async (req, res) => {
 /*
  * **EVERY COMPLETED PAYMENT A COMPANY'S ACCOUNT HOLDS, ASKED BY ITS ADDRESS.**
  *
- * A payee's page holds, sealed to them, the value their own payment is
- * recorded as, and tests it against this list on their device. So the request
- * names a company address and nothing else, and no answer here depends on who
- * is asking: the list is the account's public contract state, and relaying it
- * whole is what keeps the service from learning which payment anybody looked
- * for.
+ * **THE PAYSLIPS PAGE DOES NOT ASK THIS.** It reads the company's contract
+ * itself, on the payee's device, through the indexer the payee's wallet names,
+ * so the record it shows is the one that indexer reports, not this service's
+ * relay of it. Nothing in this application calls it now. This answer is the
+ * same public state as this service reads it, relayed whole: the request
+ * names a company address and nothing else, and no answer depends on who is
+ * asking.
  *
  * `known: false` when the address is not exactly one company's address now,
  * or the ledger this service is wired to cannot say. A read that fails

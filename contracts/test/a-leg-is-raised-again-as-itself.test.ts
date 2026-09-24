@@ -262,6 +262,23 @@ describe('a raise that threw after the network had it', () => {
     expect(r.control.raises).toBe(1);
   });
 
+  it('a leg on chain is raised again from its record after a payee became a leaver, and the order check takes the record', async () => {
+    const r = await aDraftedRun();
+    r.control.fault = 'land-then-throw';
+    await expect(r.payroll.proposeRun(r.run.id, r.viewingKey, r.by, await r.materialFor(r.run.id)))
+      .rejects.toThrow();
+    const [written] = r.roundsOf(r.run.id);
+    /* The roster can no longer pay this person; the proposal already on chain still names them. */
+    r.payroll.setStatus(r.run.employees[0]!.id, 'leaver', r.viewingKey);
+    /*
+     * RED WHEN the check that each payment is its own person's accepts only the
+     * roster as it is now: the raise again of a round already on chain is then
+     * refused for a person the proposal was approved to pay.
+     */
+    const raised = await r.payroll.proposeRun(r.run.id, r.viewingKey, r.by, await r.materialFor(r.run.id));
+    expect(raised.id).toBe(written!.id);
+  });
+
   it('a leg whose first raise never reached the chain is built from the roster again, so a leaver is refused', async () => {
     const r = await aDraftedRun();
     r.control.fault = 'throw-before-sending';
