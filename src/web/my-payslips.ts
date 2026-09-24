@@ -43,27 +43,110 @@ export interface MyPayslips {
    * something is wrong, and counted rather than dropped so a page can say so.
    */
   unopened: number;
+  /**
+   * Slips that opened but name a company address other than the one this key
+   * was worked out from. The key was handed to that one company only, so a
+   * slip naming another was put there by a company this person never accepted,
+   * and it is not shown.
+   */
+  refused: number;
 }
 
-export async function fetchMyPayslips(keys: WrappingKeypair, fetcher: Fetch = fetch): Promise<MyPayslips> {
+/**
+ * @param from the company address `keys` was worked out from, or `null` for a
+ *   key no address produced. Only slips that name exactly that are asked for,
+ *   and only those are shown.
+ */
+export async function fetchMyPayslips(
+  keys: WrappingKeypair, from: string | null, fetcher: Fetch = fetch,
+): Promise<MyPayslips> {
+  const address = from === null ? null : from.toLowerCase();
   const proof = await readJson(
     await fetcher('/api/payslips/proof', withoutSignIn({ publicKey: keys.publicKey })),
     'asking for your payslips');
   const answer: Hex = answerPayslipProof(proof.sealed, keys.secret);
   const sealed: SealedPayslip[] = await readJson(
-    await fetcher('/api/payslips', withoutSignIn({ publicKey: keys.publicKey, answer })),
+    await fetcher('/api/payslips', withoutSignIn({ publicKey: keys.publicKey, answer, from: address })),
     'fetching your payslips');
   const opened: OpenedPayslip[] = [];
   let unopened = 0;
+  let refused = 0;
   for (const entry of sealed) {
+    let slip: OpenedPayslip;
     try {
-      opened.push(openPayslip(entry, keys.secret));
+      slip = openPayslip(entry, keys.secret);
     } catch (e) {
       if (!(e instanceof Error) || e.message !== NOT_YOUR_PAYSLIP) throw e;
       unopened += 1;
+      continue;
     }
+    if ((slip.issuedBy === null ? null : slip.issuedBy.toLowerCase()) !== address) { refused += 1; continue; }
+    opened.push(slip);
   }
-  return { opened, sealed, unopened };
+  return { opened, sealed, unopened, refused };
+}
+
+/* ------------------------------------------------------------------ */
+/* whether each payslip was paid, from the company's public record      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * **WHAT THE COMPANY'S RECORD SAYS ABOUT ONE PAYSLIP.** `'paid'` only when the
+ * company's public record of completed payments, as the service relays it,
+ * was read and holds this payment; `'not-yet'` only when it was read and does
+ * not; `'cannot-tell'` whenever it was not read, whatever the reason. Nothing
+ * that failed is ever reported as not paid. The list is the service's report
+ * of the chain, and nothing on this device checks it against the chain.
+ */
+export type OnTheChain = 'paid' | 'not-yet' | 'cannot-tell';
+
+const HEX32 = /^[0-9a-f]{64}$/u;
+
+/** One company's completed payments as the service relayed them, or `null` when they could not be read. */
+async function completedPaymentsAt(company: string, fetcher: Fetch): Promise<Set<string> | null> {
+  try {
+    const r = await fetcher(
+      `/api/payslips/paid?company=${encodeURIComponent(company)}`, { credentials: 'omit' });
+    if (!r.ok) return null;
+    const body = await r.json();
+    if (body?.known !== true || !Array.isArray(body.movements)) return null;
+    const out = new Set<string>();
+    for (const m of body.movements) {
+      if (typeof m !== 'string' || !HEX32.test(m.toLowerCase())) return null;
+      out.add(m.toLowerCase());
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * **ASKS, FOR EACH SLIP THAT CARRIES A RECEIPT, WHETHER ITS PAYMENT IS IN THE
+ * COMPANY'S RECORD OF COMPLETED PAYMENTS - WITHOUT SAYING WHICH PAYMENT.**
+ *
+ * Each receipt was opened on this device and holds the value the company's
+ * account records when this person's payment is made. What is asked for is the
+ * company's whole list of completed payments, by company address, and the
+ * value is looked for in it here. So no request names a leaf, a payment or a
+ * person, and one list answers every slip from that company.
+ *
+ * A slip with no receipt is not in the answer: nothing can be asked for it.
+ */
+export async function paymentsOnTheChain(
+  slips: OpenedPayslip[], fetcher: Fetch = fetch,
+): Promise<Map<string, OnTheChain>> {
+  const lists = new Map<string, Promise<Set<string> | null>>();
+  const out = new Map<string, OnTheChain>();
+  for (const s of slips) {
+    if (!s.receipt) continue;
+    const company = s.receipt.company;
+    if (company === null) { out.set(s.runId, 'cannot-tell'); continue; }
+    if (!lists.has(company)) lists.set(company, completedPaymentsAt(company, fetcher));
+    const list = await lists.get(company)!;
+    out.set(s.runId, list === null ? 'cannot-tell' : list.has(s.receipt.movement) ? 'paid' : 'not-yet');
+  }
+  return out;
 }
 
 /** Every address a company's payslips were sealed under, asked by any one of them. */

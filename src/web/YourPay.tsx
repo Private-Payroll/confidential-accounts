@@ -11,6 +11,7 @@ import { walletInThisPage } from './wallet-frame.js';
 import { US_TO_A_WALLET } from './Join.js';
 import {
   fetchMyPayslips, payslipAddressesFor, rememberedCompanies, rememberCompany, tidyCompanyAddress,
+  paymentsOnTheChain, type OnTheChain, type Fetch,
 } from './my-payslips.js';
 
 export { YOUR_PAY_PATH } from './my-payslips.js';
@@ -45,6 +46,37 @@ export function paymentWords(p: Pick<OpenedPayslip, 'status' | 'settledAt' | 'wi
   return { paid: 'Not known', onChain: 'Not recorded' };
 }
 
+/**
+ * **THE WORDS FOR ONE PAYSLIP, WHEN THE CHAIN WAS ASKED ABOUT IT.** A run
+ * written by a rehearsal ledger moved no money and says so whatever else is
+ * known; otherwise what the company's record of completed payments says is
+ * what is said, and without an answer the run's own facts are. "Not yet" appears only when the company's
+ * record of completed payments was read and does not hold this payment.
+ */
+export function paidWords(
+  p: Pick<OpenedPayslip, 'status' | 'settledAt' | 'wiring'>, chain: OnTheChain | undefined,
+): { paid: string; onChain: string } {
+  if (p.wiring === 'simulated' || chain === undefined) return paymentWords(p);
+  if (chain === 'paid') return { paid: 'Paid', onChain: 'Yes' };
+  if (chain === 'not-yet') return { paid: 'Not yet', onChain: 'Not yet' };
+  return { paid: 'Cannot tell', onChain: 'Not known' };
+}
+
+/** What a row says about payment. */
+export type PaymentWords = ReturnType<typeof paidWords>;
+
+/**
+ * The words for every slip, keyed by run: the company's record asked once per
+ * company for the slips that carry a receipt, and the run's own facts for the
+ * rest. Every slip handed in has an entry.
+ */
+export async function wordsForSlips(
+  slips: OpenedPayslip[], fetcher?: Fetch,
+): Promise<Map<string, PaymentWords>> {
+  const chain = await paymentsOnTheChain(slips, fetcher);
+  return new Map(slips.map(s => [s.runId, paidWords(s, chain.get(s.runId))]));
+}
+
 const amountOf = (p: OpenedPayslip): string => {
   const asset = assets.find(p.payslip.asset);
   return asset
@@ -68,6 +100,7 @@ export function YourPay({ onBack }: { onBack: () => void }) {
   const [companies, setCompanies] = useState<string[]>(() => rememberedCompanies());
   const [adding, setAdding] = useState('');
   const [slips, setSlips] = useState<OpenedPayslip[] | null>(null);
+  const [words, setWords] = useState<Map<string, PaymentWords>>(() => new Map());
   const [unopened, setUnopened] = useState(0);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -123,7 +156,7 @@ export function YourPay({ onBack }: { onBack: () => void }) {
             name: US_TO_A_WALLET.name,
             rdns: US_TO_A_WALLET.rdns,
           }, dialog);
-          const mine = await fetchMyPayslips(payslipKeypairFrom(companyKey));
+          const mine = await fetchMyPayslips(payslipKeypairFrom(companyKey), address);
           found.push(...mine.opened);
           notOpened += mine.unopened;
         } catch (e) {
@@ -131,6 +164,7 @@ export function YourPay({ onBack }: { onBack: () => void }) {
         }
       }
       found.sort((a, b) => (a.period < b.period ? 1 : a.period > b.period ? -1 : 0));
+      setWords(await wordsForSlips(found));
       setSlips(found);
       setUnopened(notOpened);
       if (missed.length > 0) {
@@ -185,25 +219,7 @@ export function YourPay({ onBack }: { onBack: () => void }) {
                 <p className="authsub" data-no-payslips>
                   No payslips were found for you at these company addresses.
                 </p>))
-            : <table data-payslips>
-                <thead><tr>
-                  <th>Period</th><th>Amount</th><th>Paid</th><th>On the chain</th><th>Company address</th>
-                </tr></thead>
-                <tbody>
-                  {slips.map(s => {
-                    const w = paymentWords(s);
-                    return (
-                      <tr key={s.runId} data-payslip={s.runId}>
-                        <td>{s.period}</td>
-                        <td>{amountOf(s)}</td>
-                        <td>{w.paid}</td>
-                        <td>{w.onChain}</td>
-                        <td title={s.issuedBy ?? ''}>{short(s.issuedBy)}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+            : <PayslipTable slips={slips} words={words} />
         )}
         {slips !== null && slips.length > 0 && (
           <p className="authsub">
@@ -222,5 +238,32 @@ export function YourPay({ onBack }: { onBack: () => void }) {
         <button type="button" className="ghost" onClick={onBack}>Back</button>
       </div>
     </div>
+  );
+}
+
+/** The payslips, one row each, with the words already worked out for each. */
+export function PayslipTable({ slips, words }: {
+  slips: OpenedPayslip[]; words: Map<string, PaymentWords>;
+}) {
+  return (
+    <table data-payslips>
+      <thead><tr>
+        <th>Period</th><th>Amount</th><th>Paid</th><th>On the chain</th><th>Company address</th>
+      </tr></thead>
+      <tbody>
+        {slips.map(s => {
+          const w = words.get(s.runId) ?? paymentWords(s);
+          return (
+            <tr key={s.runId} data-payslip={s.runId}>
+              <td>{s.period}</td>
+              <td>{amountOf(s)}</td>
+              <td>{w.paid}</td>
+              <td>{w.onChain}</td>
+              <td title={s.issuedBy ?? ''}>{short(s.issuedBy)}</td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
   );
 }

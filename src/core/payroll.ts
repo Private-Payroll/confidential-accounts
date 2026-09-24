@@ -12,7 +12,7 @@ import { newWords } from 'midnight-identity';
  * sides of the comparison cannot drift apart. */
 import { addressFingerprint, FingerprintError } from 'midnight-identity/profile/fingerprint';
 import { payslipKeypairForWallet } from './payslip-key.js';
-import type { SealedPayslip } from './payslip-open.js';
+import { NO_LEAF, type SealedPayslip } from './payslip-open.js';
 
 /**
  * **THE ORIGIN THE SEED'S STAND-IN WALLET IS ASKED AT, AND IT IS NOT AN
@@ -321,6 +321,24 @@ type RunSecrets = Pick<PayrollRun, 'employees' | 'totals' | 'proposalIds' | 'pay
  * sequence. Written once so that the count the signers approve and the tree the
  * vault proves against cannot be drawn from two different lists.
  */
+/**
+ * One receipt, sealed under a fresh key wrapped to the payee's public key.
+ * `paid` absent writes the stand-in: the same fields at the same lengths, so a
+ * slip whose leg has not been raised is not told apart from one whose has.
+ */
+function sealReceipt(
+  runId: string, publicKey: Hex, company: string | null, paid: { leaf: Hex; movement: Hex } | null,
+): NonNullable<PayrollRun['payslips'][number]['receipt']> {
+  const key = newSymmetricKey();
+  const sealed = seal(canonical({
+    runId,
+    leaf: paid ? paid.leaf.toLowerCase() : NO_LEAF,
+    movement: paid ? paid.movement.toLowerCase() : NO_LEAF,
+    company,
+  }), key);
+  return { wrapped: wrapKey(key, publicKey), sealed };
+}
+
 const legEmployees = (run: PayrollRun, leg: AssetId): Employee[] =>
   run.employees.filter(e => e.asset === leg);
 
@@ -2528,6 +2546,8 @@ export class PayrollService {
         employeeId: id, wrapped: wrapKey(slipKey, publicKey), slip, issuedBy,
         /* The public key it is wrapped to, which is what its payee asks by. */
         sealedTo: publicKey.toLowerCase(),
+        /* A stand-in until the payee's leg is raised; see `withReceipts`. */
+        receipt: sealReceipt(runId, publicKey, companyAddressForOffer(this.store, accountId), null),
       });
     });
 
@@ -2808,6 +2828,14 @@ export class PayrollService {
 
     const beforeRaising = this.requireRun(runId, viewingKey);
     this.refuseALegThatIsProposed(beforeRaising, leg, viewingKey);
+    /*
+     * A leg raised again is the same round, so it keeps the address it was
+     * first raised at; a new leg takes the company's address now.
+     */
+    const legCompany = again !== undefined && earlierMaterial && earlierMaterial.company !== undefined
+      ? earlierMaterial.company
+      : companyAddressForOffer(this.store, run.accountId);
+    beforeRaising.payslips = this.withReceipts(beforeRaising, leg, payable, legCompany);
     beforeRaising.payout = { ...(beforeRaising.payout ?? {}), [leg]: {
       root: payable.run.root,
       payees: payable.run.payees,
@@ -2818,6 +2846,7 @@ export class PayrollService {
       facts: payable.facts,
       runId: payable.identity.runId,
       epoch: payable.identity.epoch,
+      company: legCompany,
     } };
     this.putRun(beforeRaising, viewingKey);
 
@@ -2856,6 +2885,69 @@ export class PayrollService {
     afterRaising.proposalIds = { ...afterRaising.proposalIds, [leg]: proposal.id };
     this.putRun(afterRaising, viewingKey);
     return proposal;
+  }
+
+  /**
+   * **EACH PAYEE'S OWN LEAF, SEALED TO THEM ON THEIR PAYSLIP, AS A LEG IS
+   * RAISED.**
+   *
+   * The account records a completed payment against a payee's leaf, and the
+   * payee is never otherwise told theirs - so without this they can never ask
+   * about their own payment. Each receipt carries the leaf, the value the
+   * account records when it is paid (the contract's own derivation, handed down
+   * with the material because this layer may not compute it), the run it
+   * belongs to, and the company address the run is raised at. It is sealed
+   * under a fresh key wrapped to the key the payslip is wrapped to, so the
+   * service holds it as ciphertext, and what the payee does with it on their
+   * device is never sent back.
+   *
+   * **EVERY SLIP'S RECEIPT IS WRITTEN AGAIN ON EVERY RAISE, NOT ONLY THE RAISED
+   * LEG'S.** Receipts sit outside the run's envelope, and a raise that touched
+   * only one leg's slips would show the store which people are paid in the
+   * same asset - which the sealed leg map exists to hide. So a slip whose leg
+   * has been raised gets its real receipt, sealed afresh; every other slip gets
+   * a stand-in of the same length that opens to no leaf.
+   *
+   * **POSITION `i` OF A LEG'S LEAVES IS POSITION `i` OF ITS PEOPLE**: a leg's
+   * payments are built from its people in that order, and a retry names people
+   * by the same positions. A retry pays a person under the leaf they already
+   * had, so a receipt written here is theirs for every attempt at the leg.
+   */
+  private withReceipts(
+    run: PayrollRun, leg: AssetId, payable: RunMaterial,
+    /** Where the leg being raised is recorded: the company's address now, or where it was first raised. */
+    legCompany: string | null,
+  ): PayrollRun['payslips'] {
+    const now = companyAddressForOffer(this.store, run.accountId);
+    const paidAt = new Map<string, { leaf: Hex; company: string | null }>();
+    const legs = new Set<AssetId>([leg, ...(Object.keys(run.payout ?? {}) as AssetId[])]);
+    for (const asset of legs) {
+      const recorded = run.payout?.[asset];
+      const leaves = asset === leg ? payable.leaves : recorded?.leaves;
+      /*
+       * A leg raised earlier sends its payees to the address it was raised
+       * at, never to the company's address now. One raised before that was
+       * recorded is given the stand-in: better nothing to ask than the wrong
+       * record to ask.
+       */
+      const company = asset === leg ? legCompany : recorded?.company;
+      if (!leaves || company === undefined) continue;
+      legEmployees(run, asset).forEach((e, i) => {
+        const leaf = leaves[i];
+        if (leaf !== undefined) paidAt.set(e.id, { leaf, company });
+      });
+    }
+    return run.payslips.map(p => {
+      const publicKey = p.sealedTo ?? run.employees.find(e => e.id === p.employeeId)?.wrappingPublicKey;
+      if (!publicKey) return p;
+      const paid = paidAt.get(p.employeeId);
+      return {
+        ...p,
+        receipt: paid === undefined
+          ? sealReceipt(run.id, publicKey, now, null)
+          : sealReceipt(run.id, publicKey, paid.company, { leaf: paid.leaf, movement: payable.movementOf(paid.leaf) }),
+      };
+    });
   }
 
   /**
@@ -3410,27 +3502,37 @@ export class PayrollService {
    * public half each roster record carries outside its seal, which is the half
    * every payslip for that person was wrapped to.
    */
-  payslipsFor(wrappingPublicKey: Hex): SealedPayslip[] {
+  payslipsFor(
+    wrappingPublicKey: Hex,
+    /**
+     * **THE COMPANY ADDRESS THE ASKER'S KEY WAS WORKED OUT FROM.** A payee's
+     * key is derived from one company's address, and that is the only company
+     * they handed it to; a slip naming any other address was put there by a
+     * company the payee never accepted, and it is not sent. `null` for a key
+     * no address produced, which is sent only slips that name no address.
+     * Omitted, nothing is filtered: that is for a caller inside the service.
+     */
+    from?: string | null,
+  ): SealedPayslip[] {
     const key = wrappingPublicKey.toLowerCase();
+    const asked = from === undefined || from === null ? from : from.toLowerCase();
+    /* For a slip sealed before it named its key: the roster record's key now. */
+    const mine = new Set(this.store.employeeIdsWithKey(key));
     const out: SealedPayslip[] = [];
-    for (const account of this.store.listAccounts()) {
-      /* For a slip sealed before it named its key: the roster record's key now. */
-      const mine = new Set(this.store.listEmployees(account.id)
-        .filter(e => (e.wrappingPublicKey ?? '').toLowerCase() === key)
-        .map(e => e.id));
-      for (const run of this.store.listRuns(account.id)) {
-        for (const p of run.payslips) {
-          const toThisKey = p.sealedTo !== undefined
-            ? p.sealedTo.toLowerCase() === key
-            : mine.has(p.employeeId);
-          if (!toThisKey) continue;
-          out.push({
-            runId: run.id, period: run.period, status: run.status,
-            settledAt: run.settledAt ?? null, wiring: run.wiring ?? null,
-            issuedBy: p.issuedBy ?? null,
-            wrapped: p.wrapped, slip: p.slip,
-          });
-        }
+    for (const run of this.store.runsWithPayslipsSealedTo(key)) {
+      for (const p of run.payslips) {
+        const toThisKey = p.sealedTo !== undefined
+          ? p.sealedTo.toLowerCase() === key
+          : mine.has(p.employeeId);
+        if (!toThisKey) continue;
+        if (asked !== undefined && (p.issuedBy ? p.issuedBy.toLowerCase() : null) !== asked) continue;
+        out.push({
+          runId: run.id, period: run.period, status: run.status,
+          settledAt: run.settledAt ?? null, wiring: run.wiring ?? null,
+          issuedBy: p.issuedBy ?? null,
+          wrapped: p.wrapped, slip: p.slip,
+          receipt: p.receipt ?? null,
+        });
       }
     }
     return out.sort((a, b) => (a.period < b.period ? 1 : a.period > b.period ? -1 : 0));
@@ -3449,9 +3551,9 @@ export class PayrollService {
   payslipAddressesOf(companyAddress: string): string[] {
     const asked = companyAddress.toLowerCase();
     const found = new Set<string>();
-    for (const account of this.store.listAccounts()) {
-      const now = companyAddressForOffer(this.store, account.id);
-      const named = this.payslipAddressesNamedBy(account.id);
+    for (const accountId of this.store.accountsAtPayslipAddress(asked)) {
+      const now = companyAddressForOffer(this.store, accountId);
+      const named = this.payslipAddressesNamedBy(accountId);
       if (now !== asked && !named.has(asked)) continue;
       if (now) found.add(now);
       for (const a of named) found.add(a);
@@ -3459,13 +3561,23 @@ export class PayrollService {
     return [...found].sort();
   }
 
+  /**
+   * **THE ONE ACCOUNT WHOSE CHAIN ADDRESS IS THIS ONE NOW**, or `null`. A
+   * receipt names the company address its run was raised at, and the account's
+   * record of completed payments is read at the address it has now; a company
+   * that has since moved is not answered for, because its current record is
+   * not the one that run was paid into.
+   */
+  accountAtCompanyAddress(companyAddress: string): string | null {
+    const asked = companyAddress.toLowerCase();
+    const at = this.store.accountsAtPayslipAddress(asked)
+      .filter(id => companyAddressForOffer(this.store, id) === asked);
+    return at.length === 1 ? at[0]! : null;
+  }
+
   /** Every company address one company's payslips name, lower-cased. */
   private payslipAddressesNamedBy(accountId: string): Set<string> {
-    const named = new Set<string>();
-    for (const run of this.store.listRuns(accountId)) {
-      for (const p of run.payslips) if (p.issuedBy) named.add(p.issuedBy.toLowerCase());
-    }
-    return named;
+    return new Set(this.store.payslipAddressesNamedBy(accountId));
   }
 
   /** What one employee can see. Requires their own secret and returns only their line. */

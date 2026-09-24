@@ -47,7 +47,7 @@
  * downstream is handed the number and looks it up by name.
  */
 import {
-  buildRun, buildRetryRun, rootOfLeaves, type PaymentFacts, type DetailsOfKind,
+  buildRun, buildRetryRun, rootOfLeaves, paidMovementOfLeaf, type PaymentFacts, type DetailsOfKind,
 } from './payout-tree.js';
 import { currentPayoutSeed, type PayoutSeed, type RunIdentity } from './run-keys.js';
 import { vaultDetailsOf } from './vault-details.js';
@@ -109,6 +109,12 @@ export interface RunMaterial {
    * this root commits to. Never a second implementation of it.
    */
   readonly rootOf: (leaves: Hex[]) => Hex;
+  /**
+   * The contract's own `paidMovementOf`, travelling with the material for the
+   * reason `rootOf` does: the layer that seals each payee's receipt may not
+   * reach the runtime that computes it.
+   */
+  readonly movementOf: (leaf: Hex) => Hex;
 }
 
 /**
@@ -193,6 +199,7 @@ export const runMaterialFor = async (args: {
     facts: args.facts,
     identity,
     rootOf: rootOfLeaves,
+    movementOf: paidMovementOfLeaf,
   } as RunMaterial;
 };
 

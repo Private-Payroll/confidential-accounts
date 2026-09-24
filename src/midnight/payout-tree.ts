@@ -162,6 +162,16 @@ export const payoutLeafOf = (p: PayoutLeafInput): Hex =>
   toHex(pureCircuits.payoutLeaf(fromHex(p.details), fromHex(p.nonce)));
 
 /**
+ * **THE VALUE THE ACCOUNT RECORDS WHEN THIS LEAF IS PAID.** The contract's own
+ * `paidMovementOf`, called and never derived a second way. A payee who holds
+ * this value can find out whether they were paid by testing it against the
+ * account's public set of completed payments, on their own device, without
+ * naming their leaf to anybody.
+ */
+export const paidMovementOfLeaf = (leaf: Hex): Hex =>
+  toHex(pureCircuits.paidMovementOf(fromHex(leaf)));
+
+/**
  * Builds the run's tree.
  *
  * Order matters and is the caller's): a payee's index is where their leaf sits,

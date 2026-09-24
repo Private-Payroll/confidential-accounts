@@ -40,6 +40,27 @@ export interface SealedPayslip {
   issuedBy: string | null;
   wrapped: { ephemeral: Hex } & Sealed;
   slip: Sealed;
+  /**
+   * **WHAT THIS PAYMENT IS RECORDED AGAINST ON THE CHAIN, SEALED TO THE PAYEE.**
+   * `null` until the run is raised, and on a slip from a run raised before
+   * these were written. Opened here, on the payee's device, beside the slip.
+   */
+  receipt: { wrapped: { ephemeral: Hex } & Sealed; sealed: Sealed } | null;
+}
+
+/**
+ * **ONE PAYEE'S OWN LEAF, AND THE VALUE THE ACCOUNT RECORDS WHEN IT IS PAID.**
+ *
+ * `movement` is what the page tests against the account's public set of
+ * completed payments; `company` is the address that set is read at, the
+ * company's address when the run was raised. The leaf is kept with the
+ * receipt and is never sent anywhere.
+ */
+export interface PaymentReceipt {
+  runId: string;
+  leaf: Hex;
+  movement: Hex;
+  company: string | null;
 }
 
 /** What is inside a payslip once its payee has opened it. */
@@ -52,8 +73,14 @@ export interface PayslipContents {
   paidTo?: unknown;
 }
 
-export interface OpenedPayslip extends Omit<SealedPayslip, 'wrapped' | 'slip'> {
+export interface OpenedPayslip extends Omit<SealedPayslip, 'wrapped' | 'slip' | 'receipt'> {
   payslip: PayslipContents;
+  /**
+   * The payee's own receipt, opened. `null` when the slip carries none, and
+   * when the one it carries does not open with this key or does not name this
+   * slip's run - either way nothing can be asked of the chain for it.
+   */
+  receipt: PaymentReceipt | null;
 }
 
 /** Thrown when a key does not open a slip. The same words whichever way it failed. */
@@ -78,8 +105,42 @@ export function openPayslip(entry: SealedPayslip, wrappingSecret: Hex): OpenedPa
   } catch {
     throw new Error(NOT_YOUR_PAYSLIP);
   }
-  const { wrapped: _w, slip: _s, ...facts } = entry;
-  return { ...facts, payslip };
+  const { wrapped: _w, slip: _s, receipt: sealedReceipt, ...facts } = entry;
+  return { ...facts, payslip, receipt: openReceipt(sealedReceipt ?? null, entry.runId, wrappingSecret) };
+}
+
+const HEX32 = /^[0-9a-f]{64}$/u;
+
+/**
+ * What a receipt carries in place of a leaf and its recorded value until the
+ * payee's leg is raised. The same length as a real one, so the two are not
+ * told apart by anybody who cannot open them.
+ */
+export const NO_LEAF = '0'.repeat(64);
+
+/**
+ * Opens a receipt, or answers `null`. A receipt that does not open, or that
+ * names another run, is not an answer about this slip: the slip still shows,
+ * and the page says it cannot tell whether it was paid.
+ */
+export function openReceipt(
+  sealed: SealedPayslip['receipt'], runId: string, wrappingSecret: Hex,
+): PaymentReceipt | null {
+  if (!sealed || !sealed.wrapped || !sealed.sealed) return null;
+  try {
+    const key = unwrapKey(sealed.wrapped, wrappingSecret);
+    const r = parseCanonical<Partial<PaymentReceipt>>(unseal(sealed.sealed, key));
+    const leaf = typeof r.leaf === 'string' ? r.leaf.toLowerCase() : '';
+    const movement = typeof r.movement === 'string' ? r.movement.toLowerCase() : '';
+    const company = typeof r.company === 'string' ? r.company.toLowerCase() : null;
+    if (r.runId !== runId || !HEX32.test(leaf) || !HEX32.test(movement)) return null;
+    /* The stand-in a slip carries until its leg is raised: it names no payment. */
+    if (leaf === NO_LEAF) return null;
+    if (company !== null && !HEX32.test(company)) return null;
+    return { runId, leaf, movement, company };
+  } catch {
+    return null;
+  }
 }
 
 /** The public half of a payslip secret, so a page holding only the secret can ask for its slips. */

@@ -2049,6 +2049,12 @@ app.post('/api/payslips', wrap(async (req, res) => {
   const b = z.object({
     publicKey: payslipKey,
     answer: z.string().regex(/^[0-9a-fA-F]{64}$/u, 'the answer is the value that was sealed to you'),
+    /* The company address this key was worked out from, or null for a key no address
+     * produced. Only slips naming exactly that are sent. */
+    from: z.union([
+      z.string().regex(/^[0-9a-fA-F]{64}$/u, 'That is not a company address. It is 64 characters of 0-9 and a-f'),
+      z.null(),
+    ]),
   }).parse(req.body);
   const proven = await payslipProofs.consume(payslipProofSubject(b.publicKey), b.answer.toLowerCase());
   if (!proven) {
@@ -2059,7 +2065,31 @@ app.post('/api/payslips', wrap(async (req, res) => {
     });
     return;
   }
-  res.json(payroll.payslipsFor(b.publicKey));
+  res.json(payroll.payslipsFor(b.publicKey, b.from));
+}));
+
+/*
+ * **EVERY COMPLETED PAYMENT A COMPANY'S ACCOUNT HOLDS, ASKED BY ITS ADDRESS.**
+ *
+ * A payee's page holds, sealed to them, the value their own payment is
+ * recorded as, and tests it against this list on their device. So the request
+ * names a company address and nothing else, and no answer here depends on who
+ * is asking: the list is the account's public contract state, and relaying it
+ * whole is what keeps the service from learning which payment anybody looked
+ * for.
+ *
+ * `known: false` when the address is not exactly one company's address now,
+ * or the ledger this service is wired to cannot say. A read that fails
+ * answers an error instead. The page says it cannot tell in both cases, never
+ * that a payment has not been made.
+ */
+app.get('/api/payslips/paid', wrap(async (req, res) => {
+  if (!await payslipsMetered(req, res)) return;
+  const company = z.string().regex(/^[0-9a-fA-F]{64}$/u, 'a company address is 32 bytes of hex')
+    .parse(String(req.query.company ?? ''));
+  const accountId = payroll.accountAtCompanyAddress(company);
+  const read = accountId === null ? null : await ledger.paidMovementsOf(accountId);
+  res.json(read === null || !read.known ? { known: false, movements: [] } : read);
 }));
 
 /*

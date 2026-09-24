@@ -3205,8 +3205,11 @@ function EmployeePortal({ session, runs, employee, onExit }: {
        * it is never part of a request.
        */
       const keys = { secret, publicKey: payslipPublicKeyOf(secret) };
-      const fetched = await fetchMyPayslips(keys)
-        .catch(() => ({ opened: [] as OpenedPayslip[], sealed: [] as SealedPayslip[], unopened: 0 }));
+      /* The demonstration's keys are worked out from the company's own address. */
+      const from = typeof session.account.contractAddress === 'string'
+        ? session.account.contractAddress.toLowerCase() : null;
+      const fetched = await fetchMyPayslips(keys, from)
+        .catch(() => ({ opened: [] as OpenedPayslip[], sealed: [] as SealedPayslip[], unopened: 0, refused: 0 }));
       setSealedOne(fetched.sealed[0] ?? null);
       setSlips(fetched.opened.filter(s => s.status === 'settled'));
     })();

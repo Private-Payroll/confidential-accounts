@@ -10,17 +10,17 @@
  * **THE MECHANISM OUTLIVED THE DOOR IT WAS BUILT FOR, AND OTHERS USE IT.**
  * `WalletIdentityService` counts every challenge and every sign-in attempt on
  * the `ip` scope; `GET /api/invites/:token/offer`, a METERED door that answers
- * a stranger, counts on `invite-offer`; and the three doors a payee asks for
+ * a stranger, counts on `invite-offer`; and the four doors a payee asks for
  * their own payslips by, which take no sign-in, share `payslips`. None is a
  * guessing oracle the way login was; what a limit buys them is that an attempt
  * is BOUNDED and therefore visible.
  *
  * **THE WORD `METERED` IS DOING REAL WORK AND USED TO BE MISSING.** This
  * sentence once said *the one door that answers a stranger*, flat, and that is
- * FALSE at source: **fifteen routes in `src/server/index.ts` carry no
- * `authed`**, twelve of them wrapped by `wrap` and three registered bare. Read
+ * FALSE at source: **sixteen routes in `src/server/index.ts` carry no
+ * `authed`**, thirteen of them wrapped by `wrap` and three registered bare. Read
  * as written it would say the unauthenticated surface is one endpoint wide and
- * metered, when it is fifteen wide: four are metered in the route itself,
+ * metered, when it is sixteen wide: five are metered in the route itself,
  * through two meters, and the two wallet sign-in doors are metered inside the
  * service.
  *
@@ -122,9 +122,10 @@ export const DEFAULT_POLICY: Record<string, LimitPolicy> = {
   /**
    * **A PAYEE'S OWN PAYSLIPS, ASKED WITHOUT A SIGN-IN.** The page makes three
    * requests per company address it knows - the addresses, the proof, the list -
-   * and each list request reads every company's runs. Sixty in a quarter of an
-   * hour is a person opening their payslips many times over, and bounds what
-   * one caller can make the service read.
+   * and one more per company its payments were raised at, for that company's
+   * completed payments. Sixty in a quarter of an hour is a person opening their
+   * payslips many times over, and bounds what one caller can make the service
+   * read.
    */
   'payslips': { max: 60, windowSeconds: 15 * 60 },
 };

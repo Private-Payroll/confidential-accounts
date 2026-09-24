@@ -658,6 +658,22 @@ export interface PaymentsAmong {
   paid: Hex[];
 }
 
+/**
+ * **EVERY COMPLETED PAYMENT ONE ACCOUNT HOLDS, AS THE VALUES IT RECORDS.**
+ *
+ * The account's set of completed payments is public contract state: anybody
+ * can read it at the account's address. Handed over whole so a payee can test
+ * their own value against it on their own device, and nobody who relays it
+ * learns which value they tested.
+ *
+ * `known: false` is not "nobody was paid", exactly as `PaymentsAmong` says, and
+ * `movements` is always empty then.
+ */
+export interface PaidMovements {
+  known: boolean;
+  movements: Hex[];
+}
+
 export interface Ledger {
   /** Brings the account into being. On Midnight, deploying the contract. */
   open(accountId: string, opening: AccountOpening): Promise<TxRef>;
@@ -698,6 +714,8 @@ export interface Ledger {
    * about the one thing the chain is authoritative on.
    */
   paidAmong(accountId: string, leaves: Hex[]): Promise<PaymentsAmong | null>;
+  /** Every completed payment the account holds; `null` for an account this ledger does not hold, or whose state the chain does not return. */
+  paidMovementsOf(accountId: string): Promise<PaidMovements | null>;
 
   /**
    * Opens a round. The chain receives a commitment to the payload, never the
@@ -1447,6 +1465,12 @@ export class SimulatedLedger implements Ledger {
     const a = this.accounts.get(accountId);
     if (!a) return null;
     return { known: false, paid: [] };
+  }
+
+  /** The same answer, for the same reason: this class records no payments. */
+  async paidMovementsOf(accountId: string): Promise<PaidMovements | null> {
+    if (!this.accounts.get(accountId)) return null;
+    return { known: false, movements: [] };
   }
 
   async propose(

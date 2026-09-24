@@ -53,7 +53,7 @@ import {
   refusalForProven, refusalUnlessOnlyACallTo, readProvenTransaction, readFinishedTransaction,
 } from './proven-submission.js';
 import type {
-  Ledger, LedgerAddress, LedgerStatus, LedgerRecord, PaymentsAmong,
+  Ledger, LedgerAddress, LedgerStatus, LedgerRecord, PaymentsAmong, PaidMovements,
   AccountOpening, SealedStateAt, TxRef, SignerRef, WriteInFlight, VaultTxArrival, VaultTxSent,
 } from '../core/ledger.js';
 import type { Hex } from '../core/crypto.js';
@@ -341,6 +341,10 @@ export class ChainLedger implements Ledger {
 
   paidAmong(accountId: string, leaves: Hex[]): Promise<PaymentsAmong | null> {
     return this.inner.paidAmong(accountId, leaves);
+  }
+
+  paidMovementsOf(accountId: string): Promise<PaidMovements | null> {
+    return this.inner.paidMovementsOf(accountId);
   }
 
   fetch(accountId: string, keyEpoch: number): Promise<LedgerRecord | null> {

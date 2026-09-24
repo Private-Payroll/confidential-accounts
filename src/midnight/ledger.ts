@@ -73,7 +73,7 @@
 import type {
   Ledger, LedgerAddress, LedgerRecord, TxRef, ProofSystem, Circuit,
   StateView, StateChange, LedgerStatus, SignerRef, AccountOpening,
-  SealedStateAt, PaymentsAmong,
+  SealedStateAt, PaymentsAmong, PaidMovements,
 } from '../core/ledger.js';
 import { viewDigestOf } from '../core/ledger.js';
 import type { AssetId } from '../core/assets.js';
@@ -947,6 +947,27 @@ export class MidnightLedger implements Ledger {
       (leaf) => movements.member(pureCircuits.paidMovementOf(fromHex(leaf))));
 
     return { known: true, paid };
+  }
+
+  /**
+   * **EVERY COMPLETED PAYMENT THE ACCOUNT HOLDS, READ WHOLE.**
+   *
+   * The other read above asks about the leaves somebody already holds; this
+   * one is for a payee who must not name theirs. The set is public contract
+   * state, so handing it over whole says nothing a chain does not, and the
+   * payee tests their own value against it on their own device.
+   *
+   * A state the chain does not return answers `null`. A set that does not
+   * decode refuses, for the reason `paidAmong` gives.
+   */
+  async paidMovementsOf(accountId: string): Promise<PaidMovements | null> {
+    const address = await this.addressOf(accountId);
+    if (!address) return null;
+    const { ledger: readLedger } = await import('../../contracts/managed/contract/index.js');
+    const providers = await this.providers();
+    const state = await providers.publicDataProvider.queryContractState(address as any);
+    if (!state) return null;
+    return { known: true, movements: paidMovementsIn(readLedger(state.data)) };
   }
 
   /**
@@ -2406,6 +2427,20 @@ export class UndecodedLedgerField extends Error {
     );
     this.name = 'UndecodedLedgerField';
   }
+}
+
+/**
+ * The account's completed payments, off its decoded public state, as hex.
+ * Separate so it can be held against the compiled contract's own state
+ * without a chain. A field that did not decode as a set refuses rather than
+ * reading as an empty one.
+ */
+export function paidMovementsIn(parsed: any): Hex[] {
+  const movements = parsed?.movements;
+  if (movements == null || typeof movements[Symbol.iterator] !== 'function') {
+    throw new UndecodedLedgerField('movements', 'set');
+  }
+  return [...(movements as Iterable<Uint8Array>)].map((m) => toHex(m).toLowerCase());
 }
 
 /**
