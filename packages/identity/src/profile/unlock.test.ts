@@ -764,6 +764,27 @@ describe('THE MESSAGE THAT CROSSES, AND THE READER ON THE OTHER SIDE', () => {
     expect(!stale.ok && stale.code).toBe('nonce-mismatch');
   });
 
+  it('CARRIES THE INDEXER THE WALLET READS THE CHAIN THROUGH WHEN IT IS GIVEN ONE, AND THE READER HANDS IT BACK', () => {
+    const indexer = { indexerUri: 'https://indexer.example/graphql', indexerWsUri: 'wss://indexer.example/graphql/ws' };
+    const released = releaseFor(identity, ask, NOW, indexer);
+    /* Public addresses, beside the key. RED WHEN they are dropped or renamed. */
+    expect(Object.keys(released).sort())
+      .toEqual(['at', 'company', 'indexer', 'key', 'nonce', 'origin', 'schema']);
+    const read = readRelease(released, expecting);
+    expect(read.ok && read.indexer).toEqual(indexer);
+    /* The key is the same key whether or not an indexer went with it. */
+    expect(read.ok && hex(read.key)).toBe(hex(independentUnlockKey(CO_A)));
+    /* A wallet that names none, or names something that is not two addresses, reads as none - and still releases. */
+    const none = readRelease(releaseFor(identity, ask, NOW), expecting);
+    expect(none.ok && none.indexer).toBeNull();
+    for (const said of [42, 'https://x', { indexerUri: 'https://x' }, { indexerUri: '', indexerWsUri: 'wss://x' },
+      { indexerUri: 'https://x', indexerWsUri: 'w'.repeat(513) }]) {
+      const odd = readRelease({ ...releaseFor(identity, ask, NOW), indexer: said }, expecting);
+      /* RED WHEN something that is not two addresses is handed on as an indexer. */
+      expect(odd.ok && odd.indexer, JSON.stringify(said)).toBeNull();
+    }
+  });
+
   it('refuses anything that is not a release, and any key that is not 32 bytes', () => {
     for (const junk of [null, undefined, 42, 'a string', {}, { schema: 'something/else' }]) {
       const read = readRelease(junk, expecting);

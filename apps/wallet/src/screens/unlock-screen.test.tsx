@@ -28,6 +28,7 @@ import { fromBase64Url, toBase64Url } from 'midnight-identity/passkey/bytes';
 import { unshieldedAddressFor } from '../chain/unshielded.js';
 import { rememberSignIn, walletSignedInTo } from '../lib/signed-in-here.js';
 import { Approve } from './approve.js';
+import { INDEXER_HTTP_URL, INDEXER_WS_URL } from '../config.js';
 
 /**
  * **THE SCREEN THAT GIVES SOMETHING AWAY RATHER THAN SAYING SOMETHING.**
@@ -690,6 +691,12 @@ describe('WHAT CROSSES BACK, AND WHICH KEY IT IS', () => {
       });
       expect(read.ok).toBe(true);
       expect(read.ok && hex(read.key)).toBe(keyFor(CO_A));
+      /*
+       * And where this wallet reads the chain, so the page can read its
+       * company's contract there itself. RED WHEN the release leaves it out or
+       * names an indexer this wallet does not read.
+       */
+      expect(read.ok && read.indexer).toEqual({ indexerUri: INDEXER_HTTP_URL, indexerWsUri: INDEXER_WS_URL });
     });
 
   it('A REQUEST CALLING ITSELF SOMEBODY ELSE STILL GETS THE KEY FOR WHAT IT NAMED',

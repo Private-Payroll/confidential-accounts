@@ -2,8 +2,8 @@ import React from 'react';
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { OpenedPayslip } from '../core/payslip-open.js';
-import type { Fetch } from './my-payslips.js';
-import { PayslipTable, wordsForSlips } from './YourPay.js';
+import type { ChainReader } from './payslip-worker-client.js';
+import { PAID_MEANS, PayslipTable, wordsForSlips } from './YourPay.js';
 
 /**
  * **WHAT THE EMPLOYEE READS IN THE ROW, NOT ONLY WHAT A FUNCTION RETURNS.**
@@ -17,17 +17,23 @@ const ACME = 'ab'.repeat(32);
 const ELSEWHERE = 'cd'.repeat(32);
 const value = (n: number) => n.toString(16).padStart(64, '0');
 
-const slip = (runId: string, period: string, company: string, movement: string): OpenedPayslip => ({
+const NOW = 1_800_000_000;
+const INDEXER = { indexerUri: 'https://indexer.example/graphql', indexerWsUri: 'wss://indexer.example/graphql/ws' };
+
+const slip = (runId: string, period: string, company: string, movement: string, until: number | null = NOW + 60): OpenedPayslip => ({
   runId, period, status: 'proposed', settledAt: null, wiring: 'chain', issuedBy: company,
   payslip: { employeeId: 'emp_1', name: 'Dana', asset: 'TESTUSD', amount: 5_000_000n, period },
-  receipt: { runId, leaf: value(9), movement, company },
+  receipt: { runId, leaf: value(9), movement, company, until },
 });
 
-const record: Fetch = async (url) => {
-  if (url === `/api/payslips/paid?company=${ACME}`) {
-    return new Response(JSON.stringify({ known: true, movements: [value(1), value(7)] }));
-  }
-  return new Response('{"error":"down"}', { status: 503 });
+/** This device's read: ACME's contract holds two payments; the other could not be read. */
+const asked: string[] = [];
+const record: ChainReader = {
+  recorded: async (_indexer, company, movements) => {
+    asked.push(company);
+    if (company !== ACME) return null;
+    return movements.map(m => m === value(1) || m === value(7));
+  },
 };
 
 /** The Paid and On the chain cells of one row, as text. */
@@ -39,30 +45,44 @@ const paidCells = (html: string, runId: string): [string, string] => {
 };
 
 describe('the payslips table says, row by row, whether each was paid', () => {
-  it('PAID, NOT YET AND CANNOT TELL, EACH IN ITS OWN ROW', async () => {
+  it('RECORDED AS PAID, NOT YET AND CANNOT TELL, EACH IN ITS OWN ROW', async () => {
     const slips = [
       slip('run_sep', '2026-09', ACME, value(7)),
       slip('run_aug', '2026-08', ACME, value(3)),
       slip('run_jul', '2026-07', ELSEWHERE, value(1)),
+      /* Its window closed with the payment not recorded. */
+      slip('run_jun', '2026-06', ACME, value(4), NOW - 60),
     ];
-    const html = renderToStaticMarkup(<PayslipTable slips={slips} words={await wordsForSlips(slips, record)} />);
+    const html = renderToStaticMarkup(<PayslipTable slips={slips} words={await wordsForSlips(slips, record, INDEXER, NOW)} />);
     /*
      * RED WHEN the page shows the run's own facts where the company's record
      * answered - every row then reads that the page cannot tell yet - or when
      * a record that could not be read is shown as not paid.
      */
-    expect(paidCells(html, 'run_sep')).toEqual(['Paid', 'Yes']);
+    expect(paidCells(html, 'run_sep')).toEqual(['Recorded as paid', 'Yes']);
     expect(paidCells(html, 'run_aug')).toEqual(['Not yet', 'Not yet']);
     expect(paidCells(html, 'run_jul')).toEqual(['Cannot tell', 'Not known']);
+    /* RED WHEN a payment whose window has closed reads "not yet" for good. */
+    expect(paidCells(html, 'run_jun')).toEqual(['Cannot tell', 'Not known']);
     expect(html).not.toContain('Sent for approval');
   });
 
+  it('THE SENTENCE UNDER THE TABLE IS THE ONE RULED, WORD FOR WORD', async () => {
+    const slips = [slip('run_sep', '2026-09', ACME, value(7))];
+    const html = renderToStaticMarkup(<PayslipTable slips={slips} words={await wordsForSlips(slips, record, INDEXER, NOW)} />);
+    /* RED WHEN one word of it changes. */
+    expect(PAID_MEANS).toBe('Paid means the company\'s account records your payment as made. '
+      + 'Check that the amount reached your wallet\'s private balance.');
+    /* RED WHEN it is not rendered, or not after the table. */
+    const escaped = PAID_MEANS.replace(/'/g, '&#x27;');
+    expect(html.indexOf(escaped)).toBeGreaterThan(html.indexOf('</table>'));
+  });
+
   it('A SLIP WITH NO RECEIPT SAYS WHAT ITS RUN RECORDS, AND ASKS NOTHING', async () => {
-    const asked: string[] = [];
-    const counting: Fetch = async (url, init) => { asked.push(url); return record(url, init); };
+    asked.length = 0;
     const draft: OpenedPayslip = { ...slip('run_oct', '2026-10', ACME, value(7)), status: 'draft', receipt: null };
     const html = renderToStaticMarkup(
-      <PayslipTable slips={[draft]} words={await wordsForSlips([draft], counting)} />);
+      <PayslipTable slips={[draft]} words={await wordsForSlips([draft], record, INDEXER, NOW)} />);
     expect(paidCells(html, 'run_oct')).toEqual(['Not sent for approval yet', 'No']);
     expect(asked).toEqual([]);
   });

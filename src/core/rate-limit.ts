@@ -121,9 +121,11 @@ export const DEFAULT_POLICY: Record<string, LimitPolicy> = {
   'invite-offer': { max: 30, windowSeconds: 15 * 60 },
   /**
    * **A PAYEE'S OWN PAYSLIPS, ASKED WITHOUT A SIGN-IN.** The page makes three
-   * requests per company address it knows - the addresses, the proof, the list -
-   * and one more per company its payments were raised at, for that company's
-   * completed payments. Sixty in a quarter of an hour is a person opening their
+   * requests per company address it knows - the addresses, the proof, the list.
+   * Whether each was paid it reads through the indexer the payee's wallet
+   * names, not from here. The endpoint for a company's completed payments
+   * shares this limit.
+   * Sixty in a quarter of an hour is a person opening their
    * payslips many times over, and bounds what one caller can make the service
    * read.
    */

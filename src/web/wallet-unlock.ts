@@ -1,5 +1,5 @@
 import { readKeyringRelease, readRelease } from 'midnight-identity/profile/unlock';
-import type { ReleaseFailure } from 'midnight-identity/profile/unlock';
+import type { ReleaseFailure, WalletIndexer } from 'midnight-identity/profile/unlock';
 import { toHex, randomBytes } from '../core/crypto.js';
 import {
   KEYRING_AND_COMPANY_PURPOSE, KEYRING_PURPOSE, UNLOCK_PURPOSE, UNLOCK_WINDOW_MS, keyringAsk, unlockAsk,
@@ -77,6 +77,17 @@ export interface UnlockAsked {
 export async function askWalletToUnlock(
   view: Openable, walletOrigin: string, ask: UnlockAsked, dialog?: WalletDialog,
 ): Promise<Uint8Array> {
+  return (await askWalletToUnlockAndWhereItReads(view, walletOrigin, ask, dialog)).key;
+}
+
+/**
+ * `askWalletToUnlock`, and the indexer the wallet said it reads the chain
+ * through, or `null` when it did not say. The indexer is public and is used
+ * to read a contract on this device; the key is used exactly as above.
+ */
+export async function askWalletToUnlockAndWhereItReads(
+  view: Openable, walletOrigin: string, ask: UnlockAsked, dialog?: WalletDialog,
+): Promise<{ key: Uint8Array; indexer: WalletIndexer | null }> {
   const now = ask.now ?? (() => Date.now());
   /* Sixteen random bytes. It ties one answer to one question and is not a
    * secret; it is generated here because nobody else is a party to it. */
@@ -105,7 +116,7 @@ export async function askWalletToUnlock(
     forCompany: ask.company,
   });
   if (!read.ok) throw new UnlockRefused(read.code, read.says);
-  return read.key;
+  return { key: read.key, indexer: read.indexer };
 }
 
 export interface KeyringAsked {

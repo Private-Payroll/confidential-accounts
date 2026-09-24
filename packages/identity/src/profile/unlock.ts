@@ -342,11 +342,28 @@ export interface UnlockRelease {
   readonly at: number;
   /** Base64url of 32 bytes. **Do not log this. Do not store it.** */
   readonly key: string;
+  /**
+   * **WHERE THIS WALLET READS THE CHAIN.** Public: two addresses, the same for
+   * every person using this wallet, and never a secret. A requester that wants
+   * to read a contract itself reads it through these, so the answer rests on
+   * the indexer this wallet already reads its own balance from, rather than
+   * on the requester's own service.
+   * Absent from a wallet that does not say.
+   */
+  readonly indexer?: WalletIndexer;
+}
+
+/** The two addresses a wallet reads the chain through. */
+export interface WalletIndexer {
+  /** The indexer's HTTP address, which answers a read. */
+  readonly indexerUri: string;
+  /** Its websocket address, which answers a subscription. */
+  readonly indexerWsUri: string;
 }
 
 /** The message a person's press produces. The only thing that builds one. */
 export function releaseFor(
-  identity: Identity, ask: UnlockRequest, at: number,
+  identity: Identity, ask: UnlockRequest, at: number, indexer?: WalletIndexer,
 ): UnlockRelease {
   return Object.freeze({
     schema: RELEASE_SCHEMA,
@@ -355,8 +372,27 @@ export function releaseFor(
     nonce: ask.nonce,
     at,
     key: toBase64Url(unlockKeyFor(identity, ask)),
+    ...(indexer === undefined
+      ? {}
+      : { indexer: Object.freeze({ indexerUri: indexer.indexerUri, indexerWsUri: indexer.indexerWsUri }) }),
   });
 }
+
+/** The longest indexer address read back. A URL, not a document. */
+const MAX_INDEXER_ADDRESS = 512;
+
+/**
+ * **THE WALLET'S INDEXER, IF IT NAMED ONE AND IT READS AS TWO ADDRESSES.**
+ * Anything else answers `null`: a release is still a good release without
+ * it, and the requester then reads nothing rather than reading from a guess.
+ */
+const indexerOf = (said: unknown): WalletIndexer | null => {
+  if (typeof said !== 'object' || said === null) return null;
+  const { indexerUri, indexerWsUri } = said as Record<string, unknown>;
+  const usable = (v: unknown): v is string =>
+    typeof v === 'string' && v.length > 0 && v.length <= MAX_INDEXER_ADDRESS;
+  return usable(indexerUri) && usable(indexerWsUri) ? { indexerUri, indexerWsUri } : null;
+};
 
 /* ------------------------- reading one, over there ------------------------ */
 
@@ -368,7 +404,11 @@ export type ReleaseFailure =
   | 'unusable-key';
 
 export type ReleaseRead =
-  | { readonly ok: true; readonly key: Uint8Array; readonly at: number }
+  | {
+    readonly ok: true; readonly key: Uint8Array; readonly at: number;
+    /** Where the wallet reads the chain, or `null` when it did not say. */
+    readonly indexer: WalletIndexer | null;
+  }
   | { readonly ok: false; readonly code: ReleaseFailure; readonly says: string };
 
 /**
@@ -438,7 +478,7 @@ export function readRelease(
   if (typeof body.at !== 'number' || !Number.isSafeInteger(body.at)) {
     return { ok: false, code: 'not-a-release', says: 'that is not a released key.' };
   }
-  return { ok: true, key, at: body.at };
+  return { ok: true, key, at: body.at, indexer: indexerOf(body.indexer) };
 }
 
 /* ============================ the keyring key ============================ */

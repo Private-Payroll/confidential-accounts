@@ -228,6 +228,8 @@ export interface RetryMaterial {
    */
   readonly identity: RunIdentity;
   readonly rootOf: (leaves: Hex[]) => Hex;
+  /** The contract's own `paidMovementOf`; `RunMaterial.movementOf` says why it is carried. */
+  readonly movementOf: (leaf: Hex) => Hex;
 }
 
 /**
@@ -281,5 +283,6 @@ export const retryMaterialFor = async (args: {
     originalIndices: retry.originalIndices,
     identity: retry.identity,
     rootOf: rootOfLeaves,
+    movementOf: paidMovementOfLeaf,
   } as RetryMaterial;
 };

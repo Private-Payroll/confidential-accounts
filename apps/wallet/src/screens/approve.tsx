@@ -27,7 +27,7 @@ import { sealToInbox } from 'midnight-identity/profile/inbox';
  * screen is about to disclose, for the person to carry back to the page that
  * asked. The same file, the same width, the same argument. */
 import { addressFingerprint, companyFingerprint } from 'midnight-identity/profile/fingerprint';
-import { EMBEDDER } from '../config.js';
+import { EMBEDDER, INDEXER_HTTP_URL, INDEXER_WS_URL } from '../config.js';
 import { useConsent } from '../framing.js';
 import { ApproveBalance } from './approve-balance.js';
 import type { Consent } from '../framing.js';
@@ -656,8 +656,12 @@ export function Approve({
     const at = now();
     /* The origin is read off the PARSED ask, which the parser put there from
      * `MessageEvent.origin`. `releaseFor` takes the ask rather than a string,
-     * so there is no argument here an attacker-supplied origin could reach. */
-    channel.answer(releaseFor(identity, request, at));
+     * so there is no argument here an attacker-supplied origin could reach.
+     * The indexer this wallet reads the chain through goes with it: two public
+     * addresses, so the page can read its company's contract where this wallet
+     * reads its own balance, rather than through the page's own service. */
+    channel.answer(releaseFor(identity, request, at,
+      { indexerUri: INDEXER_HTTP_URL, indexerWsUri: INDEXER_WS_URL }));
 
     /* WHAT IS WRITTEN DOWN: that a key went, to whom, and when. **The key is
      * not in this call and there is no field on `Release` to put it in.** */

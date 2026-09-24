@@ -18,21 +18,33 @@ import { vaultDetails } from '../testing/vault-details.js';
 import { payeeFor } from '../testing/payees.js';
 import { registryWithTestPrivateForms, aVaultHolding } from '../testing/assets.js';
 import { fetchMyPayslips, paymentsOnTheChain, type Fetch } from '../web/my-payslips.js';
+import type { ChainReader } from '../web/payslip-worker-client.js';
 import { paidWords } from '../web/YourPay.js';
 import type { User } from './types.js';
 
 /**
- * **EACH PAYSLIP SAYS WHETHER IT WAS PAID - "PAID", "NOT YET" OR "CANNOT TELL" -
- * AND ONLY ITS PAYEE CAN ASK.**
+ * **EACH PAYSLIP SAYS WHETHER IT WAS PAID - "RECORDED AS PAID", "NOT YET" OR
+ * "CANNOT TELL" - FROM WHAT THE PAYEE'S OWN DEVICE READ, AND ONLY ITS PAYEE CAN
+ * ASK.**
  *
  * Every payee below is hired through the real invitation, with a key their own
  * wallet's words work out for the company's address, and every run is raised
  * with material built by the real tree builder. The service is the product's
  * own `PayrollService`, reached through a stand-in for the wire that records
- * every request the page makes.
+ * every request the page makes. The device's own read of the contract is a
+ * stand-in answering from a list of completed payments per company address:
+ * the worker that really reads it is held against the compiled contract in
+ * `contracts/test/a-retried-payment-reads-paid.test.ts`.
  */
 
 const ORIGIN = 'https://payroll.example';
+/** Inside every window these runs are raised with. */
+const NOW = 1_800_000_000;
+const CLOSES = 1_800_086_400;
+const INDEXER = {
+  indexerUri: 'https://indexer.example/api/v4/graphql',
+  indexerWsUri: 'wss://indexer.example/api/v4/graphql/ws',
+};
 const VAULT = toHex(new Uint8Array(32).fill(0xa1));
 
 const harness = () => {
@@ -94,20 +106,38 @@ const raiseLeg = async (h: H, c: C, runId: string, asset?: 'GBP' | 'EUR'): Promi
   const inputs = await h.payroll.runMaterialInputs(runId, c.viewingKey, asset);
   const material = await runMaterialFor({
     accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds, facts: inputs.facts,
-    opensAt: 1_800_000_000n, closesAt: 1_800_086_400n, vault: VAULT, detailsOf: vaultDetails,
+    opensAt: BigInt(NOW), closesAt: BigInt(CLOSES), vault: VAULT, detailsOf: vaultDetails,
   });
   await h.payroll.proposeRun(runId, c.viewingKey, c.by, material, asset);
   return material;
 };
 
+/** What the device read at one company address: its completed payments, or `null` when it could not read. */
+type Record = (company: string) => Hex[] | null;
+
 /**
  * The wire, as the page meets it. Payslips come from the service's own
- * `payslipsFor`, behind the same proof the route asks for; the completed
- * payments come from `paid`. Every request is kept.
+ * `payslipsFor`, behind the same proof the route asks for. **The service's own
+ * list of completed payments answers `serviceSays`**, which a test sets to a
+ * payment the contract does not hold, so a page that asked it and believed it
+ * would show that slip paid. The device's own read answers from `paid`. Every
+ * request, and every read, is kept.
  */
-const wire = (h: H, paid: (url: string) => Promise<Response> | Response, opts: { ignoreFrom?: boolean } = {}) => {
+type Wired = Fetch & { reader: ChainReader; reads: Array<{ company: string; movements: Hex[] }> };
+const wire = (h: H, paid: Record, opts: { ignoreFrom?: boolean; serviceSays?: Hex[] } = {}) => {
   const seen: Array<{ url: string; body: string; init: RequestInit | undefined }> = [];
   let live: { publicKey: string; value: string } | null = null;
+  const reads: Wired['reads'] = [];
+  const reader: ChainReader = {
+    recorded: async (indexer, company, movements) => {
+      expect(indexer).toEqual(INDEXER);
+      reads.push({ company, movements });
+      const list = paid(company);
+      if (list === null) return null;
+      const held = new Set(list.map(m => m.toLowerCase()));
+      return movements.map(m => held.has(m.toLowerCase()));
+    },
+  };
   const fetcher: Fetch = async (url, init) => {
     const body = init?.body ? String(init.body) : '';
     seen.push({ url, body, init });
@@ -123,23 +153,26 @@ const wire = (h: H, paid: (url: string) => Promise<Response> | Response, opts: {
       return new Response(JSON.stringify(
         opts.ignoreFrom ? h.payroll.payslipsFor(b.publicKey) : h.payroll.payslipsFor(b.publicKey, b.from)));
     }
-    if (url.startsWith('/api/payslips/paid?')) return paid(url);
+    if (url.startsWith('/api/payslips/paid?')) {
+      /* The service's word. RED WHEN the page believes it. */
+      return new Response(JSON.stringify({ known: true, movements: opts.serviceSays ?? [] }));
+    }
     return new Response('{}', { status: 404 });
   };
-  return { fetcher, seen };
+  return { fetcher: Object.assign(fetcher, { reader, reads }) as Wired, seen, reads };
 };
 
-const listOf = (movements: Hex[]) => () => new Response(JSON.stringify({ known: true, movements }));
+const listOf = (movements: Hex[]): Record => () => movements;
 
-/** What the page shows for each of this person's slips, by period. */
-const shown = async (fetcher: Fetch, keys: { secret: Hex; publicKey: Hex }, from: string) => {
+/** What the page shows for each of this person's slips, by period, read at `now`. */
+const shown = async (fetcher: Wired, keys: { secret: Hex; publicKey: Hex }, from: string, now = NOW) => {
   const mine = await fetchMyPayslips(keys, from, fetcher);
-  const chain = await paymentsOnTheChain(mine.opened, fetcher);
+  const chain = await paymentsOnTheChain(mine.opened, fetcher.reader, INDEXER, now);
   return Object.fromEntries(mine.opened.map(s => [s.period, chain.get(s.runId)]));
 };
 
 describe('each payslip says whether it was paid, from the chain', () => {
-  it('A PAID PAYSLIP READS "PAID", AN UNPAID ONE "NOT YET"', async () => {
+  it('A PAID PAYSLIP READS "RECORDED AS PAID", AN UNPAID ONE "NOT YET" - WHATEVER THE SERVICE SAYS', async () => {
     const h = harness();
     const c = await company(h);
     const dana = hire(h, c, 'Dana');
@@ -147,19 +180,25 @@ describe('each payslip says whether it was paid, from the chain', () => {
     const { material } = await raise(h, c, '2026-08');
     /* Dana is first on the leg and Eli second, which is the order the leaves are in. */
     const paidDana = paidMovementOfLeaf(material.leaves[0]!);
-    const { fetcher } = wire(h, listOf([toHex(randomBytes(32)), paidDana.toUpperCase()]));
+    const { fetcher } = wire(h, listOf([toHex(randomBytes(32)), paidDana.toUpperCase()]),
+      { serviceSays: [paidDana, paidMovementOfLeaf(material.leaves[1]!)] });
     /*
      * RED WHEN the receipt is sealed with another person's leaf, or the page
      * looks for something other than its own recorded value: Dana then reads
      * "not yet" and Eli "paid".
      */
     expect(await shown(fetcher, dana.keys, c.address)).toEqual({ '2026-08': 'paid' });
+    /*
+     * RED WHEN the page takes the service's list of completed payments, which
+     * says Eli was paid: Eli then reads "paid" for a payment the contract does
+     * not hold.
+     */
     expect(await shown(fetcher, eli.keys, c.address)).toEqual({ '2026-08': 'not-yet' });
     /* A rehearsal moved no money, whatever a list says. RED WHEN the chain's word overrides it. */
     expect(paidWords({ status: 'settled', settledAt: null, wiring: 'simulated' }, 'paid').paid)
       .toBe('No: a rehearsal, nothing was sent');
     expect(paidWords({ status: 'proposed', settledAt: null, wiring: 'chain' }, 'paid'))
-      .toEqual({ paid: 'Paid', onChain: 'Yes' });
+      .toEqual({ paid: 'Recorded as paid', onChain: 'Yes' });
     expect(paidWords({ status: 'proposed', settledAt: null, wiring: 'chain' }, 'not-yet'))
       .toEqual({ paid: 'Not yet', onChain: 'Not yet' });
   });
@@ -169,19 +208,30 @@ describe('each payslip says whether it was paid, from the chain', () => {
     const c = await company(h);
     const dana = hire(h, c, 'Dana');
     await raise(h, c, '2026-08');
-    const unreadable: Array<[string, () => Response | Promise<Response>]> = [
-      ['the ledger cannot say', () => new Response(JSON.stringify({ known: false, movements: [] }))],
-      ['the service failed', () => new Response('{"error":"down"}', { status: 503 })],
-      ['the network failed', () => { throw new TypeError('failed to fetch'); }],
-      ['the answer is not a list', () => new Response(JSON.stringify({ known: true, movements: 'none' }))],
-      ['an entry is not a value', () => new Response(JSON.stringify({ known: true, movements: [42] }))],
-      ['the body is not JSON', () => new Response('<html>')],
+    const unreadable: Array<[string, Record]> = [
+      ['the contract could not be read', () => null],
+      ['the reader failed', () => { throw new TypeError('failed to fetch'); }],
     ];
     for (const [why, answer] of unreadable) {
       const { fetcher } = wire(h, answer);
       /* RED WHEN any of these is read as an empty list of completed payments. */
       expect(await shown(fetcher, dana.keys, c.address), why).toEqual({ '2026-08': 'cannot-tell' });
     }
+    /* A reader that answers for a different number of payments than it was asked about. */
+    const { fetcher } = wire(h, listOf([]));
+    const short: ChainReader = { recorded: async () => [] };
+    const mine = await fetchMyPayslips(dana.keys, c.address, fetcher);
+    expect((await paymentsOnTheChain(mine.opened, short, INDEXER, NOW)).get(mine.opened[0]!.runId))
+      .toBe('cannot-tell');
+    /*
+     * RED WHEN a wallet that named no indexer, or a page with no reader, reads
+     * as not paid: there was then nothing read at all.
+     */
+    expect((await paymentsOnTheChain(mine.opened, fetcher.reader, null, NOW)).get(mine.opened[0]!.runId))
+      .toBe('cannot-tell');
+    expect((await paymentsOnTheChain(mine.opened, null, INDEXER, NOW)).get(mine.opened[0]!.runId))
+      .toBe('cannot-tell');
+    expect(fetcher.reads).toEqual([]);
     /* RED WHEN "cannot tell" is put on the screen in the words for "not yet". */
     expect(paidWords({ status: 'proposed', settledAt: null, wiring: 'chain' }, 'cannot-tell'))
       .toEqual({ paid: 'Cannot tell', onChain: 'Not known' });
@@ -197,7 +247,8 @@ describe('each payslip says whether it was paid, from the chain', () => {
     /* The run was raised while the company had no address to read the record at. */
     const noAddress = { ...slip!, receipt: { ...slip!.receipt!, company: null } };
     /* RED WHEN a receipt with nowhere to ask reads as not paid. */
-    expect((await paymentsOnTheChain([noAddress], fetcher)).get(slip!.runId)).toBe('cannot-tell');
+    expect((await paymentsOnTheChain([noAddress], fetcher.reader, INDEXER, NOW)).get(slip!.runId)).toBe('cannot-tell');
+    expect(fetcher.reads).toEqual([]);
     expect(seen.some(r => r.url.startsWith('/api/payslips/paid'))).toBe(false);
   });
 
@@ -246,14 +297,17 @@ describe('each payslip says whether it was paid, from the chain', () => {
      */
     expect(receiptOf(ben).company).toBe(c.address);
     expect(receiptOf(cat).company).toBe(moved);
-    /* The service answers only for a company's address now, as its route does. */
-    const route = (url: string) => {
-      const asked = new URL(url, 'https://x').searchParams.get('company')!;
-      return new Response(JSON.stringify(h.payroll.accountAtCompanyAddress(asked) === null
-        ? { known: false, movements: [] } : { known: true, movements: [] }));
-    };
-    expect((await shown(wire(h, route).fetcher, ben.keys, c.address))['2026-08']).toBe('cannot-tell');
-    expect((await shown(wire(h, route).fetcher, cat.keys, c.address))['2026-08']).toBe('not-yet');
+    /*
+     * The device reads each contract at the address its receipt names, and a
+     * contract a company moved away from is still on the chain to be read.
+     */
+    const both: Record = (at) => (at === c.address || at === moved ? [] : null);
+    const forBen = wire(h, both).fetcher;
+    const forCat = wire(h, both).fetcher;
+    expect((await shown(forBen, ben.keys, c.address))['2026-08']).toBe('not-yet');
+    expect((await shown(forCat, cat.keys, c.address))['2026-08']).toBe('not-yet');
+    expect(forBen.reads.map(r => r.company)).toEqual([c.address]);
+    expect(forCat.reads.map(r => r.company)).toEqual([moved]);
   });
 
   it('A RECEIPT ANSWERS ONLY FOR THE SLIP IT WAS SEALED WITH', async () => {
@@ -284,7 +338,8 @@ describe('each payslip says whether it was paid, from the chain', () => {
     /* RED WHEN a draft goes out with no receipt, which tells the store its leg is not raised. */
     expect(mine.sealed[0]!.receipt).not.toBeNull();
     expect(mine.opened[0]!.receipt).toBeNull();
-    expect((await paymentsOnTheChain(mine.opened, fetcher)).size).toBe(0);
+    expect((await paymentsOnTheChain(mine.opened, fetcher.reader, INDEXER, NOW)).size).toBe(0);
+    expect(fetcher.reads).toEqual([]);
     expect(seen.some(r => r.url.startsWith('/api/payslips/paid'))).toBe(false);
   });
 });
@@ -309,9 +364,13 @@ describe('nothing the page sends names which payment it opened', () => {
       for (const s of secretsOf) expect(said, r.url).not.toContain(s.toLowerCase());
       expect(said).not.toContain(dana.keys.secret.toLowerCase());
     }
-    /* What it does ask for the payments is the company's whole list, by the company's address. */
-    expect(seen.filter(r => r.url.startsWith('/api/payslips/paid')).map(r => r.url))
-      .toEqual([`/api/payslips/paid?company=${c.address}`]);
+    /*
+     * RED WHEN the page asks the service whether anything was paid. What it
+     * reads is the contract, on this device, by the company's address; the
+     * values it looks for stay on the device.
+     */
+    expect(seen.filter(r => r.url.startsWith('/api/payslips/paid'))).toEqual([]);
+    expect(fetcher.reads.map(r => r.company)).toEqual([c.address]);
     /* And the receipt reaches the service only as ciphertext. */
     const stored = JSON.stringify(h.store.snapshot().runs);
     for (const s of secretsOf) expect(stored).not.toContain(s.toLowerCase());
@@ -472,5 +531,149 @@ describe('the payslip lookups read what they answer and not every record', () =>
     const again = new FileStore((h.store as any).path);
     expect(again.runsWithPayslipsSealedTo(dana.keys.publicKey)).toHaveLength(1);
     expect(again.accountsAtPayslipAddress(moved)).toEqual([c.accountId]);
+  });
+});
+
+describe('a payment that can no longer be made does not say "not yet"', () => {
+  it('PAST THE END OF ITS WINDOW, AN UNRECORDED PAYMENT READS "CANNOT TELL"', async () => {
+    const h = harness();
+    const c = await company(h);
+    const dana = hire(h, c, 'Dana');
+    await raise(h, c, '2026-08');
+    const { fetcher } = wire(h, listOf([]));
+    const [slip] = (await fetchMyPayslips(dana.keys, c.address, fetcher)).opened;
+    /* The receipt carries the end of the window it can be paid in, sealed with it. */
+    expect(slip!.receipt!.until).toBe(CLOSES);
+    expect(await shown(fetcher, dana.keys, c.address, CLOSES - 1)).toEqual({ '2026-08': 'not-yet' });
+    /*
+     * RED WHEN a payment nothing can still make reads "not yet" for good: the
+     * window has closed and no retry names Dana.
+     */
+    expect(await shown(fetcher, dana.keys, c.address, CLOSES)).toEqual({ '2026-08': 'cannot-tell' });
+    /* A receipt that does not say when its window ends is never "not yet" either. */
+    const noWindow = { ...slip!, receipt: { ...slip!.receipt!, until: null } };
+    expect((await paymentsOnTheChain([noWindow], fetcher.reader, INDEXER, NOW)).get(slip!.runId))
+      .toBe('cannot-tell');
+  });
+});
+
+describe('what a payslip names cannot be changed by whoever holds the store', () => {
+  it('A COMPANY ADDRESS SWAPPED BESIDE THE SEAL IS REFUSED BY THE PAGE, NOT SHOWN', async () => {
+    const h = harness();
+    const acme = await company(h, 'Acme');
+    const dana = hire(h, acme, 'Dana');
+    await h.payroll.createRunFromRoster(acme.accountId, '2026-08', acme.viewingKey);
+    const [real] = h.payroll.payslipsFor(dana.keys.publicKey, acme.address);
+    expect(openPayslip(real!, dana.keys.secret).issuedBy).toBe(acme.address);
+    /*
+     * The slip was sealed naming Acme; the store relabels it as another
+     * company's. RED WHEN the page believes the label beside the seal: it
+     * shows the slip as the other company's.
+     */
+    const other = 'ef'.repeat(32);
+    const relabelled = { ...real!, issuedBy: other };
+    expect(openPayslip(relabelled, dana.keys.secret).issuedBy).toBe(acme.address);
+    /* A service that relabels every slip it sends as the other company's. */
+    const w = wire(h, listOf([])).fetcher;
+    const liar: Fetch = async (url, init) => {
+      if (url !== '/api/payslips') return w(url, init);
+      const body = JSON.parse(String(init!.body));
+      const answered = await w(url, { ...init, body: JSON.stringify({ ...body, from: acme.address }) });
+      return new Response(JSON.stringify((await answered.json()).map((p: typeof real) => ({ ...p, issuedBy: other }))));
+    };
+    /* Asked for the other company's slips, the page refuses Acme's slip relabelled as one. */
+    const mine = await fetchMyPayslips(dana.keys, other, liar);
+    expect(mine.opened).toEqual([]);
+    expect(mine.refused).toBe(1);
+  });
+
+  it('A RECEIPT FROM A COMPANY WITH NO ADDRESS IS THE SAME LENGTH AS ONE FROM A COMPANY WITH ONE', async () => {
+    const h = harness();
+    const c = await company(h);
+    const dana = hire(h, c, 'Dana');
+    const a = await h.payroll.createRunFromRoster(c.accountId, '2026-08', c.viewingKey);
+    /* The same company, for a while with no address to read a record at. */
+    h.store.putAccount({ ...h.accounts.require(c.accountId), contractAddress: 'none yet' });
+    const b = await h.payroll.createRunFromRoster(c.accountId, '2026-09', c.viewingKey);
+    const lengthOf = (runId: string) => h.store.getRun(runId)!.payslips.map(p => JSON.stringify(p.receipt).length);
+    /*
+     * RED WHEN a receipt naming no company is written shorter: the store could
+     * then tell which receipts point at no record.
+     */
+    expect(lengthOf(b.run.id)).toEqual(lengthOf(a.run.id));
+    /*
+     * Raised there, the receipt is still that length, and it opens to a
+     * receipt naming no company - which asks nothing and says it cannot tell.
+     * RED WHEN what stands in for no company is read as a company's address.
+     */
+    await raiseLeg(h, c, b.run.id);
+    expect(lengthOf(b.run.id)).toEqual(lengthOf(a.run.id));
+    const { fetcher } = wire(h, listOf([]));
+    const sep = h.payroll.payslipsFor(dana.keys.publicKey, c.address).find(p => p.runId === b.run.id)!;
+    const opened = openPayslip(sep, dana.keys.secret);
+    expect(opened.receipt).not.toBeNull();
+    expect(opened.receipt!.company).toBeNull();
+    expect((await paymentsOnTheChain([opened], fetcher.reader, INDEXER, NOW)).get(b.run.id)).toBe('cannot-tell');
+    expect(fetcher.reads).toEqual([]);
+  });
+});
+
+describe('a leg is raised only with its payments in its people\'s order', () => {
+  it('MATERIAL WHOSE PAYMENTS ARE IN ANOTHER ORDER IS REFUSED, AND NOTHING IS WRITTEN', async () => {
+    const h = harness();
+    const c = await company(h);
+    hire(h, c, 'Dana');
+    hire(h, c, 'Eli');
+    const { run } = await h.payroll.createRunFromRoster(c.accountId, '2026-08', c.viewingKey);
+    const inputs = await h.payroll.runMaterialInputs(run.id, c.viewingKey);
+    const reversed = await runMaterialFor({
+      accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds, facts: [...inputs.facts].reverse(),
+      opensAt: BigInt(NOW), closesAt: BigInt(CLOSES), vault: VAULT, detailsOf: vaultDetails,
+    });
+    const before = JSON.stringify(h.store.getRun(run.id));
+    /*
+     * RED WHEN the raise checks only how many payments there are: Dana's
+     * receipt would then carry Eli's payment and Eli's Dana's.
+     */
+    await expect(h.payroll.proposeRun(run.id, c.viewingKey, c.by, reversed))
+      .rejects.toThrow(/position 1 is not Dana's/);
+    expect(JSON.stringify(h.store.getRun(run.id))).toBe(before);
+    /* The same payments in the run's own order are raised. */
+    await raiseLeg(h, c, run.id);
+  });
+});
+
+describe('the payslip index follows a rotation written after it was built', () => {
+  it('A ROTATION THAT MOVES A SLIP\'S KEY AND THE COMPANY\'S ADDRESS IS FOLLOWED BY BOTH LOOKUPS', async () => {
+    const h = harness();
+    const c = await company(h);
+    const dana = hire(h, c, 'Dana');
+    const { run } = await h.payroll.createRunFromRoster(c.accountId, '2026-08', c.viewingKey);
+    /* The index is built. */
+    expect(h.payroll.payslipsFor(dana.keys.publicKey)).toHaveLength(1);
+    expect(h.payroll.payslipAddressesOf(c.address)).toEqual([c.address]);
+
+    /* A real rotation of the company's key, which leaves every slip where it was. */
+    await h.accounts.rotate(c.accountId, c.viewingKey);
+    expect(h.payroll.payslipsFor(dana.keys.publicKey)).toHaveLength(1);
+
+    /* A rotation that writes the slip to another key and the company at another address. */
+    const renewed = payslipKeypairForWallet(newWords(), c.address, ORIGIN);
+    const moved = 'cd'.repeat(32);
+    const stored = h.store.getRun(run.id)!;
+    h.store.commitRotation({
+      account: { ...h.accounts.require(c.accountId), contractAddress: moved },
+      employees: [],
+      runs: [{ ...stored, payslips: stored.payslips.map(p => ({ ...p, sealedTo: renewed.publicKey })) }],
+      proposals: [],
+    });
+    /*
+     * RED WHEN the rotation's writes are not applied to the index: the old key
+     * goes on finding the slip, and the company's address now is not known.
+     */
+    expect(h.payroll.payslipsFor(dana.keys.publicKey)).toEqual([]);
+    expect(h.payroll.payslipsFor(renewed.publicKey)).toHaveLength(1);
+    expect(h.payroll.accountAtCompanyAddress(moved)).toBe(c.accountId);
+    expect(h.payroll.payslipAddressesOf(moved).sort()).toEqual([c.address, moved].sort());
   });
 });

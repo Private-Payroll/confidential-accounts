@@ -4,6 +4,8 @@ import {
   type SealedPayslip, type OpenedPayslip,
 } from '../core/payslip-open.js';
 import type { WrappingKeypair } from '../core/crypto.js';
+import type { WalletIndexer } from 'midnight-identity/profile/unlock';
+import type { ChainReader } from './payslip-worker-client.js';
 
 /**
  * **A PAYEE'S OWN PAYSLIPS, FETCHED AS CIPHERTEXT AND OPENED ON THIS DEVICE.**
@@ -87,64 +89,69 @@ export async function fetchMyPayslips(
 }
 
 /* ------------------------------------------------------------------ */
-/* whether each payslip was paid, from the company's public record      */
+/* whether each payslip was paid, from what the wallet's indexer reports */
 /* ------------------------------------------------------------------ */
 
 /**
- * **WHAT THE COMPANY'S RECORD SAYS ABOUT ONE PAYSLIP.** `'paid'` only when the
- * company's public record of completed payments, as the service relays it,
- * was read and holds this payment; `'not-yet'` only when it was read and does
- * not; `'cannot-tell'` whenever it was not read, whatever the reason. Nothing
- * that failed is ever reported as not paid. The list is the service's report
- * of the chain, and nothing on this device checks it against the chain.
+ * **WHAT THE COMPANY'S ACCOUNT RECORDS ABOUT ONE PAYSLIP, AS THIS DEVICE READ
+ * IT.** The state read is the one the indexer the payee's wallet names reports
+ * for the contract; nothing on this device checks it against the chain beyond
+ * that. And the receipt is written by the service, so which contract is read
+ * and which value is looked for come from it. `'paid'` only when the account's
+ * public set of completed payments was
+ * read and holds this payment; `'not-yet'` only when it was read, does not
+ * hold it, and the window this payment can still be made in has not closed;
+ * `'cannot-tell'` whenever it was not read, whatever the reason, and when the
+ * window has closed or was never known. Nothing that failed is ever reported
+ * as not paid, and nothing here asks this application's service.
  */
 export type OnTheChain = 'paid' | 'not-yet' | 'cannot-tell';
 
-const HEX32 = /^[0-9a-f]{64}$/u;
-
-/** One company's completed payments as the service relayed them, or `null` when they could not be read. */
-async function completedPaymentsAt(company: string, fetcher: Fetch): Promise<Set<string> | null> {
-  try {
-    const r = await fetcher(
-      `/api/payslips/paid?company=${encodeURIComponent(company)}`, { credentials: 'omit' });
-    if (!r.ok) return null;
-    const body = await r.json();
-    if (body?.known !== true || !Array.isArray(body.movements)) return null;
-    const out = new Set<string>();
-    for (const m of body.movements) {
-      if (typeof m !== 'string' || !HEX32.test(m.toLowerCase())) return null;
-      out.add(m.toLowerCase());
-    }
-    return out;
-  } catch {
-    return null;
-  }
-}
-
 /**
  * **ASKS, FOR EACH SLIP THAT CARRIES A RECEIPT, WHETHER ITS PAYMENT IS IN THE
- * COMPANY'S RECORD OF COMPLETED PAYMENTS - WITHOUT SAYING WHICH PAYMENT.**
+ * COMPANY'S RECORD OF COMPLETED PAYMENTS - READ BY THIS DEVICE, NOT ASKED OF
+ * THIS APPLICATION'S SERVICE.**
  *
  * Each receipt was opened on this device and holds the value the company's
- * account records when this person's payment is made. What is asked for is the
- * company's whole list of completed payments, by company address, and the
- * value is looked for in it here. So no request names a leaf, a payment or a
- * person, and one list answers every slip from that company.
+ * account records when this person's payment is made. The reader is this
+ * page's own worker, reading the company's contract through the indexer the
+ * payee's wallet named; it asks the indexer for the contract by its address
+ * and tests the values here; the indexer does learn that this device asked
+ * about that company. With no indexer, or no reader, every slip that
+ * carries a receipt says that it cannot tell.
  *
  * A slip with no receipt is not in the answer: nothing can be asked for it.
+ *
+ * @param nowSeconds this device's clock, in seconds, compared against the end
+ *   of each payment's window. Approximate, and only ever used to stop saying
+ *   "not yet".
  */
 export async function paymentsOnTheChain(
-  slips: OpenedPayslip[], fetcher: Fetch = fetch,
+  slips: OpenedPayslip[], reader: ChainReader | null, indexer: WalletIndexer | null,
+  nowSeconds: number = Math.floor(Date.now() / 1000),
 ): Promise<Map<string, OnTheChain>> {
-  const lists = new Map<string, Promise<Set<string> | null>>();
   const out = new Map<string, OnTheChain>();
+  const byCompany = new Map<string, OpenedPayslip[]>();
   for (const s of slips) {
     if (!s.receipt) continue;
     const company = s.receipt.company;
-    if (company === null) { out.set(s.runId, 'cannot-tell'); continue; }
-    if (!lists.has(company)) lists.set(company, completedPaymentsAt(company, fetcher));
-    const list = await lists.get(company)!;
-    out.set(s.runId, list === null ? 'cannot-tell' : list.has(s.receipt.movement) ? 'paid' : 'not-yet');
+    if (company === null || reader === null || indexer === null) { out.set(s.runId, 'cannot-tell'); continue; }
+    byCompany.set(company, [...(byCompany.get(company) ?? []), s]);
+  }
+  for (const [company, mine] of byCompany) {
+    let recorded: boolean[] | null;
+    try {
+      recorded = await reader!.recorded(indexer!, company, mine.map(s => s.receipt!.movement));
+    } catch {
+      recorded = null;
+    }
+    mine.forEach((s, i) => {
+      const r = recorded?.[i];
+      if (recorded === null || typeof r !== 'boolean') { out.set(s.runId, 'cannot-tell'); return; }
+      if (r) { out.set(s.runId, 'paid'); return; }
+      const until = s.receipt!.until;
+      out.set(s.runId, until !== null && nowSeconds < until ? 'not-yet' : 'cannot-tell');
+    });
   }
   return out;
 }

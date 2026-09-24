@@ -12,7 +12,7 @@ import { newWords } from 'midnight-identity';
  * sides of the comparison cannot drift apart. */
 import { addressFingerprint, FingerprintError } from 'midnight-identity/profile/fingerprint';
 import { payslipKeypairForWallet } from './payslip-key.js';
-import { NO_LEAF, type SealedPayslip } from './payslip-open.js';
+import { NO_COMPANY, NO_LEAF, untilText, type SealedPayslip } from './payslip-open.js';
 
 /**
  * **THE ORIGIN THE SEED'S STAND-IN WALLET IS ASKED AT, AND IT IS NOT AN
@@ -324,17 +324,22 @@ type RunSecrets = Pick<PayrollRun, 'employees' | 'totals' | 'proposalIds' | 'pay
 /**
  * One receipt, sealed under a fresh key wrapped to the payee's public key.
  * `paid` absent writes the stand-in: the same fields at the same lengths, so a
- * slip whose leg has not been raised is not told apart from one whose has.
+ * slip whose leg has not been raised is not told apart from one whose has. A
+ * leg raised at a company with no address, and a window not known, are
+ * written at the same lengths as the values they stand in for, for the same
+ * reason.
  */
 function sealReceipt(
-  runId: string, publicKey: Hex, company: string | null, paid: { leaf: Hex; movement: Hex } | null,
+  runId: string, publicKey: Hex, company: string | null,
+  paid: { leaf: Hex; movement: Hex; until: bigint | null } | null,
 ): NonNullable<PayrollRun['payslips'][number]['receipt']> {
   const key = newSymmetricKey();
   const sealed = seal(canonical({
     runId,
     leaf: paid ? paid.leaf.toLowerCase() : NO_LEAF,
     movement: paid ? paid.movement.toLowerCase() : NO_LEAF,
-    company,
+    company: company === null ? NO_COMPANY : company.toLowerCase(),
+    until: untilText(paid ? paid.until : null),
   }), key);
   return { wrapped: wrapKey(key, publicKey), sealed };
 }
@@ -2527,21 +2532,27 @@ export class PayrollService {
        * real check the moment the two halves stop travelling together. **It is
        * not a defence today and must not be counted as one.**
        */
-      const slipKey = newSymmetricKey();
-      const slip = seal(canonical({
-        employeeId: id, name: spec.name, asset: spec.asset, amount: spec.amount, period,
-        paidTo: addressOf(spec, existing),
-      }), slipKey);
       /*
        * **THE ADDRESS THE PAYEE ASKS THEIR WALLET FOR, WRITTEN ON THE SLIP.**
        * A roster payee's key was worked out from one company address, and
        * that is the address that opens this slip for as long as it exists,
        * whatever the company's address becomes. An ad hoc payee's key was
        * minted above and no address produces it, so there is none to name.
+       *
+       * **IT IS SEALED INSIDE THE SLIP AS WELL AS WRITTEN BESIDE IT.** The copy
+       * beside it is what the slip is filed and found by; the sealed one is
+       * what the payee's page believes, so a copy changed in the store names
+       * an address the page then refuses rather than one it shows.
        */
       const issuedBy = existing
         ? (existing.payslipKeyFrom ?? companyAddressForOffer(this.store, accountId))
         : null;
+      const slipKey = newSymmetricKey();
+      const slip = seal(canonical({
+        employeeId: id, name: spec.name, asset: spec.asset, amount: spec.amount, period,
+        paidTo: addressOf(spec, existing),
+        issuedBy: issuedBy === null ? null : issuedBy.toLowerCase(),
+      }), slipKey);
       payslips.push({
         employeeId: id, wrapped: wrapKey(slipKey, publicKey), slip, issuedBy,
         /* The public key it is wrapped to, which is what its payee asks by. */
@@ -2764,7 +2775,7 @@ export class PayrollService {
     }
 
     /*
-     * **THE MATERIAL IS WRITTEN DOWN BEFORE THE ROUND IS RAISED, AND THE ORDER
+     * **THE MATERIAL IS WRITTEN DOWN BEFORE THE PROPOSAL IS RAISED, AND THE ORDER
      * IS THE POINT.**
      *
      * Every field of it is computed before the call and none of it is a function
@@ -2826,6 +2837,19 @@ export class PayrollService {
       this.accounts.refuseRaisingADifferentRound(run.accountId, again, viewingKey, payable.run, leg);
     }
 
+    /*
+     * **POSITION `i` OF THE MATERIAL IS POSITION `i` OF THIS LEG'S PEOPLE,
+     * CHECKED AND NOT ASSUMED.** Each payee's receipt is written from the leaf
+     * at their own position, so material whose payments are in another order
+     * would seal one person's leaf to another person's payslip: each would be
+     * told about somebody else's payment. A payment is the same one when it
+     * pays the same address the same amount in the same token, either as the
+     * roster builds it now or as the leg recorded it when it was first raised.
+     * It runs before anything is written down, and after a raise again is
+     * compared with its earlier round, so material for a different round is
+     * refused by that comparison, which names the round.
+     */
+    this.refuseMaterialOutOfOrder(run, leg, paid, payable, viewingKey);
     const beforeRaising = this.requireRun(runId, viewingKey);
     this.refuseALegThatIsProposed(beforeRaising, leg, viewingKey);
     /*
@@ -2835,7 +2859,9 @@ export class PayrollService {
     const legCompany = again !== undefined && earlierMaterial && earlierMaterial.company !== undefined
       ? earlierMaterial.company
       : companyAddressForOffer(this.store, run.accountId);
-    beforeRaising.payslips = this.withReceipts(beforeRaising, leg, payable, legCompany);
+    beforeRaising.payslips = this.withReceipts(beforeRaising, payable.movementOf, {
+      leg, leaves: payable.leaves, closesAt: payable.run.closesAt, company: legCompany,
+    });
     beforeRaising.payout = { ...(beforeRaising.payout ?? {}), [leg]: {
       root: payable.run.root,
       payees: payable.run.payees,
@@ -2888,6 +2914,38 @@ export class PayrollService {
   }
 
   /**
+   * `raiseTheLeg`'s order check. Refuses naming the first position whose
+   * payment is not that position's person's, and writes nothing.
+   */
+  private refuseMaterialOutOfOrder(
+    run: PayrollRun, leg: AssetId, people: Employee[], payable: RunMaterial, viewingKey: Hex,
+  ): void {
+    type Paying = Pick<PaymentFacts, 'payee' | 'token' | 'amount'>;
+    const same = (a: Paying | undefined, b: Paying | undefined): boolean =>
+      a !== undefined && b !== undefined && a.amount === b.amount
+      && canonical(a.token) === canonical(b.token) && canonical(a.payee) === canonical(b.payee);
+    let roster: ShieldedPaymentFacts[] | null;
+    try {
+      roster = this.paymentFactsFor(run.id, viewingKey, leg);
+    } catch {
+      /* Somebody on the leg cannot be paid from the roster now; the leg's own record still can. */
+      roster = null;
+    }
+    const recorded = run.payout?.[leg]?.facts;
+    people.forEach((e, i) => {
+      const fact = payable.facts[i];
+      if (fact !== undefined && fact.amount === e.amount
+        && (same(fact, roster?.[i]) || same(fact, recorded?.[i]))) return;
+      throw new Error(
+        `the payments prepared for the ${leg} leg do not match the people on this run: the one at `
+        + `position ${i + 1} is not ${e.name}'s as the run has them now or as the leg first `
+        + 'recorded them. Each person is told about the payment at their own position, so these '
+        + 'would tell somebody about another person\'s. Prepare this leg\'s payments again from '
+        + 'the run and send them. Nothing was changed.');
+    });
+  }
+
+  /**
    * **EACH PAYEE'S OWN LEAF, SEALED TO THEM ON THEIR PAYSLIP, AS A LEG IS
    * RAISED.**
    *
@@ -2912,29 +2970,49 @@ export class PayrollService {
    * payments are built from its people in that order, and a retry names people
    * by the same positions. A retry pays a person under the leaf they already
    * had, so a receipt written here is theirs for every attempt at the leg.
+   *
+   * **AND EACH RECEIPT SAYS WHEN THE LAST ATTEMPT THAT CAN PAY ITS PERSON
+   * CLOSES**: the latest end among the leg's own window and the windows of
+   * every retry on the leg that names them. Past it, a payment the account
+   * does not record is not "not yet", because nothing written down for that
+   * person can still make it. So a retry writes every receipt again too.
    */
   private withReceipts(
-    run: PayrollRun, leg: AssetId, payable: RunMaterial,
-    /** Where the leg being raised is recorded: the company's address now, or where it was first raised. */
-    legCompany: string | null,
+    run: PayrollRun,
+    /** The contract's own `paidMovementOf`, handed down with the material. */
+    movementOf: (leaf: Hex) => Hex,
+    /**
+     * The leg being raised, before it is written onto the run: its leaves, its
+     * window's end, and where it is recorded - the company's address now, or
+     * where it was first raised. Absent when every leg is already written.
+     */
+    raising?: { leg: AssetId; leaves: Hex[]; closesAt: bigint; company: string | null },
   ): PayrollRun['payslips'] {
     const now = companyAddressForOffer(this.store, run.accountId);
-    const paidAt = new Map<string, { leaf: Hex; company: string | null }>();
-    const legs = new Set<AssetId>([leg, ...(Object.keys(run.payout ?? {}) as AssetId[])]);
+    const paidAt = new Map<string, { leaf: Hex; company: string | null; until: bigint }>();
+    const legs = new Set<AssetId>([
+      ...(raising ? [raising.leg] : []), ...(Object.keys(run.payout ?? {}) as AssetId[])]);
     for (const asset of legs) {
       const recorded = run.payout?.[asset];
-      const leaves = asset === leg ? payable.leaves : recorded?.leaves;
+      const mine = raising?.leg === asset;
+      const leaves = mine ? raising.leaves : recorded?.leaves;
       /*
        * A leg raised earlier sends its payees to the address it was raised
        * at, never to the company's address now. One raised before that was
        * recorded is given the stand-in: better nothing to ask than the wrong
        * record to ask.
        */
-      const company = asset === leg ? legCompany : recorded?.company;
-      if (!leaves || company === undefined) continue;
+      const company = mine ? raising.company : recorded?.company;
+      const closesAt = mine ? raising.closesAt : recorded?.closesAt;
+      if (!leaves || company === undefined || closesAt === undefined) continue;
+      const retries = recorded?.retries ?? [];
       legEmployees(run, asset).forEach((e, i) => {
         const leaf = leaves[i];
-        if (leaf !== undefined) paidAt.set(e.id, { leaf, company });
+        if (leaf === undefined) return;
+        const until = retries
+          .filter(r => r.originalIndices.includes(i))
+          .reduce((latest, r) => (r.closesAt > latest ? r.closesAt : latest), closesAt);
+        paidAt.set(e.id, { leaf, company, until });
       });
     }
     return run.payslips.map(p => {
@@ -2945,7 +3023,8 @@ export class PayrollService {
         ...p,
         receipt: paid === undefined
           ? sealReceipt(run.id, publicKey, now, null)
-          : sealReceipt(run.id, publicKey, paid.company, { leaf: paid.leaf, movement: payable.movementOf(paid.leaf) }),
+          : sealReceipt(run.id, publicKey, paid.company,
+            { leaf: paid.leaf, movement: movementOf(paid.leaf), until: paid.until }),
       };
     });
   }
@@ -3153,6 +3232,8 @@ export class PayrollService {
         at,
       };
       leg0.retries = [...(leg0.retries ?? []), retry];
+      /* The people it names can be paid until its window closes, and their receipts now say so. */
+      beforeRaising.payslips = this.withReceipts(beforeRaising, payable.movementOf);
       this.putRun(beforeRaising, viewingKey);
     }
 

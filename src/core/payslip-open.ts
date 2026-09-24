@@ -61,6 +61,12 @@ export interface PaymentReceipt {
   leaf: Hex;
   movement: Hex;
   company: string | null;
+  /**
+   * The end of the last window this payment can be made in, in seconds since
+   * the Unix epoch, or `null` when the receipt does not say. Past it, a payment
+   * that is not recorded is not "not yet": nothing now open can make it.
+   */
+  until: number | null;
 }
 
 /** What is inside a payslip once its payee has opened it. */
@@ -71,6 +77,11 @@ export interface PayslipContents {
   amount: bigint;
   period: string;
   paidTo?: unknown;
+  /**
+   * The company address the slip names, sealed with it. Absent from a slip
+   * sealed before it was written inside.
+   */
+  issuedBy?: string | null;
 }
 
 export interface OpenedPayslip extends Omit<SealedPayslip, 'wrapped' | 'slip' | 'receipt'> {
@@ -106,7 +117,25 @@ export function openPayslip(entry: SealedPayslip, wrappingSecret: Hex): OpenedPa
     throw new Error(NOT_YOUR_PAYSLIP);
   }
   const { wrapped: _w, slip: _s, receipt: sealedReceipt, ...facts } = entry;
-  return { ...facts, payslip, receipt: openReceipt(sealedReceipt ?? null, entry.runId, wrappingSecret) };
+  /*
+   * **THE ADDRESS THE SLIP NAMES IS THE ONE SEALED INSIDE IT.** The copy beside
+   * the ciphertext is what the service files it under, and anybody who can
+   * write the store can change it without touching the slip. Changing the
+   * sealed one means sealing a new slip, which anybody holding the payee's
+   * public key can do, so this stops a relabelled slip and not a forged one.
+   * A slip that carries one is named by it, and a page that asked for one
+   * address refuses a slip sealed naming another. A slip sealed before the
+   * address was written inside keeps the copy beside it.
+   */
+  const sealedIssuer = Object.prototype.hasOwnProperty.call(payslip, 'issuedBy')
+    ? (typeof payslip.issuedBy === 'string' ? payslip.issuedBy.toLowerCase() : null)
+    : undefined;
+  return {
+    ...facts,
+    issuedBy: sealedIssuer === undefined ? facts.issuedBy : sealedIssuer,
+    payslip,
+    receipt: openReceipt(sealedReceipt ?? null, entry.runId, wrappingSecret),
+  };
 }
 
 const HEX32 = /^[0-9a-f]{64}$/u;
@@ -119,9 +148,35 @@ const HEX32 = /^[0-9a-f]{64}$/u;
 export const NO_LEAF = '0'.repeat(64);
 
 /**
+ * What a receipt carries in place of a company address when the leg was
+ * raised at a company with none: the same length as an address, so a receipt
+ * naming no company is not told apart by its length from one that names one.
+ */
+export const NO_COMPANY = '0'.repeat(64);
+
+/**
+ * How many digits a receipt's window end is written in: every value up to the
+ * year 5000 and beyond, padded, so every receipt is the same length whatever
+ * its window.
+ */
+export const UNTIL_DIGITS = 20;
+
+/** A window end as a receipt carries it. `null` writes the stand-in, all zeros. */
+export const untilText = (until: bigint | null): string => {
+  const text = (until ?? 0n).toString();
+  if (until !== null && (until < 0n || text.length > UNTIL_DIGITS)) {
+    throw new Error(`a payment window's end of ${text} seconds cannot be written on a receipt.`);
+  }
+  return text.padStart(UNTIL_DIGITS, '0');
+};
+
+const UNTIL = new RegExp(`^[0-9]{${UNTIL_DIGITS}}$`, 'u');
+
+/**
  * Opens a receipt, or answers `null`. A receipt that does not open, or that
  * names another run, is not an answer about this slip: the slip still shows,
- * and the page says it cannot tell whether it was paid.
+ * and the page says what the run's own record says rather than what the
+ * account records.
  */
 export function openReceipt(
   sealed: SealedPayslip['receipt'], runId: string, wrappingSecret: Hex,
@@ -132,12 +187,16 @@ export function openReceipt(
     const r = parseCanonical<Partial<PaymentReceipt>>(unseal(sealed.sealed, key));
     const leaf = typeof r.leaf === 'string' ? r.leaf.toLowerCase() : '';
     const movement = typeof r.movement === 'string' ? r.movement.toLowerCase() : '';
-    const company = typeof r.company === 'string' ? r.company.toLowerCase() : null;
+    const named = typeof r.company === 'string' ? r.company.toLowerCase() : null;
+    const company = named === NO_COMPANY ? null : named;
     if (r.runId !== runId || !HEX32.test(leaf) || !HEX32.test(movement)) return null;
     /* The stand-in a slip carries until its leg is raised: it names no payment. */
     if (leaf === NO_LEAF) return null;
     if (company !== null && !HEX32.test(company)) return null;
-    return { runId, leaf, movement, company };
+    const written = (r as { until?: unknown }).until;
+    const until = typeof written === 'string' && UNTIL.test(written) && /[1-9]/u.test(written)
+      ? Number(written) : null;
+    return { runId, leaf, movement, company, until };
   } catch {
     return null;
   }

@@ -14,7 +14,9 @@ import { SimulatedLedger, SimulatedCommitments } from './ledger.js';
 import { AccountService, openAccount, sealAccount } from './account.js';
 import { NoCompanyAddress, companyForSession } from './company-address.js';
 import { KEYRING_PURPOSE, UNLOCK_PURPOSE, keyringAsk, unlockAsk } from './wallet-unlock.js';
-import { askWalletForKeys, askWalletToUnlock, UnlockRefused } from '../web/wallet-unlock.js';
+import {
+  askWalletForKeys, askWalletToUnlock, askWalletToUnlockAndWhereItReads, UnlockRefused,
+} from '../web/wallet-unlock.js';
 import type { Openable } from '../web/wallet-sign-in.js';
 
 /**
@@ -156,6 +158,22 @@ const A_KEYRING = JSON.stringify({
 });
 
 /* ======================================================================== */
+
+describe('THE WALLET SAYS WHERE IT READS THE CHAIN, BESIDE THE KEY', () => {
+  it('THE PAGE GETS BACK THE SAME KEY AND THE INDEXER THE WALLET NAMED, OR NONE', async () => {
+    const indexer = { indexerUri: 'https://indexer.example/graphql', indexerWsUri: 'wss://indexer.example/graphql/ws' };
+    const ask = {
+      company: ACME, atOrigin: US, name: NAME, rdns: RDNS, now: () => AT, nonce: 'nonce-one',
+    };
+    const naming = new WalletAtTheOtherEnd((a: Ask) => releaseFor(identity, asUnlock(a), AT, indexer));
+    const both = await askWalletToUnlockAndWhereItReads(naming, WALLET, ask);
+    /* RED WHEN the page drops what the wallet named, or the key changes because it was named. */
+    expect(both.indexer).toEqual(indexer);
+    expect(toHex(both.key)).toBe(toHex(await unlock(new WalletAtTheOtherEnd(honestly()))));
+    const silent = await askWalletToUnlockAndWhereItReads(new WalletAtTheOtherEnd(honestly()), WALLET, ask);
+    expect(silent.indexer).toBeNull();
+  });
+});
 
 describe('§1 — THE BUNDLE OPENS WITH A KEY THE WALLET RELEASED', () => {
   it('THE KEY OPENS THE BUNDLE, AND NO PASSWORD IS ANYWHERE IN IT', async () => {
