@@ -69,14 +69,23 @@ const seeded = await (async () => {
   const dana = hire('Dana', 'a1');
   const eli = hire('Eli', 'b2');
   const { run } = await payroll.createRunFromRoster(account.id, '2026-08', viewingKey);
-  return { dana, eli, address, runId: run.id };
+  return { dana, eli, address, runId: run.id, accountId: account.id };
 })();
+const ONE_PAYMENT = 'ab'.repeat(32);
 
 const { handInWiring } = await import('../wiring/handed-in.js');
 handInWiring({
   name: 'simulated',
   commitments: SimulatedCommitments,
-  createLedger: () => new SimulatedLedger(SimulatedCommitments),
+  /*
+   * A ledger double, named: it answers for the accounts it holds with one
+   * completed payment, so the route's own choice of account is what is tested
+   * rather than a ledger that cannot say for anybody.
+   */
+  createLedger: () => Object.assign(new SimulatedLedger(SimulatedCommitments), {
+    paidMovementsOf: async (accountId: string) =>
+      (accountId === seeded.accountId ? { known: true, movements: [ONE_PAYMENT] } : null),
+  }),
   createProofSystem: () => new SimulatedProofSystem(),
 });
 const { app } = await import('./index.js');
@@ -98,11 +107,13 @@ const post = async (path: string, body: unknown) => {
   return { status: r.status, body: await r.json().catch(() => null), text: '' };
 };
 
-const proveAndFetch = async (keys: { secret: string; publicKey: string }) => {
+const proveAndFetch = async (
+  keys: { secret: string; publicKey: string }, from: string | null = seeded.address,
+) => {
   const proof = await post('/api/payslips/proof', { publicKey: keys.publicKey });
   expect(proof.status).toBe(200);
   const answer = answerPayslipProof(proof.body.sealed, keys.secret);
-  return post('/api/payslips', { publicKey: keys.publicKey, answer });
+  return post('/api/payslips', { publicKey: keys.publicKey, answer, from });
 };
 
 describe('a payee\'s own payslips, over the wire', () => {
@@ -139,22 +150,25 @@ describe('a payee\'s own payslips, over the wire', () => {
     /* Eli cannot read what was sealed to Dana's key. */
     expect(() => unwrapKey(proof.body.sealed, seeded.eli.secret)).toThrow();
     /* RED WHEN the list route skips the proof. */
-    const guessed = await post('/api/payslips', { publicKey: seeded.dana.publicKey, answer: '00'.repeat(32) });
+    const guessed = await post('/api/payslips', {
+      publicKey: seeded.dana.publicKey, answer: '00'.repeat(32), from: seeded.address,
+    });
     expect(guessed.status).toBe(403);
     expect(guessed.body).not.toBeInstanceOf(Array);
     /* And a proof for one key does not answer for another. */
     const mine = await post('/api/payslips/proof', { publicKey: seeded.eli.publicKey });
     const answer = answerPayslipProof(mine.body.sealed, seeded.eli.secret);
-    const crossed = await post('/api/payslips', { publicKey: seeded.dana.publicKey, answer });
+    const crossed = await post('/api/payslips', { publicKey: seeded.dana.publicKey, answer, from: seeded.address });
     expect(crossed.status).toBe(403);
   });
 
   it('A PROOF IS SPENT ONCE', async () => {
     const proof = await post('/api/payslips/proof', { publicKey: seeded.dana.publicKey });
     const answer = answerPayslipProof(proof.body.sealed, seeded.dana.secret);
-    expect((await post('/api/payslips', { publicKey: seeded.dana.publicKey, answer })).status).toBe(200);
+    const from = seeded.address;
+    expect((await post('/api/payslips', { publicKey: seeded.dana.publicKey, answer, from })).status).toBe(200);
     /* RED WHEN the value is not consumed. */
-    expect((await post('/api/payslips', { publicKey: seeded.dana.publicKey, answer })).status).toBe(403);
+    expect((await post('/api/payslips', { publicKey: seeded.dana.publicKey, answer, from })).status).toBe(403);
   });
 
   it('ASKING ABOUT A KEY NOBODY HOLDS ANSWERS THE SAME WAY, AND LISTS NOTHING', async () => {
@@ -188,6 +202,28 @@ describe('a payee\'s own payslips, over the wire', () => {
     expect(r.status).toBe(200);
     expect((await r.json()).addresses).toEqual([seeded.address]);
     expect((await fetch(`${base}/api/payslips/addresses?company=nope`)).status).toBe(400);
+  });
+
+  it('ONLY SLIPS NAMING THE ADDRESS THE KEY CAME FROM ARE SENT, AND THE ADDRESS MUST BE SAID', async () => {
+    /* RED WHEN the list is sent whatever company address the asker names. */
+    expect((await proveAndFetch(seeded.dana, 'ef'.repeat(32))).body).toEqual([]);
+    /* A key no address produced is sent only slips that name none; Dana's name one. */
+    expect((await proveAndFetch(seeded.dana, null)).body).toEqual([]);
+    /* RED WHEN the route answers a request that does not say which address the key came from. */
+    const proof = await post('/api/payslips/proof', { publicKey: seeded.dana.publicKey });
+    const answer = answerPayslipProof(proof.body.sealed, seeded.dana.secret);
+    expect((await post('/api/payslips', { publicKey: seeded.dana.publicKey, answer })).status).toBe(400);
+  });
+
+  it('A COMPANY\'S COMPLETED PAYMENTS ARE ASKED BY ITS ADDRESS, AND AN ADDRESS NOBODY HOLDS IS NOT ANSWERED', async () => {
+    const r = await fetch(`${base}/api/payslips/paid?company=${seeded.address}`);
+    expect(r.status).toBe(200);
+    /* RED WHEN the route reads some other account's record, or none. */
+    expect(await r.json()).toEqual({ known: true, movements: [ONE_PAYMENT] });
+    /* An address that is no company's now cannot be answered for. RED WHEN that reads as an empty list. */
+    expect(await (await fetch(`${base}/api/payslips/paid?company=${'ef'.repeat(32)}`)).json())
+      .toEqual({ known: false, movements: [] });
+    expect((await fetch(`${base}/api/payslips/paid?company=nope`)).status).toBe(400);
   });
 
   it('THE DOORS WITH NO SIGN-IN ARE METERED BY WHO IS ASKING (LAST: IT SPENDS THE BUDGET)', async () => {

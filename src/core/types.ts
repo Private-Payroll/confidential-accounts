@@ -1139,6 +1139,16 @@ export interface PayrollRun {
      * sealed before it was recorded, where the roster record's key stands in.
      */
     sealedTo?: Hex;
+    /**
+     * **WHAT THIS PAYEE'S PAYMENT IS RECORDED AGAINST, SEALED TO THEM.** The
+     * payee's own payout leaf, the value the account records when that leaf is
+     * paid, and the company address the run was raised at, sealed the way the
+     * slip is and wrapped to the same key, so the store holds it as ciphertext.
+     * Until the payee's leg is raised it is a stand-in of the same length that
+     * names no payment. Absent on every slip of a run drawn up before receipts
+     * existed.
+     */
+    receipt?: { wrapped: { ephemeral: Hex } & Sealed; sealed: Sealed };
   }>;
   /**
    * A SUBTOTAL PER ASSET, never one total, and that is a correctness change
@@ -1318,6 +1328,15 @@ export interface RunPayout {
    * payrolls without reaching back and breaking an approved one.
    */
   epoch: number;
+  /**
+   * The company's address when this leg was raised: where its payments are
+   * recorded, and so where its payees' receipts send them to ask. Kept per leg
+   * because a company can move between one leg and the next, and a receipt
+   * that named the later address would have its payee read a record their
+   * payment was never written to. Absent on a leg raised before receipts
+   * existed, whose payees get a receipt that names no payment.
+   */
+  company?: string | null;
 }
 
 /** What an auditor receives. Proves a statement without carrying the underlying data. */

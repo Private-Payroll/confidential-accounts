@@ -121,7 +121,9 @@ describe('an employee sees each payment made to them, and nobody else\'s', () =>
     /* RED WHEN the slip is handed over opened, or with anything beside the run's own facts. */
     expect(handed).toHaveLength(1);
     expect(Object.keys(handed[0]).sort()).toEqual(
-      ['issuedBy', 'period', 'runId', 'settledAt', 'slip', 'status', 'wiring', 'wrapped']);
+      ['issuedBy', 'period', 'receipt', 'runId', 'settledAt', 'slip', 'status', 'wiring', 'wrapped']);
+    /* A draft has not been raised, so its receipt names no payment yet. */
+    expect(openPayslip(handed[0], dana.keys.secret).receipt).toBeNull();
     const text = JSON.stringify(handed);
     expect(text).not.toContain('Dana Whitfield');
     expect(text).not.toContain(dana.keys.secret);

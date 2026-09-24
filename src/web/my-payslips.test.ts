@@ -20,6 +20,7 @@ const slipFor = (publicKey: string, name: string, period: string): SealedPayslip
     wiring: 'chain', issuedBy: 'ab'.repeat(32),
     wrapped: wrapKey(key, publicKey),
     slip: seal(canonical({ employeeId: 'emp_1', name, asset: 'TESTUSD', amount: 5_000_000n, period }), key),
+    receipt: null,
   };
 };
 
@@ -58,7 +59,7 @@ describe('a payee\'s own payslips are fetched sealed and opened on this device',
       slipFor(me.publicKey, 'Dana', '2026-08'),
       slipFor(someoneElse.publicKey, 'Eli', '2026-08'),
     ]);
-    const got = await fetchMyPayslips(me, fetcher);
+    const got = await fetchMyPayslips(me, 'ab'.repeat(32), fetcher);
     expect(got.opened.map(s => s.payslip.name)).toEqual(['Dana']);
     expect(got.opened[0].payslip.amount).toBe(5_000_000n);
     /* A slip sent for this key that it does not open is counted, not shown. */
@@ -77,7 +78,7 @@ describe('a payee\'s own payslips are fetched sealed and opened on this device',
     const me = newWrappingKeypair();
     const { fetcher } = service([null as unknown as SealedPayslip]);
     /* RED WHEN every failure is counted as a slip that did not open. */
-    await expect(fetchMyPayslips(me, fetcher)).rejects.toThrow(TypeError);
+    await expect(fetchMyPayslips(me, 'ab'.repeat(32), fetcher)).rejects.toThrow(TypeError);
   });
 
   it('THE ADDRESSES ARE ASKED FOR WITHOUT THE SIGN-IN TOO', async () => {
