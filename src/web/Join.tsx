@@ -16,6 +16,7 @@ import * as keyring from './keyring.js';
 import { shownError } from './shown-error.js';
 import { AuthScreen, WALLET_ORIGIN } from './Auth.js';
 import { askWalletToUnlock } from './wallet-unlock.js';
+import { rememberCompany, YOUR_PAY_PATH } from './my-payslips.js';
 import { askWalletForPayeeAddress } from './wallet-payee.js';
 import { openWalletDialog } from './wallet-sign-in.js';
 import { walletInThisPage } from './wallet-frame.js';
@@ -77,7 +78,7 @@ interface Offer {
 }
 
 /** How this deployment introduces itself to a wallet. Untrusted there, shown as text. */
-const US_TO_A_WALLET = {
+export const US_TO_A_WALLET = {
   name: 'Confidential Accounts',
   rdns: 'social.lemonade.confidential-accounts',
 };
@@ -185,7 +186,7 @@ export function JoinScreen({ token }: { token: string }) {
    * to storage, so closing the tab loses it and the wallet is asked again,
    * which is the correct outcome rather than a cost.
    */
-  const [held, setHeld] = useState<{ address: string; wrappingPublicKey: Hex } | null>(null);
+  const [held, setHeld] = useState<{ address: string; wrappingPublicKey: Hex; keyFrom: string | null } | null>(null);
   const [code, setCode] = useState('');
 
   /*
@@ -351,7 +352,10 @@ export function JoinScreen({ token }: { token: string }) {
        * this device until the person has pasted the code their wallet showed —
        * see `held`. `send` below is what seals and posts it.
        */
-      setHeld({ address: address.bech32, wrappingPublicKey: wrapping.publicKey });
+      setHeld({
+        address: address.bech32, wrappingPublicKey: wrapping.publicKey,
+        keyFrom: current.companyAddress,
+      });
     } catch (e) {
       setErr(shownError(
         e,
@@ -427,10 +431,15 @@ export function JoinScreen({ token }: { token: string }) {
               wrappingPublicKey: ready.wrappingPublicKey,
               address: ready.address,
               confirmation: tidy,
+              /* The address the key above was worked out from, so every payslip
+               * sealed to it names the address that opens it. */
+              keyFrom: ready.keyFrom,
             },
             current.inboxPublicKey),
         }),
       });
+      /* Only an address, which is public; nothing that opens anything. */
+      if (current.companyAddress) rememberCompany(current.companyAddress);
       setAccepted(true);
     } catch (e) {
       setErr(shownError(e, 'accepting an invitation'));
@@ -468,6 +477,11 @@ export function JoinScreen({ token }: { token: string }) {
             The key that opens your payslips is worked out from your wallet and the company's
             own address on the chain. It was never sent and is not stored here, so any device
             holding your wallet opens every payslip you are ever issued.
+          </p>
+          <p className="authsub">
+            Your payslips appear at <a href={YOUR_PAY_PATH}>your payslips</a> as each one is
+            issued, once you are signed in. On another device, add this company's address there:
+            {' '}<code>{offer.companyAddress}</code>
           </p>
         </div>
       </div>

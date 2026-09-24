@@ -249,9 +249,13 @@ export function noColourRefusal(
 /**
  * The amount, as a whole number of the token's smallest unit.
  *
- * The token is the test asset `MINT-TEST-TOKEN.command` created and nothing
- * declares a scale for it, so this door converts nothing — `fund-vault.ts`'s
- * rule, and here there is not even an unmeasured belief to convert by.
+ * For the stagenet test asset at the colour the asset registry names, the
+ * registry gives 6 decimal places, so one whole unit is 1000000 of the smallest
+ * units this door takes; a token of any other colour has no stated scale, and
+ * this door reads the colour from the mint record without checking it against
+ * the registry. The door converts nothing: it takes the count of smallest units,
+ * because that count is what is deposited, and turning a figure with a point
+ * into it is the person's to do with the scale in front of them.
  */
 export function amountFromText(text: string): bigint {
   const trimmed = (text ?? '').trim();
@@ -265,8 +269,9 @@ export function amountFromText(text: string): bigint {
   if (!/^[0-9]+$/.test(trimmed)) {
     throw new Error(
       `"${trimmed}" is not an amount this door will take. Digits and nothing else: no point, ` +
-      'no separators, no sign, no exponent. This token has no declared decimal places and ' +
-      'this door invents none.');
+      'no separators, no sign, no exponent. It takes the count of the token\'s smallest units. ' +
+      'For the stagenet test token at the colour the asset registry names, one whole unit is ' +
+      '1000000 here; a token of any other colour has no stated scale.');
   }
   const amount = BigInt(trimmed);
   if (amount <= 0n) {

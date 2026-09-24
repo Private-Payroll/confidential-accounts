@@ -214,7 +214,7 @@ const invite = async (
     token: c.admin.token,
     body: {
       name: 'Dana Ellis', email, title: 'Engineer',
-      asset: 'GBP', salary: '5500.00', viewingKey: c.viewingKey,
+      asset: 'TESTUSD', salary: '5500.00', viewingKey: c.viewingKey,
     },
   });
   expect(raised.status, JSON.stringify(raised.body)).toBe(200);

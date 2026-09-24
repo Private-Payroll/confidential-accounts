@@ -41,6 +41,7 @@ import {
 import type { DataStore } from './store.js';
 import type { Hex } from './crypto.js';
 import type { PayeeAddress } from '../midnight/payee-address.js';
+import { registryWithTestPrivateForms } from '../testing/assets.js';
 
 const THREE_SIGNERS = [
   { name: 'Ada', role: 'admin' as const },
@@ -54,7 +55,9 @@ function harness() {
   const proofs = new SimulatedProofSystem();
   const accounts = new AccountService(store, ledger, SimulatedCommitments);
   const invites = new RecordingInviteDelivery();
-  const payroll = new PayrollService(store, accounts, proofs, undefined, 'undeployed', invites);
+  /* GBP given a private token of its own, so a person can be hired in it. */
+  const payroll = new PayrollService(
+    store, accounts, proofs, registryWithTestPrivateForms(), 'undeployed', invites);
   return { store, accounts, payroll, invites };
 }
 

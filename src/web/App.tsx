@@ -11,6 +11,7 @@ import { openRecord } from '../core/sealed-records.js';
 import { seatOnThisDevice, type SeatOnThisDevice } from '../core/signer-leaf.js';
 import { acceptSeatOnThisDevice } from './accept-seat.js';
 import { assets, formatAmount, parseAmount, subtotals, type Asset, type AssetId } from '../core/assets.js';
+import { hiringAssets, invitingAssets, NOBODY_CAN_BE_HIRED, NOBODY_CAN_BE_INVITED } from './hiring-assets.js';
 import type {
   Account, Attestation, Installation, Invite, PayrollRun, PluginEvent, PluginManifest, RunPayout,
   Proposal, RosterEmployee, SealedAccount, SealedProposal, SealedRun, ShieldedEntry,
@@ -28,6 +29,9 @@ import type { GovernedStage } from './governed-call-on-device.js';
 import { MaintenancePanel } from './MaintenancePanel.js';
 import { WalletWaiting } from './wallet-waiting.js';
 import { JoinScreen, joinTokenFromLocation } from './Join.js';
+import { YourPay, YOUR_PAY_PATH } from './YourPay.js';
+import { fetchMyPayslips } from './my-payslips.js';
+import { openPayslip, payslipPublicKeyOf, type OpenedPayslip, type SealedPayslip } from '../core/payslip-open.js';
 /* X12 §2 — the drop box is opened HERE, on this machine, because computing the
  * code on ours would mean holding the address. */
 import { acceptedCodes, type Accepted } from './accepted-address.js';
@@ -93,18 +97,23 @@ const isAmount = (text: string, asset: Asset): boolean => {
 /** Where an asset picker starts. Registry order, not a favourite. */
 const defaultAsset = (): AssetId => (assets.enabled()[0] ?? assets.all()[0]).code;
 
+/** Where a hiring picker starts: the first asset somebody can be paid in, or nothing. */
+const defaultHiringAsset = (): AssetId => hiringAssets()[0]?.code ?? '';
+
 /**
  * Asset choice, always from the registry.
  *
  * A hardcoded list here is how a currency gets added in a migration and stays
  * invisible in the product — and how a disabled one keeps being offered.
  */
-function AssetSelect({ value, onChange, disabled }: {
+function AssetSelect({ value, onChange, disabled, from }: {
   value: AssetId; onChange: (code: AssetId) => void; disabled?: boolean;
+  /** Narrower than every enabled asset, where the form's purpose needs it. */
+  from?: Asset[];
 }) {
   return (
     <select value={value} onChange={e => onChange(e.target.value)} disabled={disabled}>
-      {assets.enabled().map(a => <option key={a.code} value={a.code}>{a.code} — {a.name}</option>)}
+      {(from ?? assets.enabled()).map(a => <option key={a.code} value={a.code}>{a.code} — {a.name}</option>)}
     </select>
   );
 }
@@ -355,6 +364,9 @@ function Screens({ commitments }: { commitments: CommitmentScheme }) {
   const [busy, setBusy] = useState(false);
   /* Null on every page that is not an invitation. */
   const [joinToken] = useState(() => joinTokenFromLocation(window.location));
+  /* The payee's own page: their payslips, opened with their own wallet. */
+  const [yourPay, setYourPay] = useState(
+    () => window.location.pathname.replace(/\/+$/, '') === YOUR_PAY_PATH);
 
   const load = useCallback(async (sess: Session) => {
     const id = sess.account.id;
@@ -671,6 +683,8 @@ function Screens({ commitments }: { commitments: CommitmentScheme }) {
     return <AuthScreen onDone={onAuthed} notice={signOutNotice} />;
   }
 
+  if (yourPay) return <YourPay onBack={() => setYourPay(false)} />;
+
   if (!s || !state) {
     return <>
       <AccountPicker
@@ -678,7 +692,7 @@ function Screens({ commitments }: { commitments: CommitmentScheme }) {
         onOpen={openAccount} onUnlock={unlockWithWallet}
         onCreateWithWallet={createWithWallet}
         onFinishSetup={finishSetup} awaitingSetup={awaitingSetup}
-        onDemo={loadDemo} onSignOut={signOut} />
+        onDemo={loadDemo} onSignOut={signOut} onYourPay={() => setYourPay(true)} />
     </>;
   }
 
@@ -1574,7 +1588,7 @@ function People({ people, session, busy, act }: {
   const [codes, setCodes] = useState<Record<string, Accepted | null>>({});
   // The asset is part of the form, not a constant: what somebody is paid in is
   // a property of that person, and the registry decides what may be chosen.
-  const [form, setForm] = useState({ name: '', email: '', title: '', salary: '', asset: defaultAsset() });
+  const [form, setForm] = useState({ name: '', email: '', title: '', salary: '', asset: invitingAssets()[0]?.code ?? '' });
   const [open, setOpen] = useState(false);
   /*
    * **NO EMAIL FIELD, AND THAT IS `C24`.**
@@ -1593,11 +1607,17 @@ function People({ people, session, busy, act }: {
    * the missing `email` beside it: a value this screen never holds cannot be
    * wired through by somebody later.
    */
-  const [self, setSelf] = useState({ name: '', title: '', salary: '', asset: defaultAsset() });
+  const [self, setSelf] = useState({ name: '', title: '', salary: '', asset: defaultHiringAsset() });
   const [openSelf, setOpenSelf] = useState(false);
 
-  const asset = assets.require(form.asset);
-  const selfAsset = assets.require(self.asset);
+  /*
+   * A build where no asset can be paid privately can hire nobody. The labels
+   * still need an asset to describe, and the buttons below stay shut.
+   */
+  const canInvite = invitingAssets().length > 0;
+  const canHire = hiringAssets().length > 0;
+  const asset = assets.find(form.asset) ?? assets.all()[0];
+  const selfAsset = assets.find(self.asset) ?? assets.all()[0];
 
   /*
    * THE OPERATOR-SIDE "OPEN INVITE AS THEM" BUTTON IS GONE, AND IT COULD NOT
@@ -1843,8 +1863,9 @@ function People({ people, session, busy, act }: {
               <div className="field"><label>Title</label>
                 <input value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} placeholder="Engineer" /></div>
               <div className="field"><label>Paid in</label>
-                <AssetSelect value={form.asset} onChange={code => setForm({ ...form, asset: code })} /></div>
+                <AssetSelect value={form.asset} from={invitingAssets()} onChange={code => setForm({ ...form, asset: code })} /></div>
             </div>
+            {!canInvite && <div className="err" data-nobody-can-be-invited>{NOBODY_CAN_BE_INVITED}</div>}
             <div className="field">
               <label>Monthly gross ({asset.code}, {asset.decimals} decimal places)</label>
               <input value={form.salary} onChange={e => setForm({ ...form, salary: e.target.value })}
@@ -1852,7 +1873,7 @@ function People({ people, session, busy, act }: {
             </div>
             <div className="inline">
               <button className="btn pri" onClick={add}
-                disabled={busy || !form.name || !form.email || !form.title || !isAmount(form.salary, asset)}>
+                disabled={busy || !canInvite || !form.name || !form.email || !form.title || !isAmount(form.salary, asset)}>
                 Create the link</button>
               <button className="btn ghost" onClick={() => setOpen(false)}>Cancel</button>
             </div>
@@ -1882,16 +1903,17 @@ function People({ people, session, busy, act }: {
             </div>
             <div className="two">
               <div className="field"><label>Paid in</label>
-                <AssetSelect value={self.asset} onChange={code => setSelf({ ...self, asset: code })} /></div>
+                <AssetSelect value={self.asset} from={hiringAssets()} onChange={code => setSelf({ ...self, asset: code })} /></div>
               <div className="field">
                 <label>Monthly gross ({selfAsset.code}, {selfAsset.decimals} decimal places)</label>
                 <input value={self.salary} onChange={e => setSelf({ ...self, salary: e.target.value })}
                   placeholder={formatAmount(5500n * 10n ** BigInt(selfAsset.decimals), selfAsset)} /></div>
             </div>
+            {!canHire && <div className="err" data-nobody-can-be-hired>{NOBODY_CAN_BE_HIRED}</div>}
             <div className="inline">
               <button className="btn pri" onClick={addSelf}
                 disabled={busy || !self.name || !self.title
-                  || !isAmount(self.salary, selfAsset)}>Add me to payroll</button>
+                  || !canHire || !isAmount(self.salary, selfAsset)}>Add me to payroll</button>
               <button className="btn ghost" onClick={() => setOpenSelf(false)}>Cancel</button>
             </div>
             <div className="hint" style={{ marginTop: 14 }}>
@@ -3162,42 +3184,45 @@ function Settings({ account, state, session, me, busy, act, commitments }: {
 /* employee portal                                                     */
 /* ------------------------------------------------------------------ */
 
-/** One person's line on a run, opened with their own key and nobody else's. */
-interface SlipView {
-  runId: string; period: string; status: string; settledAt: string | null;
-  payslip: { employeeId: string; name: string; asset: AssetId; amount: bigint; period: string };
-}
+/** One person's line on a run, opened in this browser with their own key and nobody else's. */
+type SlipView = OpenedPayslip;
 
 function EmployeePortal({ session, runs, employee, onExit }: {
   session: Session; runs: PayrollRun[]; employee: EmployeeIdentity; onExit: () => void;
 }) {
   const [slips, setSlips] = useState<SlipView[]>([]);
+  /* Kept sealed as well, so the demonstration below has a real slip to try. */
+  const [sealedOne, setSealedOne] = useState<SealedPayslip | null>(null);
   const [err, setErr] = useState('');
 
   useEffect(() => {
     (async () => {
-      const out: SlipView[] = [];
-      for (const r of runs.filter(x => x.status === 'settled')) {
-        try {
-          out.push(await api<SlipView>(
-            `/api/runs/${r.id}/employee/${employee.employeeId}?secret=${employee.wrappingSecret}`));
-        } catch { /* not on that run, or this browser holds no key for them */ }
-      }
-      setSlips(out);
+      const secret = employee.wrappingSecret;
+      if (!secret) { setSlips([]); return; }
+      /*
+       * Fetched as ciphertext and opened here. The secret is used on this
+       * device to prove the key is this person's and to open each slip, and
+       * it is never part of a request.
+       */
+      const keys = { secret, publicKey: payslipPublicKeyOf(secret) };
+      const fetched = await fetchMyPayslips(keys)
+        .catch(() => ({ opened: [] as OpenedPayslip[], sealed: [] as SealedPayslip[], unopened: 0 }));
+      setSealedOne(fetched.sealed[0] ?? null);
+      setSlips(fetched.opened.filter(s => s.status === 'settled'));
     })();
   }, [runs, employee]);
 
   const tryOther = async () => {
     setErr('');
-    const other = session.employees.find(e => e.employeeId !== employee.employeeId);
-    const run = runs.find(r => r.status === 'settled');
-    if (!other || !run) { setErr('Nothing settled yet to try this against.'); return; }
+    const other = session.employees.find(e => e.employeeId !== employee.employeeId && e.wrappingSecret);
+    if (!other || !sealedOne) { setErr('Nothing settled yet to try this against.'); return; }
     try {
-      await api(`/api/runs/${run.id}/employee/${other.employeeId}?secret=${employee.wrappingSecret}`);
+      /* A colleague's key, against this person's own sealed slip. */
+      openPayslip(sealedOne, other.wrappingSecret!);
       setErr('That should not have worked.');
     } catch (e: any) {
       /* A refusal a person READS is a refusal the report keeps, even when the
-       * refusal is the thing being demonstrated. `C159`. */
+       * refusal is the thing being demonstrated. */
       setErr(`Blocked: ${shownError(e, 'the payslip demonstration')}`);
     }
   };
@@ -3262,7 +3287,7 @@ function EmployeePortal({ session, runs, employee, onExit }: {
                 Colleagues' salaries and the company headcount are sealed to keys you do not hold.
                 This is enforced by the cryptography, not by this screen hiding things.
               </p>
-              <button className="btn" onClick={tryOther}>Try opening a colleague's payslip</button>
+              <button className="btn" onClick={tryOther}>Try opening your payslip with a colleague's key</button>
               {err && <div className="err" style={{ marginTop: 13, marginBottom: 0 }}>{err}</div>}
             </div>
           </div>

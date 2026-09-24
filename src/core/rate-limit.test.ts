@@ -225,14 +225,14 @@ withDb('THE ONE THAT MATTERS: concurrent attempts each get their own number', ()
  *
  * `rate-limit.ts` said `GET /api/invites/:token/offer` *is the one door in this
  * product that answers a stranger*. That is false at source and had been for
- * some time: **twelve routes in `src/server/index.ts` carry no `authed`**. What
- * is unique about the offer endpoint is the METER, and the sentence has been
- * narrowed to say so.
+ * some time: **fifteen routes in `src/server/index.ts` carry no `authed`**. What
+ * sets the offer endpoint and the payslip doors apart is the METER, and the
+ * sentence has been narrowed to say so.
  *
  * **A CORRECTED SENTENCE WITH NOTHING BEHIND IT GOES STALE THE SAME WAY THE
  * FIRST ONE DID**, so the numbers are asserted here rather than asserted in a
  * comment. This test reads the route table as TEXT — it is a census, not
- * behaviour — and it goes red when a thirteenth unauthenticated route is
+ * behaviour — and it goes red when a sixteenth unauthenticated route is
  * added or when the metering moves, which is exactly when somebody should
  * re-read that paragraph.
  */
@@ -242,16 +242,19 @@ describe('the unauthenticated surface, counted rather than described', () => {
     .map((line, i) => ({ line, at: i + 1 }))
     .filter(r => /^\s*app\.(get|post|put|patch|delete)\(/.test(r.line));
 
-  it('there are twelve routes with no `authed`, and the offer endpoint is one of them', () => {
+  it('there are fifteen routes with no `authed`, and the offer endpoint is one of them', () => {
     const open = routes.filter(r => !r.line.includes('authed'));
     expect(
       open.map(r => `${r.at}: ${r.line.trim().slice(0, 70)}`).join('\n'),
     ).toBeTruthy();
-    expect(open).toHaveLength(12);
+    expect(open).toHaveLength(15);
     expect(open.some(r => r.line.includes("'/api/invites/:token/offer'"))).toBe(true);
+    for (const path of ["'/api/payslips/proof'", "'/api/payslips'", "'/api/payslips/addresses'"]) {
+      expect(open.some(r => r.line.includes(path)), path).toBe(true);
+    }
   });
 
-  it('and exactly ONE route handler meters, which is the word the sentence turns on', () => {
+  it('and exactly TWO meters are read in the route file, which is the word the sentence turns on', () => {
     /*
      * `limiter.record` inside a route handler. `WalletIdentityService` meters
      * `/auth/wallet/challenge` and `/auth/wallet` from inside the service by
@@ -260,8 +263,11 @@ describe('the unauthenticated surface, counted rather than described', () => {
      * how the original sentence came to be written.
      */
     const metering = server.split('\n').filter(l => /limiter\.record\(/.test(l));
-    expect(metering).toHaveLength(1);
-    expect(metering[0]).toContain("'invite-offer'");
+    expect(metering).toHaveLength(2);
+    expect(metering.some(l => l.includes("'invite-offer'"))).toBe(true);
+    /* The payslip meter is one helper, and each of the three payslip doors calls it. */
+    expect(metering.some(l => l.includes("'payslips'"))).toBe(true);
+    expect(server.split('\n').filter(l => /await payslipsMetered\(req, res\)/.test(l))).toHaveLength(3);
   });
 
   it('and the sentence in `rate-limit.ts` says METERED, not merely unauthenticated', () => {
@@ -271,7 +277,7 @@ describe('the unauthenticated surface, counted rather than described', () => {
      * wording.
      */
     const doc = readFileSync('src/core/rate-limit.ts', 'utf8');
-    expect(doc).toContain('the one METERED door');
+    expect(doc).toContain('a METERED door that answers');
     expect(doc).not.toMatch(/is the one door in this product that\n \* answers a stranger, and/);
   });
 });

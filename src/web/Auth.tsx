@@ -83,7 +83,7 @@ export function AuthScreen({ onDone, notice = '' }: {
 /** Shown after sign in when the user is on zero or several accounts. */
 export function AccountPicker({
   user, accounts, onOpen, onUnlock, onCreateWithWallet, onFinishSetup,
-  awaitingSetup, onDemo, onSignOut, busy, err,
+  awaitingSetup, onDemo, onSignOut, onYourPay, busy, err,
 }: {
   user: keyring.Me;
   accounts: any[];
@@ -100,6 +100,8 @@ export function AccountPicker({
   /** The company this tab created and has not finished sealing, if any. */
   awaitingSetup: string | null;
   onDemo: () => void;
+  /** The payee's own payslips. Absent where the screen offers no way there. */
+  onYourPay?: () => void;
   onSignOut: () => void;
   busy: boolean;
   err?: string;
@@ -200,7 +202,10 @@ export function AccountPicker({
 
           {err && <div className="autherr">{err}</div>}
           {wallet && <p className="authsub"><b>You signed in as</b><br />{wallet}</p>}
-          <div className="authswap"><a onClick={onSignOut}>Sign out</a></div>
+          <div className="authswap">
+            {onYourPay && <><a data-your-pay-link onClick={onYourPay}>Your payslips</a><span> · </span></>}
+            <a onClick={onSignOut}>Sign out</a>
+          </div>
         </div>
       </div>
     );
@@ -263,6 +268,7 @@ export function AccountPicker({
         <div className="authswap">
           <a onClick={onDemo}>Load a demo company</a>
           <span> · </span>
+          {onYourPay && <><a data-your-pay-link onClick={onYourPay}>Your payslips</a><span> · </span></>}
           <a onClick={onSignOut}>Sign out</a>
         </div>
       </div>

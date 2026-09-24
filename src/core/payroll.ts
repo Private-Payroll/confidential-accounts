@@ -12,6 +12,7 @@ import { newWords } from 'midnight-identity';
  * sides of the comparison cannot drift apart. */
 import { addressFingerprint, FingerprintError } from 'midnight-identity/profile/fingerprint';
 import { payslipKeypairForWallet } from './payslip-key.js';
+import type { SealedPayslip } from './payslip-open.js';
 
 /**
  * **THE ORIGIN THE SEED'S STAND-IN WALLET IS ASKED AT, AND IT IS NOT AN
@@ -25,7 +26,7 @@ import { payslipKeypairForWallet } from './payslip-key.js';
  */
 const SEED_WALLET_ORIGIN = 'https://payroll.example';
 import type { AssetId } from './assets.js';
-import { assets as defaultAssets, subtotals, formatAmount, ledgerTokenOf } from './assets.js';
+import { assets as defaultAssets, subtotals, formatAmount, ledgerTokenOf, ledgerFormOf } from './assets.js';
 import type { Account, Employee, PayrollRun, SealedRun, ShieldedEntry, Attestation, RosterEmployee, SealedEmployee, Invite, User, RunSkip, RunSkips, RunRetry, RunRepeatRecord, RunPayout, Proposal } from './types.js';
 import { sealRecord, openRecord, sealToInbox, openFromInbox } from './sealed-records.js';
 import {
@@ -575,6 +576,7 @@ export class PayrollService {
         + 'be invited, because there is nothing to send an invitation to and nothing to '
         + 'check the person who redeems it against');
     }
+    this.refuseAPayeeWhoCannotBePaid(spec);
     const { raw, sentTo, ...rest } = this.raise(accountId, spec, viewingKey, createdBy);
     /*
      * **THE RAW TOKEN COMES BACK TO WHOEVER RAISED IT, AND THIS REVERSES AN
@@ -810,6 +812,7 @@ export class PayrollService {
         'only somebody already on this account can add themselves as a payee. '
         + 'Anybody else is an employee, and an employee is invited');
     }
+    this.refuseAPayeeWhoCannotBePaid(spec);
 
     /*
      * "SELF" IS ENFORCED HERE, NOT ASSERTED IN THE METHOD NAME.
@@ -910,6 +913,8 @@ export class PayrollService {
         {
           wrappingPublicKey: handover.wrappingPublicKey,
           address: handover.address.bech32,
+          /* A member's own key is worked out from the company's address now. */
+          keyFrom: companyAddressForOffer(this.store, accountId),
           /*
            * **NO CODE, BECAUSE THERE IS NOBODY TO COMPARE ONE WITH.**
            * The comparison exists so an admin can check that the address which
@@ -1605,6 +1610,27 @@ export class PayrollService {
      */
     const address = payeeOf(handover.address, this.network);
 
+    /*
+     * **THE ADDRESS THE PAYSLIP KEY CAME FROM IS ONE OF THIS COMPANY'S.** Every
+     * payslip sealed to this person will name it, and their page asks their
+     * wallet for it, so an address that is not this company's would send them,
+     * and every colleague whose page lists this company's addresses, to ask
+     * their wallet about somebody else's contract. It is taken when it is the
+     * company's address now or one this company's payslips already name;
+     * otherwise refused and the invitation put back, and accepting again works
+     * the key out from the address the company has now.
+     */
+    const companyNow = companyAddressForOffer(this.store, rec.accountId);
+    if (handover.keyFrom && handover.keyFrom !== companyNow
+      && !this.payslipAddressesNamedBy(rec.accountId).has(handover.keyFrom)) {
+      putBack();
+      throw new Error(
+        `the key this person handed over was worked out from company address ${handover.keyFrom}, `
+        + 'which is not this company\'s address and is named by none of its payslips. Every payslip '
+        + 'sealed to them would send them to that address to open it. It has been refused and the '
+        + 'invitation put back; ask them to accept again from their invitation link.');
+    }
+
     const person = this.open(rec, viewingKey);
     /*
      * The roster is filled and the box emptied in ONE write. It was two, and a
@@ -1616,6 +1642,13 @@ export class PayrollService {
       {
         ...person,
         wrappingPublicKey: handover.wrappingPublicKey,
+        /*
+         * Which company address the key was worked out from, as the payee's
+         * own device said. A handover that does not say is taken to be the
+         * company's address now: every key derived before a company first
+         * moves was derived from that address.
+         */
+        payslipKeyFrom: handover.keyFrom ?? companyNow,
         status: 'active',
         address,
         handedOverBy: acceptedBy,
@@ -1654,6 +1687,31 @@ export class PayrollService {
    * `SimulatedLedger`. That needs to be refusable by construction rather than
    * by a comment.
    */
+  /**
+   * **A PAYEE IS HIRED IN SOMETHING THEY CAN BE PAID IN.** Every payment out of
+   * a company here is made on Midnight, privately or publicly. A person hired
+   * in an asset with no form on Midnight at all would be accepted, invited and
+   * admitted, and then refused on the day their first payment is raised, after
+   * they had handed over their address and been told they are on the roster.
+   * So the refusal is here, at the doors that put somebody on the roster, in
+   * the words the asset gives for itself.
+   *
+   * An asset with a public form only is still taken: the roster also holds
+   * payees who are paid publicly, such as a supplier or the company's own
+   * account, and a payroll run refuses a public payee by itself. The seeded
+   * walk-through is not a door a person comes in by and does not pass here.
+   */
+  private refuseAPayeeWhoCannotBePaid(spec: HireSpec): void {
+    const asset = this.assets.require(spec.asset);
+    const privately = ledgerFormOf(asset, 'shielded');
+    const publicly = ledgerFormOf(asset, 'unshielded');
+    if (privately.of !== 'token' && publicly.of !== 'token') {
+      throw new Error(
+        `nobody can be hired in ${asset.code}. ${privately.why} Choose a currency that can be paid `
+        + 'out here.');
+    }
+  }
+
   hireDirect(accountId: string, spec: HireSpec, viewingKey: Hex): { employee: RosterEmployee; secret: EmployeeSecret } {
     /*
      * **THE SEED WALKS THE INVITE PATH, SO IT NEEDS WHAT THE INVITE PATH
@@ -2456,7 +2514,21 @@ export class PayrollService {
         employeeId: id, name: spec.name, asset: spec.asset, amount: spec.amount, period,
         paidTo: addressOf(spec, existing),
       }), slipKey);
-      payslips.push({ employeeId: id, wrapped: wrapKey(slipKey, publicKey), slip });
+      /*
+       * **THE ADDRESS THE PAYEE ASKS THEIR WALLET FOR, WRITTEN ON THE SLIP.**
+       * A roster payee's key was worked out from one company address, and
+       * that is the address that opens this slip for as long as it exists,
+       * whatever the company's address becomes. An ad hoc payee's key was
+       * minted above and no address produces it, so there is none to name.
+       */
+      const issuedBy = existing
+        ? (existing.payslipKeyFrom ?? companyAddressForOffer(this.store, accountId))
+        : null;
+      payslips.push({
+        employeeId: id, wrapped: wrapKey(slipKey, publicKey), slip, issuedBy,
+        /* The public key it is wrapped to, which is what its payee asks by. */
+        sealedTo: publicKey.toLowerCase(),
+      });
     });
 
     const run: PayrollRun = {
@@ -3321,6 +3393,79 @@ export class PayrollService {
   private isSettled(proposalId: string | undefined, viewingKey: Hex): boolean {
     if (!proposalId) return false;
     return this.accounts.requireProposal(proposalId, viewingKey).status === 'executed';
+  }
+
+  /**
+   * **EVERY PAYSLIP SEALED TO ONE PUBLIC KEY, AS CIPHERTEXT.**
+   *
+   * The caller has already shown it holds the secret for this key; that is the
+   * route's job and not this one's. What comes back cannot be read without that
+   * secret: each slip is sealed under its own key and that key is wrapped to
+   * this public key, so the service handing it over reads nothing. The run's
+   * own facts travel beside it - its period, whether it has settled, and which
+   * ledger wrote it - because those are what a payee needs to know a payment
+   * happened, and they are about the payee's own run.
+   *
+   * No viewing key is taken and none is needed. The key is matched against the
+   * public half each roster record carries outside its seal, which is the half
+   * every payslip for that person was wrapped to.
+   */
+  payslipsFor(wrappingPublicKey: Hex): SealedPayslip[] {
+    const key = wrappingPublicKey.toLowerCase();
+    const out: SealedPayslip[] = [];
+    for (const account of this.store.listAccounts()) {
+      /* For a slip sealed before it named its key: the roster record's key now. */
+      const mine = new Set(this.store.listEmployees(account.id)
+        .filter(e => (e.wrappingPublicKey ?? '').toLowerCase() === key)
+        .map(e => e.id));
+      for (const run of this.store.listRuns(account.id)) {
+        for (const p of run.payslips) {
+          const toThisKey = p.sealedTo !== undefined
+            ? p.sealedTo.toLowerCase() === key
+            : mine.has(p.employeeId);
+          if (!toThisKey) continue;
+          out.push({
+            runId: run.id, period: run.period, status: run.status,
+            settledAt: run.settledAt ?? null, wiring: run.wiring ?? null,
+            issuedBy: p.issuedBy ?? null,
+            wrapped: p.wrapped, slip: p.slip,
+          });
+        }
+      }
+    }
+    return out.sort((a, b) => (a.period < b.period ? 1 : a.period > b.period ? -1 : 0));
+  }
+
+  /**
+   * **EVERY ADDRESS A COMPANY'S PAYSLIPS WERE SEALED UNDER, FROM ANY ONE OF
+   * THEM.** A payee who knows their company only by the address it has today
+   * would otherwise ask their wallet for that address alone, and every slip
+   * sealed before the company moved would stay closed to them. So the answer is
+   * the company's address now and every address a slip of theirs names.
+   *
+   * These are contract addresses, which a chain publishes; nothing here says
+   * who was paid, how much, or how many.
+   */
+  payslipAddressesOf(companyAddress: string): string[] {
+    const asked = companyAddress.toLowerCase();
+    const found = new Set<string>();
+    for (const account of this.store.listAccounts()) {
+      const now = companyAddressForOffer(this.store, account.id);
+      const named = this.payslipAddressesNamedBy(account.id);
+      if (now !== asked && !named.has(asked)) continue;
+      if (now) found.add(now);
+      for (const a of named) found.add(a);
+    }
+    return [...found].sort();
+  }
+
+  /** Every company address one company's payslips name, lower-cased. */
+  private payslipAddressesNamedBy(accountId: string): Set<string> {
+    const named = new Set<string>();
+    for (const run of this.store.listRuns(accountId)) {
+      for (const p of run.payslips) if (p.issuedBy) named.add(p.issuedBy.toLowerCase());
+    }
+    return named;
   }
 
   /** What one employee can see. Requires their own secret and returns only their line. */

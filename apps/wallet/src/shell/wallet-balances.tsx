@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import type { Identity } from 'midnight-identity';
 import { coinPublicKeyOf } from '../chain/balance.js';
 import type { StopBalance } from '../chain/balance.js';
+import { GIVE_UP_AFTER_MS } from '../chain/balance.js';
 import { BalanceEnginesContext } from '../chain/balance-context.js';
 import { nightFromStars } from '../chain/amount.js';
 import {
@@ -71,6 +72,13 @@ export type WalletBalanceRow =
 export type WalletBalanceRows = Readonly<Record<number, WalletBalanceRow>>;
 
 /**
+ * How long the sweep waits on one slot for a live figure. The engine's own
+ * clock gives up on silence at the same length, and it stops watching once a
+ * saved figure is on screen, so the sweep keeps a deadline of its own.
+ */
+export const SWEEP_SLOT_GIVE_UP_MS = GIVE_UP_AFTER_MS;
+
+/**
  * AS A PREDICATE. *"The account this wallet refuses to show is one
  * another wallet will happily pay into, and the money is real."* Home shows a
  * preview of three, and a preview that could leave a funded slot out would be
@@ -95,6 +103,18 @@ export type WalletBalanceRows = Readonly<Record<number, WalletBalanceRow>>;
  */
 export const holdsMoney = (row: WalletBalanceRow): boolean =>
   row.kind === 'known' && (row.night > 0n || holdsAnyOther(row.others));
+
+/**
+ * **WHAT EARNS A SLOT A PLACE IN A SHORT PREVIEW: MONEY, OR A FIGURE THAT
+ * CANNOT SAY THERE IS NONE.** A figure saved by an older version of the wallet
+ * recorded NIGHT only. A slot whose only money is another private token then
+ * reads as zero NIGHT with its other tokens not recorded, and ranking that as
+ * empty would leave a funded slot out of the preview on the strength of a
+ * figure that never looked. So it ranks with the funded ones until a check
+ * records the whole map.
+ */
+export const earnsAPreviewPlace = (row: WalletBalanceRow): boolean =>
+  holdsMoney(row) || (row.kind === 'known' && row.others === undefined);
 
 /**
  * THE CHANGE EVENT — the same shape, and the same reason, as `shell/wallets.ts`
@@ -231,20 +251,54 @@ export function useWalletBalances(identity: Identity, changed = 0): {
     return () => { stale = true; };
   }, [identity, changed, announced]);
 
+  /*
+   * **ONE SLOT, READ LIVE, AND ONLY ITS OWN ENGINE STOPPED.**
+   *
+   * An engine starts by replaying the figure it saved last time, with that
+   * figure's old moment, and only then reads the chain. So the first number it
+   * reports is not a check. A slot is finished by a figure established after
+   * the check began, by a failure, or by the deadline; at the deadline the
+   * replayed figure stands with its old moment, which says how stale it is, and
+   * with none the slot could not be checked.
+   *
+   * The stop handle is this slot's own, held here. A shared handle read later
+   * would by then belong to the next slot, and stopping that one leaves it
+   * checking for ever.
+   */
   const checkOne = (account: number): Promise<WalletBalanceRow> =>
     new Promise((resolve) => {
+      const startedAt = Date.now();
       let finished = false;
+      let stop: StopBalance | null = null;
+      let replayed: WalletBalanceRow | null = null;
+      let deadline: ReturnType<typeof setTimeout> | null = null;
       const finish = (row: WalletBalanceRow): void => {
         if (finished) return;
         finished = true;
+        if (deadline !== null) clearTimeout(deadline);
         resolve(row);
-        /* The engine may resolve before its stop handle is assigned. */
-        setTimeout(() => stopCurrent.current?.(), 0);
+        if (stop !== null) {
+          stop();
+          if (stopCurrent.current === stop) stopCurrent.current = null;
+        }
       };
-      stopCurrent.current = engines.shielded(identity, account, (state) => {
-        if (state.name === 'synced') finish(knownRow(state.night, state.asOf, state.others));
-        else if (state.name === 'failed') finish({ kind: 'failed' });
+      const handle = engines.shielded(identity, account, (state) => {
+        if (state.name === 'synced') {
+          const row = knownRow(state.night, state.asOf, state.others);
+          if (state.asOf >= startedAt) finish(row);
+          else replayed = row;
+        } else if (state.name === 'failed') {
+          finish(replayed ?? { kind: 'failed' });
+        }
       });
+      stop = handle;
+      if (finished) {
+        /* It answered before its handle was returned. */
+        handle();
+        return;
+      }
+      stopCurrent.current = handle;
+      deadline = setTimeout(() => finish(replayed ?? { kind: 'failed' }), SWEEP_SLOT_GIVE_UP_MS);
     });
 
   const runSweep = async (): Promise<void> => {
