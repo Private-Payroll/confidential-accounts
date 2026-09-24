@@ -19,6 +19,7 @@ import { sealHandover, type SealedHandover } from './invite-handover.js';
 import type { DataStore } from './store.js';
 import type { Hex } from './crypto.js';
 import type { PayeeAddress } from '../midnight/payee-address.js';
+import { registryWithTestPrivateForms } from '../testing/assets.js';
 
 /**
  * **THE INVITEE'S OWN DEVICE SEALS, SO A TEST HAS TO SEAL TOO.**
@@ -81,7 +82,9 @@ const world = () => {
     store, new SimulatedLedger(SimulatedCommitments), SimulatedCommitments);
   const invites = new RecordingInviteDelivery();
   const payroll = new PayrollService(
-    store, accounts, new SimulatedProofSystem(), undefined, 'undeployed', invites);
+    store, accounts, new SimulatedProofSystem(),
+    /* GBP given a private token of its own, so a person can be hired in it. */
+    registryWithTestPrivateForms(), 'undeployed', invites);
   return { store, accounts, payroll, invites };
 };
 

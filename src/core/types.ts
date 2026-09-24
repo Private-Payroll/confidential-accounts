@@ -798,6 +798,15 @@ export interface RosterEmployee {
   /** Null until the employee's own device generates one and sends the public half. */
   wrappingPublicKey: Hex | null;
   /**
+   * **THE COMPANY ADDRESS THAT KEY WAS WORKED OUT FROM.** The payee's device
+   * derives their payslip key from the key their wallet gives for one company
+   * address, and says which address in what it hands over. Every payslip sealed
+   * to them carries it, so a company that moves to a new address leaves each
+   * earlier slip openable under the address it was sealed for. Absent on a
+   * record admitted before this was recorded.
+   */
+  payslipKeyFrom?: string | null;
+  /**
    * WHO HANDED THE ADDRESS OVER, AND WHO ACCEPTED IT ONTO THE ROSTER.
    *
    * Sealed with the rest, and recorded because **`admit` is the moment the
@@ -1118,6 +1127,18 @@ export interface PayrollRun {
     employeeId: string;
     wrapped: { ephemeral: Hex } & Sealed;
     slip: Sealed;
+    /**
+     * The company address the payee's key was worked out from, so the payee's
+     * wallet can be asked for that address rather than whatever the company's
+     * address is today. Absent on a slip sealed before this was recorded, and
+     * `null` on one sealed to a key no address produced.
+     */
+    issuedBy?: string | null;
+    /**
+     * The public key the slip is wrapped to, lower-case. Absent on a slip
+     * sealed before it was recorded, where the roster record's key stands in.
+     */
+    sealedTo?: Hex;
   }>;
   /**
    * A SUBTOTAL PER ASSET, never one total, and that is a correctness change

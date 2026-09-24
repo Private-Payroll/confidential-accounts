@@ -78,6 +78,12 @@ export interface InviteHandover {
    * than showing an empty box that looks like a match.
    */
   readonly confirmation: string | null;
+  /**
+   * The company address the payee's device worked their payslip key out from.
+   * Absent from a handover sealed before it was carried, which reads as not
+   * known rather than as any particular address.
+   */
+  readonly keyFrom?: string | null;
 }
 
 /**
@@ -89,7 +95,7 @@ export interface InviteHandover {
  * ever holds and no invitee ever should.
  */
 export const sealHandover = (
-  parts: { wrappingPublicKey: Hex; address: string; confirmation: string | null },
+  parts: { wrappingPublicKey: Hex; address: string; confirmation: string | null; keyFrom?: string | null },
   inboxPublicKey: Hex,
 ): SealedHandover => sealToInbox<InviteHandover>({
   schema: HANDOVER_SCHEMA,
@@ -99,6 +105,7 @@ export const sealHandover = (
    * legitimately has no code — a member adding themselves — has to say so
    * rather than forget to. */
   confirmation: parts.confirmation,
+  keyFrom: parts.keyFrom ?? null,
 }, inboxPublicKey);
 
 /**
@@ -158,5 +165,23 @@ export function openHandover(
     wrappingPublicKey: opened.wrappingPublicKey,
     address: opened.address,
     confirmation: typeof opened.confirmation === 'string' ? opened.confirmation : null,
+    keyFrom: keyFromOf(opened.keyFrom),
   });
+}
+
+/**
+ * **THE ADDRESS A PAYSLIP KEY CAME FROM, OR NOTHING.** A company address is 32
+ * bytes of hex. Anything else in this field is refused rather than stored,
+ * because a payslip that names a wrong address is one its payee is sent to
+ * the wrong place to open.
+ */
+function keyFromOf(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string' || !/^[0-9a-fA-F]{64}$/u.test(value)) {
+    throw new Error(
+      'this handover names the company address its payslip key came from, and what it '
+      + 'names is not a company address. It is refused rather than stored, because every '
+      + 'payslip sealed to this person would send them to that address to open it.');
+  }
+  return value.toLowerCase();
 }

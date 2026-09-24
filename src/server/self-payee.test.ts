@@ -179,7 +179,7 @@ const asked = async (token: string, accountId: string) => {
 };
 
 const payload = (extra: Record<string, unknown>, viewingKey: string) => ({
-  name: 'The Founder', title: 'Founder', asset: 'GBP', salary: '5500.00',
+  name: 'The Founder', title: 'Founder', asset: 'TESTUSD', salary: '5500.00',
   viewingKey,
   wrappingPublicKey: newWrappingKeypair().publicKey,
   ...extra,

@@ -20,7 +20,7 @@ import {
 import { renameWallet, useWallets } from '../shell/wallets.js';
 import { WalletSwitcher } from '../shell/switcher.js';
 import {
-  WalletBalanceCell, anyNeverChecked, holdsMoney, rowFor, useWalletBalances,
+  WalletBalanceCell, anyNeverChecked, earnsAPreviewPlace, rowFor, useWalletBalances,
 } from '../shell/wallet-balances.js';
 import { Mark } from '../shell/mark.js';
 import { InboxCard } from '../components/inbox-card.js';
@@ -1284,9 +1284,10 @@ function AllWalletsCard({ identity, secret, names, changed }: {
   /* THE RANK, IN ONE LINE, AND THE ONLY QUESTION IT ASKS THE NUMBER IS
    * WHETHER IT IS MORE THAN NOTHING (`holdsMoney`, `shell/wallet-balances.tsx`
    * — the one question whose answer is the same in every unit, which is why
-   * this is not a second reader of the atomic figure). */
-  const funded = WALLET_ACCOUNTS.filter((account) => holdsMoney(rowFor(rows, account)));
-  const rest = WALLET_ACCOUNTS.filter((account) => !holdsMoney(rowFor(rows, account)));
+   * this is not a second reader of the atomic figure). A figure that did not
+   * record the other tokens ranks with them (`earnsAPreviewPlace`). */
+  const funded = WALLET_ACCOUNTS.filter((account) => earnsAPreviewPlace(rowFor(rows, account)));
+  const rest = WALLET_ACCOUNTS.filter((account) => !earnsAPreviewPlace(rowFor(rows, account)));
   const shown = [...funded, ...rest.slice(0, Math.max(0, PREVIEWED - funded.length))]
     .sort((a, b) => a - b);
   const hidden = WALLET_ACCOUNTS.length - shown.length;

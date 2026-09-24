@@ -34,7 +34,8 @@ import {
   type ListVerdict, type Marked,
 } from '../core/provenance.js';
 import { assets as assetRegistry, parseAmount } from '../core/assets.js';
-import { bigintJsonReplacer } from '../core/crypto.js';
+import { bigintJsonReplacer, wrapKey } from '../core/crypto.js';
+import { payslipProofSubject } from '../core/payslip-open.js';
 import {
   SIGNED_IN_AS_HEADER, anotherPersonRefusal, answerCarriesToken, clearedSessionCookie,
   cookieScopeFor, credentialOf, crossSiteWriteRefusal, sessionCookie,
@@ -406,6 +407,8 @@ if (DATABASE_URL) {
 }
 
 const challenges = new MemoryChallengeStore();
+/* Its own store, so a value sealed for a payslip proof can never be spent as a sign-in. */
+const payslipProofs = new MemoryChallengeStore();
 /*
  * `challenges` IS STILL PASSED TO THE WALLET SIGN-IN BELOW AND NOT TO THIS.
  * Recovery is gone, and `WalletIdentityService` uses the same store
@@ -1978,9 +1981,98 @@ app.post('/api/runs/:id/private-payments', authed, ownsRun, wrap(async (req, res
  * a route that exists is a route somebody integrates against.
  */
 
-app.get('/api/runs/:runId/employee/:employeeId', wrap(async (req, res) => {
-  const secret = String(req.query.secret ?? '');
-  res.json(payroll.employeeView(String(req.params.runId), String(req.params.employeeId), secret));
+/*
+ * **NO ROUTE HERE TAKES THE KEY THAT OPENS A PAYSLIP.**
+ *
+ * This one used to: it took the payee's secret in the query string and opened
+ * the slip in this process, which put the one key that is meant to live only
+ * with the payee into a URL, a request log and this service's memory. It now
+ * refuses before reading anything, and says where payslips are opened instead.
+ */
+app.get('/api/runs/:runId/employee/:employeeId', (_req, res) => {
+  res.status(410).json({
+    code: 'payslips-open-in-your-browser',
+    error: 'payslips are now opened in your own browser, with the key from your wallet. This '
+      + 'service never takes that key, and this request was refused without being read. A key '
+      + 'put in a web address can be kept by the browser and anything in between, so treat one '
+      + 'sent here as seen.',
+  });
+});
+
+/*
+ * **A PAYEE'S OWN PAYSLIPS, TO THE HOLDER OF THEIR KEY AND NOBODY ELSE.**
+ *
+ * Two steps and no sign-in. The first seals a one-use value to the public key
+ * asked about; only the holder of the matching secret can read it back, and
+ * the second step hands over the slips only for that value. What is handed
+ * over is ciphertext that the same secret opens in the payee's browser; this
+ * service never holds that secret and cannot read what it hands over.
+ *
+ * **NO SESSION IS READ, DELIBERATELY.** Which signed-in person is paid by which
+ * company is sealed inside the company's own records, and a lookup tied to a
+ * session would write that link down here in the clear. The page asks without
+ * its sign-in for the same reason.
+ *
+ * The first step answers the same way whether or not any slip is sealed to that
+ * key, so asking does not reveal whether somebody is on a payroll here.
+ */
+/*
+ * Metered by who is asking, because nothing else identifies the caller here.
+ * A caller with no address is not counted, as on the offer route.
+ */
+const payslipsMetered = async (req: express.Request, res: express.Response): Promise<boolean> => {
+  const from = context(req).ip;
+  if (!from) return true;
+  const decision = await limiter.record('payslips', from);
+  if (decision.allowed) return true;
+  res.setHeader('Retry-After', String(decision.retryAfterSeconds));
+  res.status(429).json({
+    error: 'too many payslip requests from here. These requests need no sign-in, so they are '
+      + `metered. Try again in ${decision.retryAfterSeconds} seconds.`,
+    retryAfterSeconds: decision.retryAfterSeconds,
+  });
+  return false;
+};
+
+const payslipKey = z.string().regex(/^[0-9a-fA-F]{64}$/u, 'a payslip key is 32 bytes of hex')
+  .transform(k => k.toLowerCase());
+
+app.post('/api/payslips/proof', wrap(async (req, res) => {
+  if (!await payslipsMetered(req, res)) return;
+  const b = z.object({ publicKey: payslipKey }).parse(req.body);
+  const { challenge, expiresAt } = await payslipProofs.issue(payslipProofSubject(b.publicKey));
+  res.json({ sealed: wrapKey(challenge, b.publicKey), expiresAt });
+}));
+
+app.post('/api/payslips', wrap(async (req, res) => {
+  if (!await payslipsMetered(req, res)) return;
+  const b = z.object({
+    publicKey: payslipKey,
+    answer: z.string().regex(/^[0-9a-fA-F]{64}$/u, 'the answer is the value that was sealed to you'),
+  }).parse(req.body);
+  const proven = await payslipProofs.consume(payslipProofSubject(b.publicKey), b.answer.toLowerCase());
+  if (!proven) {
+    res.status(403).json({
+      code: 'payslip-proof-refused',
+      error: 'this key has not been shown to be yours, so no payslips are sent for it. '
+        + 'Ask again from the start: the value sealed to you can be used once, for two minutes.',
+    });
+    return;
+  }
+  res.json(payroll.payslipsFor(b.publicKey));
+}));
+
+/*
+ * **EVERY ADDRESS A COMPANY'S PAYSLIPS NAME, FROM ANY ONE OF THEM.** A payee
+ * who knows only a company's address today still reaches slips sealed under an
+ * address it had before. Contract addresses are public on a chain, and this
+ * answers with nothing else.
+ */
+app.get('/api/payslips/addresses', wrap(async (req, res) => {
+  if (!await payslipsMetered(req, res)) return;
+  const company = z.string().regex(/^[0-9a-fA-F]{64}$/u, 'a company address is 32 bytes of hex')
+    .parse(String(req.query.company ?? ''));
+  res.json({ addresses: payroll.payslipAddressesOf(company) });
 }));
 
 /*

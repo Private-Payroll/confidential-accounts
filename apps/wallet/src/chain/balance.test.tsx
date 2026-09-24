@@ -988,12 +988,14 @@ describe('every wallet, honestly — §5 decided, and the invisible-money answer
     const identity = identityFromSecret(secret);
     /* Account 9 is EIGHTH in slot order — it could never be in the first
      * three by position, and it holds money. Account 11 has been checked and
-     * holds nothing, so it is a real zero rather than an unknown. */
+     * holds nothing, so it is a real zero rather than an unknown: its figure
+     * recorded every token, and there were none. A figure that recorded NIGHT
+     * only could not say that, and would rank with the funded ones. */
     await saveWalletCheckpoint(coinPublicKeyOf(identity, 9), 9, {
       serialized: 'x', night: 4_000_000n, asOf: Date.now(),
     }, HERE);
     await saveWalletCheckpoint(coinPublicKeyOf(identity, 11), 11, {
-      serialized: 'x', night: 0n, asOf: Date.now(),
+      serialized: 'x', night: 0n, others: {}, asOf: Date.now(),
     }, HERE);
     render(
       <BalanceEnginesContext.Provider
