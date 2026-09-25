@@ -3,19 +3,27 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { Account } from '../core/types.js';
 import { MaintenancePanel, seatWords, whyNotHandOver, type AuthorityScreen } from './MaintenancePanel.js';
+import { newSigningKeypair, type Hex } from '../core/crypto.js';
+import { signVaultKeys } from '../core/vault-keys.js';
 
 /*
  * The settings screen's list of who can change a company's rules, rendered
  * against a service answer, with nothing but the page's own call standing in.
+ * The roster is a real one: each signer's vault keys signed with their own
+ * roster signing key, as a device gives them.
  */
 const k = (n: number) => ({ tag: 'schnorr', value: n.toString(16).padStart(2, '0').repeat(32) });
+const ADA = newSigningKeypair();
+const BO = newSigningKeypair();
+const entry = (id: string, userId: string, name: string, pair: { publicKey: Hex; secret: Hex }, key: number, signedBy = pair) => ({
+  id, userId, name, status: 'active', signingPublicKey: pair.publicKey,
+  vaultKeys: signVaultKeys('acc_1', id, { committeeKey: k(key), recordsKey: k(key + 0x10).value as Hex }, signedBy.secret),
+});
 const account = {
   id: 'acc_1', name: 'Northwind',
-  signers: [
-    { id: 's1', userId: 'ada', name: 'Ada Lovelace', status: 'active' },
-    { id: 's2', userId: 'bo', name: 'Bo Diddley', status: 'active' },
-  ],
+  signers: [entry('s1', 'ada', 'Ada Lovelace', ADA, 1), entry('s2', 'bo', 'Bo Diddley', BO, 2)],
 } as unknown as Account;
+const ME = { signerId: 's1' };
 
 const answer = (over: Partial<AuthorityScreen> = {}): AuthorityScreen => ({
   company: { address: 'c0'.repeat(32), threshold: 2, signerCount: 2 },
@@ -26,15 +34,15 @@ const answer = (over: Partial<AuthorityScreen> = {}): AuthorityScreen => ({
     {
       contract: 'account', address: 'c0'.repeat(32), read: 'read', threshold: 1, changes: '0', shape: 'one-key',
       heldByTheCompany: false, seatsOutsideTheCommittee: 1,
-      seats: [{ key: k(9), holder: null, thisService: true, onTheCompanysCommittee: false, you: false }],
+      seats: [{ key: k(9), holder: null, thisService: true, onTheCompanysCommittee: false }],
       why: '1 seat(s) on this account are held by a key that is not on the company\'s committee now.',
     },
     {
       contract: 'vault', address: 'ab'.repeat(32), read: 'read', threshold: 2, changes: '1', shape: 'committee',
       heldByTheCompany: true, seatsOutsideTheCommittee: 0,
       seats: [
-        { key: k(1), holder: 'ada', onTheCompanysCommittee: true, you: true },
-        { key: k(2), holder: 'bo', onTheCompanysCommittee: true, you: false },
+        { key: k(1), holder: null, onTheCompanysCommittee: true },
+        { key: k(2), holder: null, onTheCompanysCommittee: true },
       ],
       why: 'the company\'s committee holds this vault.',
     },
@@ -44,13 +52,13 @@ const answer = (over: Partial<AuthorityScreen> = {}): AuthorityScreen => ({
   ...over,
 });
 
-const shown = async (a: AuthorityScreen, calls: string[] = [], wallet = k(1)) => {
+const shown = async (a: AuthorityScreen, calls: string[] = [], wallet = k(1), roster: Account = account) => {
   const api = async (path: string, opts?: RequestInit) => {
     calls.push(`${opts?.method ?? 'GET'} ${path}`);
     if (path.endsWith('/handover')) bodies.push(String(opts?.body));
     return path.endsWith('/handover') ? { txRef: 'tx-1' } : a;
   };
-  render(<MaintenancePanel account={account} api={api} walletKey={async () => wallet} />);
+  render(<MaintenancePanel account={account} me={ME} api={api} walletKey={async () => wallet} roster={async () => roster} />);
   await act(async () => { await Promise.resolve(); });
   return calls;
 };
@@ -59,8 +67,9 @@ const bodies: string[] = [];
 afterEach(() => { cleanup(); bodies.length = 0; });
 
 describe('WHO CAN CHANGE THIS COMPANY\'S RULES, ON THE SETTINGS SCREEN', () => {
-  it('SHOWS EVERY CONTRACT\'S SEATS BY NAME, AND A SEAT NOBODY ON THE COMPANY GAVE, MARKED', async () => {
-    /* RED WHEN: `seatWords` drops the outside marker or the holder's name, or a contract row is not rendered. */
+  it('SHOWS EVERY CONTRACT\'S SEATS BY THE NAME THE ROSTER GIVES THEM, AND A SEAT NOBODY ON THE COMPANY GAVE, MARKED', async () => {
+    /* RED WHEN: `seatWords` drops the outside marker or the holder's name, names a holder from anything but the
+     * roster, or a contract row is not rendered. */
     await shown(answer());
     const account_ = document.querySelector('[data-contract="account"]')!;
     expect(account_.getAttribute('data-held')).toBe('false');
@@ -109,27 +118,51 @@ describe('WHO CAN CHANGE THIS COMPANY\'S RULES, ON THE SETTINGS SCREEN', () => {
     fireEvent.click(document.querySelector('[data-hand-over-account]')!);
     await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
     expect(calls).not.toContain('POST /api/accounts/acc_1/authority/handover');
-    expect(document.querySelector('.err:not([data-every-signer-needed])')!.textContent).toMatch(/does not carry the key your wallet gives/);
+    expect(document.querySelector('.err:not([data-every-signer-needed])')!.textContent).toMatch(/roster does not carry the key your wallet gives/);
     const a = answer();
-    expect(whyNotHandOver(a, k(1), 2)).toBeNull();
-    /* The service names another key as this person's: refused even though the wallet's key is on the committee. */
-    const swapped = answer();
-    swapped.contracts[1]!.seats[0] = { ...swapped.contracts[1]!.seats[0]!, key: k(2) };
-    expect(whyNotHandOver(swapped, k(1), 2)).toMatch(/shows a key as yours that is not the one your wallet gives/);
-    /* RED WHEN: a seat carrying this person's key under another name is not refused. */
-    const renamed = answer();
-    renamed.contracts[1]!.seats[0] = { ...renamed.contracts[1]!.seats[0]!, you: false };
-    expect(whyNotHandOver(renamed, k(1), 2)).toMatch(/on a seat it says is not yours/);
+    expect(whyNotHandOver(a, k(1), account, ME)).toBeNull();
     /* RED WHEN: the committee's size is not compared with the company's own roster. */
-    expect(whyNotHandOver({ ...a, committee: { committee: [k(1)], threshold: 1 } }, k(1), 2)).toMatch(/has 1 key\(s\) and this company has 2 signer/);
-    expect(whyNotHandOver({ ...a, committee: null, why: 'no committee yet.' }, k(1), 2)).toBe('no committee yet.');
+    expect(whyNotHandOver({ ...a, committee: { committee: [k(1)], threshold: 1 } }, k(1), account, ME))
+      .toMatch(/has 1 key\(s\) and the company's own roster names 2/);
+    expect(whyNotHandOver({ ...a, committee: null, why: 'no committee yet.' }, k(1), account, ME)).toBe('no committee yet.');
   });
 
-  it('names a holder who has no signer row plainly rather than inventing one', () => {
-    /* RED WHEN: `seatWords` falls back to the raw user id. */
-    expect(seatWords({ key: k(3), holder: 'zed', onTheCompanysCommittee: true, you: false }, account.signers))
-      .toBe('a signer of this company');
-    expect(seatWords({ key: k(3), holder: null, onTheCompanysCommittee: false, you: false }, account.signers))
+  it('A COMMITTEE CARRYING A KEY THE ROSTER DOES NOT NAME - ONE THE SERVICE CHOSE - IS NOT HANDED THE ACCOUNT', async () => {
+    const substituted = answer({ committee: { committee: [k(1), k(7)], threshold: 2 } });
+    /* RED WHEN: the device takes the service's committee on its size and its own key alone - it then hands the
+     * account to a key the service chose in the other signer's place. */
+    expect(whyNotHandOver(substituted, k(1), account, ME)).toMatch(/1 key\(s\) the company's own roster does not name/);
+    const calls = await shown(substituted);
+    fireEvent.click(document.querySelector('[data-hand-over-account]')!);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+    expect(calls).not.toContain('POST /api/accounts/acc_1/authority/handover');
+    expect(document.querySelector('.err:not([data-every-signer-needed])')!.textContent).toMatch(/roster does not name/);
+    /* RED WHEN: one key named twice passes as two signers. */
+    expect(whyNotHandOver(answer({ committee: { committee: [k(1), k(1)], threshold: 2 } }), k(1), account, ME))
+      .toMatch(/names one key twice/);
+  });
+
+  it('NOBODY CAN PUT A KEY IN ANOTHER SIGNER\'S NAME: a roster entry whose keys another signer signed names nothing', () => {
+    /* Bo's entry carries a key signed with Ada's roster key - what whoever wrote it first would put there. */
+    const forged = { ...account, signers: [account.signers[0], entry('s2', 'bo', 'Bo Diddley', BO, 7, ADA)] } as unknown as Account;
+    const a = answer({ committee: { committee: [k(1), k(7)], threshold: 2 } });
+    /* RED WHEN: the signature over an entry's keys is not checked against that entry's own signing key. */
+    expect(whyNotHandOver(a, k(1), forged, ME)).toMatch(/1 of this company's 2 signers has not set up vault keys that the company's own roster says are theirs/);
+    expect(seatWords({ key: k(7), onTheCompanysCommittee: true }, forged, ME)).toBe('a key nobody now on this company gave');
+  });
+
+  it('THIS PERSON\'S OWN ROSTER ENTRY MUST CARRY THE KEY THEIR WALLET GIVES', () => {
+    /* RED WHEN: the wallet's key is accepted on the committee although the roster names it as somebody else's. */
+    expect(whyNotHandOver(answer(), k(2), account, ME)).toMatch(/roster does not carry the key your wallet gives/);
+  });
+
+  it('names a seat the roster names nobody for plainly, and takes no holder from the service', () => {
+    /* RED WHEN: `seatWords` names a holder the service reports rather than the roster. */
+    expect(seatWords({ key: k(3), holder: 'bo', onTheCompanysCommittee: true }, account, ME))
+      .toBe('a key nobody now on this company gave');
+    expect(seatWords({ key: k(3), holder: null, onTheCompanysCommittee: false }, account, ME))
       .toBe('a key nobody now on this company gave - not on the company\'s committee');
+    expect(seatWords({ key: k(2), onTheCompanysCommittee: true }, account, ME)).toBe('Bo Diddley');
+    expect(seatWords({ key: k(1), onTheCompanysCommittee: true }, account, ME)).toBe('Ada Lovelace (you)');
   });
 });

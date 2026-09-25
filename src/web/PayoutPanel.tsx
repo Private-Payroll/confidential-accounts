@@ -13,6 +13,7 @@ import {
 import { PUBLIC_PAYMENT } from './public-payment.js';
 import { deviceRecordsFor, deviceSignerFrom, privatePaymentsFor, rosterOf, vaultServiceFor } from './vault-page-doors.js';
 import { startVaultBuilder, type VaultBuilderClient } from './vault-worker-client.js';
+import { openAccount } from '../core/account.js';
 
 /**
  * **PAYING A PERSON PRIVATELY OUT OF THE COMPANY'S VAULT, ONE AT A TIME, AGAINST
@@ -80,7 +81,8 @@ export function PayoutPanel({ account, me, viewingKey, runs, proposals }: {
   const [busy, setBusy] = useState(false);
   const [waiting, setWaiting] = useState<ReadonlySet<number>>(new Set());
   const builderRef = useRef<Promise<VaultBuilderClient> | null>(null);
-  const service = vaultServiceFor(keyring.api, account.id);
+  const service = vaultServiceFor(keyring.api, account.id,
+    async () => openAccount(await keyring.api(`/api/accounts/${account.id}`), viewingKey));
   const leg = payable.find((p) => p.key === chosen);
 
   const builder = () => {

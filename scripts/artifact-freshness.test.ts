@@ -547,7 +547,7 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
     /*
      * **THE LIST IS DERIVED FROM A DIRECTORY WALK, SO A LITERAL `toEqual` OVER
      * IT IS A CLAIM ABOUT WHICH FILES A COPY HAS, NOT ABOUT KEY COVERAGE.** In
-     * any copy that does not carry one of these eight it went red with a message
+     * any copy that does not carry one of these nine it went red with a message
      * about proving keys, which is not what changed.
      *
      * The direction that is the guard: every file gated on keys is named here,
@@ -556,6 +556,7 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
      * whole thing passing over nothing.
      */
     const NAMED = [
+      'contracts/test/a-company-seats-its-signers-from-the-page.test.ts',
       'contracts/test/a-company-vault-from-the-page.test.ts',
       'contracts/test/a-private-payment-from-the-page.test.ts',
       'contracts/test/a-run-raised-and-approved-from-the-page.test.ts',

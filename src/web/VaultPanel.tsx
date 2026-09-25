@@ -13,6 +13,9 @@ import {
   browserTemporaryKeys, deviceRecordsFor, deviceSignerFrom, giveVaultKeys, rosterOf, vaultServiceFor,
 } from './vault-page-doors.js';
 import { startVaultBuilder, type VaultBuilderClient } from './vault-worker-client.js';
+import { openAccount } from '../core/account.js';
+import { rosterVaultKeys } from '../core/vault-keys.js';
+import { whyNotTheCommittee } from './handover-check.js';
 
 /**
  * **A COMPANY'S VAULTS, CREATED AND FUNDED FROM THIS SCREEN.**
@@ -46,9 +49,11 @@ const STATE_WORDS: Record<string, string> = {
 
 const shieldedAssets = () => assets.enabled().filter((a) => ledgerFormOf(a, 'shielded').of === 'token');
 
-export function VaultPanel({ account, me }: {
+export function VaultPanel({ account, me, viewingKey }: {
   account: Account;
   me: { signerId: string; signingSecret: Hex; wrappingSecret: Hex };
+  /** Opens the company's sealed roster on this device, which every key the service reports is checked against. */
+  viewingKey: Hex;
 }) {
   const [rows, setRows] = useState<VaultRow[] | null>(null);
   const [committee, setCommittee] = useState<{ ready: boolean; why: string | null; mine: boolean } | null>(null);
@@ -60,7 +65,9 @@ export function VaultPanel({ account, me }: {
   const [asset, setAsset] = useState(() => shieldedAssets()[0]?.code ?? '');
   const [amount, setAmount] = useState('');
   const builderRef = useRef<Promise<VaultBuilderClient> | null>(null);
-  const service = vaultServiceFor(keyring.api, account.id);
+  /* The roster, opened here afresh each time a key the service reports is checked against it. */
+  const roster = async () => openAccount(await keyring.api(`/api/accounts/${account.id}`), viewingKey);
+  const service = vaultServiceFor(keyring.api, account.id, roster);
 
   const builder = () => {
     builderRef.current ??= startVaultBuilder(NETWORK);
@@ -69,12 +76,16 @@ export function VaultPanel({ account, me }: {
   };
 
   const refresh = useCallback(async () => {
-    const [list, keys] = await Promise.all([
+    const [list, keys, named] = await Promise.all([
       keyring.api(`/api/accounts/${account.id}/vaults`),
       keyring.api(`/api/accounts/${account.id}/vault-keys`),
+      roster(),
     ]);
     setRows(list.rows);
-    setCommittee({ ready: keys.committee !== null, why: keys.why, mine: keys.mine !== null });
+    /* Whether this signer has given keys is read from their own roster entry, which is the only record of it. */
+    const mine = rosterVaultKeys(named).find((r) => r.signerId === me.signerId)?.keys ?? null;
+    const refused = keys.committee === null ? null : whyNotTheCommittee(keys.committee.committee, named);
+    setCommittee({ ready: keys.committee !== null && refused === null, why: refused ?? keys.why, mine: mine !== null });
     const authority = await keyring.api(`/api/accounts/${account.id}/authority`).catch(() => null);
     setEverySigner(authority?.everySignerNeeded ?? null);
   }, [account.id]);
@@ -86,6 +97,7 @@ export function VaultPanel({ account, me }: {
     const released = await keyring.companyKeysForVaults(account.id, WALLET_ORIGIN);
     await giveVaultKeys(keyring.api, account.id, {
       committeeKey: released.committeeKey, companyKey: released.companyKey, signingSecret: me.signingSecret,
+      signerId: me.signerId, viewingKey,
     });
     const roster = rosterOf(account);
     const signedInAs = () => keyring.currentUser()?.id ?? null;

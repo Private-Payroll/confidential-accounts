@@ -26,6 +26,7 @@ import {
 } from './ledger.js';
 import { storedSignerLeaf } from './signer-leaf.js';
 import { payrollRoundOf } from './retry-cover.js';
+import { vaultKeyIndexOf, vaultKeysAreTheSigners, type SignedVaultKeys } from './vault-keys.js';
 import {
   noVaultHoldingsReader, refuseWhatTheVaultCannotPay,
   type PaymentAsked, type VaultHoldings,
@@ -51,6 +52,12 @@ const MOVES_NO_MONEY = 'moves-no-money' as const;
  * this process, and the device sends the proposal it builds with `sendRaise`.
  */
 const THE_DEVICE_SENDS = 'the-device-sends' as const;
+
+/** The kinds of proposal a signer's own device raises. */
+const RAISED_FROM_A_DEVICE: ReadonlySet<string> = new Set(['payroll', 'add-signer', 'set-threshold']);
+
+/** The kinds of proposal that change who may approve, which a device raises and then carries out. */
+export const GOVERNANCE_FROM_A_DEVICE: ReadonlySet<string> = new Set(['add-signer', 'set-threshold']);
 
 /**
  * **HOW LONG AN APPROVAL A DEVICE SENT IS WAITED ON BEFORE ITS STANDING IS LEFT
@@ -93,6 +100,17 @@ const sameStanding = (a: ApprovalOutcome | undefined, b: ApprovalOutcome | undef
  * which is decimal digits. All of it opens with the account's viewing key, which
  * is what a caller presents to be given it.
  */
+/** What a governance round a device raises changes. */
+export type GovernanceChange = { kind: 'add-signer'; leaf: Hex } | { kind: 'threshold'; threshold: number };
+
+/** A seat or a threshold change written down for a signer's device to raise. */
+export interface GovernanceRaiseOrder {
+  proposalId: string;
+  chainId: Hex;
+  governance: GovernanceChange;
+  half: RaiseHalf;
+}
+
 export interface RaiseHalf {
   assetId: Hex;
   assetBlinding: Hex;
@@ -104,6 +122,33 @@ export interface RaiseHalf {
 const hexOfBytes = (b: Uint8Array): Hex => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 
 export interface SignerSpec { name: string; role: Role; userId?: string | null; }
+
+/** Vault keys that are not signed with the giver's own roster signing key. */
+export class VaultKeysNotYours extends Error {
+  constructor() {
+    super('these vault keys were not set up from your own seat on this company, so they are not kept. Open the '
+      + 'company on this device again and set them up from Vaults.');
+    this.name = 'VaultKeysNotYours';
+  }
+}
+
+/** A signer giving different vault keys from the ones their roster entry already carries. */
+export class VaultKeysAlreadyGiven extends Error {
+  constructor() {
+    super('you already set up different vault keys for this company, from a different wallet. The first ones are '
+      + 'kept and these are not. Open the company with that wallet, or ask the company\'s signers to remove you and '
+      + 'invite you again.');
+    this.name = 'VaultKeysAlreadyGiven';
+  }
+}
+
+/** Somebody with no seat on the company giving vault keys for it. */
+export class NoSeatToGiveKeysFor extends Error {
+  constructor() {
+    super('only a signer with access to this company sets up vault keys for it. Ask a signer to grant you access.');
+    this.name = 'NoSeatToGiveKeysFor';
+  }
+}
 
 /** Returned once, at creation, and never persisted server side. */
 export interface SignerSecrets {
@@ -1224,7 +1269,16 @@ export class AccountService {
       by ? this.refFor(account, by) : this.anyActiveSigner(account),
     );
 
-    account.wrappedKeys.push({ signerId, ...wrapKey(viewingKey, signer.wrappingPublicKey) });
+    return this.admit(rec, account, viewingKey, signer);
+  }
+
+  /**
+   * **THE RECORD'S HALF OF A SEAT, WRITTEN ONCE THE CHAIN HAS BEEN ASKED TO SEAT
+   * THIS PERSON.** Shared by the seat this service makes and the seat a signer's
+   * device makes, so the two cannot come to write different records.
+   */
+  private admit(rec: SealedAccount, account: Account, viewingKey: Hex, signer: Signer): Account {
+    account.wrappedKeys.push({ signerId: signer.id, ...wrapKey(viewingKey, signer.wrappingPublicKey) });
     /*
      * The pending signer is folded into the SEALED ROSTER here, and dropped from
      * the inbox. This is the step the invitee could not perform for themselves —
@@ -1236,7 +1290,7 @@ export class AccountService {
      * to disagree the moment anything edits one of them.
      */
     signer.status = 'active';
-    this.save(rec, account, viewingKey, rec.pendingSigners.filter(p => p.id !== signerId));
+    this.save(rec, account, viewingKey, rec.pendingSigners.filter(p => p.id !== signer.id));
     return account;
   }
 
@@ -1262,6 +1316,7 @@ export class AccountService {
     viewingKey: Hex,
     signerId: string,
     proposedBy: string,
+    opts: { onDevice?: true } = {},
   ): Promise<Proposal> {
     const account = this.open(accountId, viewingKey);
     const signer = account.signers.find(s => s.id === signerId);
@@ -1296,7 +1351,13 @@ export class AccountService {
        * so a payload nobody can decrypt makes the proposal unapprovable. It
        * failed exactly that way the first time, with `aes-gcm: invalid tag`.
        */
-      sealedPayload: seal(canonical({ signerId, entries: [] }), viewingKey),
+      /*
+       * The change travels with the proposal, as a payroll round's does, because a
+       * device that raises the proposal, or seats the person once it is approved,
+       * recomputes the proposal's identity from its salt and has nowhere else to
+       * read it from.
+       */
+      sealedPayload: seal(canonical({ signerId, entries: [], __change: change }), viewingKey),
       digest,
       proposedBy,
       /* Kept because removing the proposer deletes their row, and
@@ -1317,7 +1378,7 @@ export class AccountService {
      * asset key on every proposal and a real asset code in that slot would be a
      * governance round claiming to move money.
      */
-    await this.raise(proposal, viewingKey, MOVES_NO_MONEY, () => this.ledger.propose(
+    await this.raise(proposal, viewingKey, MOVES_NO_MONEY, opts.onDevice ? THE_DEVICE_SENDS : () => this.ledger.propose(
       accountId, digest, change,
       this.refFor(account, proposedBy), this.commitments.noVault()));
     return proposal;
@@ -1335,6 +1396,7 @@ export class AccountService {
     viewingKey: Hex,
     newThreshold: number,
     proposedBy: string,
+    opts: { onDevice?: true } = {},
   ): Promise<Proposal> {
     const account = this.open(accountId, viewingKey);
 
@@ -1399,7 +1461,7 @@ export class AccountService {
       // Sealed under the account key for the same reason the other governance
       // payloads are: every approval path opens this blob, so one nobody can
       // decrypt makes the proposal unapprovable.
-      sealedPayload: seal(canonical({ newThreshold, entries: [] }), viewingKey),
+      sealedPayload: seal(canonical({ newThreshold, entries: [], __change: change }), viewingKey),
       digest,
       proposedBy,
       /* Kept because removing the proposer deletes their row, and
@@ -1420,7 +1482,7 @@ export class AccountService {
      * asset key on every proposal and a real asset code in that slot would be a
      * governance round claiming to move money.
      */
-    await this.raise(proposal, viewingKey, MOVES_NO_MONEY, () => this.ledger.propose(
+    await this.raise(proposal, viewingKey, MOVES_NO_MONEY, opts.onDevice ? THE_DEVICE_SENDS : () => this.ledger.propose(
       accountId, digest, change,
       this.refFor(account, proposedBy), this.commitments.noVault()));
     return proposal;
@@ -3187,6 +3249,271 @@ export class AccountService {
    * another request, the answer is about a record that no longer exists and the
    * send is refused as having sent nothing.
    */
+  /**
+   * **A SEAT OR A THRESHOLD CHANGE, AS A SIGNER'S DEVICE RAISES IT.**
+   *
+   * The account's half of the raise, and the change itself - the leaf of the
+   * person to be seated, or the new threshold - so the device makes the proposal's
+   * payload with the contract's own function rather than being handed one.
+   */
+  async governanceOrderOf(proposalId: string, viewingKey: Hex): Promise<GovernanceRaiseOrder> {
+    const proposal = this.requireProposal(proposalId, viewingKey);
+    if (!GOVERNANCE_FROM_A_DEVICE.has(proposal.kind)) {
+      throw new NothingWasSent('this proposal is neither a seat nor a threshold change. Nothing was sent.');
+    }
+    const half = await this.raiseHalfOf(proposalId, viewingKey);
+    return { proposalId, chainId: proposal.chainId as Hex, governance: this.governanceChangeOf(proposal, viewingKey), half };
+  }
+
+  /**
+   * **WHAT A SEAT OR THRESHOLD PROPOSAL CHANGES, AND THE SALT ITS IDENTITY WAS
+   * MADE WITH**, for every device that approves it: the device remakes the
+   * identity from the change it was asked to approve and this salt, and refuses
+   * to approve a proposal that is for anything else.
+   */
+  governanceAsked(proposalId: string, viewingKey: Hex): { governance: GovernanceChange; proposalSalt: Hex } {
+    const proposal = this.requireProposal(proposalId, viewingKey);
+    if (!GOVERNANCE_FROM_A_DEVICE.has(proposal.kind)) {
+      throw new Error('this proposal is neither a seat nor a threshold change.');
+    }
+    return { governance: this.governanceChangeOf(proposal, viewingKey), proposalSalt: this.governanceSaltOf(proposal, viewingKey) };
+  }
+
+  /** What a governance proposal changes, read off its own sealed payload and the roster. */
+  private governanceChangeOf(proposal: Proposal, viewingKey: Hex): GovernanceChange {
+    const body = parseCanonical<{ signerId?: string; newThreshold?: number }>(unseal(proposal.sealedPayload, viewingKey));
+    if (proposal.kind === 'set-threshold' && typeof body.newThreshold === 'number') {
+      return { kind: 'threshold', threshold: body.newThreshold };
+    }
+    if (proposal.kind === 'add-signer' && typeof body.signerId === 'string') {
+      const signer = this.open(proposal.accountId, viewingKey).signers.find(x => x.id === body.signerId);
+      if (!signer?.leafCommitment) {
+        throw new NothingWasSent('the person this proposal would seat is no longer waiting for a seat. Nothing was sent.');
+      }
+      return { kind: 'add-signer', leaf: signer.leafCommitment };
+    }
+    throw new NothingWasSent('this request does not say what it changes, so it cannot be finished. Start it again from '
+      + 'Settings. Nothing was sent.');
+  }
+
+  /** The salt a governance round's identity was made with, which the device recomputes it from. */
+  private governanceSaltOf(proposal: Proposal, viewingKey: Hex): Hex {
+    const { __change: change } = parseCanonical<{ __change?: StateChange }>(unseal(proposal.sealedPayload, viewingKey));
+    if (!change?.salt) {
+      throw new NothingWasSent(
+        'this request was written down before signers could be added from a device, so it cannot be finished. Press '
+        + 'Grant access, or Change, again to start a new one. Nothing was sent.');
+    }
+    return change.salt;
+  }
+
+  /**
+   * **THE PROPOSAL THAT SEATS ONE PERSON WAITING FOR A SEAT, WRITTEN DOWN FOR A
+   * DEVICE TO RAISE - OR THE ONE ALREADY WRITTEN DOWN.** A proposal for this
+   * person's leaf that is still open or approved is answered again rather than a
+   * second one raised beside it, so pressing the control twice costs nothing.
+   *
+   * **AND A SEAT THE CHAIN ALREADY MADE IS WRITTEN ON THE RECORD HERE.** A seat a
+   * device sent is recorded only once the chain shows it; one the chain showed
+   * after the device stopped waiting is recorded the next time anybody asks.
+   */
+  async seatRound(accountId: string, viewingKey: Hex, signerId: string, by: string): Promise<Proposal> {
+    const signer = this.waitingForASeat(accountId, viewingKey, signerId);
+    const digest = this.commitments.signerAddPayload(signer.leafCommitment!);
+    const live = this.liveRoundFor(accountId, viewingKey, digest);
+    if (await this.ledger.holdsSigner?.(accountId, signer.leafCommitment!) === true) {
+      this.recordTheSeat(accountId, viewingKey, signerId, live);
+      return live ? this.requireProposal(live.id, viewingKey) : this.seatedWithoutAProposal(signer);
+    }
+    return live ?? this.proposeSigner(accountId, viewingKey, signerId, by, { onDevice: true });
+  }
+
+  /** The same, for a change of the account's threshold. */
+  async thresholdRound(accountId: string, viewingKey: Hex, newThreshold: number, by: string): Promise<Proposal> {
+    const digest = this.commitments.signerThresholdPayload(newThreshold);
+    const live = this.liveRoundFor(accountId, viewingKey, digest);
+    if (live && (await this.ledger.status(accountId))?.threshold === newThreshold) {
+      this.recordTheThreshold(accountId, viewingKey, newThreshold, live);
+      return this.requireProposal(live.id, viewingKey);
+    }
+    return live ?? this.proposeThresholdChange(accountId, viewingKey, newThreshold, by, { onDevice: true });
+  }
+
+  /**
+   * A live proposal for this change, newest first. **One written down without
+   * the salt its identity was made with is passed over**, because no device can
+   * act on it: a new one is written down in its place.
+   */
+  private liveRoundFor(accountId: string, viewingKey: Hex, digest: Hex): Proposal | null {
+    const live = this.listProposals(accountId, viewingKey)
+      .filter(p => p.digest === digest && (p.status === 'open' || p.status === 'approved'))
+      .filter(p => this.hasGovernanceSalt(p, viewingKey))
+      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+    return live[0] ?? null;
+  }
+
+  private hasGovernanceSalt(proposal: Proposal, viewingKey: Hex): boolean {
+    try {
+      this.governanceSaltOf(proposal, viewingKey);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** What a seat made on the chain with no proposal this service holds answers with. */
+  private seatedWithoutAProposal(signer: Signer): never {
+    throw new NothingWasSent(
+      `the chain already holds ${signer.name}'s seat, and it is now written on the company's record. Nothing was sent.`);
+  }
+
+  private waitingForASeat(accountId: string, viewingKey: Hex, signerId: string): Signer {
+    const signer = this.open(accountId, viewingKey).signers.find(s => s.id === signerId);
+    if (!signer) throw new NothingWasSent('that person is no longer waiting for access. Reload the page. Nothing was sent.');
+    if (signer.status === 'active') throw new NothingWasSent('that signer already has a seat. Nothing was sent.');
+    if (!signer.leafCommitment) {
+      throw new NothingWasSent(
+        'that person has not accepted their invitation on their own device yet, so there is no seat to give them. '
+        + 'Nothing was sent.');
+    }
+    return signer;
+  }
+
+  /** Only a seated signer who may approve carries out a proposal that changes who may approve. */
+  private refuseAGovernorWhoIsNot(accountId: string, viewingKey: Hex, by: string): void {
+    const sender = this.open(accountId, viewingKey).signers.find(x => x.id === by);
+    if (!sender || sender.status !== 'active' || sender.role === 'viewer') {
+      throw new NothingWasSent(
+        'only a seated signer who may approve carries out this proposal. Ask a signer who can approve to press it. '
+        + 'Nothing was sent.');
+    }
+  }
+
+  /**
+   * **WHAT A DEVICE NEEDS TO SEAT ONE PERSON ON AN APPROVED PROPOSAL**: their
+   * leaf, the proposal's identity, and the salt the identity was made with. The
+   * device recomputes the identity from the leaf and the salt, and the contract
+   * refuses the seat unless the proposal has the account's threshold of approvals.
+   */
+  seatOrderOf(accountId: string, viewingKey: Hex, signerId: string): { leaf: Hex; proposal: Hex; proposalSalt: Hex } {
+    const signer = this.waitingForASeat(accountId, viewingKey, signerId);
+    const round = this.approvedFor(accountId, viewingKey, this.commitments.signerAddPayload(signer.leafCommitment!));
+    return { leaf: signer.leafCommitment!, proposal: round.chainId as Hex, proposalSalt: this.governanceSaltOf(round, viewingKey) };
+  }
+
+  /** The same, for a change of the account's threshold. */
+  thresholdOrderOf(accountId: string, viewingKey: Hex, newThreshold: number): { threshold: number; proposal: Hex; proposalSalt: Hex } {
+    const round = this.approvedFor(accountId, viewingKey, this.commitments.signerThresholdPayload(newThreshold));
+    return { threshold: newThreshold, proposal: round.chainId as Hex, proposalSalt: this.governanceSaltOf(round, viewingKey) };
+  }
+
+  /** A refusal before anything is sent is marked so, whatever threw it. */
+  private beforeSending<T>(check: () => T): T {
+    try {
+      return check();
+    } catch (e) {
+      if (saysNothingWasSent(e)) throw e;
+      throw new NothingWasSent(`${String((e as { message?: unknown })?.message ?? e).replace(/\.\s*$/u, '')}. Nothing was sent.`);
+    }
+  }
+
+  /** Asks the chain until `seen` answers yes, for as long as an approval is waited on. */
+  private async untilTheChainShows(seen: () => Promise<boolean>): Promise<boolean> {
+    for (let asked = 0; asked < this.inclusion.attempts; asked++) {
+      if (asked > 0) await new Promise<void>(r => setTimeout(r, this.inclusion.everyMs));
+      try {
+        if (await seen()) return true;
+      } catch {
+        /* A read that failed says nothing about what was sent; ask again. */
+      }
+    }
+    return false;
+  }
+
+  /**
+   * **A SEAT A SIGNER'S DEVICE BUILT AND PROVED, SENT - AND THE PERSON IS
+   * ADMITTED ON THE RECORD ONLY ONCE THE CHAIN HOLDS THEIR LEAF.** This process
+   * holds no signer's secret, so it cannot make the seating call itself: the
+   * device of a seated signer makes it, and the door refuses anything but
+   * exactly one seating call to this company's contract. The door cannot tell
+   * which leaf the call seats, so the record waits for the chain to show this
+   * person's leaf in the signer set before it wraps the viewing key to them.
+   * A seat the chain has not shown by the end of the wait is recorded the next
+   * time the control is pressed.
+   */
+  async seatFromDevice(accountId: string, viewingKey: Hex, signerId: string, proven: Uint8Array, by: string): Promise<Account> {
+    const order = this.beforeSending(() => {
+      this.refuseAGovernorWhoIsNot(accountId, viewingKey, by);
+      return this.seatOrderOf(accountId, viewingKey, signerId);
+    });
+    const release = this.holdTheSend(`seat ${accountId} ${signerId}`, 'this seat');
+    try {
+      await this.sendProvenCall(accountId, proven, 'amendSigner', 'this seat');
+      const holds = this.ledger.holdsSigner;
+      if (typeof holds !== 'function'
+        || !await this.untilTheChainShows(async () => await holds.call(this.ledger, accountId, order.leaf) === true)) {
+        throw new Error(
+          'the seat was sent and the chain has not shown it yet, so it is not written on the company\'s record. Do not '
+          + 'send it again: press Grant access later and it is recorded once the chain shows it.');
+      }
+      const round = this.listProposals(accountId, viewingKey).find(p => p.chainId === order.proposal) ?? null;
+      return this.recordTheSeat(accountId, viewingKey, signerId, round);
+    } finally {
+      release();
+    }
+  }
+
+  /** The seat on the record, and the proposal that made it closed, once the chain holds the seat. */
+  private recordTheSeat(accountId: string, viewingKey: Hex, signerId: string, round: Proposal | null): Account {
+    if (round) this.markCarriedOut(round.id, viewingKey);
+    const { rec, account } = this.load(accountId, viewingKey);
+    const signer = account.signers.find(s => s.id === signerId);
+    if (!signer || signer.status === 'active') return account;
+    return this.admit(rec, account, viewingKey, signer);
+  }
+
+  /** A governance proposal the chain carried out, and closed, is not answered again as live. */
+  private markCarriedOut(proposalId: string, viewingKey: Hex): void {
+    const now = this.requireProposal(proposalId, viewingKey);
+    if (now.status === 'executed') return;
+    now.status = 'executed';
+    this.putProposal(now, viewingKey);
+  }
+
+  /**
+   * A threshold change a signer's device built and proved, sent, and written on
+   * the record only once the chain's threshold is the new one.
+   */
+  async setThresholdFromDevice(
+    accountId: string, viewingKey: Hex, newThreshold: number, proven: Uint8Array, by: string,
+  ): Promise<Account> {
+    const order = this.beforeSending(() => {
+      this.refuseAGovernorWhoIsNot(accountId, viewingKey, by);
+      return this.thresholdOrderOf(accountId, viewingKey, newThreshold);
+    });
+    const release = this.holdTheSend(`threshold ${accountId}`, 'this threshold change');
+    try {
+      await this.sendProvenCall(accountId, proven, 'setThreshold', 'this threshold change');
+      if (!await this.untilTheChainShows(async () => (await this.ledger.status(accountId))?.threshold === newThreshold)) {
+        throw new Error(
+          'the threshold change was sent and the chain has not shown it yet, so it is not written on the company\'s '
+          + 'record. Do not send it again: enter the same number and press Change later, and it is recorded once the '
+          + 'chain shows it.');
+      }
+      const round = this.listProposals(accountId, viewingKey).find(p => p.chainId === order.proposal) ?? null;
+      return this.recordTheThreshold(accountId, viewingKey, newThreshold, round);
+    } finally {
+      release();
+    }
+  }
+
+  private recordTheThreshold(accountId: string, viewingKey: Hex, newThreshold: number, round: Proposal | null): Account {
+    if (round) this.markCarriedOut(round.id, viewingKey);
+    const { rec, account } = this.load(accountId, viewingKey);
+    this.save(rec, { ...account, policy: { ...account.policy, threshold: newThreshold } }, viewingKey, rec.pendingSigners);
+    return this.open(accountId, viewingKey);
+  }
+
   private holdARaise(proposalId: string, viewingKey: Hex, asked: Proposal): () => void {
     const now = this.requireProposal(proposalId, viewingKey);
     if (now.status !== 'open') throw new NothingWasSent(notSentBecauseItIs(now.status));
@@ -3216,8 +3543,10 @@ export class AccountService {
    */
   private async mayBeSentFromADevice(proposalId: string, viewingKey: Hex): Promise<Proposal> {
     const proposal = this.requireProposal(proposalId, viewingKey);
-    if (proposal.kind !== 'payroll') {
-      throw new NothingWasSent('only a payroll proposal is raised from a device here, and this is not one. Nothing was sent.');
+    if (!RAISED_FROM_A_DEVICE.has(proposal.kind)) {
+      throw new NothingWasSent(
+        'only a payroll proposal, a seat or a threshold change is raised from a device here, and this is none of '
+        + 'those. Nothing was sent.');
     }
     if (proposal.status !== 'open') throw new NothingWasSent(notSentBecauseItIs(proposal.status));
     const held = proposal.raisedAt ? 'present'
@@ -3684,6 +4013,46 @@ export class AccountService {
     pendingSigners: PendingSigner[] = rec.pendingSigners,
   ): void {
     this.store.putAccount(sealAccount(account, viewingKey, pendingSigners, rec.keyEpoch));
+    /*
+     * **THE NAMELESS INDEX OF THE COMPANY'S VAULT KEYS IS MADE AGAIN FROM THE
+     * ROSTER ON EVERY ROSTER WRITE**, so a seat, a removal or a signer giving
+     * keys is reflected in it at once, and it can never hold a key the roster
+     * does not name.
+     */
+    this.store.putVaultKeyIndex(vaultKeyIndexOf(account));
+  }
+
+  /**
+   * **ONE SIGNER GIVES THEIR VAULT KEYS, AND THEY ARE WRITTEN INTO THEIR OWN
+   * ENTRY IN THE SEALED ROSTER.** Refused unless they are signed with that
+   * entry's own signing key, so no member can put a key in another signer's
+   * name without that signer's signing secret. **WHAT THIS DOES NOT STOP:** the
+   * roster is sealed under the company's viewing key, and whoever holds that key
+   * - this service is handed it on every request that needs it - can rewrite an
+   * entry whole, its signing key included. Given once: the same keys again are
+   * accepted, and different ones are refused, because every one of them is
+   * worked out again from the same wallet and the same seat. The member's filing
+   * key, which is their roster signing key, is kept beside it for the vault
+   * records' door.
+   */
+  giveVaultKeys(accountId: string, viewingKey: Hex, userId: string, given: SignedVaultKeys): 'given' | 'already-given' {
+    const { rec, account } = this.load(accountId, viewingKey);
+    const seat = account.signers.find(s => s.userId === userId && s.status === 'active');
+    if (!seat) throw new NoSeatToGiveKeysFor();
+    const candidate = { ...seat, vaultKeys: given };
+    if (!vaultKeysAreTheSigners(accountId, candidate)) {
+      throw new VaultKeysNotYours();
+    }
+    if (seat.vaultKeys) {
+      const same = seat.vaultKeys.committeeKey.value.toLowerCase() === given.committeeKey.value.toLowerCase()
+        && seat.vaultKeys.recordsKey.toLowerCase() === given.recordsKey.toLowerCase();
+      if (same) return 'already-given';
+      throw new VaultKeysAlreadyGiven();
+    }
+    seat.vaultKeys = { committeeKey: { ...given.committeeKey }, recordsKey: given.recordsKey, signature: given.signature };
+    this.save(rec, account, viewingKey, rec.pendingSigners);
+    this.store.putFilingKey({ accountId, userId, filingKey: seat.signingPublicKey.toLowerCase() as Hex });
+    return 'given';
   }
 
   /* ---------------- sealing proposals ---------------- */

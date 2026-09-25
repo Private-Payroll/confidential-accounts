@@ -25,7 +25,10 @@ import type { Marked } from '../core/provenance.js';
 import { AuthScreen, AccountPicker, WALLET_ORIGIN } from './Auth.js';
 import { VaultPanel } from './VaultPanel.js';
 import { PayoutPanel } from './PayoutPanel.js';
-import { RaiseLeg, RetryUnpaid, WithdrawRound, approveFromThisDevice, sendRunFromThisDevice, stageWords } from './GovernedCallControls.js';
+import {
+  RaiseLeg, RetryUnpaid, WithdrawRound, approveFromThisDevice, changeThresholdFromThisDevice, seatFromThisDevice,
+  sendRunFromThisDevice, stageWords,
+} from './GovernedCallControls.js';
 import type { GovernedStage } from './governed-call-on-device.js';
 import { MaintenancePanel } from './MaintenancePanel.js';
 import { WalletWaiting } from './wallet-waiting.js';
@@ -1110,7 +1113,7 @@ function Vault({ account, me, viewingKey, runs, proposals }: {
 }) {
   return (
     <div className="stack">
-      <VaultPanel account={account} me={me} />
+      <VaultPanel account={account} me={me} viewingKey={viewingKey} />
 
       <PayoutPanel account={account} me={me} viewingKey={viewingKey} runs={runs} proposals={proposals} />
 
@@ -2969,17 +2972,41 @@ function Settings({ account, state, session, me, busy, act, commitments }: {
     await loadInvites();
   });
 
-  const grant = (sg: Signer) => act(async () => {
-    await api(`/api/accounts/${account.id}/grant`, {
-      method: 'POST', body: JSON.stringify({ viewingKey: session.viewingKey, signerId: sg.id }),
-    });
-  });
+  /*
+   * **A SEAT IS GIVEN FROM THIS DEVICE, NOT BY THE SERVICE.** The service holds
+   * no signer's secret, and every call that changes who may approve opens with
+   * the contract's signer check. So pressing the control raises the proposal that
+   * seats this person (once), approves it with this signer's own key, and seats
+   * them once the proposal has the company's threshold of approvals. Short of that,
+   * the other signers approve it under Approvals and anyone seated presses it
+   * again.
+   */
+  const [governing, setGoverning] = useState<GovernedStage | null>(null);
+  const [waitingOn, setWaitingOn] = useState<{ what: string; again: string } | null>(null);
+  const governed = async (
+    waiting: { what: string; again: string }, run: (progress: (s: GovernedStage) => void) => Promise<{ state: string }>,
+  ) => {
+    try {
+      const out = await run(setGoverning);
+      setWaitingOn(out.state === 'waiting-for-approvals' ? waiting : null);
+    } finally {
+      setGoverning(null);
+    }
+  };
+  const myRole = account.signers.find(x => x.id === me.signerId)?.role;
+  const grant = (sg: Signer) => act(() => governed({ what: `adding ${sg.name}`, again: 'Grant access' },
+    (progress) => seatFromThisDevice(account, { signerId: sg.id, leaf: sg.leafCommitment! }, me, session.viewingKey, progress)));
+  const [newThreshold, setNewThreshold] = useState('');
+  const changeThreshold = () => act(() => governed(
+    { what: `changing approvals required to ${newThreshold}`, again: `Change, with ${newThreshold} entered,` },
+    (progress) => changeThresholdFromThisDevice(account, Number(newThreshold), me, session.viewingKey, progress)));
 
   const pendingSigners = account.signers.filter(x => x.status === 'pending');
 
   return (
     <div className="stack">
-      <MaintenancePanel account={account} />
+      <MaintenancePanel account={account} me={me} roster={async () => openSealedAccount(
+        await api<SealedAccount>(`/api/accounts/${account.id}`), session.viewingKey)} />
       {open && (
         <div className="card">
           <div className="hd"><h3>Invite a signer</h3></div>
@@ -3056,7 +3083,10 @@ function Settings({ account, state, session, me, busy, act, commitments }: {
                     <td style={{ textTransform: 'capitalize' }}>{sg.role}</td>
                     <td><span className="chip no">nothing</span></td>
                     <td style={{ textAlign: 'right' }}>
-                      <button className="btn sm pri" onClick={() => grant(sg)} disabled={busy}>Grant access</button>
+                      {!sg.leafCommitment
+                        ? <span className="sub" data-not-accepted>Waiting for them to accept the invitation</span>
+                        : myRole !== 'viewer' && (
+                          <button className="btn sm pri" onClick={() => grant(sg)} disabled={busy}>Grant access</button>)}
                     </td>
                   </tr>
                 ))}
@@ -3065,9 +3095,10 @@ function Settings({ account, state, session, me, busy, act, commitments }: {
           </div>
           <div className="bd" style={{ borderTop: '1px solid var(--line)' }}>
             <div className="hint">
-              Granting re-wraps the viewing key to their public key. Only someone who already holds the key
-              can do this, so the server cannot grant access on its own and neither can an administrator
-              who has been removed.
+              Granting access lets this person approve payments and see everything in this company account, including
+              pay. It needs {account.policy.threshold} approval{account.policy.threshold === 1 ? '' : 's'} from the
+              signers first. Seating them is done from a signer&rsquo;s own device, because the service holds no
+              signer&rsquo;s key and cannot seat anyone by itself.
             </div>
           </div>
         </div>
@@ -3079,6 +3110,27 @@ function Settings({ account, state, session, me, busy, act, commitments }: {
           <div className="spacer" />
           {!open && <button className="btn pri" onClick={() => setOpen(true)}>Invite signer</button>}
         </div>
+        {governing && <div className="bd hint" data-governed-stage>Now: {stageWords(governing)}…</div>}
+        {waitingOn && <div className="bd hint" data-waiting-on-approvals>
+          Your approval of {waitingOn.what} is recorded. It needs {account.policy.threshold} approvals: once the other
+          signers have approved it under Approvals, a signer who can approve presses {waitingOn.again} again.
+        </div>}
+        {myRole !== 'viewer'
+          && account.signers.filter(x => x.status === 'active').length > 1 && (
+          <div className="bd inline" data-change-threshold>
+            <label htmlFor="new-threshold">Approvals required</label>
+            <input id="new-threshold" type="number" min={1}
+              max={account.signers.filter(x => x.status === 'active').length}
+              value={newThreshold} onChange={e => setNewThreshold(e.target.value)}
+              placeholder={String(account.policy.threshold)} style={{ width: 80 }} />
+            <button className="btn" onClick={changeThreshold}
+              disabled={busy || !/^[1-9][0-9]*$/u.test(newThreshold) || Number(newThreshold) === account.policy.threshold
+                || Number(newThreshold) > account.signers.filter(x => x.status === 'active').length}>
+              Change</button>
+            <span className="sub">Approvals needed to release funds and to add signers. Changing it needs
+              {' '}{account.policy.threshold} approval{account.policy.threshold === 1 ? '' : 's'} first.</span>
+          </div>
+        )}
         <div className="bd tight">
           <table>
             <thead><tr><th>Name</th><th>Role</th><th>Status</th><th>Signing key</th></tr></thead>

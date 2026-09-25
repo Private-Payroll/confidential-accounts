@@ -60,7 +60,9 @@ import * as accountModule from '../managed/contract/index.js';
 import { witnesses, type AccountPrivateState } from '../src/witnesses.js';
 import { privateStateFor, leafOfDevice, change, ZERO_32 } from './simulator.js';
 import { MemoryStore } from '../../src/core/store.js';
-import type { SealedAccount } from '../../src/core/types.js';
+import { AccountService, sealAccount } from '../../src/core/account.js';
+import { MidnightCommitments } from '../../src/midnight/commitments.js';
+import { signVaultKeys } from '../../src/core/vault-keys.js';
 import { ChainLedger } from '../../src/wiring/chain.js';
 import { companyVaultRoutes, type VaultChain } from '../../src/server/company-vaults.js';
 import { mountVaultRecords, vaultAccountFromTheIndexer } from '../../src/server/vault-records-authority.js';
@@ -184,6 +186,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
   let server: ReturnType<express.Express['listen']>;
   let base: string;
   let store: MemoryStore;
+  let viewingKey: Hex;
   let company: Hex;
   let words: string;
   let me: DeviceSigner;
@@ -276,10 +279,17 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     sent = [];
     arrivals = [];
     temporaryKeys = new Map();
-    store.putAccount({
-      id: ACCOUNT_ID, createdAt: new Date().toISOString(), keyEpoch: 0, threshold: 1, signerCount: 1,
-      memberUserIds: ['ada'], pendingSigners: [], wrappedKeys: [], inboxPublicKey: '00'.repeat(32),
-    } as unknown as SealedAccount);
+    /* A company of one, with its roster sealed under a viewing key the page holds, as the product keeps it. */
+    viewingKey = toHex(new Uint8Array(32).fill(0x5e));
+    store.putAccount(sealAccount({
+      id: ACCOUNT_ID, createdAt: new Date().toISOString(), name: 'Northwind',
+      signers: [{
+        id: 'ada', userId: 'ada', name: 'Ada', status: 'active', role: 'admin', leafCommitment: null,
+        signingPublicKey: signing.publicKey, wrappingPublicKey: wrapping.publicKey,
+      }],
+      policy: { threshold: 1, limitsByRole: {} }, recovery: { signerIds: ['ada'], threshold: 1 }, wrappedKeys: [],
+    } as never, viewingKey, []));
+    const accounts = new AccountService(store, {} as never, MidnightCommitments);
 
     const app = express();
     const signedIn: express.RequestHandler = (req, res, next) => {
@@ -344,6 +354,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     };
     app.use(companyVaultRoutes({
       signedIn, member, store,
+      giveVaultKeys: (id, vk, person, given) => accounts.giveVaultKeys(id, vk as Hex, person, given),
       company: async () => ({ address: company, threshold: 1 }),
       ledger: watched, chain: vaultChain,
       verifierKeys: async () => new Map(await Promise.all(
@@ -365,7 +376,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
         queryContractState: async (a) => { const c = chain.contract(a); return c === null ? null : { data: asRuntime(c).data }; },
       }),
       companies: () => store.listAccounts().map((a) => ({ id: a.id, contractAddress: company, memberUserIds: a.memberUserIds })),
-      filingKeyOf: (id, person) => store.getVaultKeys(id, person)?.filingKey ?? null,
+      filingKeyOf: (id, person) => store.getFilingKey(id, person)?.filingKey ?? null,
     });
     await new Promise<void>((resolve) => { server = app.listen(0, '127.0.0.1', () => resolve()); });
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -424,9 +435,10 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     await http(`${at}/vault-keys`, {
       method: 'PUT',
       body: {
-        committeeKey: committeeKeyFor(identityFromWords(words), company),
-        recordsKey: recordsReaderOf(me.companyKey).publicKey,
-        filingKey: signing.publicKey,
+        viewingKey,
+        ...signVaultKeys(ACCOUNT_ID, 'ada', {
+          committeeKey: committeeKeyFor(identityFromWords(words), company), recordsKey: recordsReaderOf(me.companyKey).publicKey,
+        }, signing.secret),
       },
     });
     const { vault } = await createCompanyVault({ ...pacing, account: company, service, builder: builder(), keys });

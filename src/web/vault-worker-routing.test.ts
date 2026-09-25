@@ -46,9 +46,9 @@ describe('WHERE A PAYMENT OUT\'S PROVING MATERIAL IS FETCHED FROM', () => {
   });
 
   it('NO VAULT CIRCUIT SHARES A NAME WITH AN ACCOUNT CIRCUIT SERVED TO A DEVICE, which is what routing by name rests on', () => {
-    /* RED WHEN: the served list is not exactly these three, or a vault circuit is named like one of them. */
-    expect(ACCOUNT_CIRCUITS_A_DEVICE_GOVERNS).toEqual(['propose', 'approve']);
-    expect([...ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE].sort()).toEqual(['approve', 'propose', 'recordPayment']);
+    /* RED WHEN: the served list is not exactly these five, or a vault circuit is named like one of them. */
+    expect(ACCOUNT_CIRCUITS_A_DEVICE_GOVERNS).toEqual(['propose', 'approve', 'amendSigner', 'setThreshold']);
+    expect([...ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE].sort()).toEqual(['amendSigner', 'approve', 'propose', 'recordPayment', 'setThreshold']);
     expect((VAULT_CIRCUITS as readonly string[]).filter((c) => ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE.includes(c))).toEqual([]);
   });
 

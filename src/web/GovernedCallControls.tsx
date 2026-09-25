@@ -4,9 +4,10 @@ import type { Hex } from '../core/crypto.js';
 import type { Account, Proposal } from '../core/types.js';
 import * as keyring from './keyring.js';
 import {
-  approveOnDevice, governedCallServiceFor, mayWithdraw, pendingRetries, raiseRetryOnDevice, raiseRunOnDevice,
-  roundsOfTheLeg, sendRaiseFromDevice, sendRetryFromDevice, unpaidToRetry, withdrawRound,
-  type GovernedCallDoors, type GovernedStage, type PendingRetry, type RaiseDoors, type RetryOnTheLeg, type RoundStanding,
+  approveOnDevice, changeThresholdOnDevice, governedCallServiceFor, mayWithdraw, pendingRetries, raiseRetryOnDevice,
+  raiseRunOnDevice, roundsOfTheLeg, seatSignerOnDevice, sendRaiseFromDevice, sendRetryFromDevice, unpaidToRetry, withdrawRound,
+  type GovernedCallDoors, type GovernedOutcome, type GovernedStage, type PendingRetry, type RaiseDoors, type RetryOnTheLeg,
+  type RoundStanding,
 } from './governed-call-on-device.js';
 import { startVaultBuilder, type VaultBuilderClient } from './vault-worker-client.js';
 import { SealedNotePool } from '../midnight/vault-pool.js';
@@ -65,7 +66,7 @@ const holdingsFor = (
     nonce: n.nonce, token: n.token, value: n.value.toString(), ...(n.createdIn === undefined ? {} : { createdIn: n.createdIn }),
   });
   return deviceVaultHoldings({
-    chain: (vault) => vaultServiceFor(keyring.api, account.id).chain(vault),
+    chain: (vault) => vaultServiceFor(keyring.api, account.id, async () => account).chain(vault),
     pool: async (vault) => (await pool.load(vault)).notes,
     heldCommitmentOf: async (vault, note) => (await builder.commitments({ vault, coin: wire(note) })).held,
     paymentsFit: (notes, payments) => builder.paymentsFit({
@@ -81,6 +82,33 @@ export async function approveFromThisDevice(
 ): Promise<void> {
   await approveOnDevice(await doorsFor(account, progress), {
     round: proposal, signerId: me.signerId, signature: keyring.signApproval(proposal, me), viewingKey,
+  });
+}
+
+/**
+ * **SEATING A PERSON WAITING FOR A SEAT, FROM THIS DEVICE.** The proposal is
+ * raised here if the chain does not hold it, approved with this signer's own
+ * key, and the seat is made here once the proposal has its approvals. This
+ * service holds no signer's secret, so no other machine can do any of it.
+ */
+export async function seatFromThisDevice(
+  account: Account, seat: { signerId: string; leaf: Hex }, me: { signerId: string; signingSecret: Hex }, viewingKey: Hex,
+  progress: (s: GovernedStage) => void,
+): Promise<GovernedOutcome> {
+  return seatSignerOnDevice(await doorsFor(account, progress), {
+    viewingKey, signerId: me.signerId, seat,
+    sign: (round) => keyring.signApproval(round as unknown as Proposal, me),
+  });
+}
+
+/** The same, for changing how many approvals the company needs. */
+export async function changeThresholdFromThisDevice(
+  account: Account, newThreshold: number, me: { signerId: string; signingSecret: Hex }, viewingKey: Hex,
+  progress: (s: GovernedStage) => void,
+): Promise<GovernedOutcome> {
+  return changeThresholdOnDevice(await doorsFor(account, progress), {
+    viewingKey, signerId: me.signerId, newThreshold,
+    sign: (round) => keyring.signApproval(round as unknown as Proposal, me),
   });
 }
 

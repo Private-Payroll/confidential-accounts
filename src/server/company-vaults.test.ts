@@ -5,6 +5,8 @@ import { MemoryStore } from '../core/store.js';
 import type { SealedAccount } from '../core/types.js';
 import { NothingWasSent } from '../core/jobs.js';
 import { companyCommittee, companyVaultRoutes, vaultState, type CompanyVaultDeps } from './company-vaults.js';
+import { VaultKeysAlreadyGiven, VaultKeysNotYours } from '../core/account.js';
+import type { SignedVaultKeys } from '../core/vault-keys.js';
 
 /*
  * The company-vault routes' own refusals, with the chain and the fee payer
@@ -47,6 +49,29 @@ let accountCallState: CompanyVaultDeps['chain']['accountCallState'];
 let asked: string[];
 /* Whether the vault's ledger is this build's shape, as the chain reader answers it; `undefined` for a reader with no such check. */
 let ledgerIsThisBuilds: CompanyVaultDeps['chain']['ledgerIsThisBuilds'];
+/*
+ * **THE ROSTER, STOOD IN.** What each member's own roster entry carries, and the
+ * index the service would make from it - sorted, with no names. The real roster
+ * write is `AccountService.giveVaultKeys`, driven in `a-signers-keys-are-the-rosters.test.ts`.
+ */
+let roster: Map<string, SignedVaultKeys>;
+const BAD_SIGNATURE = 'ee'.repeat(64);
+const giveVaultKeys: CompanyVaultDeps['giveVaultKeys'] = (accountId, _vk, userId, given) => {
+  if (given.signature === BAD_SIGNATURE) throw new VaultKeysNotYours();
+  const before = roster.get(`${accountId}:${userId}`);
+  if (before) {
+    if (before.committeeKey.value === given.committeeKey.value && before.recordsKey === given.recordsKey) return 'already-given';
+    throw new VaultKeysAlreadyGiven();
+  }
+  roster.set(`${accountId}:${userId}`, given);
+  const mine = [...roster.entries()].filter(([k]) => k.startsWith(`${accountId}:`)).map(([, v]) => v);
+  store.putVaultKeyIndex({
+    accountId, signerCount: store.getAccount(accountId)!.signerCount,
+    committeeKeys: mine.map((k) => k.committeeKey).sort((a, b) => (a.value < b.value ? -1 : 1)),
+    readers: mine.map((k) => k.recordsKey).sort(), filers: [],
+  });
+  return 'given';
+};
 const vkOf = (c: string) => new TextEncoder().encode(`vk:${c}`);
 const aDeploy = () => ({
   intents: new Map([[1, { actions: [{
@@ -66,6 +91,7 @@ const account = (over: Partial<SealedAccount> = {}): SealedAccount => ({
 
 beforeEach(async () => {
   store = new MemoryStore();
+  roster = new Map();
   store.putAccount(account());
   store.putAccount(account({ id: 'acc_2', memberUserIds: ['carol'] }));
   sent = [];
@@ -108,6 +134,7 @@ beforeEach(async () => {
       next();
     },
     store,
+    giveVaultKeys,
     company: async (id) => (id === 'acc_1' ? { address: hex(0xc0), threshold: acc1Threshold } : { address: hex(0xc1), threshold: 1 }),
     ledger: { get sendVault() { return sendVault; } },
     chain: {
@@ -161,32 +188,37 @@ const call = async (path: string, as: string | null, method = 'GET', body?: unkn
   return { status: r.status, body: await r.json().catch(() => ({})) };
 };
 const give = (as: string, n: number, over: Record<string, unknown> = {}) => call('/api/accounts/acc_1/vault-keys', as, 'PUT', {
-  committeeKey: key(n), recordsKey: hex(n + 0x10), filingKey: hex(n + 0x20), ...over,
+  viewingKey: 'vk', committeeKey: key(n), recordsKey: hex(n + 0x10), signature: 'ab'.repeat(64), ...over,
 });
 
 describe('A SIGNER\'S VAULT KEYS', () => {
   it('are given once, and the same keys again change nothing', async () => {
     expect((await give('ada', 1)).status).toBe(201);
     expect((await give('ada', 1)).status).toBe(200);
-    expect(store.getVaultKeys('acc_1', 'ada')!.filingKey).toBe(hex(0x21));
+    expect(roster.get('acc_1:ada')!.recordsKey).toBe(hex(0x11));
   });
 
   it('A DIFFERENT SET FROM THE SAME PERSON IS REFUSED, AND THE FIRST IS KEPT', async () => {
     await give('ada', 1);
     const r = await give('ada', 2);
     expect(r.status).toBe(409);
-    expect(r.body.error).toMatch(/different wallet or seat/);
-    expect(store.getVaultKeys('acc_1', 'ada')!.committeeKey).toEqual(key(1));
-    expect((await give('ada', 1, { filingKey: hex(0x99) })).status).toBe(409);
+    expect(r.body.error).toMatch(/different vault keys for this company, from a different wallet/);
+    expect(roster.get('acc_1:ada')!.committeeKey).toEqual(key(1));
+    expect((await give('ada', 1, { recordsKey: hex(0x99) })).status).toBe(409);
   });
 
-  it('refuses anything that is not three public keys, a non-member and nobody signed in', async () => {
+  it('refuses anything that is not two public keys and a signature, keys not signed by the giver\'s own seat, a non-member and nobody signed in', async () => {
     expect((await give('ada', 1, { committeeKey: { tag: 'ecdsa', value: hex(1) } })).status).toBe(400);
     expect((await give('ada', 1, { recordsKey: 'AB'.repeat(32) })).status).toBe(400);
     expect((await give('ada', 1, { signingSecret: hex(1) })).status).toBe(400);
+    /* RED WHEN: the old shape - a filing key, and no viewing key or signature - is still taken. */
+    expect((await give('ada', 1, { filingKey: hex(1) })).status).toBe(400);
+    expect((await give('ada', 1, { signature: undefined })).status).toBe(400);
+    expect((await give('ada', 1, { viewingKey: undefined })).status).toBe(400);
+    expect((await give('ada', 1, { signature: BAD_SIGNATURE })).status).toBe(403);
     expect((await give('carol', 1)).status).toBe(404);
     expect((await call('/api/accounts/acc_1/vault-keys', null, 'PUT', {})).status).toBe(401);
-    expect(store.getVaultKeys('acc_1', 'carol')).toBeNull();
+    expect(roster.has('acc_1:carol')).toBe(false);
   });
 
   it('the committee is complete only when every signer has given a key', async () => {
@@ -194,7 +226,8 @@ describe('A SIGNER\'S VAULT KEYS', () => {
     let k = await call('/api/accounts/acc_1/vault-keys', 'ada');
     expect(k.body.committee).toBeNull();
     expect(k.body.why).toMatch(/1 of this company's 2 signers has not/);
-    expect(k.body.mine).toEqual({ committeeKey: key(1), recordsKey: hex(0x11), filingKey: hex(0x21) });
+    /* RED WHEN: the answer says which key is whose - the service then tells anybody who asks. */
+    expect(Object.keys(k.body).sort()).toEqual(['committee', 'readers', 'why']);
     await give('bo', 2);
     k = await call('/api/accounts/acc_1/vault-keys', 'ada');
     expect(k.body.committee).toEqual({ committee: [key(1), key(2)], threshold: 2 });
@@ -202,11 +235,17 @@ describe('A SIGNER\'S VAULT KEYS', () => {
   });
 
   it('a seeded signer with no person behind them leaves the committee incomplete', () => {
-    const r = companyCommittee(account({ memberUserIds: ['ada'], signerCount: 2 }), 1, () => ({
-      accountId: 'acc_1', userId: 'ada', committeeKey: key(1), recordsKey: hex(1), filingKey: hex(1), givenAt: '',
-    }));
+    const r = companyCommittee(account({ memberUserIds: ['ada'], signerCount: 2 }), 1, {
+      accountId: 'acc_1', signerCount: 2, committeeKeys: [key(1)], readers: [hex(1)], filers: [hex(1)],
+    });
     expect(r.committee).toBeNull();
     expect(r.why).toMatch(/1 of this company's 2 signers/);
+    /* RED WHEN: an index made when the company had another number of signers is taken as this company's committee. */
+    const stale = companyCommittee(account({ signerCount: 3 }), 1, {
+      accountId: 'acc_1', signerCount: 2, committeeKeys: [key(1), key(2)], readers: [], filers: [],
+    });
+    expect(stale.committee).toBeNull();
+    expect(stale.why).toMatch(/3 of this company's 3 signers/);
   });
 });
 
@@ -480,9 +519,10 @@ describe('THE COMPANY ACCOUNT STANDS BEHIND EVERY VAULT', () => {
     expect(vaultState({ state: 'absent', address: VAULT, why: '' }, { heldByOthers: false })).toBe('not-on-chain-yet');
   });
 
-  it('SETTINGS SHOWS EVERY CONTRACT\'S SEATS FROM THE CHAIN, WHO HOLDS EACH, AND A SEAT HELD BY SOMEBODY NOT ON THE COMPANY', async () => {
+  it('SETTINGS SHOWS EVERY CONTRACT\'S SEATS FROM THE CHAIN, AND A SEAT HELD BY SOMEBODY NOT ON THE COMPANY - AND NEVER WHOSE EACH SEAT IS', async () => {
     /* RED WHEN: `authorityView` stops counting seats outside the committee - `seatsOutsideTheCommittee` reads 0 for
-     * the vault and its sentence stops naming the seat - or a seat's holder is taken from anything but the keys given. */
+     * the vault and its sentence stops naming the seat - or the service names whose key a seat is, which only the
+     * sealed roster may say. */
     await vaultHeld();
     authority = { committee: [key(1), key(3)], threshold: 2, counter: 1n };
     accountAuthority = { committee: [key(9)], threshold: 1, counter: 0n };
@@ -495,8 +535,8 @@ describe('THE COMPANY ACCOUNT STANDS BEHIND EVERY VAULT', () => {
     expect(acct).toMatchObject({ contract: 'account', heldByTheCompany: false, shape: 'one-key', changes: '0', seatsOutsideTheCommittee: 1 });
     expect(vault).toMatchObject({ contract: 'vault', heldByTheCompany: false, threshold: 2, seatsOutsideTheCommittee: 1 });
     expect(vault.seats).toEqual([
-      { key: key(1), holder: 'ada', thisService: false, onTheCompanysCommittee: true, you: true },
-      { key: key(3), holder: null, thisService: false, onTheCompanysCommittee: false, you: false },
+      { key: key(1), holder: null, thisService: false, onTheCompanysCommittee: true },
+      { key: key(3), holder: null, thisService: false, onTheCompanysCommittee: false },
     ]);
     expect(vault.why).toMatch(/1 seat\(s\) on this vault are held by a key that is not on the company's committee/);
     /* RED WHEN: the service's own key is not passed to the view - the seat then reads as nobody's. */

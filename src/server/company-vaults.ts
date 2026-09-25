@@ -38,7 +38,9 @@
 import express from 'express';
 import { z } from 'zod';
 import type { Hex } from '../core/crypto.js';
-import type { SealedAccount, CompanyVault, VaultKeysOfASigner } from '../core/types.js';
+import type { SealedAccount, CompanyVault } from '../core/types.js';
+import type { CompanyVaultKeyIndex, SignedVaultKeys } from '../core/vault-keys.js';
+import { NoSeatToGiveKeysFor, VaultKeysAlreadyGiven, VaultKeysNotYours } from '../core/account.js';
 import type { Ledger, VaultTxArrival } from '../core/ledger.js';
 import { saysNothingWasSent } from '../core/jobs.js';
 import { readContractAuthority, type AuthorityRead } from '../midnight/ledger.js';
@@ -126,9 +128,15 @@ export interface CompanyVaultDeps {
     putCompanyVault(v: CompanyVault): void;
     getCompanyVault(vault: string): CompanyVault | null;
     listCompanyVaults(accountId: string): CompanyVault[];
-    putVaultKeys(k: VaultKeysOfASigner): void;
-    getVaultKeys(accountId: string, userId: string): VaultKeysOfASigner | null;
+    /** The company's vault keys with nobody's name on them, made from the sealed roster. */
+    getVaultKeyIndex(accountId: string): CompanyVaultKeyIndex | null;
   };
+  /**
+   * Writes one signer's signed vault keys into their own entry in the sealed
+   * roster. It needs the viewing key, and it refuses keys not signed by that
+   * entry's own signing key.
+   */
+  readonly giveVaultKeys: (accountId: string, viewingKey: string, userId: string, given: SignedVaultKeys) => 'given' | 'already-given';
   /** The company's account contract address, and its approval threshold, as the chain holds them. */
   readonly company: (accountId: string) => Promise<{ address: Hex; threshold: number } | null>;
   readonly ledger: Pick<Ledger, 'sendVault'>;
@@ -152,12 +160,18 @@ export interface CompanyVaultDeps {
   readonly now?: () => Date;
 }
 
-/** The committee a company's vault must be held by, from the signers who have given keys. */
+/**
+ * The committee a company's vault must be held by, from the keys its seated
+ * signers gave. **Read from an index with no names in it**, made from the sealed
+ * roster: the committee is a set, sorted by value, so nothing here needs to know
+ * which key is whose. An index made when the company had a different number of
+ * signers is not this company's committee, and says so.
+ */
 export function companyCommittee(
-  account: SealedAccount, threshold: number,
-  keysOf: (userId: string) => VaultKeysOfASigner | null,
+  account: SealedAccount, threshold: number, index: CompanyVaultKeyIndex | null,
 ): { committee: Committee | null; why: string | null } {
-  const keys = account.memberUserIds.map((u) => keysOf(u)?.committeeKey ?? null);
+  const given = index !== null && index.signerCount === account.signerCount ? index.committeeKeys : [];
+  const keys = [...given, ...Array.from({ length: Math.max(0, account.signerCount - given.length) }, () => null)];
   const why = whyNoCommittee({ keys, threshold, signerCount: account.signerCount });
   return why === null
     ? { committee: committeeOf(keys, threshold, account.signerCount), why: null }
@@ -216,7 +230,7 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
     if (company === null) {
       return { company: null, committee: null, why: 'this company has no contract on the chain this service can read, so it has no vaults yet.' };
     }
-    const found = companyCommittee(account, company.threshold, (u) => deps.store.getVaultKeys(account.id, u));
+    const found = companyCommittee(account, company.threshold, deps.store.getVaultKeyIndex(account.id));
     return { company, ...found };
   };
 
@@ -347,46 +361,38 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
 
   r.put('/api/accounts/:id/vault-keys', ...guard, async (req, res) => {
     const body = z.object({
+      viewingKey: z.string().min(1),
       committeeKey: z.object({ tag: z.literal('schnorr'), value: z.string().regex(HEX64) }),
       recordsKey: z.string().regex(HEX64),
-      filingKey: z.string().regex(HEX64),
+      signature: z.string().regex(/^[0-9a-f]{128}$/u),
     }).strict().safeParse(req.body);
     if (!body.success) {
-      res.status(400).json({ error: 'these are not the three public keys a signer gives for a company\'s vaults.' });
+      res.status(400).json({ error: 'these are not the two public keys, and your signature over them, that a signer gives for a company\'s vaults.' });
       return;
     }
     const account = accountOf(req);
-    const person = personOf(req);
-    const before = deps.store.getVaultKeys(account.id, person);
-    const given = body.data;
-    if (before !== null) {
-      const same = before.committeeKey.value === given.committeeKey.value
-        && before.recordsKey === given.recordsKey && before.filingKey === given.filingKey;
-      if (same) { res.json({ given: true }); return; }
-      /* Every one of the three is worked out again from the same words and the same seat, so a
-       * different set is a different wallet, and it does not silently replace the first. */
-      res.status(409).json({
-        error: 'you already gave this company different vault keys, from a different wallet or seat. They are '
-          + 'kept, and these are not. If that is wrong, the company\'s signers must replace you.',
-      });
-      return;
+    const { viewingKey, ...given } = body.data;
+    try {
+      const done = deps.giveVaultKeys(account.id, viewingKey, personOf(req), given as SignedVaultKeys);
+      res.status(done === 'given' ? 201 : 200).json({ given: true });
+    } catch (e) {
+      if (e instanceof VaultKeysAlreadyGiven) { res.status(409).json({ error: e.message }); return; }
+      if (e instanceof VaultKeysNotYours || e instanceof NoSeatToGiveKeysFor) { res.status(403).json({ error: e.message }); return; }
+      throw e;
     }
-    deps.store.putVaultKeys({
-      accountId: account.id, userId: person,
-      committeeKey: given.committeeKey, recordsKey: given.recordsKey as Hex, filingKey: given.filingKey as Hex,
-      givenAt: now().toISOString(),
-    });
-    res.status(201).json({ given: true });
   });
 
+  /*
+   * **THE COMMITTEE AND THE READERS, WITH NOBODY'S NAME ON EITHER.** Which key
+   * is whose is in the sealed roster, and a device reads it there and refuses
+   * any key this answer carries that the roster does not name.
+   */
   r.get('/api/accounts/:id/vault-keys', ...guard, async (req, res) => {
     const account = accountOf(req);
     const { committee, why } = await committeeNow(account);
-    const mine = deps.store.getVaultKeys(account.id, personOf(req));
-    const readers = account.memberUserIds
-      .map((u) => deps.store.getVaultKeys(account.id, u)?.recordsKey ?? null)
-      .filter((k): k is Hex => k !== null);
-    res.json({ committee, why, readers, mine: mine === null ? null : { committeeKey: mine.committeeKey, recordsKey: mine.recordsKey, filingKey: mine.filingKey } });
+    const index = deps.store.getVaultKeyIndex(account.id);
+    const readers = index !== null && index.signerCount === account.signerCount ? [...index.readers] : [];
+    res.json({ committee, why, readers });
   });
 
   /* ---- vaults ---- */
@@ -737,14 +743,12 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
 
   /* ---- who holds the company's rules ---- */
 
-  const holdersOf = (account: SealedAccount): Map<string, string> => {
-    const out = new Map<string, string>();
-    for (const u of account.memberUserIds) {
-      const k = deps.store.getVaultKeys(account.id, u)?.committeeKey;
-      if (k) out.set(`${k.tag.toLowerCase()}:${k.value.toLowerCase()}`, u);
-    }
-    return out;
-  };
+  /*
+   * **WHO HOLDS EACH SEAT IS NOT ANSWERED HERE.** This service keeps no record of
+   * which key is whose; the device names each seat's holder from the sealed
+   * roster it opens, and says which seat is its own from its own wallet.
+   */
+  const NO_HOLDERS: ReadonlyMap<string, string> = new Map();
 
   /*
    * **A HANDOVER SENT AND NOT YET SHOWN BY THE CHAIN IS NOT SENT AGAIN.** Every
@@ -774,13 +778,12 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
   r.get('/api/accounts/:id/authority', ...guard, async (req, res) => {
     const account = accountOf(req);
     const { company, committee, why } = await committeeNow(account);
-    const holders = holdersOf(account);
     const serviceKey = deps.account.temporaryKey ?? null;
     const contracts: ContractAuthorityView[] = [];
     if (company !== null) {
-      contracts.push(authorityView('account', await authorityOf(company.address), committee, holders, serviceKey));
+      contracts.push(authorityView('account', await authorityOf(company.address), committee, NO_HOLDERS, serviceKey));
       for (const v of deps.store.listCompanyVaults(account.id)) {
-        contracts.push(authorityView('vault', await authorityOf(v.vault), committee, holders, serviceKey));
+        contracts.push(authorityView('vault', await authorityOf(v.vault), committee, NO_HOLDERS, serviceKey));
       }
     }
     const accountRow = contracts[0];
@@ -802,7 +805,7 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
       committee,
       why,
       everySignerNeeded: company === null ? null : everySignerNeeded(account.signerCount, company.threshold),
-      contracts: contracts.map((c) => ({ ...c, seats: c.seats.map((s) => ({ ...s, you: s.holder === personOf(req) })) })),
+      contracts,
       handover: {
         ...handover,
         /* Said beside the button, because a handover cannot be undone from this screen. */
