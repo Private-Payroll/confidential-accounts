@@ -458,7 +458,8 @@ export async function payPrivatelyFromCompanyVault(
     throw new Error('this service does not read this vault as held by the company\'s committee, so its record is not '
       + `opened here and nothing is paid out of it. Nothing was sent.${view.why ? ` The service says: ${view.why}` : ''} `
       + 'Where the cause is that a signer joined or left, or the threshold changed, since the vault was handed over, '
-      + 'its committee cannot be changed from this product yet, and no payment out of it is made until it can.');
+      + 'the signers who hold it now sign the change in Settings, and payments out of it are made again once the chain '
+      + 'shows it.');
   }
   /*
    * **AND THE WHOLE QUESTION THE SERVICE ASKS BEFORE IT SENDS, NOT HALF OF IT.**

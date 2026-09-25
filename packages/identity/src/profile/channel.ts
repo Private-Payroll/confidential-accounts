@@ -1,4 +1,5 @@
 import type { BalancedAnswer } from './balance.js';
+import type { CommitteeSignatures } from './committee-sign.js';
 import { parseAsk } from './request.js';
 import type { Ask, RequestError } from './request.js';
 import type { DisclosureResponse } from './disclosure.js';
@@ -137,7 +138,7 @@ export function framingOf(view: ChannelWindow, embedder: string | null): Framing
  * a channel that would then have two rules to keep in step.
  */
 export type Answer =
-  | DisclosureResponse | UnlockRelease | KeyringRelease | SealedAcceptance | BalancedAnswer;
+  | DisclosureResponse | UnlockRelease | KeyringRelease | SealedAcceptance | BalancedAnswer | CommitteeSignatures;
 
 export interface Channel {
   /** Send the answer back — to the OBSERVED origin, and nowhere else. */

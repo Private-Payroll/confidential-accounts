@@ -3,6 +3,9 @@ import type { Account } from '../core/types.js';
 import * as keyring from './keyring.js';
 import { WALLET_ORIGIN } from './Auth.js';
 import { holderOf, whyNotHandOver, type Roster } from './handover-check.js';
+import {
+  NothingToSign, signCommitteeChangeOnDevice, type CommitteeChangeDoors, type CommitteeChangeView,
+} from './committee-change-on-device.js';
 
 export { whyNotHandOver };
 
@@ -68,7 +71,9 @@ export function seatWords(seat: SeatView, roster: Roster, me: { signerId: string
   return `${who}${you ? ' (you)' : ''}${seat.onTheCompanysCommittee ? '' : ' - not on the company\'s committee'}`;
 }
 
-export function MaintenancePanel({ account, me, api = keyring.api, walletKey, roster = async () => account }: {
+export function MaintenancePanel({
+  account, me, api = keyring.api, walletKey, roster = async () => account, signInWallet,
+}: {
   account: Account;
   /** This person's own seat, so the screen can say which seat is theirs. */
   me: { signerId: string };
@@ -76,20 +81,70 @@ export function MaintenancePanel({ account, me, api = keyring.api, walletKey, ro
   /** The committee key this person's wallet gives for this company. */
   walletKey?: () => Promise<Key>;
   /** The company's sealed roster, opened on this device afresh. The account as this page opened it when not given. */
-  roster?: () => Promise<Roster>;
+  roster?: () => Promise<Roster & { policy?: { threshold: number } }>;
+  /** Asks this person's wallet to sign a committee change. The wallet in its own window when not given. */
+  signInWallet?: CommitteeChangeDoors['askWallet'];
 }) {
   const [view, setView] = useState<AuthorityScreen | null>(null);
+  const [owed, setOwed] = useState<CommitteeChangeView | null>(null);
   const [err, setErr] = useState('');
   const [said, setSaid] = useState('');
   const [busy, setBusy] = useState(false);
 
   const refresh = useCallback(async () => {
-    setView(await api(`/api/accounts/${account.id}/authority`) as AuthorityScreen);
+    const screen = await api(`/api/accounts/${account.id}/authority`) as AuthorityScreen;
+    setView(screen);
+    setOwed(screen.change.possible
+      ? await api(`/api/accounts/${account.id}/committee-change`) as CommitteeChangeView
+      : null);
   }, [account.id, api]);
   useEffect(() => { void refresh().catch((e) => setErr(String(e?.message ?? e))); }, [refresh]);
 
   const askWallet = walletKey
     ?? (async () => (await keyring.companyKeysForVaults(account.id, WALLET_ORIGIN)).committeeKey);
+
+  const askToSign = signInWallet
+    ?? ((ask) => keyring.signCommitteeChangeFromTheWallet(WALLET_ORIGIN, ask));
+
+  /*
+   * **THIS PERSON SIGNS THE CHANGE ON EVERY CONTRACT THEY HOLD A SEAT ON, IN
+   * THEIR OWN WALLET.** The committee the service names is checked against the
+   * roster this device opened before the wallet is asked; the service puts the
+   * signatures together and sends each change once enough have signed.
+   */
+  const signChange = async () => {
+    setBusy(true); setErr(''); setSaid('');
+    try {
+      const { results } = await signCommitteeChangeOnDevice({
+        view: async () => await api(`/api/accounts/${account.id}/committee-change`) as CommitteeChangeView,
+        walletKey: askWallet,
+        roster,
+        askWallet: askToSign,
+        send: async (body) => await api(`/api/accounts/${account.id}/committee-change/signatures`, {
+          method: 'POST', body: JSON.stringify(body),
+        }),
+      }, me);
+      const sent = results.filter((r) => r.state === 'sent').length;
+      const waiting = results.filter((r) => r.state === 'waiting');
+      const refused = results.filter((r) => r.state === 'refused');
+      const parts = [
+        sent > 0 ? `${sent} change${sent === 1 ? ' was' : 's were'} signed by enough of the signers and sent. Each takes effect once the chain shows it below.` : '',
+        waiting.length > 0 ? `${waiting.length} change${waiting.length === 1 ? ' waits' : 's wait'} for more signers: `
+          + waiting.map((w) => `${String(w.have)} of ${String(w.required)} signed`).join(', ') + '.' : '',
+      ].filter((p) => p !== '');
+      if (parts.length > 0) setSaid(`Your signatures were handed over. ${parts.join(' ')}`);
+      if (refused.length > 0) {
+        setErr(`${refused.length === results.length ? 'No change could be used' : 'Some changes could not be used'}: `
+          + refused.map((r) => String(r.error)).join(' '));
+      }
+    } catch (e: any) {
+      if (e instanceof NothingToSign) setSaid(`${e.message.charAt(0).toUpperCase()}${e.message.slice(1)}`);
+      else setErr(`Signing the change did not finish: ${String(e?.message ?? e)}`);
+    } finally {
+      setBusy(false);
+      await refresh().catch(() => {});
+    }
+  };
 
   const handOver = async () => {
     setBusy(true); setErr(''); setSaid('');
@@ -161,7 +216,21 @@ export function MaintenancePanel({ account, me, api = keyring.api, walletKey, ro
               )
               : view.handover.why && !view.contracts[0]?.heldByTheCompany && <div className="hint">{view.handover.why}</div>}
 
-            <button className="btn" disabled data-change-authority>Change who holds these rules</button>
+            {owed !== null && owed.contracts.length > 0 && (
+              <div className="field" data-change-owed>
+                <label>Waiting for signatures</label>
+                <ul>
+                  {owed.contracts.map((c) => (
+                    <li key={c.address} data-owed-contract={c.contract}>
+                      {c.contract === 'account' ? 'Company account' : 'Vault'} {short(c.address)}: {c.signedSeats.length} of {c.required} signed
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <button className="btn" disabled={busy || !view.change.possible} onClick={signChange} data-change-authority>
+              Sign the change in your wallet
+            </button>
             <div className="hint" data-change-why>{view.change.why}</div>
           </>
         )}

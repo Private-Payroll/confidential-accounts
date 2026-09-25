@@ -48,7 +48,7 @@ export const vaultServiceFor = (api: Api, accountId: string, roster: () => Promi
     keys: async () => {
       const [served, named] = await Promise.all([api(`${base}/vault-keys`), roster()]);
       const refused = (served.committee === null ? null : whyNotTheCommittee(served.committee.committee, named))
-        ?? whyNotTheReaders(served.readers ?? [], named);
+        ?? whyNotTheReaders(served.readers ?? [], named, served.committee !== null);
       if (refused !== null) throw new Error(`${refused} Nothing was built or sent.`);
       return served;
     },

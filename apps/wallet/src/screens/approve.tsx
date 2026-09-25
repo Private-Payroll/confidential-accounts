@@ -30,6 +30,7 @@ import { addressFingerprint, companyFingerprint } from 'midnight-identity/profil
 import { EMBEDDER, INDEXER_HTTP_URL, INDEXER_WS_URL } from '../config.js';
 import { useConsent } from '../framing.js';
 import { ApproveBalance } from './approve-balance.js';
+import { ApproveCommittee } from './approve-committee.js';
 import type { Consent } from '../framing.js';
 
 /**
@@ -484,6 +485,10 @@ export function Approve({
     /* **NOR A BALANCE ASK**: it pays and discloses nothing, and its one door is
      * the press on its own screen (`approve-balance.tsx`). */
     if (request.kind === 'balance') return;
+    /* **NOR A COMMITTEE CHANGE**: it signs a change to a company's rules and
+     * discloses nothing, and its one door is the press on its own screen
+     * (`approve-committee.tsx`). */
+    if (request.kind === 'committee') return;
     const disclosed: Sent[] = [];
     const declined: AttributeName[] = [];
     for (const row of rows) {
@@ -1133,6 +1138,19 @@ export function Approve({
       )}
     </Section>
   );
+
+  if (request.kind === 'committee') {
+    return (
+      <ApproveCommittee
+        request={request}
+        identity={identity}
+        channel={channel}
+        consent={consent}
+        whoIsAsking={whoIsAsking}
+        onDecline={() => { channel?.refuse('declined'); setChannelState({ of: 'waiting' }); }}
+      />
+    );
+  }
 
   if (request.kind === 'balance') {
     return (

@@ -64,6 +64,10 @@
       "types": "./lib/profile/committee-key.d.ts",
       "default": "./lib/profile/committee-key.js"
     },
+    "./profile/committee-sign": {
+      "types": "./lib/profile/committee-sign.d.ts",
+      "default": "./lib/profile/committee-sign.js"
+    },
     "./profile/origin": {
       "types": "./lib/profile/origin.d.ts",
       "default": "./lib/profile/origin.js"

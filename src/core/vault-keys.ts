@@ -141,11 +141,26 @@ export function whyNotTheRostersCommittee(
   return null;
 }
 
-/** Why the records keys the service reports are not all ones the roster names, or null when they are. */
-export function whyNotTheRostersReaders(readers: readonly Hex[], roster: readonly RosterVaultKeys[]): string | null {
+/**
+ * Why the records keys the service reports are not exactly the ones the roster
+ * names, or null when they are: none the roster does not name, and - once the
+ * service reports a complete committee, which is when the vault's secret is
+ * wrapped to them - none it names left out.
+ */
+export function whyNotTheRostersReaders(
+  readers: readonly Hex[], roster: readonly RosterVaultKeys[], opts: { complete: boolean } = { complete: true },
+): string | null {
   const named = new Set(roster.flatMap((r) => (r.keys === null ? [] : [fold(r.keys.recordsKey)])));
   const stranger = readers.filter((k) => !named.has(fold(k))).length;
-  return stranger === 0 ? null
-    : `this service reports ${stranger} records key(s) the company's own roster does not name, so the vault's secret `
+  if (stranger > 0) {
+    return `this service reports ${stranger} records key(s) the company's own roster does not name, so the vault's secret `
       + 'is not wrapped to them. Reload the page, and if it happens again, contact support.';
+  }
+  if (!opts.complete) return null;
+  const reported = new Set(readers.map(fold));
+  const missing = [...named].filter((k) => !reported.has(k)).length;
+  return missing === 0 ? null
+    : `this service left ${missing} records ${missing === 1 ? 'key' : 'keys'} the company's own roster names out of the `
+      + `vault, so ${missing === 1 ? 'that signer' : 'those signers'} could not read the vault's records. The vault is `
+      + 'not set up from here. Reload the page, and if it happens again, contact support.';
 }

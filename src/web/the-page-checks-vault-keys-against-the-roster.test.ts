@@ -82,4 +82,15 @@ describe('A RECORDS KEY THE SERVICE REPORTS', () => {
       '/vault-keys': { committee: { committee: [k(1), k(2)], threshold: 2 }, why: null, readers: [r(0x11), r(0x77)] },
     }).keys()).rejects.toThrow(/1 records key\(s\) the company's own roster does not name/u);
   });
+
+  it('IS REFUSED WHEN THE SERVICE LEAVES OUT A RECORDS KEY THE ROSTER NAMES, ONCE THE COMMITTEE IS COMPLETE', async () => {
+    /* RED WHEN: only a stranger's key is refused and a missing one is not - a signer is then left out of the vault's
+     * readers and cannot read its records. */
+    await expect(serviceAnswering({
+      '/vault-keys': { committee: { committee: [k(1), k(2)], threshold: 2 }, why: null, readers: [r(0x11)] },
+    }).keys()).rejects.toThrow(/left 1 records key the company's own roster names out of the vault/u);
+    /* While the committee is not complete, no secret is wrapped yet, and the answer is taken as it is. */
+    const incomplete = { committee: null, why: 'a signer has not opened the company yet', readers: [] };
+    await expect(serviceAnswering({ '/vault-keys': incomplete }).keys()).resolves.toEqual(incomplete);
+  });
 });

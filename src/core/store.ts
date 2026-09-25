@@ -26,6 +26,12 @@ export interface Shape {
   /** Each member's filing key, keyed by `accountId:userId`. */
   filingKeys: Record<string, FilingKeyOfAMember>;
   /**
+   * The signatures collected so far for one committee change of one contract,
+   * keyed by the contract's address. Each was made in its signer's own wallet
+   * and is good for that one change only; no key is ever kept here.
+   */
+  committeeSignatures: Record<string, CollectedCommitteeSignatures>;
+  /**
    * **EVERY LEDGER OBSERVED WRITING HERE, IN THE ORDER IT WAS FIRST SEEN.**
    *
    * Appended to by every write below that carries a marker, including the
@@ -49,9 +55,25 @@ export interface Shape {
   writtenBy: WiringName[];
 }
 
+/**
+ * **SIGNATURES FOR ONE COMMITTEE CHANGE OF ONE CONTRACT, AS THEY ARRIVE FROM
+ * EACH SIGNER'S WALLET.** Everything here is public the moment the change
+ * reaches the chain, and every signature is bound to this contract, this whole
+ * new committee and this counter, so none of it can be put to any other use.
+ */
+export interface CollectedCommitteeSignatures {
+  readonly accountId: string;
+  readonly address: string;
+  /** The counter the change is signed against, in decimal. */
+  readonly counter: string;
+  readonly to: { readonly committee: ReadonlyArray<{ readonly tag: string; readonly value: string }>; readonly threshold: number };
+  readonly signatures: ReadonlyArray<{ readonly seat: number; readonly signature: { readonly tag: string; readonly value: string } }>;
+}
+
 export const emptyShape = (): Shape =>
   ({ accounts: {}, proposals: {}, runs: {}, attestations: {}, employees: {}, invites: {},
-    installations: {}, pluginEvents: {}, users: {}, writtenBy: [], companyVaults: {}, vaultKeyIndex: {}, filingKeys: {} });
+    installations: {}, pluginEvents: {}, users: {}, writtenBy: [], companyVaults: {}, vaultKeyIndex: {}, filingKeys: {},
+    committeeSignatures: {} });
 
 /**
  * Note what is NOT stored here: viewing keys and signer secrets. Nothing that can
@@ -459,6 +481,12 @@ export class MemoryStore {
   putFilingKey(k: FilingKeyOfAMember) { this.data.filingKeys[`${k.accountId}:${k.userId}`] = k; this.flush(); }
   getFilingKey(accountId: string, userId: string): FilingKeyOfAMember | null {
     return this.data.filingKeys[`${accountId}:${userId}`] ?? null;
+  }
+  putCommitteeSignatures(c: CollectedCommitteeSignatures) {
+    this.data.committeeSignatures[c.address.toLowerCase()] = c; this.flush();
+  }
+  getCommitteeSignatures(address: string): CollectedCommitteeSignatures | null {
+    return this.data.committeeSignatures[address.toLowerCase()] ?? null;
   }
 
   putAttestation(a: Attestation) { this.data.attestations[a.id] = a; this.flush(); }

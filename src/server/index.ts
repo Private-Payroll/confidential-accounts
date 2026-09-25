@@ -69,7 +69,7 @@ import type { WireRecord } from '../midnight/sealed-record-wire.js';
 import { companyVaultRoutes, type VaultChain } from './company-vaults.js';
 import { vaultArtefactPlaces, vaultArtefactRoutes } from './vault-artefacts.js';
 import {
-  accountHandoverWith, accountTemporaryVerifyingKey, accountVerifierKeysIn, vaultChainFromTheIndexer,
+  accountHandoverWith, accountTemporaryVerifyingKey, accountVerifierKeysIn, committeeChangeWith, vaultChainFromTheIndexer,
   vaultVerifierKeysIn,
 } from './vault-chain.js';
 import { DEPLOYED_CIRCUITS } from '../midnight/deferral.js';
@@ -569,6 +569,8 @@ app.use(cors());
       temporaryKey: startup.started ? await accountTemporaryVerifyingKey(writeCapability?.maintenanceAuthority) : undefined,
     },
     readers: { proven: readProvenTransaction, finished: readFinishedTransaction },
+    /* A committee change is put together from its signers' own signatures; this deployment signs none of it. */
+    committeeChange: startup.started ? committeeChangeWith(NETWORK) : undefined,
   }));
 }
 

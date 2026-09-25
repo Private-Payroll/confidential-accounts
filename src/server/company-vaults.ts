@@ -43,12 +43,15 @@ import type { CompanyVaultKeyIndex, SignedVaultKeys } from '../core/vault-keys.j
 import { NoSeatToGiveKeysFor, VaultKeysAlreadyGiven, VaultKeysNotYours } from '../core/account.js';
 import type { Ledger, VaultTxArrival } from '../core/ledger.js';
 import { saysNothingWasSent } from '../core/jobs.js';
-import { readContractAuthority, type AuthorityRead } from '../midnight/ledger.js';
+import { authorityFromContractState, readContractAuthority, type AuthorityRead } from '../midnight/ledger.js';
 import { committeeOf, sameCommittee, whyNoCommittee, type Committee } from '../midnight/vault-committee.js';
-import { authorityView, everySignerNeeded, type ContractAuthorityView } from '../midnight/company-authority.js';
+import { authorityView, everySignerNeeded, type ContractAuthorityView, type SeatSignature } from '../midnight/company-authority.js';
+import { contractsOwingAChange } from '../midnight/committee-change.js';
+import type { CollectedCommitteeSignatures } from '../core/store.js';
 import {
-  circuitsRefusal, asFarAsTheVault, readVaultDeploy, refusalForDeposit, refusalForHandover, refusalForPayout, refusalForPublicPayout,
-  refusalToPutMoneyIn, type FundingFacts, type VaultStartingLedger,
+  circuitsRefusal, asFarAsTheVault, readVaultDeploy, refusalForCommitteeChange, refusalForDeposit, refusalForHandover, refusalForPayout,
+  refusalForPublicPayout,
+  refusalToPutMoneyIn, whyTheHistoryDoesNotVouch, type ContractHistoryStep, type FundingFacts, type VaultStartingLedger,
 } from '../wiring/vault-submission.js';
 
 const HEX64 = /^[0-9a-f]{64}$/u;
@@ -96,6 +99,14 @@ export interface VaultChain {
    * place a note's position in the commitment tree is read from.
    */
   eventsOf?(transactionHash: Hex): Promise<readonly ServedEventOnTheWire[]>;
+  /**
+   * **EVERYTHING THE CHAIN HAS DONE TO ONE CONTRACT, OLDEST FIRST**, each step
+   * with the contract's state after it, in the form `contractState` answers.
+   * Read only for a contract whose rules have changed more than once, which is
+   * what a company whose signers change leaves behind. Absent where this
+   * deployment cannot read a history, and then such a contract is refused.
+   */
+  historyOf?(address: Hex): Promise<ReadonlyArray<{ kind: 'deploy' | 'call' | 'update'; transaction: string; state: unknown }>>;
 }
 
 /** The chain as one block saw it, for a private payment to be built on. Every value is the bytes, as base64. */
@@ -130,6 +141,9 @@ export interface CompanyVaultDeps {
     listCompanyVaults(accountId: string): CompanyVault[];
     /** The company's vault keys with nobody's name on them, made from the sealed roster. */
     getVaultKeyIndex(accountId: string): CompanyVaultKeyIndex | null;
+    /** The signatures collected so far for a committee change of one contract. */
+    getCommitteeSignatures(address: string): CollectedCommitteeSignatures | null;
+    putCommitteeSignatures(c: CollectedCommitteeSignatures): void;
   };
   /**
    * Writes one signer's signed vault keys into their own entry in the sealed
@@ -157,6 +171,15 @@ export interface CompanyVaultDeps {
     readonly temporaryKey?: { tag: string; value: string };
   };
   readonly readers: { proven(bytes: Uint8Array): Promise<unknown>; finished(bytes: Uint8Array): Promise<unknown> };
+  /**
+   * Puts one contract's committee change together from the signatures its
+   * signers' wallets made, checking each, and proves it once enough have
+   * signed. It takes no key. Absent where this deployment sends nothing, and
+   * then a committee change is refused by name.
+   */
+  readonly committeeChange?: (input: {
+    read: AuthorityRead; to: Committee; signatures: readonly SeatSignature[]; label: string;
+  }) => Promise<{ have: number; required: number; seatsSigned: number[]; proven: Uint8Array | null }>;
   readonly now?: () => Date;
 }
 
@@ -248,6 +271,39 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
     readContractAuthority((a) => deps.chain.contractState(a as Hex), vault);
 
   /*
+   * **WHAT THE CHAIN'S HISTORY OF A CONTRACT SAYS ABOUT EVERY CHANGE TO ITS
+   * RULES**, asked only of a contract changed more than once: `null` when the
+   * history vouches for all of them, the sentence when it does not, `undefined`
+   * when there is nothing to ask or no history this deployment can read.
+   */
+  const historyVerdict = async (
+    address: Hex, read: AuthorityRead, keys: ReadonlyMap<string, Uint8Array>, circuits: readonly string[] | undefined,
+    whose: string,
+  ): Promise<string | null | undefined> => {
+    if (read.state !== 'read' || read.authority.counter <= 1n || deps.chain.historyOf === undefined) return undefined;
+    let raw: Awaited<ReturnType<NonNullable<VaultChain['historyOf']>>>;
+    try {
+      raw = await deps.chain.historyOf(address);
+    } catch (e) {
+      return `its history could not be read in full (${(e as Error)?.message ?? String(e)})`;
+    }
+    const steps: ContractHistoryStep[] = raw.map((step) => {
+      const authority = authorityFromContractState(step.state);
+      return {
+        kind: step.kind,
+        transaction: step.transaction,
+        authority: 'why' in authority
+          ? { state: 'unreadable', address, why: authority.why }
+          : { state: 'read', address, authority },
+        circuits: circuits === undefined
+          ? circuitsRefusal(step.state, keys, 'this state')
+          : circuitsRefusal(step.state, keys, 'this state', circuits, whose),
+      };
+    });
+    return whyTheHistoryDoesNotVouch(steps, read);
+  };
+
+  /*
    * **WHAT THE CHAIN SAYS ABOUT THE COMPANY'S ACCOUNT RIGHT NOW.** Its
    * authority and its circuits, each read afresh and never from a record kept
    * here. Read once per request and handed to every vault the request answers
@@ -255,7 +311,7 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
    */
   const accountFactsOf = async (
     companyAddress: Hex,
-  ): Promise<{ read: AuthorityRead; circuits: string | null }> => {
+  ): Promise<{ read: AuthorityRead; circuits: string | null; history?: string | null }> => {
     const read = await authorityOf(companyAddress);
     let state: unknown;
     try {
@@ -266,12 +322,14 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
         circuits: null,
       };
     }
+    const keys = await deps.account.verifierKeys();
     return {
       read,
       circuits: circuitsRefusal(
-        state, await deps.account.verifierKeys(),
+        state, keys,
         'no money goes in, because this company\'s account is not the one this service\'s build compiled',
         deps.account.circuits, 'the account\'s'),
+      history: await historyVerdict(companyAddress, read, keys, deps.account.circuits, 'the account\'s'),
     };
   };
 
@@ -282,7 +340,7 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
    */
   const whyNotFunded = async (
     vault: Hex, read: AuthorityRead, committee: Committee, companyAddress: string, state?: unknown,
-    accountFacts?: { read: AuthorityRead; circuits: string | null },
+    accountFacts?: { read: AuthorityRead; circuits: string | null; history?: string | null },
     what = 'no money goes into this vault',
     /* The narrower question a device's handover waits on: the vault alone, never a door carrying money. */
     asFar: typeof refusalToPutMoneyIn = refusalToPutMoneyIn,
@@ -312,17 +370,21 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
       pinned = null;
     }
     const acc = accountFacts ?? await accountFactsOf(companyAddress as Hex);
+    const vaultKeys = await deps.verifierKeys();
+    const vaultHistory = await historyVerdict(vault, vaultRead, vaultKeys, undefined, 'the vault\'s');
     const facts: FundingFacts = {
       label: vault,
       what,
       vault: vaultRead,
-      vaultCircuits: circuitsRefusal(now, await deps.verifierKeys(), 'this vault is not funded'),
+      vaultCircuits: circuitsRefusal(now, vaultKeys, 'this vault is not funded'),
       pinnedAccount: pinned,
       companyAccount: companyAddress,
       committee,
       heldHere: deps.account.temporaryKey === undefined ? [] : [deps.account.temporaryKey],
       account: acc.read,
       accountCircuits: acc.circuits,
+      ...(vaultHistory === undefined ? {} : { vaultHistory }),
+      ...(acc.history === undefined ? {} : { accountHistory: acc.history }),
     };
     const refused = asFar(facts);
     return refused === null ? null : { ...refused, vaultRead };
@@ -695,8 +757,8 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
       res.status(409).json({
         nothingWasSent: true,
         error: `${unvouched.why} Where the cause is that a signer joined or left, or the threshold changed, since `
-          + 'the vault was handed over, its committee cannot be changed from this product yet, and no payment out '
-          + 'of it is paid for until it can.',
+          + 'the vault was handed over, the signers who hold it now sign the change in Settings, and payments out of '
+          + 'it are paid for again once the chain shows it.',
       });
       return;
     }
@@ -730,8 +792,8 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
       res.status(409).json({
         nothingWasSent: true,
         error: `${unvouched.why} Where the cause is that a signer joined or left, or the threshold changed, since `
-          + 'the vault was handed over, its committee cannot be changed from this product yet, and no payment out '
-          + 'of it is paid for until it can.',
+          + 'the vault was handed over, the signers who hold it now sign the change in Settings, and payments out of '
+          + 'it are paid for again once the chain shows it.',
       });
       return;
     }
@@ -759,20 +821,51 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
    */
   const handoversSent = new Map<string, number>();
   /*
-   * **NOT WHILE ONE SIGNER COULD ACT ALONE AND ANOTHER COULD LEAVE.** A handed-over account's committee cannot be
-   * changed until signers can sign a change in their wallets, so a signer removed afterwards keeps their seat. At
-   * a threshold of one, that one person could then replace the rules every vault of the company pays out by.
+   * **NOT WHILE ONE SIGNER COULD ACT ALONE AND ANOTHER COULD LEAVE.** A signer removed from the company keeps their
+   * seat on every contract until the committee on it is changed, and at a threshold of one that one person could
+   * sign a change to the rules every vault of the company pays out by before the others do.
    */
   const whyNotYet = (threshold: number, signerCount: number): string | null =>
     threshold < 2 && signerCount > 1
       ? `this company has ${signerCount} signers and any one of them can approve alone. Once the account is handed over, `
-        + 'its committee cannot be changed until signers can sign a change in their wallets, so a signer who later leaves '
-        + 'could alone change the rules every vault pays out by. Raise the threshold to at least two first. Nothing was sent.'
+        + 'a signer who later leaves keeps their seat until the others change the committee, and until then could alone '
+        + 'change the rules every vault pays out by. Raise the threshold to at least two first. Nothing was sent.'
       : null;
   const HANDOVER_LIFETIME_MS = 30 * 60_000;
   const handoverStillPending = (accountId: string): boolean => {
     const at = handoversSent.get(accountId);
     return at !== undefined && now().getTime() - at < HANDOVER_LIFETIME_MS;
+  };
+
+  /** Whether a committee change is offered on the settings screen, and the sentence beside it. */
+  const changeOffered = (hasCommittee: boolean, contracts: readonly ContractAuthorityView[]) => {
+    if (!hasCommittee) {
+      return { possible: false, why: 'This company has no complete committee yet, so there is nothing to change its contracts to.' };
+    }
+    const behind = contracts.filter((c) => c.read === 'read' && !c.heldByTheCompany
+      && !(c.shape === 'one-key' && c.changes === '0') && c.shape !== 'anyone' && c.shape !== 'no-one');
+    const accountBehind = behind.some((c) => c.contract === 'account');
+    const vaultsBehind = behind.filter((c) => c.contract === 'vault').length;
+    const named = [
+      accountBehind ? 'the company account' : '',
+      vaultsBehind > 0 ? `${vaultsBehind} vault${vaultsBehind === 1 ? '' : 's'}` : '',
+    ].filter((x) => x !== '').join(' and ');
+    return behind.length === 0
+      ? {
+        possible: false,
+        why: 'No change is waiting. Every contract listed above that has been handed over and could be read is held by '
+          + 'the company\'s committee as it stands now.',
+      }
+      : {
+        possible: true,
+        why: `${named.charAt(0).toUpperCase()}${named.slice(1)} ${behind.length === 1 ? 'is' : 'are'} still held by the `
+          + 'committee from before the company\'s signers or threshold changed. '
+          + (accountBehind
+            ? 'Until the company account is changed, no money goes into or out of any vault. '
+            : 'Until a vault is changed, no money goes into or out of that vault. ')
+          + 'Anyone who has left keeps their seat until then. The signers who hold each one now sign the change in '
+          + 'their own wallets. Once enough have signed, it is sent.',
+      };
   };
 
   r.get('/api/accounts/:id/authority', ...guard, async (req, res) => {
@@ -809,24 +902,21 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
       handover: {
         ...handover,
         /* Said beside the button, because a handover cannot be undone from this screen. */
-        permanent: 'Once handed over, the account is held by the company\'s committee as it stands now. Until '
-          + 'signers can sign a change in their wallets, nobody can change that committee: a signer who joins '
-          + 'or leaves afterwards stops every deposit into every vault, and a signer who leaves keeps their seat, '
-          + `so with ${Math.max(0, (company?.threshold ?? 1) - 1)} of the signers who stay they could change the rules `
-          + 'every vault pays out by.',
+        permanent: 'Once handed over, the account is held by the company\'s committee as it stands now. When a '
+          + 'signer joins or leaves, or the threshold changes, the account and every vault must be changed to match. '
+          + 'Enough of the signers who hold each one now sign that change in their own wallets. Until the account is '
+          + 'changed, no money goes into or out of any vault; until a vault is changed, none goes into or out of that '
+          + 'vault. A signer who has left keeps their seat until then, so with '
+          + `${Math.max(0, (company?.threshold ?? 1) - 1)} of the signers who stay they could change the rules every `
+          + 'vault pays out by.',
       },
       /*
        * A change after the handover is a replacement signed by the committee
-       * that holds the contract now, and a committee key signs only inside its
-       * holder's wallet. Until the wallet can be asked to, no change is offered.
+       * that holds the contract now, each signature made in its holder's
+       * wallet. It is offered whenever a handed-over contract holds a committee
+       * that is not the company's.
        */
-      change: {
-        possible: false,
-        why: 'Changing who holds these rules needs the signers who hold them now to sign the change in their own '
-          + 'wallets, and the wallet cannot be asked to sign one yet. Until it can, a signer who joins or leaves '
-          + 'is shown here; if the account\'s keys are no longer the company\'s, no money goes into any vault, and '
-          + 'if a vault\'s are not, none goes into that vault.',
-      },
+      change: changeOffered(company !== null && committee !== null, contracts),
     });
   });
 
@@ -897,6 +987,193 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
     if (sent === null && res.statusCode !== 502) release();
     if (sent === null) return;
     res.json({ txRef: sent.ref, state: 'handover-sent' });
+  });
+
+  /* ---- a committee changed after a signer joins or leaves ---- */
+
+  /*
+   * **WHICH CONTRACTS STILL CARRY A COMMITTEE THAT IS NOT THE COMPANY'S NOW.**
+   * Read from the chain each time: the committee that holds each contract, the
+   * counter a change is signed against, and the seats that have already signed
+   * the change to the company's committee as it stands now. Signatures kept for
+   * a counter the chain has moved past, or for a committee that is no longer
+   * the company's, are not reported: they can never be used.
+   */
+  const collectedFor = (address: string, counter: bigint, to: Committee): CollectedCommitteeSignatures | null => {
+    const kept = deps.store.getCommitteeSignatures(address);
+    return kept !== null && kept.counter === counter.toString() && sameCommittee(kept.to, to) ? kept : null;
+  };
+
+  const companyContracts = async (account: SealedAccount, companyAddress: Hex) => {
+    const out: { contract: 'account' | 'vault'; read: AuthorityRead }[] = [
+      { contract: 'account', read: await authorityOf(companyAddress) },
+    ];
+    for (const v of deps.store.listCompanyVaults(account.id)) out.push({ contract: 'vault', read: await authorityOf(v.vault) });
+    return out;
+  };
+
+  r.get('/api/accounts/:id/committee-change', ...guard, async (req, res) => {
+    const account = accountOf(req);
+    const { company, committee, why } = await committeeNow(account);
+    if (company === null || committee === null) {
+      res.json({ company: company?.address ?? null, to: null, why: why ?? 'this company has no committee yet.', contracts: [], notChangeable: [] });
+      return;
+    }
+    const { owed, notChangeable } = contractsOwingAChange(await companyContracts(account, company.address), committee);
+    res.json({
+      company: company.address,
+      to: committee,
+      why: null,
+      contracts: owed.map((c) => ({
+        contract: c.contract,
+        address: c.address,
+        counter: c.counter.toString(),
+        now: c.now,
+        signedSeats: [...(collectedFor(c.address, c.counter, committee)?.signatures ?? [])].map((x) => x.seat).sort((a, b) => a - b),
+        required: c.now.threshold,
+      })),
+      notChangeable,
+    });
+  });
+
+  /*
+   * **ONE CHANGE SENT PER CONTRACT AT A TIME.** Every copy would be signed
+   * against the same counter, and the chain charges the fee for each one it
+   * then refuses. Kept in this process only, for as long as the change could
+   * still land.
+   */
+  const changesSent = new Map<string, number>();
+  const changeStillPending = (key: string): boolean => {
+    const at = changesSent.get(key);
+    return at !== undefined && now().getTime() - at < HANDOVER_LIFETIME_MS;
+  };
+  /*
+   * **ONE REQUEST AT A TIME PER CONTRACT.** Two signers whose signatures each
+   * complete the change, arriving together, would otherwise both put it
+   * together and both send it, and the chain charges the fee for the second
+   * and refuses it; and each would write back the signatures it read, so one
+   * signature could be lost. In this process only: a second process or a
+   * restart does not see it.
+   */
+  const inTurn = new Map<string, Promise<unknown>>();
+  const oneAtATime = <T>(key: string, work: () => Promise<T>): Promise<T> => {
+    const before = inTurn.get(key) ?? Promise.resolve();
+    const mine = before.then(work, work);
+    const settled = mine.then(() => undefined, () => undefined);
+    inTurn.set(key, settled);
+    void settled.then(() => { if (inTurn.get(key) === settled) inTurn.delete(key); });
+    return mine;
+  };
+
+  /*
+   * **A SIGNER'S SIGNATURES ON THE CHANGE, AS THEIR WALLET MADE THEM.** Each
+   * contract's change is rebuilt here from the chain and the company's
+   * committee, never taken from the request; each signature is checked against
+   * the seat it names on the committee holding the contract now, and kept; and
+   * once enough have signed, the change is sent. This service signs nothing.
+   */
+  r.post('/api/accounts/:id/committee-change/signatures', ...guard, async (req, res) => {
+    const KEY = z.object({ tag: z.string().min(1), value: z.string().regex(/^[0-9a-f]+$/u) }).strict();
+    const body = z.object({
+      to: z.object({ committee: z.array(KEY), threshold: z.number().int() }).strict(),
+      signatures: z.array(z.object({
+        address: z.string().regex(HEX64),
+        counter: z.string().regex(/^[0-9]+$/u),
+        seat: z.number().int().min(0),
+        signature: KEY,
+      }).strict()).min(1).max(64),
+    }).strict().safeParse(req.body);
+    if (!body.success) {
+      res.status(400).json({ nothingWasSent: true, error: 'these are not signatures on a change to this company\'s committee. Nothing was sent.' });
+      return;
+    }
+    const account = accountOf(req);
+    const { company, committee, why } = await committeeNow(account);
+    if (company === null || committee === null) {
+      res.status(409).json({ nothingWasSent: true, error: `${why ?? 'this company has no committee yet.'} Nothing was sent.` });
+      return;
+    }
+    if (!sameCommittee(body.data.to, committee)) {
+      res.status(409).json({
+        nothingWasSent: true,
+        error: 'these signatures are on a committee that is not this company\'s as it stands now, so they were not kept. '
+          + 'Nothing was sent. Reload this page and sign again.',
+      });
+      return;
+    }
+    const assemble = deps.committeeChange;
+    if (assemble === undefined) {
+      res.status(503).json({ nothingWasSent: true, error: 'this deployment does not send transactions, so nothing was sent.' });
+      return;
+    }
+    const results: Array<Record<string, unknown>> = [];
+    const byAddress = new Map<string, typeof body.data.signatures>();
+    for (const sig of body.data.signatures) byAddress.set(sig.address, [...(byAddress.get(sig.address) ?? []), sig]);
+    for (const [address, given] of byAddress) {
+      await oneAtATime(fold(address), async () => {
+        const isAccount = fold(address) === fold(company.address);
+        const vault = isAccount ? null : deps.store.getCompanyVault(address);
+        if (!isAccount && (vault === null || vault.accountId !== account.id)) {
+          results.push({ address, state: 'refused', nothingWasSent: true, error: 'this company has no contract at that address.' });
+          return;
+        }
+        const contract: 'account' | 'vault' = isAccount ? 'account' : 'vault';
+        const label = isAccount ? 'the company\'s account' : `vault ${address}`;
+        const read = await authorityOf(address as Hex);
+        if (read.state !== 'read') {
+          results.push({ address, state: 'refused', nothingWasSent: true, error: `the chain could not be asked who holds ${label} (${read.why}). Nothing was sent.` });
+          return;
+        }
+        if (given.some((g) => g.counter !== read.authority.counter.toString())) {
+          results.push({
+            address, state: 'refused', nothingWasSent: true,
+            error: `${label} has been changed since these signatures were made, so they no longer count. Nothing was sent. Sign again.`,
+          });
+          return;
+        }
+        const key = `${fold(address)}:${read.authority.counter}`;
+        if (changeStillPending(key)) {
+          results.push({ address, state: 'sent', note: 'the change was sent and the chain has not shown it yet.' });
+          return;
+        }
+        const kept = collectedFor(address, read.authority.counter, committee)?.signatures ?? [];
+        const merged = [...kept.filter((k) => !given.some((g) => g.seat === k.seat)), ...given.map((g) => ({ seat: g.seat, signature: g.signature }))];
+        let assembled: Awaited<ReturnType<NonNullable<CompanyVaultDeps['committeeChange']>>>;
+        try {
+          assembled = await assemble({ read, to: committee, signatures: merged, label });
+        } catch (e) {
+          results.push({ address, state: 'refused', nothingWasSent: true, error: `${(e as Error)?.message ?? String(e)} Nothing was sent.` });
+          return;
+        }
+        deps.store.putCommitteeSignatures({
+          accountId: account.id, address: fold(address), counter: read.authority.counter.toString(),
+          to: { committee: committee.committee.map((k) => ({ tag: k.tag, value: k.value })), threshold: committee.threshold },
+          signatures: merged.map((m) => ({ seat: m.seat, signature: { tag: m.signature.tag, value: m.signature.value } })),
+      });
+      if (assembled.proven === null) {
+        results.push({ address, state: 'waiting', have: assembled.have, required: assembled.required, seatsSigned: assembled.seatsSigned });
+        return;
+      }
+      if (typeof deps.ledger.sendVault !== 'function') {
+        results.push({ address, state: 'refused', nothingWasSent: true, error: 'this deployment does not send transactions, so nothing was sent.' });
+        return;
+      }
+      changesSent.set(key, now().getTime());
+      try {
+        const sent = await deps.ledger.sendVault(account.id, `changing ${label}'s committee to the company's`,
+          'proven-moving-nothing', assembled.proven,
+          (tx) => refusalForCommitteeChange(tx, { address, to: committee, onChain: read.authority, contract }),
+          deps.readers.proven);
+        results.push({ address, state: 'sent', txRef: sent.ref, have: assembled.have, required: assembled.required });
+      } catch (e) {
+        const nothing = saysNothingWasSent(e);
+        /* Only a refusal that says nothing was sent frees the contract for another send; one that may have landed does not. */
+        if (nothing) changesSent.delete(key);
+        results.push({ address, state: 'refused', nothingWasSent: nothing, error: (e as Error)?.message ?? String(e) });
+      }
+      });
+    }
+    res.json({ results });
   });
 
   return r;

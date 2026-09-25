@@ -49,6 +49,8 @@ let accountCallState: CompanyVaultDeps['chain']['accountCallState'];
 let asked: string[];
 /* Whether the vault's ledger is this build's shape, as the chain reader answers it; `undefined` for a reader with no such check. */
 let ledgerIsThisBuilds: CompanyVaultDeps['chain']['ledgerIsThisBuilds'];
+let assembleDep: CompanyVaultDeps['committeeChange'];
+let historyOf: CompanyVaultDeps['chain']['historyOf'];
 /*
  * **THE ROSTER, STOOD IN.** What each member's own roster entry carries, and the
  * index the service would make from it - sorted, with no names. The real roster
@@ -120,6 +122,8 @@ beforeEach(async () => {
   };
   pinnedNow = hex(0xc0);
   ledgerIsThisBuilds = async () => {};
+  assembleDep = undefined;
+  historyOf = undefined;
   sendVault = async (_a, what) => { sent.push(what); return { ref: 'r', at: 'now', transactionHash: 'h' }; };
   const app = express();
   app.use(companyVaultRoutes({
@@ -161,6 +165,7 @@ beforeEach(async () => {
       get payoutState() { return payoutState; },
       get eventsOf() { return eventsOf; },
       get accountCallState() { return accountCallState; },
+      get historyOf() { return historyOf; },
     },
     verifierKeys: async () => new Map(CIRCUITS.map((c) => [c, vkOf(c)])),
     account: {
@@ -173,6 +178,7 @@ beforeEach(async () => {
       proven: async (b) => (b[0] === 0xee ? handoverShape : b[0] === 0xdd ? payoutShape : deployShape ? aDeploy() : {}),
       finished: async () => ({}),
     },
+    get committeeChange() { return assembleDep; },
   }));
   await new Promise<void>((resolve) => { server = app.listen(0, '127.0.0.1', () => resolve()); });
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -543,8 +549,12 @@ describe('THE COMPANY ACCOUNT STANDS BEHIND EVERY VAULT', () => {
     expect(acct.seats[0]).toMatchObject({ key: key(9), thisService: true });
     expect(acct.why).toMatch(/THIS SERVICE'S temporary key holds this account's rules/);
     expect(r.body.handover).toMatchObject({ possible: true, why: null });
-    expect(r.body.handover.permanent).toMatch(/a signer who leaves keeps their seat/);
-    expect(r.body.change.possible).toBe(false);
+    expect(r.body.handover.permanent).toMatch(/A signer who has left keeps their seat until then/);
+    /* RED WHEN: a handed-over vault held by a committee that is not the company's is not offered a change - it is
+     * the one thing that brings it back, and the screen would offer nothing. */
+    expect(r.body.change.possible).toBe(true);
+    expect(r.body.change.why).toMatch(/^1 vault is still held by the committee from before/);
+    expect(r.body.change.why).toMatch(/no money goes into or out of that vault/);
     expect(r.body.change.why).toMatch(/sign the change in their own wallets/);
     /* Two signers at a threshold of two: losing either one strands the money, and the company is told. */
     expect(r.body.everySignerNeeded).toMatch(/Every one of this company's 2 signers/);
@@ -819,5 +829,193 @@ describe('THE VAULT\'S NOTES ARE VOUCHED FOR ONLY WHEN READ OFF A LEDGER OF THIS
     /* RED WHEN: a reader that cannot check is read as one that checked. */
     expect(v.body.notesFromThisBuild).toBe(false);
     expect(v.body.notesWhy).toMatch(/not set up to check how a vault is laid out.*Whoever runs the service turns that check on$/su);
+  });
+});
+
+describe('A COMMITTEE CHANGED AFTER A SIGNER JOINS OR LEAVES', () => {
+  /* The vault and the account held by the committee the company had: ada alone. bo has since joined. */
+  const behind = async () => {
+    await give('ada', 1); await give('bo', 2);
+    store.putCompanyVault({ accountId: 'acc_1', vault: VAULT, deployedAt: '', deployRef: 'r', intended: { committee: [key(1)], threshold: 1 } });
+    authority = { committee: [key(1)], threshold: 1, counter: 1n };
+    accountAuthority = { committee: [key(1)], threshold: 1, counter: 1n };
+  };
+  const to = { committee: [key(1), key(2)], threshold: 2 };
+  let assembled: Array<{ address: string; seats: number[] }>;
+  /* The builder stood in: it checks nothing but counts seats, and a signature spelled 'bad' is one that does not verify. */
+  const standIn = () => {
+    assembled = [];
+    assembleDep = async ({ read, signatures }) => {
+      if (signatures.some((x) => x.signature.value === 'bad')) throw new Error('this signature does not verify against the key in seat 0.');
+      const required = read.state === 'read' ? read.authority.threshold : 99;
+      assembled.push({ address: read.address, seats: signatures.map((x) => x.seat) });
+      return { have: signatures.length, required, seatsSigned: signatures.map((x) => x.seat), proven: signatures.length >= required ? new Uint8Array([0xcc]) : null };
+    };
+  };
+  const sig = (address: string, counter = '1', seat = 0, value = 'ab') => ({ address, counter, seat, signature: { tag: 'schnorr', value } });
+  const post = (as: string, body: unknown) => call('/api/accounts/acc_1/committee-change/signatures', as, 'POST', body);
+
+  it('LISTS EVERY HANDED-OVER CONTRACT WHOSE COMMITTEE IS NOT THE COMPANY\'S, WITH THE COUNTER AND THE COMMITTEE THAT MUST SIGN', async () => {
+    await behind();
+    const r = await call('/api/accounts/acc_1/committee-change', 'ada');
+    expect(r.status).toBe(200);
+    /* RED WHEN: the account is left out - every vault pays out on it, so its committee must change too. */
+    expect(r.body).toEqual({
+      company: hex(0xc0), to, why: null, notChangeable: [],
+      contracts: [
+        { contract: 'account', address: hex(0xc0), counter: '1', now: { committee: [key(1)], threshold: 1 }, signedSeats: [], required: 1 },
+        { contract: 'vault', address: VAULT, counter: '1', now: { committee: [key(1)], threshold: 1 }, signedSeats: [], required: 1 },
+      ],
+    });
+    expect((await call('/api/accounts/acc_1/committee-change', 'carol')).status).toBe(404);
+  });
+
+  it('SENDS EACH CHANGE ONCE ENOUGH HAVE SIGNED, READING IT AS A STRANGER\'S FIRST, AND KEEPS NOTHING BUT THE SIGNATURES', async () => {
+    await behind();
+    standIn();
+    const checked: Array<string | null> = [];
+    sendVault = async (_a, what, _arrival, _bytes, check) => {
+      checked.push(await check({ intents: new Map([[1, { actions: [{ address: VAULT, counter: 1n, updates: [{ authority: { ...to, counter: 2n } }], signatures: [[0n, {}]] }] }]]) }));
+      sent.push(what);
+      return { ref: 'r', at: 'now', transactionHash: 'h' };
+    };
+    const r = await post('ada', { to, signatures: [sig(hex(0xc0)), sig(VAULT)] });
+    expect(r.status).toBe(200);
+    expect(r.body.results.map((x: { address: string; state: string }) => [x.address, x.state])).toEqual([[hex(0xc0), 'sent'], [VAULT, 'sent']]);
+    expect(sent).toEqual(['changing the company\'s account\'s committee to the company\'s', `changing vault ${VAULT}'s committee to the company's`]);
+    /* RED WHEN: the fee is paid without `refusalForCommitteeChange` reading the transaction - the account's check then
+     * reads the vault's shape as another contract's and must refuse it. */
+    expect(checked[0]).toMatch(/changes a different contract/);
+    expect(checked[1]).toBeNull();
+    /* RED WHEN: anything but the seat and the signature is kept. */
+    expect(store.getCommitteeSignatures(VAULT)).toEqual({
+      accountId: 'acc_1', address: VAULT, counter: '1', to, signatures: [{ seat: 0, signature: { tag: 'schnorr', value: 'ab' } }],
+    });
+    /* A second press while the change could still land sends nothing. */
+    const again = await post('ada', { to, signatures: [sig(VAULT)] });
+    expect(again.body.results[0].state).toBe('sent');
+    expect(sent).toHaveLength(2);
+  });
+
+  it('WAITS FOR MORE SIGNERS, KEEPING EACH SEAT ONCE, AND SAYS HOW MANY HAVE SIGNED', async () => {
+    await behind();
+    authority = { committee: [key(1), key(3)], threshold: 2, counter: 4n };
+    standIn();
+    const first = await post('ada', { to, signatures: [sig(VAULT, '4', 0)] });
+    expect(first.body.results[0]).toMatchObject({ state: 'waiting', have: 1, required: 2 });
+    expect(sent).toEqual([]);
+    const listed = await call('/api/accounts/acc_1/committee-change', 'ada');
+    expect(listed.body.contracts.find((c: { contract: string }) => c.contract === 'vault').signedSeats).toEqual([0]);
+    /* The same seat again replaces its own signature rather than counting twice. */
+    await post('ada', { to, signatures: [sig(VAULT, '4', 0, 'cd')] });
+    expect(assembled.at(-1)).toEqual({ address: VAULT, seats: [0] });
+    const second = await post('bo', { to, signatures: [sig(VAULT, '4', 1)] });
+    expect(second.body.results[0].state).toBe('sent');
+    expect(assembled.at(-1)!.seats.sort()).toEqual([0, 1]);
+  });
+
+  it('REFUSES A COMMITTEE THAT IS NOT THE COMPANY\'S, A CONTRACT THAT IS NOT ITS, A COUNTER THE CHAIN HAS MOVED PAST, AND A SIGNATURE THAT DOES NOT VERIFY', async () => {
+    await behind();
+    standIn();
+    /* RED WHEN: the service installs whatever committee the request names. */
+    const other = await post('ada', { to: { committee: [key(1), key(3)], threshold: 2 }, signatures: [sig(VAULT)] });
+    expect(other.status).toBe(409);
+    expect(other.body).toMatchObject({ nothingWasSent: true });
+    const results = (await post('ada', { to, signatures: [sig(hex(0xee)), sig(VAULT, '0'), sig(hex(0xc0), '1', 0, 'bad')] })).body.results;
+    expect(results.map((x: { state: string }) => x.state)).toEqual(['refused', 'refused', 'refused']);
+    expect(results[0].error).toMatch(/no contract at that address/);
+    expect(results[1].error).toMatch(/has been changed since these signatures were made/);
+    expect(results[2].error).toMatch(/does not verify/);
+    /* Nothing kept, nothing sent. */
+    expect(store.getCommitteeSignatures(VAULT)).toBeNull();
+    expect(store.getCommitteeSignatures(hex(0xc0))).toBeNull();
+    expect(sent).toEqual([]);
+    expect((await post('ada', { to, signatures: [{ ...sig(VAULT), signingKey: 'ab' }] })).status).toBe(400);
+    expect((await post('carol', { to, signatures: [sig(VAULT)] })).status).toBe(404);
+  });
+
+  it('SIGNATURES KEPT FOR A COUNTER THE CHAIN HAS MOVED PAST ARE NEVER REPORTED OR USED', async () => {
+    await behind();
+    authority = { committee: [key(1), key(3)], threshold: 2, counter: 4n };
+    standIn();
+    await post('ada', { to, signatures: [sig(VAULT, '4', 0)] });
+    authority = { committee: [key(1), key(3)], threshold: 2, counter: 5n };
+    const listed = await call('/api/accounts/acc_1/committee-change', 'ada');
+    expect(listed.body.contracts.find((c: { contract: string }) => c.contract === 'vault')).toMatchObject({ counter: '5', signedSeats: [] });
+    await post('bo', { to, signatures: [sig(VAULT, '5', 1)] });
+    /* RED WHEN: a signature made against counter 4 is put on the change against counter 5. */
+    expect(assembled.at(-1)).toEqual({ address: VAULT, seats: [1] });
+  });
+
+  it('SIGNATURES KEPT FOR A COMMITTEE THE COMPANY NO LONGER HAS ARE NEVER REPORTED OR USED', async () => {
+    await behind();
+    authority = { committee: [key(1), key(3)], threshold: 2, counter: 4n };
+    standIn();
+    await post('ada', { to, signatures: [sig(VAULT, '4', 0)] });
+    /* Another signer joins before the change is sent: same counter, a different committee to install. */
+    store.putAccount(account({ signerCount: 3, memberUserIds: ['ada', 'bo', 'cy'] }));
+    await give('cy', 5);
+    acc1Threshold = 2;
+    const next = { committee: [key(1), key(2), key(5)], threshold: 2 };
+    const listed = await call('/api/accounts/acc_1/committee-change', 'ada');
+    expect(listed.body.to).toEqual(next);
+    /* RED WHEN: ada's signature on the old committee is reported as given - her device would never be asked again,
+     * and it can never verify against the new change, so the contract would wait for good. */
+    expect(listed.body.contracts.find((c: { contract: string }) => c.contract === 'vault').signedSeats).toEqual([]);
+    await post('bo', { to: next, signatures: [sig(VAULT, '4', 1)] });
+    expect(assembled.at(-1)).toEqual({ address: VAULT, seats: [1] });
+  });
+
+  it('A VAULT ANOTHER COMPANY HOLDS IS NOT THIS COMPANY\'S, AND A SEND THAT SENT NOTHING FREES THE CONTRACT FOR ANOTHER', async () => {
+    await behind();
+    standIn();
+    store.putCompanyVault({ accountId: 'acc_2', vault: hex(0xaa), deployedAt: '', deployRef: 'r', intended: to });
+    /* RED WHEN: a vault is taken as this company's because it is some company's. */
+    const theirs = await post('ada', { to, signatures: [sig(hex(0xaa))] });
+    expect(theirs.body.results[0]).toMatchObject({ state: 'refused', error: 'this company has no contract at that address.' });
+    sendVault = async () => { throw new NothingWasSent('the fee payer could not pay. Nothing was sent.'); };
+    expect((await post('ada', { to, signatures: [sig(VAULT)] })).body.results[0]).toMatchObject({ state: 'refused', nothingWasSent: true });
+    sendVault = async (_a, what) => { sent.push(what); return { ref: 'r', at: 'now', transactionHash: 'h' }; };
+    /* RED WHEN: a send that sent nothing leaves the contract marked as sent, and the next press does nothing. */
+    expect((await post('ada', { to, signatures: [sig(VAULT)] })).body.results[0]).toMatchObject({ state: 'sent', txRef: 'r' });
+    expect(sent).toHaveLength(1);
+  });
+
+  it('TWO SIGNERS WHOSE SIGNATURES EACH COMPLETE THE CHANGE, ARRIVING TOGETHER, SEND IT ONCE', async () => {
+    await behind();
+    authority = { committee: [key(1), key(2)], threshold: 1, counter: 1n };
+    standIn();
+    const slow = assembleDep!;
+    /* The builder takes a moment, as proving does, so both requests are inside it at once. */
+    assembleDep = async (input) => { await new Promise((r) => setTimeout(r, 20)); return slow(input); };
+    const [a, b] = await Promise.all([
+      post('ada', { to, signatures: [sig(VAULT, '1', 0)] }), post('bo', { to, signatures: [sig(VAULT, '1', 1)] }),
+    ]);
+    /* RED WHEN: the two are put together and sent side by side - the chain charges for the second and refuses it. */
+    expect(sent.filter((w) => w.includes(VAULT))).toHaveLength(1);
+    expect([a.body.results[0].state, b.body.results[0].state]).toEqual(['sent', 'sent']);
+  });
+
+  it('A VAULT CHANGED TWICE IS FUNDED ONLY WHEN ITS HISTORY ON THE CHAIN VOUCHES FOR BOTH CHANGES', async () => {
+    await give('ada', 1); await give('bo', 2);
+    store.putCompanyVault({ accountId: 'acc_1', vault: VAULT, deployedAt: '', deployRef: 'r', intended: to });
+    authority = { ...to, counter: 2n };
+    const state = (a: unknown) => ({ maintenanceAuthority: a, operations: () => CIRCUITS, operation: (c: string) => ({ verifierKey: vkOf(c) }) });
+    const rows = async () => (await call('/api/accounts/acc_1/vaults', 'ada')).body.rows[0];
+    /* RED WHEN: a door that cannot read a history funds a vault changed more than once. */
+    expect(await rows()).toMatchObject({ state: 'not-fundable' });
+    historyOf = async () => [
+      { kind: 'deploy', transaction: 't0', state: state({ committee: [key(9)], threshold: 1, counter: 0n }) },
+      { kind: 'update', transaction: 't1', state: state({ committee: [key(1)], threshold: 1, counter: 1n }) },
+      { kind: 'update', transaction: 't2', state: state({ ...to, counter: 2n }) },
+    ];
+    expect(await rows()).toMatchObject({ state: 'held-by-committee', why: null });
+    /* One change left a circuit this build did not compile: not funded, and it says which. */
+    historyOf = async () => [
+      { kind: 'deploy', transaction: 't0', state: state({ committee: [key(9)], threshold: 1, counter: 0n }) },
+      { kind: 'update', transaction: 't1', state: { ...state({ committee: [key(1)], threshold: 1, counter: 1n }), operation: () => ({ verifierKey: vkOf('other') }) } },
+      { kind: 'update', transaction: 't2', state: state({ ...to, counter: 2n }) },
+    ];
+    expect((await rows()).why).toMatch(/change 1 left it running circuits other than this build's/);
   });
 });

@@ -62,9 +62,12 @@ export function whyNotHandOver(view: HandoverView, mine: Key, roster: Roster, me
 export const whyNotTheCommittee = (committee: readonly Key[], roster: Roster): string | null =>
   whyNotTheRostersCommittee(committee, rosterVaultKeys(roster));
 
-/** Whether every records key the service reports is one the roster names. */
-export const whyNotTheReaders = (readers: readonly Hex[], roster: Roster): string | null =>
-  whyNotTheRostersReaders(readers, rosterVaultKeys(roster));
+/**
+ * Whether the records keys the service reports are the roster's: none it does
+ * not name, and, when the committee is complete, none it names left out.
+ */
+export const whyNotTheReaders = (readers: readonly Hex[], roster: Roster, complete = true): string | null =>
+  whyNotTheRostersReaders(readers, rosterVaultKeys(roster), { complete });
 
 /**
  * **WHOSE KEY A SEAT HOLDS, FROM THE ROSTER THIS DEVICE OPENED**, or null when
