@@ -15,7 +15,7 @@ import { MidnightCommitments } from '../midnight/commitments.js';
 import { FileStore } from './store-file.js';
 import { AccountService } from './account.js';
 import { NO_ASSET } from './assets.js';
-import { newBlinding, newSigningKeypair, newWrappingKeypair, type Hex } from './crypto.js';
+import { canonical, newBlinding, newSigningKeypair, newWrappingKeypair, seal, type Hex } from './crypto.js';
 import { storedSignerLeaf } from './signer-leaf.js';
 import { NothingWasSent } from './jobs.js';
 
@@ -121,5 +121,24 @@ describe('WHAT A DEVICE IS HANDED FOR A SEAT OR A THRESHOLD IS REFUSED TO A WRON
     expect(() => accounts.thresholdOrderOf(company, wrong, 1)).toThrow();
     expect(() => accounts.governanceAsked(p.id, wrong)).toThrow();
     await expect(accounts.governanceOrderOf(p.id, wrong)).rejects.toThrow();
+  });
+});
+
+describe('A DEVICE IS HANDED THE PROPOSAL WRITTEN DOWN WITH ITS SALT, NEVER AN APPROVED ONE WRITTEN WITHOUT', () => {
+  it('an approved seat proposal with no salt does not win over the live one a device can act on (a threshold change takes the same path)', async () => {
+    /* A proposal written down before proposals carried a salt, and approved: its payload names the change and no salt. */
+    const unsalted = (p: { id: string }, payload: Record<string, unknown>) => {
+      const opened = accounts.requireProposal(p.id, viewingKey);
+      (accounts as unknown as { putProposal(p: unknown, vk: Hex): void }).putProposal(
+        { ...opened, status: 'approved', sealedPayload: seal(canonical(payload), viewingKey) }, viewingKey);
+    };
+    const legacy = await accounts.proposeSigner(company, viewingKey, bo.signerId, ada.signerId);
+    unsalted(legacy, { signerId: bo.signerId, entries: [] });
+    const live = await accounts.seatRound(company, viewingKey, bo.signerId, ada.signerId);
+    expect(live.id).not.toBe(legacy.id);
+    /* RED WHEN: the order is taken from whichever proposal sorts first - the approved one without a salt - and
+     * refused, so a seat nobody can finish is what the device is told. */
+    const order = accounts.seatOrderOf(company, viewingKey, bo.signerId);
+    expect(order.proposal).toBe(live.chainId);
   });
 });

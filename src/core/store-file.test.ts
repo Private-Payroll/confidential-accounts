@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, chmodSync, readdirSync, readFileSync } from 'node:fs';
+import { mkdtempSync, chmodSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FileStore } from './store-file.js';
-import { parseCanonical } from './crypto.js';
+import { canonical, parseCanonical } from './crypto.js';
 import type { Shape } from './store.js';
 import type { User } from './types.js';
 
@@ -74,5 +74,25 @@ describe('the store file', () => {
     store.putUser(user('usr_first'));
     store.putUser(user('usr_second'));
     expect(readdirSync(dir)).toEqual(['db.json']);
+  });
+});
+
+describe('a table this store no longer keeps', () => {
+  it('THE OLD PER-PERSON TABLE OF WHOSE VAULT KEY IS WHOSE IS DROPPED WHEN A FILE IS LOADED, AND NOT WRITTEN BACK', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mn-sf-retired-'));
+    const path = join(dir, 'db.json');
+    const first = new FileStore(path);
+    first.putUser(user('u1'));
+    /* A file written before the roster held each signer's keys: a person named beside their committee key. */
+    const old = parseCanonical<Record<string, unknown>>(readFileSync(path, 'utf8'));
+    old.vaultKeys = { 'acc_1:usr_ada': { accountId: 'acc_1', userId: 'usr_ada', committeeKey: { tag: 'schnorr', value: 'ab'.repeat(32) } } };
+    writeFileSync(path, canonical(old));
+    const loaded = new FileStore(path);
+    /* RED WHEN: the table is carried forward - the file names a person beside their committee key after load. */
+    expect(readFileSync(path, 'utf8')).not.toContain('usr_ada');
+    expect(Object.keys(parseCanonical<Record<string, unknown>>(readFileSync(path, 'utf8')))).not.toContain('vaultKeys');
+    /* And everything else in the file is kept. */
+    expect(loaded.getUser('u1')?.email).toBe('u1@a.co');
+    void ({} as Shape);
   });
 });

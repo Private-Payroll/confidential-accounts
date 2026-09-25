@@ -19,6 +19,25 @@ import type { Shape } from './store.js';
  * printing goes with it, which is a real loss for a file meant to be inspected
  * and a small one next to a store that cannot save an installation.
  */
+/**
+ * **TABLES THIS STORE NO LONGER KEEPS, DROPPED WHEN A FILE IS LOADED.**
+ *
+ * `vaultKeys` held, per person, which committee key and records key were whose.
+ * That is now kept only in each signer's own entry of the sealed roster, and
+ * the service keeps an index with no names in it. A file written before that
+ * change still carries the old table, and spreading the file over the empty
+ * shape would carry it forward on every write, so the record of whose key is
+ * whose would never leave the service. It is dropped here, on load, and the
+ * next write leaves it out of the file.
+ */
+const RETIRED_TABLES: readonly string[] = ['vaultKeys'];
+
+export const withoutRetiredTables = <T extends object>(parsed: T): T => {
+  const kept = { ...parsed } as Record<string, unknown>;
+  for (const t of RETIRED_TABLES) delete kept[t];
+  return kept as T;
+};
+
 export class FileStore extends MemoryStore {
   constructor(private path: string) {
     super();
@@ -38,7 +57,7 @@ export class FileStore extends MemoryStore {
      * backup.** A one-shot migration fixes the deploy and not the restore.
      */
     this.data = existsSync(path)
-      ? { ...emptyShape(), ...parseCanonical<Shape>(readFileSync(path, 'utf8')) }
+      ? { ...emptyShape(), ...withoutRetiredTables(parseCanonical<Shape>(readFileSync(path, 'utf8'))) }
       : emptyShape();
     this.flush();
   }

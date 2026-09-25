@@ -136,10 +136,12 @@ describe('ONE REFUSAL FOR EVERY REPLACEMENT OF A CONTRACT\'S RULES', () => {
   });
 
   it('NO SHIPPING FILE MAKES A REPLACEMENT OF A CONTRACT\'S RULES ANYWHERE BUT THE ONE PLACE', () => {
-    /* RED WHEN: any file the product ships constructs `ReplaceAuthority` itself - reverting `committeeReplacement`
-     * or `buildMaintenanceInstruction` to their own construction turns this count to two or more - or names the
-     * class in code anywhere but the three files that declare its shape, which is how an alias would reach it.
-     * WHAT IT CANNOT SEE: a name assembled at run time. It reads source text, and says so. */
+    /* RED WHEN: any file the product ships constructs `ReplaceAuthority` anywhere but inside `replaceAuthorityOf`
+     * and, in the wallet, inside `committeeSignaturesFor` - reverting `committeeReplacement` or
+     * `buildMaintenanceInstruction` to their own construction makes a third - or names the class in code anywhere
+     * but the four files listed below, which is how an alias would reach it.
+     * WHAT IT CANNOT SEE: a name assembled at run time, or a construction in a helper that is not exported and is
+     * declared after the named function. It reads source text, and says so. */
     const roots = ['src', 'scripts', 'packages/identity/src', 'apps/wallet/src'];
     const hits: string[] = [];
     const walk = (dir: string) => {
@@ -175,10 +177,28 @@ describe('ONE REFUSAL FOR EVERY REPLACEMENT OF A CONTRACT\'S RULES', () => {
       }
     };
     for (const r of roots) nameWalk(join(REPO, r));
-    expect(named.sort()).toEqual(['src/midnight/authority-replacement.ts', 'src/midnight/ledger.ts', 'src/midnight/vault-committee.ts']);
+    /*
+     * **AND ONE PLACE IN THE WALLET, WHICH CANNOT REACH THE ONE ABOVE.** The wallet builds the committee change it
+     * signs from what its screen showed, so that it signs nothing it did not show, and the wallet's package cannot
+     * import this repository's `src/`. Its committee is refused on the same grounds when the ask is read -
+     * `committeeOnTheWire` and `committeeChangeOf` in `packages/identity/src/profile/request.ts`: no keys, a key
+     * that is not a committee key, a threshold that is not a whole number from one to the number of keys, a key
+     * listed twice - and `committee-sign.test.ts` pins each of those. RED WHEN: any other wallet file constructs one.
+     */
+    expect(named.sort()).toEqual([
+      'packages/identity/src/profile/committee-sign.ts',
+      'src/midnight/authority-replacement.ts', 'src/midnight/ledger.ts', 'src/midnight/vault-committee.ts',
+    ]);
     expect(sdk).toEqual([]);
-    expect(hits).toHaveLength(1);
-    expect(hits[0]).toMatch(/^src\/midnight\/authority-replacement\.ts:/);
+    expect(hits).toHaveLength(2);
+    expect(hits.find((h) => h.startsWith('src/'))).toMatch(/^src\/midnight\/authority-replacement\.ts:/);
+    expect(hits.find((h) => h.startsWith('packages/'))).toMatch(/^packages\/identity\/src\/profile\/committee-sign\.ts:/);
+    const walletText = readFileSync(join(REPO, 'packages/identity/src/profile/committee-sign.ts'), 'utf8');
+    const walletAt = Number(hits.find((h) => h.startsWith('packages/'))!.split(':')[1]);
+    const walletBefore = walletText.split('\n').slice(0, walletAt).join('\n');
+    expect(walletBefore.lastIndexOf('export function committeeSignaturesFor'))
+      .toBeGreaterThan(walletBefore.lastIndexOf('\nexport function '));
+    hits.splice(hits.findIndex((h) => h.startsWith('packages/')), 1);
     const builderText = readFileSync(join(REPO, 'src/midnight/authority-replacement.ts'), 'utf8');
     const at = Number(hits[0]!.split(':')[1]);
     const before = builderText.split('\n').slice(0, at).join('\n');

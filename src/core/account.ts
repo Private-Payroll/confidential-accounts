@@ -3397,13 +3397,15 @@ export class AccountService {
    */
   seatOrderOf(accountId: string, viewingKey: Hex, signerId: string): { leaf: Hex; proposal: Hex; proposalSalt: Hex } {
     const signer = this.waitingForASeat(accountId, viewingKey, signerId);
-    const round = this.approvedFor(accountId, viewingKey, this.commitments.signerAddPayload(signer.leafCommitment!));
+    const round = this.approvedFor(
+      accountId, viewingKey, this.commitments.signerAddPayload(signer.leafCommitment!), { forADevice: true });
     return { leaf: signer.leafCommitment!, proposal: round.chainId as Hex, proposalSalt: this.governanceSaltOf(round, viewingKey) };
   }
 
   /** The same, for a change of the account's threshold. */
   thresholdOrderOf(accountId: string, viewingKey: Hex, newThreshold: number): { threshold: number; proposal: Hex; proposalSalt: Hex } {
-    const round = this.approvedFor(accountId, viewingKey, this.commitments.signerThresholdPayload(newThreshold));
+    const round = this.approvedFor(
+      accountId, viewingKey, this.commitments.signerThresholdPayload(newThreshold), { forADevice: true });
     return { threshold: newThreshold, proposal: round.chainId as Hex, proposalSalt: this.governanceSaltOf(round, viewingKey) };
   }
 
@@ -4133,10 +4135,20 @@ export class AccountService {
    * anything looser would let an approved addition authorise a removal, which is
    * the hole the domain separators exist to close.
    */
-  private approvedFor(accountId: string, viewingKey: Hex, digest: Hex): Proposal {
+  private approvedFor(
+    accountId: string, viewingKey: Hex, digest: Hex, opts: { forADevice?: boolean } = {},
+  ): Proposal {
+    /*
+     * **A DEVICE CAN ACT ONLY ON A PROPOSAL WRITTEN DOWN WITH ITS SALT**, because
+     * it remakes the proposal's identity from the change and the salt. So when
+     * the answer goes to a device, a proposal written down without one is passed
+     * over here, exactly as `liveRoundFor` passes it over, rather than winning
+     * the sort below and being refused afterwards.
+     */
     const found = this.listProposals(accountId, viewingKey)
       .filter(p => p.digest === digest)
-      .filter(p => p.status === 'approved' || p.status === 'open');
+      .filter(p => p.status === 'approved' || p.status === 'open')
+      .filter(p => !opts.forADevice || this.hasGovernanceSalt(p, viewingKey));
     if (found.length === 0) {
       throw new Error(
         'there is no open proposal on this account for that change. Propose it and gather ' +

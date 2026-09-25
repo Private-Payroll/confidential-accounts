@@ -391,7 +391,7 @@ describe('A PRIVATE PAYMENT OUT', () => {
     const t = await setUp();
     const e = await payPrivatelyFromCompanyVault(t.doors({}, [oneKey]), order()).catch((x) => x);
     expect(e.message).toMatch(/does not read this vault as held by the company's committee/);
-    expect(e.message).toMatch(/cannot be changed from this product yet/);
+    expect(e.message).toMatch(/sign the change in Settings/);
     expect(t.log).toEqual([]);
     expect(await t.journal()).toEqual([]);
   });

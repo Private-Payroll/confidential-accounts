@@ -31,7 +31,9 @@
  *
  * Imports nothing that loads WebAssembly: the ledger's classes are handed in.
  */
-import type { AuthorityRead, AuthorityShape, MaintenanceEndStateRecord, MaintenancePrimitives } from './ledger.js';
+import type {
+  AuthorityRead, AuthorityShape, MaintenanceEndStateRecord, MaintenancePrimitives, MaintenanceSignature,
+} from './ledger.js';
 import {
   attachMaintenanceSignature, buildMaintenanceInstruction, compareAuthority, planAuthorityReplacement,
   signatureProgress,
@@ -236,4 +238,86 @@ export function buildAccountHandover(
   const unproven = L.Transaction.fromParts(
     input.network, undefined, undefined, L.Intent.new(input.ttl).addMaintenanceUpdate(built.update));
   return { unproven, endState: built.endState };
+}
+
+/* ----------------------------------------------- a committee changed after */
+
+/** One signature on a committee change: the seat it was made for on the committee that holds the contract now. */
+export interface SeatSignature {
+  readonly seat: number;
+  readonly signature: MaintenanceSignature;
+}
+
+/** The ledger the service assembles a committee change with. `@midnightntwrk/ledger-v9` satisfies it. */
+export interface CommitteeChangeLedger extends MaintenancePrimitives {
+  Intent: { new: (ttl: Date) => { addMaintenanceUpdate(update: unknown): unknown } };
+  Transaction: { fromParts(network: string, guaranteed: undefined, fallible: undefined, intent: unknown): unknown };
+}
+
+/**
+ * **A CONTRACT'S COMMITTEE REPLACED BY THE COMPANY'S, SIGNED BY THE COMMITTEE
+ * THAT HOLDS IT NOW.** Every signature was made in its signer's own wallet and
+ * arrives here on its own; this checks each against the seat it claims, puts
+ * them on the one update the chain will accept, and says how many more are
+ * needed. When enough have signed it returns the transaction unproven, for the
+ * caller to prove and send.
+ *
+ * **NO KEY IS A PARAMETER OF THIS FUNCTION.** It takes signatures, which are
+ * public once the change reaches the chain and are good for this one update
+ * only: the update names the contract, the whole new committee and the counter
+ * the chain holds now, so a signature collected for it verifies against no
+ * other contract, no other committee and no later counter.
+ *
+ * Refused here, before anything is built: a contract still held by the key it
+ * was created with and never changed (that is its handover, a different act),
+ * a contract whose rules need no signature or can never be changed, a contract
+ * already held by the company's committee, and anything the product's one
+ * authority builder refuses about the new committee.
+ */
+export function buildCommitteeChange(
+  L: CommitteeChangeLedger,
+  input: {
+    readonly read: AuthorityRead;
+    readonly to: Committee;
+    readonly signatures: readonly SeatSignature[];
+    readonly network: string;
+    readonly ttl: Date;
+    readonly label: string;
+  },
+): {
+  readonly have: number;
+  readonly required: number;
+  readonly seatsSigned: number[];
+  readonly unproven: unknown | null;
+  readonly endState: MaintenanceEndStateRecord;
+} {
+  const { read } = input;
+  if (read.state !== 'read') {
+    throw new Error(`the chain could not be asked who holds ${input.label}'s rules (${read.why}), so nothing was built.`);
+  }
+  if (read.authority.shape === 'one-key' && read.authority.counter === 0n) {
+    throw new Error(`${input.label} is still held by the key it was created with, so it is handed to the committee `
+      + 'first. Nothing was built.');
+  }
+  if (read.authority.shape === 'anyone' || read.authority.shape === 'no-one') {
+    throw new Error(`${input.label}'s rules ${read.authority.shape === 'anyone' ? 'need no signature at all' : 'can never be changed'}, `
+      + 'so a change signed by the company\'s signers is not built for it. Nothing was built.');
+  }
+  const plan = planAuthorityReplacement(read, input.to, { emptyCommitteeIsDeliberate: false });
+  if (plan.action === 'refuse') throw new Error(`the committee will not be changed: ${plan.why}`);
+  if (plan.action === 'settled') throw new Error(`${input.label} is already held by the company's committee. Nothing was built.`);
+  let built = buildMaintenanceInstruction(L, plan, { label: input.label, emptyCommitteeIsDeliberate: false });
+  for (const s of [...input.signatures].sort((a, b) => a.seat - b.seat)) {
+    built = attachMaintenanceSignature(L, built, s.seat, s.signature);
+  }
+  const progress = signatureProgress(built);
+  return {
+    have: progress.have,
+    required: progress.required,
+    seatsSigned: progress.seatsSigned,
+    unproven: progress.complete
+      ? L.Transaction.fromParts(input.network, undefined, undefined, L.Intent.new(input.ttl).addMaintenanceUpdate(built.update))
+      : null,
+    endState: built.endState,
+  };
 }

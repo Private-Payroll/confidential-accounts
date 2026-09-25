@@ -163,7 +163,7 @@ export const REQUEST_SCHEMA = 'midnight-identity/disclosure-request/v1';
  * than inserted, so the sentence a refusal already produced does not change
  * shape for the three kinds that were there before it.
  */
-export const ASK_KINDS = ['disclosure', 'sign-in', 'unlock', 'join', 'keyring', 'balance'] as const;
+export const ASK_KINDS = ['disclosure', 'sign-in', 'unlock', 'join', 'keyring', 'balance', 'committee'] as const;
 export type AskKind = (typeof ASK_KINDS)[number];
 
 /** One thing an application is asking for. */
@@ -351,9 +351,66 @@ export interface BalanceRequest extends Asking {
   readonly transaction: string;
 }
 
+/** A committee key as it travels on this wire: the tag the ledger names, and thirty-two bytes of lower-case hex. */
+export interface CommitteeKeyOnTheWire {
+  readonly tag: 'schnorr';
+  readonly value: string;
+}
+
+/** A committee: its keys in the order the chain holds them, and how many of them must sign a change. */
+export interface CommitteeOnTheWire {
+  readonly committee: readonly CommitteeKeyOnTheWire[];
+  readonly threshold: number;
+}
+
+/** One contract whose committee the ask changes. */
+export interface CommitteeChangeOfAContract {
+  readonly contract: 'account' | 'vault';
+  /** The contract's address, canonical lower case. Claimed; shown whole. */
+  readonly address: string;
+  /** The counter the chain holds for the contract's rules now, in decimal. Claimed; signed over. */
+  readonly counter: string;
+  /** The committee that holds the contract now, which is the one that signs. Claimed; shown. */
+  readonly now: CommitteeOnTheWire;
+}
+
+/**
+ * ASKING THIS WALLET TO SIGN A CHANGE TO WHO HOLDS A COMPANY'S RULES.
+ *
+ * **THE ONE KIND THAT SIGNS WITH A COMMITTEE KEY.** Every contract a company
+ * has - its account and each vault - carries a list of keys and a threshold
+ * that decide who may change the contract's rules, and this wallet holds one of
+ * those keys for each company its person signs for. When a signer joins or
+ * leaves, or the threshold changes, each contract's list must be replaced, and
+ * the replacement must be signed by enough of the keys on the list now.
+ *
+ * **THE WALLET BUILDS WHAT IT SIGNS.** Nothing in this ask is bytes to sign.
+ * It names, for each contract, the address, the counter and the committee that
+ * holds it now, and once, the committee to install. The wallet makes the one
+ * change that replaces the whole list with that committee and signs that, so
+ * what it signs can only be what the screen showed: who joins, who leaves and
+ * the new threshold. There is no field on this type for anything else a change
+ * to a contract's rules could do.
+ *
+ * **EVERYTHING HERE IS CLAIMED.** A page could name a committee that is not the
+ * company's, or say a contract is held by keys it is not held by. The first is
+ * shown whole and is exactly what would be installed; the second only changes
+ * who the screen says leaves, because the chain checks the signature against
+ * the committee that really holds the contract.
+ */
+export interface CommitteeRequest extends Asking {
+  readonly kind: 'committee';
+  /** The company's own account address, canonical lower case. It selects the key that signs. */
+  readonly company: string;
+  /** The committee to install, the same on every contract. */
+  readonly to: CommitteeOnTheWire;
+  /** Never empty, and no address twice. */
+  readonly contracts: readonly CommitteeChangeOfAContract[];
+}
+
 /** What an application may open this wallet with. */
 export type Ask =
-  | DisclosureRequest | SignInRequest | UnlockRequest | JoinRequest | KeyringRequest | BalanceRequest;
+  | DisclosureRequest | SignInRequest | UnlockRequest | JoinRequest | KeyringRequest | BalanceRequest | CommitteeRequest;
 
 /**
  * THE KINDS THAT CARRY A LIST OF THINGS ASKED FOR.
@@ -417,7 +474,14 @@ export type RequestFailure =
   | 'not-a-vault-address'
   | 'attributes-on-a-balance'
   | 'inbox-key-on-a-balance'
-  | 'balance-fields-on-another-kind';
+  | 'balance-fields-on-another-kind'
+  /* A request to sign a change to a company's committee: the change itself,
+   * the two things it may not carry, and its own fields arriving on another
+   * kind. */
+  | 'not-a-committee-change'
+  | 'attributes-on-a-committee-change'
+  | 'inbox-key-on-a-committee-change'
+  | 'committee-fields-on-another-kind';
 
 export class RequestError extends Error {
   readonly code: RequestFailure;
@@ -717,6 +781,114 @@ function wantsOf(body: Record<string, unknown>): readonly Want[] {
   return Object.freeze(parsed);
 }
 
+/** The most contracts one committee change is signed for in one press. */
+const MAX_CONTRACTS = 64;
+/** The most keys a committee on this wire may list. */
+const MAX_COMMITTEE = 64;
+const COMMITTEE_KEY = /^[0-9a-fA-F]{64}$/u;
+const COUNTER = /^[0-9]{1,20}$/u;
+
+const notACommitteeChange = (why: string): RequestError => new RequestError(
+  'not-a-committee-change',
+  `this asks your wallet to sign a change to who holds a company's rules, and ${why}. Nothing has been shown to `
+  + 'them and nothing has been signed.');
+
+/** A committee as this wire carries it, folded to lower case, or the refusal. */
+function committeeOnTheWire(value: unknown, which: string): CommitteeOnTheWire {
+  if (typeof value !== 'object' || value === null) throw notACommitteeChange(`${which} is not a committee`);
+  const v = value as Record<string, unknown>;
+  const keys = v['committee'];
+  const threshold = v['threshold'];
+  if (!Array.isArray(keys) || keys.length === 0 || keys.length > MAX_COMMITTEE) {
+    throw notACommitteeChange(`${which} lists no keys, or more than ${MAX_COMMITTEE}`);
+  }
+  const committee = keys.map((k: unknown) => {
+    const key = k as Record<string, unknown> | null;
+    if (typeof key !== 'object' || key === null || key['tag'] !== 'schnorr'
+      || typeof key['value'] !== 'string' || !COMMITTEE_KEY.test(key['value'] as string)) {
+      throw notACommitteeChange(`${which} lists a key that is not a committee key a wallet derives`);
+    }
+    return Object.freeze({ tag: 'schnorr' as const, value: (key['value'] as string).toLowerCase() });
+  });
+  if (typeof threshold !== 'number' || !Number.isInteger(threshold) || threshold < 1 || threshold > committee.length) {
+    throw notACommitteeChange(`${which}'s threshold is not a whole number from one to the number of its keys`);
+  }
+  return Object.freeze({ committee: Object.freeze(committee), threshold });
+}
+
+/**
+ * **A COMMITTEE CHANGE, READ WHOLE.** The committee to install lists no key
+ * twice, because a key listed twice would make the threshold read as more
+ * people than it is; every contract names its address once, a counter, and the
+ * committee on it now.
+ */
+function committeeChangeOf(body: Record<string, unknown>, asking: Asking): CommitteeRequest {
+  if ('wants' in body) {
+    throw new RequestError(
+      'attributes-on-a-committee-change',
+      'this asks your wallet to sign a change to who holds a company\'s rules, and it also carries a list of '
+      + 'details to hand over. Those are two different powers and this wallet will not approve them behind one '
+      + 'press, so the whole request is refused. Nothing has been shown to them and nothing has been signed.');
+  }
+  if ('inboxPublicKey' in body) {
+    throw new RequestError(
+      'inbox-key-on-a-committee-change',
+      'this asks your wallet to sign a change to who holds a company\'s rules, and it also names a key to seal an '
+      + 'answer to. The signatures are handed back to the page that asked, so the key is refused rather than '
+      + 'ignored. Nothing has been shown to them and nothing has been signed.');
+  }
+  const company = body['company'];
+  if (typeof company !== 'string' || !COMPANY_ADDRESS.test(company)) {
+    throw new RequestError(
+      'not-a-company-address',
+      'this asks your wallet to sign a change to who holds a company\'s rules and does not name a company this '
+      + 'wallet can make sense of. A company is named by its own address on the chain - sixty-four characters, '
+      + 'exactly as the chain writes it. Nothing has been shown to them and nothing has been signed.');
+  }
+  const to = committeeOnTheWire(body['to'], 'the committee to install');
+  if (new Set(to.committee.map((k) => k.value)).size !== to.committee.length) {
+    throw notACommitteeChange('the committee to install lists one key twice, so its threshold is not what it reads as');
+  }
+  const contracts = body['contracts'];
+  if (!Array.isArray(contracts) || contracts.length === 0 || contracts.length > MAX_CONTRACTS) {
+    throw notACommitteeChange(`it names no contract to change, or more than ${MAX_CONTRACTS}`);
+  }
+  const seen = new Set<string>();
+  const parsed = contracts.map((c: unknown) => {
+    const entry = c as Record<string, unknown> | null;
+    if (typeof entry !== 'object' || entry === null) throw notACommitteeChange('one of the contracts is not readable');
+    const contract = entry['contract'];
+    const address = entry['address'];
+    const counter = entry['counter'];
+    if (contract !== 'account' && contract !== 'vault') {
+      throw notACommitteeChange('one of the contracts is neither the company\'s account nor one of its vaults');
+    }
+    if (typeof address !== 'string' || !COMPANY_ADDRESS.test(address)) {
+      throw notACommitteeChange('one of the contracts is not named by a sixty-four character address');
+    }
+    if (typeof counter !== 'string' || !COUNTER.test(counter) || BigInt(counter) < 1n) {
+      throw notACommitteeChange('one of the contracts names no counter a handed-over contract can be at');
+    }
+    const folded = address.toLowerCase();
+    if (seen.has(folded)) throw notACommitteeChange('it names one contract twice');
+    seen.add(folded);
+    return Object.freeze({
+      contract, address: folded, counter: BigInt(counter).toString(),
+      now: committeeOnTheWire(entry['now'], 'the committee a contract is held by now'),
+    });
+  });
+  if (parsed.filter((c) => c.contract === 'account').length > 1) {
+    throw notACommitteeChange('it names more than one company account');
+  }
+  return Object.freeze({
+    ...asking,
+    kind: 'committee' as const,
+    company: company.toLowerCase(),
+    to,
+    contracts: Object.freeze(parsed),
+  });
+}
+
 /**
  * THE ONLY DOOR AN ASK COMES THROUGH.
  *
@@ -776,6 +948,21 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
       + 'a request to pay for a transaction, so they are refused rather than ignored. Nothing '
       + 'has been shown to them.');
   }
+
+  /*
+   * **A COMMITTEE TO INSTALL AND THE CONTRACTS IT GOES ON BELONG TO A
+   * COMMITTEE CHANGE AND TO NOTHING ELSE**, refused by presence on every other
+   * kind for the keyring fields' reason.
+   */
+  if (kind !== 'committee' && ('to' in body || 'contracts' in body)) {
+    throw new RequestError(
+      'committee-fields-on-another-kind',
+      `this is a '${kind}' and it names a committee or the contracts a committee holds. Those belong only to a `
+      + 'request to sign a change to who holds a company\'s rules, so they are refused rather than ignored. '
+      + 'Nothing has been shown to them.');
+  }
+
+  if (kind === 'committee') return committeeChangeOf(body, asking);
 
   if (kind === 'balance') {
     if ('wants' in body) {

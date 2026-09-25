@@ -4,13 +4,16 @@ import type { Hex } from '../core/crypto.js';
 import { VAULT_CIRCUITS } from '../midnight/vault-contract.js';
 import { vaultOutputHistoryFrom } from '../midnight/deposit-nonce.js';
 import { indexerNoteEvents, indexerVaultTransactions } from '../midnight/note-index.js';
+import { indexerContractHistory } from '../midnight/contract-history.js';
 import type { VaultChain } from './company-vaults.js';
 import { startingLedgerFrom } from '../wiring/vault-submission.js';
 import { DEPLOYED_CIRCUITS } from '../midnight/deferral.js';
 import type { AuthorityRead } from '../midnight/ledger.js';
 import type { MaintenanceAuthorityChoice } from '../midnight/partial-contract.js';
 import type { Committee } from '../midnight/vault-committee.js';
-import { buildAccountHandover, type AccountHandoverLedger } from '../midnight/company-authority.js';
+import {
+  buildAccountHandover, buildCommitteeChange, type AccountHandoverLedger, type CommitteeChangeLedger, type SeatSignature,
+} from '../midnight/company-authority.js';
 import { assertVaultLedgerIsThisBuilds } from '../midnight/vault-ledger-shape.js';
 
 /**
@@ -23,11 +26,13 @@ import { assertVaultLedgerIsThisBuilds } from '../midnight/vault-ledger-shape.js
 const hex = (bytes: Uint8Array): Hex => Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('') as Hex;
 
 export async function vaultChainFromTheIndexer(indexer: { url: string; wsUrl: string }): Promise<VaultChain> {
-  const [{ indexerPublicDataProvider }, runtime, vault] = await Promise.all([
+  const [{ indexerPublicDataProvider }, runtime, vault, { deserializeCompactContractState }] = await Promise.all([
     import('@midnight-ntwrk/midnight-js-indexer-public-data-provider'),
     import('@midnight-ntwrk/compact-runtime'),
     import('../../contracts/managed-vault/contract/index.js'),
+    import('@midnight-ntwrk/midnight-js-utils'),
   ]);
+  const contractHistory = indexerContractHistory(indexer.url, indexer.wsUrl);
   type Serialisable = { serialize(): Uint8Array };
   type AtBlock = { type: 'blockHash'; blockHash: string };
   const provider = indexerPublicDataProvider(indexer.url, indexer.wsUrl) as unknown as {
@@ -59,6 +64,12 @@ export async function vaultChainFromTheIndexer(indexer: { url: string; wsUrl: st
       return startingLedgerFrom(ledger);
     },
     everCreated: (address) => history.everCreated(address),
+    /* Each step's state read by the same reader the indexer's own client reads a contract's state with. */
+    historyOf: async (address) => (await contractHistory.of(address)).map((step) => ({
+      kind: step.kind,
+      transaction: step.transaction,
+      state: deserializeCompactContractState(step.state, { caller: 'company-vaults:historyOf' }),
+    })),
     /*
      * **ONE BLOCK, NAMED FIRST, AND BOTH CONTRACTS READ AS OF IT.** The vault's
      * call reads the account's state inside the same circuit, so the two must
@@ -143,8 +154,8 @@ export async function accountTemporaryVerifyingKey(
 
 /** A proving provider for a transaction that calls no circuit: it is never asked, and says so if it is. */
 const neverAsked = {
-  check: async () => { throw new Error('a company account\'s handover calls no circuit, and a circuit was asked to be checked'); },
-  prove: async () => { throw new Error('a company account\'s handover calls no circuit, and a circuit was asked to be proved'); },
+  check: async () => { throw new Error('a change to a contract\'s rules calls no circuit, and a circuit was asked to be checked'); },
+  prove: async () => { throw new Error('a change to a contract\'s rules calls no circuit, and a circuit was asked to be proved'); },
   lookupKey: async () => undefined,
 };
 
@@ -170,5 +181,39 @@ export function accountHandoverWith(
     const proven = await (unproven as { prove(p: unknown, c: unknown): Promise<{ serialize(): Uint8Array }> })
       .prove(neverAsked, (L as unknown as { CostModel: { initialCostModel(): unknown } }).CostModel.initialCostModel());
     return proven.serialize();
+  };
+}
+
+/** What assembling one committee change leaves: how far the signing is, and the transaction once it is complete. */
+export interface CommitteeChangeAssembled {
+  readonly have: number;
+  readonly required: number;
+  readonly seatsSigned: number[];
+  /** The proven transaction, once enough of the committee holding the contract now has signed. */
+  readonly proven: Uint8Array | null;
+}
+
+/**
+ * **A CONTRACT'S COMMITTEE CHANGE, PUT TOGETHER FROM SIGNATURES ITS SIGNERS'
+ * WALLETS MADE.** Every signature is checked against the seat it claims before
+ * it is used, and a transaction comes back only once enough of the committee
+ * holding the contract now have signed. It is signed by nobody here: this
+ * service holds no committee key, and the builder takes none.
+ */
+export function committeeChangeWith(
+  network: string,
+  now: () => number = Date.now,
+): (input: { read: AuthorityRead; to: Committee; signatures: readonly SeatSignature[]; label: string }) => Promise<CommitteeChangeAssembled> {
+  return async ({ read, to, signatures, label }) => {
+    const L = await import('@midnightntwrk/ledger-v9');
+    const built = buildCommitteeChange(L as unknown as CommitteeChangeLedger, {
+      read, to, signatures, network, label, ttl: new Date(now() + 30 * 60_000),
+    });
+    if (built.unproven === null) {
+      return { have: built.have, required: built.required, seatsSigned: built.seatsSigned, proven: null };
+    }
+    const proven = await (built.unproven as { prove(p: unknown, c: unknown): Promise<{ serialize(): Uint8Array }> })
+      .prove(neverAsked, (L as unknown as { CostModel: { initialCostModel(): unknown } }).CostModel.initialCostModel());
+    return { have: built.have, required: built.required, seatsSigned: built.seatsSigned, proven: proven.serialize() };
   };
 }

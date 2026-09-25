@@ -166,3 +166,59 @@ describe('WHO CAN CHANGE THIS COMPANY\'S RULES, ON THE SETTINGS SCREEN', () => {
     expect(seatWords({ key: k(1), onTheCompanysCommittee: true }, account, ME)).toBe('Ada Lovelace (you)');
   });
 });
+
+describe('A COMMITTEE CHANGE, SIGNED FROM THE SETTINGS SCREEN', () => {
+  const owed = {
+    company: 'c0'.repeat(32), to: { committee: [k(1), k(2)], threshold: 2 }, why: null, notChangeable: [],
+    contracts: [{ contract: 'vault', address: 'ab'.repeat(32), counter: '1', now: { committee: [k(1)], threshold: 1 }, signedSeats: [], required: 1 }],
+  };
+  const offered = answer({ change: { possible: true, why: '1 contract is still held by a committee that is not the company\'s as it stands now.' } });
+
+  it('OFFERS THE PRESS ONLY WHEN A CHANGE IS OWED, AND SHOWS HOW FAR EACH CONTRACT\'S SIGNING HAS GOT', async () => {
+    const calls: string[] = [];
+    const api = async (path: string, opts?: RequestInit) => {
+      calls.push(`${opts?.method ?? 'GET'} ${path}`);
+      return path.endsWith('/committee-change') ? owed : offered;
+    };
+    render(<MaintenancePanel account={account} me={ME} api={api} walletKey={async () => k(1)} roster={async () => account} signInWallet={async () => { throw new Error('not pressed'); }} />);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    /* RED WHEN: the button stays shut while a change is owed. */
+    expect((document.querySelector('[data-change-authority]') as HTMLButtonElement).disabled).toBe(false);
+    expect(document.querySelector('[data-owed-contract="vault"]')!.textContent).toMatch(/0 of 1 signed/);
+  });
+
+  it('THE PRESS ASKS THE WALLET AND HANDS THE SIGNATURES TO THE SERVICE, AND SAYS WHAT WAS SENT', async () => {
+    const calls: string[] = [];
+    const sentBodies: string[] = [];
+    const asked: unknown[] = [];
+    const api = async (path: string, opts?: RequestInit) => {
+      calls.push(`${opts?.method ?? 'GET'} ${path}`);
+      if (path.endsWith('/signatures')) { sentBodies.push(String(opts?.body)); return { results: [{ address: 'ab'.repeat(32), state: 'sent' }] }; }
+      return path.endsWith('/committee-change') ? owed : offered;
+    };
+    render(<MaintenancePanel account={account} me={ME} api={api} walletKey={async () => k(1)} roster={async () => account}
+      signInWallet={async (ask) => { asked.push(ask); return { signer: k(1), signatures: [{ address: 'ab'.repeat(32), counter: '1', seat: 0, signature: k(0xee) }] }; }} />);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { fireEvent.click(document.querySelector('[data-change-authority]')!); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+    expect(asked).toHaveLength(1);
+    expect(JSON.parse(sentBodies[0]!)).toEqual({ to: owed.to, signatures: [{ address: 'ab'.repeat(32), counter: '1', seat: 0, signature: k(0xee) }] });
+    expect(calls).toContain('POST /api/accounts/acc_1/committee-change/signatures');
+    expect(await screen.findByText(/1 change was signed by enough of the signers and sent/)).toBeTruthy();
+  });
+
+  it('TELLS A PERSON WITH NOTHING TO SIGN SO, AS NEWS AND NOT AS A FAILURE, WITHOUT OPENING THEIR WALLET', async () => {
+    const asked: unknown[] = [];
+    const notMine = { ...owed, contracts: [{ ...owed.contracts[0]!, now: { committee: [k(2)], threshold: 1 } }] };
+    const api = async (path: string) => (path.endsWith('/committee-change') ? notMine : offered);
+    render(<MaintenancePanel account={account} me={ME} api={api} walletKey={async () => k(1)} roster={async () => account}
+      signInWallet={async (ask) => { asked.push(ask); throw new Error('not asked'); }} />);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { fireEvent.click(document.querySelector('[data-change-authority]')!); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+    /* RED WHEN: nothing to sign is shown as "did not finish". */
+    expect(await screen.findByText(/You do not hold a seat on any contract that needs this change/)).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/did not finish/);
+    expect(asked).toEqual([]);
+  });
+});

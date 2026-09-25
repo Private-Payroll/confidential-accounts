@@ -155,7 +155,9 @@ describe('§4 — A REQUEST DECLARES WHAT IT IS', () => {
      * `screens/approve.tsx`. */
     /* **AND FOR `balance`**, appended sixth, with its screen in
      * `screens/approve-balance.tsx`. */
-    expect([...ASK_KINDS]).toEqual(['disclosure', 'sign-in', 'unlock', 'join', 'keyring', 'balance']);
+    /* **AND FOR `committee`**, appended seventh, with its screen in
+     * `screens/approve-committee.tsx`. */
+    expect([...ASK_KINDS]).toEqual(['disclosure', 'sign-in', 'unlock', 'join', 'keyring', 'balance', 'committee']);
   });
 });
 
