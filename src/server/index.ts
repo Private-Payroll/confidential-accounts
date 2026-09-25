@@ -2231,6 +2231,16 @@ app.post('/api/accounts/:id/runs', authed, member, wrap(async (req, res) => {
       employeeIds: z.array(z.string()),
       reason: z.string(),
     }).optional(),
+    /*
+     * **A SECOND RUN FOR A MONTH THAT ALREADY HAS ONE, CONFIRMED BY NAMING WHAT
+     * IT REPEATS.** As at the ad hoc door, who is confirming it is taken from
+     * the signed-in caller and never from this body.
+     */
+    repeats: z.object({
+      runIds: z.array(z.string()),
+      reason: z.string(),
+      chainPayments: z.number().int().nonnegative().optional(),
+    }).optional(),
   }).parse(req.body);
   const me = identity.user(req.userId!);
   /* The month is read here too, by the same function the service uses. */
@@ -2242,7 +2252,11 @@ app.post('/api/accounts/:id/runs', authed, member, wrap(async (req, res) => {
      * refuses and a run refused for want of a name would be a worse answer than
      * an id somebody can look up.
      */
-    b.skipPending && { ...b.skipPending, by: me.name.trim() || me.id }));
+    b.skipPending && { ...b.skipPending, by: me.name.trim() || me.id },
+    b.repeats && {
+      runIds: b.repeats.runIds, reason: b.repeats.reason, by: me.name.trim() || me.id,
+      ...(b.repeats.chainPayments === undefined ? {} : { chainPayments: b.repeats.chainPayments }),
+    }));
 }));
 
 

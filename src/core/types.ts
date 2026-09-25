@@ -1111,6 +1111,11 @@ export interface Employee {
   /** What actually moves for this person on this run, and in what. */
   asset: AssetId;
   amount: bigint;
+  /**
+   * Where this person is paid, as their payslip on this run names it. Absent
+   * for somebody with no roster entry, and on a run drawn before it was kept.
+   */
+  paidTo?: string;
 }
 
 export interface PayrollRun {
@@ -1621,11 +1626,17 @@ export interface RunPayout {
  * Inside the envelope, with the people it is about.
  */
 export interface RunRepeatRecord {
-  /** The runs this one knowingly repeats, by id. */
+  /** The runs this one knowingly repeats, by id, and any round on chain the records could not account for, by its id there. */
   of: string[];
   reason: string;
   by: string;
   at: string;
+  /**
+   * How many completed payments on chain the records could not account for
+   * when it was confirmed. A raise is refused once there are more. Absent
+   * means none.
+   */
+  chainPayments?: number;
 }
 
 export interface PayrollRun {
