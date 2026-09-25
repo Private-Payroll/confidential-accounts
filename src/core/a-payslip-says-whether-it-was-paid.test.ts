@@ -358,8 +358,12 @@ describe('nothing the page sends names which payment it opened', () => {
     expect(seen.length).toBeGreaterThan(0);
     for (const r of seen) {
       const said = (r.url + ' ' + r.body + ' ' + JSON.stringify(r.init?.headers ?? {})).toLowerCase();
-      /* RED WHEN any request carries this page's sign-in, which would tie a person to what they asked. */
-      expect(r.init?.credentials, r.url).toBe('omit');
+      /*
+       * The sign-in rides on every request, because the service answers a
+       * signed-in person only. It goes to this page's own origin and nowhere
+       * else. RED WHEN it is sent to any origin, or left off.
+       */
+      expect(r.init?.credentials, r.url).toBe('same-origin');
       /* RED WHEN the page asks about its own payment by its leaf or its recorded value. */
       for (const s of secretsOf) expect(said, r.url).not.toContain(s.toLowerCase());
       expect(said).not.toContain(dana.keys.secret.toLowerCase());

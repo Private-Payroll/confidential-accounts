@@ -6,6 +6,7 @@ import {
 import type { WrappingKeypair } from '../core/crypto.js';
 import type { WalletIndexer } from 'midnight-identity/profile/unlock';
 import type { ChainReader } from './payslip-worker-client.js';
+import { PAGE_OUT_OF_DATE, PAYSLIP_PAGE_HEADER, PAYSLIP_PAGE_VERSION } from '../core/payslip-page.js';
 
 /**
  * **A PAYEE'S OWN PAYSLIPS, FETCHED AS CIPHERTEXT AND OPENED ON THIS DEVICE.**
@@ -14,24 +15,38 @@ import type { ChainReader } from './payslip-worker-client.js';
  * value the service sealed to its public half, which is how the service knows
  * to answer, and once per slip to open it. It is never part of a request.
  *
- * The requests go without this page's sign-in. Which signed-in person is paid
- * by which company is kept sealed inside the company's records, and a lookup
- * carrying a sign-in would hand the service that link in the clear.
+ * The requests carry this page's sign-in, because the service answers a
+ * signed-in person only, and they name this page so that a page older than the
+ * service is told to reload rather than to sign in again. While it answers, the
+ * service therefore sees which signed-in person asks about which company
+ * address; it does not write that down.
  */
-/** Where a payee's own payslips are. */
+/** An address that opens this application, kept so links to it still arrive. */
 export const YOUR_PAY_PATH = '/payslips';
 
 export type Fetch = (input: string, init?: RequestInit) => Promise<Response>;
 
-const withoutSignIn = (body: unknown): RequestInit => ({
-  method: 'POST',
-  credentials: 'omit',
-  headers: { 'content-type': 'application/json' },
-  body: JSON.stringify(body),
+/** What every payslip request carries: the sign-in cookie, to this origin only, and the page's name. */
+const asThisPage = (init: RequestInit = {}): RequestInit => ({
+  ...init,
+  credentials: 'same-origin',
+  headers: {
+    'content-type': 'application/json',
+    [PAYSLIP_PAGE_HEADER]: PAYSLIP_PAGE_VERSION,
+    ...((init.headers as Record<string, string> | undefined) ?? {}),
+  },
 });
+
+const signedIn = (body: unknown): RequestInit => asThisPage({ method: 'POST', body: JSON.stringify(body) });
+
+/** Thrown when the service says this page is older than it. Never caught as one address's failure. */
+export class PageOutOfDate extends Error {
+  constructor() { super(PAGE_OUT_OF_DATE); this.name = 'PageOutOfDate'; }
+}
 
 const readJson = async (r: Response, doing: string): Promise<any> => {
   const body = await r.json().catch(() => ({}));
+  if (!r.ok && body?.code === 'payslip-page-out-of-date') throw new PageOutOfDate();
   if (!r.ok) throw new Error(body?.error ?? `${doing} failed (${r.status})`);
   return body;
 };
@@ -64,11 +79,11 @@ export async function fetchMyPayslips(
 ): Promise<MyPayslips> {
   const address = from === null ? null : from.toLowerCase();
   const proof = await readJson(
-    await fetcher('/api/payslips/proof', withoutSignIn({ publicKey: keys.publicKey })),
+    await fetcher('/api/payslips/proof', signedIn({ publicKey: keys.publicKey })),
     'asking for your payslips');
   const answer: Hex = answerPayslipProof(proof.sealed, keys.secret);
   const sealed: SealedPayslip[] = await readJson(
-    await fetcher('/api/payslips', withoutSignIn({ publicKey: keys.publicKey, answer, from: address })),
+    await fetcher('/api/payslips', signedIn({ publicKey: keys.publicKey, answer, from: address })),
     'fetching your payslips');
   const opened: OpenedPayslip[] = [];
   let unopened = 0;
@@ -130,11 +145,27 @@ export async function paymentsOnTheChain(
   slips: OpenedPayslip[], reader: ChainReader | null, indexer: WalletIndexer | null,
   nowSeconds: number = Math.floor(Date.now() / 1000),
 ): Promise<Map<string, OnTheChain>> {
+  return (await readTheChain(slips, reader, indexer, nowSeconds)).chain;
+}
+
+/**
+ * **THE SAME READ, AND WHETHER IT COULD BE MADE AT ALL.** `couldNotRead` is
+ * true when a slip that carries a receipt could not be asked about because the
+ * wallet named no indexer or there is no reader, or when a read failed or came
+ * back as something that is not an answer. It is what lets a page say why its
+ * rows cannot tell, rather than only that they cannot.
+ */
+export async function readTheChain(
+  slips: OpenedPayslip[], reader: ChainReader | null, indexer: WalletIndexer | null,
+  nowSeconds: number = Math.floor(Date.now() / 1000),
+): Promise<{ chain: Map<string, OnTheChain>; couldNotRead: boolean }> {
   const out = new Map<string, OnTheChain>();
+  let couldNotRead = false;
   const byCompany = new Map<string, OpenedPayslip[]>();
   for (const s of slips) {
     if (!s.receipt) continue;
     const company = s.receipt.company;
+    if (company !== null && (reader === null || indexer === null)) couldNotRead = true;
     if (company === null || reader === null || indexer === null) { out.set(s.runId, 'cannot-tell'); continue; }
     byCompany.set(company, [...(byCompany.get(company) ?? []), s]);
   }
@@ -147,36 +178,37 @@ export async function paymentsOnTheChain(
     }
     mine.forEach((s, i) => {
       const r = recorded?.[i];
-      if (recorded === null || typeof r !== 'boolean') { out.set(s.runId, 'cannot-tell'); return; }
+      if (recorded === null || typeof r !== 'boolean') { couldNotRead = true; out.set(s.runId, 'cannot-tell'); return; }
       if (r) { out.set(s.runId, 'paid'); return; }
       const until = s.receipt!.until;
       out.set(s.runId, until !== null && nowSeconds < until ? 'not-yet' : 'cannot-tell');
     });
   }
-  return out;
+  return { chain: out, couldNotRead };
 }
 
 /** Every address a company's payslips were sealed under, asked by any one of them. */
 export async function payslipAddressesFor(company: string, fetcher: Fetch = fetch): Promise<string[]> {
   const r = await fetcher(
     `/api/payslips/addresses?company=${encodeURIComponent(company)}`,
-    { credentials: 'omit' });
+    asThisPage());
   const body = await readJson(r, 'asking which addresses a company has had');
   return Array.isArray(body.addresses) ? body.addresses : [];
 }
 
 /* ------------------------------------------------------------------ */
-/* which companies this browser has been told pay you                   */
+/* which companies pay you, as this browser holds them for one person   */
 /* ------------------------------------------------------------------ */
 
 /**
- * **A LIST OF COMPANY ADDRESSES, AND NOTHING ELSE.** Contract addresses are
- * public, so keeping them in this browser keeps nothing that opens anything:
- * the key that opens a slip is worked out from the wallet each time and is not
- * kept here or anywhere. Another device starts with an empty list, and the
- * person adds the company's address there.
+ * **A LIST OF COMPANY ADDRESSES, AND NOTHING ELSE, KEPT FOR ONE SIGNED-IN
+ * PERSON.** The list that follows a person to every device is inside their own
+ * saved keys (`keyring.ts`). This one holds, in this browser only, an address
+ * that could not be saved there yet, until it can be. It is keyed by the
+ * person, so somebody else signing in in this browser is never shown it.
+ * Contract addresses are public, and nothing here opens anything.
  */
-const REMEMBERED = 'payslip-companies';
+const REMEMBERED = 'payslip-companies-of:';
 const COMPANY_ADDRESS = /^[0-9a-f]{64}$/u;
 
 export const tidyCompanyAddress = (text: string): string | null => {
@@ -184,25 +216,40 @@ export const tidyCompanyAddress = (text: string): string | null => {
   return COMPANY_ADDRESS.test(t) ? t : null;
 };
 
-export function rememberedCompanies(storage: Pick<Storage, 'getItem'> | null = safeStorage()): string[] {
+/** Only well-formed company addresses, each once. */
+export const onlyCompanyAddresses = (list: unknown): string[] =>
+  Array.isArray(list)
+    ? [...new Set(list.filter((a): a is string => typeof a === 'string' && COMPANY_ADDRESS.test(a)))]
+    : [];
+
+export function rememberedCompanies(
+  person: string, storage: Pick<Storage, 'getItem'> | null = safeStorage(),
+): string[] {
   try {
-    const raw = storage?.getItem(REMEMBERED);
-    const list = raw ? JSON.parse(raw) : [];
-    return Array.isArray(list) ? list.filter((a): a is string => typeof a === 'string' && COMPANY_ADDRESS.test(a)) : [];
+    const raw = storage?.getItem(REMEMBERED + person);
+    return onlyCompanyAddresses(raw ? JSON.parse(raw) : []);
   } catch {
     return [];
   }
 }
 
 export function rememberCompany(
-  address: string, storage: Pick<Storage, 'getItem' | 'setItem'> | null = safeStorage(),
+  person: string, address: string,
+  storage: Pick<Storage, 'getItem' | 'setItem'> | null = safeStorage(),
 ): string[] {
   const tidy = tidyCompanyAddress(address);
-  const list = rememberedCompanies(storage);
+  const list = rememberedCompanies(person, storage);
   if (tidy === null || list.includes(tidy)) return list;
   const next = [...list, tidy];
-  try { storage?.setItem(REMEMBERED, JSON.stringify(next)); } catch { /* kept for this visit only */ }
+  try { storage?.setItem(REMEMBERED + person, JSON.stringify(next)); } catch { /* kept for this visit only */ }
   return next;
+}
+
+/** Empties one person's list in this browser, once what it held has been saved with them. */
+export function forgetRememberedCompanies(
+  person: string, storage: Pick<Storage, 'removeItem'> | null = safeStorage(),
+): void {
+  try { storage?.removeItem(REMEMBERED + person); } catch { /* nothing to empty */ }
 }
 
 function safeStorage(): Storage | null {

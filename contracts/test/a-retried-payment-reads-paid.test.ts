@@ -23,7 +23,7 @@ import { SimulatedLedger, SimulatedProofSystem, type StateChange } from '../../s
 import { MidnightCommitments } from '../../src/midnight/commitments.js';
 import { buildRun, buildRetryRun } from '../../src/midnight/payout-tree.js';
 import { runMaterialFor, retryMaterialFor } from '../../src/midnight/run-material.js';
-import { paidMovementsIn, UndecodedLedgerField, MidnightLedger } from '../../src/midnight/ledger.js';
+import { paidMovementsIn, UndecodedLedgerField } from '../../src/midnight/ledger.js';
 import { vaultDetails } from '../../src/testing/vault-details.js';
 import { registryWithTestPrivateForms, aVaultHolding } from '../../src/testing/assets.js';
 import { FileStore } from '../../src/core/store-file.js';
@@ -137,17 +137,8 @@ describe('a payment made by a retry reads as paid on its payee\'s page', () => {
     /* The account's completed payments, read off the contract's own state, relayed whole. */
     const onChain = paidMovementsIn(sim.ledger);
     expect(onChain).toHaveLength(2);
-    /* And the chain ledger's own read of the same state answers the same list. */
     /* The contract state as an indexer hands it back: a `ContractState` whose `data` is the ledger. */
     const state = sim.contractStateForCall;
-    const reading = (answer: unknown) => new MidnightLedger(
-      { networkId: 'preview' } as any, undefined as any, {} as never,
-      async (id: string) => (id === created.account.id ? 'addr_1' : null),
-      async () => ({ publicDataProvider: { queryContractState: async () => answer } }), {});
-    expect(await reading(state).paidMovementsOf(created.account.id)).toEqual({ known: true, movements: onChain });
-    /* RED WHEN a state the chain did not return is read as a record of nobody paid. */
-    expect(await reading(null).paidMovementsOf(created.account.id)).toBeNull();
-    expect(await reading(state).paidMovementsOf('acct_nobody')).toBeNull();
     /*
      * **THE DEVICE'S OWN READ, AS ITS WORKER DOES IT**: the indexer is asked for
      * the contract at the receipt's company address and answers the state

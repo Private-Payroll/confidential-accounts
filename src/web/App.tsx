@@ -29,7 +29,7 @@ import type { GovernedStage } from './governed-call-on-device.js';
 import { MaintenancePanel } from './MaintenancePanel.js';
 import { WalletWaiting } from './wallet-waiting.js';
 import { JoinScreen, joinTokenFromLocation } from './Join.js';
-import { YourPay, YOUR_PAY_PATH } from './YourPay.js';
+import { EmployerView } from './YourPay.js';
 import { fetchMyPayslips } from './my-payslips.js';
 import { openPayslip, payslipPublicKeyOf, type OpenedPayslip, type SealedPayslip } from '../core/payslip-open.js';
 /* X12 §2 — the drop box is opened HERE, on this machine, because computing the
@@ -364,9 +364,9 @@ function Screens({ commitments }: { commitments: CommitmentScheme }) {
   const [busy, setBusy] = useState(false);
   /* Null on every page that is not an invitation. */
   const [joinToken] = useState(() => joinTokenFromLocation(window.location));
-  /* The payee's own page: their payslips, opened with their own wallet. */
-  const [yourPay, setYourPay] = useState(
-    () => window.location.pathname.replace(/\/+$/, '') === YOUR_PAY_PATH);
+  /* The companies that pay the signed-in person, and the one of them open now. */
+  const [employers, setEmployers] = useState<string[]>([]);
+  const [employer, setEmployer] = useState<string | null>(null);
 
   const load = useCallback(async (sess: Session) => {
     const id = sess.account.id;
@@ -402,6 +402,7 @@ function Screens({ commitments }: { commitments: CommitmentScheme }) {
    * on this device. That is the honest state and it now has words on screen.
    */
   const refreshAccounts = useCallback(async () => {
+    setEmployers(keyring.companiesThatPayYou());
     const sealed = await api<SealedAccount[]>('/api/accounts');
     setMyAccounts(sealed.map(rec => {
       const open = keyring.openAccount(rec);
@@ -532,11 +533,43 @@ function Screens({ commitments }: { commitments: CommitmentScheme }) {
           + 'it. VITE_WALLET_ORIGIN has to be set when the site is built.');
       }
       await keyring.openKeysWithWallet(WALLET_ORIGIN);
+      await keyring.bringCompaniesThatPayYouAcross().catch(() => undefined);
       await refreshAccounts();
     } catch (e: any) { setErr(shownError(e, 'opening your saved keys with a wallet')); setBusy(false); return; }
     setBusy(false);
     await openAccount(id);
   }, [refreshAccounts, openAccount]);
+
+  /**
+   * **OPENING THE KEYS SAVED FOR YOU, FOR THE LIST OF COMPANIES THAT PAY YOU.**
+   * That list is kept inside them, where the service cannot read it, so it is
+   * on screen once the wallet has released the key they are sealed under. What
+   * this browser held for this person alone is moved into them on the way.
+   */
+  const unlockEmployers = useCallback(async () => {
+    setErr(''); setBusy(true);
+    try {
+      if (!WALLET_ORIGIN) {
+        throw new Error(
+          'this build does not know where your wallet is served from, so it cannot open '
+          + 'it. VITE_WALLET_ORIGIN has to be set when the site is built.');
+      }
+      await keyring.openKeysWithWallet(WALLET_ORIGIN);
+      await keyring.bringCompaniesThatPayYouAcross().catch(() => undefined);
+      await refreshAccounts();
+    } catch (e: any) { setErr(shownError(e, 'opening your saved keys with a wallet')); }
+    finally { setBusy(false); }
+  }, [refreshAccounts]);
+
+  /** One more company that pays you, saved with you. */
+  const addEmployer = useCallback(async (company: string) => {
+    setErr(''); setBusy(true);
+    try {
+      await keyring.rememberCompanyThatPaysYou(company);
+      setEmployers(keyring.companiesThatPayYou());
+    } catch (e: any) { setErr(shownError(e, 'adding a company that pays you')); }
+    finally { setBusy(false); }
+  }, []);
 
   /*
    * **THERE IS NO SECOND WAY TO START A COMPANY FROM THIS SCREEN.** The one that
@@ -641,6 +674,7 @@ function Screens({ commitments }: { commitments: CommitmentScheme }) {
     const { ended, anotherPerson } = await keyring.signOut();
     setSignOutNotice(ended ? '' : anotherPerson ? SIGN_OUT_ANOTHER_PERSON : SIGN_OUT_DID_NOT_END);
     setUser(null); setMyAccounts(null); setS(null); setState(null); setPage('dashboard');
+    setEmployers([]); setEmployer(null);
   }, []);
 
   // Declared above the gates below. Hooks cannot sit after an early return.
@@ -683,7 +717,8 @@ function Screens({ commitments }: { commitments: CommitmentScheme }) {
     return <AuthScreen onDone={onAuthed} notice={signOutNotice} />;
   }
 
-  if (yourPay) return <YourPay onBack={() => setYourPay(false)} />;
+  /* A company that pays you, opened: your payslips from it and nothing a signer sees. */
+  if (employer !== null) return <EmployerView company={employer} onBack={() => setEmployer(null)} />;
 
   if (!s || !state) {
     return <>
@@ -692,7 +727,9 @@ function Screens({ commitments }: { commitments: CommitmentScheme }) {
         onOpen={openAccount} onUnlock={unlockWithWallet}
         onCreateWithWallet={createWithWallet}
         onFinishSetup={finishSetup} awaitingSetup={awaitingSetup}
-        onDemo={loadDemo} onSignOut={signOut} onYourPay={() => setYourPay(true)} />
+        onDemo={loadDemo} onSignOut={signOut}
+        employers={employers} onOpenEmployer={setEmployer}
+        onAddEmployer={addEmployer} onUnlockEmployers={unlockEmployers} />
     </>;
   }
 
