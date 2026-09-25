@@ -425,6 +425,10 @@ import type { ProofSystem, RunProposal } from './ledger.js';
 import type { DataStore } from './store.js';
 import { paymentChecked, paymentsCheckedDigest, type PaymentChecked } from './device-raise.js';
 import { isLiveRound, sameList, untoldRetryRounds } from './retry-cover.js';
+import {
+  alreadyPaying, confirmationCovers, kindOfRun, paidTwiceOnOneRun, unaccountedOnChain,
+  type Payee as PaidPerson, type RunPaying,
+} from './already-paid.js';
 
 export interface EmployeeSpec {
   name: string;
@@ -543,7 +547,25 @@ export class PayrollService {
    */
   private readonly raising = new Set<string>();
 
+  /**
+   * **THE MONTH EACH RAISE IN THIS PROCESS IS FOR, AND WHICH RUN IS RAISING
+   * IT.** Two runs for one month raised at the same moment would each be
+   * compared with the other before either had written its round down, and
+   * both would pass. So while one run's leg or retry is being raised, a
+   * different run for the same month is refused as having raised nothing; the
+   * same run's other legs are not. In memory, like `raising`.
+   */
+  private readonly raisingMonth = new Map<string, { runId: string; legs: number }>();
+
   private holdTheLeg(run: PayrollRun, leg: AssetId): () => void {
+    const month = `${run.accountId} ${canonicalOrAsWritten(run.period)}`;
+    const other = this.raisingMonth.get(month);
+    if (other && other.runId !== run.id) {
+      throw new Error(
+        `run ${other.runId} for ${run.period} is being raised right now by another request, so this run `
+        + 'was not raised. Nothing was raised. Once that raise has answered, raise this one again and it '
+        + 'is checked against it.');
+    }
     const key = `${run.id} ${leg}`;
     if (this.raising.has(key)) {
       throw new Error(
@@ -551,7 +573,13 @@ export class PayrollService {
         + 'again. Nothing was raised. Once that raise has answered, the run says where the leg stands.');
     }
     this.raising.add(key);
-    return () => { this.raising.delete(key); };
+    this.raisingMonth.set(month, { runId: run.id, legs: (other?.legs ?? 0) + 1 });
+    return () => {
+      this.raising.delete(key);
+      const held = this.raisingMonth.get(month);
+      if (held && held.legs > 1) this.raisingMonth.set(month, { ...held, legs: held.legs - 1 });
+      else this.raisingMonth.delete(month);
+    };
   }
 
   /* ---------------- roster ---------------- */
@@ -2117,6 +2145,14 @@ export class PayrollService {
      * Nobody is left out of a payroll run by a value nobody supplied.
      */
     skipPending?: SkipAcknowledgement,
+    /**
+     * **A SECOND RUN FOR A MONTH THAT ALREADY HAS ONE, CONFIRMED BY NAMING WHAT
+     * IT REPEATS.** Absent means REFUSE, and absent is the default on every
+     * existing caller. It names every run for the month that has been raised,
+     * and every round and payment the chain holds that this company's records
+     * cannot account for; it is read again when the run is raised.
+     */
+    repeats?: RepeatAcknowledgement,
   ) {
     /*
      * **THE PERIOD IS READ BEFORE ANYTHING IS ASKED ABOUT IT.** The two
@@ -2264,7 +2300,17 @@ export class PayrollService {
     for (const e of roster) {
       if (e.address) payrollPayee(e.name, e.address);
     }
-    if (this.store.listRuns(accountId)
+    /*
+     * **A CONFIRMATION IS CHECKED AGAINST WHAT IT CONFIRMS, IN BOTH DIRECTIONS,
+     * BEFORE IT LETS ANYTHING THROUGH.** Without one, the chain is asked here
+     * as well as at the raise, so a payroll this company's records cannot see
+     * is refused before a run is even drawn for it.
+     */
+    const drawnRepeat = repeats
+      ? await this.confirmedRosterRepeat(accountId, period, viewingKey, repeats)
+      : undefined;
+    if (!drawnRepeat) await this.refuseWhatTheChainHoldsUnaccounted(accountId, period, viewingKey, undefined, 'draw');
+    if (!drawnRepeat && this.store.listRuns(accountId)
       .some(r => samePeriod(r.period, period) && r.status !== 'draft')) {
       /*
        * **AND IT NAMES WHAT TO DO INSTEAD, BECAUSE OF WHO READS IT.** This is
@@ -2285,7 +2331,7 @@ export class PayrollService {
      * about, may be on chain. The status alone cannot say; the proposal records
      * can, because they are written before the chain is called.
      */
-    this.refuseAPayrollThatMayBeOnChain(accountId, period, viewingKey);
+    if (!drawnRepeat) this.refuseAPayrollThatMayBeOnChain(accountId, period, viewingKey);
     /*
      * NO CROSS-RATE CHECK, because there is nothing to cross. Exchange rates
      * are ruled out entirely: everybody is paid in the currency assigned to
@@ -2308,6 +2354,8 @@ export class PayrollService {
        * only branch that sets `leftOut` has already refused an absent one.
        */
       leftOut && skipPending ? { people: leftOut, ack: skipPending } : undefined,
+      undefined,
+      drawnRepeat,
     );
   }
 
@@ -2391,6 +2439,21 @@ export class PayrollService {
        * is spent, and says which assets can be paid privately.
        */
       const payee = payrollPayee(person.name, person.address);
+      /*
+       * **THE ADDRESS PAID IS THE ADDRESS ON THE PAYSLIP, OR NOTHING IS PAID.**
+       * The payslip was written when the run was drawn and names where its
+       * payee is paid; this pays the roster's address as it is now. Asked
+       * after the address is known to be one a payroll may pay at all. A run
+       * drawn before its people's addresses were kept beside them has nothing
+       * to compare, and is paid as it always was.
+       */
+      if (e.paidTo !== undefined && e.paidTo.toLowerCase() !== person.address.bech32.toLowerCase()) {
+        throw new Error(
+          `${person.name}'s address on the roster has changed since this run was drawn, so it would `
+          + 'pay an address their payslip does not name. Nothing was raised and no fee was spent. '
+          + `Check the change with ${person.name}, then draw the run again. If a round of this run was `
+          + 'raised before, withdraw it first.');
+      }
       return {
         payee,
         token: ledgerTokenOf(e.asset, payee.kind, this.assets),
@@ -2420,6 +2483,12 @@ export class PayrollService {
      * every caller. See `RepeatAcknowledgement`.
      */
     repeats?: RepeatAcknowledgement,
+    /**
+     * **A REPEAT THE ROSTER DOOR HAS ALREADY CHECKED**, written onto the run as
+     * it stands. Only `createRunFromRoster` passes one, and never beside
+     * `repeats`.
+     */
+    drawnRepeat?: RunRepeatRecord,
   ): Promise<{ run: PayrollRun; secrets: EmployeeSecret[] }> {
     /*
      * **EVERY RUN THIS PRODUCT DRAWS IS DRAWN HERE**, from a roster or ad hoc,
@@ -2444,9 +2513,9 @@ export class PayrollService {
      * refusal here would only let a draft that can never be raised - an ad hoc
      * run over the same names - shut the roster out of the period for good.
      */
-    const repeated = roster && !repeats ? undefined : acknowledgedRepeats(
+    const repeated = drawnRepeat ?? (roster && !repeats ? undefined : acknowledgedRepeats(
       period, this.runsRepeating(accountId, period, contentOf(specs), viewingKey), repeats,
-      new Date().toISOString());
+      new Date().toISOString()));
     /*
      * **`runId`, NOT `id`, AND THE NAME IS THE WHOLE REASON FOR THIS COMMENT.**
      * The loop below binds its own `id` for the EMPLOYEE, and this function's
@@ -2510,9 +2579,18 @@ export class PayrollService {
         secrets.push({ employeeId: id, name: spec.name, wrappingSecret: wk.secret });
       }
 
+      /*
+       * **WHERE THIS PERSON IS PAID, AS THEIR PAYSLIP SAYS, KEPT BESIDE THEM ON
+       * THE RUN.** The payslip is sealed to the payee and nobody else can open
+       * it, so this is the only copy the company can compare with the roster
+       * when the run is raised: a raise pays the roster's address, and the
+       * payslip is how the payee checks it.
+       */
+      const paidTo = addressOf(spec, existing);
       employees.push({
         id, name: spec.name, wrappingPublicKey: publicKey,
         asset: spec.asset, amount: spec.amount,
+        ...(paidTo ? { paidTo } : {}),
       });
 
       // Two layers: seal the slip under a fresh key, wrap that key to the employee.
@@ -2557,7 +2635,7 @@ export class PayrollService {
       const slipKey = newSymmetricKey();
       const slip = seal(canonical({
         employeeId: id, name: spec.name, asset: spec.asset, amount: spec.amount, period,
-        paidTo: addressOf(spec, existing),
+        paidTo,
         issuedBy: issuedBy === null ? null : issuedBy.toLowerCase(),
       }), slipKey);
       payslips.push({
@@ -2857,6 +2935,19 @@ export class PayrollService {
      * refused by that comparison, which names the round.
      */
     this.refuseMaterialOutOfOrder(run, leg, paid, payable, viewingKey);
+    /*
+     * **A NEW ROUND OF A LEG IS ASKED TWO MORE THINGS BEFORE ANYTHING IS
+     * WRITTEN DOWN**: that it does not pay one payee twice, and that the chain
+     * holds no round or payment these records cannot account for. Only a round
+     * raised again as itself is not asked: it is the same round, which the
+     * chain opens once. A leg raised again as a new round is asked, because a
+     * round of another run may have been raised over its people meanwhile.
+     */
+    if (again === undefined) {
+      this.refusePayingOnePayeeTwice(run, leg, viewingKey);
+      await this.refuseWhatTheChainHoldsUnaccounted(
+        run.accountId, run.period, viewingKey, run.repeats, 'raise', Object.keys(run.payout ?? {}).length > 0);
+    }
     /* Read before the run is, so nothing is awaited between its read and its write. */
     const seeds = await this.accounts.payoutSeedsOf(run.accountId, viewingKey);
     const beforeRaising = this.requireRun(runId, viewingKey);
@@ -3241,6 +3332,14 @@ export class PayrollService {
       this.accounts.refuseRaisingADifferentRound(run.accountId, again, viewingKey, payable.run, leg);
     }
     await this.refuseARetryOverPeopleCovered(run, leg, legRound, indices, payable.leaves, again, viewingKey);
+    /*
+     * **A NEW RETRY IS A NEW ROUND**, asked what the chain holds that these
+     * records cannot account for, as a leg's new round is; a retry raised again
+     * as itself is not.
+     */
+    if (again === undefined) {
+      await this.refuseWhatTheChainHoldsUnaccounted(run.accountId, run.period, viewingKey, run.repeats, 'raise', true);
+    }
 
     /* Read before the run is, so nothing is awaited between its read and its write. */
     const seeds = await this.accounts.payoutSeedsOf(run.accountId, viewingKey);
@@ -3475,13 +3574,20 @@ export class PayrollService {
   private refuseRaisingOverAnotherRun(run: PayrollRun, viewingKey: Hex): void {
     const live = new Set(this.accounts.payrollRoundsOf(run.accountId, viewingKey)
       .filter(isLiveRound).map(r => r.runId));
-    const mine = new Set(run.employees.map(e => e.id));
     const content = contentOf(run.employees);
-    const clashes = this.store.listRuns(run.accountId)
+    const others = this.store.listRuns(run.accountId)
       .filter(r => samePeriod(r.period, run.period) && r.id !== run.id && live.has(r.id))
       .map(r => this.openRun(r, viewingKey))
-      .filter(r => !(run.repeats?.of ?? []).includes(r.id) && !(r.repeats?.of ?? []).includes(run.id))
-      .filter(r => contentOf(r.employees) === content || r.employees.some(e => mine.has(e.id)));
+      .filter(r => !(run.repeats?.of ?? []).includes(r.id) && !(r.repeats?.of ?? []).includes(run.id));
+    /*
+     * **THE SAME PEOPLE ARE THE SAME PAYEES: ONE ROSTER ENTRY, OR ONE ADDRESS.**
+     * This run's people are read at the address the raise will pay; the other
+     * run's at the address its payslips name, where it kept one.
+     */
+    const paying = new Set(alreadyPaying(
+      this.paying(run, viewingKey, 'now'), others.map(r => this.paying(r, viewingKey, 'recorded')), samePeriod,
+    ).map(c => c.run.id));
+    const clashes = others.filter(r => contentOf(r.employees) === content || paying.has(r.id));
     if (clashes.length === 0) return;
     const ids = clashes.map(r => r.id).join(', ');
     throw new Error(
@@ -3490,8 +3596,152 @@ export class PayrollService {
       + 'payment secrets, so nothing on chain would connect them, both could be approved and '
       + 'paid, and they would be paid twice. Pay them from the run already raised: raise it again '
       + 'if its raise failed, or raise a retry on it for anybody it has not reached. A run that '
-      + 'means to pay them a second time has to carry a confirmation naming that run, and no door '
-      + 'in this product yet takes one for a run drawn from the roster.');
+      + `means to pay them a second time has to be drawn up with a confirmation naming run ${ids}. `
+      + 'No screen takes that confirmation yet.');
+  }
+
+  /**
+   * **NOT OVER ONE PAYEE TWICE ON THE RUN ITSELF.** Two roster entries paid at
+   * one address are two payments to one payee, whether they sit in one leg or
+   * in two; asked of every pair with somebody in the leg being raised.
+   */
+  private refusePayingOnePayeeTwice(run: PayrollRun, leg: AssetId, viewingKey: Hex): void {
+    const inLeg = new Set(legEmployees(run, leg).map(e => e.id));
+    const twice = paidTwiceOnOneRun(this.paying(run, viewingKey, 'now').people)
+      .filter(([a, b]) => inLeg.has(a.id) || inLeg.has(b.id));
+    if (twice.length === 0) return;
+    const [a, b] = twice[0]!;
+    throw new Error(
+      `${a.name} and ${b.name} are both on this run and are paid at the same address, so this run `
+      + `would pay that address twice for ${run.period}. Nothing was raised and no fee was spent. `
+      + 'If one of the two entries is a duplicate, mark it as a leaver on the roster and draw the run '
+      + 'again.');
+  }
+
+  /**
+   * **A RUN AS `already-paid.ts` COMPARES IT.** `now` reads each person at the
+   * roster's address, which is what a raise pays; `recorded` reads them at the
+   * address their payslip names, where the run kept one, and at the roster's
+   * otherwise. Somebody with no roster entry has no address and matches by
+   * entry alone.
+   */
+  private paying(run: PayrollRun, viewingKey: Hex, at: 'now' | 'recorded'): RunPaying {
+    return {
+      id: run.id, month: run.period, kind: kindOfRun(run),
+      people: run.employees.map((e): PaidPerson => ({
+        id: e.id, name: e.name,
+        address: (at === 'recorded' ? e.paidTo : undefined)
+          ?? this.person(e.id, viewingKey)?.address?.bech32 ?? null,
+      })),
+    };
+  }
+
+  /**
+   * **WHAT THE CHAIN HOLDS FOR THIS ACCOUNT THAT THESE RECORDS CANNOT ACCOUNT
+   * FOR.** Every open round is compared with the proposals written down here,
+   * of every kind, and the chain's count of completed payments with how many of
+   * the leaves of this account's runs it says it has paid. Nothing here is
+   * asked of the records alone: they are what is being checked.
+   */
+  private async unaccountedOnChainFor(accountId: string, viewingKey: Hex) {
+    const status = await this.accounts.ledgerStatus(accountId);
+    if (!status) {
+      throw new Error(
+        'the chain did not answer for this company\'s account, so it cannot be said whether it holds '
+        + 'a round or a payment this company\'s records do not. Nothing was raised and no fee was '
+        + 'spent. Raise the run again once the chain answers.');
+    }
+    const rounds = this.accounts.listProposals(accountId, viewingKey).map(p => p.chainId);
+    let paid: number | null = 0;
+    if (status.movementCount > 0) {
+      const leaves = [...new Set(this.store.listRuns(accountId)
+        .map(r => this.openRun(r, viewingKey))
+        .flatMap(r => Object.values(r.payout ?? {}).flatMap(leg => leg.leaves))
+        .map(l => l.toLowerCase()))] as Hex[];
+      const among = leaves.length > 0 ? await this.accounts.paidAmong(accountId, leaves) : { known: true, paid: [] };
+      paid = among?.known ? among.paid.length : null;
+    }
+    return unaccountedOnChain(
+      { openRounds: status.openProposals.map(p => p.id), payments: status.movementCount },
+      { rounds, paid });
+  }
+
+  /**
+   * **NO RUN IS RAISED WHILE THE CHAIN HOLDS A ROUND OR A PAYMENT THESE RECORDS
+   * CANNOT ACCOUNT FOR**, unless its confirmation names them. Every other
+   * refusal against paying somebody twice reads these records, and records
+   * restored from an older copy have no trace of what was raised after it: the
+   * round that is missing may be this month's pay for these people.
+   *
+   * **ASKED WHEN A RUN IS DRAWN, AND AGAIN WHEN A LEG OF IT IS FIRST RAISED.**
+   * At the draw it is an early answer and a chain that cannot be read, or does
+   * not answer, leaves the draw alone; at the raise it is the answer, and a
+   * chain that cannot be read, or does not answer, refuses.
+   */
+  private async refuseWhatTheChainHoldsUnaccounted(
+    accountId: string, period: string, viewingKey: Hex,
+    confirmed: RunRepeatRecord | undefined, when: 'draw' | 'raise',
+    /** Some of this run's people already have a round, so it must not be drawn up again whole. */
+    partlyRaised = false,
+  ): Promise<void> {
+    let found: Awaited<ReturnType<PayrollService['unaccountedOnChainFor']>>;
+    try {
+      found = await this.unaccountedOnChainFor(accountId, viewingKey);
+    } catch (e) {
+      if (when === 'draw') return;
+      throw e;
+    }
+    if (found.rounds.length === 0 && found.payments === 0) return;
+    if (confirmationCovers(found, confirmed)) return;
+    throw new Error(unaccountedRefusal(period, found, partlyRaised));
+  }
+
+  /**
+   * **THE ROSTER DOOR'S CONFIRMATION, CHECKED AGAINST WHAT IT CONFIRMS.** It
+   * must name every run for the month that has been raised or may have been,
+   * and every open round the chain holds that these records cannot account
+   * for, and no others; and it must count the chain's unaccounted payments as
+   * they are now. Returns the record to write onto the run, or nothing when
+   * there was nothing to confirm.
+   */
+  private async confirmedRosterRepeat(
+    accountId: string, period: string, viewingKey: Hex, ack: RepeatAcknowledgement,
+  ): Promise<RunRepeatRecord | undefined> {
+    const live = this.accounts.payrollRoundsOf(accountId, viewingKey).filter(isLiveRound);
+    const runs = this.store.listRuns(accountId)
+      .filter(r => samePeriod(r.period, period) && (r.status !== 'draft' || live.some(x => x.runId === r.id)))
+      .map(r => r.id);
+    const chain = await this.unaccountedOnChainFor(accountId, viewingKey);
+    const key = (id: string) => (id.startsWith('run_') ? id : id.toLowerCase());
+    const expected = new Set([...runs, ...chain.rounds].map(key));
+    const named = new Set(ack.runIds.map(key));
+    const unnamed = [...expected].filter(id => !named.has(id));
+    if (unnamed.length) {
+      throw new Error(
+        `this confirmation leaves out ${unnamed.join(', ')}. A repeat is confirmed by naming every run `
+        + `for ${period} that has been raised, and every round the chain holds that these records cannot `
+        + 'account for. Name all of them and confirm again.');
+    }
+    const extra = [...named].filter(id => !expected.has(id));
+    if (extra.length) {
+      throw new Error(
+        `${extra.join(', ')} ${extra.length === 1 ? 'was' : 'were'} confirmed as repeated and this run `
+        + `does not repeat ${extra.length === 1 ? 'it' : 'them'}, so the list that was read is not the `
+        + 'list this run would act on. Take the confirmation again against what this run actually repeats.');
+    }
+    if ((ack.chainPayments ?? 0) !== chain.payments) {
+      throw new Error(
+        `the chain holds ${chain.payments} ${chain.payments === 1 ? 'payment' : 'payments'} that this `
+        + `company's records cannot account for, and the confirmation counted ${ack.chainPayments ?? 0}. `
+        + `Count them again and confirm with ${chain.payments}.`);
+    }
+    if (expected.size === 0 && chain.payments === 0) return undefined;
+    if (!ack.by.trim()) throw new Error('a repeated payroll has to be attributable to somebody');
+    if (!ack.reason.trim()) throw new Error('say why this run repeats another; a blank reason is not a record');
+    return {
+      of: [...expected].sort(), reason: ack.reason, by: ack.by, at: new Date().toISOString(),
+      ...(chain.payments > 0 ? { chainPayments: chain.payments } : {}),
+    };
   }
 
   /**
@@ -4489,6 +4739,12 @@ export interface RepeatAcknowledgement {
   by: string;
   /** Why, in their words. A blank reason is refused. */
   reason: string;
+  /**
+   * How many of the chain's completed payments this company's records cannot
+   * account for, as the person confirming it read them. Taken only at the
+   * roster door; absent means none.
+   */
+  chainPayments?: number;
 }
 
 interface RepeatedRun {
@@ -4546,6 +4802,15 @@ export const canonicalPeriod = (period: string): string => {
  * stands, so a record that cannot be read still matches itself and is never
  * quietly treated as a period of its own.
  */
+/** A period's month, or the period as written when it names none. */
+const canonicalOrAsWritten = (period: string): string => {
+  try {
+    return canonicalPeriod(period);
+  } catch {
+    return period;
+  }
+};
+
 const samePeriod = (a: string, b: string): boolean => {
   if (a === b) return true;
   let left: string;
@@ -4580,6 +4845,35 @@ const isThisRetry = (r: RunRetry, m: RetryMaterial): boolean =>
 const retryProposalIdsOf = (payout: Record<AssetId, RunPayout> | undefined): string[] =>
   Object.values(payout ?? {}).flatMap(p =>
     (p.retries ?? []).map(r => r.proposalId).filter((id): id is string => id !== undefined));
+
+/** Why a raise is refused while the chain holds what these records cannot account for. */
+const unaccountedRefusal = (
+  period: string, found: { rounds: string[]; payments: number; cannotSay: boolean }, partlyRaised = false,
+): string => {
+  const parts = [
+    ...(found.rounds.length
+      ? [`${found.rounds.length} open ${found.rounds.length === 1 ? 'round' : 'rounds'} (${found.rounds.join(', ')})`]
+      : []),
+    ...(found.payments ? [`${found.payments} ${found.payments === 1 ? 'payment' : 'payments'}`] : []),
+  ];
+  return `the chain holds ${parts.join(' and ')} that this company's records cannot account for`
+    + (found.cannotSay
+      ? ', and it could not say which payments these records know about, so none is counted as known'
+      : '')
+    + `. They may be ${period}'s pay for the people on this run, and a new run gives everybody on it `
+    + 'new payment secrets, so nothing on chain would stop them being paid twice. Nothing was raised '
+    + 'and no fee was spent. Whoever keeps this company\'s records has to restore the copy that holds '
+    + 'them before this run is raised. If they are known to be for something else, '
+    + (partlyRaised
+      ? 'the people on this run who have no round yet have to be drawn up on a run of their own from the '
+        + 'roster, and nobody else, with a confirmation that names every run already raised for '
+      : 'the run has to be drawn up again from the roster with a confirmation that names every run '
+        + 'already raised for ')
+    + `${period}`
+    + (found.rounds.length ? `, names ${found.rounds.join(', ')}` : '')
+    + (found.payments ? `, and counts ${found.payments} ${found.payments === 1 ? 'payment' : 'payments'}` : '')
+    + '. No screen takes that confirmation yet.';
+};
 
 const repeatRefusal = (period: string, found: RepeatedRun[]): string =>
   `this run pays the same people the same amounts for ${period} as `
