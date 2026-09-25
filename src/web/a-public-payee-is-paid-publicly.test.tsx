@@ -192,7 +192,7 @@ describe('PAYING A PUBLIC PAYEE FROM THE VAULT', () => {
 });
 
 describe('A PUBLIC PAYMENT ON THE PAYSLIPS PAGE', () => {
-  it('reads "cannot tell" and is never asked about with the value a private payment is recorded under', async () => {
+  it('reads "cannot tell" when its money has no public form, and is never asked about with the value a private payment is recorded under', async () => {
     const asked: unknown[] = [];
     const reader = { recorded: async (_i: unknown, _c: string, payments: unknown[]) => { asked.push(...payments); return payments.map(() => false); } };
     const slip = (runId: string, paidTo: string) => ({
@@ -204,7 +204,9 @@ describe('A PUBLIC PAYMENT ON THE PAYSLIPS PAGE', () => {
     const chain = await paymentsOnTheChain(
       [slip('run_pub', PUBLIC.bech32), slip('run_priv', PRIVATE.bech32)] as never,
       reader as never, { indexer: 'x' } as never, () => true);
-    /* RED WHEN: a public payment is asked about as if it were private - it would read "not yet" for a payment that was made. */
+    /* RED WHEN: a public payment is asked about as if it were private - it would read "not yet" for a payment that was made.
+     * TESTUSD has no public form, so there is no public value to ask with; a public payment in money that has one
+     * is asked about in its own form (`a-public-payment-reads-as-the-chain-says.test.ts`). */
     expect(chain.get('run_pub')).toBe('cannot-tell');
     expect(asked.map((p) => (p as { paidTo: string }).paidTo)).toEqual([PRIVATE.bech32]);
     expect(chain.get('run_priv')).toBe('not-yet');
@@ -259,6 +261,23 @@ describe('WHERE A SCREEN USED TO SAY EVERY SALARY IS KEPT OFF THE RECORD', () =>
     expect(shown()).toEqual([]);
     expect(document.body.textContent).toMatch(/never appears in the clear/);
     expect(document.body.textContent).toMatch(/Amountshielded/);
+  });
+
+  it('the invitation form offers NIGHT and says it when the money chosen can only be paid publicly', async () => {
+    vi.stubGlobal('fetch', async () => new Response(JSON.stringify([]), { status: 200 }));
+    render(<People people={[] as never}
+      session={{ account, viewingKey: VK, secrets: [], employees: [], seat: null } as never}
+      busy={false} act={async () => {}} />);
+    await act(async () => { fireEvent.click([...document.querySelectorAll('button')].find((b) => b.textContent === 'Invite employee')!); });
+    const paidIn = [...document.querySelectorAll('label')].find((l) => l.textContent === 'Paid in')!.parentElement!.querySelector('select')!;
+    const offered = [...paidIn.querySelectorAll('option')].map((o) => (o as HTMLOptionElement).value);
+    /* RED WHEN: the invitation offers only money with a private form, which leaves NIGHT out. */
+    expect(offered).toContain('NIGHT');
+    expect(offered[0]).not.toBe('NIGHT');
+    expect(shown()).toEqual([]);
+    await act(async () => { fireEvent.change(paidIn, { target: { value: 'NIGHT' } }); });
+    /* RED WHEN: a company inviting somebody in money only paid publicly is not told what that puts on the record. */
+    expect(shown()).toEqual([PUBLIC_PAYMENT]);
   });
 
   it('the form where a member adds themselves says it when the money they choose can only be paid publicly', async () => {

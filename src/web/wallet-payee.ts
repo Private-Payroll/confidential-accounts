@@ -46,6 +46,8 @@ export interface PayeeAsked {
   /** What this deployment calls itself. Untrusted by the wallet, shown as text. */
   readonly name: string;
   readonly rdns: string;
+  /** Ask for the PUBLIC receiving address: the money has no private form. */
+  readonly publicly?: boolean;
 }
 
 /**
@@ -63,5 +65,6 @@ export async function askWalletForPayeeAddress(
     rdns: ask.rdns,
     nonce: ask.nonce,
     expiresAt: ask.expiresAt,
+    publicly: ask.publicly === true,
   }), dialog);
 }

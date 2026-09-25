@@ -20,13 +20,15 @@
  * The screens say "not recorded" for that case. They never show it as a zero.
  */
 
-/** Every private token other than NIGHT that a wallet holds, keyed by the
- * token's raw colour. Each amount is in that token's smallest unit, and every
+/** Every token other than NIGHT that one balance line holds, keyed by the
+ * token's raw colour: private tokens on the shielded line, public ones on the
+ * unshielded line. Each amount is in that token's smallest unit, and every
  * amount is above zero: a token the wallet holds none of is not in the map. */
 export type OtherTokens = Readonly<Record<string, bigint>>;
 
 /**
- * NIGHT's amount and every other held token, split out of the SDK's map.
+ * NIGHT's amount and every other held token, split out of the SDK's map. The
+ * unshielded engine splits its own map of public tokens with this too.
  * NIGHT is zero when the map has no NIGHT key: the map was read whole, so a
  * missing key is none held. Another token is left out when its amount is not
  * above zero, so the screens never list a token at zero.

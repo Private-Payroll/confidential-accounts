@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildRun, paidMovementOfLeaf } from '../midnight/payout-tree.js';
 import { vaultDetails } from '../testing/vault-details.js';
-import { payeeFor } from '../testing/payees.js';
+import { payeeFor, unshieldedPayeeFor } from '../testing/payees.js';
 import { toHex } from '../core/crypto.js';
 import { contractCircuits, movementOfPayslip } from './payslip-movement.js';
 
@@ -68,7 +68,29 @@ describe('what the payee\'s device looks for is what the account records', () =>
     })).toBe(paidMovementOfLeaf(run.tree.leaves[0]!));
   });
 
-  it('AN ADDRESS THAT IS NOT A SHIELDED ADDRESS IS REFUSED, NOT GUESSED AT', async () => {
+  it('A PUBLIC PAYEE\'S VALUE, BUILT FROM WHAT THEY HOLD, IS THE VALUE OF THEIR OWN PUBLIC LEAF', async () => {
+    /* A run paying one person publicly and one privately, from the SAME thirty-two bytes. */
+    const bytes = toHex(new Uint8Array(32).fill(9));
+    const mixed = [
+      { payee: unshieldedPayeeFor(bytes, 'undeployed'), token: TOKEN, amount: 4_000n },
+      { payee: payeeFor(bytes, 'undeployed'), token: TOKEN, amount: 4_000n },
+    ];
+    const run = buildRun(seeds, identity, mixed, vaultDetails);
+    const circuits = await contractCircuits();
+    mixed.forEach((f, i) => {
+      const args = run.payeeArgs(i);
+      /*
+       * RED WHEN the device builds every value with the shielded details
+       * circuit, or reads the kind from anything but the address: the public
+       * payee's value is then not their leaf's.
+       */
+      expect(movementOfPayslip(circuits, {
+        paidTo: f.payee.bech32, token: TOKEN, amount: f.amount.toString(), nonce: args.nonce, blinding: args.blinding,
+      }), f.payee.kind).toBe(paidMovementOfLeaf(run.tree.leaves[i]!));
+    });
+  });
+
+  it('AN ADDRESS THAT DOES NOT DECODE IS REFUSED, NOT GUESSED AT', async () => {
     const circuits = await contractCircuits();
     for (const paidTo of ['', 'mn_addr_undeployed1qqqq', 'nonsense']) {
       /* RED WHEN something that does not decode builds a value anyway. */

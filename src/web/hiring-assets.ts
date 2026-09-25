@@ -16,13 +16,17 @@ export const hiringAssets = (registry: AssetRegistry = assets): Asset[] => {
 };
 
 /**
- * **WHAT AN EMPLOYEE CAN BE INVITED IN: AN ASSET WITH A PRIVATE FORM.** An
- * invited person's address comes from their own wallet and may be a private
- * one, which an asset with a public form only cannot pay. So that asset is left
- * to the form where a member adds their own address, which may be public.
+ * **WHAT AN EMPLOYEE CAN BE INVITED IN: ANYTHING THEY CAN BE HIRED IN.** An
+ * invited person's address comes from their own wallet. For money with a
+ * private form the invitation asks the wallet for their shielded address; for
+ * money with none, NIGHT among it, it asks for their PUBLIC address instead and
+ * accepts nothing else, so a private address never arrives for money that
+ * cannot reach one (`Join.tsx`, and `admit` on the service).
  */
-export const invitingAssets = (registry: AssetRegistry = assets): Asset[] =>
-  hiringAssets(registry).filter(a => privateForm(a).of === 'available');
+export const invitingAssets = (registry: AssetRegistry = assets): Asset[] => hiringAssets(registry);
+
+/** Whether an invitation in this asset asks the invited person's wallet for a PUBLIC address. */
+export const invitesForAPublicAddress = (asset: Asset): boolean => privateForm(asset).of !== 'available';
 
 /** Said where a hiring form would be, in a build where nothing can be paid on Midnight. */
 export const NOBODY_CAN_BE_HIRED =

@@ -4,7 +4,9 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { Buffer as PolyfillBuffer } from 'buffer/';
 import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
 import { identityFromWords, secretFromWords } from 'midnight-identity/keys/derivation';
-import { GIVEN_NAME, RECEIVING_ADDRESS, REGISTRY } from 'midnight-identity/profile/attributes';
+import {
+  GIVEN_NAME, PUBLIC_RECEIVING_ADDRESS, RECEIVING_ADDRESS, REGISTRY,
+} from 'midnight-identity/profile/attributes';
 import { check } from 'midnight-identity/profile/definition';
 import { emptyProfile, selfAssert } from 'midnight-identity/profile/model';
 import { load, save } from 'midnight-identity/profile/store';
@@ -464,12 +466,52 @@ describe('§1 — a derived attribute is derived, and checked against its own ru
     for (const definition of REGISTRY.all) {
       expect(producerFor(definition.name) !== null).toBe(definition.source === 'derived');
     }
-    expect(DERIVED_ATTRIBUTES).toEqual([RECEIVING_ADDRESS]);
+    expect(DERIVED_ATTRIBUTES).toEqual([RECEIVING_ADDRESS, PUBLIC_RECEIVING_ADDRESS]);
   });
 
   it('AND NOBODY CAN TYPE ONE OR HAVE ONE ISSUED', () => {
     const profile = emptyProfile(NOW);
     expect(() => selfAssert(profile, REGISTRY, RECEIVING_ADDRESS, shieldedOf(2), '', NOW))
       .toThrow(/works it out from your own keys/u);
+  });
+});
+
+describe('money with no private form asks for the PUBLIC address, and gets nothing else', () => {
+  const publicOf = (account: number): string => unshieldedAddressFor(identity, account);
+  const asking = (): Record<string, unknown> => wire({
+    wants: [
+      { attribute: GIVEN_NAME, required: true },
+      { attribute: PUBLIC_RECEIVING_ADDRESS, required: true, reason: 'This is where your salary goes.' },
+    ],
+  });
+
+  it('THE CHOSEN WALLET\'S PUBLIC ADDRESS IS SENT, WITH ITS CODE, IN ONE PRESS, AND NO SHIELDED ADDRESS GOES', async () => {
+    await someone();
+    const channel = open(A, asking());
+    await saying('Who is asking');
+    /* RED WHEN the producer answers the public attribute with the shielded address, or has no producer. */
+    expect(await settledText('[data-derived-value]')).toBe(publicOf(FIRST_OFFERED));
+    /* RED WHEN no code is shown for the public address: the invitation could not be accepted. */
+    expect(await settledText('[data-confirmation-code]')).toBe(addressFingerprint(publicOf(FIRST_OFFERED)));
+    await pickTheName();
+    const response = await press(channel);
+    const sent = response.payload.disclosed.find((d) => d.about === PUBLIC_RECEIVING_ADDRESS);
+    expect(sent?.says).toEqual({ of: 'value', value: publicOf(FIRST_OFFERED) });
+    expect(sent?.asserted).toEqual({ by: 'wallet' });
+    /* RED WHEN the shielded address leaves beside it. */
+    expect(response.payload.disclosed.some((d) => d.about === RECEIVING_ADDRESS)).toBe(false);
+    expect(JSON.stringify(response)).not.toContain(shieldedOf(FIRST_OFFERED));
+    /* ONE press answered it: one answer crossed, and it is the whole answer. */
+    expect(channel.sent.filter((m) => (m.message as { payload?: unknown })?.payload !== undefined)).toHaveLength(1);
+  });
+
+  it('THE PUBLIC RULE REFUSES A SHIELDED ADDRESS, AND THE SHIELDED RULE A PUBLIC ONE', () => {
+    const definition = REGISTRY.definitionOf(PUBLIC_RECEIVING_ADDRESS)!;
+    /* RED WHEN the public pattern takes a shielded address: private money's address offered for money with no private form. */
+    expect(check(definition, shieldedOf(FIRST_OFFERED)).ok).toBe(false);
+    expect(check(definition, publicOf(FIRST_OFFERED))).toEqual({ ok: true, value: publicOf(FIRST_OFFERED) });
+    /* A mainnet public address has no network segment, and is still one. */
+    const mainnet = publicOf(FIRST_OFFERED).replace(/^mn_addr_[a-z0-9]+1/u, 'mn_addr1');
+    expect(check(definition, mainnet).ok).toBe(true);
   });
 });

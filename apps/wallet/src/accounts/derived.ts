@@ -1,6 +1,6 @@
 import { check } from 'midnight-identity/profile/definition';
 import type { AttributeDefinition, AttributeName } from 'midnight-identity/profile/definition';
-import { RECEIVING_ADDRESS, REGISTRY } from 'midnight-identity/profile/attributes';
+import { PUBLIC_RECEIVING_ADDRESS, RECEIVING_ADDRESS, REGISTRY } from 'midnight-identity/profile/attributes';
 import type { Identity } from 'midnight-identity';
 import type { NetworkName } from 'midnight-identity/network';
 import { ownedAddressFor } from './owned-address.js';
@@ -54,12 +54,16 @@ import { WALLET_ACCOUNTS } from './subwallets.js';
 export type Producer = (owned: OwnedAddress) => string;
 
 /**
- * THE PRODUCERS. **`address` IS THE SHIELDED ONE**, and the field beside it —
- * `unshieldedBech32` — is the one that must never be wired in here. The check
- * in `derive` is what makes that a refusal rather than a comment.
+ * THE PRODUCERS. **`address` IS THE SHIELDED ONE AND ANSWERS THE RECEIVING
+ * ADDRESS; `unshieldedBech32` IS THE PUBLIC ONE AND ANSWERS ONLY THE PUBLIC
+ * RECEIVING ADDRESS.** Each definition's own pattern refuses the other kind, so
+ * the two wired the wrong way round is a refusal in `derive` rather than a
+ * comment: money with no private form is never handed a shielded address, and
+ * private money never a public one.
  */
 const PRODUCERS: Readonly<Record<string, Producer>> = Object.freeze({
   [RECEIVING_ADDRESS]: (owned: OwnedAddress) => owned.address.bech32,
+  [PUBLIC_RECEIVING_ADDRESS]: (owned: OwnedAddress) => owned.unshieldedBech32,
 });
 
 /** Whether this wallet can answer a derived attribute at all. */
@@ -129,6 +133,13 @@ export function derive(definition: AttributeDefinition, owned: OwnedAddress): De
  *
  * An account whose address cannot be worked out is left out rather than
  * guessed; the answer is then silent about it, which reads as "cannot tell".
+ *
+ * **THE PUBLIC ADDRESSES ARE NOT ANSWERED FOR, AND THAT IS DELIBERATE.** The
+ * answer is a digest a page can test any address against. A shielded address
+ * never appears on the chain, so a page can only test one it was already
+ * given. A public address is on the chain for anyone to read, so a page could
+ * test the answer against every public address the chain has ever shown and
+ * learn which of them are this person's, in every subwallet.
  */
 export function receivingAddressesOf(identity: Identity, network: NetworkName): string[] {
   const definition = REGISTRY.definitionOf(RECEIVING_ADDRESS);

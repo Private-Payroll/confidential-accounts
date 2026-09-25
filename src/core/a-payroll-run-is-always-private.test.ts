@@ -202,11 +202,12 @@ describe('the door, the refusal, and the record', () => {
      * PAYSLIP.** A run drawn while a person was private whose roster entry then
      * moves to a public address must not pay the new one: their payslip names
      * the private address. The swap goes through `putPerson`, which is how a
-     * roster state `admit` cannot produce is reached.
+     * roster state `admit` cannot produce is reached. Dana is paid in money
+     * with a private form: `admit` refuses a private address for NIGHT.
      */
     const { account, viewingKey } = await company();
     const a = h.payroll.hireDirect(account.id, {
-      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'NIGHT', baseAmount: 100_00n,
+      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
     }, viewingKey);
     const { run } = await h.payroll.createRunFromRoster(account.id, '2026-08', viewingKey);
 

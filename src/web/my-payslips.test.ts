@@ -176,8 +176,11 @@ describe('what the hiring form offers', () => {
     expect(codes[0]).toBe('TESTUSD');
     expect(codes).toContain('NIGHT');
     expect(assets.require(codes[0]).ledger.shielded).not.toBeNull();
-    /* An employee is invited only in something that can be paid privately. RED
-     * WHEN the invitation form offers a public-only asset. */
-    expect(invitingAssets().map(a => a.code)).toEqual(['TESTUSD']);
+    /* An employee can be invited in anything they can be hired in, NIGHT among
+     * it: the invitation asks their wallet for a public address when the money
+     * has no private form. RED WHEN the invitation form offers less than hiring,
+     * which is where NIGHT was left out. */
+    expect(invitingAssets().map(a => a.code)).toEqual(codes);
+    expect(invitingAssets().map(a => a.code)).toContain('NIGHT');
   });
 });

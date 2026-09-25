@@ -4,6 +4,7 @@ import { ZswapSecretKeys } from '@midnightntwrk/ledger-v9';
 import { identityFromSecret, identityFromWords, newSecret } from '../keys/derivation.js';
 import { AddressError, addressFor, payeeAddress, samePayee, shortPayee } from './address.js';
 import { NETWORKS, isNetworkName, networkName } from './network.js';
+import { bech32m } from '@scure/base';
 
 /**
  * THE ADDRESS IS THE ONE THING A PERSON HANDS OUT, so it is checked against the
@@ -134,6 +135,34 @@ describe('an address somebody nominates — their own wallet', () => {
 
   it('trims what somebody pasted, because people paste with whitespace', () => {
     expect(payeeAddress(`  ${TESTNET_ADDRESS}\n`, 'testnet').bech32).toBe(TESTNET_ADDRESS);
+  });
+
+  it('REFUSES A SHIELDED ADDRESS THAT IS NOT TWO KEYS OF THIRTY-TWO BYTES', () => {
+    /*
+     * The platform's decode takes the first thirty-two bytes as the coin key and
+     * everything after them as the encryption key, checking no length for the
+     * second. Each of these is a real checksum, the right kind and the right
+     * network, over the real address's bytes cut short or run long.
+     * RED WHEN the length check in `payeeAddress` is removed: 32, 33, 63, 65 and
+     * 96 bytes then decode and are returned as addresses.
+     */
+    const bytes = bech32m.decodeToBytes(TESTNET_ADDRESS).bytes;
+    expect(bytes.length).toBe(64);
+    const sized = (n: number): string => {
+      const out = new Uint8Array(n);
+      out.set(bytes.subarray(0, Math.min(n, 64)));
+      if (n > 64) out.set(bytes.subarray(0, n - 64), 64);
+      return bech32m.encode('mn_shield-addr_testnet', bech32m.toWords(out), false);
+    };
+    for (const n of [32, 33, 63, 65, 96]) {
+      let caught: unknown = null;
+      try { payeeAddress(sized(n), 'testnet'); } catch (e) { caught = e; }
+      expect(caught, `${n} bytes`).toBeInstanceOf(AddressError);
+      expect((caught as AddressError).code, `${n} bytes`).toBe('wrong-kind');
+      expect((caught as Error).message, `${n} bytes`).toContain(`carries ${n} bytes`);
+    }
+    /* RED WHEN the check refuses the right length too: sixty-four bytes is the real address. */
+    expect(payeeAddress(sized(64), 'testnet').bech32).toBe(TESTNET_ADDRESS);
   });
 });
 

@@ -1,12 +1,12 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { NETWORK } from 'midnight-identity/network';
 import {
-  AddressShapeError, checkShieldedAddress,
+  AddressShapeError, checkShieldedAddress, checkUnshieldedAddress,
 } from 'midnight-identity/wallet/address-shape';
 /* X12 §2 — the one place the code's spelling is decided, in the repository
  * that decides its width. */
 import { tidyFingerprint } from 'midnight-identity/profile/fingerprint';
-import { RECEIVING_ADDRESS } from '../core/wallet-payee-ask.js';
+import { PUBLIC_RECEIVING_ADDRESS, RECEIVING_ADDRESS } from '../core/wallet-payee-ask.js';
 import { reviveBigints, toHex, type Hex } from '../core/crypto.js';
 import { payslipKeypairFrom } from '../core/payslip-key-derive.js';
 import { sealHandover } from '../core/invite-handover.js';
@@ -18,6 +18,8 @@ import { AuthScreen, WALLET_ORIGIN } from './Auth.js';
 import { askWalletToUnlock } from './wallet-unlock.js';
 import { YOUR_PAY_PATH } from './my-payslips.js';
 import { askWalletForPayeeAddress } from './wallet-payee.js';
+import { invitesForAPublicAddress } from './hiring-assets.js';
+import { PUBLIC_PAYMENT } from './public-payment.js';
 import { openWalletDialog } from './wallet-sign-in.js';
 import { walletInThisPage } from './wallet-frame.js';
 
@@ -115,7 +117,7 @@ export const US_TO_A_WALLET = {
  * strictly weaker than `self-payee`, and both halves of that belong in the
  * entry rather than in a claim.**
  */
-const addressFromWalletAnswer = (answer: unknown): string => {
+const addressFromWalletAnswer = (answer: unknown, asked: string): string => {
   const payload = (answer as { payload?: unknown })?.payload as {
     disclosed?: unknown;
   } | undefined;
@@ -124,14 +126,14 @@ const addressFromWalletAnswer = (answer: unknown): string => {
     throw new Error('your wallet did not answer with anything this page can read.');
   }
   const extra = disclosed.filter(
-    (s: unknown) => (s as { about?: unknown })?.about !== RECEIVING_ADDRESS);
+    (s: unknown) => (s as { about?: unknown })?.about !== asked);
   if (extra.length > 0) {
     throw new Error(
       `your wallet was asked for a receiving address and also sent ${extra.length} other `
       + 'detail(s). Nothing else was asked for, so nothing has been sent on.');
   }
   const sent = disclosed.find(
-    (s: unknown) => (s as { about?: unknown })?.about === RECEIVING_ADDRESS) as {
+    (s: unknown) => (s as { about?: unknown })?.about === asked) as {
       says?: { of?: string; value?: unknown };
       asserted?: { by?: string };
     } | undefined;
@@ -327,11 +329,21 @@ export function JoinScreen({ token, onOpenPayslips }: {
        * be a number nothing could ever check, and the member-gated challenge
        * route is shut to an invitee anyway.
        */
+      /*
+       * **MONEY WITH NO PRIVATE FORM ASKS FOR THE PUBLIC ADDRESS, AND TAKES
+       * NOTHING ELSE.** NIGHT, and any token with no private form, can only be
+       * paid to a public address, so the wallet is asked for that one by name,
+       * in the same single ask. What comes back is checked as a public address
+       * below; a shielded one is refused, here and again by `admit`.
+       */
+      const publicly = invitesForAPublicAddress(assets.require(current.asset));
+      const asked = publicly ? PUBLIC_RECEIVING_ADDRESS : RECEIVING_ADDRESS;
       const answer = await askWalletForPayeeAddress(host, WALLET_ORIGIN, {
         nonce: toHex(crypto.getRandomValues(new Uint8Array(16))),
         expiresAt: Date.now() + PAYEE_WINDOW_MS,
         name: US_TO_A_WALLET.name,
         rdns: US_TO_A_WALLET.rdns,
+        publicly,
       }, dialog);
 
       /*
@@ -348,10 +360,14 @@ export function JoinScreen({ token, onOpenPayslips }: {
        * `C149` says this page may not, and the real decoder's package has one
        * unrelated `ledger-v9` import at module scope. It is held against the
        * real decoder by a test in the wallet repository, and `admit` still
-       * rebuilds the value through the real `payeeAddress()` from this very
-       * string before anything is paid.
+       * rebuilds the value through the real decoder from this very string
+       * before anything is paid. A public address is held to the same checks
+       * by `checkUnshieldedAddress`, and each check refuses the other kind.
        */
-      const address = checkShieldedAddress(addressFromWalletAnswer(answer), NETWORK);
+      const said = addressFromWalletAnswer(answer, asked);
+      const address = publicly
+        ? checkUnshieldedAddress(said, NETWORK)
+        : checkShieldedAddress(said, NETWORK);
 
       /*
        * ── FOUR: NOTHING LEAVES THIS DEVICE YET ──────────────────────────────
@@ -496,6 +512,9 @@ export function JoinScreen({ token, onOpenPayslips }: {
             <input readOnly value={offer.title} /></div>
           <div className="field"><label>Monthly gross</label>
             <input readOnly value={`${formatAmount(offer.baseAmount, asset)} ${asset.code}`} /></div>
+          {/* Money with no private form is paid publicly, so the person being offered it is told. */}
+          {invitesForAPublicAddress(asset)
+            && <div className="hint" data-public-payment>{PUBLIC_PAYMENT}</div>}
           <div className="field"><label>Starting</label>
             <input readOnly value={new Date(offer.startDate).toLocaleDateString('en-GB')} /></div>
           {/*
@@ -560,10 +579,13 @@ export function JoinScreen({ token, onOpenPayslips }: {
                 choose that wallet, on your wallet's own screen. Nothing here can propose an
                 address and there is nowhere on this page to type one.
               </p>
-              <p className="authsub">
-                Your address is sealed to {offer.company} on this device before it is sent, so
-                this service never sees it.
-              </p>
+              {/* Not said for money paid publicly: every payment puts that address on a public record. */}
+              {!invitesForAPublicAddress(asset) && (
+                <p className="authsub" data-sealed-never-seen>
+                  Your address is sealed to {offer.company} on this device before it is sent, so
+                  this service never sees it.
+                </p>
+              )}
             </>
           ) : (
             <>

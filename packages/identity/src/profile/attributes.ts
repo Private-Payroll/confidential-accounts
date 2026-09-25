@@ -46,6 +46,14 @@ export const EMAIL: AttributeName = 'email';
  * `Source` carries the reasoning; the entry below is what makes it an entry.
  */
 export const RECEIVING_ADDRESS: AttributeName = 'receiving-address';
+/**
+ * **WHERE TO PAY THIS PERSON IN MONEY THAT HAS NO PRIVATE FORM.** The same
+ * kind of fact as the one above, about the same chosen subwallet: its PUBLIC
+ * address. NIGHT, and any token with no private form, can only be paid to a
+ * public address, so a company paying in one asks for this rather than for
+ * the shielded address, which that money cannot reach.
+ */
+export const PUBLIC_RECEIVING_ADDRESS: AttributeName = 'public-receiving-address';
 
 /*
  * A DELIBERATELY LOOSE EMAIL PATTERN, and the reason is not laziness.
@@ -82,6 +90,15 @@ const EMAIL_PATTERN = "[^@\\s]+@[^@\\s.]+(?:\\.[^@\\s.]+)+";
  * to refuse; the `1` after it is Bech32m's own separator.
  */
 const SHIELDED_ADDRESS_PATTERN = 'mn_shield-addr_[a-z0-9]+1[a-z0-9]{40,}';
+
+/*
+ * **THE SHAPE OF A PUBLIC ADDRESS**, the same kind of guard as the one above
+ * and worth as little, for the same reason. What it catches is the substitution
+ * in the other direction: a `mn_shield-addr_` address handed over where money
+ * with no private form is to be paid, which that money cannot reach. A mainnet
+ * address has no network segment, so the segment is optional here.
+ */
+const PUBLIC_ADDRESS_PATTERN = 'mn_addr(?:_[a-z0-9]+)?1[a-z0-9]{40,}';
 
 const DEFINITIONS: readonly AttributeDefinition[] = Object.freeze([
   define({
@@ -172,6 +189,37 @@ const DEFINITIONS: readonly AttributeDefinition[] = Object.freeze([
       /* The rule — both ends, never only the head. Two shielded addresses on
        * one network share their prefix, so a head-only shortening makes every
        * address on this network look like every other. */
+      abbreviate: 'middle',
+    },
+    provable: [],
+  }),
+  define({
+    name: PUBLIC_RECEIVING_ADDRESS,
+    version: 1,
+    /* DERIVED, exactly as the shielded one is: nobody states it, nobody issues it. */
+    source: 'derived',
+    validate: {
+      of: 'text',
+      minLength: 40,
+      maxLength: 200,
+      pattern: PUBLIC_ADDRESS_PATTERN,
+      patternSays:
+        'A public receiving address is an unshielded one, starting mn_addr, because this '
+        + 'money has no private form and cannot be paid to a shielded address.',
+    },
+    selfAssertable: false,
+    acceptedIssuers: null,
+    multiple: false,
+    /*
+     * SENSITIVE for the reason the shielded one is, and more so: every payment
+     * to it is on a record anyone can read, so the address a company holds is
+     * the key to that person's pay on the chain.
+     */
+    sensitivity: 'sensitive',
+    render: {
+      label: 'Public receiving address',
+      hint: 'Where this company would pay you, in money that is only ever paid publicly. It '
+        + 'comes from the wallet you choose below, and it changes if you choose a different one.',
       abbreviate: 'middle',
     },
     provable: [],

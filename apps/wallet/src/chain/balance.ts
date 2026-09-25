@@ -71,10 +71,11 @@ export type BalanceState =
    * shielded NIGHT, STARs of unshielded NIGHT, or SPECKs of DUST, depending on
    * which engine reports it.
    *
-   * `others` is set by the shielded engine only: every other private token the
-   * wallet holds (`shielded-tokens.ts`). It is absent when the figure did not
-   * record them, as a checkpoint from an older version of the wallet did not,
-   * and absent never means none. */
+   * `others` is every other token the line holds: private tokens from the
+   * shielded engine, public tokens from the unshielded one, split the same way
+   * (`shielded-tokens.ts`). The DUST engine never sets it. It is absent when the
+   * figure did not record them, as a shielded checkpoint from an older version
+   * of the wallet did not, and absent never means none. */
   | {
     readonly name: 'synced'; readonly night: bigint; readonly asOf: number;
     readonly others?: OtherTokens;

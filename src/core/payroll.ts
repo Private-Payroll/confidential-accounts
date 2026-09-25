@@ -871,6 +871,19 @@ export class PayrollService {
         + 'Anybody else is an employee, and an employee is invited');
     }
     this.refuseAPayeeWhoCannotBePaid(spec);
+    /*
+     * **REFUSED BEFORE ANYTHING IS WRITTEN.** `admit` refuses the same address
+     * further down, but by then an entry and an invitation have been made for
+     * it; refusing here leaves nothing behind. Adding yourself asks your wallet
+     * for your shielded address only, so money with no private form cannot be
+     * chosen here yet.
+     */
+    const unreachable = this.addressTheMoneyCannotReach(spec.asset, handover.address);
+    if (unreachable !== null) {
+      throw new Error(`${unreachable} Choose money that can be paid to a `
+        + `${handover.address.kind === 'shielded' ? 'private' : 'public'} address, the kind your wallet sent. `
+        + 'Nothing was added to the payroll.');
+    }
 
     /*
      * "SELF" IS ENFORCED HERE, NOT ASSERTED IN THE METHOD NAME.
@@ -1691,6 +1704,25 @@ export class PayrollService {
 
     const person = this.open(rec, viewingKey);
     /*
+     * **THE ADDRESS IS OF A KIND THIS PERSON'S MONEY CAN REACH.** Money with no
+     * private form, NIGHT among it, is paid publicly and cannot be paid to a
+     * shielded address; money with no public form cannot be paid to a public
+     * one. An invitation asks the person's wallet for the kind their money
+     * takes, and the page refuses the other, but the page is not the door that
+     * writes the roster: this is. So an address of a kind the money has no form
+     * for, when it has the other, is refused here and the invitation put back,
+     * rather than admitted and refused on the day their first payment is
+     * raised. Money with no form on Midnight at all is refused where somebody is
+     * hired (`refuseAPayeeWhoCannotBePaid`), and the seeded walk-through, which
+     * is not hired through that door, is left as it was.
+     */
+    const unreachable = this.addressTheMoneyCannotReach(person.asset, address);
+    if (unreachable !== null) {
+      putBack();
+      throw new Error(
+        `not admitted. ${unreachable} Ask them to open their invitation link and accept again.`);
+    }
+    /*
      * The roster is filled and the box emptied in ONE write. It was two, and a
      * crash between them left an active roster entry and a full drop box —
      * two records of where somebody's money goes, which is what the box exists
@@ -1758,6 +1790,24 @@ export class PayrollService {
    * address is paid publicly by a run, out of the vault's public money. The seeded
    * walk-through is not a door a person comes in by and does not pass here.
    */
+  /**
+   * **WHY AN ADDRESS CANNOT BE PAID IN THIS MONEY, OR `null` WHEN IT CAN.** An
+   * address of a kind the money has no form for, when the money has the other
+   * form: a private address for NIGHT, or a public one for money that is only
+   * ever paid privately. Money with no form on Midnight at all is not this
+   * question's (`refuseAPayeeWhoCannotBePaid` below).
+   */
+  private addressTheMoneyCannotReach(code: AssetId, address: Payee): string | null {
+    const paidIn = this.assets.require(code);
+    const other = address.kind === 'shielded' ? 'unshielded' : 'shielded';
+    if (ledgerFormOf(paidIn, address.kind).of === 'token' || ledgerFormOf(paidIn, other).of !== 'token') {
+      return null;
+    }
+    return `${paidIn.code} can only be paid to a ${address.kind === 'shielded' ? 'public' : 'private'} `
+      + `address, and the address that arrived is a ${address.kind === 'shielded' ? 'private' : 'public'} one. `
+      + 'Nothing has been paid.';
+  }
+
   private refuseAPayeeWhoCannotBePaid(spec: HireSpec): void {
     const asset = this.assets.require(spec.asset);
     const privately = ledgerFormOf(asset, 'shielded');

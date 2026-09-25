@@ -554,12 +554,13 @@ function BalanceLine({ kind, title, hero, state, owner }: {
           <p className="m-0 mt-1 text-xs text-muted">
             Exactly {exact(state.night)}, as of {asClock(state.asOf)}.
           </p>
-          {kind === 'shielded' && state.others !== undefined
+          {kind !== 'dust' && state.others !== undefined
             && otherTokenLines(state.others).map(([colour, amount]) => (
-              /* EVERY OTHER PRIVATE TOKEN THIS WALLET HOLDS, one plain line each,
-               * after NIGHT's. The wallet has no name and no scale for these, so
-               * the amount is in the token's smallest unit and the token is named
-               * by its colour: short, with the whole colour beside it. Only held
+              /* EVERY OTHER TOKEN THIS LINE HOLDS, private on the shielded line
+               * and public on the unshielded one, one plain line each, after
+               * NIGHT's. The wallet has no name and no scale for these, so the
+               * amount is in the token's smallest unit and the token is named by
+               * its colour: short, with the whole colour beside it. Only held
                * tokens get a line; there is no zero line for a token not held. */
               <p key={colour} className="m-0 mt-1 text-sm text-ink" data-token={colour}>
                 {smallestUnits(amount)} of token{' '}
