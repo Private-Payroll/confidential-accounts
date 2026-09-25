@@ -273,6 +273,45 @@ describe('opening a company that pays you shows your payslips from it and nothin
     }
   });
 
+  it('THE VIEW SAYS WHAT IS KEPT PRIVATE IN THE RULED WORDS, WORD FOR WORD', () => {
+    const w = around();
+    const { container } = render(<EmployerView company={ACME} onBack={() => {}} deps={w.deps} />);
+    /* RED WHEN the sentence is changed by a word, or the one it replaced comes back. */
+    expect(container.querySelector('[data-privacy]')?.textContent).toBe(
+      'Your payslip key never leaves this device. When you open your payslips, the service sees '
+      + 'that you asked about this company; it does not keep a record of it.');
+    expect(container.textContent).not.toContain('not sent to us or saved here');
+  });
+
+  it('A RECEIPT NAMING A CONTRACT THE VIEW DID NOT OPEN FOR THIS COMPANY READS "CANNOT TELL" ON SCREEN', async () => {
+    const ROGUE = 'ee'.repeat(32);
+    const rogue = slip('2026-09', PAID);
+    const naming = { ...rogue, receipt: { ...rogue.receipt!, company: ROGUE } };
+    const w = around({ slips: { [ACME]: [naming, slip('2026-08', PAID)] } });
+    const { container } = render(<EmployerView company={ACME} onBack={() => {}} deps={w.deps} />);
+    press(container);
+    await waitFor(() => expect(
+      container.querySelector('[data-payslip="2026-08"]')?.textContent).toContain('Recorded as paid'));
+    /* RED WHEN the view reads the contract a receipt names without having opened it for this company. */
+    expect(container.querySelector('[data-payslip="2026-09"]')?.textContent).toContain('Cannot tell');
+    expect(w.asked.read).not.toContain(ROGUE);
+    /* Not a failure to read, so the could-not-read sentence is not shown for it. */
+    expect(container.querySelector('[data-could-not-read]')).toBeNull();
+  });
+
+  it('A COMPANY THAT MOVED STILL READS "RECORDED AS PAID" FOR A SLIP SEALED UNDER ITS EARLIER ADDRESS', async () => {
+    /* Sealed under the address the company had before; its leg was recorded at the address it has now. */
+    const before = slip('2026-07', PAID);
+    const sealedBefore = { ...before, issuedBy: ACME_BEFORE };
+    const w = around({ slips: { [ACME_BEFORE]: [sealedBefore] } });
+    const { container } = render(<EmployerView company={ACME} onBack={() => {}} deps={w.deps} />);
+    press(container);
+    /* RED WHEN the view reads only the addresses its slips were sealed under, not every address it opened. */
+    await waitFor(() => expect(
+      container.querySelector('[data-payslip="2026-07"]')?.textContent).toContain('Recorded as paid'));
+    expect(w.asked.read).toEqual([ACME]);
+  });
+
   it('A PAGE OLDER THAN THE SERVICE SAYS SO, WORD FOR WORD, AND NOTHING ELSE', async () => {
     const w = around({ failOpening: new PageOutOfDate() });
     const { container } = render(<EmployerView company={ACME} onBack={() => {}} deps={w.deps} />);

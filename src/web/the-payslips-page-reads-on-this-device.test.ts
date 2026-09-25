@@ -146,6 +146,75 @@ describe('the page reads whether each slip was paid through the indexer its wall
   });
 });
 
+/** The same slip, with a receipt that names `company` as the contract its payment is recorded at. */
+const namingContract = (runId: string, nonce: string, company: string): OpenedPayslip => {
+  const s = slip(runId, nonce);
+  return { ...s, receipt: { ...s.receipt!, company } };
+};
+/** A contract nobody opened: one the service deployed for itself, say. */
+const ROGUE = 'ee'.repeat(32);
+/** Where the same company is now, after it moved. */
+const MOVED = 'cd'.repeat(32);
+
+describe('the page reads only a contract it opened for that company', () => {
+  it('A RECEIPT NAMING A CONTRACT THE PAGE DID NOT OPEN READS "CANNOT TELL", WHATEVER THAT CONTRACT RECORDS', async () => {
+    /* The rogue contract does record this payment: a service that deployed it recorded the leaf there. */
+    FakeWorker.behave = answering([PAID]);
+    const { page } = await fresh();
+    const opened = await page.openAndRead([ACME], async () => ({ key: new Uint8Array(32), indexer: INDEXER, held: HELD }),
+      service([namingContract('run_rogue', PAID, ROGUE), slip('run_a', PAID)]));
+    /* RED WHEN the contract a receipt names is read without being one the page opened: "Recorded as paid". */
+    expect(opened.words.get('run_rogue')).toEqual({ paid: 'Cannot tell', onChain: 'Not known' });
+    /* One the page did open reads as the chain says. */
+    expect(opened.words.get('run_a')).toEqual({ paid: 'Recorded as paid', onChain: 'Yes' });
+    /* RED WHEN the rogue contract is asked about at all. */
+    expect(FakeWorker.made[0]!.sent).toEqual([
+      { id: 1, indexer: INDEXER, company: ACME, payments: [paymentFor(PAID)] }]);
+  });
+
+  it('LEFT TO ITS DEFAULT, THE READ STILL NEVER ASKS ABOUT A CONTRACT NO SLIP WAS OPENED AT', async () => {
+    const { payslips } = await fresh();
+    const asked: string[] = [];
+    const reader = {
+      recorded: async (_i: unknown, company: string, m: unknown[]) => { asked.push(company); return m.map(() => true); },
+    };
+    const chain = await payslips.paymentsOnTheChain(
+      [namingContract('run_rogue', PAID, ROGUE), slip('run_a', PAID)], reader, INDEXER, confirmedAll);
+    /* RED WHEN the default takes in the contracts receipts name rather than the addresses slips were opened at. */
+    expect(chain.get('run_rogue')).toBe('cannot-tell');
+    expect(chain.get('run_a')).toBe('paid');
+    expect(asked).toEqual([ACME]);
+  });
+
+  it('A COMPANY THAT MOVED READS ITS NEW CONTRACT, BECAUSE THE PAGE OPENED THAT ADDRESS TOO', async () => {
+    FakeWorker.behave = answering([PAID]);
+    const { page } = await fresh();
+    const release = async () => ({ key: new Uint8Array(32), indexer: INDEXER, held: HELD });
+    /* The slip was sealed under the old address; its leg was raised after the move. */
+    const theSlip = namingContract('run_after_move', PAID, MOVED);
+    const byAddress = async (_k: unknown, address: string) =>
+      ({ opened: address === ACME ? [theSlip] : [], sealed: [], unopened: 0, refused: 0 });
+    const opened = await page.openAndRead([ACME, MOVED], release, byAddress);
+    /* RED WHEN a moved company's payslips read "cannot tell" for a payment it really recorded. */
+    expect(opened.words.get('run_after_move')).toEqual({ paid: 'Recorded as paid', onChain: 'Yes' });
+  });
+
+  it('AN ADDRESS THE WALLET WOULD NOT OPEN IS NOT ONE THE PAGE OPENED', async () => {
+    FakeWorker.behave = answering([PAID]);
+    const { page } = await fresh();
+    const release = async (address: string) => {
+      if (address === MOVED) throw new Error('the person declined');
+      return { key: new Uint8Array(32), indexer: INDEXER, held: HELD };
+    };
+    const theSlip = namingContract('run_after_move', PAID, MOVED);
+    const byAddress = async (_k: unknown, address: string) =>
+      ({ opened: address === ACME ? [theSlip] : [], sealed: [], unopened: 0, refused: 0 });
+    const opened = await page.openAndRead([ACME, MOVED], release, byAddress);
+    /* RED WHEN an address is counted as opened before its key was given and its slips fetched. */
+    expect(opened.words.get('run_after_move')).toEqual({ paid: 'Cannot tell', onChain: 'Not known' });
+  });
+});
+
 describe('a reader that does not start or does not answer is "cannot tell", and does not stay broken', () => {
   it('A WORKER THAT NEVER SAYS IT IS READY ANSWERS NOTHING, AND THE NEXT READ STARTS ANOTHER', async () => {
     vi.useFakeTimers();

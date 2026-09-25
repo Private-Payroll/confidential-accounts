@@ -192,11 +192,12 @@ export function checkShieldedAddress(
   }
 
   /*
-   * **THE LENGTH IS PART OF THE DECODE AND NOT AN EXTRA RULE.** The platform's
-   * codec takes the first 32 bytes and *the rest*, so a short string would
-   * silently produce an encryption key of nothing. `ShieldedEncryptionPublicKey`
-   * refuses that on its own side (dist:175 onwards); this is that refusal,
-   * stated where it can be read.
+   * **THE LENGTH IS CHECKED HERE, AND THIS IS STRICTER THAN THE PLATFORM.** The
+   * platform's codec takes the first 32 bytes as the coin key and *the rest* as
+   * the encryption key. `ShieldedCoinPublicKey` refuses anything but 32 bytes
+   * (dist:162), but `ShieldedEncryptionPublicKey`'s constructor checks no length
+   * (dist:174 onwards), so the platform decodes a string of 32 bytes and
+   * anything after them, including nothing. This refuses every length but 64.
    */
   if (decoded.bytes.length !== KEY_BYTES * 2) {
     throw new AddressShapeError(

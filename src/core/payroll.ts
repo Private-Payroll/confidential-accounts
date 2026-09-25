@@ -3925,20 +3925,6 @@ export class PayrollService {
     return [...found].sort();
   }
 
-  /**
-   * **THE ONE ACCOUNT WHOSE CHAIN ADDRESS IS THIS ONE NOW**, or `null`. A
-   * receipt names the company address its run was raised at, and the account's
-   * record of completed payments is read at the address it has now; a company
-   * that has since moved is not answered for, because its current record is
-   * not the one that run was paid into.
-   */
-  accountAtCompanyAddress(companyAddress: string): string | null {
-    const asked = companyAddress.toLowerCase();
-    const at = this.store.accountsAtPayslipAddress(asked)
-      .filter(id => companyAddressForOffer(this.store, id) === asked);
-    return at.length === 1 ? at[0]! : null;
-  }
-
   /** Every company address one company's payslips name, lower-cased. */
   private payslipAddressesNamedBy(accountId: string): Set<string> {
     return new Set(this.store.payslipAddressesNamedBy(accountId));

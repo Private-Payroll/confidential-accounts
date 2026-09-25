@@ -1278,6 +1278,10 @@ export function Approve({
             those records whenever their page is running. This wallet cannot watch it
             happen and cannot tell you afterwards how often it did.
           </p>
+          <p className="m-0 text-sm text-muted" data-unlock-held-addresses>
+            It also lets this page check whether a payslip was paid to one of your wallets. It
+            does not tell the page any of your addresses.
+          </p>
         </Section>
 
         <Section

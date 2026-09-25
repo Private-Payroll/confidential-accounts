@@ -175,9 +175,13 @@ const wire = (h: H, paid: Record, opts: { ignoreFrom?: boolean; serviceSays?: He
 const listOf = (movements: Hex[]): Record => () => movements;
 
 /** What the page shows for each of this person's slips, by period, read at `now`. */
-const shown = async (fetcher: Wired, keys: { secret: Hex; publicKey: Hex }, from: string, now = NOW) => {
+const shown = async (
+  fetcher: Wired, keys: { secret: Hex; publicKey: Hex }, from: string, now = NOW,
+  /* The company addresses the page opened; left out, the address the slips were fetched for. */
+  openedFor?: string[],
+) => {
   const mine = await fetchMyPayslips(keys, from, fetcher);
-  const chain = await paymentsOnTheChain(mine.opened, fetcher.reader, INDEXER, CONFIRMED, now, REGISTRY);
+  const chain = await paymentsOnTheChain(mine.opened, fetcher.reader, INDEXER, CONFIRMED, now, REGISTRY, openedFor);
   return Object.fromEntries(mine.opened.map(s => [s.period, chain.get(s.runId)]));
 };
 
@@ -314,10 +318,18 @@ describe('each payslip says whether it was paid, from the chain', () => {
     const both: Record = (at) => (at === c.address || at === moved ? [] : null);
     const forBen = wire(h, both).fetcher;
     const forCat = wire(h, both).fetcher;
-    expect((await shown(forBen, ben.keys, c.address))['2026-08']).toBe('not-yet');
-    expect((await shown(forCat, cat.keys, c.address))['2026-08']).toBe('not-yet');
+    /* The page opens every address the company's slips were sealed under, and the one it has now. */
+    const opened = h.payroll.payslipAddressesOf(c.address);
+    expect(opened.sort()).toEqual([c.address, moved].sort());
+    expect((await shown(forBen, ben.keys, c.address, NOW, opened))['2026-08']).toBe('not-yet');
+    /* RED WHEN a company that moved reads "cannot tell" for a leg raised at its new address. */
+    expect((await shown(forCat, cat.keys, c.address, NOW, opened))['2026-08']).toBe('not-yet');
     expect(forBen.reads.map(r => r.company)).toEqual([c.address]);
     expect(forCat.reads.map(r => r.company)).toEqual([moved]);
+    /* A page that did not open the new address reads nothing there, and cannot tell. */
+    const unopened = wire(h, both).fetcher;
+    expect((await shown(unopened, cat.keys, c.address))['2026-08']).toBe('cannot-tell');
+    expect(unopened.reads).toEqual([]);
   });
 
   it('A RECEIPT ANSWERS ONLY FOR THE SLIP IT WAS SEALED WITH', async () => {
@@ -530,8 +542,9 @@ describe('the payslip lookups read what they answer and not every record', () =>
     h.store.putAccount({ ...h.accounts.require(c.accountId), contractAddress: moved });
     /* RED WHEN the index keeps the old address as the company's address now. */
     expect(h.payroll.payslipAddressesOf(moved).sort()).toEqual([c.address, moved].sort());
-    expect(h.payroll.accountAtCompanyAddress(moved)).toBe(c.accountId);
-    expect(h.payroll.accountAtCompanyAddress(c.address)).toBeNull();
+    expect(h.store.accountsAtPayslipAddress(moved)).toEqual([c.accountId]);
+    /* And the address it had before still finds it, for a payee who knows only that one. */
+    expect(h.payroll.payslipAddressesOf(c.address).sort()).toEqual([c.address, moved].sort());
     /* A store emptied is asked about what it holds now. RED WHEN the index outlives its data. */
     const emptied = new FileStore(join(mkdtempSync(join(tmpdir(), 'mn-emptied-')), 'db.json'));
     for (const a of Object.values(h.store.snapshot().accounts)) emptied.putAccount(a);
@@ -687,7 +700,7 @@ describe('the payslip index follows a rotation written after it was built', () =
      */
     expect(h.payroll.payslipsFor(dana.keys.publicKey)).toEqual([]);
     expect(h.payroll.payslipsFor(renewed.publicKey)).toHaveLength(1);
-    expect(h.payroll.accountAtCompanyAddress(moved)).toBe(c.accountId);
+    expect(h.store.accountsAtPayslipAddress(moved)).toEqual([c.accountId]);
     expect(h.payroll.payslipAddressesOf(moved).sort()).toEqual([c.address, moved].sort());
   });
 });

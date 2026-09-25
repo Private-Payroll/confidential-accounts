@@ -452,6 +452,16 @@ describe('§2 — THE SCREEN SAYS WHAT THEY WILL BE ABLE TO DO, NOT THAT A KEY M
     expect(screen.getByText(giveTo())).toBeTruthy();
   });
 
+  it('SAYS, IN THE RULED WORDS, THAT THE PAGE CAN CHECK A PAYSLIP WAS PAID TO ONE OF YOUR WALLETS', async () => {
+    await someone();
+    open();
+    await saying('Who is asking');
+    /* RED WHEN the line is missing or changed by a word: the answer carries more than the key, unsaid. */
+    expect(document.querySelector('[data-unlock-held-addresses]')?.textContent?.replace(/\s+/g, ' ').trim())
+      .toBe('It also lets this page check whether a payslip was paid to one of your wallets. '
+        + 'It does not tell the page any of your addresses.');
+  });
+
   it('says the three things a person needs: what it is, how long, and that it stays given',
     async () => {
       await someone();

@@ -114,11 +114,13 @@ export async function fetchMyPayslips(
  * for the contract; nothing on this device checks it against the chain beyond
  * that. The value looked for is built on this device from the address the
  * payee's own wallet confirmed, the slip's token and amount, and the payee's
- * own nonce and blinding; which contract is read is the one the receipt names.
+ * own nonce and blinding; which contract is read is the one the receipt names,
+ * and only when it is an address this page opened for that company.
  * `'paid'` only when the account's public set of completed payments was
  * read and holds this payment; `'not-yet'` only when it was read, does not
  * hold it, and the window this payment can still be made in has not closed;
- * `'cannot-tell'` whenever the wallet did not confirm the address, whenever it
+ * `'cannot-tell'` whenever the wallet did not confirm the address, whenever the
+ * receipt names a contract this page did not open for that company, whenever it
  * was not read, whatever the reason, and when the window has closed or was
  * never known. Nothing that failed is ever reported as not paid, and nothing
  * here asks this application's service.
@@ -149,8 +151,9 @@ export async function paymentsOnTheChain(
   confirmed: (slip: OpenedPayslip) => boolean,
   nowSeconds: number = Math.floor(Date.now() / 1000),
   registry: AssetRegistry = assets,
+  openedFor?: Iterable<string>,
 ): Promise<Map<string, OnTheChain>> {
-  return (await readTheChain(slips, reader, indexer, confirmed, nowSeconds, registry)).chain;
+  return (await readTheChain(slips, reader, indexer, confirmed, nowSeconds, registry, openedFor)).chain;
 }
 
 /**
@@ -180,6 +183,23 @@ const paymentOf = (s: OpenedPayslip, registry: AssetRegistry): PayslipPayment | 
  * wallet named no indexer or there is no reader, or when a read failed or came
  * back as something that is not an answer. It is what lets a page say why its
  * rows cannot tell, rather than only that they cannot.
+ *
+ * **ONLY A CONTRACT THIS PAGE OPENED FOR THAT COMPANY IS READ.** A receipt is
+ * sealed by the service, so the contract it names is the service's word. So a
+ * receipt is asked about only when the contract it names is one of
+ * `openedFor`: the addresses whose key the payee's wallet gave and whose slips
+ * this page then fetched and opened. A receipt alone therefore cannot send this
+ * page to a contract the service deployed for itself. What this does not stop:
+ * the addresses a company's payslips were sealed under are also the service's
+ * answer, so a service that names its own contract there, and whose payee
+ * approves that address in their wallet, has it opened too. A company that
+ * moved has in that set its address now and every address its slips were
+ * sealed under, so a payment recorded at one of those still reads. Any other
+ * receipt reads "cannot tell", and that is not a failure to read.
+ *
+ * @param openedFor the company addresses this page opened. Left out, it is the
+ *   addresses the slips themselves were opened at, which is never wider: a slip
+ *   reaches this page only from the address it was fetched for.
  */
 export async function readTheChain(
   slips: OpenedPayslip[], reader: ChainReader | null, indexer: WalletIndexer | null,
@@ -188,15 +208,18 @@ export async function readTheChain(
   nowSeconds: number = Math.floor(Date.now() / 1000),
   /** The assets this page knows, the same registry the service pays from. */
   registry: AssetRegistry = assets,
+  openedFor?: Iterable<string>,
 ): Promise<{ chain: Map<string, OnTheChain>; couldNotRead: boolean }> {
   const out = new Map<string, OnTheChain>();
   let couldNotRead = false;
+  const opened = openedAddresses(openedFor ?? slips.map(s => s.issuedBy));
   const byCompany = new Map<string, { slip: OpenedPayslip; payment: PayslipPayment }[]>();
   for (const s of slips) {
     if (!s.receipt) continue;
     const company = s.receipt.company;
-    if (company !== null && (reader === null || indexer === null)) couldNotRead = true;
-    if (company === null || reader === null || indexer === null) { out.set(s.runId, 'cannot-tell'); continue; }
+    /* A contract this page did not open for the company is never read, whatever else is known. */
+    if (company === null || !opened.has(company)) { out.set(s.runId, 'cannot-tell'); continue; }
+    if (reader === null || indexer === null) { couldNotRead = true; out.set(s.runId, 'cannot-tell'); continue; }
     /* An address the wallet did not confirm is never asked about: nothing read for it could be "not yet". */
     const payment = confirmedSafely(confirmed, s) ? paymentOf(s, registry) : null;
     if (payment === null) { out.set(s.runId, 'cannot-tell'); continue; }
@@ -220,6 +243,16 @@ export async function readTheChain(
   }
   return { chain: out, couldNotRead };
 }
+
+/** Company addresses as a receipt names them: lower case, no `0x`, and nothing that is not one. */
+const openedAddresses = (list: Iterable<string | null>): Set<string> => {
+  const out = new Set<string>();
+  for (const a of list) {
+    const tidy = typeof a === 'string' ? tidyCompanyAddress(a) : null;
+    if (tidy !== null) out.add(tidy);
+  }
+  return out;
+};
 
 const confirmedSafely = (confirmed: (slip: OpenedPayslip) => boolean, s: OpenedPayslip): boolean => {
   try { return confirmed(s) === true; } catch { return false; }
@@ -288,6 +321,35 @@ export function forgetRememberedCompanies(
   person: string, storage: Pick<Storage, 'removeItem'> | null = safeStorage(),
 ): void {
   try { storage?.removeItem(REMEMBERED + person); } catch { /* nothing to empty */ }
+}
+
+/**
+ * **THE LIST AN OLDER PAYSLIPS PAGE KEPT IN THIS BROWSER, FOR NOBODY IN
+ * PARTICULAR.** It is read once, into the saved keys of whoever opens theirs
+ * here first, and then marked as taken. It is never emptied: what it holds is
+ * left exactly as that page wrote it.
+ */
+const OLDER_LIST = 'payslip-companies';
+const OLDER_LIST_TAKEN = 'payslip-companies-taken';
+
+/** What the older list holds, or nothing once it has been taken. */
+export function olderListNotYetTaken(
+  storage: Pick<Storage, 'getItem'> | null = safeStorage(),
+): string[] {
+  try {
+    if (storage === null || (storage.getItem(OLDER_LIST_TAKEN) ?? null) !== null) return [];
+    const raw = storage.getItem(OLDER_LIST);
+    return onlyCompanyAddresses(raw ? JSON.parse(raw) : []);
+  } catch {
+    return [];
+  }
+}
+
+/** Marks the older list as taken, so it is read no more. The list itself is left alone. */
+export function markOlderListTaken(
+  storage: Pick<Storage, 'setItem'> | null = safeStorage(),
+): void {
+  try { storage?.setItem(OLDER_LIST_TAKEN, '1'); } catch { /* not marked, so it is read again at the next unlock here */ }
 }
 
 function safeStorage(): Storage | null {

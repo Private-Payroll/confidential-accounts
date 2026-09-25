@@ -612,6 +612,7 @@ describe('§5 - A PAYSLIP KEY IS WORKED OUT ONLY FROM THIS COMPANY\'S KEY, FROM 
       'GET /api/me/keys': { keyBundle: seal(A_KEYRING, personKey), version: 3 },
       'POST /api/accounts/acc_1/unlock': { company: ACME },
       'POST /api/accounts/acc_1/payee-challenge': { nonce: 'p', handle: 'ph', expiresAt: new Date(AT + 60_000).toISOString() },
+      'PUT /api/me/keys': { version: 4 },
     };
     (globalThis as { window?: unknown }).window = Object.assign(view, { location: { origin: US } });
     globalThis.fetch = (async (url: string, init?: RequestInit) => {
@@ -636,7 +637,8 @@ describe('§5 - A PAYSLIP KEY IS WORKED OUT ONLY FROM THIS COMPANY\'S KEY, FROM 
 
   it('THE KEY HANDED BACK IS THE COMPANY\'S OWN KEY FROM THIS WALLET, NOT THE KEY THE SAVED KEYS OPEN WITH', async () => {
     const { keyring, view, personKey, asks } = await journey(identity);
-    const { companyKey, disclosure } = await keyring.payslipKeyAndPayeeAddress('acc_1', WALLET, view, US);
+    const { companyKey, companyAddress, disclosure } = await keyring.payslipKeyAndPayeeAddress('acc_1', WALLET, view, US);
+    expect(companyAddress).toBe(ACME);
     const expected = toHex(unlockKeyFor(identity, asUnlock(parseAsk(unlockAsk({
       name: NAME, rdns: RDNS, purpose: UNLOCK_PURPOSE, nonce: 'n', expiresAt: AT + 60_000, company: ACME,
     }), US, AT))));
@@ -645,8 +647,47 @@ describe('§5 - A PAYSLIP KEY IS WORKED OUT ONLY FROM THIS COMPANY\'S KEY, FROM 
     expect(keyring.companyKeyReleasedFor('acc_1')).toBe(expected);
     expect(disclosure.handle).toBe('ph');
     /* And a second time asks the wallet for no key, only for where to pay. */
-    await keyring.payslipKeyAndPayeeAddress('acc_1', WALLET, view, US);
+    const again = await keyring.payslipKeyAndPayeeAddress('acc_1', WALLET, view, US);
     expect(asks()).toBe(2);
+    /* RED WHEN the company address the key came from is not handed back, first time or after. */
+    expect(again.companyAddress).toBe(ACME);
+  });
+
+  it('A SIGNER WHO MAKES THEMSELVES PAYABLE HAS THEIR COMPANY ON THEIR OWN LIST, ONCE THE SERVICE TOOK IT', async () => {
+    const { keyring, view, personKey } = await journey(identity);
+    expect(keyring.companiesThatPayYou()).toEqual([]);
+    /* A service that refuses: nothing goes on the list. */
+    await expect(keyring.payYourselfHere('acc_1', WALLET, async () => { throw new Error('refused'); }, view, US))
+      .rejects.toThrow('refused');
+    expect(keyring.companiesThatPayYou()).toEqual([]);
+    const sent: string[] = [];
+    const answering = globalThis.fetch;
+    const saved: string[] = [];
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      if (`${String(init?.method ?? 'GET')} ${url}` === 'PUT /api/me/keys') saved.push(JSON.parse(String(init!.body)).keyBundle);
+      return answering(url, init);
+    }) as typeof fetch;
+    await keyring.payYourselfHere('acc_1', WALLET, async (_key, d) => { sent.push(d.handle); }, view, US);
+    expect(sent).toEqual(['ph']);
+    /* RED WHEN a signer paid through self-payee is left off their own list of companies that pay them. */
+    expect(keyring.companiesThatPayYou()).toEqual([ACME]);
+    expect(saved).toHaveLength(1);
+    expect(JSON.parse(unseal(saved[0] as never, personKey)).paidBy).toEqual([ACME]);
+  });
+
+  it('A LIST THAT CANNOT BE SAVED AFTER A SIGNER MADE THEMSELVES PAYABLE IS SAID, NOT SWALLOWED', async () => {
+    const { keyring, view } = await journey(identity);
+    const answering = globalThis.fetch;
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      if (`${String(init?.method ?? 'GET')} ${url}` === 'PUT /api/me/keys') {
+        return { ok: false, status: 409, json: async () => ({ error: 'the keys changed on another device' }) } as Response;
+      }
+      return answering(url, init);
+    }) as typeof fetch;
+    /* RED WHEN the refused save is caught and dropped: the signer is paid and the company never reaches their list. */
+    await expect(keyring.payYourselfHere('acc_1', WALLET, async () => {}, view, US))
+      .rejects.toThrow(/changed on another device/);
+    expect(keyring.companiesThatPayYou()).toEqual([]);
   });
 
   it('A DIFFERENT WALLET ANSWERING THE COMPANY\'S ASK IS REFUSED, AND NO COMPANY KEY IS KEPT', async () => {

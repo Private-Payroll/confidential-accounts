@@ -36,8 +36,8 @@ import { openAccount as openSealedAccount, approvalMessage } from '../core/accou
 import { clobberRefusal, seatToPromote } from './seat-repair.js';
 import type { Account, SealedAccount } from '../core/types.js';
 import {
-  forgetRememberedCompanies, onlyCompanyAddresses, rememberCompany, rememberedCompanies,
-  tidyCompanyAddress,
+  forgetRememberedCompanies, markOlderListTaken, olderListNotYetTaken, onlyCompanyAddresses,
+  rememberCompany, rememberedCompanies, tidyCompanyAddress,
 } from './my-payslips.js';
 
 export interface AccountKeys {
@@ -259,6 +259,8 @@ let walletAddress: string | null = null;
 let releasedCompanyKey: {
   accountId: string;
   key: Hex;
+  /** The company address the wallet was asked about, which is what a payslip key from `key` names. */
+  address: string;
   /** Public. Given in the same answer as the company key, so it is that wallet's. */
   committeeKey: { tag: string; value: string } | null;
 } | null = null;
@@ -848,7 +850,8 @@ async function openKeysOnceOpen(
        * so its company key came from that same wallet. A payslip key can only
        * ever be derived from it, for THIS company. */
       releasedCompanyKey = {
-        accountId: company.accountId, key: toHex(released.companyKey), committeeKey: released.committeeKey,
+        accountId: company.accountId, key: toHex(released.companyKey), address: company.address,
+        committeeKey: released.committeeKey,
       };
     }
   } else {
@@ -891,7 +894,9 @@ export async function payslipKeyAndPayeeAddress(
   accountId: string, walletOrigin: string,
   view: Openable = walletInThisPage(window),
   atOrigin: string = window.location.origin,
-): Promise<{ companyKey: Hex; disclosure: { handle: string; nonce: string; response: unknown } }> {
+): Promise<{
+  companyKey: Hex; companyAddress: string; disclosure: { handle: string; nonce: string; response: unknown };
+}> {
   if (!sessionLive) throw new Error('not signed in');
   /* OPENED IN THE CLICK, and carried through both asks. */
   const dialog = openTheWallet(view, walletOrigin);
@@ -915,8 +920,10 @@ export async function payslipKeyAndPayeeAddress(
       companyKey = companyKeyReleasedFor(accountId);
       if (companyKey === null) throw new Error('your wallet did not give a key for this company.');
     }
+    const companyAddress = releasedCompanyKey?.accountId === accountId ? releasedCompanyKey.address : null;
+    if (companyAddress === null) throw new Error('your wallet did not give a key for this company.');
     const disclosure = await payeeDisclosureFromWallet(accountId, walletOrigin, view, dialog);
-    return { companyKey, disclosure };
+    return { companyKey, companyAddress, disclosure };
   } catch (e) {
     putAway(dialog);
     throw e;
@@ -924,6 +931,25 @@ export async function payslipKeyAndPayeeAddress(
     if (twoAsks) putAway(dialog);
     doneWaiting();
   }
+}
+
+/**
+ * **A SIGNER MADE PAYABLE BY THEIR OWN COMPANY, AND THAT COMPANY PUT ON THEIR
+ * OWN LIST OF COMPANIES THAT PAY THEM.** The key and the address come from the
+ * wallet as `payslipKeyAndPayeeAddress` gets them; `send` hands them to the
+ * service; once it has taken them, the company address the payslip key was
+ * worked out from is saved with this person, as an invitation's is.
+ */
+export async function payYourselfHere(
+  accountId: string, walletOrigin: string,
+  send: (companyKey: Hex, disclosure: { handle: string; nonce: string; response: unknown }) => Promise<void>,
+  view: Openable = walletInThisPage(window),
+  atOrigin: string = window.location.origin,
+): Promise<void> {
+  const { companyKey, companyAddress, disclosure } = await payslipKeyAndPayeeAddress(
+    accountId, walletOrigin, view, atOrigin);
+  await send(companyKey, disclosure);
+  await rememberCompanyThatPaysYou(companyAddress);
 }
 
 /**
@@ -1135,9 +1161,15 @@ export function companiesThatPayYou(storage?: Pick<Storage, 'getItem'> | null): 
 
 /**
  * **ONE MORE COMPANY THAT PAYS YOU, SAVED WITH YOU.** Into the saved keys when
- * this tab has them open; otherwise, or when that save is refused, into this
- * browser's list for this person, which is moved into the saved keys the next
- * time they are opened here. Refuses anything that is not a company address.
+ * this tab has them open. Before they are open, into this browser's list for
+ * this person, which is moved into the saved keys the next time they are
+ * opened here, and says so there if it cannot be. Refuses anything that is not
+ * a company address.
+ *
+ * **ONCE THE SAVED KEYS ARE OPEN, A REFUSED SAVE IS SAID, NEVER KEPT IN THIS
+ * BROWSER INSTEAD.** A person whose first keys cannot be saved from this tab is
+ * told to sign in again in it; keeping the company here instead left it in one
+ * browser with nothing on screen to say so.
  */
 export async function rememberCompanyThatPaysYou(
   address: string, storage?: Pick<Storage, 'getItem' | 'setItem'> | null,
@@ -1152,15 +1184,8 @@ export async function rememberCompanyThatPaysYou(
   if (encKey !== null) {
     const held = onlyCompanyAddresses(keyring.paidBy ?? []);
     if (held.includes(tidy)) return;
-    try {
-      await putBundle({ ...keyring, paidBy: [...held, tidy] });
-      return;
-    } catch (e) {
-      /* Only a person whose first keys cannot be saved from this tab is kept
-       * in this browser instead. Any other refusal, such as keys changed on
-       * another device, is said, so this tab does not go on writing over them. */
-      if (!(e instanceof Error) || e.message !== FIRST_KEYS_NEED_THE_SIGN_IN) throw e;
-    }
+    await putBundle({ ...keyring, paidBy: [...held, tidy] });
+    return;
   }
   rememberCompany(who.id, tidy, storage);
 }
@@ -1168,19 +1193,29 @@ export async function rememberCompanyThatPaysYou(
 /**
  * **WHAT THIS BROWSER HELD FOR THIS PERSON, MOVED INTO THEIR SAVED KEYS.** Run
  * once the saved keys are open. The browser's list is emptied only after the
- * save is taken; a refused save leaves it where it was.
+ * save is taken; a refused save leaves it where it was and is thrown, so the
+ * page says why rather than leaving the list in this browser unsaid.
+ *
+ * **AND THE LIST AN OLDER PAYSLIPS PAGE KEPT HERE FOR NOBODY IN PARTICULAR**,
+ * read once: into the saved keys of the first person whose saved keys take it,
+ * and then marked as taken so it is not read again. It is left where it is and
+ * not emptied. It holds company addresses and nothing else, and anybody using
+ * this browser could already read it.
  */
 export async function bringCompaniesThatPayYouAcross(
-  storage?: (Pick<Storage, 'getItem' | 'removeItem'>) | null,
+  storage?: (Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>) | null,
 ): Promise<void> {
   const who = me;
   if (who === null || encKey === null) return;
   const here = rememberedCompanies(who.id, storage);
-  if (here.length === 0) return;
+  const older = olderListNotYetTaken(storage);
+  if (here.length === 0 && older.length === 0) return;
   const held = onlyCompanyAddresses(keyring.paidBy ?? []);
-  const next = [...new Set([...held, ...here])];
+  const next = [...new Set([...held, ...here, ...older])];
   if (next.length > held.length) await putBundle({ ...keyring, paidBy: next });
-  if (me === who) forgetRememberedCompanies(who.id, storage);
+  if (me !== who) return;
+  if (here.length > 0) forgetRememberedCompanies(who.id, storage);
+  if (older.length > 0) markOlderListTaken(storage);
 }
 
 /**

@@ -84,8 +84,10 @@ export const PAID_MEANS = 'Paid means the company\'s account records your paymen
 export async function wordsForSlips(
   slips: OpenedPayslip[], reader: ChainReader | null, indexer: WalletIndexer | null,
   confirmed: (slip: OpenedPayslip) => boolean, nowSeconds?: number,
+  /** The company addresses this page opened; see `readTheChain`. */
+  openedFor?: Iterable<string>,
 ): Promise<Map<string, PaymentWords>> {
-  const chain = await paymentsOnTheChain(slips, reader, indexer, confirmed, nowSeconds);
+  const chain = await paymentsOnTheChain(slips, reader, indexer, confirmed, nowSeconds, undefined, openedFor);
   return new Map(slips.map(s => [s.runId, paidWords(s, chain.get(s.runId))]));
 }
 
@@ -124,6 +126,11 @@ export interface OpenedAtCompany {
    * for every slip it said nothing about.
    */
   confirmed: (slip: OpenedPayslip) => boolean;
+  /**
+   * The company addresses whose key the wallet gave and whose slips were then
+   * fetched and opened here. Only a receipt naming one of these is read.
+   */
+  openedAt: ReadonlySet<string>;
 }
 
 /**
@@ -146,11 +153,13 @@ export async function openAddresses(
   const missed: string[] = [];
   let indexer: WalletIndexer | null = null;
   const heldWith = new Map<OpenedPayslip, HeldAddresses | null>();
+  const openedAt = new Set<string>();
   for (const address of addresses) {
     try {
       const released = await release(address);
       indexer ??= released.indexer;
       const mine = await opened(payslipKeypairFrom(released.key), address);
+      openedAt.add(address.toLowerCase());
       for (const slip of mine.opened) heldWith.set(slip, released.held ?? null);
       found.push(...mine.opened);
       notOpened += mine.unopened;
@@ -167,7 +176,7 @@ export async function openAddresses(
     return held !== undefined && held !== null && typeof paidTo === 'string'
       && listHolds(held.digests, held.scope, paidTo);
   };
-  return { found, notOpened, refused, missed, indexer, confirmed };
+  return { found, notOpened, refused, missed, indexer, confirmed, openedAt };
 }
 
 /**
@@ -184,7 +193,8 @@ export async function openAndRead(
 ): Promise<{ found: OpenedPayslip[]; words: Map<string, PaymentWords>; notOpened: number; missed: string[] }> {
   const got = await openAddresses(addresses, release, opened);
   return {
-    found: got.found, words: await wordsForSlips(got.found, reader, got.indexer, got.confirmed),
+    found: got.found,
+    words: await wordsForSlips(got.found, reader, got.indexer, got.confirmed, undefined, got.openedAt),
     notOpened: got.notOpened, missed: got.missed,
   };
 }
@@ -262,6 +272,10 @@ export const onThisPage: EmployerViewDeps = {
   reader: payslipReader,
 };
 
+/** The view's sentence about what is kept private, word for word as it was ruled. */
+export const YOUR_PAYSLIPS_PRIVACY = 'Your payslip key never leaves this device. When you open your '
+  + 'payslips, the service sees that you asked about this company; it does not keep a record of it.';
+
 /**
  * **A COMPANY THAT PAYS YOU, AS YOU SEE IT: YOUR PAYSLIPS FROM IT AND NOTHING
  * ELSE.** No roster, no runs, no approvals; nothing a signer sees.
@@ -312,7 +326,8 @@ export function EmployerView({ company, onBack, deps = onThisPage }: {
       }
       if (got.found.some(s => s.receipt)) {
         setChecking(true);
-        const read = await readTheChain(got.found, deps.reader(), got.indexer, got.confirmed);
+        const read = await readTheChain(
+          got.found, deps.reader(), got.indexer, got.confirmed, undefined, undefined, got.openedAt);
         setWords(new Map(got.found.map(s => [s.runId, paidWords(s, read.chain.get(s.runId))])));
         setUnread(read.couldNotRead);
       }
@@ -331,10 +346,7 @@ export function EmployerView({ company, onBack, deps = onThisPage }: {
         <div className="authmark">CA</div>
         <h1>Your payslips</h1>
         <p className="authsub"><code data-company>{company}</code></p>
-        <p className="authsub">
-          The key that opens your payslips is worked out on this device from your wallet. It is
-          not sent to us or saved here, and nobody else holds it, including the company.
-        </p>
+        <p className="authsub" data-privacy>{YOUR_PAYSLIPS_PRIVACY}</p>
 
         {err && <div className="err" data-error>{err}</div>}
 

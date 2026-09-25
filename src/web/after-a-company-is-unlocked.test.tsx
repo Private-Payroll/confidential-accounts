@@ -788,10 +788,10 @@ describe('the companies that pay you are kept with you, sealed, and shown to nob
     aDeployment({ keyBundle: 'another-company' });
     /* Another person's list, held in this browser for them. */
     localStorage.setItem('payslip-companies-of:usr_someone_else', JSON.stringify([ACME]));
-    /* And the list from before lists were kept per person. */
+    /* And the list from before lists were kept per person, which is read only into saved keys, at unlock (below). */
     localStorage.setItem('payslip-companies', JSON.stringify([ACME]));
     await signInAndOpenKeys();
-    /* RED WHEN a list is shown to whoever signs in next, rather than to the person it is for. */
+    /* RED WHEN a browser list is shown to whoever signs in next, rather than to the person it is for. */
     expect(keyring.companiesThatPayYou()).toEqual([]);
     /* Their own list is shown to them, and to nobody once they are signed out. */
     await keyring.rememberCompanyThatPaysYou(BEFORE_UNLOCK);
@@ -799,6 +799,38 @@ describe('the companies that pay you are kept with you, sealed, and shown to nob
     keyring.forgetLocally();
     /* RED WHEN the list outlives the sign-in in this tab. */
     expect(keyring.companiesThatPayYou()).toEqual([]);
+  });
+
+  it('IN A TAB THAT CANNOT SAVE FIRST KEYS, ADDING A COMPANY ONCE THE KEYS ARE OPEN IS REFUSED OUT LOUD, NOT KEPT IN THIS BROWSER', async () => {
+    const { sent } = aDeployment({ keyBundle: 'none' });
+    await openKeysInAReloadedTab();
+    /* RED WHEN the refusal is swallowed and the company is kept in this browser with nothing said. */
+    await expect(keyring.rememberCompanyThatPaysYou(ACME))
+      .rejects.toThrow('Sign in again in this tab, with the same wallet address, and try again.');
+    expect(localStorage.length).toBe(0);
+    expect(sent('PUT /api/me/keys')).toHaveLength(0);
+  });
+
+  it('THE LIST AN OLDER PAGE KEPT HERE FOR NOBODY IS READ ONCE INTO THE SAVED KEYS, AND LEFT WHERE IT WAS', async () => {
+    const { sent } = aDeployment({ keyBundle: 'another-company' });
+    localStorage.setItem('payslip-companies', JSON.stringify([ACME, 'not an address']));
+    await signInAndOpenKeys();
+    await keyring.bringCompaniesThatPayYouAcross();
+    const writes = sent('PUT /api/me/keys');
+    /* RED WHEN the older list is no longer read, and its owner must add each company again. */
+    expect(writes).toHaveLength(1);
+    expect(JSON.parse(unseal(writes[0].body.keyBundle, keyringHex())).paidBy).toEqual([ACME]);
+    expect(keyring.companiesThatPayYou()).toEqual([ACME]);
+    /* RED WHEN it is emptied or changed: nothing is deleted. */
+    expect(localStorage.getItem('payslip-companies')).toBe(JSON.stringify([ACME, 'not an address']));
+    /* RED WHEN it is read again: once taken, the next unlock here reads nothing from it, whatever it holds. */
+    const LATER = 'ef'.repeat(32);
+    localStorage.setItem('payslip-companies', JSON.stringify([LATER]));
+    await keyring.signInWithWallet(WALLET, undefined, new WalletAtTheOtherEnd());
+    await keyring.openKeysWithWallet(WALLET, new WalletAtTheOtherEnd(), US);
+    await keyring.bringCompaniesThatPayYouAcross();
+    expect(sent('PUT /api/me/keys')).toHaveLength(1);
+    expect(keyring.companiesThatPayYou()).toEqual([ACME]);
   });
 
   it('A SAVE REFUSED BECAUSE THE KEYS CHANGED ELSEWHERE IS SAID, AND NOT QUIETLY KEPT IN THIS BROWSER', async () => {
