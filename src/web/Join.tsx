@@ -16,7 +16,7 @@ import * as keyring from './keyring.js';
 import { shownError } from './shown-error.js';
 import { AuthScreen, WALLET_ORIGIN } from './Auth.js';
 import { askWalletToUnlock } from './wallet-unlock.js';
-import { rememberCompany, YOUR_PAY_PATH } from './my-payslips.js';
+import { YOUR_PAY_PATH } from './my-payslips.js';
 import { askWalletForPayeeAddress } from './wallet-payee.js';
 import { openWalletDialog } from './wallet-sign-in.js';
 import { walletInThisPage } from './wallet-frame.js';
@@ -438,8 +438,13 @@ export function JoinScreen({ token }: { token: string }) {
             current.inboxPublicKey),
         }),
       });
-      /* Only an address, which is public; nothing that opens anything. */
-      if (current.companyAddress) rememberCompany(current.companyAddress);
+      /* Only an address, which is public; nothing that opens anything. Saved
+       * with the person who accepted, so the company is on their list wherever
+       * they sign in. The acceptance above has already been taken, so a list
+       * that cannot be written does not undo it. */
+      if (current.companyAddress) {
+        await keyring.rememberCompanyThatPaysYou(current.companyAddress).catch(() => undefined);
+      }
       setAccepted(true);
     } catch (e) {
       setErr(shownError(e, 'accepting an invitation'));

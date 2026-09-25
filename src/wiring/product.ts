@@ -223,7 +223,6 @@ export function unconfiguredLedger(refusal: string, _name: Wiring['name']): Ledg
     address: () => no('the address of an account'),
     status: () => no('the state of an account'),
     paidAmong: () => no('what has been paid among a set of signers'),
-    paidMovementsOf: () => no('what an account has paid'),
     fetch: () => no('a stored record'),
     reseal: () => no('filing an account\'s sealed state'),
     propose: () => no('raising a round'),

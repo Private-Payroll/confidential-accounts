@@ -10,19 +10,18 @@
  * **THE MECHANISM OUTLIVED THE DOOR IT WAS BUILT FOR, AND OTHERS USE IT.**
  * `WalletIdentityService` counts every challenge and every sign-in attempt on
  * the `ip` scope; `GET /api/invites/:token/offer`, a METERED door that answers
- * a stranger, counts on `invite-offer`; and the four doors a payee asks for
- * their own payslips by, which take no sign-in, share `payslips`. None is a
- * guessing oracle the way login was; what a limit buys them is that an attempt
- * is BOUNDED and therefore visible.
+ * a stranger, counts on `invite-offer`; and the three doors a payee asks for
+ * their own payslips by, which answer a signed-in person only, share
+ * `payslips`. None is a guessing oracle the way login was; what a limit buys
+ * them is that an attempt is BOUNDED and therefore visible.
  *
  * **THE WORD `METERED` IS DOING REAL WORK AND USED TO BE MISSING.** This
  * sentence once said *the one door that answers a stranger*, flat, and that is
- * FALSE at source: **sixteen routes in `src/server/index.ts` carry no
- * `authed`**, thirteen of them wrapped by `wrap` and three registered bare. Read
+ * FALSE at source: **twelve routes in `src/server/index.ts` carry no
+ * `authed`**, nine of them wrapped by `wrap` and three registered bare. Read
  * as written it would say the unauthenticated surface is one endpoint wide and
- * metered, when it is sixteen wide: five are metered in the route itself,
- * through two meters, and the two wallet sign-in doors are metered inside the
- * service.
+ * metered, when it is twelve wide: one is metered in the route itself, and the
+ * two wallet sign-in doors are metered inside the service.
  *
  * ONE MECHANISM, A SCOPE PER DOOR. Each is the same bucket with a different
  * `scope`, so there is one rule to get right rather than one per caller.
@@ -120,11 +119,11 @@ export const DEFAULT_POLICY: Record<string, LimitPolicy> = {
    */
   'invite-offer': { max: 30, windowSeconds: 15 * 60 },
   /**
-   * **A PAYEE'S OWN PAYSLIPS, ASKED WITHOUT A SIGN-IN.** The page makes three
-   * requests per company address it knows - the addresses, the proof, the list.
-   * Whether each was paid it reads through the indexer the payee's wallet
-   * names, not from here. The endpoint for a company's completed payments
-   * shares this limit.
+   * **A PAYEE'S OWN PAYSLIPS, ASKED BY A SIGNED-IN PERSON.** The page makes
+   * three requests per company it opens - the addresses, then the proof and the
+   * list for each address. Whether each was paid it reads through the indexer
+   * the payee's wallet names, not from here. Counted by where the request comes
+   * from, on top of the sign-in.
    * Sixty in a quarter of an hour is a person opening their
    * payslips many times over, and bounds what one caller can make the service
    * read.

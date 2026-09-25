@@ -7,8 +7,9 @@ import { payslipPublicKeyOf } from '../core/payslip-open.js';
 import { assets } from '../core/assets.js';
 import {
   fetchMyPayslips, payslipAddressesFor, rememberCompany, rememberedCompanies, tidyCompanyAddress,
-  type Fetch,
+  forgetRememberedCompanies, PageOutOfDate, type Fetch,
 } from './my-payslips.js';
+import { PAGE_OUT_OF_DATE, PAYSLIP_PAGE_HEADER, PAYSLIP_PAGE_VERSION } from '../core/payslip-page.js';
 import { hiringAssets, invitingAssets } from './hiring-assets.js';
 import { paymentWords } from './YourPay.js';
 
@@ -52,7 +53,7 @@ const service = (slips: SealedPayslip[]) => {
 };
 
 describe('a payee\'s own payslips are fetched sealed and opened on this device', () => {
-  it('OPENS THEIR SLIPS, AND THE SECRET IS IN NO REQUEST AND NO SIGN-IN RIDES ALONG', async () => {
+  it('OPENS THEIR SLIPS, THE SECRET IS IN NO REQUEST, AND THE SIGN-IN AND THE PAGE RIDE ALONG', async () => {
     const me = newWrappingKeypair();
     const someoneElse = newWrappingKeypair();
     const { fetcher, seen } = service([
@@ -69,9 +70,22 @@ describe('a payee\'s own payslips are fetched sealed and opened on this device',
       /* RED WHEN the secret is sent to prove the key, or rides in an address. */
       expect(r.url).not.toContain(me.secret);
       expect(String(r.init?.body ?? '')).not.toContain(me.secret);
-      /* RED WHEN the request carries this page's sign-in. */
-      expect(r.init?.credentials).toBe('omit');
+      /* RED WHEN the request goes without this page's sign-in: the service refuses it. */
+      expect(r.init?.credentials).toBe('same-origin');
+      /* RED WHEN the page does not name itself: the service tells it it is out of date. */
+      expect((r.init?.headers as Record<string, string>)[PAYSLIP_PAGE_HEADER]).toBe(PAYSLIP_PAGE_VERSION);
     }
+  });
+
+  it('A SERVICE THAT SAYS THIS PAGE IS OUT OF DATE IS SAID IN ITS WORDS, AND NOT AS ONE ADDRESS FAILING', async () => {
+    const me = newWrappingKeypair();
+    const stale: Fetch = async () => new Response(
+      JSON.stringify({ code: 'payslip-page-out-of-date', error: PAGE_OUT_OF_DATE }), { status: 409 });
+    /* RED WHEN the refusal is read as an ordinary failure. */
+    const failed = await fetchMyPayslips(me, 'ab'.repeat(32), stale).catch((e: unknown) => e);
+    expect(failed).toBeInstanceOf(PageOutOfDate);
+    expect((failed as Error).message).toBe('This page is out of date. Reload it and open your payslips again.');
+    await expect(payslipAddressesFor('ab'.repeat(32), stale)).rejects.toBeInstanceOf(PageOutOfDate);
   });
 
   it('SOMETHING THAT IS NOT A SLIP AT ALL IS AN ERROR, NOT A SLIP THAT DID NOT OPEN', async () => {
@@ -81,7 +95,7 @@ describe('a payee\'s own payslips are fetched sealed and opened on this device',
     await expect(fetchMyPayslips(me, 'ab'.repeat(32), fetcher)).rejects.toThrow(TypeError);
   });
 
-  it('THE ADDRESSES ARE ASKED FOR WITHOUT THE SIGN-IN TOO', async () => {
+  it('THE ADDRESSES ARE ASKED FOR WITH THE SIGN-IN TOO', async () => {
     const seen: Array<{ url: string; init?: RequestInit }> = [];
     const fetcher: Fetch = async (url, init) => {
       seen.push({ url, init });
@@ -89,8 +103,9 @@ describe('a payee\'s own payslips are fetched sealed and opened on this device',
     };
     expect(await payslipAddressesFor('ab'.repeat(32), fetcher)).toEqual(['cd'.repeat(32)]);
     expect(seen[0].url).toBe(`/api/payslips/addresses?company=${'ab'.repeat(32)}`);
-    /* RED WHEN it carries this page's sign-in, which would tie a person to a company. */
-    expect(seen[0].init?.credentials).toBe('omit');
+    /* RED WHEN it goes without the sign-in, or without naming the page. */
+    expect(seen[0].init?.credentials).toBe('same-origin');
+    expect((seen[0].init?.headers as Record<string, string>)[PAYSLIP_PAGE_HEADER]).toBe(PAYSLIP_PAGE_VERSION);
   });
 
   it('A PUBLIC KEY WORKED OUT FROM THE SECRET IS THE ONE THE SLIPS ARE SEALED TO', () => {
@@ -99,24 +114,39 @@ describe('a payee\'s own payslips are fetched sealed and opened on this device',
   });
 });
 
-describe('which companies this browser has been told pay you', () => {
+describe('which companies this browser holds for one person', () => {
   const memory = () => {
     const m = new Map<string, string>();
-    return { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => { m.set(k, v); } };
+    return {
+      getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => { m.set(k, v); },
+      removeItem: (k: string) => { m.delete(k); },
+    };
   };
 
   it('KEEPS COMPANY ADDRESSES AND NOTHING ELSE', () => {
     const s = memory();
-    expect(rememberCompany('0x' + 'AB'.repeat(32), s)).toEqual(['ab'.repeat(32)]);
-    expect(rememberCompany('ab'.repeat(32), s)).toEqual(['ab'.repeat(32)]);
-    expect(rememberCompany('not an address', s)).toEqual(['ab'.repeat(32)]);
-    expect(rememberedCompanies(s)).toEqual(['ab'.repeat(32)]);
+    expect(rememberCompany('usr_a', '0x' + 'AB'.repeat(32), s)).toEqual(['ab'.repeat(32)]);
+    expect(rememberCompany('usr_a', 'ab'.repeat(32), s)).toEqual(['ab'.repeat(32)]);
+    expect(rememberCompany('usr_a', 'not an address', s)).toEqual(['ab'.repeat(32)]);
+    expect(rememberedCompanies('usr_a', s)).toEqual(['ab'.repeat(32)]);
     expect(tidyCompanyAddress('12')).toBeNull();
   });
 
+  it('ANOTHER PERSON IN THE SAME BROWSER IS NEVER SHOWN IT', () => {
+    const s = memory();
+    rememberCompany('usr_a', 'ab'.repeat(32), s);
+    /* RED WHEN the list is kept for the browser rather than for the person. */
+    expect(rememberedCompanies('usr_b', s)).toEqual([]);
+    /* And the list from before, kept for nobody in particular, is shown to nobody. */
+    s.setItem('payslip-companies', JSON.stringify(['cd'.repeat(32)]));
+    expect(rememberedCompanies('usr_b', s)).toEqual([]);
+    forgetRememberedCompanies('usr_a', s);
+    expect(rememberedCompanies('usr_a', s)).toEqual([]);
+  });
+
   it('A BROKEN LIST READS AS EMPTY RATHER THAN THROWING', () => {
-    expect(rememberedCompanies({ getItem: () => '{not json' })).toEqual([]);
-    expect(rememberedCompanies({ getItem: () => { throw new Error('blocked'); } })).toEqual([]);
+    expect(rememberedCompanies('usr_a', { getItem: () => '{not json' })).toEqual([]);
+    expect(rememberedCompanies('usr_a', { getItem: () => { throw new Error('blocked'); } })).toEqual([]);
   });
 });
 

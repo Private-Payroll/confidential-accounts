@@ -36,6 +36,7 @@ import {
 import { assets as assetRegistry, parseAmount } from '../core/assets.js';
 import { bigintJsonReplacer, wrapKey } from '../core/crypto.js';
 import { payslipProofSubject } from '../core/payslip-open.js';
+import { PAGE_OUT_OF_DATE, PAYSLIP_PAGE_HEADER, isCurrentPayslipPage } from '../core/payslip-page.js';
 import {
   SIGNED_IN_AS_HEADER, anotherPersonRefusal, answerCarriesToken, clearedSessionCookie,
   cookieScopeFor, credentialOf, crossSiteWriteRefusal, sessionCookie,
@@ -2000,25 +2001,29 @@ app.get('/api/runs/:runId/employee/:employeeId', (_req, res) => {
 });
 
 /*
- * **A PAYEE'S OWN PAYSLIPS, TO THE HOLDER OF THEIR KEY AND NOBODY ELSE.**
+ * **A PAYEE'S OWN PAYSLIPS, TO A SIGNED-IN PERSON WHO HOLDS THEIR KEY.**
  *
- * Two steps and no sign-in. The first seals a one-use value to the public key
- * asked about; only the holder of the matching secret can read it back, and
- * the second step hands over the slips only for that value. What is handed
- * over is ciphertext that the same secret opens in the payee's browser; this
- * service never holds that secret and cannot read what it hands over.
+ * Two locks, and both are required. The first is the sign-in: every route here
+ * answers only a live session, as every company route does. The second is the
+ * key: the first step seals a one-use value to the public key asked about, only
+ * the holder of the matching secret can read it back, and the second step hands
+ * over the slips only for that value. What is handed over is ciphertext that
+ * the same secret opens in the payee's browser; this service never holds that
+ * secret and cannot read what it hands over.
  *
- * **NO SESSION IS READ, DELIBERATELY.** Which signed-in person is paid by which
- * company is sealed inside the company's own records, and a lookup tied to a
- * session would write that link down here in the clear. The page asks without
- * its sign-in for the same reason.
+ * **WHAT THE SIGN-IN COSTS, SAID RATHER THAN LEFT TO BE FOUND.** While it
+ * answers, this service sees which signed-in person asked for slips naming which
+ * company address. Nothing here writes that down: no route stores it, and the
+ * refusal log records a request's method and address and no session. Which
+ * companies pay a person is kept in that person's own saved keys, sealed under
+ * the key their wallet releases, and this service cannot read it there.
  *
  * The first step answers the same way whether or not any slip is sealed to that
  * key, so asking does not reveal whether somebody is on a payroll here.
  */
 /*
- * Metered by who is asking, because nothing else identifies the caller here.
- * A caller with no address is not counted, as on the offer route.
+ * Metered by where the request comes from, on top of the sign-in. A caller with
+ * no address is not counted, as on the offer route.
  */
 const payslipsMetered = async (req: express.Request, res: express.Response): Promise<boolean> => {
   const from = context(req).ip;
@@ -2027,24 +2032,34 @@ const payslipsMetered = async (req: express.Request, res: express.Response): Pro
   if (decision.allowed) return true;
   res.setHeader('Retry-After', String(decision.retryAfterSeconds));
   res.status(429).json({
-    error: 'too many payslip requests from here. These requests need no sign-in, so they are '
-      + `metered. Try again in ${decision.retryAfterSeconds} seconds.`,
+    error: `too many payslip requests from here. Try again in ${decision.retryAfterSeconds} seconds.`,
     retryAfterSeconds: decision.retryAfterSeconds,
   });
   return false;
 };
 
+/*
+ * **A PAGE OLDER THAN THESE ROUTES IS TOLD TO RELOAD, BEFORE ANYTHING ELSE.**
+ * It sends no sign-in, and a bare "not signed in" would send somebody who is
+ * signed in back to a sign-in. Checked ahead of the sign-in, and it answers
+ * nothing but the refusal, so no route here answers without a sign-in.
+ */
+const currentPayslipPage: express.RequestHandler = (req, res, next) => {
+  if (isCurrentPayslipPage(req.headers[PAYSLIP_PAGE_HEADER])) { next(); return; }
+  res.status(409).json({ code: 'payslip-page-out-of-date', error: PAGE_OUT_OF_DATE });
+};
+
 const payslipKey = z.string().regex(/^[0-9a-fA-F]{64}$/u, 'a payslip key is 32 bytes of hex')
   .transform(k => k.toLowerCase());
 
-app.post('/api/payslips/proof', wrap(async (req, res) => {
+app.post('/api/payslips/proof', currentPayslipPage, authed, wrap(async (req, res) => {
   if (!await payslipsMetered(req, res)) return;
   const b = z.object({ publicKey: payslipKey }).parse(req.body);
   const { challenge, expiresAt } = await payslipProofs.issue(payslipProofSubject(b.publicKey));
   res.json({ sealed: wrapKey(challenge, b.publicKey), expiresAt });
 }));
 
-app.post('/api/payslips', wrap(async (req, res) => {
+app.post('/api/payslips', currentPayslipPage, authed, wrap(async (req, res) => {
   if (!await payslipsMetered(req, res)) return;
   const b = z.object({
     publicKey: payslipKey,
@@ -2069,37 +2084,18 @@ app.post('/api/payslips', wrap(async (req, res) => {
 }));
 
 /*
- * **EVERY COMPLETED PAYMENT A COMPANY'S ACCOUNT HOLDS, ASKED BY ITS ADDRESS.**
- *
- * **THE PAYSLIPS PAGE DOES NOT ASK THIS.** It reads the company's contract
- * itself, on the payee's device, through the indexer the payee's wallet names,
- * so the record it shows is the one that indexer reports, not this service's
- * relay of it. Nothing in this application calls it now. This answer is the
- * same public state as this service reads it, relayed whole: the request
- * names a company address and nothing else, and no answer depends on who is
- * asking.
- *
- * `known: false` when the address is not exactly one company's address now,
- * or the ledger this service is wired to cannot say. A read that fails
- * answers an error instead. The page says it cannot tell in both cases, never
- * that a payment has not been made.
+ * `GET /api/payslips/paid` STOOD HERE AND IS GONE. It relayed a company's
+ * completed payments, and nothing called it once the payslip page read the
+ * company's contract itself, through the indexer the payee's wallet names.
  */
-app.get('/api/payslips/paid', wrap(async (req, res) => {
-  if (!await payslipsMetered(req, res)) return;
-  const company = z.string().regex(/^[0-9a-fA-F]{64}$/u, 'a company address is 32 bytes of hex')
-    .parse(String(req.query.company ?? ''));
-  const accountId = payroll.accountAtCompanyAddress(company);
-  const read = accountId === null ? null : await ledger.paidMovementsOf(accountId);
-  res.json(read === null || !read.known ? { known: false, movements: [] } : read);
-}));
 
 /*
  * **EVERY ADDRESS A COMPANY'S PAYSLIPS NAME, FROM ANY ONE OF THEM.** A payee
  * who knows only a company's address today still reaches slips sealed under an
  * address it had before. Contract addresses are public on a chain, and this
- * answers with nothing else.
+ * answers with nothing else, to a signed-in person only.
  */
-app.get('/api/payslips/addresses', wrap(async (req, res) => {
+app.get('/api/payslips/addresses', currentPayslipPage, authed, wrap(async (req, res) => {
   if (!await payslipsMetered(req, res)) return;
   const company = z.string().regex(/^[0-9a-fA-F]{64}$/u, 'a company address is 32 bytes of hex')
     .parse(String(req.query.company ?? ''));

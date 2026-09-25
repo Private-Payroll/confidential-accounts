@@ -83,7 +83,8 @@ export function AuthScreen({ onDone, notice = '' }: {
 /** Shown after sign in when the user is on zero or several accounts. */
 export function AccountPicker({
   user, accounts, onOpen, onUnlock, onCreateWithWallet, onFinishSetup,
-  awaitingSetup, onDemo, onSignOut, onYourPay, busy, err,
+  awaitingSetup, onDemo, onSignOut, employers = [], onOpenEmployer, onAddEmployer, onUnlockEmployers,
+  busy, err,
 }: {
   user: keyring.Me;
   accounts: any[];
@@ -100,14 +101,67 @@ export function AccountPicker({
   /** The company this tab created and has not finished sealing, if any. */
   awaitingSetup: string | null;
   onDemo: () => void;
-  /** The payee's own payslips. Absent where the screen offers no way there. */
-  onYourPay?: () => void;
+  /**
+   * The companies that pay this person, by contract address: from their saved
+   * keys once those are open here, and from what this browser holds for them.
+   */
+  employers?: string[];
+  /** Opens one of them: that person's own payslips from it, and nothing a signer sees. */
+  onOpenEmployer?: (company: string) => void;
+  /** Saves one more company that pays this person, with them. */
+  onAddEmployer?: (company: string) => void;
+  /** Opens the keys saved for this person, which is where the list of companies that pay them is kept. */
+  onUnlockEmployers?: () => void;
   onSignOut: () => void;
   busy: boolean;
   err?: string;
 }) {
   const [name, setName] = useState('');
+  const [adding, setAdding] = useState('');
   const wallet = keyring.signedInWallet();
+
+  /*
+   * **THE COMPANIES THAT PAY YOU, BESIDE THE ONES YOU SIGN FOR, EACH MARKED.**
+   * A company that pays you and that you also sign for has a row of each kind,
+   * one for each thing you are there. Opening one of these shows your payslips
+   * from it and nothing else.
+   */
+  const paidBy = onOpenEmployer && (
+    <>
+      {employers.length > 0 && (
+        <div className="acctlist" data-employers>
+          {employers.map(c => (
+            <button key={c} className="acctrow" data-employer={c} disabled={busy}
+              onClick={() => onOpenEmployer(c)}>
+              <div>
+                <b>A company that pays you</b>
+                <span><code>{c}</code></span>
+              </div>
+              <span className="chev">Open</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {!keyring.canOpenCompanies() && onUnlockEmployers && (
+        <div className="acctlist">
+          <button className="acctrow" data-unlock-employers disabled={busy} onClick={onUnlockEmployers}>
+            <div><b>Companies that pay you</b></div>
+            <span className="chev">{busy ? 'Waiting for your wallet' : 'Unlock'}</span>
+          </button>
+        </div>
+      )}
+      {/* Not a form: the form on this screen is the one that starts a company. */}
+      {onAddEmployer && (
+        <div className="acctnew" data-add-employer>
+          <input value={adding} onChange={e => setAdding(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && !busy && adding.trim() !== '') { onAddEmployer(adding.trim()); setAdding(''); } }}
+            placeholder="Add a company's address" />
+          <button type="button" disabled={busy || adding.trim() === ''}
+            onClick={() => { onAddEmployer(adding.trim()); setAdding(''); }}>Add</button>
+        </div>
+      )}
+    </>
+  );
   const setupProblem = keyring.companyAwaitingSetupProblem();
 
   /**
@@ -152,6 +206,8 @@ export function AccountPicker({
             </div>
           )}
 
+          {paidBy}
+
           {/*
             * **AN ADDRESS THIS DEPLOYMENT HAS NEVER SEEN.** A person here is one
             * wallet address, so an address that is new here has nothing, even when
@@ -166,7 +222,7 @@ export function AccountPicker({
             </p>
           )}
 
-          {accounts.length === 0 && !awaitingSetup && (
+          {accounts.length === 0 && employers.length === 0 && !awaitingSetup && (
             <p className="authsub">
               You are not a signer on any company here yet. Start one below, or ask a
               colleague to invite you — an invitation brings you back to this screen.
@@ -203,7 +259,6 @@ export function AccountPicker({
           {err && <div className="autherr">{err}</div>}
           {wallet && <p className="authsub"><b>You signed in as</b><br />{wallet}</p>}
           <div className="authswap">
-            {onYourPay && <><a data-your-pay-link onClick={onYourPay}>Your payslips</a><span> · </span></>}
             <a onClick={onSignOut}>Sign out</a>
           </div>
         </div>
@@ -233,7 +288,9 @@ export function AccountPicker({
           </div>
         )}
 
-        {accounts.length === 0 && (
+        {paidBy}
+
+        {accounts.length === 0 && employers.length === 0 && (
           <div className="empty">
             <b>No accounts yet</b>
             Create one, or ask a colleague to invite you to theirs.
@@ -268,7 +325,6 @@ export function AccountPicker({
         <div className="authswap">
           <a onClick={onDemo}>Load a demo company</a>
           <span> · </span>
-          {onYourPay && <><a data-your-pay-link onClick={onYourPay}>Your payslips</a><span> · </span></>}
           <a onClick={onSignOut}>Sign out</a>
         </div>
       </div>

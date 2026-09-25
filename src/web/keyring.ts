@@ -35,6 +35,10 @@ import { askWalletForPayeeAddress } from './wallet-payee.js';
 import { openAccount as openSealedAccount, approvalMessage } from '../core/account.js';
 import { clobberRefusal, seatToPromote } from './seat-repair.js';
 import type { Account, SealedAccount } from '../core/types.js';
+import {
+  forgetRememberedCompanies, onlyCompanyAddresses, rememberCompany, rememberedCompanies,
+  tidyCompanyAddress,
+} from './my-payslips.js';
 
 export interface AccountKeys {
   signerId: string;
@@ -187,6 +191,18 @@ export interface Keyring {
    * `JSON.parse` of one must keep working.
    */
   pendingSeats?: Record<string, PendingSeat>;
+  /**
+   * **THE COMPANIES THAT PAY THIS PERSON, BY THEIR PUBLIC CONTRACT ADDRESS.**
+   *
+   * Kept here, sealed with everything else, because the service must not hold
+   * in a form it can read which signed-in person is paid by which company. It
+   * holds nothing that opens anything: the key that opens a payslip is worked
+   * out from the wallet each time.
+   *
+   * **Optional, because saved keys written before it have no such field** and
+   * `JSON.parse` of them must keep working.
+   */
+  paidBy?: string[];
 }
 
 export interface Me { id: string; email: string | null; name: string }
@@ -1103,6 +1119,68 @@ export async function rememberAccount(accountId: string, keys: AccountKeys) {
   if (!encKey) throw new Error('not signed in');
   refuseToClobber(accountId, keys);
   await putBundle({ ...keyring, accounts: { ...keyring.accounts, [accountId]: keys } });
+}
+
+/**
+ * **THE COMPANIES THAT PAY THE SIGNED-IN PERSON: WHAT THEIR SAVED KEYS HOLD,
+ * WHEN THIS TAB HAS THEM OPEN, AND WHAT THIS BROWSER HOLDS FOR THEM ALONE.**
+ * Empty for nobody signed in. Never another person's: the browser's list is
+ * kept under the person it was written for.
+ */
+export function companiesThatPayYou(storage?: Pick<Storage, 'getItem'> | null): string[] {
+  if (me === null) return [];
+  const saved = encKey === null ? [] : onlyCompanyAddresses(keyring.paidBy ?? []);
+  return [...new Set([...saved, ...rememberedCompanies(me.id, storage)])];
+}
+
+/**
+ * **ONE MORE COMPANY THAT PAYS YOU, SAVED WITH YOU.** Into the saved keys when
+ * this tab has them open; otherwise, or when that save is refused, into this
+ * browser's list for this person, which is moved into the saved keys the next
+ * time they are opened here. Refuses anything that is not a company address.
+ */
+export async function rememberCompanyThatPaysYou(
+  address: string, storage?: Pick<Storage, 'getItem' | 'setItem'> | null,
+): Promise<void> {
+  const who = me;
+  if (who === null) throw new Error('not signed in');
+  const tidy = tidyCompanyAddress(address);
+  if (tidy === null) {
+    throw new Error('That is not a company address. It is 64 characters of 0-9 and a-f; the company '
+      + 'that pays you can tell you theirs.');
+  }
+  if (encKey !== null) {
+    const held = onlyCompanyAddresses(keyring.paidBy ?? []);
+    if (held.includes(tidy)) return;
+    try {
+      await putBundle({ ...keyring, paidBy: [...held, tidy] });
+      return;
+    } catch (e) {
+      /* Only a person whose first keys cannot be saved from this tab is kept
+       * in this browser instead. Any other refusal, such as keys changed on
+       * another device, is said, so this tab does not go on writing over them. */
+      if (!(e instanceof Error) || e.message !== FIRST_KEYS_NEED_THE_SIGN_IN) throw e;
+    }
+  }
+  rememberCompany(who.id, tidy, storage);
+}
+
+/**
+ * **WHAT THIS BROWSER HELD FOR THIS PERSON, MOVED INTO THEIR SAVED KEYS.** Run
+ * once the saved keys are open. The browser's list is emptied only after the
+ * save is taken; a refused save leaves it where it was.
+ */
+export async function bringCompaniesThatPayYouAcross(
+  storage?: (Pick<Storage, 'getItem' | 'removeItem'>) | null,
+): Promise<void> {
+  const who = me;
+  if (who === null || encKey === null) return;
+  const here = rememberedCompanies(who.id, storage);
+  if (here.length === 0) return;
+  const held = onlyCompanyAddresses(keyring.paidBy ?? []);
+  const next = [...new Set([...held, ...here])];
+  if (next.length > held.length) await putBundle({ ...keyring, paidBy: next });
+  if (me === who) forgetRememberedCompanies(who.id, storage);
 }
 
 /**

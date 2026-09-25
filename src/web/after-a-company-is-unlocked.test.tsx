@@ -741,3 +741,92 @@ describe('A PERSON\'S FIRST KEYS ARE SAVED ONLY FROM THE TAB THAT SIGNED THEM IN
     expect(keyring.keysFor('acc_new')).not.toBeNull();
   });
 });
+
+describe('the companies that pay you are kept with you, sealed, and shown to nobody else', () => {
+  const ACME = 'ab'.repeat(32);
+  const BEFORE_UNLOCK = 'cd'.repeat(32);
+  afterEach(() => { localStorage.clear(); });
+
+  it('A COMPANY ADDED ONCE THE SAVED KEYS ARE OPEN IS SAVED INSIDE THEM, BESIDE WHAT WAS THERE', async () => {
+    const { sent } = aDeployment({ keyBundle: 'another-company' });
+    await signInAndOpenKeys();
+    await keyring.rememberCompanyThatPaysYou('0x' + ACME.toUpperCase());
+    const writes = sent('PUT /api/me/keys');
+    /* RED WHEN the list is not saved with the person. */
+    expect(writes).toHaveLength(1);
+    /* RED WHEN the address crosses the wire where the service can read it. */
+    expect(JSON.stringify(writes[0].body)).not.toContain(ACME);
+    const inside = JSON.parse(unseal(writes[0].body.keyBundle, keyringHex()));
+    expect(inside.paidBy).toEqual([ACME]);
+    /* RED WHEN saving the list drops a company's keys. */
+    expect(Object.keys(inside.accounts)).toEqual(['acc_other']);
+    expect(keyring.companiesThatPayYou()).toEqual([ACME]);
+    /* Nothing is left in this browser: it is in the saved keys. */
+    expect(localStorage.length).toBe(0);
+    /* Adding it again writes nothing. */
+    await keyring.rememberCompanyThatPaysYou(ACME);
+    expect(sent('PUT /api/me/keys')).toHaveLength(1);
+  });
+
+  it('ONE ADDED BEFORE THEY ARE OPEN IS HELD FOR THIS PERSON AND MOVED INTO THEM AT THE NEXT UNLOCK', async () => {
+    const { sent } = aDeployment({ keyBundle: 'another-company' });
+    await keyring.signInWithWallet(WALLET, undefined, new WalletAtTheOtherEnd());
+    await keyring.rememberCompanyThatPaysYou(BEFORE_UNLOCK);
+    expect(sent('PUT /api/me/keys')).toHaveLength(0);
+    expect(keyring.companiesThatPayYou()).toEqual([BEFORE_UNLOCK]);
+    await keyring.openKeysWithWallet(WALLET, new WalletAtTheOtherEnd(), US);
+    await keyring.bringCompaniesThatPayYouAcross();
+    const writes = sent('PUT /api/me/keys');
+    /* RED WHEN what this browser held is never moved into the saved keys. */
+    expect(writes).toHaveLength(1);
+    expect(JSON.parse(unseal(writes[0].body.keyBundle, keyringHex())).paidBy).toEqual([BEFORE_UNLOCK]);
+    expect(localStorage.length).toBe(0);
+    expect(keyring.companiesThatPayYou()).toEqual([BEFORE_UNLOCK]);
+  });
+
+  it('SOMEBODY ELSE SIGNED IN IN THIS BROWSER IS NOT SHOWN THEM, AND NOBODY SIGNED IN IS SHOWN NOTHING', async () => {
+    aDeployment({ keyBundle: 'another-company' });
+    /* Another person's list, held in this browser for them. */
+    localStorage.setItem('payslip-companies-of:usr_someone_else', JSON.stringify([ACME]));
+    /* And the list from before lists were kept per person. */
+    localStorage.setItem('payslip-companies', JSON.stringify([ACME]));
+    await signInAndOpenKeys();
+    /* RED WHEN a list is shown to whoever signs in next, rather than to the person it is for. */
+    expect(keyring.companiesThatPayYou()).toEqual([]);
+    /* Their own list is shown to them, and to nobody once they are signed out. */
+    await keyring.rememberCompanyThatPaysYou(BEFORE_UNLOCK);
+    expect(keyring.companiesThatPayYou()).toEqual([BEFORE_UNLOCK]);
+    keyring.forgetLocally();
+    /* RED WHEN the list outlives the sign-in in this tab. */
+    expect(keyring.companiesThatPayYou()).toEqual([]);
+  });
+
+  it('A SAVE REFUSED BECAUSE THE KEYS CHANGED ELSEWHERE IS SAID, AND NOT QUIETLY KEPT IN THIS BROWSER', async () => {
+    aDeployment({ keyBundle: 'another-company', bundleWriteRefused: true });
+    await signInAndOpenKeys();
+    /* RED WHEN every refusal falls back to this browser, leaving this tab writing over newer keys. */
+    await expect(keyring.rememberCompanyThatPaysYou(ACME)).rejects.toThrow(/changed on another device/);
+    expect(localStorage.length).toBe(0);
+  });
+
+  it('ONCE THE SAVED KEYS ARE OPEN, THE COMPANIES THAT PAY YOU ARE STILL LISTED, BESIDE THE ONES YOU SIGN FOR', async () => {
+    aDeployment({ keyBundle: 'another-company' });
+    await signInAndOpenKeys();
+    const { AccountPicker } = await import('./Auth.js');
+    const { container } = render(
+      <AccountPicker
+        user={{ id: PERSON, email: null, name: '' }} busy={false}
+        accounts={[{ id: 'acc_other', name: 'Globex', signers: 1, threshold: 1, wiring: 'chain' }]}
+        onOpen={() => {}} onUnlock={() => {}} onCreateWithWallet={() => {}}
+        onFinishSetup={() => {}} awaitingSetup={null} onDemo={() => {}} onSignOut={() => {}}
+        employers={[ACME]} onOpenEmployer={() => {}} onAddEmployer={() => {}} onUnlockEmployers={() => {}} />);
+    expect(container.querySelector('h1')?.textContent).toBe('Your accounts');
+    /* RED WHEN the unlocked face drops the companies that pay you. */
+    const paying = container.querySelectorAll('[data-employer]');
+    expect(paying).toHaveLength(1);
+    expect(paying[0].textContent).toContain('A company that pays you');
+    expect(container.textContent).toContain('Globex');
+    /* Nothing to unlock once the keys are open. */
+    expect(container.querySelector('[data-unlock-employers]')).toBeNull();
+  });
+});

@@ -7,7 +7,7 @@ import { newWords } from 'midnight-identity';
 import type { User } from '../core/types.js';
 
 /**
- * **A PAYEE'S PAYSLIPS OVER THE WIRE: TO THE HOLDER OF THE KEY, AS
+ * **A PAYEE'S PAYSLIPS OVER THE WIRE: TO A SIGNED-IN HOLDER OF THE KEY, AS
  * CIPHERTEXT, AND NO ROUTE TAKES THE KEY.**
  *
  * The store is written first by the product's own services, the way a company
@@ -34,6 +34,9 @@ const { unwrapKey } = await import('../core/crypto.js');
 const { payeeFor } = await import('../testing/payees.js');
 const { paymentWords } = await import('../web/YourPay.js');
 const { aVaultHolding } = await import('../testing/assets.js');
+const { signInWithAWallet } = await import('../testing/wallet-session.js');
+const { theNetwork } = await import('../midnight/network.js');
+const { PAGE_OUT_OF_DATE, PAYSLIP_PAGE_HEADER, PAYSLIP_PAGE_VERSION } = await import('../core/payslip-page.js');
 
 /* ── the company, written before the server starts ──────────────────── */
 const seeded = await (async () => {
@@ -71,41 +74,53 @@ const seeded = await (async () => {
   const { run } = await payroll.createRunFromRoster(account.id, '2026-08', viewingKey);
   return { dana, eli, address, runId: run.id, accountId: account.id };
 })();
-const ONE_PAYMENT = 'ab'.repeat(32);
 
 const { handInWiring } = await import('../wiring/handed-in.js');
 handInWiring({
   name: 'simulated',
   commitments: SimulatedCommitments,
-  /*
-   * A ledger double, named: it answers for the accounts it holds with one
-   * completed payment, so the route's own choice of account is what is tested
-   * rather than a ledger that cannot say for anybody.
-   */
-  createLedger: () => Object.assign(new SimulatedLedger(SimulatedCommitments), {
-    paidMovementsOf: async (accountId: string) =>
-      (accountId === seeded.accountId ? { known: true, movements: [ONE_PAYMENT] } : null),
-  }),
+  createLedger: () => new SimulatedLedger(SimulatedCommitments),
   createProofSystem: () => new SimulatedProofSystem(),
 });
 const { app } = await import('./index.js');
 
 let server: Server;
 let base: string;
+/* A signed-in person. The payslip routes answer nobody else; the key is the second lock. */
+let token = '';
 beforeAll(async () => {
   server = await new Promise<Server>(resolve => { const s = app.listen(0, () => resolve(s)); });
   const a = server.address();
   if (!a || typeof a === 'string') throw new Error('no port');
   base = `http://127.0.0.1:${a.port}`;
+  token = (await signInWithAWallet(call, { slot: 7, origin: ORIGIN, network: theNetwork() })).token;
 });
 afterAll(async () => { await new Promise<void>(r => server.close(() => r())); });
 
-const post = async (path: string, body: unknown) => {
+/* How the current page asks: with its sign-in, naming itself. Either can be left off. */
+const asked = (opts: { signedIn?: boolean; page?: string | null } = {}): Record<string, string> => ({
+  'content-type': 'application/json',
+  ...((opts.signedIn ?? true) ? { authorization: `Bearer ${token}` } : {}),
+  ...(opts.page === null ? {} : { [PAYSLIP_PAGE_HEADER]: opts.page ?? PAYSLIP_PAGE_VERSION }),
+});
+
+async function call(method: string, path: string, opts: { token?: string; body?: unknown } = {}) {
   const r = await fetch(base + path, {
-    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+    method,
+    headers: {
+      'content-type': 'application/json',
+      ...(opts.token ? { authorization: `Bearer ${opts.token}` } : {}),
+    },
+    body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
   });
+  return { status: r.status, body: await r.json().catch(() => null) };
+}
+
+const post = async (path: string, body: unknown, how: Parameters<typeof asked>[0] = {}) => {
+  const r = await fetch(base + path, { method: 'POST', headers: asked(how), body: JSON.stringify(body) });
   return { status: r.status, body: await r.json().catch(() => null), text: '' };
 };
+const get = (path: string, how: Parameters<typeof asked>[0] = {}) => fetch(base + path, { headers: asked(how) });
 
 const proveAndFetch = async (
   keys: { secret: string; publicKey: string }, from: string | null = seeded.address,
@@ -198,10 +213,10 @@ describe('a payee\'s own payslips, over the wire', () => {
   });
 
   it('EVERY ADDRESS A COMPANY\'S SLIPS NAME, ASKED BY ITS ADDRESS', async () => {
-    const r = await fetch(`${base}/api/payslips/addresses?company=${seeded.address}`);
+    const r = await get(`/api/payslips/addresses?company=${seeded.address}`);
     expect(r.status).toBe(200);
     expect((await r.json()).addresses).toEqual([seeded.address]);
-    expect((await fetch(`${base}/api/payslips/addresses?company=nope`)).status).toBe(400);
+    expect((await get('/api/payslips/addresses?company=nope')).status).toBe(400);
   });
 
   it('ONLY SLIPS NAMING THE ADDRESS THE KEY CAME FROM ARE SENT, AND THE ADDRESS MUST BE SAID', async () => {
@@ -215,23 +230,53 @@ describe('a payee\'s own payslips, over the wire', () => {
     expect((await post('/api/payslips', { publicKey: seeded.dana.publicKey, answer })).status).toBe(400);
   });
 
-  it('A COMPANY\'S COMPLETED PAYMENTS ARE ASKED BY ITS ADDRESS, AND AN ADDRESS NOBODY HOLDS IS NOT ANSWERED', async () => {
-    const r = await fetch(`${base}/api/payslips/paid?company=${seeded.address}`);
-    expect(r.status).toBe(200);
-    /* RED WHEN the route reads some other account's record, or none. */
-    expect(await r.json()).toEqual({ known: true, movements: [ONE_PAYMENT] });
-    /* An address that is no company's now cannot be answered for. RED WHEN that reads as an empty list. */
-    expect(await (await fetch(`${base}/api/payslips/paid?company=${'ef'.repeat(32)}`)).json())
-      .toEqual({ known: false, movements: [] });
-    expect((await fetch(`${base}/api/payslips/paid?company=nope`)).status).toBe(400);
+  it('NO PAYSLIP ROUTE ANSWERS WITHOUT A SIGN-IN', async () => {
+    /* RED WHEN `authed` is taken off the proof route: it would answer 200 with a sealed value. */
+    const proof = await post('/api/payslips/proof', { publicKey: seeded.dana.publicKey }, { signedIn: false });
+    expect(proof.status).toBe(401);
+    expect(proof.body).not.toHaveProperty('sealed');
+    /* RED WHEN `authed` is taken off the list route: a proof made signed in would be spent signed out. */
+    const made = await post('/api/payslips/proof', { publicKey: seeded.dana.publicKey });
+    const answer = answerPayslipProof(made.body.sealed, seeded.dana.secret);
+    const list = await post('/api/payslips',
+      { publicKey: seeded.dana.publicKey, answer, from: seeded.address }, { signedIn: false });
+    expect(list.status).toBe(401);
+    expect(list.body).not.toBeInstanceOf(Array);
+    /* RED WHEN `authed` is taken off the addresses route. */
+    const addresses = await get(`/api/payslips/addresses?company=${seeded.address}`, { signedIn: false });
+    expect(addresses.status).toBe(401);
+    expect(await addresses.json()).not.toHaveProperty('addresses');
   });
 
-  it('THE DOORS WITH NO SIGN-IN ARE METERED BY WHO IS ASKING (LAST: IT SPENDS THE BUDGET)', async () => {
+  it('A PAGE OLDER THAN THESE ROUTES IS TOLD, WORD FOR WORD, TO RELOAD', async () => {
+    /* The page from before sent no sign-in and no page header. */
+    for (const how of [{ signedIn: false, page: null }, { signedIn: true, page: null }, { page: '0' }] as const) {
+      const proof = await post('/api/payslips/proof', { publicKey: seeded.dana.publicKey }, how);
+      /* RED WHEN the check is dropped (401 or 200 instead) or the sentence changes. */
+      expect(proof.status).toBe(409);
+      expect(proof.body).toEqual({ code: 'payslip-page-out-of-date', error: PAGE_OUT_OF_DATE });
+    }
+    expect(PAGE_OUT_OF_DATE).toBe('This page is out of date. Reload it and open your payslips again.');
+    const list = await post('/api/payslips',
+      { publicKey: seeded.dana.publicKey, answer: '00'.repeat(32), from: seeded.address }, { signedIn: false, page: null });
+    expect(list.body.error).toBe(PAGE_OUT_OF_DATE);
+    const addresses = await get(`/api/payslips/addresses?company=${seeded.address}`, { page: null });
+    expect((await addresses.json()).error).toBe(PAGE_OUT_OF_DATE);
+  });
+
+  it('THE ROUTE THAT RELAYED A COMPANY\'S COMPLETED PAYMENTS ANSWERS NOTHING', async () => {
+    /* RED WHEN it is put back: it answered 200 with `{ known, movements }`. */
+    const r = await get(`/api/payslips/paid?company=${seeded.address}`);
+    expect(r.status).toBe(404);
+    expect(await r.text()).not.toContain('movements');
+  });
+
+  it('THE PAYSLIP DOORS ARE METERED BY WHERE THE REQUEST COMES FROM (LAST: IT SPENDS THE BUDGET)', async () => {
     let status = 200;
     let calls = 0;
     while (status !== 429 && calls < 200) {
       calls += 1;
-      status = (await fetch(`${base}/api/payslips/addresses?company=${seeded.address}`)).status;
+      status = (await get(`/api/payslips/addresses?company=${seeded.address}`)).status;
     }
     /* RED WHEN the routes are not metered: two hundred answers and no refusal. */
     expect(status).toBe(429);
