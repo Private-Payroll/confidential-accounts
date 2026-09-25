@@ -22,7 +22,7 @@ import { fetchMyPayslips, paymentsOnTheChain, type Fetch } from '../web/my-paysl
 import type { ChainReader } from '../web/payslip-worker-client.js';
 
 /** The compiled contracts' own circuits, as the device's reader calls them. */
-const CIRCUITS: PayslipCircuits = { details: vaultDetails.shielded, leafOf: payoutLeafOf, movementOf: paidMovementOfLeaf };
+const CIRCUITS: PayslipCircuits = { details: vaultDetails, leafOf: payoutLeafOf, movementOf: paidMovementOfLeaf };
 /** Every slip's address taken as confirmed by the payee's wallet; what an unconfirmed one reads is pinned elsewhere. */
 const CONFIRMED = () => true;
 import { paidWords } from '../web/YourPay.js';

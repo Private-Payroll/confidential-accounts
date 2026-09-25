@@ -8,6 +8,7 @@ import type { Identity } from 'midnight-identity';
 import { INDEXER_HTTP_URL, INDEXER_WS_URL, NETWORK } from '../config.js';
 import { withOwnClock } from './balance.js';
 import type { BalanceEngine, BalanceState } from './balance.js';
+import { splitShielded } from './shielded-tokens.js';
 import { isWalletAccount } from '../accounts/subwallets.js';
 import { describeFailure } from '../lib/failure-text.js';
 
@@ -89,6 +90,24 @@ export function unshieldedWalletFor(
 /** Unshielded NIGHT, as the balances record keys it. */
 const NIGHT_UNSHIELDED_RAW = nativeToken().raw;
 
+type Synced = Extract<BalanceState, { name: 'synced' }>;
+
+/**
+ * **THE NUMBER A COMPLETED UNSHIELDED SYNC ESTABLISHES, FROM THE WHOLE MAP.**
+ * The unshielded wallet reports one balance for every public token among its
+ * coins, keyed by the token's raw colour, exactly as the shielded wallet does
+ * for private ones. NIGHT is one key; every other public token the account
+ * holds is carried beside it, split the same way the private side splits its
+ * own map, so a public payment in any token shows on the card rather than
+ * reading as nothing.
+ */
+export const syncedFromUnshielded = (
+  balances: Readonly<Record<string, bigint>>, asOf: number,
+): Synced => {
+  const { night, others } = splitShielded(balances, NIGHT_UNSHIELDED_RAW);
+  return { name: 'synced', night, asOf, others };
+};
+
 /**
  * The unshielded engine — the same four sentences as the shielded one
  * (`balance.ts`), read from the unshielded wallet's own state stream. No
@@ -112,11 +131,7 @@ const startUnshieldedRaw: BalanceEngine = (identity, account, onState) => {
         const progress = state.progress;
         if (progress.isConnected && progress.isStrictlyComplete()) {
           numberShown = true;
-          tell({
-            name: 'synced',
-            night: state.balances[NIGHT_UNSHIELDED_RAW] ?? 0n,
-            asOf: Date.now(),
-          });
+          tell(syncedFromUnshielded(state.balances, Date.now()));
           return;
         }
         if (numberShown) return; /* the established number stands */

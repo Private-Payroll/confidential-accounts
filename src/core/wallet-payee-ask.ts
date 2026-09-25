@@ -11,7 +11,7 @@ import { REQUEST_SCHEMA } from 'midnight-identity/profile/request';
  * request that quietly asks for nothing. This import is one of two
  * cross-repository edges; the other is the export that makes it reachable.
  */
-import { RECEIVING_ADDRESS } from 'midnight-identity/profile/attributes';
+import { PUBLIC_RECEIVING_ADDRESS, RECEIVING_ADDRESS } from 'midnight-identity/profile/attributes';
 
 /**
  * **ASKING THE WALLET WHERE TO PAY SOMEBODY — this side's half.**
@@ -62,7 +62,7 @@ import { RECEIVING_ADDRESS } from 'midnight-identity/profile/attributes';
 export const PAYEE_KIND = 'disclosure' as const;
 
 /** Re-exported so the server half names it without a second import path. */
-export { RECEIVING_ADDRESS };
+export { PUBLIC_RECEIVING_ADDRESS, RECEIVING_ADDRESS };
 
 export interface PayeeAsk {
   readonly schema: typeof REQUEST_SCHEMA;
@@ -104,8 +104,15 @@ const PAYEE_REASON =
  * is the challenge's own, exactly as `signInWithWallet` already does it.
  */
 
+/**
+ * **WHICH ADDRESS IS ASKED FOR IS SET BY THE MONEY, NOT BY ANYBODY'S CHOICE OF
+ * ADDRESS.** Money with a private form is paid to the person's shielded
+ * address; money with none, NIGHT among it, can only be paid to their public
+ * one, so `publicly` asks for that instead. It is still one attribute, asked
+ * for by name in one disclosure, and still never proposes a value.
+ */
 export const payeeAsk = (parts: {
-  name: string; rdns: string; nonce: string; expiresAt: number;
+  name: string; rdns: string; nonce: string; expiresAt: number; publicly?: boolean;
 }): PayeeAsk => Object.freeze({
   schema: REQUEST_SCHEMA,
   kind: PAYEE_KIND,
@@ -115,6 +122,7 @@ export const payeeAsk = (parts: {
   expiresAt: parts.expiresAt,
   /* ONE THING, REQUIRED, AND NO VALUE BESIDE IT. */
   wants: Object.freeze([Object.freeze({
-    attribute: RECEIVING_ADDRESS, required: true, reason: PAYEE_REASON,
+    attribute: parts.publicly === true ? PUBLIC_RECEIVING_ADDRESS : RECEIVING_ADDRESS,
+    required: true, reason: PAYEE_REASON,
   })]),
 });

@@ -70,6 +70,9 @@ export class AddressError extends Error {
   }
 }
 
+/** Each of an address's two keys is this many bytes. */
+const KEY_BYTES = 32;
+
 const build = (
   address: ShieldedAddress, bech32: string, network: NetworkName,
 ): PayeeAddress => Object.freeze({
@@ -87,10 +90,11 @@ const build = (
  * their salary paid there instead — they nominate it, and it becomes the
  * address every employer pays.
  *
- * Three things are checked and all three are the platform's own checks rather
- * than ours: the Bech32m checksum, so a typo does not decode; the address KIND,
- * so a coin-public-key-only string is refused; and the NETWORK, so a testnet
- * address handed to a mainnet payroll throws by name.
+ * Four things are checked. Three are the platform's own checks rather than
+ * ours: the Bech32m checksum, so a typo does not decode; the address KIND, so a
+ * coin-public-key-only string is refused; and the NETWORK, so a testnet address
+ * handed to a mainnet payroll throws by name. The fourth is the LENGTH, which
+ * the platform's decode does not check and the ledger does (below).
  *
  * `network` is required and deliberately not defaulted. An address is only
  * meaningful on one network, and a default is how a testnet address reaches a
@@ -143,6 +147,23 @@ export function payeeAddress(bech32: string, network: NetworkName): PayeeAddress
         : `"${raw}" is not a payee address: ${message}. It must be a shield-addr — `
           + 'a coin public key on its own is not enough to pay somebody, because it does '
           + 'not say who may READ the payment.');
+  }
+
+  /*
+   * **THE LENGTH, WHICH THE PLATFORM'S DECODE DOES NOT CHECK.** Its codec takes
+   * the first thirty-two bytes as the coin key and everything after them as the
+   * encryption key, and the encryption key's constructor checks no length, so
+   * a string of the right kind and network carrying thirty-two bytes and any
+   * tail at all, including none, decodes, and the ledger then refuses what is
+   * built to it. So it is refused here, before anything is built: an address is
+   * two keys of thirty-two bytes, and nothing else.
+   */
+  if (parsed.data.length !== KEY_BYTES * 2) {
+    throw new AddressError(
+      'wrong-kind',
+      `"${raw}" carries ${parsed.data.length} bytes and a payee address carries `
+      + `${KEY_BYTES * 2} — ${KEY_BYTES} for the key that may spend and ${KEY_BYTES} for `
+      + 'the key that may read.');
   }
 
   return build(address, parsed.asString(), network);

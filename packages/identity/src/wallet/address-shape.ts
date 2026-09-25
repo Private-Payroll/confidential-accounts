@@ -2,7 +2,7 @@ import { bech32m } from '@scure/base';
 import { NETWORKS, type NetworkName } from './network.js';
 
 /**
- * **THE THREE CHECKS `payeeAddress()` MAKES, WITHOUT THE TEN MEGABYTES.**
+ * **THE FOUR CHECKS `payeeAddress()` MAKES, WITHOUT THE TEN MEGABYTES.**
  *
  * ── WHY THIS FILE EXISTS, AND IT IS A MEASUREMENT RATHER THAN A PREFERENCE ─
  *
@@ -29,12 +29,15 @@ import { NETWORKS, type NetworkName } from './network.js';
  *     :51  MidnightBech32m.parse   = bech32m.decodeToBytes(s), then
  *                                   prefix must be 'mn', then validateSegment
  *                                   on the type and (unless mainnet) the network
- *     :44  validateSegment         = /^[A-Za-z1-9-]+$/
- *     :103 Bech32mCodec.decode     = type must equal 'shield-addr',
- *                                   network must equal the one asked for
- *     :122 ShieldedAddress codec   = first 32 bytes are the coin public key,
+ *     :46  validateSegment         = /^[A-Za-z1-9-]+$/
+ *     :101 Bech32mCodec.decode     = type must equal 'shield-addr' (:103),
+ *                                   network must equal the one asked for (:106)
+ *     :121 ShieldedAddress codec   = first 32 bytes are the coin public key,
  *                                   the rest is the encryption public key
  *     :154 keyLength               = 32
+ *
+ * Those line numbers are of `@midnightntwrk/wallet-sdk-address-format`
+ * 4.0.0-beta.2. A different version numbers its lines differently.
  *
  * **Every one of those is plain JavaScript over `@scure/base`'s bech32m** —
  * the same `bech32m` this file imports, from the same version the package
@@ -47,7 +50,11 @@ import { NETWORKS, type NetworkName } from './network.js';
  *
  * `address-shape.test.ts` runs this and `payeeAddress()` over the same inputs
  * and requires them to agree — **the same accept, the same refusal code, and
- * the same two key halves.** That test lives in this repository because this is
+ * the same two key halves**, including for an address of the wrong length,
+ * which both refuse (below). One string is refused under different codes: a
+ * prefix with no type segment at all (`mn1…`), which the platform's parse
+ * lets through and its decode then calls the wrong kind, and which this file
+ * refuses as not an address. Both refuse it. That test lives in this repository because this is
  * the side that may load the ledger. **If the platform ever changes its
  * encoding, the test goes red here rather than a wrong address going out in a
  * page there.**
@@ -93,20 +100,20 @@ export interface CheckedShieldedAddress {
   readonly encryptionPublicKey: string;
 }
 
-/** `@midnightntwrk/wallet-sdk-address-format` dist:29. */
+/** `@midnightntwrk/wallet-sdk-address-format` dist:41. */
 const PREFIX = 'mn';
-/** The codec's own type name. dist:103, `ShieldedAddress.codec`. */
+/** The codec's own type name. dist:121, `ShieldedAddress.codec`. */
 const SHIELD_ADDR = 'shield-addr';
 /** `ShieldedCoinPublicKey.keyLength`. dist:154. */
 const KEY_BYTES = 32;
-/** `MidnightBech32m.validateSegment`. dist:44. */
+/** `MidnightBech32m.validateSegment`. dist:46. */
 const SEGMENT = /^[A-Za-z1-9-]+$/u;
 
 const hex = (bytes: Uint8Array): string =>
   Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 
 /**
- * **A MAINNET ADDRESS HAS NO NETWORK SEGMENT AT ALL.** dist:52 — the third
+ * **A MAINNET ADDRESS HAS NO NETWORK SEGMENT AT ALL.** dist:53 — the third
  * segment defaults to the library's `mainnet` symbol when it is absent, and
  * `asString` puts nothing back. Measured and recorded in `address.ts` too;
  * repeated here because this file has to reproduce it rather than inherit it.
@@ -168,8 +175,8 @@ export function checkShieldedAddress(
 
   /*
    * **THE KIND IS CHECKED BEFORE THE NETWORK, AND THAT ORDER IS THE
-   * PLATFORM'S.** `Bech32mCodec.decode` compares the type first (dist:105) and
-   * the network second (dist:108), and `address.ts` distinguishes the two
+   * PLATFORM'S.** `Bech32mCodec.decode` compares the type first (dist:103) and
+   * the network second (dist:106), and `address.ts` distinguishes the two
    * failures on the library's own words. Here the two are separate branches
    * rather than a regular expression over an error message, which is strictly
    * better and is the one place this file is not a mirror.
@@ -192,12 +199,14 @@ export function checkShieldedAddress(
   }
 
   /*
-   * **THE LENGTH IS CHECKED HERE, AND THIS IS STRICTER THAN THE PLATFORM.** The
-   * platform's codec takes the first 32 bytes as the coin key and *the rest* as
-   * the encryption key. `ShieldedCoinPublicKey` refuses anything but 32 bytes
-   * (dist:162), but `ShieldedEncryptionPublicKey`'s constructor checks no length
-   * (dist:174 onwards), so the platform decodes a string of 32 bytes and
-   * anything after them, including nothing. This refuses every length but 64.
+   * **THE LENGTH IS CHECKED HERE, AND IT IS STRICTER THAN THE PLATFORM'S
+   * DECODE.** The platform's codec takes the first 32 bytes as the coin key and
+   * *the rest* as the encryption key. `ShieldedCoinPublicKey` refuses anything
+   * but 32 bytes (dist:162), but `ShieldedEncryptionPublicKey`'s constructor
+   * checks no length (dist:181), so the platform decodes a string of 32 bytes
+   * and anything after them, including nothing. This refuses every length but
+   * 64, and `payeeAddress()` makes the same check after the platform's decode,
+   * with the same code and the same words.
    */
   if (decoded.bytes.length !== KEY_BYTES * 2) {
     throw new AddressShapeError(
@@ -209,11 +218,89 @@ export function checkShieldedAddress(
 
   return Object.freeze({
     /* Re-encoded from what was decoded, exactly as `MidnightBech32m.asString`
-     * does it (dist:80), so the value that travels is the canonical one and not
+     * does it (dist:80-83), so the value that travels is the canonical one and not
      * whatever spelling arrived. */
     bech32: bech32m.encode(decoded.prefix, bech32m.toWords(decoded.bytes), false),
     network,
     coinPublicKey: hex(decoded.bytes.subarray(0, KEY_BYTES)),
     encryptionPublicKey: hex(decoded.bytes.subarray(KEY_BYTES)),
+  });
+}
+
+/** A public address as the platform writes it, and the one key it carries. */
+export interface CheckedUnshieldedAddress {
+  /** The address as the platform writes it, re-encoded from what was decoded. */
+  readonly bech32: string;
+  readonly network: NetworkName;
+  /** The address's thirty-two bytes, lowercase hex: whose public coins these are. */
+  readonly userAddress: string;
+}
+
+/** The public codec's own type name. dist:195, `UnshieldedAddress.codec`. */
+const ADDR = 'addr';
+
+/**
+ * **THE SAME CHECKS FOR A PUBLIC ADDRESS**, in the same order, over the same
+ * `bech32m`: the checksum, the `mn` prefix, the segments, the KIND (`addr`,
+ * dist:195), the NETWORK, and the length, which the platform's own
+ * `UnshieldedAddress` constructor checks (dist:199): exactly thirty-two bytes.
+ *
+ * It exists for the places that must tell a public address from a private one
+ * without the ledger: the payroll page, which may hold no WebAssembly, and the
+ * wallet's answer about which addresses it holds, which the page checks with
+ * the same code. `address-shape.test.ts` holds it against the platform's
+ * decoder, as it holds the shielded check.
+ */
+export function checkUnshieldedAddress(
+  bech32: string, network: NetworkName,
+): CheckedUnshieldedAddress {
+  const raw = (bech32 ?? '').trim();
+  if (!raw) {
+    throw new AddressShapeError('empty', 'an address is required, and this one is empty.');
+  }
+  if (!(NETWORKS as readonly string[]).includes(network)) {
+    throw new Error(`"${network}" is not a Midnight network this wallet knows.`);
+  }
+
+  let decoded: { prefix: string; bytes: Uint8Array };
+  try {
+    decoded = bech32m.decodeToBytes(raw);
+  } catch (e) {
+    throw new AddressShapeError(
+      'not-an-address',
+      `"${raw}" is not a Midnight address: ${(e as Error).message}. `
+      + 'A public address looks like mn_addr_<network>1... and carries its own checksum, '
+      + 'so a single mistyped character fails here.');
+  }
+
+  const [prefix, type, segment] = decoded.prefix.split('_');
+  if (prefix !== PREFIX || type === undefined || !SEGMENT.test(type)
+    || (segment !== undefined && !SEGMENT.test(segment))) {
+    throw new AddressShapeError('not-an-address', `"${raw}" is not a Midnight address.`);
+  }
+  if (type !== ADDR) {
+    throw new AddressShapeError(
+      'wrong-kind',
+      `"${raw}" is not a public address: Expected type ${ADDR}, got ${type}. `
+      + 'This money has no private form, so it can only be paid to a public address, '
+      + 'one that starts mn_addr.');
+  }
+  const wanted = segmentFor(network);
+  const theirs = segment ?? null;
+  if (theirs !== wanted) {
+    throw new AddressShapeError(
+      'wrong-network',
+      `"${raw}" is not an address for ${network}: Expected ${network} address, got `
+      + `${theirs ?? 'mainnet'} one.`);
+  }
+  if (decoded.bytes.length !== KEY_BYTES) {
+    throw new AddressShapeError(
+      'wrong-kind',
+      `"${raw}" carries ${decoded.bytes.length} bytes and a public address carries ${KEY_BYTES}.`);
+  }
+  return Object.freeze({
+    bech32: bech32m.encode(decoded.prefix, bech32m.toWords(decoded.bytes), false),
+    network,
+    userAddress: hex(decoded.bytes),
   });
 }

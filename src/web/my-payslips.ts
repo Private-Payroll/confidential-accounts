@@ -169,15 +169,19 @@ const paymentOf = (s: OpenedPayslip, registry: AssetRegistry): PayslipPayment | 
   const paidTo = s.payslip.paidTo;
   if (r === null || typeof paidTo !== 'string' || typeof s.payslip.amount !== 'bigint') return null;
   /*
-   * **A PAYMENT MADE PUBLICLY IS NEVER ASKED ABOUT HERE.** What this device
-   * builds is the value a private payment is recorded under; a public payment
-   * is recorded under another, so asking with this one could only ever answer
-   * "not yet" for a payment that was made. It reads "cannot tell".
+   * **A PUBLIC PAYMENT IS ASKED ABOUT IN ITS OWN FORM.** The token is the
+   * asset's public token when the slip was paid to a public address and its
+   * private token otherwise, read off the address the slip names; the device's
+   * reader builds the value with the details commitment of that same kind. A
+   * value built in the other form was never recorded, and would read "not yet"
+   * for a payment that was made. A slip reaches here only once `confirmed` has
+   * said the payee's wallet holds its address, and the wallet answers for no
+   * public address today, so a public payment still reads "cannot tell".
    */
-  if (paidPublicly(paidTo)) return null;
+  const form = paidPublicly(paidTo) ? 'unshielded' : 'shielded';
   try {
     return {
-      paidTo, token: ledgerTokenOf(s.payslip.asset, 'shielded', registry) as Hex, amount: s.payslip.amount.toString(),
+      paidTo, token: ledgerTokenOf(s.payslip.asset, form, registry) as Hex, amount: s.payslip.amount.toString(),
       nonce: r.nonce, blinding: r.blinding,
     };
   } catch {

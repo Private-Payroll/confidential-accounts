@@ -115,11 +115,9 @@ describe('the product\'s own registry', () => {
     /* The product's registry, where only a test asset has a private form. */
     const s = services({ registry: productAssets });
     const created = await s.accounts.create('Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1);
-    for (const asset of ['GBP', 'NIGHT']) {
-      s.payroll.hireDirect(created.account.id, {
-        name: `Payee ${asset}`, email: `${asset}@a.co`, title: 'Eng', asset, baseAmount: 100_00n,
-      }, created.viewingKey);
-    }
+    s.payroll.hireDirect(created.account.id, {
+      name: 'Payee GBP', email: 'GBP@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+    }, created.viewingKey);
     const { run } = await s.payroll.createRunFromRoster(created.account.id, '2026-10', created.viewingKey);
     /* RED WHEN a payroll payment's token is anything but the asset's own private form. */
     await expect(s.payroll.runMaterialInputs(run.id, created.viewingKey, 'GBP'))
@@ -135,10 +133,12 @@ describe('the product\'s own registry', () => {
     /*
      * RED WHEN NIGHT is given a private form. `nativeToken()` is unshielded by
      * definition, so there is no private NIGHT on this platform and no test
-     * asset changes that.
+     * asset changes that. A NIGHT payee handed over with a private address is
+     * refused where they are admitted.
      */
-    await expect(s.payroll.runMaterialInputs(run.id, created.viewingKey, 'NIGHT'))
-      .rejects.toThrow(/NIGHT has no private form on Midnight/);
+    expect(() => s.payroll.hireDirect(created.account.id, {
+      name: 'Payee NIGHT', email: 'NIGHT@a.co', title: 'Eng', asset: 'NIGHT', baseAmount: 100_00n,
+    }, created.viewingKey)).toThrow(/NIGHT can only be paid to a public address, and the address that arrived is a private one/);
     expect(s.control.raises).toBe(0);
   });
 });

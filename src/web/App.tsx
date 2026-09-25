@@ -11,7 +11,7 @@ import { openRecord } from '../core/sealed-records.js';
 import { seatOnThisDevice, type SeatOnThisDevice } from '../core/signer-leaf.js';
 import { acceptSeatOnThisDevice } from './accept-seat.js';
 import { assets, formatAmount, parseAmount, privateForm, subtotals, type Asset, type AssetId } from '../core/assets.js';
-import { hiringAssets, invitingAssets, NOBODY_CAN_BE_HIRED, NOBODY_CAN_BE_INVITED } from './hiring-assets.js';
+import { hiringAssets, invitingAssets, invitesForAPublicAddress, NOBODY_CAN_BE_HIRED, NOBODY_CAN_BE_INVITED } from './hiring-assets.js';
 import { PUBLIC_PAYMENT, runPaysAnyonePublicly, setUpPublicly } from './public-payment.js';
 import type {
   Account, Attestation, Installation, Invite, PayrollRun, PluginEvent, PluginManifest, RunPayout,
@@ -1925,6 +1925,9 @@ export function People({ people, session, busy, act }: {
               <div className="field"><label>Paid in</label>
                 <AssetSelect value={form.asset} from={invitingAssets()} onChange={code => setForm({ ...form, asset: code })} /></div>
             </div>
+            {/* Money with no private form is paid publicly, so that is said where a person is invited in it. */}
+            {invitesForAPublicAddress(asset)
+              && <div className="hint" data-public-payment>{PUBLIC_PAYMENT}</div>}
             {!canInvite && <div className="err" data-nobody-can-be-invited>{NOBODY_CAN_BE_INVITED}</div>}
             <div className="field">
               <label>Monthly gross ({asset.code}, {asset.decimals} decimal places)</label>

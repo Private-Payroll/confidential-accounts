@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { Identity, Secret } from 'midnight-identity/keys/derivation';
-import { RECEIVING_ADDRESS, REGISTRY } from 'midnight-identity/profile/attributes';
+import { PUBLIC_RECEIVING_ADDRESS, RECEIVING_ADDRESS, REGISTRY } from 'midnight-identity/profile/attributes';
 import type { Registry } from 'midnight-identity/profile/attributes';
 import { abbreviate, check } from 'midnight-identity/profile/definition';
 import type { AttributeDefinition, AttributeName } from 'midnight-identity/profile/definition';
@@ -261,7 +261,8 @@ interface Row {
    *
    * `derived.ts`'s whole discipline is that this screen asks whether a
    * definition is derived and never which attribute it is holding. A code
-   * belongs to ONE attribute — the address money arrives at — so the question
+   * belongs to the attributes money arrives at — the shielded receiving
+   * address and the public one — so the question
    * *which attribute is this* is answered once, here, where the attribute is
    * already in hand, and the render below stays a render.
    *
@@ -299,7 +300,8 @@ const rowsFor = (
     /* Computed from the value that is about to be sent and from
      * nothing else — the same string the receiving side will compute from the
      * same address, which is the whole of the comparison. */
-    code: want.attribute === RECEIVING_ADDRESS && derived !== null && derived.ok
+    code: (want.attribute === RECEIVING_ADDRESS || want.attribute === PUBLIC_RECEIVING_ADDRESS)
+      && derived !== null && derived.ok
       ? addressFingerprint(derived.value) : null,
   };
 });

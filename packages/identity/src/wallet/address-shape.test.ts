@@ -2,8 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
 import { identityFromSecret, identityFromWords, newSecret } from '../keys/derivation.js';
 import { AddressError, addressFor, payeeAddress } from './address.js';
-import { AddressShapeError, checkShieldedAddress } from './address-shape.js';
+import { AddressShapeError, checkShieldedAddress, checkUnshieldedAddress } from './address-shape.js';
 import { NETWORKS, type NetworkName } from './network.js';
+import { bech32m } from '@scure/base';
 
 /**
  * **THE MIRROR IS HELD AGAINST THE ORIGINAL, NOT AGAINST ITS OWN COMMENT.**
@@ -126,6 +127,22 @@ describe('the address check that carries no WebAssembly', () => {
     }
   });
 
+  it('AGREES ON AN ADDRESS OF THE WRONG LENGTH: BOTH REFUSE IT, WITH ONE CODE', () => {
+    /*
+     * RED WHEN either side stops refusing a length: the platform's decode
+     * alone takes 32 bytes and any tail, so `real` then answers ok where
+     * `mirror` refuses.
+     */
+    const made = bech32m.decodeToBytes(addressFor(ours.money.zswap, 'stagenet').bech32).bytes;
+    for (const n of [32, 33, 63, 65, 96]) {
+      const out = new Uint8Array(n);
+      out.set(made.subarray(0, Math.min(n, 64)));
+      const odd = bech32m.encode('mn_shield-addr_stagenet', bech32m.toWords(out), false);
+      expect(mirror(odd, 'stagenet'), `${n} bytes`).toEqual({ ok: false, code: 'wrong-kind' });
+      expect(real(odd, 'stagenet'), `${n} bytes`).toEqual(mirror(odd, 'stagenet'));
+    }
+  });
+
   it('TRIMS WHAT SOMEBODY PASTED, BECAUSE PEOPLE PASTE WITH WHITESPACE', () => {
     const made = addressFor(ours.money.zswap, 'stagenet').bech32;
     expect(checkShieldedAddress(`  ${made}\n`, 'stagenet').bech32).toBe(made);
@@ -136,5 +153,60 @@ describe('the address check that carries no WebAssembly', () => {
      * refusal that named it would send somebody looking at the wrong value. */
     const made = addressFor(ours.money.zswap, 'stagenet').bech32;
     expect(() => checkShieldedAddress(made, 'TESTNET' as NetworkName)).toThrow(/not a Midnight network/u);
+  });
+});
+
+describe('the public address check that carries no WebAssembly', () => {
+  /** What the platform's own decoder says of a public address, as a comparable value. */
+  const realPublic = async (bech32: string, network: NetworkName):
+  Promise<{ ok: true; key: string; canonical: string } | { ok: false }> => {
+    const { MidnightBech32m, UnshieldedAddress } = await import('@midnightntwrk/wallet-sdk-address-format');
+    try {
+      const parsed = MidnightBech32m.parse(bech32.trim());
+      const address = parsed.decode(UnshieldedAddress, network);
+      return { ok: true, key: address.hexString, canonical: parsed.asString() };
+    } catch {
+      return { ok: false };
+    }
+  };
+  const mirrorPublic = (bech32: string, network: NetworkName):
+  { ok: true; key: string; canonical: string } | { ok: false; code?: string } => {
+    try {
+      const a = checkUnshieldedAddress(bech32, network);
+      return { ok: true, key: a.userAddress, canonical: a.bech32 };
+    } catch (e) {
+      return { ok: false, code: (e as AddressShapeError).code };
+    }
+  };
+  const bytes = bech32m.decodeToBytes(addressFor(ours.money.zswap, 'stagenet').bech32).bytes.subarray(0, 32);
+  const made = (n: number, network: string | null = 'stagenet', type = 'addr'): string =>
+    bech32m.encode(`mn_${type}${network === null ? '' : `_${network}`}`,
+      bech32m.toWords(Uint8Array.from({ length: n }, (_, i) => bytes[i % 32]!)), false);
+
+  it('AGREES WITH THE PLATFORM ON A REAL PUBLIC ADDRESS, ON EVERY NETWORK, INCLUDING MAINNET', async () => {
+    for (const net of NETWORKS) {
+      const address = made(32, net === 'mainnet' ? null : net);
+      const mirror = mirrorPublic(address, net);
+      /* RED WHEN the mirror refuses a real public address, or reads another key out of it. */
+      expect(mirror).toMatchObject({ ok: true, canonical: address });
+      const { code: _code, ...shape } = mirror as { code?: string };
+      expect(shape).toEqual(await realPublic(address, net));
+    }
+  });
+
+  it('REFUSES WHAT THE PLATFORM REFUSES: THE WRONG LENGTH, THE WRONG NETWORK, AND A SHIELDED ADDRESS', async () => {
+    const cases: Array<[string, NetworkName, string]> = [
+      [made(31), 'stagenet', 'wrong-kind'], [made(33), 'stagenet', 'wrong-kind'], [made(64), 'stagenet', 'wrong-kind'],
+      [made(32, 'preview'), 'stagenet', 'wrong-network'],
+      [addressFor(ours.money.zswap, 'stagenet').bech32, 'stagenet', 'wrong-kind'],
+      /* Thirty-two bytes under the shielded type: only the KIND check refuses this one. */
+      [made(32, 'stagenet', 'shield-addr'), 'stagenet', 'wrong-kind'],
+      ['', 'stagenet', 'empty'], ['hello', 'stagenet', 'not-an-address'],
+    ];
+    for (const [value, net, code] of cases) {
+      /* RED WHEN the public check takes any length, any network, or the other kind. */
+      expect(mirrorPublic(value, net), value).toEqual({ ok: false, code });
+      expect(await realPublic(value, net), value).toEqual({ ok: false });
+    }
   });
 });

@@ -4,7 +4,7 @@ import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
 import { signatureVerifyingKey } from '@midnightntwrk/ledger-v9';
 import { addressFor, identityFromWords } from 'midnight-identity';
 import { addressOfVerifyingKey, mint } from 'midnight-identity/profile/disclosure';
-import { RECEIVING_ADDRESS } from 'midnight-identity/profile/attributes';
+import { PUBLIC_RECEIVING_ADDRESS, RECEIVING_ADDRESS } from 'midnight-identity/profile/attributes';
 import { parseAsk } from 'midnight-identity/profile/request';
 import type { Sent } from 'midnight-identity/profile/model';
 import { MemoryChallengeStore } from './challenges.js';
@@ -105,6 +105,16 @@ describe('the address comes from the wallet, and this side judges it', () => {
     if (parsed.kind !== 'disclosure') throw new Error('unreachable');
     expect(parsed.wants.map((w) => w.attribute)).toEqual([RECEIVING_ADDRESS]);
     expect(parsed.wants[0]!.required).toBe(true);
+    /*
+     * And the ask for money with no private form, which names the PUBLIC
+     * receiving address and nothing else. RED WHEN `publicly` is ignored, or
+     * the wallet's parser refuses the public ask.
+     */
+    const publicAsk = parseAsk(payeeAsk({
+      name: 'Payroll', rdns: 'example.payroll', nonce: 'n2', expiresAt: NOW + 60_000, publicly: true,
+    }), ORIGIN, NOW);
+    if (publicAsk.kind !== 'disclosure') throw new Error('unreachable');
+    expect(publicAsk.wants.map((w) => [w.attribute, w.required])).toEqual([[PUBLIC_RECEIVING_ADDRESS, true]]);
     /* NOWHERE TO PUT AN ADDRESS. Not a check — a shape. The wallet refuses one
      * by name, and this side has no parameter that could supply it. */
     expect(JSON.stringify(ask)).not.toContain('mn_shield-addr_');

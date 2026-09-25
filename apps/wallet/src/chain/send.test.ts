@@ -88,6 +88,29 @@ describe('the recipient is a KIND, not a string — §4', () => {
     expect(() => parseRecipient(testnetAddress, NETWORK)).toThrow(/network|stagenet/iu);
   });
 
+  it('a shielded address of the wrong length is refused before anything is built', async () => {
+    /*
+     * Right checksum, right kind, right network, and thirty-two bytes with a
+     * tail of the wrong length. The platform's decode alone takes it, and the
+     * ledger refuses what is built to it. `parseRecipient` is where a typed
+     * recipient becomes one a send can carry, so a throw here is a send that
+     * never starts. RED WHEN `payeeAddress` stops checking the length: this
+     * then parses as a shielded recipient.
+     */
+    const { bech32m } = await import('@scure/base');
+    const { AddressError } = await import('midnight-identity');
+    const real = bech32m.decodeToBytes(shieldedBech).bytes;
+    for (const n of [32, 48, 65]) {
+      const out = new Uint8Array(n);
+      out.set(real.subarray(0, Math.min(n, 64)));
+      const odd = bech32m.encode(`mn_shield-addr_${NETWORK}`, bech32m.toWords(out), false);
+      let caught: unknown = null;
+      try { parseRecipient(odd, NETWORK); } catch (e) { caught = e; }
+      expect(caught, `${n} bytes`).toBeInstanceOf(AddressError);
+      expect((caught as Error).message, `${n} bytes`).toContain(`carries ${n} bytes`);
+    }
+  });
+
   it('garbage and emptiness are refused with their own words', () => {
     expect(() => parseRecipient('', NETWORK)).toThrow(/empty/u);
     expect(() => parseRecipient('not an address', NETWORK)).toThrow(/not a Midnight address/u);
