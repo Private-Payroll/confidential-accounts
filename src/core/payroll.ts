@@ -37,7 +37,7 @@ import {
 } from '../midnight/payee-address.js';
 import { payrollPayee } from './movement.js';
 import type { NetworkName } from '../midnight/network.js';
-import type { ShieldedPaymentFacts, PaymentFacts } from '../midnight/payout-tree.js';
+import type { PaymentFacts } from '../midnight/payout-tree.js';
 import type { RunInputs } from '../midnight/run-status.js';
 import { emptyRegister, decide, registerFor, skippedIndices } from '../midnight/run-skips.js';
 import type { RunMaterial, RetryMaterial } from '../midnight/run-material.js';
@@ -1662,9 +1662,9 @@ export class PayrollService {
      * types are payees instead of one, and a third is still refused naming
      * both.
      *
-     * **THE EMPLOYEE IS NOT EXPOSED BY THIS DOOR OPENING.** `payrollPayee`
-     * refuses a public payee where a run is drawn and where its payment facts
-     * are built, so being on the roster is not being payable from a payroll.
+     * **A PUBLIC ADDRESS IS PAID PUBLICLY BY A RUN**, out of the vault's public
+     * money, and the screen says so where the person is set up and wherever a
+     * run pays them.
      */
     const address = payeeOf(handover.address, this.network);
 
@@ -1754,9 +1754,8 @@ export class PayrollService {
    * So the refusal is here, at the doors that put somebody on the roster, in
    * the words the asset gives for itself.
    *
-   * An asset with a public form only is still taken: the roster also holds
-   * payees who are paid publicly, such as a supplier or the company's own
-   * account, and a payroll run refuses a public payee by itself. The seeded
+   * An asset with a public form only is still taken: a payee with a public
+   * address is paid publicly by a run, out of the vault's public money. The seeded
    * walk-through is not a door a person comes in by and does not pass here.
    */
   private refuseAPayeeWhoCannotBePaid(spec: HireSpec): void {
@@ -2284,18 +2283,12 @@ export class PayrollService {
         : 'no active employees to pay');
     }
     /*
-     * **A PAYROLL RUN IS ALWAYS PRIVATE, ASKED HERE AS WELL AS AT THE MONEY.**
-     * `movement.ts`.
+     * **EVERY PAYEE'S ADDRESS IS ONE A RUN CAN PAY, ASKED HERE AS WELL AS AT
+     * THE MONEY.** `paymentFactsFor` is the line nothing reaches the chain
+     * without. This one is earlier and is for the person: a run refused at the
+     * moment it is drawn names the roster entry and costs nothing.
      *
-     * `paymentFactsFor` is the line nothing reaches the chain without, and it
-     * is where the rule is load bearing. **This one is earlier and is for the
-     * person**: a run refused at the moment it is drawn names the roster entry
-     * and costs nothing, where the same refusal at payment time arrives after
-     * payslips are sealed and a proposal is raised.
-     *
-     * **THE SAME FUNCTION, NOT A SECOND COPY OF THE SENTENCE.** A rule written
-     * twice is this project's oldest failure, and a refusal written twice is
-     * one that can be deleted in one place and go on looking enforced.
+     * **THE SAME FUNCTION, NOT A SECOND COPY OF THE SENTENCE.**
      */
     for (const e of roster) {
       if (e.address) payrollPayee(e.name, e.address);
@@ -2376,28 +2369,15 @@ export class PayrollService {
    * address whose secrets nobody holds — is not recoverable by anybody.
    */
   /*
-   * **`ShieldedPaymentFacts`, AND THE NARROWING IS THE POINT.**
+   * **EACH PAYEE IN THE FORM THEIR ADDRESS IS.** A vault holds both kinds of
+   * money and `payout-tree.ts` builds each leaf by its payee's own kind, so a
+   * run can pay private and public payees side by side. Every payee is put
+   * through `payrollPayee`, and the token, the leaf and the vault's payout all
+   * follow the kind it hands back, so a private address is never paid publicly
+   * and a public one is never built into a private leaf.
    *
-   * A vault holds both kinds of money and `payout-tree.ts` carries the kind per
-   * payee. **This path produces private ones only**, and that is still true
-   * after the widening — but it is true for a DIFFERENT REASON than it was, and
-   * the difference is the whole point.
-   *
-   * **IT USED TO BE TRUE BY ACCIDENT.** A roster address arrived through
-   * `payeeAddress`, which refused anything but a `shield-addr`, so no public
-   * payee could exist to reach this line. The narrowing held because the door
-   * upstream was shut.
-   *
-   * **THE DOOR IS OPEN NOW AND THE NARROWING IS HELD BY A RULE.** A
-   * roster entry can carry either kind, so every payee on a run is put through
-   * `payrollPayee`, which refuses a public one by name and returns the other
-   * narrowed. **A payroll run cannot contain a public payee**, and if that
-   * refusal is ever removed this function stops compiling rather than quietly
-   * returning something its type says it cannot.
-   *
-   * **PER PAYEE AND NOT PER RUN.** The rule is about who is being paid, so it
-   * is asked about each of them; a run-level check would pass a mixed run whose
-   * first payee happened to be private.
+   * **PER PAYEE AND NOT PER RUN.** The form is a fact about who is being paid,
+   * so it is read off each of them.
    */
   paymentFactsFor(
     runId: string, viewingKey: Hex,
@@ -2410,7 +2390,7 @@ export class PayrollService {
      * is NOT what a caller building a run's material wants.
      */
     asset?: AssetId,
-  ): ShieldedPaymentFacts[] {
+  ): PaymentFacts[] {
     const run = this.requireRun(runId, viewingKey);
     const people = asset === undefined ? run.employees : legEmployees(run, asset);
     return people.map((e) => {
@@ -3025,7 +3005,7 @@ export class PayrollService {
     const same = (a: Paying | undefined, b: Paying | undefined): boolean =>
       a !== undefined && b !== undefined && a.amount === b.amount
       && canonical(a.token) === canonical(b.token) && canonical(a.payee) === canonical(b.payee);
-    let roster: ShieldedPaymentFacts[] | null;
+    let roster: PaymentFacts[] | null;
     try {
       roster = this.paymentFactsFor(run.id, viewingKey, leg);
     } catch {
@@ -4204,7 +4184,7 @@ export class PayrollService {
     accountId: string;
     /** The identifier this leg's payee secrets are derived from. */
     runId: string;
-    facts: ShieldedPaymentFacts[];
+    facts: PaymentFacts[];
     seeds: PayoutSeed[];
     /**
      * The seed generation the material must be built under, when it is not the

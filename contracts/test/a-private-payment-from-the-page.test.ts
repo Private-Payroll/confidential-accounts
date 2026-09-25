@@ -35,7 +35,10 @@
  *   · the run's material is rebuilt here by the same function the service's
  *     route calls (`assemblePrivatePayments`), from a run built here; the
  *     payroll store and the route's reading of it are not driven;
- *   · nothing reaches a real network, a real indexer, a browser or a wallet.
+ *   · nothing reaches a real network, a real indexer, a browser or a wallet;
+ *   · **a vault's public money is put there by calling its public deposit
+ *     straight onto this chain**, which does not check balancing, so the
+ *     public payments below are paid out of money no wallet sent.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createHash, randomBytes } from 'node:crypto';
@@ -70,6 +73,7 @@ import { answerVaultAsk } from '../../src/web/vault-worker-entry.js';
 import { vaultBuilderOver, type VaultAnswer } from '../../src/web/vault-worker-client.js';
 import {
   createCompanyVault, depositIntoCompanyVault, openCompanyVaultPool, payPrivatelyFromCompanyVault,
+  payPubliclyFromCompanyVault,
   type TemporaryKeys, type VaultService,
 } from '../../src/web/vault-operation.js';
 import { readWhatThePageAsks, base64FromBytes } from '../../apps/wallet/src/chain/balance-for-page.js';
@@ -79,11 +83,12 @@ import { accountHandoverWith, accountTemporaryVerifyingKey, accountVerifierKeysI
 import { DEPLOYED_CIRCUITS } from '../../src/midnight/deferral.js';
 import { fileURLToPath } from 'node:url';
 import { readProvenTransaction } from '../../src/wiring/proven-submission.js';
-import { refusalForPayout, startingLedgerFrom } from '../../src/wiring/vault-submission.js';
+import { refusalForPayout, refusalForPublicPayout, startingLedgerFrom } from '../../src/wiring/vault-submission.js';
 import { signingKeyFromBip340 } from '@midnightntwrk/ledger-v9';
 import { buildRun, rootOfLeaves } from '../../src/midnight/payout-tree.js';
 import { vaultDetails } from '../../src/testing/vault-details.js';
-import { payeeAddressFromKeys } from '../../src/midnight/payee-address.js';
+import { payeeAddressFromKeys, type Payee } from '../../src/midnight/payee-address.js';
+import { unshieldedPayeeFor } from '../../src/testing/payees.js';
 import { assemblePrivatePayments } from '../../src/midnight/private-payment-wire.js';
 import { witnessesOver } from '../../src/midnight/vault-notes.js';
 
@@ -164,7 +169,7 @@ const TEMPORARY = { kind: 'single-key', signingKey: TEMPORARY_ACCOUNT_KEY, tempo
  * EACH PRODUCES.** The general checks compile without them, so this is skipped
  * there by name, and the job that builds the keys runs this file by name.
  */
-const KEYS_ON_DISK = ['deposit', 'payout'].every((c) => existsSync(new URL(`../managed-vault/keys/${c}.verifier`, import.meta.url)))
+const KEYS_ON_DISK = ['deposit', 'payout', 'payoutUnshielded'].every((c) => existsSync(new URL(`../managed-vault/keys/${c}.verifier`, import.meta.url)))
   && ['propose', 'approve', 'recordPayment'].every((c) => existsSync(new URL(`../managed/keys/${c}.verifier`, import.meta.url)));
 if (!KEYS_ON_DISK) {
   console.log(
@@ -389,6 +394,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     payoutState: (vault) => http(`${at}/vaults/${vault}/payout-state`),
     events: (vault, tx) => http(`${at}/vaults/${vault}/events/${tx}`),
     payout: (vault, tx) => http(`${at}/vaults/${vault}/payout`, { method: 'POST', body: { tx } }),
+    payoutPublicly: (vault, tx) => http(`${at}/vaults/${vault}/public-payout`, { method: 'POST', body: { tx } }),
   };
   const keys: TemporaryKeys = {
     put: async (v, k) => { temporaryKeys.set(v, k); },
@@ -433,10 +439,11 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
   };
 
   /** A one-person run of `amount`, raised and approved on the account by its founder, and what the service would hand the device for it. */
-  const anApprovedRun = async (vault: Hex, amount: bigint) => {
+  const anApprovedRun = async (vault: Hex, amount: bigint, paying?: { payee: Payee; token: Hex }) => {
     const payeeKeys = L.ZswapSecretKeys.fromSeed(new Uint8Array(randomBytes(32)));
-    const payee = payeeAddressFromKeys({ coinPublicKey: payeeKeys.coinPublicKey as Hex, encryptionPublicKey: payeeKeys.encryptionPublicKey as Hex }, NET);
-    const facts = [{ payee, token: TOKEN, amount }];
+    const payee = paying?.payee
+      ?? payeeAddressFromKeys({ coinPublicKey: payeeKeys.coinPublicKey as Hex, encryptionPublicKey: payeeKeys.encryptionPublicKey as Hex }, NET);
+    const facts = [{ payee, token: paying?.token ?? TOKEN, amount }];
     const run = buildRun([{ epoch: 0, seed: toHex(new Uint8Array(randomBytes(32))) }], { accountId: ACCOUNT_ID, runId: 'run_1', epoch: 0 }, facts, vaultDetails);
     const now = BigInt(Math.floor(Date.now() / 1000));
     const window = { from: now - 600n, until: now + 3_600n };
@@ -581,5 +588,146 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     expect(offer.inputs.map((i: any) => String(i.contractAddress).toLowerCase())).toEqual([vault]);
     expect(offer.outputs.map((o: any) => (o.contractAddress === undefined ? 'person' : String(o.contractAddress).toLowerCase())).sort())
       .toEqual(['person', vault].sort());
+  });
+
+  /* ------------------------------------------------ a public payment out */
+
+  /* Not NIGHT: this chain holds NIGHT's supply fixed, and a vault funded from nothing would break it. */
+  const PUBLIC_TOKEN = 'a8'.repeat(32) as Hex;
+  /**
+   * **A VAULT THAT ALREADY HOLDS PUBLIC MONEY.** Put there by the vault's own
+   * public deposit circuit, called straight onto this chain, which does not check
+   * that a transaction balances: nobody's coin is spent to fund it. This is how
+   * the test gets public money into a vault, not how a company does.
+   */
+  const holdingPublicly = async (vault: Hex, amount: bigint) => {
+    const keys = L.ZswapSecretKeys.fromSeed(new Uint8Array(randomBytes(32)));
+    const built = await (contracts as any).createUnprovenCallTxFromInitialStates(vaultZk, {
+      compiledContract: vaultCompiled({ noteToSpend: () => { throw new Error('nothing here spends'); } }),
+      circuitId: 'depositUnshielded', contractAddress: vault, coinPublicKey: keys.coinPublicKey,
+      initialContractState: asRuntime(chain.contract(vault)),
+      initialZswapChainState: new L.ZswapChainState(),
+      ledgerParameters: L.LedgerParameters.initialParameters(),
+      args: [fromHex(PUBLIC_TOKEN), amount],
+    }, keys.encryptionPublicKey);
+    const r = chain.apply(built.private.unprovenTx);
+    if (!r.ok) throw new Error(`the chain refused the public deposit: ${r.error}`);
+    chain.applied.pop();
+  };
+  const publicBalance = (vault: Hex): bigint => {
+    let held = 0n;
+    for (const [type, value] of chain.contract(vault).balance) if (String(type.raw ?? '') === PUBLIC_TOKEN) held += value;
+    return held;
+  };
+  const USER = 'c3'.repeat(32);
+  const publicDoors = (run: { leaf: Hex }) => ({
+    ...pacing, service, builder: builder(),
+    paidYet: async () => accountLedgerOf(chain.contract(company)).movements.member(accountCircuits.paidMovementOf(fromHex(run.leaf))),
+  });
+
+  it('ONE PERSON IS PAID PUBLICLY: THE VAULT\'S PUBLIC PAYOUT PAYS THEIR PUBLIC ADDRESS, AND THE ACCOUNT RECORDS IT', async () => {
+    const { vault } = await aFundedVault();
+    await holdingPublicly(vault, 1_000n);
+    expect(publicBalance(vault)).toBe(1_000n);
+    const run = await anApprovedRun(vault, 250n, { payee: unshieldedPayeeFor(USER, NET), token: PUBLIC_TOKEN });
+    const order = run.order();
+    expect(order.payments.map((p) => [p.kind, p.paid])).toEqual([['unshielded', false]]);
+    const before = chain.applied.length;
+    const notesBefore = [...vaultLedgerOf(chain.contract(vault)).notes].map((c: Uint8Array) => hex(c));
+
+    const done = await payPubliclyFromCompanyVault(publicDoors(run), { order, payment: order.payments[0]! });
+
+    /* RED WHEN: the payment does not reach the chain through the public door, or the chain refuses it. */
+    expect(chain.applied.slice(before).map((a) => [a.ok, a.error])).toEqual([[true, '']]);
+    expect(arrivals.at(-1)).toBe('proven-moving-the-vaults-own-coins');
+    expect(done.txRef).toBe(String(chain.applied.at(-1)!.tx.identifiers()[0]));
+    const tx = chain.applied.at(-1)!.tx;
+    const named = (e: unknown) => (e instanceof Uint8Array ? new TextDecoder().decode(e) : String(e));
+    /* RED WHEN: a public payee is paid through anything but the vault's public payout. */
+    expect([...tx.intents.values()][0].actions.map((a: any) => `${String(a.address).toLowerCase()}/${named(a.entryPoint)}`).sort())
+      .toEqual([`${company}/recordPayment`, `${vault}/payoutUnshielded`].sort());
+    /* RED WHEN: the money goes anywhere but the payee's public address, or in another amount or token. */
+    const outs = [...tx.intents.values()].flatMap((i: any) => [
+      ...(i.guaranteedUnshieldedOffer?.outputs ?? []), ...(i.fallibleUnshieldedOffer?.outputs ?? [])]);
+    expect(outs.map((o: any) => [String(o.owner).toLowerCase(), String(o.type).toLowerCase(), o.value])).toEqual([[USER, PUBLIC_TOKEN, 250n]]);
+    /* The vault's public money went down by the payment, and its private notes were not touched. */
+    expect(publicBalance(vault)).toBe(750n);
+    expect([...vaultLedgerOf(chain.contract(vault)).notes].map((c: Uint8Array) => hex(c))).toEqual(notesBefore);
+    /* RED WHEN: the account does not record the public payee paid - a second payment would then be offered. */
+    expect(accountLedgerOf(chain.contract(company)).movements.member(accountCircuits.paidMovementOf(fromHex(run.leaf)))).toBe(true);
+    expect(run.order().payments.map((p) => p.paid)).toEqual([true]);
+    /* RED WHEN: the service's reader for a public payment stops matching what the SDK builds, or its reader for a
+     * private payment would take a public one. */
+    expect(refusalForPublicPayout(tx, { vault, account: company })).toBeNull();
+    expect(refusalForPayout(tx, { vault, account: company })).toMatch(/^this is not a private payment out of this company's vault/);
+  });
+
+  it('A PUBLIC PAYEE IS NOT PAID TWICE: NOT OFFERED AGAIN, AND A SECOND PAYMENT BUILT ANYWAY IS REFUSED BY THE ACCOUNT', async () => {
+    const { vault } = await aFundedVault();
+    await holdingPublicly(vault, 1_000n);
+    const run = await anApprovedRun(vault, 100n, { payee: unshieldedPayeeFor(USER, NET), token: PUBLIC_TOKEN });
+    const first = run.order();
+    await payPubliclyFromCompanyVault(publicDoors(run), { order: first, payment: first.payments[0]! });
+    const again = run.order();
+    /* RED WHEN: `paid` is not read back from the account for a public payee. */
+    await expect(payPubliclyFromCompanyVault(publicDoors(run), { order: again, payment: again.payments[0]! }))
+      .rejects.toThrow(/already records this person paid/);
+    const applied = chain.applied.length;
+    const sentBefore = arrivals.length;
+    /* Built anyway from the order read before: the account refuses it while it is built, so nothing is sent. */
+    await expect(payPubliclyFromCompanyVault(publicDoors(run), { order: first, payment: first.payments[0]! }))
+      .rejects.toThrow(/already been made/);
+    expect(chain.applied.length).toBe(applied);
+    expect(arrivals.length).toBe(sentBefore);
+    expect(publicBalance(vault)).toBe(900n);
+  });
+
+  it('A PRIVATE PAYEE IS NEVER PAID PUBLICLY, AND A PUBLIC PAYEE NEVER PRIVATELY', async () => {
+    const { vault } = await aFundedVault();
+    await holdingPublicly(vault, 1_000n);
+    const privateRun = await anApprovedRun(vault, 100n);
+    const priv = privateRun.order();
+    const applied = chain.applied.length;
+    const sentBefore = arrivals.length;
+    /* RED WHEN: the public door takes a payment the leg names private. */
+    await expect(payPubliclyFromCompanyVault(publicDoors(privateRun), { order: priv, payment: priv.payments[0]! }))
+      .rejects.toThrow(/not a public one/);
+    /* RED WHEN: the public builder takes a private address because the payment was relabelled public. */
+    await expect(payPubliclyFromCompanyVault(publicDoors(privateRun), {
+      order: priv, payment: { ...priv.payments[0]!, kind: 'unshielded' },
+    })).rejects.toThrow(/is not a public payee address for undeployed/);
+    /* RED WHEN: the account pays a private payee's approved leaf to a public address - the leaf is built by kind. */
+    await expect(payPubliclyFromCompanyVault(publicDoors(privateRun), {
+      order: priv, payment: { ...priv.payments[0]!, kind: 'unshielded', payee: unshieldedPayeeFor(USER, NET).bech32, token: PUBLIC_TOKEN },
+    })).rejects.toThrow(/that path is not for this payee/);
+    /* RED WHEN: the device's public builder takes a payment the leg names private, whatever the page asked. */
+    const chainNow = await service.payoutState(vault);
+    const { payments: _p, ...round } = priv;
+    await expect(builder().payoutPublicly({ vault, account: company, order: round, payment: priv.payments[0]!, chain: chainNow }))
+      .rejects.toThrow(/^this payment is not a public one, so it is not built as one\. Nothing was built\.$/);
+    expect(privateRun.order().payments.map((p) => p.paid)).toEqual([false]);
+
+    const publicRun = await anApprovedRun(vault, 100n, { payee: unshieldedPayeeFor(USER, NET), token: PUBLIC_TOKEN });
+    const pub = publicRun.order();
+    const privateDoors = { ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records, builder: builder() };
+    /* RED WHEN: the device's private builder takes a payment the leg names public, whatever the page asked. */
+    const { payments: _q, ...pubRound } = pub;
+    await expect(builder().payout({
+      vault, account: company, order: pubRound, payment: pub.payments[0]!,
+      note: { nonce: '01'.repeat(32), token: PUBLIC_TOKEN, value: '1000', createdIn: '02'.repeat(32) }, events: [], chain: chainNow,
+    })).rejects.toThrow(/^this payment is not a private one, so it is not built as one\. Nothing was built\.$/);
+    /* RED WHEN: the private door takes a payment the leg names public. */
+    await expect(payPrivatelyFromCompanyVault(privateDoors, { order: pub, payment: pub.payments[0]! }))
+      .rejects.toThrow(/not a private one/);
+    /*
+     * RED WHEN: the private builder takes a public address because the payment was relabelled private. Named in the
+     * vault's private token, so a note covers it and the builder's own decode of the address is what refuses.
+     */
+    await expect(payPrivatelyFromCompanyVault(privateDoors, { order: pub, payment: { ...pub.payments[0]!, kind: 'shielded', token: TOKEN } }))
+      .rejects.toThrow(/is not a payee address for undeployed[\s\S]*It must be a shield-addr/);
+    expect(publicRun.order().payments.map((p) => p.paid)).toEqual([false]);
+    expect(chain.applied.length).toBe(applied + 2);
+    expect(arrivals.length).toBe(sentBefore);
+    expect(publicBalance(vault)).toBe(1_000n);
   });
 });

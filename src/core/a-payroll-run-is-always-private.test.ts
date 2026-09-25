@@ -25,24 +25,16 @@ import type { PayoutSeed, RunIdentity } from '../midnight/run-keys.js';
 import type { User } from './types.js';
 
 /**
- * **A PERSON CAN BE RECORDED AS A PUBLIC PAYEE, AND A PAYROLL RUN REFUSES ONE.**
+ * **A PERSON CAN BE RECORDED AS A PUBLIC PAYEE, AND A PAYROLL RUN PAYS THEM
+ * PUBLICLY.**
  *
- * Two rules that look like one and are not, which is why they are pinned in one
- * file where a reader can see them side by side:
+ * The door: a public address can be handed over, admitted, read back out of the
+ * seal and paid, through the same decode a private one goes through. Nobody is
+ * asked which kind it is; the string says.
  *
- *   **THE DOOR IS OPEN.** A public address can be handed over, admitted, read
- *   back out of the seal and paid, through the same decode a private one goes
- *   through. Nobody is asked which kind it is; the string says.
- *
- *   **AND THE PAYROLL PATH REFUSES IT.** A public payment publishes the
- *   recipient's address and the amount, and an employee never consents to
- *   being disclosed. So a payroll run cannot contain a public payee, refused in
- *   the code rather than warned about, with no flag anywhere that relaxes it.
- *
- * **THE SECOND RULE IS WHAT MAKES THE FIRST ONE SAFE.** Widening the door
- * without it would ship the exact failure it exists to prevent, so the tests
- * below that DELETE the refusal in spirit — a run drawn, a run's money built —
- * are the ones worth reading first.
+ * The run: each person is paid in the form their address is. A private address
+ * is paid privately and a public one publicly, and nothing on the way lets one
+ * be paid the other way. The file keeps its name because other files cite it.
  */
 
 const NETWORK = 'undeployed' as const;
@@ -194,24 +186,23 @@ describe('the door, the refusal, and the record', () => {
     return { account, viewingKey, entry };
   };
 
-  it('§2 A RUN DRAWN FROM A ROSTER HOLDING A PUBLIC PAYEE IS REFUSED, AND IT NAMES THEM', async () => {
-    const { account, viewingKey } = await withPublicPayee();
-    await expect(h.payroll.createRunFromRoster(account.id, '2026-08', viewingKey))
-      .rejects.toThrow(
-        /Robin is set up to be paid publicly[\s\S]*a payroll run will not accept a public address/);
+  it('§2 A RUN DRAWN FROM A ROSTER HOLDING A PUBLIC PAYEE IS DRAWN, AND PAYS THEM AT THEIR PUBLIC ADDRESS', async () => {
+    const { account, viewingKey, entry } = await withPublicPayee();
+    /* RED WHEN: the draw refuses a person because their address is public. */
+    const { run } = await h.payroll.createRunFromRoster(account.id, '2026-08', viewingKey);
+    expect(run.employees.map(e => e.paidTo)).toEqual([entry.address!.bech32]);
+    const facts = h.payroll.paymentFactsFor(run.id, viewingKey);
+    /* RED WHEN: a public payee's payment is built as a private one, or at another address. */
+    expect(facts.map(f => [f.payee.kind, f.payee.bech32])).toEqual([['unshielded', entry.address!.bech32]]);
   });
 
-  it('§2 AND AT THE LINE NOTHING REACHES THE CHAIN WITHOUT, WHICH IS WHERE IT IS LOAD BEARING', async () => {
+  it('§2 AND A ROSTER ADDRESS MOVED TO PUBLIC AFTER THE DRAW IS NOT PAID AT THE NEW ONE', async () => {
     /*
-     * **THE REFUSAL AT THE DRAW IS FOR THE PERSON; THIS ONE IS FOR THE MONEY.**
-     * A run raised while everybody was private, whose roster then changes, must
-     * not build payment facts for a public payee. That is the state
-     * `paymentFactsFor` is the last thing standing in front of.
-     *
-     * The address is swapped through `putPerson`, which is how the neighbouring
-     * test reaches a roster state `admit` cannot produce. The point is not that
-     * the product can produce it; it is that the refusal does not depend on the
-     * product being unable to.
+     * **THE KIND FOLLOWS THE ADDRESS, AND THE ADDRESS PAID IS THE ONE ON THE
+     * PAYSLIP.** A run drawn while a person was private whose roster entry then
+     * moves to a public address must not pay the new one: their payslip names
+     * the private address. The swap goes through `putPerson`, which is how a
+     * roster state `admit` cannot produce is reached.
      */
     const { account, viewingKey } = await company();
     const a = h.payroll.hireDirect(account.id, {
@@ -223,11 +214,12 @@ describe('the door, the refusal, and the record', () => {
     (h.payroll as any).putPerson(
       { ...person, address: unshieldedPayeeFor('f6'.repeat(32), NETWORK) }, viewingKey);
 
+    /* RED WHEN: a private payee's payment is rebuilt as a public one at an address their payslip does not name. */
     expect(() => h.payroll.paymentFactsFor(run.id, viewingKey))
-      .toThrow(/Dana is set up to be paid publicly[\s\S]*will not accept a public address/);
+      .toThrow(/Dana's address on the roster has changed since this run was drawn/);
   });
 
-  it('§2 A PRIVATE PAYEE PASSES THROUGH UNCHANGED, SO THE REFUSAL IS NOT A WALL', async () => {
+  it('§2 A PRIVATE PAYEE PASSES THROUGH UNCHANGED', async () => {
     const { account, viewingKey } = await company();
     h.payroll.hireDirect(account.id, {
       name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
@@ -243,29 +235,13 @@ describe('the door, the refusal, and the record', () => {
     expect(payrollPayee('Dana', payee)).toBe(payee);
   });
 
-  it('§2 IT IS A REFUSAL AND NOT A WARNING, AND IT SAYS WHAT TO DO INSTEAD', () => {
-    /*
-     * A warning is a decision handed to an operator at the worst moment, and
-     * this one is wrong for every customer. So the message must not read as a
-     * question, and it must leave somebody with a next step rather than a wall.
-     */
-    let says = '';
-    try {
-      payrollPayee('Robin', unshieldedPayeeFor('e5'.repeat(32), NETWORK));
-    } catch (e) { says = (e as Error).message; }
-
-    expect(says).toContain('a payroll run will not accept a public address');
-    /* And it does NOT claim payroll already settles privately. No asset has a
-     * private form today, so that sentence would be the overclaim this whole
-     * round exists to avoid, printed where a customer would believe it. */
-    expect(says).not.toMatch(/payroll is always private|nobody can see|confidential/i);
-    expect(says).toContain('one-off transfer');
-    /* Not a confirmation. */
-    expect(says).not.toMatch(/are you sure|continue anyway|confirm|override/i);
-    /* Not written in the platform's vocabulary. Product-copy pass. */
-    expect(says).not.toMatch(/shielded|unshielded|note|wallet|mint|gas/i);
-    /* And no em dash: this product must not read as machine written. */
-    expect(says).not.toContain('—');
+  it('§2 BOTH KINDS COME BACK AS THEY WENT IN, AND A PAYEE OF NEITHER KIND IS REFUSED BY NAME', () => {
+    const pub = unshieldedPayeeFor('e5'.repeat(32), NETWORK);
+    /* RED WHEN: a public payee is refused, or handed back as anything but itself. */
+    expect(payrollPayee('Robin', pub)).toBe(pub);
+    /* RED WHEN: a payee that is neither kind reaches a run builder unrefused. */
+    expect(() => payrollPayee('Robin', { ...pub, kind: 'dust' } as unknown as Payee))
+      .toThrow(/^Robin is set up to be paid at an address that is neither private nor public\.$/);
   });
 
   it('§2 NO FLAG RELAXES IT, PINNED ON THE SHAPE RATHER THAN ON GOOD INTENTIONS', () => {
@@ -321,8 +297,7 @@ describe('the door, the refusal, and the record', () => {
     await h.payroll.createRunFromRoster(account.id, '2026-08', viewingKey);
     publicTransfer();
 
-    /* Payroll history is runs. A transfer is not one, and cannot become one:
-     * §2's refusal is what stops a public payee reaching a run at all. */
+    /* Payroll history is runs. A transfer is not one, and cannot become one. */
     const runs = h.store.listRuns(account.id);
     expect(runs).toHaveLength(1);
     expect(runs.map(r => r.id).some(id => id.startsWith('trf_'))).toBe(false);
@@ -432,7 +407,7 @@ describe('the door, the refusal, and the record', () => {
       accountId: 'acct_1', payee: employee, asset: 'NIGHT', amount: 1n,
       privacy: 'public', reference: 'August bonus', createdBy: 'usr_founder',
       employees: [employee],
-    })).toThrow(/this address is on the payroll roster[\s\S]*pay them through payroll instead/);
+    })).toThrow(/^this address is on the payroll roster\. Pay them through payroll instead\.$/);
 
     /* Somebody who is not on the roster is paid publicly without objection,
      * because that is the company's own money going where it chose. */

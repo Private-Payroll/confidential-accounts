@@ -766,14 +766,11 @@ export function chainLedger(
  *
  * ── READ THIS FIRST: WHAT THIS DOES NOT CLOSE ────────────────────────────
  *
- * **EVERY PAYEE ON EVERY RUN THIS PRODUCT CAN RAISE IS PRIVATE.**
- * `payrollPayee` (`src/core/movement.ts:140`) refuses a public address by name,
- * and `paymentFactsFor` (`src/core/payroll.ts:2212`) puts every payee through
- * it at `:2251` and returns the narrowed type. So the only payments a run can carry are
- * ones this reader CANNOT answer, and a service holding it still refuses every
- * payroll run it is asked to raise. **What changes is the refusal's class, not
- * the outcome.** A one-off transfer to a public address is the shape this can
- * answer, and that surface does not raise runs.
+ * **A RUN PAYS EACH PERSON IN THE FORM THEIR ADDRESS IS**, so a run can carry
+ * public payments, private ones, or both. This reader answers the public ones
+ * and refuses the private ones: a round with a private payee that this service
+ * is asked to send itself is refused, and a round a signer's device sends has
+ * had its private money asked on that device.
  *
  * It is here anyway, and it is not decoration: it is the public half of a
  * reader a service has to have, wired where a service can reach it, with the
@@ -783,10 +780,8 @@ export function chainLedger(
  * NEW BEHAVIOUR HERE.** A reader that answers nothing refuses every round that
  * moves money, whatever its payees are. This one refuses on what the chain
  * says, so a round whose payees are ALL PUBLIC and whose total the vault's
- * public balance covers is now raised where it was previously stopped. Nothing
- * the payroll door can build has that shape; `AccountService.proposeRun` itself
- * does not check, and what was holding that shut was the refusing reader rather
- * than a rule. Naming it is not the same as pinning it, and it is not pinned.
+ * public balance covers is now raised where it was previously stopped. A
+ * payroll run whose payees are all public has that shape.
  *
  * ── WHAT IT CAN ANSWER AND WHAT IT CANNOT ────────────────────────────────
  *

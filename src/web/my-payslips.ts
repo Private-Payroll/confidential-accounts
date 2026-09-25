@@ -7,6 +7,7 @@ import type { WrappingKeypair } from '../core/crypto.js';
 import type { WalletIndexer } from 'midnight-identity/profile/unlock';
 import type { ChainReader, PayslipPayment } from './payslip-worker-client.js';
 import { assets, ledgerTokenOf, type AssetRegistry } from '../core/assets.js';
+import { paidPublicly } from './public-payment.js';
 import { PAGE_OUT_OF_DATE, PAYSLIP_PAGE_HEADER, PAYSLIP_PAGE_VERSION } from '../core/payslip-page.js';
 
 /**
@@ -167,6 +168,13 @@ const paymentOf = (s: OpenedPayslip, registry: AssetRegistry): PayslipPayment | 
   const r = s.receipt;
   const paidTo = s.payslip.paidTo;
   if (r === null || typeof paidTo !== 'string' || typeof s.payslip.amount !== 'bigint') return null;
+  /*
+   * **A PAYMENT MADE PUBLICLY IS NEVER ASKED ABOUT HERE.** What this device
+   * builds is the value a private payment is recorded under; a public payment
+   * is recorded under another, so asking with this one could only ever answer
+   * "not yet" for a payment that was made. It reads "cannot tell".
+   */
+  if (paidPublicly(paidTo)) return null;
   try {
     return {
       paidTo, token: ledgerTokenOf(s.payslip.asset, 'shielded', registry) as Hex, amount: s.payslip.amount.toString(),

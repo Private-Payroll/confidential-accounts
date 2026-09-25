@@ -40,6 +40,7 @@ export const vaultServiceFor = (api: Api, accountId: string): VaultService => {
     payoutState: (vault) => api(`${base}/vaults/${vault}/payout-state`),
     events: (vault, transactionHash) => api(`${base}/vaults/${vault}/events/${encodeURIComponent(transactionHash)}`),
     payout: (vault, tx) => post(`${base}/vaults/${vault}/payout`, tx),
+    payoutPublicly: (vault, tx) => post(`${base}/vaults/${vault}/public-payout`, tx),
   };
 };
 

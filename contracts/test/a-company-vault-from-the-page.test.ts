@@ -333,6 +333,7 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     payoutState: () => { throw new Error('this watch makes no payment out'); },
     events: () => { throw new Error('this watch makes no payment out'); },
     payout: () => { throw new Error('this watch makes no payment out'); },
+    payoutPublicly: () => { throw new Error('this watch makes no payment out'); },
   });
   const keys: TemporaryKeys = {
     put: async (v, k) => { temporaryKeys.set(v, k); },

@@ -256,10 +256,9 @@ export async function payeeFromWallet(
    * vendor may want public settlement. **A third type is still refused naming
    * both** — `payeeOf` throws on a `mn_dust_`, which is not a payee at all.
    *
-   * **AND THE EMPLOYEE IS NOT EXPOSED BY THIS.** Being recordable is not being
-   * payable from a payroll run: `payrollPayee` refuses a public payee where a
-   * run is drawn and where its payment facts are built. Widening here without
-   * that refusal would be the mistake this file is written to avoid.
+   * **A PUBLIC ADDRESS IS PAID PUBLICLY.** A payroll run pays each person in
+   * the form their address is, and the screen says what a public payment puts
+   * on the record wherever a person is set up to be paid that way.
    */
   let address: Payee;
   try {
