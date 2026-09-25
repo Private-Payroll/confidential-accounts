@@ -21,7 +21,7 @@ import { refuseWhatTheVaultCannotPay, type PaymentAsked, type VaultHoldings } fr
 import {
   DEVICE_RAISE_VERSION, WRITTEN_DOWN_IS_NOT_WHAT_IS_CHECKED, paymentsCheckedDigest, type PaymentChecked,
 } from '../core/device-raise.js';
-import type { SignerMaterial, GovernedCallOrder } from './governed-call-builder.js';
+import type { SignerMaterial, GovernedCallOrder, RaiseRunOrder, RaiseGovernanceOrder, GovernanceOnTheWire } from './governed-call-builder.js';
 import type { Hex, Sealed } from '../core/crypto.js';
 import { payrollRoundOf, sameList, untoldRetryRounds } from '../core/retry-cover.js';
 import type { AccountCallChainOnTheWire, VaultBuilderClient } from './vault-worker-client.js';
@@ -30,7 +30,7 @@ import type { AccountCallChainOnTheWire, VaultBuilderClient } from './vault-work
 export interface RaiseOrderOnTheWire {
   readonly proposalId: string;
   readonly chainId: string;
-  readonly order: Extract<GovernedCallOrder, { circuit: 'propose' }>;
+  readonly order: RaiseRunOrder;
   /** The digest of the payments the proposal written down pays, taken as `paymentsCheckedDigest` takes it. */
   readonly paymentsChecked: string;
 }
@@ -83,6 +83,22 @@ export interface GovernedCallService {
   callState(accountId: string): Promise<AccountCallChainOnTheWire & { readonly account: string }>;
   approve(proposalId: string, body: { signerId: string; signature: string; viewingKey: string; tx: string }): Promise<RoundOnThePage>;
   standing(proposalId: string, body: { viewingKey: string }): Promise<RoundOnThePage>;
+  /** The proposal that seats one person waiting for a seat, and what a device needs to raise it if the chain does not hold it yet. */
+  seatRound?(accountId: string, signerId: string, body: { viewingKey: string }): Promise<GovernanceRoundOnTheWire>;
+  thresholdRound?(accountId: string, body: { viewingKey: string; newThreshold: number }): Promise<GovernanceRoundOnTheWire>;
+  sendGovernance?(proposalId: string, body: { viewingKey: string; tx: string }): Promise<RoundOnThePage>;
+  seatOrder?(accountId: string, signerId: string, body: { viewingKey: string }): Promise<{ order: GovernedCallOrder }>;
+  seat?(accountId: string, signerId: string, body: { viewingKey: string; tx: string }): Promise<unknown>;
+  thresholdOrder?(accountId: string, body: { viewingKey: string; newThreshold: number }): Promise<{ order: GovernedCallOrder }>;
+  setThreshold?(accountId: string, body: { viewingKey: string; newThreshold: number; tx: string }): Promise<unknown>;
+}
+
+/** A seat or a threshold round as the service hands it over: the proposal, and the raise when it is still to be sent. */
+export interface GovernanceRoundOnTheWire {
+  readonly proposal: RoundOnThePage & { readonly approvals?: ReadonlyArray<{ readonly signerId: string }> };
+  /** What the proposal changes and the salt its identity was made with; null once it has been carried out. */
+  readonly asked: { readonly governance: GovernanceOnTheWire; readonly proposalSalt: string } | null;
+  readonly order: { readonly proposalId: string; readonly chainId: string; readonly order: RaiseGovernanceOrder } | null;
 }
 
 export type GovernedStage = 'checking-the-vault' | 'writing-down' | 'reading-the-chain' | 'building' | 'sending' | 'waiting-for-the-chain';
@@ -548,7 +564,11 @@ export async function raiseRetryOnDevice(
  */
 export async function approveOnDevice(
   doors: GovernedCallDoors,
-  input: { round: RoundOnThePage; signerId: string; signature: string; viewingKey: string },
+  input: {
+    round: RoundOnThePage; signerId: string; signature: string; viewingKey: string;
+    /** For a seat or a threshold change: what it changes and its salt, which the approval is refused unless it matches. */
+    of?: { governance: GovernanceOnTheWire; proposalSalt: string };
+  },
 ): Promise<RoundOnThePage> {
   const { service } = doors;
   const before = await service.standing(input.round.id, { viewingKey: input.viewingKey });
@@ -560,7 +580,9 @@ export async function approveOnDevice(
   const chain = await service.callState(doors.accountId);
   doors.progress?.('building');
   const { tx } = await doors.builder.governedCall({
-    account: chain.account, order: { circuit: 'approve', proposal: before.chainId }, material: doors.material, chain,
+    account: chain.account,
+    order: { circuit: 'approve', proposal: before.chainId, ...(input.of === undefined ? {} : { of: input.of }) },
+    material: doors.material, chain,
   });
   doors.progress?.('sending');
   const sent = await service.approve(input.round.id, {
@@ -588,6 +610,8 @@ export const governedCallServiceFor = (api: Api): GovernedCallService => {
   const post = (path: string, body: unknown) => api(path, { method: 'POST', body: JSON.stringify(body) });
   const run = (id: string) => `/api/runs/${encodeURIComponent(id)}`;
   const proposal = (id: string) => `/api/proposals/${encodeURIComponent(id)}`;
+  const account = (id: string) => `/api/accounts/${encodeURIComponent(id)}`;
+  const signer = (accountId: string, id: string) => `${account(accountId)}/signers/${encodeURIComponent(id)}`;
   return {
     legPayments: (runId, body) => post(`${run(runId)}/leg-payments`, body),
     raiseRun: (runId, body) => post(`${run(runId)}/propose`, body),
@@ -600,5 +624,128 @@ export const governedCallServiceFor = (api: Api): GovernedCallService => {
     callState: (accountId) => api(`/api/accounts/${encodeURIComponent(accountId)}/call-state`),
     approve: (proposalId, body) => marked(() => post(`${proposal(proposalId)}/approve`, body)),
     standing: (proposalId, body) => post(`${proposal(proposalId)}/standing`, body),
+    seatRound: (accountId, signerId, body) => post(`${signer(accountId, signerId)}/round`, body),
+    thresholdRound: (accountId, body) => post(`${account(accountId)}/threshold/round`, body),
+    sendGovernance: (proposalId, body) => marked(() => post(`${proposal(proposalId)}/governance-send`, body)),
+    seatOrder: (accountId, signerId, body) => post(`${signer(accountId, signerId)}/seat-order`, body),
+    seat: (accountId, signerId, body) => marked(() => post(`${signer(accountId, signerId)}/seat`, body)),
+    thresholdOrder: (accountId, body) => post(`${account(accountId)}/threshold/order`, body),
+    setThreshold: (accountId, body) => marked(() => post(`${account(accountId)}/threshold`, body)),
   };
 };
+
+/* ── A SEAT AND A THRESHOLD CHANGE, CARRIED OUT FROM THIS DEVICE ─────────────── */
+
+/** Where a round that changes who may approve stands after this device has done what it can. */
+export type GovernedOutcome =
+  | { readonly state: 'done' }
+  | { readonly state: 'waiting-for-approvals'; readonly round: RoundOnThePage };
+
+const sameGovernance = (a: GovernanceOnTheWire, b: GovernanceOnTheWire): boolean =>
+  a.kind === b.kind && (a.kind === 'add-signer'
+    ? a.leaf.toLowerCase() === (b as { leaf: string }).leaf.toLowerCase()
+    : a.threshold === (b as { threshold: string }).threshold);
+
+/**
+ * **A ROUND THAT CHANGES WHO MAY APPROVE, TAKEN AS FAR AS THIS DEVICE CAN TAKE
+ * IT.** Raised if the chain does not hold it yet, approved by this signer if
+ * they have not approved it, and carried out if it has the approvals it needs.
+ * A round still short of approvals is left for the others to approve from their
+ * own devices, and said so.
+ *
+ * **EVERY ORDER THE SERVICE HANDS OVER IS CHECKED AGAINST THE CHANGE THIS
+ * PERSON ASKED FOR**, here and again where the call is built: the raise must be
+ * for this leaf or this threshold, and so must the seat or the change. A device
+ * proves what it is handed, so this is where a different change is noticed.
+ */
+async function governOnDevice(
+  doors: GovernedCallDoors,
+  input: {
+    viewingKey: string; signerId: string; sign: (round: RoundOnThePage) => string;
+    change: GovernanceOnTheWire;
+    round: () => Promise<GovernanceRoundOnTheWire>;
+    carryOrder: () => Promise<{ order: GovernedCallOrder }>;
+    carry: (tx: string) => Promise<unknown>;
+  },
+): Promise<GovernedOutcome> {
+  const { service } = doors;
+  const handed = await input.round();
+  let round: RoundOnThePage = handed.proposal;
+  if (round.status === 'executed') return { state: 'done' };
+  /* The change the service says this proposal makes must be the one asked for here, before anything is raised or approved. */
+  if (handed.asked === null || !sameGovernance(handed.asked.governance, input.change)) {
+    throw new Error('the service sent this device a different change from the one asked for here. Nothing was built or '
+      + 'sent. Reload the page and try again; if it happens again, do not approve it.');
+  }
+  const of = { governance: input.change, proposalSalt: handed.asked.proposalSalt };
+  if (handed.order !== null) {
+    const o = handed.order.order as Partial<RaiseGovernanceOrder>;
+    if (o.circuit !== 'propose' || !o.governance || !sameGovernance(o.governance, input.change)
+      || String(o.proposal).toLowerCase() !== String(handed.proposal.chainId).toLowerCase()) {
+      throw new Error('the service sent this device a different proposal from the one asked for here. Nothing was built '
+        + 'or sent. Reload the page and try again; if it happens again, do not approve it.');
+    }
+    doors.progress?.('reading-the-chain');
+    const chain = await service.callState(doors.accountId);
+    doors.progress?.('building');
+    const { tx } = await doors.builder.governedCall({ account: chain.account, order: o as RaiseGovernanceOrder, material: doors.material, chain });
+    doors.progress?.('sending');
+    const sent = await service.sendGovernance!(handed.proposal.id, { viewingKey: input.viewingKey, tx });
+    round = await waitFor(doors, 'this proposal', handed.proposal.id, input.viewingKey, (r) => Boolean(r.raisedAt), sent);
+  }
+  const signed = (handed.proposal.approvals ?? []).some((a) => a.signerId === input.signerId);
+  if (round.status === 'open' && !signed) {
+    round = await approveOnDevice(doors, {
+      round, signerId: input.signerId, signature: input.sign(round), viewingKey: input.viewingKey, of,
+    });
+  }
+  if (round.status !== 'approved') return { state: 'waiting-for-approvals', round };
+  const { order } = await input.carryOrder();
+  const carried = order as { circuit?: string; leaf?: string; threshold?: string; proposal?: string };
+  const asked = input.change.kind === 'add-signer'
+    ? carried.circuit === 'amendSigner' && String(carried.leaf).toLowerCase() === input.change.leaf.toLowerCase()
+    : carried.circuit === 'setThreshold' && carried.threshold === input.change.threshold;
+  if (!asked || String(carried.proposal).toLowerCase() !== String(round.chainId).toLowerCase()) {
+    throw new Error('the service sent this device something to carry out that is not the proposal asked for here. '
+      + 'Nothing was built or sent. Reload the page and try again.');
+  }
+  doors.progress?.('reading-the-chain');
+  const chain = await service.callState(doors.accountId);
+  doors.progress?.('building');
+  const { tx } = await doors.builder.governedCall({ account: chain.account, order, material: doors.material, chain });
+  doors.progress?.('sending');
+  await input.carry(tx);
+  return { state: 'done' };
+}
+
+/** Seats one person waiting for a seat, as far as this device can: see `governOnDevice`. */
+export function seatSignerOnDevice(
+  doors: GovernedCallDoors,
+  input: { viewingKey: string; signerId: string; sign: (round: RoundOnThePage) => string; seat: { signerId: string; leaf: string } },
+): Promise<GovernedOutcome> {
+  const { service, accountId } = doors;
+  const body = { viewingKey: input.viewingKey };
+  return governOnDevice(doors, {
+    ...input,
+    change: { kind: 'add-signer', leaf: input.seat.leaf },
+    round: () => service.seatRound!(accountId, input.seat.signerId, body),
+    carryOrder: () => service.seatOrder!(accountId, input.seat.signerId, body),
+    carry: (tx) => service.seat!(accountId, input.seat.signerId, { ...body, tx }),
+  });
+}
+
+/** Changes the account's threshold, as far as this device can: see `governOnDevice`. */
+export function changeThresholdOnDevice(
+  doors: GovernedCallDoors,
+  input: { viewingKey: string; signerId: string; sign: (round: RoundOnThePage) => string; newThreshold: number },
+): Promise<GovernedOutcome> {
+  const { service, accountId } = doors;
+  const body = { viewingKey: input.viewingKey, newThreshold: input.newThreshold };
+  return governOnDevice(doors, {
+    ...input,
+    change: { kind: 'threshold', threshold: String(input.newThreshold) },
+    round: () => service.thresholdRound!(accountId, body),
+    carryOrder: () => service.thresholdOrder!(accountId, body),
+    carry: (tx) => service.setThreshold!(accountId, { ...body, tx }),
+  });
+}

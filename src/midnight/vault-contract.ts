@@ -158,11 +158,12 @@ export const ACCOUNT_CIRCUITS_A_VAULT_CALLS: readonly string[] = Object.freeze([
 
 /**
  * **THE ACCOUNT'S CIRCUITS A SIGNER'S OWN DEVICE BUILDS AND PROVES**: raising a
- * round and approving one. Each opens with the signer check, so each runs
+ * round, approving one, and carrying out an approved round that seats a signer
+ * or changes the threshold. Each opens with the signer check, so each runs
  * against the signer's own secret, which exists only on that device. No vault
- * circuit shares a name with either.
+ * circuit shares a name with any of them.
  */
-export const ACCOUNT_CIRCUITS_A_DEVICE_GOVERNS: readonly string[] = Object.freeze(['propose', 'approve']);
+export const ACCOUNT_CIRCUITS_A_DEVICE_GOVERNS: readonly string[] = Object.freeze(['propose', 'approve', 'amendSigner', 'setThreshold']);
 
 /** Every one of the account's circuits whose proving material is served to a device, for either reason above. */
 export const ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE: readonly string[] = Object.freeze([

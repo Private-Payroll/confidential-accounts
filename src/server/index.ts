@@ -45,6 +45,7 @@ import type { Hex } from '../core/crypto.js';
 import { payeeAddress } from '../midnight/payee-address.js';
 import { theNetwork } from '../midnight/network.js';
 import { NothingWasSent, saysNothingWasSent } from '../core/jobs.js';
+import { roundForADevice } from './governance-wire.js';
 import {
   DEVICE_RAISE_VERSION, DIGEST_SHAPE, RAISE_IS_NOT_WHAT_WAS_CHECKED, RAISE_NAMES_NOTHING_CHECKED,
   SEND_IS_NOT_WHAT_WAS_CHECKED, paymentChecked, paymentsCheckedDigest, paymentsOnTheWire, reloadThePage,
@@ -528,7 +529,7 @@ app.use(cors());
   mountVaultRecords(app, {
     signedIn: (req, res, next) => authed(req, res, next),
     records, accountOf, companies: () => store.listAccounts(),
-    filingKeyOf: (companyId, person) => store.getVaultKeys(companyId, person)?.filingKey ?? null,
+    filingKeyOf: (companyId, person) => store.getFilingKey(companyId, person)?.filingKey ?? null,
   });
 
   /*
@@ -548,6 +549,7 @@ app.use(cors());
     signedIn: (req, res, next) => authed(req, res, next),
     member: (req, res, next) => member(req, res, next),
     store,
+    giveVaultKeys: (accountId, viewingKey, userId, given) => accounts.giveVaultKeys(accountId, viewingKey as Hex, userId, given),
     company: async (accountId) => {
       const [address, status] = await Promise.all([ledger.address(accountId), ledger.status(accountId)]);
       if (!address || !status) return null;
@@ -2561,6 +2563,116 @@ app.post('/api/accounts/:id/grant', authed, member, wrap(async (req, res) => {
   const b = z.object({ viewingKey: z.string(), signerId: z.string() }).parse(req.body);
   res.json(await accounts.grantAccess(String(req.params.id), b.viewingKey, b.signerId));
 }));
+
+/*
+ * ── SEATING A SIGNER AND CHANGING THE THRESHOLD, FROM A SIGNER'S DEVICE ──────
+ *
+ * **THIS SERVICE HOLDS NO SIGNER'S SECRET, SO IT CANNOT RAISE, APPROVE OR CARRY
+ * OUT A ROUND THAT CHANGES WHO MAY APPROVE.** Every one of those calls opens with
+ * the contract's signer check, which only a seated signer's own device can pass.
+ * So the service writes the proposal down and hands over what the device needs to
+ * build it; the device raises it, each approver approves it from their own
+ * device through the ordinary approval route, and once it is approved a seated
+ * signer's device carries it out. What reaches this service is a proven
+ * transaction, which its one door for such transactions refuses unless it is
+ * exactly one call to the named circuit of this company's own contract.
+ *
+ * Nothing here takes the caller's word for who they are: the seat they act from
+ * is the one their sign-in holds on this company.
+ */
+app.post('/api/accounts/:id/signers/:signerId/round', authed, member, wrap(async (req, res) => {
+  const b = z.object({ viewingKey: z.string() }).strict().parse(req.body ?? {});
+  const id = String(req.params.id);
+  const by = accounts.seatOf(id, b.viewingKey as Hex, req.userId!);
+  res.json(await roundForADevice(accounts,
+    await accounts.seatRound(id, b.viewingKey as Hex, String(req.params.signerId), by), b.viewingKey as Hex));
+}));
+
+app.post('/api/accounts/:id/threshold/round', authed, member, wrap(async (req, res) => {
+  const b = z.object({ viewingKey: z.string(), newThreshold: z.number().int().min(1) }).strict().parse(req.body ?? {});
+  const id = String(req.params.id);
+  const by = accounts.seatOf(id, b.viewingKey as Hex, req.userId!);
+  res.json(await roundForADevice(accounts,
+    await accounts.thresholdRound(id, b.viewingKey as Hex, b.newThreshold, by), b.viewingKey as Hex));
+}));
+
+/*
+ * **A SEAT OR A THRESHOLD ROUND A DEVICE BUILT, SENT.** Only those two kinds:
+ * a payroll round is sent through its run, where what the device checked
+ * against the vault is compared with what was written down.
+ */
+app.post('/api/proposals/:id/governance-send', authed, ownsProposal, async (req, res) => {
+  const b = z.object({ viewingKey: z.string(), tx: z.string().min(1).max(1_000_000) }).strict().safeParse(req.body ?? {});
+  if (!b.success) {
+    res.status(400).json({ nothingWasSent: true, error: 'this request does not carry a round to send. Nothing was sent.' });
+    return;
+  }
+  await answerASend(req, res, async () => {
+    let by: string;
+    try {
+      const order = await accounts.governanceOrderOf(String(req.params.id), b.data.viewingKey as Hex);
+      by = accounts.seatOf(accounts.requireProposal(order.proposalId, b.data.viewingKey as Hex).accountId,
+        b.data.viewingKey as Hex, req.userId!);
+    } catch (e: any) {
+      if (saysNothingWasSent(e)) throw e;
+      throw new NothingWasSent(`${String(e?.message ?? e).replace(/\.\s*$/u, '')}. Nothing was sent.`);
+    }
+    return accounts.sendRaise(String(req.params.id), b.data.viewingKey as Hex,
+      new Uint8Array(Buffer.from(b.data.tx, 'base64')), by);
+  });
+});
+
+app.post('/api/accounts/:id/signers/:signerId/seat-order', authed, member, wrap(async (req, res) => {
+  const b = z.object({ viewingKey: z.string() }).strict().parse(req.body ?? {});
+  const o = accounts.seatOrderOf(String(req.params.id), b.viewingKey as Hex, String(req.params.signerId));
+  res.json({ order: { circuit: 'amendSigner', leaf: o.leaf, proposal: o.proposal, proposalSalt: o.proposalSalt } });
+}));
+
+app.post('/api/accounts/:id/signers/:signerId/seat', authed, member, async (req, res) => {
+  const b = z.object({ viewingKey: z.string(), tx: z.string().min(1).max(1_000_000) }).strict().safeParse(req.body ?? {});
+  if (!b.success) {
+    res.status(400).json({ nothingWasSent: true, error: 'this request does not carry a seat to send. Nothing was sent.' });
+    return;
+  }
+  await answerASend(req, res, async () => {
+    const id = String(req.params.id);
+    let by: string;
+    try {
+      by = accounts.seatOf(id, b.data.viewingKey as Hex, req.userId!);
+    } catch (e: any) {
+      throw new NothingWasSent(`${String(e?.message ?? e).replace(/\.\s*$/u, '')}. Nothing was sent.`);
+    }
+    return accounts.seatFromDevice(id, b.data.viewingKey as Hex, String(req.params.signerId),
+      new Uint8Array(Buffer.from(b.data.tx, 'base64')), by);
+  });
+});
+
+app.post('/api/accounts/:id/threshold/order', authed, member, wrap(async (req, res) => {
+  const b = z.object({ viewingKey: z.string(), newThreshold: z.number().int().min(1) }).strict().parse(req.body ?? {});
+  const o = accounts.thresholdOrderOf(String(req.params.id), b.viewingKey as Hex, b.newThreshold);
+  res.json({ order: { circuit: 'setThreshold', threshold: String(o.threshold), proposal: o.proposal, proposalSalt: o.proposalSalt } });
+}));
+
+app.post('/api/accounts/:id/threshold', authed, member, async (req, res) => {
+  const b = z.object({
+    viewingKey: z.string(), newThreshold: z.number().int().min(1), tx: z.string().min(1).max(1_000_000),
+  }).strict().safeParse(req.body ?? {});
+  if (!b.success) {
+    res.status(400).json({ nothingWasSent: true, error: 'this request does not carry a threshold change to send. Nothing was sent.' });
+    return;
+  }
+  await answerASend(req, res, async () => {
+    const id = String(req.params.id);
+    let by: string;
+    try {
+      by = accounts.seatOf(id, b.data.viewingKey as Hex, req.userId!);
+    } catch (e: any) {
+      throw new NothingWasSent(`${String(e?.message ?? e).replace(/\.\s*$/u, '')}. Nothing was sent.`);
+    }
+    return accounts.setThresholdFromDevice(id, b.data.viewingKey as Hex, b.data.newThreshold,
+      new Uint8Array(Buffer.from(b.data.tx, 'base64')), by);
+  });
+});
 
 /* ------------------------- disclosure ------------------------- */
 

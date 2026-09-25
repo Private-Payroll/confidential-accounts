@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { Account } from '../core/types.js';
 import * as keyring from './keyring.js';
 import { WALLET_ORIGIN } from './Auth.js';
-import { whyNotHandOver } from './handover-check.js';
+import { holderOf, whyNotHandOver, type Roster } from './handover-check.js';
 
 export { whyNotHandOver };
 
@@ -24,10 +24,10 @@ export { whyNotHandOver };
  */
 interface SeatView {
   key: { tag: string; value: string };
-  holder: string | null;
+  /** Always null now: the service keeps no record of whose each key is, and the roster names the holder here. */
+  holder?: string | null;
   thisService?: boolean;
   onTheCompanysCommittee: boolean;
-  you: boolean;
 }
 interface ContractView {
   contract: 'account' | 'vault';
@@ -56,19 +56,27 @@ type Key = { tag: string; value: string };
 
 const short = (hex: string) => `${hex.slice(0, 8)}…${hex.slice(-6)}`;
 
-/** Who holds a seat, in words: a signer's name, or the plain fact that nobody on this company gave that key. */
-export function seatWords(seat: SeatView, signers: Account['signers']): string {
+/**
+ * Who holds a seat, in words: the name the company's own roster gives the key,
+ * or the plain fact that no seated signer's roster entry names it.
+ */
+export function seatWords(seat: SeatView, roster: Roster, me: { signerId: string }): string {
   if (seat.thisService) return 'this service\'s temporary key';
-  const name = seat.holder === null ? null : signers.find((s) => s.userId === seat.holder)?.name ?? null;
-  const who = name ?? (seat.holder === null ? 'a key nobody now on this company gave' : 'a signer of this company');
-  return `${who}${seat.you ? ' (you)' : ''}${seat.onTheCompanysCommittee ? '' : ' - not on the company\'s committee'}`;
+  const holder = holderOf(seat.key, roster);
+  const who = holder?.name ?? 'a key nobody now on this company gave';
+  const you = holder !== null && holder.signerId === me.signerId;
+  return `${who}${you ? ' (you)' : ''}${seat.onTheCompanysCommittee ? '' : ' - not on the company\'s committee'}`;
 }
 
-export function MaintenancePanel({ account, api = keyring.api, walletKey }: {
+export function MaintenancePanel({ account, me, api = keyring.api, walletKey, roster = async () => account }: {
   account: Account;
+  /** This person's own seat, so the screen can say which seat is theirs. */
+  me: { signerId: string };
   api?: Api;
   /** The committee key this person's wallet gives for this company. */
   walletKey?: () => Promise<Key>;
+  /** The company's sealed roster, opened on this device afresh. The account as this page opened it when not given. */
+  roster?: () => Promise<Roster>;
 }) {
   const [view, setView] = useState<AuthorityScreen | null>(null);
   const [err, setErr] = useState('');
@@ -87,8 +95,7 @@ export function MaintenancePanel({ account, api = keyring.api, walletKey }: {
     setBusy(true); setErr(''); setSaid('');
     try {
       const fresh = await api(`/api/accounts/${account.id}/authority`) as AuthorityScreen;
-      const active = account.signers.filter((s) => s.status === 'active').length;
-      const refused = whyNotHandOver(fresh, await askWallet(), active);
+      const refused = whyNotHandOver(fresh, await askWallet(), await roster(), me);
       if (refused !== null) throw new Error(refused);
       /* The committee checked here is the one sent, and the service installs only that one. */
       const r = await api(`/api/accounts/${account.id}/authority/handover`, {
@@ -135,7 +142,7 @@ export function MaintenancePanel({ account, api = keyring.api, walletKey }: {
                 <ul>
                   {c.seats.map((s) => (
                     <li key={s.key.value} data-seat-outside={String(!s.onTheCompanysCommittee)}>
-                      {seatWords(s, account.signers)} <span className="sub">{short(s.key.value)}</span>
+                      {seatWords(s, account, me)} <span className="sub">{short(s.key.value)}</span>
                     </li>
                   ))}
                 </ul>

@@ -339,6 +339,10 @@ export class ChainLedger implements Ledger {
     return this.inner.status(accountId);
   }
 
+  holdsSigner(accountId: string, leaf: Hex): Promise<boolean | null> {
+    return this.inner.holdsSigner(accountId, leaf);
+  }
+
   paidAmong(accountId: string, leaves: Hex[]): Promise<PaymentsAmong | null> {
     return this.inner.paidAmong(accountId, leaves);
   }

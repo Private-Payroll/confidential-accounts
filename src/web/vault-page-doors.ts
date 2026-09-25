@@ -5,7 +5,9 @@
  * opened, and a place in this browser for a vault's temporary key.
  */
 import type { Hex } from '../core/crypto.js';
-import { fromHex, signingPublicKeyOf } from '../core/crypto.js';
+import { fromHex } from '../core/crypto.js';
+import { signVaultKeys } from '../core/vault-keys.js';
+import { whyNotTheCommittee, whyNotTheReaders, type Roster } from './handover-check.js';
 import type { Account } from '../core/types.js';
 import type { WireRecord } from '../midnight/sealed-record-wire.js';
 import type { PoolSigner } from '../midnight/vault-pool.js';
@@ -28,14 +30,41 @@ const marked = async <T>(call: () => Promise<T>): Promise<T> => {
   }
 };
 
-export const vaultServiceFor = (api: Api, accountId: string): VaultService => {
+/**
+ * **THE COMPANY'S VAULT ROUTES, AS THE PAGE CALLS THEM, WITH EVERY COMMITTEE
+ * AND EVERY RECORDS KEY THEY REPORT CHECKED AGAINST THE SEALED ROSTER.**
+ *
+ * `roster` opens the company's roster on this device. A committee the service
+ * reports that is not exactly the keys the roster names is refused before a
+ * vault is built for it, and a records key the roster does not name is refused
+ * before the vault's secret is wrapped to it. A vault the service reads as held
+ * by its committee is read as not held when the committee on the chain is not
+ * the roster's, so no pool is opened and no money goes in.
+ */
+export const vaultServiceFor = (api: Api, accountId: string, roster: () => Promise<Roster>): VaultService => {
   const base = `/api/accounts/${encodeURIComponent(accountId)}`;
   const post = (path: string, tx: string) => marked(() => api(path, { method: 'POST', body: JSON.stringify({ tx }) }));
   return {
-    keys: () => api(`${base}/vault-keys`),
+    keys: async () => {
+      const [served, named] = await Promise.all([api(`${base}/vault-keys`), roster()]);
+      const refused = (served.committee === null ? null : whyNotTheCommittee(served.committee.committee, named))
+        ?? whyNotTheReaders(served.readers ?? [], named);
+      if (refused !== null) throw new Error(`${refused} Nothing was built or sent.`);
+      return served;
+    },
     deploy: (tx) => post(`${base}/vaults`, tx),
     handover: (vault, tx) => post(`${base}/vaults/${vault}/handover`, tx),
-    chain: (vault) => api(`${base}/vaults/${vault}/chain`),
+    chain: async (vault) => {
+      const view = await api(`${base}/vaults/${vault}/chain`);
+      const heldBy = view.heldByCommittee === true && view.authority ? view.authority.committee : null;
+      if (!view.committee && heldBy === null) return view;
+      const named = await roster();
+      const offered = view.committee ? whyNotTheCommittee(view.committee.committee, named) : null;
+      const held = heldBy === null ? null : whyNotTheCommittee(heldBy, named);
+      const refused = offered ?? held;
+      return refused === null ? view
+        : { ...view, committee: null, heldByCommittee: false, fundable: false, why: refused };
+    },
     deposit: (vault, tx) => post(`${base}/vaults/${vault}/deposit`, tx),
     payoutState: (vault) => api(`${base}/vaults/${vault}/payout-state`),
     events: (vault, transactionHash) => api(`${base}/vaults/${vault}/events/${encodeURIComponent(transactionHash)}`),
@@ -60,17 +89,25 @@ export const privatePaymentsFor = (
 });
 
 /** Gives this signer's three public vault keys, once; the service keeps the first set. */
+/**
+ * **THIS SIGNER'S TWO VAULT KEYS, SIGNED WITH THEIR OWN ROSTER SIGNING KEY AND
+ * WRITTEN INTO THEIR OWN ENTRY IN THE SEALED ROSTER.** The signature is what lets
+ * every other device accept them as this signer's, and what stops anybody else
+ * putting a key in this signer's name. The filing key is the roster signing key
+ * itself, so it is not sent.
+ */
 export const giveVaultKeys = (
   api: Api, accountId: string,
-  keys: { committeeKey: { tag: string; value: string }; companyKey: Hex; signingSecret: Hex },
-): Promise<unknown> => api(`/api/accounts/${encodeURIComponent(accountId)}/vault-keys`, {
-  method: 'PUT',
-  body: JSON.stringify({
-    committeeKey: keys.committeeKey,
-    recordsKey: recordsKeypairFrom(fromHex(keys.companyKey)).publicKey,
-    filingKey: signingPublicKeyOf(keys.signingSecret),
-  }),
-});
+  keys: { committeeKey: { tag: string; value: string }; companyKey: Hex; signingSecret: Hex; signerId: string; viewingKey: Hex },
+): Promise<unknown> => {
+  const signed = signVaultKeys(accountId, keys.signerId, {
+    committeeKey: keys.committeeKey, recordsKey: recordsKeypairFrom(fromHex(keys.companyKey)).publicKey,
+  }, keys.signingSecret);
+  return api(`/api/accounts/${encodeURIComponent(accountId)}/vault-keys`, {
+    method: 'PUT',
+    body: JSON.stringify({ viewingKey: keys.viewingKey, ...signed }),
+  });
+};
 
 /** This device as a signer of the company's vaults. */
 export const deviceSignerFrom = (

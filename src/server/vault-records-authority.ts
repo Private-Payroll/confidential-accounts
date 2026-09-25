@@ -54,7 +54,7 @@ const fold = (h: string): string => h.trim().toLowerCase().replace(/^0x/u, '');
  * this product's rosters.
  */
 /**
- * The filing key a person gave for a company (`VaultKeysOfASigner.filingKey`),
+ * The filing key a member files a company's records under (`FilingKeyOfAMember.filingKey`),
  * or null when they have given none.
  */
 export type FilingKeyOf = (companyId: string, person: string) => Hex | null;

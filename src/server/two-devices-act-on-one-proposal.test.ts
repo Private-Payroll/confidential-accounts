@@ -224,7 +224,7 @@ const aDevice = (who: keyof typeof USERS, company: { account: string }, signer: 
     },
     builder: {
       governedCall: async ({ order }) => ({
-        tx: Buffer.from(JSON.stringify({ signer, order } satisfies Built)).toString('base64'),
+        tx: Buffer.from(JSON.stringify({ signer, order: order as Built['order'] } satisfies Built)).toString('base64'),
       }),
     },
     material: { signingSecret: '11'.repeat(32), blinding: '22'.repeat(32), scope: '33'.repeat(32) },

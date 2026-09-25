@@ -1,7 +1,8 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
 import { utf8 } from './crypto.js';
-import type { SealedAccount, Proposal, SealedProposal, PayrollRun, SealedRun, Attestation, SealedEmployee, Invite, Installation, PluginEvent, User, CompanyVault, VaultKeysOfASigner } from './types.js';
+import type { SealedAccount, Proposal, SealedProposal, PayrollRun, SealedRun, Attestation, SealedEmployee, Invite, Installation, PluginEvent, User, CompanyVault, FilingKeyOfAMember } from './types.js';
+import type { CompanyVaultKeyIndex } from './vault-keys.js';
 import { provenanceOf, type Marked, type WiringName } from './provenance.js';
 
 export interface Shape {
@@ -16,8 +17,14 @@ export interface Shape {
   users: Record<string, User>;
   /** A company's vaults, keyed by vault address. */
   companyVaults: Record<string, CompanyVault>;
-  /** Each signer's public vault keys, keyed by `accountId:userId`. */
-  vaultKeys: Record<string, VaultKeysOfASigner>;
+  /**
+   * Each company's vault keys with nobody's name on them, keyed by account. Made
+   * from the sealed roster every time the roster is written; the roster is the
+   * only record of whose each key is.
+   */
+  vaultKeyIndex: Record<string, CompanyVaultKeyIndex>;
+  /** Each member's filing key, keyed by `accountId:userId`. */
+  filingKeys: Record<string, FilingKeyOfAMember>;
   /**
    * **EVERY LEDGER OBSERVED WRITING HERE, IN THE ORDER IT WAS FIRST SEEN.**
    *
@@ -44,7 +51,7 @@ export interface Shape {
 
 export const emptyShape = (): Shape =>
   ({ accounts: {}, proposals: {}, runs: {}, attestations: {}, employees: {}, invites: {},
-    installations: {}, pluginEvents: {}, users: {}, writtenBy: [], companyVaults: {}, vaultKeys: {} });
+    installations: {}, pluginEvents: {}, users: {}, writtenBy: [], companyVaults: {}, vaultKeyIndex: {}, filingKeys: {} });
 
 /**
  * Note what is NOT stored here: viewing keys and signer secrets. Nothing that can
@@ -447,8 +454,12 @@ export class MemoryStore {
       .filter(v => v.accountId === accountId)
       .sort((a, b) => a.deployedAt.localeCompare(b.deployedAt));
   }
-  putVaultKeys(k: VaultKeysOfASigner) { this.data.vaultKeys[`${k.accountId}:${k.userId}`] = k; this.flush(); }
-  getVaultKeys(accountId: string, userId: string) { return this.data.vaultKeys[`${accountId}:${userId}`] ?? null; }
+  putVaultKeyIndex(k: CompanyVaultKeyIndex) { this.data.vaultKeyIndex[k.accountId] = k; this.flush(); }
+  getVaultKeyIndex(accountId: string): CompanyVaultKeyIndex | null { return this.data.vaultKeyIndex[accountId] ?? null; }
+  putFilingKey(k: FilingKeyOfAMember) { this.data.filingKeys[`${k.accountId}:${k.userId}`] = k; this.flush(); }
+  getFilingKey(accountId: string, userId: string): FilingKeyOfAMember | null {
+    return this.data.filingKeys[`${accountId}:${userId}`] ?? null;
+  }
 
   putAttestation(a: Attestation) { this.data.attestations[a.id] = a; this.flush(); }
   getAttestation(id: string) { return this.data.attestations[id] ?? null; }

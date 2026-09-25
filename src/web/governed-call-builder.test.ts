@@ -23,6 +23,9 @@ const sha = (...parts: Array<Uint8Array | bigint>) => Uint8Array.from(createHash
 const accountPure = {
   runPayload: (root: Uint8Array, payees: bigint, opensAt: bigint, closesAt: bigint) => sha(root, payees, opensAt, closesAt),
   proposalIdOf: (payload: Uint8Array, vault: Uint8Array, salt: Uint8Array) => sha(payload, vault, salt),
+  signerAddPayload: (leaf: Uint8Array) => sha(Buffer.from('seat'), leaf),
+  setThresholdPayload: (t: bigint) => sha(Buffer.from('threshold'), t),
+  noVault: () => new Uint8Array(32).fill(0xfe),
 };
 const idOf = (r: typeof run, salt: string) => Buffer.from(accountPure.proposalIdOf(
   accountPure.runPayload(Buffer.from(r.root, 'hex'), BigInt(r.payees), BigInt(r.opensAt), BigInt(r.closesAt)),
@@ -236,13 +239,13 @@ describe('ONE GOVERNED CALL', () => {
     expect(refused).toBeInstanceOf(TypeError);
   });
 
-  it('ONLY A RAISE AND AN APPROVAL, ONLY FOR AN ACCOUNT ADDRESS, AND NOTHING IS BUILT OTHERWISE', async () => {
-    for (const circuit of ['cancel', 'closeExpiredRun', 'recordPayment', 'amendSigner', 'toString']) {
+  it('ONLY A RAISE, AN APPROVAL, A SEAT OR A THRESHOLD, ONLY FOR AN ACCOUNT ADDRESS, AND NOTHING IS BUILT OTHERWISE', async () => {
+    for (const circuit of ['cancel', 'closeExpiredRun', 'recordPayment', 'setVaultThreshold', 'adopt', 'toString']) {
       const log: string[] = [];
       /* RED WHEN: a circuit a device does not govern here - or one open to anybody - is built with a signer's record. */
       await expect(buildGovernedCall(depsWith(log, []), {
         account: ACCOUNT, order: { circuit, proposal: 'aa'.repeat(32) } as unknown as GovernedCallOrder, material, chain,
-      })).rejects.toThrow(/raises and approves proposals/u);
+      })).rejects.toThrow(/raises and approves proposals, seats signers and changes the threshold/u);
       expect(log).toEqual([]);
     }
     const log: string[] = [];
@@ -252,5 +255,107 @@ describe('ONE GOVERNED CALL', () => {
     await expect(buildGovernedCall(depsWith(log, []), { account: ACCOUNT, order: approve, material: before, chain }))
       .rejects.toThrow(/written before vault scopes were recorded/u);
     expect(log).toEqual([]);
+  });
+});
+
+/* ── SEATING A SIGNER AND CHANGING THE THRESHOLD, FROM THE DEVICE ───────────── */
+
+const LEAF = 'ab'.repeat(32);
+const SALT = 'cd'.repeat(32);
+const hexOf = (b: Uint8Array) => Buffer.from(b).toString('hex');
+const seatRoundId = (leaf: string, salt: string) => hexOf(accountPure.proposalIdOf(
+  accountPure.signerAddPayload(bytes(leaf)), accountPure.noVault(), bytes(salt)));
+const thresholdRoundId = (t: bigint, salt: string) => hexOf(accountPure.proposalIdOf(
+  accountPure.setThresholdPayload(t), accountPure.noVault(), bytes(salt)));
+const seatRaise: GovernedCallOrder = {
+  circuit: 'propose', governance: { kind: 'add-signer', leaf: LEAF },
+  half: { ...half, proposalSalt: SALT, changeAmount: '0' }, proposal: seatRoundId(LEAF, SALT),
+};
+const seatIt: GovernedCallOrder = { circuit: 'amendSigner', leaf: LEAF, proposal: seatRoundId(LEAF, SALT), proposalSalt: SALT };
+const setIt: GovernedCallOrder = { circuit: 'setThreshold', threshold: '2', proposal: thresholdRoundId(2n, SALT), proposalSalt: SALT };
+
+describe('A SEAT AND A THRESHOLD, BUILT ON THE DEVICE', () => {
+  it('a governance raise is the merged circuit on its governance branch, with the contract\'s own payload for the leaf named and its own no-vault', async () => {
+    const handed: Handed[] = [];
+    await buildGovernedCall(depsWith([], handed), { account: ACCOUNT, order: seatRaise, material, chain });
+    /* RED WHEN: the branch flag, the payload or the vault is not the governance round the leaf makes. */
+    expect(handed[0]!.options.args).toEqual([
+      accountPure.signerAddPayload(bytes(LEAF)), new Uint8Array(32), 0n, 0n, 0n, false, accountPure.noVault(),
+    ]);
+    expect(handed[0]!.options.circuitId).toBe('propose');
+  });
+
+  it('seating is amendSigner on its seating branch, appended, for the leaf named and the proposal named', async () => {
+    const handed: Handed[] = [];
+    await buildGovernedCall(depsWith([], handed), { account: ACCOUNT, order: seatIt, material, chain });
+    /* RED WHEN: a seat is built as a removal, into a vacated slot, or for another leaf or round. */
+    expect(handed[0]!.options.args).toEqual([bytes(LEAF), bytes(seatRoundId(LEAF, SALT)), false, false]);
+    expect(handed[0]!.options.circuitId).toBe('amendSigner');
+  });
+
+  it('a threshold change is setThreshold with the number and the proposal', async () => {
+    const handed: Handed[] = [];
+    await buildGovernedCall(depsWith([], handed), { account: ACCOUNT, order: setIt, material, chain });
+    expect(handed[0]!.options.args).toEqual([2n, bytes(thresholdRoundId(2n, SALT))]);
+    await expect(buildGovernedCall(depsWith([], []), {
+      account: ACCOUNT, order: { ...setIt, threshold: '0', proposal: thresholdRoundId(0n, SALT) } as GovernedCallOrder, material, chain,
+    })).rejects.toThrow(/at least one/u);
+  });
+
+  it('A SEAT OR A THRESHOLD CHANGE READS THE PROPOSAL\'S SALT AND NO OTHER ACCOUNT FIELD', () => {
+    for (const order of [seatIt, setIt]) {
+      const r = recordForOneCall(order, material);
+      /* RED WHEN: the salt the proposal's identity is recomputed from is not the one handed over. */
+      expect(r.proposalSalt).toEqual(bytes(SALT));
+      for (const field of ['assetBlinding', 'assetId', 'changeAmount', 'changeBatchDigest'] as const) {
+        expect(() => r[field]).toThrow(NotReadByAnApproval);
+      }
+    }
+  });
+
+  it('A SEAT FOR ANOTHER LEAF, A THRESHOLD OTHER THAN THE PROPOSAL\'S, OR A RAISE WHOSE CHANGE IS NOT THE RECORDED ONE, IS NOT BUILT', async () => {
+    for (const order of [
+      { ...seatIt, leaf: 'ef'.repeat(32) },
+      { ...seatIt, proposalSalt: 'ee'.repeat(32) },
+      { ...setIt, threshold: '3' },
+      { ...seatRaise, governance: { kind: 'add-signer', leaf: 'ef'.repeat(32) } },
+      { ...seatRaise, governance: { kind: 'threshold', threshold: '2' } },
+    ] as GovernedCallOrder[]) {
+      const log: string[] = [];
+      /* RED WHEN: a round approved for one change can carry out another, or a raise proves a change nobody wrote down. */
+      await expect(buildGovernedCall(depsWith(log, []), { account: ACCOUNT, order, material, chain }))
+        .rejects.toThrow(/not the one the company wrote down|not for this change/u);
+      expect(log).toEqual([]);
+    }
+  });
+
+  it('a governance round that is neither a seat nor a threshold is not built', async () => {
+    const log: string[] = [];
+    await expect(buildGovernedCall(depsWith(log, []), {
+      account: ACCOUNT, order: { ...seatRaise, governance: { kind: 'remove-signer', leaf: LEAF } } as unknown as GovernedCallOrder,
+      material, chain,
+    })).rejects.toThrow(/neither a seat nor a threshold/u);
+    expect(log).toEqual([]);
+  });
+});
+
+describe('AN APPROVAL OF A SEAT OR A THRESHOLD IS BOUND TO THE CHANGE ASKED FOR', () => {
+  it('is built when the change and its salt make the proposal named, and refused when they do not', async () => {
+    const id = seatRoundId(LEAF, SALT);
+    const bound: GovernedCallOrder = { circuit: 'approve', proposal: id, of: { governance: { kind: 'add-signer', leaf: LEAF }, proposalSalt: SALT } };
+    const handed: Handed[] = [];
+    await buildGovernedCall(depsWith([], handed), { account: ACCOUNT, order: bound, material, chain });
+    expect(handed[0]!.options.args).toEqual([bytes(id)]);
+    for (const order of [
+      { ...bound, of: { governance: { kind: 'add-signer', leaf: 'ef'.repeat(32) }, proposalSalt: SALT } },
+      { ...bound, of: { governance: { kind: 'threshold', threshold: '1' }, proposalSalt: SALT } },
+      { ...bound, of: { governance: { kind: 'add-signer', leaf: LEAF }, proposalSalt: 'ee'.repeat(32) } },
+    ] as GovernedCallOrder[]) {
+      const log: string[] = [];
+      /* RED WHEN: a device approves a proposal for a change other than the one it was asked to approve. */
+      await expect(buildGovernedCall(depsWith(log, []), { account: ACCOUNT, order, material, chain }))
+        .rejects.toThrow(/not for the change asked for here/u);
+      expect(log).toEqual([]);
+    }
   });
 });

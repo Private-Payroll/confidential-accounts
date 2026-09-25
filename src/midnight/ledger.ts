@@ -920,6 +920,25 @@ export class MidnightLedger implements Ledger {
    * gets: a repaired empty answer would report a run of paid people as a run of
    * unpaid ones, which is the exact reading this whole path exists to prevent.
    */
+  /**
+   * **WHETHER THE ACCOUNT'S SIGNER SET HOLDS THIS LEAF**, as the contract's own
+   * decoded set answers it. Null when the account is not on the chain to ask; a
+   * set that does not decode refuses rather than reading as "no".
+   */
+  async holdsSigner(accountId: string, leaf: Hex): Promise<boolean | null> {
+    const address = await this.addressOf(accountId);
+    if (!address) return null;
+    const { ledger: readLedger } = await import('../../contracts/managed/contract/index.js');
+    const providers = await this.providers();
+    const state = await providers.publicDataProvider.queryContractState(address as any);
+    if (!state) return null;
+    const leaves = (readLedger(state.data) as any)?.signerLeaves;
+    if (leaves == null || typeof leaves.member !== 'function') {
+      throw new UndecodedLedgerField('signerLeaves', 'set');
+    }
+    return Boolean(leaves.member(fromHex(leaf)));
+  }
+
   async paidAmong(accountId: string, leaves: Hex[]): Promise<PaymentsAmong | null> {
     const address = await this.addressOf(accountId);
     if (!address) return null;

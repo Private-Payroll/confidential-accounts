@@ -157,6 +157,12 @@ export interface Signer {
   /** x25519, used to receive the wrapped account viewing key */
   wrappingPublicKey: Hex;
   role: Role;
+  /**
+   * The two public keys this signer gave for the company's vaults, signed with
+   * this entry's own signing key. Absent until they give them. The roster is
+   * the only record of whose they are.
+   */
+  vaultKeys?: { committeeKey: { tag: string; value: string }; recordsKey: Hex; signature: Hex } | null;
   /*
    * `blinding` USED TO BE HERE, AND IT WAS TAKEN BACK OUT. Read this before
    * putting anything like it back.
@@ -1643,27 +1649,16 @@ export interface PayrollRun {
 }
 
 /**
- * **ONE SIGNER'S PUBLIC KEYS FOR A COMPANY'S VAULTS**, given by that signer's
- * own wallet and device the first time they open the company here.
- *
- *   - `committeeKey` is the key they sit on every vault's committee with. Its
- *     secret half never leaves their wallet.
- *   - `recordsKey` is the key the vault's nonce secret is wrapped to for them.
- *   - `filingKey` is the key every sealed record they file is signed with; the
- *     service refuses a filing from them signed by any other.
- *
- * All three are public. Kept outside the sealed roster, so this service can
- * see which member gave which key - the same exposure as `memberUserIds` - and
- * a service that lied about another signer's keys would be believed by a
- * device assembling a committee of more than one.
+ * **THE FILING KEY ONE MEMBER FILES A VAULT'S SEALED RECORDS UNDER.** It is
+ * their roster signing key, and it is kept here, outside the roster, so the
+ * service can refuse a filing from a member signed with any other key without
+ * opening the roster. It says nothing about any vault committee key: those are
+ * kept in the sealed roster, and outside it only in an index with no names in it.
  */
-export interface VaultKeysOfASigner {
+export interface FilingKeyOfAMember {
   accountId: string;
   userId: string;
-  committeeKey: { tag: string; value: string };
-  recordsKey: Hex;
   filingKey: Hex;
-  givenAt: string;
 }
 
 /**

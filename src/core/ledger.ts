@@ -700,6 +700,15 @@ export interface Ledger {
   paidAmong(accountId: string, leaves: Hex[]): Promise<PaymentsAmong | null>;
 
   /**
+   * **WHETHER THE ACCOUNT'S SIGNER SET HOLDS THIS LEAF NOW**, read from the
+   * chain, or null when the account is not there to ask. A seat a signer's
+   * device sends is written on the record only once this says yes, because the
+   * door it goes through can tell which circuit it calls and not which leaf it
+   * seats.
+   */
+  holdsSigner?(accountId: string, leaf: Hex): Promise<boolean | null>;
+
+  /**
    * Opens a round. The chain receives a commitment to the payload, never the
    * payload — and a commitment to the CHANGE as well.
    *
@@ -1447,6 +1456,11 @@ export class SimulatedLedger implements Ledger {
     const a = this.accounts.get(accountId);
     if (!a) return null;
     return { known: false, paid: [] };
+  }
+
+  async holdsSigner(accountId: string, leaf: Hex): Promise<boolean | null> {
+    const a = this.accounts.get(accountId);
+    return a ? a.signerLeaves.has(leaf) : null;
   }
 
   async propose(

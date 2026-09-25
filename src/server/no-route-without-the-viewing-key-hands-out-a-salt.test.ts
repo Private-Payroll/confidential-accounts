@@ -42,6 +42,8 @@ const HANDS_OUT = [
   'privatePaymentOrderOf', 'retryPaymentOrderOf', 'runSaltOf', 'assemblePrivatePayments',
   'raiseOrderOf', 'retryRaiseOrderOf', 'raiseOrderOnTheWire', 'raiseHalfOf', 'payeeArgs', 'pathFor', 'proposalSalt',
   'payoutRebuildOf', 'runMaterialInputs', 'payoutSeedsOf', 'payoutMaterialOf', '.leaves',
+  /* A seat's or a threshold change's own salt, and the account's half of raising one. */
+  'governanceOrderOf', 'governanceOrderOnTheWire', 'governanceAsked', 'roundForADevice', 'seatOrderOf', 'thresholdOrderOf',
 ];
 
 /** Each route declaration in a file, with the text of its handler up to the next one. */
@@ -62,6 +64,11 @@ describe('no route that does not take the viewing key returns a salt or a path',
     const reaching = all.filter(r => HANDS_OUT.some(f => r.body.includes(f)));
     /* RED WHEN a route is added that reaches one of them, or one of these stops doing so. */
     expect(reaching.map(r => r.route).sort()).toEqual([
+      'POST /api/accounts/:id/signers/:signerId/round',
+      'POST /api/accounts/:id/signers/:signerId/seat-order',
+      'POST /api/accounts/:id/threshold/order',
+      'POST /api/accounts/:id/threshold/round',
+      'POST /api/proposals/:id/governance-send',
       'POST /api/runs/:id/payments',
       'POST /api/runs/:id/private-payments',
       'POST /api/runs/:id/propose',
