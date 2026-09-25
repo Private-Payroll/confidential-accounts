@@ -242,9 +242,13 @@ describe('the unauthenticated surface, counted rather than described', () => {
   const routes = server.split('\n')
     .map((line, i) => ({ line, at: i + 1 }))
     .filter(r => /^\s*app\.(get|post|put|patch|delete)\(/.test(r.line));
+  /* Whether a route line hands `authed` to the route, read with its comments taken out, so a
+   * commented-out `authed` is not counted as one. */
+  const signInRequired = (line: string): boolean =>
+    /[(,]\s*authed\s*[,)]/u.test(line.replace(/\/\*.*?\*\//gu, '').replace(/\/\/.*$/u, ''));
 
   it('there are twelve routes with no `authed`, the offer endpoint is one of them, and no payslip door is', () => {
-    const open = routes.filter(r => !r.line.includes('authed'));
+    const open = routes.filter(r => !signInRequired(r.line));
     expect(
       open.map(r => `${r.at}: ${r.line.trim().slice(0, 70)}`).join('\n'),
     ).toBeTruthy();
@@ -253,10 +257,19 @@ describe('the unauthenticated surface, counted rather than described', () => {
     /* RED WHEN a payslip door answers without a sign-in again. */
     for (const path of ["'/api/payslips/proof'", "'/api/payslips'", "'/api/payslips/addresses'"]) {
       expect(open.some(r => r.line.includes(path)), path).toBe(false);
-      expect(routes.some(r => r.line.includes(path) && r.line.includes('authed')), path).toBe(true);
+      expect(routes.some(r => r.line.includes(path) && signInRequired(r.line)), path).toBe(true);
     }
     /* RED WHEN the route that relayed a company's completed payments comes back. */
     expect(routes.some(r => r.line.includes("'/api/payslips/paid'"))).toBe(false);
+  });
+
+  it('a route whose `authed` is only in a comment is counted as needing no sign-in', () => {
+    /* RED WHEN the census is matched against the text 'authed' wherever it appears on the line. */
+    expect(signInRequired("app.get('/api/x', authed, wrap(async () => {}));")).toBe(true);
+    expect(signInRequired("app.get('/api/x', currentPayslipPage, authed, wrap(async () => {}));")).toBe(true);
+    expect(signInRequired("app.get('/api/x', /* authed, */ wrap(async () => {}));")).toBe(false);
+    expect(signInRequired("app.get('/api/x', wrap(async () => {})); // authed")).toBe(false);
+    expect(signInRequired("app.get('/api/authed-thing', wrap(async () => {}));")).toBe(false);
   });
 
   it('and exactly TWO meters are read in the route file, which is the word the sentence turns on', () => {

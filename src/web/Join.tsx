@@ -155,7 +155,15 @@ const addressFromWalletAnswer = (answer: unknown): string => {
 /** How long the wallet has to answer the address ask. The unlock's own window. */
 const PAYEE_WINDOW_MS = 2 * 60 * 1000;
 
-export function JoinScreen({ token }: { token: string }) {
+export function JoinScreen({ token, onOpenPayslips }: {
+  token: string;
+  /**
+   * Opens the payslips in this same tab rather than loading the page again. A
+   * tab that signed its person in can save their first keys; a loaded page
+   * cannot, so the link is followed here when it can be.
+   */
+  onOpenPayslips?: () => void;
+}) {
   const [offer, setOffer] = useState<Offer | null>(null);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
@@ -468,29 +476,7 @@ export function JoinScreen({ token }: { token: string }) {
   const asset = assets.require(offer.asset);
 
   if (accepted) {
-    return (
-      <div className="authwrap">
-        <div className="authcard">
-          <div className="authmark">CA</div>
-          <h1>Accepted</h1>
-          <p className="authsub">
-            {offer.company} has been sent your address, sealed so that only they can read it.
-            An admin has to admit you before you appear on a payroll run — until they do,
-            nothing is paid to you.
-          </p>
-          <p className="authsub">
-            The key that opens your payslips is worked out from your wallet and the company's
-            own address on the chain. It was never sent and is not stored here, so any device
-            holding your wallet opens every payslip you are ever issued.
-          </p>
-          <p className="authsub">
-            Your payslips appear at <a href={YOUR_PAY_PATH}>your payslips</a> as each one is
-            issued, once you are signed in. On another device, add this company's address there:
-            {' '}<code>{offer.companyAddress}</code>
-          </p>
-        </div>
-      </div>
-    );
+    return <Accepted company={offer.company} companyAddress={offer.companyAddress} onOpenPayslips={onOpenPayslips} />;
   }
 
   return (
@@ -624,6 +610,47 @@ export function JoinScreen({ token }: { token: string }) {
         </div>
       </div>
     </>
+  );
+}
+
+/**
+ * **WHAT A PERSON SEES ONCE THEIR ACCEPTANCE HAS BEEN TAKEN.** Its own
+ * component so the link it carries can be followed in a test.
+ */
+export function Accepted({ company, companyAddress, onOpenPayslips }: {
+  company: string; companyAddress: string | null; onOpenPayslips?: () => void;
+}) {
+  return (
+    <div className="authwrap">
+      <div className="authcard">
+        <div className="authmark">CA</div>
+        <h1>Accepted</h1>
+        <p className="authsub">
+          {company} has been sent your address, sealed so that only they can read it.
+          An admin has to admit you before you appear on a payroll run — until they do,
+          nothing is paid to you.
+        </p>
+        <p className="authsub">
+          The key that opens your payslips is worked out from your wallet and the company's
+          own address on the chain. It was never sent and is not stored here, so any device
+          holding your wallet opens every payslip you are ever issued.
+        </p>
+        <p className="authsub">
+          Your payslips appear at <a
+            href={YOUR_PAY_PATH}
+            data-open-payslips
+            onClick={onOpenPayslips && ((e) => {
+              /* A click that asks for a new tab or window is left to the browser. */
+              if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+              e.preventDefault();
+              onOpenPayslips();
+            })}
+          >your payslips</a> as each one is
+          issued, once you are signed in. On another device, add this company's address there:
+          {' '}<code>{companyAddress}</code>
+        </p>
+      </div>
+    </div>
   );
 }
 

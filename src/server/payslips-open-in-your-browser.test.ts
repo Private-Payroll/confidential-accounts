@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -272,15 +272,26 @@ describe('a payee\'s own payslips, over the wire', () => {
   });
 
   it('THE PAYSLIP DOORS ARE METERED BY WHERE THE REQUEST COMES FROM (LAST: IT SPENDS THE BUDGET)', async () => {
-    let status = 200;
-    let calls = 0;
-    while (status !== 429 && calls < 200) {
-      calls += 1;
-      status = (await get(`/api/payslips/addresses?company=${seeded.address}`)).status;
+    /* The clock is held in the middle of one fifteen-minute window, so the count cannot start
+     * again half way through because a window happened to end while this ran. */
+    const WINDOW = 15 * 60 * 1000;
+    let middle = Math.floor(Date.now() / WINDOW) * WINDOW + WINDOW / 2;
+    if (middle < Date.now()) middle += WINDOW;
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(middle);
+    try {
+      let status = 200;
+      let calls = 0;
+      while (status !== 429 && calls < 200) {
+        calls += 1;
+        status = (await get(`/api/payslips/addresses?company=${seeded.address}`)).status;
+      }
+      /* RED WHEN the routes are not metered: two hundred answers and no refusal. */
+      expect(status).toBe(429);
+      expect(calls).toBeLessThanOrEqual(61);
+      expect((await post('/api/payslips/proof', { publicKey: seeded.dana.publicKey })).status).toBe(429);
+    } finally {
+      vi.useRealTimers();
     }
-    /* RED WHEN the routes are not metered: two hundred answers and no refusal. */
-    expect(status).toBe(429);
-    expect(calls).toBeLessThanOrEqual(61);
-    expect((await post('/api/payslips/proof', { publicKey: seeded.dana.publicKey })).status).toBe(429);
   });
 });

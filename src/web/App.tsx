@@ -29,7 +29,7 @@ import type { GovernedStage } from './governed-call-on-device.js';
 import { MaintenancePanel } from './MaintenancePanel.js';
 import { WalletWaiting } from './wallet-waiting.js';
 import { JoinScreen, joinTokenFromLocation } from './Join.js';
-import { EmployerView } from './YourPay.js';
+import { EmployerView, YOUR_PAY_PATH } from './YourPay.js';
 import { fetchMyPayslips } from './my-payslips.js';
 import { openPayslip, payslipPublicKeyOf, type OpenedPayslip, type SealedPayslip } from '../core/payslip-open.js';
 /* X12 §2 — the drop box is opened HERE, on this machine, because computing the
@@ -363,7 +363,7 @@ function Screens({ commitments }: { commitments: CommitmentScheme }) {
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
   /* Null on every page that is not an invitation. */
-  const [joinToken] = useState(() => joinTokenFromLocation(window.location));
+  const [joinToken, setJoinToken] = useState(() => joinTokenFromLocation(window.location));
   /* The companies that pay the signed-in person, and the one of them open now. */
   const [employers, setEmployers] = useState<string[]>([]);
   const [employer, setEmployer] = useState<string | null>(null);
@@ -533,8 +533,15 @@ function Screens({ commitments }: { commitments: CommitmentScheme }) {
           + 'it. VITE_WALLET_ORIGIN has to be set when the site is built.');
       }
       await keyring.openKeysWithWallet(WALLET_ORIGIN);
-      await keyring.bringCompaniesThatPayYouAcross().catch(() => undefined);
+      /* A list this browser holds that cannot be saved with the person is said,
+       * and the company is not opened over the top of that sentence. */
+      const notMoved = await keyring.bringCompaniesThatPayYouAcross().then(() => null, (e: unknown) => e);
       await refreshAccounts();
+      if (notMoved !== null) {
+        setErr(shownError(notMoved, 'saving the companies that pay you with your keys'));
+        setBusy(false);
+        return;
+      }
     } catch (e: any) { setErr(shownError(e, 'opening your saved keys with a wallet')); setBusy(false); return; }
     setBusy(false);
     await openAccount(id);
@@ -555,8 +562,10 @@ function Screens({ commitments }: { commitments: CommitmentScheme }) {
           + 'it. VITE_WALLET_ORIGIN has to be set when the site is built.');
       }
       await keyring.openKeysWithWallet(WALLET_ORIGIN);
-      await keyring.bringCompaniesThatPayYouAcross().catch(() => undefined);
+      /* A list this browser holds that cannot be saved with the person is said. */
+      const notMoved = await keyring.bringCompaniesThatPayYouAcross().then(() => null, (e: unknown) => e);
       await refreshAccounts();
+      if (notMoved !== null) setErr(shownError(notMoved, 'saving the companies that pay you with your keys'));
     } catch (e: any) { setErr(shownError(e, 'opening your saved keys with a wallet')); }
     finally { setBusy(false); }
   }, [refreshAccounts]);
@@ -696,7 +705,14 @@ function Screens({ commitments }: { commitments: CommitmentScheme }) {
    * has the reasoning. Read once at render rather than watched, because this
    * page is opened by following a link and nothing inside it navigates.
    */
-  if (joinToken) return <JoinScreen token={joinToken} />;
+  if (joinToken) {
+    /* Following the accepted screen's link stays in this tab, so a person who
+     * signed in here can still save their first keys here. */
+    return <JoinScreen token={joinToken} onOpenPayslips={() => {
+      window.history.pushState(null, '', YOUR_PAY_PATH);
+      setJoinToken(null);
+    }} />;
+  }
 
   /*
    * MOUNTED ONCE, ABOVE EVERY GATE. Every wallet ask in `keyring.ts`
@@ -1845,25 +1861,26 @@ function People({ people, session, busy, act }: {
     /* The wallet opens once. It gives this company's key, checked against the
      * keys this tab has open, unless this tab already holds it; then the person
      * chooses which of their own wallets this company is about, and presses.
-     * Nothing is sent until they do. */
-    const { companyKey, disclosure } = await keyring.payslipKeyAndPayeeAddress(
-      session.account.id, WALLET_ORIGIN);
-    /* Derived, not minted. The secret is never sent and never stored: only the
-     * public half goes, and the secret is recomputed from the wallet whenever
-     * a payslip is opened. */
-    const wrapping = payslipKeypairFrom(fromHex(companyKey));
-    await api(`/api/accounts/${session.account.id}/self-payee`, {
-      method: 'POST',
-      body: JSON.stringify({
-        name: self.name, title: self.title,
-        asset: selfAsset.code, salary: decimal(self.salary, selfAsset),
-        viewingKey: session.viewingKey,
-        wrappingPublicKey: wrapping.publicKey,
-        disclosure,
-      }),
+     * Nothing is sent until they do. Once the service has taken it, this
+     * company goes on the person's own list of companies that pay them. */
+    await keyring.payYourselfHere(session.account.id, WALLET_ORIGIN, async (companyKey, disclosure) => {
+      /* Derived, not minted. The secret is never sent and never stored: only the
+       * public half goes, and the secret is recomputed from the wallet whenever
+       * a payslip is opened. */
+      const wrapping = payslipKeypairFrom(fromHex(companyKey));
+      await api(`/api/accounts/${session.account.id}/self-payee`, {
+        method: 'POST',
+        body: JSON.stringify({
+          name: self.name, title: self.title,
+          asset: selfAsset.code, salary: decimal(self.salary, selfAsset),
+          viewingKey: session.viewingKey,
+          wrappingPublicKey: wrapping.publicKey,
+          disclosure,
+        }),
+      });
+      setSelf({ name: '', title: '', salary: '', asset: self.asset });
+      setOpenSelf(false);
     });
-    setSelf({ name: '', title: '', salary: '', asset: self.asset });
-    setOpenSelf(false);
   });
 
   /*
