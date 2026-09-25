@@ -7,7 +7,7 @@
  * `public-data.ts` says why nothing the page loads may import either.
  *
  * What is asked of the indexer is the company's contract state, by its
- * address, and nothing else. The values looked for in it were opened on this
+ * address, and nothing else. The values looked for in it were built on this
  * device and are tested here, so no request names a payment or a person. The
  * indexer does see that this device asked about that company's contract.
  */

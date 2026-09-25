@@ -20,19 +20,28 @@ const value = (n: number) => n.toString(16).padStart(64, '0');
 const NOW = 1_800_000_000;
 const INDEXER = { indexerUri: 'https://indexer.example/graphql', indexerWsUri: 'wss://indexer.example/graphql/ws' };
 
-const slip = (runId: string, period: string, company: string, movement: string, until: number | null = NOW + 60): OpenedPayslip => ({
+/** The address Dana's wallet confirmed it holds, and one it did not. */
+const MINE = 'mn_shield-addr_test1mine';
+const NOT_MINE = 'mn_shield-addr_test1notmine';
+
+const slip = (
+  runId: string, period: string, company: string, nonce: string, until: number | null = NOW + 60, paidTo = MINE,
+): OpenedPayslip => ({
   runId, period, status: 'proposed', settledAt: null, wiring: 'chain', issuedBy: company,
-  payslip: { employeeId: 'emp_1', name: 'Dana', asset: 'TESTUSD', amount: 5_000_000n, period },
-  receipt: { runId, leaf: value(9), movement, company, until },
+  payslip: { employeeId: 'emp_1', name: 'Dana', asset: 'TESTUSD', amount: 5_000_000n, period, paidTo },
+  receipt: { runId, nonce, blinding: value(9), company, until },
 });
 
-/** This device's read: ACME's contract holds two payments; the other could not be read. */
+/** Dana's wallet confirmed `MINE` and nothing else. */
+const confirmed = (s: OpenedPayslip): boolean => s.payslip.paidTo === MINE;
+
+/** This device's read: ACME's contract holds two payments, told apart here by nonce; the other could not be read. */
 const asked: string[] = [];
 const record: ChainReader = {
-  recorded: async (_indexer, company, movements) => {
+  recorded: async (_indexer, company, payments) => {
     asked.push(company);
     if (company !== ACME) return null;
-    return movements.map(m => m === value(1) || m === value(7));
+    return payments.map(p => p.nonce === value(1) || p.nonce === value(7));
   },
 };
 
@@ -52,8 +61,12 @@ describe('the payslips table says, row by row, whether each was paid', () => {
       slip('run_jul', '2026-07', ELSEWHERE, value(1)),
       /* Its window closed with the payment not recorded. */
       slip('run_jun', '2026-06', ACME, value(4), NOW - 60),
+      /* Paid to an address the wallet did not confirm, and recorded under that nonce. */
+      slip('run_may', '2026-05', ACME, value(7), NOW + 60, NOT_MINE),
+      /* The same, and not recorded. */
+      slip('run_apr', '2026-04', ACME, value(5), NOW + 60, NOT_MINE),
     ];
-    const html = renderToStaticMarkup(<PayslipTable slips={slips} words={await wordsForSlips(slips, record, INDEXER, NOW)} />);
+    const html = renderToStaticMarkup(<PayslipTable slips={slips} words={await wordsForSlips(slips, record, INDEXER, confirmed, NOW)} />);
     /*
      * RED WHEN the page shows the run's own facts where the company's record
      * answered - every row then reads that the page cannot tell yet - or when
@@ -64,12 +77,15 @@ describe('the payslips table says, row by row, whether each was paid', () => {
     expect(paidCells(html, 'run_jul')).toEqual(['Cannot tell', 'Not known']);
     /* RED WHEN a payment whose window has closed reads "not yet" for good. */
     expect(paidCells(html, 'run_jun')).toEqual(['Cannot tell', 'Not known']);
+    /* RED WHEN an address the wallet did not confirm is asked about: May would read paid and April not yet. */
+    expect(paidCells(html, 'run_may')).toEqual(['Cannot tell', 'Not known']);
+    expect(paidCells(html, 'run_apr')).toEqual(['Cannot tell', 'Not known']);
     expect(html).not.toContain('Sent for approval');
   });
 
   it('THE SENTENCE UNDER THE TABLE IS THE ONE RULED, WORD FOR WORD', async () => {
     const slips = [slip('run_sep', '2026-09', ACME, value(7))];
-    const html = renderToStaticMarkup(<PayslipTable slips={slips} words={await wordsForSlips(slips, record, INDEXER, NOW)} />);
+    const html = renderToStaticMarkup(<PayslipTable slips={slips} words={await wordsForSlips(slips, record, INDEXER, confirmed, NOW)} />);
     /* RED WHEN one word of it changes. */
     expect(PAID_MEANS).toBe('Paid means the company\'s account records your payment as made. '
       + 'Check that the amount reached your wallet\'s private balance.');
@@ -82,7 +98,7 @@ describe('the payslips table says, row by row, whether each was paid', () => {
     asked.length = 0;
     const draft: OpenedPayslip = { ...slip('run_oct', '2026-10', ACME, value(7)), status: 'draft', receipt: null };
     const html = renderToStaticMarkup(
-      <PayslipTable slips={[draft]} words={await wordsForSlips([draft], record, INDEXER, NOW)} />);
+      <PayslipTable slips={[draft]} words={await wordsForSlips([draft], record, INDEXER, confirmed, NOW)} />);
     expect(paidCells(html, 'run_oct')).toEqual(['Not sent for approval yet', 'No']);
     expect(asked).toEqual([]);
   });

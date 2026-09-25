@@ -115,14 +115,20 @@ export interface PayoutLeafInput {
   details: Hex;
   /**
    * The per-payee NONCE, and the reason this file is not simply a tree of
-   * payment hashes. V-43.
+   * payment hashes.
    *
-   * A claim discloses its merkle path, and a path's level-0 sibling IS the
-   * neighbouring leaf's hash. So the first payment of a run publishes a leaf
-   * value for somebody who has not been paid yet. If quoting a leaf were enough
-   * to claim it, anybody watching could mark the rest of the payroll paid and
-   * the account could not refuse them, because a contract cannot see its
-   * caller. This nonce is what a claim must know and a watcher cannot learn.
+   * Recording a payment takes the leaf's preimage - these details and this
+   * nonce - beside the run's salt and the payee's merkle path. `recordPayment`
+   * cannot see who calls it, so whoever knows all four can record that payment
+   * as made without making it. None of those four is published by a payment: the
+   * vault hands them to the account inside a call whose arguments travel under
+   * a commitment with fresh randomness, and what the account's circuit makes
+   * public is the proposal, the vault, the window and the recorded value. So a
+   * watcher learns no leaf, no path and no nonce from a landed payment, and
+   * cannot mark anybody else paid. This nonce is one of the things a claim must
+   * know that a watcher does not, and the salt, held only under the company's
+   * viewing key, is another. (Read from the compiled circuits and the ledger's
+   * call format; not yet from the bytes of a landed transaction.)
    *
    * **It must be fresh and unguessable per payee.** Deriving it from the
    * payee's identity, or reusing one across a run, reopens exactly the hole it

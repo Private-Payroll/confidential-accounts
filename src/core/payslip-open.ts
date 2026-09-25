@@ -49,17 +49,22 @@ export interface SealedPayslip {
 }
 
 /**
- * **ONE PAYEE'S OWN LEAF, AND THE VALUE THE ACCOUNT RECORDS WHEN IT IS PAID.**
+ * **ONE PAYEE'S OWN NONCE AND BLINDING, AND WHERE THEIR PAYMENT IS RECORDED.**
  *
- * `movement` is what the page tests against the account's public set of
- * completed payments; `company` is the address that set is read at, the
- * company's address when the run was raised. The leaf is kept with the
- * receipt and is never sent anywhere.
+ * The page does not take the value it looks for from anybody: the payee's
+ * device builds the payment's leaf from the address its own wallet confirms,
+ * the slip's token and amount, and these two secrets, with the contract's own
+ * circuits, and tests the value the account records for that leaf. A receipt
+ * holding anybody else's secrets, or a slip naming another amount or token,
+ * builds a leaf that was never recorded. `company` is the address the record
+ * is read at: the company's address when the leg was first raised, as the
+ * service wrote it. Neither secret leaves this device, and neither lets its
+ * holder record or make a payment.
  */
 export interface PaymentReceipt {
   runId: string;
-  leaf: Hex;
-  movement: Hex;
+  nonce: Hex;
+  blinding: Hex;
   company: string | null;
   /**
    * The end of the last window this payment can be made in, in seconds since
@@ -141,9 +146,9 @@ export function openPayslip(entry: SealedPayslip, wrappingSecret: Hex): OpenedPa
 const HEX32 = /^[0-9a-f]{64}$/u;
 
 /**
- * What a receipt carries in place of a leaf and its recorded value until the
- * payee's leg is raised. The same length as a real one, so the two are not
- * told apart by anybody who cannot open them.
+ * What a receipt carries in place of a nonce and a blinding until the payee's
+ * leg is raised. The same length as a real one, so the two are not told apart
+ * by anybody who cannot open them.
  */
 export const NO_LEAF = '0'.repeat(64);
 
@@ -185,18 +190,18 @@ export function openReceipt(
   try {
     const key = unwrapKey(sealed.wrapped, wrappingSecret);
     const r = parseCanonical<Partial<PaymentReceipt>>(unseal(sealed.sealed, key));
-    const leaf = typeof r.leaf === 'string' ? r.leaf.toLowerCase() : '';
-    const movement = typeof r.movement === 'string' ? r.movement.toLowerCase() : '';
+    const nonce = typeof r.nonce === 'string' ? r.nonce.toLowerCase() : '';
+    const blinding = typeof r.blinding === 'string' ? r.blinding.toLowerCase() : '';
     const named = typeof r.company === 'string' ? r.company.toLowerCase() : null;
     const company = named === NO_COMPANY ? null : named;
-    if (r.runId !== runId || !HEX32.test(leaf) || !HEX32.test(movement)) return null;
+    if (r.runId !== runId || !HEX32.test(nonce) || !HEX32.test(blinding)) return null;
     /* The stand-in a slip carries until its leg is raised: it names no payment. */
-    if (leaf === NO_LEAF) return null;
+    if (nonce === NO_LEAF || blinding === NO_LEAF) return null;
     if (company !== null && !HEX32.test(company)) return null;
     const written = (r as { until?: unknown }).until;
     const until = typeof written === 'string' && UNTIL.test(written) && /[1-9]/u.test(written)
       ? Number(written) : null;
-    return { runId, leaf, movement, company, until };
+    return { runId, nonce, blinding, company, until };
   } catch {
     return null;
   }

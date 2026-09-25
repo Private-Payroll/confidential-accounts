@@ -1,7 +1,11 @@
 import { check } from 'midnight-identity/profile/definition';
 import type { AttributeDefinition, AttributeName } from 'midnight-identity/profile/definition';
-import { RECEIVING_ADDRESS } from 'midnight-identity/profile/attributes';
+import { RECEIVING_ADDRESS, REGISTRY } from 'midnight-identity/profile/attributes';
+import type { Identity } from 'midnight-identity';
+import type { NetworkName } from 'midnight-identity/network';
+import { ownedAddressFor } from './owned-address.js';
 import type { OwnedAddress } from './owned-address.js';
+import { WALLET_ACCOUNTS } from './subwallets.js';
 
 /**
  * WHERE A DERIVED ATTRIBUTE'S VALUE ACTUALLY COMES FROM.
@@ -111,4 +115,30 @@ export function derive(definition: AttributeDefinition, owned: OwnedAddress): De
     };
   }
   return { ok: true, value: checked.value };
+}
+
+/**
+ * **EVERY RECEIVING ADDRESS THIS WALLET HOLDS, ONE PER ACCOUNT IT OFFERS.**
+ *
+ * Worked out through the same door and the same producer a receiving-address
+ * disclosure uses: `ownedAddressFor` for the account, then `derive` over the
+ * registry's own definition. There is no second way to turn an account into
+ * the address it is paid at, so the addresses answered for here are exactly
+ * the ones this wallet would have handed out. Nothing here needs the person to
+ * approve anything: the keys are the ones the screen already holds.
+ *
+ * An account whose address cannot be worked out is left out rather than
+ * guessed; the answer is then silent about it, which reads as "cannot tell".
+ */
+export function receivingAddressesOf(identity: Identity, network: NetworkName): string[] {
+  const definition = REGISTRY.definitionOf(RECEIVING_ADDRESS);
+  if (definition === null) return [];
+  const held: string[] = [];
+  for (const account of WALLET_ACCOUNTS) {
+    try {
+      const derived = derive(definition, ownedAddressFor(identity, account, {}, network));
+      if (derived.ok) held.push(derived.value);
+    } catch { /* not an address this wallet can show */ }
+  }
+  return held;
 }

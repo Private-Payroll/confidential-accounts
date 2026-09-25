@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { OpenedPayslip } from '../core/payslip-open.js';
 import type { MyPayslips } from './my-payslips.js';
+import { HELD_ADDRESS_SLOTS, heldAddressDigest } from 'midnight-identity/profile/unlock';
+import { payeeFor } from '../testing/payees.js';
+import { ledgerTokenOf } from '../core/assets.js';
 
 /**
  * **THE PAYSLIPS PAGE, FROM THE WALLET'S ANSWER TO THE WORDS IN EACH ROW, WITH
@@ -41,13 +44,27 @@ const ready: Behaviour = (w) => { queueMicrotask(() => w.emit('message', { kind:
 const answering = (held: string[]): Behaviour => (w) => {
   ready(w);
   w.onAsk = (ask) => queueMicrotask(() =>
-    w.emit('message', { id: ask.id, recorded: ask.movements.map((m: string) => held.includes(m)) }));
+    w.emit('message', { id: ask.id, recorded: ask.payments.map((p: { nonce: string }) => held.includes(p.nonce)) }));
 };
 
-const slip = (runId: string, movement: string, until = NOW + 3_600): OpenedPayslip => ({
+/** Where Dana is paid, and her wallet's digest of it under the page's nonce, among filler. */
+const DANA = payeeFor('0d'.repeat(32), 'undeployed').bech32;
+const SCOPE = { nonce: 'the-page-nonce', origin: 'https://payroll.example', company: 'ab'.repeat(32) };
+const HELD = {
+  scope: SCOPE,
+  digests: [heldAddressDigest(SCOPE, DANA)!,
+    ...Array.from({ length: HELD_ADDRESS_SLOTS - 1 }, (_, i) => (i + 1).toString(16).padStart(64, '0'))].sort(),
+};
+const confirmedAll = () => true;
+
+/** A slip whose receipt carries `nonce`; the stand-in worker reads a payment by its nonce. */
+const slip = (runId: string, nonce: string, until = NOW + 3_600): OpenedPayslip => ({
   runId, period: runId, status: 'proposed', settledAt: null, wiring: 'chain', issuedBy: ACME,
-  payslip: { employeeId: 'emp_1', name: 'Dana', asset: 'TESTUSD', amount: 1n, period: runId },
-  receipt: { runId, leaf: '09'.repeat(32), movement, company: ACME, until },
+  payslip: { employeeId: 'emp_1', name: 'Dana', asset: 'TESTUSD', amount: 1n, period: runId, paidTo: DANA },
+  receipt: { runId, nonce, blinding: '09'.repeat(32), company: ACME, until },
+});
+const paymentFor = (nonce: string) => ({
+  paidTo: DANA, token: ledgerTokenOf('TESTUSD', 'shielded'), amount: '1', nonce, blinding: '09'.repeat(32),
 });
 const service = (slips: OpenedPayslip[]) => async (): Promise<MyPayslips> =>
   ({ opened: slips, sealed: [], unopened: 0, refused: 0 });
@@ -76,7 +93,7 @@ describe('the page reads whether each slip was paid through the indexer its wall
     FakeWorker.behave = answering([PAID]);
     const { page } = await fresh();
     const key = new Uint8Array(32).fill(7);
-    const opened = await page.openAndRead([ACME], async () => ({ key, indexer: INDEXER }),
+    const opened = await page.openAndRead([ACME], async () => ({ key, indexer: INDEXER, held: HELD }),
       service([slip('run_a', PAID), slip('run_b', UNPAID)]));
     /*
      * RED WHEN the page drops the indexer the wallet named, or reads with
@@ -85,7 +102,8 @@ describe('the page reads whether each slip was paid through the indexer its wall
      */
     expect(FakeWorker.made).toHaveLength(1);
     /* Newest period first, as the page lists them. */
-    expect(FakeWorker.made[0]!.sent).toEqual([{ id: 1, indexer: INDEXER, company: ACME, movements: [UNPAID, PAID] }]);
+    expect(FakeWorker.made[0]!.sent).toEqual([
+      { id: 1, indexer: INDEXER, company: ACME, payments: [paymentFor(UNPAID), paymentFor(PAID)] }]);
     expect(opened.words.get('run_a')).toEqual({ paid: 'Recorded as paid', onChain: 'Yes' });
     expect(opened.words.get('run_b')).toEqual({ paid: 'Not yet', onChain: 'Not yet' });
   });
@@ -93,21 +111,38 @@ describe('the page reads whether each slip was paid through the indexer its wall
   it('A WALLET THAT NAMES NO INDEXER STARTS NO READER, AND EVERY ROW SAYS IT CANNOT TELL', async () => {
     FakeWorker.behave = answering([PAID]);
     const { page } = await fresh();
-    const opened = await page.openAndRead([ACME], async () => ({ key: new Uint8Array(32), indexer: null }),
+    const opened = await page.openAndRead([ACME], async () => ({ key: new Uint8Array(32), indexer: null, held: HELD }),
       service([slip('run_a', PAID)]));
     expect(FakeWorker.made).toHaveLength(0);
     expect(opened.words.get('run_a')).toEqual({ paid: 'Cannot tell', onChain: 'Not known' });
   });
 
+  it('A WALLET THAT SAYS NOTHING ABOUT THE ADDRESSES IT HOLDS - AN OLDER WALLET - STARTS NO READER, AND EVERY ROW SAYS IT CANNOT TELL', async () => {
+    FakeWorker.behave = answering([PAID, UNPAID]);
+    const { page } = await fresh();
+    for (const release of [
+      async () => ({ key: new Uint8Array(32), indexer: INDEXER }),
+      async () => ({ key: new Uint8Array(32), indexer: INDEXER, held: null }),
+      /* A list that does not hold Dana's address under this nonce. */
+      async () => ({ key: new Uint8Array(32), indexer: INDEXER, held: { ...HELD, scope: { ...SCOPE, nonce: 'another-nonce' } } }),
+    ]) {
+      const opened = await page.openAndRead([ACME], release, service([slip('run_a', PAID), slip('run_b', UNPAID)]));
+      /* RED WHEN an address the wallet did not confirm is asked about: run_b would read "Not yet". */
+      expect(opened.words.get('run_a')).toEqual({ paid: 'Cannot tell', onChain: 'Not known' });
+      expect(opened.words.get('run_b')).toEqual({ paid: 'Cannot tell', onChain: 'Not known' });
+    }
+    expect(FakeWorker.made).toHaveLength(0);
+  });
+
   it('THE PAGE\'S OWN CLOCK DECIDES WHEN A PAYMENT STOPS BEING "NOT YET"', async () => {
     const { payslips } = await fresh();
-    const reader = { recorded: async (_i: unknown, _c: string, m: string[]) => m.map(() => false) };
+    const reader = { recorded: async (_i: unknown, _c: string, m: unknown[]) => m.map(() => false) };
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime((NOW - 1) * 1000);
-    expect((await payslips.paymentsOnTheChain([slip('run_a', UNPAID, NOW)], reader, INDEXER)).get('run_a')).toBe('not-yet');
+    expect((await payslips.paymentsOnTheChain([slip('run_a', UNPAID, NOW)], reader, INDEXER, confirmedAll)).get('run_a')).toBe('not-yet');
     /* RED WHEN the page's default clock is not this device's clock in seconds. */
     vi.setSystemTime(NOW * 1000);
-    expect((await payslips.paymentsOnTheChain([slip('run_a', UNPAID, NOW)], reader, INDEXER)).get('run_a')).toBe('cannot-tell');
+    expect((await payslips.paymentsOnTheChain([slip('run_a', UNPAID, NOW)], reader, INDEXER, confirmedAll)).get('run_a')).toBe('cannot-tell');
   });
 });
 
@@ -116,12 +151,12 @@ describe('a reader that does not start or does not answer is "cannot tell", and 
     vi.useFakeTimers();
     const { client } = await fresh();
     const reader = client.payslipReader();
-    const first = reader.recorded(INDEXER, ACME, [PAID]);
+    const first = reader.recorded(INDEXER, ACME, [paymentFor(PAID)]);
     await vi.advanceTimersByTimeAsync(30_000);
     /* RED WHEN a worker that never started holds the page for ever. */
     expect(await first).toBeNull();
     FakeWorker.behave = answering([PAID]);
-    const second = reader.recorded(INDEXER, ACME, [PAID]);
+    const second = reader.recorded(INDEXER, ACME, [paymentFor(PAID)]);
     await vi.advanceTimersByTimeAsync(0);
     /* RED WHEN a failed start is kept, so no read ever works again. */
     expect(await second).toEqual([true]);
@@ -132,7 +167,7 @@ describe('a reader that does not start or does not answer is "cannot tell", and 
     vi.useFakeTimers();
     FakeWorker.behave = (w) => { queueMicrotask(() => w.emit('error')); };
     const { client } = await fresh();
-    const read = client.payslipReader().recorded(INDEXER, ACME, [PAID]);
+    const read = client.payslipReader().recorded(INDEXER, ACME, [paymentFor(PAID)]);
     await vi.advanceTimersByTimeAsync(0);
     /* RED WHEN a worker that failed to start is waited on for the whole start time. */
     expect(await Promise.race([read, Promise.resolve('still waiting')])).toBeNull();
@@ -142,7 +177,7 @@ describe('a reader that does not start or does not answer is "cannot tell", and 
     vi.useFakeTimers();
     FakeWorker.behave = ready;
     const { client } = await fresh();
-    const read = client.payslipReader().recorded(INDEXER, ACME, [PAID]);
+    const read = client.payslipReader().recorded(INDEXER, ACME, [paymentFor(PAID)]);
     await vi.advanceTimersByTimeAsync(client.READ_WAIT_MS - 1);
     expect(await Promise.race([read, Promise.resolve('still waiting')])).toBe('still waiting');
     await vi.advanceTimersByTimeAsync(1);

@@ -5,7 +5,8 @@ import {
 } from '../core/payslip-open.js';
 import type { WrappingKeypair } from '../core/crypto.js';
 import type { WalletIndexer } from 'midnight-identity/profile/unlock';
-import type { ChainReader } from './payslip-worker-client.js';
+import type { ChainReader, PayslipPayment } from './payslip-worker-client.js';
+import { assets, ledgerTokenOf, type AssetRegistry } from '../core/assets.js';
 import { PAGE_OUT_OF_DATE, PAYSLIP_PAGE_HEADER, PAYSLIP_PAGE_VERSION } from '../core/payslip-page.js';
 
 /**
@@ -111,14 +112,16 @@ export async function fetchMyPayslips(
  * **WHAT THE COMPANY'S ACCOUNT RECORDS ABOUT ONE PAYSLIP, AS THIS DEVICE READ
  * IT.** The state read is the one the indexer the payee's wallet names reports
  * for the contract; nothing on this device checks it against the chain beyond
- * that. And the receipt is written by the service, so which contract is read
- * and which value is looked for come from it. `'paid'` only when the account's
- * public set of completed payments was
+ * that. The value looked for is built on this device from the address the
+ * payee's own wallet confirmed, the slip's token and amount, and the payee's
+ * own nonce and blinding; which contract is read is the one the receipt names.
+ * `'paid'` only when the account's public set of completed payments was
  * read and holds this payment; `'not-yet'` only when it was read, does not
  * hold it, and the window this payment can still be made in has not closed;
- * `'cannot-tell'` whenever it was not read, whatever the reason, and when the
- * window has closed or was never known. Nothing that failed is ever reported
- * as not paid, and nothing here asks this application's service.
+ * `'cannot-tell'` whenever the wallet did not confirm the address, whenever it
+ * was not read, whatever the reason, and when the window has closed or was
+ * never known. Nothing that failed is ever reported as not paid, and nothing
+ * here asks this application's service.
  */
 export type OnTheChain = 'paid' | 'not-yet' | 'cannot-tell';
 
@@ -127,13 +130,13 @@ export type OnTheChain = 'paid' | 'not-yet' | 'cannot-tell';
  * COMPANY'S RECORD OF COMPLETED PAYMENTS - READ BY THIS DEVICE, NOT ASKED OF
  * THIS APPLICATION'S SERVICE.**
  *
- * Each receipt was opened on this device and holds the value the company's
- * account records when this person's payment is made. The reader is this
- * page's own worker, reading the company's contract through the indexer the
- * payee's wallet named; it asks the indexer for the contract by its address
- * and tests the values here; the indexer does learn that this device asked
- * about that company. With no indexer, or no reader, every slip that
- * carries a receipt says that it cannot tell.
+ * Each receipt was opened on this device and holds this person's own nonce and
+ * blinding. A slip whose address their wallet confirmed is asked about: this
+ * page's own worker builds from it the value the company's account records
+ * when that payment is made, reads the company's contract through the indexer
+ * the payee's wallet named, and tests the value there. The indexer learns only
+ * that this device asked about that company. With no indexer, or no reader,
+ * every slip that carries a receipt says that it cannot tell.
  *
  * A slip with no receipt is not in the answer: nothing can be asked for it.
  *
@@ -143,10 +146,33 @@ export type OnTheChain = 'paid' | 'not-yet' | 'cannot-tell';
  */
 export async function paymentsOnTheChain(
   slips: OpenedPayslip[], reader: ChainReader | null, indexer: WalletIndexer | null,
+  confirmed: (slip: OpenedPayslip) => boolean,
   nowSeconds: number = Math.floor(Date.now() / 1000),
+  registry: AssetRegistry = assets,
 ): Promise<Map<string, OnTheChain>> {
-  return (await readTheChain(slips, reader, indexer, nowSeconds)).chain;
+  return (await readTheChain(slips, reader, indexer, confirmed, nowSeconds, registry)).chain;
 }
+
+/**
+ * **ONE SLIP'S PAYMENT AS THIS DEVICE KNOWS IT, OR `null`.** The address is the
+ * slip's own and is used only once `confirmed` has said the payee's wallet holds
+ * it; the token is the ledger's for the slip's asset, from this page's own
+ * registry. Anything missing or unreadable is `null`, which reads as "cannot
+ * tell".
+ */
+const paymentOf = (s: OpenedPayslip, registry: AssetRegistry): PayslipPayment | null => {
+  const r = s.receipt;
+  const paidTo = s.payslip.paidTo;
+  if (r === null || typeof paidTo !== 'string' || typeof s.payslip.amount !== 'bigint') return null;
+  try {
+    return {
+      paidTo, token: ledgerTokenOf(s.payslip.asset, 'shielded', registry) as Hex, amount: s.payslip.amount.toString(),
+      nonce: r.nonce, blinding: r.blinding,
+    };
+  } catch {
+    return null;
+  }
+};
 
 /**
  * **THE SAME READ, AND WHETHER IT COULD BE MADE AT ALL.** `couldNotRead` is
@@ -157,22 +183,30 @@ export async function paymentsOnTheChain(
  */
 export async function readTheChain(
   slips: OpenedPayslip[], reader: ChainReader | null, indexer: WalletIndexer | null,
+  /** Whether the payee's own wallet confirmed it holds the address this slip was paid to. */
+  confirmed: (slip: OpenedPayslip) => boolean,
   nowSeconds: number = Math.floor(Date.now() / 1000),
+  /** The assets this page knows, the same registry the service pays from. */
+  registry: AssetRegistry = assets,
 ): Promise<{ chain: Map<string, OnTheChain>; couldNotRead: boolean }> {
   const out = new Map<string, OnTheChain>();
   let couldNotRead = false;
-  const byCompany = new Map<string, OpenedPayslip[]>();
+  const byCompany = new Map<string, { slip: OpenedPayslip; payment: PayslipPayment }[]>();
   for (const s of slips) {
     if (!s.receipt) continue;
     const company = s.receipt.company;
     if (company !== null && (reader === null || indexer === null)) couldNotRead = true;
     if (company === null || reader === null || indexer === null) { out.set(s.runId, 'cannot-tell'); continue; }
-    byCompany.set(company, [...(byCompany.get(company) ?? []), s]);
+    /* An address the wallet did not confirm is never asked about: nothing read for it could be "not yet". */
+    const payment = confirmedSafely(confirmed, s) ? paymentOf(s, registry) : null;
+    if (payment === null) { out.set(s.runId, 'cannot-tell'); continue; }
+    byCompany.set(company, [...(byCompany.get(company) ?? []), { slip: s, payment }]);
   }
-  for (const [company, mine] of byCompany) {
+  for (const [company, asked] of byCompany) {
+    const mine = asked.map(a => a.slip);
     let recorded: boolean[] | null;
     try {
-      recorded = await reader!.recorded(indexer!, company, mine.map(s => s.receipt!.movement));
+      recorded = await reader!.recorded(indexer!, company, asked.map(a => a.payment));
     } catch {
       recorded = null;
     }
@@ -186,6 +220,10 @@ export async function readTheChain(
   }
   return { chain: out, couldNotRead };
 }
+
+const confirmedSafely = (confirmed: (slip: OpenedPayslip) => boolean, s: OpenedPayslip): boolean => {
+  try { return confirmed(s) === true; } catch { return false; }
+};
 
 /** Every address a company's payslips were sealed under, asked by any one of them. */
 export async function payslipAddressesFor(company: string, fetcher: Fetch = fetch): Promise<string[]> {

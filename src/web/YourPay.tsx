@@ -5,7 +5,7 @@ import type { OpenedPayslip } from '../core/payslip-open.js';
 import * as keyring from './keyring.js';
 import { shownError } from './shown-error.js';
 import { WALLET_ORIGIN } from './Auth.js';
-import { askWalletToUnlockAndWhereItReads } from './wallet-unlock.js';
+import { askWalletToUnlockAndWhereItReads, type HeldAddresses } from './wallet-unlock.js';
 import { openWalletDialog } from './wallet-sign-in.js';
 import { walletInThisPage } from './wallet-frame.js';
 import { US_TO_A_WALLET } from './Join.js';
@@ -14,7 +14,7 @@ import {
   type Fetch, type OnTheChain, type MyPayslips,
 } from './my-payslips.js';
 import { payslipReader, type ChainReader } from './payslip-worker-client.js';
-import type { WalletIndexer } from 'midnight-identity/profile/unlock';
+import { listHolds, type WalletIndexer } from 'midnight-identity/profile/unlock';
 
 export { YOUR_PAY_PATH } from './my-payslips.js';
 
@@ -82,9 +82,10 @@ export const PAID_MEANS = 'Paid means the company\'s account records your paymen
  * own facts for the rest. Every slip handed in has an entry.
  */
 export async function wordsForSlips(
-  slips: OpenedPayslip[], reader: ChainReader | null, indexer: WalletIndexer | null, nowSeconds?: number,
+  slips: OpenedPayslip[], reader: ChainReader | null, indexer: WalletIndexer | null,
+  confirmed: (slip: OpenedPayslip) => boolean, nowSeconds?: number,
 ): Promise<Map<string, PaymentWords>> {
-  const chain = await paymentsOnTheChain(slips, reader, indexer, nowSeconds);
+  const chain = await paymentsOnTheChain(slips, reader, indexer, confirmed, nowSeconds);
   return new Map(slips.map(s => [s.runId, paidWords(s, chain.get(s.runId))]));
 }
 
@@ -98,8 +99,13 @@ const amountOf = (p: OpenedPayslip): string => {
 const short = (address: string | null): string =>
   address ? `${address.slice(0, 8)}…${address.slice(-6)}` : 'none';
 
-/** What the wallet hands back for one company address: its key, and where it reads the chain. */
-export type Release = (address: string) => Promise<{ key: Uint8Array; indexer: WalletIndexer | null }>;
+/**
+ * What the wallet hands back for one company address: its key, where it reads
+ * the chain, and its digests of the addresses it holds (`null` when it gave none).
+ */
+export type Release = (address: string) => Promise<{
+  key: Uint8Array; indexer: WalletIndexer | null; held?: HeldAddresses | null;
+}>;
 
 /** What one company's addresses gave up, before the chain is asked about any of it. */
 export interface OpenedAtCompany {
@@ -112,6 +118,12 @@ export interface OpenedAtCompany {
   missed: string[];
   /** Where the wallet reads the chain, as it named it with the first key it gave. */
   indexer: WalletIndexer | null;
+  /**
+   * Whether the wallet confirmed it holds the address a slip was paid to,
+   * checked against what it said with the key that opened that slip. `false`
+   * for every slip it said nothing about.
+   */
+  confirmed: (slip: OpenedPayslip) => boolean;
 }
 
 /**
@@ -133,11 +145,13 @@ export async function openAddresses(
   let refused = 0;
   const missed: string[] = [];
   let indexer: WalletIndexer | null = null;
+  const heldWith = new Map<OpenedPayslip, HeldAddresses | null>();
   for (const address of addresses) {
     try {
       const released = await release(address);
       indexer ??= released.indexer;
       const mine = await opened(payslipKeypairFrom(released.key), address);
+      for (const slip of mine.opened) heldWith.set(slip, released.held ?? null);
       found.push(...mine.opened);
       notOpened += mine.unopened;
       refused += mine.refused;
@@ -147,7 +161,13 @@ export async function openAddresses(
     }
   }
   found.sort((a, b) => (a.period < b.period ? 1 : a.period > b.period ? -1 : 0));
-  return { found, notOpened, refused, missed, indexer };
+  const confirmed = (slip: OpenedPayslip): boolean => {
+    const held = heldWith.get(slip);
+    const paidTo = slip.payslip.paidTo;
+    return held !== undefined && held !== null && typeof paidTo === 'string'
+      && listHolds(held.digests, held.scope, paidTo);
+  };
+  return { found, notOpened, refused, missed, indexer, confirmed };
 }
 
 /**
@@ -164,7 +184,7 @@ export async function openAndRead(
 ): Promise<{ found: OpenedPayslip[]; words: Map<string, PaymentWords>; notOpened: number; missed: string[] }> {
   const got = await openAddresses(addresses, release, opened);
   return {
-    found: got.found, words: await wordsForSlips(got.found, reader, got.indexer),
+    found: got.found, words: await wordsForSlips(got.found, reader, got.indexer, got.confirmed),
     notOpened: got.notOpened, missed: got.missed,
   };
 }
@@ -292,7 +312,7 @@ export function EmployerView({ company, onBack, deps = onThisPage }: {
       }
       if (got.found.some(s => s.receipt)) {
         setChecking(true);
-        const read = await readTheChain(got.found, deps.reader(), got.indexer);
+        const read = await readTheChain(got.found, deps.reader(), got.indexer, got.confirmed);
         setWords(new Map(got.found.map(s => [s.runId, paidWords(s, read.chain.get(s.runId))])));
         setUnread(read.couldNotRead);
       }

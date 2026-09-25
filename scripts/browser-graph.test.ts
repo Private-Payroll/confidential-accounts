@@ -171,7 +171,7 @@ describe('EVERY BROWSER BUILD IN THIS REPOSITORY', () => {
     expect(reaching).toEqual([]);
   });
 
-  it('THE PAYROLL PAGE IS WALKED THROUGH BOTH ITS WORKERS AND INTO THE VAULT BUILDER', () => {
+  it('THE PAYROLL PAGE IS WALKED THROUGH EVERY WORKER IT STARTS AND INTO THE VAULT BUILDER', () => {
     /* A walk that stopped at the page would pass the refusal above for the wrong reason.
      * RED WHEN: workers stop being followed - the worker entries vanish from `entries` and the vault
      * builder and its committee rule vanish from `files`. */

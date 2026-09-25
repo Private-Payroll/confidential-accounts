@@ -41,7 +41,7 @@ import type { ShieldedPaymentFacts, PaymentFacts } from '../midnight/payout-tree
 import type { RunInputs } from '../midnight/run-status.js';
 import { emptyRegister, decide, registerFor, skippedIndices } from '../midnight/run-skips.js';
 import type { RunMaterial, RetryMaterial } from '../midnight/run-material.js';
-import type { PayoutSeed } from '../midnight/run-keys.js';
+import { runSecrets, type PayoutSeed, type RunIdentity } from '../midnight/run-keys.js';
 
 /**
  * The private half of a roster entry — everything a salary slip is built from.
@@ -328,16 +328,23 @@ type RunSecrets = Pick<PayrollRun, 'employees' | 'totals' | 'proposalIds' | 'pay
  * leg raised at a company with no address, and a window not known, are
  * written at the same lengths as the values they stand in for, for the same
  * reason.
+ *
+ * **IT CARRIES THE PAYEE'S OWN NONCE AND BLINDING, AND NOTHING THAT LETS ITS
+ * HOLDER RECORD OR MOVE A PAYMENT.** From those, the address the payee's own
+ * wallet confirms, and the slip's token and amount, the payee's device builds
+ * the payment's leaf with the contract's own circuits and looks for its record.
+ * Recording a payment as made, or paying it, also needs the run's salt and
+ * the payee's merkle path, and neither is ever written here.
  */
 function sealReceipt(
   runId: string, publicKey: Hex, company: string | null,
-  paid: { leaf: Hex; movement: Hex; until: bigint | null } | null,
+  paid: { nonce: Hex; blinding: Hex; until: bigint | null } | null,
 ): NonNullable<PayrollRun['payslips'][number]['receipt']> {
   const key = newSymmetricKey();
   const sealed = seal(canonical({
     runId,
-    leaf: paid ? paid.leaf.toLowerCase() : NO_LEAF,
-    movement: paid ? paid.movement.toLowerCase() : NO_LEAF,
+    nonce: paid ? paid.nonce.toLowerCase() : NO_LEAF,
+    blinding: paid ? paid.blinding.toLowerCase() : NO_LEAF,
     company: company === null ? NO_COMPANY : company.toLowerCase(),
     until: untilText(paid ? paid.until : null),
   }), key);
@@ -354,10 +361,10 @@ const legEmployees = (run: PayrollRun, leg: AssetId): Employee[] =>
  * Every per-payee nonce and blinding on a run comes out of this identifier and
  * the account's seed. Two legs of one payroll are two approvals over two
  * separate trees, and if they shared an identifier they would derive the SAME
- * secrets for position 0 of each — and a nonce is published by the payment that
- * spends it, so paying the first leg would hand a watcher the second leg's.
- * They are different runs by the only measure that matters here, so they get
- * different identifiers.
+ * secrets for position 0 of each - and each payee is handed their own nonce and
+ * blinding, so the person at position 0 of one leg would hold the secrets of
+ * whoever sits there in the other. They are different runs by the only measure
+ * that matters here, so they get different identifiers.
  *
  * The value is stored with the leg rather than recomputed on demand, so that
  * changing this rule cannot strand a run that is already approved.
@@ -2839,10 +2846,10 @@ export class PayrollService {
 
     /*
      * **POSITION `i` OF THE MATERIAL IS POSITION `i` OF THIS LEG'S PEOPLE,
-     * CHECKED AND NOT ASSUMED.** Each payee's receipt is written from the leaf
-     * at their own position, so material whose payments are in another order
-     * would seal one person's leaf to another person's payslip: each would be
-     * told about somebody else's payment. A payment is the same one when it
+     * CHECKED AND NOT ASSUMED.** Each payee's receipt is written from the
+     * secrets at their own position, so material whose payments are in another
+     * order would seal one person's secrets to another person's payslip: each
+     * would be sent looking for somebody else's payment. A payment is the same one when it
      * pays the same address the same amount in the same token, either as the
      * roster builds it now or as the leg recorded it when it was first raised.
      * It runs before anything is written down, and after a raise again is
@@ -2850,6 +2857,8 @@ export class PayrollService {
      * refused by that comparison, which names the round.
      */
     this.refuseMaterialOutOfOrder(run, leg, paid, payable, viewingKey);
+    /* Read before the run is, so nothing is awaited between its read and its write. */
+    const seeds = await this.accounts.payoutSeedsOf(run.accountId, viewingKey);
     const beforeRaising = this.requireRun(runId, viewingKey);
     this.refuseALegThatIsProposed(beforeRaising, leg, viewingKey);
     /*
@@ -2859,8 +2868,9 @@ export class PayrollService {
     const legCompany = again !== undefined && earlierMaterial && earlierMaterial.company !== undefined
       ? earlierMaterial.company
       : companyAddressForOffer(this.store, run.accountId);
-    beforeRaising.payslips = this.withReceipts(beforeRaising, payable.movementOf, {
+    beforeRaising.payslips = this.withReceipts(beforeRaising, seeds, {
       leg, leaves: payable.leaves, closesAt: payable.run.closesAt, company: legCompany,
+      identity: payable.identity,
     });
     beforeRaising.payout = { ...(beforeRaising.payout ?? {}), [leg]: {
       root: payable.run.root,
@@ -2946,18 +2956,19 @@ export class PayrollService {
   }
 
   /**
-   * **EACH PAYEE'S OWN LEAF, SEALED TO THEM ON THEIR PAYSLIP, AS A LEG IS
-   * RAISED.**
+   * **EACH PAYEE'S OWN NONCE AND BLINDING, SEALED TO THEM ON THEIR PAYSLIP, AS
+   * A LEG IS RAISED.**
    *
    * The account records a completed payment against a payee's leaf, and the
-   * payee is never otherwise told theirs - so without this they can never ask
-   * about their own payment. Each receipt carries the leaf, the value the
-   * account records when it is paid (the contract's own derivation, handed down
-   * with the material because this layer may not compute it), the run it
-   * belongs to, and the company address the run is raised at. It is sealed
-   * under a fresh key wrapped to the key the payslip is wrapped to, so the
-   * service holds it as ciphertext, and what the payee does with it on their
-   * device is never sent back.
+   * payee is never otherwise told what goes into theirs - so without this they
+   * can never ask about their own payment. Each receipt carries the payee's
+   * nonce and blinding, the run it belongs to, the company address the run is
+   * raised at, and when the last attempt that can pay them closes; the payee's
+   * device builds the leaf itself from those, its own confirmed address and the
+   * slip's token and amount, so nothing written here can name a payment that is
+   * not theirs. It is sealed under a fresh key wrapped to the key the payslip is
+   * wrapped to, so the service holds it as ciphertext, and what the payee does
+   * with it on their device is never sent back.
    *
    * **EVERY SLIP'S RECEIPT IS WRITTEN AGAIN ON EVERY RAISE, NOT ONLY THE RAISED
    * LEG'S.** Receipts sit outside the run's envelope, and a raise that touched
@@ -2973,23 +2984,32 @@ export class PayrollService {
    *
    * **AND EACH RECEIPT SAYS WHEN THE LAST ATTEMPT THAT CAN PAY ITS PERSON
    * CLOSES**: the latest end among the leg's own window and the windows of
-   * every retry on the leg that names them. Past it, a payment the account
-   * does not record is not "not yet", because nothing written down for that
-   * person can still make it. So a retry writes every receipt again too.
+   * every retry on the leg that names them AND HAS BEEN RAISED. A retry only
+   * written down can pay nobody, so it extends nothing until it is raised; a
+   * retry writes every receipt again once it is.
+   *
+   * **WHAT A RECEIPT CARRIES IS EACH PAYEE'S OWN NONCE AND BLINDING**, derived
+   * here from the account's payout seeds and the identity the leg was raised
+   * under, exactly as the leg's leaves were. Position `i` of those secrets is
+   * position `i` of the leg's people, for the reason position `i` of the leaves
+   * is.
    */
   private withReceipts(
     run: PayrollRun,
-    /** The contract's own `paidMovementOf`, handed down with the material. */
-    movementOf: (leaf: Hex) => Hex,
+    /** The account's payout seeds, every generation, read before the run was. */
+    seeds: PayoutSeed[],
     /**
      * The leg being raised, before it is written onto the run: its leaves, its
-     * window's end, and where it is recorded - the company's address now, or
-     * where it was first raised. Absent when every leg is already written.
+     * window's end, where it is recorded - the company's address now, or where
+     * it was first raised - and the identity its secrets are derived under.
+     * Absent when every leg is already written.
      */
-    raising?: { leg: AssetId; leaves: Hex[]; closesAt: bigint; company: string | null },
+    raising?: {
+      leg: AssetId; leaves: Hex[]; closesAt: bigint; company: string | null; identity: RunIdentity;
+    },
   ): PayrollRun['payslips'] {
     const now = companyAddressForOffer(this.store, run.accountId);
-    const paidAt = new Map<string, { leaf: Hex; company: string | null; until: bigint }>();
+    const paidAt = new Map<string, { nonce: Hex; blinding: Hex; company: string | null; until: bigint }>();
     const legs = new Set<AssetId>([
       ...(raising ? [raising.leg] : []), ...(Object.keys(run.payout ?? {}) as AssetId[])]);
     for (const asset of legs) {
@@ -3004,15 +3024,20 @@ export class PayrollService {
        */
       const company = mine ? raising.company : recorded?.company;
       const closesAt = mine ? raising.closesAt : recorded?.closesAt;
-      if (!leaves || company === undefined || closesAt === undefined) continue;
-      const retries = recorded?.retries ?? [];
+      const identity: RunIdentity | undefined = mine
+        ? raising.identity
+        : recorded && { accountId: run.accountId, runId: recorded.runId, epoch: recorded.epoch };
+      if (!leaves || leaves.length === 0 || company === undefined || closesAt === undefined
+        || identity === undefined) continue;
+      const secrets = runSecrets(seeds, identity, leaves.length);
+      const retries = (recorded?.retries ?? []).filter(r => r.proposalId !== undefined);
       legEmployees(run, asset).forEach((e, i) => {
-        const leaf = leaves[i];
-        if (leaf === undefined) return;
+        const mineAt = secrets[i];
+        if (leaves[i] === undefined || mineAt === undefined) return;
         const until = retries
           .filter(r => r.originalIndices.includes(i))
           .reduce((latest, r) => (r.closesAt > latest ? r.closesAt : latest), closesAt);
-        paidAt.set(e.id, { leaf, company, until });
+        paidAt.set(e.id, { nonce: mineAt.nonce, blinding: mineAt.blinding, company, until });
       });
     }
     return run.payslips.map(p => {
@@ -3024,7 +3049,7 @@ export class PayrollService {
         receipt: paid === undefined
           ? sealReceipt(run.id, publicKey, now, null)
           : sealReceipt(run.id, publicKey, paid.company,
-            { leaf: paid.leaf, movement: movementOf(paid.leaf), until: paid.until }),
+            { nonce: paid.nonce, blinding: paid.blinding, until: paid.until }),
       };
     });
   }
@@ -3217,6 +3242,8 @@ export class PayrollService {
     }
     await this.refuseARetryOverPeopleCovered(run, leg, legRound, indices, payable.leaves, again, viewingKey);
 
+    /* Read before the run is, so nothing is awaited between its read and its write. */
+    const seeds = await this.accounts.payoutSeedsOf(run.accountId, viewingKey);
     const beforeRaising = this.requireRun(runId, viewingKey);
     const leg0 = beforeRaising.payout?.[leg];
     if (!leg0) throw new Error(`the ${leg} leg of run ${run.id} has lost its payout material`);
@@ -3232,8 +3259,6 @@ export class PayrollService {
         at,
       };
       leg0.retries = [...(leg0.retries ?? []), retry];
-      /* The people it names can be paid until its window closes, and their receipts now say so. */
-      beforeRaising.payslips = this.withReceipts(beforeRaising, payable.movementOf);
       this.putRun(beforeRaising, viewingKey);
     }
 
@@ -3258,6 +3283,14 @@ export class PayrollService {
     if (pending) {
       pending.proposalId = proposal.id;
       this.putRun(afterRaising, viewingKey);
+      /*
+       * Raised: the people it names can be paid until its window closes, and
+       * their receipts now say so. Written after the proposal it was raised as,
+       * so nothing that fails here can leave a raised retry unrecorded.
+       */
+      const raisedRun = this.requireRun(runId, viewingKey);
+      raisedRun.payslips = this.withReceipts(raisedRun, seeds);
+      this.putRun(raisedRun, viewingKey);
     }
     return proposal;
   }

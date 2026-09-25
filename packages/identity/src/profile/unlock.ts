@@ -7,6 +7,10 @@ import type { Identity } from '../keys/derivation.js';
 import { fromBase64Url, toBase64Url } from '../passkey/bytes.js';
 import type { KeyringRequest, UnlockRequest } from './request.js';
 import { usableOrigin, whyNotUsable } from './origin.js';
+import { heldAddressList, readHeldAddressList } from './held-address.js';
+
+export { HELD_ADDRESS_SLOTS, heldAddressDigest, listHolds } from './held-address.js';
+export type { HeldScope } from './held-address.js';
 
 /**
  * THE KEY THIS WALLET RELEASES, AND EVERYTHING THAT MAKES IT SAFE TO.
@@ -351,6 +355,14 @@ export interface UnlockRelease {
    * Absent from a wallet that does not say.
    */
   readonly indexer?: WalletIndexer;
+  /**
+   * **WHICH SHIELDED ADDRESSES THIS WALLET HOLDS, WITHOUT NAMING ANY.** One
+   * digest of each address of every account the wallet offers, under this
+   * ask's nonce, the observed origin and the company, padded with random filler to a fixed length and sorted
+   * (`held-address.ts`). A page that later opens a payslip checks the slip's
+   * address against it. Absent from a wallet that does not say.
+   */
+  readonly held?: readonly string[];
 }
 
 /** The two addresses a wallet reads the chain through. */
@@ -361,9 +373,16 @@ export interface WalletIndexer {
   readonly indexerWsUri: string;
 }
 
-/** The message a person's press produces. The only thing that builds one. */
+/**
+ * The message a person's press produces. The only thing that builds one.
+ *
+ * @param receiving every shielded address of every account this wallet offers,
+ *   worked out from its own keys. Only their digests under this ask go into
+ *   the message; the addresses themselves do not.
+ */
 export function releaseFor(
   identity: Identity, ask: UnlockRequest, at: number, indexer?: WalletIndexer,
+  receiving?: readonly string[],
 ): UnlockRelease {
   return Object.freeze({
     schema: RELEASE_SCHEMA,
@@ -375,6 +394,9 @@ export function releaseFor(
     ...(indexer === undefined
       ? {}
       : { indexer: Object.freeze({ indexerUri: indexer.indexerUri, indexerWsUri: indexer.indexerWsUri }) }),
+    ...(receiving === undefined
+      ? {}
+      : { held: Object.freeze(heldAddressList({ nonce: ask.nonce, origin: originOf(ask), company: companyOf(ask) }, receiving)) }),
   });
 }
 
@@ -408,6 +430,12 @@ export type ReleaseRead =
     readonly ok: true; readonly key: Uint8Array; readonly at: number;
     /** Where the wallet reads the chain, or `null` when it did not say. */
     readonly indexer: WalletIndexer | null;
+    /**
+     * The wallet's digests of the addresses it holds, under the nonce this
+     * page chose, its origin and the company it asked about; `null` when it did not say or said something that is not a
+     * list of the fixed length. Checked with `listHolds`.
+     */
+    readonly held: readonly string[] | null;
   }
   | { readonly ok: false; readonly code: ReleaseFailure; readonly says: string };
 
@@ -478,7 +506,9 @@ export function readRelease(
   if (typeof body.at !== 'number' || !Number.isSafeInteger(body.at)) {
     return { ok: false, code: 'not-a-release', says: 'that is not a released key.' };
   }
-  return { ok: true, key, at: body.at, indexer: indexerOf(body.indexer) };
+  return {
+    ok: true, key, at: body.at, indexer: indexerOf(body.indexer), held: readHeldAddressList(body.held),
+  };
 }
 
 /* ============================ the keyring key ============================ */
