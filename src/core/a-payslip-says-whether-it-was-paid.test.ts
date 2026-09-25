@@ -11,14 +11,20 @@ import { PayrollService, RecordingInviteDelivery } from './payroll.js';
 import { payslipKeypairForWallet } from './payslip-key.js';
 import { sealHandover } from './invite-handover.js';
 import { openPayslip } from './payslip-open.js';
-import { wrapKey, toHex, randomBytes, type Hex } from './crypto.js';
+import { wrapKey, toHex, randomBytes, unwrapKey, unseal, type Hex } from './crypto.js';
 import { runMaterialFor, type RunMaterial } from '../midnight/run-material.js';
-import { paidMovementOfLeaf } from '../midnight/payout-tree.js';
+import { paidMovementOfLeaf, payoutLeafOf } from '../midnight/payout-tree.js';
+import { movementOfPayslip, type PayslipCircuits } from '../web/payslip-movement.js';
 import { vaultDetails } from '../testing/vault-details.js';
 import { payeeFor } from '../testing/payees.js';
 import { registryWithTestPrivateForms, aVaultHolding } from '../testing/assets.js';
 import { fetchMyPayslips, paymentsOnTheChain, type Fetch } from '../web/my-payslips.js';
 import type { ChainReader } from '../web/payslip-worker-client.js';
+
+/** The compiled contracts' own circuits, as the device's reader calls them. */
+const CIRCUITS: PayslipCircuits = { details: vaultDetails.shielded, leafOf: payoutLeafOf, movementOf: paidMovementOfLeaf };
+/** Every slip's address taken as confirmed by the payee's wallet; what an unconfirmed one reads is pinned elsewhere. */
+const CONFIRMED = () => true;
 import { paidWords } from '../web/YourPay.js';
 import type { User } from './types.js';
 
@@ -47,9 +53,11 @@ const INDEXER = {
 };
 const VAULT = toHex(new Uint8Array(32).fill(0xa1));
 
+/** The registry the service pays from here, and so the one the page reads a slip's token from. */
+const REGISTRY = registryWithTestPrivateForms();
 const harness = () => {
   const store = new FileStore(join(mkdtempSync(join(tmpdir(), 'mn-paid-or-not-')), 'db.json'));
-  const registry = registryWithTestPrivateForms();
+  const registry = REGISTRY;
   const accounts = new AccountService(
     store, new SimulatedLedger(MidnightCommitments), MidnightCommitments, registry, aVaultHolding());
   const invites = new RecordingInviteDelivery();
@@ -129,8 +137,10 @@ const wire = (h: H, paid: Record, opts: { ignoreFrom?: boolean; serviceSays?: He
   let live: { publicKey: string; value: string } | null = null;
   const reads: Wired['reads'] = [];
   const reader: ChainReader = {
-    recorded: async (indexer, company, movements) => {
+    recorded: async (indexer, company, payments) => {
       expect(indexer).toEqual(INDEXER);
+      /* What the device's worker does: each payment's recorded value, built with the contracts' own circuits. */
+      const movements = payments.map(p => movementOfPayslip(CIRCUITS, p));
       reads.push({ company, movements });
       const list = paid(company);
       if (list === null) return null;
@@ -167,7 +177,7 @@ const listOf = (movements: Hex[]): Record => () => movements;
 /** What the page shows for each of this person's slips, by period, read at `now`. */
 const shown = async (fetcher: Wired, keys: { secret: Hex; publicKey: Hex }, from: string, now = NOW) => {
   const mine = await fetchMyPayslips(keys, from, fetcher);
-  const chain = await paymentsOnTheChain(mine.opened, fetcher.reader, INDEXER, now);
+  const chain = await paymentsOnTheChain(mine.opened, fetcher.reader, INDEXER, CONFIRMED, now, REGISTRY);
   return Object.fromEntries(mine.opened.map(s => [s.period, chain.get(s.runId)]));
 };
 
@@ -221,15 +231,15 @@ describe('each payslip says whether it was paid, from the chain', () => {
     const { fetcher } = wire(h, listOf([]));
     const short: ChainReader = { recorded: async () => [] };
     const mine = await fetchMyPayslips(dana.keys, c.address, fetcher);
-    expect((await paymentsOnTheChain(mine.opened, short, INDEXER, NOW)).get(mine.opened[0]!.runId))
+    expect((await paymentsOnTheChain(mine.opened, short, INDEXER, CONFIRMED, NOW, REGISTRY)).get(mine.opened[0]!.runId))
       .toBe('cannot-tell');
     /*
      * RED WHEN a wallet that named no indexer, or a page with no reader, reads
      * as not paid: there was then nothing read at all.
      */
-    expect((await paymentsOnTheChain(mine.opened, fetcher.reader, null, NOW)).get(mine.opened[0]!.runId))
+    expect((await paymentsOnTheChain(mine.opened, fetcher.reader, null, CONFIRMED, NOW, REGISTRY)).get(mine.opened[0]!.runId))
       .toBe('cannot-tell');
-    expect((await paymentsOnTheChain(mine.opened, null, INDEXER, NOW)).get(mine.opened[0]!.runId))
+    expect((await paymentsOnTheChain(mine.opened, null, INDEXER, CONFIRMED, NOW, REGISTRY)).get(mine.opened[0]!.runId))
       .toBe('cannot-tell');
     expect(fetcher.reads).toEqual([]);
     /* RED WHEN "cannot tell" is put on the screen in the words for "not yet". */
@@ -247,7 +257,7 @@ describe('each payslip says whether it was paid, from the chain', () => {
     /* The run was raised while the company had no address to read the record at. */
     const noAddress = { ...slip!, receipt: { ...slip!.receipt!, company: null } };
     /* RED WHEN a receipt with nowhere to ask reads as not paid. */
-    expect((await paymentsOnTheChain([noAddress], fetcher.reader, INDEXER, NOW)).get(slip!.runId)).toBe('cannot-tell');
+    expect((await paymentsOnTheChain([noAddress], fetcher.reader, INDEXER, CONFIRMED, NOW, REGISTRY)).get(slip!.runId)).toBe('cannot-tell');
     expect(fetcher.reads).toEqual([]);
     expect(seen.some(r => r.url.startsWith('/api/payslips/paid'))).toBe(false);
   });
@@ -338,7 +348,7 @@ describe('each payslip says whether it was paid, from the chain', () => {
     /* RED WHEN a draft goes out with no receipt, which tells the store its leg is not raised. */
     expect(mine.sealed[0]!.receipt).not.toBeNull();
     expect(mine.opened[0]!.receipt).toBeNull();
-    expect((await paymentsOnTheChain(mine.opened, fetcher.reader, INDEXER, NOW)).size).toBe(0);
+    expect((await paymentsOnTheChain(mine.opened, fetcher.reader, INDEXER, CONFIRMED, NOW, REGISTRY)).size).toBe(0);
     expect(fetcher.reads).toEqual([]);
     expect(seen.some(r => r.url.startsWith('/api/payslips/paid'))).toBe(false);
   });
@@ -556,7 +566,7 @@ describe('a payment that can no longer be made does not say "not yet"', () => {
     expect(await shown(fetcher, dana.keys, c.address, CLOSES)).toEqual({ '2026-08': 'cannot-tell' });
     /* A receipt that does not say when its window ends is never "not yet" either. */
     const noWindow = { ...slip!, receipt: { ...slip!.receipt!, until: null } };
-    expect((await paymentsOnTheChain([noWindow], fetcher.reader, INDEXER, NOW)).get(slip!.runId))
+    expect((await paymentsOnTheChain([noWindow], fetcher.reader, INDEXER, CONFIRMED, NOW, REGISTRY)).get(slip!.runId))
       .toBe('cannot-tell');
   });
 });
@@ -617,7 +627,7 @@ describe('what a payslip names cannot be changed by whoever holds the store', ()
     const opened = openPayslip(sep, dana.keys.secret);
     expect(opened.receipt).not.toBeNull();
     expect(opened.receipt!.company).toBeNull();
-    expect((await paymentsOnTheChain([opened], fetcher.reader, INDEXER, NOW)).get(b.run.id)).toBe('cannot-tell');
+    expect((await paymentsOnTheChain([opened], fetcher.reader, INDEXER, CONFIRMED, NOW, REGISTRY)).get(b.run.id)).toBe('cannot-tell');
     expect(fetcher.reads).toEqual([]);
   });
 });
@@ -679,5 +689,117 @@ describe('the payslip index follows a rotation written after it was built', () =
     expect(h.payroll.payslipsFor(renewed.publicKey)).toHaveLength(1);
     expect(h.payroll.accountAtCompanyAddress(moved)).toBe(c.accountId);
     expect(h.payroll.payslipAddressesOf(moved).sort()).toEqual([c.address, moved].sort());
+  });
+});
+
+describe('the device builds the value it looks for from what the payee holds, and a forged receipt or slip reads "not yet"', () => {
+  /** A receipt as sealed, opened to its plain text: every field it carries, and nothing parsed away. */
+  const receiptText = (h: H, who: { keys: { secret: Hex; publicKey: Hex } }, from: string): string => {
+    const [sealed] = h.payroll.payslipsFor(who.keys.publicKey, from);
+    const r = sealed!.receipt!;
+    return unseal(r.sealed, unwrapKey(r.wrapped, who.keys.secret));
+  };
+
+  it('A RECEIPT NAMING A PAID COLLEAGUE\'S NONCE AND BLINDING READS "NOT YET"', async () => {
+    const h = harness();
+    const c = await company(h);
+    const dana = hire(h, c, 'Dana');
+    const eli = hire(h, c, 'Eli');
+    const { material } = await raise(h, c, '2026-08');
+    /* Eli, second on the leg, was paid. Dana was not. */
+    const { fetcher } = wire(h, listOf([paidMovementOfLeaf(material.leaves[1]!)]));
+    const [danas] = (await fetchMyPayslips(dana.keys, c.address, fetcher)).opened;
+    const [elis] = (await fetchMyPayslips(eli.keys, c.address, fetcher)).opened;
+    /* The control: Eli's own slip, with his own receipt, reads paid. */
+    expect((await paymentsOnTheChain([elis!], fetcher.reader, INDEXER, CONFIRMED, NOW, REGISTRY)).get(elis!.runId))
+      .toBe('paid');
+    /*
+     * The service seals Eli's secrets onto Dana's slip. RED WHEN what the page
+     * looks for does not bind the payee's own address: Dana would read paid on
+     * the strength of Eli's payment (today's receipt, which carried the value
+     * itself, did exactly that).
+     */
+    const forged = { ...danas!, receipt: { ...danas!.receipt!, nonce: elis!.receipt!.nonce, blinding: elis!.receipt!.blinding } };
+    expect((await paymentsOnTheChain([forged], fetcher.reader, INDEXER, CONFIRMED, NOW, REGISTRY)).get(danas!.runId))
+      .toBe('not-yet');
+  });
+
+  it('A FORGED AMOUNT OR TOKEN READS "NOT YET", NEVER "RECORDED AS PAID"', async () => {
+    const h = harness();
+    const c = await company(h);
+    const dana = hire(h, c, 'Dana');
+    const { material } = await raise(h, c, '2026-08');
+    const { fetcher } = wire(h, listOf([paidMovementOfLeaf(material.leaves[0]!)]));
+    const [slip] = (await fetchMyPayslips(dana.keys, c.address, fetcher)).opened;
+    const read = async (s: typeof slip) =>
+      (await paymentsOnTheChain([s!], fetcher.reader, INDEXER, CONFIRMED, NOW, REGISTRY)).get(slip!.runId);
+    expect(await read(slip)).toBe('paid');
+    /* RED WHEN the amount is left out of what the device builds: a slip saying more reads paid. */
+    expect(await read({ ...slip!, payslip: { ...slip!.payslip, amount: slip!.payslip.amount + 1n } })).toBe('not-yet');
+    /* RED WHEN the token is left out: a slip naming another asset reads paid. */
+    expect(await read({ ...slip!, payslip: { ...slip!.payslip, asset: 'EUR' } })).toBe('not-yet');
+  });
+
+  it('A SLIP WHOSE ADDRESS THE WALLET DID NOT CONFIRM READS "CANNOT TELL" AND ASKS NOTHING', async () => {
+    const h = harness();
+    const c = await company(h);
+    const dana = hire(h, c, 'Dana');
+    const { material } = await raise(h, c, '2026-08');
+    for (const recorded of [[paidMovementOfLeaf(material.leaves[0]!)], []]) {
+      const { fetcher } = wire(h, listOf(recorded));
+      const [slip] = (await fetchMyPayslips(dana.keys, c.address, fetcher)).opened;
+      /* RED WHEN an unconfirmed address is asked about: it reads paid, or "not yet". */
+      expect((await paymentsOnTheChain([slip!], fetcher.reader, INDEXER, () => false, NOW, REGISTRY)).get(slip!.runId))
+        .toBe('cannot-tell');
+      /* A confirmation that throws is no confirmation. */
+      expect((await paymentsOnTheChain([slip!], fetcher.reader, INDEXER, () => { throw new Error('x'); }, NOW, REGISTRY))
+        .get(slip!.runId)).toBe('cannot-tell');
+      expect(fetcher.reads).toEqual([]);
+    }
+  });
+
+  it('EVERY RECEIPT IS ONE LENGTH AND CARRIES A NONCE AND A BLINDING, NEVER A SALT, A PATH OR A LEAF', async () => {
+    const h = harness();
+    const c = await company(h);
+    const dana = hire(h, c, 'Dana');
+    const eli = hire(h, c, 'Eli');
+    const { runId: aug } = await raise(h, c, '2026-08');
+    await h.payroll.createRunFromRoster(c.accountId, '2026-09', c.viewingKey);
+    const lengths = Object.values(h.store.snapshot().runs).flatMap(r => r.payslips.map(p => JSON.stringify(p.receipt).length));
+    /* RED WHEN a raised receipt and a stand-in differ in length. */
+    expect(new Set(lengths).size).toBe(1);
+    const text = receiptText(h, dana, c.address);
+    /* RED WHEN a field is added to the receipt, or the old leaf and value come back. */
+    expect(Object.keys(JSON.parse(text)).sort()).toEqual(['blinding', 'company', 'nonce', 'runId', 'until']);
+    /* RED WHEN the run's salt reaches the receipt. */
+    const proposalId = h.payroll.requireRun(aug, c.viewingKey).proposalIds.GBP!;
+    const salt = h.accounts.runSaltOf(proposalId, c.viewingKey);
+    expect(text.toLowerCase()).not.toContain(salt.toLowerCase());
+    expect(receiptText(h, eli, c.address).toLowerCase()).not.toContain(salt.toLowerCase());
+  });
+
+  it('A RETRY WRITTEN DOWN AND NEVER RAISED DOES NOT EXTEND "UNTIL"; ONCE RAISED IT DOES', async () => {
+    const h = harness();
+    const c = await company(h);
+    const dana = hire(h, c, 'Dana');
+    const { runId } = await raise(h, c, '2026-08');
+    const seeds = await h.accounts.payoutSeedsOf(c.accountId, c.viewingKey);
+    const LATER = BigInt(CLOSES + 86_400);
+    const run = h.payroll.requireRun(runId, c.viewingKey);
+    const leg = run.payout!.GBP!;
+    leg.retries = [{
+      originalIndices: [0], root: leg.root, payees: 1n, opensAt: BigInt(NOW), closesAt: LATER, vault: VAULT,
+      proposedBy: c.by, at: '2026-09-25T00:00:00.000Z',
+    } as NonNullable<typeof leg.retries>[number]];
+    const untilOf = () => {
+      const again = { ...run, payslips: (h.payroll as any).withReceipts(run, seeds) };
+      (h.payroll as unknown as { putRun: (r: typeof again, k: Hex) => void }).putRun(again, c.viewingKey);
+      return openPayslip(h.payroll.payslipsFor(dana.keys.publicKey, c.address)[0]!, dana.keys.secret).receipt!.until;
+    };
+    /* RED WHEN a retry only written down extends the window: nothing raised can pay Dana after it closes. */
+    expect(untilOf()).toBe(CLOSES);
+    leg.retries[0]!.proposalId = 'raised-as-this';
+    /* RED WHEN a raised retry does not extend it: Dana would read "cannot tell" while the retry can still pay her. */
+    expect(untilOf()).toBe(Number(LATER));
   });
 });

@@ -21,7 +21,11 @@ import type { Posted, WatchedOpener } from '../testing/settled-channel.js';
 import { parseAsk } from 'midnight-identity/profile/request';
 import type { KeyringRequest, UnlockRequest } from 'midnight-identity/profile/request';
 import type { ChannelWindow } from 'midnight-identity/profile/channel';
-import { keyringKeyFor, readRelease, releaseFor, unlockKeyFor } from 'midnight-identity/profile/unlock';
+import {
+  HELD_ADDRESS_SLOTS, keyringKeyFor, listHolds, readRelease, releaseFor, unlockKeyFor,
+} from 'midnight-identity/profile/unlock';
+import { NETWORK } from 'midnight-identity/network';
+import { ownedAddressFor } from '../accounts/owned-address.js';
 import { companyFingerprint } from 'midnight-identity/profile/fingerprint';
 import type { KeyringRelease, UnlockRelease } from 'midnight-identity/profile/unlock';
 import { fromBase64Url, toBase64Url } from 'midnight-identity/passkey/bytes';
@@ -697,6 +701,19 @@ describe('WHAT CROSSES BACK, AND WHICH KEY IT IS', () => {
        * names an indexer this wallet does not read.
        */
       expect(read.ok && read.indexer).toEqual({ indexerUri: INDEXER_HTTP_URL, indexerWsUri: INDEXER_WS_URL });
+      /*
+       * And which receiving addresses this wallet holds, as digests under the
+       * page's nonce, for every account it offers, from the one press. RED WHEN
+       * the press sends no list, or a list that does not hold the wallet's own
+       * main and last subwallet addresses.
+       */
+      const held = read.ok ? read.held : null;
+      expect(held).toHaveLength(HELD_ADDRESS_SLOTS);
+      const scope = { nonce: 'n1', origin: ORIGIN, company: CO_A };
+      expect(listHolds(held!, scope, ownedAddressFor(identity, 0, {}, NETWORK).address.bech32)).toBe(true);
+      expect(listHolds(held!, scope, ownedAddressFor(identity, 11, {}, NETWORK).address.bech32)).toBe(true);
+      /* RED WHEN an address, rather than its digest, crosses back. */
+      expect(JSON.stringify(answer.message)).not.toContain('shield-addr');
     });
 
   it('A REQUEST CALLING ITSELF SOMEBODY ELSE STILL GETS THE KEY FOR WHAT IT NAMED',

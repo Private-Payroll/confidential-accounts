@@ -1,23 +1,37 @@
 /**
  * **THE PAGE'S SIDE OF THE PAYSLIP READER.** One question, one answer, matched
  * by id. The page never loads what the worker loads; it sends a company's
- * address, the values it opened on this device, and the indexer the payee's
- * wallet named, and receives back which of those values the company's account
- * records as paid.
+ * address, the payments it opened on this device, and the indexer the payee's
+ * wallet named, and receives back which of those payments the company's
+ * account records as made. The worker builds each payment's leaf from what is
+ * sent, with the contract's own circuits; nothing it tests is taken as given.
  *
  * Nothing here talks to this application's service.
  */
 import type { Hex } from '../core/crypto.js';
 import type { WalletIndexer } from 'midnight-identity/profile/unlock';
 
+/**
+ * One payment as the payee's device knows it: the address its wallet
+ * confirmed, the slip's ledger token and amount, and the payee's own nonce and
+ * blinding. The amount travels as decimal text.
+ */
+export interface PayslipPayment {
+  paidTo: string;
+  token: Hex;
+  amount: string;
+  nonce: Hex;
+  blinding: Hex;
+}
+
 export interface PayslipAsk {
   id: number;
   indexer: WalletIndexer;
   company: string;
-  movements: Hex[];
+  payments: PayslipPayment[];
 }
 
-/** `recorded` lines up with the values asked about; `null` when the contract could not be read. */
+/** `recorded` lines up with the payments asked about; `null` when any could not be worked out or read. */
 export interface PayslipAnswer {
   id: number;
   recorded: boolean[] | null;
@@ -25,7 +39,7 @@ export interface PayslipAnswer {
 
 /** What the page asks the device's own reader. */
 export interface ChainReader {
-  recorded(indexer: WalletIndexer, company: string, movements: Hex[]): Promise<boolean[] | null>;
+  recorded(indexer: WalletIndexer, company: string, payments: PayslipPayment[]): Promise<boolean[] | null>;
 }
 
 interface WorkerLike {
@@ -46,12 +60,12 @@ export function readerOver(worker: WorkerLike): ChainReader {
     resolve(Array.isArray(a.recorded) && a.recorded.every(r => typeof r === 'boolean') ? a.recorded : null);
   });
   return {
-    recorded: (indexer, company, movements) => {
+    recorded: (indexer, company, payments) => {
       const id = next;
       next += 1;
       const answered = new Promise<boolean[] | null>((resolve) => waiting.set(id, resolve));
-      worker.postMessage({ id, indexer, company, movements } satisfies PayslipAsk);
-      return answered.then(r => (r !== null && r.length === movements.length ? r : null));
+      worker.postMessage({ id, indexer, company, payments } satisfies PayslipAsk);
+      return answered.then(r => (r !== null && r.length === payments.length ? r : null));
     },
   };
 }
@@ -66,12 +80,12 @@ export const READ_WAIT_MS = 60_000;
 let started: Promise<ChainReader> | null = null;
 export function payslipReader(): ChainReader {
   return {
-    recorded: async (indexer, company, movements) => {
+    recorded: async (indexer, company, payments) => {
       try {
         started ??= startPayslipReader();
         const reader = await started;
         return await Promise.race([
-          reader.recorded(indexer, company, movements),
+          reader.recorded(indexer, company, payments),
           new Promise<null>((resolve) => setTimeout(() => resolve(null), READ_WAIT_MS)),
         ]);
       } catch {

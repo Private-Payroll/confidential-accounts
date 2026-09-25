@@ -123,9 +123,10 @@ export interface RunMaterial {
  * @param accountId  whose payroll this is
  * @param runId      what distinguishes this run from every other one on the
  *   account. **It must be unique per set of leaves, not per payroll**: two runs
- *   sharing an id derive the same per-payee secrets, and a nonce is published by
- *   the payment that spends it. A payroll that settles in two currencies is two
- *   runs by this measure, because it is two approvals over two trees.
+ *   sharing an id derive the same per-payee secrets, so the payee at a position
+ *   in one run would be handed the nonce and blinding of whoever sits at that
+ *   position in the other. A payroll that settles in two currencies is two runs
+ *   by this measure, because it is two approvals over two trees.
  * @param seeds      the account's payout seeds, every generation of them
  * @param facts      who is being paid, in what, how much — in the order the tree
  *   is to be built, which is part of the run

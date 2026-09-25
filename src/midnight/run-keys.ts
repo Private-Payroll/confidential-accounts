@@ -135,10 +135,10 @@ export interface PayeeSecrets {
  * The secrets for the payee at `index`.
  *
  * The index is the SALT and the role is the INFO, so the two secrets for one
- * payee are independent of each other and of every other payee's. Deriving both
- * from one hash of the index — say the first and second halves — would mean a
- * leaked nonce leaks the blinding beside it, and a nonce IS published by the
- * payment that spends it.
+ * payee are independent of each other and of every other payee's. A payment
+ * does not publish its nonce, but each payee is handed their own nonce and
+ * blinding to find their payment, so no payee's secrets may say anything about
+ * another's.
  */
 export const payeeSecretsOf = (runKey: Hex, index: number): PayeeSecrets => {
   if (!Number.isInteger(index) || index < 0) {

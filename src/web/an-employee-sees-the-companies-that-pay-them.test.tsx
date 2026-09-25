@@ -24,6 +24,7 @@ import { AccountPicker } from './Auth.js';
 import { EmployerView, onThisPage, type EmployerViewDeps } from './YourPay.js';
 import { PAYSLIP_PAGE_HEADER, PAYSLIP_PAGE_VERSION } from '../core/payslip-page.js';
 import { newWrappingKeypair, wrapKey, toHex, randomBytes } from '../core/crypto.js';
+import { HELD_ADDRESS_SLOTS, heldAddressDigest } from 'midnight-identity/profile/unlock';
 
 /* The tab was prepared for this person, as a sign-in leaves it. */
 vi.mock('./keyring.js', async (original) => ({
@@ -41,11 +42,25 @@ const INDEXER = { indexerUri: 'https://indexer.example/graphql', indexerWsUri: '
 const PAID = '01'.repeat(32);
 const UNPAID = '02'.repeat(32);
 
-const slip = (runId: string, movement: string | null): OpenedPayslip => ({
+/**
+ * Where Dana is paid - `payeeFor('0d'.repeat(32), 'undeployed')`, written out because this file runs
+ * where the address library cannot encode one - and what her wallet says about it: a digest under the
+ * ask's nonce, among filler.
+ */
+const DANA = 'mn_shield-addr_undeployed1p5xs6rgdp5xs6rgdp5xs6rgdp5xs6rgdp5xs6rgdp5xs6rgdp5x4w46h2at4w46h2at4w46h2at4w46h2at4w46h2at4w46h2at4w4ctsw9lr';
+const SCOPE = { nonce: 'the-page-nonce', origin: 'https://payroll.example', company: 'ab'.repeat(32) };
+const HELD = {
+  scope: SCOPE,
+  digests: [heldAddressDigest(SCOPE, DANA)!,
+    ...Array.from({ length: HELD_ADDRESS_SLOTS - 1 }, (_, i) => (i + 1).toString(16).padStart(64, '0'))].sort(),
+};
+
+/** A slip whose receipt carries `nonce`, or none; the stand-in reader below reads a payment by its nonce. */
+const slip = (runId: string, nonce: string | null): OpenedPayslip => ({
   runId, period: runId, status: 'proposed', settledAt: null, wiring: 'chain', issuedBy: ACME,
-  payslip: { employeeId: 'emp_1', name: 'Dana', asset: 'TESTUSD', amount: 1n, period: runId },
-  receipt: movement === null ? null
-    : { runId, leaf: '09'.repeat(32), movement, company: ACME, until: Math.floor(Date.now() / 1000) + 3_600 },
+  payslip: { employeeId: 'emp_1', name: 'Dana', asset: 'TESTUSD', amount: 1n, period: runId, paidTo: DANA },
+  receipt: nonce === null ? null
+    : { runId, nonce, blinding: '09'.repeat(32), company: ACME, until: Math.floor(Date.now() / 1000) + 3_600 },
 });
 
 /* ------------------------------------------------------------------ */
@@ -108,17 +123,19 @@ function around(opts: {
   let letGo: () => void = () => {};
   const gate = opts.held ? new Promise<void>(r => { letGo = r; }) : Promise.resolve();
   const reader: ChainReader = {
-    recorded: async (_indexer, company, movements) => {
+    recorded: async (_indexer, company, payments) => {
       asked.read.push(company);
       await gate;
-      return (opts.recorded ?? (ms => ms.map(m => m === PAID)))(movements);
+      return (opts.recorded ?? (ms => ms.map(m => m === PAID)))(payments.map(p => p.nonce));
     },
   };
   const deps: EmployerViewDeps = {
     askTheWallet: () => ({
       release: async (address) => {
         asked.released.push(address);
-        return { key: new Uint8Array(32).fill(7), indexer: opts.indexer === undefined ? INDEXER : opts.indexer };
+        return {
+          key: new Uint8Array(32).fill(7), indexer: opts.indexer === undefined ? INDEXER : opts.indexer, held: HELD,
+        };
       },
       done: () => { asked.done += 1; },
     }),

@@ -14,6 +14,14 @@ const INDEXER = { indexerUri: 'https://indexer.example/graphql', indexerWsUri: '
 const ACME = 'ab'.repeat(32);
 const PAID = '01'.repeat(32);
 const UNPAID = '02'.repeat(32);
+/** Two payments as the page sends them; the worker's stand-ins below build each one's value from its nonce. */
+const payment = (nonce: string) => ({
+  paidTo: 'mn_shield-addr_test1dana', token: 'ab'.repeat(32), amount: '5000000', nonce, blinding: '09'.repeat(32),
+});
+const PAID_P = payment(PAID);
+const UNPAID_P = payment(UNPAID);
+/** A stand-in for the contract's circuits: a payment's value is its nonce. */
+const byNonce = async (p: { nonce: string }) => p.nonce;
 
 /** A page and a worker joined by a channel, with the worker answering through `answer`. */
 const joined = (answer: (ask: PayslipAsk) => unknown) => {
@@ -30,10 +38,10 @@ const joined = (answer: (ask: PayslipAsk) => unknown) => {
 };
 
 describe('the page asks its own reader, and nothing else', () => {
-  it('WHAT CROSSES TO THE WORKER IS THE INDEXER, THE COMPANY AND THE VALUES, AND THE ANSWER LINES UP WITH THEM', async () => {
-    const { reader, sent } = joined(ask => ({ id: ask.id, recorded: ask.movements.map(m => m === PAID) }));
-    expect(await reader.recorded(INDEXER, ACME, [UNPAID, PAID])).toEqual([false, true]);
-    expect(sent).toEqual([{ id: 1, indexer: INDEXER, company: ACME, movements: [UNPAID, PAID] }]);
+  it('WHAT CROSSES TO THE WORKER IS THE INDEXER, THE COMPANY AND THE PAYMENTS, AND THE ANSWER LINES UP WITH THEM', async () => {
+    const { reader, sent } = joined(ask => ({ id: ask.id, recorded: ask.payments.map(p => p.nonce === PAID) }));
+    expect(await reader.recorded(INDEXER, ACME, [UNPAID_P, PAID_P])).toEqual([false, true]);
+    expect(sent).toEqual([{ id: 1, indexer: INDEXER, company: ACME, payments: [UNPAID_P, PAID_P] }]);
   });
 
   it('AN ANSWER THAT IS NOT A LIST OF YES AND NO, OR IS THE WRONG LENGTH, READS AS "COULD NOT READ"', async () => {
@@ -43,7 +51,7 @@ describe('the page asks its own reader, and nothing else', () => {
     for (const recorded of bad) {
       const { reader } = joined(ask => ({ id: ask.id, recorded }));
       /* RED WHEN a malformed answer is read as a list of payments nobody made. */
-      expect(await reader.recorded(INDEXER, ACME, [UNPAID, PAID]), JSON.stringify(recorded)).toBeNull();
+      expect(await reader.recorded(INDEXER, ACME, [UNPAID_P, PAID_P]), JSON.stringify(recorded)).toBeNull();
     }
   });
 
@@ -53,8 +61,8 @@ describe('the page asks its own reader, and nothing else', () => {
       if (first) { first = false; return { id: ask.id + 7, recorded: [true] }; }
       return { id: ask.id, recorded: [false] };
     });
-    const answer = reader.recorded(INDEXER, ACME, [PAID]);
-    const second = reader.recorded(INDEXER, ACME, [PAID]);
+    const answer = reader.recorded(INDEXER, ACME, [PAID_P]);
+    const second = reader.recorded(INDEXER, ACME, [PAID_P]);
     /* RED WHEN answers are not matched by id: the first question takes a stray "yes". */
     expect(await second).toEqual([false]);
     const pending = await Promise.race([answer, new Promise(r => setTimeout(() => r('waiting'), 20))]);
@@ -73,10 +81,11 @@ describe('the worker answers every question, and a failure is never "not recorde
     const failing: PayslipReaderDeps = {
       sourceFor: async () => { throw new Error('the indexer did not answer'); },
       readLedger: async () => () => ({}),
+      movementOf: byNonce,
     };
     startPayslipWorker(scope, failing);
     expect(posted).toEqual([{ kind: 'payslip-reader-ready' }]);
-    listener!({ data: { id: 4, indexer: INDEXER, company: ACME, movements: [PAID] } });
+    listener!({ data: { id: 4, indexer: INDEXER, company: ACME, payments: [PAID_P] } });
     await new Promise(r => setTimeout(r, 0));
     /* RED WHEN a read that failed goes unanswered, or is answered as nothing recorded. */
     expect(posted[1]).toEqual({ id: 4, recorded: null });
@@ -95,11 +104,25 @@ describe('the worker answers every question, and a failure is never "not recorde
       },
       readLedger: async () => (data: unknown) => (data === 'state'
         ? { movements: { member: (v: Uint8Array) => v[0] === 1 } } : null),
+      movementOf: byNonce,
     };
-    const answer = await answerPayslipAsk(deps, { id: 9, indexer: INDEXER, company: ACME.toUpperCase(), movements: [PAID, UNPAID] });
+    const answer = await answerPayslipAsk(deps, { id: 9, indexer: INDEXER, company: ACME.toUpperCase(), payments: [PAID_P, UNPAID_P] });
     expect(answer).toEqual({ id: 9, recorded: [true, false] });
     expect(seen.indexer).toEqual(INDEXER);
     /* RED WHEN a value looked for reaches the indexer. */
     expect(seen.asked).toEqual([ACME]);
+  });
+
+  it('A PAYMENT WHOSE VALUE CANNOT BE BUILT IS "COULD NOT READ" FOR THE WHOLE QUESTION, AND NOTHING IS ASKED', async () => {
+    const asked: string[] = [];
+    const deps: PayslipReaderDeps = {
+      sourceFor: async () => ({ queryContractState: async (a: string) => { asked.push(a); return { data: 'state' }; } }),
+      readLedger: async () => () => ({ movements: { member: () => false } }),
+      movementOf: async (p) => { if (p.nonce === UNPAID) throw new Error('not an address'); return p.nonce; },
+    };
+    /* RED WHEN a payment that could not be built is read as not recorded. */
+    expect(await answerPayslipAsk(deps, { id: 3, indexer: INDEXER, company: ACME, payments: [PAID_P, UNPAID_P] }))
+      .toEqual({ id: 3, recorded: null });
+    expect(asked).toEqual([]);
   });
 });

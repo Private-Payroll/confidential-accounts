@@ -30,7 +30,7 @@ import { FileStore } from '../../src/core/store-file.js';
 import { assetIdBytes } from '../../src/core/assets.js';
 import { openPayslip } from '../../src/core/payslip-open.js';
 import { paymentsOnTheChain } from '../../src/web/my-payslips.js';
-import { answerPayslipAsk, type PayslipReaderDeps } from '../../src/web/payslip-worker-entry.js';
+import { answerPayslipAsk, realDeps, type PayslipReaderDeps } from '../../src/web/payslip-worker-entry.js';
 import type { ChainReader } from '../../src/web/payslip-worker-client.js';
 import { ledger as readLedger } from '../managed/contract/index.js';
 import { fromHex, toHex, unseal, parseCanonical, type Hex, type Sealed } from '../../src/core/crypto.js';
@@ -147,18 +147,21 @@ describe('a payment made by a retry reads as paid on its payee\'s page', () => {
      */
     const INDEXER = { indexerUri: 'https://indexer.example/graphql', indexerWsUri: 'wss://indexer.example/graphql/ws' };
     const asked: string[] = [];
+    /* The worker's own reader, as it ships, with only the indexer stood in for. */
     const deps: PayslipReaderDeps = {
+      ...realDeps,
       sourceFor: async (indexer) => {
         expect(indexer).toEqual(INDEXER);
         return { queryContractState: async (address: string) => { asked.push(address); return address === company ? state : null; } };
       },
-      readLedger: async () => readLedger as (data: unknown) => unknown,
     };
     let next = 0;
     const onThisDevice: ChainReader = {
-      recorded: async (indexer, at, movements) =>
-        (await answerPayslipAsk(deps, { id: (next += 1), indexer, company: at, movements })).recorded,
+      recorded: async (indexer, at, payments) =>
+        (await answerPayslipAsk(deps, { id: (next += 1), indexer, company: at, payments })).recorded,
     };
+    /* Each payee's wallet is taken as holding the address its slip names; what it answers is held elsewhere. */
+    const confirmed = () => true;
 
     const answers = [] as string[];
     const late = [] as string[];
@@ -167,12 +170,14 @@ describe('a payment made by a retry reads as paid on its payee\'s page', () => {
         (store.getEmployee(p.employee.id)!.wrappingPublicKey as string), company);
       const opened = openPayslip(sealed!, p.secret.wrappingSecret);
       expect(opened.receipt).not.toBeNull();
-      answers.push((await paymentsOnTheChain([opened], onThisDevice, INDEXER, NOW)).get(run.id)!);
-      late.push((await paymentsOnTheChain([opened], onThisDevice, INDEXER, Number(CLOSES) + 60)).get(run.id)!);
+      answers.push((await paymentsOnTheChain([opened], onThisDevice, INDEXER, confirmed, NOW, registry)).get(run.id)!);
+      late.push((await paymentsOnTheChain([opened], onThisDevice, INDEXER, confirmed, Number(CLOSES) + 60, registry))
+        .get(run.id)!);
     }
     /*
-     * RED WHEN the receipt sealed to a payee is not their own leaf's - a
-     * receipt built off the wrong position reads person 1, whom the retry paid,
+     * RED WHEN the receipt sealed to a payee does not carry their own secrets,
+     * or the device builds the value any way but the contract's - a receipt
+     * built off the wrong position reads person 1, whom the retry paid,
      * or person 0, whom the leg paid, as not yet, and person 2, whom nobody
      * paid, as paid. The answer is not the same read backwards, so a mapping
      * that runs the wrong way round is caught too.
@@ -197,10 +202,16 @@ describe('a payment made by a retry reads as paid on its payee\'s page', () => {
 
   it('THE DEVICE\'S READ ANSWERS "CANNOT SAY" FOR A CONTRACT IT COULD NOT READ, NEVER "NOT RECORDED"', async () => {
     const INDEXER = { indexerUri: 'https://indexer.example/graphql', indexerWsUri: 'wss://indexer.example/graphql/ws' };
-    const ask = { id: 1, indexer: INDEXER, company: 'ab'.repeat(32), movements: ['cd'.repeat(32)] };
+    const payment = (nonce: string) => ({
+      paidTo: 'mn_shield-addr_test1x', token: '00'.repeat(32), amount: '1', nonce, blinding: '00'.repeat(32),
+    });
+    const ask = { id: 1, indexer: INDEXER, company: 'ab'.repeat(32), payments: [payment('cd'.repeat(32))] };
+    /* A stand-in for the circuits: a payment's value is its nonce, so what is read is what is tested. */
+    const byNonce = async (p: { nonce: string }) => p.nonce;
     const reading = (state: unknown, decode: (data: unknown) => unknown = readLedger as never): PayslipReaderDeps => ({
       sourceFor: async () => ({ queryContractState: async () => state }),
       readLedger: async () => decode,
+      movementOf: byNonce,
     });
     /* RED WHEN no state, a state that does not decode, or a missing set is read as nothing recorded. */
     expect((await answerPayslipAsk(reading(null), ask)).recorded).toBeNull();
@@ -208,11 +219,12 @@ describe('a payment made by a retry reads as paid on its payee\'s page', () => {
     expect((await answerPayslipAsk(reading({ data: {} }, () => ({})), ask)).recorded).toBeNull();
     expect((await answerPayslipAsk({
       sourceFor: async () => { throw new Error('the indexer is down'); }, readLedger: async () => readLedger as never,
+      movementOf: byNonce,
     }, ask)).recorded).toBeNull();
     /* And a set that is there answers per value. */
     const set = { movements: { member: (v: Uint8Array) => toHex(v) === 'cd'.repeat(32) } };
     expect((await answerPayslipAsk(reading({ data: {} }, () => set), ask)).recorded).toEqual([true]);
-    expect((await answerPayslipAsk(reading({ data: {} }, () => set), { ...ask, movements: ['ef'.repeat(32)] })).recorded)
+    expect((await answerPayslipAsk(reading({ data: {} }, () => set), { ...ask, payments: [payment('ef'.repeat(32))] })).recorded)
       .toEqual([false]);
   });
 

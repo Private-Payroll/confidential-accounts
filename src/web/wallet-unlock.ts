@@ -1,5 +1,5 @@
 import { readKeyringRelease, readRelease } from 'midnight-identity/profile/unlock';
-import type { ReleaseFailure, WalletIndexer } from 'midnight-identity/profile/unlock';
+import type { HeldScope, ReleaseFailure, WalletIndexer } from 'midnight-identity/profile/unlock';
 import { toHex, randomBytes } from '../core/crypto.js';
 import {
   KEYRING_AND_COMPANY_PURPOSE, KEYRING_PURPOSE, UNLOCK_PURPOSE, UNLOCK_WINDOW_MS, keyringAsk, unlockAsk,
@@ -81,13 +81,25 @@ export async function askWalletToUnlock(
 }
 
 /**
- * `askWalletToUnlock`, and the indexer the wallet said it reads the chain
- * through, or `null` when it did not say. The indexer is public and is used
- * to read a contract on this device; the key is used exactly as above.
+ * What the wallet said about the addresses it holds: its digests, and the ask
+ * they were taken under - this page's own nonce, its own origin and the company
+ * it asked about. Tested with `listHolds`.
+ */
+export interface HeldAddresses {
+  readonly scope: HeldScope;
+  readonly digests: readonly string[];
+}
+
+/**
+ * `askWalletToUnlock`, plus two things the wallet may say with the key: the
+ * indexer it reads the chain through (public, used to read a contract on this
+ * device), and digests of the addresses it holds, which this page can test an
+ * address it already has against and cannot read an address out of. Each is
+ * `null` when the wallet did not say.
  */
 export async function askWalletToUnlockAndWhereItReads(
   view: Openable, walletOrigin: string, ask: UnlockAsked, dialog?: WalletDialog,
-): Promise<{ key: Uint8Array; indexer: WalletIndexer | null }> {
+): Promise<{ key: Uint8Array; indexer: WalletIndexer | null; held: HeldAddresses | null }> {
   const now = ask.now ?? (() => Date.now());
   /* Sixteen random bytes. It ties one answer to one question and is not a
    * secret; it is generated here because nobody else is a party to it. */
@@ -116,7 +128,12 @@ export async function askWalletToUnlockAndWhereItReads(
     forCompany: ask.company,
   });
   if (!read.ok) throw new UnlockRefused(read.code, read.says);
-  return { key: read.key, indexer: read.indexer };
+  return {
+    key: read.key, indexer: read.indexer,
+    held: read.held === null ? null : Object.freeze({
+      scope: Object.freeze({ nonce, origin: ask.atOrigin, company: ask.company }), digests: read.held,
+    }),
+  };
 }
 
 export interface KeyringAsked {

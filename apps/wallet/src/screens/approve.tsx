@@ -50,7 +50,7 @@ import { ownedAddressFor } from '../accounts/owned-address.js';
 import type { OwnedAddress } from '../accounts/owned-address.js';
 /* The producer for a DERIVED attribute, and the reason it lives beside
  * the screen rather than in the registry: `../accounts/derived.ts`. */
-import { derive } from '../accounts/derived.js';
+import { derive, receivingAddressesOf } from '../accounts/derived.js';
 import type { Derived } from '../accounts/derived.js';
 /* Which wallet a company is OFFERED, which is a rule and a default
  * rather than a refusal: `../accounts/slot-choice.ts`. */
@@ -659,9 +659,13 @@ export function Approve({
      * so there is no argument here an attacker-supplied origin could reach.
      * The indexer this wallet reads the chain through goes with it: two public
      * addresses, so the page can read its company's contract where this wallet
-     * reads its own balance, rather than through the page's own service. */
+     * reads its own balance, rather than through the page's own service.
+     * And every receiving address this wallet holds, which leave as digests
+     * under the page's own nonce and never as addresses: the page can test
+     * only an address it already has. */
     channel.answer(releaseFor(identity, request, at,
-      { indexerUri: INDEXER_HTTP_URL, indexerWsUri: INDEXER_WS_URL }));
+      { indexerUri: INDEXER_HTTP_URL, indexerWsUri: INDEXER_WS_URL },
+      receivingAddressesOf(identity, NETWORK)));
 
     /* WHAT IS WRITTEN DOWN: that a key went, to whom, and when. **The key is
      * not in this call and there is no field on `Release` to put it in.** */
