@@ -12,8 +12,11 @@
    * `tsconfig.json` is unchanged.
    *
    * WHAT IS IN THE LIBRARY, MEASURED RATHER THAN CHOSEN.
-   * Every `.ts` under `src/` that is not a test, not `test-setup.ts`, and not
-   * under `apps/wallet/`. That is 34 files. The measurement that makes the split
+   * Every `.ts` under `src/` that is not a test, and not under `apps/wallet/`.
+   * That is 38 files, and `src/test-setup.ts` is one of them: the exclude below
+   * that names it is written from the repository root, so it resolves under
+   * this directory to a path that does not exist and excludes nothing - the
+   * library carries `lib/test-setup.js`. The measurement that makes the split
    * safe: NO file outside `apps/wallet/` imports anything from `apps/wallet/` or
    * through the `@/` alias — only three TEST files do, and tests are excluded
    * here and keep running from source under `vitest`. So the library half has
