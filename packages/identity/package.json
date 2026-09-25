@@ -102,7 +102,7 @@
     "@hugeicons/core-free-icons": "4.3.0",
     "@hugeicons/react": "1.1.9",
     "@midnightntwrk/ledger-v9": "1.0.0-rc.3",
-    "@midnightntwrk/wallet-sdk": "2.0.0-beta.2",
+    "@midnightntwrk/wallet-sdk": "2.0.0-canary.20260909152755-289030d",
     "@midnightntwrk/wallet-sdk-address-format": "4.0.0-beta.2",
     "@midnightntwrk/wallet-sdk-hd": "3.1.0-beta.1",
     "@noble/ciphers": "2.3.0",
