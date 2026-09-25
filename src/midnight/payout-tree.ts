@@ -324,14 +324,9 @@ export interface PaymentFacts {
  * IN A COMMENT.**
  *
  * `PaymentFacts` carries either kind, because the vault holds both and one
- * approved run can mix them. **The ROSTER cannot yet**: a roster entry's
- * address comes from the payee's own device through `payeeAddress`, which
- * parses a `shield-addr` and refuses everything else, and nothing in identity
- * has been given a way to record a public one (`V-105`).
- *
- * So `PayrollService.paymentFactsFor` returns this, and the day the roster
- * learns about public payees the change is a compiler error at every site that
- * relied on it rather than a silent widening.
+ * approved run can mix them. A payroll run's payments are `PaymentFacts`, each
+ * payee in the form its address is; this narrower type is for a caller whose
+ * payments must all be private.
  */
 export type ShieldedPaymentFacts = PaymentFacts & { payee: PayeeAddress };
 

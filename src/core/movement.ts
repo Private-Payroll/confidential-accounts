@@ -22,8 +22,9 @@ import type { EntryKind } from './types.js';
  * address that only ever receives from one company's account, on payday, every
  * month, is not much of a disguise. So who chooses is not a preference:
  *
- *   A PAYROLL RUN      nobody chooses. **Always private.** An employee never
- *                      consents to being disclosed and must never be asked to.
+ *   A PAYROLL RUN      nobody chooses. Each person is paid in the form their
+ *                      address is: a private address privately, a public one
+ *                      publicly, and the screen says which.
  *   A ONE-OFF TRANSFER the company chooses, per transfer. It is the company's
  *                      own money going somewhere the company picked, and a
  *                      vendor who wants public settlement is a real customer.
@@ -79,6 +80,14 @@ export type Privacy = 'private' | 'public';
  *
  * Exhaustive over the union: a third payee kind fails to compile here.
  */
+/**
+ * **WHAT A PUBLIC PAYMENT PUTS ON THE RECORD, SAID ONCE.** Every screen that
+ * shows a person or a run paid publicly says it in these words, so no two of
+ * them can drift apart.
+ */
+export const PUBLIC_PAYMENT_SAYS =
+  'A public payment puts the address and the amount on a record anyone can read.';
+
 export const privacyOf = (p: Payee): Privacy =>
   p.kind === 'shielded' ? 'private' : 'public';
 
@@ -98,51 +107,35 @@ export const privacyOf = (p: Payee): Privacy =>
 export const entryKindOf = (m: MovementKind): EntryKind => m;
 
 /**
- * **A PAYROLL RUN CANNOT CONTAIN A PUBLIC PAYEE. REFUSED, NOT WARNED ABOUT.**
+ * **A PAYROLL RUN PAYS EACH PERSON IN THE FORM THEIR ADDRESS IS.** A private
+ * address is paid privately and a public address publicly, out of the vault's
+ * public money. Nobody chooses: the kind was read off the address when it was
+ * decoded, and every step after this (the token, the leaf, the vault's own
+ * payout) is chosen by that same kind, so a person cannot be paid the other way.
  *
- * ── WHY A REFUSAL AND NOT A CONFIRMATION ─────────────────────────────────
+ * ── WHY IT NO LONGER REFUSES A PUBLIC ADDRESS ────────────────────────────
  *
- * A warning is a decision handed to an operator at the worst moment, and this
- * one is wrong for every customer. The person it would disclose is not in the
- * room, has not been asked, and cannot be asked: **an employee never consents
- * to being paid publicly.** There is nothing for an operator to weigh, so there
- * is nothing to put in front of them.
+ * It did, on the reasoning that an employee never consents to being paid
+ * publicly. That kept out everybody paid in money with no private form, such
+ * as NIGHT: they were accepted when they were hired and refused on payday. A
+ * vault holds public money and pays it out publicly, so a person set up with a
+ * public address is paid that way, and the screen says what a public payment
+ * puts on the record wherever a person is set up to be paid publicly and
+ * wherever a run pays anybody publicly.
+ *
+ * **What it still refuses is a payee that is neither kind.** A roster address
+ * is rebuilt from its own string when it is read, so this cannot happen through
+ * the product; it is refused here by name rather than handed to a run builder
+ * that would fail further down without saying who.
  *
  * ── AND THERE IS NO FLAG ─────────────────────────────────────────────────
  *
- * **This takes a name and a payee, permanently.** A test pins the arity,
- * because a rule with a switch beside it is the rule not existing, and the
- * switch always arrives as a test-mode option somebody needs for an afternoon.
- * `a-payroll-run-is-always-private.test.ts` is what fails if either goes.
- *
- * ── WHAT IT ALSO PREVENTS, WHICH IS WORTH KNOWING ────────────────────────
- *
- * A withdrawal is a one-payee run to the company's own public address. Because
- * this refusal sits on the payroll path, **a withdrawal cannot be built as a
- * payroll run at all**, so it cannot reach payroll history as somebody's
- * salary. That is the misfiling most worth worrying about, closed by a refusal
- * written for something else.
- *
- * ── AND IT DOES NOT SAY "PAYROLL IS ALWAYS PRIVATE" ──────────────────────
- *
- * It did, and a product-copy pass was right to refuse it. **No asset has a
- * private form today** — `privateForm` answers `not-yet` for every row of the
- * registry — so a sentence telling a customer their payroll already settles
- * where nobody can read it is the overclaim that ends the company, printed at
- * the moment they are most likely to believe it.
- *
- * **The rule is defensible without the claim**: this is about which addresses
- * the payroll door accepts, and it says exactly that.
- *
- * Returns the payee NARROWED, so the caller's own type says private too.
+ * **This takes a name and a payee, permanently.** How a person is paid is the
+ * address's to say, and a switch beside it would be a way to say otherwise.
  */
-export function payrollPayee(name: string, payee: Payee): PayeeAddress {
-  if (payee.kind === 'shielded') return payee;
-  throw new Error(
-    `${name} is set up to be paid publicly. `
-    + 'A public payment puts the address and the amount on a record anyone can read. '
-    + 'An employee is never paid that way, so a payroll run will not accept a public address. '
-    + 'To pay a public address, use a one-off transfer.');
+export function payrollPayee(name: string, payee: Payee): Payee {
+  if (payee.kind === 'shielded' || payee.kind === 'unshielded') return payee;
+  throw new Error(`${name} is set up to be paid at an address that is neither private nor public.`);
 }
 
 /**
@@ -226,11 +219,10 @@ export interface TransferSpec {
    * **THE ADDRESSES ON THIS ACCOUNT'S PAYROLL ROSTER. REQUIRED, NEVER
    * DEFAULTED.** It is the half of the rule `payrollPayee` cannot reach.
    *
-   * `payrollPayee` is written on the shape of a RUN. The rule is about WHO the
-   * payee is: *no employee is ever disclosed publicly.* Those are not the same
-   * sentence, and the gap between them is a bonus, an expense or a correction
-   * raised as a one-off transfer to an employee's own address, with every
-   * check passing.
+   * A person on the roster is paid through payroll, which is where the screen
+   * says a public payment is public and where the protections against paying
+   * a person twice are asked. A bonus, an expense or a correction raised as a
+   * public one-off transfer to their address would go round both.
    *
    * **Required and not defaulted, for `payeeAddress`'s reason about `network`**:
    * a default is how the check quietly stops being made. `PayrollService.
@@ -274,8 +266,8 @@ export function transferOf(spec: TransferSpec): Transfer {
   }
 
   /*
-   * **NO EMPLOYEE IS EVER DISCLOSED PUBLICLY, CHECKED WHERE THE TRANSFER IS
-   * MADE.** See `TransferSpec.employees`.
+   * **A PERSON ON THE ROSTER IS PAID PUBLICLY THROUGH PAYROLL, NOT BY A PUBLIC
+   * TRANSFER, CHECKED WHERE THE TRANSFER IS MADE.** See `TransferSpec.employees`.
    *
    * **THE PRIVATE DIRECTION IS DELIBERATELY NOT REFUSED HERE**, and the reason
    * is that it is a filing question rather than a disclosure one: an expense
@@ -289,8 +281,7 @@ export function transferOf(spec: TransferSpec): Transfer {
     && spec.employees.some(e => e.bech32 === spec.payee.bech32)) {
     throw new Error(
       'this address is on the payroll roster. '
-      + 'A public payment puts the address and the amount on a record anyone can read. '
-      + 'An employee is never paid that way, so pay them through payroll instead.');
+      + 'Pay them through payroll instead.');
   }
 
   if (spec.privacy === 'private') {
@@ -340,14 +331,8 @@ export function transferOf(spec: TransferSpec): Transfer {
  * `assetIdBytes` is the account's name for an asset and is not used here.
  *
  * **A PAYROLL RUN'S PAYMENTS DO NOT COME FROM HERE** but from `paymentFactsFor`
- * in `payroll.ts`, which asks the same function for the private form, because a
- * payroll run is always private.
- *
- * **AND IT IS THE COUNTERPART OF `paymentFactsFor`, NOT A WIDENING OF IT.**
- * That one returns `ShieldedPaymentFacts` because a payroll run is always
- * private; this one returns `PaymentFacts`, because a transfer is whichever
- * kind the address is. Two functions, two return types, one refusal between
- * them — rather than one function with a flag deciding which rule applies.
+ * in `payroll.ts`, which asks the same function for the form each payee's
+ * address is, exactly as this does.
  */
 export const transferFacts = (t: Transfer, registry: AssetRegistry = defaultAssets): PaymentFacts => ({
   payee: t.payee,

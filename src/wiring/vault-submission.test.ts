@@ -13,7 +13,7 @@ import { VAULT_CIRCUITS } from '../midnight/vault-contract.js';
 import type { AuthorityRead, OnChainAuthority } from '../midnight/ledger.js';
 import {
   circuitsRefusal, refusalToPutMoneyIn, readVaultDeploy, refusalForDeposit, refusalForHandover,
-  refusalForPayout, startingLedgerFrom, type VaultStartingLedger,
+  refusalForPayout, refusalForPublicPayout, startingLedgerFrom, type VaultStartingLedger,
 } from './vault-submission.js';
 
 /*
@@ -388,5 +388,75 @@ describe('A PRIVATE PAYMENT OUT OF THE VAULT', () => {
     const noSums = payout() as Record<string, unknown>;
     delete noSums.imbalances;
     expect(refusalForPayout(noSums, expect_)).toMatch(/could not be added up/);
+  });
+});
+
+/*
+ * **THE FEE ON A PUBLIC PAYMENT OUT.** The shape the SDK builds, read back from a
+ * real transaction the ledger applied, is pinned in
+ * `contracts/test/a-private-payment-from-the-page.test.ts`; these are the refusals.
+ */
+describe('A PUBLIC PAYMENT OUT OF THE VAULT', () => {
+  const VAULT = 'ab'.repeat(32);
+  const ACCOUNT = 'cd'.repeat(32);
+  const OTHER = 'ee'.repeat(32);
+  type Shape = {
+    actions?: unknown[]; intentExtra?: Record<string, unknown>; guaranteed?: unknown; fallible?: unknown;
+    imbalances?: (segment: number) => Map<unknown, bigint>;
+  };
+  const payout = (over: Shape = {}) => ({
+    intents: new Map([[1, {
+      actions: over.actions ?? [
+        { address: ACCOUNT, entryPoint: 'recordPayment' },
+        { address: VAULT, entryPoint: new TextEncoder().encode('payoutUnshielded') },
+      ],
+      guaranteedUnshieldedOffer: { inputs: [], outputs: [{ owner: 'c3'.repeat(32), type: 'a8'.repeat(32), value: 250n }], signatures: [] },
+      ...(over.intentExtra ?? {}),
+    }]]),
+    guaranteedOffer: 'guaranteed' in over ? over.guaranteed : undefined,
+    fallibleOffer: 'fallible' in over ? over.fallible : undefined,
+    imbalances: over.imbalances ?? (() => new Map<unknown, bigint>([[{ tag: 'dust' }, -5n], [{ tag: 'unshielded' }, 0n]])),
+  });
+  const expect_ = { vault: VAULT, account: ACCOUNT };
+
+  it('is paid for when the vault\'s public payout pays one public address and asks this company\'s account', () => {
+    expect(refusalForPublicPayout(payout(), expect_)).toBeNull();
+    /* RED WHEN: a public payment is taken by the private payout's reader. */
+    expect(refusalForPayout(payout(), expect_)).toMatch(/moves public money/);
+  });
+
+  it('REFUSES ANY CALL BUT THE VAULT\'S PUBLIC PAYOUT AND THIS COMPANY\'S APPROVAL OF IT', () => {
+    const refuse = /must call this vault's public payout and this company's approval of it/;
+    /* RED WHEN: the call set is not compared exactly, or the private payout is taken for the public one. */
+    expect(refusalForPublicPayout(payout({ actions: [{ address: ACCOUNT, entryPoint: 'recordPayment' }, { address: VAULT, entryPoint: 'payout' }] }), expect_)).toMatch(refuse);
+    expect(refusalForPublicPayout(payout({ actions: [{ address: OTHER, entryPoint: 'recordPayment' }, { address: VAULT, entryPoint: 'payoutUnshielded' }] }), expect_)).toMatch(refuse);
+    expect(refusalForPublicPayout(payout({ actions: [{ address: ACCOUNT, entryPoint: 'recordPayment' }, { address: OTHER, entryPoint: 'payoutUnshielded' }] }), expect_)).toMatch(refuse);
+    expect(refusalForPublicPayout(payout({ actions: [{ address: VAULT, entryPoint: 'payoutUnshielded' }] }), expect_)).toMatch(refuse);
+  });
+
+  it('REFUSES ONE THAT SPENDS ANYBODY\'S COIN, MOVES PRIVATE MONEY, PAYS MORE THAN ONE ADDRESS, OR BRINGS ITS OWN FEE', () => {
+    /* RED WHEN: a public input is let through - the fee payer would add DUST to a spend of somebody's coin. */
+    expect(refusalForPublicPayout(payout({ intentExtra: { guaranteedUnshieldedOffer: { inputs: [1], outputs: [1] } } }), expect_))
+      .toMatch(/spends somebody's public coin/);
+    /* RED WHEN: a private coin is let through on a public payment. */
+    expect(refusalForPublicPayout(payout({ guaranteed: { inputs: [{ contractAddress: VAULT }], outputs: [], transients: [] } }), expect_))
+      .toMatch(/moves private money as well/);
+    expect(refusalForPublicPayout(payout({ fallible: new Map([[1, { inputs: [], outputs: [{}], transients: [] }]]) }), expect_))
+      .toMatch(/moves private money as well/);
+    /* RED WHEN: the output count is not exactly one, across both parts. */
+    expect(refusalForPublicPayout(payout({ intentExtra: { fallibleUnshieldedOffer: { inputs: [], outputs: [1] } } }), expect_))
+      .toMatch(/must pay exactly one person/);
+    expect(refusalForPublicPayout(payout({ intentExtra: { guaranteedUnshieldedOffer: { inputs: [], outputs: [] } } }), expect_))
+      .toMatch(/must pay exactly one person/);
+    /* RED WHEN: a fee already paid from elsewhere is let through. */
+    expect(refusalForPublicPayout(payout({ intentExtra: { dustActions: { spends: [1], registrations: [] } } }), expect_))
+      .toMatch(/already pays a network fee/);
+    /* RED WHEN: anything but DUST left unbalanced is let through. */
+    expect(refusalForPublicPayout(payout({ imbalances: () => new Map([[{ tag: 'unshielded' }, 5n]]) }), expect_))
+      .toMatch(/does not balance in its own money/);
+    /* RED WHEN: the intent's own segment is not asked - a public output left unbalanced there is paid for. */
+    expect(refusalForPublicPayout(payout({
+      imbalances: (segment) => new Map(segment === 1 ? [[{ tag: 'unshielded' }, -999n]] : [[{ tag: 'dust' }, -5n]]),
+    }), expect_)).toMatch(/does not balance in its own money/);
   });
 });

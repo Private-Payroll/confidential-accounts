@@ -70,7 +70,7 @@ describe('ONE APPROVED LEG\'S PAYMENTS, AS THE SERVICE HANDS THEM TO A DEVICE', 
       const p = out.order.payments[i]!;
       /* RED WHEN: a person's values are taken from another position, or their address from anywhere but their own fact. */
       expect(p).toMatchObject({
-        index: i, payee: facts[i]!.payee.bech32, token: TOKEN, amount: String(facts[i]!.amount),
+        index: i, kind: 'shielded', payee: facts[i]!.payee.bech32, token: TOKEN, amount: String(facts[i]!.amount),
         blinding: args.blinding, nonce: args.nonce, leaf: args.leaf,
       });
       expect(pathFromWire(p.path)).toEqual(args.path);
@@ -111,14 +111,23 @@ describe('ONE APPROVED LEG\'S PAYMENTS, AS THE SERVICE HANDS THEM TO A DEVICE', 
     expect(assemblePrivatePayments({ ...retryInput, indices: [] })).toEqual({ refusal: expect.stringMatching(/not the ones its signers approved/) });
   });
 
-  it('REFUSES A LEG THAT NAMES A PUBLIC ADDRESS, EVEN ONE THE SIGNERS APPROVED', () => {
-    /* RED WHEN: the kind check is removed - a person would be offered a payment the private circuit cannot make. */
+  it('HANDS OVER EACH PAYMENT IN THE FORM ITS PAYEE\'S ADDRESS IS, AGAINST THE LEAF BUILT FOR THAT FORM', () => {
     const publicFacts = [facts[0]!, { payee: unshieldedPayeeFor('c3'.repeat(32), NET), token: TOKEN, amount: 90n }];
     const mixed = buildRun(seeds, identity, publicFacts, vaultDetails);
     const out = assemblePrivatePayments(input({
       built: mixed, facts: publicFacts, leaves: mixed.tree.leaves,
       order: { ...input().order, root: mixed.tree.root, proposal: idFrom(mixed.tree.leaves, window) },
     }));
-    expect(out).toEqual({ refusal: expect.stringMatching(/names a public address/) });
+    if ('refusal' in out) throw new Error(out.refusal);
+    /* RED WHEN: a payment's kind is taken from anywhere but its own payee - a public payee would be handed to the
+     * private payout, or a private one to the public payout. */
+    expect(out.order.payments.map((p) => [p.kind, p.payee])).toEqual([
+      ['shielded', publicFacts[0]!.payee.bech32], ['unshielded', publicFacts[1]!.payee.bech32],
+    ]);
+    /* RED WHEN: the public payee's leaf is built by the private details circuit, which the public payout cannot pay. */
+    const asPrivate = buildRun(seeds, identity,
+      [facts[0]!, { payee: payeeFor('c3'.repeat(32), NET), token: TOKEN, amount: 90n }], vaultDetails);
+    expect(out.order.payments[1]!.leaf).toBe(mixed.payeeArgs(1).leaf);
+    expect(out.order.payments[1]!.leaf).not.toBe(asPrivate.payeeArgs(1).leaf);
   });
 });

@@ -24,7 +24,13 @@ import type { RunWindow } from './run-status.js';
 export interface PrivatePaymentOnTheWire {
   /** Their position in the leg, as the tree was built. */
   readonly index: number;
-  /** Their shielded address, as they registered it. */
+  /**
+   * How they are paid, which is the kind of their address: `shielded` through
+   * the vault's private payout, `unshielded` through its public one. Read off
+   * the payment the leg was raised with, never chosen.
+   */
+  readonly kind: 'shielded' | 'unshielded';
+  /** Their address, as they registered it, private or public as `kind` says. */
   readonly payee: string;
   readonly token: Hex;
   /** In the asset's smallest unit, as decimal digits. */
@@ -122,16 +128,18 @@ export function assemblePrivatePayments(input: {
         + 'offered to pay. Nothing was sent.',
     };
   }
-  if (input.facts.some((f) => f.payee.kind !== 'shielded')) {
-    return {
-      refusal: 'a payroll run pays people privately, and this one names a public address, so nothing is '
-        + 'offered to pay. Nothing was sent.',
-    };
-  }
+  /*
+   * **EACH PAYMENT GOES OUT IN THE FORM ITS PAYEE'S ADDRESS IS.** The leaf each
+   * one is paid against was built by that same kind, so the private payout
+   * cannot pay a public payee's leaf and the public payout cannot pay a
+   * private one; the device decodes the address again and refuses one whose
+   * kind disagrees with this.
+   */
   const payments = input.facts.map((fact, i): PrivatePaymentOnTheWire => {
     const args = built.payeeArgs(i);
     return {
       index: positions === undefined ? i : positions[i]!,
+      kind: fact.payee.kind,
       payee: fact.payee.bech32,
       token: args.token,
       amount: args.amount.toString(),

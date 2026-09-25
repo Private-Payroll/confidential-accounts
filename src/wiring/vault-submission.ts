@@ -461,6 +461,107 @@ export function refusalForPayout(tx: unknown, expect: PayoutExpectations): strin
   return null;
 }
 
+/* ------------------------------------------------- 5. a public payment out */
+
+interface UnshieldedOfferShape { readonly inputs?: unknown; readonly outputs?: unknown }
+
+/**
+ * **`null` ONLY FOR A PUBLIC PAYMENT THAT MOVES THIS VAULT'S OWN PUBLIC MONEY
+ * TO ONE PERSON AND NOTHING ELSE.**
+ *
+ * The same division as the private payout above: the account decides, inside
+ * the transaction, whether the company approved the run, whether its window is
+ * open and whether this person was already paid. What is decided here is only
+ * whether the fee payer adds DUST to it. A public payment spends no coin of
+ * anybody's: the vault releases its own public money to one public address, so
+ * the transaction may carry exactly one public output, no public input, no
+ * private coin at all, and no fee paid from anywhere else.
+ */
+export function refusalForPublicPayout(tx: unknown, expect: PayoutExpectations): string | null {
+  const what = 'a public payment out of this company\'s vault';
+  const t = tx as (TxShape & { imbalances?: (segment: number) => Map<{ tag?: unknown }, bigint> }) | null;
+  if (!(t?.intents instanceof Map) || t.intents.size !== 1) {
+    return `this is not ${what}: it must carry exactly one set of actions. Nothing was sent.`;
+  }
+  const intent = [...t.intents.values()][0] as IntentShape | null;
+  if (!intent || !Array.isArray(intent.actions)) {
+    return `this is not ${what}: it could not be read, so it was not paid for. Nothing was sent.`;
+  }
+  if (!emptyOffer(intent.dustActions, ['spends', 'registrations'])) {
+    return `this is not ${what}: it already pays a network fee from somewhere else. Nothing was sent.`;
+  }
+  const called: string[] = [];
+  for (const action of intent.actions) {
+    const call = action as { address?: unknown; entryPoint?: unknown } | null;
+    if (!call || call.entryPoint === undefined || call.address === undefined) {
+      return `this is not ${what}: it does something other than call the vault and the account. Nothing was sent.`;
+    }
+    called.push(`${bare(call.address)}/${nameOf(call.entryPoint)}`);
+  }
+  const wanted = [`${bare(expect.account)}/recordPayment`, `${bare(expect.vault)}/payoutUnshielded`];
+  if (called.length !== 2 || [...called].sort().join() !== [...wanted].sort().join()) {
+    return `this is not ${what}: it must call this vault's public payout and this company's approval of it, and `
+      + 'nothing else. Nothing was sent.';
+  }
+  /* No private coin moves in a public payment, in any part. */
+  const shielded: ShieldedOfferShape[] = [];
+  if (t.guaranteedOffer !== undefined && t.guaranteedOffer !== null) shielded.push(t.guaranteedOffer as ShieldedOfferShape);
+  if (t.fallibleOffer !== undefined && t.fallibleOffer !== null) {
+    if (!(t.fallibleOffer instanceof Map)) {
+      return `this is not ${what}: its coins could not be read, so it was not paid for. Nothing was sent.`;
+    }
+    shielded.push(...[...t.fallibleOffer.values()] as ShieldedOfferShape[]);
+  }
+  if (!shielded.every((o) => emptyOffer(o, ['inputs', 'outputs', 'transients']))) {
+    return `this is not ${what}: it moves private money as well, and a public payment moves none. Nothing was sent.`;
+  }
+  /* Nobody's public coin is spent, and the vault's money goes to exactly one address. */
+  const publicOffers = [intent.guaranteedUnshieldedOffer, intent.fallibleUnshieldedOffer]
+    .filter((o) => o !== undefined && o !== null) as UnshieldedOfferShape[];
+  let outputs = 0;
+  for (const offer of publicOffers) {
+    if (!Array.isArray(offer.inputs) || !Array.isArray(offer.outputs)) {
+      return `this is not ${what}: its public coins could not be read, so it was not paid for. Nothing was sent.`;
+    }
+    if (offer.inputs.length > 0) {
+      return `this is not ${what}: it spends somebody's public coin, and a payment out of a vault spends none. `
+        + 'Nothing was sent.';
+    }
+    outputs += offer.outputs.length;
+  }
+  if (outputs !== 1) {
+    return `this is not ${what}: it must pay exactly one person. Nothing was sent.`;
+  }
+  if (typeof t.imbalances !== 'function') {
+    return `this is not ${what}: what it moves could not be added up, so it was not paid for. Nothing was sent.`;
+  }
+  /*
+   * **EVERY SEGMENT ANYTHING SITS IN, THE INTENT'S OWN INCLUDED.** The public
+   * output rides on the intent, and a builder places an intent at a segment of
+   * its own choosing, so a public output left unbalanced there is asked about
+   * as well as the guaranteed part and every private fallible part.
+   */
+  const segments = [...new Set([
+    0, ...[...t.intents.keys()].map(Number),
+    ...(t.fallibleOffer instanceof Map ? [...t.fallibleOffer.keys()].map(Number) : []),
+  ])];
+  for (const segment of segments) {
+    let owed: Map<{ tag?: unknown }, bigint>;
+    try {
+      owed = t.imbalances(segment);
+    } catch {
+      return `this is not ${what}: what it moves could not be added up, so it was not paid for. Nothing was sent.`;
+    }
+    for (const [token, amount] of owed) {
+      if (token?.tag !== 'dust' && amount !== 0n) {
+        return `this is not ${what}: it does not balance in its own money, and the company pays only the network `
+          + 'fee. Nothing was sent.';
+      }
+    }
+  }
+  return null;
+}
+
 /* ------------------------------------------------- whether money may go in */
 
 /* --------------------------------------------- the one answer, for every door */

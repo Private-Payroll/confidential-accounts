@@ -49,6 +49,10 @@ export type VaultAsk =
     id: number; network: string; ask: 'payout'; vault: string; account: string; order: OrderOnTheWire;
     payment: PrivatePaymentOnTheWire; note: NoteOnTheWire; events: readonly EventOnTheWire[]; chain: PayoutChainOnTheWire;
   }
+  | {
+    id: number; network: string; ask: 'payout-publicly'; vault: string; account: string; order: OrderOnTheWire;
+    payment: PrivatePaymentOnTheWire; chain: PayoutChainOnTheWire;
+  }
   /*
    * **THE ONE ASK THAT CARRIES A SIGNER'S OWN KEY MATERIAL**, from the page to
    * the worker on the same device. The worker uses it for this one call and
@@ -71,6 +75,7 @@ export type VaultAnswer =
   | Answered<'after-payment', { notes: NoteOnTheWire[] }>
   | Answered<'confirm-payment', { confirmation: PaymentConfirmation }>
   | Answered<'payout', { tx: string; spent: string; change: NoteOnTheWire | null }>
+  | Answered<'payout-publicly', { tx: string }>
   | Answered<'governed-call', { tx: string }>
   | { id: number; ok: false; error: string };
 
@@ -100,6 +105,10 @@ export interface VaultBuilderClient {
     vault: string; account: string; order: OrderOnTheWire; payment: PrivatePaymentOnTheWire;
     note: NoteOnTheWire; events: readonly EventOnTheWire[]; chain: PayoutChainOnTheWire;
   }): Promise<{ tx: string; spent: string; change: NoteOnTheWire | null }>;
+  /** A public payment out of the vault, built and proved: no note, no change. */
+  payoutPublicly(input: {
+    vault: string; account: string; order: OrderOnTheWire; payment: PrivatePaymentOnTheWire; chain: PayoutChainOnTheWire;
+  }): Promise<{ tx: string }>;
   /** A raise or an approval on the company account, built and proved with this signer's own material. */
   governedCall(input: {
     account: string; order: GovernedCallOrder; material: SignerMaterial; chain: AccountCallChainOnTheWire;
@@ -161,6 +170,7 @@ export function vaultBuilderOver(worker: WorkerLike, network: string): VaultBuil
       const a = await ask({ ask: 'payout', ...input });
       return { tx: a.tx, spent: a.spent, change: a.change };
     },
+    payoutPublicly: async (input) => ({ tx: (await ask({ ask: 'payout-publicly', ...input })).tx }),
     governedCall: async (input) => ({ tx: (await ask({ ask: 'governed-call', ...input })).tx }),
   };
 }

@@ -12,7 +12,7 @@
  * origin and sends nothing anywhere.
  */
 import {
-  buildCommitteeHandover, buildDeposit, buildPayout, buildVaultDeploy, chooseNoteForPayment, confirmPayment, paymentsFitNotes,
+  buildCommitteeHandover, buildDeposit, buildPayout, buildPublicPayout, buildVaultDeploy, chooseNoteForPayment, confirmPayment, paymentsFitNotes,
   poolAfterPayment,
   type VaultBuilderDeps,
 } from './vault-builder.js';
@@ -192,6 +192,19 @@ export const answerVaultAsk = async (
         },
       });
       return { id: ask.id, ok: true, ask: 'payout', tx: toBase64(built.proven), spent: built.spent, change: built.change };
+    }
+    case 'payout-publicly': {
+      const built = await buildPublicPayout(withNetwork, {
+        vault: ask.vault, account: ask.account, order: ask.order, payment: ask.payment,
+        chain: {
+          blockHash: ask.chain.blockHash,
+          vaultState: fromBase64(ask.chain.vaultState),
+          zswapState: fromBase64(ask.chain.zswapState),
+          parameters: fromBase64(ask.chain.parameters),
+          accountState: fromBase64(ask.chain.accountState),
+        },
+      });
+      return { id: ask.id, ok: true, ask: 'payout-publicly', tx: toBase64(built.proven) };
     }
     case 'governed-call': {
       const built = await buildGovernedCall(d, {

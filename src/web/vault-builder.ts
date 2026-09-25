@@ -35,7 +35,7 @@ import {
   establishCreatingTransaction, indexForSpend, theTransactionTheseEventsAreFrom, vaultNoteCommitment,
   type ServedEvent,
 } from '../midnight/note-index.js';
-import { payeeAddress } from '../midnight/payee-address.js';
+import { payeeAddress, unshieldedPayeeAddress } from '../midnight/payee-address.js';
 import type { NetworkName } from '../midnight/network.js';
 import { pathFromWire, type PrivatePaymentOnTheWire, type PrivatePaymentOrderOnTheWire } from '../midnight/private-payment-wire.js';
 
@@ -271,6 +271,87 @@ const servedFromWire = (events: readonly EventOnTheWire[]): ServedEvent[] => eve
   },
 }));
 
+/**
+ * **ONE PUBLIC PAYMENT OUT OF THE VAULT, BUILT AND PROVED HERE.**
+ *
+ * The vault's public payout: no note is chosen or spent, no change comes back
+ * and no key travels with it, because a public payment is sent to the payee's
+ * public address where their wallet finds it by looking. The account's
+ * approval, the window and the once-only record are asked by the same call the
+ * private payout makes, from inside the vault.
+ *
+ * **ONLY A PUBLIC PAYMENT, IN BOTH HALVES.** The leg must name it public, and
+ * its address must decode as a public one; a private address is refused by the
+ * decode, so a private payee can never be sent public money here.
+ */
+export async function buildPublicPayout(
+  deps: VaultBuilderDeps,
+  input: {
+    readonly vault: string;
+    readonly account: string;
+    readonly order: Omit<PrivatePaymentOrderOnTheWire, 'payments'>;
+    readonly payment: PrivatePaymentOnTheWire;
+    readonly chain: PayoutChain;
+  },
+): Promise<{ proven: Uint8Array }> {
+  const vault = input.vault.toLowerCase();
+  const account = input.account.toLowerCase();
+  const { order, payment } = input;
+  if (!HEX64.test(vault) || !HEX64.test(account) || order.vault.toLowerCase() !== vault) {
+    throw new Error('this payment is not for this vault and this company\'s account, so nothing was built.');
+  }
+  for (const h of [order.proposal, order.salt, order.root, payment.token, payment.blinding, payment.nonce]) {
+    if (!HEX64.test(h)) throw new Error('this payment\'s round is not described in full, so nothing was built.');
+  }
+  for (const d of [order.payees, order.opensAt, order.closesAt, payment.amount]) {
+    if (!DIGITS.test(d)) throw new Error('this payment\'s round is not described in full, so nothing was built.');
+  }
+  if (deps.compiledWith === undefined) {
+    throw new Error('this device was not given the vault in the form a payment is built with, so nothing was built.');
+  }
+  if (payment.kind !== 'unshielded') {
+    throw new Error('this payment is not a public one, so it is not built as one. Nothing was built.');
+  }
+  const payee = unshieldedPayeeAddress(payment.payee, deps.network as NetworkName);
+  const amount = BigInt(payment.amount);
+  if (amount <= 0n) throw new Error('a payment of nothing is not made, so nothing was built.');
+
+  /* No note is handed in: the public payout spends none, and asking for one fails by name. */
+  const pending: { spending?: Hex } = {};
+  const compiled = deps.compiledWith(witnessesOver(() => ({ notes: [] }), pending));
+  const L = deps.ledger;
+  const accountState = deps.runtimeState.deserialize(input.chain.accountState);
+  const blockHash = input.chain.blockHash;
+  const keys = throwawayKeys(deps);
+  const built = await deps.contracts.createUnprovenCallTxFromInitialStates(deps.zkConfig, {
+    compiledContract: compiled,
+    circuitId: 'payoutUnshielded',
+    contractAddress: vault,
+    coinPublicKey: keys.coinPublicKey,
+    initialContractState: deps.runtimeState.deserialize(input.chain.vaultState),
+    initialZswapChainState: L.ZswapChainState.deserialize(input.chain.zswapState),
+    ledgerParameters: L.LedgerParameters.deserialize(input.chain.parameters),
+    args: [
+      fromHex(order.proposal), fromHex(order.root), BigInt(order.payees),
+      BigInt(order.opensAt), BigInt(order.closesAt), fromHex(order.salt),
+      /* The payee's public address in the recipient position, and nothing that could be a coin key. */
+      fromHex(payee.userAddress), fromHex(payment.token), amount,
+      fromHex(payment.blinding), fromHex(payment.nonce), pathFromWire(payment.path),
+    ],
+  }, keys.encryptionPublicKey, {
+    blockHash,
+    publicDataProvider: {
+      queryContractState: async (address: unknown, at?: { blockHash?: string }) =>
+        (String(address).toLowerCase() === account && at?.blockHash === blockHash ? accountState : null),
+    },
+  });
+  if (pending.spending !== undefined) {
+    throw new Error('the vault asked to spend a note for a public payment, so it was not sent. Nothing was sent.');
+  }
+  const proven = await deps.prove(built.private.unprovenTx, 'payoutUnshielded');
+  return { proven: proven.serialize() };
+}
+
 /** What a payment's own events say: it landed as built, the chain has not answered yet, or it is not as built. */
 export type PaymentConfirmation =
   | { readonly state: 'landed'; readonly createdIn: string }
@@ -362,6 +443,10 @@ export async function buildPayout(
   }
   if (deps.compiledWith === undefined) {
     throw new Error('this device was not given the vault in the form a payment is built with, so nothing was built.');
+  }
+  /* A payment the leg names as public is never built through the private payout, whatever its address reads as. */
+  if (payment.kind !== 'shielded') {
+    throw new Error('this payment is not a private one, so it is not built as one. Nothing was built.');
   }
   const payee = payeeAddress(payment.payee, deps.network as NetworkName);
   const amount = BigInt(payment.amount);

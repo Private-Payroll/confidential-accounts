@@ -850,11 +850,9 @@ export interface RosterEmployee {
    * **`Payee` AND NOT `PayeeAddress`, AND THE WIDENING IS DELIBERATE.** The
    * roster records whichever kind of address a person's own wallet produced,
    * because `payeeOf` reads the kind off the string and there is nothing to ask
-   * anybody. **It does NOT follow that anybody can be paid publicly from a
-   * run**: `payrollPayee` in `movement.ts` refuses a public payee on the
-   * payroll path, so the widening is a door and the refusal is a separate rule
-   * sitting behind it. `paymentFactsFor` still returns `ShieldedPaymentFacts`,
-   * and it is that refusal which keeps it true.
+   * anybody. A run pays each person in that same form: a public address is
+   * paid publicly, out of the vault's public money (`payrollPayee` in
+   * `movement.ts`).
    */
   address: Payee | null;
 }

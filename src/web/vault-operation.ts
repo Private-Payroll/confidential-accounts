@@ -105,6 +105,8 @@ export interface VaultService {
   /** The chain's events for one transaction. */
   events(vault: Hex, transactionHash: string): Promise<{ events: EventOnTheWire[] }>;
   payout(vault: Hex, tx: string): Promise<{ txRef: string; transactionHash: string | null }>;
+  /** Sends a public payment out of the vault, with the network fee paid for it. */
+  payoutPublicly(vault: Hex, tx: string): Promise<{ txRef: string; transactionHash: string | null }>;
 }
 
 /** Where this device keeps a vault's temporary key until the handover has landed. */
@@ -439,6 +441,9 @@ export async function payPrivatelyFromCompanyVault(
 ): Promise<{ txRef: string; transactionHash: string; spent: Hex; change: NoteOnTheWire | null }> {
   const { order, payment } = input;
   const vault = order.vault.toLowerCase() as Hex;
+  if (payment.kind !== 'shielded') {
+    throw new Error('this payment is not a private one, so it is not paid privately. Nothing was sent.');
+  }
   if (payment.paid === true) {
     throw new Error('the company\'s account already records this person paid for this run. Nothing was sent.');
   }
@@ -584,5 +589,108 @@ export async function payPrivatelyFromCompanyVault(
   } catch (e) {
     if (e instanceof PaymentNotYetSeen || e instanceof PaymentNotAsBuilt || e instanceof PaymentLandedUnrecorded) throw e;
     throw new PaymentNotYetSeen(vault, sent.txRef, (e as Error)?.message ?? String(e));
+  }
+}
+
+/**
+ * **A PUBLIC PAYMENT MAY HAVE BEEN SENT, AND THIS DEVICE HAS NOT SEEN IT
+ * RECORDED.** The money may have moved. Raised for every failure after the
+ * service began sending, so no screen reads it as a payment that did not
+ * happen. A public payment spends no note and changes no record on this
+ * device, so there is nothing here to rebuild.
+ */
+export class PublicPaymentNotYetSeen extends Error {
+  constructor(readonly vault: Hex, readonly txRef: string, why?: string) {
+    super(`the payment may have been sent${txRef === '' ? '' : ` (${txRef})`} and this device has not seen it land`
+      + `${why === undefined ? '' : ` (${why})`}, so it may still land. Do not pay this person again: open the run `
+      + 'later, and it shows them paid once the chain does.');
+    this.name = 'PublicPaymentNotYetSeen';
+  }
+}
+
+export interface PublicPayoutDoors extends Pacing {
+  readonly service: VaultService;
+  readonly builder: VaultBuilderClient;
+  readonly now?: () => Date;
+  /**
+   * Whether the company's account records this payment as made, asked again
+   * after it is sent: `true` once it does, `false` while it does not, `null`
+   * when this deployment cannot say.
+   */
+  readonly paidYet: () => Promise<boolean | null>;
+}
+
+/**
+ * **ONE PERSON PAID PUBLICLY OUT OF THE COMPANY'S VAULT, AGAINST A ROUND THE
+ * COMPANY APPROVED.** `order` and `payment` are what the service rebuilt from
+ * that round, and the payment is a public one: it is refused here unless the
+ * leg names it public, and the builder refuses its address unless it decodes
+ * as a public one.
+ *
+ * **NOTHING ON THIS DEVICE CHANGES.** No note is chosen or spent and nothing is
+ * written to the vault's record. The payment is done when the company's account
+ * records it, which is the same record that refuses paying this person twice.
+ */
+export async function payPubliclyFromCompanyVault(
+  doors: PublicPayoutDoors,
+  input: { readonly order: PrivatePaymentOrderOnTheWire; readonly payment: PrivatePaymentOnTheWire },
+): Promise<{ txRef: string }> {
+  const { order, payment } = input;
+  const vault = order.vault.toLowerCase() as Hex;
+  if (payment.kind !== 'unshielded') {
+    throw new Error('this payment is not a public one, so it is not paid publicly. Nothing was sent.');
+  }
+  if (payment.paid === true) {
+    throw new Error('the company\'s account already records this person paid for this run. Nothing was sent.');
+  }
+  const seconds = BigInt(Math.floor((doors.now ?? (() => new Date()))().getTime() / 1000));
+  if (seconds < BigInt(order.opensAt) || seconds >= BigInt(order.closesAt)) {
+    throw new Error('this run can be paid only inside the window its signers approved, and it is not open now. '
+      + 'Nothing was sent.');
+  }
+  doors.progress?.('reading the chain');
+  const view = await doors.service.chain(vault);
+  if (!view.onChain || view.heldByCommittee !== true) {
+    throw new Error('this service does not read this vault as held by the company\'s committee, so nothing is paid '
+      + `out of it. Nothing was sent.${view.why ? ` The service says: ${view.why}` : ''}`);
+  }
+  if (view.fundable !== true) {
+    throw new Error('No payment can be made out of this vault yet, so none was prepared or recorded. Nothing was '
+      + `sent.${view.why ? ` Reason: ${view.why}` : ''}`);
+  }
+  const chain = await doors.service.payoutState(vault);
+  if (chain.vault.toLowerCase() !== vault) {
+    throw new Error('the chain was read for a different vault, so nothing was built. Nothing was sent.');
+  }
+
+  doors.progress?.('building the payment');
+  const { payments: _all, ...round } = order;
+  const built = await doors.builder.payoutPublicly({
+    vault, account: chain.account, order: round, payment,
+    chain: {
+      blockHash: chain.blockHash, vaultState: chain.vaultState, zswapState: chain.zswapState,
+      parameters: chain.parameters, accountState: chain.accountState,
+    },
+  });
+
+  doors.progress?.('sending the payment');
+  let sent: { txRef: string; transactionHash: string | null };
+  try {
+    sent = await doors.service.payoutPublicly(vault, built.tx);
+  } catch (e) {
+    if (sentNothing(e)) throw e;
+    throw new PublicPaymentNotYetSeen(vault, '', (e as Error)?.message ?? String(e));
+  }
+
+  /* ---- from here the money may have moved, and every failure says so ---- */
+  try {
+    doors.progress?.('waiting for the payment');
+    const recorded = await until(doors, async () => ((await doors.paidYet().catch(() => null)) === true ? true : null));
+    if (recorded === null) throw new PublicPaymentNotYetSeen(vault, sent.txRef);
+    doors.progress?.('done');
+    return { txRef: sent.txRef };
+  } catch (e) {
+    if (e instanceof PublicPaymentNotYetSeen) throw e;
+    throw new PublicPaymentNotYetSeen(vault, sent.txRef, (e as Error)?.message ?? String(e));
   }
 }

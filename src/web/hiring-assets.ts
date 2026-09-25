@@ -3,9 +3,9 @@ import { assets, privateForm, ledgerFormOf, type Asset, type AssetRegistry } fro
 /**
  * **WHAT A PERSON CAN BE HIRED IN: AN ASSET THAT CAN BE PAID ON MIDNIGHT.**
  * The service refuses the rest at hiring; this is so the form never offers
- * them. Assets with a private form come first, because payroll is always paid
- * privately and a picker starts on its first entry. An asset with a public form
- * only stays on offer for a payee who is paid publicly, such as a supplier.
+ * them. Assets with a private form come first, because a picker starts on its
+ * first entry. An asset with a public form only stays on offer for a payee who
+ * is paid publicly, which a run does out of the vault's public money.
  * Exported so a test holds the list against the registry.
  */
 export const hiringAssets = (registry: AssetRegistry = assets): Asset[] => {
@@ -17,9 +17,9 @@ export const hiringAssets = (registry: AssetRegistry = assets): Asset[] => {
 
 /**
  * **WHAT AN EMPLOYEE CAN BE INVITED IN: AN ASSET WITH A PRIVATE FORM.** An
- * invitation hires a person, a person is paid by payroll, and payroll is
- * always paid privately. An asset with a public form only is left to the form
- * a company uses for its own account.
+ * invited person's address comes from their own wallet and may be a private
+ * one, which an asset with a public form only cannot pay. So that asset is left
+ * to the form where a member adds their own address, which may be public.
  */
 export const invitingAssets = (registry: AssetRegistry = assets): Asset[] =>
   hiringAssets(registry).filter(a => privateForm(a).of === 'available');

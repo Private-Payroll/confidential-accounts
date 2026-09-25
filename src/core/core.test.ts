@@ -1507,7 +1507,7 @@ describe('onboarding', () => {
     }, viewingKey);
 
     const { run } = await h.payroll.createRunFromRoster(account.id, '2026-07', viewingKey);
-    const facts = h.payroll.paymentFactsFor(run.id, viewingKey);
+    const facts = h.payroll.paymentFactsFor(run.id, viewingKey).map(f => ({ ...f, payee: privatePayee(f.payee) }));
 
     expect(facts).toHaveLength(2);
     expect(facts.map(f => f.amount)).toEqual([100_00n, 200_00n]);

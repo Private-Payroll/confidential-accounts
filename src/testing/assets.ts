@@ -7,8 +7,8 @@ import type { VaultHoldings } from '../core/vault-holdings.js';
  * **A PRIVATE TOKEN ONLY A TEST KNOWS, FOR AN ASSET THE PRODUCT CANNOT PAY
  * PRIVATELY.**
  *
- * A payroll run is always private and no asset in the product's registry has a
- * private form, so the product refuses every payroll run before a fee. Tests
+ * No asset in the product's registry has a private form, so the product
+ * refuses every payroll run with a private payee before a fee. Tests
  * whose subject is how a run is raised, approved, retried or reported still
  * need a run to exist. They are handed a registry in which the placeholder
  * assets carry a private token, and a vault that holds enough. What the

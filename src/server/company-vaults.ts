@@ -45,7 +45,7 @@ import { readContractAuthority, type AuthorityRead } from '../midnight/ledger.js
 import { committeeOf, sameCommittee, whyNoCommittee, type Committee } from '../midnight/vault-committee.js';
 import { authorityView, everySignerNeeded, type ContractAuthorityView } from '../midnight/company-authority.js';
 import {
-  circuitsRefusal, asFarAsTheVault, readVaultDeploy, refusalForDeposit, refusalForHandover, refusalForPayout,
+  circuitsRefusal, asFarAsTheVault, readVaultDeploy, refusalForDeposit, refusalForHandover, refusalForPayout, refusalForPublicPayout,
   refusalToPutMoneyIn, type FundingFacts, type VaultStartingLedger,
 } from '../wiring/vault-submission.js';
 
@@ -696,6 +696,41 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
     }
     const sent = await send(res, account.id, 'a private payment out of a vault', 'proven-moving-the-vaults-own-coins', bytes,
       (tx) => refusalForPayout(tx, { vault: record.vault, account: company.address }));
+    if (sent === null) return;
+    res.json({ txRef: sent.ref, transactionHash: sent.transactionHash });
+  });
+
+  /*
+   * **THE FEE ON A PUBLIC PAYMENT OUT, BEHIND THE SAME GATE.** The vault releases
+   * its own public money to one public address; the account decides the rest
+   * inside the transaction, exactly as for a private payment. What differs is
+   * only what the transaction may carry, and `refusalForPublicPayout` says it.
+   */
+  r.post('/api/accounts/:id/vaults/:vault/public-payout', ...guard, async (req, res) => {
+    const record = theVault(req, res);
+    if (record === null) return;
+    const bytes = txFrom(req, res);
+    if (bytes === null) return;
+    const account = accountOf(req);
+    const { company, committee, why } = await committeeNow(account);
+    if (company === null || committee === null) {
+      res.status(409).json({ nothingWasSent: true, error: `${why} Nothing was sent.` });
+      return;
+    }
+    const unvouched = await whyNotFunded(
+      record.vault, await authorityOf(record.vault), committee, company.address, undefined, undefined,
+      'this service pays no fee for a payment out of this vault');
+    if (unvouched !== null) {
+      res.status(409).json({
+        nothingWasSent: true,
+        error: `${unvouched.why} Where the cause is that a signer joined or left, or the threshold changed, since `
+          + 'the vault was handed over, its committee cannot be changed from this product yet, and no payment out '
+          + 'of it is paid for until it can.',
+      });
+      return;
+    }
+    const sent = await send(res, account.id, 'a public payment out of a vault', 'proven-moving-the-vaults-own-coins', bytes,
+      (tx) => refusalForPublicPayout(tx, { vault: record.vault, account: company.address }));
     if (sent === null) return;
     res.json({ txRef: sent.ref, transactionHash: sent.transactionHash });
   });

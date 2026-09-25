@@ -7,8 +7,10 @@ import type { PrivatePaymentOnTheWire, PrivatePaymentOrderOnTheWire } from '../m
 import * as keyring from './keyring.js';
 import { WALLET_ORIGIN } from './Auth.js';
 import {
-  PaymentLandedUnrecorded, PaymentNotAsBuilt, PaymentNotYetSeen, payPrivatelyFromCompanyVault, type VaultStage,
+  PaymentLandedUnrecorded, PaymentNotAsBuilt, PaymentNotYetSeen, payPrivatelyFromCompanyVault,
+  payPubliclyFromCompanyVault, PublicPaymentNotYetSeen, type VaultStage,
 } from './vault-operation.js';
+import { PUBLIC_PAYMENT } from './public-payment.js';
 import { deviceRecordsFor, deviceSignerFrom, privatePaymentsFor, rosterOf, vaultServiceFor } from './vault-page-doors.js';
 import { startVaultBuilder, type VaultBuilderClient } from './vault-worker-client.js';
 
@@ -102,6 +104,25 @@ export function PayoutPanel({ account, me, viewingKey, runs, proposals }: {
     if (!order || !leg) return;
     setBusy(true); setErr(''); setSaid('');
     try {
+      /*
+       * **A PUBLIC PAYMENT GOES OUT THROUGH THE VAULT'S PUBLIC PAYOUT AND NOTHING
+       * ELSE**, by the kind the leg recorded for this person. It opens no note
+       * and needs no company key, and it is done when the account records it.
+       */
+      if (payment.kind === 'unshielded') {
+        const done = await payPubliclyFromCompanyVault({
+          sleep: (ms: number) => new Promise<void>((r) => setTimeout(r, ms)),
+          progress: setStage,
+          service,
+          builder: await builder(),
+          paidYet: async () => {
+            const now = await privatePaymentsFor(keyring.api, leg.run.id, viewingKey, leg.asset, leg.retry?.proposalId);
+            return now.payments.find((p) => p.index === payment.index)?.paid ?? null;
+          },
+        }, { order, payment });
+        setSaid(`Paid publicly (${done.txRef}). The chain holds the payment.`);
+        return;
+      }
       const released = await keyring.companyKeysForVaults(account.id, WALLET_ORIGIN);
       const roster = rosterOf(account);
       const signedInAs = () => keyring.currentUser()?.id ?? null;
@@ -119,7 +140,8 @@ export function PayoutPanel({ account, me, viewingKey, runs, proposals }: {
       }, { order, payment });
       setSaid(`Paid privately (${done.txRef}). The chain holds the payment and the vault's record is updated.`);
     } catch (e: any) {
-      const mayHaveMoved = e instanceof PaymentNotYetSeen || e instanceof PaymentNotAsBuilt || e instanceof PaymentLandedUnrecorded;
+      const mayHaveMoved = e instanceof PaymentNotYetSeen || e instanceof PaymentNotAsBuilt || e instanceof PaymentLandedUnrecorded
+        || e instanceof PublicPaymentNotYetSeen;
       if (mayHaveMoved) setWaiting(new Set([...waiting, payment.index]));
       setErr(mayHaveMoved ? e.message : `The payment did not finish: ${String(e?.message ?? e)}`);
     } finally {
@@ -128,12 +150,15 @@ export function PayoutPanel({ account, me, viewingKey, runs, proposals }: {
     }
   };
 
+  /* Whether the loaded leg pays anybody publicly, read off each payment's own kind. */
+  const paysPublicly = order !== null && order.payments.some((p) => p.kind === 'unshielded');
+
   const money = (amount: string) => (leg ? `${formatAmount(BigInt(amount), assets.require(leg.asset))} ${leg.asset}` : amount);
 
   return (
     <div className="card" data-payout-panel>
       <div className="hd"><h3>Pay a run from a vault</h3>
-        <span className="sub">one person at a time, privately, against an approved round</span></div>
+        <span className="sub">{paysPublicly ? 'one person at a time, against an approved round' : 'one person at a time, privately, against an approved round'}</span></div>
       <div className="bd">
         {err && <div className="err" data-payout-error>{err}</div>}
         {said && <div className="hint" data-payout-said>{said}</div>}
@@ -156,7 +181,11 @@ export function PayoutPanel({ account, me, viewingKey, runs, proposals }: {
                   <td style={{ textAlign: 'right' }}>
                     {p.paid === true && <span className="chip ok">paid</span>}
                     {p.paid !== true && waiting.has(p.index) && <span className="chip">sent, waiting for the chain</span>}
-                    {p.paid !== true && !waiting.has(p.index) && (
+                    {p.paid !== true && !waiting.has(p.index) && p.kind === 'unshielded' && (
+                      <button className="btn sm pri" disabled={busy} onClick={pay(p)} data-pay-publicly>
+                        Pay publicly</button>
+                    )}
+                    {p.paid !== true && !waiting.has(p.index) && p.kind !== 'unshielded' && (
                       <button className="btn sm pri" disabled={busy} onClick={pay(p)} data-pay-privately>
                         Pay privately</button>
                     )}
@@ -166,7 +195,8 @@ export function PayoutPanel({ account, me, viewingKey, runs, proposals }: {
             </tbody>
           </table>
         )}
-        <div className="hint" style={{ marginTop: 14 }}>
+        {paysPublicly && <div className="hint" data-public-payment style={{ marginTop: 14 }}>{PUBLIC_PAYMENT}</div>}
+        {!paysPublicly && <div className="hint" style={{ marginTop: 14 }}>
           A run is paid only once its signers have approved it and inside the window they approved. Each payment
           spends one of the vault's notes, and whatever it does not pay out goes back to the vault as a new note.
           The amount and the person paid are not written on the chain in the open. What the chain does show: that
@@ -175,7 +205,7 @@ export function PayoutPanel({ account, me, viewingKey, runs, proposals }: {
           payment the money came from), and a record of each payment that anyone who already knows its details could
           match.
           The company pays the network fee.
-        </div>
+        </div>}
       </div>
     </div>
   );

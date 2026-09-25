@@ -10,8 +10,9 @@ import { openAccount as openSealedAccount, type CreatedAccount, type SignerSecre
 import { openRecord } from '../core/sealed-records.js';
 import { seatOnThisDevice, type SeatOnThisDevice } from '../core/signer-leaf.js';
 import { acceptSeatOnThisDevice } from './accept-seat.js';
-import { assets, formatAmount, parseAmount, subtotals, type Asset, type AssetId } from '../core/assets.js';
+import { assets, formatAmount, parseAmount, privateForm, subtotals, type Asset, type AssetId } from '../core/assets.js';
 import { hiringAssets, invitingAssets, NOBODY_CAN_BE_HIRED, NOBODY_CAN_BE_INVITED } from './hiring-assets.js';
+import { PUBLIC_PAYMENT, runPaysAnyonePublicly, setUpPublicly } from './public-payment.js';
 import type {
   Account, Attestation, Installation, Invite, PayrollRun, PluginEvent, PluginManifest, RunPayout,
   Proposal, RosterEmployee, SealedAccount, SealedProposal, SealedRun, ShieldedEntry,
@@ -1139,7 +1140,7 @@ function Vault({ account, me, viewingKey, runs, proposals }: {
 /* dashboard                                                           */
 /* ------------------------------------------------------------------ */
 
-function Dashboard({ state, runs, people, pending, onGo }: {
+export function Dashboard({ state, runs, people, pending, onGo }: {
   state: ShieldedState; runs: PayrollRun[]; people: RosterEmployee[];
   pending: Proposal[]; onGo: (page: Page) => void;
 }) {
@@ -1198,9 +1199,12 @@ function Dashboard({ state, runs, people, pending, onGo }: {
             <div style={{ marginTop: 16 }}>
               <button className="btn pri" onClick={() => onGo('payroll')}>Go to payroll</button>
             </div>
-            <div className="hint" style={{ marginTop: 14 }}>
-              Individual salaries are shielded.
-            </div>
+            {/* A payroll that pays anybody publicly does not have every salary kept off the record. */}
+            {active.some(setUpPublicly)
+              ? <div className="hint" data-public-payment style={{ marginTop: 14 }}>{PUBLIC_PAYMENT}</div>
+              : <div className="hint" style={{ marginTop: 14 }}>
+                  Individual salaries are shielded.
+                </div>}
           </div>
         </div>
 
@@ -1391,7 +1395,7 @@ function PayrollList({ runs, people, busy, session, onOpen, act }: {
  * own, and the run is done only when every leg is. Every action below is
  * therefore per leg, and the leg names its asset.
  */
-function RunDetail({ run, proposals, account, session, me, busy, onBack, act }: {
+export function RunDetail({ run, proposals, account, session, me, busy, onBack, act }: {
   run: (PayrollRun & Marked) | undefined; proposals: Array<Proposal & Marked>; account: Account;
   session: Session; me: SignerSecrets; busy: boolean; onBack: () => void; act: Act;
 }) {
@@ -1559,6 +1563,8 @@ function RunDetail({ run, proposals, account, session, me, busy, onBack, act }: 
 
       <div className="card">
         <div className="hd"><h3>Recipients</h3><span className="sub">visible to signers only</span></div>
+        {/* A run pays each person in the form their address is. */}
+        {runPaysAnyonePublicly(run) && <div className="hint" data-public-payment style={{ padding: '8px 16px' }}>{PUBLIC_PAYMENT}</div>}
         <div className="bd tight">
           <table>
             <thead><tr><th>Name</th><th className="num">Gross</th><th>Payslip</th></tr></thead>
@@ -1609,7 +1615,7 @@ function RunDetail({ run, proposals, account, session, me, busy, onBack, act }: 
 /* people                                                              */
 /* ------------------------------------------------------------------ */
 
-function People({ people, session, busy, act }: {
+export function People({ people, session, busy, act }: {
   people: Roster[]; session: Session; busy: boolean; act: Act;
 }) {
   /*
@@ -1963,6 +1969,9 @@ function People({ people, session, busy, act }: {
                 <input value={self.salary} onChange={e => setSelf({ ...self, salary: e.target.value })}
                   placeholder={formatAmount(5500n * 10n ** BigInt(selfAsset.decimals), selfAsset)} /></div>
             </div>
+            {/* Money with no private form is paid publicly, so that is said where a person sets it. */}
+            {privateForm(selfAsset).of !== 'available'
+              && <div className="hint" data-public-payment>{PUBLIC_PAYMENT}</div>}
             {!canHire && <div className="err" data-nobody-can-be-hired>{NOBODY_CAN_BE_HIRED}</div>}
             <div className="inline">
               <button className="btn pri" onClick={addSelf}
@@ -2186,6 +2195,9 @@ function People({ people, session, busy, act }: {
                   <td>
                     <div className="name">{p.name}</div>
                     <div className="sub2">{p.email}</div>
+                    {/* Paid in the form their address is, so a public address is
+                        said to be public where the person is set up. */}
+                    {setUpPublicly(p) && <div className="sub2" data-public-payment>{PUBLIC_PAYMENT}</div>}
                   </td>
                   <td>{p.title}</td>
                   <td className="sub2">{new Date(p.startDate).toLocaleDateString('en-GB')}</td>
@@ -2234,7 +2246,7 @@ function People({ people, session, busy, act }: {
  * two-asset payroll raises one per asset — so nothing here may assume that the
  * open proposal is the open proposal.
  */
-function Approvals({ pending, account, session, me, busy, runs, act }: {
+export function Approvals({ pending, account, session, me, busy, runs, act }: {
   pending: Array<Proposal & Marked>; account: Account; session: Session; me: SignerSecrets;
   busy: boolean; runs: Array<PayrollRun & Marked>; act: Act;
 }) {
@@ -2277,6 +2289,9 @@ function Approvals({ pending, account, session, me, busy, runs, act }: {
         const need = account.policy.threshold;
         const ready = p.approvals.length >= need;
         const leg = legOf(p);
+        /* A leg that pays anybody publicly puts their amounts on the record when it is paid. */
+        const legPaysPublicly = leg !== null
+          && runPaysAnyonePublicly({ employees: leg.run.employees.filter(e => e.asset === leg.asset) });
         return (
           <div className="card" key={p.id}>
             <div className="hd">
@@ -2301,10 +2316,12 @@ function Approvals({ pending, account, session, me, busy, runs, act }: {
                   <span className="prog"><i style={{ width: `${Math.min(100, p.approvals.length / need * 100)}%` }} /></span>
                   {p.approvals.length} of {need}
                 </span></div>
-              <div className="row"><span>Amount</span>
-                <span className="r"><span className="chip off">shielded</span></span></div>
+              {!legPaysPublicly && <div className="row"><span>Amount</span>
+                <span className="r"><span className="chip off">shielded</span></span></div>}
               <div className="hint" style={{ marginTop: 12 }}>
-                The amount is inside the sealed payload and never appears in the clear. Whether this proposal has
+                {legPaysPublicly
+                  ? <span data-public-payment>{PUBLIC_PAYMENT}</span>
+                  : 'The amount is inside the sealed payload and never appears in the clear.'} Whether this proposal has
                 enough signatures is the contract&rsquo;s answer, not ours &mdash; we only show it. The amount is
                 opened here for one thing: your company&rsquo;s own spending ceilings, which this service applies
                 and the chain knows nothing about.
