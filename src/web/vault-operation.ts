@@ -101,6 +101,12 @@ export interface VaultService {
   chain(vault: Hex): Promise<VaultChainView>;
   deposit(vault: Hex, tx: string): Promise<{ txRef: string; transactionHash: string | null }>;
   /**
+   * Sends a public deposit into the vault, with the network fee paid for it.
+   * `money` is what the page asked the vault to receive, and the service
+   * refuses a deposit that is anything else.
+   */
+  depositPublicly?(vault: Hex, tx: string, money: { token: Hex; amount: string }): Promise<{ txRef: string; transactionHash: string | null }>;
+  /**
    * One block's view of the vault and the company's account, for a payment out
    * to be built on. A deposit reads the ledger parameters from it too.
    */
@@ -587,6 +593,44 @@ export async function settleDepositInFlight(
   throw new DepositStillInFlight(vault, d.txRef, until);
 }
 
+/**
+ * **THE CHAIN'S LEDGER PARAMETERS NOW, FOR A DEPOSIT INTO THIS VAULT, OR A
+ * REFUSAL THAT NAMES ONLY A DEPOSIT'S OWN REASONS.** Read from the one block's
+ * view a payment out is built on. Bytes that are not the parameters of the
+ * ledger version this page builds with are refused.
+ */
+async function chainParametersForADeposit(doors: { readonly service: VaultService }, vault: Hex): Promise<string> {
+  const notRead = () => new Error('the chain\'s current parameters could not be read for this vault, so no '
+    + 'coin was chosen and nothing was built or sent. Try again shortly.');
+  let at: Awaited<ReturnType<VaultService['payoutState']>>;
+  try {
+    at = await doors.service.payoutState(vault);
+  } catch {
+    throw notRead();
+  }
+  const answeredWrongly = (why: string) => new Error('the service answered with something other than this vault\'s '
+    + `current parameters (${why}), so no coin was chosen and nothing was built or sent. Try again; if this happens `
+    + 'again, the service needs attention.');
+  if (String(at?.vault).toLowerCase() !== vault.toLowerCase() || typeof at.parameters !== 'string' || at.parameters.length === 0) {
+    throw answeredWrongly('the answer was not this vault\'s parameters');
+  }
+  let header: string;
+  try {
+    header = atob(at.parameters.slice(0, 44));
+  } catch {
+    throw answeredWrongly('the answer was not ledger parameters');
+  }
+  if (!header.startsWith(LEDGER_PARAMETERS_HEADER.slice(0, LEDGER_PARAMETERS_HEADER.indexOf('[v') + 2))) {
+    throw answeredWrongly('the answer was not ledger parameters');
+  }
+  if (!header.startsWith(LEDGER_PARAMETERS_HEADER)) {
+    throw new Error('the network is running a different ledger version from the one this page builds deposits with, '
+      + 'so no coin was chosen, nothing was built or sent, and no money has moved. Reload the page; if this stays, '
+      + 'deposits cannot be made from this page until it matches the network again.');
+  }
+  return at.parameters;
+}
+
 export async function depositIntoCompanyVault(
   doors: DepositDoors, vault: Hex, money: DepositMoney,
 ): Promise<{
@@ -622,35 +666,7 @@ export async function depositIntoCompanyVault(
    * refusals are worded for a payment, so none of its words reach this
    * deposit's refusal: only this deposit's own reasons do.
    */
-  const notRead = () => new Error('the chain\'s current parameters could not be read for this vault, so no '
-    + 'coin was chosen and nothing was built or sent. Try again shortly.');
-  let at: Awaited<ReturnType<VaultService['payoutState']>>;
-  try {
-    at = await doors.service.payoutState(vault);
-  } catch {
-    throw notRead();
-  }
-  const answeredWrongly = (why: string) => new Error('the service answered with something other than this vault\'s '
-    + `current parameters (${why}), so no coin was chosen and nothing was built or sent. Try again; if this happens `
-    + 'again, the service needs attention.');
-  if (String(at?.vault).toLowerCase() !== vault.toLowerCase() || typeof at.parameters !== 'string' || at.parameters.length === 0) {
-    throw answeredWrongly('the answer was not this vault\'s parameters');
-  }
-  let header: string;
-  try {
-    header = atob(at.parameters.slice(0, 44));
-  } catch {
-    throw answeredWrongly('the answer was not ledger parameters');
-  }
-  if (!header.startsWith(LEDGER_PARAMETERS_HEADER.slice(0, LEDGER_PARAMETERS_HEADER.indexOf('[v') + 2))) {
-    throw answeredWrongly('the answer was not ledger parameters');
-  }
-  if (!header.startsWith(LEDGER_PARAMETERS_HEADER)) {
-    throw new Error('the network is running a different ledger version from the one this page builds deposits with, '
-      + 'so no coin was chosen, nothing was built or sent, and no money has moved. Reload the page; if this stays, '
-      + 'deposits cannot be made from this page until it matches the network again.');
-  }
-  const parameters: string = at.parameters;
+  const parameters = await chainParametersForADeposit(doors, vault);
   const notes = new Set((view.notes ?? []).map((n) => n.toLowerCase()));
   const commitments = (coin: { nonce: Hex; token: Hex; value: bigint }) => doors.builder.commitments({
     vault, coin: { nonce: coin.nonce, token: coin.token, value: coin.value.toString() },
@@ -709,6 +725,126 @@ export async function depositIntoCompanyVault(
   const recorded = await recordLandedDeposit(doors, vault, inFlight, output, { waiting: true, giveUp: false });
   doors.progress?.('done');
   return { txRef: sent.txRef, transactionHash: sent.transactionHash, ...recorded, ...(earlier.state === 'none' ? {} : { earlier }) };
+}
+
+/* ----------------------------------------------------------- a public deposit */
+
+/** What the vault receives in a public deposit: one public token, and an amount of it in its smallest unit. */
+export interface PublicDepositMoney {
+  readonly token: Hex;
+  readonly value: bigint;
+}
+
+/**
+ * **A PUBLIC DEPOSIT MAY HAVE BEEN SENT, AND THIS PAGE WAS NOT TOLD IT WAS.** The
+ * money may have moved. Raised for every failure after the service began
+ * sending, so no screen reads it as a deposit that did not happen.
+ */
+export class PublicDepositNotYetSeen extends Error {
+  constructor(readonly vault: Hex, readonly until: number) {
+    super('the public deposit may have been sent, and this page was not told whether it arrived. Do not put the same '
+      + `money in again before ${new Date(until).toLocaleTimeString()}. If it has not arrived by then, it never will. `
+      + 'Open your wallet: if its public balance has dropped by this amount and you spent nothing else from it, the '
+      + 'vault has it. "Check my last deposit" finds only private deposits, so it cannot tell you about this one.');
+    this.name = 'PublicDepositNotYetSeen';
+  }
+}
+
+export interface PublicDepositDoors extends Pacing {
+  readonly service: VaultService;
+  readonly builder: VaultBuilderClient;
+  readonly company: Hex;
+  readonly pay: DepositDoors['pay'];
+  /** The time now, in milliseconds. */
+  readonly clock?: () => number;
+}
+
+const HEX32_TOKEN = /^[0-9a-f]{64}$/u;
+
+/**
+ * **A PUBLIC TOKEN PUT INTO THE COMPANY'S VAULT AS IT IS.**
+ *
+ * The vault's public deposit takes one token and one amount; the chain adds them
+ * to the vault's public balance, which anyone can read. So, unlike a private
+ * deposit, **NOTHING IS CHOSEN, KEPT OR RECORDED ON THIS DEVICE**: there is no
+ * coin, no nonce, no journal line and no note, and a vault that holds only
+ * public money needs no record of its own to be paid out of.
+ *
+ *   1. the vault and the company's account must be held by the committee, as
+ *      for a private deposit, and the chain's parameters are read the same way;
+ *   2. the deposit is built and proved in the vault worker, which refuses one
+ *      that would ask for anything but this token and this amount;
+ *   3. the signer's own wallet pays the public amount and signs, after showing
+ *      the token, the amount, and that both are public;
+ *   4. the wallet's answer must name exactly this token and this amount leaving
+ *      it, or nothing is sent;
+ *   5. the service adds the network fee and sends it, and refuses one that is
+ *      not exactly this vault's public deposit of this token and this amount.
+ *
+ * **WHY NOTHING FOLLOWS IT UP ON THIS DEVICE.** A private deposit is kept here
+ * until the chain holds it because its coin was chosen here and its note must
+ * be recorded, and a second deposit must not choose the same coin. A public
+ * deposit has none of those: the service answers once the chain has taken it,
+ * and if that answer is lost there is nothing on this device to finish. The
+ * wallet's public balance and the chain say whether it arrived.
+ */
+export async function depositPubliclyIntoCompanyVault(
+  doors: PublicDepositDoors, vault: Hex, money: PublicDepositMoney,
+): Promise<{ txRef: string; transactionHash: string | null; token: Hex; value: bigint }> {
+  /* The token as the asset's row names it: 64 lowercase hex characters, compared and sent as it is. */
+  if (typeof money.token !== 'string' || !HEX32_TOKEN.test(money.token)) {
+    throw new Error('this is not a public token a vault can hold, so nothing was built or sent. No money moved. Reload the page and try again; if it happens again, the service needs attention.');
+  }
+  if (typeof money.value !== 'bigint' || money.value <= 0n) throw new Error('an amount of nothing is not a deposit.');
+  if (typeof doors.service.depositPublicly !== 'function') {
+    throw new Error('this page cannot send a public deposit, so nothing was built or sent. No money moved. Reload the page and try again; if it happens again, the service needs attention.');
+  }
+  const view = await doors.service.chain(vault);
+  if (!view.onChain || view.heldByCommittee !== true || view.state === undefined) {
+    throw new Error(view.why ?? 'this vault is not held by the company\'s committee, so no money goes in.');
+  }
+  /* Asked before the wallet is, so a deposit the service will refuse asks the wallet for nothing. */
+  if (view.fundable !== true) {
+    throw new Error(view.why ?? 'this company\'s account is not held by its committee yet, so no money goes in.');
+  }
+  const parameters = await chainParametersForADeposit(doors, vault);
+  if (typeof doors.builder.publicDeposit !== 'function') {
+    throw new Error('this page cannot build a public deposit, so nothing was built or sent. No money moved. Reload the page and try again; if it happens again, the service needs attention.');
+  }
+  doors.progress?.('building the deposit');
+  const built = await doors.builder.publicDeposit({
+    vault, token: money.token, amount: money.value.toString(), state: view.state, parameters,
+  });
+  doors.progress?.('asking your wallet');
+  const paid = await doors.pay({ company: doors.company, vault, transaction: built.tx });
+  /*
+   * **WHAT THE WALLET SAYS LEFT IT MUST BE WHAT WAS ASKED.** The wallet reads the
+   * amount from the transaction, not from this page; an answer naming anything
+   * else is not sent. What it booked is let go when the transaction can no
+   * longer be sent.
+   */
+  const leaves = Array.isArray(paid?.leaves) ? paid.leaves as readonly { token?: unknown; amount?: unknown; kind?: unknown }[] : [];
+  if (leaves.length !== 1 || leaves[0]?.kind !== 'unshielded'
+    || String(leaves[0]?.token).toLowerCase() !== money.token || String(leaves[0]?.amount) !== money.value.toString()) {
+    throw new Error('your wallet prepared a payment for something other than this public deposit, so this page did not '
+      + 'send it and no money moved. You can put money in again now.');
+  }
+  doors.progress?.('sending the deposit');
+  /* The deposit is built to live an hour, and no longer than this, clocks disagreeing included. */
+  const until = (doors.clock ?? Date.now)() + DEPOSIT_TIME_TO_LIVE_MS;
+  let sent: { txRef: string; transactionHash: string | null };
+  try {
+    sent = await doors.service.depositPublicly(vault, paid.transaction, { token: money.token, amount: money.value.toString() });
+  } catch (e) {
+    if (!sentNothing(e)) throw new PublicDepositNotYetSeen(vault, until);
+    const at = new Date(until).toLocaleTimeString();
+    throw new Error(`the public deposit was not sent, so no money has moved yet. Your wallet already signed it, and `
+      + `until ${at} anyone can still send it. If they do, the money goes into this vault and nowhere else. Do not put `
+      + `the same money in again before ${at}, or the vault may receive it twice. The service said: `
+      + `${(e as Error)?.message ?? String(e)}`);
+  }
+  doors.progress?.('done');
+  return { txRef: sent.txRef, transactionHash: sent.transactionHash, token: money.token, value: money.value };
 }
 
 /* ------------------------------------------------------------ a payment out */

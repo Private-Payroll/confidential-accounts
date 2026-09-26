@@ -1,12 +1,13 @@
 /**
- * **A COMPANY VAULT'S FOUR TRANSACTIONS, BUILT AND PROVED ON THE SIGNER'S OWN
+ * **A COMPANY VAULT'S TRANSACTIONS, BUILT AND PROVED ON THE SIGNER'S OWN
  * DEVICE.**
  *
  *   1. the vault's deploy, pinned to the company's account and held for one
  *      block by a temporary key made here;
  *   2. the handover of that vault to the company's committee, signed by that
  *      temporary key and by nothing else;
- *   3. a deposit of one coin the device has already chosen and recorded;
+ *   3. a deposit of one coin the device has already chosen and recorded, or a
+ *      public deposit of one public token and one amount, which makes no coin;
  *   4. a private payment out of the vault, spending one note the device chose
  *      from the pool it opened, against a round the company approved.
  *
@@ -18,8 +19,9 @@
  * **WHAT LEAVES THIS FILE GOES TO THE PAGE ON THIS DEVICE, AND ONLY A PROVEN
  * TRANSACTION IS SENT ON FROM THERE.** No transaction this builds carries a coin
  * of the device's: the deploy and the handover move none, the deposit's one
- * output is the vault's, and a payment out spends the vault's note into the
- * payee's coin and the vault's change. The two public keys the call builder asks
+ * output is the vault's, a public deposit only asks for the public money the
+ * depositor's wallet then adds, and a payment out spends the vault's note into
+ * the payee's coin and the vault's change. The two public keys the call builder asks
  * for are made from randomness nobody keeps. Besides the transactions, the page
  * is handed the vault's temporary key, which it keeps until the handover has
  * landed and never sends anywhere; the note a payment spends and the pool after
@@ -161,6 +163,109 @@ export async function buildDeposit(
   }, keys.encryptionPublicKey);
   const proven = await deps.prove(built.private.unprovenTx, 'deposit');
   return { proven: proven.serialize() };
+}
+
+/**
+ * **THE PUBLIC DEPOSIT.** One public token and one amount into the vault's
+ * public balance, through the vault's public deposit. No coin is made and no
+ * nonce or note exists: the chain adds the amount to what the vault holds
+ * publicly, and anyone can read it. `state` and `parameters` are as for the
+ * private deposit.
+ *
+ * **WHAT IS BUILT IS READ BACK BEFORE IT IS PROVED.** It must be exactly one
+ * call, to this vault's public deposit, asking for exactly this token and this
+ * amount and for nothing else - no coin, no other token, nothing paid out and
+ * no other contract called - or nothing is proved and nothing leaves here.
+ */
+export async function buildPublicDeposit(
+  deps: VaultBuilderDeps,
+  input: {
+    readonly vault: string;
+    readonly token: string;
+    readonly amount: bigint;
+    readonly state: Uint8Array;
+    readonly parameters: Uint8Array;
+  },
+): Promise<{ proven: Uint8Array }> {
+  const vault = String(input.vault).toLowerCase();
+  if (!HEX64.test(vault) || !HEX64.test(input.token) || typeof input.amount !== 'bigint' || input.amount <= 0n
+    || input.amount >= (1n << 128n)) {
+    throw new Error('this is not a public deposit a vault can take, so nothing was built. No money moved. Reload the page and try again; if it happens again, the service needs attention.');
+  }
+  if (!(input.parameters instanceof Uint8Array) || input.parameters.length === 0) {
+    throw new Error('the chain\'s current ledger parameters were not handed over, so nothing was built or sent. No money moved. Reload the page and try again; if it happens again, the service needs attention.');
+  }
+  const keys = throwawayKeys(deps);
+  const L = deps.ledger;
+  const built = await deps.contracts.createUnprovenCallTxFromInitialStates(deps.zkConfig, {
+    compiledContract: deps.compiled,
+    circuitId: 'depositUnshielded',
+    contractAddress: vault,
+    coinPublicKey: keys.coinPublicKey,
+    initialContractState: deps.runtimeState.deserialize(input.state),
+    /* A public deposit touches no private coin, so the builder is given no commitment tree to read. */
+    initialZswapChainState: new L.ZswapChainState(),
+    ledgerParameters: L.LedgerParameters.deserialize(input.parameters),
+    args: [fromHex(input.token), input.amount],
+  }, keys.encryptionPublicKey);
+  const unproven = built.private.unprovenTx;
+  const refused = whyNotOnlyThisPublicDeposit(unproven, { vault, token: input.token, amount: input.amount });
+  if (refused !== null) throw new Error(`${refused} Nothing was built. No money moved. Reload the page and try again; if it happens again, the service needs attention.`);
+  const proven = await deps.prove(unproven, 'depositUnshielded');
+  return { proven: proven.serialize() };
+}
+
+/**
+ * `null` only for a transaction that is one call, to this vault's public
+ * deposit, asking for exactly `amount` of `token` and for nothing else.
+ * Exported so the check can be driven without building anything.
+ */
+export function whyNotOnlyThisPublicDeposit(
+  tx: unknown, expect: { readonly vault: string; readonly token: string; readonly amount: bigint },
+): string | null {
+  const t = tx as {
+    intents?: unknown; guaranteedOffer?: unknown; fallibleOffer?: unknown;
+  } | null;
+  if (!(t?.intents instanceof Map) || t.intents.size !== 1) return 'this is not one call to the vault.';
+  if (t.guaranteedOffer !== undefined && t.guaranteedOffer !== null) return 'this would move private money as well.';
+  if (t.fallibleOffer !== undefined && t.fallibleOffer !== null
+    && !(t.fallibleOffer instanceof Map && t.fallibleOffer.size === 0)) return 'this would move private money as well.';
+  const intent = [...t.intents.values()][0] as {
+    actions?: unknown; guaranteedUnshieldedOffer?: unknown; fallibleUnshieldedOffer?: unknown;
+  } | null;
+  if (!intent || !Array.isArray(intent.actions) || intent.actions.length !== 1) return 'this is not one call to the vault.';
+  if ((intent.guaranteedUnshieldedOffer ?? null) !== null || (intent.fallibleUnshieldedOffer ?? null) !== null) {
+    return 'this already moves public money of its own.';
+  }
+  const call = intent.actions[0] as {
+    address?: unknown; entryPoint?: unknown; guaranteedTranscript?: { effects?: unknown }; fallibleTranscript?: { effects?: unknown };
+  } | null;
+  const name = call?.entryPoint instanceof Uint8Array ? new TextDecoder().decode(call.entryPoint) : String(call?.entryPoint);
+  if (String(call?.address).toLowerCase() !== expect.vault.toLowerCase() || name !== 'depositUnshielded') {
+    return 'this does not call this vault\'s public deposit.';
+  }
+  const asked = new Map<string, bigint>();
+  for (const transcript of [call?.guaranteedTranscript, call?.fallibleTranscript]) {
+    if (transcript === undefined || transcript === null) continue;
+    const e = transcript.effects as Record<string, unknown> | undefined;
+    if (e === undefined || e === null) return 'what this call asks for could not be read.';
+    for (const k of ['claimedNullifiers', 'claimedShieldedReceives', 'claimedShieldedSpends', 'claimedContractCalls']) {
+      if (!Array.isArray(e[k]) || (e[k] as unknown[]).length !== 0) return 'this call asks for more than public money.';
+    }
+    for (const k of ['shieldedMints', 'unshieldedMints', 'unshieldedOutputs', 'claimedUnshieldedSpends']) {
+      if (!(e[k] instanceof Map) || (e[k] as Map<unknown, unknown>).size !== 0) return 'this call asks for more than public money.';
+    }
+    if (!(e.unshieldedInputs instanceof Map)) return 'what this call asks for could not be read.';
+    for (const [type, value] of e.unshieldedInputs as Map<{ tag?: unknown; raw?: unknown }, unknown>) {
+      if (type?.tag !== 'unshielded' || typeof value !== 'bigint') return 'this call asks for money that is not a public token.';
+      const k = String(type.raw).toLowerCase();
+      asked.set(k, (asked.get(k) ?? 0n) + value);
+    }
+  }
+  if (asked.size !== 1 || asked.get(expect.token.toLowerCase()) !== expect.amount) {
+    return 'this call does not ask for exactly the token and amount of this deposit.';
+  }
+  return null;
 }
 
 export { hex as hexOfBytes };

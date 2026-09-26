@@ -40,6 +40,7 @@ export type VaultAsk =
   | { id: number; network: string; ask: 'deploy'; account: string }
   | { id: number; network: string; ask: 'handover'; vault: string; counter: string; temporaryKey: SigningKeyOnTheWire; to: Committee }
   | { id: number; network: string; ask: 'deposit'; vault: string; coin: CoinOnTheWire; state: string; parameters: string }
+  | { id: number; network: string; ask: 'public-deposit'; vault: string; token: string; amount: string; state: string; parameters: string }
   | { id: number; network: string; ask: 'commitments'; vault: string; coin: CoinOnTheWire }
   | { id: number; network: string; ask: 'choose-note'; notes: readonly NoteOnTheWire[]; token: string; amount: string }
   | {
@@ -82,6 +83,7 @@ export type VaultAnswer =
   | Answered<'deploy', { vault: string; temporaryKey: SigningKeyOnTheWire; tx: string }>
   | Answered<'handover', { tx: string }>
   | Answered<'deposit', { tx: string }>
+  | Answered<'public-deposit', { tx: string }>
   | Answered<'commitments', { output: string; held: string }>
   | Answered<'choose-note', { note: NoteOnTheWire }>
   | Answered<'payments-fit', { answer: PaymentsFitAnswer }>
@@ -102,6 +104,11 @@ export interface VaultBuilderClient {
   handover(input: { vault: string; counter: bigint; temporaryKey: SigningKeyOnTheWire; to: Committee }): Promise<{ tx: string }>;
   /** `state` and `parameters` are base64 of the vault's state and of the ledger parameters the chain holds now. */
   deposit(input: { vault: string; coin: CoinOnTheWire; state: string; parameters: string }): Promise<{ tx: string }>;
+  /**
+   * The vault's public deposit of one public token and one amount, built and
+   * proved: no coin, no nonce, no note. `amount` is decimal digits.
+   */
+  publicDeposit?(input: { vault: string; token: string; amount: string; state: string; parameters: string }): Promise<{ tx: string }>;
   commitments(input: { vault: string; coin: CoinOnTheWire }): Promise<{ output: string; held: string }>;
   chooseNote(input: { notes: readonly NoteOnTheWire[]; token: string; amount: string }): Promise<NoteOnTheWire>;
   /**
@@ -179,6 +186,7 @@ export function vaultBuilderOver(worker: WorkerLike, network: string): VaultBuil
       const a = await ask({ ask: 'deposit', ...input });
       return { tx: a.tx };
     },
+    publicDeposit: async (input) => ({ tx: (await ask({ ask: 'public-deposit', ...input })).tx }),
     commitments: async (input) => {
       const a = await ask({ ask: 'commitments', ...input });
       return { output: a.output, held: a.held };

@@ -1049,3 +1049,59 @@ describe('A COMMITTEE CHANGED AFTER A SIGNER JOINS OR LEAVES', () => {
     expect((await rows()).why).toMatch(/change 1 left it running circuits other than this build's/);
   });
 });
+
+describe('A PUBLIC DEPOSIT\'S ROUTE', () => {
+  const TOKEN_ASKED = 'cd'.repeat(32);
+  const vaultHeld = async () => {
+    await give('ada', 1); await give('bo', 2);
+    store.putCompanyVault({ accountId: 'acc_1', vault: VAULT, deployedAt: '', deployRef: 'r', intended: { committee: [key(1), key(2)], threshold: 2 } });
+    authority = { committee: [key(1), key(2)], threshold: 2, counter: 1n };
+  };
+  const publicDeposit = (body: Record<string, unknown> = { tx: 'AAAA', token: TOKEN_ASKED, amount: '900' }) =>
+    call(`/api/accounts/acc_1/vaults/${VAULT}/public-deposit`, 'ada', 'POST', body);
+
+  it('IS SENT ONLY FOR A VAULT AND AN ACCOUNT THE COMMITTEE HOLDS ON THE CHAIN NOW, AND READ AS A PUBLIC DEPOSIT OF THE TOKEN AND AMOUNT ASKED', async () => {
+    const checks: Array<(tx: unknown) => unknown> = [];
+    sendVault = async (_a, what, _arrival, _bytes, check) => { sent.push(what); checks.push(check); return { ref: 'r', at: 'now', transactionHash: 'h' }; };
+    await give('ada', 1); await give('bo', 2);
+    store.putCompanyVault({ accountId: 'acc_1', vault: VAULT, deployedAt: '', deployRef: 'r', intended: { committee: [key(1), key(2)], threshold: 2 } });
+    /* RED WHEN: the route stops reading the vault's authority from the chain before it pays a fee. */
+    const notHeld = await publicDeposit();
+    expect(notHeld).toMatchObject({ status: 409, body: { nothingWasSent: true } });
+    expect(notHeld.body.error).toMatch(/finish handing it to the committee first/);
+    /* RED WHEN: the route stops asking whether the company's account is held by the committee too. */
+    authority = { committee: [key(1), key(2)], threshold: 2, counter: 1n };
+    serviceKey = key(9);
+    accountAuthority = { committee: [key(9)], threshold: 1, counter: 0n };
+    expect(await publicDeposit()).toMatchObject({ status: 409, body: { nothingWasSent: true } });
+    expect(sent).toEqual([]);
+    serviceKey = undefined;
+    accountAuthority = { committee: [key(1), key(2)], threshold: 2, counter: 1n };
+    expect(await publicDeposit()).toMatchObject({ status: 200, body: { txRef: 'r', transactionHash: 'h' } });
+    expect(sent).toEqual(['a public deposit into a vault']);
+    /* RED WHEN: the route sends with any reader but the public deposit's, or one not told the token and amount asked. */
+    expect(await checks[0]!({})).toMatch(/^this is not this company's public deposit into this vault/);
+  });
+
+  it('A BODY THAT DOES NOT NAME ONE PUBLIC TOKEN AND A WHOLE AMOUNT, OR CARRIES ANYTHING ELSE, IS REFUSED BEFORE ANYTHING IS READ', async () => {
+    await vaultHeld();
+    for (const [why, body] of [
+      ['no token', { tx: 'AAAA', amount: '900' }],
+      ['no amount', { tx: 'AAAA', token: TOKEN_ASKED }],
+      ['a token that is not one', { tx: 'AAAA', token: 'CD'.repeat(32), amount: '900' }],
+      ['an amount of nothing', { tx: 'AAAA', token: TOKEN_ASKED, amount: '0' }],
+      ['an amount that is not whole', { tx: 'AAAA', token: TOKEN_ASKED, amount: '9.5' }],
+      ['something else as well', { tx: 'AAAA', token: TOKEN_ASKED, amount: '900', vault: 'ee'.repeat(32) }],
+      ['no transaction', { token: TOKEN_ASKED, amount: '900' }],
+    ] as const) {
+      expect(await publicDeposit(body), why).toMatchObject({ status: 400, body: { nothingWasSent: true } });
+    }
+    expect(sent).toEqual([]);
+  });
+
+  it('A VAULT THIS COMPANY DID NOT CREATE IS NOT THIS COMPANY\'S', async () => {
+    store.putCompanyVault({ accountId: 'acc_2', vault: VAULT, deployedAt: '', deployRef: 'r', intended: { committee: [], threshold: 1 } });
+    expect((await publicDeposit()).status).toBe(404);
+    expect(sent).toEqual([]);
+  });
+});

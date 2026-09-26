@@ -12,7 +12,7 @@
  * origin and sends nothing anywhere.
  */
 import {
-  buildCommitteeHandover, buildDeposit, buildPayout, buildPublicPayout, buildVaultDeploy, chooseNoteForPayment, confirmPayment, paymentsFitNotes,
+  buildCommitteeHandover, buildDeposit, buildPayout, buildPublicDeposit, buildPublicPayout, buildVaultDeploy, chooseNoteForPayment, confirmPayment, paymentsFitNotes,
   poolAfterPayment,
   type VaultBuilderDeps,
 } from './vault-builder.js';
@@ -196,6 +196,17 @@ export const answerVaultAsk = async (
         parameters: typeof ask.parameters === 'string' ? fromBase64(ask.parameters) : new Uint8Array(0),
       });
       return { id: ask.id, ok: true, ask: 'deposit', tx: toBase64(built.proven) };
+    }
+    case 'public-deposit': {
+      const amount = typeof ask.amount === 'string' && /^[0-9]+$/u.test(ask.amount) ? BigInt(ask.amount) : 0n;
+      const built = await buildPublicDeposit(withNetwork, {
+        vault: ask.vault,
+        token: ask.token,
+        amount,
+        state: fromBase64(ask.state),
+        parameters: typeof ask.parameters === 'string' ? fromBase64(ask.parameters) : new Uint8Array(0),
+      });
+      return { id: ask.id, ok: true, ask: 'public-deposit', tx: toBase64(built.proven) };
     }
     case 'choose-note': {
       const note = chooseNoteForPayment({ notes: ask.notes, token: ask.token, amount: ask.amount });

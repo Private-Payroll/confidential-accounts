@@ -15,6 +15,8 @@
  *      company's committee, against the counter the chain holds now;
  *   3. **a deposit into a vault the committee holds**: calls to that vault's
  *      `deposit` and nothing else, with coins the depositor's own wallet added;
+ *      or one call to its public deposit, of exactly the token and amount the
+ *      page asked for, paid from the depositor's own public money;
  *   4. **a private payment out of that vault**: the vault's `payout` and the
  *      company account's `recordPayment` it asks, and nothing else, spending one
  *      coin the vault owns into one person's coin and at most one coin back to
@@ -455,6 +457,157 @@ function refusalForADepositThatStatesItsMoney(t: TxShape & { imbalances?: unknow
     for (const [token, amount] of owed as Map<{ tag?: unknown } | null, unknown>) {
       if (typeof amount !== 'bigint') return unreadable;
       if (token?.tag !== 'dust' && amount !== 0n) return states;
+    }
+  }
+  return null;
+}
+
+/* ------------------------------------------------ 3b. a public deposit */
+
+/** What a public deposit must put into the vault, as the page asked for it. */
+export interface PublicDepositExpectations {
+  /** The vault the money goes into. */
+  readonly vault: string;
+  /** The one public token that goes in. */
+  readonly token: string;
+  /** How much of it, in its smallest unit. */
+  readonly amount: bigint;
+  /** The address a public input's owner is paid change at: the ledger's own `addressFromKey`. */
+  readonly addressOf: (owner: unknown) => string;
+}
+
+/**
+ * **`null` ONLY FOR EXACTLY ONE PUBLIC DEPOSIT OF THIS TOKEN AND THIS AMOUNT INTO
+ * THIS VAULT, PAID FOR BY THE DEPOSITOR'S OWN PUBLIC MONEY.**
+ *
+ * The vault's public deposit asks the transaction for one token and one amount,
+ * and the chain adds them to the vault's public balance. So what is read here:
+ *
+ *   · one call, to this vault's `depositUnshielded`, and nothing else;
+ *   · what that call asks for, read from its own declared effects: exactly
+ *     this amount of this token, and no coin, no other token, nothing paid out
+ *     and no other contract called;
+ *   · no private coin anywhere in it;
+ *   · every public coin it spends belongs to whoever pays for it, and every
+ *     public coin it makes goes back to one of those owners as change, so the
+ *     only money that leaves the depositor goes into this vault;
+ *   · it balances in its own money, so the company's fee payer adds only DUST;
+ *   · no fee already paid from anywhere else.
+ */
+export function refusalForPublicDeposit(tx: unknown, expect: PublicDepositExpectations): string | null {
+  const what = 'this company\'s public deposit into this vault';
+  const t = tx as (TxShape & { imbalances?: (segment: number) => Map<{ tag?: unknown }, bigint> }) | null;
+  if (!(t?.intents instanceof Map) || t.intents.size !== 1) {
+    return `this is not ${what}: it must carry exactly one set of actions. Nothing was sent.`;
+  }
+  const intent = [...t.intents.values()][0] as IntentShape | null;
+  if (!intent || !Array.isArray(intent.actions)) {
+    return `this is not ${what}: it could not be read, so it was not paid for. Nothing was sent.`;
+  }
+  if (!emptyOffer(intent.dustActions, ['spends', 'registrations'])) {
+    return `this is not ${what}: it already pays a network fee from somewhere else. Nothing was sent.`;
+  }
+  if (intent.actions.length !== 1) {
+    return `this is not ${what}: it must call this vault's public deposit and nothing else. Nothing was sent.`;
+  }
+  const call = intent.actions[0] as {
+    address?: unknown; entryPoint?: unknown;
+    guaranteedTranscript?: { effects?: unknown } | null; fallibleTranscript?: { effects?: unknown } | null;
+  } | null;
+  if (!call || call.entryPoint === undefined || call.address === undefined
+    || bare(call.address) !== bare(expect.vault) || nameOf(call.entryPoint) !== 'depositUnshielded') {
+    return `this is not ${what}: it must call this vault's public deposit and nothing else. Nothing was sent.`;
+  }
+  /* What the call asks the transaction for, from its own declared effects. */
+  const unreadable = `this is not ${what}: what it asks for could not be read, so it was not paid for. Nothing was sent.`;
+  const asked = new Map<string, bigint>();
+  let transcripts = 0;
+  for (const transcript of [call.guaranteedTranscript, call.fallibleTranscript]) {
+    if (transcript === undefined || transcript === null) continue;
+    transcripts += 1;
+    const e = transcript.effects as Record<string, unknown> | undefined | null;
+    if (e === undefined || e === null) return unreadable;
+    for (const k of ['claimedNullifiers', 'claimedShieldedReceives', 'claimedShieldedSpends', 'claimedContractCalls']) {
+      if (!Array.isArray(e[k])) return unreadable;
+      if ((e[k] as unknown[]).length !== 0) {
+        return `this is not ${what}: the call asks for more than public money going into the vault. Nothing was sent.`;
+      }
+    }
+    for (const k of ['shieldedMints', 'unshieldedMints', 'unshieldedOutputs', 'claimedUnshieldedSpends', 'unshieldedInputs']) {
+      if (!(e[k] instanceof Map)) return unreadable;
+      if (k !== 'unshieldedInputs' && (e[k] as Map<unknown, unknown>).size !== 0) {
+        return `this is not ${what}: the call asks for more than public money going into the vault. Nothing was sent.`;
+      }
+    }
+    for (const [type, value] of e.unshieldedInputs as Map<{ tag?: unknown; raw?: unknown } | null, unknown>) {
+      if (type?.tag !== 'unshielded' || typeof value !== 'bigint') return unreadable;
+      const k = bare(type.raw);
+      asked.set(k, (asked.get(k) ?? 0n) + value);
+    }
+  }
+  if (transcripts === 0) return unreadable;
+  if (asked.size !== 1 || asked.get(bare(expect.token)) !== expect.amount) {
+    return `this is not ${what}: it does not put exactly the token and amount asked for into the vault. Nothing was sent.`;
+  }
+  /* No private coin moves in a public deposit, in any part. */
+  const shielded: ShieldedOfferShape[] = [];
+  if (t.guaranteedOffer !== undefined && t.guaranteedOffer !== null) shielded.push(t.guaranteedOffer as ShieldedOfferShape);
+  if (t.fallibleOffer !== undefined && t.fallibleOffer !== null) {
+    if (!(t.fallibleOffer instanceof Map)) return unreadable;
+    shielded.push(...[...t.fallibleOffer.values()] as ShieldedOfferShape[]);
+  }
+  if (!shielded.every((o) => emptyOffer(o, ['inputs', 'outputs', 'transients']))) {
+    return `this is not ${what}: it moves private money as well, and a public deposit moves none. Nothing was sent.`;
+  }
+  /* The depositor's public coins in, and only change back to the depositor out. */
+  const payers = new Set<string>();
+  const outs: unknown[] = [];
+  let spends = 0;
+  for (const offer of [intent.guaranteedUnshieldedOffer, intent.fallibleUnshieldedOffer]) {
+    if (offer === undefined || offer === null) continue;
+    const o = offer as UnshieldedOfferShape;
+    if (!Array.isArray(o.inputs) || !Array.isArray(o.outputs)) return unreadable;
+    for (const input of o.inputs) {
+      let address: string;
+      try {
+        address = bare(expect.addressOf((input as { owner?: unknown } | null)?.owner));
+      } catch {
+        return unreadable;
+      }
+      payers.add(address);
+      spends += 1;
+    }
+    outs.push(...o.outputs);
+  }
+  if (spends === 0) {
+    return `this is not ${what}: nobody's public money pays for it, so the depositor's wallet has not finished it. `
+      + 'Nothing was sent and no money moved. Put the money in again from your wallet.';
+  }
+  for (const out of outs) {
+    if (!payers.has(bare((out as { owner?: unknown } | null)?.owner))) {
+      return `this is not ${what}: it pays public money to someone other than the vault and the depositor's own change. `
+        + 'Nothing was sent.';
+    }
+  }
+  if (typeof t.imbalances !== 'function') return unreadable;
+  const segments = [...new Set([
+    0, ...[...t.intents.keys()].map(Number),
+    ...(t.fallibleOffer instanceof Map ? [...t.fallibleOffer.keys()].map(Number) : []),
+  ])];
+  for (const segment of segments) {
+    let owed: Map<{ tag?: unknown }, bigint>;
+    try {
+      owed = t.imbalances(segment);
+    } catch {
+      return unreadable;
+    }
+    if (!(owed instanceof Map)) return unreadable;
+    for (const [token, amount] of owed) {
+      if (typeof amount !== 'bigint') return unreadable;
+      if (token?.tag !== 'dust' && amount !== 0n) {
+        return `this is not ${what}: it does not balance in its own money, and the company pays only the network `
+          + 'fee. Nothing was sent and no money moved. Put the money in again from your wallet.';
+      }
     }
   }
   return null;
