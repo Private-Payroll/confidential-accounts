@@ -133,6 +133,7 @@ export async function depositCoinOnThisDevice(input: {
     vault,
     money: input.money,
     journal,
+    nonceAt: (m, s) => journal.nonceAt(vault, m, s),
     everCreated: input.chain.everCreated,
     outputCommitmentOf: input.chain.outputCommitmentOf,
     heldNow: input.chain.heldNow,

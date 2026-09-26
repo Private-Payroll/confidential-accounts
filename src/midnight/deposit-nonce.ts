@@ -26,16 +26,16 @@
  * ------------------------------------------------------------------------
  * **THE SLOT, AND WHY IT IS BOUNDED BY THE VAULT RATHER THAN BY A GUESS.**
  *
- * A deposit's slot is the number of coins the chain has ever created for the
- * vault, as the depositor read it, plus its attempt: 1, 2 or at most
- * `DEPOSIT_SLOT_ATTEMPTS`. That set only grows, so every deposit that ever
- * lands used a slot no larger than the vault's final output count plus
- * `DEPOSIT_SLOT_ATTEMPTS`, and a rebuild that walks that far has tried every
- * slot any deposit could have used. An attempt that never lands consumes
- * nothing: the next deposit reads the same count and may use the same slot.
+ * A deposit's slot is the lowest slot, from 1, at which the coin its money
+ * would make has never been created for the vault (`claimNewDepositCoin`).
+ * Only coins of that same money at lower slots can push it up, so every
+ * deposit that ever lands used a slot no larger than the vault's final output
+ * count plus `DEPOSIT_SLOT_ATTEMPTS`, and a rebuild that walks that far has
+ * tried every slot any deposit could have used. An attempt that never lands
+ * consumes nothing: the next deposit of the same money finds that slot free
+ * and uses it.
  *
- * Two deposits of one amount that read the same count before either lands name
- * the same coin. Only one of them can land: the ledger refuses to create an
+ * Two deposits of one amount made before either lands name the same coin. Only one of them can land: the ledger refuses to create an
  * output whose commitment it has already recorded, spent or not, and it
  * refuses the whole transaction, so the other moves no money. What that costs
  * is one proof made for nothing.
@@ -142,9 +142,10 @@ const be = (value: bigint, bytes: number): Uint8Array => {
 };
 
 /**
- * **HOW MANY SLOTS ONE DEPOSIT MAY TRY**, and so how far past the vault's
- * output count a rebuild walks. It is the bound, not a tuning: raising it
- * without raising the walk makes deposits a rebuild cannot find.
+ * **HOW FAR PAST THE VAULT'S OUTPUT COUNT A REBUILD WALKS**, and so the
+ * margin above that count within which a deposit looks for a free slot. It is
+ * the bound, not a tuning: a deposit allowed past it is one a rebuild cannot
+ * find.
  */
 export const DEPOSIT_SLOT_ATTEMPTS = 3;
 
@@ -162,8 +163,8 @@ export const lastDepositSlot = (everCreatedCount: number): number => {
 /**
  * **THE NONCE OF A DEPOSIT OF `money` AT `slot`.**
  *
- * The slot is the vault's output count as the depositor read it, plus the
- * attempt (`claimNewDepositCoin`). Nothing else chooses it.
+ * The slot is the lowest one at which this money's coin has never been made
+ * for the vault (`claimNewDepositCoin`). Nothing else chooses it.
  */
 export const depositNonceAt = (key: DepositNonceKey, money: DepositMoney, slot: number): Hex => {
   if (!(key instanceof Uint8Array) || key.length !== KEY_BYTES) {
@@ -273,17 +274,15 @@ export const whyThisCoinIsNotNew = (seen: {
 /**
  * **THE REFUSAL WHEN EVERY SLOT TRIED NAMED A COIN THAT ALREADY EXISTS.**
  *
- * Each slot a deposit may use is the vault's output count plus one, two or
- * three, so getting here means the chain created this exact coin at each of
- * them since the count was read: deposits of the same amount landing while this
- * one was being prepared, or a count read from an indexer that is behind. Every
- * line filed on the way is a harmless attempt that never landed.
+ * Every slot up to the vault's output count plus `DEPOSIT_SLOT_ATTEMPTS` named
+ * a coin that already exists, which only deposits of this same amount can do.
+ * No line is filed for a slot that is passed over.
  */
 export class DepositCoinAlreadyMade extends Error {
   constructor(readonly attempts: number, readonly because: string) {
     super(
-      `nothing was deposited: each of the ${attempts} slots this deposit may use named a coin that `
-      + `already exists (${because}). Deposits of this same amount are landing while this one is `
+      `nothing was deposited: every slot this deposit may use named a coin that already exists `
+      + `(${because}). Deposits of this same amount are landing while this one is `
       + 'being prepared, or the chain was read from an indexer that is behind. Nothing was proved and '
       + 'no money moved. Wait for the other deposits to finish, read the vault again, and deposit '
       + 'again.');
@@ -292,17 +291,34 @@ export class DepositCoinAlreadyMade extends Error {
 }
 
 /**
- * **CHOOSE A DEPOSIT'S COIN: READ THE VAULT, CLAIM A LINE, CHECK THE COIN IS NEW.**
+ * **CHOOSE A DEPOSIT'S COIN: THE LOWEST SLOT WHOSE COIN HAS NEVER BEEN MADE,
+ * THEN ONE LINE FOR IT.**
  *
  * One function, for every place a private deposit's coin is chosen (the
  * ledger and the device), so the order is written once:
  *
- *   1. the vault's history is already read (`everCreated`); its size is the
- *      first slot less one;
- *   2. a line is filed in the deposit journal, which derives the nonce;
- *   3. the coin it names is refused if the pool, the vault's notes now or the
- *      chain's whole history already hold it, and the next slot is claimed;
- *   4. after `DEPOSIT_SLOT_ATTEMPTS` slots, `DepositCoinAlreadyMade`.
+ *   1. the vault's history is already read (`everCreated`);
+ *   2. from slot 1 upward, the coin this money would make at each slot is
+ *      derived here, without filing anything, and the first one that the
+ *      chain has never created, the vault does not hold and the pool does not
+ *      name is the one used;
+ *   3. a line is filed in the deposit journal for that slot alone, and the
+ *      coin it files must be the coin derived in step 2;
+ *   4. no slot free up to `lastDepositSlot` of the history as read is
+ *      `DepositCoinAlreadyMade`.
+ *
+ * **WHY THE LOWEST FREE SLOT AND NOT THE OUTPUT COUNT.** A slot taken from the
+ * vault's output count as the device read it grows with every output the
+ * indexer served, including outputs the chain later drops, and one pushed past
+ * the rebuild's walk is named by its journal alone. The lowest free slot is
+ * pushed up only by coins of this exact money at the slots below it, and those
+ * are this company's own earlier deposits of the same amount. So a deposit that
+ * lands at slot `s` sits above `s - 1` coins of its own money, every one of them
+ * in the history unless it too was dropped; the history when the rebuild reads
+ * it therefore holds at least `s` coins, this one included, and the walk, which
+ * runs to that count plus `DEPOSIT_SLOT_ATTEMPTS`, reaches it unless more of
+ * those same-amount coins were dropped than `DEPOSIT_SLOT_ATTEMPTS` plus every
+ * other coin the vault holds.
  *
  * Nothing here calls the contract. The caller calls it with the coin returned,
  * and with nothing else.
@@ -311,6 +327,8 @@ export const claimNewDepositCoin = async (input: {
   readonly vault: string;
   readonly money: DepositMoney;
   readonly journal: DepositJournal;
+  /** The nonce this vault's deposit of `money` has at `slot`: the derivation the journal files under. */
+  readonly nonceAt: (money: DepositMoney, slot: number) => Hex;
   readonly everCreated: ReadonlySet<string>;
   /** The ledger's commitment of a coin owned by this vault, lower-case hex. */
   readonly outputCommitmentOf: (coin: DepositCoin) => Promise<string> | string;
@@ -320,19 +338,32 @@ export const claimNewDepositCoin = async (input: {
   readonly accept?: (coin: DepositCoin) => Promise<void> | void;
   readonly now?: () => string;
 }): Promise<{ readonly coin: DepositCoin; readonly slot: number }> => {
-  const first = input.everCreated.size + 1;
+  const last = lastDepositSlot(input.everCreated.size);
   let because = '';
-  for (let slot = first; slot < first + DEPOSIT_SLOT_ATTEMPTS; slot += 1) {
-    const { coin } = await input.journal.claim(
-      input.vault, input.money, slot, (input.now ?? (() => new Date().toISOString()))());
+  for (let slot = 1; slot <= last; slot += 1) {
+    const derived: DepositCoin = { nonce: input.nonceAt(input.money, slot), token: input.money.token, value: input.money.value };
+    /* The history first: it is a set lookup, and it is where almost every taken slot is found. */
+    if (input.everCreated.has(bare(await input.outputCommitmentOf(derived)))) {
+      because = whyThisCoinIsNotNew({ poolHoldsTheNonce: false, heldNow: false, createdBefore: true })!;
+      continue;
+    }
     const why = whyThisCoinIsNotNew({
-      poolHoldsTheNonce: await input.poolHoldsTheNonce(coin.nonce),
-      heldNow: await input.heldNow(coin),
-      createdBefore: input.everCreated.has(bare(await input.outputCommitmentOf(coin))),
+      poolHoldsTheNonce: await input.poolHoldsTheNonce(derived.nonce),
+      heldNow: await input.heldNow(derived),
+      createdBefore: false,
     });
     if (why !== null) { because = why; continue; }
+    const { coin } = await input.journal.claim(
+      input.vault, input.money, slot, (input.now ?? (() => new Date().toISOString()))());
+    if (coin.nonce.toLowerCase() !== derived.nonce.toLowerCase() || coin.token.toLowerCase() !== derived.token.toLowerCase()
+      || coin.value !== derived.value) {
+      throw new Error(
+        'nothing was deposited and no money moved: the deposit journal filed a different coin from the one '
+        + 'chosen for this deposit, which is a fault in the product and not something you did. Reload the page '
+        + 'and try once more; if this comes back, stop and report it.');
+    }
     await input.accept?.(coin);
     return { coin, slot };
   }
-  throw new DepositCoinAlreadyMade(DEPOSIT_SLOT_ATTEMPTS, because);
+  throw new DepositCoinAlreadyMade(last, because);
 };

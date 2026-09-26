@@ -155,49 +155,86 @@ describe('the slots a deposit may use, and how far a rebuild walks', () => {
 describe('choosing a deposit\'s coin', () => {
   const GBP_MONEY = { token: GBP, value: 500n };
   const journalOf = (lines: Array<{ slot: number; coin: DepositCoin }>): DepositJournal => ({
+    nonceAt: (_vault, money, slot) => depositNonceAt(key(), money, slot),
     claim: async (_vault, money, slot, attemptedAt) => {
       const coin = { nonce: depositNonceAt(key(), money, slot), token: money.token, value: money.value };
       lines.push({ slot, coin });
       return { coin, attemptedAt };
     },
   });
+  const nonceAt = (m: typeof GBP_MONEY, slot: number) => depositNonceAt(key(), m, slot);
   const commitment = (c: DepositCoin) => `c-${c.nonce}`;
+  const at = (slot: number, money = GBP_MONEY) => ({ nonce: depositNonceAt(key(), money, slot), ...money });
 
-  it('USES THE SLOT AFTER EVERYTHING THE VAULT HAS MADE, and hands back the coin the journal filed', async () => {
+  it('USES THE LOWEST SLOT WHOSE COIN WAS NEVER MADE, WHATEVER ELSE THE VAULT HOLDS, and hands back the coin the journal filed', async () => {
     const lines: Array<{ slot: number; coin: DepositCoin }> = [];
+    /* Four outputs of other money: none of them is this money's coin at any slot. */
     const got = await claimNewDepositCoin({
-      vault: VAULT, money: GBP_MONEY, journal: journalOf(lines),
+      vault: VAULT, money: GBP_MONEY, journal: journalOf(lines), nonceAt,
       everCreated: new Set(['x', 'y', 'z', 'w']),
       outputCommitmentOf: commitment, heldNow: () => false, poolHoldsTheNonce: () => false,
     });
-    expect(got.slot, 'RED WHEN: the first slot is not the output count plus one').toBe(5);
+    expect(got.slot, 'RED WHEN: the slot is taken from the output count rather than from the lowest free slot').toBe(1);
     expect(got.coin, 'RED WHEN: the coin used is not the one the journal filed').toEqual(lines[0]!.coin);
-    expect(lines.map((l) => l.slot), 'RED WHEN: more than one line is filed for a coin that is new').toEqual([5]);
+    expect(lines.map((l) => l.slot), 'RED WHEN: more than one line is filed for a coin that is new').toEqual([1]);
+  });
+
+  it('OUTPUTS THE INDEXER SERVED AND THE CHAIN LATER DROPS DO NOT PUSH A DEPOSIT PAST THE SLOTS A REBUILD WALKS', async () => {
+    /*
+     * The measured case: the chain finally holds three coins of this money, at slots 1, 2 and 3; the indexer the
+     * device read also served four outputs that the chain later dropped. Under a slot taken from the count read, the
+     * deposit went to slot 8 and the rebuild, walking to the final count of four plus three, stopped at 7.
+     */
+    const lines: Array<{ slot: number; coin: DepositCoin }> = [];
+    const real = [1, 2, 3].map((n) => commitment(at(n)));
+    const dropped = ['p1', 'p2', 'p3', 'p4'];
+    const got = await claimNewDepositCoin({
+      vault: VAULT, money: GBP_MONEY, journal: journalOf(lines), nonceAt,
+      everCreated: new Set([...real, ...dropped]),
+      outputCommitmentOf: commitment, heldNow: () => false, poolHoldsTheNonce: () => false,
+    });
+    const finalCount = real.length + 1; /* the three the chain kept, and this deposit once it lands */
+    expect(got.slot, 'RED WHEN: an output the chain may drop raises the slot').toBe(4);
+    expect(got.slot, 'RED WHEN: a deposit can land past the last slot a rebuild of the final chain walks')
+      .toBeLessThanOrEqual(lastDepositSlot(finalCount));
+    expect(lines.map((l) => l.slot), 'RED WHEN: a line is filed for a slot that was passed over').toEqual([4]);
   });
 
   it('MOVES TO THE NEXT SLOT when a coin already exists anywhere, and refuses after the last', async () => {
     const lines: Array<{ slot: number; coin: DepositCoin }> = [];
-    const at = (slot: number) => ({ nonce: depositNonceAt(key(), GBP_MONEY, slot), ...GBP_MONEY });
-    const made = new Set([commitment(at(2))]);
+    const made = new Set([commitment(at(1)), commitment(at(2))]);
     const got = await claimNewDepositCoin({
-      vault: VAULT, money: GBP_MONEY, journal: journalOf(lines), everCreated: made,
-      outputCommitmentOf: commitment, heldNow: () => false,
+      vault: VAULT, money: GBP_MONEY, journal: journalOf(lines), nonceAt, everCreated: made,
+      outputCommitmentOf: commitment, heldNow: (c) => c.nonce === at(4).nonce,
       poolHoldsTheNonce: (n) => n === at(3).nonce,
     });
-    expect(lines.map((l) => l.slot), 'RED WHEN: a coin the chain made, or the pool holds, is used instead of moving on').toEqual([2, 3, 4]);
-    expect(got.slot, 'RED WHEN: the coin handed back is not the one at the first free slot').toBe(4);
+    expect(got.slot, 'RED WHEN: a coin the chain made, the vault holds or the pool names is used instead of moving on').toBe(5);
+    expect(lines.map((l) => l.slot), 'RED WHEN: a line is filed for a slot that was passed over').toEqual([5]);
     const stuck: Array<{ slot: number; coin: DepositCoin }> = [];
     await expect(claimNewDepositCoin({
-      vault: VAULT, money: GBP_MONEY, journal: journalOf(stuck), everCreated: new Set(),
-      outputCommitmentOf: commitment, heldNow: () => true, poolHoldsTheNonce: () => false,
+      vault: VAULT, money: GBP_MONEY, journal: journalOf(stuck), nonceAt, everCreated: new Set(),
+      /* Every slot a rebuild of this empty vault walks is taken; the one after it is free and must not be used. */
+      outputCommitmentOf: commitment, heldNow: (c) => [1, 2, 3].some((n) => at(n).nonce === c.nonce), poolHoldsTheNonce: () => false,
     }), 'RED WHEN: a deposit tries past the last slot a rebuild walks, or uses a coin the vault holds').rejects.toThrow(DepositCoinAlreadyMade);
-    expect(stuck.map((l) => l.slot), 'RED WHEN: the slots tried are not exactly the ones a rebuild walks').toEqual([1, 2, 3]);
+    expect(stuck, 'RED WHEN: a line is filed although no slot was free').toEqual([]);
+  });
+
+  it('A JOURNAL THAT FILES A DIFFERENT COIN FROM THE ONE DERIVED STOPS THE DEPOSIT BEFORE THE LAST CHECK', async () => {
+    const lines: Array<{ slot: number; coin: DepositCoin }> = [];
+    let accepted = 0;
+    await expect(claimNewDepositCoin({
+      vault: VAULT, money: GBP_MONEY, journal: journalOf(lines), everCreated: new Set(),
+      nonceAt: (m, slot) => depositNonceAt(key(), m, slot + 1),
+      outputCommitmentOf: commitment, heldNow: () => false, poolHoldsTheNonce: () => false,
+      accept: () => { accepted += 1; },
+    }), 'RED WHEN: the coin used is not compared with the coin the journal filed').rejects.toThrow(/filed a different coin/);
+    expect(accepted).toBe(0);
   });
 
   it('a check that refuses the coin stops the deposit with the line filed and nothing else', async () => {
     const lines: Array<{ slot: number; coin: DepositCoin }> = [];
     await expect(claimNewDepositCoin({
-      vault: VAULT, money: GBP_MONEY, journal: journalOf(lines), everCreated: new Set(),
+      vault: VAULT, money: GBP_MONEY, journal: journalOf(lines), nonceAt, everCreated: new Set(),
       outputCommitmentOf: commitment, heldNow: () => false, poolHoldsTheNonce: () => false,
       accept: () => { throw new Error('the pool would refuse this note'); },
     }), 'RED WHEN: the last check is skipped').rejects.toThrow(/pool would refuse/);

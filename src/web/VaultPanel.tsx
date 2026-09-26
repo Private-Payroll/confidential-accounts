@@ -10,7 +10,7 @@ import {
   VaultHandoverOwed, type VaultStage,
 } from './vault-operation.js';
 import {
-  browserTemporaryKeys, deviceRecordsFor, deviceSignerFrom, giveVaultKeys, rosterOf, vaultServiceFor,
+  browserDepositsInFlight, browserTemporaryKeys, deviceRecordsFor, deviceSignerFrom, giveVaultKeys, rosterOf, vaultServiceFor,
 } from './vault-page-doors.js';
 import { startVaultBuilder, type VaultBuilderClient } from './vault-worker-client.js';
 import { openAccount } from '../core/account.js';
@@ -164,9 +164,13 @@ export function VaultPanel({ account, me, viewingKey }: {
       ...pacing, service, me: k.device, myRecordsKey: k.myRecordsKey, signers: k.signers, records: k.records,
       company: k.company, builder: await builder(),
       pay: (ask) => keyring.payIntoAVaultFromTheWallet(WALLET_ORIGIN, ask),
+      inFlight: browserDepositsInFlight(),
     }, vault, money);
     setAmount('');
-    return `${amount} ${chosen.code} is in the vault (${done.txRef}).`;
+    return done.notYetSpendable === undefined
+      ? `${amount} ${chosen.code} is in the vault (${done.txRef}).`
+      : `${amount} ${chosen.code} is in the vault (${done.txRef}). It is the company's, and it cannot be used for a payment `
+        + `yet: ${done.notYetSpendable}.`;
   });
 
   return (

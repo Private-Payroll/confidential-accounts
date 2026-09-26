@@ -20,7 +20,10 @@ import { buildGovernedCall, type GovernedCallDeps } from './governed-call-builde
 import { circuitOf, httpKeyMaterialSource, IndexedDbArtefactCache, type ArtefactSource } from './key-material.js';
 import { ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE } from '../midnight/vault-contract.js';
 import { zkConfigOver, byCircuitName } from './zk-config.js';
-import type { VaultAsk, VaultAnswer } from './vault-worker-client.js';
+import type { CreatingTransactionAnswer, VaultAsk, VaultAnswer } from './vault-worker-client.js';
+import type { EventOnTheWire } from './vault-builder.js';
+import { establishCreatingTransaction, NoteIndexRefused, type ServedEvent } from '../midnight/note-index.js';
+import type { Hex } from '../core/crypto.js';
 
 /** Where this application serves the vault's public proving material. */
 export const VAULT_ARTEFACT_BASE = '/artefacts/vault';
@@ -66,6 +69,38 @@ export const accountCircuitsBeside = (vault: ArtefactSource, account: ArtefactSo
     getParams: (k) => vault.getParams(k),
     artefact: (kind, keyLocation) => which(keyLocation).artefact(kind, keyLocation),
   };
+};
+
+/** The served events, with each position read as the number it is. */
+const servedOf = (events: readonly EventOnTheWire[]): ServedEvent[] => events.map((e) => ({
+  transactionHash: e.transactionHash,
+  details: {
+    tag: e.details.tag,
+    ...(e.details.commitment === undefined ? {} : { commitment: e.details.commitment }),
+    ...(e.details.contract === undefined ? {} : { contract: e.details.contract }),
+    ...(e.details.mtIndex === undefined || !/^[0-9]+$/u.test(e.details.mtIndex) ? {} : { mtIndex: BigInt(e.details.mtIndex) }),
+  },
+}));
+
+/**
+ * **WHICH TRANSACTION CREATED A NOTE, AS THE EVENTS OF THE TRANSACTION NAMED
+ * FOR IT SAY.** The events must carry exactly one output with this commitment,
+ * owned by this vault. A refusal is `refused`; anything else that stops the
+ * answer is `unreadable`, and asking again may answer it.
+ */
+export const creatingTransactionOfNote = (input: {
+  readonly vault: string; readonly commitment: string; readonly transactionHash: string;
+  readonly events: readonly EventOnTheWire[];
+}): CreatingTransactionAnswer => {
+  try {
+    const { createdIn } = establishCreatingTransaction(servedOf(input.events), {
+      vault: input.vault as Hex, commitment: input.commitment, transaction: { hash: input.transactionHash as Hex },
+    });
+    return { state: 'found', createdIn };
+  } catch (cause) {
+    if (cause instanceof NoteIndexRefused) return { state: 'refused' };
+    return { state: 'unreadable' };
+  }
 };
 
 /** What this worker builds with: the vault's builder, and the account's two circuits beside it. */
@@ -180,6 +215,12 @@ export const answerVaultAsk = async (
         vault: ask.vault, transactionHash: ask.transactionHash, change: ask.change, events: ask.events,
       });
       return { id: ask.id, ok: true, ask: 'confirm-payment', confirmation };
+    }
+    case 'creating-transaction': {
+      const answer = creatingTransactionOfNote({
+        vault: ask.vault, commitment: ask.commitment, transactionHash: ask.transactionHash, events: ask.events,
+      });
+      return { id: ask.id, ok: true, ask: 'creating-transaction', answer };
     }
     case 'payout': {
       const built = await buildPayout(withNetwork, {

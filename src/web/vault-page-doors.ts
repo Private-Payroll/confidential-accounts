@@ -14,7 +14,7 @@ import type { PoolSigner } from '../midnight/vault-pool.js';
 import { recordsKeypairFrom } from '../midnight/company-nonce-secret.js';
 import { HttpSealedPoolStore, pageWireSend } from './http-sealed-pool-store.js';
 import type { DeviceRecords, DeviceSigner } from './deposit-on-device.js';
-import type { TemporaryKeys, VaultService } from './vault-operation.js';
+import type { DepositInFlight, DepositsInFlight, TemporaryKeys, VaultService } from './vault-operation.js';
 import type { SigningKeyOnTheWire } from './vault-worker-client.js';
 import type { PrivatePaymentOrderOnTheWire } from '../midnight/private-payment-wire.js';
 
@@ -161,5 +161,47 @@ export function browserTemporaryKeys(factory: IDBFactory = indexedDB): Temporary
     put: async (vault, key) => { await run('readwrite', (s) => s.put({ tag: key.tag, value: key.value }, vault)); },
     get: async (vault) => ((await run('readonly', (s) => s.get(vault))) as SigningKeyOnTheWire | undefined) ?? null,
     forget: async (vault) => { await run('readwrite', (s) => s.delete(vault)); },
+  };
+}
+
+/**
+ * **A DEPOSIT SENT FROM THIS BROWSER AND NOT YET SEEN LAND, KEPT IN THIS
+ * BROWSER.** It names the coin, so it stays on this device and is never sent
+ * anywhere; the next deposit into the same vault from here reads it first.
+ */
+export function browserDepositsInFlight(factory: IDBFactory = indexedDB): DepositsInFlight {
+  const STORE = 'deposits';
+  const open = () => new Promise<IDBDatabase>((resolve, reject) => {
+    const req = factory.open('vault-deposits-in-flight', 1);
+    req.onupgradeneeded = () => { req.result.createObjectStore(STORE); };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(new Error('this browser would not open its note of deposits on their way. Check that this '
+      + 'browser lets this site store data (a private window may not), then try again.', { cause: req.error }));
+  });
+  const run = async <T>(mode: IDBTransactionMode, act: (s: IDBObjectStore) => IDBRequest<T>): Promise<T> => {
+    const db = await open();
+    try {
+      return await new Promise<T>((resolve, reject) => {
+        const tx = db.transaction(STORE, mode);
+        const req = act(tx.objectStore(STORE));
+        tx.oncomplete = () => resolve(req.result);
+        const failed = () => reject(new Error('this browser did not keep its note of a deposit on its way. Check that '
+          + 'this browser lets this site store data (a private window may not), then try again.', { cause: tx.error }));
+        tx.onerror = failed;
+        tx.onabort = failed;
+      });
+    } finally {
+      db.close();
+    }
+  };
+  return {
+    put: async (vault, d) => {
+      await run('readwrite', (s) => s.put({
+        coin: { nonce: d.coin.nonce, token: d.coin.token, value: d.coin.value },
+        recordedAt: d.recordedAt, txRef: d.txRef, transactionHash: d.transactionHash,
+      }, vault.toLowerCase()));
+    },
+    get: async (vault) => ((await run('readonly', (s) => s.get(vault.toLowerCase()))) as DepositInFlight | undefined) ?? null,
+    forget: async (vault) => { await run('readwrite', (s) => s.delete(vault.toLowerCase())); },
   };
 }

@@ -58,7 +58,7 @@ import {
   depositCoinOnThisDevice, startVaultNonceSecretOnThisDevice,
   type DeviceRecords, type DeviceSigner,
 } from './deposit-on-device.js';
-import type { SigningKeyOnTheWire, VaultBuilderClient } from './vault-worker-client.js';
+import type { CreatingTransactionAnswer, SigningKeyOnTheWire, VaultBuilderClient } from './vault-worker-client.js';
 
 /** What the service says the chain holds for one vault. */
 export interface VaultChainView {
@@ -293,21 +293,255 @@ export interface DepositDoors extends PoolDoors {
   readonly builder: VaultBuilderClient;
   readonly pay: (ask: { company: Hex; vault: Hex; transaction: string }) =>
     Promise<{ transaction: string; leaves: readonly unknown[] }>;
+  /** Where this device keeps a deposit it has sent until the chain holds it or it can no longer land. */
+  readonly inFlight: DepositsInFlight;
+  /** The time now, in milliseconds. */
+  readonly clock?: () => number;
 }
 
-/** **THE DEPOSIT WAS SENT AND THE CHAIN HAS NOT SHOWN IT.** The money may have moved. */
+/**
+ * **A DEPOSIT THIS DEVICE HAS HANDED OVER TO BE SENT AND HAS NOT YET SEEN
+ * LAND.** Kept on this device, and only here: it names the coin, so it never
+ * leaves it.
+ */
+export interface DepositInFlight {
+  readonly coin: { readonly nonce: Hex; readonly token: Hex; readonly value: string };
+  /**
+   * When this was written, in milliseconds. It is written after the deposit is
+   * built and before the wallet is asked, so the transaction's own time to live
+   * ends no later than this plus `DEPOSIT_TIME_TO_LIVE_MS`.
+   */
+  readonly recordedAt: number;
+  /** The service's reference for the send, once it has one. */
+  readonly txRef: string;
+  /** The transaction's hash, once the service has named it. */
+  readonly transactionHash: string | null;
+}
+
+/** One deposit in flight per vault on this device: a second is refused until the first is settled. */
+export interface DepositsInFlight {
+  get(vault: Hex): Promise<DepositInFlight | null>;
+  put(vault: Hex, deposit: DepositInFlight): Promise<void>;
+  forget(vault: Hex): Promise<void>;
+}
+
+/**
+ * **HOW LONG A DEPOSIT CAN TAKE TO LAND, AT MOST.** The call is built with a
+ * time to live of one hour from when it is built (`ttlOneHour` in
+ * `@midnight-ntwrk/midnight-js-contracts`), and the ledger refuses a
+ * transaction whose time to live is behind the block it would go in. A quarter
+ * of an hour more covers a block clock and this device's clock disagreeing.
+ * Past this, a deposit the chain does not hold never will.
+ */
+export const DEPOSIT_TIME_TO_LIVE_MS = 75 * 60_000;
+
+/** **THE DEPOSIT MAY HAVE BEEN SENT AND THE VAULT DOES NOT HOLD IT YET.** The money may have moved. */
 export class DepositNotYetSeen extends Error {
   constructor(readonly vault: Hex, readonly txRef: string) {
-    super(`the deposit was sent (${txRef}) and the chain has not shown it yet, so it may still land. `
-      + 'Its note is not recorded in the pool until it does; its journal line already names it, and the '
-      + 'company\'s records rebuild it. Do not deposit again until the vault shows it.');
+    super(`${txRef === '' ? 'the deposit may have been sent' : `the deposit was sent (${txRef})`} and has not reached `
+      + 'the vault yet. It may still arrive; if it does not, no money moved. Do not put the same money in again to '
+      + 'replace it: if both arrive, the vault holds both. It is added to the vault\'s record the next time money is '
+      + 'put into this vault from this browser.');
     this.name = 'DepositNotYetSeen';
   }
 }
 
+/**
+ * **THE DEPOSIT IS IN THE VAULT AND IS NOT IN ITS RECORD YET.** Either the
+ * transaction that made it cannot be read yet, or the vault's notes and its
+ * history were read a moment apart. The money is the vault's. Nothing is
+ * recorded until it can be, and the next deposit from this browser asks again.
+ */
+export class DepositLandedNotYetRecorded extends Error {
+  constructor(readonly vault: Hex, readonly txRef: string) {
+    super(`the deposit${txRef === '' ? '' : ` (${txRef})`} is in the vault. This page could not yet read the transfer `
+      + 'that brought it in, so it is not in the vault\'s record and cannot be used for a payment yet. It is added the '
+      + 'next time money is put into this vault from this browser. Do not put the same money in again.');
+    this.name = 'DepositLandedNotYetRecorded';
+  }
+}
+
+/**
+ * **AN EARLIER DEPOSIT FROM THIS BROWSER HAS NOT ARRIVED AND CAN STILL ARRIVE.**
+ * No coin is chosen for a second one: made now, it could be the same coin, and
+ * the chain would refuse it after its fee.
+ */
+export class DepositStillInFlight extends Error {
+  constructor(readonly vault: Hex, readonly txRef: string, readonly until: number) {
+    const at = new Date(until).toLocaleString();
+    super(`an earlier deposit into this vault from this browser${txRef === '' ? '' : ` (${txRef})`} has not reached the `
+      + `vault yet, and can still arrive until ${at}. Nothing new was prepared or sent. Try again after ${at}: if the `
+      + 'earlier deposit has arrived by then, it is recorded first; if it has not, it never will, and your new deposit '
+      + 'goes ahead.');
+    this.name = 'DepositStillInFlight';
+  }
+}
+
+/**
+ * **THE DEPOSIT WAS NOT SENT, AFTER THE WALLET HAD FINISHED IT.** No money
+ * moved. The wallet set coins aside when it finished the transaction; only the
+ * wallet lets them go, once that transaction can no longer be sent.
+ */
+export class DepositNotSent extends Error {
+  constructor(readonly vault: Hex, why: string) {
+    super(`the deposit was not sent, so no money moved (${why}). You can put money in again now. Your wallet may show `
+      + 'part of its balance as held for this deposit until the transaction it finished can no longer be sent, about '
+      + 'an hour after it was prepared; only your wallet can release that hold.');
+    this.name = 'DepositNotSent';
+  }
+}
+
+const inFlightCoin = (d: DepositInFlight) => ({ nonce: d.coin.nonce, token: d.coin.token, value: BigInt(d.coin.value) });
+
+/**
+ * **WHICH TRANSACTION CREATED A DEPOSIT'S NOTE, AS THE CHAIN SAYS, OR WHY IT
+ * CANNOT BE SAID.** Asked of the transaction the service named, by its hash;
+ * its events must carry exactly one output with this coin's commitment, owned
+ * by this vault. `not-yet` is an indexer that does not hold the transaction
+ * yet, and asking again answers it.
+ *
+ * The events are read here and judged in the vault worker, because judging
+ * them loads the ledger, which this page does not carry. A worker that cannot
+ * answer is `not-yet`, as an unreadable answer always was.
+ */
+async function creatingTransactionOfDeposit(
+  doors: DepositDoors, vault: Hex, output: string, transactionHash: string | null,
+): Promise<{ state: 'found'; createdIn: Hex } | { state: 'not-yet' } | { state: 'unknown'; why: string }> {
+  const hash = transactionHash === null ? null : transactionHash.toLowerCase();
+  if (hash === null || !HEX64.test(hash)) {
+    return { state: 'unknown', why: 'this page could not find out which transfer brought it in' };
+  }
+  let events: EventOnTheWire[];
+  try {
+    events = (await doors.service.events(vault, hash)).events;
+  } catch {
+    return { state: 'not-yet' };
+  }
+  if (events.length === 0) return { state: 'not-yet' };
+  let judged: CreatingTransactionAnswer;
+  try {
+    judged = await doors.builder.creatingTransaction({ vault, commitment: output, transactionHash: hash, events });
+  } catch {
+    return { state: 'not-yet' };
+  }
+  if (judged.state === 'found') return { state: 'found', createdIn: judged.createdIn as Hex };
+  if (judged.state === 'refused') {
+    return { state: 'unknown', why: 'the transfer this page was given does not show this deposit' };
+  }
+  return { state: 'not-yet' };
+}
+
+/** What a deposit left in the vault's record, once the chain holds it. */
+export interface DepositRecorded {
+  readonly note: { nonce: Hex; token: Hex; value: bigint; createdIn?: Hex };
+  /**
+   * Present when the note is recorded without the transaction that created
+   * it: the money is the vault's, and it cannot be paid out until that
+   * transaction is named. Says why.
+   */
+  readonly notYetSpendable?: string;
+}
+
+/** Forgotten as in flight. A failure to forget is not a failure of the deposit: the next look finds it settled again. */
+const letGo = async (doors: DepositDoors, vault: Hex): Promise<void> => {
+  await doors.inFlight.forget(vault).catch(() => { /* the next deposit settles it again, and finds nothing to do */ });
+};
+
+/**
+ * **RECORDS A DEPOSIT THE VAULT'S NOTES HOLD, ONCE, AND FORGETS IT AS IN
+ * FLIGHT.** Only ever called once the vault's notes hold this coin. A pool that
+ * already holds its nonce has it recorded already, by this browser or another
+ * signer's. `giveUp` is for a deposit whose own time to live has passed: the
+ * note is in the vault for good, so if the transaction that made it still
+ * cannot be read, it is recorded without it rather than kept waiting for ever.
+ */
+async function recordLandedDeposit(
+  doors: DepositDoors, vault: Hex, d: DepositInFlight, output: string,
+  how: { readonly waiting: boolean; readonly giveUp: boolean },
+): Promise<DepositRecorded> {
+  const coin = inFlightCoin(d);
+  let found = await creatingTransactionOfDeposit(doors, vault, output, d.transactionHash);
+  if (found.state === 'not-yet' && how.waiting) {
+    found = (await until(doors, async () => {
+      const again = await creatingTransactionOfDeposit(doors, vault, output, d.transactionHash);
+      return again.state === 'not-yet' ? null : again;
+    })) ?? found;
+  }
+  if (found.state === 'not-yet') {
+    /* The vault holds the note and its transaction is not readable yet: nothing is written, and asking again answers it. */
+    if (!how.giveUp) throw new DepositLandedNotYetRecorded(vault, d.txRef);
+    found = { state: 'unknown', why: 'this page could not read the transfer that brought it in' };
+  }
+  const note = { ...coin, ...(found.state === 'found' ? { createdIn: found.createdIn } : {}) };
+  const pool = new SealedNotePool(doors.records('pool'),
+    { signerId: doors.me.signerId, wrappingSecret: doors.me.wrappingSecret }, doors.signers);
+  const ATTEMPTS = 5;
+  for (let attempt = 1; ; attempt += 1) {
+    const now = await pool.load(vault);
+    if (now.notes.some((n) => n.nonce.toLowerCase() === coin.nonce.toLowerCase())) break;
+    try {
+      await pool.save(vault, { notes: afterDeposit(now, note).notes }, now.readAt);
+      break;
+    } catch (cause) {
+      if (!isALostPoolRace(cause) || attempt === ATTEMPTS) throw cause;
+    }
+  }
+  await letGo(doors, vault);
+  return { note, ...(found.state === 'unknown' ? { notYetSpendable: found.why } : {}) };
+}
+
+/**
+ * **WHAT BECAME OF A DEPOSIT THIS BROWSER SENT AND HAS NOT YET SEEN ARRIVE.**
+ *
+ *   · the vault's record already holds its nonce (this browser or another
+ *     signer recorded it): nothing to record, and it is forgotten;
+ *   · the vault's notes hold its coin: the note is recorded, under the
+ *     transaction the chain says created it; once its time to live has
+ *     passed, without that transaction if it still cannot be read;
+ *   · the chain made it and the vault's notes, read a moment apart, do not
+ *     show it: it has arrived and is not recorded yet, so it is kept;
+ *   · its time to live has passed and the chain never made it: it never will,
+ *     and it is forgotten;
+ *   · otherwise it can still arrive, and `DepositStillInFlight` says so.
+ *
+ * Nothing is recorded that the vault's notes do not hold.
+ */
+export async function settleDepositInFlight(
+  doors: DepositDoors, vault: Hex, view?: VaultChainView,
+): Promise<{ state: 'none' | 'never-landed' | 'already-recorded' } | ({ state: 'recorded' } & DepositRecorded)> {
+  const d = await doors.inFlight.get(vault);
+  if (d === null) return { state: 'none' };
+  const pool = new SealedNotePool(doors.records('pool'),
+    { signerId: doors.me.signerId, wrappingSecret: doors.me.wrappingSecret }, doors.signers);
+  if ((await pool.load(vault)).notes.some((n) => n.nonce.toLowerCase() === d.coin.nonce.toLowerCase())) {
+    await letGo(doors, vault);
+    return { state: 'already-recorded' };
+  }
+  const seen = view ?? await doors.service.chain(vault);
+  const { output, held } = await doors.builder.commitments({ vault, coin: d.coin });
+  const until = d.recordedAt + DEPOSIT_TIME_TO_LIVE_MS;
+  const past = (doors.clock ?? Date.now)() > until;
+  if ((seen.notes ?? []).some((n) => n.toLowerCase() === held.toLowerCase())) {
+    return { state: 'recorded', ...await recordLandedDeposit(doors, vault, d, output, { waiting: false, giveUp: past }) };
+  }
+  const bare = (h: string) => h.toLowerCase().replace(/^0x/u, '');
+  if ((seen.everCreated ?? []).some((c) => bare(c) === bare(output))) {
+    throw new DepositLandedNotYetRecorded(vault, d.txRef);
+  }
+  if (past) {
+    await letGo(doors, vault);
+    return { state: 'never-landed' };
+  }
+  throw new DepositStillInFlight(vault, d.txRef, until);
+}
+
 export async function depositIntoCompanyVault(
   doors: DepositDoors, vault: Hex, money: DepositMoney,
-): Promise<{ txRef: string; transactionHash: string | null; note: { nonce: Hex; token: Hex; value: bigint } }> {
+): Promise<{
+  txRef: string; transactionHash: string | null;
+  /** What became of an earlier deposit from this browser, settled before this one chose its coin. */
+  earlier?: Awaited<ReturnType<typeof settleDepositInFlight>>;
+} & DepositRecorded> {
   const view = await doors.service.chain(vault);
   if (!view.onChain || view.heldByCommittee !== true || view.state === undefined) {
     throw new Error(view.why ?? 'this vault is not held by the company\'s committee, so no money goes in.');
@@ -337,6 +571,12 @@ export async function depositIntoCompanyVault(
     throw new Error('the chain\'s current parameters could not be read for this vault, so no coin was chosen and '
       + `nothing was built or sent (${(cause as Error)?.message ?? String(cause)}). Try again shortly.`);
   }
+  /*
+   * **AN EARLIER DEPOSIT FROM THIS DEVICE IS SETTLED FIRST.** Recorded if it has
+   * landed, forgotten if it never can; while it still can, no coin is chosen
+   * for this one, because it could be the same coin.
+   */
+  const earlier = await settleDepositInFlight(doors, vault, view);
   const notes = new Set((view.notes ?? []).map((n) => n.toLowerCase()));
   const commitments = (coin: { nonce: Hex; token: Hex; value: bigint }) => doors.builder.commitments({
     vault, coin: { nonce: coin.nonce, token: coin.token, value: coin.value.toString() },
@@ -354,35 +594,43 @@ export async function depositIntoCompanyVault(
   const built = await doors.builder.deposit({
     vault, coin: { nonce: coin.nonce, token: coin.token, value: coin.value.toString() }, state: view.state, parameters,
   });
+  /*
+   * **KEPT ON THIS DEVICE BEFORE THE WALLET IS ASKED, AND THIS MAY NOT MOVE
+   * BELOW THE SEND.** From the send on, the money may move whatever happens to
+   * this page, and this is what the next deposit from here looks for first.
+   */
+  const coinOnTheWire = { nonce: coin.nonce, token: coin.token, value: coin.value.toString() };
+  let inFlight: DepositInFlight = { coin: coinOnTheWire, recordedAt: (doors.clock ?? Date.now)(), txRef: '', transactionHash: null };
+  await doors.inFlight.put(vault, inFlight);
   doors.progress?.('asking your wallet');
-  const paid = await doors.pay({ company: doors.company, vault, transaction: built.tx });
+  let paid: { transaction: string; leaves: readonly unknown[] };
+  try {
+    paid = await doors.pay({ company: doors.company, vault, transaction: built.tx });
+  } catch (e) {
+    await letGo(doors, vault);
+    throw e;
+  }
   doors.progress?.('sending the deposit');
-  const sent = await doors.service.deposit(vault, paid.transaction);
+  let sent: { txRef: string; transactionHash: string | null };
+  try {
+    sent = await doors.service.deposit(vault, paid.transaction);
+  } catch (e) {
+    if (!sentNothing(e)) throw new DepositNotYetSeen(vault, '');
+    await letGo(doors, vault);
+    throw new DepositNotSent(vault, (e as Error)?.message ?? String(e));
+  }
+  inFlight = { ...inFlight, txRef: sent.txRef, transactionHash: sent.transactionHash };
+  await doors.inFlight.put(vault, inFlight).catch(() => { /* the earlier line still names the coin, and the chain is asked by it */ });
   doors.progress?.('recording the deposit');
-  const held = (await commitments(coin)).held.toLowerCase();
+  const { output, held } = await commitments(coin);
   const seen = await until(doors, async () => {
     const v = await doors.service.chain(vault);
-    return (v.notes ?? []).some((n) => n.toLowerCase() === held) ? true : null;
+    return (v.notes ?? []).some((n) => n.toLowerCase() === held.toLowerCase()) ? true : null;
   });
   if (!seen) throw new DepositNotYetSeen(vault, sent.txRef);
-  const pool = new SealedNotePool(doors.records('pool'),
-    { signerId: doors.me.signerId, wrappingSecret: doors.me.wrappingSecret }, doors.signers);
-  const note = {
-    nonce: coin.nonce, token: coin.token, value: coin.value,
-    ...(sent.transactionHash === null ? {} : { createdIn: sent.transactionHash as Hex }),
-  };
-  const ATTEMPTS = 5;
-  for (let attempt = 1; ; attempt += 1) {
-    const now = await pool.load(vault);
-    try {
-      await pool.save(vault, { notes: afterDeposit(now, note).notes }, now.readAt);
-      break;
-    } catch (cause) {
-      if (!isALostPoolRace(cause) || attempt === ATTEMPTS) throw cause;
-    }
-  }
+  const recorded = await recordLandedDeposit(doors, vault, inFlight, output, { waiting: true, giveUp: false });
   doors.progress?.('done');
-  return { txRef: sent.txRef, transactionHash: sent.transactionHash, note };
+  return { txRef: sent.txRef, transactionHash: sent.transactionHash, ...recorded, ...(earlier.state === 'none' ? {} : { earlier }) };
 }
 
 /* ------------------------------------------------------------ a payment out */

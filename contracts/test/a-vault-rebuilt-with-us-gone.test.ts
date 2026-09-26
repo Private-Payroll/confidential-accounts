@@ -221,15 +221,17 @@ describe('a vault whose every record of ours is gone', () => {
     };
 
     /* A deposit, the way the product makes one: claim, check the coin is new, call, record. */
-    const deposit = async (value: bigint, opts: { abandon?: boolean } = {}) => {
+    const deposit = async (value: bigint, opts: { abandon?: boolean; slot: number }) => {
       const createdBefore = await vaultOutputHistoryFrom(theChain()).everCreated(vaultAddr);
       const { coin, slot } = await claimNewDepositCoin({
-        vault: vaultAddr, money: { token: toHex(GBP), value }, journal: depositJournal, everCreated: createdBefore,
+        vault: vaultAddr, money: { token: toHex(GBP), value }, journal: depositJournal,
+        nonceAt: (m, s) => depositJournal.nonceAt(vaultAddr, m, s), everCreated: createdBefore,
         outputCommitmentOf: (c) => vaultNoteCommitment(c, vaultAddr),
         heldNow: (c) => chainNotes().includes(held(c)),
         poolHoldsTheNonce: async (n) => (await pool.load(vaultAddr)).notes.some((x) => x.nonce === n),
       });
-      expect(slot, 'the setup meant every coin here to be new at its first slot').toBe(createdBefore.size + 1);
+      /* The lowest slot whose coin was never made: only earlier coins of the same money move it up. */
+      expect(slot, 'RED WHEN: a deposit\'s slot is not the lowest one its own money has left free').toBe(opts.slot);
       if (opts.abandon) return coin;
       const r = await vault.impureCircuits.deposit(ctx('deposit'), {
         nonce: fromHex(coin.nonce), color: fromHex(coin.token), value: coin.value,
@@ -261,10 +263,10 @@ describe('a vault whose every record of ours is gone', () => {
   it('THE POOL DELETED, THE VAULT REBUILT FROM THE COMPANY\'S SEED AND ITS OWN RECORDS, AND A NOTE THAT COMES BACK SPENT', async () => {
     const work = await aCompanyAtWork(depositNonceKeyFor(releasedCompanyKey(WORDS, company), vaultAddr));
 
-    const first = await work.deposit(1_000n);                       // slot 1
-    const second = await work.deposit(400n);                        // slot 2
-    await work.deposit(5_000n, { abandon: true });                  // slot 3: filed, never called, so it uses nothing up
-    const third = await work.deposit(1_000n);                       // slot 3 again: the same amount as the first
+    const first = await work.deposit(1_000n, { slot: 1 });
+    const second = await work.deposit(400n, { slot: 1 });                  // another amount's first coin
+    await work.deposit(5_000n, { abandon: true, slot: 1 });                // filed, never called, so it uses nothing up
+    const third = await work.deposit(1_000n, { slot: 2 });                 // the same amount as the first, whose coin is at 1
     expect(third.nonce, 'RED WHEN: two deposits of one amount share a nonce').not.toBe(first.nonce);
 
     const toBob = await work.payFromThePool(BOB, 250n, 0xb1);        // 400 -> change 150
@@ -312,7 +314,7 @@ describe('a vault whose every record of ours is gone', () => {
       'RED WHEN: a deposit, or a change that a spent note became, is not named from the records -- the 50 is only reachable through a 400 and a 150 the vault no longer holds',
     ).toEqual({ deposits: 3, changes: 3, pieces: 0 });
     expect(walk.slots, 'RED WHEN: the walk is bounded by anything but the vault\'s six outputs and the attempts')
-      .toEqual({ walked: 9, lastFound: 3 });
+      .toEqual({ walked: 9, lastFound: 2 });
 
     const rebuilt = reconcileVaultPool({
       vault: vaultAddr, chain: chainNotes(), versions: [], named: walk.coins, circuits: vaultCircuits,
@@ -343,7 +345,7 @@ describe('a vault whose every record of ours is gone', () => {
 
   it('A NONCE NOBODY ELSE CAN DERIVE: another person\'s words, or a rounded amount, name nothing, and the rebuild SAYS so rather than guessing', async () => {
     const work = await aCompanyAtWork(depositNonceKeyFor(releasedCompanyKey(WORDS, company), vaultAddr));
-    await work.deposit(1_234n);
+    await work.deposit(1_234n, { slot: 1 });
     const everCreated = await vaultOutputHistoryFrom(theChain()).everCreated(vaultAddr);
     const exact: CompanyRecords = { deposited: [{ token: toHex(GBP), value: 1_234n }], paid: [] };
 
@@ -375,7 +377,7 @@ describe('a vault whose every record of ours is gone', () => {
     });
     vaultState = r.context.callContext.currentQueryContext.state;
     logCall(r);
-    await work.deposit(900n);
+    await work.deposit(900n, { slot: 1 });
 
     const everCreated = await vaultOutputHistoryFrom(theChain()).everCreated(vaultAddr);
     const walk = await walkCompanyRecords({

@@ -20,6 +20,15 @@ export interface PayoutChainOnTheWire {
   readonly accountState: string;
 }
 export type OrderOnTheWire = Omit<PrivatePaymentOrderOnTheWire, 'payments'>;
+/**
+ * Which transaction created a note, as its events say: `found`; `refused`, the
+ * events are there and do not show this note as made there, and asking again
+ * will not change that; or `unreadable`, and asking again may answer it.
+ */
+export type CreatingTransactionAnswer =
+  | { readonly state: 'found'; readonly createdIn: string }
+  | { readonly state: 'refused' }
+  | { readonly state: 'unreadable' };
 /** One block's view of the company account, for a raise or an approval to be built on. Base64 of the bytes. */
 export interface AccountCallChainOnTheWire {
   readonly blockHash: string;
@@ -44,6 +53,10 @@ export type VaultAsk =
   | {
     id: number; network: string; ask: 'confirm-payment'; vault: string; transactionHash: string;
     change: NoteOnTheWire | null; events: readonly EventOnTheWire[];
+  }
+  | {
+    id: number; network: string; ask: 'creating-transaction'; vault: string; commitment: string;
+    transactionHash: string; events: readonly EventOnTheWire[];
   }
   | {
     id: number; network: string; ask: 'payout'; vault: string; account: string; order: OrderOnTheWire;
@@ -74,6 +87,7 @@ export type VaultAnswer =
   | Answered<'payments-fit', { answer: PaymentsFitAnswer }>
   | Answered<'after-payment', { notes: NoteOnTheWire[] }>
   | Answered<'confirm-payment', { confirmation: PaymentConfirmation }>
+  | Answered<'creating-transaction', { answer: CreatingTransactionAnswer }>
   | Answered<'payout', { tx: string; spent: string; change: NoteOnTheWire | null }>
   | Answered<'payout-publicly', { tx: string }>
   | Answered<'governed-call', { tx: string }>
@@ -102,6 +116,10 @@ export interface VaultBuilderClient {
   confirmPayment(input: {
     vault: string; transactionHash: string; change: NoteOnTheWire | null; events: readonly EventOnTheWire[];
   }): Promise<PaymentConfirmation>;
+  /** Which transaction created the note with this commitment, as these events of the named transaction say. */
+  creatingTransaction(input: {
+    vault: string; commitment: string; transactionHash: string; events: readonly EventOnTheWire[];
+  }): Promise<CreatingTransactionAnswer>;
   payout(input: {
     vault: string; account: string; order: OrderOnTheWire; payment: PrivatePaymentOnTheWire;
     note: NoteOnTheWire; events: readonly EventOnTheWire[]; chain: PayoutChainOnTheWire;
@@ -169,6 +187,7 @@ export function vaultBuilderOver(worker: WorkerLike, network: string): VaultBuil
     paymentsFit: async (input) => (await ask({ ask: 'payments-fit', ...input })).answer,
     afterPayment: async (input) => (await ask({ ask: 'after-payment', ...input })).notes,
     confirmPayment: async (input) => (await ask({ ask: 'confirm-payment', ...input })).confirmation,
+    creatingTransaction: async (input) => (await ask({ ask: 'creating-transaction', ...input })).answer,
     payout: async (input) => {
       const a = await ask({ ask: 'payout', ...input });
       return { tx: a.tx, spent: a.spent, change: a.change };
