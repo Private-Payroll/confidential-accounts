@@ -27,13 +27,14 @@
  * of one proof. The bytes live in memory, are handed to the prover, and are
  * dropped.
  *
- * **WHAT THAT LEAVES OPEN, SAID PLAINLY RATHER THAN IMPLIED: something has to
- * build that unproven transaction, and building it needs the signer's own
- * private state.** In this product today that state is held where the server is,
- * not where the browser is - so the preimage a browser proves is one it was
- * handed. Proving it on the device is what stops it reaching a proving service;
- * it is not yet what stops it existing anywhere but the device. The step that
- * closes that is a private-state provider in the browser.
+ * **WHAT THIS RUNNER DOES NOT DO IS BUILD, SAID PLAINLY RATHER THAN IMPLIED.**
+ * It proves a preimage fetched from this application's own origin, so it keeps
+ * that preimage from a proving service but not from wherever it was built.
+ * Nothing the page does today gives it a job: a vault's deploy, handover,
+ * deposit and payment out, and a company account's raise and approval, are
+ * each built and proved in the vault worker (`vault-worker-entry.ts`) from what
+ * this device holds - a deposit's coin and its nonce included - and only the
+ * proven transaction leaves the device.
  */
 import { NothingWasSent, type Job, type JobRunner } from '../core/jobs.js';
 import type { KeyMaterialSource } from '../midnight/wasm-proving.js';

@@ -124,7 +124,9 @@ export async function buildCommitteeHandover(
 
 /**
  * THE DEPOSIT. `coin` is the one the device chose and recorded before this was
- * asked; `state` is the vault's state as the chain served it.
+ * asked; `state` is the vault's state as the chain served it; `parameters` are
+ * the ledger parameters the chain holds now, serialized, and the deposit is
+ * built with those and with no others.
  */
 export async function buildDeposit(
   deps: VaultBuilderDeps,
@@ -132,11 +134,16 @@ export async function buildDeposit(
     readonly vault: string;
     readonly coin: { readonly nonce: string; readonly token: string; readonly value: bigint };
     readonly state: Uint8Array;
+    readonly parameters: Uint8Array;
   },
 ): Promise<{ proven: Uint8Array }> {
   const { nonce, token, value } = input.coin;
   if (!HEX64.test(nonce) || !HEX64.test(token) || value <= 0n) {
     throw new Error('this is not a coin a deposit can be made with, so nothing was built.');
+  }
+  if (!(input.parameters instanceof Uint8Array) || input.parameters.length === 0) {
+    throw new Error('the chain\'s current ledger parameters were not handed over, so nothing was built or sent. '
+      + 'Read them from the vault\'s payout state and pass them as the deposit\'s parameters.');
   }
   const keys = throwawayKeys(deps);
   const L = deps.ledger;
@@ -148,7 +155,8 @@ export async function buildDeposit(
     initialContractState: deps.runtimeState.deserialize(input.state),
     /* A deposit spends nothing of the chain's, so the builder is given no commitment tree to read. */
     initialZswapChainState: new L.ZswapChainState(),
-    ledgerParameters: L.LedgerParameters.initialParameters(),
+    /* The parameters the chain holds now, read by the page; never the ledger's starting ones. */
+    ledgerParameters: L.LedgerParameters.deserialize(input.parameters),
     args: [{ nonce: fromHex(nonce), color: fromHex(token), value }],
   }, keys.encryptionPublicKey);
   const proven = await deps.prove(built.private.unprovenTx, 'deposit');

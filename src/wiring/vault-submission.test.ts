@@ -201,6 +201,8 @@ describe.skipIf(!KEYS_ON_DISK)('what the fee payer pays for on a vault [needs co
       const vaultState = (deploy.intents.values().next().value.actions[0]).initialState;
       const built = await buildDeposit(deps, {
         vault, coin: { nonce: 'c1'.repeat(32), token: 'ab'.repeat(32), value: 5n }, state: vaultState.serialize(),
+        /* A fresh chain's parameters: this file reads the transaction's shape, not what it costs. */
+        parameters: L.LedgerParameters.initialParameters().serialize(),
       });
       const tx = readDeploy(built.proven);
       expect(tx.guaranteedOffer.outputs.length).toBe(1);

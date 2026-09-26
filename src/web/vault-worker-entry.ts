@@ -157,6 +157,8 @@ export const answerVaultAsk = async (
         vault: ask.vault,
         coin: { nonce: ask.coin.nonce, token: ask.coin.token, value: BigInt(ask.coin.value) },
         state: fromBase64(ask.state),
+        /* An ask with no parameters is passed on empty, so the builder's refusal names what is missing. */
+        parameters: typeof ask.parameters === 'string' ? fromBase64(ask.parameters) : new Uint8Array(0),
       });
       return { id: ask.id, ok: true, ask: 'deposit', tx: toBase64(built.proven) };
     }

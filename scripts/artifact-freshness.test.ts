@@ -565,6 +565,7 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
       'src/midnight/ledger.test.ts',
       'src/midnight/the-key-reaches-the-circuit.test.ts',
       'src/midnight/the-secret-comes-from-the-keyring.test.ts',
+      'src/web/a-deposit-built-on-the-device.test.ts',
       'src/wiring/vault-submission.test.ts',
     ];
     expect(gated.filter((f) => !NAMED.includes(f)),
@@ -580,6 +581,7 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
       'contracts/test/a-private-payment-from-the-page.test.ts',
       'contracts/test/a-vaults-committee-changes-with-its-signers.test.ts',
       'src/wiring/vault-submission.test.ts',
+      'src/web/a-deposit-built-on-the-device.test.ts',
     ];
     const vaultGated = gatedOnKeys([VAULT_KEY_DIR]);
     expect(vaultGated.filter((f) => !VAULT_NAMED.includes(f)),

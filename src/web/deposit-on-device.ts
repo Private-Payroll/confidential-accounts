@@ -13,10 +13,11 @@
  *      opened here;
  *   3. the deposit journal line is sealed here and filed signed;
  *   4. the coin is checked against the vault's history, its notes and its pool;
- *   5. the coin is handed back, for the caller to build the deposit's
- *      transaction with on this device. No page calls this yet, and no page
- *      builds a deposit's transaction yet: what this settles is that the coin
- *      is chosen where the key is, and nothing the server receives names it.
+ *   5. the coin is handed back, and the caller (`depositIntoCompanyVault` in
+ *      `vault-operation.ts`) has the vault worker build and prove the deposit
+ *      with it, using the ledger parameters the chain holds now. What this
+ *      settles is that the coin is chosen where the key is, and nothing the
+ *      server receives names it.
  *
  * Starting a vault's nonce secret is done here as well: the secret is made on
  * the device and filed only as a sealed record wrapped to the signers, and
