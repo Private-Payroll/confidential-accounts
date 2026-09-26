@@ -14,7 +14,7 @@ import {
   rosterOf, vaultServiceFor,
 } from './vault-page-doors.js';
 import { startVaultBuilder, type VaultBuilderClient } from './vault-worker-client.js';
-import { depositFromSource, privateTokenFromTheWallet } from './deposit-source.js';
+import { depositFromSource, depositKindFor, sourceFor, type DepositKind } from './deposit-source.js';
 import { openAccount } from '../core/account.js';
 import { rosterVaultKeys } from '../core/vault-keys.js';
 import { whyNotTheCommittee } from './handover-check.js';
@@ -50,6 +50,9 @@ const STATE_WORDS: Record<string, string> = {
 };
 
 const shieldedAssets = () => assets.enabled().filter((a) => ledgerFormOf(a, 'shielded').of === 'token');
+/** Every asset money can go into a vault in, privately, publicly or both. */
+const depositableAssets = () => assets.enabled().filter((a) =>
+  ledgerFormOf(a, 'shielded').of === 'token' || ledgerFormOf(a, 'unshielded').of === 'token');
 
 export function VaultPanel({ account, me, viewingKey }: {
   account: Account;
@@ -64,7 +67,10 @@ export function VaultPanel({ account, me, viewingKey }: {
   const [err, setErr] = useState('');
   const [said, setSaid] = useState('');
   const [busy, setBusy] = useState(false);
-  const [asset, setAsset] = useState(() => shieldedAssets()[0]?.code ?? '');
+  const [asset, setAsset] = useState(() => shieldedAssets()[0]?.code ?? depositableAssets()[0]?.code ?? '');
+  const [kind, setKind] = useState<DepositKind>('private');
+  /* An asset with only one form goes in only that way, and the other way says why. */
+  const { goesIn, whyNot } = depositKindFor(asset, kind);
   const [amount, setAmount] = useState('');
   const builderRef = useRef<Promise<VaultBuilderClient> | null>(null);
   /* The roster, opened here afresh each time a key the service reports is checked against it. */
@@ -160,7 +166,7 @@ export function VaultPanel({ account, me, viewingKey }: {
     const chosen = assets.require(asset);
     const value = parseAmount(amount, chosen);
     if (value <= 0n) throw new Error('an amount of nothing is not a deposit.');
-    const source = privateTokenFromTheWallet((ask) => keyring.payIntoAVaultFromTheWallet(WALLET_ORIGIN, ask));
+    const source = sourceFor(goesIn, (ask) => keyring.payIntoAVaultFromTheWallet(WALLET_ORIGIN, ask));
     /* Asked before the keys are, so an asset this source cannot bring asks the wallet for nothing. */
     source.money({ code: chosen.code, value });
     const k = await withKeys();
@@ -170,6 +176,10 @@ export function VaultPanel({ account, me, viewingKey }: {
       inFlight: browserDepositsInFlight({ signerId: me.signerId, wrappingSecret: me.wrappingSecret }),
     }, vault, source, { code: chosen.code, value });
     setAmount('');
+    if (!('note' in done)) {
+      return `${amount} ${chosen.code} is in the vault (${done.txRef}). This deposit is public: anyone can look up `
+        + 'the amount and the address it came from.';
+    }
     return done.notYetSpendable === undefined
       ? `${amount} ${chosen.code} is in the vault (${done.txRef}).`
       : `${amount} ${chosen.code} is in the vault (${done.txRef}). It is the company's, and it cannot be used for a payment `
@@ -240,13 +250,33 @@ export function VaultPanel({ account, me, viewingKey }: {
                       <div className="two">
                         <div className="field"><label>Asset</label>
                           <select value={asset} onChange={(e) => setAsset(e.target.value)} disabled={busy}>
-                            {shieldedAssets().map((a) => <option key={a.code} value={a.code}>{a.code} — {a.name}</option>)}
+                            {depositableAssets().map((a) => <option key={a.code} value={a.code}>{a.code} — {a.name}</option>)}
                           </select></div>
                         <div className="field"><label>Amount</label>
                           <input value={amount} onChange={(e) => setAmount(e.target.value)} disabled={busy} placeholder="0.00" /></div>
                       </div>
+                      <div className="field" data-deposit-kind={goesIn}><label>How it goes in</label>
+                        {(['private', 'public'] as const).map((k) => (
+                          <label key={k} style={{ display: 'block' }}>
+                            <input
+                              type="radio" name={`kind-${row.vault}`} value={k} checked={goesIn === k}
+                              disabled={busy || whyNot[k] !== null} onChange={() => setKind(k)}
+                              data-deposit-kind-choice={k}
+                            />
+                            {k === 'private'
+                              ? ' Privately: nobody reading the chain sees the token or the amount'
+                              : ' Publicly: anyone can look up the token, the amount, your wallet\'s public address and the vault it '
+                                + 'goes into. Money put in publicly is paid out publicly, and this page cannot make it private later.'}
+                          </label>
+                        ))}
+                        {whyNot[goesIn === 'private' ? 'public' : 'private'] !== null && (
+                          <div className="hint" data-deposit-kind-why>
+                            {whyNot[goesIn === 'private' ? 'public' : 'private']}
+                          </div>
+                        )}
+                      </div>
                       <button className="btn pri" disabled={busy || amount.trim() === '' || asset === ''} onClick={deposit(row.vault)} data-deposit>
-                        Put money in from my wallet
+                        {goesIn === 'public' ? 'Put money in publicly from my wallet' : 'Put money in from my wallet'}
                       </button>
                       <button className="btn" disabled={busy} onClick={check(row.vault)} data-check-last-deposit>
                         Check my last deposit

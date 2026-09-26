@@ -18,6 +18,7 @@
  *   POST /api/accounts/:id/vaults/:vault/handover       that vault handed to the company's committee
  *   GET  /api/accounts/:id/vaults/:vault/chain          what the chain holds for one vault
  *   POST /api/accounts/:id/vaults/:vault/deposit        a deposit the depositor's wallet has paid for
+ *   POST /api/accounts/:id/vaults/:vault/public-deposit a public deposit the depositor's wallet has paid for
  *   GET  /api/accounts/:id/vaults/:vault/payout-state   the chain as one block saw it, for a payout to be built on
  *   GET  /api/accounts/:id/vaults/:vault/events/:tx     what one transaction created, for a note's place to be read
  *   GET  /api/accounts/:id/vaults/:vault/created/:out   which of the vault's transactions created one output
@@ -51,7 +52,7 @@ import { contractsOwingAChange } from '../midnight/committee-change.js';
 import type { CollectedCommitteeSignatures } from '../core/store.js';
 import {
   circuitsRefusal, asFarAsTheVault, readVaultDeploy, refusalForCommitteeChange, refusalForDeposit, refusalForHandover, refusalForPayout,
-  refusalForPublicPayout,
+  refusalForPublicDeposit, refusalForPublicPayout,
   refusalToPutMoneyIn, whyTheHistoryDoesNotVouch, type ContractHistoryStep, type FundingFacts, type VaultStartingLedger,
 } from '../wiring/vault-submission.js';
 
@@ -644,6 +645,51 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
     }
     const sent = await send(res, account.id, 'a deposit into a vault', 'finished-by-the-depositor', bytes,
       (tx) => refusalForDeposit(tx, { vault: record.vault }));
+    if (sent === null) return;
+    res.json({ txRef: sent.ref, transactionHash: sent.transactionHash });
+  });
+
+  /*
+   * **A PUBLIC DEPOSIT, BEHIND THE SAME GATE AS A PRIVATE ONE.** The page names
+   * the token and the amount it asked the vault to receive, and the transaction
+   * is refused unless it is exactly that, into this vault, paid for by the
+   * depositor's own public money.
+   */
+  r.post('/api/accounts/:id/vaults/:vault/public-deposit', ...guard, async (req, res) => {
+    const record = theVault(req, res);
+    if (record === null) return;
+    const asked = z.object({
+      tx: z.string().min(1).max(VAULT_TX_LIMIT),
+      token: z.string().regex(HEX64),
+      amount: z.string().regex(/^[1-9][0-9]{0,38}$/u),
+    }).strict().safeParse(req.body);
+    if (!asked.success) {
+      res.status(400).json({
+        nothingWasSent: true,
+        error: 'this request does not say which public token and how much of it goes into the vault, with the '
+          + 'transaction that puts it there. Nothing was sent and no money moved. Reload the page and try again; if it '
+          + 'happens again, the service needs attention.',
+      });
+      return;
+    }
+    const bytes = new Uint8Array(Buffer.from(asked.data.tx, 'base64'));
+    const account = accountOf(req);
+    const { company, committee, why } = await committeeNow(account);
+    if (company === null || committee === null) {
+      res.status(409).json({ nothingWasSent: true, error: `${why} Nothing was sent.` });
+      return;
+    }
+    /* READ FROM THE CHAIN, NOW, AND NEVER FROM THE RECORD ABOVE. */
+    const refusal = await whyNotFunded(record.vault, await authorityOf(record.vault), committee, company.address);
+    if (refusal !== null) {
+      res.status(409).json({ nothingWasSent: true, error: refusal.why });
+      return;
+    }
+    const sent = await send(res, account.id, 'a public deposit into a vault', 'finished-by-the-depositor', bytes,
+      async (tx) => refusalForPublicDeposit(tx, {
+        vault: record.vault, token: asked.data.token, amount: BigInt(asked.data.amount),
+        addressOf: (await import('@midnightntwrk/ledger-v9')).addressFromKey as (owner: unknown) => string,
+      }));
     if (sent === null) return;
     res.json({ txRef: sent.ref, transactionHash: sent.transactionHash });
   });

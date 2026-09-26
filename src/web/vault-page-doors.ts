@@ -69,6 +69,9 @@ export const vaultServiceFor = (api: Api, accountId: string, roster: () => Promi
         : { ...view, committee: null, heldByCommittee: false, fundable: false, why: refused };
     },
     deposit: (vault, tx) => post(`${base}/vaults/${vault}/deposit`, tx),
+    depositPublicly: (vault, tx, money) => marked(() => api(`${base}/vaults/${vault}/public-deposit`, {
+      method: 'POST', body: JSON.stringify({ tx, token: money.token, amount: money.amount }),
+    })),
     payoutState: (vault) => api(`${base}/vaults/${vault}/payout-state`),
     events: (vault, transactionHash) => api(`${base}/vaults/${vault}/events/${encodeURIComponent(transactionHash)}`),
     createdBy: async (vault, commitment) => {

@@ -59,6 +59,7 @@ import * as vaultModule from '../managed-vault/contract/index.js';
 import * as accountModule from '../managed/contract/index.js';
 import { witnesses, type AccountPrivateState } from '../src/witnesses.js';
 import { aWalletThatPaysPrivately, type AWalletThatPaysPrivately } from './a-wallet-that-pays-privately.js';
+import { aWalletThatPaysPublicly } from './a-wallet-that-pays-publicly.js';
 import { privateStateFor, leafOfDevice, change, ZERO_32 } from './simulator.js';
 import { MemoryStore } from '../../src/core/store.js';
 import { AccountService, sealAccount } from '../../src/core/account.js';
@@ -80,14 +81,20 @@ import {
   type TemporaryKeys, type VaultService, type DepositInFlight, type DepositsInFlight, type PaymentInFlight, type PaymentsInFlight,
 } from '../../src/web/vault-operation.js';
 import { inFlightInMemory as inFlightRecordsInMemory, sealedOnThisDevice, type KeptOnThisDevice } from '../../src/web/in-flight-on-this-device.js';
-import { readWhatThePageAsks, base64FromBytes } from '../../apps/wallet/src/chain/balance-for-page.js';
+import {
+  readWhatThePageAsks, base64FromBytes, whyThePublicBalancingIsNotWhatWasApproved,
+} from '../../apps/wallet/src/chain/balance-for-page.js';
+import { depositFromSource, publicTokenFromTheWallet } from '../../src/web/deposit-source.js';
+import { StaticAssetRegistry, type Asset } from '../../src/core/assets.js';
 import { UNLOCK_PURPOSE, UNLOCK_WINDOW_MS, unlockAsk } from '../../src/core/wallet-unlock.js';
 import { fromHex, newSigningKeypair, newWrappingKeypair, toHex, type Hex } from '../../src/core/crypto.js';
 import { accountHandoverWith, accountTemporaryVerifyingKey, accountVerifierKeysIn } from '../../src/server/vault-chain.js';
 import { DEPLOYED_CIRCUITS } from '../../src/midnight/deferral.js';
 import { fileURLToPath } from 'node:url';
 import { readProvenTransaction } from '../../src/wiring/proven-submission.js';
-import { refusalForPayout, refusalForPublicPayout, startingLedgerFrom } from '../../src/wiring/vault-submission.js';
+import {
+  refusalForDeposit, refusalForPayout, refusalForPublicDeposit, refusalForPublicPayout, startingLedgerFrom,
+} from '../../src/wiring/vault-submission.js';
 import { signingKeyFromBip340 } from '@midnightntwrk/ledger-v9';
 import { buildRun, rootOfLeaves } from '../../src/midnight/payout-tree.js';
 import { vaultDetails } from '../../src/testing/vault-details.js';
@@ -433,6 +440,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     handover: (vault, tx) => http(`${at}/vaults/${vault}/handover`, { method: 'POST', body: { tx } }),
     chain: (vault) => http(`${at}/vaults/${vault}/chain`),
     deposit: (vault, tx) => http(`${at}/vaults/${vault}/deposit`, { method: 'POST', body: { tx } }),
+    depositPublicly: (vault, tx, money) => http(`${at}/vaults/${vault}/public-deposit`, { method: 'POST', body: { tx, ...money } }),
     payoutState: (vault) => http(`${at}/vaults/${vault}/payout-state`),
     events: (vault, tx) => http(`${at}/vaults/${vault}/events/${tx}`),
     createdBy: async (vault, commitment) => {
@@ -779,5 +787,135 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     expect(chain.applied.length).toBe(applied + 2);
     expect(arrivals.length).toBe(sentBefore);
     expect(publicBalance(vault)).toBe(1_000n);
+  });
+
+  /* ------------------------------------------- a public deposit from the page */
+
+  /** A public token the page can offer, in a registry of its own: `PUBLIC_TOKEN` has no private form. */
+  const PUBLIC_ASSET: Asset = {
+    code: 'PUBT', name: 'A public token', kind: 'token', decimals: 0, chain: 'midnight',
+    ledger: { shielded: null, unshielded: PUBLIC_TOKEN } as Asset['ledger'], enabled: true, sortOrder: 1,
+  };
+  const PUBLIC_REGISTRY = new StaticAssetRegistry([PUBLIC_ASSET]);
+  /** The depositor's wallet, paying publicly: it reads the page's ask as the product wallet does, balances through the SDK and checks what it added. */
+  const aPublicWallet = async (values: readonly bigint[]) => {
+    const w = await aWalletThatPaysPublicly(NET);
+    const seededAt = chain.apply(w.seedTransaction(PUBLIC_TOKEN, values));
+    if (!seededAt.ok) throw new Error(`the depositor's public coins were not seeded: ${seededAt.error}`);
+    chain.applied.pop();
+    w.holdWhatTheChainSays(chain.state.utxo.utxos);
+    const asProven = { Transaction: { deserialize: (_s: string, _p: string, b: 'pre-binding', raw: Uint8Array) => L.Transaction.deserialize('signature', 'pre-proof', b, raw) } };
+    const asked: Array<{ pays: string; leaves: unknown }> = [];
+    const pay = async (ask: { company: Hex; vault: Hex; transaction: string }) => {
+      const read = readWhatThePageAsks(asProven as never, ask.transaction, ask.vault);
+      asked.push({ pays: read.pays, leaves: read.leaves });
+      const paid = await w.payFor(read.tx);
+      const why = whyThePublicBalancingIsNotWhatWasApproved({ baseTransaction: paid }, read.leaves[0]!, w.address);
+      if (why !== null) throw new Error(why);
+      return { transaction: base64FromBytes((paid as any).bind().serialize()), leaves: read.leaves };
+    };
+    return { wallet: w, pay, asked };
+  };
+
+  it('A COMPANY PUTS A PUBLIC TOKEN INTO ITS VAULT FROM THE PAGE: ONE PUBLIC DEPOSIT, OF THIS AMOUNT, INTO THIS VAULT, PAID FROM THE WALLET\'S OWN PUBLIC COINS', async () => {
+    const { vault } = await aFundedVault();
+    const { wallet, pay, asked } = await aPublicWallet([600n, 700n]);
+    expect(publicBalance(vault)).toBe(0n);
+    const before = chain.applied.length;
+    const notesBefore = [...vaultLedgerOf(chain.contract(vault)).notes].map((c: Uint8Array) => hex(c));
+    const doors = {
+      ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records,
+      company, builder: builder(), inFlight: inFlightInMemory(),
+    };
+
+    const done = await depositFromSource(doors, vault, publicTokenFromTheWallet(pay, PUBLIC_REGISTRY), { code: 'PUBT', value: 900n });
+
+    /* RED WHEN: the deposit does not reach the chain through the public deposit route, or the chain refuses it. */
+    expect(chain.applied.slice(before).map((a) => [a.ok, a.error])).toEqual([[true, '']]);
+    expect(arrivals.at(-1)).toBe('finished-by-the-depositor');
+    expect(sent.some((b) => b.includes('"amount":"900"') && b.includes(`"token":"${PUBLIC_TOKEN}"`))).toBe(true);
+    expect(done.txRef).toBe(String(chain.applied.at(-1)!.tx.identifiers()[0]));
+    /* RED WHEN: the wallet is asked as for a private deposit, or is shown another token or amount. */
+    expect(asked).toEqual([{ pays: 'public', leaves: [{ token: PUBLIC_TOKEN, amount: '900', kind: 'unshielded' }] }]);
+    const tx = chain.applied.at(-1)!.tx;
+    const named = (e: unknown) => (e instanceof Uint8Array ? new TextDecoder().decode(e) : String(e));
+    /* RED WHEN: a public deposit is anything but the vault's public deposit. */
+    expect([...tx.intents.values()].flatMap((i: any) => i.actions.map((a: any) => `${String(a.address).toLowerCase()}/${named(a.entryPoint)}`)))
+      .toEqual([`${vault}/depositUnshielded`]);
+    /* RED WHEN: the vault receives another amount, or the page's deposit is paid in the wrong section and never balances. */
+    expect(publicBalance(vault)).toBe(900n);
+    /* The wallet spent both coins and took 400 back as change; nobody else was paid. */
+    const outs = [...tx.intents.values()].flatMap((i: any) => [
+      ...(i.guaranteedUnshieldedOffer?.outputs ?? []), ...(i.fallibleUnshieldedOffer?.outputs ?? [])]);
+    expect(outs.map((o: any) => [String(o.owner).toLowerCase(), String(o.value)])).toEqual([[wallet.address.toLowerCase(), '400']]);
+    /* No private coin moved and the vault's notes were not touched: nothing is recorded on the device for public money. */
+    expect(tx.guaranteedOffer).toBeUndefined();
+    expect([...vaultLedgerOf(chain.contract(vault)).notes].map((c: Uint8Array) => hex(c))).toEqual(notesBefore);
+    /* RED WHEN: the service's reader stops matching what the page and the wallet build, or takes it for another vault, token or amount. */
+    const addressOf = L.addressFromKey as (o: unknown) => string;
+    expect(refusalForPublicDeposit(tx, { vault, token: PUBLIC_TOKEN, amount: 900n, addressOf })).toBeNull();
+    expect(refusalForPublicDeposit(tx, { vault: 'ee'.repeat(32), token: PUBLIC_TOKEN, amount: 900n, addressOf })).toMatch(/must call this vault's public deposit/);
+    expect(refusalForPublicDeposit(tx, { vault, token: PUBLIC_TOKEN, amount: 901n, addressOf })).toMatch(/exactly the token and amount asked for/);
+    expect(refusalForPublicDeposit(tx, { vault, token: TOKEN, amount: 900n, addressOf })).toMatch(/exactly the token and amount asked for/);
+    /* And the private deposit's reader never takes it. */
+    expect(refusalForDeposit(tx, { vault })).not.toBeNull();
+  });
+
+  it('A VAULT FUNDED BY A PUBLIC DEPOSIT FROM THE PAGE PAYS A PUBLIC PAYEE FROM THE PAGE', async () => {
+    const { vault } = await aFundedVault();
+    const { pay } = await aPublicWallet([1_000n]);
+    const doors = {
+      ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records,
+      company, builder: builder(), inFlight: inFlightInMemory(),
+    };
+    await depositFromSource(doors, vault, publicTokenFromTheWallet(pay, PUBLIC_REGISTRY), { code: 'PUBT', value: 1_000n });
+    expect(publicBalance(vault)).toBe(1_000n);
+    const run = await anApprovedRun(vault, 250n, { payee: unshieldedPayeeFor(USER, NET), token: PUBLIC_TOKEN });
+    const order = run.order();
+    const before = chain.applied.length;
+
+    await payPubliclyFromCompanyVault(publicDoors(run), { order, payment: order.payments[0]! });
+
+    /* RED WHEN: money a company put in publicly from the page cannot be paid out publicly from the page. */
+    expect(chain.applied.slice(before).map((a) => [a.ok, a.error])).toEqual([[true, '']]);
+    const outs = [...chain.applied.at(-1)!.tx.intents.values()].flatMap((i: any) => [
+      ...(i.guaranteedUnshieldedOffer?.outputs ?? []), ...(i.fallibleUnshieldedOffer?.outputs ?? [])]);
+    expect(outs.map((o: any) => [String(o.owner).toLowerCase(), String(o.type).toLowerCase(), o.value])).toEqual([[USER, PUBLIC_TOKEN, 250n]]);
+    expect(publicBalance(vault)).toBe(750n);
+    expect(run.order().payments.map((p) => p.paid)).toEqual([true]);
+  });
+
+  it('THE SERVICE SENDS NO PUBLIC DEPOSIT THAT IS NOT EXACTLY WHAT THE PAGE ASKED FOR, AND NO MONEY MOVES', async () => {
+    const { vault } = await aFundedVault();
+    /* One coin for each deposit the wallet pays for below, since it forgets a coin once it has paid with it. */
+    const { pay } = await aPublicWallet([1_000n, 1_000n, 1_000n, 1_000n]);
+    const doors = {
+      ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records,
+      company, builder: builder(), inFlight: inFlightInMemory(),
+    };
+    const applied = chain.applied.length;
+    const refusedBy = async (svc: VaultService) => {
+      const e = await depositFromSource({ ...doors, service: svc }, vault, publicTokenFromTheWallet(pay, PUBLIC_REGISTRY), { code: 'PUBT', value: 300n })
+        .then(() => null, (err: Error) => err.message);
+      return e;
+    };
+    /* RED WHEN: the service sends a public deposit for another amount than the page named. */
+    expect(await refusedBy({ ...service, depositPublicly: (v, tx, m) => service.depositPublicly!(v, tx, { ...m, amount: '299' }) }))
+      .toMatch(/^the public deposit was not sent, so no money has moved yet\.[\s\S]*The service said: this is not this company's public deposit into this vault: it does not put exactly the token and amount asked for/);
+    /* RED WHEN: the service sends a public deposit for another token than the page named. */
+    expect(await refusedBy({ ...service, depositPublicly: (v, tx, m) => service.depositPublicly!(v, tx, { ...m, token: TOKEN }) }))
+      .toMatch(/it does not put exactly the token and amount asked for/);
+    /* RED WHEN: the service sends a deposit nobody's public money paid for: the page's own, unbalanced. */
+    const theWalletPaidNothing = async (ask: { company: Hex; vault: Hex; transaction: string }) => {
+      const t = L.Transaction.deserialize('signature', 'pre-proof', 'pre-binding', Buffer.from(ask.transaction, 'base64')) as any;
+      return { transaction: base64FromBytes(t.bind().serialize()), leaves: [{ token: PUBLIC_TOKEN, amount: '300', kind: 'unshielded' }] };
+    };
+    await expect(depositFromSource(doors, vault, publicTokenFromTheWallet(theWalletPaidNothing, PUBLIC_REGISTRY), { code: 'PUBT', value: 300n }))
+      .rejects.toThrow(/nobody's public money pays for it/);
+    /* RED WHEN: the service sends a private deposit's route a public one. */
+    const intoThePrivateRoute = await refusedBy({ ...service, depositPublicly: (v, tx) => service.deposit(v, tx) });
+    expect(intoThePrivateRoute).toMatch(/^the public deposit was not sent, so no money has moved yet\.[\s\S]*The service said: this deposit moves public money as well/);
+    expect(chain.applied.length).toBe(applied);
+    expect(publicBalance(vault)).toBe(0n);
   });
 });

@@ -12,7 +12,7 @@ import {
   BalanceRefused, payForThePage, readWhatThePageAsks,
 } from '../chain/balance-for-page.js';
 import type {
-  BalanceDoors, FacadeForBalancing, LedgerForBalancing, UnboundTransactionLike,
+  BalanceDoors, FacadeForBalancing, LedgerForBalancing, PageAskPays, UnboundTransactionLike,
 } from '../chain/balance-for-page.js';
 import { facadeFor, facadeKeysFor } from '../chain/facade.js';
 import { makeBrowserProvingService } from '../chain/proving.js';
@@ -50,6 +50,7 @@ export const liveBalanceDoors = (identity: Identity, account: number): BalanceDo
       return { shieldedSecretKeys: keys.shielded, dustSecretKey: keys.dust };
     },
     signSegment: () => unshieldedKeystoreFor(identity, account).signDataAsync,
+    ownPublicAddress: () => String(unshieldedKeystoreFor(identity, account).getAddress()),
     stop: async () => {
       if (running === null) return;
       const f = await running.catch(() => null);
@@ -68,11 +69,11 @@ const describeLeaving = (l: LeavesTheWallet): string =>
 
 type Stage =
   | { of: 'reading' }
-  | { of: 'ready'; tx: UnboundTransactionLike; leaves: LeavesTheWallet[] }
+  | { of: 'ready'; tx: UnboundTransactionLike; leaves: LeavesTheWallet[]; pays: PageAskPays }
   | { of: 'refused'; says: string }
-  | { of: 'paying'; leaves: LeavesTheWallet[] }
-  | { of: 'failed'; says: string; leaves: LeavesTheWallet[] }
-  | { of: 'sent'; at: number; leaves: LeavesTheWallet[] };
+  | { of: 'paying'; leaves: LeavesTheWallet[]; pays: PageAskPays }
+  | { of: 'failed'; says: string; leaves: LeavesTheWallet[]; pays: PageAskPays }
+  | { of: 'sent'; at: number; leaves: LeavesTheWallet[]; pays: PageAskPays };
 
 export function ApproveBalance({
   request, identity, account, channel, consent, whoIsAsking, whichWallet, onDecline,
@@ -100,7 +101,7 @@ export function ApproveBalance({
       if (!alive) return;
       try {
         const read = readWhatThePageAsks(ledger, request.transaction, request.vault);
-        setStage({ of: 'ready', tx: read.tx, leaves: read.leaves });
+        setStage({ of: 'ready', tx: read.tx, leaves: read.leaves, pays: read.pays });
       } catch (e) {
         setStage({ of: 'refused', says: e instanceof BalanceRefused ? e.message : 'Nothing has been paid.' });
       }
@@ -110,26 +111,37 @@ export function ApproveBalance({
 
   const pay = useCallback((): void => {
     if (stage.of !== 'ready' || channel === null) return;
-    const { tx, leaves } = stage;
-    setStage({ of: 'paying', leaves });
-    void payForThePage(doors, tx).then((finished) => {
+    const { tx, leaves, pays } = stage;
+    setStage({ of: 'paying', leaves, pays });
+    void payForThePage(doors, tx, { pays, leaves }).then((finished) => {
       const at = now();
       channel.answer(balancedAnswerFor(request, finished, leaves, at));
-      setStage({ of: 'sent', at, leaves });
+      setStage({ of: 'sent', at, leaves, pays });
     }, (e: unknown) => {
       setStage({
-        of: 'failed', leaves,
-        says: `${e instanceof Error ? e.message : String(e)} Anything this wallet set aside for it has been let go, and nothing was handed back to the page.`,
+        of: 'failed', leaves, pays,
+        says: pays === 'public'
+          ? `${e instanceof Error ? e.message : String(e)} The page was given nothing back.`
+          : `${e instanceof Error ? e.message : String(e)} Anything this wallet set aside for it has been let go, and nothing was handed back to the page.`,
       });
     });
   }, [stage, channel, doors, request, now]);
 
-  const headline = <h1 data-headline>{`Pay into a company vault for ${request.requester.origin}`}</h1>;
+  const publicly = stage.of !== 'reading' && stage.of !== 'refused' && stage.pays === 'public';
+  const headline = (
+    <h1 data-headline>
+      {publicly
+        ? `Pay publicly into a company vault for ${request.requester.origin}`
+        : `Pay into a company vault for ${request.requester.origin}`}
+    </h1>
+  );
 
   const where = (
     <Section
       title="Where the money goes"
-      description="What the page says. This wallet checked that the transaction calls this vault and nothing else, and that the one coin it creates belongs to this vault."
+      description={publicly
+        ? 'What the page says. This wallet checked that the transaction calls this vault\'s public deposit and nothing else, and that it puts exactly the amount shown above into this vault.'
+        : 'What the page says. This wallet checked that the transaction calls this vault and nothing else, and that the one coin it creates belongs to this vault.'}
     >
       <p className="m-0 text-sm text-muted">The company, as the page names it</p>
       <p className="m-0 font-mono tracking-wide text-ink text-xl" data-company-fingerprint>
@@ -155,6 +167,22 @@ export function ApproveBalance({
       ))}
     </div>
   );
+
+  if (stage.of === 'sent' && stage.pays === 'public') {
+    return (
+      <>
+        <h1 data-paid-heading>{`You paid publicly for a deposit for ${request.requester.origin}`}</h1>
+        <p className="lede" data-paid>
+          {`On ${new Date(stage.at).toLocaleString()} this wallet added the public money below to the deposit and handed it back. `}
+          The company&rsquo;s service sends it. Until the chain has it, nothing has moved, and your public balance still
+          shows this money. Do not spend it elsewhere first, or this deposit will fail.
+        </p>
+        {leavingList(stage.leaves)}
+        <p className="m-0 font-mono break-all text-sm text-muted">{request.vault}</p>
+        <p style={{ marginTop: '1.5rem' }}><a href={hrefOf('home')}>&larr; Your wallet</a></p>
+      </>
+    );
+  }
 
   if (stage.of === 'sent') {
     return (
@@ -192,13 +220,31 @@ export function ApproveBalance({
           </p>
         </Section>
       )}
+      {publicly && (
+        <Alert tone="warning" role={null} title="This deposit is public">
+          <p className="m-0" data-public-deposit>
+            The token and the amount above leave your public balance, and anyone reading the chain can see them, your
+            wallet&rsquo;s public address, and the vault they went into.
+          </p>
+          {stage.leaves.some((l) => l.token === NIGHT_TOKEN) && (
+            <p className="m-0" data-night-stops-dust>
+              NIGHT that goes into the vault no longer generates DUST for this wallet.
+            </p>
+          )}
+        </Alert>
+      )}
       {where}
       {whoIsAsking}
       {whichWallet}
-      {stage.of === 'paying' && (
+      {stage.of === 'paying' && !publicly && (
         <p className="lede" data-paying>
           Adding your coins and proving them in this browser. This can take a few minutes, and nothing is sent to the
           network from here.
+        </p>
+      )}
+      {stage.of === 'paying' && publicly && (
+        <p className="lede" data-paying>
+          Adding your public coins and signing in this browser. Nothing is sent to the network from here.
         </p>
       )}
       {stage.of === 'failed' && (
@@ -217,7 +263,7 @@ export function ApproveBalance({
           variant="primary" onClick={pay} data-approve data-pay
           disabled={!consent.ok || stage.of !== 'ready' || channel === null}
         >
-          Pay into the vault
+          {publicly ? 'Pay publicly into the vault' : 'Pay into the vault'}
         </Button>
         <Button variant="ghost" data-decline onClick={onDecline} disabled={stage.of === 'paying'}>
           Do not pay
