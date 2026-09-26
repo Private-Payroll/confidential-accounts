@@ -18,6 +18,7 @@ import { depositFromSource, depositKindFor, sourceFor, type DepositKind } from '
 import { openAccount } from '../core/account.js';
 import { rosterVaultKeys } from '../core/vault-keys.js';
 import { whyNotTheCommittee } from './handover-check.js';
+import { readPublicHoldings, sayPublicHoldings } from './device-vault-holdings.js';
 
 /**
  * **A COMPANY'S VAULTS, CREATED AND FUNDED FROM THIS SCREEN.**
@@ -73,6 +74,9 @@ export function VaultPanel({ account, me, viewingKey }: {
   const { goesIn, whyNot } = depositKindFor(asset, kind);
   const [amount, setAmount] = useState('');
   const builderRef = useRef<Promise<VaultBuilderClient> | null>(null);
+  /* What each vault holds publicly, as last read on this screen, and which vault is being read now. */
+  const [publicHeld, setPublicHeld] = useState<Record<string, string[]>>({});
+  const [readingPublic, setReadingPublic] = useState<Hex | null>(null);
   /* The roster, opened here afresh each time a key the service reports is checked against it. */
   const roster = async () => openAccount(await keyring.api(`/api/accounts/${account.id}`), viewingKey);
   const service = vaultServiceFor(keyring.api, account.id, roster);
@@ -129,7 +133,25 @@ export function VaultPanel({ account, me, viewingKey }: {
       setErr(e instanceof VaultHandoverOwed ? e.message : `${what} did not finish: ${String(e?.message ?? e)}`);
     } finally {
       setBusy(false); setStage(null);
+      /* A figure read before money moved is not shown after it. */
+      setPublicHeld({});
       await refresh().catch(() => {});
+    }
+  };
+
+  /*
+   * **WHAT THE VAULT HOLDS PUBLICLY, READ WHEN ASKED.** The company's service
+   * reads it off the vault's state on the chain; nothing is shown until it has
+   * answered, and an answer it could not give is shown as that, never as none.
+   */
+  const readPublic = (vault: Hex) => async () => {
+    setReadingPublic(vault);
+    try {
+      const lines = sayPublicHoldings(await readPublicHoldings(() => service.chain(vault)));
+      const at = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      setPublicHeld((held) => ({ ...held, [vault]: [...lines, `Read at ${at}. Press again after money moves.`] }));
+    } finally {
+      setReadingPublic(null);
     }
   };
 
@@ -231,6 +253,14 @@ export function VaultPanel({ account, me, viewingKey }: {
                   <label>Vault created {new Date(row.deployedAt).toLocaleString()}</label>
                   <div data-vault-state>{STATE_WORDS[row.state] ?? row.state}</div>
                   {row.why && row.state !== 'held-by-committee' && <div className="hint">{row.why}</div>}
+                  {row.state !== 'not-on-chain-yet' && row.state !== 'unknown' && (
+                    <div className="field" data-public-balance>
+                      <button className="btn" disabled={readingPublic !== null} onClick={readPublic(row.vault)} data-read-public-balance>
+                        {readingPublic === row.vault ? 'Reading…' : 'Show money held publicly'}
+                      </button>
+                      {(publicHeld[row.vault] ?? []).map((line, i) => <div key={i} className="hint" data-public-balance-line>{line}</div>)}
+                    </div>
+                  )}
                   {row.state === 'handover-owed' && (
                     <button className="btn pri" disabled={busy} onClick={finish(row.vault)} data-finish-handover>
                       Finish handing it to the committee

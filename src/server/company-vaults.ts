@@ -47,6 +47,7 @@ import type { Ledger, VaultTxArrival } from '../core/ledger.js';
 import { saysNothingWasSent } from '../core/jobs.js';
 import { authorityFromContractState, readContractAuthority, type AuthorityRead } from '../midnight/ledger.js';
 import { committeeOf, sameCommittee, whyNoCommittee, type Committee } from '../midnight/vault-committee.js';
+import { publicHoldingsOf, PublicBalanceUnreadable } from '../midnight/public-balance.js';
 import { authorityView, everySignerNeeded, type ContractAuthorityView, type SeatSignature } from '../midnight/company-authority.js';
 import { contractsOwingAChange } from '../midnight/committee-change.js';
 import type { CollectedCommitteeSignatures } from '../core/store.js';
@@ -608,10 +609,29 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
       res.status(503).json({ error: `the vault's history could not be read in full: ${(e as Error)?.message ?? e}` });
       return;
     }
+    /*
+     * **WHAT THE VAULT HOLDS IN PUBLIC MONEY, OFF THE SAME STATE**, which the
+     * indexer serves as its latest action left it, so a public deposit shows as soon
+     * as its state does. Read here because the page does not carry the
+     * ledger. Every token is listed with its amount as a decimal string; a
+     * balance this service cannot read is said in words and never sent as an
+     * empty list, because an empty list means the vault holds none.
+     */
+    let publicBalances: Array<{ token: string; amount: string }> | undefined;
+    let publicBalancesWhy: string | undefined;
+    try {
+      publicBalances = publicHoldingsOf(state).map((h) => ({ token: h.token, amount: h.amount.toString() }));
+    } catch (e) {
+      /* Only the reader's own refusal is passed on in its words; anything else is said plainly. */
+      publicBalancesWhy = e instanceof PublicBalanceUnreadable
+        ? e.message
+        : 'this service could not read what the vault holds in public money';
+    }
     res.json({
       vault: record.vault,
       onChain: true,
       state: toBase64(deps.chain.serialize(state)),
+      ...(publicBalances === undefined ? { publicBalancesWhy } : { publicBalances }),
       notes: deps.chain.notesOf(state),
       notesFromThisBuild,
       ...(notesWhy === undefined ? {} : { notesWhy }),

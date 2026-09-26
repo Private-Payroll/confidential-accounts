@@ -789,9 +789,10 @@ export function chainLedger(
  *
  * ── WHAT IT CAN ANSWER AND WHAT IT CANNOT ────────────────────────────────
  *
- * **PUBLIC MONEY: YES.** `unshieldedBalance` asks the indexer's own door for
- * the balances a contract holds and needs nothing else. `affordable` walks the
- * public payees through that same read.
+ * **PUBLIC MONEY: YES.** `unshieldedBalance` reads the balance inside the
+ * vault's contract state, as the indexer serves it after the vault's latest
+ * action, and needs nothing else. `affordable` walks the public payees through
+ * that same read.
  *
  * **PRIVATE MONEY: NO, AND IT REFUSES RATHER THAN ANSWERING.** A private
  * balance is a reconciliation between a local note pool and the chain, and a

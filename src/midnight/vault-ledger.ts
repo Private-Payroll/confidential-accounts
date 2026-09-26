@@ -48,6 +48,7 @@ import { assertVaultLedgerIsThisBuilds } from './vault-ledger-shape.js';
 import { commitmentForNote } from './vault-recovery.js';
 import { poolAgainstChain } from './pool-against-chain.js';
 import { isALostPoolRace } from './vault-pool.js';
+import { bareColour, heldOf, publicHoldingsOf, PublicBalanceUnreadable, type PublicHolding } from './public-balance.js';
 import {
   noVaultOutputHistory, claimNewDepositCoin,
   type DepositMoney, type VaultOutputHistory,
@@ -1928,17 +1929,22 @@ export class VaultLedger {
    * ----------------------------------------------------------------------
    * **ZERO IS AN ANSWER AND ABSENCE IS NOT.**
    *
-   * The indexer's `queryUnshieldedBalances` is asked, which is its own door for
-   * exactly this question and returns `{ tokenType, balance }` rows rather than
-   * a `Map` keyed by `TokenType` OBJECTS — the shape `ContractState.balance`
-   * has, whose keys cannot be looked up by value at all.
+   * The balance is read off the vault's contract state as the indexer serves
+   * it for the vault's latest action, which carries `ContractState.balance` as the
+   * vault's latest action left it. The walk over it is `publicHoldingsOf`,
+   * the one reader every caller of a public balance goes through.
    *
-   *   · a list arrives and this colour is not in it  → **`0n`**. The chain
-   *     published what this contract holds and this colour is not among it.
-   *     That is a true statement about the vault.
-   *   · `null`, a throw, a provider that cannot answer, or a reply that is not
-   *     a list → **`VaultChainUnreadable`**, saying THAT. `C110` is why: a
-   *     state the node had finalised read as absent to the indexer 168ms
+   * The indexer's own `queryUnshieldedBalances` is NOT asked. For a contract
+   * whose latest action is a call, its client selects the balances of the
+   * contract's deploy, so for a vault deployed empty and funded afterwards it
+   * answers the vault as it was the day it was made.
+   *
+   *   · a state arrives and its balance names no amount of this colour
+   *     → **`0n`**. The chain holds this contract's balance and this colour is
+   *     not among it. That is a true statement about the vault.
+   *   · no state, a throw, a provider that cannot answer, or a balance this
+   *     client cannot read → **`VaultChainUnreadable`**, saying THAT. A state
+   *     the node has finalised can read as absent to the indexer a moment
    *     later, and a vault that reads as empty because we asked too early is a
    *     vault whose whole float would be reported as nothing.
    *
@@ -1960,66 +1966,53 @@ export class VaultLedger {
    * deliberately has none on the public path: see `payPublicly`.
    */
   async unshieldedBalance(vaultAddress: string, token: Hex): Promise<bigint> {
+    return heldOf(await this.unshieldedHoldings(vaultAddress), token);
+  }
+
+  /**
+   * **EVERY PUBLIC TOKEN THE VAULT HOLDS NOW, AND HOW MUCH OF EACH**, read off
+   * its contract state as of its latest action. The same answers as
+   * `unshieldedBalance`, for a caller that wants the whole list: a token the
+   * list does not name is held at zero, and a state that cannot be read is
+   * `VaultChainUnreadable`, never an empty list.
+   */
+  async unshieldedHoldings(vaultAddress: string): Promise<PublicHolding[]> {
     const providers = await this.providers();
-    const ask = providers?.publicDataProvider?.queryUnshieldedBalances;
+    const ask = providers?.publicDataProvider?.queryContractState;
     if (typeof ask !== 'function') {
-      /*
-       * NOT ZERO, AND NOT A FALLBACK TO `queryContractState().balance`. That
-       * map is keyed by TokenType OBJECTS, so a value lookup on it silently
-       * finds nothing and would answer "this vault holds none" for a vault
-       * holding a float. A provider that cannot answer is us not knowing.
-       */
       throw new VaultChainUnreadable(
         vaultAddress,
-        'this provider bundle has no queryUnshieldedBalances, so nothing here can say what '
-        + 'the chain published for this contract',
+        'this provider bundle cannot read a contract\'s state, so nothing here can say what the chain holds '
+        + 'for this contract',
         'public-balance');
     }
 
-    let rows: unknown;
+    let state: unknown;
     try {
-      rows = await ask.call(providers.publicDataProvider, vaultAddress);
+      /* No block named: the indexer answers the state its latest action left. */
+      state = await ask.call(providers.publicDataProvider, vaultAddress);
     } catch (cause) {
       throw new VaultChainUnreadable(
         vaultAddress, `the read itself failed: ${(cause as Error)?.message ?? String(cause)}`,
         'public-balance');
     }
 
-    if (rows == null) {
+    if (state == null) {
       throw new VaultChainUnreadable(
         vaultAddress,
-        'the indexer has no contract action for this address, so it has not published a '
-        + 'balance for it yet. That is not a vault holding nothing',
-        'public-balance');
-    }
-    if (!Array.isArray(rows)) {
-      throw new VaultChainUnreadable(
-        vaultAddress,
-        `the indexer answered with ${typeof rows} rather than a list of balances. A shape this `
-        + 'client cannot read is our ignorance, not an empty treasury',
+        'the indexer has no state for this address, so it has not said what the contract holds yet. That is '
+        + 'does not mean the vault is empty',
         'public-balance');
     }
 
-    /*
-     * `RawTokenType` is the colour as hex — the same 32 bytes this client holds
-     * as `token`, which is what `vault-unshielded.test.ts` reads off the
-     * declared effects (`{ tag: 'unshielded', raw: <hex> }`). Compared
-     * case-insensitively and with a `0x` tolerated, because a comparison that
-     * silently fails on spelling answers ZERO for a vault that is funded.
-     */
-    const want = normalColour(token);
-    let held = 0n;
-    for (const row of rows as Array<{ tokenType?: unknown; balance?: unknown }>) {
-      if (typeof row?.tokenType !== 'string' || typeof row?.balance !== 'bigint') {
-        throw new VaultChainUnreadable(
-          vaultAddress,
-          'one of the indexer\'s balance rows is not { tokenType: string, balance: bigint }. '
-          + 'Skipping it would understate a treasury, so nothing is returned',
-          'public-balance');
+    try {
+      return publicHoldingsOf(state);
+    } catch (cause) {
+      if (cause instanceof PublicBalanceUnreadable) {
+        throw new VaultChainUnreadable(vaultAddress, cause.message, 'public-balance');
       }
-      if (normalColour(row.tokenType) === want) held += row.balance;
+      throw cause;
     }
-    return held;
   }
 
   /**
@@ -2182,19 +2175,21 @@ export class VaultLedger {
  * What a set of public payments owes, per colour.
  *
  * Summed per colour rather than over the run, because a vault holds a separate
- * ledger balance for each and covering one says nothing about another.
+ * ledger balance for each and covering one says nothing about another. **The
+ * colour is spelled the way the balance is read**, lower case with no prefix:
+ * two payments of one token written two ways are one debt against one
+ * balance, and checked apart each would pass against the whole of it.
  */
 const owedPerColour = (
   payments: ReadonlyArray<{ token: Hex; amount: bigint }>,
 ): Map<Hex, bigint> => {
   const owed = new Map<Hex, bigint>();
-  for (const p of payments) owed.set(p.token, (owed.get(p.token) ?? 0n) + p.amount);
+  for (const p of payments) {
+    const colour = bareColour(p.token) as Hex;
+    owed.set(colour, (owed.get(colour) ?? 0n) + p.amount);
+  }
   return owed;
 };
-
-/** A colour as the chain spells it, so a comparison cannot fail on case or a prefix. */
-const normalColour = (t: string): string =>
-  (t.startsWith('0x') || t.startsWith('0X') ? t.slice(2) : t).toLowerCase();
 
 export const toNote = (
   nonce: Hex, token: Hex, value: bigint, index: bigint,

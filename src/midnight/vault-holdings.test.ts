@@ -66,7 +66,7 @@ function vaultClient(opts: {
   pool?: Note[];
   chainNotes?: Note[] | 'unreadable';
 }) {
-  const asked = { publicBalances: 0, contractState: 0 };
+  const asked = { states: 0, publicBalances: 0, notes: 0 };
   const pool: NotePool = {
     load: async () => ({ notes: opts.pool ?? [], readAt: { vault: 'unused', version: 1 } }),
     save: async () => { throw new Error('a read must not write the pool'); },
@@ -74,23 +74,28 @@ function vaultClient(opts: {
   };
   const providers = async () => ({
     publicDataProvider: {
-      queryUnshieldedBalances: async () => {
-        asked.publicBalances++;
-        if (opts.publicRows === 'unreadable') return null;
-        return (opts.publicRows ?? []).map(([tokenType, balance]) => ({ tokenType, balance }));
-      },
+      /*
+       * ONE STATE ANSWERS BOTH READS, as the chain's does: its balance is the
+       * vault's public money and its ledger holds the notes. A public read
+       * that cannot be answered is a state whose balance cannot be read.
+       */
       queryContractState: async () => {
-        asked.contractState++;
+        asked.states++;
         if (opts.chainNotes === 'unreadable') return null;
         const held = (opts.chainNotes ?? []).map(n => commitmentForNote(vaultCircuits as never, VAULT, n));
-        return {
-          data: {
-            ...shapedLike(CANONICAL_SLOTS),
-            notes: {
-              member: (c: Uint8Array) => held.includes(Buffer.from(c).toString('hex')),
-              size: () => BigInt(held.length),
-            },
+        const data = {
+          ...shapedLike(CANONICAL_SLOTS),
+          notes: {
+            member: (c: Uint8Array) => held.includes(Buffer.from(c).toString('hex')),
+            size: () => BigInt(held.length),
           },
+        };
+        const balance = new Map((opts.publicRows === 'unreadable' ? [] : opts.publicRows ?? [])
+          .map(([raw, v]) => [{ tag: 'unshielded', raw }, v]));
+        /* Each half counts its own reads, so a form routed to the other half is seen. */
+        return {
+          get balance() { asked.publicBalances++; return opts.publicRows === 'unreadable' ? undefined : balance; },
+          get data() { asked.notes++; return data; },
         };
       },
     },
@@ -101,11 +106,11 @@ function vaultClient(opts: {
 }
 
 describe('§1 each form is asked with its own read, and each refusal keeps its kind', () => {
-  it('a public balance is the indexer\'s figure for the contract in that token', async () => {
+  it('a public balance is the figure inside the contract\'s state, in that token', async () => {
     const { ledger, asked } = vaultClient({ publicRows: [[NIGHT, 12n], [COLOUR, 99n]] });
     /* RED WHEN the public form is routed to the note pool, or the token is ignored. */
     expect(await chainVaultHoldings(ledger).held(VAULT, 'unshielded', NIGHT)).toEqual({ of: 'held', amount: 12n });
-    expect(asked).toEqual({ publicBalances: 1, contractState: 0 });
+    expect(asked).toEqual({ states: 1, publicBalances: 1, notes: 0 });
   });
 
   it('a private balance is the notes the chain\'s commitment set holds, and only then', async () => {
@@ -113,7 +118,10 @@ describe('§1 each form is asked with its own read, and each refusal keeps its k
     const { ledger, asked } = vaultClient({ pool: notes, chainNotes: notes });
     /* RED WHEN the private form is routed to the public read. */
     expect(await chainVaultHoldings(ledger).held(VAULT, 'shielded', COLOUR)).toEqual({ of: 'held', amount: 100n });
-    expect(asked).toEqual({ publicBalances: 0, contractState: 1 });
+    /* One state read, its notes read and its balance never touched. */
+    expect(asked.states).toBe(1);
+    expect(asked.publicBalances).toBe(0);
+    expect(asked.notes).toBeGreaterThan(0);
   });
 
   it('a pool the chain contradicts is CONTRADICTED, not summed and not unreadable', async () => {

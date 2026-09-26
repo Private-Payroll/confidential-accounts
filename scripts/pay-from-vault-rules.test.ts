@@ -215,7 +215,7 @@ describe('§6 the vault is asked whether it holds the money, before any fee, thr
   };
   const vaultHolding = (rows: Array<[string, bigint]>) => new VaultLedger(
     { networkId: 'stagenet' } as never, {} as never,
-    (async () => ({ publicDataProvider: { queryUnshieldedBalances: async () => rows.map(([tokenType, balance]) => ({ tokenType, balance })) } })) as never,
+    (async () => ({ publicDataProvider: { queryContractState: async () => ({ balance: new Map(rows.map(([raw, balance]) => [{ tag: 'unshielded', raw }, balance])) }) } })) as never,
     {}, refusingPool, VAULT_ARTEFACTS);
 
   it('asks for one payment of the payment\'s own token and amount, as the account service asks', () => {

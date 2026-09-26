@@ -715,12 +715,12 @@ async function main(): Promise<MovementVerdict | 'not-read'> {
    * **THE BALANCE BEFORE, SO THE BALANCE AFTER CAN BE CHECKED AGAINST SOMETHING
    * RATHER THAN READ AS AGREEMENT.** `C268`'s shape on the public path.
    *
-   * `unshieldedBalance` answers `0n` when the chain publishes rows for this
-   * contract and none of them carries this colour, and that is correct: it is a
-   * true statement about the vault. **What has never been observed is
-   * how the indexer SPELLS the native token type.** It arrives as
-   * `HexEncoded`, the client compares it case-insensitively against
-   * `nativeToken().raw`, and both sides of that comparison in
+   * `unshieldedBalance` answers `0n` when the contract's balance is read and
+   * names no amount of this colour, and that is correct: it is a true
+   * statement about the vault. **What has never been observed is how a live
+   * state SPELLS the native token type.** It arrives as the hex of the colour,
+   * the client compares it case-insensitively against `nativeToken().raw`,
+   * and both sides of that comparison in
    * `vault-ledger.test.ts` come from the test's own constant — so a difference
    * in spelling cannot be caught there by construction.
    *
@@ -833,8 +833,8 @@ async function main(): Promise<MovementVerdict | 'not-read'> {
       ? `    ${held.toLocaleString()} of NIGHT, in the smallest unit`
       : `    The chain answered ${held.toLocaleString()}. That is a reading, and this run`
         + ' claims nothing from it.');
-    say('    WHERE THAT NUMBER CAME FROM: the indexer\'s own queryUnshieldedBalances for this');
-    say(`    contract, summed over the rows whose token type is ${colour},`);
+    say('    WHERE THAT NUMBER CAME FROM: the balance inside this contract\'s state as the');
+    say(`    indexer serves it after its latest action, for the token type ${colour},`);
     say(`    asked through ${cfg.indexer}`);
     say('    at ' + new Date().toISOString() + '.');
     say('    It is the LEDGER\'s number and not a record this machine keeps. A company that');

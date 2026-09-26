@@ -212,19 +212,20 @@ function harness(opts: {
   /**
    * **WHAT THE CHAIN SAYS THIS VAULT HOLDS IN PUBLIC MONEY.**
    *
-   * The indexer's own door, `queryUnshieldedBalances`, which returns
-   * `{ tokenType, balance }` rows rather than the `Map` keyed by TokenType
-   * OBJECTS that `ContractState.balance` is.
+   * The balance inside the vault's contract state, `ContractState.balance`: a
+   * `Map` keyed by `{ tag, raw }` token types, served with the same state the
+   * notes are read from.
    *
    *   omitted        the vault holds 1,000 of NIGHT
-   *   'no-provider'  a bundle whose provider cannot answer the question at all
-   *   'unreadable'   the indexer has no contract action for this address (null)
+   *   'no-provider'  a bundle whose provider cannot read a contract's state
+   *   'unreadable'   the indexer has no state for this address (null)
    *   'read-throws'  the read itself fails
-   *   'not-a-list'   an answer of a shape this client cannot read
-   *   'bad-row'      a list containing a row that is not { tokenType, balance }
+   *   'no-balance'   a state that carries no balance map at all
+   *   'not-a-map'    a balance of a shape this client cannot read
+   *   'bad-row'      a map holding an entry that is not a public token and an amount
    *   rows           exactly these colours and amounts
    */
-  publicBalances?: 'no-provider' | 'unreadable' | 'read-throws' | 'not-a-list' | 'bad-row'
+  publicBalances?: 'no-provider' | 'unreadable' | 'read-throws' | 'no-balance' | 'not-a-map' | 'bad-row'
     | Array<[string, bigint]>;
   /**
    * What the chain's events say about the notes.
@@ -672,63 +673,63 @@ function harness(opts: {
   };
 
   /*
-   * **THE INDEXER'S OWN DOOR FOR A CONTRACT'S PUBLIC BALANCES.**
+   * **THE VAULT'S PUBLIC BALANCE, AS ITS CONTRACT STATE CARRIES IT.**
    *
-   * `queryUnshieldedBalances` returns `UnshieldedBalance[]` —
-   * `{ tokenType: RawTokenType, balance: bigint }` — and `null` when the
-   * indexer has no contract action for the address. Mirrored rather than
-   * simplified: the shape is what the client reads, and `null` is the
-   * answer the client must NOT turn into zero.
+   * `ContractState.balance` is a `Map` whose keys are token-type OBJECTS,
+   * `{ tag: 'unshielded', raw }`, and the fee token `{ tag: 'dust' }` sits in
+   * it too. Mirrored rather than simplified: the shape is what the client
+   * reads, and a missing map is the answer the client must NOT turn into zero.
    */
-  const publicBalanceProvider = () => {
-    if (opts.publicBalances === 'no-provider') return {};
-    return {
-      queryUnshieldedBalances: async () => {
-        if (opts.publicBalances === 'read-throws') throw new Error('indexer said no');
-        if (opts.publicBalances === 'unreadable') return null;
-        if (opts.publicBalances === 'not-a-list') return { tokenType: NIGHT, balance: 5n };
-        if (opts.publicBalances === 'bad-row') {
-          return [{ tokenType: NIGHT, balance: 5n }, { tokenType: NIGHT, balance: '7' }];
-        }
-        const rows: Array<[string, bigint]> = Array.isArray(opts.publicBalances)
-          ? opts.publicBalances
-          : [[NIGHT, 1_000n]];
-        return rows.map(([tokenType, balance]) => ({ tokenType, balance }));
-      },
-    };
+  const unshielded = (raw: string) => ({ tag: 'unshielded', raw });
+  const balanceOf = (): unknown => {
+    if (opts.publicBalances === 'not-a-map') return [{ tokenType: NIGHT, balance: 5n }];
+    if (opts.publicBalances === 'bad-row') {
+      return new Map<unknown, unknown>([[unshielded(NIGHT), 5n], [unshielded(NIGHT), '7']]);
+    }
+    const rows: Array<[string, bigint]> = Array.isArray(opts.publicBalances)
+      ? opts.publicBalances
+      : [[NIGHT, 1_000n]];
+    return new Map<unknown, unknown>([[{ tag: 'dust' }, 3n], ...rows.map(([raw, v]) => [unshielded(raw), v] as const)]);
   };
 
   const providers = async () => ({
-    publicDataProvider: {
-      ...publicBalanceProvider(),
+    publicDataProvider: opts.publicBalances === 'no-provider' ? {} : {
       queryContractState: async () => {
-        if (opts.chain === 'read-throws') throw new Error('indexer said no');
-        if (opts.chain === 'unreadable') return null;
-        if (opts.chain === 'no-notes-field') {
-          /*
-           * A STATE OF THE RIGHT SHAPE WHOSE DECODED FORM HAS NO NOTES SET.
-           * The shape is what it should be, so this stays a test of the reader
-           * refusing rather than of the shape gate refusing first - the two are
-           * different failures and want different answers.
-           */
-          return { data: { ...shapedLike(CANONICAL_SLOTS), account: { bytes: new Uint8Array(32) } } };
-        }
-        const held = chainNotesOf().map(toHex);
-        return {
-          data: {
-            /* What the shape reader asks the state, before any field is read off it. */
-            ...shapedLike(opts.ledgerSlots ?? CANONICAL_SLOTS),
-            account: { bytes: Uint8Array.from(Buffer.from(VAULT, 'hex')) },
-            notes: {
-              member: (c: Uint8Array) => held.includes(toHex(c)),
-              size: () => BigInt(held.length),
-            },
-            payments: 0n,
-          },
-        };
+        if (opts.publicBalances === 'read-throws') throw new Error('indexer said no');
+        if (opts.publicBalances === 'unreadable') return null;
+        const state = await chainState();
+        if (state === null || opts.publicBalances === 'no-balance') return state;
+        return { ...state, balance: balanceOf() };
       },
     },
   });
+
+  const chainState = async (): Promise<Record<string, unknown> | null> => {
+    if (opts.chain === 'read-throws') throw new Error('indexer said no');
+    if (opts.chain === 'unreadable') return null;
+    if (opts.chain === 'no-notes-field') {
+      /*
+       * A STATE OF THE RIGHT SHAPE WHOSE DECODED FORM HAS NO NOTES SET.
+       * The shape is what it should be, so this stays a test of the reader
+       * refusing rather than of the shape gate refusing first - the two are
+       * different failures and want different answers.
+       */
+      return { data: { ...shapedLike(CANONICAL_SLOTS), account: { bytes: new Uint8Array(32) } } };
+    }
+    const held = chainNotesOf().map(toHex);
+    return {
+      data: {
+        /* What the shape reader asks the state, before any field is read off it. */
+        ...shapedLike(opts.ledgerSlots ?? CANONICAL_SLOTS),
+        account: { bytes: Uint8Array.from(Buffer.from(VAULT, 'hex')) },
+        notes: {
+          member: (c: Uint8Array) => held.includes(toHex(c)),
+          size: () => BigInt(held.length),
+        },
+        payments: 0n,
+      },
+    };
+  };
 
   /*
    * The journal is a list this harness holds, and each entry also notes how
@@ -2356,11 +2357,12 @@ describe('S6k: the public balance is the chain\'s number, or no number', () => {
    * opposite consequences, and only one of them is a reason to stop.
    */
   it.each([
-    ['the indexer has no contract action for this address', 'unreadable' as const],
+    ['the indexer has no state for this address', 'unreadable' as const],
     ['the read itself failed', 'read-throws' as const],
-    ['a shape this client cannot read', 'not-a-list' as const],
+    ['a state that carries no balance', 'no-balance' as const],
+    ['a balance of a shape this client cannot read', 'not-a-map' as const],
     ['a provider that cannot answer at all', 'no-provider' as const],
-    ['a row that is not a balance', 'bad-row' as const],
+    ['an entry that is not a public token and an amount', 'bad-row' as const],
   ])('REFUSES rather than answering zero: %s', async (_why, publicBalances) => {
     const { ledger } = harness({ publicBalances });
     await expect(ledger.unshieldedBalance(VAULT, NIGHT))

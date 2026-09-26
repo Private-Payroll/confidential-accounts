@@ -52,6 +52,8 @@ let asked: string[];
 let ledgerIsThisBuilds: CompanyVaultDeps['chain']['ledgerIsThisBuilds'];
 let assembleDep: CompanyVaultDeps['committeeChange'];
 let historyOf: CompanyVaultDeps['chain']['historyOf'];
+/* The vault's public balance as its state carries it; absent unless a test sets it. */
+let vaultBalance: unknown;
 /*
  * **THE ROSTER, STOOD IN.** What each member's own roster entry carries, and the
  * index the service would make from it - sorted, with no names. The real roster
@@ -131,6 +133,7 @@ beforeEach(async () => {
   ledgerIsThisBuilds = async () => {};
   assembleDep = undefined;
   historyOf = undefined;
+  vaultBalance = undefined;
   sendVault = async (_a, what) => { sent.push(what); return { ref: 'r', at: 'now', transactionHash: 'h' }; };
   const app = express();
   app.use(companyVaultRoutes({
@@ -162,6 +165,7 @@ beforeEach(async () => {
         return {
           maintenanceAuthority: authority, serialize: () => new Uint8Array([7]),
           operations: () => CIRCUITS, operation: (c: string) => ({ verifierKey: circuitKeys(c) }),
+          ...(vaultBalance === undefined ? {} : { balance: vaultBalance }),
         };
       },
       serialize: (s) => (s as { serialize(): Uint8Array }).serialize(),
@@ -859,6 +863,51 @@ describe('THE VAULT\'S NOTES ARE VOUCHED FOR ONLY WHEN READ OFF A LEDGER OF THIS
     /* RED WHEN: a reader that cannot check is read as one that checked. */
     expect(v.body.notesFromThisBuild).toBe(false);
     expect(v.body.notesWhy).toMatch(/not set up to check how a vault is laid out.*Whoever runs the service turns that check on$/su);
+  });
+});
+
+describe('THE VAULT\'S VIEW SAYS WHAT IT HOLDS IN PUBLIC MONEY', () => {
+  const NIGHT = 'ab'.repeat(32);
+  const OTHER = 'cd'.repeat(32);
+  const view = async () => {
+    store.putCompanyVault({ accountId: 'acc_1', vault: VAULT, deployedAt: '', deployRef: 'r', intended: { committee: [key(1), key(2)], threshold: 2 } });
+    return call(`/api/accounts/acc_1/vaults/${VAULT}/chain`, 'ada');
+  };
+
+  it('lists every public token the vault\'s state holds, with its amount as a whole number', async () => {
+    vaultBalance = new Map<unknown, bigint>([
+      [{ tag: 'unshielded', raw: OTHER }, 5n], [{ tag: 'dust' }, 9n], [{ tag: 'unshielded', raw: NIGHT }, 12_000_000n],
+    ]);
+    const v = await view();
+    /* RED WHEN the view leaves the balance out, lists the fee token, or sends an amount a page reads as a float. */
+    expect(v.status).toBe(200);
+    expect(v.body.publicBalances).toEqual([{ token: NIGHT, amount: '12000000' }, { token: OTHER, amount: '5' }]);
+    expect(v.body.publicBalancesWhy).toBeUndefined();
+  });
+
+  it('sends an EMPTY list for a vault whose balance holds no public token', async () => {
+    vaultBalance = new Map();
+    /* RED WHEN an empty balance is sent as unreadable. */
+    expect((await view()).body.publicBalances).toEqual([]);
+  });
+
+  it('says why, and sends no list, when the state carries no balance it can read, and keeps the rest of the view', async () => {
+    const v = await view();
+    /* RED WHEN an unreadable balance is sent as an empty list: a page would then show a funded vault as holding nothing. */
+    expect(v.body.publicBalances).toBeUndefined();
+    expect(v.body.publicBalancesWhy).toMatch(/carries no balance this client can read.*does not mean it is empty/su);
+    /* RED WHEN one unreadable part refuses the whole view, which a handover and a deposit read too. */
+    expect(v.body).toMatchObject({ onChain: true, notes: [hex(0x5a)] });
+  });
+
+  it('says only that it could not read it when the read fails some other way, and passes on no raw error', async () => {
+    vaultBalance = new (class extends Map<unknown, bigint> {
+      override [Symbol.iterator](): MapIterator<[unknown, bigint]> { throw new Error('iterator exploded at 0x1f'); }
+    })();
+    const v = await view();
+    /* RED WHEN any exception's own message is sent to the page as the reason. */
+    expect(v.body.publicBalances).toBeUndefined();
+    expect(v.body.publicBalancesWhy).toBe('this service could not read what the vault holds in public money');
   });
 });
 
