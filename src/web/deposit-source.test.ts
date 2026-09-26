@@ -14,6 +14,8 @@ import {
   openCompanyVaultPool, type DepositInFlight, type DepositsInFlight, type VaultChainView, type VaultService,
 } from './vault-operation.js';
 import type { VaultBuilderClient } from './vault-worker-client.js';
+import { inFlightInMemory, sealedOnThisDevice, type SealedInFlight } from './in-flight-on-this-device.js';
+import { creatingTransactionOfNote } from './vault-worker-entry.js';
 import {
   depositFromSource, privateTokenFromTheWallet, type DepositAsk, type DepositSource, type PaidIn,
 } from './deposit-source.js';
@@ -49,29 +51,32 @@ const setUp = async () => {
     payoutState: async (v) => ({ vault: v, account: ACCOUNT, blockHash: 'B1', vaultState: 'V', zswapState: 'Z', parameters: PARAMS, accountState: 'A' }),
     deposit: async (_v, tx) => { log.push(`sent ${tx}`); notes.push(held(lastBuilt!)); return { txRef: 'r1', transactionHash: null }; },
     events: async () => { throw new Error('no events'); },
+    /* The vault's history holds the deposit's output in one transaction, which made it. */
+    createdBy: async (v, commitment) => ({
+      transactionHash: 'e8'.repeat(32),
+      events: [{ transactionHash: 'e8'.repeat(32), details: { tag: 'zswapOutput', commitment, contract: v, mtIndex: '0' } }],
+    }),
     payout: async () => { throw new Error('no payout'); },
     payoutPublicly: async () => { throw new Error('no payout'); },
   };
   const refuse = async () => { throw new Error('a deposit never asks this'); };
   const builder: VaultBuilderClient = {
     deploy: refuse, handover: refuse, chooseNote: refuse, paymentsFit: refuse, afterPayment: refuse,
-    confirmPayment: refuse, creatingTransaction: refuse, payout: refuse, payoutPublicly: refuse, governedCall: refuse,
+    confirmPayment: refuse, creatingTransaction: async (i) => creatingTransactionOfNote(i), payout: refuse, payoutPublicly: refuse, governedCall: refuse,
     commitments: async (i) => ({ output: `out:${i.coin.nonce}`, held: held(i.coin) }),
     deposit: async (i) => { lastBuilt = i.coin; log.push(`built ${i.coin.token.slice(0, 2)} ${i.coin.value}`); return { tx: 'PROVEN' }; },
   } as VaultBuilderClient;
   const kept = new Map<WireRecord, MemorySealedPoolStore>();
   const records = (r: WireRecord) => kept.get(r) ?? kept.set(r, new MemorySealedPoolStore()).get(r)!;
   const wrapping = newWrappingKeypair();
-  const inFlight = new Map<string, DepositInFlight>();
+  const inFlight = new Map<string, SealedInFlight>();
   const doors = {
     sleep: async () => {}, waitMs: 3, everyMs: 1, service, records,
     me: { signerId: 'ada', wrappingSecret: wrapping.secret, companyKey: new Uint8Array(32).fill(9) },
     myRecordsKey: 'ff'.repeat(32) as Hex,
     signers: async () => [{ id: 'ada', wrappingPublicKey: wrapping.publicKey }],
     company: ACCOUNT, builder,
-    inFlight: {
-      get: async (v) => inFlight.get(v) ?? null, put: async (v, d) => { inFlight.set(v, d); }, forget: async (v) => { inFlight.delete(v); },
-    } as DepositsInFlight,
+    inFlight: sealedOnThisDevice<DepositInFlight>(inFlightInMemory(inFlight), { signerId: 'ada', wrappingSecret: wrapping.secret }, 'deposit') as DepositsInFlight,
   };
   await openCompanyVaultPool(doors, VAULT);
   return { log, doors, records };

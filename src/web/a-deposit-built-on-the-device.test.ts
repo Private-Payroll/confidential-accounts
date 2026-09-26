@@ -48,6 +48,8 @@ import { buildVaultDeploy, type VaultBuilderDeps } from './vault-builder.js';
 import { answerVaultAsk } from './vault-worker-entry.js';
 import { vaultBuilderOver, type VaultAnswer } from './vault-worker-client.js';
 import { openCompanyVaultPool, type VaultChainView, type VaultService, type DepositInFlight, type DepositsInFlight, } from './vault-operation.js';
+import { inFlightInMemory, sealedOnThisDevice, type InFlightRecords } from './in-flight-on-this-device.js';
+import { refusalForDeposit } from '../wiring/vault-submission.js';
 import { MemorySealedPoolStore } from '../midnight/vault-pool.js';
 import type { WireRecord } from '../midnight/sealed-record-wire.js';
 import { openNonceSecrets, recordsKeypairFrom, currentDepositNonceKey } from '../midnight/company-nonce-secret.js';
@@ -58,15 +60,9 @@ import * as ShieldedV1 from '@midnightntwrk/wallet-sdk-shielded/v1';
 import { chooseCoin } from '@midnightntwrk/wallet-sdk-capabilities';
 import { Either } from 'effect';
 
-/** Deposits in flight, kept for the length of one test. */
-const inFlightInMemory = (): DepositsInFlight => {
-  const kept = new Map<string, DepositInFlight>();
-  return {
-    get: async (v) => kept.get(v) ?? null,
-    put: async (v, d) => { kept.set(v, d); },
-    forget: async (v) => { kept.delete(v); },
-  };
-};
+/** Deposits in flight, sealed as the page keeps them, over this test's own record of every write. */
+const inFlightOver = (records: InFlightRecords, wrappingSecret: string): DepositsInFlight =>
+  sealedOnThisDevice<DepositInFlight>(records, { signerId: 'ada', wrappingSecret }, 'deposit');
 
 const NET = 'undeployed';
 const ACCOUNT = 'c0'.repeat(32);
@@ -74,6 +70,8 @@ const ACCOUNT = 'c0'.repeat(32);
 const TOKEN = Buffer.from(Array.from({ length: 32 }, (_, i) => (i * 29 + 7) & 0xff)).toString('hex');
 const OTHER_TOKEN = '5c'.repeat(32);
 const VALUE = 0x3a7f19c2d4e5n;
+/* The transaction the vault's history names for the deposit, when the send itself named none. */
+const LANDED_IN = '7e'.repeat(32);
 
 /*
  * **THE DEPOSIT BELOW IS BUILT FROM THE VAULT'S VERIFIER KEYS, WHICH ONLY A FULL
@@ -315,8 +313,21 @@ describe.skipIf(!KEYS_ON_DISK)('A DEPOSIT FROM THE PAGE, BUILT ON THE DEVICE [ne
         return { txRef: 'r1', transactionHash: null };
       },
       events: async () => { throw new Error('no events'); },
+      /* The vault's history, asked by the output the send could not name: one transaction, which made it. */
+      createdBy: async (v, commitment) => {
+        catching('service created-by', [v, commitment]);
+        return { transactionHash: LANDED_IN, events: [{ transactionHash: LANDED_IN, details: { tag: 'zswapOutput', commitment, contract: vault, mtIndex: '0' } }] };
+      },
       payout: async () => { throw new Error('no payout'); },
       payoutPublicly: async () => { throw new Error('no payout'); },
+    };
+    /* What this browser keeps of the deposit on its way, every write watched. */
+    const sealedStore = inFlightInMemory();
+    const inFlightRecords: InFlightRecords = {
+      get: (slot) => sealedStore.get(slot),
+      add: (slot, record) => { catching('browser in-flight', [slot, record]); return sealedStore.add(slot, record); },
+      replace: (slot, claim, record) => { catching('browser in-flight', [slot, claim, record]); return sealedStore.replace(slot, claim, record); },
+      remove: (slot, claim) => sealedStore.remove(slot, claim),
     };
     const wrapping = newWrappingKeypair();
     const companyKey = new Uint8Array(32).map((_, i) => 200 - i);
@@ -342,11 +353,13 @@ describe.skipIf(!KEYS_ON_DISK)('A DEPOSIT FROM THE PAGE, BUILT ON THE DEVICE [ne
       ledger: { shielded: TOKEN, unshielded: null } as never,
     }]));
     const done = await depositFromSource({
-      ...doors, company: ACCOUNT as Hex, builder: watched, inFlight: inFlightInMemory(),
+      ...doors, company: ACCOUNT as Hex, builder: watched, inFlight: inFlightOver(inFlightRecords, wrapping.secret),
     }, vault, source, { code: 'DEP', value: VALUE });
 
     /* ---- the deposit happened, and what the service was sent is what the wallet finished ---- */
     expect(done.note.value).toBe(VALUE);
+    /* RED WHEN: a deposit whose send named no transaction is recorded without the one its own output was found in. */
+    expect(done.note.createdIn).toBe(LANDED_IN);
     expect(unproven, 'the deposit was built once, on this device').toHaveLength(1);
     const asked = caught.filter((c) => c.to === 'wallet').map((c) => (c.what as { transaction: string }).transaction);
     /* RED WHEN: the builder hands back the unproven transaction, or the wallet is asked with anything but the proven one. */
@@ -360,8 +373,8 @@ describe.skipIf(!KEYS_ON_DISK)('A DEPOSIT FROM THE PAGE, BUILT ON THE DEVICE [ne
       .toEqual([Buffer.from(CHAIN_PARAMETERS).toString('hex')]);
     /* Every door a deposit uses was watched, so a search over them searched something. */
     expect([...new Set(caught.map((c) => c.to.split(' ').slice(0, 2).join(' ')))].sort(), 'RED WHEN: a door stops being watched').toEqual([
-      'records deposit-journal', 'records nonce-secret', 'records pool', 'service chain', 'service deposit', 'service keys',
-      'service payout-state', 'wallet',
+      'browser in-flight', 'records deposit-journal', 'records nonce-secret', 'records pool', 'service chain', 'service created-by',
+      'service deposit', 'service keys', 'service payout-state', 'wallet',
     ]);
 
     /* ---- what the chain is sent states neither the deposit's token nor its amount ---- */
@@ -378,6 +391,11 @@ describe.skipIf(!KEYS_ON_DISK)('A DEPOSIT FROM THE PAGE, BUILT ON THE DEVICE [ne
     /* RED WHEN: the wallet pays in another section than the deposit's, or short, or not at all - a delta is left. */
     expect(deltasOf(onChain), 'the finished deposit states a token and amount in public').toEqual([]);
     expect(shieldedImbalancesOf(onChain), 'the finished deposit leaves a private token unbalanced').toEqual([]);
+    /* RED WHEN: the service's deposit refusal stops reading the private offer - it then sends a deposit that states both. */
+    expect(refusalForDeposit(before, { vault }), 'the service would send a deposit that states its token and amount')
+      .toMatch(/could have seen which token it moves and how much/);
+    /* RED WHEN: the refusal reads the network fee, or a zero entry, as money stated - the finished deposit is then never sent. */
+    expect(refusalForDeposit(onChain, { vault }), 'the service refuses the finished deposit').toBeNull();
     /* RED WHEN: the token or the amount appears anywhere in what the chain is sent, however it is written. */
     expect(carries([finished[0]!], Buffer.from(TOKEN, 'hex')), 'the finished deposit names its token').toBe(false);
     expect(holdsAmount(finished[0]!, VALUE), 'the finished deposit names its amount').toBe(false);
@@ -399,6 +417,19 @@ describe.skipIf(!KEYS_ON_DISK)('A DEPOSIT FROM THE PAGE, BUILT ON THE DEVICE [ne
       caught.filter((c) => carries([c.what], secret)).map((c) => `${name}, in: ${c.to}`));
     /* RED WHEN: any request, record or wallet ask carries one of them - in hex, in bytes, or inside base64. */
     expect(leaked, 'these left the device').toEqual([]);
+    /* ---- and what this browser keeps of the deposit on its way states none of it ---- */
+    const keptHere = caught.filter((c) => c.to === 'browser in-flight');
+    expect(keptHere.length, 'the deposit was kept on its way').toBeGreaterThan(0);
+    /* Searched as it is kept, and with every hex string in it read back as text, since a field could be hex-encoded. */
+    const asText = (what: unknown) => {
+      const json = JSON.stringify(what);
+      return [json, ...(json.match(/[0-9a-f]{16,}/giu) ?? []).map((h) => Buffer.from(h.length % 2 === 0 ? h : h.slice(1), 'hex').toString('latin1'))]
+        .join('\n').toLowerCase();
+    };
+    const inTheClear = keptHere.filter((c) => carries([c.what], nonce) || carries([c.what], Buffer.from(TOKEN, 'hex'))
+      || [nonce.toString('hex'), TOKEN, VALUE.toString(), VALUE.toString(16)].some((x) => asText(c.what).includes(x.toLowerCase())));
+    /* RED WHEN: the note of a deposit on its way is kept unsealed - its nonce, its token or its amount is then in this browser. */
+    expect(inTheClear.map((c) => c.to), 'the deposit on its way is kept in the clear').toEqual([]);
     /*
      * RED WHEN: any request, record, wallet ask or wallet answer carries any part of the unproven transaction the
      * proof does not leave public - the part that carries the nonce, or any other - cut anywhere, not only whole.

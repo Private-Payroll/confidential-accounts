@@ -395,6 +395,68 @@ export function refusalForDeposit(tx: unknown, expect: { readonly vault: string 
     }
   }
   if (calls === 0) return 'this deposit calls nothing, so there is nothing to pay for. Nothing was sent.';
+  return refusalForADepositThatStatesItsMoney(t as TxShape & { imbalances?: unknown });
+}
+
+/**
+ * **A FINISHED PRIVATE DEPOSIT STATES NO TOKEN AND NO AMOUNT.**
+ *
+ * The vault's deposit asks for a coin of one token and one amount, and until
+ * the depositor's wallet balances it the transaction's private offer carries
+ * that token and the amount as an open imbalance, which anybody reading the
+ * chain can see. The wallet balances it by adding its own coin, and what is
+ * left states neither. So a deposit whose private offers still carry any
+ * imbalance, in any part, is one this service would publish with its money
+ * showing, and it is not sent. Only the network fee may still be owed, and
+ * that is paid in DUST.
+ *
+ * Read twice, because either alone could be fooled by a transaction built
+ * some other way: each offer's own `deltas`, and the transaction's
+ * `imbalances` for every part. A transaction whose offers cannot be read
+ * this way is refused as well; one with no private offer at all states no
+ * private money.
+ */
+function refusalForADepositThatStatesItsMoney(t: TxShape & { imbalances?: unknown }): string | null {
+  const states = 'your wallet did not finish this deposit privately, so anyone reading the chain could have seen which '
+    + 'token it moves and how much. Nothing was sent and no money moved. Put the money in again from your wallet.';
+  const unreadable = 'this service could not confirm that the deposit hides which token it moves and how much, so it '
+    + 'was not sent. Nothing was sent and no money moved. Put the money in again from your wallet.';
+  const offers: unknown[] = [];
+  if (t.guaranteedOffer !== undefined && t.guaranteedOffer !== null) offers.push(t.guaranteedOffer);
+  if (t.fallibleOffer !== undefined && t.fallibleOffer !== null) {
+    if (!(t.fallibleOffer instanceof Map)) return unreadable;
+    offers.push(...t.fallibleOffer.values());
+  }
+  for (const offer of offers) {
+    const deltas = (offer as { deltas?: unknown } | null)?.deltas;
+    if (deltas === undefined) continue;
+    let entries: unknown[];
+    if (deltas instanceof Map) entries = [...deltas.entries()];
+    else if (Array.isArray(deltas)) entries = deltas;
+    else return unreadable;
+    for (const entry of entries) {
+      if (!Array.isArray(entry) || typeof entry[1] !== 'bigint') return unreadable;
+      if (entry[1] !== 0n) return states;
+    }
+  }
+  if (offers.length === 0) return null;
+  if (typeof t.imbalances !== 'function') return unreadable;
+  const segments = new Set<number>([0]);
+  for (const key of t.intents instanceof Map ? t.intents.keys() : []) segments.add(Number(key));
+  for (const key of t.fallibleOffer instanceof Map ? t.fallibleOffer.keys() : []) segments.add(Number(key));
+  for (const segment of segments) {
+    let owed: unknown;
+    try {
+      owed = (t.imbalances as (s: number) => unknown).call(t, segment);
+    } catch {
+      return unreadable;
+    }
+    if (!(owed instanceof Map)) return unreadable;
+    for (const [token, amount] of owed as Map<{ tag?: unknown } | null, unknown>) {
+      if (typeof amount !== 'bigint') return unreadable;
+      if (token?.tag !== 'dust' && amount !== 0n) return states;
+    }
+  }
   return null;
 }
 

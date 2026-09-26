@@ -20,6 +20,7 @@
  *   POST /api/accounts/:id/vaults/:vault/deposit        a deposit the depositor's wallet has paid for
  *   GET  /api/accounts/:id/vaults/:vault/payout-state   the chain as one block saw it, for a payout to be built on
  *   GET  /api/accounts/:id/vaults/:vault/events/:tx     what one transaction created, for a note's place to be read
+ *   GET  /api/accounts/:id/vaults/:vault/created/:out   which of the vault's transactions created one output
  *   POST /api/accounts/:id/vaults/:vault/payout         a private payment out of the vault
  *   GET  /api/accounts/:id/authority                    who holds the account's and every vault's rules
  *   GET  /api/accounts/:id/call-state                   the account as one block saw it, for a raise or an approval to be built on
@@ -99,6 +100,13 @@ export interface VaultChain {
    * place a note's position in the commitment tree is read from.
    */
   eventsOf?(transactionHash: Hex): Promise<readonly ServedEventOnTheWire[]>;
+  /**
+   * **THE TRANSACTION IN THIS VAULT'S OWN HISTORY WHOSE EVENTS CARRY AN OUTPUT
+   * WITH THIS COMMITMENT, OWNED BY THIS VAULT**, with those events; `null` when
+   * none does yet. For a note whose sender could not name its transaction.
+   * Absent where this deployment reads no chain.
+   */
+  createdBy?(vault: Hex, commitment: string): Promise<{ transactionHash: Hex; events: readonly ServedEventOnTheWire[] } | null>;
   /**
    * **EVERYTHING THE CHAIN HAS DONE TO ONE CONTRACT, OLDEST FIRST**, each step
    * with the contract's state after it, in the form `contractState` answers.
@@ -716,6 +724,35 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
       res.json({ events: await deps.chain.eventsOf(tx as Hex) });
     } catch (e) {
       /* The reader's own name travels, because "not yet" and "never" are different answers to a person waiting. */
+      res.status(503).json({ error: (e as Error)?.message ?? String(e), kind: (e as Error)?.name ?? 'Error' });
+    }
+  });
+
+  /*
+   * **WHICH OF THIS VAULT'S TRANSACTIONS CREATED ONE OUTPUT, ASKED BY THE
+   * OUTPUT'S COMMITMENT.** A device that sent a deposit or a payment and never
+   * learned its transaction's hash asks here once the output has landed. Only
+   * this vault's own transactions are read, and only an output this vault owns
+   * answers; the device judges the events itself before it records anything.
+   * The commitment is what the chain publishes for the output, and nothing a
+   * device holds that opens the note is asked for.
+   */
+  r.get('/api/accounts/:id/vaults/:vault/created/:commitment', ...guard, async (req, res) => {
+    const record = theVault(req, res);
+    if (record === null) return;
+    const commitment = fold(String(req.params.commitment));
+    if (!HEX64.test(commitment)) {
+      res.status(400).json({ error: 'an output is named by its commitment, sixty-four hex characters.' });
+      return;
+    }
+    if (deps.chain.createdBy === undefined) {
+      res.status(503).json({ error: 'this deployment reads no chain.' });
+      return;
+    }
+    try {
+      const found = await deps.chain.createdBy(record.vault, commitment);
+      res.json(found === null ? { found: false } : { found: true, transactionHash: found.transactionHash, events: found.events });
+    } catch (e) {
       res.status(503).json({ error: (e as Error)?.message ?? String(e), kind: (e as Error)?.name ?? 'Error' });
     }
   });

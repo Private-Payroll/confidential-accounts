@@ -47,7 +47,9 @@ import {
 import type {
   DepositAttempt, DepositJournal, PaymentAttempt, PaymentJournal,
 } from './vault-ledger.js';
-import { depositNonceAt, type DepositMoney, type DepositNonceKey } from './deposit-nonce.js';
+import {
+  depositNonceAt, DepositSlotTaken, DEPOSIT_CLAIM_LIVE_MS, type DepositMoney, type DepositNonceKey,
+} from './deposit-nonce.js';
 import type { AttemptedVaultCalls } from './vault-recovery.js';
 import type { VaultCoin } from './vault-coins.js';
 import type { Hex } from '../core/crypto.js';
@@ -119,6 +121,11 @@ export class SealedJournal<Line> {
    */
   async append(
     vaultAddress: string, lineAt: (version: number) => Line, what: 'deposit' | 'payment',
+    /**
+     * Asked of the lines as filed, on every attempt and so after every lost
+     * race: an error it answers stops the append, and nothing is written.
+     */
+    refuse?: (lines: readonly Line[]) => Error | null,
   ): Promise<{ line: Line; version: number }> {
     if (vaultAddress !== this.vault) {
       throw new Error(
@@ -137,6 +144,8 @@ export class SealedJournal<Line> {
        * would succeed.
        */
       assertNoSignerWouldLoseAccess(now.wrappedFor, to.map((s) => s.id), this.page.called);
+      const refused = refuse?.(now.lines) ?? null;
+      if (refused !== null) throw refused;
       const version = now.version + 1;
       const line = lineAt(version);
       const page = { [this.page.lines]: [...now.lines, line] };
@@ -241,14 +250,29 @@ export class DepositJournalInStore implements DepositJournal {
     return depositNonceAt(this.nonces, money, slot);
   }
 
+  /**
+   * **A SLOT ANOTHER DEPOSIT CLAIMED A MOMENT AGO IS NOT CLAIMED AGAIN.** Two
+   * signers, two browsers or two tabs depositing the same money into one vault
+   * at once each find the same lowest free slot, because neither deposit has
+   * reached the chain. The journal is the one record both write to, one version
+   * at a time, and it is read again after every lost race; so a line for this
+   * very coin filed within `DEPOSIT_CLAIM_LIVE_MS` of this claim refuses it with
+   * `DepositSlotTaken`, and the caller tries the next slot. An older line is a
+   * deposit that can no longer land, and its slot is free again.
+   */
   async claim(vaultAddress: string, money: DepositMoney, slot: number, attemptedAt: string): Promise<DepositAttempt> {
     const nonce = depositNonceAt(this.nonces, money, slot);
+    const at = Date.parse(attemptedAt);
     const { line } = await this.journal.append(vaultAddress, () => ({
       nonce,
       token: money.token,
       value: money.value,
       attemptedAt,
-    }), 'deposit');
+    }), 'deposit', (lines) => {
+      const recent = lines.some((l) => l.nonce.toLowerCase() === nonce.toLowerCase() && l.token.toLowerCase() === money.token.toLowerCase()
+        && l.value === money.value && !(at - Date.parse(l.attemptedAt) >= DEPOSIT_CLAIM_LIVE_MS));
+      return recent ? new DepositSlotTaken(slot) : null;
+    });
     this.written();
     return { coin: { nonce: line.nonce, token: line.token, value: line.value }, attemptedAt: line.attemptedAt };
   }

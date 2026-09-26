@@ -6,11 +6,12 @@ import { assets, ledgerFormOf, parseAmount } from '../core/assets.js';
 import * as keyring from './keyring.js';
 import { WALLET_ORIGIN } from './Auth.js';
 import {
-  createCompanyVault, openCompanyVaultPool,
+  checkWhatThisBrowserSent, createCompanyVault, openCompanyVaultPool, sayWhatTheCheckFound,
   VaultHandoverOwed, type VaultStage,
 } from './vault-operation.js';
 import {
-  browserDepositsInFlight, browserTemporaryKeys, deviceRecordsFor, deviceSignerFrom, giveVaultKeys, rosterOf, vaultServiceFor,
+  browserDepositsInFlight, browserPaymentsInFlight, browserTemporaryKeys, deviceRecordsFor, deviceSignerFrom, giveVaultKeys,
+  rosterOf, vaultServiceFor,
 } from './vault-page-doors.js';
 import { startVaultBuilder, type VaultBuilderClient } from './vault-worker-client.js';
 import { depositFromSource, privateTokenFromTheWallet } from './deposit-source.js';
@@ -166,13 +167,31 @@ export function VaultPanel({ account, me, viewingKey }: {
     const done = await depositFromSource({
       ...pacing, service, me: k.device, myRecordsKey: k.myRecordsKey, signers: k.signers, records: k.records,
       company: k.company, builder: await builder(),
-      inFlight: browserDepositsInFlight(),
+      inFlight: browserDepositsInFlight({ signerId: me.signerId, wrappingSecret: me.wrappingSecret }),
     }, vault, source, { code: chosen.code, value });
     setAmount('');
     return done.notYetSpendable === undefined
       ? `${amount} ${chosen.code} is in the vault (${done.txRef}).`
       : `${amount} ${chosen.code} is in the vault (${done.txRef}). It is the company's, and it cannot be used for a payment `
         + `yet: ${done.notYetSpendable}.`;
+  });
+
+  /*
+   * **WHAT THIS BROWSER LAST SENT TO THE VAULT, LOOKED FOR ON THE CHAIN AND
+   * RECORDED, WITHOUT PUTTING ANY MONEY IN.** The wallet is not asked; the
+   * company's keys are, because the vault's record is opened and written here.
+   */
+  const check = (vault: Hex) => run('Checking your last deposit', async () => {
+    const k = await withKeys();
+    const opener = { signerId: me.signerId, wrappingSecret: me.wrappingSecret };
+    const found = await checkWhatThisBrowserSent({
+      ...pacing, service, me: k.device, myRecordsKey: k.myRecordsKey, signers: k.signers, records: k.records,
+      company: k.company, builder: await builder(),
+      pay: async () => { throw new Error('checking a deposit puts no money in.'); },
+      inFlight: browserDepositsInFlight(opener),
+      payments: browserPaymentsInFlight(opener),
+    }, vault);
+    return sayWhatTheCheckFound(found);
   });
 
   return (
@@ -228,6 +247,9 @@ export function VaultPanel({ account, me, viewingKey }: {
                       </div>
                       <button className="btn pri" disabled={busy || amount.trim() === '' || asset === ''} onClick={deposit(row.vault)} data-deposit>
                         Put money in from my wallet
+                      </button>
+                      <button className="btn" disabled={busy} onClick={check(row.vault)} data-check-last-deposit>
+                        Check my last deposit
                       </button>
                     </>
                   )}

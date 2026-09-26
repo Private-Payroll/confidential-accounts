@@ -11,7 +11,9 @@ import {
   payPubliclyFromCompanyVault, PublicPaymentNotYetSeen, type VaultStage,
 } from './vault-operation.js';
 import { PUBLIC_PAYMENT } from './public-payment.js';
-import { deviceRecordsFor, deviceSignerFrom, privatePaymentsFor, rosterOf, vaultServiceFor } from './vault-page-doors.js';
+import {
+  browserPaymentsInFlight, deviceRecordsFor, deviceSignerFrom, privatePaymentsFor, rosterOf, vaultServiceFor,
+} from './vault-page-doors.js';
 import { startVaultBuilder, type VaultBuilderClient } from './vault-worker-client.js';
 import { openAccount } from '../core/account.js';
 
@@ -139,8 +141,12 @@ export function PayoutPanel({ account, me, viewingKey, runs, proposals }: {
         signers: roster.signers,
         records: deviceRecordsFor(me.signingSecret, roster.filers, signedInAs),
         builder: await builder(),
+        inFlight: browserPaymentsInFlight({ signerId: me.signerId, wrappingSecret: me.wrappingSecret }),
       }, { order, payment });
-      setSaid(`Paid privately (${done.txRef}). The chain holds the payment and the vault's record is updated.`);
+      setSaid(done.seenAs === 'its-own-transaction'
+        ? `Paid privately (${done.txRef}). The chain holds the payment and the vault's record is updated.`
+        : 'The money for this payment has left the vault, and the vault\'s record is updated. The run shows whether this '
+          + 'person was paid.');
     } catch (e: any) {
       const mayHaveMoved = e instanceof PaymentNotYetSeen || e instanceof PaymentNotAsBuilt || e instanceof PaymentLandedUnrecorded
         || e instanceof PublicPaymentNotYetSeen;

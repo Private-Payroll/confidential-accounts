@@ -9,7 +9,7 @@ import { describe, it, expect } from 'vitest';
 import {
   depositNonceAt, depositNonceKeyFor, vaultOutputHistoryFrom, noVaultOutputHistory,
   whyThisCoinIsNotNew, DepositCoinAlreadyMade, claimNewDepositCoin, lastDepositSlot,
-  DEPOSIT_SLOT_ATTEMPTS, type DepositNonceKey, type DepositCoin,
+  DEPOSIT_SLOT_ATTEMPTS, DepositSlotTaken, type DepositNonceKey, type DepositCoin,
 } from './deposit-nonce.js';
 import type { DepositJournal } from './vault-ledger.js';
 import { toHex } from '../core/crypto.js';
@@ -229,6 +229,36 @@ describe('choosing a deposit\'s coin', () => {
       accept: () => { accepted += 1; },
     }), 'RED WHEN: the coin used is not compared with the coin the journal filed').rejects.toThrow(/filed a different coin/);
     expect(accepted).toBe(0);
+  });
+
+  it('A SLOT ANOTHER DEPOSIT CLAIMED A MOMENT AGO IS PASSED OVER FOR THE NEXT, AND NOTHING ELSE THE JOURNAL SAYS IS', async () => {
+    const lines: Array<{ slot: number; coin: DepositCoin }> = [];
+    const taken = new Set([1, 2]);
+    const racing = (error: (slot: number) => Error): DepositJournal => ({
+      ...journalOf(lines),
+      claim: async (vault, money, slot, attemptedAt) => {
+        if (taken.has(slot)) throw error(slot);
+        return journalOf(lines).claim(vault, money, slot, attemptedAt);
+      },
+    });
+    /* By name, as a copy of the class from another module would throw it. */
+    const got = await claimNewDepositCoin({
+      vault: VAULT, money: GBP_MONEY, journal: racing((slot) => Object.assign(new Error(`taken ${slot}`), { name: 'DepositSlotTaken' })),
+      nonceAt, everCreated: new Set(), outputCommitmentOf: commitment, heldNow: () => false, poolHoldsTheNonce: () => false,
+    });
+    /* RED WHEN: a taken slot stops the deposit, or is used anyway. */
+    expect(got.slot).toBe(3);
+    expect(got.coin.nonce).toBe(at(3).nonce);
+    await expect(claimNewDepositCoin({
+      vault: VAULT, money: GBP_MONEY, journal: racing(() => new Error('the journal could not be written')),
+      nonceAt, everCreated: new Set(), outputCommitmentOf: commitment, heldNow: () => false, poolHoldsTheNonce: () => false,
+    }), 'RED WHEN: any failure of the journal is taken as a taken slot').rejects.toThrow('the journal could not be written');
+    /* Every slot a rebuild walks taken a moment ago: no coin, and the refusal says why. */
+    taken.add(3);
+    await expect(claimNewDepositCoin({
+      vault: VAULT, money: GBP_MONEY, journal: racing((slot) => new DepositSlotTaken(slot)),
+      nonceAt, everCreated: new Set(), outputCommitmentOf: commitment, heldNow: () => false, poolHoldsTheNonce: () => false,
+    }), 'RED WHEN: a deposit tries past the last slot a rebuild walks').rejects.toThrow(DepositCoinAlreadyMade);
   });
 
   it('a check that refuses the coin stops the deposit with the line filed and nothing else', async () => {

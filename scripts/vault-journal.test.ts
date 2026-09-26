@@ -328,9 +328,11 @@ describe('a journal write never takes a reader away', () => {
       const journal = kind === 'payment'
         ? new SealedPaymentJournal(paymentJournalFile(d, 'stagenet', 'payroll-test-1'), VAULT, me, async () => listed)
         : new SealedDepositJournal(depositJournalFileOf(d, 'stagenet', 'payroll-test-1'), VAULT, me, async () => listed, KEY);
+      /* Each deposit line at a slot of its own: a slot claimed a moment ago is not claimed again. */
+      let slot = 0;
       const write = async (): Promise<void> => {
         if (journal instanceof SealedPaymentJournal) await journal.record(VAULT, attempt('01'.repeat(32), 1_000n, 200n) as never);
-        else await journal.claim(VAULT, { token: GBP, value: 700n }, 1, 't');
+        else await journal.claim(VAULT, { token: GBP, value: 700n }, slot += 1, 't');
       };
       await write();
       const before = readdirSync(d).length;

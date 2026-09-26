@@ -196,7 +196,7 @@ describe.skipIf(!KEYS_ON_DISK)('what the fee payer pays for on a vault [needs co
   });
 
   describe('A DEPOSIT INTO THE VAULT', () => {
-    it('is paid for when it only calls this vault\'s deposit, whatever private coins the wallet added', async () => {
+    it('IS NOT SENT BEFORE THE WALLET HAS BALANCED IT, BECAUSE IT THEN STATES ITS TOKEN AND AMOUNT; AND IT CALLS ONLY THIS VAULT\'S DEPOSIT', async () => {
       const state = new L.ContractState();
       const vaultState = (deploy.intents.values().next().value.actions[0]).initialState;
       const built = await buildDeposit(deps, {
@@ -206,7 +206,10 @@ describe.skipIf(!KEYS_ON_DISK)('what the fee payer pays for on a vault [needs co
       });
       const tx = readDeploy(built.proven);
       expect(tx.guaranteedOffer.outputs.length).toBe(1);
-      expect(refusalForDeposit(tx, { vault })).toBeNull();
+      expect([...tx.guaranteedOffer.deltas.entries()], 'the control: the unbalanced deposit states both').toEqual([['ab'.repeat(32), -5n]]);
+      /* RED WHEN: the refusal stops reading the private offer's deltas and imbalances. The balanced deposit, which is
+       * sent, is `a-deposit-built-on-the-device.test.ts`, over the wallet SDK's own balancing. */
+      expect(refusalForDeposit(tx, { vault })).toMatch(/could have seen which token it moves and how much/);
       expect(refusalForDeposit(tx, { vault: 'ee'.repeat(32) })).toMatch(/something other than this vault's deposit/);
       void state;
     });
@@ -221,6 +224,43 @@ describe.skipIf(!KEYS_ON_DISK)('what the fee payer pays for on a vault [needs co
       expect(refusalForDeposit(oneIntent([{ address: vault, initialState: {} }]), { vault })).toMatch(/something other than call the vault/);
       expect(refusalForDeposit(oneIntent([]), { vault })).toMatch(/calls nothing/);
       expect(refusalForDeposit({ intents: new Map() }, { vault })).toMatch(/calls nothing/);
+    });
+
+    it('REFUSES A DEPOSIT WHOSE PRIVATE PART STILL STATES A TOKEN OR AN AMOUNT, IN ANY PART, AND SENDS ONE THAT STATES NEITHER', () => {
+      const TOKEN_TYPE = { tag: 'shielded', raw: 'ab'.repeat(32) };
+      const DUST = { tag: 'dust' };
+      const deposit = (offer: Record<string, unknown>, imbalances: Array<[unknown, bigint]> | 'throws' | null, fallible?: Map<number, unknown>, inSegment = 0) => ({
+        ...oneIntent([{ address: vault, entryPoint: 'deposit' }]),
+        guaranteedOffer: { inputs: [], outputs: [1], transients: [], ...offer },
+        ...(fallible === undefined ? {} : { fallibleOffer: fallible }),
+        ...(imbalances === null ? {} : {
+          imbalances: (segment: number) => {
+            if (imbalances === 'throws') throw new Error('unreadable');
+            return new Map(segment === inSegment ? imbalances : []);
+          },
+        }),
+      });
+      const balanced = new Map<string, bigint>();
+      /* Sent: no delta, and nothing unbalanced but the network fee, which is DUST. */
+      expect(refusalForDeposit(deposit({ deltas: balanced }, [[DUST, 12n], [TOKEN_TYPE, 0n]]), { vault })).toBeNull();
+      /* RED WHEN: an offer's own deltas are not read - the deposit's token and amount are published. */
+      expect(refusalForDeposit(deposit({ deltas: new Map([['ab'.repeat(32), -5n]]) }, []), { vault })).toMatch(/could have seen which token it moves/);
+      expect(refusalForDeposit(deposit({ deltas: [['ab'.repeat(32), -5n]] }, []), { vault })).toMatch(/could have seen which token/);
+      /* RED WHEN: a fallible part is not read. */
+      expect(refusalForDeposit(deposit({ deltas: balanced }, [], new Map([[1, { deltas: new Map([['ab'.repeat(32), 5n]]) }]])), { vault }))
+        .toMatch(/could have seen which token/);
+      /* RED WHEN: the transaction's own imbalances are not read, or a private token's is read as the fee. */
+      expect(refusalForDeposit(deposit({ deltas: balanced }, [[TOKEN_TYPE, -5n]]), { vault })).toMatch(/could have seen which token/);
+      /* RED WHEN: only the guaranteed part's imbalance is read - an imbalance in a fallible part is sent. */
+      expect(refusalForDeposit(deposit({ deltas: balanced }, [[TOKEN_TYPE, -5n]], new Map([[1, { deltas: balanced }]]), 1), { vault }))
+        .toMatch(/could have seen which token/);
+      /* RED WHEN: a private part that cannot be read is sent as if it stated nothing. */
+      expect(refusalForDeposit(deposit({ deltas: 'x' }, []), { vault })).toMatch(/could not confirm that the deposit hides/);
+      expect(refusalForDeposit(deposit({ deltas: balanced }, null), { vault })).toMatch(/could not confirm that the deposit hides/);
+      expect(refusalForDeposit(deposit({ deltas: balanced }, 'throws'), { vault })).toMatch(/could not confirm that the deposit hides/);
+      expect(refusalForDeposit({ ...deposit({ deltas: balanced }, []), fallibleOffer: [] }, { vault })).toMatch(/could not confirm that the deposit hides/);
+      /* Every refusal says nothing was sent and what to do. */
+      expect(refusalForDeposit(deposit({ deltas: balanced }, [[TOKEN_TYPE, -5n]]), { vault })).toMatch(/Nothing was sent and no money moved\. Put the money in again/);
     });
   });
 
