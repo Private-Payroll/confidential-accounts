@@ -22,7 +22,7 @@ import { compiledOutputCommitment } from './rebuild-from-records.js';
 import { vaultNoteCommitment, type ServedEvent } from './note-index.js';
 import { changeNonceOf, sentNonceOf } from './vault-recovery.js';
 import {
-  depositNonceAt, depositNonceKeyFor, vaultOutputHistoryFrom, claimNewDepositCoin, DepositCoinAlreadyMade,
+  depositNonceAt, depositNonceKeyFor, vaultOutputHistoryFrom, claimNewDepositCoin,
   type DepositCoin,
 } from './deposit-nonce.js';
 import type { DepositJournal } from './vault-ledger.js';
@@ -107,23 +107,25 @@ describe('a deposit\'s history check', () => {
     const money = { token: hex32(), value: 1_000n };
     const coinAt = (slot: number): DepositCoin => ({ nonce: depositNonceAt(key, money, slot), ...money });
     const journal = (slots: number[]): DepositJournal => ({
+      nonceAt: (_v, m, slot) => depositNonceAt(key, m, slot),
       claim: async (_v, m, slot, attemptedAt) => { slots.push(slot); return { coin: { nonce: depositNonceAt(key, m, slot), ...m }, attemptedAt }; },
     });
     const ask = {
-      vault, money, outputCommitmentOf: (c: DepositCoin) => fast(c, vault), heldNow: () => false, poolHoldsTheNonce: () => false,
+      vault, money, nonceAt: (m: typeof money, slot: number) => depositNonceAt(key, m, slot),
+      outputCommitmentOf: (c: DepositCoin) => fast(c, vault), heldNow: () => false, poolHoldsTheNonce: () => false,
     };
-    /* Three coins made, so the slots are 4, 5 and 6; the chain holds the ledger's commitment of all three. */
-    const all = new Set(await Promise.all([4, 5, 6].map((s) => vaultNoteCommitment(coinAt(s), vault))));
+    /* Three coins of this money made, at slots 1, 2 and 3: the chain holds the ledger's commitment of each. */
+    const all = new Set(await Promise.all([1, 2, 3].map((s) => vaultNoteCommitment(coinAt(s), vault))));
     const tried: number[] = [];
     let accepted = 0;
-    await expect(claimNewDepositCoin({ ...ask, journal: journal(tried), everCreated: all, accept: () => { accepted += 1; } }),
-      'RED WHEN: the fast check misses a coin the ledger recorded').rejects.toThrow(DepositCoinAlreadyMade);
-    expect(tried).toEqual([4, 5, 6]);
-    expect(accepted, 'RED WHEN: a recorded coin reaches the step before the build').toBe(0);
-    const some = new Set([...await Promise.all([4, 6].map((s) => vaultNoteCommitment(coinAt(s), vault))), 'f1'.repeat(32)]);
+    const first = await claimNewDepositCoin({ ...ask, journal: journal(tried), everCreated: all, accept: () => { accepted += 1; } });
+    expect(first.slot, 'RED WHEN: the fast check misses a coin the ledger recorded').toBe(4);
+    expect(tried, 'RED WHEN: a line is filed for a coin the ledger recorded').toEqual([4]);
+    expect(accepted, 'RED WHEN: a recorded coin reaches the step before the build').toBe(1);
+    const some = new Set([...await Promise.all([1, 2, 4].map((s) => vaultNoteCommitment(coinAt(s), vault))), 'f1'.repeat(32)]);
     const got = await claimNewDepositCoin({ ...ask, journal: journal([]), everCreated: some });
-    expect(got.slot, 'RED WHEN: a recorded coin is used, or a free slot is passed over').toBe(5);
-    expect(got.coin).toEqual(coinAt(5));
+    expect(got.slot, 'RED WHEN: a recorded coin is used, or a free slot is passed over').toBe(3);
+    expect(got.coin).toEqual(coinAt(3));
   });
 
   it('TAKES MILLISECONDS ON A VAULT THE SIZE OF FIVE YEARS OF A FIFTY-PERSON PAYROLL, WHICH THE LEDGER\'S CODE WOULD NOT', async () => {
@@ -135,8 +137,11 @@ describe('a deposit\'s history check', () => {
     const vault = hex32();
     const txs: Array<{ hash: Hex; events: ServedEvent[] }> = [];
     const fast = await compiledOutputCommitment();
+    const key = depositNonceKeyFor(bytes(32), vault);
+    const money = { token: 'aa'.repeat(32) as Hex, value: 5_000_000n };
     for (let month = 0; month < 60; month += 1) {
-      const d = { nonce: hex32(), token: 'aa'.repeat(32) as Hex, value: 5_000_000n };
+      /* Every month's deposit is the same amount, so the sixty sit at slots 1 to 60 of this money. */
+      const d = { nonce: depositNonceAt(key, money, month + 1), ...money };
       const h = hex32();
       txs.push({ hash: h, events: [{ transactionHash: h, details: { tag: 'zswapOutput', commitment: fast(d, vault), contract: vault, mtIndex: 0n } }] });
       for (let p = 0; p < 50; p += 1) {
@@ -162,9 +167,10 @@ describe('a deposit\'s history check', () => {
       if (!a.ok || a.ask !== 'commitments') throw new Error('the worker did not answer');
       return a.output;
     };
-    const key = depositNonceKeyFor(bytes(32), vault);
-    const money = { token: 'aa'.repeat(32) as Hex, value: 5_000_000n };
-    const journal: DepositJournal = { claim: async (_v, m, slot, attemptedAt) => ({ coin: { nonce: depositNonceAt(key, m, slot), ...m }, attemptedAt }) };
+    const journal: DepositJournal = {
+      nonceAt: (_v, m, slot) => depositNonceAt(key, m, slot),
+      claim: async (_v, m, slot, attemptedAt) => ({ coin: { nonce: depositNonceAt(key, m, slot), ...m }, attemptedAt }),
+    };
 
     let t = performance.now();
     const everCreated = await history.everCreated(vault);
@@ -173,11 +179,12 @@ describe('a deposit\'s history check', () => {
     let asked = 0;
     t = performance.now();
     const claimed = await claimNewDepositCoin({
-      vault, money, journal, everCreated, outputCommitmentOf: (c) => { asked += 1; return workerOutput(c); },
+      vault, money, journal, nonceAt: (m, slot) => depositNonceAt(key, m, slot),
+      everCreated, outputCommitmentOf: (c) => { asked += 1; return workerOutput(c); },
       heldNow: () => false, poolHoldsTheNonce: () => false,
     });
     const checkMs = performance.now() - t;
-    expect(claimed.slot).toBe(3_061);
+    expect(claimed.slot, 'RED WHEN: a slot below the sixty-first is used although its coin was made').toBe(61);
 
     /*
      * One candidate through the device's path against one through the ledger's code, on the same coins: both
@@ -202,7 +209,8 @@ describe('a deposit\'s history check', () => {
       + `${ledgerUs.toFixed(0)} us through the ledger's code`);
     /* RED WHEN: the device's check is made through the ledger's general code again - twenty or more times slower here. */
     expect(deviceUs, 'the device\'s check costs what the ledger\'s code costs').toBeLessThan(ledgerUs / 4);
-    /* RED WHEN: the deposit's check computes a commitment for anything but the one slot it uses - a walk of the history. */
-    expect(asked, 'the deposit\'s check computed more than its own coin').toBe(1);
+    /* RED WHEN: the deposit's check computes a commitment past the slot it uses - a walk of the history rather than of
+     * this money's own earlier deposits. */
+    expect(asked, 'the deposit\'s check computed more than its own money\'s slots').toBe(61);
   }, 60_000);
 });

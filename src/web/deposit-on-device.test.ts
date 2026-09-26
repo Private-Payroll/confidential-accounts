@@ -40,9 +40,10 @@ describe('a deposit\'s coin, chosen on the device', () => {
     const made = { ...nothingMade, everCreated: new Set(['x', 'y']) };
     const byBo = await depositCoinOnThisDevice({ vault: VAULT, money: { token: GBP, value: 70n }, me: bo.me, signers, records, chain: made });
     const secrets = openNonceSecrets((await kept.get('nonce-secret')!.get(VAULT))!, VAULT, recordsKeypairFrom(ada.me.companyKey));
-    expect(byBo.slot, 'RED WHEN: the slot is not the one after everything the vault has made').toBe(3);
+    /* Two outputs of other money: neither is this money's coin, so the lowest slot is free. */
+    expect(byBo.slot, 'RED WHEN: the slot is taken from the vault\'s output count rather than the lowest free slot').toBe(1);
     expect(byBo.coin.nonce, 'RED WHEN: a signer\'s deposit is not derived from the company\'s secret, so only they could name it')
-      .toBe(depositNonceAt(currentDepositNonceKey(secrets), { token: GBP, value: 70n }, 3));
+      .toBe(depositNonceAt(currentDepositNonceKey(secrets), { token: GBP, value: 70n }, 1));
     expect(byBo.epoch).toBe(1);
     expect((await kept.get('deposit-journal')!.versions(VAULT)), 'the line is filed before the coin is handed back').toHaveLength(1);
     expect(JSON.stringify(await kept.get('deposit-journal')!.versions(VAULT)), 'RED WHEN: the line is filed in the clear').not.toContain(byBo.coin.nonce);

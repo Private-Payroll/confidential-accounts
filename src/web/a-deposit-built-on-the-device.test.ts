@@ -38,11 +38,21 @@ import * as vaultModule from '../../contracts/managed-vault/contract/index.js';
 import { buildVaultDeploy, type VaultBuilderDeps } from './vault-builder.js';
 import { answerVaultAsk } from './vault-worker-entry.js';
 import { vaultBuilderOver, type VaultAnswer } from './vault-worker-client.js';
-import { depositIntoCompanyVault, openCompanyVaultPool, type VaultChainView, type VaultService } from './vault-operation.js';
+import { depositIntoCompanyVault, openCompanyVaultPool, type VaultChainView, type VaultService, type DepositInFlight, type DepositsInFlight, } from './vault-operation.js';
 import { MemorySealedPoolStore } from '../midnight/vault-pool.js';
 import type { WireRecord } from '../midnight/sealed-record-wire.js';
 import { openNonceSecrets, recordsKeypairFrom, currentDepositNonceKey } from '../midnight/company-nonce-secret.js';
 import { newWrappingKeypair, toHex, type Hex } from '../core/crypto.js';
+
+/** Deposits in flight, kept for the length of one test. */
+const inFlightInMemory = (): DepositsInFlight => {
+  const kept = new Map<string, DepositInFlight>();
+  return {
+    get: async (v) => kept.get(v) ?? null,
+    put: async (v, d) => { kept.set(v, d); },
+    forget: async (v) => { kept.delete(v); },
+  };
+};
 
 const NET = 'undeployed';
 const ACCOUNT = 'c0'.repeat(32);
@@ -218,6 +228,7 @@ describe.skipIf(!KEYS_ON_DISK)('A DEPOSIT FROM THE PAGE, BUILT ON THE DEVICE [ne
     const done = await depositIntoCompanyVault({
       ...doors, company: ACCOUNT as Hex, builder: watched,
       pay: async (ask) => { catching('wallet', ask); return { transaction: ask.transaction, leaves: [] }; },
+      inFlight: inFlightInMemory(),
     }, vault, { token: TOKEN as Hex, value: 1_000n });
 
     /* ---- the deposit happened, and what the service was sent is the proven transaction ---- */

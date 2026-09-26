@@ -208,8 +208,8 @@ export interface DepositLine {
  * `{ notes: [coin + attemptedAt] }`, the shape every deposit line has always had.
  *
  * **IT DERIVES THE NONCE, INSIDE THE CLAIM.** The nonce comes from the vault's
- * deposit nonce key, the coin, and the slot the caller read off the vault's
- * output count (`claimNewDepositCoin`), and the coin handed back is the coin
+ * deposit nonce key, the coin, and the slot the caller chose as the lowest one
+ * whose coin was never made (`claimNewDepositCoin`), and the coin handed back is the coin
  * that line records. A caller never supplies a nonce, so no caller can make a
  * deposit that the vault's nonce secret cannot name again.
  */
@@ -235,6 +235,10 @@ export class DepositJournalInStore implements DepositJournal {
   async open(): Promise<{ attempts: readonly DepositLine[]; version: number }> {
     const now = await this.journal.open();
     return { attempts: now.lines, version: now.version };
+  }
+
+  nonceAt(_vaultAddress: string, money: DepositMoney, slot: number): Hex {
+    return depositNonceAt(this.nonces, money, slot);
   }
 
   async claim(vaultAddress: string, money: DepositMoney, slot: number, attemptedAt: string): Promise<DepositAttempt> {

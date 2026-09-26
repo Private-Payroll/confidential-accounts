@@ -327,13 +327,17 @@ export interface DepositAttempt {
  *
  * `claim` files one line at the journal's next version, with the nonce derived
  * from the vault's nonce secret, the coin and the `slot` it is handed
- * (`claimNewDepositCoin` chooses the slot from the vault's own output count),
+ * (`claimNewDepositCoin` chooses the lowest slot whose coin was never made),
  * and hands back the coin it recorded. It is called before the call, and a
  * `claim` that throws stops the deposit while stopping still costs nothing. The
  * ledger calls the contract only with a coin a claim returned.
+ *
+ * `nonceAt` is the same derivation with nothing filed, so slots whose coin
+ * already exists are passed over without a line each.
  */
 export interface DepositJournal {
   claim(vaultAddress: string, money: DepositMoney, slot: number, attemptedAt: string): Promise<DepositAttempt>;
+  nonceAt(vaultAddress: string, money: DepositMoney, slot: number): Hex;
 }
 
 /**
@@ -346,15 +350,16 @@ export interface DepositJournal {
  * privately without saying where the coin is written is one that would open
  * the window the journal exists to close, and it is stopped instead.
  */
-export const noDepositJournal = (): DepositJournal => ({
-  claim: async () => {
+export const noDepositJournal = (): DepositJournal => {
+  const refuse = (): never => {
     throw new Error(
       'a private deposit writes down the coin it is about to create before the money moves, and '
       + 'this ledger was given nowhere to write it. Nothing is proved or deposited. Construct the '
       + 'ledger with a deposit journal -- the sealed one the deposit door keeps beside the pool -- '
       + 'and deposit again.');
-  },
-});
+  };
+  return { nonceAt: refuse, claim: async () => refuse() };
+};
 
 /**
  * WHAT ONE CIRCUIT CALL IS, before any of it reaches the SDK. V-82.
@@ -1240,7 +1245,7 @@ export class VaultLedger {
     /*
      * **THE COIN IS WRITTEN DOWN HERE, BEFORE THE MONEY MOVES, AND THIS LINE MAY
      * NOT MOVE BELOW THE CALL.** The claim files the line and derives the nonce
-     * from the slot the vault's output count gives it; before the call, because the nonce is the one
+     * from the lowest slot whose coin was never made; before the call, because the nonce is the one
      * value the note cannot be spent without. A claim that throws stops the
      * deposit with nothing spent; the same throw one statement later would be a
      * loss.
@@ -1250,14 +1255,14 @@ export class VaultLedger {
      * vault was read names the same coin, and the ledger refuses to create a
      * coin it has already recorded, but only once the proof is made and the
      * transaction submitted. So a coin that already exists is not attempted:
-     * its line stays filed as an attempt that never landed, and the next slot is
-     * claimed. `afterDeposit` is the same function that will make the write, so
+     * its slot is passed over with no line filed, and the next slot is tried. `afterDeposit` is the same function that will make the write, so
      * a deposit it would refuse refuses HERE, before a fee.
      */
     const { coin: claimed } = await claimNewDepositCoin({
       vault: vaultAddress,
       money,
       journal: this.depositJournal,
+      nonceAt: (m, slot) => this.depositJournal.nonceAt(vaultAddress, m, slot),
       everCreated: createdBefore,
       outputCommitmentOf: (c) => vaultNoteCommitment(c, vaultAddress as Hex),
       heldNow: (c) => heldNow.member(fromHex(commitmentForNote(pureCircuits as never, vaultAddress as Hex, c))),

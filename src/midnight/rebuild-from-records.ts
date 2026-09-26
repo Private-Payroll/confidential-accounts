@@ -164,10 +164,10 @@ export const walkCompanyRecords = async (input: {
 
   /*
    * **EVERY SLOT A DEPOSIT CAN HAVE USED, FOR EVERY EPOCH AT ONCE.** A slot is
-   * the vault's output count when the deposit was prepared, plus its attempt,
-   * and that count only grows; so no deposit to this vault used a slot past
-   * `lastDepositSlot` of the count read now. The bound is the vault's, not a
-   * number of misses in a row.
+   * the lowest one at which its money's coin had never been made, so a deposit
+   * at slot `s` sits above `s - 1` earlier coins of its own money on the chain;
+   * no deposit to this vault therefore used a slot past `lastDepositSlot` of the
+   * count read now. The bound is the vault's, not a number of misses in a row.
    */
   const last = input.keys.length > 0 ? lastDepositSlot(input.everCreated.size) : 0;
   let lastFound = 0;

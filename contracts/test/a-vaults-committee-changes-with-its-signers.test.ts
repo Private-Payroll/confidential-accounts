@@ -57,7 +57,7 @@ import { answerVaultAsk } from '../../src/web/vault-worker-entry.js';
 import { vaultBuilderOver, type VaultAnswer } from '../../src/web/vault-worker-client.js';
 import {
   createCompanyVault, depositIntoCompanyVault, openCompanyVaultPool, payPrivatelyFromCompanyVault,
-  type TemporaryKeys, type VaultService,
+  type TemporaryKeys, type VaultService, type DepositInFlight, type DepositsInFlight,
 } from '../../src/web/vault-operation.js';
 import { readWhatThePageAsks, base64FromBytes } from '../../apps/wallet/src/chain/balance-for-page.js';
 import { UNLOCK_PURPOSE, UNLOCK_WINDOW_MS, unlockAsk } from '../../src/core/wallet-unlock.js';
@@ -79,6 +79,16 @@ import { vaultDetails } from '../../src/testing/vault-details.js';
 import { payeeAddressFromKeys, type Payee } from '../../src/midnight/payee-address.js';
 import { assemblePrivatePayments } from '../../src/midnight/private-payment-wire.js';
 import { witnessesOver } from '../../src/midnight/vault-notes.js';
+
+/** Deposits in flight, kept for the length of one test. */
+const inFlightInMemory = (): DepositsInFlight => {
+  const kept = new Map<string, DepositInFlight>();
+  return {
+    get: async (v) => kept.get(v) ?? null,
+    put: async (v, d) => { kept.set(v, d); },
+    forget: async (v) => { kept.delete(v); },
+  };
+};
 
 const NET = 'undeployed';
 const RECORDS: readonly WireRecord[] = ['pool', 'deposit-journal', 'payment-journal', 'nonce-secret'];
@@ -449,7 +459,7 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
     await openCompanyVaultPool(poolDoors, vault);
     const authority = await http(`${at}/authority`);
     await http(`${at}/authority/handover`, { method: 'POST', body: { committee: authority.committee } });
-    const deposited = await depositIntoCompanyVault({ ...poolDoors, company, builder: builder(), pay: wallet }, vault, { token: TOKEN, value: 1_000n });
+    const deposited = await depositIntoCompanyVault({ ...poolDoors, company, builder: builder(), pay: wallet, inFlight: inFlightInMemory() }, vault, { token: TOKEN, value: 1_000n });
     return { vault, note: deposited.note };
   };
 

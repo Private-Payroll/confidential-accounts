@@ -55,7 +55,7 @@ import { answerVaultAsk } from '../../src/web/vault-worker-entry.js';
 import { vaultBuilderOver, type VaultAnswer } from '../../src/web/vault-worker-client.js';
 import {
   createCompanyVault, depositIntoCompanyVault, openCompanyVaultPool, VaultHandoverOwed,
-  type TemporaryKeys, type VaultService,
+  type TemporaryKeys, type VaultService, type DepositInFlight, type DepositsInFlight,
 } from '../../src/web/vault-operation.js';
 import { readWhatThePageAsks, base64FromBytes, bytesFromBase64 } from '../../apps/wallet/src/chain/balance-for-page.js';
 import { UNLOCK_PURPOSE, UNLOCK_WINDOW_MS, unlockAsk } from '../../src/core/wallet-unlock.js';
@@ -68,6 +68,16 @@ import { whyNotHandOver } from '../../src/web/handover-check.js';
 import { readProvenTransaction, readFinishedTransaction } from '../../src/wiring/proven-submission.js';
 import { startingLedgerFrom } from '../../src/wiring/vault-submission.js';
 import { signingKeyFromBip340 } from '@midnightntwrk/ledger-v9';
+
+/** Deposits in flight, kept for the length of one test. */
+const inFlightInMemory = (): DepositsInFlight => {
+  const kept = new Map<string, DepositInFlight>();
+  return {
+    get: async (v) => kept.get(v) ?? null,
+    put: async (v, d) => { kept.set(v, d); },
+    forget: async (v) => { kept.delete(v); },
+  };
+};
 
 const NET = 'undeployed';
 const RECORDS: readonly WireRecord[] = ['pool', 'deposit-journal', 'payment-journal', 'nonce-secret'];
@@ -470,7 +480,7 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     /* ---- NO MONEY GOES IN WHILE THE ACCOUNT IS STILL THE TEMPORARY KEY'S, AND THE WALLET IS NOT ASKED ---- */
     shown = [];
     await expect(depositIntoCompanyVault({
-      ...poolDoors, company, builder: builder(), pay: wallet,
+      ...poolDoors, company, builder: builder(), pay: wallet, inFlight: inFlightInMemory(),
     }, vault, { token: GBP, value: 1n })).rejects.toThrow(/account is still held by the temporary key/);
     expect(shown).toEqual([]);
     expect(chain.applied).toHaveLength(2);
@@ -519,7 +529,7 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     /* ---- the deposit ---- */
     shown = [];
     const deposited = await depositIntoCompanyVault({
-      ...poolDoors, company, builder: builder(), pay: wallet,
+      ...poolDoors, company, builder: builder(), pay: wallet, inFlight: inFlightInMemory(),
     }, vault, { token: GBP, value: 1_000n });
     expect(chain.applied.map((a) => a.ok)).toEqual([true, true, true, true]);
 
