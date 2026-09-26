@@ -2311,10 +2311,19 @@ app.post('/api/invites/:token/accept-signer', authed, wrap(async (req, res) => {
      * that this server cannot receive it than that it promises not to keep it.
      */
     leafCommitment: z.string().min(32),
+    /*
+     * The invitee's proof that these keys are theirs, made with a secret in
+     * their link that this server never receives. It is passed through sealed
+     * and checked on every signer's device, not here: this server holds
+     * nothing that could check it, and that is the point of it.
+     */
+    seatProof: z.object({
+      nonce: z.string().regex(/^[0-9a-f]{64}$/), proof: z.string().regex(/^[0-9a-f]{64}$/),
+    }).strict().optional(),
   }).parse(req.body);
   res.json(accounts.acceptSignerInvite(
     String(req.params.token), req.userId!, b.signingPublicKey, b.wrappingPublicKey,
-    b.leafCommitment));
+    b.leafCommitment, b.seatProof));
 }));
 
 /*

@@ -32,6 +32,14 @@ import {
 import type { DataStore } from './store.js';
 import type { Hex } from './crypto.js';
 import type { PayeeAddress } from '../midnight/payee-address.js';
+import { newSeatInvitation, proveSeatKeys } from './seat-invite-proof.js';
+/** What the invited person's device sends beside its keys: the proof its link let it make. */
+const provenBy = (
+  viewingKey: string, invite: { accountId: string; name?: string; role?: string },
+  signingPublicKey: string, wrappingPublicKey: string, leafCommitment: string,
+) => proveSeatKeys(newSeatInvitation(viewingKey, invite.accountId, invite.name!, invite.role!),
+  { signingPublicKey, wrappingPublicKey, leafCommitment });
+
 
 /**
  * **THE INVITEE'S OWN DEVICE SEALS, SO A TEST HAS TO SEAL TOO.**
@@ -458,7 +466,8 @@ describe('onboarding', () => {
 
     // The invitee's device generates its own keys. Only public halves travel.
     const sk = newSigningKeypair(); const wk = newWrappingKeypair();
-    const pending = h.accounts.acceptSignerInvite(invite.token, null, sk.publicKey, wk.publicKey, LEAF);
+    const pending = h.accounts.acceptSignerInvite(invite.token, null, sk.publicKey, wk.publicKey, LEAF,
+      provenBy(viewingKey, invite, sk.publicKey, wk.publicKey, LEAF));
     expect(pending.status).toBe('pending');
 
     // No wrapped key exists for them, so they cannot reach the viewing key.
@@ -2113,7 +2122,8 @@ describe('multi-tenancy', () => {
 
     const invite = h.accounts.inviteSigner(c.account.id, 'Blake', 'blake@acme.co', 'approver');
     const sk = newSigningKeypair(); const wk = newWrappingKeypair();
-    const pending = h.accounts.acceptSignerInvite(invite.token, blake.id, sk.publicKey, wk.publicKey, LEAF);
+    const pending = h.accounts.acceptSignerInvite(invite.token, blake.id, sk.publicKey, wk.publicKey, LEAF,
+      provenBy(c.viewingKey, invite, sk.publicKey, wk.publicKey, LEAF));
 
     // On the account, but not yet a member: an invite is not a grant.
     expect(pending.status).toBe('pending');
@@ -2480,7 +2490,8 @@ describe('granting access puts the signer in the on-chain set', () => {
     const invite = h.accounts.inviteSigner(c.account.id, 'Blake', 'b@acme.co', 'approver');
     const sk = newSigningKeypair(); const wk = newWrappingKeypair();
     const blake = h.accounts.acceptSignerInvite(
-      invite.token, null, sk.publicKey, wk.publicKey, 'be'.repeat(32));
+      invite.token, null, sk.publicKey, wk.publicKey, 'be'.repeat(32),
+      provenBy(c.viewingKey, invite, sk.publicKey, wk.publicKey, 'be'.repeat(32)));
 
     const seat = await h.accounts.proposeSigner(
       c.account.id, c.viewingKey, blake.id, c.secrets[0].signerId,
@@ -2516,7 +2527,8 @@ describe('granting access puts the signer in the on-chain set', () => {
     const invite = h.accounts.inviteSigner(c.account.id, 'Blake', 'b@acme.co', 'approver');
     const sk = newSigningKeypair(); const wk = newWrappingKeypair();
     const blake = h.accounts.acceptSignerInvite(
-      invite.token, null, sk.publicKey, wk.publicKey, 'be'.repeat(32));
+      invite.token, null, sk.publicKey, wk.publicKey, 'be'.repeat(32),
+      provenBy(c.viewingKey, invite, sk.publicKey, wk.publicKey, 'be'.repeat(32)));
 
     /*
      * THE REFUSAL MOVED UP A LAYER.
@@ -2581,7 +2593,8 @@ describe('granting access puts the signer in the on-chain set', () => {
     const invite = h.accounts.inviteSigner(c.account.id, 'Dana', 'd@acme.co', 'approver');
     const sk = newSigningKeypair(); const wk = newWrappingKeypair();
     const dana = h.accounts.acceptSignerInvite(
-      invite.token, null, sk.publicKey, wk.publicKey, 'da'.repeat(32));
+      invite.token, null, sk.publicKey, wk.publicKey, 'da'.repeat(32),
+      provenBy(c.viewingKey, invite, sk.publicKey, wk.publicKey, 'da'.repeat(32)));
 
     const seat = await h.accounts.proposeSigner(
       c.account.id, c.viewingKey, dana.id, c.secrets[0].signerId,
@@ -2610,7 +2623,8 @@ describe('granting access puts the signer in the on-chain set', () => {
     const mk = (name: string, leaf: string) => {
       const invite = h.accounts.inviteSigner(c.account.id, name, `${name}@acme.co`, 'approver');
       const sk = newSigningKeypair(); const wk = newWrappingKeypair();
-      return h.accounts.acceptSignerInvite(invite.token, null, sk.publicKey, wk.publicKey, leaf);
+      return h.accounts.acceptSignerInvite(invite.token, null, sk.publicKey, wk.publicKey, leaf,
+        provenBy(c.viewingKey, invite, sk.publicKey, wk.publicKey, leaf));
     };
     const wanted = mk('Blake', 'be'.repeat(32));
     const other = mk('Mallory', 'ma'.repeat(32));
@@ -2653,7 +2667,8 @@ describe('granting access puts the signer in the on-chain set', () => {
     const invite = h.accounts.inviteSigner(c.account.id, 'Dana', 'd@acme.co', 'approver');
     const sk = newSigningKeypair(); const wk = newWrappingKeypair();
     const dana = h.accounts.acceptSignerInvite(
-      invite.token, null, sk.publicKey, wk.publicKey, 'da'.repeat(32));
+      invite.token, null, sk.publicKey, wk.publicKey, 'da'.repeat(32),
+      provenBy(c.viewingKey, invite, sk.publicKey, wk.publicKey, 'da'.repeat(32)));
     // Three signers, threshold two: past the window on the first extra signer.
     await expect(h.accounts.grantAccess(c.account.id, c.viewingKey, dana.id))
       .rejects.toThrow(/no open proposal on this account for that change/i);
@@ -2777,7 +2792,8 @@ describe('what the ACCOUNTS table leaves in the store', () => {
     const wk = newWrappingKeypair();
     const pendingLeaf = 'ef'.repeat(32);
     const pending = h.accounts.acceptSignerInvite(
-      invite.token, blake.id, sk.publicKey, wk.publicKey, pendingLeaf);
+      invite.token, blake.id, sk.publicKey, wk.publicKey, pendingLeaf,
+      provenBy(c.viewingKey, invite, sk.publicKey, wk.publicKey, pendingLeaf));
 
     return { h, c, ada, blake, pending, pendingLeaf, sk, wk };
   }
@@ -3060,7 +3076,8 @@ describe('changing the locks', () => {
     const wk = newWrappingKeypair();
     const pendingLeaf = 'ef'.repeat(32);
     const pending = h.accounts.acceptSignerInvite(
-      invite.token, blake.id, sk.publicKey, wk.publicKey, pendingLeaf);
+      invite.token, blake.id, sk.publicKey, wk.publicKey, pendingLeaf,
+      provenBy(c.viewingKey, invite, sk.publicKey, wk.publicKey, pendingLeaf));
 
     return { h, c, run, p, pending, pendingLeaf };
   }

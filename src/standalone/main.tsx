@@ -483,7 +483,7 @@ async function route(url: URL, init?: RequestInit): Promise<Response> {
     // No `body.blinding`. M-106: an invitee's blinding factor never leaves
     // their device, so there is no parameter here to receive one.
     return ok(accounts.acceptSignerInvite(seg[2], (await caller(init)), body.signingPublicKey,
-      body.wrappingPublicKey, body.leafCommitment));
+      body.wrappingPublicKey, body.leafCommitment, body.seatProof));
   if (seg[1] === 'invites' && seg[3] === 'offer' && method === 'GET')
     return ok(payroll.offerFor(seg[2]));
 

@@ -47,6 +47,10 @@ const { addressOfSlot, signInWithAWallet } = await import('../testing/wallet-ses
 const { theNetwork } = await import('../midnight/network.js');
 const { sign, newSigningKeypair, newWrappingKeypair, newBlinding } = await import('../core/crypto.js');
 const { storedSignerLeaf } = await import('../core/signer-leaf.js');
+const { newSeatInvitation, proveSeatKeys, seatInvitationFragment, seatInvitationFromFragment } =
+  await import('../core/seat-invite-proof.js');
+const { acceptSeatOnThisDevice, newSeatKeys } = await import('../web/accept-seat.js');
+type PendingSeat = import('../web/keyring.js').PendingSeat;
 const device = await import('../web/governed-call-on-device.js');
 const { refuseARaiseThatIsNotTheRecordedOne, refuseWhatThisDeviceDidNotOpen, recordForOneCall, NotWhatThisDeviceOpened } =
   await import('../web/governed-call-builder.js');
@@ -139,7 +143,10 @@ leaves.set(`${company} ${ada.signerId}`, created.account.signers[0]!.leafCommitm
  */
 const invited = (who: 'blake' | 'cleo') => {
   const raw = accounts.inviteSigner(company, who, `${who}@seats.example`, 'approver');
-  const s = accounts.acceptSignerInvite(raw.token, USERS[who], people[who].publicKey, people[who].wrapping.publicKey, leafOf(who));
+  const keys = { signingPublicKey: people[who].publicKey, wrappingPublicKey: people[who].wrapping.publicKey, leafCommitment: leafOf(who) };
+  /* With the proof the person's link let their device make, as the join page sends it. */
+  const s = accounts.acceptSignerInvite(raw.token, USERS[who], keys.signingPublicKey, keys.wrappingPublicKey, keys.leafCommitment,
+    proveSeatKeys(newSeatInvitation(viewingKey, company, who, 'approver'), keys));
   leaves.set(`${company} ${s.id}`, leafOf(who));
   return s.id;
 };
@@ -152,9 +159,21 @@ const viewed = await accounts.create('Viewed', [
 const viewedWaiting = (() => {
   const pair = newSigningKeypair();
   const raw = accounts.inviteSigner(viewed.account.id, 'Dora', 'dora@seats.example', 'approver');
-  return accounts.acceptSignerInvite(raw.token, USERS.dora, pair.publicKey, newWrappingKeypair().publicKey,
-    storedSignerLeaf({ signingSecret: pair.secret, blinding: newBlinding(), scope }, MidnightCommitments)).id;
+  const keys = {
+    signingPublicKey: pair.publicKey, wrappingPublicKey: newWrappingKeypair().publicKey,
+    leafCommitment: storedSignerLeaf({ signingSecret: pair.secret, blinding: newBlinding(), scope }, MidnightCommitments),
+  };
+  return accounts.acceptSignerInvite(raw.token, USERS.dora, keys.signingPublicKey, keys.wrappingPublicKey, keys.leafCommitment,
+    proveSeatKeys(newSeatInvitation(viewed.viewingKey, viewed.account.id, 'Dora', 'approver'), keys)).id;
 })();
+
+/* A third company, two of two, where an invitation is raised on one device and seated from two. */
+const joined = await accounts.create('Joined', [
+  { name: 'Ada', role: 'admin', userId: USERS.ada }, { name: 'Blake', role: 'approver', userId: USERS.blake },
+], 2);
+for (const [i, sg] of joined.account.signers.entries()) {
+  leaves.set(`${joined.account.id} ${joined.secrets[i]!.signerId}`, sg.leafCommitment as Hex);
+}
 
 handInWiring({
   name: 'simulated',
@@ -390,5 +409,43 @@ describe('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVICES, ON THE PRODUCT\'S 
     expect(t.status).toBe(422);
     expect(t.body.error).toMatch(/only a seated signer who may approve/u);
     expect(sent).toEqual([]);
+  });
+  it('AN INVITATION RAISED ON ONE DEVICE IS ACCEPTED ON THE INVITEE\'S OWN AND SEATED FROM TWO OTHERS, END TO END', async () => {
+    const at = joined.account.id;
+    const [jAda, jBlake] = joined.secrets as [typeof joined.secrets[0], typeof joined.secrets[0]];
+    /* Ada's page raises the invitation over the route, and makes the link's secret as the page does. */
+    const raised = await call('POST', `/api/accounts/${at}/invites/signer`, {
+      token: tokens.ada, body: { name: 'Dora', email: 'dora@joined.example', role: 'approver' } });
+    expect(raised.status).toBe(200);
+    const link = seatInvitationFromFragment(seatInvitationFragment(raised.body.token,
+      newSeatInvitation(joined.viewingKey, at, raised.body.name, raised.body.role)))!;
+    /* Dora's device, signed in as Dora, accepts from the link with nothing but what the link carries. */
+    const sealedThere: PendingSeat[] = [];
+    const accepted = await acceptSeatOnThisDevice(at, MidnightCommitments, {
+      newKeys: newSeatKeys,
+      seal: async (seat) => { sealedThere.push(seat); },
+      publish: (payload) => apiAs('dora')(`/api/invites/${encodeURIComponent(link.token)}/accept-signer`, {
+        method: 'POST', body: JSON.stringify(payload) }),
+      promote: async () => {},
+    }, link.invitation);
+    const leaf = storedSignerLeaf(sealedThere[0]!, MidnightCommitments);
+    /* Ada's device raises the seat and approves it; two approvals are needed, so it waits. */
+    const adaDevice = aDevice('ada', jAda.signerId, jAda.signingSecret, [], at);
+    const first = await device.seatSignerOnDevice(adaDevice.doors, {
+      viewingKey: joined.viewingKey, signerId: jAda.signerId, sign: adaDevice.sign, seat: { signerId: accepted.signerId, leaf } });
+    /* RED WHEN: the device that raised the invitation cannot raise the seat of a key that arrived from another device. */
+    expect(first.state).toBe('waiting-for-approvals');
+    /* Blake's device, which raised nothing, approves it and carries it out. */
+    const blakeDevice = aDevice('blake', jBlake.signerId, jBlake.signingSecret, [], at);
+    const second = await device.seatSignerOnDevice(blakeDevice.doors, {
+      viewingKey: joined.viewingKey, signerId: jBlake.signerId, sign: blakeDevice.sign, seat: { signerId: accepted.signerId, leaf } });
+    /* RED WHEN: an honest invitation accepted on the invitee's own device cannot be seated. */
+    expect(second).toEqual({ state: 'done' });
+    const now = openAccount((await call('GET', `/api/accounts/${at}`, { token: tokens.ada })).body, joined.viewingKey);
+    /* RED WHEN: the seat carried out is not recorded, and Dora stays waiting. */
+    expect(now.signers.map((x) => ({ name: x.name, status: x.status }))).toEqual([
+      { name: 'Ada', status: 'active' }, { name: 'Blake', status: 'active' }, { name: 'Dora', status: 'active' }]);
+    /* RED WHEN: the key seated is not the one made and kept on Dora's device. */
+    expect(now.signers.find((x) => x.name === 'Dora')!.signingPublicKey).toBe(sealedThere[0]!.signingPublicKey);
   });
 });

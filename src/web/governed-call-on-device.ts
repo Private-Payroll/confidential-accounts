@@ -25,10 +25,11 @@ import type {
   SignerMaterial, GovernedCallOrder, OpenedRound, RaiseRunOrder, RaiseGovernanceOrder, GovernanceOnTheWire,
 } from './governed-call-builder.js';
 import { parseCanonical, unseal, type Hex, type Sealed } from '../core/crypto.js';
-import { openRecord } from '../core/sealed-records.js';
+import { openFromInbox, openRecord } from '../core/sealed-records.js';
 import { openAccount } from '../core/account.js';
+import { refuseASeatKeyNotFromTheInvitee, SeatKeyNotFromTheInvitee } from '../core/seat-invite-proof.js';
 import { assetIdBytes } from '../core/assets.js';
-import type { SealedAccount, SealedProposal } from '../core/types.js';
+import type { PendingSignerPayload, SealedAccount, SealedProposal } from '../core/types.js';
 import type { StateChange } from '../core/ledger.js';
 import { payrollRoundOf, sameList, untoldRetryRounds } from '../core/retry-cover.js';
 import type { AccountCallChainOnTheWire, VaultBuilderClient } from './vault-worker-client.js';
@@ -162,8 +163,9 @@ const KINDS_A_DEVICE_ACTS_ON = new Set(['payroll', 'add-signer', 'set-threshold'
  * viewing key, and the service is handed that key, so a service that rewrote a
  * record whole and sealed it again would be read here as written. The identity
  * and the payload it is made from sit on the record beside the sealed part,
- * not inside it. And a person waiting for a seat is read from what they left
- * in the company's inbox, which is sealed to a key anybody may seal to. What
+ * not inside it. A person waiting for a seat is read from what they left in
+ * the company's inbox, which is sealed to a key anybody may seal to, so their
+ * keys are taken only with the proof their invitation gave them. What
  * this closes is a service that sends a device values other than its own
  * records hold: a salt, an identity, a leaf, a run or a change the records do
  * not name.
@@ -209,8 +211,37 @@ export async function openTheRoundHere(
     }
     let leaf: string | null | undefined;
     try {
-      leaf = openAccount(await service.sealedAccount(accountId), key).signers.find((x) => x.id === body.signerId)?.leafCommitment;
+      const sealedAccount = await service.sealedAccount(accountId);
+      const signers = openAccount(sealedAccount, key).signers;
+      const named = signers.find((x) => x.id === body.signerId);
+      leaf = named?.leafCommitment;
+      /*
+       * **A PERSON WAITING FOR A SEAT IS READ FROM THE INBOX, AND THE INBOX
+       * TAKES ANYBODY'S WRITE.** So the keys found there are seated only if
+       * they carry the invitee's proof, made with the secret in their link,
+       * which this device works out again from the viewing key. A key put
+       * there by somebody without that key carries no proof that passes, and
+       * is refused here, before anything is built or approved.
+       */
+      if (named?.status === 'pending') {
+        const box = sealedAccount.pendingSigners.find((p) => p.id === named.id);
+        if (!box) {
+          throw new SeatKeyNotFromTheInvitee('This person\'s acceptance could not be found. Access was not granted and '
+            + 'nothing was sent. Reload the page; if they are still shown as waiting, press Grant access again.');
+        }
+        const waiting = openFromInbox<PendingSignerPayload>(box.sealed, accountId, key);
+        refuseASeatKeyNotFromTheInvitee(key, accountId, waiting);
+        /* The same keys as somebody already on the list is the same person twice, or a copy. */
+        if (signers.some((x) => x.id !== named.id && (x.signingPublicKey === waiting.signingPublicKey
+          || (x.leafCommitment ?? '').toLowerCase() === waiting.leafCommitment.toLowerCase()))) {
+          throw new SeatKeyNotFromTheInvitee('These keys already belong to another signer on this company, so they '
+            + 'cannot be given access under this name. Access was not granted and nothing was sent. Do not give this '
+            + 'person access: they need a new invitation, and check with them that they were the one who accepted.');
+        }
+        leaf = waiting.leafCommitment;
+      }
     } catch (e) {
+      if (e instanceof SeatKeyNotFromTheInvitee) throw e;
       throw new NotOpenedOnThisDevice('This device cannot read the company\'s list of signers, so it cannot check this '
         + 'proposal. Reload the page and try again. If it happens again, do not act on this proposal.', { cause: e });
     }

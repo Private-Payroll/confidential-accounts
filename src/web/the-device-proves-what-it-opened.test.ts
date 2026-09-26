@@ -28,6 +28,7 @@ import { AccountService } from '../core/account.js';
 import { newSigningKeypair, newWrappingKeypair, newBlinding, type Hex } from '../core/crypto.js';
 import { storedSignerLeaf } from '../core/signer-leaf.js';
 import { sealedProposalFor } from '../testing/sealed-records.js';
+import { newSeatInvitation, proveSeatKeys } from '../core/seat-invite-proof.js';
 
 /* ── the builder, over stand-ins for the contract's pure functions ─────────── */
 
@@ -219,7 +220,10 @@ const ada = created.secrets[0]!;
 const late = { ...newSigningKeypair(), wrapping: newWrappingKeypair(), blinding: newBlinding() };
 const lateLeaf = storedSignerLeaf({ signingSecret: late.secret, blinding: late.blinding, scope: MidnightCommitments.allVaults() }, MidnightCommitments);
 const invite = accounts.inviteSigner(company, 'Late', 'late@opened.example', 'approver');
-const lateSeat = accounts.acceptSignerInvite(invite.token, 'usr_late', late.publicKey, late.wrapping.publicKey, lateLeaf);
+/* Accepted as a person's own device accepts: with the proof its link let it make. */
+const lateKeys = { signingPublicKey: late.publicKey, wrappingPublicKey: late.wrapping.publicKey, leafCommitment: lateLeaf };
+const lateSeat = accounts.acceptSignerInvite(invite.token, 'usr_late', late.publicKey, late.wrapping.publicKey, lateLeaf,
+  proveSeatKeys(newSeatInvitation(viewingKey, company, 'Late', 'approver'), lateKeys));
 const seatRound = await accounts.seatRound(company, viewingKey, lateSeat.id, ada.signerId);
 const thresholdRound = await accounts.thresholdRound(company, viewingKey, 2, ada.signerId);
 
