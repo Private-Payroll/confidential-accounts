@@ -1,7 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  newSigningKeypair, newWrappingKeypair, newBlinding, reviveBigints, type Hex,
-} from '../core/crypto.js';
+import { reviveBigints, type Hex } from '../core/crypto.js';
 import { fromHex } from '../core/crypto.js';
 import { payslipKeypairFrom } from '../core/payslip-key-derive.js';
 import type { CommitmentScheme } from '../core/ledger.js';
@@ -9,7 +7,7 @@ import type { RunPayments } from '../midnight/run-status.js';
 import { openAccount as openSealedAccount, type CreatedAccount, type SignerSecrets } from '../core/account.js';
 import { openRecord } from '../core/sealed-records.js';
 import { seatOnThisDevice, type SeatOnThisDevice } from '../core/signer-leaf.js';
-import { acceptSeatOnThisDevice } from './accept-seat.js';
+import { newSeatInvitation, seatInvitationFragment } from '../core/seat-invite-proof.js';
 import { assets, formatAmount, parseAmount, privateForm, subtotals, type Asset, type AssetId } from '../core/assets.js';
 import { hiringAssets, invitingAssets, invitesForAPublicAddress, NOBODY_CAN_BE_HIRED, NOBODY_CAN_BE_INVITED } from './hiring-assets.js';
 import { PUBLIC_PAYMENT, runPaysAnyonePublicly, setUpPublicly } from './public-payment.js';
@@ -266,9 +264,9 @@ type Roster = RosterEmployee & { handedOver?: boolean };
  * anything afterwards. A path segment is all three, and the token is both the
  * lookup and the key to the offer — so it stays out of every log it can.
  *
- * `https://app.example/join/${token}` — the placeholder domain the signer
- * invites still render — is what this replaces: it named a host nobody owns and
- * put the token in a path.
+ * A signer's link is made here too, with more in its fragment than the token:
+ * the company and the invitation's secret, which the invitee's device proves
+ * its keys with. `seat-invite-proof.ts` says why it has to travel this way.
  */
 const joinLink = (token: string): string =>
   `${window.location.origin}/join#${encodeURIComponent(token)}`;
@@ -712,7 +710,7 @@ function Screens({ commitments }: { commitments: CommitmentScheme }) {
   if (joinToken) {
     /* Following the accepted screen's link stays in this tab, so a person who
      * signed in here can still save their first keys here. */
-    return <JoinScreen token={joinToken} onOpenPayslips={() => {
+    return <JoinScreen token={joinToken} commitments={commitments} onOpenPayslips={() => {
       window.history.pushState(null, '', YOUR_PAY_PATH);
       setJoinToken(null);
     }} />;
@@ -2846,7 +2844,7 @@ const zeroish = (v: string): boolean => v.trim() !== '' && !(Number(v) >= 1);
 const overSeated = (v: string, seats: number): boolean =>
   v.trim() !== '' && Number(v) > seats;
 
-function Settings({ account, state, session, me, busy, act, commitments }: {
+export function Settings({ account, state, session, me, busy, act, commitments }: {
   account: Account; state: ShieldedState; session: Session; me: SignerSecrets;
   busy: boolean; act: Act;
   /** Handed down from `App`, which is handed it by the entry point. Never imported. */
@@ -2857,7 +2855,6 @@ function Settings({ account, state, session, me, busy, act, commitments }: {
   const [vaultForm, setVaultForm] = useState({ vault: '', threshold: '2' });
   const [form, setForm] = useState({ name: '', email: '', role: 'approver' });
   const [open, setOpen] = useState(false);
-  const [tokens, setTokens] = useState<Record<string, string>>({});
   const [openInvites, setOpenInvites] = useState<Invite[]>([]);
 
   useEffect(() => { api<PublicView>('/api/public').then(setPub).catch(() => {}); }, [state, account]);
@@ -2910,67 +2907,33 @@ function Settings({ account, state, session, me, busy, act, commitments }: {
     const created = await api<Invite>(`/api/accounts/${account.id}/invites/signer`, {
       method: 'POST', body: JSON.stringify(form),
     });
+    /*
+     * **THE INVITATION'S SECRET IS MADE HERE, FROM THE VIEWING KEY, AND GOES
+     * ONLY INTO THE LINK'S FRAGMENT.** The invitee's device proves its keys
+     * with it, and every signer's device works it out again from the name and
+     * role written on the invitation - so a key put in the inbox by anybody
+     * without the viewing key is refused before it is seated. The name and role
+     * are the ones the service recorded, because those are what the invitee's
+     * inbox entry will carry. `seat-invite-proof.ts` has the whole of it.
+     */
+    const invitation = newSeatInvitation(
+      session.viewingKey as Hex, account.id, created.name ?? form.name, created.role ?? form.role);
     setForm({ name: '', email: '', role: 'approver' }); setOpen(false);
     /*
      * Keyed by the SUBJECT, and by a name+role fallback rather than a
      * millisecond timestamp — two invites raised in the same millisecond would
-     * otherwise render one person's token against the other's name.
+     * otherwise render one person's link against the other's name.
      */
-    setRaised(x => ({ ...x, [inviteKey(created)]: created.token }));
+    setRaised(x => ({ ...x, [inviteKey(created)]: joinLink(seatInvitationFragment(created.token, invitation)) }));
     await loadInvites();
   });
 
-  /**
-   * Stands in for the invitee opening the link on their own device.
-   *
-   * Three secrets are generated here and ONLY PUBLIC HALVES LEAVE — including
-   * the blinding factor, which stays. It is the one that is easy to lose track
-   * of, because nothing visibly breaks without it until the signer tries to
-   * prove membership on chain. It is as precious as the signing key, it belongs
-   * in the keyring beside it, and since M-106 the server has no field to put it
-   * in even if this code tried to send it.
+  /*
+   * **THERE IS NO WAY TO ACCEPT A SIGNER INVITATION FROM THIS SCREEN.** It
+   * used to have one, which made the invitee's keys in the INVITER's browser.
+   * An invitation is accepted on the invitee's own device, at the link below,
+   * through `acceptSeatOnThisDevice` in `Join.tsx`.
    */
-  const acceptInvite = (inv: Invite) => act(async () => {
-    /*
-     * **THE SEQUENCE IS IN `accept-seat.ts` AND A TEST DRIVES IT.** `C329`,
-     *
-     *
-     * It was thirty lines here, in a file no test imports, and the two things
-     * that matter about it are both invisible from outside: that the material
-     * is sealed BEFORE the leaf is published, and that the leaf is derived the
-     * way the contract reads it. What is left here is the four doors.
-     */
-    const accepted = await acceptSeatOnThisDevice(inv.accountId, commitments, {
-      newKeys: () => {
-        const sk = newSigningKeypair();
-        const wk = newWrappingKeypair();
-        return {
-          signingSecret: sk.secret, signingPublicKey: sk.publicKey,
-          wrappingSecret: wk.secret, wrappingPublicKey: wk.publicKey,
-          blinding: newBlinding(),
-        };
-      },
-      seal: (seat) => keyring.sealPendingSeat(seat),
-      publish: (payload) => api<Signer>(`/api/invites/${inv.token}/accept-signer`, {
-        method: 'POST',
-        /*
-         * THE BLINDING DOES NOT TRAVEL. M-106, and this line is where the
-         * promise is either kept or broken.
-         *
-         * It briefly did: M-99's removal re-seated every surviving signer at a
-         * new generation, and their new leaves cannot be computed without their
-         * blindings, so each invitee had to send theirs to be held in the
-         * account's sealed inbox. Slots re-seat nobody. Decision 0003 says a
-         * blinding lives on one device and nowhere else, and `SeatDoors`
-         * has no parameter for one.
-         */
-        body: JSON.stringify(payload),
-      }),
-      promote: (pk, signerId) => keyring.promotePendingSeat(pk, signerId),
-    });
-    setTokens(x => ({ ...x, [accepted.signerId]: accepted.wrappingSecret }));
-    await loadInvites();
-  });
 
   /*
    * **A SEAT IS GIVEN FROM THIS DEVICE, NOT BY THE SERVICE.** The service holds
@@ -3041,29 +3004,25 @@ function Settings({ account, state, session, me, busy, act, commitments }: {
                * before a refresh, shows as outstanding and nothing more — which
                * is the honest state rather than a broken link.
                */
-              const token = raised[inviteKey(inv)];
+              const link = raised[inviteKey(inv)];
               return (
                 <div key={inviteKey(inv)} style={{ marginBottom: 16 }}>
                   <div className="field" style={{ marginBottom: 8 }}>
                     <label>{inv.name}, {inv.role}</label>
-                    {token
-                      ? <input readOnly value={`https://app.example/join/${token}`} />
+                    {link
+                      ? <input readOnly data-signer-link value={link} />
                       : <div className="hint">
                           Raised, and the link is not shown again. Send it from wherever you
                           copied it, or withdraw this invite and raise a new one.
                         </div>}
                   </div>
-                  {token && (
-                    <button className="btn" onClick={() => acceptInvite({ ...inv, token })} disabled={busy}>
-                      Open this invite as {(inv.name ?? '').split(' ')[0]}
-                    </button>
-                  )}
                 </div>
               );
             })}
             <div className="hint">
-              The link carries no secret and grants nothing. Opening it generates a keypair in that person's
-              browser and sends back only the public halves.
+              Send each link only to the person it names. Whoever opens it can accept in their place, so check
+              with that person before you grant access. They make their own keys on their own device, and only
+              the public parts come back to the company. They see nothing until access is granted.
             </div>
           </div>
         </div>

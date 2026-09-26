@@ -166,3 +166,14 @@ describe('C328 — the leaf this path publishes', () => {
     expect(d.promoted[0]).toEqual([KEYS.signingPublicKey, 'sgn_new']);
   });
 });
+
+describe('an invitation carried in a link is for one company', () => {
+  it('REFUSES an invitation made for another company, before any key is made or anything is sent', async () => {
+    const d = doorsThat();
+    const other = { accountId: 'acc_elsewhere', nonce: '01'.repeat(32), secret: '02'.repeat(32) };
+    /* RED WHEN: keys are made and published for a company the link does not name - the proof is then refused everywhere, after the fact. */
+    await expect(acceptSeatOnThisDevice(ACCOUNT, SimulatedCommitments, d.doors, other))
+      .rejects.toThrow(/for a different company/u);
+    expect(d.order).toEqual([]);
+  });
+});

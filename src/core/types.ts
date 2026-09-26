@@ -364,6 +364,13 @@ export interface PendingSignerPayload {
   signingPublicKey: Hex;
   wrappingPublicKey: Hex;
   leafCommitment: Hex;
+  /**
+   * The invitee's proof that these keys are theirs, made with a secret that
+   * reached them in their link and never reached this service. Every signer's
+   * device checks it before giving this person access; see
+   * `seat-invite-proof.ts`. Absent means refused there, not trusted.
+   */
+  seatProof?: { nonce: Hex; proof: Hex };
   /*
    * No `blinding`. See `Signer` above: one was needed here so a removal could
    * re-seat this person later, and the re-seating is gone, so the invitee's

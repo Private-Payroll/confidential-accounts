@@ -18,6 +18,14 @@ import { NO_ASSET } from './assets.js';
 import { canonical, newBlinding, newSigningKeypair, newWrappingKeypair, seal, type Hex } from './crypto.js';
 import { storedSignerLeaf } from './signer-leaf.js';
 import { NothingWasSent } from './jobs.js';
+import { newSeatInvitation, proveSeatKeys } from './seat-invite-proof.js';
+/** What the invited person's device sends beside its keys: the proof its link let it make. */
+const provenBy = (
+  viewingKey: string, invite: { accountId: string; name?: string; role?: string },
+  signingPublicKey: string, wrappingPublicKey: string, leafCommitment: string,
+) => proveSeatKeys(newSeatInvitation(viewingKey, invite.accountId, invite.name!, invite.role!),
+  { signingPublicKey, wrappingPublicKey, leafCommitment });
+
 
 type Held = { circuit: string; land: () => Promise<unknown> };
 let ledger: SimulatedLedger;
@@ -42,7 +50,9 @@ beforeEach(async () => {
   const pair = newSigningKeypair();
   const leaf = storedSignerLeaf({ signingSecret: pair.secret, blinding: newBlinding(), scope: MidnightCommitments.allVaults() }, MidnightCommitments);
   const raw = accounts.inviteSigner(company, 'Bo', 'bo@example.test', 'approver');
-  bo = { signerId: accounts.acceptSignerInvite(raw.token, 'usr_bo', pair.publicKey, newWrappingKeypair().publicKey, leaf).id, leaf };
+  const boWrapping = newWrappingKeypair().publicKey;
+  bo = { signerId: accounts.acceptSignerInvite(raw.token, 'usr_bo', pair.publicKey, boWrapping, leaf,
+    provenBy(viewingKey, raw, pair.publicKey, boWrapping, leaf)).id, leaf };
   /* A device's call, as the door hands it to the chain: here the test's own record of what to do, and when. */
   Object.assign(ledger, {
     submitProvenCall: async (accountId: string, bytes: Uint8Array, circuit: string) => {

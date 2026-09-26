@@ -25,6 +25,7 @@ import {
   thresholdFor,
 } from './ledger.js';
 import { storedSignerLeaf } from './signer-leaf.js';
+import { refuseASeatKeyNotFromTheInvitee, SeatKeyNotFromTheInvitee } from './seat-invite-proof.js';
 import { payrollRoundOf } from './retry-cover.js';
 import { vaultKeyIndexOf, vaultKeysAreTheSigners, type SignedVaultKeys } from './vault-keys.js';
 import {
@@ -1102,6 +1103,12 @@ export class AccountService {
      * not.
      */
     leafCommitment: Hex,
+    /**
+     * The invitee's proof that the keys above are theirs. This service cannot
+     * check it and does not try: it is sealed into the inbox with the keys, and
+     * every signer's device checks it before giving this person access.
+     */
+    seatProof?: { nonce: Hex; proof: Hex },
   ): Signer {
     const invite = this.store.getInvite(token);
     if (!invite) throw new Error('invite not found');
@@ -1154,6 +1161,7 @@ export class AccountService {
       signingPublicKey,
       wrappingPublicKey,
       leafCommitment,
+      ...(seatProof === undefined ? {} : { seatProof: { nonce: seatProof.nonce, proof: seatProof.proof } }),
     };
     const pending: PendingSigner = {
       id: 'sgn_' + nanoid(10),
@@ -1256,6 +1264,8 @@ export class AccountService {
      * real constructor no longer takes, so the two ledgers do not agree on this
      * and this expression is what keeps each honest against its own chain.
      */
+    /* Before the chain is asked, so a key nobody proved is refused with nothing sent. */
+    this.refuseKeysTheInviteeDidNotProve(rec, account, viewingKey, signer);
     const status = await this.ledger.status(accountId);
     const bootstrapping = !!status && status.signerCount < status.threshold;
     const authorising = bootstrapping
@@ -1273,11 +1283,50 @@ export class AccountService {
   }
 
   /**
+   * The waiting person's entry, opened from the inbox and held to the proof
+   * their invitation gave them, and to the keys the caller is about to use.
+   */
+  private refuseKeysTheInviteeDidNotProve(rec: SealedAccount, account: Account, viewingKey: Hex, signer: Signer): void {
+    const box = rec.pendingSigners.find(p => p.id === signer.id);
+    if (!box) {
+      throw new SeatKeyNotFromTheInvitee(
+        'this person\'s acceptance could not be found, so access was not granted and nothing was written. Reload the '
+        + 'page; if they are still waiting, press Grant access again.');
+    }
+    const waiting = openFromInbox<PendingSignerPayload>(box.sealed, rec.id, viewingKey);
+    refuseASeatKeyNotFromTheInvitee(viewingKey, rec.id, waiting);
+    /*
+     * A proved entry copied beside itself under another id is still proved: the
+     * proof covers the keys, not the entry that holds them. The same keys as
+     * anybody else on the list are one person counted twice, or a copy.
+     */
+    if (account.signers.some(s => s.id !== signer.id && (s.signingPublicKey === waiting.signingPublicKey
+      || (s.leafCommitment ?? '').toLowerCase() === waiting.leafCommitment.toLowerCase()))) {
+      throw new SeatKeyNotFromTheInvitee(
+        'these keys already belong to another signer on this company, so they cannot be given access under this name. '
+        + 'Access was not granted and nothing was written.');
+    }
+  }
+
+  /**
    * **THE RECORD'S HALF OF A SEAT, WRITTEN ONCE THE CHAIN HAS BEEN ASKED TO SEAT
    * THIS PERSON.** Shared by the seat this service makes and the seat a signer's
    * device makes, so the two cannot come to write different records.
    */
   private admit(rec: SealedAccount, account: Account, viewingKey: Hex, signer: Signer): Account {
+    /*
+     * **THE KEYS WRITTEN DOWN ARE CHECKED HERE, WHERE THEY ARE WRITTEN DOWN.**
+     *
+     * Every signer's device checks a waiting person's proof before it raises,
+     * approves or carries out their seat. But this is a second reading of the
+     * inbox, made after the last device looked, and the viewing key is wrapped
+     * to whatever wrapping key it finds. The inbox takes anybody's write, so a
+     * key put there after the seat was carried out would otherwise be the one
+     * handed the viewing key while the chain holds the invited person's leaf.
+     * This call holds the viewing key, so it asks the same question the devices
+     * ask, of exactly the entry it is about to fold into the roster.
+     */
+    this.refuseKeysTheInviteeDidNotProve(rec, account, viewingKey, signer);
     account.wrappedKeys.push({ signerId: signer.id, ...wrapKey(viewingKey, signer.wrappingPublicKey) });
     /*
      * The pending signer is folded into the SEALED ROSTER here, and dropped from
@@ -3322,7 +3371,7 @@ export class AccountService {
     const digest = this.commitments.signerAddPayload(signer.leafCommitment!);
     const live = this.liveRoundFor(accountId, viewingKey, digest);
     if (await this.ledger.holdsSigner?.(accountId, signer.leafCommitment!) === true) {
-      this.recordTheSeat(accountId, viewingKey, signerId, live);
+      this.recordTheSeat(accountId, viewingKey, signerId, live, signer.leafCommitment!);
       return live ? this.requireProposal(live.id, viewingKey) : this.seatedWithoutAProposal(signer);
     }
     return live ?? this.proposeSigner(accountId, viewingKey, signerId, by, { onDevice: true });
@@ -3459,18 +3508,32 @@ export class AccountService {
           + 'send it again: press Grant access later and it is recorded once the chain shows it.');
       }
       const round = this.listProposals(accountId, viewingKey).find(p => p.chainId === order.proposal) ?? null;
-      return this.recordTheSeat(accountId, viewingKey, signerId, round);
+      return this.recordTheSeat(accountId, viewingKey, signerId, round, order.leaf as Hex);
     } finally {
       release();
     }
   }
 
   /** The seat on the record, and the proposal that made it closed, once the chain holds the seat. */
-  private recordTheSeat(accountId: string, viewingKey: Hex, signerId: string, round: Proposal | null): Account {
+  private recordTheSeat(
+    accountId: string, viewingKey: Hex, signerId: string, round: Proposal | null,
+    /** The leaf the chain was just seen to hold. The person written down must be the one it seats. */
+    seated: Hex,
+  ): Account {
     if (round) this.markCarriedOut(round.id, viewingKey);
     const { rec, account } = this.load(accountId, viewingKey);
     const signer = account.signers.find(s => s.id === signerId);
     if (!signer || signer.status === 'active') return account;
+    /*
+     * The record is read again here, after the chain was asked, so what it now
+     * says about this person is held to the leaf the chain holds rather than
+     * trusted: a different leaf is somebody the chain did not seat.
+     */
+    if ((signer.leafCommitment ?? '').toLowerCase() !== seated.toLowerCase()) {
+      throw new SeatKeyNotFromTheInvitee(
+        'the person waiting under this name is not the one the chain has just given a seat, so nothing was written. '
+        + 'Reload the page and look at who is waiting before you grant access again.');
+    }
     return this.admit(rec, account, viewingKey, signer);
   }
 

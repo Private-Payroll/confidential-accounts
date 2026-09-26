@@ -31,9 +31,10 @@
  * be finished later by `finishPendingSeat`, which proves the seat carries this
  * device's own public key before it binds anything.
  */
-import type { Hex } from '../core/crypto.js';
+import { newBlinding, newSigningKeypair, newWrappingKeypair, type Hex } from '../core/crypto.js';
 import { storedSignerLeaf, type LeafScheme } from '../core/signer-leaf.js';
 import type { PendingSeat } from './keyring.js';
+import { proveSeatKeys, type SeatInvitation, type SeatProof } from '../core/seat-invite-proof.js';
 
 /** The keys a new seat is made of. Public halves leave; the rest never does. */
 export interface NewSeatKeys {
@@ -42,6 +43,17 @@ export interface NewSeatKeys {
   wrappingSecret: Hex;
   wrappingPublicKey: Hex;
   blinding: Hex;
+}
+
+/** Three secrets and the public halves of two of them, made on this device. */
+export function newSeatKeys(): NewSeatKeys {
+  const sk = newSigningKeypair();
+  const wk = newWrappingKeypair();
+  return {
+    signingSecret: sk.secret, signingPublicKey: sk.publicKey,
+    wrappingSecret: wk.secret, wrappingPublicKey: wk.publicKey,
+    blinding: newBlinding(),
+  };
 }
 
 /** What this function is allowed to do, and nothing else. */
@@ -59,6 +71,8 @@ export interface SeatDoors {
    */
   publish(payload: {
     signingPublicKey: Hex; wrappingPublicKey: Hex; leafCommitment: Hex;
+    /** The nonce and the proof. The invitation's secret is not a field either. */
+    seatProof?: SeatProof;
   }): Promise<{ id: string }>;
   /** Binds the sealed material to the seat the server named. Step 5. */
   promote(signingPublicKey: Hex, signerId: string): Promise<void>;
@@ -74,7 +88,16 @@ export async function acceptSeatOnThisDevice(
   accountId: string,
   commitments: LeafScheme,
   doors: SeatDoors,
+  /**
+   * What the invitee's link carried. With it, the keys go out with the proof
+   * every signer's device asks for before it gives this person access; without
+   * it they go out with none, and are refused there.
+   */
+  invitation?: SeatInvitation,
 ): Promise<AcceptedSeat> {
+  if (invitation && invitation.accountId !== accountId) {
+    throw new Error('this invitation is for a different company from the one being joined. Nothing was sent.');
+  }
   const keys = doors.newKeys();
   /*
    * Read once from the scheme and used for both the leaf and the material that
@@ -107,11 +130,14 @@ export async function acceptSeatOnThisDevice(
   /* Durable BEFORE published. The whole of `C329` is this order. */
   await doors.seal(seat);
 
-  const signer = await doors.publish({
+  const published = {
     signingPublicKey: keys.signingPublicKey,
     wrappingPublicKey: keys.wrappingPublicKey,
     leafCommitment,
-  });
+  };
+  const signer = await doors.publish(invitation
+    ? { ...published, seatProof: proveSeatKeys(invitation, published) }
+    : published);
 
   await doors.promote(keys.signingPublicKey, signer.id);
   return { signerId: signer.id, wrappingSecret: keys.wrappingSecret };

@@ -22,6 +22,9 @@ import { invitesForAPublicAddress } from './hiring-assets.js';
 import { PUBLIC_PAYMENT } from './public-payment.js';
 import { openWalletDialog } from './wallet-sign-in.js';
 import { walletInThisPage } from './wallet-frame.js';
+import { seatInvitationFromFragment, type SeatInvitation } from '../core/seat-invite-proof.js';
+import type { LeafScheme } from '../core/signer-leaf.js';
+import { acceptSeatOnThisDevice, newSeatKeys } from './accept-seat.js';
 
 /**
  * **THE SCREEN AN INVITATION OPENS.** `docs/NEXT.md` `X11` §2 and §3,
@@ -157,7 +160,132 @@ const addressFromWalletAnswer = (answer: unknown, asked: string): string => {
 /** How long the wallet has to answer the address ask. The unlock's own window. */
 const PAYEE_WINDOW_MS = 2 * 60 * 1000;
 
-export function JoinScreen({ token, onOpenPayslips }: {
+/**
+ * **ONE ADDRESS, TWO KINDS OF INVITATION.** A signer's link carries the
+ * company and the invitation's secret in its fragment beside the token, and an
+ * employee's carries the token alone, so the fragment says which screen this is.
+ */
+export function JoinScreen({ token, onOpenPayslips, commitments }: {
+  token: string;
+  onOpenPayslips?: () => void;
+  /** How this deployment computes a signer's leaf. Needed only for a signer's invitation. */
+  commitments?: LeafScheme;
+}) {
+  const seat = seatInvitationFromFragment(token);
+  if (seat) return <SignerJoinScreen token={seat.token} invitation={seat.invitation} commitments={commitments} />;
+  return <EmployeeJoinScreen token={token} onOpenPayslips={onOpenPayslips} />;
+}
+
+/**
+ * **A SIGNER'S INVITATION, ACCEPTED ON THE INVITEE'S OWN DEVICE.**
+ *
+ * The person signs in, the keys that will be theirs on the company are made in
+ * this browser and sealed into their own saved keys - sealed under a key their
+ * wallet gives, so the saved copy is one this service cannot open - and the
+ * company is sent only the public halves and the leaf, with the proof, made
+ * from the secret in this link, that they came from here. The link's secret is
+ * not sent: the fragment never reaches a server, and nothing below puts it in a
+ * request.
+ *
+ * Nothing about the company is shown, because nothing about it is readable to
+ * somebody not yet on it: its name is sealed under a key only its signers hold.
+ */
+function SignerJoinScreen({ token, invitation, commitments }: {
+  token: string; invitation: SeatInvitation; commitments?: LeafScheme;
+}) {
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+  const [signedIn, setSignedIn] = useState(keyring.isSignedIn());
+  useEffect(() => {
+    let alive = true;
+    keyring.resumeSession().then((u) => { if (alive && u) setSignedIn(true); }, () => {});
+    return () => { alive = false; };
+  }, []);
+
+  /* Whether the wallet is being asked, so the busy label says what is actually being waited for. */
+  const [asking, setAsking] = useState(false);
+
+  const accept = async () => {
+    setErr(''); setBusy(true);
+    try {
+      if (!commitments) {
+        throw new Error('this page is missing part of its setup, so it cannot make your keys. Tell the person who '
+          + 'invited you. Nothing was sent.');
+      }
+      /* The keys are saved under this person's own key, which the wallet gives. Asked in the click. */
+      if (!keyring.canOpenCompanies()) {
+        if (!WALLET_ORIGIN) {
+          throw new Error('this site is not set up to open your wallet, so you cannot accept here yet. Tell the '
+            + 'person who invited you. Nothing was sent.');
+        }
+        setAsking(true);
+        try { await keyring.openKeysWithWallet(WALLET_ORIGIN); } finally { setAsking(false); }
+      }
+      /*
+       * **A SEAT ALREADY KEPT FOR THIS COMPANY IS NOT MADE AGAIN.** Coming
+       * back to the link after accepting would otherwise make a second set of
+       * keys, which the keyring refuses to save over the first.
+       */
+      if (keyring.keysFor(invitation.accountId) || keyring.pendingSeatsFor(invitation.accountId).length > 0) {
+        throw new Error('you have already accepted an invitation to this company with this sign-in, and your keys '
+          + `for it are saved. You do not need this link again: go to ${window.location.origin} and sign in. `
+          + 'Nothing was sent.');
+      }
+      await acceptSeatOnThisDevice(invitation.accountId, commitments, {
+        newKeys: newSeatKeys,
+        seal: (s) => keyring.sealPendingSeat(s),
+        publish: (payload) => keyring.api(`/api/invites/${encodeURIComponent(token)}/accept-signer`, {
+          method: 'POST', body: JSON.stringify(payload),
+        }),
+        promote: (pk, signerId) => keyring.promotePendingSeat(pk, signerId),
+      }, invitation);
+      setDone(true);
+    } catch (e) {
+      setErr(shownError(e, 'accepting an invitation'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="authwrap" data-signer-invitation>
+      <div className="authcard">
+        <div className="authmark">CA</div>
+        <h1>{done ? 'Accepted' : 'You have been invited to a company account'}</h1>
+        {done ? (
+          <p className="authsub" data-signer-accepted>
+            Your keys were made on this device. The company received only their public parts. Its signers
+            now have to approve your access, and until they do you can see nothing about it. Once they have,
+            go to {window.location.origin} and sign in. The company will be in your list. You do not need
+            this link again.
+          </p>
+        ) : (
+          <>
+            <p className="authsub">
+              Accepting makes your keys for this company on this device. The company receives only their
+              public parts. Your private keys are saved with your sign-in, locked by your wallet. You will
+              see nothing about the company until its signers give you access.
+            </p>
+            {err && <div className="err">{err}</div>}
+            {!signedIn ? (
+              <>
+                <p className="authsub">To accept, sign in first.</p>
+                <AuthScreen onDone={() => setSignedIn(keyring.isSignedIn())} />
+              </>
+            ) : (
+              <button type="button" className="primary" data-accept-signer disabled={busy} onClick={accept}>
+                {busy ? (asking ? 'Waiting for your wallet' : 'Accepting') : 'Accept on this device'}
+              </button>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function EmployeeJoinScreen({ token, onOpenPayslips }: {
   token: string;
   /**
    * Opens the payslips in this same tab rather than loading the page again. A
