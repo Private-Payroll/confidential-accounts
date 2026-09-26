@@ -306,6 +306,8 @@ describe('THE POOL AND A DEPOSIT', () => {
 
   it('A DEPOSIT WHOSE CHAIN PARAMETERS CANNOT BE READ CHOOSES NO COIN, BUILDS NOTHING AND ASKS NO WALLET', async () => {
     const ready = view({ heldByCommittee: true, fundable: true, state: 'AAAA', notes: [], everCreated: [] });
+    const COULD_NOT_READ = /^the chain's current parameters could not be read for this vault, so no coin was chosen and nothing was built or sent/;
+    const ANSWERED_WRONGLY = /^the service answered with something other than this vault's current parameters \(.+\), so no coin was chosen and nothing was built or sent/;
     const refusals: Array<[string, Partial<VaultService>]> = [
       ['the block cannot be read', { payoutState: async () => { throw new Error('the chain could not be read'); } }],
       ['the block names no parameters', { payoutState: async (v) => ({ vault: v, account: ACCOUNT, blockHash: 'B1', vaultState: 'V', zswapState: 'Z', parameters: '', accountState: 'A' }) }],
@@ -319,12 +321,63 @@ describe('THE POOL AND A DEPOSIT', () => {
       await openCompanyVaultPool(poolDoors(serviceFrom([ready], log), records), VAULT);
       /* RED WHEN: the parameters are read after the coin is chosen, or a failed or foreign read is let through -
        * the journal then holds a coin, and the log carries 'build deposit' or 'paid'. */
-      await expect(depositIntoCompanyVault({
+      const said = await depositIntoCompanyVault({
         ...poolDoors(serviceFrom([ready], log, over), records), company: ACCOUNT, inFlight: inFlightInMemory(), builder: builder(log),
         pay: async () => { log.push('paid'); return { transaction: 'X', leaves: [] }; },
-      }, VAULT, { token: 'ab'.repeat(32), value: 7n }), why).rejects.toThrow(/current parameters could not be read.*no coin was chosen/);
+      }, VAULT, { token: 'ab'.repeat(32), value: 7n }).then(() => 'it went ahead', (x: Error) => x.message);
+      /* RED WHEN: a block that cannot be read is called an answer the service got wrong, or the other way round. */
+      expect(said, why).toMatch(why === 'the block cannot be read' ? COULD_NOT_READ : ANSWERED_WRONGLY);
+      /* RED WHEN: any of a deposit's own refusals is worded for a payment. */
+      expect(said, why).not.toMatch(/paid out|payment/i);
       expect(log, why).toEqual([]);
       expect(await records('deposit-journal').get(VAULT), why).toBeNull();
+    }
+  });
+
+  it('A DEPOSIT\'S REFUSAL CARRIES NONE OF THE PAYMENT ROUTE\'S WORDS WHEN THE BLOCK CANNOT BE READ', async () => {
+    const ready = view({ heldByCommittee: true, fundable: true, state: 'AAAA', notes: [], everCreated: [] });
+    /* What the route the block is read through answers when it refuses, word for word. */
+    const routeSays = [
+      'this company has no contract on the chain this service can read, so nothing can be paid out.',
+      'this deployment reads no chain, so nothing can be paid out.',
+      'the chain could not be read for this payment: the indexer is down',
+    ];
+    for (const said of routeSays) {
+      const log: string[] = [];
+      const records = stores();
+      await openCompanyVaultPool(poolDoors(serviceFrom([ready], log), records), VAULT);
+      const e = await depositIntoCompanyVault({
+        ...poolDoors(serviceFrom([ready], log, { payoutState: async () => { throw new Error(said); } }), records),
+        company: ACCOUNT, inFlight: inFlightInMemory(), builder: builder(log),
+        pay: async () => { log.push('paid'); return { transaction: 'X', leaves: [] }; },
+      }, VAULT, { token: 'ab'.repeat(32), value: 7n }).catch((x: Error) => x);
+      expect((e as Error).message, said).toMatch(/current parameters could not be read.*no coin was chosen/);
+      /* RED WHEN: the route's own refusal is carried into the deposit's, so a deposit says nothing can be paid out. */
+      expect((e as Error).message, said).not.toMatch(/paid out|payment/i);
+      expect(log, said).toEqual([]);
+      expect(await records('deposit-journal').get(VAULT), said).toBeNull();
+    }
+  });
+
+  it('PARAMETERS OF A VERSION THIS PAGE DOES NOT BUILD WITH ARE REFUSED BEFORE A COIN\'S JOURNAL LINE IS FILED', async () => {
+    const ready = view({ heldByCommittee: true, fundable: true, state: 'AAAA', notes: [], everCreated: [] });
+    for (const other of ['v7', 'v9', 'v80', 'v']) {
+      const log: string[] = [];
+      const records = stores();
+      const served = btoa(`midnight:ledger-parameters[${other}]:stand-in`);
+      await openCompanyVaultPool(poolDoors(serviceFrom([ready], log), records), VAULT);
+      const e = await depositIntoCompanyVault({
+        ...poolDoors(serviceFrom([ready], log, {
+          payoutState: async (v) => ({ vault: v, account: ACCOUNT, blockHash: 'B1', vaultState: 'V', zswapState: 'Z', parameters: served, accountState: 'A' }),
+        }), records),
+        company: ACCOUNT, inFlight: inFlightInMemory(), builder: builder(log),
+        pay: async () => { log.push('paid'); return { transaction: 'X', leaves: [] }; },
+      }, VAULT, { token: 'ab'.repeat(32), value: 7n }).catch((x: Error) => x);
+      /* RED WHEN: only the header's start is checked, so another version reaches the worker after the journal line is filed. */
+      expect((e as Error).message, other).toMatch(/different ledger version from the one this page builds deposits with, so no coin was chosen, nothing was built or sent/);
+      expect((e as Error).message, other).not.toMatch(/paid out|payment/i);
+      expect(log, other).toEqual([]);
+      expect(await records('deposit-journal').get(VAULT), other).toBeNull();
     }
   });
 });
@@ -436,6 +489,22 @@ describe('A DEPOSIT THAT DOES NOT FINISH', () => {
     expect(t.w.built[1]!.nonce, 'RED WHEN: the second deposit of the same money is built from the coin the first one made').not.toBe(firstCoin.nonce);
     /* The pool holds exactly what the chain holds of these deposits. */
     expect(notes.map((n) => heldOf({ nonce: n.nonce, token: n.token, value: n.value.toString() })).sort()).toEqual([...t.w.notes].sort());
+  });
+
+  it('AN EARLIER DEPOSIT THAT HAS LANDED IS RECORDED EVEN WHEN THIS ONE IS REFUSED FOR THE CHAIN\'S LEDGER VERSION', async () => {
+    const t = await setUp();
+    const first = await depositIntoCompanyVault(t.doors, VAULT, MONEY).catch((x) => x);
+    expect(first).toBeInstanceOf(DepositNotYetSeen);
+    const firstCoin = t.w.built[0]!;
+    t.lands(firstCoin);
+    const otherVersion = btoa('midnight:ledger-parameters[v9]:stand-in');
+    const service = { ...t.service, payoutState: async (v: string) => ({ vault: v, account: ACCOUNT, blockHash: 'B1', vaultState: 'V', zswapState: 'Z', parameters: otherVersion, accountState: 'A' }) } as VaultService;
+    const second = await depositIntoCompanyVault({ ...t.doors, service }, VAULT, MONEY).catch((x) => x);
+    expect((second as Error).message).toMatch(/different ledger version/);
+    /* RED WHEN: the ledger version is checked before the earlier deposit is settled, so a landed note waits for a page update. */
+    expect((await t.pool.load(VAULT)).notes.find((n) => n.nonce === firstCoin.nonce), 'the landed deposit was not recorded')
+      .toMatchObject({ nonce: firstCoin.nonce, value: 7n, createdIn: HASH });
+    expect(t.w.built, 'the refused deposit was built').toHaveLength(1);
   });
 
   it('WHILE AN EARLIER DEPOSIT CAN STILL LAND, NO SECOND ONE IS BUILT; ONCE IT CAN NO LONGER LAND, IT IS LET GO', async () => {

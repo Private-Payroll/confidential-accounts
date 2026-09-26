@@ -8,6 +8,8 @@
 import { describe, it, expect } from 'vitest';
 import { buildDeposit, type VaultBuilderDeps } from './vault-builder.js';
 import { answerVaultAsk } from './vault-worker-entry.js';
+import { LEDGER_PARAMETERS_HEADER } from './vault-operation.js';
+import * as L from '@midnightntwrk/ledger-v9';
 
 const VAULT = 'cd'.repeat(32);
 const COIN = { nonce: 'c1'.repeat(32), token: 'ab'.repeat(32), value: 5n };
@@ -81,5 +83,19 @@ describe('the ledger parameters a deposit is built with', () => {
       coin: { nonce: COIN.nonce, token: COIN.token, value: '5' }, state: base64(new Uint8Array([1])),
     } as never)).rejects.toThrow(/parameters were not handed over/);
     expect(asked).toHaveLength(1);
+  });
+
+  it('THE VERSION THE PAGE ACCEPTS IS THE ONE THE INSTALLED LEDGER WRITES, AND THE LEDGER READS NO OTHER', () => {
+    const written = Buffer.from(L.LedgerParameters.initialParameters().serialize());
+    /* RED WHEN: the ledger is upgraded to write another version and the page still accepts only the old one. */
+    expect(written.toString('latin1').startsWith(LEDGER_PARAMETERS_HEADER), 'the page refuses what this ledger writes').toBe(true);
+    const asWritten = written.toString('latin1');
+    const version = /\[v(\d+)\]/u.exec(asWritten)![1]!;
+    for (const other of [String(Number(version) - 1), String(Number(version) + 1)]) {
+      const relabelled = Buffer.from(asWritten.replace(`[v${version}]`, `[v${other}]`), 'latin1');
+      /* RED WHEN: the ledger reads another version too, and the page's refusal of it refuses a deposit the worker could build. */
+      expect(() => L.LedgerParameters.deserialize(relabelled), `v${other}`).toThrow();
+    }
+    expect(() => L.LedgerParameters.deserialize(written), 'the control: the ledger reads what it writes').not.toThrow();
   });
 });
