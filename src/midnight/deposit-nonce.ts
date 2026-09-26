@@ -150,6 +150,30 @@ const be = (value: bigint, bytes: number): Uint8Array => {
 export const DEPOSIT_SLOT_ATTEMPTS = 3;
 
 /**
+ * **HOW LONG A CLAIMED SLOT STAYS TAKEN WITHOUT THE CHAIN HAVING MADE ITS
+ * COIN.** A deposit's call can land for an hour after it is built, and it is
+ * built after its slot is claimed; this is that hour, the quarter of an hour a
+ * block clock and a device clock may disagree by, and as long again for the
+ * build and the wallet. A line older than this is a deposit that can no longer
+ * land, so its slot is free again. Every slot a claim can take is still at or
+ * below `lastDepositSlot` of the history as read, so a skipped slot never puts
+ * a deposit where a rebuild's walk does not reach.
+ */
+export const DEPOSIT_CLAIM_LIVE_MS = 150 * 60_000;
+
+/**
+ * **ANOTHER DEPOSIT OF THE SAME MONEY CLAIMED THIS SLOT A MOMENT AGO**, from
+ * this browser or another, and it may still land. Its coin would be this coin,
+ * so the next slot is tried.
+ */
+export class DepositSlotTaken extends Error {
+  constructor(readonly slot: number) {
+    super(`another deposit of this same amount into this vault started a moment ago and may still arrive (slot ${slot})`);
+    this.name = 'DepositSlotTaken';
+  }
+}
+
+/**
  * **THE HIGHEST SLOT ANY DEPOSIT TO A VAULT CAN HAVE USED**, given every coin
  * the chain has ever created for it.
  */
@@ -320,6 +344,14 @@ export class DepositCoinAlreadyMade extends Error {
  * those same-amount coins were dropped than `DEPOSIT_SLOT_ATTEMPTS` plus every
  * other coin the vault holds.
  *
+ * **A SLOT ANOTHER DEPOSIT CLAIMED A MOMENT AGO IS ALSO PASSED OVER**
+ * (`DepositSlotTaken`), and that coin may never be made. So the sentence above
+ * holds less the slots passed over that way; what still holds whatever is
+ * passed over is the bound: no slot past `lastDepositSlot` of the history as
+ * read is ever claimed, and the history only grows, so the walk reaches every
+ * slot a claim can take, unless outputs the chain later drops made the history
+ * read here longer than the one the rebuild reads.
+ *
  * Nothing here calls the contract. The caller calls it with the coin returned,
  * and with nothing else.
  */
@@ -353,8 +385,17 @@ export const claimNewDepositCoin = async (input: {
       createdBefore: false,
     });
     if (why !== null) { because = why; continue; }
-    const { coin } = await input.journal.claim(
-      input.vault, input.money, slot, (input.now ?? (() => new Date().toISOString()))());
+    let claimed: Awaited<ReturnType<DepositJournal['claim']>>;
+    try {
+      claimed = await input.journal.claim(
+        input.vault, input.money, slot, (input.now ?? (() => new Date().toISOString()))());
+    } catch (cause) {
+      /* By name: the journal may be another module's copy. Another deposit holds this slot; the next is tried. */
+      if (!(cause instanceof Error && cause.name === 'DepositSlotTaken')) throw cause;
+      because = cause.message;
+      continue;
+    }
+    const { coin } = claimed;
     if (coin.nonce.toLowerCase() !== derived.nonce.toLowerCase() || coin.token.toLowerCase() !== derived.token.toLowerCase()
       || coin.value !== derived.value) {
       throw new Error(

@@ -40,3 +40,10 @@ describe('THE CHAIN READER\'S CHECK OF A VAULT\'S SHAPE', () => {
     await expect(chain.ledgerIsThisBuilds!(anotherBuilds)).rejects.toThrow(new RegExp(`${fields.length - 1} ledger fields`, 'u'));
   });
 });
+
+describe('THE CHAIN READER\'S LOOKUP OF THE TRANSACTION THAT CREATED AN OUTPUT', () => {
+  it('SAYS THE CHAIN COULD NOT BE ASKED, NEVER THAT NO TRANSACTION CREATED IT', async () => {
+    /* RED WHEN: an indexer that does not answer is read as an empty history - a payment on its way is then let go. */
+    await expect(chain.createdBy!('ab'.repeat(32), 'cd'.repeat(32))).rejects.toThrow(/could not be asked/);
+  });
+});

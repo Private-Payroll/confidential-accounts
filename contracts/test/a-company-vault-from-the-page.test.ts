@@ -28,6 +28,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
 import * as L from '@midnightntwrk/ledger-v9';
@@ -57,7 +58,9 @@ import {
   createCompanyVault, depositIntoCompanyVault, openCompanyVaultPool, VaultHandoverOwed,
   type TemporaryKeys, type VaultService, type DepositInFlight, type DepositsInFlight,
 } from '../../src/web/vault-operation.js';
+import { inFlightInMemory as inFlightRecordsInMemory, sealedOnThisDevice, type KeptOnThisDevice } from '../../src/web/in-flight-on-this-device.js';
 import { readWhatThePageAsks, base64FromBytes, bytesFromBase64 } from '../../apps/wallet/src/chain/balance-for-page.js';
+import { aWalletThatPaysPrivately, type AWalletThatPaysPrivately } from './a-wallet-that-pays-privately.js';
 import { UNLOCK_PURPOSE, UNLOCK_WINDOW_MS, unlockAsk } from '../../src/core/wallet-unlock.js';
 import { newSigningKeypair, newWrappingKeypair, toHex, type Hex } from '../../src/core/crypto.js';
 import { committeeReplacement } from '../../src/midnight/vault-committee.js';
@@ -69,15 +72,10 @@ import { readProvenTransaction, readFinishedTransaction } from '../../src/wiring
 import { startingLedgerFrom } from '../../src/wiring/vault-submission.js';
 import { signingKeyFromBip340 } from '@midnightntwrk/ledger-v9';
 
-/** Deposits in flight, kept for the length of one test. */
-const inFlightInMemory = (): DepositsInFlight => {
-  const kept = new Map<string, DepositInFlight>();
-  return {
-    get: async (v) => kept.get(v) ?? null,
-    put: async (v, d) => { kept.set(v, d); },
-    forget: async (v) => { kept.delete(v); },
-  };
-};
+/** Deposits or payments on their way, kept for the length of one test, sealed as the page keeps them. */
+const keptOnThisDevice = <T,>(kind: 'deposit' | 'payment'): KeptOnThisDevice<T> =>
+  sealedOnThisDevice<T>(inFlightRecordsInMemory(), { signerId: 'ada', wrappingSecret: newWrappingKeypair().secret }, kind);
+const inFlightInMemory = (): DepositsInFlight => keptOnThisDevice<DepositInFlight>('deposit');
 
 const NET = 'undeployed';
 const RECORDS: readonly WireRecord[] = ['pool', 'deposit-journal', 'payment-journal', 'nonce-secret'];
@@ -102,6 +100,8 @@ const releasedCompanyKey = (words: string, company: string): Uint8Array => {
 class Chain {
   state: any = L.LedgerState.blank(NET);
   everCreated = new Map<string, Set<string>>();
+  /* Every applied transaction's events, under the name an indexer would give it: its hash, or for an unproven one a hash of its identifier. */
+  events = new Map<string, any[]>();
   applied: Array<{ hash: string; ok: boolean; error: string }> = [];
   private strictness() {
     const s = new L.WellFormedStrictness();
@@ -119,6 +119,9 @@ class Chain {
     const ok = result.type === 'success';
     if (ok) {
       this.state = next;
+      let named: string;
+      try { named = String(tx.transactionHash()); } catch { named = createHash('sha256').update(String(tx.identifiers()[0])).digest('hex'); }
+      this.events.set(named, [...result.events]);
       for (const out of tx.guaranteedOffer?.outputs ?? []) {
         if (out.contractAddress === undefined) continue;
         const k = String(out.contractAddress).toLowerCase();
@@ -139,6 +142,8 @@ class Chain {
   seed(tx: any): { ok: boolean; error: string } {
     const r = this.apply(tx);
     this.applied.pop();
+    /* The block ends here, so the commitment tree's root after it is one a later spend may prove against. */
+    if (r.ok) this.state = this.state.postBlockUpdate(new Date());
     return r;
   }
 }
@@ -167,6 +172,7 @@ if (!KEYS_ON_DISK) {
 
 describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [needs contracts/managed-vault/keys; `npm run compact:vault -- --full` builds them]', () => {
   let chain: Chain;
+  let depositor: AWalletThatPaysPrivately;
   let server: ReturnType<express.Express['listen']>;
   let base: string;
   let store: MemoryStore;
@@ -225,6 +231,9 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
 
   beforeEach(async () => {
     chain = new Chain();
+    /* The depositor's wallet holds its own private coins before anything else is on the chain. */
+    depositor = aWalletThatPaysPrivately(NET);
+    chain.seed(depositor.seedTransaction(GBP, [100_000n, 100_000n, 100_000n, 100_000n]));
     store = new MemoryStore();
     /* The company account, deployed as the service deploys one: its temporary key, this build's circuits. */
     const accountState = new L.ContractState();
@@ -289,6 +298,23 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
           blockHash: 'b1'.repeat(32), vaultState: b64(vs), zswapState: b64(chain.state.zswap),
           parameters: b64(chain.state.parameters), accountState: b64(as),
         };
+      },
+      /* As an indexer would answer it: the one applied transaction whose events carry this output, made for this vault. */
+      createdBy: async (v, commitment) => {
+        for (const [name, events] of chain.events) {
+          const wire = events.map((e: any) => ({
+            transactionHash: name,
+            details: {
+              tag: String(e.content.tag),
+              ...(e.content.commitment === undefined ? {} : { commitment: String(e.content.commitment) }),
+              ...(e.content.contract === undefined ? {} : { contract: String(e.content.contract) }),
+              ...(e.content.mtIndex === undefined ? {} : { mtIndex: String(e.content.mtIndex) }),
+            },
+          }));
+          if (wire.some((e) => e.details.tag === 'zswapOutput' && e.details.commitment?.toLowerCase() === commitment.toLowerCase()
+            && e.details.contract?.toLowerCase() === v.toLowerCase())) return { transactionHash: name as Hex, events: wire };
+        }
+        return null;
       },
     };
     /* A fee payer that adds no fee, and whose submission is the chain applying the transaction. */
@@ -364,6 +390,10 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     /* A payment out is watched in `a-private-payment-from-the-page.test.ts`; a deposit reads the chain's parameters here. */
     payoutState: (vault) => http(`/api/accounts/${ACCOUNT_ID}/vaults/${vault}/payout-state`, undefined, as),
     events: () => { throw new Error('this watch makes no payment out'); },
+    createdBy: async (vault, commitment) => {
+      const found = await http(`/api/accounts/${ACCOUNT_ID}/vaults/${vault}/created/${commitment}`, undefined, as);
+      return found.found === true ? { transactionHash: found.transactionHash, events: found.events } : null;
+    },
     payout: () => { throw new Error('this watch makes no payment out'); },
     payoutPublicly: () => { throw new Error('this watch makes no payment out'); },
   });
@@ -399,7 +429,8 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     const read = readWhatThePageAsks(asProven as never, ask.transaction, ask.vault);
     shown.push(read.leaves);
     /* What the wallet's coins and proofs would be is not run here: it is bound, and nothing is added. */
-    return { transaction: base64FromBytes((read.tx as any).bind().serialize()), leaves: read.leaves };
+    /* Paid for with the stand-in wallet's own private coin, as a wallet does, then bound. */
+    return { transaction: base64FromBytes((depositor.payFor(read.tx) as any).bind().serialize()), leaves: read.leaves };
   };
   let shown: unknown[] = [];
   /* Every body the service answered with, so what it holds can be looked for in what it said. */
@@ -536,10 +567,14 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     expect(shown).toEqual([[{ token: GBP, amount: '1000', kind: 'shielded' }]]);
     const notes = [...vaultLedgerOf(chain.contract(vault)).notes].map((c: Uint8Array) => hex(c));
     expect(notes).toHaveLength(1);
-    /* An unproven transaction has no hash, so the note is recorded without the transaction that made it;
-     * a proven one carries it (`chain-sends-a-vault-transaction.test.ts`). */
+    /* An unproven transaction has no hash, so the service names none; the note is recorded under the transaction the
+     * vault's history holds its output in, found through the service's own route by the output's commitment. */
     expect(chain.applied[3]!.hash).toMatch(/^unproven:/);
     expect(deposited.transactionHash).toBeNull();
+    /* RED WHEN: the page does not look the deposit up by its output - the note is then recorded without its transaction. */
+    expect(deposited.note.createdIn, 'the deposit is recorded without its creating transaction')
+      .toBe(createHash('sha256').update(chain.applied[3]!.hash.slice('unproven:'.length)).digest('hex'));
+    expect(deposited.notYetSpendable).toBeUndefined();
     const pool = new SealedNotePool(records()('pool'), { signerId: 'ada', wrappingSecret: wrapping.secret }, signers);
     const loaded = await pool.load(vault);
     expect(loaded.notes).toEqual([deposited.note]);

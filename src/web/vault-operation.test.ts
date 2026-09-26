@@ -5,7 +5,11 @@ import {
   payPrivatelyFromCompanyVault, PaymentNotYetSeen, PaymentNotAsBuilt, PaymentLandedUnrecorded,
   payPubliclyFromCompanyVault, PublicPaymentNotYetSeen,
   type TemporaryKeys, type VaultChainView, type VaultService, type DepositInFlight, type DepositsInFlight,
+  type PaymentInFlight, type PaymentsInFlight,
+  checkWhatThisBrowserSent, sayWhatTheCheckFound, DepositStartedElsewhere, PaymentStillInFlight, PaymentStartedElsewhere,
+  settlePaymentInFlight,
 } from './vault-operation.js';
+import type { Kept, KeptOnThisDevice } from './in-flight-on-this-device.js';
 import { chooseNoteForPayment, confirmPayment, poolAfterPayment } from './vault-builder.js';
 import { vaultNoteCommitment } from '../midnight/note-index.js';
 import { SealedNotePool } from '../midnight/vault-pool.js';
@@ -20,11 +24,21 @@ import * as vaultModule from '../../contracts/managed-vault/contract/index.js';
 import { openNonceSecrets, recordsKeypairFrom, currentDepositNonceKey } from '../midnight/company-nonce-secret.js';
 import { depositNonceAt, DepositCoinAlreadyMade } from '../midnight/deposit-nonce.js';
 
-/** Deposits in flight, kept for the length of one test. */
-const inFlightInMemory = (kept = new Map<string, DepositInFlight>()): DepositsInFlight => ({
+/**
+ * Deposits or payments in flight, kept for the length of one test in the clear, one per vault, each changed only
+ * under its claim. The sealing is `in-flight-on-this-device.test.ts`'s.
+ */
+let claims = 0;
+const inFlightInMemory = <T,>(kept = new Map<string, Kept<T>>()): KeptOnThisDevice<T> => ({
   get: async (v) => kept.get(v) ?? null,
-  put: async (v, d) => { kept.set(v, d); },
-  forget: async (v) => { kept.delete(v); },
+  claim: async (v, d) => {
+    if (kept.has(v)) return null;
+    claims += 1;
+    kept.set(v, { ...d, claim: `claim-${claims}` });
+    return `claim-${claims}`;
+  },
+  update: async (v, c, d) => { if (kept.get(v)?.claim === c) kept.set(v, { ...d, claim: c }); },
+  forget: async (v, c) => { if (kept.get(v)?.claim === c) kept.delete(v); },
 });
 
 /*
@@ -89,6 +103,16 @@ const serviceFrom = (views: VaultChainView[], log: string[], over: Partial<Vault
       if (landed) return { events: landed };
       if (tx === 'dd'.repeat(32)) throw new Error('the indexer does not hold this transaction yet');
       return { events: [{ transactionHash: tx, details: { tag: 'zswapOutput' } }] };
+    },
+    /* The vault's history, searched by an output's commitment: the landed payments' events. */
+    createdBy: async (_v, commitment) => {
+      for (const [hash, events] of paymentEvents) {
+        if (events.some((e) => e.details.tag === 'zswapOutput' && e.details.commitment === commitment && e.details.contract === VAULT)) {
+          log.push(`found ${commitment.slice(0, 4)} in ${hash.slice(0, 2)}`);
+          return { transactionHash: hash, events };
+        }
+      }
+      return null;
     },
     payout: async () => { log.push('sent payout'); return { txRef: 'o', transactionHash: 'dd'.repeat(32) }; },
     payoutPublicly: async () => { log.push('sent public payout'); return { txRef: 'u', transactionHash: 'de'.repeat(32) }; },
@@ -399,6 +423,7 @@ describe('A DEPOSIT THAT DOES NOT FINISH', () => {
       sent: [] as string[], asked: [] as string[], built: [] as Coin[], eventReads: 0,
       depositAnswer: { txRef: 'p', transactionHash: HASH as string | null },
       sendFails: null as null | Error,
+      lookups: 0, historyUnreadable: false,
     };
     const service = serviceFrom([], w.asked, {
       chain: async () => view({ heldByCommittee: true, fundable: true, state: 'AAAA', notes: [...w.notes], everCreated: [...w.everCreated] }),
@@ -408,6 +433,17 @@ describe('A DEPOSIT THAT DOES NOT FINISH', () => {
         const e = w.events.get(tx);
         if (e === undefined) throw new Error('the indexer does not hold this transaction yet');
         return { events: e };
+      },
+      /* The vault's own history, newest first, searched by an output's commitment. */
+      createdBy: async (_v, commitment) => {
+        w.lookups += 1;
+        if (w.historyUnreadable) throw new Error('the indexer could not list this vault\'s transactions');
+        for (const [hash, events] of [...w.events].reverse()) {
+          if (events.some((e) => e.details.tag === 'zswapOutput' && e.details.commitment === commitment && e.details.contract === VAULT)) {
+            return { transactionHash: hash, events };
+          }
+        }
+        return null;
       },
     });
     const b: VaultBuilderClient = {
@@ -430,7 +466,7 @@ describe('A DEPOSIT THAT DOES NOT FINISH', () => {
   const setUp = async () => {
     const t = world();
     const records = stores();
-    const kept = new Map<string, DepositInFlight>();
+    const kept = new Map<string, Kept<DepositInFlight>>();
     let now = 1_000_000;
     const doors = {
       ...pacing, service: t.service, me, myRecordsKey: 'ff'.repeat(32), records,
@@ -549,15 +585,57 @@ describe('A DEPOSIT THAT DOES NOT FINISH', () => {
     expect((settled as { notYetSpendable?: string }).notYetSpendable, 'RED WHEN: a note that cannot be paid out yet is recorded silently')
       .toMatch(/does not show this deposit/);
 
-    /* The service could not name the transaction: recorded with no transaction, and it says so. */
+    /* The service could not name the transaction and the vault's history does not list one yet: nothing is recorded, and it is kept. */
+    const nameless = await setUp();
+    nameless.w.depositAnswer = { txRef: 'p', transactionHash: null };
+    const waited = await depositIntoCompanyVault({ ...nameless.doors, pay: async (ask) => {
+      nameless.w.notes.push(heldOf(nameless.w.built[0]!));
+      return { transaction: `${ask.transaction}+coins`, leaves: [] };
+    } }, VAULT, MONEY).catch((x) => x);
+    expect(waited, 'RED WHEN: a note is recorded under a transaction nothing established').toBeInstanceOf(DepositLandedNotYetRecorded);
+    expect((await nameless.pool.load(VAULT)).notes).toEqual([]);
+    expect(nameless.kept.size).toBe(1);
+  });
+
+  it('A DEPOSIT WHOSE SEND GAVE NO HASH IS RECORDED UNDER ITS CREATING TRANSACTION ONCE IT LANDS, FOUND BY ITS OWN OUTPUT', async () => {
+    const LANDED_IN = 'e7'.repeat(32);
+    /* The service answered without a hash, and the vault's history lists the transaction by the time the note shows. */
     const nameless = await setUp();
     nameless.w.depositAnswer = { txRef: 'p', transactionHash: null };
     const done = await depositIntoCompanyVault({ ...nameless.doors, pay: async (ask) => {
-      nameless.w.notes.push(heldOf(nameless.w.built[0]!));
+      nameless.lands(nameless.w.built[0]!, LANDED_IN);
       return { transaction: `${ask.transaction}+coins`, leaves: [] };
     } }, VAULT, MONEY);
-    expect(done.note.createdIn, 'RED WHEN: a hash the service never named is recorded').toBeUndefined();
-    expect(done.notYetSpendable).toMatch(/could not find out which transfer/);
+    /* RED WHEN: the page stops looking the transaction up by the deposit's output - the note is then recorded with none. */
+    expect(done.note.createdIn, 'RED WHEN: a deposit with no hash from its send is recorded without its creating transaction').toBe(LANDED_IN);
+    expect(done.notYetSpendable).toBeUndefined();
+    expect(nameless.kept.size).toBe(0);
+
+    /* The answer to the send was lost altogether and the page was closed; the next look from this browser records it. */
+    const dropped = await setUp();
+    dropped.w.sendFails = new Error('the connection dropped');
+    await expect(depositIntoCompanyVault(dropped.doors, VAULT, MONEY)).rejects.toBeInstanceOf(DepositNotYetSeen);
+    dropped.lands(dropped.w.built[0]!, LANDED_IN);
+    const settled = await settleDepositInFlight(dropped.doors, VAULT);
+    expect(settled, 'RED WHEN: a deposit whose send outcome was unknown lands and is recorded with no creating transaction')
+      .toMatchObject({ state: 'recorded', note: { createdIn: LANDED_IN } });
+    expect((await dropped.pool.load(VAULT)).notes[0]?.createdIn).toBe(LANDED_IN);
+
+    /* Another vault's output under the same commitment is not this deposit's: the vault worker refuses it, so it is not recorded under it. */
+    const foreign = await setUp();
+    foreign.w.sendFails = new Error('the connection dropped');
+    await depositIntoCompanyVault(foreign.doors, VAULT, MONEY).catch(() => undefined);
+    const coin = foreign.w.built[0]!;
+    foreign.w.notes.push(heldOf(coin));
+    foreign.w.everCreated.push(outputOf(coin));
+    foreign.w.events.set(LANDED_IN, [
+      { transactionHash: LANDED_IN, details: { tag: 'zswapOutput', commitment: outputOf(coin), contract: VAULT, mtIndex: '4' } },
+      { transactionHash: LANDED_IN, details: { tag: 'zswapOutput', commitment: outputOf(coin), contract: 'ee'.repeat(32), mtIndex: '5' } },
+    ]);
+    const refused = await settleDepositInFlight(foreign.doors, VAULT);
+    expect((await foreign.pool.load(VAULT)).notes[0]?.createdIn,
+      'RED WHEN: the page records a transaction the vault worker did not establish').toBeUndefined();
+    expect((refused as { notYetSpendable?: string }).notYetSpendable).toMatch(/does not show this deposit/);
   });
 
   it('A DEPOSIT THE VAULT HOLDS WHOSE TRANSACTION CANNOT BE READ YET IS NOT RECORDED UNTIL IT CAN BE, OR UNTIL ITS TIME TO LIVE HAS PASSED', async () => {
@@ -666,6 +744,163 @@ describe('A DEPOSIT THAT DOES NOT FINISH', () => {
   });
 });
 
+describe('WHAT THIS BROWSER LAST SENT, CHECKED ON ITS OWN, AND TWO TABS OR TWO BROWSERS AT ONCE', () => {
+  const wrapping = newWrappingKeypair();
+  const me = { signerId: 'ada', wrappingSecret: wrapping.secret, companyKey: new Uint8Array(32).fill(6) };
+  const MONEY = { token: 'ab'.repeat(32) as never, value: 9n };
+  const LANDED_IN = 'e9'.repeat(32);
+  type Coin = { nonce: string; token: string; value: string };
+  const outputOf = (c: Coin) => `out:${c.nonce}:${c.token}:${c.value}`;
+  const heldOf = (c: Coin) => `held:${c.nonce}:${c.token}:${c.value}`;
+  const signers = async () => [{ id: 'ada', wrappingPublicKey: wrapping.publicKey }];
+  /** One chain and one company's records, shared by every browser a test opens on them. */
+  const company = async () => {
+    const w = { notes: [] as string[], everCreated: [] as string[], built: [] as Coin[], sent: 0, asked: 0,
+      events: new Map<string, Array<{ transactionHash: string; details: { tag: string; commitment?: string; contract?: string; mtIndex?: string } }>>(),
+      answer: { txRef: 'p', transactionHash: null as string | null }, sendFails: null as Error | null, paidFor: [] as string[] };
+    const kept = new Map<WireRecord, MemorySealedPoolStore>();
+    const records = (r: WireRecord) => kept.get(r) ?? kept.set(r, new MemorySealedPoolStore()).get(r)!;
+    const service = serviceFrom([], [], {
+      chain: async () => view({ heldByCommittee: true, fundable: true, state: 'AAAA', notes: [...w.notes], everCreated: [...w.everCreated] }),
+      deposit: async () => { if (w.sendFails) throw w.sendFails; w.sent += 1; return w.answer; },
+      events: async (_v, tx) => {
+        const e = w.events.get(tx);
+        if (e === undefined) throw new Error('the indexer does not hold this transaction yet');
+        return { events: e };
+      },
+      createdBy: async (_v, commitment) => {
+        for (const [hash, events] of w.events) {
+          if (events.some((e) => e.details.commitment === commitment && e.details.contract === VAULT)) return { transactionHash: hash, events };
+        }
+        return null;
+      },
+    });
+    const b: VaultBuilderClient = {
+      ...builder([]),
+      deposit: async (i) => { w.built.push(i.coin); return { tx: `P${w.built.length}` }; },
+      commitments: async (i) => ({ output: outputOf(i.coin), held: heldOf(i.coin) }),
+    };
+    const lands = (coin: Coin, hash = LANDED_IN) => {
+      w.notes.push(heldOf(coin));
+      w.everCreated.push(outputOf(coin));
+      w.events.set(hash, [{ transactionHash: hash, details: { tag: 'zswapOutput', commitment: outputOf(coin), contract: VAULT, mtIndex: '4' } }]);
+    };
+    /** One browser: its own place for what it has on its way, and the company's records. */
+    const browser = (kept = new Map<string, Kept<DepositInFlight>>()) => ({
+      kept,
+      doors: {
+        ...pacing, service, me, myRecordsKey: 'ff'.repeat(32), records, signers, company: ACCOUNT, builder: b,
+        inFlight: inFlightInMemory<DepositInFlight>(kept), payments: inFlightInMemory<PaymentInFlight>(),
+        pay: async (ask: { transaction: string }) => {
+          w.asked += 1;
+          w.paidFor.push(ask.transaction);
+          return { transaction: `${ask.transaction}+coins`, leaves: [] };
+        },
+      },
+    });
+    const first = browser();
+    await openCompanyVaultPool(first.doors, VAULT);
+    const pool = new SealedNotePool(records('pool'), { signerId: 'ada', wrappingSecret: wrapping.secret }, signers);
+    return { w, records, lands, browser, first, pool };
+  };
+
+  it('CHECK MY LAST DEPOSIT SETTLES A DEPOSIT ON ITS WAY WITHOUT A NEW ONE, AND SAYS WHAT IT FOUND', async () => {
+    const c = await company();
+    c.w.sendFails = new Error('the connection dropped');
+    await expect(depositIntoCompanyVault(c.first.doors, VAULT, MONEY)).rejects.toBeInstanceOf(DepositNotYetSeen);
+    c.w.sendFails = null;
+    const [built, asked] = [c.w.built.length, c.w.asked];
+    const before = await checkWhatThisBrowserSent(c.first.doors, VAULT);
+    expect(before.deposit.state, 'RED WHEN: the check lets go of a deposit that can still arrive').toBe('still-on-its-way');
+    expect(sayWhatTheCheckFound(before)).toMatch(/has not reached the vault yet/);
+    c.lands(c.w.built[0]!);
+    const found = await checkWhatThisBrowserSent(c.first.doors, VAULT);
+    /* RED WHEN: the check does not settle the deposit in flight, or settles it without its creating transaction. */
+    expect(found.deposit).toMatchObject({ state: 'recorded', note: { createdIn: LANDED_IN } });
+    expect((await c.pool.load(VAULT)).notes.map((n) => n.createdIn)).toEqual([LANDED_IN]);
+    expect([c.w.built.length, c.w.asked, c.w.sent], 'RED WHEN: checking builds, asks the wallet or sends anything').toEqual([built, asked, 0]);
+    expect(c.first.kept.size).toBe(0);
+    expect(sayWhatTheCheckFound(found)).toBe('Your last deposit from this browser has reached the vault and is now in its record.');
+    expect(sayWhatTheCheckFound(await checkWhatThisBrowserSent(c.first.doors, VAULT)))
+      .toBe('This browser has no deposit into this vault waiting to be seen.');
+  });
+
+  it('CHECK MY LAST DEPOSIT NAMES A NOTE THE RECORD HOLDS WITHOUT ITS TRANSACTION, ONCE THE VAULT\'S HISTORY SHOWS IT, AND NO OTHER', async () => {
+    const c = await company();
+    const coin = { nonce: 'a1'.repeat(32), token: MONEY.token as string, value: '9' };
+    const other = { nonce: 'a2'.repeat(32), token: MONEY.token as string, value: '4' };
+    const now = await c.pool.load(VAULT);
+    await c.pool.save(VAULT, { notes: [...now.notes,
+      { nonce: coin.nonce as never, token: coin.token as never, value: 9n },
+      { nonce: other.nonce as never, token: other.token as never, value: 4n }] }, now.readAt);
+    c.lands(coin);
+    c.w.notes.push(heldOf(other));
+    const found = await checkWhatThisBrowserSent(c.first.doors, VAULT);
+    const notes = (await c.pool.load(VAULT)).notes;
+    /* RED WHEN: the check does not look for the transaction of a note recorded without one - it stays unspendable with no fix on the page. */
+    expect(notes.find((n) => n.nonce === coin.nonce)?.createdIn).toBe(LANDED_IN);
+    /* RED WHEN: a note the history does not show is named anyway. */
+    expect(notes.find((n) => n.nonce === other.nonce)?.createdIn).toBeUndefined();
+    expect([found.named, found.unnamed]).toEqual([1, 1]);
+    expect(sayWhatTheCheckFound(found)).toMatch(/One amount in the vault can now be used for payments\. One amount in the vault still cannot be used for a payment/);
+  });
+
+  it('CHECK MY LAST DEPOSIT NAMES A NOTE ONLY UNDER A TRANSACTION THE VAULT WORKER HAS JUDGED, WHATEVER THE HISTORY ANSWERS', async () => {
+    const c = await company();
+    const coin = { nonce: 'a3'.repeat(32), token: MONEY.token as string, value: '9' };
+    const now = await c.pool.load(VAULT);
+    await c.pool.save(VAULT, { notes: [...now.notes, { nonce: coin.nonce as never, token: coin.token as never, value: 9n }] }, now.readAt);
+    c.w.notes.push(heldOf(coin));
+    const lying = (events: Array<{ transactionHash: string; details: { tag: string; commitment?: string; contract?: string; mtIndex?: string } }>) =>
+      ({ ...c.first.doors, service: { ...c.first.doors.service, createdBy: async () => ({ transactionHash: LANDED_IN, events }) } });
+    for (const events of [
+      /* made for another contract */
+      [{ transactionHash: LANDED_IN, details: { tag: 'zswapOutput', commitment: outputOf(coin), contract: 'ee'.repeat(32), mtIndex: '1' } }],
+      /* made twice */
+      [1, 2].map((i) => ({ transactionHash: LANDED_IN, details: { tag: 'zswapOutput', commitment: outputOf(coin), contract: VAULT, mtIndex: String(i) } })),
+      /* served under another transaction's hash */
+      [{ transactionHash: 'e4'.repeat(32), details: { tag: 'zswapOutput', commitment: outputOf(coin), contract: VAULT, mtIndex: '1' } }],
+    ]) {
+      const found = await checkWhatThisBrowserSent(lying(events), VAULT);
+      /* RED WHEN: the check records whatever the service's lookup answers, without the vault worker judging it. */
+      expect((await c.pool.load(VAULT)).notes.find((n) => n.nonce === coin.nonce)?.createdIn).toBeUndefined();
+      expect([found.named, found.unnamed]).toEqual([0, 1]);
+    }
+  });
+
+  it('TWO TABS OF ONE BROWSER: THE SECOND DEPOSIT STOPS BEFORE THE WALLET, AND THE FIRST ONE\'S RECORD IS NOT OVERWRITTEN', async () => {
+    const c = await company();
+    const shared = new Map<string, Kept<DepositInFlight>>();
+    const [tabA, tabB] = [c.browser(shared), c.browser(shared)];
+    const outcomes = await Promise.allSettled([
+      depositIntoCompanyVault(tabA.doors, VAULT, MONEY), depositIntoCompanyVault(tabB.doors, VAULT, MONEY),
+    ]);
+    const stopped = outcomes.filter((o) => o.status === 'rejected' && o.reason instanceof DepositStartedElsewhere);
+    /* RED WHEN: the record is written with a plain put - the second tab then overwrites the first and both go ahead. */
+    expect(stopped, 'RED WHEN: two tabs both keep a deposit on its way for one vault').toHaveLength(1);
+    expect(c.w.asked, 'the wallet is asked once').toBe(1);
+    /* The one deposit the wallet was asked for is the one kept: its transaction is `P<n>`, built from the n-th coin. */
+    const went = c.w.built[Number(c.w.paidFor[0]!.slice(1)) - 1]!;
+    expect(c.w.built, 'both tabs chose and built a coin').toHaveLength(2);
+    expect([...shared.values()].map((d) => d.coin.nonce), 'RED WHEN: the second tab\'s record replaces the first\'s')
+      .toEqual([went.nonce]);
+  });
+
+  it('TWO BROWSERS DEPOSITING THE SAME MONEY AT ONCE MAKE TWO DIFFERENT COINS', async () => {
+    const c = await company();
+    const [one, two] = [c.browser(), c.browser()];
+    await Promise.allSettled([depositIntoCompanyVault(one.doors, VAULT, MONEY), depositIntoCompanyVault(two.doors, VAULT, MONEY)]);
+    expect(c.w.built, 'both deposits are built').toHaveLength(2);
+    /* RED WHEN: the journal files a second claim on a slot another deposit claimed a moment ago - both then make one coin. */
+    expect(c.w.built[0]!.nonce, 'RED WHEN: two deposits of the same money at once make the same coin').not.toBe(c.w.built[1]!.nonce);
+    /* And one after the other, while the first has not landed: still two coins. */
+    const d = await company();
+    await depositIntoCompanyVault(d.browser().doors, VAULT, MONEY).catch(() => undefined);
+    await depositIntoCompanyVault(d.browser().doors, VAULT, MONEY).catch(() => undefined);
+    expect(d.w.built[0]!.nonce).not.toBe(d.w.built[1]!.nonce);
+  });
+});
+
 describe('A PRIVATE PAYMENT OUT', () => {
   const wrapping = newWrappingKeypair();
   const me = { signerId: 'ada', wrappingSecret: wrapping.secret, companyKey: new Uint8Array(32).fill(3) };
@@ -699,14 +934,16 @@ describe('A PRIVATE PAYMENT OUT', () => {
     await new SealedNotePool(records('pool'), { signerId: 'ada', wrappingSecret: wrapping.secret }, signers)
       .create(VAULT, { notes: [note as never] });
     const held = view({ heldByCommittee: true, fundable: true, notes: chainNotes });
+    const kept = new Map<string, Kept<PaymentInFlight>>();
+    const inFlight: PaymentsInFlight = inFlightInMemory<PaymentInFlight>(kept);
     const doors = (over: Partial<VaultService> = {}, views = [held]) => ({
       ...pacing, now: () => NOW, me, myRecordsKey: 'ff'.repeat(32), records, signers,
-      service: serviceFrom(views, log, over), builder: builder(log),
+      service: serviceFrom(views, log, over), builder: builder(log), inFlight,
     });
     const pool = () => new SealedNotePool(records('pool'), { signerId: 'ada', wrappingSecret: wrapping.secret }, signers);
     const notesNow = async () => (await pool().load(VAULT)).notes;
     const journal = async () => (await new PaymentJournalInStore(records('payment-journal'), VAULT, { id: 'ada', wrappingSecret: wrapping.secret }, signers).open()).attempts;
-    return { log, doors, notesNow, journal, pool };
+    return { log, doors, notesNow, journal, pool, kept };
   };
   /** The payment's own events appear once it has been sent. */
   const landsWhenSent = (change: typeof CHANGE | null = CHANGE): Partial<VaultService> => ({
@@ -730,7 +967,9 @@ describe('A PRIVATE PAYMENT OUT', () => {
     expect(t.log).toEqual([
       'choose', 'read events of 0e', 'read the block', 'build payout spending 01 with 1 event(s) at B1', 'read events of dd',
     ]);
-    expect(done).toEqual({ txRef: 'o', transactionHash: PAID_IN, spent: NOTE.nonce, change: { ...CHANGE, value: '300' } });
+    expect(done).toEqual({
+      txRef: 'o', transactionHash: PAID_IN, spent: NOTE.nonce, change: { ...CHANGE, value: '300' }, seenAs: 'its-own-transaction',
+    });
     expect(await t.notesNow()).toEqual([{ ...CHANGE, createdIn: PAID_IN }]);
     const lines = await t.journal();
     expect(lines).toHaveLength(1);
@@ -916,6 +1155,183 @@ describe('A PRIVATE PAYMENT OUT', () => {
     expect(e2.message).toMatch(/The person is paid/);
   });
 
+  /** A builder whose output commitments are the ledger's own, so the vault's history can be searched by them. */
+  const withRealOutputs = (b: VaultBuilderClient): VaultBuilderClient => ({
+    ...b,
+    commitments: async (i) => ({
+      output: await vaultNoteCommitment({ nonce: i.coin.nonce, token: i.coin.token, value: BigInt(i.coin.value) } as never, VAULT as never),
+      held: `h${i.coin.nonce.slice(1)}`,
+    }),
+  });
+  const heldChange = `h${CHANGE.nonce.slice(1)}`;
+  const second = (over: Partial<PrivatePaymentOnTheWire> = {}) => {
+    const o = order({}, { index: 1, amount: '100', ...over });
+    return { order: { ...o.order, payments: [o.payment] }, payment: o.payment };
+  };
+
+  it('A PAYMENT WHOSE SEND GAVE NO HASH IS RECORDED UNDER ITS CREATING TRANSACTION ONCE IT LANDS, AND THE NEXT PAYMENT OF THE RUN SPENDS ITS CHANGE', async () => {
+    const t = await setUp();
+    const b = t.doors({
+      payout: async () => {
+        paymentEvents.set(PAID_IN, await eventsOfAPayment(PAID_IN, CHANGE));
+        return { txRef: 'o', transactionHash: null };
+      },
+    });
+    const done = await payPrivatelyFromCompanyVault({ ...b, builder: withRealOutputs(b.builder) }, order());
+    /* RED WHEN: the page does not look the payment up by its change - it then raises not-yet-seen and records nothing. */
+    expect(await t.notesNow(), 'RED WHEN: a payment with no hash from its send is not recorded under its creating transaction')
+      .toEqual([{ ...CHANGE, createdIn: PAID_IN }]);
+    /* RED WHEN: a payment found by what it left is reported as seen by its own transaction, or named by a transaction that
+     * may be another payment's - the screen then says this person was paid. */
+    expect(done.seenAs).toBe('by-what-it-left');
+    expect(done.transactionHash).toBe('');
+    expect(t.kept.size, 'RED WHEN: a recorded payment is left on its way').toBe(0);
+    /* The next person on the run is paid out of the change. */
+    const next = t.doors({
+      payout: async () => {
+        paymentEvents.set('d2'.repeat(32), await eventsOfAPayment('d2'.repeat(32), { ...CHANGE, nonce: 'c2'.repeat(32), value: 200n }));
+        return { txRef: 'o2', transactionHash: 'd2'.repeat(32) };
+      },
+    }, [view({ heldByCommittee: true, fundable: true, notes: [heldChange] })]);
+    next.builder.payout = async (i) => ({ tx: 'O2', spent: i.note.nonce, change: { nonce: 'c2'.repeat(32), token: i.note.token, value: '200' } });
+    const paid = await payPrivatelyFromCompanyVault(next, second());
+    expect(paid.spent, 'the run goes on, spending the change the first payment left').toBe(CHANGE.nonce);
+    expect(await t.notesNow()).toEqual([{ nonce: 'c2'.repeat(32), token: TOKEN, value: 200n, createdIn: 'd2'.repeat(32) }]);
+  });
+
+  it('A PAYMENT WHOSE SEND WAS LOST IS KEPT ON ITS WAY; WHEN IT LANDS, THE NEXT PAYMENT RECORDS IT FIRST AND THE RUN FINISHES', async () => {
+    const t = await setUp();
+    const lost = t.doors({ payout: async () => { throw new Error('the connection dropped'); } });
+    const e = await payPrivatelyFromCompanyVault({ ...lost, builder: withRealOutputs(lost.builder) }, order()).catch((x) => x);
+    expect(e).toBeInstanceOf(PaymentNotYetSeen);
+    expect(e.message).toMatch(/the connection dropped/);
+    expect([...t.kept.values()].map((p) => p.change), 'RED WHEN: a payment that may have landed is not kept with its change')
+      .toEqual([{ ...CHANGE, value: '300' }]);
+    /* While the chain still holds the note it spent, no other payment is made from here. */
+    const early = t.doors();
+    await expect(payPrivatelyFromCompanyVault(early, second()), 'RED WHEN: a second payment is built while the record does not say which notes are left')
+      .rejects.toBeInstanceOf(PaymentStillInFlight);
+    /* It lands: the chain no longer holds the note, and holds the change. */
+    paymentEvents.set(PAID_IN, await eventsOfAPayment(PAID_IN, CHANGE));
+    const next = t.doors(landsWhenSent({ ...CHANGE, nonce: 'c2'.repeat(32), value: 200n }), [view({ heldByCommittee: true, fundable: true, notes: [heldChange] })]);
+    next.builder = withRealOutputs(next.builder);
+    next.builder.payout = async (i) => ({ tx: 'O2', spent: i.note.nonce, change: { nonce: 'c2'.repeat(32), token: i.note.token, value: '200' } });
+    const paid = await payPrivatelyFromCompanyVault(next, second());
+    /* RED WHEN: the earlier payment is not settled first - the next one then refuses the vanished note until a rebuild. */
+    expect(paid.spent).toBe(CHANGE.nonce);
+    expect(t.log.some((l) => /^found /.test(l)), 'RED WHEN: the earlier payment is not found by its change').toBe(true);
+    expect(await t.notesNow()).toEqual([{ nonce: 'c2'.repeat(32), token: TOKEN, value: 200n, createdIn: PAID_IN }]);
+  });
+
+  it('A PAYMENT THAT SPENT ITS NOTE EXACTLY, WITH NO HASH FROM ITS SEND, IS RECORDED ONCE THE NOTE LEAVES THE VAULT, AND NOT BEFORE', async () => {
+    const t = await setUp();
+    const gone = view({ heldByCommittee: true, fundable: true, notes: [] });
+    const held = view({ heldByCommittee: true, fundable: true, notes: [`h${NOTE.nonce.slice(1)}`] });
+    const b = t.doors({ payout: async () => ({ txRef: 'o', transactionHash: null }) }, [held, held, gone]);
+    const done = await payPrivatelyFromCompanyVault(b, order({}, { amount: '500' }));
+    /* RED WHEN: the note is taken out while the chain still holds it, or never once it does not. */
+    expect(done.change).toBeNull();
+    expect(await t.notesNow()).toEqual([]);
+    const stays = await setUp();
+    const s2 = stays.doors({ payout: async () => ({ txRef: 'o', transactionHash: null }) }, [held]);
+    await expect(payPrivatelyFromCompanyVault(s2, order({}, { amount: '500' }))).rejects.toBeInstanceOf(PaymentNotYetSeen);
+    expect(await stays.notesNow(), 'RED WHEN: a note the chain still holds is taken out of the record').toEqual([NOTE]);
+    expect(stays.kept.size, 'the payment is kept on its way').toBe(1);
+    /* A view that did not read the vault is not a note that left it. */
+    const unreadable = view({ onChain: false, heldByCommittee: true, fundable: true, notes: undefined });
+    const blind = await setUp();
+    const b3 = blind.doors({ payout: async () => ({ txRef: 'o', transactionHash: null }) }, [held, unreadable]);
+    /* RED WHEN: a view with no notes is read as the note having left - a note the chain holds is taken out of the record. */
+    await expect(payPrivatelyFromCompanyVault(b3, order({}, { amount: '500' }))).rejects.toBeInstanceOf(PaymentNotYetSeen);
+    expect(await blind.notesNow(), 'RED WHEN: an unreadable view takes the note out of the record').toEqual([NOTE]);
+    await expect(settlePaymentInFlight(blind.doors({}, [unreadable]), VAULT), 'RED WHEN: settling reads an unreadable view as the note gone')
+      .rejects.toBeInstanceOf(PaymentStillInFlight);
+    expect(await blind.notesNow()).toEqual([NOTE]);
+    /* The page was closed; the note leaves the vault later, and the next look from this browser records it. */
+    expect(await settlePaymentInFlight(stays.doors({}, [gone]), VAULT), 'RED WHEN: a payment with no change is never settled later')
+      .toEqual({ state: 'recorded', createdIn: null });
+    expect(await stays.notesNow()).toEqual([]);
+    expect(stays.kept.size).toBe(0);
+  });
+
+  it('A PAYMENT ON ITS WAY THAT CAN NO LONGER LAND IS LET GO; ONE WHOSE NOTE SOMETHING ELSE SPENT IS LET GO ONLY ONCE THE WHOLE HISTORY SAYS SO', async () => {
+    const t = await setUp();
+    const lost = t.doors({ payout: async () => { throw new Error('the connection dropped'); } });
+    await payPrivatelyFromCompanyVault(lost, order()).catch(() => undefined);
+    const later = (ms: number, views: VaultChainView[], over: Partial<VaultService> = {}) =>
+      ({ ...t.doors(over, views), builder: withRealOutputs(t.doors().builder), now: () => new Date(NOW.getTime() + ms) });
+    const held = view({ heldByCommittee: true, fundable: true, notes: [`h${NOTE.nonce.slice(1)}`] });
+    const gone = view({ heldByCommittee: true, fundable: true, notes: [] });
+    await expect(settlePaymentInFlight(later(DEPOSIT_TIME_TO_LIVE_MS - 1, [held]), VAULT)).rejects.toBeInstanceOf(PaymentStillInFlight);
+    /* RED WHEN: a payment whose note the chain still holds is forgotten before its time to live has passed, or never. */
+    expect(await settlePaymentInFlight(later(DEPOSIT_TIME_TO_LIVE_MS + 1, [held]), VAULT)).toEqual({ state: 'never-landed' });
+    expect(await t.notesNow()).toEqual([NOTE]);
+
+    const u = await setUp();
+    await payPrivatelyFromCompanyVault(u.doors({ payout: async () => { throw new Error('the connection dropped'); } }), order()).catch(() => undefined);
+    const at = (ms: number, over: Partial<VaultService> = {}) =>
+      ({ ...u.doors(over, [gone]), builder: withRealOutputs(u.doors().builder), now: () => new Date(NOW.getTime() + ms) });
+    /* The note is gone and the change is nowhere: kept until its time to live has passed and the history was read in full. */
+    await expect(settlePaymentInFlight(at(DEPOSIT_TIME_TO_LIVE_MS + 1, { createdBy: async () => { throw new Error('the indexer is down'); } }), VAULT),
+      'RED WHEN: a payment is let go on a history that could not be read').rejects.toBeInstanceOf(PaymentStillInFlight);
+    await expect(settlePaymentInFlight(at(1), VAULT)).rejects.toBeInstanceOf(PaymentStillInFlight);
+    expect(await settlePaymentInFlight(at(DEPOSIT_TIME_TO_LIVE_MS + 1), VAULT)).toEqual({ state: 'spent-elsewhere' });
+    expect(await u.notesNow(), 'RED WHEN: the record is changed for a payment that never landed').toEqual([NOTE]);
+    expect(u.kept.size).toBe(0);
+  });
+
+  it('A PAYMENT WHOSE CHANGE THE CHAIN SHOWS AND THE VAULT WORKER WILL NOT NAME IS KEPT UNTIL ITS TIME TO LIVE, THEN LET GO AS NOT MATCHED', async () => {
+    const t = await setUp();
+    await payPrivatelyFromCompanyVault(t.doors({ payout: async () => { throw new Error('the connection dropped'); } }), order()).catch(() => undefined);
+    paymentEvents.set(PAID_IN, await eventsOfAPayment(PAID_IN, CHANGE));
+    const gone = view({ heldByCommittee: true, fundable: true, notes: [heldChange] });
+    const at = (ms: number) => {
+      const d = t.doors({}, [gone]);
+      return { ...d, builder: { ...withRealOutputs(d.builder), creatingTransaction: async () => ({ state: 'refused' as const }) }, now: () => new Date(NOW.getTime() + ms) };
+    };
+    await expect(settlePaymentInFlight(at(1), VAULT)).rejects.toBeInstanceOf(PaymentStillInFlight);
+    /* RED WHEN: a change the worker will not name blocks every payment from this browser for ever. */
+    expect(await settlePaymentInFlight(at(DEPOSIT_TIME_TO_LIVE_MS + 1), VAULT)).toEqual({ state: 'not-matched' });
+    expect(await t.notesNow(), 'RED WHEN: a change nothing established is recorded').toEqual([NOTE]);
+    expect(t.kept.size).toBe(0);
+  });
+
+  it('CHECK MY LAST DEPOSIT ALSO SETTLES A PAYMENT THIS BROWSER SENT, AND SAYS SO WITHOUT SAYING WHO WAS PAID', async () => {
+    const t = await setUp();
+    const lost = t.doors({ payout: async () => { throw new Error('the connection dropped'); } });
+    await payPrivatelyFromCompanyVault({ ...lost, builder: withRealOutputs(lost.builder) }, order()).catch(() => undefined);
+    paymentEvents.set(PAID_IN, await eventsOfAPayment(PAID_IN, CHANGE));
+    const d = t.doors({}, [view({ heldByCommittee: true, fundable: true, notes: [heldChange] })]);
+    const found = await checkWhatThisBrowserSent({
+      ...d, builder: withRealOutputs(d.builder), company: ACCOUNT, inFlight: inFlightInMemory<DepositInFlight>(), payments: d.inFlight,
+      pay: async () => { throw new Error('a check asks no wallet'); }, clock: () => NOW.getTime(),
+    }, VAULT);
+    /* RED WHEN: the check does not settle a payment on its way - the payment messages send people to it for nothing. */
+    expect(found.payment).toEqual({ state: 'recorded', createdIn: PAID_IN });
+    expect(await t.notesNow()).toEqual([{ ...CHANGE, createdIn: PAID_IN }]);
+    expect(t.log.filter((l) => l === 'sent payout'), 'a check sends nothing').toHaveLength(0);
+    expect(sayWhatTheCheckFound(found)).toMatch(/^This browser has no deposit .* Money from a payment this browser sent has left the vault, and the vault's record now shows it\. Open the run to see who was paid\.$/);
+  });
+
+  it('TWO TABS: A SECOND PAYMENT STOPS BEFORE IT IS SENT WHILE ANOTHER TAB\'S IS BEING SENT', async () => {
+    const t = await setUp();
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => { release = r; });
+    const slow = t.doors({ payout: async () => { await held; throw Object.assign(new Error('refused. Nothing was sent.'), { nothingWasSent: true }); } });
+    const first = payPrivatelyFromCompanyVault(slow, order()).catch((x) => x);
+    await new Promise((r) => setTimeout(r, 5));
+    /* The second tab read this browser's records before the first tab kept its payment, so it went on to build one. */
+    const tabB = t.doors();
+    const e = await payPrivatelyFromCompanyVault({ ...tabB, inFlight: { ...tabB.inFlight, get: async () => null } }, second()).catch((x) => x);
+    /* RED WHEN: the payment's record is kept with a plain put - the second tab then replaces it and sends from the same note. */
+    expect(e).toBeInstanceOf(PaymentStartedElsewhere);
+    expect(t.log.filter((l) => l === 'sent payout')).toHaveLength(0);
+    expect([...t.kept.values()].map((p) => p.amount), 'the first tab\'s record stands').toEqual(['200']);
+    release();
+    await first;
+    expect(t.kept.size, 'the first tab forgets its own record once nothing was sent').toBe(0);
+  });
+
   it('A NOTE ANOTHER WRITER ADDED WHILE THE PAYMENT PROVED IS KEPT: THE CHANGE IS APPLIED TO THE POOL AS IT STANDS', async () => {
     /* RED WHEN: the save is built on the copy loaded before the payment - it is then refused as a lost race five
      * times over, or, without the version check, the other writer's note is dropped. */
@@ -982,6 +1398,7 @@ describe('A PUBLIC PAYMENT OUT', () => {
       ...pacing, now: () => NOW, me: { signerId: 'ada', wrappingSecret: wrapping.secret, companyKey: new Uint8Array(32) },
       myRecordsKey: 'ff'.repeat(32), records: () => new MemorySealedPoolStore(),
       signers: async () => [], service: serviceFrom([view({ heldByCommittee: true, fundable: true })], log), builder: builder(log),
+      inFlight: inFlightInMemory<PaymentInFlight>(),
     }, order())).rejects.toThrow(/^this payment is not a private one, so it is not paid privately\. Nothing was sent\.$/);
     expect(log).toEqual([]);
   });

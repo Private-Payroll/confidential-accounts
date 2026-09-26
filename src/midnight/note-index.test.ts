@@ -5,7 +5,7 @@ import {
 } from '@midnight-ntwrk/midnight-js-protocol/ledger';
 
 import {
-  NoteIndexRefused, NoteIndexUnaskable, NoteIndexUnreadable, creatingTransactionsAmong,
+  NoteIndexRefused, NoteIndexUnaskable, NoteIndexUnreadable, creatingTransactionsAmong, transactionThatCreatedOutput,
   establishCreatingTransaction, indexForSpend, indexerNoteEvents, indexerVaultTransactions,
   noteIndexFrom, recordCreatingTransaction, vaultNoteCommitment,
   type IndexerSocket, type NoteEvents, type ServedEvent,
@@ -722,6 +722,68 @@ describe('§7 which transaction created a note nobody wrote the transaction down
     expect(() => establishCreatingTransaction(
       [output(mine, 12n, VAULT, H(0x81))], { vault: VAULT as Hex, commitment: mine, transaction: { hash: 'not-a-hash' as Hex } },
     ), 'RED WHEN: the hash is recorded without the shape a spend can read it in').toThrow(NoteIndexRefused);
+  });
+});
+
+describe('§7a the transaction that created an output, found by the output alone', () => {
+  const H = (n: number) => n.toString(16).padStart(2, '0').repeat(32) as Hex;
+  const COIN = { nonce: '6a'.repeat(32) as Hex, token: 'aa'.repeat(32) as Hex, value: 300n };
+  const chainOf = (txs: Array<{ hash: Hex; events: ServedEvent[] | Error }>) => {
+    const reads: string[] = [];
+    return {
+      reads,
+      transactions: { of: async (v: Hex) => { reads.push(`list ${v.slice(0, 2)}`); return txs.map((t) => t.hash); } },
+      events: {
+        eventsOf: async (tx: { hash?: string; identifier?: string }) => {
+          reads.push(String(tx.hash).slice(0, 2));
+          const t = txs.find((x) => x.hash === tx.hash)!;
+          if (t.events instanceof Error) throw t.events;
+          return t.events;
+        },
+      } satisfies NoteEvents,
+    };
+  };
+
+  it('ANSWERS THE NEWEST OF THE VAULT\'S OWN TRANSACTIONS WHOSE EVENTS CARRY THE OUTPUT FOR THIS VAULT, AND STOPS THERE', async () => {
+    const mine = await vaultNoteCommitment(COIN, VAULT);
+    const chain = chainOf([
+      { hash: H(0x51), events: [output('f0'.repeat(32), 9n, VAULT, H(0x51))] },
+      { hash: H(0x52), events: [input(H(0x52)), output(mine.toUpperCase(), 3n, VAULT.toUpperCase() as Hex, H(0x52))] },
+      { hash: H(0x53), events: [output(mine, 4n, VAULT, H(0x53))] },
+    ]);
+    const got = await transactionThatCreatedOutput(VAULT as Hex, `0x${mine}`, chain);
+    /* RED WHEN: a transaction is answered whose events do not carry the output, or the list is read past the answer. */
+    expect(got?.transactionHash).toBe(H(0x52));
+    expect(got?.events).toHaveLength(2);
+    expect(chain.reads).toEqual([`list ${VAULT.slice(0, 2)}`, '51', '52']);
+  });
+
+  it('NEVER ANSWERS AN OUTPUT OF THIS COMMITMENT MADE FOR ANOTHER CONTRACT, OR ANY OTHER EVENT CARRYING IT', async () => {
+    const mine = await vaultNoteCommitment(COIN, VAULT);
+    const chain = chainOf([
+      { hash: H(0x61), events: [output(mine, 1n, OTHER_VAULT, H(0x61))] },
+      { hash: H(0x62), events: [{ transactionHash: H(0x62), details: { tag: 'zswapInput', commitment: mine, contract: VAULT } }] },
+    ]);
+    /* RED WHEN: the owner is not compared, or any event tag carrying the commitment is taken as its output. */
+    expect(await transactionThatCreatedOutput(VAULT as Hex, mine, chain)).toBeNull();
+  });
+
+  it('A TRANSACTION THAT CANNOT BE READ IS NOT ONE THAT DID NOT CREATE IT: WITH NOTHING ELSE ANSWERING, IT IS NOT YET, NOT NONE', async () => {
+    const mine = await vaultNoteCommitment(COIN, VAULT);
+    const unread = chainOf([
+      { hash: H(0x71), events: new NoteIndexUnreadable('not held yet') },
+      { hash: H(0x72), events: [output('f2'.repeat(32), 1n, VAULT, H(0x72))] },
+    ]);
+    /* RED WHEN: an unread transaction is skipped and the answer is "none" - the payment it made would be forgotten. */
+    await expect(transactionThatCreatedOutput(VAULT as Hex, mine, unread)).rejects.toBeInstanceOf(NoteIndexUnreadable);
+    const readLater = chainOf([
+      { hash: H(0x73), events: new NoteIndexUnreadable('not held yet') },
+      { hash: H(0x74), events: [output(mine, 1n, VAULT, H(0x74))] },
+    ]);
+    expect((await transactionThatCreatedOutput(VAULT as Hex, mine, readLater))?.transactionHash).toBe(H(0x74));
+    /* Anything else is not the chain being slow, and is not swallowed. */
+    await expect(transactionThatCreatedOutput(VAULT as Hex, mine, chainOf([{ hash: H(0x75), events: new Error('a bug') }])))
+      .rejects.toThrow('a bug');
   });
 });
 

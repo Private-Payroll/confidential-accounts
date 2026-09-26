@@ -13,7 +13,7 @@ import {
   MemorySealedPoolStore, sealPool, type PoolSigner, type SealedPoolStore,
 } from './vault-pool.js';
 import { newWrappingKeypair, newSymmetricKey, seal, wrapKey, canonical } from '../core/crypto.js';
-import { depositNonceAt, depositNonceKeyFor } from './deposit-nonce.js';
+import { depositNonceAt, depositNonceKeyFor, DepositSlotTaken, DEPOSIT_CLAIM_LIVE_MS } from './deposit-nonce.js';
 
 const KEY = depositNonceKeyFor(new Uint8Array(32).fill(0x31), 'c4'.repeat(32));
 
@@ -82,7 +82,7 @@ describe('a journal over any store', () => {
     expect(await store.versions(VAULT), 'RED WHEN: a line is filed for a slot that derives nothing').toHaveLength(2);
   });
 
-  it('TWO WRITERS WHO READ THE SAME VAULT CLAIM THE SAME COIN AND FILE TWO VERSIONS, and the journal reads it as one attempt', async () => {
+  it('TWO WRITERS WHO READ THE SAME VAULT AT ONCE DO NOT CLAIM THE SAME COIN: THE ONE WHO LOSES THE RACE IS TOLD THE SLOT IS TAKEN', async () => {
     const a = signer('ada');
     const inner = new MemorySealedPoolStore();
     /* Both writers read before either writes: the first read of each is held until both have read. */
@@ -104,11 +104,38 @@ describe('a journal over any store', () => {
     const one = new DepositJournalInStore(store, VAULT, opener, async () => [a.who], KEY);
     const two = new DepositJournalInStore(store, VAULT, opener, async () => [a.who], KEY);
     const money = { token: GBP, value: 70n };
-    const [x, y] = await Promise.all([one.claim(VAULT, money, 1, 'x'), two.claim(VAULT, money, 1, 'y')]);
-    expect(x.coin, 'only one of these can land: the ledger refuses a coin it has already made').toEqual(y.coin);
-    expect((await inner.versions(VAULT)).map((v) => v.version), 'RED WHEN: the lost race is not retried at the next version').toEqual([1, 2]);
-    const filed = attemptsFromJournalVersions({ deposits: await inner.versions(VAULT), payments: [], opener });
-    expect(filed.deposits, 'RED WHEN: one coin journalled twice is proposed as two').toEqual([x.coin]);
+    const now = '2026-09-26T10:00:00.000Z';
+    const [x, y] = await Promise.allSettled([one.claim(VAULT, money, 1, now), two.claim(VAULT, money, 1, now)]);
+    const won = [x, y].filter((r) => r.status === 'fulfilled');
+    const lost = [x, y].filter((r) => r.status === 'rejected').map((r) => (r as PromiseRejectedResult).reason);
+    /* RED WHEN: the lost race files the same line again - two deposits then make one coin, and one is refused after its fee. */
+    expect(won, 'RED WHEN: both writers claim the coin at slot 1').toHaveLength(1);
+    expect(lost[0]).toBeInstanceOf(DepositSlotTaken);
+    expect((lost[0] as DepositSlotTaken).slot).toBe(1);
+    expect((await inner.versions(VAULT)).map((v) => v.version), 'the loser filed nothing').toEqual([1]);
+    /* The loser tries the next slot, and has a coin of its own. */
+    const next = await two.claim(VAULT, money, 2, now);
+    expect(next.coin.nonce).not.toBe((won[0] as PromiseFulfilledResult<{ coin: { nonce: string } }>).value.coin.nonce);
+  });
+
+  it('A SLOT CLAIMED LONGER AGO THAN A DEPOSIT CAN TAKE TO LAND IS FREE AGAIN; ONE CLAIMED FOR OTHER MONEY NEVER HELD IT', async () => {
+    const a = signer('ada');
+    const store = new MemorySealedPoolStore();
+    const j = new DepositJournalInStore(store, VAULT, { id: 'ada', wrappingSecret: a.secret }, async () => [a.who], KEY);
+    const money = { token: GBP, value: 70n };
+    const then = Date.parse('2026-09-26T10:00:00.000Z');
+    const at = (ms: number) => new Date(then + ms).toISOString();
+    await j.claim(VAULT, money, 1, at(0));
+    /* RED WHEN: the window is shorter than the time a deposit can take to land - its coin can then be made twice. */
+    await expect(j.claim(VAULT, money, 1, at(DEPOSIT_CLAIM_LIVE_MS - 1))).rejects.toBeInstanceOf(DepositSlotTaken);
+    /* A clock behind the one that wrote the line is no reason to reuse it. */
+    await expect(j.claim(VAULT, money, 1, at(-60_000))).rejects.toBeInstanceOf(DepositSlotTaken);
+    /* RED WHEN: a line that can no longer land holds its slot for ever - every later deposit of that money moves up. */
+    expect((await j.claim(VAULT, money, 1, at(DEPOSIT_CLAIM_LIVE_MS))).coin.nonce).toBe(depositNonceAt(KEY, money, 1));
+    /* RED WHEN: a line is matched on its token alone - a claim of other money in that token is then refused for nothing. */
+    expect((await j.claim(VAULT, { token: GBP, value: 71n }, 1, at(1))).coin.value).toBe(71n);
+    expect(DEPOSIT_CLAIM_LIVE_MS, 'at least the hour a deposit can take to land and the quarter hour two clocks may disagree by')
+      .toBeGreaterThanOrEqual(75 * 60_000);
   });
 
   it('A RECORD IS OPENED ONLY AS WHAT IT WAS SEALED AS: a deposit journal presented as the payment journal is refused', async () => {

@@ -58,6 +58,7 @@ import { unlockKeyFor } from 'midnight-identity/profile/unlock';
 import * as vaultModule from '../managed-vault/contract/index.js';
 import * as accountModule from '../managed/contract/index.js';
 import { witnesses, type AccountPrivateState } from '../src/witnesses.js';
+import { aWalletThatPaysPrivately, type AWalletThatPaysPrivately } from './a-wallet-that-pays-privately.js';
 import { privateStateFor, leafOfDevice, change, ZERO_32 } from './simulator.js';
 import { MemoryStore } from '../../src/core/store.js';
 import { AccountService, sealAccount } from '../../src/core/account.js';
@@ -76,8 +77,9 @@ import { vaultBuilderOver, type VaultAnswer } from '../../src/web/vault-worker-c
 import {
   createCompanyVault, depositIntoCompanyVault, openCompanyVaultPool, payPrivatelyFromCompanyVault,
   payPubliclyFromCompanyVault,
-  type TemporaryKeys, type VaultService, type DepositInFlight, type DepositsInFlight,
+  type TemporaryKeys, type VaultService, type DepositInFlight, type DepositsInFlight, type PaymentInFlight, type PaymentsInFlight,
 } from '../../src/web/vault-operation.js';
+import { inFlightInMemory as inFlightRecordsInMemory, sealedOnThisDevice, type KeptOnThisDevice } from '../../src/web/in-flight-on-this-device.js';
 import { readWhatThePageAsks, base64FromBytes } from '../../apps/wallet/src/chain/balance-for-page.js';
 import { UNLOCK_PURPOSE, UNLOCK_WINDOW_MS, unlockAsk } from '../../src/core/wallet-unlock.js';
 import { fromHex, newSigningKeypair, newWrappingKeypair, toHex, type Hex } from '../../src/core/crypto.js';
@@ -94,15 +96,11 @@ import { unshieldedPayeeFor } from '../../src/testing/payees.js';
 import { assemblePrivatePayments } from '../../src/midnight/private-payment-wire.js';
 import { witnessesOver } from '../../src/midnight/vault-notes.js';
 
-/** Deposits in flight, kept for the length of one test. */
-const inFlightInMemory = (): DepositsInFlight => {
-  const kept = new Map<string, DepositInFlight>();
-  return {
-    get: async (v) => kept.get(v) ?? null,
-    put: async (v, d) => { kept.set(v, d); },
-    forget: async (v) => { kept.delete(v); },
-  };
-};
+/** Deposits or payments on their way, kept for the length of one test, sealed as the page keeps them. */
+const keptOnThisDevice = <T,>(kind: 'deposit' | 'payment'): KeptOnThisDevice<T> =>
+  sealedOnThisDevice<T>(inFlightRecordsInMemory(), { signerId: 'ada', wrappingSecret: newWrappingKeypair().secret }, kind);
+const inFlightInMemory = (): DepositsInFlight => keptOnThisDevice<DepositInFlight>('deposit');
+const paymentsInFlight = (): PaymentsInFlight => keptOnThisDevice<PaymentInFlight>('payment');
 
 const NET = 'undeployed';
 const RECORDS: readonly WireRecord[] = ['pool', 'deposit-journal', 'payment-journal', 'nonce-secret'];
@@ -193,6 +191,7 @@ if (!KEYS_ON_DISK) {
 
 describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [needs contracts/managed-vault/keys and contracts/managed/keys; `npm run compact` then `npm run compact:vault -- --full` build them]', () => {
   let chain: Chain;
+  let depositor: AWalletThatPaysPrivately;
   let server: ReturnType<express.Express['listen']>;
   let base: string;
   let store: MemoryStore;
@@ -264,6 +263,10 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
   beforeEach(async () => {
     setNetworkId(NET as never);
     chain = new Chain();
+    /* The depositor's wallet holds its own private coins before anything else is on the chain. */
+    depositor = aWalletThatPaysPrivately(NET);
+    chain.apply(depositor.seedTransaction(TOKEN, [100_000n, 100_000n, 100_000n, 100_000n]));
+    chain.applied.pop();
     store = new MemoryStore();
     founder = privateStateFor(1);
     /* The company account, with the state its own constructor writes for its founder, this build's circuits and the service's temporary key. */
@@ -340,6 +343,24 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
           ...(e.content.mtIndex === undefined ? {} : { mtIndex: String(e.content.mtIndex) }),
         },
       })),
+      /* As an indexer would answer it: the one applied transaction whose events carry this output, made for this vault. */
+      createdBy: async (v, commitment) => {
+        for (const [name, events] of chain.events) {
+          if (events.some((e: any) => String(e.content.tag) === 'zswapOutput' && String(e.content.commitment).toLowerCase() === commitment.toLowerCase()
+            && String(e.content.contract).toLowerCase() === v.toLowerCase())) {
+            return { transactionHash: name as Hex, events: events.map((e: any) => ({
+              transactionHash: name,
+              details: {
+                tag: String(e.content.tag),
+                ...(e.content.commitment === undefined ? {} : { commitment: String(e.content.commitment) }),
+                ...(e.content.contract === undefined ? {} : { contract: String(e.content.contract) }),
+                ...(e.content.mtIndex === undefined ? {} : { mtIndex: String(e.content.mtIndex) }),
+              },
+            })) };
+          }
+        }
+        return null;
+      },
     };
     /* A fee payer that adds no fee, names what it finalises as the chain names it, and whose submission is the chain applying it. */
     const payer = {
@@ -414,6 +435,10 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     deposit: (vault, tx) => http(`${at}/vaults/${vault}/deposit`, { method: 'POST', body: { tx } }),
     payoutState: (vault) => http(`${at}/vaults/${vault}/payout-state`),
     events: (vault, tx) => http(`${at}/vaults/${vault}/events/${tx}`),
+    createdBy: async (vault, commitment) => {
+      const found = await http(`${at}/vaults/${vault}/created/${commitment}`);
+      return found.found === true ? { transactionHash: found.transactionHash, events: found.events } : null;
+    },
     payout: (vault, tx) => http(`${at}/vaults/${vault}/payout`, { method: 'POST', body: { tx } }),
     payoutPublicly: (vault, tx) => http(`${at}/vaults/${vault}/public-payout`, { method: 'POST', body: { tx } }),
   };
@@ -437,7 +462,8 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
   const wallet = async (ask: { company: Hex; vault: Hex; transaction: string }) => {
     const asProven = { Transaction: { deserialize: (_s: string, _p: string, b: 'pre-binding', raw: Uint8Array) => L.Transaction.deserialize('signature', 'pre-proof', b, raw) } };
     const read = readWhatThePageAsks(asProven as never, ask.transaction, ask.vault);
-    return { transaction: base64FromBytes((read.tx as any).bind().serialize()), leaves: read.leaves };
+    /* Paid for with the stand-in wallet's own private coin, as a wallet does, then bound. */
+    return { transaction: base64FromBytes((depositor.payFor(read.tx) as any).bind().serialize()), leaves: read.leaves };
   };
 
   /** A vault the committee holds, its pool open, the account handed over, and 1,000 in it: the existing path, run to its end. */
@@ -502,6 +528,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     const before = chain.applied.length;
     const done = await payPrivatelyFromCompanyVault({
       ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records, builder: builder(),
+      inFlight: paymentsInFlight(),
     }, { order, payment: order.payments[0]! });
 
     /* ---- the chain applied exactly one more transaction, and the service paid for it as the vault's own coins ---- */
@@ -546,7 +573,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
   it('THE SAME PERSON IS NOT OFFERED TWICE, AND A SECOND PAYMENT BUILT ANYWAY IS REFUSED BY THE ACCOUNT', async () => {
     const { vault } = await aFundedVault();
     const run = await anApprovedRun(vault, 100n);
-    const doors = { ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records, builder: builder() };
+    const doors = { ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records, builder: builder(), inFlight: paymentsInFlight() };
     const first = run.order();
     await payPrivatelyFromCompanyVault(doors, { order: first, payment: first.payments[0]! });
     /* RED WHEN: `paid` is not read back from the account - the device would be offered the person again. */
@@ -577,6 +604,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     const applied = chain.applied.length;
     await expect(payPrivatelyFromCompanyVault({
       ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records, builder: builder(),
+      inFlight: paymentsInFlight(),
     }, { order, payment: forged })).rejects.toThrow();
     /* The account's own check stops it inside the call, before anything reaches the service. */
     expect(chain.applied.length).toBe(applied);
@@ -731,7 +759,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
 
     const publicRun = await anApprovedRun(vault, 100n, { payee: unshieldedPayeeFor(USER, NET), token: PUBLIC_TOKEN });
     const pub = publicRun.order();
-    const privateDoors = { ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records, builder: builder() };
+    const privateDoors = { ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records, builder: builder(), inFlight: paymentsInFlight() };
     /* RED WHEN: the device's private builder takes a payment the leg names public, whatever the page asked. */
     const { payments: _q, ...pubRound } = pub;
     await expect(builder().payout({

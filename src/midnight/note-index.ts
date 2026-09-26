@@ -709,6 +709,60 @@ export async function creatingTransactionsAmong(
   return { found, listed: listed.length, read };
 }
 
+/**
+ * **THE TRANSACTION IN A VAULT'S OWN HISTORY THAT CREATED ONE OUTPUT, FOUND BY
+ * THE OUTPUT'S COMMITMENT ALONE.**
+ *
+ * For a note whose sender could not name the transaction it sent: the answer to
+ * the send was lost, or the service could not name it. The commitment is what
+ * the chain publishes for the output when it lands, so asking by it says
+ * nothing the transaction itself did not.
+ *
+ * **ONLY THIS VAULT'S TRANSACTIONS ARE ASKED, AND AN OUTPUT COUNTS ONLY WHEN
+ * THE CHAIN SAYS THIS VAULT OWNS IT.** A coin paid to a contract is committed
+ * together with that contract's address, so another vault's output never has
+ * this commitment; and a transaction that did not call this vault is not on
+ * the list. The answer is still only a proposal: whoever records it puts these
+ * events to `establishCreatingTransaction`, the one test every writer of a
+ * note's transaction uses.
+ *
+ * Newest first, and it stops at the first transaction that carries the output.
+ * `null` when no listed transaction carries it and every one was read: the
+ * indexer has not caught up, or the output was never made. A transaction that
+ * could not be read, when nothing else answered, is `NoteIndexUnreadable`,
+ * because the unread one may be the answer.
+ */
+export async function transactionThatCreatedOutput(
+  vault: Hex,
+  commitment: string,
+  chain: { readonly transactions: VaultTransactions; readonly events: NoteEvents },
+): Promise<{ readonly transactionHash: Hex; readonly events: ReadonlyArray<ServedEvent> } | null> {
+  const mine = bare(vault);
+  const wanted = bare(commitment);
+  const listed = await chain.transactions.of(vault);
+  let unread: Error | null = null;
+  for (const hash of listed) {
+    let served: ReadonlyArray<ServedEvent>;
+    try {
+      served = await chain.events.eventsOf({ hash });
+    } catch (cause) {
+      if (!(cause instanceof NoteIndexUnreadable || cause instanceof NoteIndexUnaskable)) throw cause;
+      unread ??= cause;
+      continue;
+    }
+    const carries = served.some((e) => e.details.tag === 'zswapOutput'
+      && typeof e.details.commitment === 'string' && bare(e.details.commitment) === wanted
+      && typeof e.details.contract === 'string' && bare(e.details.contract) === mine);
+    if (carries) return { transactionHash: bare(hash) as Hex, events: served };
+  }
+  if (unread !== null) {
+    throw new NoteIndexUnreadable(
+      `none of the ${listed.length} transaction(s) the chain lists for this vault that could be read `
+      + `created this output, and at least one could not be read (${unread.message}). Read again.`);
+  }
+  return null;
+}
+
 /** The part of a WebSocket this file uses. The global one, in Node and in a browser. */
 export interface IndexerSocket {
   send(data: string): void;

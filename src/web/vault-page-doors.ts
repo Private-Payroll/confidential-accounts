@@ -14,7 +14,10 @@ import type { PoolSigner } from '../midnight/vault-pool.js';
 import { recordsKeypairFrom } from '../midnight/company-nonce-secret.js';
 import { HttpSealedPoolStore, pageWireSend } from './http-sealed-pool-store.js';
 import type { DeviceRecords, DeviceSigner } from './deposit-on-device.js';
-import type { DepositInFlight, DepositsInFlight, TemporaryKeys, VaultService } from './vault-operation.js';
+import type {
+  DepositInFlight, DepositsInFlight, PaymentInFlight, PaymentsInFlight, TemporaryKeys, VaultService,
+} from './vault-operation.js';
+import { sealedOnThisDevice, type InFlightOpener, type InFlightRecords, type SealedInFlight } from './in-flight-on-this-device.js';
 import type { SigningKeyOnTheWire } from './vault-worker-client.js';
 import type { PrivatePaymentOrderOnTheWire } from '../midnight/private-payment-wire.js';
 
@@ -68,6 +71,10 @@ export const vaultServiceFor = (api: Api, accountId: string, roster: () => Promi
     deposit: (vault, tx) => post(`${base}/vaults/${vault}/deposit`, tx),
     payoutState: (vault) => api(`${base}/vaults/${vault}/payout-state`),
     events: (vault, transactionHash) => api(`${base}/vaults/${vault}/events/${encodeURIComponent(transactionHash)}`),
+    createdBy: async (vault, commitment) => {
+      const answer = await api(`${base}/vaults/${vault}/created/${encodeURIComponent(commitment)}`);
+      return answer?.found === true ? { transactionHash: answer.transactionHash, events: answer.events } : null;
+    },
     payout: (vault, tx) => post(`${base}/vaults/${vault}/payout`, tx),
     payoutPublicly: (vault, tx) => post(`${base}/vaults/${vault}/public-payout`, tx),
   };
@@ -165,28 +172,45 @@ export function browserTemporaryKeys(factory: IDBFactory = indexedDB): Temporary
 }
 
 /**
- * **A DEPOSIT SENT FROM THIS BROWSER AND NOT YET SEEN LAND, KEPT IN THIS
- * BROWSER.** It names the coin, so it stays on this device and is never sent
- * anywhere; the next deposit into the same vault from here reads it first.
+ * **WHERE THIS BROWSER KEEPS A DEPOSIT OR A PAYMENT ON ITS WAY: SEALED RECORDS
+ * IN INDEXEDDB, EACH CHANGE ONE TRANSACTION.**
+ *
+ * Every record is sealed before it reaches here (`in-flight-on-this-device.ts`),
+ * so this store holds nothing it could read. Keeping a record where none is,
+ * replacing one under its claim, and forgetting one under its claim each read
+ * and write inside one IndexedDB transaction, and IndexedDB runs two
+ * transactions on one store one after the other, so two tabs cannot both keep
+ * a record in one place or lose each other's.
  */
-export function browserDepositsInFlight(factory: IDBFactory = indexedDB): DepositsInFlight {
-  const STORE = 'deposits';
+export function browserInFlightRecords(factory: IDBFactory = indexedDB): InFlightRecords {
+  const STORE = 'sealed';
   const open = () => new Promise<IDBDatabase>((resolve, reject) => {
-    const req = factory.open('vault-deposits-in-flight', 1);
+    const req = factory.open('vault-operations-in-flight', 1);
     req.onupgradeneeded = () => { req.result.createObjectStore(STORE); };
     req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(new Error('this browser would not open its note of deposits on their way. Check that this '
-      + 'browser lets this site store data (a private window may not), then try again.', { cause: req.error }));
+    req.onerror = () => reject(new Error('this browser would not open its record of deposits and payments on their way, '
+      + 'so nothing was sent and no money moved. Check that this browser lets this site store data (a private window '
+      + 'may not), then try again.', { cause: req.error }));
   });
-  const run = async <T>(mode: IDBTransactionMode, act: (s: IDBObjectStore) => IDBRequest<T>): Promise<T> => {
+  /** One read, then at most one write, inside one transaction. */
+  const step = async <T>(slot: string, decide: (there: SealedInFlight | null) => { write?: SealedInFlight | 'delete'; answer: T }): Promise<T> => {
     const db = await open();
     try {
       return await new Promise<T>((resolve, reject) => {
-        const tx = db.transaction(STORE, mode);
-        const req = act(tx.objectStore(STORE));
-        tx.oncomplete = () => resolve(req.result);
-        const failed = () => reject(new Error('this browser did not keep its note of a deposit on its way. Check that '
-          + 'this browser lets this site store data (a private window may not), then try again.', { cause: tx.error }));
+        const tx = db.transaction(STORE, 'readwrite');
+        const store = tx.objectStore(STORE);
+        let answer: T;
+        const read = store.get(slot);
+        read.onsuccess = () => {
+          const decided = decide((read.result as SealedInFlight | undefined) ?? null);
+          answer = decided.answer;
+          if (decided.write === 'delete') store.delete(slot);
+          else if (decided.write !== undefined) store.put({ ...decided.write }, slot);
+        };
+        tx.oncomplete = () => resolve(answer);
+        const failed = () => reject(new Error('this browser could not read or keep its record of a deposit or a payment on '
+          + 'its way, so nothing was sent and no money moved. Check that this browser lets this site store data (a '
+          + 'private window may not), then try again.', { cause: tx.error }));
         tx.onerror = failed;
         tx.onabort = failed;
       });
@@ -195,13 +219,17 @@ export function browserDepositsInFlight(factory: IDBFactory = indexedDB): Deposi
     }
   };
   return {
-    put: async (vault, d) => {
-      await run('readwrite', (s) => s.put({
-        coin: { nonce: d.coin.nonce, token: d.coin.token, value: d.coin.value },
-        recordedAt: d.recordedAt, txRef: d.txRef, transactionHash: d.transactionHash,
-      }, vault.toLowerCase()));
-    },
-    get: async (vault) => ((await run('readonly', (s) => s.get(vault.toLowerCase()))) as DepositInFlight | undefined) ?? null,
-    forget: async (vault) => { await run('readwrite', (s) => s.delete(vault.toLowerCase())); },
+    get: (slot) => step(slot, (there) => ({ answer: there })),
+    add: (slot, record) => step(slot, (there) => (there === null ? { write: record, answer: true } : { answer: false })),
+    replace: (slot, claim, record) => step(slot, (there) => (there?.claim === claim ? { write: record, answer: true } : { answer: false })),
+    remove: async (slot, claim) => { await step(slot, (there) => (there?.claim === claim ? { write: 'delete' as const, answer: undefined } : { answer: undefined })); },
   };
 }
+
+/** A deposit this signer sent from this browser and has not yet seen land, sealed under their own key. */
+export const browserDepositsInFlight = (me: InFlightOpener, factory: IDBFactory = indexedDB): DepositsInFlight =>
+  sealedOnThisDevice<DepositInFlight>(browserInFlightRecords(factory), me, 'deposit');
+
+/** A payment this signer sent from this browser and has not yet seen land, sealed under their own key. */
+export const browserPaymentsInFlight = (me: InFlightOpener, factory: IDBFactory = indexedDB): PaymentsInFlight =>
+  sealedOnThisDevice<PaymentInFlight>(browserInFlightRecords(factory), me, 'payment');

@@ -45,6 +45,7 @@ let handoverShape: unknown;
 let payoutShape: unknown;
 let payoutState: CompanyVaultDeps['chain']['payoutState'];
 let eventsOf: CompanyVaultDeps['chain']['eventsOf'];
+let createdBy: CompanyVaultDeps['chain']['createdBy'];
 let accountCallState: CompanyVaultDeps['chain']['accountCallState'];
 let asked: string[];
 /* Whether the vault's ledger is this build's shape, as the chain reader answers it; `undefined` for a reader with no such check. */
@@ -116,6 +117,12 @@ beforeEach(async () => {
     return { blockHash: 'B', vaultState: 'dg==', zswapState: 'eg==', parameters: 'cA==', accountState: 'YQ==' };
   };
   eventsOf = async (tx) => { asked.push(`events of ${tx.slice(0, 2)}`); return [{ transactionHash: tx, details: { tag: 'zswapOutput', mtIndex: '7' } }]; };
+  createdBy = async (vault, commitment) => {
+    asked.push(`created ${commitment.slice(0, 2)} in ${vault.slice(0, 2)}`);
+    return commitment === hex(0x0c)
+      ? { transactionHash: hex(0x0e), events: [{ transactionHash: hex(0x0e), details: { tag: 'zswapOutput', commitment, contract: vault, mtIndex: '7' } }] }
+      : null;
+  };
   accountCallState = async (address) => {
     asked.push(`call state of ${address.slice(0, 2)}`);
     return { blockHash: 'B', accountState: 'YQ==', parameters: 'cA==' };
@@ -164,6 +171,7 @@ beforeEach(async () => {
       everCreated: async () => new Set(),
       get payoutState() { return payoutState; },
       get eventsOf() { return eventsOf; },
+      get createdBy() { return createdBy; },
       get accountCallState() { return accountCallState; },
       get historyOf() { return historyOf; },
     },
@@ -740,6 +748,8 @@ describe('A PRIVATE PAYMENT OUT OF A VAULT', () => {
     expect((await call(`/api/accounts/acc_1/vaults/${hex(0xba)}/payout`, 'ada', 'POST', { tx: PAYOUT_TX })).status).toBe(404);
     expect((await call(`/api/accounts/acc_1/vaults/${hex(0xba)}/payout-state`, 'ada')).status).toBe(404);
     expect((await call(`/api/accounts/acc_1/vaults/${hex(0xba)}/events/${hex(1)}`, 'ada')).status).toBe(404);
+    expect((await call(`/api/accounts/acc_1/vaults/${hex(0xba)}/created/${hex(0x0c)}`, 'ada')).status).toBe(404);
+    expect((await call(`/api/accounts/acc_1/vaults/${VAULT}/created/${hex(0x0c)}`, 'carol')).status).toBe(404);
     expect((await call(`/api/accounts/acc_1/vaults/${VAULT}/payout`, 'carol', 'POST', { tx: PAYOUT_TX })).status).toBe(404);
     expect((await call(`/api/accounts/acc_1/vaults/${VAULT}/payout`, null, 'POST', { tx: PAYOUT_TX })).status).toBe(401);
     expect((await call(`/api/accounts/acc_1/vaults/${VAULT}/payout`, 'ada', 'POST', {})).status).toBe(400);
@@ -795,6 +805,26 @@ describe('A PRIVATE PAYMENT OUT OF A VAULT', () => {
     eventsOf = async () => { throw Object.assign(new Error('not yet'), { name: 'NoteIndexUnreadable' }); };
     expect(await call(`/api/accounts/acc_1/vaults/${VAULT}/events/${tx}`, 'ada'))
       .toMatchObject({ status: 503, body: { error: 'not yet', kind: 'NoteIndexUnreadable' } });
+  });
+
+  it('THE TRANSACTION THAT CREATED AN OUTPUT IS LOOKED FOR IN THIS VAULT\'S HISTORY, BY THE OUTPUT\'S COMMITMENT ALONE', async () => {
+    const out = hex(0x0c);
+    /* RED WHEN: the route asks any vault's history but the one in its address, or drops the events from the answer. */
+    expect(await call(`/api/accounts/acc_1/vaults/${VAULT}/created/${out.toUpperCase()}`, 'ada')).toEqual({
+      status: 200,
+      body: { found: true, transactionHash: hex(0x0e), events: [{ transactionHash: hex(0x0e), details: { tag: 'zswapOutput', commitment: out, contract: VAULT, mtIndex: '7' } }] },
+    });
+    /* RED WHEN: nothing found is answered as an error, or as a transaction. */
+    expect(await call(`/api/accounts/acc_1/vaults/${VAULT}/created/${hex(0x0d)}`, 'ada')).toEqual({ status: 200, body: { found: false } });
+    /* RED WHEN: the commitment is not checked before the chain is asked. */
+    expect((await call(`/api/accounts/acc_1/vaults/${VAULT}/created/${'0c'.repeat(33)}`, 'ada')).status).toBe(400);
+    expect((await call(`/api/accounts/acc_1/vaults/${VAULT}/created/not-a-commitment`, 'ada')).status).toBe(400);
+    expect(asked).toEqual([`created 0c in ${VAULT.slice(0, 2)}`, `created 0d in ${VAULT.slice(0, 2)}`]);
+    createdBy = async () => { throw Object.assign(new Error('not yet'), { name: 'NoteIndexUnreadable' }); };
+    expect(await call(`/api/accounts/acc_1/vaults/${VAULT}/created/${out}`, 'ada'))
+      .toMatchObject({ status: 503, body: { error: 'not yet', kind: 'NoteIndexUnreadable' } });
+    createdBy = undefined;
+    expect((await call(`/api/accounts/acc_1/vaults/${VAULT}/created/${out}`, 'ada')).status).toBe(503);
   });
 });
 
