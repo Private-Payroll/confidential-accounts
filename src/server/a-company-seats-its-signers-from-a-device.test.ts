@@ -48,7 +48,9 @@ const { theNetwork } = await import('../midnight/network.js');
 const { sign, newSigningKeypair, newWrappingKeypair, newBlinding } = await import('../core/crypto.js');
 const { storedSignerLeaf } = await import('../core/signer-leaf.js');
 const device = await import('../web/governed-call-on-device.js');
-const { refuseARaiseThatIsNotTheRecordedOne } = await import('../web/governed-call-builder.js');
+const { refuseARaiseThatIsNotTheRecordedOne, refuseWhatThisDeviceDidNotOpen, recordForOneCall, NotWhatThisDeviceOpened } =
+  await import('../web/governed-call-builder.js');
+const { unseal, parseCanonical } = await import('../core/crypto.js');
 const { pureCircuits } = await import('../../contracts/managed/contract/index.js');
 type Hex = import('../core/crypto.js').Hex;
 type Order = import('../web/governed-call-builder.js').GovernedCallOrder;
@@ -200,29 +202,37 @@ const apiAs = (who: Who) => async (path: string, init?: RequestInit) => {
   return body;
 };
 
+/** The account's asset blinding each raise was composed with, in order, as the worker's record holds it. */
+const blindingsProvedWith: string[] = [];
+
 /**
  * One person's device. The builder is a stand-in for the worker, and it asks
- * the same question the worker's builder asks before it builds anything: is
- * this order the proposal its own parts and salt make, with the contract's own
- * pure circuits. So the orders the service hands over, salts included, are
- * checked here as a device would check them. `refuse` names circuits this
- * device fails to build, as a device that stops part-way would.
+ * the same questions the worker's builder asks before it builds anything, with
+ * the contract's own pure circuits: is every value the service handed over the
+ * one this device opened from the company's own sealed records, and is this
+ * order the proposal its own parts and salt make. So the orders the service
+ * hands over, salts included, are checked here as a device would check them,
+ * and the record is composed as the worker composes it. `refuse` names
+ * circuits this device fails to build, as a device that stops part-way would.
  */
-const aDevice = (who: Who, signerId: string, signingSecret: Hex, refuse: string[] = []) => {
+const aDevice = (who: Who, signerId: string, signingSecret: Hex, refuse: string[] = [], accountId: string = company) => {
   const doors: import('../web/governed-call-on-device.js').GovernedCallDoors = {
     service: {
       ...device.governedCallServiceFor(apiAs(who)),
       callState: async () => ({ account: 'ac'.repeat(32), blockHash: 'b', accountState: 'AS', parameters: 'PP' }),
     },
     builder: {
-      governedCall: async ({ order }) => {
+      governedCall: async ({ order, opened }) => {
+        refuseWhatThisDeviceDidNotOpen({ accountPure: pureCircuits as never }, order, opened);
         refuseARaiseThatIsNotTheRecordedOne({ accountPure: pureCircuits as never }, order);
+        const record = recordForOneCall(order, { signingSecret: '11'.repeat(32), blinding: '22'.repeat(32), scope: '33'.repeat(32) }, opened);
+        if (order.circuit === 'propose') blindingsProvedWith.push(Buffer.from(record.assetBlinding).toString('hex'));
         if (refuse.includes(order.circuit)) throw new Error(`this device could not build ${order.circuit}`);
         return { tx: Buffer.from(JSON.stringify({ signer: signerId, order })).toString('base64') };
       },
     },
     material: { signingSecret: '11'.repeat(32), blinding: '22'.repeat(32), scope: '33'.repeat(32) },
-    accountId: company,
+    accountId,
     sleep: async () => {}, waitMs: 40, everyMs: 1,
   };
   return {
@@ -299,6 +309,57 @@ describe('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVICES, ON THE PRODUCT\'S 
     expect((await signersNow()).map(s => s.status)).toEqual(['active', 'active', 'active']);
     expect((await ledger.status(company))!.signerCount).toBe(3);
     expect(refusedHere).toEqual([]);
+  });
+
+  it('1. A SIGNER SEATED AFTER THE COMPANY WAS CREATED RAISES AND APPROVES A ROUND FROM THEIR OWN DEVICE, AND 4. THE COMPANY FINISHES IT', async () => {
+    sent.length = 0;
+    blindingsProvedWith.length = 0;
+    const blakeDevice = aDevice('blake', blake, people.blake.secret);
+    /* RED WHEN: a signer seated after the deploy cannot raise or approve - their seat then acts on nothing. */
+    expect((await device.changeThresholdOnDevice(blakeDevice.doors, { viewingKey, signerId: blake, sign: blakeDevice.sign, newThreshold: 3 })).state)
+      .toBe('waiting-for-approvals');
+    expect(sent.map(s => `${s.circuit} ${s.signer === blake ? 'blake' : 'other'}`)).toEqual(['propose blake', 'approve blake']);
+    /* The raise is proved with the account's own blinding, which the service reads from the account's sealed state. */
+    const kept = await ledger.fetch(company, accounts.require(company).keyEpoch);
+    expect(blindingsProvedWith).toEqual([parseCanonical<any>(unseal(kept!.sealedState, viewingKey)).blinding.assetBlinding]);
+
+    /* RED WHEN: an honest company cannot finish a round a late signer raised. */
+    const adaDevice = aDevice('ada', ada.signerId, ada.signingSecret);
+    expect(await device.changeThresholdOnDevice(adaDevice.doors, { viewingKey, signerId: ada.signerId, sign: adaDevice.sign, newThreshold: 3 }))
+      .toEqual({ state: 'done' });
+    expect((await ledger.status(company))!.threshold).toBe(3);
+    expect(refusedHere).toEqual([]);
+  });
+
+  it('2. A SALT OR AN IDENTITY THE COMPANY\'S RECORDS DO NOT HOLD IS REFUSED ON THE DEVICE BY NAME, AND NOTHING IS SENT', async () => {
+    const vAda = viewed.secrets[0]!;
+    const doraLeaf = (await call('GET', `/api/accounts/${viewed.account.id}`, { token: tokens.ada })).body;
+    const leaf = openAccount(doraLeaf, viewed.viewingKey).signers.find(x => x.id === viewedWaiting)!.leafCommitment as Hex;
+    const tamper = (change: (a: any) => void) => {
+      const d = aDevice('ada', vAda.signerId, vAda.signingSecret, [], viewed.account.id);
+      const plain = d.doors.service;
+      return {
+        ...d,
+        doors: { ...d.doors, service: { ...plain, seatRound: async (id: string, s: string, body: any) => {
+          const a = await plain.seatRound!(id, s, body); change(a); return a;
+        } } },
+      };
+    };
+    const OTHER = 'ee'.repeat(32);
+    for (const [value, change] of [
+      ['salt', (a: any) => { a.asked.proposalSalt = OTHER; a.order.order.half.proposalSalt = OTHER; }],
+      ['proposal identity', (a: any) => { a.proposal.chainId = OTHER; a.order.chainId = OTHER; a.order.order.proposal = OTHER; }],
+    ] as const) {
+      sent.length = 0;
+      const d = tamper(change);
+      const refused = await device.seatSignerOnDevice(d.doors, {
+        viewingKey: viewed.viewingKey, signerId: vAda.signerId, sign: d.sign, seat: { signerId: viewedWaiting, leaf },
+      }).catch(e => e);
+      /* RED WHEN: a value the service substituted reaches a proof - or is refused without saying which value it was. */
+      expect(refused, value).toBeInstanceOf(NotWhatThisDeviceOpened);
+      expect(refused.value).toBe(value);
+      expect(sent).toEqual([]);
+    }
   });
 
   it('A SEAT IS REFUSED BEFORE ANYTHING IS SENT FOR SOMEBODY WHO IS NOT A MEMBER, AND FOR A PERSON NOT WAITING FOR ONE', async () => {

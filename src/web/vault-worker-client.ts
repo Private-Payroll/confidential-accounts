@@ -7,7 +7,7 @@ import type { Committee } from '../midnight/vault-committee.js';
 import type { PrivatePaymentOnTheWire, PrivatePaymentOrderOnTheWire } from '../midnight/private-payment-wire.js';
 import type { PaymentsFitAnswer } from '../midnight/vault-notes.js';
 import type { EventOnTheWire, NoteOnTheWire, PaymentConfirmation } from './vault-builder.js';
-import type { GovernedCallOrder, SignerMaterial } from './governed-call-builder.js';
+import type { GovernedCallOrder, OpenedRound, SignerMaterial } from './governed-call-builder.js';
 
 export interface SigningKeyOnTheWire { readonly tag: string; readonly value: string }
 export interface CoinOnTheWire { readonly nonce: string; readonly token: string; readonly value: string }
@@ -60,7 +60,7 @@ export type VaultAsk =
    */
   | {
     id: number; network: string; ask: 'governed-call'; account: string; order: GovernedCallOrder;
-    material: SignerMaterial; chain: AccountCallChainOnTheWire;
+    material: SignerMaterial; chain: AccountCallChainOnTheWire; opened: OpenedRound;
   };
 
 type Answered<A extends VaultAsk['ask'], T> = { id: number; ok: true; ask: A } & T;
@@ -112,6 +112,8 @@ export interface VaultBuilderClient {
   /** A raise or an approval on the company account, built and proved with this signer's own material. */
   governedCall(input: {
     account: string; order: GovernedCallOrder; material: SignerMaterial; chain: AccountCallChainOnTheWire;
+    /** What this device opened from the company's sealed records, which the call is checked against and proved with. */
+    opened: OpenedRound;
   }): Promise<{ tx: string }>;
 }
 

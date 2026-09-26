@@ -21,8 +21,15 @@ import { refuseWhatTheVaultCannotPay, type PaymentAsked, type VaultHoldings } fr
 import {
   DEVICE_RAISE_VERSION, WRITTEN_DOWN_IS_NOT_WHAT_IS_CHECKED, paymentsCheckedDigest, type PaymentChecked,
 } from '../core/device-raise.js';
-import type { SignerMaterial, GovernedCallOrder, RaiseRunOrder, RaiseGovernanceOrder, GovernanceOnTheWire } from './governed-call-builder.js';
-import type { Hex, Sealed } from '../core/crypto.js';
+import type {
+  SignerMaterial, GovernedCallOrder, OpenedRound, RaiseRunOrder, RaiseGovernanceOrder, GovernanceOnTheWire,
+} from './governed-call-builder.js';
+import { parseCanonical, unseal, type Hex, type Sealed } from '../core/crypto.js';
+import { openRecord } from '../core/sealed-records.js';
+import { openAccount } from '../core/account.js';
+import { assetIdBytes } from '../core/assets.js';
+import type { SealedAccount, SealedProposal } from '../core/types.js';
+import type { StateChange } from '../core/ledger.js';
 import { payrollRoundOf, sameList, untoldRetryRounds } from '../core/retry-cover.js';
 import type { AccountCallChainOnTheWire, VaultBuilderClient } from './vault-worker-client.js';
 
@@ -48,6 +55,8 @@ export interface RoundOnThePage {
   readonly txRef?: string;
   readonly raisedAt?: string;
   readonly approvalRound?: { readonly state: string; readonly approvals?: number };
+  /** What the person is shown for it, when the page shows it. */
+  readonly summary?: string;
 }
 
 /**
@@ -91,6 +100,9 @@ export interface GovernedCallService {
   seat?(accountId: string, signerId: string, body: { viewingKey: string; tx: string }): Promise<unknown>;
   thresholdOrder?(accountId: string, body: { viewingKey: string; newThreshold: number }): Promise<{ order: GovernedCallOrder }>;
   setThreshold?(accountId: string, body: { viewingKey: string; newThreshold: number; tx: string }): Promise<unknown>;
+  /** The company's own records, sealed as they are stored, for this device to open itself. */
+  sealedProposals?(accountId: string): Promise<SealedProposal[]>;
+  sealedAccount?(accountId: string): Promise<SealedAccount>;
 }
 
 /** A seat or a threshold round as the service hands it over: the proposal, and the raise when it is still to be sent. */
@@ -111,10 +123,124 @@ export interface GovernedCallDoors {
   readonly accountId: string;
   readonly progress?: (stage: GovernedStage) => void;
   readonly sleep?: (ms: number) => Promise<void>;
+  /**
+   * Opens one proposal from the company's sealed records on this device. The
+   * company's own records, through `openTheRoundHere`, when not given.
+   */
+  readonly opens?: (proposalId: string, viewingKey: string, forARaise: boolean) => Promise<OpenedRound>;
   /** How long to wait for the chain to show what was sent, and how often to ask. */
   readonly waitMs?: number;
   readonly everyMs?: number;
 }
+
+const HEX64 = /^[0-9a-f]{64}$/u;
+const hexOfBytes = (b: Uint8Array): string => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+
+/** Why this device could not read the company's record of a proposal itself. Nothing is built without it. */
+export class NotOpenedOnThisDevice extends Error {
+  constructor(why: string, options?: { cause?: unknown }) {
+    super(`${why} Nothing was built or sent.`, options);
+    this.name = 'NotOpenedOnThisDevice';
+  }
+}
+
+/** Kinds a device here acts on. Any other is refused before anything is read out of it. */
+const KINDS_A_DEVICE_ACTS_ON = new Set(['payroll', 'add-signer', 'set-threshold']);
+
+/**
+ * **ONE PROPOSAL, READ ON THIS DEVICE FROM THE COMPANY'S OWN RECORDS.**
+ *
+ * The proposal's record is opened with the viewing key this device holds, and
+ * the payload sealed inside it with the same key: that is where the salt its
+ * identity was made with is kept, what a seat or a threshold change changes,
+ * and, for a raise, the change the proposal commits to. The leaf of a person to
+ * be seated is read from the company's roster, opened here too. What is
+ * returned is what the call is checked against and proved with
+ * (`refuseWhatThisDeviceDidNotOpen`).
+ *
+ * **THE LIMITS, SAID PLAINLY.** Every one of these records is sealed under the
+ * viewing key, and the service is handed that key, so a service that rewrote a
+ * record whole and sealed it again would be read here as written. The identity
+ * and the payload it is made from sit on the record beside the sealed part,
+ * not inside it. And a person waiting for a seat is read from what they left
+ * in the company's inbox, which is sealed to a key anybody may seal to. What
+ * this closes is a service that sends a device values other than its own
+ * records hold: a salt, an identity, a leaf, a run or a change the records do
+ * not name.
+ */
+export async function openTheRoundHere(
+  service: GovernedCallService, accountId: string, proposalId: string, viewingKey: string, forARaise: boolean,
+): Promise<OpenedRound> {
+  const key = viewingKey as Hex;
+  if (!service.sealedProposals) {
+    throw new NotOpenedOnThisDevice('This page cannot read the company\'s records, so it cannot check this proposal. Reload '
+      + 'the page to get the current version.');
+  }
+  const rec = (await service.sealedProposals(accountId)).find((r) => r.id === proposalId);
+  if (!rec || rec.accountId !== accountId) {
+    throw new NotOpenedOnThisDevice('This company\'s records hold no proposal by that name. It may have been withdrawn. '
+      + 'Reload the page to see where it stands.');
+  }
+  let envelope: { kind: string; summary: string; vault: string; sealedPayload: Sealed };
+  let body: { signerId?: unknown; newThreshold?: unknown; __change?: StateChange };
+  try {
+    envelope = openRecord('proposals', rec.accountId, rec.sealed, key);
+    if (!KINDS_A_DEVICE_ACTS_ON.has(envelope.kind)) {
+      throw new NotOpenedOnThisDevice('This page acts on payroll runs, access for new signers and changes to the approvals '
+        + 'required, and this proposal is none of those, so it cannot be approved from this device yet. Leave it '
+        + 'unapproved.');
+    }
+    body = parseCanonical(unseal(envelope.sealedPayload, key));
+  } catch (e) {
+    if (e instanceof NotOpenedOnThisDevice) throw e;
+    throw new NotOpenedOnThisDevice('This device cannot read the company\'s record of this proposal, so it cannot check it. '
+      + 'Reload the page and try again. If it happens again, do not act on this proposal.', { cause: e });
+  }
+  const change = body.__change;
+  if (!change || typeof change.salt !== 'string' || !HEX64.test(change.salt)) {
+    throw new NotOpenedOnThisDevice('This proposal\'s record is incomplete, so this device cannot check it. Withdraw the '
+      + 'proposal and raise it again.');
+  }
+  let governance: GovernanceOnTheWire | undefined;
+  if (envelope.kind === 'add-signer') {
+    if (!service.sealedAccount) {
+      throw new NotOpenedOnThisDevice('This page cannot read the company\'s list of signers, so it cannot check this '
+        + 'proposal. Reload the page to get the current version.');
+    }
+    let leaf: string | null | undefined;
+    try {
+      leaf = openAccount(await service.sealedAccount(accountId), key).signers.find((x) => x.id === body.signerId)?.leafCommitment;
+    } catch (e) {
+      throw new NotOpenedOnThisDevice('This device cannot read the company\'s list of signers, so it cannot check this '
+        + 'proposal. Reload the page and try again. If it happens again, do not act on this proposal.', { cause: e });
+    }
+    if (typeof leaf !== 'string') {
+      throw new NotOpenedOnThisDevice('The person this proposal gives access to is not on the company\'s list of signers. '
+        + 'Withdraw this proposal, then grant access again.');
+    }
+    governance = { kind: 'add-signer', leaf };
+  } else if (envelope.kind === 'set-threshold') {
+    if (typeof body.newThreshold !== 'number') {
+      throw new NotOpenedOnThisDevice('This proposal does not say how many approvals it requires. Withdraw it and make the '
+        + 'change again.');
+    }
+    governance = { kind: 'threshold', threshold: String(body.newThreshold) };
+  }
+  let half: OpenedRound['half'];
+  if (forARaise) {
+    /* The account's own name for the asset, which is what the asset witness answers with. */
+    const named = { assetId: assetIdBytes(change.asset) };
+    half = { assetId: hexOfBytes(named.assetId), changeAmount: String(change.amount), changeBatchDigest: change.batchDigest };
+  }
+  return {
+    chainId: rec.chainId, digest: rec.digest, vault: envelope.vault, salt: change.salt, summary: envelope.summary,
+    ...(governance === undefined ? {} : { governance }), ...(half === undefined ? {} : { half }),
+  };
+}
+
+const opensFor = (doors: GovernedCallDoors) => doors.opens
+  ?? ((proposalId: string, viewingKey: string, forARaise: boolean) =>
+    openTheRoundHere(doors.service, doors.accountId, proposalId, viewingKey, forARaise));
 
 /** Sent, and the chain has not shown it yet. Not a failure, and not to be sent again. */
 export class SentAndNotYetSeen extends Error {
@@ -213,11 +339,12 @@ async function buildAndSend(
   doors: GovernedCallDoors, order: RaiseOrderOnTheWire, viewingKey: string,
   send: (tx: string) => Promise<RoundOnThePage>,
 ): Promise<RoundOnThePage> {
+  const opened = await opensFor(doors)(order.proposalId, viewingKey, true);
   doors.progress?.('reading-the-chain');
   const chain = await doors.service.callState(doors.accountId);
   doors.progress?.('building');
   const { tx } = await doors.builder.governedCall({
-    account: chain.account, order: order.order, material: doors.material, chain,
+    account: chain.account, order: order.order, material: doors.material, chain, opened,
   });
   doors.progress?.('sending');
   const sent = await send(tx);
@@ -561,6 +688,11 @@ export async function raiseRetryOnDevice(
  * **ONE APPROVAL, FROM THIS DEVICE.** The signature is made by the caller with
  * the keyring, the approval is built and proved in the worker, and both go to
  * the service together. Then the chain is asked until it counts one more.
+ *
+ * **WHAT IS PROVED IS THE PROPOSAL THIS DEVICE OPENED, AND IT IS THE ONE THE
+ * PERSON WAS SHOWN.** The proposal is opened here from the company's sealed
+ * records; its identity must be the one the page showed, and so must what it
+ * says, or nothing is built.
  */
 export async function approveOnDevice(
   doors: GovernedCallDoors,
@@ -576,13 +708,22 @@ export async function approveOnDevice(
   if (String(before.chainId).toLowerCase() !== String(input.round.chainId).toLowerCase()) {
     throw new Error('the company now names another proposal than the one shown here. Nothing was built or sent.');
   }
+  const opened = await opensFor(doors)(input.round.id, input.viewingKey, false);
+  if (String(opened.chainId).toLowerCase() !== String(input.round.chainId).toLowerCase()) {
+    throw new Error('the company\'s record of this proposal does not match the proposal on this page. Nothing was built or '
+      + 'sent. Reload the page and try again. If it happens again, do not approve it.');
+  }
+  if (input.round.summary !== undefined && opened.summary !== input.round.summary) {
+    throw new Error('the company\'s record of this proposal says something different from what this page shows. Nothing '
+      + 'was built or sent. Reload the page and try again. If it happens again, do not approve it.');
+  }
   doors.progress?.('reading-the-chain');
   const chain = await service.callState(doors.accountId);
   doors.progress?.('building');
   const { tx } = await doors.builder.governedCall({
     account: chain.account,
-    order: { circuit: 'approve', proposal: before.chainId, ...(input.of === undefined ? {} : { of: input.of }) },
-    material: doors.material, chain,
+    order: { circuit: 'approve', proposal: opened.chainId, ...(input.of === undefined ? {} : { of: input.of }) },
+    material: doors.material, chain, opened,
   });
   doors.progress?.('sending');
   const sent = await service.approve(input.round.id, {
@@ -631,6 +772,8 @@ export const governedCallServiceFor = (api: Api): GovernedCallService => {
     seat: (accountId, signerId, body) => marked(() => post(`${signer(accountId, signerId)}/seat`, body)),
     thresholdOrder: (accountId, body) => post(`${account(accountId)}/threshold/order`, body),
     setThreshold: (accountId, body) => marked(() => post(`${account(accountId)}/threshold`, body)),
+    sealedProposals: (accountId) => api(`${account(accountId)}/proposals`),
+    sealedAccount: (accountId) => api(account(accountId)),
   };
 };
 
@@ -685,10 +828,13 @@ async function governOnDevice(
       throw new Error('the service sent this device a different proposal from the one asked for here. Nothing was built '
         + 'or sent. Reload the page and try again; if it happens again, do not approve it.');
     }
+    const opened = await opensFor(doors)(handed.proposal.id, input.viewingKey, true);
     doors.progress?.('reading-the-chain');
     const chain = await service.callState(doors.accountId);
     doors.progress?.('building');
-    const { tx } = await doors.builder.governedCall({ account: chain.account, order: o as RaiseGovernanceOrder, material: doors.material, chain });
+    const { tx } = await doors.builder.governedCall({
+      account: chain.account, order: o as RaiseGovernanceOrder, material: doors.material, chain, opened,
+    });
     doors.progress?.('sending');
     const sent = await service.sendGovernance!(handed.proposal.id, { viewingKey: input.viewingKey, tx });
     round = await waitFor(doors, 'this proposal', handed.proposal.id, input.viewingKey, (r) => Boolean(r.raisedAt), sent);
@@ -709,10 +855,11 @@ async function governOnDevice(
     throw new Error('the service sent this device something to carry out that is not the proposal asked for here. '
       + 'Nothing was built or sent. Reload the page and try again.');
   }
+  const opened = await opensFor(doors)(handed.proposal.id, input.viewingKey, false);
   doors.progress?.('reading-the-chain');
   const chain = await service.callState(doors.accountId);
   doors.progress?.('building');
-  const { tx } = await doors.builder.governedCall({ account: chain.account, order, material: doors.material, chain });
+  const { tx } = await doors.builder.governedCall({ account: chain.account, order, material: doors.material, chain, opened });
   doors.progress?.('sending');
   await input.carry(tx);
   return { state: 'done' };

@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { createHash } from 'node:crypto';
 import {
   argumentsFor, buildGovernedCall, CallNotBuilt, NotReadByAnApproval, recordForOneCall, RecordChangedByTheCall,
-  type GovernedCallDeps, type GovernedCallOrder,
+  refuseARaiseThatIsNotTheRecordedOne,
+  type GovernedCallDeps, type GovernedCallOrder, type OpenedRound, type GovernanceOnTheWire,
 } from './governed-call-builder.js';
 
 /*
@@ -31,9 +32,52 @@ const idOf = (r: typeof run, salt: string) => Buffer.from(accountPure.proposalId
   accountPure.runPayload(Buffer.from(r.root, 'hex'), BigInt(r.payees), BigInt(r.opensAt), BigInt(r.closesAt)),
   Buffer.from(r.vault, 'hex'), Buffer.from(salt, 'hex'))).toString('hex');
 const raise: GovernedCallOrder = { circuit: 'propose', run, half, proposal: idOf(run, half.proposalSalt) };
-const approve: GovernedCallOrder = { circuit: 'approve', proposal: 'aa'.repeat(32) };
+const approve: GovernedCallOrder = { circuit: 'approve', proposal: idOf(run, half.proposalSalt) };
 const chain = { accountState: new Uint8Array([1]), parameters: new Uint8Array([2]) };
 const bytes = (h: string) => Uint8Array.from(Buffer.from(h, 'hex'));
+const hex = (b: Uint8Array) => Buffer.from(b).toString('hex');
+
+/*
+ * **WHAT THE DEVICE OPENED, WHEN THE SERVICE WAS HONEST**: the record the order
+ * itself describes. The tests of what the device opened are in
+ * `the-device-proves-what-it-opened.test.ts`; here it is the honest case, so
+ * every other decision the builder makes can be watched on its own.
+ */
+const payloadOf = (g: GovernanceOnTheWire) => (g.kind === 'add-signer'
+  ? accountPure.signerAddPayload(bytes(g.leaf)) : accountPure.setThresholdPayload(BigInt(g.threshold)));
+const recordOf = (digest: Uint8Array, vault: Uint8Array, salt: string) => ({
+  chainId: hex(accountPure.proposalIdOf(digest, vault, bytes(salt))), digest: hex(digest), vault: hex(vault), salt,
+  summary: 'the proposal',
+});
+const halfOf = (h: typeof half) => ({ assetId: h.assetId, changeAmount: h.changeAmount, changeBatchDigest: h.changeBatchDigest });
+const openedFor = (order: GovernedCallOrder): OpenedRound => {
+  const o = order as any;
+  if (o.circuit === 'propose' && o.run) {
+    const r = o.run;
+    return {
+      ...recordOf(accountPure.runPayload(bytes(r.root), BigInt(r.payees), BigInt(r.opensAt), BigInt(r.closesAt)),
+        bytes(r.vault), o.half.proposalSalt),
+      half: halfOf(o.half),
+    };
+  }
+  if (o.circuit === 'propose') {
+    return { ...recordOf(payloadOf(o.governance), accountPure.noVault(), o.half.proposalSalt), governance: o.governance, half: halfOf(o.half) };
+  }
+  if (o.circuit === 'amendSigner') {
+    const g = { kind: 'add-signer', leaf: o.leaf } as const;
+    return { ...recordOf(payloadOf(g), accountPure.noVault(), o.proposalSalt), governance: g };
+  }
+  if (o.circuit === 'setThreshold') {
+    const g = { kind: 'threshold', threshold: o.threshold } as const;
+    return { ...recordOf(payloadOf(g), accountPure.noVault(), o.proposalSalt), governance: g };
+  }
+  if (o.of) return { ...recordOf(payloadOf(o.of.governance), accountPure.noVault(), o.of.proposalSalt), governance: o.of.governance };
+  const { half: _h, ...record } = openedFor(raise);
+  return record;
+};
+type Input = Parameters<typeof buildGovernedCall>[1];
+const build = (deps: GovernedCallDeps, input: Omit<Input, 'opened'> & { opened?: OpenedRound }) =>
+  buildGovernedCall(deps, { ...input, opened: input.opened ?? openedFor(input.order) });
 
 type Handed = { options: any; zk: unknown };
 const depsWith = (log: string[], handed: Handed[], over: {
@@ -117,7 +161,7 @@ describe('THE CIRCUIT\'S ARGUMENTS', () => {
     expect(argumentsFor(raise)).toEqual([new Uint8Array(32), bytes(run.root), 3n, 100n, 200n, true, bytes(run.vault)]);
   });
   it('an approval is the proposal\'s identity and nothing else', () => {
-    expect(argumentsFor(approve)).toEqual([bytes('aa'.repeat(32))]);
+    expect(argumentsFor(approve)).toEqual([bytes(approve.proposal)]);
   });
   it('a run with nobody in it, or a window that closes before it opens, is refused before anything is built', () => {
     expect(() => argumentsFor({ ...raise, run: { ...run, payees: '0' } })).toThrow(/at least one person/u);
@@ -130,7 +174,7 @@ describe('ONE GOVERNED CALL', () => {
   it('reaches one call builder, hands it the record as a value with this account\'s state and the served parameters, and proves for the named circuit', async () => {
     const log: string[] = [];
     const handed: Handed[] = [];
-    const out = await buildGovernedCall(depsWith(log, handed), { account: ACCOUNT.toUpperCase(), order: raise, material, chain });
+    const out = await build(depsWith(log, handed), { account: ACCOUNT.toUpperCase(), order: raise, material, chain });
     expect(out.proven).toEqual(new Uint8Array([9, 9]));
     /* RED WHEN: any other entry point of the package is reached - one that reads or writes a private-state store among them. */
     expect(log).toEqual(['reached createUnprovenCallTxFromInitialStates', 'proved UNPROVEN for propose']);
@@ -151,8 +195,8 @@ describe('ONE GOVERNED CALL', () => {
 
   it('OVERWRITES THE SIGNER\'S THREE WHEN THE CALL IS DONE, AND WHEN THE PROOF FAILS', async () => {
     const handed: Handed[] = [];
-    await buildGovernedCall(depsWith([], handed), { account: ACCOUNT, order: approve, material, chain });
-    await expect(buildGovernedCall(depsWith([], handed, { prove: async () => { throw new Error('prover gave up'); } }),
+    await build(depsWith([], handed), { account: ACCOUNT, order: approve, material, chain });
+    await expect(build(depsWith([], handed, { prove: async () => { throw new Error('prover gave up'); } }),
       { account: ACCOUNT, order: raise, material, chain })).rejects.toThrow('prover gave up');
     /* RED WHEN: a record keeps the signer's key after its one call. */
     for (const { options } of handed) {
@@ -183,7 +227,7 @@ describe('ONE GOVERNED CALL', () => {
     });
     const second = { ...raise, half: { ...half, proposalSalt: 'bb'.repeat(32) }, proposal: idOf(run, 'bb'.repeat(32)) };
     for (const order of [raise, approve, second, approve]) {
-      await buildGovernedCall(deps, { account: ACCOUNT, order, material, chain });
+      await build(deps, { account: ACCOUNT, order, material, chain });
     }
     /* RED WHEN: a record is kept between calls - the second raise then starts from what the first left behind. */
     expect(saltsAtTheStart).toEqual(['66'.repeat(32), 'bb'.repeat(32)]);
@@ -196,7 +240,7 @@ describe('ONE GOVERNED CALL', () => {
       build: async (options) => ({ private: { nextPrivateState: { ...options.initialPrivateState }, unprovenTx: 'U' } }),
     });
     /* RED WHEN: a changed record is let through - a circuit's write would then be dropped without a word. */
-    await expect(buildGovernedCall(deps, { account: ACCOUNT, order: raise, material, chain })).rejects.toThrow(RecordChangedByTheCall);
+    await expect(build(deps, { account: ACCOUNT, order: raise, material, chain })).rejects.toThrow(RecordChangedByTheCall);
     expect(log.filter((l) => l.startsWith('proved'))).toEqual([]);
   });
 
@@ -204,13 +248,13 @@ describe('ONE GOVERNED CALL', () => {
     const wrapped = Object.assign(new Error('Error executing circuit \'propose\''), {
       _tag: 'ContractRuntimeError', cause: new Error('you are not a signer on this account'),
     });
-    const refused = await buildGovernedCall(depsWith([], [], { build: async () => { throw wrapped; } }),
+    const refused = await build(depsWith([], [], { build: async () => { throw wrapped; } }),
       { account: ACCOUNT, order: raise, material, chain }).catch((e) => e);
     expect(refused).toBeInstanceOf(CallNotBuilt);
     expect(refused.message).toBe('this proposal could not be built on this device: you are not a signer on this account. Nothing was proved or sent.');
     expect(refused.cause).toBe(wrapped);
     const plain = new Error('something else');
-    await expect(buildGovernedCall(depsWith([], [], { build: async () => { throw plain; } }),
+    await expect(build(depsWith([], [], { build: async () => { throw plain; } }),
       { account: ACCOUNT, order: approve, material, chain })).rejects.toBe(plain);
   });
 
@@ -223,16 +267,18 @@ describe('ONE GOVERNED CALL', () => {
     ] as GovernedCallOrder[]) {
       const log: string[] = [];
       /* RED WHEN: the device proves a proposal the service's record does not describe. */
-      await expect(buildGovernedCall(depsWith(log, []), { account: ACCOUNT, order, material, chain }))
-        .rejects.toThrow(/not the one the company wrote down/u);
+      expect(() => refuseARaiseThatIsNotTheRecordedOne({ accountPure }, order)).toThrow(/not the one the company wrote down/u);
+      /* And against the record the device opened, which now refuses it first, by name. */
+      await expect(build(depsWith(log, []), { account: ACCOUNT, order, material, chain, opened: openedFor(raise) }))
+        .rejects.toThrow(/does not match the company's own record of this proposal/u);
       expect(log).toEqual([]);
     }
     /* The identity is compared however it is spelled. */
-    await buildGovernedCall(depsWith([], []), { account: ACCOUNT, order: { ...raise, proposal: raise.proposal.toUpperCase() }, material, chain });
+    await build(depsWith([], []), { account: ACCOUNT, order: { ...raise, proposal: raise.proposal.toUpperCase() }, material, chain });
   });
 
   it('THE RECORD IS FROZEN FOR THE CALL: a circuit that writes into it fails there', async () => {
-    const refused = await buildGovernedCall(depsWith([], [], {
+    const refused = await build(depsWith([], [], {
       build: async (options) => { options.initialPrivateState.proposalSalt = new Uint8Array(32); return { private: { nextPrivateState: options.initialPrivateState, unprovenTx: 'U' } }; },
     }), { account: ACCOUNT, order: raise, material, chain }).catch((e) => e);
     /* RED WHEN: a write into the record in place goes through unnoticed. */
@@ -243,16 +289,16 @@ describe('ONE GOVERNED CALL', () => {
     for (const circuit of ['cancel', 'closeExpiredRun', 'recordPayment', 'setVaultThreshold', 'adopt', 'toString']) {
       const log: string[] = [];
       /* RED WHEN: a circuit a device does not govern here - or one open to anybody - is built with a signer's record. */
-      await expect(buildGovernedCall(depsWith(log, []), {
+      await expect(build(depsWith(log, []), {
         account: ACCOUNT, order: { circuit, proposal: 'aa'.repeat(32) } as unknown as GovernedCallOrder, material, chain,
       })).rejects.toThrow(/raises and approves proposals, seats signers and changes the threshold/u);
       expect(log).toEqual([]);
     }
     const log: string[] = [];
-    await expect(buildGovernedCall(depsWith(log, []), { account: 'c0'.repeat(31), order: approve, material, chain }))
+    await expect(build(depsWith(log, []), { account: 'c0'.repeat(31), order: approve, material, chain }))
       .rejects.toThrow(/not for a company account/u);
     const { scope: _s, ...before } = material;
-    await expect(buildGovernedCall(depsWith(log, []), { account: ACCOUNT, order: approve, material: before, chain }))
+    await expect(build(depsWith(log, []), { account: ACCOUNT, order: approve, material: before, chain }))
       .rejects.toThrow(/written before vault scopes were recorded/u);
     expect(log).toEqual([]);
   });
@@ -277,7 +323,7 @@ const setIt: GovernedCallOrder = { circuit: 'setThreshold', threshold: '2', prop
 describe('A SEAT AND A THRESHOLD, BUILT ON THE DEVICE', () => {
   it('a governance raise is the merged circuit on its governance branch, with the contract\'s own payload for the leaf named and its own no-vault', async () => {
     const handed: Handed[] = [];
-    await buildGovernedCall(depsWith([], handed), { account: ACCOUNT, order: seatRaise, material, chain });
+    await build(depsWith([], handed), { account: ACCOUNT, order: seatRaise, material, chain });
     /* RED WHEN: the branch flag, the payload or the vault is not the governance round the leaf makes. */
     expect(handed[0]!.options.args).toEqual([
       accountPure.signerAddPayload(bytes(LEAF)), new Uint8Array(32), 0n, 0n, 0n, false, accountPure.noVault(),
@@ -287,7 +333,7 @@ describe('A SEAT AND A THRESHOLD, BUILT ON THE DEVICE', () => {
 
   it('seating is amendSigner on its seating branch, appended, for the leaf named and the proposal named', async () => {
     const handed: Handed[] = [];
-    await buildGovernedCall(depsWith([], handed), { account: ACCOUNT, order: seatIt, material, chain });
+    await build(depsWith([], handed), { account: ACCOUNT, order: seatIt, material, chain });
     /* RED WHEN: a seat is built as a removal, into a vacated slot, or for another leaf or round. */
     expect(handed[0]!.options.args).toEqual([bytes(LEAF), bytes(seatRoundId(LEAF, SALT)), false, false]);
     expect(handed[0]!.options.circuitId).toBe('amendSigner');
@@ -295,9 +341,9 @@ describe('A SEAT AND A THRESHOLD, BUILT ON THE DEVICE', () => {
 
   it('a threshold change is setThreshold with the number and the proposal', async () => {
     const handed: Handed[] = [];
-    await buildGovernedCall(depsWith([], handed), { account: ACCOUNT, order: setIt, material, chain });
+    await build(depsWith([], handed), { account: ACCOUNT, order: setIt, material, chain });
     expect(handed[0]!.options.args).toEqual([2n, bytes(thresholdRoundId(2n, SALT))]);
-    await expect(buildGovernedCall(depsWith([], []), {
+    await expect(build(depsWith([], []), {
       account: ACCOUNT, order: { ...setIt, threshold: '0', proposal: thresholdRoundId(0n, SALT) } as GovernedCallOrder, material, chain,
     })).rejects.toThrow(/at least one/u);
   });
@@ -323,17 +369,19 @@ describe('A SEAT AND A THRESHOLD, BUILT ON THE DEVICE', () => {
     ] as GovernedCallOrder[]) {
       const log: string[] = [];
       /* RED WHEN: a round approved for one change can carry out another, or a raise proves a change nobody wrote down. */
-      await expect(buildGovernedCall(depsWith(log, []), { account: ACCOUNT, order, material, chain }))
-        .rejects.toThrow(/not the one the company wrote down|not for this change/u);
+      expect(() => refuseARaiseThatIsNotTheRecordedOne({ accountPure }, order)).toThrow(/not the one the company wrote down|not for this change/u);
+      const base = order.circuit === 'amendSigner' ? seatIt : order.circuit === 'setThreshold' ? setIt : seatRaise;
+      await expect(build(depsWith(log, []), { account: ACCOUNT, order, material, chain, opened: openedFor(base) }))
+        .rejects.toThrow(/does not match the company's own record of this proposal/u);
       expect(log).toEqual([]);
     }
   });
 
   it('a governance round that is neither a seat nor a threshold is not built', async () => {
     const log: string[] = [];
-    await expect(buildGovernedCall(depsWith(log, []), {
+    await expect(build(depsWith(log, []), {
       account: ACCOUNT, order: { ...seatRaise, governance: { kind: 'remove-signer', leaf: LEAF } } as unknown as GovernedCallOrder,
-      material, chain,
+      material, chain, opened: openedFor(seatRaise),
     })).rejects.toThrow(/neither a seat nor a threshold/u);
     expect(log).toEqual([]);
   });
@@ -344,7 +392,7 @@ describe('AN APPROVAL OF A SEAT OR A THRESHOLD IS BOUND TO THE CHANGE ASKED FOR'
     const id = seatRoundId(LEAF, SALT);
     const bound: GovernedCallOrder = { circuit: 'approve', proposal: id, of: { governance: { kind: 'add-signer', leaf: LEAF }, proposalSalt: SALT } };
     const handed: Handed[] = [];
-    await buildGovernedCall(depsWith([], handed), { account: ACCOUNT, order: bound, material, chain });
+    await build(depsWith([], handed), { account: ACCOUNT, order: bound, material, chain });
     expect(handed[0]!.options.args).toEqual([bytes(id)]);
     for (const order of [
       { ...bound, of: { governance: { kind: 'add-signer', leaf: 'ef'.repeat(32) }, proposalSalt: SALT } },
@@ -353,8 +401,9 @@ describe('AN APPROVAL OF A SEAT OR A THRESHOLD IS BOUND TO THE CHANGE ASKED FOR'
     ] as GovernedCallOrder[]) {
       const log: string[] = [];
       /* RED WHEN: a device approves a proposal for a change other than the one it was asked to approve. */
-      await expect(buildGovernedCall(depsWith(log, []), { account: ACCOUNT, order, material, chain }))
-        .rejects.toThrow(/not for the change asked for here/u);
+      expect(() => refuseARaiseThatIsNotTheRecordedOne({ accountPure }, order)).toThrow(/not for the change asked for here/u);
+      await expect(build(depsWith(log, []), { account: ACCOUNT, order, material, chain, opened: openedFor(bound) }))
+        .rejects.toThrow(/does not match the company's own record of this proposal/u);
       expect(log).toEqual([]);
     }
   });

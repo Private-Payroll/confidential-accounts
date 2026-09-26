@@ -8,6 +8,7 @@
 import { describe, it, expect } from 'vitest';
 import { seatSignerOnDevice, type GovernanceRoundOnTheWire, type GovernedCallDoors } from './governed-call-on-device.js';
 import type { GovernedCallOrder } from './governed-call-builder.js';
+import { opensAs } from '../testing/sealed-records.js';
 
 const LEAF = 'ab'.repeat(32);
 const OTHER = 'ef'.repeat(32);
@@ -42,6 +43,8 @@ const aDevice = (answers: {
     builder: { governedCall: async ({ order }) => { built.push(order); return { tx: 'TX' }; } },
     material: { signingSecret: '11'.repeat(32), blinding: '22'.repeat(32), scope: '33'.repeat(32) },
     accountId: 'acc_1',
+    /* What the device opens is checked where the call is built, which this test stands in for. */
+    opens: opensAs({ prp_seat: ID }),
     sleep: async () => {}, waitMs: 10, everyMs: 1,
   };
   const seat = () => seatSignerOnDevice(doors, {
