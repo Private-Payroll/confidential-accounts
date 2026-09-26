@@ -143,7 +143,7 @@ jobs:
       # vault's generated caller reaches the account's generated module.
       - name: build the vault's proving and verifier keys
         run: npm run compact:vault -- --full
-      - run: npx vitest run src/midnight/ledger.test.ts src/midnight/deferred-set.test.ts src/midnight/the-key-reaches-the-circuit.test.ts src/midnight/the-secret-comes-from-the-keyring.test.ts src/wiring/vault-submission.test.ts contracts/test/a-company-vault-from-the-page.test.ts contracts/test/a-private-payment-from-the-page.test.ts contracts/test/a-run-raised-and-approved-from-the-page.test.ts contracts/test/a-company-seats-its-signers-from-the-page.test.ts contracts/test/a-vaults-committee-changes-with-its-signers.test.ts
+      - run: npx vitest run src/midnight/ledger.test.ts src/midnight/deferred-set.test.ts src/midnight/the-key-reaches-the-circuit.test.ts src/midnight/the-secret-comes-from-the-keyring.test.ts src/wiring/vault-submission.test.ts src/web/a-deposit-built-on-the-device.test.ts contracts/test/a-company-vault-from-the-page.test.ts contracts/test/a-private-payment-from-the-page.test.ts contracts/test/a-run-raised-and-approved-from-the-page.test.ts contracts/test/a-company-seats-its-signers-from-the-page.test.ts contracts/test/a-vaults-committee-changes-with-its-signers.test.ts
 
   rules:
     # THE RULES THE JOB BELOW APPLIES, CHECKED BEFORE IT APPLIES THEM.

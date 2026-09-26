@@ -30,7 +30,7 @@ export interface AccountCallChainOnTheWire {
 export type VaultAsk =
   | { id: number; network: string; ask: 'deploy'; account: string }
   | { id: number; network: string; ask: 'handover'; vault: string; counter: string; temporaryKey: SigningKeyOnTheWire; to: Committee }
-  | { id: number; network: string; ask: 'deposit'; vault: string; coin: CoinOnTheWire; state: string }
+  | { id: number; network: string; ask: 'deposit'; vault: string; coin: CoinOnTheWire; state: string; parameters: string }
   | { id: number; network: string; ask: 'commitments'; vault: string; coin: CoinOnTheWire }
   | { id: number; network: string; ask: 'choose-note'; notes: readonly NoteOnTheWire[]; token: string; amount: string }
   | {
@@ -86,7 +86,8 @@ export type VaultRequest = Without<VaultAsk>;
 export interface VaultBuilderClient {
   deploy(account: string): Promise<{ vault: string; temporaryKey: SigningKeyOnTheWire; tx: string }>;
   handover(input: { vault: string; counter: bigint; temporaryKey: SigningKeyOnTheWire; to: Committee }): Promise<{ tx: string }>;
-  deposit(input: { vault: string; coin: CoinOnTheWire; state: string }): Promise<{ tx: string }>;
+  /** `state` and `parameters` are base64 of the vault's state and of the ledger parameters the chain holds now. */
+  deposit(input: { vault: string; coin: CoinOnTheWire; state: string; parameters: string }): Promise<{ tx: string }>;
   commitments(input: { vault: string; coin: CoinOnTheWire }): Promise<{ output: string; held: string }>;
   chooseNote(input: { notes: readonly NoteOnTheWire[]; token: string; amount: string }): Promise<NoteOnTheWire>;
   /**

@@ -26,10 +26,12 @@
  *
  * ── A DEPOSIT ──
  *
- * The coin is chosen and recorded here (`deposit-on-device.ts`); the call is
- * built and proved here; the person's own wallet adds the coin and signs; the
- * service adds the network fee and sends it. The vault's note pool records the
- * new note only once the chain holds it, with the transaction that made it.
+ * The coin is chosen and recorded on this device (`deposit-on-device.ts`). The
+ * call is built and proved in the vault worker, with the ledger parameters the
+ * chain holds now, read from the same route a payment out is built on. The
+ * person's own wallet adds the coin and signs, and the service adds the network
+ * fee and sends it. The vault's note pool records the new note only once the
+ * chain holds it, with the transaction that made it.
  *
  * ── A PRIVATE PAYMENT OUT ──
  *
@@ -97,7 +99,10 @@ export interface VaultService {
   handover(vault: Hex, tx: string): Promise<{ txRef: string }>;
   chain(vault: Hex): Promise<VaultChainView>;
   deposit(vault: Hex, tx: string): Promise<{ txRef: string; transactionHash: string | null }>;
-  /** One block's view of the vault and the company's account, for a payment out to be built on. */
+  /**
+   * One block's view of the vault and the company's account, for a payment out
+   * to be built on. A deposit reads the ledger parameters from it too.
+   */
   payoutState(vault: Hex): Promise<{
     vault: Hex; account: Hex; blockHash: string;
     vaultState: string; zswapState: string; parameters: string; accountState: string;
@@ -280,6 +285,9 @@ export async function openCompanyVaultPool(doors: PoolDoors, vault: Hex): Promis
   doors.progress?.('done');
 }
 
+/** How the ledger begins the bytes of its parameters, whatever their version. */
+const LEDGER_PARAMETERS_HEADER = 'midnight:ledger-parameters[v';
+
 export interface DepositDoors extends PoolDoors {
   readonly company: Hex;
   readonly builder: VaultBuilderClient;
@@ -308,6 +316,27 @@ export async function depositIntoCompanyVault(
   if (view.fundable !== true) {
     throw new Error(view.why ?? 'this company\'s account is not held by its committee yet, so no money goes in.');
   }
+  /*
+   * **THE CHAIN'S PARAMETERS NOW, READ BEFORE A COIN IS CHOSEN**, from the one
+   * block's view a payment out is built on, so if the chain cannot be read no
+   * coin is chosen or recorded. The deposit is built with these and never with
+   * the ledger's starting parameters. Bytes that do not begin the way the
+   * ledger writes its parameters are refused here too, before a coin is chosen.
+   */
+  let parameters: string;
+  try {
+    const at = await doors.service.payoutState(vault);
+    if (String(at.vault).toLowerCase() !== vault.toLowerCase() || typeof at.parameters !== 'string' || at.parameters.length === 0) {
+      throw new Error('the answer was not this vault\'s parameters');
+    }
+    if (!atob(at.parameters.slice(0, 40)).startsWith(LEDGER_PARAMETERS_HEADER)) {
+      throw new Error('the answer was not ledger parameters');
+    }
+    parameters = at.parameters;
+  } catch (cause) {
+    throw new Error('the chain\'s current parameters could not be read for this vault, so no coin was chosen and '
+      + `nothing was built or sent (${(cause as Error)?.message ?? String(cause)}). Try again shortly.`);
+  }
   const notes = new Set((view.notes ?? []).map((n) => n.toLowerCase()));
   const commitments = (coin: { nonce: Hex; token: Hex; value: bigint }) => doors.builder.commitments({
     vault, coin: { nonce: coin.nonce, token: coin.token, value: coin.value.toString() },
@@ -323,7 +352,7 @@ export async function depositIntoCompanyVault(
   });
   doors.progress?.('building the deposit');
   const built = await doors.builder.deposit({
-    vault, coin: { nonce: coin.nonce, token: coin.token, value: coin.value.toString() }, state: view.state,
+    vault, coin: { nonce: coin.nonce, token: coin.token, value: coin.value.toString() }, state: view.state, parameters,
   });
   doors.progress?.('asking your wallet');
   const paid = await doors.pay({ company: doors.company, vault, transaction: built.tx });

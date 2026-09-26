@@ -269,6 +269,17 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
       notesOf: (s) => [...vaultLedgerOf(s as never).notes].map((c: Uint8Array) => hex(c) as Hex),
       startingLedgerOf: (s) => startingLedgerFrom(vaultLedgerOf(s as never)),
       everCreated: async (v) => chain.everCreated.get(v.toLowerCase()) ?? new Set(),
+      /* One moment of this chain; a deposit reads the ledger parameters from it. */
+      payoutState: async (v, account) => {
+        const vs = chain.contract(v);
+        const as = chain.contract(account);
+        if (vs === null || as === null) return null;
+        const b64 = (x: { serialize(): Uint8Array }) => base64FromBytes(x.serialize());
+        return {
+          blockHash: 'b1'.repeat(32), vaultState: b64(vs), zswapState: b64(chain.state.zswap),
+          parameters: b64(chain.state.parameters), accountState: b64(as),
+        };
+      },
     };
     /* A fee payer that adds no fee, and whose submission is the chain applying the transaction. */
     const payer = {
@@ -340,8 +351,8 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     handover: (vault, tx) => http(`/api/accounts/${ACCOUNT_ID}/vaults/${vault}/handover`, { method: 'POST', body: { tx } }, as),
     chain: (vault) => http(`/api/accounts/${ACCOUNT_ID}/vaults/${vault}/chain`, undefined, as),
     deposit: (vault, tx) => http(`/api/accounts/${ACCOUNT_ID}/vaults/${vault}/deposit`, { method: 'POST', body: { tx } }, as),
-    /* A payment out is watched in `a-private-payment-from-the-page.test.ts`; nothing here asks for one. */
-    payoutState: () => { throw new Error('this watch makes no payment out'); },
+    /* A payment out is watched in `a-private-payment-from-the-page.test.ts`; a deposit reads the chain's parameters here. */
+    payoutState: (vault) => http(`/api/accounts/${ACCOUNT_ID}/vaults/${vault}/payout-state`, undefined, as),
     events: () => { throw new Error('this watch makes no payment out'); },
     payout: () => { throw new Error('this watch makes no payment out'); },
     payoutPublicly: () => { throw new Error('this watch makes no payment out'); },
@@ -423,6 +434,7 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     const early = await builder().deposit({
       vault, coin: { nonce: 'c1'.repeat(32), token: GBP, value: '5' },
       state: (await http(`/api/accounts/${ACCOUNT_ID}/vaults/${vault}/chain`)).state,
+      parameters: base64FromBytes(chain.state.parameters.serialize()),
     });
     await expect(http(`/api/accounts/${ACCOUNT_ID}/vaults/${vault}/deposit`, {
       method: 'POST', body: { tx: base64FromBytes((L.Transaction.deserialize('signature', 'pre-proof', 'pre-binding', bytesFromBase64(early.tx)) as any).bind().serialize()) },
@@ -548,6 +560,7 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     /* The residue: before its handover, the vault takes a deposit from anybody at all. */
     const stranger = await builder().deposit({
       vault: built.vault, coin: { nonce: 'd2'.repeat(32), token: GBP, value: '7' }, state: base64FromBytes(chain.contract(built.vault).serialize()),
+      parameters: base64FromBytes(chain.state.parameters.serialize()),
     });
     expect(chain.apply(L.Transaction.deserialize('signature', 'pre-proof', 'pre-binding', bytesFromBase64(stranger.tx))).ok).toBe(true);
     expect([...vaultLedgerOf(chain.contract(built.vault)).notes]).toHaveLength(1);

@@ -14,6 +14,10 @@ import type { VaultBuilderClient } from './vault-worker-client.js';
 import { MemorySealedPoolStore } from '../midnight/vault-pool.js';
 import type { WireRecord } from '../midnight/sealed-record-wire.js';
 import { newWrappingKeypair } from '../core/crypto.js';
+import { answerVaultAsk } from './vault-worker-entry.js';
+import * as vaultModule from '../../contracts/managed-vault/contract/index.js';
+import { openNonceSecrets, recordsKeypairFrom, currentDepositNonceKey } from '../midnight/company-nonce-secret.js';
+import { depositNonceAt, DepositCoinAlreadyMade } from '../midnight/deposit-nonce.js';
 
 /*
  * The order a signer's device runs, with the service and the builder stood in.
@@ -24,12 +28,14 @@ const VAULT = 'ab'.repeat(32);
 const ACCOUNT = 'c0'.repeat(32);
 const committee = { committee: [{ tag: 'schnorr', value: '11'.repeat(32) }], threshold: 1 };
 const pacing = { sleep: async () => {}, waitMs: 3, everyMs: 1 };
+/* Stand-in ledger parameters: the header the ledger writes them under, and nothing a ledger could read. */
+const PARAMS = btoa('midnight:ledger-parameters[v8]:stand-in');
 const view = (over: Partial<VaultChainView>): VaultChainView => ({ vault: VAULT, onChain: true, committee, ...over });
 
 const builder = (log: string[]): VaultBuilderClient => ({
   deploy: async () => { log.push('build deploy'); return { vault: VAULT, temporaryKey: { tag: 'schnorr', value: '77'.repeat(32) }, tx: 'D' }; },
   handover: async (i) => { log.push(`build handover at ${i.counter}`); return { tx: 'H' }; },
-  deposit: async () => { log.push('build deposit'); return { tx: 'P' }; },
+  deposit: async (i) => { log.push(`build deposit with ${i.parameters}`); return { tx: 'P' }; },
   commitments: async (i) => ({ output: 'aa'.repeat(32), held: i.coin.nonce === 'ee'.repeat(32) ? 'bb'.repeat(32) : `h${i.coin.nonce.slice(1)}` }),
   chooseNote: async (i) => { log.push('choose'); return chooseNoteForPayment(i); },
   paymentsFit: async () => { throw new Error('a payment out never asks whether a run fits'); },
@@ -66,7 +72,7 @@ const serviceFrom = (views: VaultChainView[], log: string[], over: Partial<Vault
     deposit: async () => { log.push('sent deposit'); return { txRef: 'p', transactionHash: 'ee'.repeat(32) }; },
     payoutState: async (v) => {
       log.push('read the block');
-      return { vault: v, account: ACCOUNT, blockHash: 'B1', vaultState: 'V', zswapState: 'Z', parameters: 'P', accountState: 'A' };
+      return { vault: v, account: ACCOUNT, blockHash: 'B1', vaultState: 'V', zswapState: 'Z', parameters: PARAMS, accountState: 'A' };
     },
     events: async (_v, tx) => {
       log.push(`read events of ${tx.slice(0, 2)}`);
@@ -232,9 +238,81 @@ describe('THE POOL AND A DEPOSIT', () => {
       pay: async () => { log.push('paid'); return { transaction: 'X', leaves: [] }; },
     }, VAULT, { token: 'ab'.repeat(32), value: 7n }).catch((x) => x);
     expect(e).toBeInstanceOf(DepositNotYetSeen);
-    expect(log).toEqual(['build deposit', 'paid', 'sent deposit']);
+    /* RED WHEN: the deposit is built with anything but the parameters the block read served, or the block is not read. */
+    expect(log).toEqual(['read the block', `build deposit with ${PARAMS}`, 'paid', 'sent deposit']);
     expect((await records('pool').versions(VAULT)).length).toBe(1);
     expect(await records('deposit-journal').get(VAULT)).not.toBeNull();
+  });
+
+  it('A COIN THE LEDGER HAS ALREADY RECORDED IS REFUSED ON THE DEVICE, WITH THE FAST CHECK, BEFORE ANYTHING IS BUILT', async () => {
+    /*
+     * The vault's history holds the LEDGER'S OWN commitment (`vaultNoteCommitment`, the ledger's general code) of the
+     * coin at each slot this deposit may use, and the device asks the worker's own `commitments`, which answers with the
+     * vault's compiled commitment. So the refusal below is the fast check recognising what the ledger recorded.
+     */
+    const real = (log: string[]): VaultBuilderClient => ({
+      ...builder(log),
+      commitments: async (i) => {
+        const a = await answerVaultAsk(async () => ({ vault: vaultModule }) as never, { id: 1, network: 'undeployed', ask: 'commitments', ...i });
+        if (!a.ok || a.ask !== 'commitments') throw new Error('the worker did not answer the commitments');
+        return { output: a.output, held: a.held };
+      },
+    });
+    const money = { token: 'ab'.repeat(32) as never, value: 7n };
+    const coinAt = async (records: ReturnType<typeof stores>, slot: number) => {
+      const opened = openNonceSecrets((await records('nonce-secret').get(VAULT))!, VAULT, recordsKeypairFrom(me.companyKey));
+      const nonce = depositNonceAt(currentDepositNonceKey(opened), money, slot);
+      return { nonce, token: money.token, value: money.value };
+    };
+    /* Three coins the chain made: the first slot is 4, and slots 4, 5 and 6 are all a deposit may use. */
+    const records = stores();
+    const empty = view({ heldByCommittee: true, fundable: true, state: 'AAAA', notes: [], everCreated: [] });
+    await openCompanyVaultPool(poolDoors(serviceFrom([empty], []), records), VAULT);
+    const madeAt = async (slots: number[]) => Promise.all(slots.map(async (n) => vaultNoteCommitment(await coinAt(records, n), VAULT as never)));
+    const log: string[] = [];
+    const taken = view({ heldByCommittee: true, fundable: true, state: 'AAAA', notes: [], everCreated: await madeAt([4, 5, 6]) });
+    const e = await depositIntoCompanyVault({
+      ...poolDoors(serviceFrom([taken], log), records), company: ACCOUNT, builder: real(log),
+      pay: async () => { log.push('paid'); return { transaction: 'X', leaves: [] }; },
+    }, VAULT, money).catch((x) => x);
+    /* RED WHEN: the worker's `output` is not the ledger's commitment (the held one, say), or the history is not asked. */
+    expect(e).toBeInstanceOf(DepositCoinAlreadyMade);
+    expect(log, 'RED WHEN: a coin the ledger has recorded reaches the builder or the wallet').toEqual(['read the block']);
+
+    /* Two of the three taken: the deposit moves to the free slot and builds with that coin. */
+    const log2: string[] = [];
+    const built: string[] = [];
+    const two = view({ heldByCommittee: true, fundable: true, state: 'AAAA', notes: [], everCreated: [...await madeAt([4, 6]), 'f1'.repeat(32)] });
+    await depositIntoCompanyVault({
+      ...poolDoors(serviceFrom([two], log2), records), company: ACCOUNT,
+      builder: { ...real(log2), deposit: async (i) => { built.push(i.coin.nonce); return { tx: 'P' }; } },
+      pay: async () => ({ transaction: 'X', leaves: [] }),
+    }, VAULT, money).catch(() => undefined);
+    expect(built, 'RED WHEN: a slot whose coin the ledger recorded is used, or a free one is skipped').toEqual([(await coinAt(records, 5)).nonce]);
+  });
+
+  it('A DEPOSIT WHOSE CHAIN PARAMETERS CANNOT BE READ CHOOSES NO COIN, BUILDS NOTHING AND ASKS NO WALLET', async () => {
+    const ready = view({ heldByCommittee: true, fundable: true, state: 'AAAA', notes: [], everCreated: [] });
+    const refusals: Array<[string, Partial<VaultService>]> = [
+      ['the block cannot be read', { payoutState: async () => { throw new Error('the chain could not be read'); } }],
+      ['the block names no parameters', { payoutState: async (v) => ({ vault: v, account: ACCOUNT, blockHash: 'B1', vaultState: 'V', zswapState: 'Z', parameters: '', accountState: 'A' }) }],
+      ['the block is another vault\'s', { payoutState: async () => ({ vault: 'ee'.repeat(32) as never, account: ACCOUNT, blockHash: 'B1', vaultState: 'V', zswapState: 'Z', parameters: PARAMS, accountState: 'A' }) }],
+      ['the block\'s parameters are not parameters', { payoutState: async (v) => ({ vault: v, account: ACCOUNT, blockHash: 'B1', vaultState: 'V', zswapState: 'Z', parameters: btoa('not parameters at all, just bytes'), accountState: 'A' }) }],
+      ['the block\'s parameters are not base64', { payoutState: async (v) => ({ vault: v, account: ACCOUNT, blockHash: 'B1', vaultState: 'V', zswapState: 'Z', parameters: '%%%%', accountState: 'A' }) }],
+    ];
+    for (const [why, over] of refusals) {
+      const log: string[] = [];
+      const records = stores();
+      await openCompanyVaultPool(poolDoors(serviceFrom([ready], log), records), VAULT);
+      /* RED WHEN: the parameters are read after the coin is chosen, or a failed or foreign read is let through -
+       * the journal then holds a coin, and the log carries 'build deposit' or 'paid'. */
+      await expect(depositIntoCompanyVault({
+        ...poolDoors(serviceFrom([ready], log, over), records), company: ACCOUNT, builder: builder(log),
+        pay: async () => { log.push('paid'); return { transaction: 'X', leaves: [] }; },
+      }, VAULT, { token: 'ab'.repeat(32), value: 7n }), why).rejects.toThrow(/current parameters could not be read.*no coin was chosen/);
+      expect(log, why).toEqual([]);
+      expect(await records('deposit-journal').get(VAULT), why).toBeNull();
+    }
   });
 });
 
