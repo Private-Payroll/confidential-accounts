@@ -14,13 +14,16 @@
  *   - **contradicted**, when the pool and the chain disagree. A pool that
  *     disagrees with the chain has no balance: it is never summed.
  *
- * **IT READS PRIVATE MONEY ONLY.** Public money is a contract balance the
- * company's service reads itself, and is asked there.
+ * **IT READS PRIVATE MONEY FOR PAYMENTS.** Public money is a contract balance
+ * the company's service reads off the vault's state, and a payment's check asks
+ * it there. What this file does with public money is only to show it:
+ * `publicHoldingsFromView` reads the service's list for the vault's screen, and
+ * says so when there is none to read.
  *
  * **NOTHING IT READS LEAVES THIS DEVICE.** The vault's address goes out to ask
  * the chain what it holds; the notes, their values and the sum stay here.
  */
-import type { LedgerForm } from '../core/assets.js';
+import { assets, formatAmount, ledgerFormOf, type Asset, type AssetRegistry, type LedgerForm } from '../core/assets.js';
 import type { Hex } from '../core/crypto.js';
 import type { FitAnswer, HoldingAnswer, PaymentAsked, VaultHoldings } from '../core/vault-holdings.js';
 import { poolAgainstChain } from '../midnight/pool-against-chain.js';
@@ -151,3 +154,84 @@ export const deviceVaultHoldings = (doors: DeviceHoldingsDoors): VaultHoldings =
     throw new Error('the check of whether this vault can make each payment did not finish on this device. Reload the page and try again');
   },
 });
+
+/* ------------------------------------------------ what it holds publicly */
+
+/** What the vault's screen shows about its public money: every token and amount, or why it could not be read. */
+export type PublicHoldingsAnswer =
+  | { readonly of: 'held'; readonly holdings: ReadonlyArray<{ readonly token: string; readonly amount: bigint }> }
+  | { readonly of: 'unreadable'; readonly why: string };
+
+const COLOUR = /^[0-9a-f]{64}$/u;
+const WHOLE = /^[0-9]+$/u;
+
+/**
+ * **THE VAULT'S PUBLIC MONEY, AS THE COMPANY'S SERVICE READ IT OFF THE VAULT'S
+ * STATE.** An empty list is the vault holding no public money; anything that is
+ * not a list of tokens and whole amounts is not a reading, and is said to be
+ * unreadable rather than shown as nothing.
+ */
+export function publicHoldingsFromView(view: unknown): PublicHoldingsAnswer {
+  const v = view as { onChain?: unknown; publicBalances?: unknown; publicBalancesWhy?: unknown } | null | undefined;
+  if (v?.onChain !== true) return { of: 'unreadable', why: 'the vault is not on the chain yet' };
+  if (!Array.isArray(v.publicBalances)) {
+    return {
+      of: 'unreadable',
+      why: typeof v.publicBalancesWhy === 'string' && v.publicBalancesWhy !== ''
+        ? v.publicBalancesWhy
+        : 'the company\'s service did not say what this vault holds in public money',
+    };
+  }
+  const holdings: Array<{ token: string; amount: bigint }> = [];
+  for (const row of v.publicBalances as Array<{ token?: unknown; amount?: unknown } | null>) {
+    if (typeof row?.token !== 'string' || !COLOUR.test(row.token)
+      || typeof row.amount !== 'string' || !WHOLE.test(row.amount)) {
+      return {
+        of: 'unreadable',
+        why: 'the service sent an amount this page cannot read, so none is shown',
+      };
+    }
+    holdings.push({ token: row.token, amount: BigInt(row.amount) });
+  }
+  return { of: 'held', holdings };
+}
+
+/** Asks the service for the vault's view now and reads its public money; a failed ask is unreadable, never nothing. */
+export async function readPublicHoldings(chain: () => Promise<unknown>): Promise<PublicHoldingsAnswer> {
+  try {
+    return publicHoldingsFromView(await chain());
+  } catch (e) {
+    return { of: 'unreadable', why: `this page could not reach the company's service: ${why(e)}` };
+  }
+}
+
+/** What the screen says for any balance it could not read. The reason stays in the answer, not on the screen. */
+export const PUBLIC_BALANCE_UNREAD = 'What this vault holds publicly could not be read, so no amount is shown. '
+  + 'That does not mean it holds nothing.';
+
+/**
+ * **THE LINES THE VAULT'S SCREEN SHOWS FOR ITS PUBLIC MONEY.** A token an asset
+ * in the registry names is shown in that asset; one no asset names is shown as
+ * a count of units, so it is still counted. Money put in privately is never in
+ * this list, and the empty answer says so, so it is not read as an empty vault.
+ */
+export function sayPublicHoldings(answer: PublicHoldingsAnswer, registry: AssetRegistry = assets): string[] {
+  if (answer.of === 'unreadable') return [PUBLIC_BALANCE_UNREAD];
+  if (answer.holdings.length === 0) return ['This vault holds no money publicly. Money put in privately is not counted here.'];
+  const named = new Map<string, Asset>();
+  for (const a of registry.enabled()) {
+    try {
+      const form = ledgerFormOf(a, 'unshielded');
+      if (form.of === 'token') named.set(form.token.toLowerCase().replace(/^0x/u, ''), a);
+    } catch { /* an asset that does not say its forms names no public token */ }
+  }
+  return [
+    ...answer.holdings.map((h) => {
+      const asset = named.get(h.token);
+      return asset
+        ? `${formatAmount(h.amount, asset)} ${asset.code}, held publicly`
+        : `${h.amount} units of a currency this service does not recognise, held publicly`;
+    }),
+    'Anyone can look up money held publicly.',
+  ];
+}

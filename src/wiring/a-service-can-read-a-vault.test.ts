@@ -53,8 +53,10 @@ vi.mock('../midnight/providers.js', () => ({
     }
     return {
       publicDataProvider: {
-        queryUnshieldedBalances: async () => rows.value,
-        queryContractState: async () => null,
+        /* The vault's state as the indexer serves it: its public balance, or nothing at all. */
+        queryContractState: async () => (rows.value === null
+          ? null
+          : { balance: new Map(rows.value.map(({ tokenType, balance }) => [{ tag: 'unshielded', raw: tokenType }, balance])) }),
       },
     };
   },

@@ -359,6 +359,7 @@ const NOT_AN_ASSET_BECOMING_A_TOKEN: Record<string, { count: number; why: string
   'src/web/Join.tsx token': { count: 1, why: 'an invitation\'s token handed to the screen that accepts it' },
 
   'src/midnight/vault-coins.ts token': { count: 1, why: 'the colour read off a coin in the ledger\'s own state' },
+  'src/midnight/public-balance.ts token': { count: 1, why: 'the colour read off a contract\'s balance in the ledger\'s own state, to say how much of it the contract holds' },
   'src/midnight/vault-ledger.ts token': { count: 1, why: '`toNote` carries the token it is handed into a note' },
   'src/midnight/vault-recovery.ts token': { count: 1, why: '`paidCoinOf` carries the spent note\'s token to the coin it paid' },
   'src/server/index.ts z.string()': { count: 1, why: 'a request schema, which describes a body and makes nothing' },

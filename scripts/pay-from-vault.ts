@@ -52,7 +52,7 @@ import {
 } from '../contracts/managed/contract/index.js';
 import { Contract as VaultContract } from '../contracts/managed-vault/contract/index.js';
 import { witnesses as accountWitnesses } from '../contracts/src/witnesses.js';
-import { VaultLedger, type NotePool } from '../src/midnight/vault-ledger.js';
+import { VaultChainUnreadable, VaultLedger, type NotePool } from '../src/midnight/vault-ledger.js';
 import { chainVaultHoldings } from '../src/midnight/vault-holdings.js';
 import { vaultDetailsOf } from '../src/midnight/vault-details.js';
 import { refuseWhatTheVaultCannotPay } from '../src/core/vault-holdings.js';
@@ -432,27 +432,23 @@ async function main(): Promise<number> {
    * This used to turn anything that was not an array into an empty one, and
    * print `(nothing)` for both. The two are opposite claims about a treasury:
    * an empty list is the chain saying this contract holds no public money, and
-   * a null is the indexer having no contract action for the address at all -
-   * which is what it also answers for an address nothing was ever deployed at.
-   * Printed as the same line, a vault the reader cannot see reads as a vault
-   * that is empty, and the person reading it deposits again.
+   * an unreadable state is the indexer having nothing to say about the address
+   * at all - which is what it also answers for an address nothing was ever
+   * deployed at. Printed as the same line, a vault the reader cannot see reads
+   * as a vault that is empty, and the person reading it deposits again. The
+   * list is the vault client's own read, the one every payout check uses.
    */
   const publicRows = async (): Promise<
     { of: 'listed'; rows: Array<{ tokenType: string; balance: bigint }> }
     | { of: 'unreadable'; why: string }
   > => {
-    const rows = await publicDataProvider.queryUnshieldedBalances(vaultAddress);
-    if (rows == null) {
-      return {
-        of: 'unreadable',
-        why: 'the indexer has no contract action for this address, so it has not published a '
-          + 'balance for it at all. That is not a vault holding nothing',
-      };
+    try {
+      const held = await vaultLedger.unshieldedHoldings(vaultAddress!);
+      return { of: 'listed', rows: held.map((h) => ({ tokenType: h.token, balance: h.amount })) };
+    } catch (e) {
+      if (e instanceof VaultChainUnreadable) return { of: 'unreadable', why: e.message };
+      throw e;
     }
-    if (!Array.isArray(rows)) {
-      return { of: 'unreadable', why: `the indexer answered with ${typeof rows} rather than a list` };
-    }
-    return { of: 'listed', rows };
   };
   const printRows = async (when: string) => {
     try {
@@ -461,9 +457,9 @@ async function main(): Promise<number> {
         warn(`what this vault holds publicly COULD NOT BE READ ${when}: ${answer.why}`);
         return;
       }
-      note(`what the indexer lists for this vault ${when}, every token:`);
+      note(`what this vault's state holds in public money ${when}, every token:`);
       if (answer.rows.length === 0) {
-        note('  the chain published a balance list for this contract and it is EMPTY,');
+        note('  the vault\'s public balance was read and is empty,');
         note('  which is the chain saying this vault holds no public money');
       }
       for (const r of answer.rows) note(`  ${String(r.tokenType)}  ${String(r.balance)}`);
