@@ -51,6 +51,7 @@ const { paymentsFitNotes } = await import('./vault-builder.js');
 const { registryWithTestPrivateForms, testPrivateToken } = await import('../testing/assets.js');
 const { DEVICE_RAISE_VERSION, paymentsCheckedDigest } = await import('../core/device-raise.js');
 const { SEED_ASSETS } = await import('../core/assets.js');
+const { opensAs, sealedProposalFor } = await import('../testing/sealed-records.js');
 /* The product's own private asset, for the page's own wiring, which checks against the product's own rows. */
 const PRIVATE = SEED_ASSETS.find((a) => a.ledger.shielded !== null)!;
 const PRIVATE_POOL = [{ ...note0(7, 987_654_321n), token: PRIVATE.ledger.shielded as Hex }];
@@ -155,6 +156,8 @@ const aDevice = () => {
     builder: { governedCall: async () => ({ tx: 'TX' }) },
     material: { signingSecret: '11'.repeat(32), blinding: '22'.repeat(32), scope: '33'.repeat(32) },
     accountId: 'acc_1', sleep: async () => {}, waitMs: 3, everyMs: 1,
+    /* What the device opens is checked where the call is built, which this test stands in for. */
+    opens: opensAs({ prp_u: 'cd'.repeat(32) }),
   };
   return { requests, doors };
 };
@@ -365,6 +368,10 @@ describe('6. THE PAGE\'S REAL RETRY CONTROL IS RENDERED AND REACHES THE DEVICE P
       }
       if (url.endsWith('/retry')) return json({ proposal: round(), order: orderFor('prp_u', body.indices, body, PRIVATE.ledger.shielded!) });
       if (url === '/api/accounts/acc_1/call-state') return json({ account: 'ac'.repeat(32), blockHash: 'b', accountState: 'AS', parameters: 'PP' });
+      /* The company's own records, sealed, which the device opens itself before it builds. */
+      if (url === '/api/accounts/acc_1/proposals') {
+        return json([sealedProposalFor('acc_1', 'aa'.repeat(32) as Hex, { id: 'prp_u', chainId: 'cd'.repeat(32), salt: '66'.repeat(32) })]);
+      }
       if (url.endsWith('/retry-send')) return json(round({ txRef: 't' }));
       if (url.endsWith('/standing')) return json(round({ raisedAt: 'now' }));
       return new Response(JSON.stringify({ error: `unexpected ${url}` }), { status: 500 });

@@ -36,7 +36,7 @@ import { privateStateFor, leafOfDevice, change } from './simulator.js';
 import { DEPLOYED_CIRCUITS } from '../../src/midnight/deferral.js';
 import { answerVaultAsk } from '../../src/web/vault-worker-entry.js';
 import { vaultBuilderOver, type AccountCallChainOnTheWire, type VaultAnswer } from '../../src/web/vault-worker-client.js';
-import type { GovernedCallOrder, SignerMaterial } from '../../src/web/governed-call-builder.js';
+import type { GovernedCallOrder, OpenedRound, SignerMaterial } from '../../src/web/governed-call-builder.js';
 import { refusalForProven } from '../../src/wiring/proven-submission.js';
 
 const NET = 'undeployed';
@@ -107,6 +107,18 @@ describe.skipIf(!KEYS_ON_DISK)('A PAYROLL RUN RAISED AND APPROVED FROM THE SIGNE
     },
   });
 
+  /**
+   * What a signer's device opens from the company's own records for each run
+   * written down, by identity: the run's payload, its vault, the sealed salt and
+   * change. Every call is handed it, as the page hands it. The page's opening itself runs over real records in
+   * `src/web/the-device-proves-what-it-opened.test.ts`.
+   */
+  const opened = new Map<string, OpenedRound>();
+  const openedFor = (order: GovernedCallOrder): OpenedRound => {
+    const { half, ...record } = opened.get(order.proposal)!;
+    return order.circuit === 'propose' ? { ...record, half: half! } : record;
+  };
+
   const builder = () => {
     const deps = async () => ({
       ledger: L, runtimeState: (runtime as any).ContractState,
@@ -116,7 +128,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PAYROLL RUN RAISED AND APPROVED FROM THE SIGNE
       prove: async (unproven: any) => unproven,
     });
     const listeners: Array<(e: { data: unknown }) => void> = [];
-    return vaultBuilderOver({
+    const client = vaultBuilderOver({
       addEventListener: (_t, l) => { listeners.push(l); },
       postMessage: (message) => {
         void answerVaultAsk(deps as never, message as never).then(
@@ -124,6 +136,10 @@ describe.skipIf(!KEYS_ON_DISK)('A PAYROLL RUN RAISED AND APPROVED FROM THE SIGNE
           (e: Error) => listeners.forEach((l) => l({ data: { id: (message as { id: number }).id, ok: false, error: e.message } })));
       },
     }, NET);
+    return {
+      governedCall: (input: Omit<Parameters<typeof client.governedCall>[0], 'opened'>) =>
+        client.governedCall({ ...input, opened: openedFor(input.order) }),
+    };
   };
 
   /** The account as the chain holds it now, the way the service hands it over. */
@@ -154,9 +170,8 @@ describe.skipIf(!KEYS_ON_DISK)('A PAYROLL RUN RAISED AND APPROVED FROM THE SIGNE
       root: hex(new Uint8Array(randomBytes(32))), payees: '3',
       opensAt: String(now - 60n), closesAt: String(now + 3_600n), vault: hex(new Uint8Array(randomBytes(32))),
     };
-    const id = hex(circuits.proposalIdOf(
-      circuits.runPayload(Buffer.from(run.root, 'hex'), 3n, BigInt(run.opensAt), BigInt(run.closesAt)),
-      Buffer.from(run.vault, 'hex'), c.salt));
+    const payload = circuits.runPayload(Buffer.from(run.root, 'hex'), 3n, BigInt(run.opensAt), BigInt(run.closesAt));
+    const id = hex(circuits.proposalIdOf(payload, Buffer.from(run.vault, 'hex'), c.salt));
     const order: GovernedCallOrder = {
       circuit: 'propose', run, proposal: id,
       half: {
@@ -164,6 +179,10 @@ describe.skipIf(!KEYS_ON_DISK)('A PAYROLL RUN RAISED AND APPROVED FROM THE SIGNE
         changeAmount: c.amount.toString(), changeBatchDigest: hex(c.batch),
       },
     };
+    opened.set(id, {
+      chainId: id, digest: hex(payload), vault: run.vault, salt: hex(c.salt), summary: '',
+      half: { assetId: hex(c.asset), changeAmount: c.amount.toString(), changeBatchDigest: hex(c.batch) },
+    });
     return { order, id };
   };
   const ledgerNow = () => accountLedgerOf(chain.contract(company));

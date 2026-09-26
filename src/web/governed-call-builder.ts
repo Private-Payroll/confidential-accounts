@@ -49,11 +49,20 @@
  *                         healthy.
  *   the account's half    for a raise only: the asset, the account's asset
  *                         blinding, the salt and the change the proposal commits
- *                         to. The company's service holds these under the
- *                         account's viewing key, and hands them to a member
- *                         who presents that key. An approval reads none of
+ *                         to. The service hands them over. All but the blinding
+ *                         are also opened on the page from the proposal's own
+ *                         sealed record, with the viewing key; the record is
+ *                         composed from what was opened, and a value the
+ *                         service handed that is not the opened one is refused
+ *                         by name before anything is built. The blinding is the
+ *                         service's: it is kept only inside the account's sealed
+ *                         state beside things a signer's page is not handed, and
+ *                         what it feeds - the change commitment a raise records -
+ *                         is read back by no circuit. An approval reads none of
  *                         them, and a record for an approval refuses by name if
  *                         a circuit ever asks for one.
+ *   the salt              for a seat or a threshold change, the one sealed
+ *                         inside the proposal, from the same opening.
  *   the chain             the account's contract state and the ledger
  *                         parameters, both as one block saw them.
  *
@@ -138,6 +147,70 @@ export type GovernedCallOrder =
   }
   | { readonly circuit: 'amendSigner'; readonly leaf: string; readonly proposal: string; readonly proposalSalt: string }
   | { readonly circuit: 'setThreshold'; readonly threshold: string; readonly proposal: string; readonly proposalSalt: string };
+
+/**
+ * **WHAT THIS DEVICE OPENED ITSELF** from the company's records, with the
+ * viewing key it holds: the proposal's own record and the payload sealed inside
+ * it, and the company's roster for the leaf of a person to be seated. Every
+ * value is the hexadecimal of its thirty-two bytes except the threshold and the
+ * amount, which are decimal digits. The service's order is checked against
+ * this, and the call is proved with this.
+ */
+export interface OpenedRound {
+  /** The identity the proposal's record carries, and the payload and vault it is made from with the salt. */
+  readonly chainId: string;
+  readonly digest: string;
+  readonly vault: string;
+  /** The salt sealed inside the proposal. */
+  readonly salt: string;
+  /** What the person is shown for this proposal. */
+  readonly summary: string;
+  /** For a seat or a threshold change: the change the proposal names, the leaf read from the company's own roster. */
+  readonly governance?: GovernanceOnTheWire;
+  /** For a raise: the change sealed inside the proposal. */
+  readonly half?: Omit<RaiseHalfOnTheWire, 'proposalSalt' | 'assetBlinding'>;
+}
+
+/** Each value, as the person reading a refusal would name it. */
+const SAID: Readonly<Record<string, string>> = {
+  'proposal identity': 'proposal', salt: 'proposal', change: 'proposal', vault: 'proposal',
+  'run vault': 'account this run pays from', leaf: 'person being given access',
+  threshold: 'number of approvals required', run: 'payroll run', asset: 'currency', amount: 'amount',
+  'payments digest': 'list of payments',
+};
+/** What not to do if the refusal comes back, for each call a device makes. */
+const IF_AGAIN: Readonly<Record<string, string>> = {
+  approve: 'do not approve it', propose: 'do not send it', amendSigner: 'do not grant this access',
+  setThreshold: 'do not make this change',
+};
+
+/**
+ * **A VALUE THE SERVICE SENT THAT IS NOT THE ONE THIS DEVICE OPENED.** `value`
+ * names it exactly, for whoever reads the refusal afterwards; the sentence names
+ * it in the words of the page it is shown on.
+ */
+export class NotWhatThisDeviceOpened extends Error {
+  constructor(readonly value: string, circuit: string) {
+    super(
+      `the ${SAID[value] ?? 'proposal'} the service sent to this device does not match the company's own record of this `
+        + 'proposal, which this device read itself. Nothing was built or sent. Reload the page and try again. If it '
+        + `happens again, ${IF_AGAIN[circuit] ?? 'do not act on it'}.`,
+    );
+    this.name = 'NotWhatThisDeviceOpened';
+  }
+}
+
+/** A record whose own contents do not make the identity it carries: nothing sent it here, it disagrees with itself. */
+export class RecordDoesNotAddUp extends Error {
+  readonly value = 'record';
+  constructor(circuit: string) {
+    super(
+      'the company\'s record of this proposal does not add up, so this device will not act on it. Nothing was built or '
+        + `sent. Reload the page and try again. If it happens again, ${IF_AGAIN[circuit] ?? 'do not act on it'}.`,
+    );
+    this.name = 'RecordDoesNotAddUp';
+  }
+}
 
 /** Whether a raise is for a run rather than for a governance round. */
 export const raisesARun = (order: GovernedCallOrder): order is RaiseRunOrder =>
@@ -226,22 +299,25 @@ const ACCOUNT_FIELDS = ['assetBlinding', 'assetId', 'proposalSalt', 'changeAmoun
  * **THE RECORD FOR ONE CALL, COMPOSED NOW AND USED ONCE.**
  *
  * The signer's three come first and are refused by name if any is missing or
- * the wrong width - the scope included. For a raise the account's half is read
- * off the order, every field of it. Seating a signer and changing the threshold
- * read one account field, the salt the approved round's identity was made with,
- * and it is read off the order too. Every other account field is a refusal
- * rather than a value. The two membership-path fields are set here and from
+ * the wrong width - the scope included. For a raise the account's half is the
+ * one this device read from the proposal's own record, and the asset blinding
+ * is the order's. Seating a signer and changing the threshold read one account
+ * field, the salt the approved round's identity was made with, and it is the one
+ * sealed in the proposal. Given no record read here - which `buildGovernedCall`
+ * never builds without - each is read off the order. Every other account field
+ * is a refusal rather than a value. The two membership-path fields are set here and from
  * nowhere else, so nothing handed in can put a path into the record.
  */
-export function recordForOneCall(order: GovernedCallOrder, material: SignerMaterial): AccountPrivateState {
+export function recordForOneCall(order: GovernedCallOrder, material: SignerMaterial, opened?: OpenedRound): AccountPrivateState {
   const signer = signerHalfOf(material);
   if (order.circuit === 'propose') {
-    const h = order.half;
+    /* What this device opened, when it did; `buildGovernedCall` never builds without it. */
+    const h = opened?.half ?? order.half;
     return {
       ...signer,
       assetId: bytesOf('asset', h.assetId),
-      assetBlinding: bytesOf('account\'s asset blinding', h.assetBlinding),
-      proposalSalt: bytesOf('proposal\'s salt', h.proposalSalt),
+      assetBlinding: bytesOf('account\'s asset blinding', order.half.assetBlinding),
+      proposalSalt: bytesOf('proposal\'s salt', opened?.salt ?? order.half.proposalSalt),
       changeAmount: digitsOf('change amount', h.changeAmount),
       changeBatchDigest: bytesOf('change digest', h.changeBatchDigest),
       pinnedPath: null,
@@ -249,7 +325,7 @@ export function recordForOneCall(order: GovernedCallOrder, material: SignerMater
   }
   const record = { ...signer, pinnedPath: null } as AccountPrivateState;
   const salt = order.circuit === 'amendSigner' || order.circuit === 'setThreshold'
-    ? bytesOf('proposal\'s salt', order.proposalSalt) : null;
+    ? bytesOf('proposal\'s salt', opened?.salt ?? order.proposalSalt) : null;
   for (const field of ACCOUNT_FIELDS) {
     if (field === 'proposalSalt' && salt !== null) {
       Object.defineProperty(record, field, { enumerable: true, value: salt });
@@ -389,6 +465,88 @@ export function refuseARaiseThatIsNotTheRecordedOne(deps: Pick<GovernedCallDeps,
   }
 }
 
+const hexOf = (b: Uint8Array): string => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+const same = (a: unknown, b: unknown): boolean => String(a).toLowerCase() === String(b).toLowerCase();
+const sameGovernance = (a: GovernanceOnTheWire, b: GovernanceOnTheWire): boolean =>
+  a.kind === b.kind && (a.kind === 'add-signer'
+    ? same(a.leaf, (b as { leaf: string }).leaf)
+    : thresholdOf(a.threshold) === thresholdOf((b as { threshold: string }).threshold));
+const changeNamed = (g: GovernanceOnTheWire | undefined): string => (g?.kind === 'threshold' ? 'threshold' : 'leaf');
+
+/**
+ * **NOTHING IS PROVED WITH A VALUE THIS DEVICE DID NOT READ ITSELF, BUT TWO.**
+ *
+ * The proposal's identity is remade, with the contract's own functions, from
+ * the payload and vault its record carries and the salt sealed inside it, and
+ * must be the identity the record names. Then every value the service sent -
+ * the proposal's identity, the salt, the leaf or the threshold, the run, the
+ * vault and the account's half - must be the one read here, or the call is
+ * refused naming the value, before anything is built. A seat or a threshold
+ * change must also be the change whose payload the record carries.
+ *
+ * **THE FIRST IS THE ACCOUNT'S ASSET BLINDING**, which is the service's: see
+ * the account's half above. **THE SECOND IS THE RUN ITSELF - ITS PAYOUT ROOT,
+ * ITS COUNT OF PAYEES AND ITS WINDOW - WHICH IS ONLY AS GOOD AS THE RECORD**:
+ * the payload the run must make is kept on the record beside the sealed part,
+ * not inside it, so a record written down with another run passes here. And
+ * the chain's state a call is built against is the one the service read.
+ */
+export function refuseWhatThisDeviceDidNotOpen(
+  deps: Pick<GovernedCallDeps, 'accountPure'>, order: GovernedCallOrder, opened: OpenedRound,
+): void {
+  if (typeof opened !== 'object' || opened === null) {
+    throw new Error('this device could not read the company\'s record of this proposal, so nothing was built or sent. '
+      + 'Reload the page and try again.');
+  }
+  const P = deps.accountPure;
+  const c = order.circuit;
+  const refuse = (value: string): never => { throw new NotWhatThisDeviceOpened(value, c); };
+  const made = hexOf(P.proposalIdOf(bytesOf('proposal\'s payload', opened.digest), bytesOf('vault', opened.vault),
+    bytesOf('proposal\'s salt', opened.salt)));
+  if (!same(made, opened.chainId)) throw new RecordDoesNotAddUp(c);
+  if (!same(order.proposal, opened.chainId)) refuse('proposal identity');
+  const saltHanded = order.circuit === 'propose' ? order.half.proposalSalt
+    : order.circuit === 'approve' ? order.of?.proposalSalt : order.proposalSalt;
+  if (saltHanded !== undefined && !same(saltHanded, opened.salt)) refuse('salt');
+  const g = opened.governance;
+  if (g !== undefined) {
+    if (!same(opened.vault, hexOf(P.noVault()))) refuse('vault');
+    if (!same(hexOf(governancePayloadOf(deps, g)), opened.digest)) refuse(changeNamed(g));
+  }
+  if (order.circuit === 'approve') {
+    if (order.of !== undefined && (g === undefined || !sameGovernance(order.of.governance, g))) {
+      refuse(changeNamed(order.of.governance));
+    }
+    return;
+  }
+  if (order.circuit === 'amendSigner') {
+    if (g?.kind !== 'add-signer' || !same(order.leaf, g.leaf)) refuse('leaf');
+    return;
+  }
+  if (order.circuit === 'setThreshold') {
+    if (g?.kind !== 'threshold' || thresholdOf(order.threshold) !== thresholdOf(g.threshold)) {
+      refuse('threshold');
+    }
+    return;
+  }
+  if (raisesARun(order)) {
+    if (g !== undefined) refuse('change');
+    const [, root, payees, opensAt, closesAt, , vault] = argumentsFor(order) as [unknown, Uint8Array, bigint, bigint, bigint, unknown, Uint8Array];
+    if (!same(hexOf(P.runPayload(root, payees, opensAt, closesAt)), opened.digest)) refuse('run');
+    if (!same(hexOf(vault), opened.vault)) refuse('run vault');
+  } else if (g === undefined || !sameGovernance(order.governance, g)) {
+    refuse(changeNamed(order.governance));
+  }
+  const h = opened.half;
+  if (h === undefined) {
+    throw new Error('this device could not read the change sealed in the company\'s record of this proposal, so it cannot '
+      + 'send it. Nothing was built or sent. Reload the page and try again.');
+  }
+  if (!same(order.half.assetId, h.assetId)) refuse('asset');
+  if (String(order.half.changeAmount) !== String(h.changeAmount)) refuse('amount');
+  if (!same(order.half.changeBatchDigest, h.changeBatchDigest)) refuse('payments digest');
+}
+
 /** Overwrites the signer's three in a record that is finished with. */
 const wipe = (record: AccountPrivateState): void => {
   for (const field of ['secretKey', 'blinding', 'scope'] as const) {
@@ -411,6 +569,8 @@ export async function buildGovernedCall(
     readonly order: GovernedCallOrder;
     readonly material: SignerMaterial;
     readonly chain: AccountCallChain;
+    /** What this device opened from the company's sealed records; see `refuseWhatThisDeviceDidNotOpen`. */
+    readonly opened: OpenedRound;
   },
 ): Promise<{ proven: Uint8Array }> {
   const account = String(input.account).toLowerCase();
@@ -422,12 +582,14 @@ export async function buildGovernedCall(
     throw new Error(`a device here raises and approves proposals, seats signers and changes the threshold, and "${String(circuit)}" is none of those. Nothing was built.`);
   }
   const args = argumentsBuilt(deps, input.order);
+  /* What this device opened first, so a value the service handed over that is not in the company's records is named. */
+  refuseWhatThisDeviceDidNotOpen(deps, input.order, input.opened);
   refuseARaiseThatIsNotTheRecordedOne(deps, input.order);
   /*
    * Frozen, so a circuit that tried to write into the record it was handed
    * fails there rather than changing what the next check compares.
    */
-  const record = Object.freeze(recordForOneCall(input.order, input.material));
+  const record = Object.freeze(recordForOneCall(input.order, input.material, input.opened));
   try {
     const L = deps.ledger;
     const seed = (deps.random ?? ((n) => crypto.getRandomValues(new Uint8Array(n))))(32);

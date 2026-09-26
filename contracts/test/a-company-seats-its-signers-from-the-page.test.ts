@@ -41,7 +41,7 @@ import { privateStateFor, leafOfDevice, change } from './simulator.js';
 import { DEPLOYED_CIRCUITS } from '../../src/midnight/deferral.js';
 import { answerVaultAsk } from '../../src/web/vault-worker-entry.js';
 import { vaultBuilderOver, type AccountCallChainOnTheWire, type VaultAnswer } from '../../src/web/vault-worker-client.js';
-import type { GovernedCallOrder, SignerMaterial } from '../../src/web/governed-call-builder.js';
+import type { GovernedCallOrder, OpenedRound, SignerMaterial } from '../../src/web/governed-call-builder.js';
 import { refusalForProven } from '../../src/wiring/proven-submission.js';
 
 const NET = 'undeployed';
@@ -135,6 +135,18 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVIC
     return ledgerNow().approvalCounts.member(key) ? ledgerNow().approvalCounts.lookup(key) : null;
   };
 
+  /**
+   * What a signer's device opens from the company's own records for each round
+   * written down, by identity: the record's payload, vault and sealed salt, the
+   * change it names and the change it commits to. The page's opening itself runs over
+   * real records in `src/web/the-device-proves-what-it-opened.test.ts`.
+   */
+  const opened = new Map<string, OpenedRound>();
+  const openedFor = (order: GovernedCallOrder): OpenedRound => {
+    const { half, ...record } = opened.get(order.proposal)!;
+    return order.circuit === 'propose' ? { ...record, half: half! } : record;
+  };
+
   /** A governance round as the service would write it down: its change, a fresh salt, and the identity they make. */
   const aRound = (governance: GovernedCallOrder & { circuit: 'propose' } extends never ? never : any, seed: number) => {
     const c = change(0n, seed);
@@ -149,12 +161,16 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVIC
         changeAmount: '0', changeBatchDigest: hex(c.batch),
       },
     };
+    opened.set(id, {
+      chainId: id, digest: hex(payload), vault: hex(circuits.noVault()), salt: hex(c.salt), summary: '', governance,
+      half: { assetId: hex(c.asset), changeAmount: '0', changeBatchDigest: hex(c.batch) },
+    });
     return { raise, id, salt: hex(c.salt) };
   };
 
   /** One device builds one call, and the chain applies what it sent. */
   const onDevice = async (who: AccountPrivateState, order: GovernedCallOrder) =>
-    send((await builder().governedCall({ account: company, order, material: keyringOf(who), chain: callState() })).tx);
+    send((await builder().governedCall({ account: company, order, material: keyringOf(who), chain: callState(), opened: openedFor(order) })).tx);
 
   /** A seat raised, approved by every device named, and carried out by the first of them. */
   const seat = async (who: AccountPrivateState, approvers: AccountPrivateState[], seed: number) => {
@@ -236,7 +252,7 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVIC
     /* RED WHEN: a round approved for one person can seat another. */
     await expect(onDevice(founder, {
       circuit: 'amendSigner', leaf: hex(leafOfDevice(other)), proposal: r.id, proposalSalt: r.salt,
-    })).rejects.toThrow(/not for this change/u);
+    })).rejects.toThrow(/^the person being given access the service sent to this device does not match the company's own record/u);
     expect(seated(leafOfDevice(other))).toBe(false);
   });
 

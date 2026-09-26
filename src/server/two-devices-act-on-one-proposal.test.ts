@@ -223,9 +223,13 @@ const aDevice = (who: keyof typeof USERS, company: { account: string }, signer: 
       callState: async () => ({ account: 'ac'.repeat(32), blockHash: 'b', accountState: 'AS', parameters: 'PP' }),
     },
     builder: {
-      governedCall: async ({ order }) => ({
-        tx: Buffer.from(JSON.stringify({ signer, order: order as Built['order'] } satisfies Built)).toString('base64'),
-      }),
+      governedCall: async ({ order, opened }) => {
+        /* The worker's own check, with the contract's own pure circuits: every value is the one the device opened. */
+        const { refuseWhatThisDeviceDidNotOpen } = await import('../web/governed-call-builder.js');
+        const { pureCircuits } = await import('../../contracts/managed/contract/index.js');
+        refuseWhatThisDeviceDidNotOpen({ accountPure: pureCircuits as never }, order, opened);
+        return { tx: Buffer.from(JSON.stringify({ signer, order: order as Built['order'] } satisfies Built)).toString('base64') };
+      },
     },
     material: { signingSecret: '11'.repeat(32), blinding: '22'.repeat(32), scope: '33'.repeat(32) },
     /* The device's read of the vault is a stand-in too: every send asks it first, and here it can pay. */

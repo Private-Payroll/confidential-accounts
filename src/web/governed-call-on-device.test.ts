@@ -11,6 +11,7 @@ import { registryWithTestPrivateForms, testPrivateToken } from '../testing/asset
 import type { Hex } from '../core/crypto.js';
 import { SEED_ASSETS, StaticAssetRegistry } from '../core/assets.js';
 import { DEVICE_RAISE_VERSION, paymentsCheckedDigest } from '../core/device-raise.js';
+import { opensAs } from '../testing/sealed-records.js';
 
 /* The page's side, over a service and a worker that write down what they were asked, in order. */
 const material = { signingSecret: '11'.repeat(32), blinding: '22'.repeat(32), scope: '33'.repeat(32) };
@@ -113,6 +114,8 @@ const aDevice = (over: Partial<GovernedCallService> & {
       },
     },
     material, accountId: 'acc_1',
+    /* What the device opens is the subject of `the-device-proves-what-it-opened.test.ts`; here each proposal opens as itself. */
+    opens: opensAs({ prp_1: 'cc'.repeat(32), prp_r: 'cd'.repeat(32) }),
     progress: (s) => log.push(`stage ${s}`),
     sleep: async () => {}, waitMs: 3, everyMs: 1,
   };

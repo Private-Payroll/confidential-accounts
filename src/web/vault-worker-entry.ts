@@ -212,6 +212,7 @@ export const answerVaultAsk = async (
         order: ask.order,
         material: ask.material,
         chain: { accountState: fromBase64(ask.chain.accountState), parameters: fromBase64(ask.chain.parameters) },
+        opened: ask.opened,
       });
       return { id: ask.id, ok: true, ask: 'governed-call', tx: toBase64(built.proven) };
     }

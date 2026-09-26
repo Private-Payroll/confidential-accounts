@@ -29,6 +29,7 @@ import {
   sendRaiseFromDevice, sendRetryFromDevice,
   type GovernedCallService, type RaiseDoors, type RaiseOrderOnTheWire, type RetryOrderOnTheWire,
 } from './governed-call-on-device.js';
+import { opensAs } from '../testing/sealed-records.js';
 
 /*
  * The vault's generated module, faked down to its reader and its shape, with
@@ -229,6 +230,8 @@ const aSender = (order: RaiseOrderOnTheWire) => {
     builder: { governedCall: async () => { log.push('build'); return { tx: 'TX' }; } },
     material: { signingSecret: '11'.repeat(32), blinding: '22'.repeat(32), scope: '33'.repeat(32) },
     accountId: 'acc_1', sleep: async () => {}, waitMs: 2, everyMs: 1,
+    /* What the device opens is checked where the call is built, which this test stands in for. */
+    opens: opensAs({ prp_1: 'cc'.repeat(32) }),
   };
   return { log, doors };
 };

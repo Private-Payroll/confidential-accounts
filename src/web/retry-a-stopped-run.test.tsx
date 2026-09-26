@@ -9,6 +9,7 @@ import { deviceVaultHoldings, type PoolNote } from './device-vault-holdings.js';
 import { paymentsFitNotes } from './vault-builder.js';
 import { registryWithTestPrivateForms, testPrivateToken } from '../testing/assets.js';
 import { DEVICE_RAISE_VERSION, paymentsCheckedDigest } from '../core/device-raise.js';
+import { opensAs } from '../testing/sealed-records.js';
 
 /*
  * The control a person retries a stopped run with, rendered against a payment
@@ -135,6 +136,8 @@ const aDevice = () => {
     builder: { governedCall: async () => ({ tx: 'TX' }) },
     material: { signingSecret: '11'.repeat(32), blinding: '22'.repeat(32), scope: '33'.repeat(32) },
     accountId: 'acc_1', sleep: async () => {}, waitMs: 3, everyMs: 1,
+    /* What the device opens is checked where the call is built, which this test stands in for. */
+    opens: opensAs({ prp_r: 'cd'.repeat(32) }),
   };
   return { requests, doors };
 };
