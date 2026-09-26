@@ -285,8 +285,13 @@ export async function openCompanyVaultPool(doors: PoolDoors, vault: Hex): Promis
   doors.progress?.('done');
 }
 
-/** How the ledger begins the bytes of its parameters, whatever their version. */
-const LEDGER_PARAMETERS_HEADER = 'midnight:ledger-parameters[v';
+/**
+ * **HOW THE LEDGER THIS PAGE BUILDS WITH BEGINS THE BYTES OF ITS PARAMETERS,
+ * VERSION INCLUDED.** Parameters of any other version are ones the vault worker
+ * cannot read, so a deposit refuses them before a coin is chosen or its journal
+ * line filed. A test pins this against the installed ledger.
+ */
+export const LEDGER_PARAMETERS_HEADER = 'midnight:ledger-parameters[v8]:';
 
 export interface DepositDoors extends PoolDoors {
   readonly company: Hex;
@@ -551,32 +556,54 @@ export async function depositIntoCompanyVault(
     throw new Error(view.why ?? 'this company\'s account is not held by its committee yet, so no money goes in.');
   }
   /*
+   * **AN EARLIER DEPOSIT FROM THIS DEVICE IS SETTLED FIRST.** Recorded if it has
+   * landed, forgotten if it never can; while it still can, no coin is chosen
+   * for this one, because it could be the same coin. It needs nothing of the
+   * chain's parameters, so it is settled even when this deposit is refused
+   * for them below.
+   */
+  const earlier = await settleDepositInFlight(doors, vault, view);
+  /*
    * **THE CHAIN'S PARAMETERS NOW, READ BEFORE A COIN IS CHOSEN**, from the one
    * block's view a payment out is built on, so if the chain cannot be read no
    * coin is chosen or recorded. The deposit is built with these and never with
-   * the ledger's starting parameters. Bytes that do not begin the way the
-   * ledger writes its parameters are refused here too, before a coin is chosen.
+   * the ledger's starting parameters. Bytes that are not the parameters of the
+   * ledger version this page builds with are refused here too, before a coin
+   * is chosen or its journal line filed.
+   *
+   * The block is read through the route a payment out also reads. Its own
+   * refusals are worded for a payment, so none of its words reach this
+   * deposit's refusal: only this deposit's own reasons do.
    */
-  let parameters: string;
+  const notRead = () => new Error('the chain\'s current parameters could not be read for this vault, so no '
+    + 'coin was chosen and nothing was built or sent. Try again shortly.');
+  let at: Awaited<ReturnType<VaultService['payoutState']>>;
   try {
-    const at = await doors.service.payoutState(vault);
-    if (String(at.vault).toLowerCase() !== vault.toLowerCase() || typeof at.parameters !== 'string' || at.parameters.length === 0) {
-      throw new Error('the answer was not this vault\'s parameters');
-    }
-    if (!atob(at.parameters.slice(0, 40)).startsWith(LEDGER_PARAMETERS_HEADER)) {
-      throw new Error('the answer was not ledger parameters');
-    }
-    parameters = at.parameters;
-  } catch (cause) {
-    throw new Error('the chain\'s current parameters could not be read for this vault, so no coin was chosen and '
-      + `nothing was built or sent (${(cause as Error)?.message ?? String(cause)}). Try again shortly.`);
+    at = await doors.service.payoutState(vault);
+  } catch {
+    throw notRead();
   }
-  /*
-   * **AN EARLIER DEPOSIT FROM THIS DEVICE IS SETTLED FIRST.** Recorded if it has
-   * landed, forgotten if it never can; while it still can, no coin is chosen
-   * for this one, because it could be the same coin.
-   */
-  const earlier = await settleDepositInFlight(doors, vault, view);
+  const answeredWrongly = (why: string) => new Error('the service answered with something other than this vault\'s '
+    + `current parameters (${why}), so no coin was chosen and nothing was built or sent. Try again; if this happens `
+    + 'again, the service needs attention.');
+  if (String(at?.vault).toLowerCase() !== vault.toLowerCase() || typeof at.parameters !== 'string' || at.parameters.length === 0) {
+    throw answeredWrongly('the answer was not this vault\'s parameters');
+  }
+  let header: string;
+  try {
+    header = atob(at.parameters.slice(0, 44));
+  } catch {
+    throw answeredWrongly('the answer was not ledger parameters');
+  }
+  if (!header.startsWith(LEDGER_PARAMETERS_HEADER.slice(0, LEDGER_PARAMETERS_HEADER.indexOf('[v') + 2))) {
+    throw answeredWrongly('the answer was not ledger parameters');
+  }
+  if (!header.startsWith(LEDGER_PARAMETERS_HEADER)) {
+    throw new Error('the network is running a different ledger version from the one this page builds deposits with, '
+      + 'so no coin was chosen, nothing was built or sent, and no money has moved. Reload the page; if this stays, '
+      + 'deposits cannot be made from this page until it matches the network again.');
+  }
+  const parameters: string = at.parameters;
   const notes = new Set((view.notes ?? []).map((n) => n.toLowerCase()));
   const commitments = (coin: { nonce: Hex; token: Hex; value: bigint }) => doors.builder.commitments({
     vault, coin: { nonce: coin.nonce, token: coin.token, value: coin.value.toString() },

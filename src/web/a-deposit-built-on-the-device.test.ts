@@ -2,7 +2,8 @@
  * **A PRIVATE DEPOSIT FROM THE PAGE IS BUILT ON THE DEVICE, AND NOTHING IT SENDS
  * CARRIES THE NONCE, THE SECRET IT COMES FROM, OR THE UNPROVEN TRANSACTION.**
  *
- * The page's own operation (`depositIntoCompanyVault`) runs with the worker's
+ * The page's own deposit (`depositFromSource`, with the page's source, ending
+ * in `depositIntoCompanyVault`) runs with the worker's
  * own handler (`answerVaultAsk`) behind the page's own client, the vault's real
  * compiled contract and verifier keys, and the ledger's own transaction
  * builder. Everything that leaves the page is caught: every call to the
@@ -19,12 +20,20 @@
  *
  * What the proof leaves public is read off the same transaction with its
  * proofs erased, and the nonce is not in it. **That is the deposit before the
- * wallet balances it.** Its shielded offer states the token and the amount as a
- * public per-token delta, which a wallet balancing it with coins of the same
- * token in the same section cancels; this test does not balance it, so it says
- * nothing about the token or the amount the chain sees.
+ * wallet balances it**, and its shielded offer states the token and the amount
+ * as a public per-token delta. The person's wallet is stood in by the wallet
+ * SDK's own shielded balancing, from the factory, coin choice and key
+ * capability the product wallet's shielded wallet is built with, over coins
+ * this test gives it: it balances that public part, and the finished
+ * transaction the service is sent is read for what the chain sees of the
+ * deposit's token and amount.
  *
- * **WHAT THIS DOES NOT SHOW**: a real proof, a real wallet, a browser, or a chain.
+ * **WHAT THIS DOES NOT SHOW**: a real proof, the wallet's screen, a browser, a
+ * chain, the wallet's own path to that balancing (its facade, the token kinds
+ * it asks to balance, its signing and finishing), the proofs the wallet adds to
+ * what it balanced, the binding the wallet and the service apply, or the fee
+ * the service adds afterwards. What the
+ * chain sees is read here off proof-erased, unbound bytes.
  */
 import { describe, it, expect, beforeAll } from 'vitest';
 import { existsSync } from 'node:fs';
@@ -38,11 +47,16 @@ import * as vaultModule from '../../contracts/managed-vault/contract/index.js';
 import { buildVaultDeploy, type VaultBuilderDeps } from './vault-builder.js';
 import { answerVaultAsk } from './vault-worker-entry.js';
 import { vaultBuilderOver, type VaultAnswer } from './vault-worker-client.js';
-import { depositIntoCompanyVault, openCompanyVaultPool, type VaultChainView, type VaultService, type DepositInFlight, type DepositsInFlight, } from './vault-operation.js';
+import { openCompanyVaultPool, type VaultChainView, type VaultService, type DepositInFlight, type DepositsInFlight, } from './vault-operation.js';
 import { MemorySealedPoolStore } from '../midnight/vault-pool.js';
 import type { WireRecord } from '../midnight/sealed-record-wire.js';
 import { openNonceSecrets, recordsKeypairFrom, currentDepositNonceKey } from '../midnight/company-nonce-secret.js';
 import { newWrappingKeypair, toHex, type Hex } from '../core/crypto.js';
+import { StaticAssetRegistry } from '../core/assets.js';
+import { depositFromSource, privateTokenFromTheWallet } from './deposit-source.js';
+import * as ShieldedV1 from '@midnightntwrk/wallet-sdk-shielded/v1';
+import { chooseCoin } from '@midnightntwrk/wallet-sdk-capabilities';
+import { Either } from 'effect';
 
 /** Deposits in flight, kept for the length of one test. */
 const inFlightInMemory = (): DepositsInFlight => {
@@ -56,7 +70,10 @@ const inFlightInMemory = (): DepositsInFlight => {
 
 const NET = 'undeployed';
 const ACCOUNT = 'c0'.repeat(32);
-const TOKEN = '9b'.repeat(32);
+/* A token and an amount no other bytes in a transaction are likely to repeat, so finding either means it is there. */
+const TOKEN = Buffer.from(Array.from({ length: 32 }, (_, i) => (i * 29 + 7) & 0xff)).toString('hex');
+const OTHER_TOKEN = '5c'.repeat(32);
+const VALUE = 0x3a7f19c2d4e5n;
 
 /*
  * **THE DEPOSIT BELOW IS BUILT FROM THE VAULT'S VERIFIER KEYS, WHICH ONLY A FULL
@@ -122,6 +139,89 @@ const carries = (caught: unknown[], secret: Uint8Array): boolean => {
   }));
 };
 
+/*
+ * **EVERY PART OF THE UNPROVEN TRANSACTION THE PROOF DOES NOT LEAVE PUBLIC.**
+ * Each 16-byte run of it that is not anywhere in its proof-erased form, nor in
+ * what the service served the device to build it with (the vault's address, as
+ * bytes and as text, its state and the ledger parameters), and is not a run of
+ * a few repeated bytes that any bytes could hold. Searching for
+ * these finds a piece of the unproven transaction however it was cut, not only
+ * the whole of it or the runs of one secret.
+ */
+const privateRunsOf = (unprovenTx: Uint8Array, publicParts: readonly Uint8Array[]): Set<string> => {
+  const inPublic = new Set<string>();
+  for (const publicPart of publicParts) {
+    for (let i = 0; i + WINDOW <= publicPart.length; i += 1) inPublic.add(Buffer.from(publicPart.subarray(i, i + WINDOW)).toString('hex'));
+  }
+  const out = new Set<string>();
+  for (let i = 0; i + WINDOW <= unprovenTx.length; i += 1) {
+    const run = unprovenTx.subarray(i, i + WINDOW);
+    if (new Set(run).size < 8) continue;
+    const hex = Buffer.from(run).toString('hex');
+    if (!inPublic.has(hex)) out.add(hex);
+  }
+  return out;
+};
+/** Whether any leaf holds one of these runs: raw, as hex at either nibble, or inside base64 of anything. */
+const carriesAnyRun = (caught: unknown[], runs: ReadonlySet<string>): boolean => {
+  const within = (b: Uint8Array) => {
+    for (let i = 0; i + WINDOW <= b.length; i += 1) if (runs.has(Buffer.from(b.subarray(i, i + WINDOW)).toString('hex'))) return true;
+    return false;
+  };
+  const hexRuns = (l: string): Buffer[] => (l.match(/[0-9a-fA-F]{32,}/gu) ?? []).flatMap((h) => [h, h.slice(1)]
+    .map((x) => Buffer.from(x.slice(0, x.length - (x.length % 2)), 'hex')));
+  return caught.some((c) => leaves(c).some((l) => (l instanceof Uint8Array
+    ? within(l)
+    : within(Buffer.from(l, 'latin1')) || hexRuns(l).some(within) || decodedRuns(l).some(within))));
+};
+/*
+ * An amount as the ledger may write it: its significant bytes and nothing
+ * around them, either way round, as itself and as its 128-bit negative, and
+ * as a decimal number. The amount chosen below has six significant bytes, so
+ * a match is the amount and not a coincidence.
+ */
+const significantBytesOf = (v: bigint): Buffer => Buffer.from(v.toString(16).padStart(v.toString(16).length + (v.toString(16).length % 2), '0'), 'hex');
+const amountRunsOf = (value: bigint): Buffer[] => [value, (1n << 128n) - value].flatMap((v) => {
+  const low = significantBytesOf(v & ((1n << 48n) - 1n));
+  return [low, Buffer.from(low).reverse()];
+});
+const holdsAmount = (bytes: Uint8Array, value: bigint): boolean =>
+  amountRunsOf(value).some((r) => Buffer.from(bytes).indexOf(r) >= 0)
+  || Buffer.from(bytes).toString('latin1').includes(value.toString());
+
+/**
+ * **THE PERSON'S WALLET, AS FAR AS ITS PRIVATE BALANCING GOES.** The wallet SDK's
+ * shielded balancing, from the same factory, coin choice and key capability the
+ * product wallet's shielded wallet is built with, over coins of the deposit's
+ * token and one of another. It answers the deposit it was asked to pay for,
+ * merged with what it added, as the wallet finishes a page's transaction.
+ */
+const aWalletHolding = (network: string) => {
+  const keys = L.ZswapSecretKeys.fromSeed(new Uint8Array(32).map((_, i) => 91 + i));
+  let wallet: unknown = (ShieldedV1 as any).CoreWallet.initEmpty(keys, network);
+  for (const [token, value] of [[TOKEN, (VALUE * 6n) / 10n], [TOKEN, (VALUE * 7n) / 10n], [OTHER_TOKEN, VALUE * 3n]] as const) {
+    const coin = L.createShieldedCoinInfo(token, value);
+    const output = L.ZswapOutput.new(coin, 0, keys.coinPublicKey, keys.encryptionPublicKey);
+    wallet = (ShieldedV1 as any).CoreWallet.apply(wallet, keys, L.ZswapOffer.fromOutput(output, token, value));
+  }
+  const context = {
+    coinSelection: chooseCoin,
+    coinsAndBalancesCapability: (ShieldedV1 as any).CoinsAndBalances.makeDefaultCoinsAndBalancesCapability(),
+    keysCapability: (ShieldedV1 as any).Keys.makeDefaultKeysCapability(),
+  };
+  const balancing = (ShieldedV1 as any).Transacting.makeDefaultTransactingCapability({ networkId: network }, () => context);
+  return {
+    /** The deposit as the chain would receive it once this wallet has paid for it. */
+    payFor: (publicPart: any): any => {
+      const answered = balancing.balanceTransaction(keys, wallet, publicPart);
+      if (Either.isLeft(answered)) throw answered.left;
+      const [added] = answered.right;
+      if (added === undefined) throw new Error('the wallet found nothing to pay for');
+      return publicPart.merge(added.eraseProofs());
+    },
+  };
+};
+
 describe.skipIf(!KEYS_ON_DISK)('A DEPOSIT FROM THE PAGE, BUILT ON THE DEVICE [needs contracts/managed-vault/keys; `npm run compact:vault -- --full` builds them]', () => {
   const zk = new NodeZkConfigProvider(new URL('../../contracts/managed-vault', import.meta.url).pathname);
   const compiled = CompiledContract.make('Vault', (vaultModule as any).Contract).pipe(
@@ -161,8 +261,10 @@ describe.skipIf(!KEYS_ON_DISK)('A DEPOSIT FROM THE PAGE, BUILT ON THE DEVICE [ne
     state = Buffer.from(deploy.intents.values().next().value.actions[0].initialState.serialize()).toString('base64');
   });
 
-  it('SENDS THE SERVICE ONLY THE PROVEN TRANSACTION, AND NOTHING IT SENDS ANYWHERE CARRIES THE NONCE, ITS SECRET OR THE UNPROVEN TRANSACTION', async () => {
+  it('SENDS THE SERVICE ONLY THE DEPOSIT THE WALLET FINISHED, WHICH SHOWS NO TOKEN OR AMOUNT, AND NOTHING SENT ANYWHERE CARRIES THE NONCE, ITS SECRET OR ANY PART OF THE UNPROVEN TRANSACTION', async () => {
     unproven = []; erased = []; builtWith = [];
+    const wallet = aWalletHolding(NET);
+    const finished: Uint8Array[] = [];
     const caught: Array<{ to: string; what: unknown }> = [];
     const catching = (to: string, what: unknown) => { caught.push({ to, what }); };
 
@@ -225,18 +327,33 @@ describe.skipIf(!KEYS_ON_DISK)('A DEPOSIT FROM THE PAGE, BUILT ON THE DEVICE [ne
       signers: async () => [{ id: 'ada', wrappingPublicKey: wrapping.publicKey }],
     };
     await openCompanyVaultPool(doors, vault);
-    const done = await depositIntoCompanyVault({
-      ...doors, company: ACCOUNT as Hex, builder: watched,
-      pay: async (ask) => { catching('wallet', ask); return { transaction: ask.transaction, leaves: [] }; },
-      inFlight: inFlightInMemory(),
-    }, vault, { token: TOKEN as Hex, value: 1_000n });
+    /* The page's own source, a private token paid in by the person's wallet, over an asset whose private token is this test's. */
+    const source = privateTokenFromTheWallet(async (ask) => {
+        catching('wallet', ask);
+        /*
+         * The wallet is asked with the proven bytes, and pays for the transaction they stand for: the one the prover
+         * was given, whose public part is what a proof leaves for the chain.
+         */
+        const paid = wallet.payFor(L.Transaction.deserialize('signature', 'no-proof', 'no-binding', erased[erased.length - 1]!));
+        finished.push(paid.serialize());
+        return { transaction: Buffer.from(finished[0]!).toString('base64'), leaves: [] };
+    }, new StaticAssetRegistry([{
+      code: 'DEP', name: 'DEP', kind: 'token', decimals: 0, chain: 'midnight', enabled: true, sortOrder: 1,
+      ledger: { shielded: TOKEN, unshielded: null } as never,
+    }]));
+    const done = await depositFromSource({
+      ...doors, company: ACCOUNT as Hex, builder: watched, inFlight: inFlightInMemory(),
+    }, vault, source, { code: 'DEP', value: VALUE });
 
-    /* ---- the deposit happened, and what the service was sent is the proven transaction ---- */
-    expect(done.note.value).toBe(1_000n);
+    /* ---- the deposit happened, and what the service was sent is what the wallet finished ---- */
+    expect(done.note.value).toBe(VALUE);
     expect(unproven, 'the deposit was built once, on this device').toHaveLength(1);
+    const asked = caught.filter((c) => c.to === 'wallet').map((c) => (c.what as { transaction: string }).transaction);
+    /* RED WHEN: the builder hands back the unproven transaction, or the wallet is asked with anything but the proven one. */
+    expect(asked).toEqual([Buffer.from(PROVEN).toString('base64')]);
     const sent = caught.filter((c) => c.to === 'service deposit').map((c) => (c.what as unknown[])[1]);
-    /* RED WHEN: the builder hands back the unproven transaction, or the page sends anything but the proven one. */
-    expect(sent).toEqual([Buffer.from(PROVEN).toString('base64')]);
+    /* RED WHEN: the page sends the service anything but what the wallet answered. */
+    expect(sent).toEqual([Buffer.from(finished[0]!).toString('base64')]);
     /* RED WHEN: the deposit is built with the ledger's starting parameters, or with anything but what the chain served. */
     expect(Buffer.from(CHAIN_PARAMETERS).equals(Buffer.from(STARTING)), 'the parameters served are the starting ones').toBe(false);
     expect(builtWith.map((b) => Buffer.from(b).toString('hex')), 'the deposit was not built with the chain\'s parameters')
@@ -247,7 +364,26 @@ describe.skipIf(!KEYS_ON_DISK)('A DEPOSIT FROM THE PAGE, BUILT ON THE DEVICE [ne
       'service payout-state', 'wallet',
     ]);
 
+    /* ---- what the chain is sent states neither the deposit's token nor its amount ---- */
+    const onChain = L.Transaction.deserialize('signature', 'no-proof', 'no-binding', finished[0]!) as any;
+    const before = L.Transaction.deserialize('signature', 'no-proof', 'no-binding', erased[0]!) as any;
+    const deltasOf = (t: any) => [t.guaranteedOffer, ...(t.fallibleOffer?.values() ?? [])]
+      .filter((o: any) => o !== undefined).flatMap((o: any) => [...o.deltas.entries()]);
+    const shieldedImbalancesOf = (t: any) => [0, ...(t.intents?.keys() ?? []), ...(t.fallibleOffer?.keys() ?? [])]
+      .flatMap((segment: number) => [...t.imbalances(segment).entries()].filter(([k]: any) => k.tag === 'shielded'));
+    /* The control: before the wallet pays, the chain would see the token and the amount, and the searches below see them too. */
+    expect(deltasOf(before), 'the deposit before the wallet pays states its token and amount').toEqual([[TOKEN, -VALUE]]);
+    expect(carries([erased[0]!], Buffer.from(TOKEN, 'hex')), 'the search cannot see the token where the chain would').toBe(true);
+    expect(holdsAmount(erased[0]!, VALUE), 'the search cannot see the amount where the chain would').toBe(true);
+    /* RED WHEN: the wallet pays in another section than the deposit's, or short, or not at all - a delta is left. */
+    expect(deltasOf(onChain), 'the finished deposit states a token and amount in public').toEqual([]);
+    expect(shieldedImbalancesOf(onChain), 'the finished deposit leaves a private token unbalanced').toEqual([]);
+    /* RED WHEN: the token or the amount appears anywhere in what the chain is sent, however it is written. */
+    expect(carries([finished[0]!], Buffer.from(TOKEN, 'hex')), 'the finished deposit names its token').toBe(false);
+    expect(holdsAmount(finished[0]!, VALUE), 'the finished deposit names its amount').toBe(false);
+
     /* ---- and nothing any of them was sent carries a secret ---- */
+    const inside = (x: string) => `{"note":"${x}"}`;
     const opened = openNonceSecrets((await kept.get('nonce-secret')!.get(vault))!, vault, recordsKeypairFrom(companyKey));
     const nonce = Buffer.from(done.note.nonce, 'hex');
     const secrets: Array<[string, Uint8Array]> = [
@@ -263,12 +399,33 @@ describe.skipIf(!KEYS_ON_DISK)('A DEPOSIT FROM THE PAGE, BUILT ON THE DEVICE [ne
       caught.filter((c) => carries([c.what], secret)).map((c) => `${name}, in: ${c.to}`));
     /* RED WHEN: any request, record or wallet ask carries one of them - in hex, in bytes, or inside base64. */
     expect(leaked, 'these left the device').toEqual([]);
+    /*
+     * RED WHEN: any request, record, wallet ask or wallet answer carries any part of the unproven transaction the
+     * proof does not leave public - the part that carries the nonce, or any other - cut anywhere, not only whole.
+     */
+    const privateRuns = privateRunsOf(unproven[0]!, [
+      erased[0]!, Buffer.from(vault, 'hex'), Buffer.from(vault, 'latin1'), Buffer.from(state, 'base64'), CHAIN_PARAMETERS,
+    ]);
+    expect(privateRuns.size, 'the unproven transaction has no part the proof hides, so this search searches nothing').toBeGreaterThan(64);
+    expect(caught.filter((c) => carriesAnyRun([c.what], privateRuns)).map((c) => c.to), 'part of the unproven transaction left the device').toEqual([]);
+    const at = Buffer.from(unproven[0]!).indexOf(Buffer.from(nonce.subarray(0, WINDOW)));
+    expect(at, 'the unproven transaction does not carry the nonce where the search looks').toBeGreaterThanOrEqual(0);
+    const aroundTheNonce = unproven[0]!.subarray(Math.max(0, at - 24), at + 24);
+    const elsewhere = [...privateRuns][Math.floor(privateRuns.size / 2)]!;
+    for (const [how, what] of [
+      ['a piece around the nonce, raw', aroundTheNonce],
+      ['a piece around the nonce, in base64 inside a longer string', inside(Buffer.from(aroundTheNonce).toString('base64'))],
+      ['a piece around the nonce, in hex at an odd nibble', `f${Buffer.from(aroundTheNonce).toString('hex')}`],
+      ['one hidden run from elsewhere in it, in base64url', Buffer.from(elsewhere, 'hex').toString('base64url')],
+    ] as Array<[string, unknown]>) {
+      expect(carriesAnyRun([what], privateRuns), `the search cannot see ${how}`).toBe(true);
+    }
+    expect(carriesAnyRun([erased[0]!, finished[0]!, PROVEN], privateRuns), 'the search finds hidden parts in public bytes').toBe(false);
 
     /* ---- the search finds a nonce where one is: the unproven transaction carries it ---- */
     expect(carries([unproven[0]!], nonce), 'the search cannot see the nonce, so the searches above prove nothing').toBe(true);
     expect(carries([Buffer.from(unproven[0]!).toString('base64')], nonce), 'the search cannot see inside base64').toBe(true);
     expect(carries([toHex(nonce).toUpperCase()], nonce), 'the search cannot see hex in capitals').toBe(true);
-    const inside = (x: string) => `{"note":"${x}"}`;
     const controls: Array<[string, unknown]> = [
       ['a decimal number', BigInt(`0x${toHex(nonce)}`)],
       ['a decimal number, the bytes reversed', BigInt(`0x${Buffer.from(nonce).reverse().toString('hex')}`).toString()],
@@ -285,5 +442,6 @@ describe.skipIf(!KEYS_ON_DISK)('A DEPOSIT FROM THE PAGE, BUILT ON THE DEVICE [ne
     }
     /* ---- and the transaction's public part, which is what a proof leaves for the chain, does not ---- */
     expect(carries([erased[0]!], nonce), 'the deposit\'s public part names its nonce').toBe(false);
+    expect(carries([finished[0]!], nonce), 'the finished deposit names its nonce').toBe(false);
   }, 120_000);
 });

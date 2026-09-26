@@ -2,17 +2,18 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { NETWORK } from 'midnight-identity/network';
 import type { Hex } from '../core/crypto.js';
 import type { Account } from '../core/types.js';
-import { assets, ledgerFormOf, ledgerTokenOf, parseAmount } from '../core/assets.js';
+import { assets, ledgerFormOf, parseAmount } from '../core/assets.js';
 import * as keyring from './keyring.js';
 import { WALLET_ORIGIN } from './Auth.js';
 import {
-  createCompanyVault, depositIntoCompanyVault, openCompanyVaultPool,
+  createCompanyVault, openCompanyVaultPool,
   VaultHandoverOwed, type VaultStage,
 } from './vault-operation.js';
 import {
   browserDepositsInFlight, browserTemporaryKeys, deviceRecordsFor, deviceSignerFrom, giveVaultKeys, rosterOf, vaultServiceFor,
 } from './vault-page-doors.js';
 import { startVaultBuilder, type VaultBuilderClient } from './vault-worker-client.js';
+import { depositFromSource, privateTokenFromTheWallet } from './deposit-source.js';
 import { openAccount } from '../core/account.js';
 import { rosterVaultKeys } from '../core/vault-keys.js';
 import { whyNotTheCommittee } from './handover-check.js';
@@ -158,14 +159,15 @@ export function VaultPanel({ account, me, viewingKey }: {
     const chosen = assets.require(asset);
     const value = parseAmount(amount, chosen);
     if (value <= 0n) throw new Error('an amount of nothing is not a deposit.');
-    const money = { token: ledgerTokenOf(chosen.code, 'shielded') as Hex, value };
+    const source = privateTokenFromTheWallet((ask) => keyring.payIntoAVaultFromTheWallet(WALLET_ORIGIN, ask));
+    /* Asked before the keys are, so an asset this source cannot bring asks the wallet for nothing. */
+    source.money({ code: chosen.code, value });
     const k = await withKeys();
-    const done = await depositIntoCompanyVault({
+    const done = await depositFromSource({
       ...pacing, service, me: k.device, myRecordsKey: k.myRecordsKey, signers: k.signers, records: k.records,
       company: k.company, builder: await builder(),
-      pay: (ask) => keyring.payIntoAVaultFromTheWallet(WALLET_ORIGIN, ask),
       inFlight: browserDepositsInFlight(),
-    }, vault, money);
+    }, vault, source, { code: chosen.code, value });
     setAmount('');
     return done.notYetSpendable === undefined
       ? `${amount} ${chosen.code} is in the vault (${done.txRef}).`
