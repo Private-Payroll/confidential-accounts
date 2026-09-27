@@ -100,6 +100,16 @@ export function vaultArtefactFile(places: VaultArtefactPlaces, path: string): st
 const NOTHING_HERE = { error: 'there is no such proving material here.' };
 
 /**
+ * **A REFUSAL IS NEVER KEPT.** A file missing now can be here a minute later -
+ * this server fetches public parameters when it starts - so every refusal
+ * tells a browser, and anything between, to ask again next time.
+ */
+const refuse = (res: express.Response): void => {
+  res.setHeader('cache-control', 'no-store');
+  res.status(404).json(NOTHING_HERE);
+};
+
+/**
  * **THE FILE IS HANDED TO THE SENDER AS A PATH BELOW ITS OWN FOLDER, NOT AS A
  * WHOLE PATH ON DISK.** Express's file sender treats any path with a part that
  * starts with a dot as hidden and answers 404 for it unless told otherwise, and
@@ -124,13 +134,21 @@ export function vaultArtefactRoutes(places: VaultArtefactPlaces, published: Publ
     const file = at === null ? null : join(at.root, at.below);
     if (at === null || file === null || !existsSync(file)
       || (at.parameters !== undefined && !(await genuine(file, at.parameters)))) {
-      res.status(404).json(NOTHING_HERE);
+      refuse(res);
       return;
     }
-    res.setHeader('cache-control', 'public, max-age=3600');
     res.type('application/octet-stream');
-    res.sendFile(at.below, { root: at.root }, (err) => {
-      if (err && !res.headersSent) res.status(404).json(NOTHING_HERE);
+    /*
+     * **A REFUSAL IS NEVER LEFT CARRYING THE HOUR.** The header rides on the
+     * send, so a file that cannot be found or read never gets it, and whatever
+     * refusal a failed send turns into says it must not be kept. Set on the
+     * response before the send, as it once was, it stayed on the refusal, and
+     * a browser went on replaying that refusal from its own cache for the hour
+     * the header allowed, without asking here again - after the file was being
+     * served.
+     */
+    res.sendFile(at.below, { root: at.root, headers: { 'cache-control': 'public, max-age=3600' } }, (err) => {
+      if (err && !res.headersSent) refuse(res);
     });
   });
   return r;

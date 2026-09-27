@@ -147,7 +147,8 @@ export const provingCapability = (
   preimageFor: preimageOver(scope.fetch.bind(scope)),
 
   keyMaterial: httpKeyMaterialSource(artefactBase, {
-    cache: new IndexedDbArtefactCache(scope.indexedDB),
+    /* A store that will not keep a file costs a download; it is said in this thread's console. */
+    cache: new IndexedDbArtefactCache(scope.indexedDB, undefined, (why: string) => scope.console?.warn?.(why)),
     fetchImpl: scope.fetch.bind(scope),
     /*
      * **THE ONLY PROGRESS THIS OPERATION HAS, SENT AS IT HAPPENS.** The prover
