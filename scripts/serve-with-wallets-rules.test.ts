@@ -4,8 +4,9 @@
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { EventEmitter } from 'node:events';
 import { join } from 'node:path';
-import { parametersBeforeServing, postureFrom, refuseToServe, seedsAreOneParty, POSTURE_REQUIRED } from './serve-with-wallets-rules.js';
+import { PAGES_START_WITHIN_MS, pagesVerdict, somethingAlreadyServes, waitForThePages, parametersBeforeServing, postureFrom, refuseToServe, seedsAreOneParty, POSTURE_REQUIRED } from './serve-with-wallets-rules.js';
 import { refuseIncompleteSetup } from './create-company-rules.js';
 import { servedCircuits } from '../src/server/proving-parameters.js';
 
@@ -242,5 +243,101 @@ describe('the new application\'s proving files, before it is served', () => {
     /* RED WHEN: the warning's trigger is never set from what was found, so it can never print. */
     const block = launcher.slice(launcher.indexOf("if (chosen.page === 'web') {"), launcher.indexOf('bringUpWallet('));
     expect(block).toMatch(/parametersInPlace = said\.inPlace;/);
+  });
+});
+
+describe('ready means every page answers', () => {
+  const labels = ['the application', 'the wallet'];
+  const so = (over: Partial<import('./serve-with-wallets-rules.js').PagesSoFar>) =>
+    ({ labels, answered: [], ended: [], waitedMs: 0, ...over });
+
+  /* RED WHEN: the launcher can be ready while a page it started has not answered. */
+  it('is ready only when every page answered, and waits while one has not', () => {
+    expect(pagesVerdict(so({ answered: labels }))).toEqual({ ready: true });
+    expect(pagesVerdict(so({ answered: ['the application'], waitedMs: 5_000 }))).toEqual({ wait: true });
+  });
+
+  /* RED WHEN: a page whose process ended is waited on, or reported ready because it had answered once, or not named. */
+  it('refuses the moment a page ends, naming it and how, even one that had answered', () => {
+    const v = pagesVerdict(so({ answered: labels, ended: [{ label: 'the wallet', code: 1, signal: null }] }));
+    expect(v).toEqual({ refusal: expect.stringMatching(/^the wallet stopped \(exit 1\), so nothing was offered as ready\. What resolves it: /) });
+    expect(pagesVerdict(so({ ended: [{ label: 'the application', code: null, signal: 'SIGKILL' }] })))
+      .toEqual({ refusal: expect.stringContaining('the application stopped (signal SIGKILL)') });
+  });
+
+  /* RED WHEN: the wait never ends, or ends without naming the page that never answered. */
+  it('gives up at the limit, naming what never answered', () => {
+    const v = pagesVerdict(so({ answered: ['the application'], waitedMs: PAGES_START_WITHIN_MS }));
+    expect(v).toEqual({ refusal: expect.stringMatching(/^the wallet did not answer within 180 seconds of being started/) });
+  });
+
+  /* RED WHEN: the launcher starts its pages without first asking whether something already serves there, or prints READY before it has waited for them. */
+  it('the launcher asks what already serves, starts its pages, waits for them, and only then says READY', () => {
+    const launcher = readFileSync(join(ROOT, 'scripts', 'serve-with-wallets.ts'), 'utf8');
+    const asked = launcher.indexOf('const taken = await somethingAlreadyServes(plan.starts, answersAt);\n  if (taken) throw new Error(taken);');
+    const start = launcher.indexOf('const started = startThePages(ROOT, plan.starts, ');
+    const wait = launcher.indexOf('await waitForThePages({ starts: plan.starts, started, answersAt });');
+    expect(asked).toBeGreaterThan(-1);
+    expect(start).toBeGreaterThan(asked);
+    expect(wait).toBeGreaterThan(start);
+    expect(launcher.indexOf('READY.')).toBeGreaterThan(wait);
+    /* A page counts as answering only on a success status. */
+    expect(launcher).toMatch(/async function answersAt\(origin: string\): Promise<boolean> \{\n  try \{\n    const r = await fetch\(`\$\{origin\}\/`, \{ signal: AbortSignal\.timeout\(2000\) \}\);\n    await r\.body\?\.cancel\(\);\n    return r\.ok;/);
+  });
+});
+
+describe('the wait itself, driven', () => {
+  const STARTS = [{ label: 'the application', origin: 'http://a' }, { label: 'the wallet', origin: 'http://w' }];
+  /** A clock the wait moves forward itself, one second per pause, and a pause that takes no time. */
+  const clock = () => { let t = 0; return { now: () => t, pause: async (ms: number) => { t += ms; } }; };
+  const kids = () => [new EventEmitter(), new EventEmitter()];
+
+  /* RED WHEN: something answering where a page is about to be served is not refused, or is not named. */
+  it('refuses before starting anything when something already answers at a page\'s origin', async () => {
+    expect(await somethingAlreadyServes(STARTS, async () => false)).toBeNull();
+    const r = await somethingAlreadyServes(STARTS, async (o) => o === 'http://w');
+    expect(r).toMatch(/^something is already serving at http:\/\/w \(the wallet\), before this launcher started its own page there/);
+  });
+
+  /* RED WHEN: the wait returns before every origin has answered, or returns on the first pass it saw them all. */
+  it('returns only once every origin has answered on two passes running', async () => {
+    const c = clock();
+    const asked: string[] = [];
+    let passes = 0;
+    await waitForThePages({ starts: STARTS, started: kids(), ...c, answersAt: async (o) => {
+      asked.push(o); if (o === 'http://w') passes += 1; return o === 'http://a' || passes >= 3;
+    } });
+    expect(passes).toBe(3);
+    expect(c.now()).toBe(3000);
+  });
+
+  /* RED WHEN: a response that is not a success is counted as the page serving. */
+  it('keeps waiting while an origin answers only with a failure, then refuses at the limit naming it', async () => {
+    const c = clock();
+    await expect(waitForThePages({ starts: STARTS, started: kids(), ...c, limitMs: 5000, answersAt: async (o) => o === 'http://a' }))
+      .rejects.toThrow(/^the wallet did not answer within 5 seconds/);
+  });
+
+  /* RED WHEN: a page that ends is waited on, or the wrong page is named as the one that ended. */
+  it('refuses as soon as a started page ends, naming that page', async () => {
+    const c = clock();
+    const started = kids();
+    let n = 0;
+    await expect(waitForThePages({ starts: STARTS, started, ...c, answersAt: async () => {
+      n += 1; if (n === 3) started[1]!.emit('exit', 1, null); return false;
+    } })).rejects.toThrow(/^the wallet stopped \(exit 1\)/);
+  });
+
+  /* RED WHEN: a page that answers and then dies straight away - between the pass that saw every page and the next - is reported ready. */
+  it('does not report ready a page that answered and then ended', async () => {
+    const c = clock();
+    const started = kids();
+    let ended = false;
+    const pause = async (ms: number) => {
+      await c.pause(ms);
+      if (!ended) { ended = true; started[0]!.emit('exit', null, 'SIGTERM'); }
+    };
+    await expect(waitForThePages({ starts: STARTS, started, now: c.now, pause, answersAt: async () => true }))
+      .rejects.toThrow(/^the application stopped \(signal SIGTERM\)/);
   });
 });

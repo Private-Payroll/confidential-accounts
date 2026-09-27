@@ -54,7 +54,7 @@ import { feePayerOver, paidFeeFrom } from './funded-wallets.js';
 import { coinlessCustomer } from '../src/midnight/coinless-customer.js';
 import { testEnvironmentFor, startEnvironment } from './test-environment.js';
 import {
-  POSTURE_NOT_CARRIED, parametersBeforeServing, postureFrom, refuseToServe,
+  POSTURE_NOT_CARRIED, parametersBeforeServing, postureFrom, refuseToServe, somethingAlreadyServes, waitForThePages,
 } from './serve-with-wallets-rules.js';
 import { applicationPageFrom, pageStartsFor, refuseWhatTheServerSaid } from './serve-rules.js';
 import { ensureProvingParameters, parameterSources } from '../src/server/proving-parameters.js';
@@ -88,6 +88,17 @@ const step = (n: number, of: number, what: string) => line(`\n  [${n}/${of}] ${w
 const good = (s: string) => line(`      ${s}`);
 
 stopEverythingOnExit();
+
+/** Whether a page answers at an origin with a success status. No answer, or any other status, is no. */
+async function answersAt(origin: string): Promise<boolean> {
+  try {
+    const r = await fetch(`${origin}/`, { signal: AbortSignal.timeout(2000) });
+    await r.body?.cancel();
+    return r.ok;
+  } catch {
+    return false;
+  }
+}
 
 async function proofServerAnswers(port: number): Promise<boolean> {
   try {
@@ -231,7 +242,12 @@ async function main() {
    * **ON THIS MACHINE'S OWN LOOPBACK ONLY.** A page whose server can spend is
    * not offered to the rest of the network it happens to be on.
    */
-  startThePages(ROOT, plan.starts, { ...process.env, ...posture });
+  const taken = await somethingAlreadyServes(plan.starts, answersAt);
+  if (taken) throw new Error(taken);
+  const started = startThePages(ROOT, plan.starts, { ...process.env, ...posture });
+  good('waiting for the page and the wallet to answer');
+  await waitForThePages({ starts: plan.starts, started, answersAt });
+  good(`${plan.starts.map((s) => `${s.label} answers at ${s.origin}`).join('; ')}`);
   line();
   line(`  READY. Open ${posture.APP_ORIGIN}, sign in with your wallet, and create a company.`);
   if (!parametersInPlace) line('  NOT EVERYTHING THE PAGE PROVES WITH IS IN PLACE: step 1 above says what, and what fixes it.');
