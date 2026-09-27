@@ -2,6 +2,7 @@ import express from 'express';
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE, VAULT_CIRCUITS } from '../midnight/vault-contract.js';
+import { genuineParameterFiles, publishedByMidnight, type PublishedDigest } from './proving-parameters.js';
 
 /**
  * **THE PUBLIC MATERIAL A DEVICE PROVES A VAULT'S TRANSACTIONS WITH**, served
@@ -26,7 +27,7 @@ import { ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE, VAULT_CIRCUITS } from '../midnight
  *
  *   /artefacts/vault/keys/<circuit>.prover|verifier
  *   /artefacts/vault/zkir/<circuit>.bzkir
- *   /artefacts/vault/params/bls_midnight_2p<k>
+ *   /artefacts/vault/params/bls_midnight_2p<k>   (only when it is the file Midnight publishes)
  *   /artefacts/vault/builtin/zswap/9/keys/<output|spend|sign>.prover|verifier
  *   /artefacts/vault/builtin/zswap/9/zkir/<output|spend|sign>.bzkir
  *   /artefacts/vault/account/keys/<recordPayment|propose|approve>.prover|verifier
@@ -52,44 +53,85 @@ export const vaultArtefactPlaces = (root: string, env: NodeJS.ProcessEnv): Vault
   account: resolve(root, 'contracts', 'managed'),
 });
 
-/** The file a request names, or null for anything that is not one of the files above. */
-export function vaultArtefactFile(places: VaultArtefactPlaces, path: string): string | null {
+/**
+ * Where a named file lives: the folder it is served from, and its path below
+ * that folder. Every part of that path is fixed here or matched by a pattern
+ * of letters and digits, so none of it can start with a dot or climb out.
+ */
+interface ArtefactLocation {
+  readonly root: string;
+  readonly below: string;
+  /** Set for public parameters: the file name their published digest is listed under. */
+  readonly parameters?: string;
+}
+
+function vaultArtefactLocation(places: VaultArtefactPlaces, path: string): ArtefactLocation | null {
   const vault = /^\/(keys|zkir)\/([A-Za-z]+)\.(prover|verifier|bzkir)$/u.exec(path);
   if (vault) {
     const [, dir, circuit, ext] = vault;
     if (!(VAULT_CIRCUITS as readonly string[]).includes(circuit!)) return null;
     if ((dir === 'zkir') !== (ext === 'bzkir')) return null;
-    return join(places.compiled, dir!, `${circuit}.${ext}`);
+    return { root: places.compiled, below: join(dir!, `${circuit}.${ext}`) };
   }
   const account = /^\/account\/(keys|zkir)\/([A-Za-z]+)\.(prover|verifier|bzkir)$/u.exec(path);
   if (account) {
     const [, dir, circuit, ext] = account;
     if (!ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE.includes(circuit!)) return null;
     if ((dir === 'zkir') !== (ext === 'bzkir')) return null;
-    return join(places.account, dir!, `${circuit}.${ext}`);
+    return { root: places.account, below: join(dir!, `${circuit}.${ext}`) };
   }
   const params = /^\/params\/(bls_(?:midnight|filecoin)_2p\d{1,2})$/u.exec(path);
-  if (params) return join(places.params, params[1]!);
+  if (params) return { root: places.params, below: params[1]!, parameters: params[1]! };
   const builtin = /^\/builtin\/zswap\/9\/(keys|zkir)\/([a-z]+)\.(prover|verifier|bzkir)$/u.exec(path);
   if (builtin) {
     const [, dir, name, ext] = builtin;
     if (!BUILTIN.has(name!) || (dir === 'zkir') !== (ext === 'bzkir')) return null;
-    return join(places.params, 'zswap', '9', `${name}.${ext}`);
+    return { root: places.params, below: join('zswap', '9', `${name}.${ext}`) };
   }
   return null;
 }
 
-export function vaultArtefactRoutes(places: VaultArtefactPlaces): express.Router {
+/** The file a request names, or null for anything that is not one of the files above. */
+export function vaultArtefactFile(places: VaultArtefactPlaces, path: string): string | null {
+  const at = vaultArtefactLocation(places, path);
+  return at === null ? null : join(at.root, at.below);
+}
+
+const NOTHING_HERE = { error: 'there is no such proving material here.' };
+
+/**
+ * **THE FILE IS HANDED TO THE SENDER AS A PATH BELOW ITS OWN FOLDER, NOT AS A
+ * WHOLE PATH ON DISK.** Express's file sender treats any path with a part that
+ * starts with a dot as hidden and answers 404 for it unless told otherwise, and
+ * given a whole path it looks at every part - so every file under
+ * `.midnight/params` was found here and then refused, and a checkout placed
+ * anywhere under a dot-named folder would have had every file refused. Given
+ * the folder as its root, the sender looks only at the part below it, which the
+ * patterns above fix, and it still refuses anything that would climb out.
+ *
+ * **AND A PUBLIC PARAMETER FILE IS CHECKED BEFORE IT IS HANDED OUT.** It is
+ * compared with the digest Midnight publishes for its name, once per version of
+ * the file on disk; a file that differs, or a name nothing publishes a digest
+ * for, gets the same answer as a file that is not here. What this cannot catch
+ * is a file rewritten in place, not replaced, between that check and the send:
+ * this server's own fetch always replaces, by rename.
+ */
+export function vaultArtefactRoutes(places: VaultArtefactPlaces, published: PublishedDigest = publishedByMidnight): express.Router {
+  const genuine = genuineParameterFiles(published);
   const r = express.Router();
-  r.get(`${VAULT_ARTEFACT_PATH}/*path`, (req, res) => {
-    const file = vaultArtefactFile(places, req.path.slice(VAULT_ARTEFACT_PATH.length));
-    if (file === null || !existsSync(file)) {
-      res.status(404).json({ error: 'there is no such proving material here.' });
+  r.get(`${VAULT_ARTEFACT_PATH}/*path`, async (req, res) => {
+    const at = vaultArtefactLocation(places, req.path.slice(VAULT_ARTEFACT_PATH.length));
+    const file = at === null ? null : join(at.root, at.below);
+    if (at === null || file === null || !existsSync(file)
+      || (at.parameters !== undefined && !(await genuine(file, at.parameters)))) {
+      res.status(404).json(NOTHING_HERE);
       return;
     }
     res.setHeader('cache-control', 'public, max-age=3600');
     res.type('application/octet-stream');
-    res.sendFile(file);
+    res.sendFile(at.below, { root: at.root }, (err) => {
+      if (err && !res.headersSent) res.status(404).json(NOTHING_HERE);
+    });
   });
   return r;
 }
