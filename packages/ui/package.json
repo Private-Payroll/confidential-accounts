@@ -1,0 +1,12 @@
+{
+  "name": "vaults-ui",
+  "version": "0.0.0",
+  "description": "The component kit the payroll web application is built from.",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*"
+  }
+}

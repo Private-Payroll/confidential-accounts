@@ -5,8 +5,9 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { postureFrom, refuseToServe, seedsAreOneParty, POSTURE_REQUIRED } from './serve-with-wallets-rules.js';
+import { parametersBeforeServing, postureFrom, refuseToServe, seedsAreOneParty, POSTURE_REQUIRED } from './serve-with-wallets-rules.js';
 import { refuseIncompleteSetup } from './create-company-rules.js';
+import { servedCircuits } from '../src/server/proving-parameters.js';
 
 const ROOT = join(import.meta.dirname, '..');
 const ALL_PRESENT = {
@@ -85,8 +86,8 @@ describe('refusals before anything is brought up', () => {
 
   /*
    * RED WHEN: origins the product cannot be started on reach the slow part -
-   * a wallet on the application's own origin would be refused only after both
-   * wallets had synced.
+   * a wallet on the application's own origin would be refused only after the
+   * paying wallet had synced.
    */
   it('refuses origins it cannot start before anything is brought up', () => {
     const onePort = { ...postureFrom(DEV), WALLET_ORIGIN: 'http://localhost:5173', VITE_WALLET_ORIGIN: 'http://localhost:5173' };
@@ -122,7 +123,8 @@ describe('the launcher hands the pair over before the server exists', () => {
   });
 
   /*
-   * RED WHEN: either door that pays a fee brings a wallet up before it has
+   * RED WHEN: either script that pays a fee (this launcher and the company
+   * creator) brings a wallet up before it has
    * read its ceiling, or builds its pair without passing the ceiling on.
    */
   it('both doors read the fee ceiling before any wallet, and hand it to the pair', () => {
@@ -179,5 +181,66 @@ describe('the launcher hands the pair over before the server exists', () => {
     expect(launcher).not.toContain('fundedPartiesOver');
     expect(launcher).toMatch(/customer: await coinlessCustomer\(\)/);
     expect(launcher.indexOf('handInFundedParties(')).toBeLessThan(launcher.indexOf('await startTheServer(ROOT)'));
+  });
+});
+
+describe('the new application\'s proving files, before it is served', () => {
+  const none = { present: [], fetched: [], setAside: [], missing: [], unread: [] };
+  const launcher = readFileSync(join(ROOT, 'scripts', 'serve-with-wallets.ts'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+
+  /* RED WHEN: a complete outcome is reported as incomplete, or a fetch is not said. */
+  it('says they are in place when they are, and what it fetched', () => {
+    const r = parametersBeforeServing({ ...none, present: ['bls_midnight_2p10'], fetched: [{ name: 'bls_midnight_2p9', from: 'https://srs.midnight.network', bytes: 98692 }], setAside: [{ from: '/p/bls_midnight_2p9', to: '/p/bls_midnight_2p9.not-genuine-1' }] }, '/p');
+    expect(r.inPlace).toBe(true);
+    expect(r.lines).toEqual([
+      'fetched bls_midnight_2p9 (98692 bytes) from https://srs.midnight.network, checked against its published digest',
+      '/p/bls_midnight_2p9 was not the published file; it was renamed to /p/bls_midnight_2p9.not-genuine-1 and replaced',
+      'every circuit the page proves has its proving parameters here, checked',
+    ]);
+  });
+
+  /* RED WHEN: a file that could not be fetched is not said, or not said with what it breaks and what fixes it. */
+  it('says plainly what could not be fetched, what fails, and what fixes it', () => {
+    const r = parametersBeforeServing({ ...none, missing: [{ name: 'bls_midnight_2p9', circuits: ['depositUnshielded (vault)'], why: 'https://srs.midnight.network answered 404' }] }, '/p');
+    expect(r.inPlace).toBe(false);
+    const said = r.lines.join('\n');
+    expect(said).toMatch(/THE PAGE WILL BE SERVED, BUT NOT EVERYTHING IT PROVES WITH IS IN PLACE/);
+    expect(said).toMatch(/bls_midnight_2p9 is not here and could not be fetched: https:\/\/srs.midnight.network answered 404/);
+    expect(said).toMatch(/These will fail when the page proves them: depositUnshielded \(vault\)/);
+    expect(said).toMatch(/MIDNIGHT_PARAM_SOURCE/);
+  });
+
+  /*
+   * RED WHEN: the network's own circuits being absent is reported as a damaged
+   * build, or not reported - every private deposit would fail with nothing said.
+   */
+  it('names the network\'s own circuits apart, because nothing fetches them', () => {
+    /* The network's label as the server's own list writes it, so a renamed label is caught here and not only there. */
+    const network = servedCircuits({ compiled: '/c', account: '/a', params: '/p' }).filter((c) => c.label.endsWith('(network)'));
+    expect(network.length).toBeGreaterThan(0);
+    const r = parametersBeforeServing({ ...none, unread: [`${network[0]!.label}: its compiled circuit is not here`, 'deposit (vault): its compiled circuit is not here'] }, '/elsewhere/params');
+    expect(r.inPlace).toBe(false);
+    const said = r.lines.join('\n');
+    expect(said).toMatch(/network's own shielded circuits could not be read from \/elsewhere\/params\/zswap\/9, so every private deposit/);
+    expect(said).toMatch(/deposit \(vault\): its compiled circuit is not here, so the page cannot prove this circuit/);
+    expect(said).not.toContain(`${network[0]!.label}: its compiled circuit is not here, so the page`);
+  });
+
+  /*
+   * RED WHEN: the new application is served without its proving files being put
+   * in place first, the check runs after a wallet is brought up (a problem would
+   * then be said minutes late), or it runs for the application in src/web, whose
+   * command must keep doing exactly what it did.
+   */
+  it('puts them in place for the new application only, before any wallet and before any page', () => {
+    const ensure = launcher.indexOf('await ensureProvingParameters(');
+    expect(ensure).toBeGreaterThan(-1);
+    expect(launcher.slice(launcher.lastIndexOf('if (', ensure), ensure)).toMatch(/if \(chosen\.page === 'web'\) \{/);
+    expect(ensure).toBeLessThan(launcher.indexOf('bringUpWallet('));
+    expect(ensure).toBeLessThan(launcher.indexOf('startThePages('));
+    expect(launcher).toMatch(/if \(!parametersInPlace\) line\(/);
+    /* RED WHEN: the warning's trigger is never set from what was found, so it can never print. */
+    const block = launcher.slice(launcher.indexOf("if (chosen.page === 'web') {"), launcher.indexOf('bringUpWallet('));
+    expect(block).toMatch(/parametersInPlace = said\.inPlace;/);
   });
 });

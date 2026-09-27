@@ -1,0 +1,28 @@
+{
+  /*
+   * THE COMPONENT KIT'S TYPECHECK.
+   *
+   * A kit file reaches its neighbours by the package's own name, the way an
+   * application that uses the kit reaches them, so one spelling works on both
+   * sides of the package boundary.
+   */
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "jsx": "react-jsx",
+    "paths": {
+      "vaults-ui": ["./src/index.ts"],
+      "vaults-ui/*": ["./src/*"]
+    }
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
+  "exclude": ["dist", "node_modules"]
+}

@@ -1,0 +1,8 @@
+{
+  "name": "vaults-web",
+  "version": "0.0.0",
+  "description": "The payroll web application, built screen by screen beside the one in src/web.",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module"
+}

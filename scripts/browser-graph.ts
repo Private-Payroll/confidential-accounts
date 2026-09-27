@@ -324,6 +324,7 @@ export const pagesIn = (root: string, repo: string): string[] =>
  */
 export const BROWSER_BUILDS: BrowserBuild[] = [
   { name: 'payroll', config: 'vite.config.ts', root: 'src/web', pages: ['src/web/index.html'], alias: [] },
+  { name: 'web', config: 'apps/web/vite.config.ts', root: 'apps/web', pages: ['apps/web/index.html'], alias: [] },
   { name: 'standalone', config: 'vite.standalone.config.ts', root: 'src/standalone', pages: ['src/standalone/index.html'], alias: [] },
   {
     name: 'proving-probe', config: 'vite.probe.config.ts', root: 'browser-proving',

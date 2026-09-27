@@ -15,7 +15,7 @@
  * **IT IS NOT THE SERVER ACQUIRING A WALLET.** The server still asks for a pair
  * and still answers read-only when none was handed in. This is a separate
  * process a person starts on purpose, and the only thing that makes the server
- * able to spend is that this process brought the wallets up first. Starting the
+ * able to spend is that this process brought the paying wallet up first. Starting the
  * server any other way hands it nothing.
  *
  * -- WHAT IT TRADES, STATED ---------------------------------------------------
@@ -54,15 +54,17 @@ import { feePayerOver, paidFeeFrom } from './funded-wallets.js';
 import { coinlessCustomer } from '../src/midnight/coinless-customer.js';
 import { testEnvironmentFor, startEnvironment } from './test-environment.js';
 import {
-  POSTURE_NOT_CARRIED, postureFrom, refuseToServe,
+  POSTURE_NOT_CARRIED, parametersBeforeServing, postureFrom, refuseToServe,
 } from './serve-with-wallets-rules.js';
-import { pageStartsFor, refuseWhatTheServerSaid } from './serve-rules.js';
+import { applicationPageFrom, pageStartsFor, refuseWhatTheServerSaid } from './serve-rules.js';
+import { ensureProvingParameters, parameterSources } from '../src/server/proving-parameters.js';
+import { vaultArtefactPlaces } from '../src/server/vault-artefacts.js';
 import { startTheServer, startThePages, stopChildren, stopEverythingOnExit } from './serve-product.js';
 
 const ROOT = join(import.meta.dirname, '..');
 const STATE_DIR = join(ROOT, '.midnight');
 /*
- * **RESOLVED ONCE, HERE, AND NOT READ AGAIN.** This door used to take the raw
+ * **RESOLVED ONCE, HERE, AND NOT READ AGAIN.** This launcher used to take the raw
  * value, name a seed file with it and print it, and only validate it four
  * hundred lines later - so an unusable name reached a filename and a screen
  * before anything refused it.
@@ -123,11 +125,33 @@ async function main() {
    * here rather than after the slow part.
    */
   const ceiling = feeCeilingFrom(process.env);
-  const plan = pageStartsFor(posture);
+  /*
+   * **WHICH APPLICATION GOES ON THE APPLICATION'S ORIGIN.** Unset, it is the one
+   * in `src/web`, exactly as before; the new one is chosen by its own command.
+   */
+  const chosen = applicationPageFrom(process.env);
+  if ('refusal' in chosen) throw new Error(chosen.refusal);
+  const plan = pageStartsFor(posture, chosen.page);
   /* Already refused above when it cannot be started; this narrows the type. */
   if ('refusals' in plan) throw new Error(plan.refusals.join('; '));
   good('the authority is recorded, the contract is compiled, the prover answers,');
   good('and the wallet that pays has a seed on this machine');
+  /*
+   * **THE NEW APPLICATION'S PROVING FILES ARE PUT IN PLACE BEFORE IT IS SERVED**,
+   * and before the slow part, so what cannot be fetched is said now. Done here
+   * and awaited, rather than left to the server's own check at start, so the two
+   * never write into the same folder at once: by the time the server looks,
+   * everything this could fetch is already there.
+   */
+  let parametersInPlace = true;
+  if (chosen.page === 'web') {
+    good('putting in place the files the page proves with (the first time, this downloads them)');
+    const places = vaultArtefactPlaces(ROOT, process.env);
+    const said = parametersBeforeServing(
+      await ensureProvingParameters({ places, sources: parameterSources(process.env) }), places.params);
+    parametersInPlace = said.inPlace;
+    for (const l of said.lines) good(l);
+  }
 
   /* ---------------------------------------------------------------- 2 */
   step(2, 5, 'Bringing up the wallet that pays (this is the slow part: a sync, then DUST)');
@@ -210,6 +234,7 @@ async function main() {
   startThePages(ROOT, plan.starts, { ...process.env, ...posture });
   line();
   line(`  READY. Open ${posture.APP_ORIGIN}, sign in with your wallet, and create a company.`);
+  if (!parametersInPlace) line('  NOT EVERYTHING THE PAGE PROVES WITH IS IN PLACE: step 1 above says what, and what fixes it.');
   line('  Each company created spends a network fee from the wallet that pays.');
   line('  Closing this window stops the server, the page and the wallet.');
   line();

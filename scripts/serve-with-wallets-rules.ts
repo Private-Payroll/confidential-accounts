@@ -1,7 +1,7 @@
 /**
  * THE RULES THE STAGENET LAUNCHER REFUSES BY, IN A FILE THAT BRINGS NOTHING UP.
  *
- * The launcher brings two wallets up, which takes a seed, a proof server, a
+ * The launcher brings up the wallet that pays, which takes a seed, a proof server, a
  * sync and minutes, and then serves a product that can spend a fee. Every
  * refusal it makes before that would otherwise be reachable only by arranging
  * all of it, so the refusals live here and are pinned without a wallet.
@@ -9,6 +9,7 @@
 import type { CreatePreconditions } from './create-company-rules.js';
 import { refuseIncompleteSetup, PRECONDITIONS } from './create-company-rules.js';
 import { pageStartsFor } from './serve-rules.js';
+import type { ParameterOutcome } from '../src/server/proving-parameters.js';
 import { PAIR_NETWORK } from '../src/midnight/network.js';
 
 /**
@@ -122,4 +123,44 @@ export function refuseToServe(input: {
     : 'the product cannot be served with wallets from this machine:\n\n  '
       + reasons.join(';\n\n  ') + '.\n\nNothing has been brought up and nothing has been spent.';
   return [head, setup ?? ''].filter(Boolean).join('\n\n');
+}
+
+/**
+ * **WHAT THE PAGE WILL PROVE WITH, SAID BEFORE IT IS SERVED.**
+ *
+ * The files a device proves with are fetched and checked before the page is
+ * offered, so a person does not meet a missing one halfway through a deposit.
+ * What could not be put in place is said here in plain words, with what it
+ * breaks and what fixes it; the page is still served, because everything that
+ * does not prove works without them.
+ *
+ * `inPlace` is false when anything a device will prove with is missing.
+ */
+export function parametersBeforeServing(o: ParameterOutcome, paramsDir: string): { inPlace: boolean; lines: string[] } {
+  const lines: string[] = [];
+  for (const f of o.fetched) lines.push(`fetched ${f.name} (${f.bytes} bytes) from ${f.from}, checked against its published digest`);
+  for (const a of o.setAside) lines.push(`${a.from} was not the published file; it was renamed to ${a.to} and replaced`);
+  const network = o.unread.filter((u) => u.startsWith('shielded ') && u.includes('(network)'));
+  const other = o.unread.filter((u) => !network.includes(u));
+  const problems: string[] = [];
+  for (const m of o.missing) {
+    problems.push(
+      `${m.name} is not here and could not be fetched: ${m.why}. These will fail when the page proves them: `
+      + `${m.circuits.join(', ')}. Let this machine reach the source named, or set MIDNIGHT_PARAM_SOURCE to one `
+      + 'that serves it, then close this window and start it again');
+  }
+  if (network.length > 0) {
+    problems.push(
+      `the network's own shielded circuits could not be read from ${paramsDir}/zswap/9, so every private deposit `
+      + 'and private payment will fail when the page proves it. Nothing fetches them yet: they come from the proof '
+      + 'server\'s own cache. Put them in place, then close this window and start it again');
+  }
+  for (const u of other) problems.push(`${u}, so the page cannot prove this circuit until that is fixed`);
+  if (problems.length === 0) {
+    lines.push('every circuit the page proves has its proving parameters here, checked');
+    return { inPlace: true, lines };
+  }
+  lines.push('THE PAGE WILL BE SERVED, BUT NOT EVERYTHING IT PROVES WITH IS IN PLACE:');
+  for (const p of problems) lines.push(`  - ${p}.`);
+  return { inPlace: false, lines };
 }

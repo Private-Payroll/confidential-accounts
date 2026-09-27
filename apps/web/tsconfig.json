@@ -1,0 +1,27 @@
+{
+  /*
+   * THE NEW PAYROLL APPLICATION'S TYPECHECK.
+   *
+   * Its own file, like the wallet's, so the application's DOM types, its JSX
+   * and its settings stay out of every other config. The strictness is the
+   * wallet's and is repeated rather than inherited, because a config that
+   * reaches out of its own folder for settings behaves differently depending
+   * on where it sits.
+   */
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": ["vite/client"],
+    "jsx": "react-jsx"
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "vite.config.ts"],
+  "exclude": ["dist", "node_modules"]
+}
