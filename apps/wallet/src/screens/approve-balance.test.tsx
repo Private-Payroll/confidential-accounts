@@ -12,7 +12,7 @@ import { watchedStore } from '../testing/settled-store.js';
 import { afterTheAnswer, settled, watchedOpener } from '../testing/settled-channel.js';
 import { ApproveBalance } from './approve-balance.js';
 import { Approve } from './approve.js';
-import type { BalanceDoors, FacadeForBalancing } from '../chain/balance-for-page.js';
+import type { BalanceDoors, FacadeForBalancing, WalletPartForBalancing } from '../chain/balance-for-page.js';
 
 /*
  * The screen a person sees when a company's page asks this wallet to pay for a
@@ -43,6 +43,25 @@ const wire = (over: Record<string, unknown> = {}) => ({
 });
 const ask = parseAsk(wire(), ORIGIN, NOW) as BalanceRequest;
 
+/** A part of the wallet that has read the chain, and one whose reading the test drives. */
+const read = (): WalletPartForBalancing => ({
+  state: { subscribe: (o) => { o.next({ progress: { isConnected: true, isStrictlyComplete: () => true } }); return { unsubscribe: () => {} }; } },
+});
+const stillReading = () => {
+  let observer: Parameters<WalletPartForBalancing['state']['subscribe']>[0] | null = null;
+  return {
+    state: { subscribe: (o: Parameters<WalletPartForBalancing['state']['subscribe']>[0]) => { observer = o; return { unsubscribe: () => {} }; } },
+    says: (isConnected: boolean, complete: boolean) => observer?.next({ progress: { isConnected, isStrictlyComplete: () => complete } }),
+    breaks: (e: unknown) => observer?.error(e),
+  };
+};
+/** A balance the test lets finish when it chooses. */
+const heldBalance = () => {
+  let release: (v: unknown) => void = () => {};
+  const held = new Promise((r) => { release = r; });
+  return { balanceUnboundTransaction: async () => { await held; return 'recipe'; }, release: () => release('recipe') };
+};
+
 const doorsWith = (log: string[], facade: Partial<FacadeForBalancing> = {}, actions: unknown[] = [{ address: VAULT, entryPoint: 'deposit' }]) => (): BalanceDoors => ({
   ledger: async () => ({
     Transaction: {
@@ -58,6 +77,8 @@ const doorsWith = (log: string[], facade: Partial<FacadeForBalancing> = {}, acti
     signRecipe: async () => { log.push('sign'); return 'signed'; },
     finalizeRecipe: async () => { log.push('finish'); return { serialize: () => new Uint8Array([4, 2]) }; },
     revert: async () => { log.push('revert'); },
+    shielded: read(),
+    unshielded: read(),
     ...facade,
   }) as FacadeForBalancing,
   keys: () => ({ shieldedSecretKeys: 'z', dustSecretKey: 'd' }),
@@ -66,7 +87,7 @@ const doorsWith = (log: string[], facade: Partial<FacadeForBalancing> = {}, acti
 });
 const channelFor = (answers: unknown[]): Channel => ({
   answer: (a) => { answers.push(a); },
-  refuse: (r) => { answers.push({ refused: r }); },
+  refuse: (r: string, why?: string) => { answers.push(why === undefined ? { refused: r } : { refused: r, why }); },
   stop: () => {},
 } as Channel);
 const consented = { ok: true } as never;
@@ -114,7 +135,7 @@ describe('A PAGE ASKING THIS WALLET TO PAY FOR A DEPOSIT', () => {
     });
   });
 
-  it('A FAILED PRESS ANSWERS NOTHING, LETS GO OF WHAT IT BOOKED, AND SAYS SO', async () => {
+  it('A FAILED PRESS HANDS BACK NOTHING, LETS GO OF WHAT IT BOOKED, AND TELLS THE PAGE IT FAILED', async () => {
     const log: string[] = []; const answers: unknown[] = [];
     renderWith(doorsWith(log, { finalizeRecipe: async () => { throw new Error('the proof would not build.'); } }), answers);
     // THE SAME RACE AS THE TEST ABOVE, AND IT WAS STILL GREEN ONLY BECAUSE
@@ -122,8 +143,100 @@ describe('A PAGE ASKING THIS WALLET TO PAY FOR A DEPOSIT', () => {
     expect(await screen.findByText(`2500 base units of the private token below`)).toBeTruthy();
     fireEvent.click(screen.getByText('Pay into the vault'));
     expect(await screen.findByText(/the proof would not build\. Anything this wallet set aside/)).toBeTruthy();
+    expect(screen.getByText(/Anything this wallet set aside for it has been let go\. The page was given nothing and has been told this payment failed\./)).toBeTruthy();
     expect(log).toEqual(['balance', 'sign', 'revert']);
+    /* RED WHEN: a person who approved is reported to the page as having declined, or the page hears nothing. */
+    expect(answers).toEqual([{ refused: 'failed', why: 'did-not-finish' }]);
+  });
+
+  it('THE WALLET READS THE CHAIN BEFORE IT PAYS, SAYS SO, AND LETS THE PERSON STILL SAY NO', async () => {
+    const log: string[] = []; const answers: unknown[] = []; const declined: string[] = [];
+    const shielded = stillReading();
+    renderWith(doorsWith(log, { shielded }), answers, consented, declined);
+    expect(await screen.findByText(`2500 base units of the private token below`)).toBeTruthy();
+    fireEvent.click(screen.getByText('Pay into the vault'));
+    /* RED WHEN: the screen does not say the wallet is reading, or it balances before the read is done. */
+    expect(await screen.findByText(/Your wallet is reading the network to find your private coins/)).toBeTruthy();
+    shielded.says(true, false);
+    await settled(20);
+    expect(log).toEqual([]);
+    const no = screen.getByText('Do not pay') as HTMLButtonElement;
+    /* RED WHEN: a person waiting on a slow read cannot walk away. */
+    expect(no.disabled).toBe(false);
+    fireEvent.click(no);
+    shielded.says(true, true);
+    await settled(20);
+    /* RED WHEN: coins are added, or a failure is reported, for a payment the person turned down while it was reading. */
+    expect(log).toEqual([]);
+    expect(declined).toEqual(['declined']);
     expect(answers).toEqual([]);
+  });
+
+  it('ONCE THE COINS ARE BEING ADDED, IT NO LONGER SAYS NOTHING IS PAID, AND "NO" IS NO LONGER OFFERED', async () => {
+    const log: string[] = []; const answers: unknown[] = [];
+    const shielded = stillReading();
+    const held = heldBalance();
+    renderWith(doorsWith(log, { shielded, balanceUnboundTransaction: held.balanceUnboundTransaction as never }), answers);
+    expect(await screen.findByText(`2500 base units of the private token below`)).toBeTruthy();
+    fireEvent.click(screen.getByText('Pay into the vault'));
+    await screen.findByText(/Your wallet is reading the network/);
+    shielded.says(true, true);
+    await settled(20);
+    /* RED WHEN: the screen keeps saying nothing is paid and offering "no" after the wallet has begun setting coins aside. */
+    expect(document.querySelector('[data-reading-the-chain]')).toBeNull();
+    expect(document.querySelector('[data-paying]')).not.toBeNull();
+    expect((screen.getByText('Do not pay') as HTMLButtonElement).disabled).toBe(true);
+    held.release();
+    await screen.findByText(`You paid for a deposit for ${ORIGIN}`);
+  });
+
+  it('A PERSON WHO LEAVES OR PICKS ANOTHER WALLET WHILE IT READS IS NOT PAID FOR FROM THE FIRST', async () => {
+    for (const how of ['leaves', 'switches'] as const) {
+      const log: string[] = []; const answers: unknown[] = [];
+      const shielded = stillReading();
+      const doors = doorsWith(log, { shielded });
+      const view = render(
+        <ApproveBalance
+          request={ask} identity={identity} account={0} channel={channelFor(answers)} consent={consented}
+          whoIsAsking={<p>asker</p>} whichWallet={<p>picker</p>} onDecline={() => {}}
+          doorsFor={doors} now={() => NOW} />);
+      expect(await screen.findByText(`2500 base units of the private token below`)).toBeTruthy();
+      fireEvent.click(screen.getByText('Pay into the vault'));
+      await screen.findByText(/Your wallet is reading the network/);
+      if (how === 'leaves') view.unmount();
+      else {
+        view.rerender(
+          <ApproveBalance
+            request={ask} identity={identity} account={2} channel={channelFor(answers)} consent={consented}
+            whoIsAsking={<p>asker</p>} whichWallet={<p>picker</p>} onDecline={() => {}}
+            doorsFor={doors} now={() => NOW} />);
+      }
+      shielded.says(true, true);
+      await settled(20);
+      /* RED WHEN: the wallet the person pressed with goes on to set coins aside after they left or chose another. */
+      expect(log, how).toEqual([]);
+      if (how === 'switches') {
+        /* RED WHEN: the abandoned press answers the page, or overwrites the screen of the wallet now chosen. */
+        expect(answers).toEqual([]);
+        expect((screen.getByText('Pay into the vault') as HTMLButtonElement).disabled).toBe(false);
+      }
+      cleanup();
+    }
+  });
+
+  it('A WALLET THAT CANNOT REACH THE CHAIN PAYS NOTHING, SAYS WHY, AND THE PAGE IS TOLD WHICH', async () => {
+    const log: string[] = []; const answers: unknown[] = [];
+    const shielded = stillReading();
+    renderWith(doorsWith(log, { shielded }), answers);
+    expect(await screen.findByText(`2500 base units of the private token below`)).toBeTruthy();
+    fireEvent.click(screen.getByText('Pay into the vault'));
+    await screen.findByText(/Your wallet is reading the network/);
+    shielded.breaks(new Error('socket closed'));
+    /* RED WHEN: a wallet that lost the chain goes on to balance, hides why, or the page is told the person declined. */
+    expect(await screen.findByText(/stopped reading the network before it had found your coins/)).toBeTruthy();
+    expect(log).toEqual([]);
+    expect(answers).toEqual([{ refused: 'failed', why: 'chain-unreadable' }]);
+    expect((screen.getByText('Pay into the vault') as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('A TRANSACTION INTO ANOTHER CONTRACT IS REFUSED ON SIGHT, AND THE BUTTON STAYS DOWN', async () => {

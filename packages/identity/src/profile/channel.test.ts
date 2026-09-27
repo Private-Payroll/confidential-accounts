@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  FRAMED_BY_A_STRANGER, NOT_BUILT_TO_BE_FRAMED, READY_PING, framingOf, listen,
+  FRAMED_BY_A_STRANGER, NOT_BUILT_TO_BE_FRAMED, PAYMENT_FAILURES, READY_PING, framingOf, listen,
 } from './channel.js';
 import type { ChannelState, ChannelWindow } from './channel.js';
 
@@ -165,5 +165,39 @@ describe('§4 - AN `undefined` OPENER IS NO OPENER', () => {
     const states = run(view, EMBEDDER);
     handler!({ source: undefined, origin: EMBEDDER, data: signIn() } as unknown as MessageEvent);
     expect(states.map((s) => s.of)).toEqual(['waiting']);
+  });
+});
+
+describe('A PAYMENT THAT FAILED AFTER THE PRESS IS NOT A DECLINE', () => {
+  const REFUSED = 'midnight-identity/disclosure-refused/v1';
+  const opened = () => {
+    const opener = postable();
+    const view = walletView({ opener });
+    const channel = listen(view, () => NOW, () => {}, null);
+    view.deliver({ source: opener as never, origin: EMBEDDER, data: signIn() });
+    opener.posted.length = 0;
+    return { opener, channel };
+  };
+
+  it('says failed, and which of the four things stopped it, to the origin that asked', () => {
+    for (const why of PAYMENT_FAILURES) {
+      const { opener, channel } = opened();
+      channel.refuse('failed', why);
+      /* RED WHEN: a failure goes back as a decline, loses its reason, or goes anywhere but the asker's origin. */
+      expect(opener.posted, why).toEqual([{ message: { schema: REFUSED, reason: 'failed', why }, target: EMBEDDER }]);
+    }
+    /* RED WHEN: the list grows or shrinks without the page's reader being told. */
+    expect([...PAYMENT_FAILURES]).toEqual(['chain-unreadable', 'not-enough', 'not-as-approved', 'did-not-finish']);
+  });
+
+  it('carries no word that is not on the list, and a decline still carries nothing but the decline', () => {
+    const { opener, channel } = opened();
+    (channel.refuse as (r: string, w?: unknown) => void)('failed', 'Insufficient funds: 4999 of 5000 NIGHT');
+    /* RED WHEN: a caller's own sentence, which can name coins and amounts, crosses to the page. */
+    expect(opener.posted).toEqual([{ message: { schema: REFUSED, reason: 'failed', why: 'did-not-finish' }, target: EMBEDDER }]);
+    const other = opened();
+    other.channel.refuse('declined');
+    /* RED WHEN: a decline starts carrying a reason field. */
+    expect(other.opener.posted).toStrictEqual([{ message: { schema: REFUSED, reason: 'declined' }, target: EMBEDDER }]);
   });
 });

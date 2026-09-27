@@ -1,9 +1,63 @@
 import { describe, expect, it } from 'vitest';
+import { Data, Effect } from 'effect';
+import type { PaymentFailure } from 'midnight-identity/profile/channel';
 import * as L from '@midnightntwrk/ledger-v9';
 import {
-  BalanceRefused, PAGE_TOKEN_KINDS, base64FromBytes, payForThePage, readWhatThePageAsks,
+  BalanceRefused, CHAIN_SILENCE_GIVE_UP_MS, CHAIN_WOULD_NOT_ANSWER, ChainUnread, PAGE_TOKEN_KINDS, base64FromBytes,
+  payForThePage, readWhatThePageAsks, whyThePaymentFailed,
 } from './balance-for-page.js';
-import type { BalanceDoors, FacadeForBalancing, LedgerForBalancing, UnboundTransactionLike } from './balance-for-page.js';
+import type {
+  BalanceDoors, FacadeForBalancing, LedgerForBalancing, UnboundTransactionLike, WalletPartForBalancing,
+} from './balance-for-page.js';
+
+/** A part of the wallet that has already read the chain to the end, and answers so the moment it is asked, as the SDK's replayed state does. */
+const aPartThatHasRead = (): WalletPartForBalancing & { readonly unsubscribed: number } => {
+  let unsubscribed = 0;
+  return {
+    state: {
+      subscribe: (o) => {
+        o.next({ progress: { isConnected: true, isStrictlyComplete: () => true } });
+        return { unsubscribe: () => { unsubscribed += 1; } };
+      },
+    },
+    get unsubscribed() { return unsubscribed; },
+  };
+};
+
+/** A part of the wallet whose reading of the chain the test drives, one report at a time. */
+const aPartStillReading = () => {
+  let observer: Parameters<WalletPartForBalancing['state']['subscribe']>[0] | null = null;
+  let unsubscribed = 0;
+  return {
+    state: {
+      subscribe: (o: Parameters<WalletPartForBalancing['state']['subscribe']>[0]) => {
+        observer = o;
+        return { unsubscribe: () => { unsubscribed += 1; } };
+      },
+    },
+    says: (isConnected: boolean, complete: boolean) =>
+      observer?.next({ progress: { isConnected, isStrictlyComplete: () => complete } }),
+    breaks: (e: unknown) => observer?.error(e),
+    ends: () => observer?.complete(),
+    get unsubscribed() { return unsubscribed; },
+  };
+};
+
+/** Timers the test fires by hand. */
+const handTimers = () => {
+  const pending = new Map<number, () => void>();
+  const asked: number[] = [];
+  let next = 1;
+  return {
+    asked,
+    set: (run: () => void, ms: number) => { const id = next; next += 1; pending.set(id, run); asked.push(ms); return id; },
+    clear: (id: unknown) => { pending.delete(id as number); },
+    fireAll: () => { for (const [id, run] of [...pending]) { pending.delete(id); run(); } },
+    get armed() { return pending.size; },
+  };
+};
+
+const settle = async (): Promise<void> => { for (let i = 0; i < 5; i += 1) await Promise.resolve(); };
 
 const VAULT = '54ef954a25aefff8e1675af10a852ef29d5de5c63a51b64b978bf7bd0eaeca4e';
 const OTHER = 'dbe119a304f8e7ea882353435c1d536cf2faf4298236a9aae77670e750af65c8';
@@ -126,6 +180,8 @@ describe('THE PRESS', () => {
       signRecipe: async (r) => { log.push(`sign ${String(r)}`); return 'signed'; },
       finalizeRecipe: async (r) => { log.push(`finish ${String(r)}`); return { serialize: () => new Uint8Array([9, 9]) }; },
       revert: async (r) => { log.push(`revert ${String(r)}`); },
+      shielded: aPartThatHasRead(),
+      unshielded: aPartThatHasRead(),
       ...facade,
     }) as FacadeForBalancing,
     keys: () => ({ shieldedSecretKeys: 'z', dustSecretKey: 'd' }),
@@ -163,5 +219,181 @@ describe('THE PRESS', () => {
       balanceUnboundTransaction: async () => { throw new Error('not enough'); },
     }, log), tx)).rejects.toThrow('not enough');
     expect(log).toEqual([]);
+  });
+});
+
+describe('THE WALLET READS THE CHAIN BEFORE IT PAYS', () => {
+  const tx = txOf([deposit], [[{ tag: 'shielded', raw: GBP }, -1000n]]);
+  const doorsOver = (parts: Partial<FacadeForBalancing>, log: string[]): BalanceDoors => ({
+    ledger: async () => ledgerReturning(tx),
+    facade: async () => ({
+      balanceUnboundTransaction: async (_t, _k, o) => { log.push(`balance ${o.tokenKindsToBalance.join(',')}`); return 'recipe'; },
+      signRecipe: async () => { log.push('sign'); return 'signed'; },
+      finalizeRecipe: async () => { log.push('finish'); return { serialize: () => new Uint8Array([9]) }; },
+      revert: async () => { log.push('revert'); },
+      ...parts,
+    }) as FacadeForBalancing,
+    keys: () => ({ shieldedSecretKeys: 'z', dustSecretKey: 'd' }),
+    signSegment: () => async () => ({}) as never,
+    now: () => 1_000,
+  });
+
+  it('A PRIVATE DEPOSIT IS NOT BALANCED UNTIL THE PRIVATE COINS HAVE BEEN READ TO THE END', async () => {
+    const log: string[] = []; const said: string[] = [];
+    const shielded = aPartStillReading();
+    const paid = payForThePage(doorsOver({ shielded, unshielded: aPartThatHasRead() }, log), tx, undefined, {
+      onReading: () => said.push('reading'), onBalancing: () => said.push('balancing'), timers: handTimers(),
+    });
+    await settle();
+    shielded.says(false, false);
+    shielded.says(true, false);
+    await settle();
+    /* RED WHEN: the wallet balances on a part that has not read the chain, or on one only connected. */
+    expect(log).toEqual([]);
+    expect(said).toEqual(['reading']);
+    shielded.says(true, true);
+    expect(await paid).toBe(base64FromBytes(new Uint8Array([9])));
+    expect(log).toEqual(['balance shielded', 'sign', 'finish']);
+    expect(said).toEqual(['reading', 'balancing']);
+    /* And a part that had already read the chain when asked is let go too. */
+    const ready = aPartThatHasRead();
+    await payForThePage(doorsOver({ shielded: ready }, []), tx, undefined, { timers: handTimers() });
+    /* RED WHEN: the wallet keeps listening to a part that answered while it was still subscribing. */
+    expect(ready.unsubscribed).toBe(1);
+    /* RED WHEN: the wallet keeps listening after it has what it waited for. */
+    expect(shielded.unsubscribed).toBe(1);
+  });
+
+  it('A PUBLIC DEPOSIT WAITS FOR THE PUBLIC COINS, AND ONLY FOR THEM', async () => {
+    const log: string[] = [];
+    const unshielded = aPartStillReading();
+    const shielded = aPartStillReading();
+    const approved = { pays: 'public' as const, leaves: [{ token: '00'.repeat(32), amount: '700', kind: 'unshielded' as const }] };
+    const doors = { ...doorsOver({ shielded, unshielded }, log), ownPublicAddress: () => 'me' };
+    const paid = payForThePage(doors, tx, approved, { timers: handTimers() }).catch((e: unknown) => e);
+    await settle();
+    shielded.says(true, true);
+    await settle();
+    /* RED WHEN: the public deposit balances before its public coins are read, or waits on the private ones instead. */
+    expect(log).toEqual([]);
+    unshielded.says(true, true);
+    await paid;
+    expect(log[0]).toBe('balance unshielded');
+    /* And the private part is not waited on at all: it never finishes here, and the public deposit is paid. */
+    const again: string[] = [];
+    const stillPrivate = aPartStillReading();
+    const readPublic = aPartStillReading();
+    const second = payForThePage({ ...doorsOver({ shielded: stillPrivate, unshielded: readPublic }, again), ownPublicAddress: () => 'me' },
+      tx, approved, { timers: handTimers() }).catch((e: unknown) => e);
+    await settle();
+    stillPrivate.says(true, false);
+    readPublic.says(true, true);
+    await second;
+    /* RED WHEN: a public deposit also waits for the private coins to be read. */
+    expect(again[0]).toBe('balance unshielded');
+  });
+
+  it('A WALLET THE CHAIN NEVER ANSWERS PAYS NOTHING, BOOKS NOTHING, AND SAYS WHY', async () => {
+    const log: string[] = [];
+    const shielded = aPartStillReading();
+    const timers = handTimers();
+    const paid = payForThePage(doorsOver({ shielded }, log), tx, undefined, { timers }).catch((e: unknown) => e);
+    await settle();
+    shielded.says(false, false);
+    timers.fireAll();
+    const e = await paid;
+    /* RED WHEN: a wallet that never reached the chain goes on to balance, or fails for a reason nobody can act on. */
+    expect(e).toBeInstanceOf(ChainUnread);
+    expect((e as Error).message).toBe(CHAIN_WOULD_NOT_ANSWER);
+    expect(CHAIN_WOULD_NOT_ANSWER).toMatch(/could not reach the network to find your coins, so it paid nothing\. Check your connection and try again.*Nothing has been paid\.$/u);
+    /* RED WHEN: the wait asks for any other delay than the one it names. */
+    expect(timers.asked).toEqual([CHAIN_SILENCE_GIVE_UP_MS]);
+    expect(log).toEqual([]);
+    expect(whyThePaymentFailed(e)).toBe('chain-unreadable');
+    /* RED WHEN: the clock is brought back inside the 20 to 30 seconds a new wallet waited for its first answer from stagenet. */
+    expect(CHAIN_SILENCE_GIVE_UP_MS).toBeGreaterThanOrEqual(90_000);
+  });
+
+  it('ONCE THE CHAIN HAS ANSWERED, NO CLOCK ENDS THE READING', async () => {
+    const log: string[] = [];
+    const shielded = aPartStillReading();
+    const timers = handTimers();
+    const paid = payForThePage(doorsOver({ shielded }, log), tx, undefined, { timers });
+    await settle();
+    shielded.says(true, false);
+    /* RED WHEN: a long first read is cut off as though the chain were silent. */
+    expect(timers.armed).toBe(0);
+    timers.fireAll();
+    shielded.says(true, true);
+    await paid;
+    expect(log[0]).toBe('balance shielded');
+  });
+
+  it('A WALLET WHOSE READING FAILS OR ENDS BEFORE IT HAS READ TO THE END PAYS NOTHING AND SAYS SO', async () => {
+    for (const how of ['fails', 'ends'] as const) {
+      const log: string[] = [];
+      const shielded = aPartStillReading();
+      const paid = payForThePage(doorsOver({ shielded }, log), tx, undefined, { timers: handTimers() }).catch((e: unknown) => e);
+      await settle();
+      shielded.says(true, false);
+      if (how === 'fails') shielded.breaks(new Error('socket closed')); else shielded.ends();
+      const e = await paid;
+      /* RED WHEN: a read that failed or ended early is treated as a finished one, left waiting for ever, or reaches the person in the SDK's words. */
+      expect(e, how).toBeInstanceOf(ChainUnread);
+      expect((e as Error).message, how).toMatch(/^this wallet stopped reading the network before it had found your coins, so it paid nothing\..*Nothing has been paid\.$/u);
+      expect((e as Error).message, how).not.toMatch(/socket closed/u);
+      expect(log, how).toEqual([]);
+    }
+  });
+
+  it('A WALLET THAT CANNOT SAY WHETHER IT HAS READ THE CHAIN PAYS NOTHING', async () => {
+    const log: string[] = [];
+    const e = await payForThePage(doorsOver({}, log), tx, undefined, { timers: handTimers() }).catch((x: unknown) => x);
+    /* RED WHEN: a wallet with no report of its reading is taken to have read everything. */
+    expect(e).toBeInstanceOf(ChainUnread);
+    expect(log).toEqual([]);
+  });
+
+  it('A PERSON WHO SAID NO WHILE IT WAS READING IS NOT PAID FOR', async () => {
+    const log: string[] = [];
+    const shielded = aPartStillReading();
+    let wanted = true;
+    const paid = payForThePage(doorsOver({ shielded }, log), tx, undefined, {
+      stillWanted: () => wanted, timers: handTimers(),
+    }).catch((e: unknown) => e);
+    await settle();
+    wanted = false;
+    shielded.says(true, true);
+    /* RED WHEN: the wallet books coins for a payment the person turned down while it was reading. */
+    expect(await paid).toBeInstanceOf(BalanceRefused);
+    expect(log).toEqual([]);
+  });
+
+  it('WHICH OF FOUR THINGS STOPPED IT, AND ONLY THAT', async () => {
+    /* The SDK's own shape: a tagged error, failed through Effect and handed to a promise, as the wallet's parts do. */
+    class InsufficientFunds extends Data.TaggedError('Wallet.InsufficientFunds')<{ readonly message: string }> {}
+    const asTheWalletThrowsIt = await Effect.runPromise(Effect.fail(new InsufficientFunds({ message: 'Insufficient funds' })))
+      .then(() => null, (e: unknown) => e);
+    /* The control: what reaches here carries no tag of its own, as measured in a real browser. */
+    expect((asTheWalletThrowsIt as { _tag?: unknown })._tag).toBeUndefined();
+    expect((asTheWalletThrowsIt as Error).name).toBe('(FiberFailure) Wallet.InsufficientFunds');
+    const cases: Array<[unknown, PaymentFailure]> = [
+      [asTheWalletThrowsIt, 'not-enough'],
+      [{ name: '(FiberFailure) Wallet.InsufficientFunds' }, 'not-enough'],
+      [{ name: 'Error', [Symbol.for('effect/Runtime/FiberFailure/Cause')]: { _tag: 'Fail', error: { _tag: 'Wallet.InsufficientFunds' } } }, 'not-enough'],
+      [{ name: '(FiberFailure) Wallet.SomethingElse' }, 'did-not-finish'],
+      [new ChainUnread('x'), 'chain-unreadable'],
+      [{ _tag: 'Wallet.InsufficientFunds', message: 'Insufficient funds' }, 'not-enough'],
+      [Object.assign(new Error('Insufficient funds'), { name: 'Wallet.InsufficientFunds' }), 'not-enough'],
+      [new Error('wrapped', { cause: { _tag: 'Wallet.InsufficientFunds' } }), 'not-enough'],
+      [new Error('Insufficient funds'), 'did-not-finish'],
+      [new BalanceRefused('this wallet could not read its own public address'), 'did-not-finish'],
+      [new Error('the proof would not build'), 'did-not-finish'],
+      ['a string', 'did-not-finish'],
+    ];
+    for (const [e, why] of cases) {
+      /* RED WHEN: a failure is named as another, or the SDK's own not-enough is missed where it arrives wrapped. */
+      expect(whyThePaymentFailed(e), String((e as Error)?.message ?? e)).toBe(why);
+    }
   });
 });

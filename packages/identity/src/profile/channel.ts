@@ -140,11 +140,35 @@ export function framingOf(view: ChannelWindow, embedder: string | null): Framing
 export type Answer =
   | DisclosureResponse | UnlockRelease | KeyringRelease | SealedAcceptance | BalancedAnswer | CommitteeSignatures;
 
+/**
+ * **WHY A PAYMENT THE PERSON APPROVED DID NOT HAPPEN, IN FOUR WORDS AND NO MORE.**
+ *
+ * A person who pressed Pay and saw it fail did not decline, and a page that
+ * tells them they did sends them looking for a mistake they never made. So a
+ * failure after approval is its own refusal, and it carries one of these.
+ *
+ * **A CLOSED LIST, NOT THE WALLET'S OWN SENTENCE.** The wallet's words about a
+ * failure can name its coins, its amounts or its state, and the page asking is
+ * not the person. What crosses is which of four things happened, and the page
+ * says it in its own words. `not-enough` does tell the page one thing it did
+ * not know before: that this wallet could not cover the amount it was asked for.
+ *
+ *   - `chain-unreadable` - the wallet could not read the chain to find its coins.
+ *   - `not-enough` - the wallet does not hold enough of what the payment needs.
+ *   - `not-as-approved` - what the wallet was about to add was not what the
+ *     person approved, so it stopped before signing.
+ *   - `did-not-finish` - anything else that stopped it after the press.
+ */
+export const PAYMENT_FAILURES = ['chain-unreadable', 'not-enough', 'not-as-approved', 'did-not-finish'] as const;
+export type PaymentFailure = (typeof PAYMENT_FAILURES)[number];
+
 export interface Channel {
   /** Send the answer back — to the OBSERVED origin, and nowhere else. */
   answer(answer: Answer): void;
   /** Tell the requester the person said no, without saying anything else. */
   refuse(reason: 'declined' | 'expired'): void;
+  /** Tell the requester a payment the person approved did not happen, and which of four reasons stopped it. */
+  refuse(reason: 'failed', why: PaymentFailure): void;
   stop(): void;
 }
 
@@ -262,9 +286,13 @@ export function listen(
 
   return Object.freeze({
     answer: (answer: Answer) => send(answer),
-    refuse: (reason: 'declined' | 'expired') => send({
-      schema: 'midnight-identity/disclosure-refused/v1', reason,
-    }),
+    refuse: (reason: 'declined' | 'expired' | 'failed', why?: PaymentFailure) => send(reason === 'failed'
+      ? {
+        schema: 'midnight-identity/disclosure-refused/v1', reason,
+        /* Only a word from the list crosses, whatever the caller handed in. */
+        why: (PAYMENT_FAILURES as readonly unknown[]).includes(why) ? why : 'did-not-finish',
+      }
+      : { schema: 'midnight-identity/disclosure-refused/v1', reason }),
     stop: () => view.removeEventListener('message', handler),
   });
 }

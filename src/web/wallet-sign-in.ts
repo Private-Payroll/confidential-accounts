@@ -49,9 +49,19 @@ import { signInAsk } from '../core/wallet-sign-in-ask.js';
 export const READY_TIMEOUT_MS = 20_000;
 export const ANSWER_TIMEOUT_MS = 5 * 60_000;
 
+/**
+ * **WHY A PAYMENT THE PERSON APPROVED DID NOT HAPPEN**, as the wallet names it:
+ * one of four words, never the wallet's own sentence. Read as a string, and any
+ * word this page does not know reads as the last, so a wallet that learns a
+ * fifth still reaches the person as a failure and never as a decline.
+ */
+export type WalletPaymentFailure = 'chain-unreadable' | 'not-enough' | 'not-as-approved' | 'did-not-finish';
+
 export type WalletRefusal =
   | { readonly of: 'declined' }
   | { readonly of: 'expired' }
+  /** The person approved and the wallet could not pay. Never a decline, and never said as one. */
+  | { readonly of: 'failed'; readonly why: WalletPaymentFailure }
   | { readonly of: 'no-wallet-tab' }
   /**
    * The window opened and is not there any more — the person closed it, or
@@ -376,6 +386,32 @@ const WINDOW_GONE_SAYS =
   'your wallet window could not be reached, so nothing has been signed and nothing has been '
   + 'sent. Press the button again — a press is what lets this page open a fresh one.';
 
+/**
+ * **WHAT IS SAID WHEN THE PERSON APPROVED AND THE WALLET COULD NOT PAY.** Each
+ * one says that nothing was paid and nothing was sent, because the wallet hands
+ * nothing back when it fails, so this page has nothing to send; and each says
+ * what to do next. None says the person declined, and none sends them back to
+ * the wallet's window to read more, because that window is put away the moment
+ * this answer arrives.
+ */
+export const PAYMENT_FAILED_SAYS: Readonly<Record<WalletPaymentFailure, string>> = Object.freeze({
+  'chain-unreadable': 'your wallet could not read the network to find your money, so it paid nothing and '
+    + 'nothing has been sent. Check your connection and try again; if your connection is working, the network '
+    + 'may be unavailable, so try again later.',
+  'not-enough': 'your wallet does not have enough available to pay for this, so it paid nothing and nothing '
+    + 'has been sent. Add to your wallet or choose a smaller amount, and try again.',
+  'not-as-approved': 'your wallet stopped before paying, because what it was about to pay did not match what '
+    + 'you approved, so it paid nothing and nothing has been sent. Try again. If it happens again, stop and '
+    + 'report it before paying from here.',
+  'did-not-finish': 'your wallet could not finish the payment you approved, so it paid nothing and nothing '
+    + 'has been sent. Try again.',
+});
+
+const failureNamed = (why: unknown): WalletPaymentFailure =>
+  typeof why === 'string' && Object.prototype.hasOwnProperty.call(PAYMENT_FAILED_SAYS, why)
+    ? why as WalletPaymentFailure
+    : 'did-not-finish';
+
 const GAVE_UP_SAYS =
   'you stopped waiting for your wallet. Nothing was signed, nothing was released, and '
   + 'nothing has changed here.';
@@ -479,7 +515,7 @@ export function askWallet(
        */
       if (event.origin !== walletOrigin) return;
       if (event.source !== ((wallet.messageSource ?? wallet) as MessageEventSource)) return;
-      const body = (event.data ?? null) as { schema?: unknown; reason?: unknown } | null;
+      const body = (event.data ?? null) as { schema?: unknown; reason?: unknown; why?: unknown } | null;
       if (body === null || typeof body !== 'object') return;
 
       if (body.schema === READY_PING) {
@@ -489,6 +525,12 @@ export function askWallet(
           'your wallet was opened but nothing came back. Nothing has been signed.')),
         ANSWER_TIMEOUT_MS);
         wallet.postMessage(message, walletOrigin);
+        return;
+      }
+
+      if (body.schema === 'midnight-identity/disclosure-refused/v1' && body.reason === 'failed') {
+        const why = failureNamed(body.why);
+        stop(new WalletClosed({ of: 'failed', why }, PAYMENT_FAILED_SAYS[why]));
         return;
       }
 

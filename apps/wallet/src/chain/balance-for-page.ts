@@ -1,5 +1,6 @@
 import type { SignSegment } from '@midnightntwrk/wallet-sdk-facade';
 import type { LeavesTheWallet } from 'midnight-identity/profile/balance';
+import type { PaymentFailure } from 'midnight-identity/profile/channel';
 
 /*
  * PAYING FOR THE COIN LEGS OF A TRANSACTION A COMPANY'S PAGE BUILT.
@@ -17,7 +18,8 @@ import type { LeavesTheWallet } from 'midnight-identity/profile/balance';
  *     the one shielded token the coin is made of, and how much of it the
  *     transaction consumes beyond what it supplies. That figure is what the
  *     person approves. Nothing the page says about an amount is read.
- *  3. ON A PRESS, balance the shielded leg only, sign what was
+ *  3. ON A PRESS, wait until the part of this wallet that pays has read the
+ *     chain (below), then balance the shielded leg only, sign what was
  *     added, and finish the transaction. **DUST is never balanced here**: the
  *     network fee is the company's fee payer's, and this wallet does not need
  *     to hold NIGHT or be registered for DUST to answer.
@@ -69,7 +71,28 @@ export interface UnboundTransactionLike {
   imbalances(segment: number): Map<{ tag: string; raw?: string }, bigint>;
 }
 
+/** How far one part of the wallet has read the chain, as the SDK reports it. */
+export interface ReadingProgress {
+  readonly isConnected: boolean;
+  isStrictlyComplete(): boolean;
+}
+
+/** One part of the wallet - its private coins or its public ones - reduced to its reports of reading the chain. */
+export interface WalletPartForBalancing {
+  readonly state: {
+    subscribe(observer: {
+      next: (state: { readonly progress: ReadingProgress }) => void;
+      error: (e: unknown) => void;
+      complete: () => void;
+    }): { unsubscribe(): void };
+  };
+}
+
 export interface FacadeForBalancing {
+  /** The part holding this wallet's private coins. */
+  readonly shielded?: WalletPartForBalancing;
+  /** The part holding this wallet's public coins. */
+  readonly unshielded?: WalletPartForBalancing;
   balanceUnboundTransaction(
     tx: never,
     secretKeys: { shieldedSecretKeys: unknown; dustSecretKey: unknown },
@@ -82,7 +105,10 @@ export interface FacadeForBalancing {
 
 export interface BalanceDoors {
   readonly ledger: () => Promise<LedgerForBalancing>;
-  /** Started and synchronised. The wait for this is the person's to see. */
+  /**
+   * Started, and NOT necessarily done reading the chain: a wallet started on the
+   * press holds no coins until it has. `payForThePage` waits for that itself.
+   */
   readonly facade: () => Promise<FacadeForBalancing>;
   readonly keys: () => { shieldedSecretKeys: unknown; dustSecretKey: unknown };
   readonly signSegment: () => SignSegment;
@@ -108,6 +134,165 @@ export class BalanceRefused extends Error {
     super(message);
     this.name = 'BalanceRefused';
   }
+}
+
+/** The wallet could not read the chain, so it balanced nothing. */
+export class ChainUnread extends BalanceRefused {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ChainUnread';
+  }
+}
+
+/** What the wallet was about to add was not what the person approved, so it signed nothing. */
+export class NotAsApproved extends BalanceRefused {
+  constructor(message: string) {
+    super(message);
+    this.name = 'NotAsApproved';
+  }
+}
+
+/**
+ * **HOW LONG THE WALLET WAITS FOR THE CHAIN TO ANSWER AT ALL.** It covers only
+ * silence: once every part that pays has connected, the wait is for reading,
+ * which is the person's to watch and to walk away from, and no clock ends it.
+ * Measured once, on 27 Sep, from one machine: a wallet started from nothing
+ * was still hearing nothing on its private part 20 seconds in and had its
+ * first answer by 30, then read to the end at 85 seconds; its public part, for
+ * an address with no history, answered within a second. The private read
+ * starts from the beginning of the chain, so it grows as the chain does. The
+ * clock is set well clear of that silence so that a wallet which is only slow
+ * to hear back is not told it could not reach the network.
+ */
+export const CHAIN_SILENCE_GIVE_UP_MS = 120_000;
+
+export const CHAIN_WOULD_NOT_ANSWER =
+  'this wallet could not reach the network to find your coins, so it paid nothing. Check your connection '
+  + 'and try again; if your connection is working, the network may be unavailable, so try again later. '
+  + 'Nothing has been paid.';
+
+const CHAIN_STOPPED =
+  'this wallet stopped reading the network before it had found your coins, so it paid nothing. Check your '
+  + 'connection and try again. Nothing has been paid.';
+
+export interface WaitingForTheChain {
+  /** Called once, when the wallet has to wait for the chain before it can pay. */
+  readonly onReading?: () => void;
+  /** Called once the wallet has read the chain and is about to add its coins. */
+  readonly onBalancing?: () => void;
+  /** Asked after the wait and before anything is booked: false stops here. */
+  readonly stillWanted?: () => boolean;
+  readonly giveUpMs?: number;
+  readonly timers?: {
+    set(run: () => void, ms: number): unknown;
+    clear(handle: unknown): void;
+  };
+}
+
+const realTimers = {
+  set: (run: () => void, ms: number): unknown => setTimeout(run, ms),
+  clear: (handle: unknown): void => { clearTimeout(handle as ReturnType<typeof setTimeout>); },
+};
+
+/**
+ * **THE WALLET READS THE CHAIN BEFORE IT PAYS.** A wallet started on the press
+ * holds nothing until it has read the chain, and balancing on it then answers
+ * that there is not enough. So this resolves only once EVERY part that will
+ * pay reports itself connected and read to the end, which is the condition
+ * each part's own wait for its synced state uses; and it refuses, with nothing
+ * booked, if the chain stays silent past `giveUpMs`, or a part's reports end
+ * or fail before that.
+ *
+ * **WHAT "READ TO THE END" DOES NOT COVER.** It is the end of what the indexer
+ * has served. A payment another window of this wallet built, and that is sent
+ * but not yet served, still reads here as unspent, and this wallet can build on
+ * the same coins; the chain then refuses one of the two. And the wallet's own
+ * reading retries a lost connection by itself without saying so, so once every
+ * part has connected, a lost network shows as a wait that does not end. The
+ * person can still choose not to pay while it lasts.
+ */
+export function untilItHasReadTheChain(
+  parts: readonly (WalletPartForBalancing | undefined)[],
+  watch: WaitingForTheChain = {},
+): Promise<void> {
+  const timers = watch.timers ?? realTimers;
+  return new Promise<void>((resolve, reject) => {
+    if (parts.length === 0 || parts.some((p) => p === undefined)) {
+      reject(new ChainUnread(
+        'this wallet could not tell whether it is up to date with the network, so it paid nothing. Try again, '
+        + 'and if it happens again this wallet cannot pay this deposit. Nothing has been paid.'));
+      return;
+    }
+    const seen: (ReadingProgress | null)[] = parts.map(() => null);
+    const subscriptions: { unsubscribe(): void }[] = [];
+    let over = false;
+    let told = false;
+    let silence: unknown = null;
+    const finish = (failure?: Error): void => {
+      if (over) return;
+      over = true;
+      if (silence !== null) timers.clear(silence);
+      silence = null;
+      for (const s of subscriptions) s.unsubscribe();
+      if (failure) reject(failure); else resolve();
+    };
+    const look = (): void => {
+      if (over) return;
+      if (seen.every((p) => p !== null && p.isConnected && p.isStrictlyComplete())) { finish(); return; }
+      if (!told) { told = true; watch.onReading?.(); }
+      if (silence !== null && seen.every((p) => p !== null && p.isConnected)) {
+        timers.clear(silence);
+        silence = null;
+      }
+    };
+    silence = timers.set(() => finish(new ChainUnread(CHAIN_WOULD_NOT_ANSWER)), watch.giveUpMs ?? CHAIN_SILENCE_GIVE_UP_MS);
+    parts.forEach((part, i) => {
+      if (over) return;
+      const subscription = part!.state.subscribe({
+        next: (state) => { seen[i] = state.progress; look(); },
+        error: () => finish(new ChainUnread(CHAIN_STOPPED)),
+        complete: () => finish(new ChainUnread(CHAIN_STOPPED)),
+      });
+      if (over) subscription.unsubscribe(); else subscriptions.push(subscription);
+    });
+    look();
+  });
+}
+
+/*
+ * **HOW THE SDK'S "NOT ENOUGH" ARRIVES HERE, MEASURED IN A REAL BROWSER.** The
+ * wallet's parts run on Effect and hand their failures to a promise, so what is
+ * thrown is Effect's wrapper: its name reads `(FiberFailure) Wallet.InsufficientFunds`,
+ * it carries no `_tag` of its own, and the tagged error sits in the cause the
+ * wrapper keeps under Effect's own symbol.
+ */
+const FIBER_FAILURE_CAUSE = Symbol.for('effect/Runtime/FiberFailure/Cause');
+const NOT_ENOUGH = 'Wallet.InsufficientFunds';
+const namesNotEnough = (name: unknown): boolean =>
+  typeof name === 'string' && (name === NOT_ENOUGH || name.endsWith(` ${NOT_ENOUGH}`) || name === 'InsufficientFundsError');
+
+/** True when the SDK said the wallet does not hold enough, however the error reached here. */
+const saysNotEnough = (e: unknown): boolean => {
+  const next: unknown[] = [e];
+  for (let looked = 0; next.length > 0 && looked < 12; looked += 1) {
+    const at = next.shift();
+    if (at === null || typeof at !== 'object') continue;
+    const o = at as { _tag?: unknown; name?: unknown; cause?: unknown; error?: unknown; [FIBER_FAILURE_CAUSE]?: unknown };
+    if (o._tag === NOT_ENOUGH || namesNotEnough(o.name)) return true;
+    next.push(o[FIBER_FAILURE_CAUSE], o.error, o.cause);
+  }
+  return false;
+};
+
+/**
+ * **WHICH OF FOUR THINGS STOPPED A PAYMENT THE PERSON APPROVED**, for the page
+ * that asked. Only the word crosses; the person reads the whole reason here.
+ */
+export function whyThePaymentFailed(e: unknown): PaymentFailure {
+  if (e instanceof ChainUnread) return 'chain-unreadable';
+  if (e instanceof NotAsApproved) return 'not-as-approved';
+  if (saysNotEnough(e)) return 'not-enough';
+  return 'did-not-finish';
 }
 
 export const bytesFromBase64 = (text: string): Uint8Array => {
@@ -404,6 +589,7 @@ export async function payForThePage(
   doors: BalanceDoors, tx: UnboundTransactionLike,
   /** What step 1 read, when it read a public deposit. Absent, only private money is paid. */
   approved?: { readonly pays: PageAskPays; readonly leaves: readonly LeavesTheWallet[] },
+  watch: WaitingForTheChain = {},
 ): Promise<string> {
   const publicly = approved?.pays === 'public';
   let own = '';
@@ -417,6 +603,12 @@ export async function payForThePage(
     own = doors.ownPublicAddress();
   }
   const facade = await doors.facade();
+  /* Only the part that pays has to have read the chain: a public deposit adds public coins and nothing else. */
+  await untilItHasReadTheChain(publicly ? [facade.unshielded] : [facade.shielded], watch);
+  if (watch.stillWanted?.() === false) {
+    throw new BalanceRefused('you chose not to pay, so this wallet added nothing. Nothing has been paid.');
+  }
+  watch.onBalancing?.();
   const now = doors.now ?? Date.now;
   const recipe = await facade.balanceUnboundTransaction(tx as never, doors.keys(), {
     ttl: new Date(now() + PAGE_TTL_MS),
@@ -426,7 +618,7 @@ export async function payForThePage(
   try {
     if (publicly) {
       const why = whyThePublicBalancingIsNotWhatWasApproved(recipe, approved.leaves[0]!, own);
-      if (why !== null) throw new BalanceRefused(`${why}, so it signed nothing. Nothing has been paid.`);
+      if (why !== null) throw new NotAsApproved(`${why}, so it signed nothing. Nothing has been paid.`);
     }
     const signed = await facade.signRecipe(recipe as never, doors.signSegment());
     const finished = await facade.finalizeRecipe(signed as never);
