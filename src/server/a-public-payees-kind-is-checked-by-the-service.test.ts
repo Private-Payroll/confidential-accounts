@@ -18,17 +18,20 @@
  * before the server starts, over the same store file and the same ledger.
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { importTheServer, useOnlyTheseSettings } from '../testing/server-under-test.js';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Server } from 'node:http';
 
-process.env.ALLOW_SIMULATED_COMPANY_ADDRESS = '1';
-process.env.ALLOW_MEMORY_SESSIONS = '1';
-process.env.DATABASE_URL = '';
-process.env.SERVE = '0';
-process.env.APP_ORIGIN = 'https://payroll.example';
-process.env.DATA_PATH = join(mkdtempSync(join(tmpdir(), 'mn-public-kind-')), 'db.json');
+useOnlyTheseSettings({
+  ALLOW_SIMULATED_COMPANY_ADDRESS: '1',
+  ALLOW_MEMORY_SESSIONS: '1',
+  DATABASE_URL: '',
+  SERVE: '0',
+  APP_ORIGIN: 'https://payroll.example',
+  DATA_PATH: join(mkdtempSync(join(tmpdir(), 'mn-public-kind-')), 'db.json'),
+});
 
 const ORIGIN = 'https://payroll.example';
 
@@ -141,7 +144,7 @@ handInWiring({
   createProofSystem: () => new SimulatedProofSystem(),
 });
 
-const { app } = await import('./index.js');
+const { app } = await importTheServer();
 
 let server: Server;
 let base: string;
@@ -159,7 +162,7 @@ const call = async (method: string, path: string, opts: { token?: string; body?:
 const post = (path: string, body: unknown) => call('POST', path, { token, body });
 
 beforeAll(async () => {
-  server = await new Promise<Server>((resolve) => { const s = app.listen(0, () => resolve(s)); });
+  server = await new Promise<Server>((resolve) => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
   const a = server.address();
   if (!a || typeof a === 'string') throw new Error('no port');
   base = `http://127.0.0.1:${a.port}`;
@@ -173,11 +176,11 @@ beforeEach(() => { sent.length = 0; });
 type Payment = { kind: string; token: string; amount: string };
 const privateAgain = (payments: Payment[]) => payments.map((p) => (p.kind === 'unshielded' ? { ...p, kind: 'shielded' } : p));
 /*
- * The next question after the comparison: what the vault holds publicly. Whether this deployment can read a chain
- * decides which of the two answers comes back, and both refuse before any fee.
+ * The next question after the comparison: what the vault holds publicly. This server is started with no
+ * deployment and no chain settings, so it cannot read a chain, and it says so before any fee is spent.
  */
 const PUBLIC_MONEY_ASKED =
-  /^(this service cannot read what a vault holds|what the vault holds of NIGHT publicly could not be read from the chain).*Nothing was raised and no fee was spent\.$/su;
+  /^this service cannot read what a vault holds.*Nothing was raised and no fee was spent\.$/su;
 const CHANGED = /the run changed after this device checked it against the vault.*Nothing was written down\./su;
 
 describe('A PUBLIC PAYEE\'S KIND IS CHECKED WHERE THE SERVICE COMPARES WHAT A DEVICE CHECKED', () => {

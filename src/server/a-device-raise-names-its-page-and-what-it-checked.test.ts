@@ -20,17 +20,20 @@
  * starts, over the same store file and the same ledger it is handed.
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { importTheServer, useOnlyTheseSettings } from '../testing/server-under-test.js';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Server } from 'node:http';
 
-process.env.ALLOW_SIMULATED_COMPANY_ADDRESS = '1';
-process.env.ALLOW_MEMORY_SESSIONS = '1';
-process.env.DATABASE_URL = '';
-process.env.SERVE = '0';
-process.env.APP_ORIGIN = 'https://payroll.example';
-process.env.DATA_PATH = join(mkdtempSync(join(tmpdir(), 'mn-device-raise-')), 'db.json');
+useOnlyTheseSettings({
+  ALLOW_SIMULATED_COMPANY_ADDRESS: '1',
+  ALLOW_MEMORY_SESSIONS: '1',
+  DATABASE_URL: '',
+  SERVE: '0',
+  APP_ORIGIN: 'https://payroll.example',
+  DATA_PATH: join(mkdtempSync(join(tmpdir(), 'mn-device-raise-')), 'db.json'),
+});
 
 const ORIGIN = 'https://payroll.example';
 
@@ -148,7 +151,7 @@ handInWiring({
   createProofSystem: () => new SimulatedProofSystem(),
 });
 
-const { app } = await import('./index.js');
+const { app } = await importTheServer();
 
 let server: Server;
 let base: string;
@@ -166,7 +169,7 @@ const call = async (method: string, path: string, opts: { token?: string; body?:
 const post = (path: string, body: unknown) => call('POST', path, { token, body });
 
 beforeAll(async () => {
-  server = await new Promise<Server>((resolve) => { const s = app.listen(0, () => resolve(s)); });
+  server = await new Promise<Server>((resolve) => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
   const a = server.address();
   if (!a || typeof a === 'string') throw new Error('no port');
   base = `http://127.0.0.1:${a.port}`;
@@ -254,7 +257,7 @@ describe('A RAISE FROM A DEVICE NAMES ITS PAGE AND WHAT IT CHECKED', () => {
       /* RED WHEN: the service stops asking about private money a raise not marked as the device's would pay, or the new fields switch that off. */
       expect(r.status, why).toBe(400);
       expect(String(r.body?.error), why).toMatch(
-        /(cannot read what a vault holds|what the vault holds of \S+ privately could not be established).*Nothing was raised and no fee was spent\.$/su);
+        /cannot read what a vault holds.*Nothing was raised and no fee was spent\.$/su);
       /* RED WHEN: a raise not marked as the device's is refused by a device-raise check instead. */
       expect(String(r.body?.error), why).not.toMatch(/out of date|does not say which payments|the run changed after this device checked it/u);
     }

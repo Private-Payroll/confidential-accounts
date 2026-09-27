@@ -22,6 +22,7 @@
  * server gets wrong in practice.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { importTheServer, useOnlyTheseSettings } from '../testing/server-under-test.js';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -37,27 +38,30 @@ import { signInWithAWallet } from '../testing/wallet-session.js';
  *
  * Set BEFORE the import, because the module wires itself up at import time.
  */
-process.env.ALLOW_MEMORY_SESSIONS = '1';
-/*
- * **AND THE DEVELOPER'S OWN DATABASE IS REFUSED OUT LOUD.**
- *
- * `X2` made the server read `.env`, which is what lets a person start it — and
- * `.env` on a working machine holds the LIVE connection string. Saying
- * `ALLOW_MEMORY_SESSIONS=1` is no longer enough on its own: the server prefers a
- * connection string when it has one, so this file would have opened the real
- * database and written sessions into it, silently.
- *
- * SET TO EMPTY RATHER THAN DELETED. `loadEnvFile` fills a name that is
- * `undefined`, so deleting it invites the file to put it straight back. Empty is
- * a name that exists and is not a connection string, which is exactly the claim
- * being made — and the server refuses to start if both arrive anyway.
- */
-process.env.DATABASE_URL = '';
-process.env.SERVE = '0';
-/* `PI4b`: a session comes from a wallet sign-in, and a wallet signature names
- * the origin it was minted for — so this suite has to declare one. */
-process.env.APP_ORIGIN = 'https://payroll.example';
-process.env.DATA_PATH = join(mkdtempSync(join(tmpdir(), 'mn-http-')), 'db.json');
+useOnlyTheseSettings({
+  ALLOW_MEMORY_SESSIONS: '1',
+  /*
+   * **AND THE DEVELOPER'S OWN DATABASE IS REFUSED OUT LOUD.**
+   *
+   * The server reads `.env`, which is what lets a person start it — and
+   * `.env` on a working machine holds the LIVE connection string. Saying
+   * `ALLOW_MEMORY_SESSIONS=1` is no longer enough on its own: the server prefers a
+   * connection string when it has one, so this file would have opened the real
+   * database and written sessions into it, silently.
+   *
+   * SET TO EMPTY, AND THE `.env` IS NOT READ AT ALL. `importTheServer` imports
+   * the entry point from a directory without one, so no connection string can arrive
+   * from the working tree; empty is this file saying so in its own words - and
+   * the server refuses to start if a connection string and
+   * `ALLOW_MEMORY_SESSIONS=1` ever arrive together.
+   */
+  DATABASE_URL: '',
+  SERVE: '0',
+  /* A session comes from a wallet sign-in, and a wallet signature names the
+   * origin it was minted for — so this suite has to declare one. */
+  APP_ORIGIN: 'https://payroll.example',
+  DATA_PATH: join(mkdtempSync(join(tmpdir(), 'mn-http-')), 'db.json'),
+});
 
 const ORIGIN = 'https://payroll.example';
 /**
@@ -100,7 +104,7 @@ handInWiring({
   createProofSystem: () => new SimulatedProofSystem(),
 });
 
-const { app } = await import('./index.js');
+const { app } = await importTheServer();
 const { theNetwork } = await import('../midnight/network.js');
 const NETWORK = theNetwork();
 
@@ -109,7 +113,7 @@ let base: string;
 
 beforeAll(async () => {
   server = await new Promise<Server>(resolve => {
-    const s = app.listen(0, () => resolve(s));
+    const s = app.listen(0, '127.0.0.1', () => resolve(s));
   });
   const a = server.address();
   if (!a || typeof a === 'string') throw new Error('no port');

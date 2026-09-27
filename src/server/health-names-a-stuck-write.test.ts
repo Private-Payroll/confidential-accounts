@@ -9,17 +9,20 @@
  * by the test.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { importTheServer, useOnlyTheseSettings } from '../testing/server-under-test.js';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Server } from 'node:http';
 
 /* Set BEFORE the import, as every server test does: the module wires itself up at import time. */
-process.env.ALLOW_MEMORY_SESSIONS = '1';
-process.env.DATABASE_URL = '';
-process.env.SERVE = '0';
-process.env.APP_ORIGIN = 'https://payroll.example';
-process.env.DATA_PATH = join(mkdtempSync(join(tmpdir(), 'mn-health-')), 'db.json');
+useOnlyTheseSettings({
+  ALLOW_MEMORY_SESSIONS: '1',
+  DATABASE_URL: '',
+  SERVE: '0',
+  APP_ORIGIN: 'https://payroll.example',
+  DATA_PATH: join(mkdtempSync(join(tmpdir(), 'mn-health-')), 'db.json'),
+});
 
 const { SimulatedProofSystem, SimulatedCommitments } = await import('../core/ledger.js');
 const { ChainLedger } = await import('../wiring/chain.js');
@@ -59,12 +62,12 @@ handInWiring({
   createProofSystem: () => new SimulatedProofSystem(),
 });
 
-const { app } = await import('./index.js');
+const { app } = await importTheServer();
 
 let server: Server;
 let base: string;
 beforeAll(async () => {
-  server = await new Promise<Server>(resolve => { const s = app.listen(0, () => resolve(s)); });
+  server = await new Promise<Server>(resolve => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
   const a = server.address();
   if (!a || typeof a === 'string') throw new Error('no port');
   base = `http://127.0.0.1:${a.port}`;

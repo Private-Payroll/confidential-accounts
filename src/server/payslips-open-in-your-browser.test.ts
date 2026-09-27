@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { importTheServer, useOnlyTheseSettings } from '../testing/server-under-test.js';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -15,12 +16,14 @@ import type { User } from '../core/types.js';
  * through its routes.
  */
 
-process.env.ALLOW_MEMORY_SESSIONS = '1';
-process.env.DATABASE_URL = '';
-process.env.SERVE = '0';
-process.env.APP_ORIGIN = 'https://payroll.example';
 const DATA_PATH = join(mkdtempSync(join(tmpdir(), 'mn-payslips-')), 'db.json');
-process.env.DATA_PATH = DATA_PATH;
+useOnlyTheseSettings({
+  ALLOW_MEMORY_SESSIONS: '1',
+  DATABASE_URL: '',
+  SERVE: '0',
+  APP_ORIGIN: 'https://payroll.example',
+  DATA_PATH: DATA_PATH,
+});
 const ORIGIN = 'https://payroll.example';
 
 const { FileStore } = await import('../core/store-file.js');
@@ -82,14 +85,14 @@ handInWiring({
   createLedger: () => new SimulatedLedger(SimulatedCommitments),
   createProofSystem: () => new SimulatedProofSystem(),
 });
-const { app } = await import('./index.js');
+const { app } = await importTheServer();
 
 let server: Server;
 let base: string;
 /* A signed-in person. The payslip routes answer nobody else; the key is the second lock. */
 let token = '';
 beforeAll(async () => {
-  server = await new Promise<Server>(resolve => { const s = app.listen(0, () => resolve(s)); });
+  server = await new Promise<Server>(resolve => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
   const a = server.address();
   if (!a || typeof a === 'string') throw new Error('no port');
   base = `http://127.0.0.1:${a.port}`;

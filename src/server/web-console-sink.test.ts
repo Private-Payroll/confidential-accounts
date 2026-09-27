@@ -100,14 +100,29 @@ const SHAPES: ReadonlyArray<readonly [string, RegExp]> = [
 const children: ChildProcess[] = [];
 afterAll(() => { for (const c of children) { try { c.kill('SIGKILL'); } catch { /* gone */ } } });
 
-const freePort = async (): Promise<number> => await new Promise((resolve, reject) => {
+/*
+ * **A PORT THE SYSTEM WILL NOT HAND TO ANOTHER TEST IN THE MEANTIME.** The port is found here
+ * and bound later, by the child, so between the two anything else asking the
+ * system for a port could be handed the same one - and every other server in
+ * this suite asks for exactly that, with port 0. The system hands those out
+ * from its ephemeral range (from 32768 on Linux and 49152 on macOS, by default),
+ * so this looks below it: a port there is only ever taken by somebody naming it.
+ */
+const BELOW_THE_EPHEMERAL_RANGE = { from: 20_000, to: 32_000 };
+const isFree = async (port: number): Promise<boolean> => await new Promise((resolve) => {
   const probe = createServer();
-  probe.on('error', reject);
-  probe.listen(0, '127.0.0.1', () => {
-    const { port } = probe.address() as { port: number };
-    probe.close(() => resolve(port));
-  });
+  probe.once('error', () => resolve(false));
+  probe.listen(port, '127.0.0.1', () => probe.close(() => resolve(true)));
 });
+const freePort = async (): Promise<number> => {
+  const { from, to } = BELOW_THE_EPHEMERAL_RANGE;
+  const start = from + Math.floor(Math.random() * (to - from));
+  for (let i = 0; i < to - from; i += 1) {
+    const port = from + ((start - from + i) % (to - from));
+    if (await isFree(port)) return port;
+  }
+  throw new Error(`no free port on 127.0.0.1 between ${from} and ${to}`);
+};
 
 type Running = { port: number; report: string; out: string };
 

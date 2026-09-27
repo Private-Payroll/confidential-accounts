@@ -31,6 +31,7 @@
  * one route where copying the other two would have had nothing to copy.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { importTheServer, useOnlyTheseSettings } from '../testing/server-under-test.js';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -40,12 +41,14 @@ import { signatureVerifyingKey } from '@midnightntwrk/ledger-v9';
 import { identityFromWords } from 'midnight-identity';
 import { addressOfVerifyingKey, mint } from 'midnight-identity/profile/disclosure';
 
-process.env.ALLOW_SIMULATED_COMPANY_ADDRESS = '1';
-process.env.ALLOW_MEMORY_SESSIONS = '1';
-process.env.DATABASE_URL = '';
-process.env.SERVE = '0';
-process.env.APP_ORIGIN = 'https://payroll.example';
-process.env.DATA_PATH = join(mkdtempSync(join(tmpdir(), 'mn-who-raised-')), 'db.json');
+useOnlyTheseSettings({
+  ALLOW_SIMULATED_COMPANY_ADDRESS: '1',
+  ALLOW_MEMORY_SESSIONS: '1',
+  DATABASE_URL: '',
+  SERVE: '0',
+  APP_ORIGIN: 'https://payroll.example',
+  DATA_PATH: join(mkdtempSync(join(tmpdir(), 'mn-who-raised-')), 'db.json'),
+});
 
 const ORIGIN = 'https://payroll.example';
 
@@ -64,7 +67,7 @@ handInWiring({
   createProofSystem: () => new SimulatedProofSystem(),
 });
 
-const { app } = await import('./index.js');
+const { app } = await importTheServer();
 const { theNetwork } = await import('../midnight/network.js');
 const NETWORK = theNetwork();
 
@@ -80,7 +83,7 @@ let base: string;
 
 beforeAll(async () => {
   server = await new Promise<Server>(resolve => {
-    const s = app.listen(0, () => resolve(s));
+    const s = app.listen(0, '127.0.0.1', () => resolve(s));
   });
   const a = server.address();
   if (!a || typeof a === 'string') throw new Error('no port');
