@@ -15,6 +15,7 @@
  * in and this is the test that dies.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { importTheServer, useOnlyTheseSettings } from '../testing/server-under-test.js';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -33,19 +34,21 @@ import { signInWithAWallet } from '../testing/wallet-session.js';
  * same place it already declares that sessions are in memory and no port is
  * served. Take this line out and all five go red, which is the point of it.
  */
-process.env.ALLOW_SIMULATED_COMPANY_ADDRESS = '1';
-process.env.ALLOW_MEMORY_SESSIONS = '1';
-/*
- * Empty, not deleted, and the reason is in `server.test.ts`: since `X2` the
- * server reads `.env`, `.env` holds a live connection string, and a deleted
- * name is one `loadEnvFile` puts straight back.
- */
-process.env.DATABASE_URL = '';
-process.env.SERVE = '0';
-/* `PI4b`: a session comes from a wallet sign-in now, and a wallet signature
- * names the origin it was minted for — so this suite has to declare one. */
-process.env.APP_ORIGIN = 'https://payroll.example';
-process.env.DATA_PATH = join(mkdtempSync(join(tmpdir(), 'mn-unlock-')), 'db.json');
+useOnlyTheseSettings({
+  ALLOW_SIMULATED_COMPANY_ADDRESS: '1',
+  ALLOW_MEMORY_SESSIONS: '1',
+  /*
+   * Empty: this file says in its own words that there is no database. The
+   * working tree's `.env`, which on a developer's machine names a live one, is
+   * never read here - `importTheServer` imports from a directory without one.
+   */
+  DATABASE_URL: '',
+  SERVE: '0',
+  /* A session comes from a wallet sign-in, and a wallet signature names the
+   * origin it was minted for — so this suite has to declare one. */
+  APP_ORIGIN: 'https://payroll.example',
+  DATA_PATH: join(mkdtempSync(join(tmpdir(), 'mn-unlock-')), 'db.json'),
+});
 
 const ORIGIN = 'https://payroll.example';
 /**
@@ -81,7 +84,7 @@ handInWiring({
   createProofSystem: () => new SimulatedProofSystem(),
 });
 
-const { app } = await import('./index.js');
+const { app } = await importTheServer();
 const { theNetwork } = await import('../midnight/network.js');
 const NETWORK = theNetwork();
 
@@ -90,7 +93,7 @@ let base: string;
 
 beforeAll(async () => {
   server = await new Promise<Server>(resolve => {
-    const s = app.listen(0, () => resolve(s));
+    const s = app.listen(0, '127.0.0.1', () => resolve(s));
   });
   const a = server.address();
   if (!a || typeof a === 'string') throw new Error('no port');

@@ -2962,8 +2962,8 @@ app.post('/api/demo/seed', authed, wrap(async (req, res) => {
  * carry most of the weight now, but a hand-built response object still
  * compiles, and a status code has no type at all.
  *
- * `server.test.ts` imports this and drives real HTTP against an ephemeral
- * port. Listening is therefore conditional: importing the module must not
+ * Tests import this through `src/testing/server-under-test.ts` and drive real
+ * HTTP against an ephemeral port on 127.0.0.1. Listening is therefore conditional: importing the module must not
  * seize :8787 or leave a handle open that keeps vitest alive.
  */
 export { app };

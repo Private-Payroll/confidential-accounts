@@ -19,6 +19,7 @@
  * back in and this is the test that dies.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { importTheServer, useOnlyTheseSettings } from '../testing/server-under-test.js';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -35,15 +36,17 @@ import { payeeFor } from '../testing/payees.js';
 /* The same declarations `unlock-company.test.ts` makes, and for the same
  * reasons: a simulated ledger, sessions in memory, no port served, and the
  * live connection string emptied rather than deleted. */
-process.env.ALLOW_SIMULATED_COMPANY_ADDRESS = '1';
-process.env.ALLOW_MEMORY_SESSIONS = '1';
-process.env.DATABASE_URL = '';
-process.env.SERVE = '0';
-/* **THE ORIGIN A DISCLOSURE HAS TO NAME.** Configuration, never a header — a
- * disclosure minted for another payroll names that payroll inside the
- * signature, and the test below sends one. */
-process.env.APP_ORIGIN = 'https://payroll.example';
-process.env.DATA_PATH = join(mkdtempSync(join(tmpdir(), 'mn-self-payee-')), 'db.json');
+useOnlyTheseSettings({
+  ALLOW_SIMULATED_COMPANY_ADDRESS: '1',
+  ALLOW_MEMORY_SESSIONS: '1',
+  DATABASE_URL: '',
+  SERVE: '0',
+  /* **THE ORIGIN A DISCLOSURE HAS TO NAME.** Configuration, never a header — a
+   * disclosure minted for another payroll names that payroll inside the
+   * signature, and the test below sends one. */
+  APP_ORIGIN: 'https://payroll.example',
+  DATA_PATH: join(mkdtempSync(join(tmpdir(), 'mn-self-payee-')), 'db.json'),
+});
 
 const ORIGIN = 'https://payroll.example';
 /**
@@ -79,7 +82,7 @@ handInWiring({
   createProofSystem: () => new SimulatedProofSystem(),
 });
 
-const { app } = await import('./index.js');
+const { app } = await importTheServer();
 /* The one the SERVER is running, worked out the same way it works it out —
  * `C151` is what a network name disagreeing across two applications costs. */
 const { theNetwork } = await import('../midnight/network.js');
@@ -103,7 +106,7 @@ let base: string;
 
 beforeAll(async () => {
   server = await new Promise<Server>(resolve => {
-    const s = app.listen(0, () => resolve(s));
+    const s = app.listen(0, '127.0.0.1', () => resolve(s));
   });
   const a = server.address();
   if (!a || typeof a === 'string') throw new Error('no port');

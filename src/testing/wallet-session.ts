@@ -81,7 +81,9 @@ export const signInWithAWallet = async (
   if (asked.status !== 200) {
     throw new Error(
       `the wallet challenge answered ${asked.status}: ${JSON.stringify(asked.body)}. `
-      + 'A 503 here means APP_ORIGIN is not set for this suite.');
+      + 'A 503 here means the server that answered could not start wallet sign-in (the body says '
+      + 'why): most often the test file did not name APP_ORIGIN in useOnlyTheseSettings, or a '
+      + "process other than the test's own server answered the address it dialled.");
   }
 
   const address = addressOfSlot(opts.slot, opts.network);
