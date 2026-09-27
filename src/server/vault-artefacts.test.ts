@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import express from 'express';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { request, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -176,6 +176,74 @@ describe('THE ROUTE HANDS THE FILE OVER, NOT ONLY FINDS IT', () => {
         expect(got.status, path).not.toBe(200);
         expect(got.body.includes(SECRET), path).toBe(false);
       }
+    }
+  });
+});
+
+/* The status and the caching header of one response, as a browser would receive them. */
+const head = (server: Server, path: string): Promise<{ status: number; cache: string | undefined }> =>
+  new Promise((resolve, reject) => {
+    const { port } = server.address() as AddressInfo;
+    const req = request({ host: '127.0.0.1', port, path, method: 'GET' }, (res) => {
+      res.resume();
+      res.on('end', () => resolve({ status: res.statusCode ?? 0, cache: res.headers['cache-control'] }));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+
+/*
+ * **A REFUSAL A BROWSER IS ALLOWED TO KEEP IS A REFUSAL IT REPLAYS.** A browser
+ * that is told a response may be kept for an hour does not ask again for an
+ * hour, whatever has changed here since. A refusal that carried that permission
+ * went on being served from the browser's own cache after the file it refused
+ * was being handed over, and the request never reached this server.
+ */
+describe('A REFUSAL IS NEVER KEPT BY A BROWSER, AND A FILE THAT IS SENT MAY BE', () => {
+  let server: Server;
+  let root: string;
+  beforeAll(async () => {
+    root = mkdtempSync(join(tmpdir(), 'artefacts-kept-'));
+    lay(root, {
+      '.midnight/params/bls_midnight_2p0': PARAMS,
+      '.midnight/params/bls_midnight_2p1': SWAPPED,
+      'contracts/managed-vault/keys/deposit.prover': PROVER,
+    });
+    /* A name that is on the list and is there, but cannot be sent: a folder where the file should be. */
+    mkdirSync(join(root, 'contracts', 'managed-vault', 'keys', 'deposit.verifier'), { recursive: true });
+    server = await serve(root);
+  });
+  afterAll(() => { server?.close(); if (root) rmSync(root, { recursive: true, force: true }); });
+
+  it('A FILE THAT IS FOUND AND THEN CANNOT BE SENT IS REFUSED WITH NOTHING A BROWSER MAY KEEP', async () => {
+    /* RED WHEN: the refusal a failed send turns into does not say it must not be kept. With the one-hour header
+     * set on the response before the send, and the refusal saying nothing, it answers 'public, max-age=3600'. */
+    const got = await head(server, '/artefacts/vault/keys/deposit.verifier');
+    expect(got.status).toBe(404);
+    expect(got.cache).toBe('no-store');
+  });
+
+  it('EVERY OTHER REFUSAL SAYS THE SAME: A NAME OFF THE LIST, A FILE NOT HERE, AND PARAMETERS THAT ARE NOT THE PUBLISHED ONES', async () => {
+    /* RED WHEN: a refusal goes out without saying it must not be kept - a browser, or anything between, may then
+     * decide for itself how long to keep it. */
+    for (const path of [
+      '/artefacts/vault/keys/nothing.prover',
+      '/artefacts/vault/zkir/deposit.bzkir',
+      '/artefacts/vault/params/bls_midnight_2p1',
+      '/artefacts/vault/params/bls_filecoin_2p0',
+    ]) {
+      const got = await head(server, path);
+      expect(got.status, path).toBe(404);
+      expect(got.cache, path).toBe('no-store');
+    }
+  });
+
+  it('A FILE THAT IS SENT MAY BE KEPT FOR AN HOUR', async () => {
+    /* RED WHEN: the caching header is dropped from a successful send - every approval then downloads again. */
+    for (const path of ['/artefacts/vault/keys/deposit.prover', '/artefacts/vault/params/bls_midnight_2p0']) {
+      const got = await head(server, path);
+      expect(got.status, path).toBe(200);
+      expect(got.cache, path).toBe('public, max-age=3600');
     }
   });
 });

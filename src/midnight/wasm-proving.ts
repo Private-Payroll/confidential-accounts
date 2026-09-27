@@ -81,11 +81,8 @@ export async function wasmProofProvider(source: KeyMaterialSource): Promise<Proo
       try {
         return await source.getParams(k);
       } catch (e) {
-        throw new Error(
-          `could not load the SRS for k=${k}: ${String((e as any)?.message ?? e)}\n` +
-            '  These are public parameters the proof server normally downloads for itself.\n' +
-            '  Run EXTRACT-PARAMS.command once to copy them out of the proof server image.',
-        );
+        /* The source says what it tried and why each failed; nothing is added that fits only one source. */
+        throw new Error(`could not load the SRS for k=${k}: ${String((e as any)?.message ?? e)}`);
       }
     },
   };

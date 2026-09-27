@@ -121,12 +121,28 @@ export const cacheKeyFor = (kind: string, keyLocation: string): string =>
  */
 const readStreaming = async (
   res: Response,
+  url: string,
   what: string,
   already: number,
   onProgress?: (p: FetchProgress) => void,
 ): Promise<{ bytes: Uint8Array; expected: number | null }> => {
   const header = res.headers.get('content-length');
   const expected = header === null || Number.isNaN(Number(header)) ? null : Number(header);
+  /*
+   * **A DOWNLOAD THAT ENDS EARLY IS A FAILURE, AND IT SAYS SO.** The server
+   * said how long the file is; fewer bytes than that is a file cut off on the
+   * way, and a prover handed one fails later with nothing to say about why.
+   */
+  /*
+   * A length is only comparable with what arrives when nothing was encoded on
+   * the way: the browser hands over decoded bytes, and the header counts the
+   * encoded ones.
+   */
+  const encoding = res.headers.get('content-encoding');
+  const comparable = expected !== null && (encoding === null || encoding === '' || encoding === 'identity');
+  const short = (received: number, cause?: unknown): Error =>
+    new Error(`the download of ${url} stopped after ${received}${comparable ? ` of ${expected}` : ''} bytes`
+      + (cause === undefined ? '' : `: ${String((cause as any)?.message ?? cause)}`));
 
   /*
    * A body that cannot be streamed is read whole rather than refused. Some
@@ -134,7 +150,15 @@ const readStreaming = async (
    * correct, and the only thing lost is the intermediate reporting.
    */
   if (!res.body || typeof (res.body as any).getReader !== 'function') {
-    const bytes = new Uint8Array(await res.arrayBuffer());
+    let whole: ArrayBuffer;
+    try {
+      whole = await res.arrayBuffer();
+    } catch (e) {
+      /* Read whole, so how much had arrived is not known and is not guessed. */
+      throw new Error(`the download of ${url} broke before it could be read: ${String((e as any)?.message ?? e)}`);
+    }
+    const bytes = new Uint8Array(whole);
+    if (comparable && bytes.length !== expected) throw short(bytes.length);
     onProgress?.({ received: already + bytes.length, total: expected === null ? null : already + expected, what });
     return { bytes, expected };
   }
@@ -143,8 +167,10 @@ const readStreaming = async (
   const parts: Uint8Array[] = [];
   let received = 0;
   for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
+    let step: { done: boolean; value?: Uint8Array };
+    try { step = await reader.read(); } catch (e) { throw short(received, e); }
+    const { done, value } = step;
+    if (done || value === undefined) break;
     parts.push(value);
     received += value.length;
     onProgress?.({
@@ -154,6 +180,7 @@ const readStreaming = async (
     });
   }
 
+  if (comparable && received !== expected) throw short(received);
   const bytes = new Uint8Array(received);
   let at = 0;
   for (const part of parts) { bytes.set(part, at); at += part.length; }
@@ -217,11 +244,26 @@ export const httpKeyMaterialSource = (
     const held = await cache?.get(key);
     if (held) return { bytes: held, fetched: false };
 
-    const res = await doFetch(url);
+    /*
+     * **ASKED OF THE SERVER EVERY TIME, NEVER ANSWERED FROM THE BROWSER'S OWN
+     * HTTP CACHE UNCHECKED.** What this file keeps, it keeps in `cache` above,
+     * and only after a whole download. The browser's HTTP cache is a second
+     * store this file does not control: a refusal a server once marked
+     * cacheable is replayed from it for as long as that mark says, without the
+     * request reaching the server at all, so a file put in place since is never
+     * seen. `no-cache` still lets the browser reuse what it holds, but only
+     * after the server has confirmed it is current.
+     */
+    let res: Response;
+    try {
+      res = await doFetch(url, { cache: 'no-cache' });
+    } catch (e) {
+      throw new Error(`${url} could not be reached: ${String((e as any)?.message ?? e)}`);
+    }
     // The URL and the status, because "failed to fetch" names nothing a person
     // or a later reader can act on.
     if (!res.ok) throw new Error(`${res.status} for ${url}`);
-    const { bytes } = await readStreaming(res, what, already, options.onProgress);
+    const { bytes } = await readStreaming(res, url, what, already, options.onProgress);
     await cache?.put(key, bytes);
     return { bytes, fetched: true };
   };
@@ -278,7 +320,12 @@ export const httpKeyMaterialSource = (
        * the same reason: a machine populated from the older download script has
        * the other one.
        */
-      let last: unknown;
+      /*
+       * **EVERY NAME'S REASON IS KEPT, NOT ONLY THE LAST.** The first name is
+       * the one that matters and the second is a fallback; reporting only the
+       * fallback's refusal hides why the file that should have arrived did not.
+       */
+      const reasons: string[] = [];
       for (const name of [`bls_midnight_2p${k}`, `bls_filecoin_2p${k}`]) {
         try {
           const got = await cached(
@@ -286,11 +333,12 @@ export const httpKeyMaterialSource = (
             'fetching the public parameters', 0,
           );
           return got.bytes;
-        } catch (e) { last = e; }
+        } catch (e) { reasons.push(`${name}: ${String((e as any)?.message ?? e)}`); }
       }
       throw new Error(
-        `the public parameters for this circuit are not available where the application serves ` +
-          `its proving material (k=${k}): ${String((last as any)?.message ?? last)}`,
+        `the public parameters for this circuit did not arrive (k=${k}). ${reasons.join('; ')}. ` +
+          'The service fetches and checks these when it starts, and its log says which it could not get; ' +
+          'try again in a minute, and if it keeps happening the service needs attention.',
       );
     },
   };
@@ -325,10 +373,22 @@ const openOnce = (factory: IDBFactoryLike, name: string): Promise<any> =>
 export class IndexedDbArtefactCache implements ArtefactCache {
   private db: Promise<any> | null = null;
 
+  /**
+   * `tell` hears every time this browser's store refuses to hand back or keep
+   * a file, with the file and the store's own reason. A refusal costs a
+   * download and never a proof, so it is said rather than thrown.
+   */
   constructor(
     private factory: IDBFactoryLike,
     private name = 'confidential-accounts-artefacts',
+    private tell: (why: string) => void = () => {},
   ) {}
+
+  private refused(doing: string, key: string, e: unknown): void {
+    try {
+      this.tell(`this browser's store would not ${doing} ${key}: ${String((e as any)?.message ?? (e as any)?.name ?? e)}`);
+    } catch { /* whoever listens cannot stop the cache */ }
+  }
 
   private open(): Promise<any> {
     if (!this.db) this.db = openOnce(this.factory, this.name);
@@ -356,7 +416,8 @@ export class IndexedDbArtefactCache implements ArtefactCache {
       });
       if (value === undefined || value === null) return null;
       return value instanceof Uint8Array ? value : new Uint8Array(value as ArrayBuffer);
-    } catch {
+    } catch (e) {
+      this.refused('hand back', key, e);
       return null;
     }
   }
@@ -372,8 +433,9 @@ export class IndexedDbArtefactCache implements ArtefactCache {
         tx.onabort = () => reject(tx.error ?? new Error('the database transaction was rolled back'));
         tx.onerror = () => reject(tx.error ?? new Error('the database transaction failed'));
       });
-    } catch {
+    } catch (e) {
       /* a cache that cannot write costs a download, not a proof */
+      this.refused('keep', key, e);
     }
   }
 }

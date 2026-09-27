@@ -168,8 +168,15 @@ describe('§2 the vault\'s screen', () => {
     });
     await act(async () => {
       fireEvent.click(document.querySelector(`[data-vault-row] [data-deposit]`)!);
-      for (let i = 0; i < 10; i += 1) await new Promise((r) => setTimeout(r, 0));
     });
+    /* Until the failure is on the screen, not a fixed count of turns: under the
+     * whole suite's load the worker's answer can take longer than ten turns, and a
+     * fixed count read an empty screen in CI while it passed alone. Each wait is
+     * its own act, so the screen is brought up to date before it is read. */
+    const until = Date.now() + 10_000;
+    while (shownError() === '' && Date.now() < until) {
+      await act(async () => { await new Promise((r) => setTimeout(r, 10)); });
+    }
   };
 
   it('A FAILURE INSIDE THE VAULT\'S WORKER REACHES THE SCREEN WITH ITS REASON', async () => {
