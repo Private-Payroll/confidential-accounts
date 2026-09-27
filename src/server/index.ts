@@ -68,6 +68,7 @@ import { MemorySealedPoolStore, type SealedPoolStore } from '../midnight/vault-p
 import type { WireRecord } from '../midnight/sealed-record-wire.js';
 import { companyVaultRoutes, type VaultChain } from './company-vaults.js';
 import { vaultArtefactPlaces, vaultArtefactRoutes } from './vault-artefacts.js';
+import { parameterSources, startProvingParameters } from './proving-parameters.js';
 import {
   accountHandoverWith, accountTemporaryVerifyingKey, accountVerifierKeysIn, committeeChangeWith, vaultChainFromTheIndexer,
   vaultVerifierKeysIn,
@@ -3020,5 +3021,13 @@ if (process.env.SERVE !== '0') {
      * the first thing opened after a walk went wrong.
      */
     console.log(`refusals   ${refusalLogPath()}`);
+    /*
+     * **THE PUBLIC PARAMETERS A DEVICE PROVES WITH ARE FETCHED HERE WHEN THEY
+     * ARE MISSING, SO NOBODY PUTS THEM IN PLACE BY HAND.** Each is checked
+     * against the digest Midnight publishes before it is kept. It does not hold
+     * up the start: a server that cannot fetch still serves, and says which
+     * proofs will fail until it can.
+     */
+    startProvingParameters({ places: vaultArtefactPlaces(process.cwd(), process.env), sources: parameterSources(process.env) });
   });
 }
