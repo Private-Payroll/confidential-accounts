@@ -147,69 +147,35 @@ export default defineConfig({
      */
     setupFiles: ['./src/test-setup.ts', './packages/identity/src/test-setup.ts'],
     /*
-     * **THE SUITE REFUSES TO RUN AGAINST AN ARTIFACT OLDER THAN ITS SOURCE.**
+     * **TWO REFUSALS BEFORE ANY TEST RUNS: A COMPILED CONTRACT OLDER THAN ITS
+     * SOURCE, AND A CONTRACT LEDGER WITH MORE TOP-LEVEL FIELDS THAN ITS LAYOUT
+     * ALLOWS.**
      *
+     * `globalSetup` and not `setupFiles`. `setupFiles` above runs once per test
+     * file, inside each worker, so a refusal there would be one failure per
+     * file. This runs once, in the main process, before any worker evaluates a
+     * test module: it cannot be out-ordered by an import, and it covers every
+     * `include` glob rather than only the contract tests.
      *
-     * `globalSetup` and not `setupFiles`, and the difference is the whole
-     * point. `setupFiles` above runs once per test FILE, inside each worker —
-     * so a refusal there is ninety-nine file-level failures in a wall of
-     * output, which is a warning wearing a refusal's clothes. This runs ONCE,
-     * in the main process, before any worker evaluates any test module. It
-     * cannot be out-ordered by an import, and it covers every `include` glob
-     * rather than only `contracts/test/**`.
+     * `artifact-freshness` refuses when the compiled contract is older than its
+     * source. `ledger-limit` refuses a contract whose ledger has passed fifteen
+     * top-level fields: sixteen compiles and deploys, but the state nests and
+     * every field's path moves, field 0 included, with no error from the
+     * compiler. It is here rather than in a test file because it is a property
+     * of the built artifact. They are two entries rather than one module that
+     * calls both, so each one's test can import its wiring module and call its
+     * default export against a fixture, and neither can be disarmed with the
+     * other. `scripts/artifact-freshness.test.ts` and
+     * `scripts/ledger-limit.test.ts` each import this file as a module and
+     * check for their own entry, so a deleted or commented-out entry turns the
+     * suite red.
      *
-     * **IT CARRIES NO ESCAPE HATCH, AND THAT IS DELIBERATE.** No environment
-     * variable, no flag; `vitest` publishes no `--globalSetup` option.
-     *
-     * **AN EARLIER VERSION OF THIS COMMENT SAID THERE WAS NO WAY PAST IT AT
-     * ALL. That was false and a review demonstrated it**, which is why the
-     * true list is written here instead: `vitest --config <other>` replaces
-     * this whole file and cannot be closed from inside it, and renaming this
-     * file makes vitest fall back to `vite.config.ts`, which has no `test`
-     * block.
-     *
-     * **AND THE FIRST OF THOSE IS NOW TAKEN, WHICH IS WHY THE SENTENCE THAT
-     * STOOD HERE IS GONE.** It read *what keeps it shut is that nothing that
-     * runs the suite passes that flag*, and that stopped being true.
-     *
-     * **WHAT IS STILL TRUE, AND IT IS NARROWER RATHER THAN WEAKER: only the
-     * mutation-testing script passes that flag, it DERIVES the config it
-     * weakens rather than maintaining a second one, and the difference is
-     * pinned at that one entry.** A separate check imports both configs as
-     * MODULES, compares every other key deeply, and asserts that nothing else
-     * passes `--config` to vitest at all - not `package.json`, not a script -
-     * and that no second `vitest.*.config.ts` exists. The two entries this file wires for the artifact and for the
-     * ledger are wired there too.
-     *
-     * **THAT TEST HAS RUN, SO "PINS" IS THE WORD — AND THE SENTENCE THAT STOOD
-     * HERE IS THE VERY THING THE NEXT PARAGRAPH WARNS ABOUT.** It read *no vitest
-     * invocation can start here today*, on the ground that the contract source
-     * was newer than the compiled artifact. **MEASURED 5 Sep: the
-     * artifact is 3,074 SECONDS NEWER than the source, and this file's own test
-     * ran green here — 28 assertions.**
-     * **A guard whose written reason no longer matches its behaviour is the
-     * next change's false confidence**, a shape this repository
-     * has paid for more than once.
-     * **What IS closed is this key**: `scripts/artifact-freshness.test.ts`
-     * imports this file as a MODULE and reads the value, and calls that
-     * module's own default export against a stale fixture, so a deleted key, a
-     * commented-out key and a swallowed throw are each a red suite rather than
-     * a silent hole.
-     */
-    /*
-     * **AND ONE MORE GUARD, WIRED SEPARATELY.**
-     *
-     * `ledger-limit` refuses a contract whose ledger has passed fifteen
-     * top-level fields. Sixteen COMPILES and DEPLOYS, the state nests,
-     * and EVERY field's path moves — field 0 included — with no error anywhere
-     * in the compiler. It is here rather than in a test file because it is a
-     * property of the built artifact, and because a guard nobody wired in is
-     * invisible to a unit test of the guard.
-     *
-     * TWO ENTRIES RATHER THAN ONE MODULE CALLING TWO THINGS, so that each
-     * one's own test can import its wiring module and call its default export
-     * against a fixture. A single wrapper would give the two of them one
-     * shared failure and one shared way to be disarmed.
+     * No environment variable skips them, and the test runner has no
+     * `--globalSetup` option. What does skip them is `--config` with another
+     * file, which replaces this one, or renaming this file (the runner then
+     * falls back to `vite.config.ts`, which has no `test` block). Every
+     * configuration in this repository that runs with a different guard list
+     * spreads this one, so the rest of it cannot drift.
      */
     globalSetup: [
       './scripts/artifact-freshness.globalSetup.ts',

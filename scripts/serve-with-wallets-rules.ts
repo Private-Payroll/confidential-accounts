@@ -164,3 +164,117 @@ export function parametersBeforeServing(o: ParameterOutcome, paramsDir: string):
   for (const p of problems) lines.push(`  - ${p}.`);
   return { inPlace: false, lines };
 }
+
+/** How long the pages have to start answering before the launcher gives up and says which did not. */
+export const PAGES_START_WITHIN_MS = 180_000;
+
+/** What is known about the pages while the launcher waits for them. */
+export interface PagesSoFar {
+  /** Every page started, by the label a person reads. */
+  readonly labels: readonly string[];
+  /** The pages that have answered at their origin. */
+  readonly answered: readonly string[];
+  /** The pages whose process has ended, and how. */
+  readonly ended: readonly { readonly label: string; readonly code: number | null; readonly signal: string | null }[];
+  /** How long it has waited so far. */
+  readonly waitedMs: number;
+}
+
+/**
+ * **READY ONLY WHEN EVERY PAGE'S ORIGIN ANSWERS AND NO PAGE IT STARTED HAS
+ * ENDED, AND A PAGE THAT ENDED IS NAMED.** A page that stops on start - its
+ * port taken, its configuration broken - would otherwise leave a launcher
+ * saying READY over an address where nothing is served, and a person opening
+ * it would meet a browser error with no reason given. That the answer comes
+ * from this launcher's own page, and not from something already on the port,
+ * is `somethingAlreadyServes`'s question, asked before any page is started.
+ *
+ * `wait` means ask again. A page that ended is a refusal even if it had
+ * answered before, because what it answered is no longer being served.
+ */
+export function pagesVerdict(s: PagesSoFar, limitMs: number = PAGES_START_WITHIN_MS):
+  { ready: true } | { wait: true } | { refusal: string } {
+  if (s.ended.length > 0) {
+    const how = s.ended.map((e) => `${e.label} stopped (${e.signal ? `signal ${e.signal}` : `exit ${e.code}`})`);
+    return {
+      refusal: `${how.join('; ')}, so nothing was offered as ready. `
+        + 'What resolves it: the page\'s own lines above say why it stopped - most often another process '
+        + 'is already serving on its port; stop that one, then run this again.',
+    };
+  }
+  const missing = s.labels.filter((l) => !s.answered.includes(l));
+  if (missing.length === 0) return { ready: true };
+  if (s.waitedMs < limitMs) return { wait: true };
+  return {
+    refusal: `${missing.join(' and ')} did not answer within ${Math.round(limitMs / 1000)} seconds of being started, `
+      + 'so nothing was offered as ready. What resolves it: read the page\'s own lines above for an error; '
+      + 'if there is none, the machine is slow to start it - run this again.',
+  };
+}
+
+/** Asks one origin whether a page answers there: true for a success status, false for anything else or no answer. */
+export type AnswersAt = (origin: string) => Promise<boolean>;
+
+/** The one thing the wait needs from a started page's process: to hear when it ends. */
+export interface EndsOnce {
+  once(event: 'exit', listener: (code: number | null, signal: NodeJS.Signals | null) => void): unknown;
+}
+
+/**
+ * **ASKED BEFORE ANY PAGE IS STARTED: DOES SOMETHING ALREADY ANSWER WHERE A
+ * PAGE IS ABOUT TO BE SERVED?** If it does, the page this launcher starts
+ * cannot take the port, and the answer the wait then hears would be that other
+ * process's - so READY would be printed over a page this launcher does not
+ * serve, on the origin the server trusts for sign-in. Refused instead, naming
+ * the origin, with nothing started.
+ */
+export async function somethingAlreadyServes(
+  starts: readonly { readonly label: string; readonly origin: string }[], answersAt: AnswersAt,
+): Promise<string | null> {
+  const taken: string[] = [];
+  for (const s of starts) if (await answersAt(s.origin)) taken.push(`${s.origin} (${s.label})`);
+  if (taken.length === 0) return null;
+  return `something is already serving at ${taken.join(' and ')}, before this launcher started its own page `
+    + 'there, so no page was started and nothing was offered as ready. What resolves it: stop whatever is '
+    + 'serving there - another launcher, the development server, or a page left running - then run this again.';
+}
+
+/**
+ * **WAITS UNTIL EVERY PAGE STARTED ANSWERS AT ITS ORIGIN, WATCHING EACH PAGE'S
+ * PROCESS AS IT GOES**, and throws `pagesVerdict`'s words when one ended or the
+ * wait ran out. `started` is in the order of `starts`. A page that answers is
+ * asked once more a pass later, so a process that answers and then dies at
+ * once is caught here rather than after READY.
+ */
+export async function waitForThePages(o: {
+  readonly starts: readonly { readonly label: string; readonly origin: string }[];
+  readonly started: readonly EndsOnce[];
+  readonly answersAt: AnswersAt;
+  readonly pause?: (ms: number) => Promise<void>;
+  readonly now?: () => number;
+  readonly limitMs?: number;
+}): Promise<void> {
+  const pause = o.pause ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const now = o.now ?? Date.now;
+  const ended: { label: string; code: number | null; signal: string | null }[] = [];
+  o.started.forEach((child, i) => child.once('exit', (code, signal) => {
+    ended.push({ label: o.starts[i]!.label, code, signal: signal ?? null });
+  }));
+  const answered = new Set<string>();
+  const from = now();
+  let readyOnce = false;
+  for (;;) {
+    for (const s of o.starts) {
+      if (!answered.has(s.label) && await o.answersAt(s.origin)) answered.add(s.label);
+    }
+    const v = pagesVerdict({
+      labels: o.starts.map((s) => s.label), answered: [...answered], ended, waitedMs: now() - from,
+    }, o.limitMs);
+    if ('refusal' in v) throw new Error(v.refusal);
+    if ('ready' in v) {
+      if (readyOnce) return;
+      readyOnce = true;
+    }
+    await pause(1000);
+  }
+}

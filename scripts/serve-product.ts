@@ -2,7 +2,7 @@
  * STARTING THE PRODUCT: THE SERVER, THEN THE APPLICATION AND THE WALLET.
  *
  * Shared by both commands that start it - the read-only one and the one that
- * first brings up the wallets that pay - so the two cannot drift into starting
+ * first brings up the wallet that pays - so the two cannot drift into starting
  * different products.
  *
  * **NOTHING HERE CAN GIVE THE SERVER A WALLET.** The server asks for a pair once,
@@ -69,10 +69,15 @@ export async function startTheServer(root: string): Promise<{ said: string; port
  */
 export function startThePages(
   root: string, starts: readonly PageStart[], env: NodeJS.ProcessEnv,
-): void {
+): ChildProcess[] {
+  const started: ChildProcess[] = [];
   for (const s of starts) {
     const [bin, ...args] = s.command;
     const exe = bin.includes('/') ? join(root, bin) : bin;
-    children.push(spawn(exe, args, { cwd: root, env, stdio: 'inherit' }));
+    const child = spawn(exe, args, { cwd: root, env, stdio: 'inherit' });
+    children.push(child);
+    started.push(child);
   }
+  /* In the order of `starts`, so a caller can tell which page a process is. */
+  return started;
 }
