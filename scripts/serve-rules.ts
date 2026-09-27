@@ -4,7 +4,7 @@
  *
  * The product is three things on one machine: the payroll application, the
  * service it talks to, and the wallet. Two commands start them - one read-only,
- * one that first brings up the wallets that pay - and both start them the same
+ * one that first brings up the wallet that pays - and both start them the same
  * way, from what is decided here.
  *
  * -- THE WALLET IS NEVER STARTED ON THE APPLICATION'S ORIGIN ---------------
@@ -21,6 +21,15 @@
  * script. Each page is started on the port its origin names and refuses to take
  * another, so the origin the application opens the wallet at is the origin the
  * wallet is actually on - rather than whichever port happened to be free.
+ *
+ * -- ONE APPLICATION ORIGIN, AND WHICH APPLICATION IS ON IT ----------------
+ *
+ * Two applications can be served on the application's origin: the one in
+ * `src/web`, and the new one being built in `apps/web`. One is served at a
+ * time, on the same origin, so the server and the wallet see the same address
+ * whichever it is and neither needs to know there are two. Which one is a
+ * setting read here, never an argument, and when nothing sets it the
+ * application in `src/web` is served exactly as before.
  */
 
 /** The command the development script runs to start the product. */
@@ -38,6 +47,39 @@ export interface PageStart {
   readonly origin: string;
   /** The executable and its arguments, relative to the repository root. */
   readonly command: readonly string[];
+}
+
+/** The setting that names which application is served on `APP_ORIGIN`. */
+export const PAGE_SETTING = 'PAYROLL_PAGE';
+
+/**
+ * The applications that can be served on `APP_ORIGIN`, and the arguments that
+ * point the page server at each one's own configuration. `src/web`'s is the
+ * default configuration file, so it needs none.
+ */
+export const APPLICATION_PAGES = {
+  legacy: { label: 'the payroll application', config: [] as readonly string[] },
+  web: { label: 'the new payroll application', config: ['--config', 'apps/web/vite.config.ts'] as readonly string[] },
+} as const;
+
+export type ApplicationPage = keyof typeof APPLICATION_PAGES;
+
+/**
+ * Which application to serve, read from the setting, or why it cannot be.
+ *
+ * **UNSET MEANS `src/web`**, so every command that does not set it serves what
+ * it always served. A value that names neither application is refused rather
+ * than taken as the default, because a person who set it meant something.
+ */
+export function applicationPageFrom(settings: Record<string, string | undefined>):
+  { page: ApplicationPage } | { refusal: string } {
+  const value = settings[PAGE_SETTING];
+  if (value === undefined || value === '') return { page: 'legacy' };
+  if (Object.hasOwn(APPLICATION_PAGES, value)) return { page: value as ApplicationPage };
+  return {
+    refusal: `${PAGE_SETTING} is "${value}", which names no application. It is one of `
+      + `${Object.keys(APPLICATION_PAGES).join(', ')}, or unset for the application in src/web`,
+  };
 }
 
 /** Every leading `NAME=VALUE` of a script, including ones assigned nothing. */
@@ -85,12 +127,15 @@ export function servableOrigin(setting: string, value: string | undefined):
  * The application and the wallet, each on the origin its setting names, or
  * every reason they cannot be started.
  *
+ * `page` is which application goes on the application's origin; the origin
+ * itself does not change with it.
+ *
  * **THE PAGE OPENS THE WALLET AT `VITE_WALLET_ORIGIN`, AND THE WALLET IS
  * STARTED AT `WALLET_ORIGIN`.** The two are one decision declared twice - once
  * for the server, once for the page - so they must agree, or the page opens a
  * wallet where nothing is listening.
  */
-export function pageStartsFor(settings: Record<string, string | undefined>):
+export function pageStartsFor(settings: Record<string, string | undefined>, page: ApplicationPage = 'legacy'):
   { starts: PageStart[] } | { refusals: string[] } {
   const refusals: string[] = [];
   const app = servableOrigin('APP_ORIGIN', settings.APP_ORIGIN);
@@ -112,8 +157,8 @@ export function pageStartsFor(settings: Record<string, string | undefined>):
   return {
     starts: [
       {
-        label: 'the payroll application', setting: 'APP_ORIGIN', origin: app.origin,
-        command: ['node_modules/.bin/vite', ...pinned(app.port)],
+        label: APPLICATION_PAGES[page].label, setting: 'APP_ORIGIN', origin: app.origin,
+        command: ['node_modules/.bin/vite', ...APPLICATION_PAGES[page].config, ...pinned(app.port)],
       },
       {
         label: 'the wallet', setting: 'WALLET_ORIGIN', origin: wallet.origin,

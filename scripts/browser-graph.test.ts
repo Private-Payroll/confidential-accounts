@@ -25,10 +25,18 @@
  */
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, relative } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { BROWSER_BUILDS, pagesIn, scriptsOf, walkBuild, type BrowserBuild, type BuildGraph } from './browser-graph.js';
+
+/*
+ * TWO BUILD PLUGINS ARE STOOD IN WHEN A BUILD'S CONFIGURATION IS LOADED BELOW. Each loads a native binary that is
+ * not present on every machine, and neither has anything to do with what is read here: which root a build serves
+ * and what its development server pre-scans. Standing them in lets every build's configuration be read everywhere.
+ */
+vi.mock('@tailwindcss/vite', () => ({ default: () => ({ name: 'stand-in-for-tailwind' }) }));
+vi.mock('vite-plugin-top-level-await', () => ({ default: () => ({ name: 'stand-in-for-top-level-await' }) }));
 
 const REPO = fileURLToPath(new URL('..', import.meta.url));
 
@@ -195,7 +203,7 @@ describe('EVERY BROWSER BUILD IN THIS REPOSITORY', () => {
         'src/midnight/wasm-proving.ts node:path',
       ]);
     }
-    for (const name of ['proving-probe', 'wallet']) expect(byName(name).dynamicNode).toEqual([]);
+    for (const name of ['proving-probe', 'wallet', 'web']) expect(byName(name).dynamicNode).toEqual([]);
   });
 
   it('THE LIST OF BUILDS IS EVERY VITE CONFIG, AND EACH LISTS EVERY PAGE IN ITS ROOT', () => {
@@ -210,21 +218,59 @@ describe('EVERY BROWSER BUILD IN THIS REPOSITORY', () => {
     for (const b of BROWSER_BUILDS) expect(b.pages).toEqual(pagesIn(b.root, REPO));
   });
 
-  it('THE DEVELOPMENT SERVER PRE-SCANS THE PAYROLL PAGE AND EVERY WORKER IT STARTS', async () => {
+  /** The scripts a build's pages name, relative to the repository root. */
+  const pageScriptsOf = (build: BrowserBuild): string[] => build.pages.flatMap((p) => scriptsOf(readFileSync(join(REPO, p), 'utf8'))
+    .map((s) => relative(REPO, join(REPO, dirname(p), s)).split('\\').join('/')));
+
+  /** What a build's development server must pre-scan: its pages, and every worker entry its pages do not name. */
+  const scanFor = (build: BrowserBuild, graph: BuildGraph): string[] => [
+    ...build.pages.map((p) => relative(build.root, p)),
+    ...graph.entries.filter((e) => !pageScriptsOf(build).includes(e)).map((e) => relative(build.root, e)),
+  ].sort();
+
+  /** The builds whose pages start a worker. */
+  const withWorkers = (): BrowserBuild[] => BROWSER_BUILDS.filter((b) => {
+    const pageScripts = pageScriptsOf(b);
+    return byName(b.name).entries.some((e) => !pageScripts.includes(e));
+  });
+
+  /*
+   * BUILDS WHOSE PAGES START A WORKER AND WHOSE PRE-SCAN DOES NOT NAME IT, EACH WITH WHY IT IS LEFT SO.
+   * An entry here is held to still being true: a build that comes to name its workers, or stops starting any,
+   * turns the test below red until its entry is taken out, so this list cannot outlive what it describes.
+   */
+  const LEFT_UNSCANNED: Record<string, string> = {
+    standalone: 'it is only ever built into one file, never served by the development server, so there is no pre-scan to reload after',
+    wallet: 'its configuration is the wallet\'s own and names no worker; the page reload this guards against is open there',
+    'proving-probe': 'a measurement page served only to measure proving, where a reload loses nothing',
+  };
+
+  it('EVERY BUILD WHOSE PAGES START A WORKER IS HELD TO ITS PRE-SCAN, OR LISTED WITH WHY IT IS NOT', () => {
+    /* RED WHEN: a build listed as left unscanned starts no worker any more - its entry would be excusing nothing.
+     * And the payroll page must still be seen to start workers, or the test below would be pinning nothing. */
+    const names = withWorkers().map((b) => b.name);
+    expect(Object.keys(LEFT_UNSCANNED).filter((n) => !names.includes(n))).toEqual([]);
+    expect(names).toContain('payroll');
+  });
+
+  it.each(BROWSER_BUILDS.map((b) => b.name))('%s: THE DEVELOPMENT SERVER PRE-SCANS EVERY PAGE AND EVERY WORKER IT STARTS', async (name) => {
     /* A dependency only a worker imports is otherwise found when the worker first starts, and the
      * development server then reloads the page and loses what was on it.
-     * RED WHEN: `optimizeDeps.entries` is removed from `vite.config.ts`, or a worker is added to the page
-     * without being named there. */
-    const { default: config } = await import('../vite.config.ts');
-    const build = BROWSER_BUILDS.find((b) => b.name === 'payroll') as BrowserBuild;
-    expect(config.root).toBe(build.root);
-    const scanned = (config.optimizeDeps?.entries ?? []) as string[];
-    const pageScripts = build.pages.flatMap((p) => scriptsOf(readFileSync(join(REPO, p), 'utf8'))
-      .map((s) => relative(REPO, join(REPO, dirname(p), s)).split('\\').join('/')));
-    const expected = [
-      ...build.pages.map((p) => relative(build.root, p)),
-      ...byName('payroll').entries.filter((e) => !pageScripts.includes(e)).map((e) => relative(build.root, e)),
-    ];
-    expect([...scanned].sort()).toEqual(expected.sort());
+     * RED WHEN: a build whose pages start a worker has no `optimizeDeps.entries`, leaves a worker out of it, or
+     * names a page or worker that is not there; its configuration serves a root other than the one listed; or a
+     * build listed above as left unscanned comes to name its workers, and its entry must be taken out.
+     * A build that starts no worker may leave the pre-scan unset, which is every page; if it sets one, it is
+     * held to naming exactly its pages - so the new application's configuration is read and checked too. */
+    const build = BROWSER_BUILDS.find((b) => b.name === name) as BrowserBuild;
+    const { default: config } = await import(/* @vite-ignore */ join(REPO, build.config));
+    expect(relative(REPO, resolve(REPO, config.root ?? '.')).split('\\').join('/')).toBe(build.root);
+    const entries = config.optimizeDeps?.entries as string[] | undefined;
+    const scanned = [...(entries ?? [])].sort();
+    if (!withWorkers().includes(build)) {
+      if (entries !== undefined) expect(scanned).toEqual(build.pages.map((p) => relative(build.root, p)).sort());
+      return;
+    }
+    if (Object.hasOwn(LEFT_UNSCANNED, name)) expect(scanned).not.toEqual(scanFor(build, byName(name)));
+    else expect(scanned).toEqual(scanFor(build, byName(name)));
   });
 });

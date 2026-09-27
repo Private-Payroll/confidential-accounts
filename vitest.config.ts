@@ -89,11 +89,11 @@ export default defineConfig({
      * contracts/ runs the compiled Compact circuits in process, so it needs
      * `npm run compact:fast` to have produced contracts/managed first.
      *
-     * **BOTH EXTENSIONS, AND THAT IS `X10` §3 RATHER THAN TIDINESS.** `C67` in
-     * the wallet: this glob read `.ts` only there too, which silently excluded
-     * every screen — a `.test.tsx` would not have been COLLECTED had somebody
-     * written one, so eleven single-line changes to the shell left the suite
-     * green. The typechecker reads a screen; it does not run it. **Narrowing
+     * **BOTH EXTENSIONS, BECAUSE NARROWING THIS HAS ALREADY COST A DEFECT.**
+     * The wallet's glob once read `.ts` only, which silently excluded every
+     * screen - a `.test.tsx` would not have been COLLECTED had somebody written
+     * one, so eleven single-line changes to the wallet's screen shell went
+     * through with the suite green. The typechecker reads a screen; it does not run it. **Narrowing
      * this back switches the screen tests off without a word.**
      */
     include: [
@@ -106,6 +106,12 @@ export default defineConfig({
        * it broke rather than in whichever product somebody thought to run.
        */
       'packages/identity/src/**/*.test.{ts,tsx}', 'apps/wallet/**/*.test.{ts,tsx}',
+      /*
+       * AND THE NEW WEB APPLICATION AND ITS COMPONENT KIT, from before either
+       * has a test, so the first one written is collected rather than
+       * discovered missing later.
+       */
+      'apps/web/**/*.test.{ts,tsx}', 'packages/ui/**/*.test.{ts,tsx}',
     ],
     /*
      * **THE ROOT IS THIS FILE'S OWN DIRECTORY, SAID ABSOLUTELY.**
@@ -132,7 +138,7 @@ export default defineConfig({
      * the wallet already uses**, in 64 files, rather than a second one invented
      * here.
      *
-     * **AND THE OTHER CLOCK** — `C134`. `testTimeout` above bounds a whole
+     * **AND THE OTHER CLOCK.** `testTimeout` above bounds a whole
      * test; it has no effect on a wait INSIDE one, which takes its budget from
      * the testing library's own configuration and defaults to one second.
      * Setting only the first is how a suite on a loaded machine reports
@@ -149,41 +155,40 @@ export default defineConfig({
      * so a refusal there is ninety-nine file-level failures in a wall of
      * output, which is a warning wearing a refusal's clothes. This runs ONCE,
      * in the main process, before any worker evaluates any test module. It
-     * cannot be out-ordered by an import, and it covers all five `include`
-     * globs rather than `contracts/test/**`.
+     * cannot be out-ordered by an import, and it covers every `include` glob
+     * rather than only `contracts/test/**`.
      *
      * **IT CARRIES NO ESCAPE HATCH, AND THAT IS DELIBERATE.** No environment
      * variable, no flag; `vitest` publishes no `--globalSetup` option.
      *
      * **AN EARLIER VERSION OF THIS COMMENT SAID THERE WAS NO WAY PAST IT AT
-     * ALL. That was false and an auditor demonstrated it**, which is why the
+     * ALL. That was false and a review demonstrated it**, which is why the
      * true list is written here instead: `vitest --config <other>` replaces
      * this whole file and cannot be closed from inside it, and renaming this
      * file makes vitest fall back to `vite.config.ts`, which has no `test`
      * block.
      *
      * **AND THE FIRST OF THOSE IS NOW TAKEN, WHICH IS WHY THE SENTENCE THAT
-     * STOOD HERE IS GONE.** It read *what keeps it shut is that neither door
-     * passes that flag*, and that stopped being true.
+     * STOOD HERE IS GONE.** It read *what keeps it shut is that nothing that
+     * runs the suite passes that flag*, and that stopped being true.
      *
      * **WHAT IS STILL TRUE, AND IT IS NARROWER RATHER THAN WEAKER: only the
-     * mutation door passes that flag, it DERIVES the config it weakens rather
-     * than maintaining a second one, and the difference is pinned at that one
-     * entry.** A test held outside the published set imports both configs as
+     * mutation-testing script passes that flag, it DERIVES the config it
+     * weakens rather than maintaining a second one, and the difference is
+     * pinned at that one entry.** A separate check imports both configs as
      * MODULES, compares every other key deeply, and asserts that nothing else
-     * in this repository passes `--config` to vitest at all — not a `.command`,
-     * not `package.json`, not a script — and that no second `vitest.*.config.ts`
-     * exists. The two entries this file wires for the artifact and for the
+     * passes `--config` to vitest at all - not `package.json`, not a script -
+     * and that no second `vitest.*.config.ts` exists. The two entries this file wires for the artifact and for the
      * ledger are wired there too.
      *
      * **THAT TEST HAS RUN, SO "PINS" IS THE WORD — AND THE SENTENCE THAT STOOD
      * HERE IS THE VERY THING THE NEXT PARAGRAPH WARNS ABOUT.** It read *no vitest
      * invocation can start here today*, on the ground that the contract source
-     * was newer than the compiled artifact. **MEASURED BY `S67`, 5 Sep: the
+     * was newer than the compiled artifact. **MEASURED 5 Sep: the
      * artifact is 3,074 SECONDS NEWER than the source, and this file's own test
-     * ran green here — 28 assertions.** `SC19` measured it first. `T-338`(c).
+     * ran green here — 28 assertions.**
      * **A guard whose written reason no longer matches its behaviour is the
-     * next round's false confidence** — `C286`'s shape, which this repository
+     * next change's false confidence**, a shape this repository
      * has paid for more than once.
      * **What IS closed is this key**: `scripts/artifact-freshness.test.ts`
      * imports this file as a MODULE and reads the value, and calls that
@@ -211,13 +216,14 @@ export default defineConfig({
       './scripts/ledger-limit.globalSetup.ts',
     ],
     /*
-     * **THE SUITE'S OWN REFUSALS DO NOT GO IN THE FILE A WALK READS.**
+     * **THE SUITE'S OWN REFUSALS DO NOT GO IN THE FILE A PERSON READS AFTER
+     * TRYING THE PRODUCT.**
      *
-     * `X10` made the service write every 400 it answers to
+     * The service writes every 400 it answers to
      * `logs/REPORT-REFUSALS.txt`, and the server tests provoke dozens of them
-     * on purpose. Mixed together, the first thing somebody opens after a walk
-     * went wrong would be half fixtures — **which is the fault this row is
-     * about, moved rather than fixed.** So the suite writes its own, under a
+     * on purpose. Mixed together, the first thing somebody opens after trying
+     * the product by hand and meeting a refusal would be half fixtures — **which is the confusion the file
+     * exists to end, moved rather than fixed.** So the suite writes its own, under a
      * name that says what it is.
      *
      * Here rather than in the production code: a service that asks whether it

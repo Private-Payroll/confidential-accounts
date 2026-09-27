@@ -11,8 +11,8 @@ import { describe, it, expect } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import {
-  LAUNCHER_COMMAND, commandOf, leadingAssignments, originsNotStarted, pageStartsFor,
-  refuseWhatTheServerSaid,
+  APPLICATION_PAGES, LAUNCHER_COMMAND, PAGE_SETTING, applicationPageFrom, commandOf, leadingAssignments,
+  originsNotStarted, pageStartsFor, refuseWhatTheServerSaid,
 } from './serve-rules.js';
 
 const ROOT = join(import.meta.dirname, '..');
@@ -126,6 +126,67 @@ describe('where each page is started', () => {
       VITE_WALLET_ORIGIN: 'http://identity.pp.localhost:5180',
     });
     expect('starts' in plan && plan.starts[1].command).toContain('localhost');
+  });
+});
+
+describe('which application is served on the application\'s origin', () => {
+  /*
+   * RED WHEN: an unset or empty setting serves anything but the application in
+   * `src/web` - every command that does not set it would change what it serves.
+   */
+  it('serves the application in src/web when nothing chooses', () => {
+    expect(applicationPageFrom({})).toEqual({ page: 'legacy' });
+    expect(applicationPageFrom({ [PAGE_SETTING]: '' })).toEqual({ page: 'legacy' });
+    expect(PAGE_SETTING).toBe('PAYROLL_PAGE');
+  });
+
+  /* RED WHEN: a value naming neither application is taken as one, or silently as the default. */
+  it('serves the new application when chosen, and refuses a value that names neither', () => {
+    expect(applicationPageFrom({ PAYROLL_PAGE: 'web' })).toEqual({ page: 'web' });
+    expect(applicationPageFrom({ PAYROLL_PAGE: 'legacy' })).toEqual({ page: 'legacy' });
+    for (const v of ['v2', 'WEB', 'toString', 'constructor', '__proto__']) {
+      const r = applicationPageFrom({ PAYROLL_PAGE: v });
+      expect(r, v).toEqual({ refusal: expect.stringMatching(/which names no application. It is one of legacy, web/) });
+    }
+  });
+
+  /*
+   * RED WHEN: the new application is started on any origin but the application's,
+   * with any configuration but its own, or unpinned; or choosing it moves the
+   * wallet. And the default start is not byte for byte what it was.
+   */
+  it('starts the new application on the same origin, with its own configuration, and the wallet unchanged', () => {
+    const legacy = pageStartsFor(devSettings());
+    const byDefault = pageStartsFor(devSettings(), 'legacy');
+    const web = pageStartsFor(devSettings(), 'web');
+    if (!('starts' in legacy) || !('starts' in web) || !('starts' in byDefault)) throw new Error('refused');
+    expect(byDefault).toEqual(legacy);
+    expect(legacy.starts[0]).toEqual({
+      label: 'the payroll application', setting: 'APP_ORIGIN', origin: 'http://localhost:5173',
+      command: ['node_modules/.bin/vite', '--host', 'localhost', '--port', '5173', '--strictPort'],
+    });
+    expect(web.starts[0]).toEqual({
+      label: 'the new payroll application', setting: 'APP_ORIGIN', origin: 'http://localhost:5173',
+      command: ['node_modules/.bin/vite', '--config', 'apps/web/vite.config.ts', '--host', 'localhost', '--port', '5173', '--strictPort'],
+    });
+    expect(web.starts[1]).toEqual(legacy.starts[1]);
+    expect(existsSync(join(ROOT, 'apps/web/vite.config.ts'))).toBe(true);
+    expect(Object.keys(APPLICATION_PAGES)).toEqual(['legacy', 'web']);
+  });
+
+  /*
+   * RED WHEN: the launcher that can spend stops reading the choice through this
+   * rule, reads it from its arguments, or starts pages from a plan that ignored it.
+   */
+  it('the launcher that can spend reads the choice from the setting, never from an argument', () => {
+    const text = code('scripts/serve-with-wallets.ts');
+    expect(text).toMatch(/const chosen = applicationPageFrom\(process\.env\);/);
+    /* RED WHEN: a value naming neither application is let through, and so served as the default. */
+    expect(text).toMatch(/const chosen = applicationPageFrom\(process\.env\);\s*if \('refusal' in chosen\) throw new Error\(chosen\.refusal\);/);
+    expect(text).toMatch(/const plan = pageStartsFor\(posture, chosen\.page\);/);
+    expect(text).not.toMatch(/process\.argv/);
+    /* And the read-only command is untouched by it: it serves the application in src/web. */
+    expect(code('scripts/serve.ts')).toMatch(/const plan = pageStartsFor\(process\.env\);/);
   });
 });
 
