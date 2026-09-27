@@ -19,6 +19,8 @@ import { openAccount } from '../core/account.js';
 import { rosterVaultKeys } from '../core/vault-keys.js';
 import { whyNotTheCommittee } from './handover-check.js';
 import { readPublicHoldings, sayPublicHoldings } from './device-vault-holdings.js';
+import { whyItFailed } from './why-it-failed.js';
+import { shownError } from './shown-error.js';
 
 /**
  * **A COMPANY'S VAULTS, CREATED AND FUNDED FROM THIS SCREEN.**
@@ -102,7 +104,7 @@ export function VaultPanel({ account, me, viewingKey }: {
     setEverySigner(authority?.everySignerNeeded ?? null);
   }, [account.id]);
 
-  useEffect(() => { void refresh().catch((e) => setErr(String(e?.message ?? e))); }, [refresh]);
+  useEffect(() => { void refresh().catch((e) => setErr(shownError(whyItFailed(e), 'reading a company\'s vaults'))); }, [refresh]);
 
   /** Every press: the company's keys from the wallet first, and this signer's public vault keys given once. */
   const withKeys = async () => {
@@ -130,7 +132,8 @@ export function VaultPanel({ account, me, viewingKey }: {
     try {
       setSaid(await go());
     } catch (e: any) {
-      setErr(e instanceof VaultHandoverOwed ? e.message : `${what} did not finish: ${String(e?.message ?? e)}`);
+      /* Every reason underneath, redacted and kept in the report as well as shown. */
+      setErr(e instanceof VaultHandoverOwed ? e.message : shownError(`${what} did not finish: ${whyItFailed(e)}`, what));
     } finally {
       setBusy(false); setStage(null);
       /* A figure read before money moved is not shown after it. */

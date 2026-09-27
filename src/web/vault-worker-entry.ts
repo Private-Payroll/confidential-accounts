@@ -24,6 +24,8 @@ import type { CreatingTransactionAnswer, VaultAsk, VaultAnswer } from './vault-w
 import type { EventOnTheWire } from './vault-builder.js';
 import { establishCreatingTransaction, NoteIndexRefused, type ServedEvent } from '../midnight/note-index.js';
 import type { Hex } from '../core/crypto.js';
+import { ensureBuffer } from 'midnight-identity/browser';
+import { whyItFailed } from './why-it-failed.js';
 
 /** Where this application serves the vault's public proving material. */
 export const VAULT_ARTEFACT_BASE = '/artefacts/vault';
@@ -167,11 +169,24 @@ const loadDeps = (scope: any) => {
   };
 };
 
+/**
+ * **THE CONTRACT RUNTIME REACHES FOR NODE'S `Buffer`, WHICH A BROWSER DOES NOT
+ * HAVE.** Every coin a vault circuit makes - the vault's note in a private
+ * deposit, the payee's coin and any change in a private payment out, both
+ * halves of a split - has its commitment turned into hex with `Buffer`, and in
+ * a browser's worker that stopped the deposit circuit with `Buffer is not
+ * defined` before the wallet was asked. So every
+ * ask puts one where the runtime looks first. Nothing is replaced where one is
+ * already there, as in Node.
+ */
+const giveTheRuntimeABuffer = (): void => ensureBuffer();
+
 /** One answer for one ask. Exported so it can be driven without a Worker. */
 export const answerVaultAsk = async (
   deps: () => Promise<WorkerDeps>,
   ask: VaultAsk,
 ): Promise<VaultAnswer> => {
+  giveTheRuntimeABuffer();
   const d = await deps();
   const withNetwork = { ...d, network: ask.network } as VaultBuilderDeps;
   const { setNetworkId } = await import('@midnight-ntwrk/midnight-js-network-id');
@@ -287,14 +302,22 @@ export const answerVaultAsk = async (
   }
 };
 
-export const startVaultWorker = (scope: any): void => {
-  const deps = loadDeps(scope);
+/**
+ * Starts answering the page. `deps` is what every ask is built with, and is
+ * the worker's own loader unless a test hands in another.
+ *
+ * **A FAILURE GOES BACK AS ITS WHOLE CHAIN OF REASONS, NOT ITS OUTER MESSAGE.**
+ * Only text crosses to the page, so what is not said here is lost for good:
+ * the contract runtime's own failure arrives as "Error executing circuit
+ * 'deposit'" with the reason that matters kept only underneath it.
+ */
+export const startVaultWorker = (scope: any, deps: () => Promise<WorkerDeps> = loadDeps(scope)): void => {
   scope.addEventListener('message', (event: MessageEvent) => {
     const ask = event.data as VaultAsk;
     if (typeof ask !== 'object' || ask === null || typeof ask.id !== 'number') return;
     void answerVaultAsk(deps, ask).then(
       (answer) => scope.postMessage(answer),
-      (e: unknown) => scope.postMessage({ id: ask.id, ok: false, error: String((e as { message?: unknown })?.message ?? e) }),
+      (e: unknown) => scope.postMessage({ id: ask.id, ok: false, error: whyItFailed(e) }),
     );
   });
   scope.postMessage({ kind: 'vault-worker-ready' });
