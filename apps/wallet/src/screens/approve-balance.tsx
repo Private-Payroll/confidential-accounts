@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { Identity } from 'midnight-identity/keys/derivation';
 import type { BalanceRequest } from 'midnight-identity/profile/request';
@@ -9,7 +9,7 @@ import { companyFingerprint } from 'midnight-identity/profile/fingerprint';
 import { Alert, Button, Section } from '../kit/index.js';
 import { hrefOf } from '../routes.js';
 import {
-  BalanceRefused, payForThePage, readWhatThePageAsks,
+  BalanceRefused, payForThePage, readWhatThePageAsks, whyThePaymentFailed,
 } from '../chain/balance-for-page.js';
 import type {
   BalanceDoors, FacadeForBalancing, LedgerForBalancing, PageAskPays, UnboundTransactionLike,
@@ -30,7 +30,11 @@ import type { Consent } from '../framing.js';
  * does not pay it.
  */
 
-/** The live doors: the wallet the person chose, on the real network, proving in this browser. */
+/**
+ * The live doors: the wallet the person chose, on the real network, proving in
+ * this browser. The wallet is started on the press and holds nothing until it
+ * has read the chain; `payForThePage` waits for that before it adds a coin.
+ */
 export const liveBalanceDoors = (identity: Identity, account: number): BalanceDoors & { stop: () => Promise<void> } => {
   let running: Promise<Awaited<ReturnType<typeof facadeFor>>> | null = null;
   const facade = () => {
@@ -71,7 +75,8 @@ type Stage =
   | { of: 'reading' }
   | { of: 'ready'; tx: UnboundTransactionLike; leaves: LeavesTheWallet[]; pays: PageAskPays }
   | { of: 'refused'; says: string }
-  | { of: 'paying'; leaves: LeavesTheWallet[]; pays: PageAskPays }
+  /** `reading`: the wallet is still reading the chain, nothing is booked, and the person may still say no. */
+  | { of: 'paying'; reading: boolean; leaves: LeavesTheWallet[]; pays: PageAskPays }
   | { of: 'failed'; says: string; leaves: LeavesTheWallet[]; pays: PageAskPays }
   | { of: 'sent'; at: number; leaves: LeavesTheWallet[]; pays: PageAskPays };
 
@@ -92,6 +97,14 @@ export function ApproveBalance({
 }): ReactNode {
   const doors = useMemo(() => doorsFor(identity, account), [doorsFor, identity, account]);
   const [stage, setStage] = useState<Stage>({ of: 'reading' });
+  /* A person who says no while the wallet is still reading the chain has already been answered for. */
+  const declined = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  /* The wallet on screen now. A press belongs to the wallet it was made with, and stops if the person picks another. */
+  const onScreen = useRef(doors);
+  useEffect(() => { onScreen.current = doors; }, [doors]);
+  const decline = useCallback((): void => { declined.current = true; onDecline(); }, [onDecline]);
 
   /* Read once per ask and per wallet. Reading pays nothing and books nothing. */
   useEffect(() => {
@@ -112,17 +125,30 @@ export function ApproveBalance({
   const pay = useCallback((): void => {
     if (stage.of !== 'ready' || channel === null) return;
     const { tx, leaves, pays } = stage;
-    setStage({ of: 'paying', leaves, pays });
-    void payForThePage(doors, tx, { pays, leaves }).then((finished) => {
+    const pressedWith = doors;
+    const stillThisWallet = (): boolean => onScreen.current === pressedWith;
+    setStage({ of: 'paying', reading: false, leaves, pays });
+    void payForThePage(doors, tx, { pays, leaves }, {
+      onReading: () => { if (!declined.current && stillThisWallet()) setStage({ of: 'paying', reading: true, leaves, pays }); },
+      onBalancing: () => { if (stillThisWallet()) setStage({ of: 'paying', reading: false, leaves, pays }); },
+      /* **ASKED LAST BEFORE ANY COIN IS SET ASIDE**: not if the person said no, left, or picked another wallet. */
+      stillWanted: () => !declined.current && mounted.current && stillThisWallet(),
+    }).then((finished) => {
+      /* A "no" that landed in the moment before the button went down: the page was told so, and is handed nothing. */
+      if (declined.current) return;
       const at = now();
       channel.answer(balancedAnswerFor(request, finished, leaves, at));
       setStage({ of: 'sent', at, leaves, pays });
     }, (e: unknown) => {
+      /* The person said no while the wallet was reading, and the page was told so then; or picked another wallet, whose screen now stands. */
+      if (declined.current || !stillThisWallet()) return;
+      /* **THE PERSON APPROVED, SO THE PAGE IS TOLD IT FAILED, NEVER THAT THEY DECLINED.** */
+      channel.refuse('failed', whyThePaymentFailed(e));
       setStage({
         of: 'failed', leaves, pays,
         says: pays === 'public'
-          ? `${e instanceof Error ? e.message : String(e)} The page was given nothing back.`
-          : `${e instanceof Error ? e.message : String(e)} Anything this wallet set aside for it has been let go, and nothing was handed back to the page.`,
+          ? `${e instanceof Error ? e.message : String(e)} The page was given nothing and has been told this payment failed.`
+          : `${e instanceof Error ? e.message : String(e)} Anything this wallet set aside for it has been let go. The page was given nothing and has been told this payment failed.`,
       });
     });
   }, [stage, channel, doors, request, now]);
@@ -236,13 +262,20 @@ export function ApproveBalance({
       {where}
       {whoIsAsking}
       {whichWallet}
-      {stage.of === 'paying' && !publicly && (
+      {stage.of === 'paying' && stage.reading && (
+        <p className="lede" data-reading-the-chain>
+          {publicly
+            ? 'Your wallet is reading the network to find your public coins before it adds them. Nothing has been paid, and you can still choose not to pay.'
+            : 'Your wallet is reading the network to find your private coins before it adds them. This can take a few minutes. Nothing has been paid, and you can still choose not to pay.'}
+        </p>
+      )}
+      {stage.of === 'paying' && !stage.reading && !publicly && (
         <p className="lede" data-paying>
           Adding your coins and proving them in this browser. This can take a few minutes, and nothing is sent to the
           network from here.
         </p>
       )}
-      {stage.of === 'paying' && publicly && (
+      {stage.of === 'paying' && !stage.reading && publicly && (
         <p className="lede" data-paying>
           Adding your public coins and signing in this browser. Nothing is sent to the network from here.
         </p>
@@ -265,7 +298,7 @@ export function ApproveBalance({
         >
           {publicly ? 'Pay publicly into the vault' : 'Pay into the vault'}
         </Button>
-        <Button variant="ghost" data-decline onClick={onDecline} disabled={stage.of === 'paying'}>
+        <Button variant="ghost" data-decline onClick={decline} disabled={stage.of === 'paying' && !stage.reading}>
           Do not pay
         </Button>
       </div>

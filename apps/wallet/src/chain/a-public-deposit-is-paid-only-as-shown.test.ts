@@ -9,7 +9,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   BalanceRefused, PAGE_TOKEN_KINDS, PUBLIC_DEPOSIT_TOKEN_KINDS, base64FromBytes, payForThePage, readWhatThePageAsks,
-  whyThePublicBalancingIsNotWhatWasApproved,
+  whyThePaymentFailed, whyThePublicBalancingIsNotWhatWasApproved,
 } from './balance-for-page.js';
 import type { BalanceDoors, FacadeForBalancing, LedgerForBalancing, UnboundTransactionLike } from './balance-for-page.js';
 
@@ -94,6 +94,8 @@ describe('THE PRESS, FOR A PUBLIC DEPOSIT', () => {
       signRecipe: async () => { log.push('sign'); return 'signed'; },
       finalizeRecipe: async () => { log.push('finish'); return { serialize: () => new Uint8Array([7]) }; },
       revert: async () => { log.push('revert'); },
+      unshielded: { state: { subscribe: (o) => { o.next({ progress: { isConnected: true, isStrictlyComplete: () => true } }); return { unsubscribe: () => {} }; } } },
+      shielded: { state: { subscribe: (o) => { o.next({ progress: { isConnected: true, isStrictlyComplete: () => true } }); return { unsubscribe: () => {} }; } } },
     }) as FacadeForBalancing,
     keys: () => ({ shieldedSecretKeys: 'z', dustSecretKey: 'd' }),
     signSegment: () => async () => ({}) as never,
@@ -129,8 +131,11 @@ describe('THE PRESS, FOR A PUBLIC DEPOSIT', () => {
     for (const [why, recipe] of cases) {
       const log: string[] = [];
       /* RED WHEN: the wallet signs a public payment it did not show, or keeps what it booked for it. */
-      await expect(payForThePage(doorsWith(recipe, log), publicDeposit(), { pays: 'public', leaves: LEAVES }), why)
-        .rejects.toThrow(/so it signed nothing\. Nothing has been paid\./);
+      const refused = await payForThePage(doorsWith(recipe, log), publicDeposit(), { pays: 'public', leaves: LEAVES })
+        .then(() => null, (e: unknown) => e);
+      expect((refused as Error)?.message, why).toMatch(/so it signed nothing\. Nothing has been paid\./);
+      /* RED WHEN: the page is told anything but that what was about to be paid was not what was approved. */
+      expect(whyThePaymentFailed(refused), why).toBe('not-as-approved');
       expect(log, why).toEqual(['balance unshielded', 'revert']);
     }
   });

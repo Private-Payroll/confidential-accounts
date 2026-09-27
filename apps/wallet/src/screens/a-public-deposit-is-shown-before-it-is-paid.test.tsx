@@ -11,7 +11,7 @@ import { settled } from '../testing/settled-channel.js';
 import { ApproveBalance, liveBalanceDoors } from './approve-balance.js';
 import { PublicKey } from '@midnightntwrk/wallet-sdk';
 import { unshieldedKeystoreFor } from '../chain/unshielded.js';
-import type { BalanceDoors, FacadeForBalancing } from '../chain/balance-for-page.js';
+import type { BalanceDoors, FacadeForBalancing, WalletPartForBalancing } from '../chain/balance-for-page.js';
 
 /*
  * The screen a person sees when a company's page asks this wallet to pay for a
@@ -40,6 +40,14 @@ const effects = {
   shieldedMints: new Map(), unshieldedMints: new Map(), unshieldedOutputs: new Map(), claimedUnshieldedSpends: new Map(),
   unshieldedInputs: new Map([[{ tag: 'unshielded', raw: NIGHT }, 2_500_000n]]),
 };
+/** A part of the wallet that has read the chain to the end. */
+const read = (): WalletPartForBalancing => ({
+  state: { subscribe: (o) => { o.next({ progress: { isConnected: true, isStrictlyComplete: () => true } }); return { unsubscribe: () => {} }; } },
+});
+/** One that has connected and is still reading. */
+const stillReading = (): WalletPartForBalancing => ({
+  state: { subscribe: (o) => { o.next({ progress: { isConnected: true, isStrictlyComplete: () => false } }); return { unsubscribe: () => {} }; } },
+});
 const doorsWith = (log: string[], facade: Partial<FacadeForBalancing> = {}) => (): BalanceDoors => ({
   ledger: async () => ({
     Transaction: {
@@ -62,6 +70,8 @@ const doorsWith = (log: string[], facade: Partial<FacadeForBalancing> = {}) => (
     signRecipe: async () => { log.push('sign'); return 'signed'; },
     finalizeRecipe: async () => { log.push('finish'); return { serialize: () => new Uint8Array([4, 2]) }; },
     revert: async () => { log.push('revert'); },
+    shielded: read(),
+    unshielded: read(),
     ...facade,
   }) as FacadeForBalancing,
   keys: () => ({ shieldedSecretKeys: 'z', dustSecretKey: 'd' }),
@@ -70,7 +80,7 @@ const doorsWith = (log: string[], facade: Partial<FacadeForBalancing> = {}) => (
   now: () => NOW,
 });
 const channelFor = (answers: unknown[]): Channel => ({
-  answer: (a) => { answers.push(a); }, refuse: (r) => { answers.push({ refused: r }); }, stop: () => {},
+  answer: (a) => { answers.push(a); }, refuse: (r: string, why?: string) => { answers.push(why === undefined ? { refused: r } : { refused: r, why }); }, stop: () => {},
 } as Channel);
 const renderWith = (doors: () => BalanceDoors, answers: unknown[]) => render(
   <ApproveBalance
@@ -103,7 +113,19 @@ describe('A PAGE ASKING THIS WALLET TO PAY FOR A PUBLIC DEPOSIT', () => {
     expect((answers[0] as { leaves: unknown }).leaves).toEqual([{ token: NIGHT, amount: '2500000', kind: 'unshielded' }]);
   });
 
-  it('WHEN WHAT THE WALLET WOULD ADD IS NOT WHAT IT SHOWED, NOTHING IS SIGNED OR ANSWERED', async () => {
+  it('WHILE ITS PUBLIC COINS ARE STILL BEING READ, IT SAYS SO AND ADDS NOTHING', async () => {
+    const log: string[] = []; const answers: unknown[] = [];
+    renderWith(doorsWith(log, { unshielded: stillReading() }), answers);
+    await screen.findByText('2.5 NIGHT, from your public balance');
+    fireEvent.click(document.querySelector('[data-pay]')!);
+    await settled(20);
+    /* RED WHEN: the public deposit is balanced before its public coins are read, or the screen says nothing while it waits. */
+    expect(log).toEqual([]);
+    expect(document.querySelector('[data-reading-the-chain]')?.textContent).toMatch(/^Your wallet is reading the network to find your public coins before it adds them\./);
+    expect(answers).toEqual([]);
+  });
+
+  it('WHEN WHAT THE WALLET WOULD ADD IS NOT WHAT IT SHOWED, NOTHING IS SIGNED OR HANDED BACK', async () => {
     const log: string[] = []; const answers: unknown[] = [];
     renderWith(doorsWith(log, {
       balanceUnboundTransaction: async () => {
@@ -118,8 +140,11 @@ describe('A PAGE ASKING THIS WALLET TO PAY FOR A PUBLIC DEPOSIT', () => {
     await settled(20);
     /* RED WHEN: the wallet signs a public payment to anyone but itself. */
     expect(log).toEqual(['balance', 'revert']);
-    expect(answers).toEqual([]);
+    /* RED WHEN: the page is handed a transaction, or is told anything but that what was about to be paid was not what was approved. */
+    expect(answers).toEqual([{ refused: 'failed', why: 'not-as-approved' }]);
     expect(document.querySelector('[data-balance-failed]')?.textContent).toMatch(/someone other than itself, so it signed nothing/);
+    /* RED WHEN: the person is not told the page heard that the payment failed. */
+    expect(document.querySelector('[data-balance-failed]')?.textContent).toMatch(/The page was given nothing and has been told this payment failed\.$/);
   });
 });
 

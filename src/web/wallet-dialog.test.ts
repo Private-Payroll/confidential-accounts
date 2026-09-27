@@ -6,7 +6,7 @@ import { parseAsk } from 'midnight-identity/profile/request';
 import type { KeyringRequest } from 'midnight-identity/profile/request';
 import { keyringReleaseFor } from 'midnight-identity/profile/unlock';
 import {
-  WALLET_DIALOG_NAME, WALLET_DIALOG_SIZE, WalletClosed, askWallet, openWalletDialog,
+  PAYMENT_FAILED_SAYS, WALLET_DIALOG_NAME, WALLET_DIALOG_SIZE, WalletClosed, askWallet, openWalletDialog,
 } from './wallet-sign-in.js';
 import type { Openable, WalletWindow } from './wallet-sign-in.js';
 
@@ -879,5 +879,48 @@ describe('§3 — A JOURNEY WHOSE SERVER CALL FAILS PUTS ITS WALLET AWAY', () =>
     ).catch(() => {});
     stop();
     expect(said).toEqual(['waiting', 'done']);
+  });
+});
+
+describe('A PAYMENT THE PERSON APPROVED AND THE WALLET COULD NOT MAKE IS NOT A DECLINE', () => {
+  const refusedWith = async (body: Record<string, unknown>): Promise<WalletClosed> => {
+    const view = new ARecordingView();
+    const answer = askWallet(view, WALLET, { schema: 'an-ask' });
+    view.fromTheWallet({ schema: READY_PING });
+    view.fromTheWallet({ schema: 'midnight-identity/disclosure-refused/v1', ...body });
+    const refusal = await answer.then(() => null, (e: unknown) => e as WalletClosed);
+    expect(refusal).toBeInstanceOf(WalletClosed);
+    expect(view.closed).toBe(1);
+    return refusal!;
+  };
+
+  it('reads failed as failed, with its reason, and never tells the person they did not approve', async () => {
+    for (const why of ['chain-unreadable', 'not-enough', 'not-as-approved', 'did-not-finish'] as const) {
+      const refusal = await refusedWith({ reason: 'failed', why });
+      /* RED WHEN: the page reads a failure as a decline, or drops which failure it was. */
+      expect(refusal.refusal, why).toEqual({ of: 'failed', why });
+      expect(refusal.message, why).toBe(PAYMENT_FAILED_SAYS[why]);
+      /* RED WHEN: any failure sentence says the person did not approve, or leaves out that nothing was paid. */
+      expect(refusal.message, why).not.toMatch(/did not approve|declined/u);
+      expect(refusal.message, why).toMatch(/paid nothing and nothing has been sent/u);
+      /* RED WHEN: a sentence sends the person to read the wallet's window, which the answer has just put away. */
+      expect(refusal.message, why).not.toMatch(/window/u);
+    }
+    /* The words a person reads when their wallet could not see its coins. */
+    expect(PAYMENT_FAILED_SAYS['chain-unreadable']).toMatch(/could not read the network to find your money/u);
+  });
+
+  it('a reason it does not know is still a failure, and a decline is still a decline', async () => {
+    for (const why of ['a-fifth-reason', undefined, 7, 'toString', '__proto__']) {
+      const refusal = await refusedWith({ reason: 'failed', why });
+      /* RED WHEN: an unknown or missing reason turns a failure back into a decline, or reads an inherited name as a reason. */
+      expect(refusal.refusal, String(why)).toEqual({ of: 'failed', why: 'did-not-finish' });
+    }
+    const declined = await refusedWith({ reason: 'declined' });
+    /* RED WHEN: a person who said no is told anything but that they said no. */
+    expect(declined.refusal).toEqual({ of: 'declined' });
+    expect(declined.message).toMatch(/you did not approve it in your wallet/u);
+    const declinedWithAWhy = await refusedWith({ reason: 'declined', why: 'not-enough' });
+    expect(declinedWithAWhy.refusal).toEqual({ of: 'declined' });
   });
 });
