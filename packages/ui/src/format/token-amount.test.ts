@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { formatTokenAmount } from './token-amount.js';
+import { formatTokenAmount, tokenAmount, TokenAmount } from './token-amount.js';
 import { formatDate, formatNumber } from './intl.js';
 
 /** Larger than Number.MAX_SAFE_INTEGER by six orders of magnitude, so a number could not hold it. */
 const BIG = 12_345_678_901_234_567_890_123n;
 const NNBSP = ' ';
+/** The figure of `units` of a token with `decimals`, written in `tag`. */
+const fmt = (units: bigint, decimals: number, tag: string) => formatTokenAmount(tokenAmount(units, decimals, 'USDC'), tag);
 
 describe('a token amount is written out exactly, in the language', () => {
   /*
@@ -20,9 +22,9 @@ describe('a token amount is written out exactly, in the language', () => {
     ['es', ['12.345.678.901.234.567,890123', '1,500000', '1234']],
   ];
   it.each(cases)('%s', (tag, [big, trailing, whole]) => {
-    expect(formatTokenAmount(BIG, 6, tag)).toBe(big);
-    expect(formatTokenAmount(1_500_000n, 6, tag)).toBe(trailing);
-    expect(formatTokenAmount(1234n, 0, tag)).toBe(whole);
+    expect(fmt(BIG, 6, tag)).toBe(big);
+    expect(fmt(1_500_000n, 6, tag)).toBe(trailing);
+    expect(fmt(1234n, 0, tag)).toBe(whole);
   });
 
   /*
@@ -39,27 +41,62 @@ describe('a token amount is written out exactly, in the language', () => {
       arab: ['١٢٬٣٤٥٬٦٧٨٬٩٠١٬٢٣٤٬٥٦٧٫٨٩٠١٢٣', '١٫٥٠٠٠٠٠'],
     };
     expect(Object.keys(expected)).toContain(system);
-    expect([formatTokenAmount(BIG, 6, 'ar'), formatTokenAmount(1_500_000n, 6, 'ar')]).toEqual(expected[system]);
+    expect([fmt(BIG, 6, 'ar'), fmt(1_500_000n, 6, 'ar')]).toEqual(expected[system]);
   });
 
   /* RED WHEN: a language with its own digits gets Western ones after the separator. */
   it('writes the fraction in the language\'s own digits', () => {
-    expect(formatTokenAmount(BIG, 6, 'ar-EG')).toBe('١٢٬٣٤٥٬٦٧٨٬٩٠١٬٢٣٤٬٥٦٧٫٨٩٠١٢٣');
+    expect(fmt(BIG, 6, 'ar-EG')).toBe('١٢٬٣٤٥٬٦٧٨٬٩٠١٬٢٣٤٬٥٦٧٫٨٩٠١٢٣');
   });
 
   /* RED WHEN: the smallest unit of an eighteen-decimal token rounds to zero, or leading zeros of the fraction go. */
   it('writes the smallest unit of a token with many decimals', () => {
-    expect(formatTokenAmount(5n, 18, 'en')).toBe('0.000000000000000005');
-    expect(formatTokenAmount(0n, 2, 'en')).toBe('0.00');
+    expect(fmt(5n, 18, 'en')).toBe('0.000000000000000005');
+    expect(fmt(0n, 2, 'en')).toBe('0.00');
   });
 
   /* RED WHEN: the type or the function lets a Number through, or a negative amount or a bad decimals count is written. */
   it('refuses what is not an exact amount', () => {
     // @ts-expect-error a token amount is a bigint, never a number
-    expect(() => formatTokenAmount(1500000, 6, 'en')).toThrow(/bigint of the token's smallest unit, and this is a number/);
-    expect(() => formatTokenAmount(-1n, 6, 'en')).toThrow(/never below zero/);
-    expect(() => formatTokenAmount(1n, -1, 'en')).toThrow(/whole number from 0 up/);
-    expect(() => formatTokenAmount(1n, 1.5, 'en')).toThrow(/whole number from 0 up/);
+    expect(() => tokenAmount(1500000, 6, 'USDC')).toThrow(/bigint of the token's smallest unit, and this is a number/);
+    expect(() => tokenAmount(-1n, 6, 'USDC')).toThrow(/never below zero/);
+    expect(() => tokenAmount(1n, -1, 'USDC')).toThrow(/whole number from 0 up/);
+    expect(() => tokenAmount(1n, 1.5, 'USDC')).toThrow(/whole number from 0 up/);
+    expect(() => tokenAmount(1n, 2, '')).toThrow(/carries its token's code/);
+  });
+});
+
+describe('a token amount is an object that becomes text only through the formatter', () => {
+  const a = tokenAmount(12_345n, 2, 'USDC');
+
+  /* RED WHEN: an amount is a primitive again, so React would write it as its digits. */
+  it('is an object, made only by tokenAmount, whose code is readable and whose units are not', () => {
+    expect(typeof a).toBe('object');
+    expect(a).toBeInstanceOf(TokenAmount);
+    expect(a.code).toBe('USDC');
+    expect(Object.keys(a)).toEqual([]);
+    expect(Object.getOwnPropertyNames(a)).toEqual([]);
+    expect(Object.isFrozen(a)).toBe(true);
+    // @ts-expect-error the constructor is not how an amount is made
+    expect(() => new TokenAmount(Symbol(), 1n, 0, 'USDC')).toThrow(/made by tokenAmount, and by nothing else/);
+  });
+
+  /* RED WHEN: any way of turning an amount into text or a number, outside the formatter, writes its figure instead of refusing. */
+  it('refuses every conversion to text or a number', () => {
+    const conversions: [string, () => unknown][] = [
+      ['String', () => String(a)], ['template', () => `${a as unknown as string}`], ['+ a string', () => (a as unknown as string) + ''],
+      ['unary +', () => +(a as unknown as number)], ['Number', () => Number(a)], ['BigInt', () => BigInt(a as unknown as bigint)],
+      ['toString', () => a.toString()], ['JSON', () => JSON.stringify({ a })], ['NumberFormat', () => new Intl.NumberFormat('en').format(a as unknown as bigint)],
+      ['toLocaleString', () => a.toLocaleString()], ['join', () => [a].join('')], ['comparison', () => (a as unknown as number) > 1],
+    ];
+    for (const [name, convert] of conversions) expect(convert, name).toThrow(/shown only by Amount/);
+  });
+
+  /* RED WHEN: the formatter takes anything but an amount made by tokenAmount, so a bigint passed by a cast is written unmarked. */
+  it('is the only thing the formatter writes', () => {
+    expect(formatTokenAmount(a, 'en')).toBe('123.45');
+    expect(() => formatTokenAmount(12_345n as unknown as TokenAmount, 'en')).toThrow(/made by tokenAmount, and this is a value of type bigint/);
+    expect(() => formatTokenAmount({ code: 'USDC' } as unknown as TokenAmount, 'en')).toThrow(/made by tokenAmount, and this is a value of type object/);
   });
 });
 

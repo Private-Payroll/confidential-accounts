@@ -8,7 +8,8 @@
   "peerDependencies": {
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "vaults-ui": "0.0.0"
+    "vaults-ui": "0.0.0",
+    "vaults-web-shared": "0.0.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "4.3.3",

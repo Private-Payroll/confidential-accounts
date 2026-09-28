@@ -12,7 +12,9 @@
  * position a screen needs and this file lacks is added as one entry with its
  * reason. THE AMOUNT RULE CANNOT: nothing in source says which values are
  * amounts, so it refuses every conversion it names, from any value, and says
- * beside it which conversions it does not read.
+ * beside it which conversions it does not read. What it does not read is
+ * closed by the amount itself, an object that React refuses to show and that
+ * throws when anything makes text or a number of it.
  */
 import { readdirSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
@@ -119,6 +121,44 @@ export async function specifiersOf(s: Source): Promise<{ specifier: string; line
   return (await importsOf(s.path, s.text)).map((e) => ({ specifier: e.specifier, line: lineNaming(s.text, e.specifier) }));
 }
 
+/*
+ * EVERY MODULE A FILE NAMES IN ITS OWN DECLARATIONS, READ FROM THE SOURCE:
+ * each `import` and `export ... from`, including those used only for types
+ * (`import type`, `import { type X }`, `export type { X } from`), and a type
+ * written as `import('...')`. The reader above drops the type-only ones,
+ * because the page never loads them. The rules about WHERE a file may reach
+ * need them too, because a type taken from a folder binds the file to that
+ * folder's insides as surely as a value does.
+ */
+function declaredSpecifiersOf(s: Source): { specifier: string; line: number }[] {
+  const out: { specifier: string; line: number }[] = [];
+  for (const { node } of walk(parse(s).program)) {
+    let source: Node | null = null;
+    if (node.type === 'ImportDeclaration' || node.type === 'ExportNamedDeclaration' || node.type === 'ExportAllDeclaration') source = (node.source ?? null) as Node | null;
+    if (node.type === 'TSImportType') {
+      const arg = (node.source ?? node.argument ?? null) as Node | null;
+      source = arg?.type === 'TSLiteralType' ? (arg.literal as Node) : arg;
+    }
+    if (source?.type === 'Literal' && typeof source.value === 'string') out.push({ specifier: source.value, line: lineOf(s.text, source.start) });
+  }
+  return out;
+}
+
+/** Every module a file names, as the browser is served it or as a type only, each with its line, each import once. */
+async function everySpecifierOf(s: Source): Promise<{ specifier: string; line: number }[]> {
+  const declared = declaredSpecifiersOf(s);
+  /* Each declaration the reader also returned is counted once, at the declaration's own line; what the reader alone returns (an `import()`, a worker) is kept. */
+  const left = new Map<string, number>();
+  for (const d of declared) left.set(d.specifier, (left.get(d.specifier) ?? 0) + 1);
+  const extra = (await specifiersOf(s)).filter((r) => {
+    const n = left.get(r.specifier) ?? 0;
+    if (n === 0) return true;
+    left.set(r.specifier, n - 1);
+    return false;
+  });
+  return [...extra, ...declared];
+}
+
 /** The package a bare specifier names: `@scope/name` or `name`. */
 export const packageOf = (spec: string): string => {
   const parts = spec.split('/');
@@ -153,19 +193,25 @@ export function declaredBy(packageJson: string): Set<string> {
 }
 
 /**
- * RULE: the application reaches the kit only by its package name. A relative
- * or absolute path that lands inside the kit's folder is a breach. `root` is
- * the repository, `kit` the kit's folder in it.
+ * RULE: the application reaches the kit only by its package name, and only
+ * what the kit's index exports. A relative or absolute path that lands inside
+ * the kit's folder is a breach, and so is one used only for a type; so is a
+ * module inside the kit named through the package (`vaults-ui/format/...`),
+ * which reaches what the index keeps back, the amount formatter above all. A
+ * stylesheet (`vaults-ui/styles.css`) is not code and is let through. `root`
+ * is the repository, `kit` the kit's folder in it; `name` is the kit's package
+ * name.
  */
-export async function pathsIntoTheKit(files: readonly Source[], root: string, kit: string): Promise<Breach[]> {
+export async function pathsIntoTheKit(files: readonly Source[], root: string, kit: string, name = 'vaults-ui'): Promise<Breach[]> {
   /* Compared without case: the Mac's file system finds `packages/UI` as `packages/ui`. */
   const kitDir = (resolve(root, kit) + sep).toLowerCase();
   const out: Breach[] = [];
   for (const f of files) {
-    for (const { specifier, line } of await specifiersOf(f)) {
+    for (const { specifier, line } of await everySpecifierOf(f)) {
       const target = specifier.startsWith('.') ? resolve(root, dirname(f.path), specifier)
         : specifier.startsWith('/') ? resolve(root, `.${specifier}`) : null;
       if (target !== null && (target + sep).toLowerCase().startsWith(kitDir)) out.push({ path: f.path, line, what: specifier });
+      if (target === null && specifier.startsWith(`${name}/`) && !specifier.endsWith('.css')) out.push({ path: f.path, line, what: specifier });
     }
   }
   return out;
@@ -200,10 +246,218 @@ export async function secondCn(files: readonly Source[], home: string): Promise<
   return out;
 }
 
+/* ------------------------------------------------------------------ the one way into shared code */
+
+/*
+ * THE PACKAGES OF SHARED CODE, reached only through the application's
+ * adapters: the browser code both web applications are built on, which talks
+ * to the service and to the person's wallet, and hands amounts back as bare
+ * `bigint` counts.
+ */
+export const SHARED_PACKAGES: ReadonlySet<string> = new Set(['vaults-web-shared']);
+
+/** The objects the browser's own globals are reached through. */
+const GLOBAL_SCOPES = new Set(['window', 'globalThis', 'self', 'top', 'parent', 'opener', 'frames']);
+
+/** An expression without the casts, brackets and commas around it: `(window as any)` and `(0, window)` are `window`. */
+const unwrapped = (n: unknown): Node | undefined => {
+  let x = n as Node | undefined;
+  for (;;) {
+    if (x !== undefined && ['TSAsExpression', 'TSSatisfiesExpression', 'TSNonNullExpression', 'TSTypeAssertion', 'ParenthesizedExpression'].includes(x.type)) x = x.expression as Node;
+    else if (x?.type === 'SequenceExpression') x = (x.expressions as Node[]).at(-1);
+    else return x;
+  }
+};
+/** Whether an expression is one of the global objects, however it is cast, or the page's own window reached through its document (`document.defaultView`). */
+const isGlobalScope = (n: unknown): boolean => {
+  const x = unwrapped(n);
+  return GLOBAL_SCOPES.has(nameOf(x)) || (x?.type === 'MemberExpression' && (GLOBAL_SCOPES.has(propertyName(x)) || propertyName(x) === 'defaultView'));
+};
+
+/** Every name a file binds: its variables, however taken apart, its functions, classes, parameters and imports. */
+function bindingsOf(program: unknown): Set<string> {
+  const out = new Set<string>();
+  const add = (n: Node | null | undefined): void => {
+    if (!n) return;
+    if (n.type === 'Identifier') out.add(String(n.name));
+    else if (n.type === 'ObjectPattern') for (const q of n.properties as Node[]) add(q.type === 'RestElement' ? q.argument as Node : q.value as Node);
+    else if (n.type === 'ArrayPattern') for (const e of n.elements as (Node | null)[]) add(e);
+    else if (n.type === 'RestElement') add(n.argument as Node);
+    else if (n.type === 'AssignmentPattern') add(n.left as Node);
+  };
+  for (const { node } of walk(program)) {
+    if (node.type === 'VariableDeclarator') add(node.id as Node);
+    if (['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression'].includes(node.type)) { add(node.id as Node); for (const q of (node.params as Node[]) ?? []) add(q); }
+    if (node.type === 'ClassDeclaration') add(node.id as Node);
+    if (['ImportSpecifier', 'ImportDefaultSpecifier', 'ImportNamespaceSpecifier'].includes(node.type)) add(node.local as Node);
+    if (node.type === 'CatchClause') add(node.param as Node);
+  }
+  return out;
+}
+/** A string written in the code, in quotes or as a template with nothing in it, or null. */
+const literalText = (n: Node | undefined): string | null => n?.type === 'Literal' && typeof n.value === 'string' ? n.value
+  : n?.type === 'TemplateLiteral' && (n.expressions as unknown[]).length === 0 ? textOf(n) : null;
+
+/*
+ * HOW A BROWSER PAGE TALKS TO ANYTHING OUTSIDE IT: the service over the
+ * network, and the wallet through a frame, a window it opens, messages, or
+ * what a wallet extension puts on the page. Each is a breach outside the
+ * adapters, whichever way it is written.
+ */
+const TALKS_OUT = new Set(['fetch', 'XMLHttpRequest', 'WebSocket', 'EventSource', 'importScripts', 'Worker', 'SharedWorker', 'MessageChannel', 'BroadcastChannel', 'postMessage',
+  'RTCPeerConnection', 'WebTransport', 'midnight', 'eval', 'Function']);
+/** Reached through a global object only, since a name like `open` is also an ordinary name. */
+const TALKS_OUT_ON_A_GLOBAL = new Set([...TALKS_OUT, 'open', 'midnight']);
+/** Whatever it is reached on. */
+const TALKS_OUT_ON_ANYTHING = new Set(['postMessage', 'contentWindow', 'sendBeacon', 'onmessage', 'serviceWorker']);
+
+/** A property's name as written: `a.b` and `a['b']` are both `b`; a name built at run time is ''. */
+const propertyName = (m: Node): string => {
+  const prop = m.property as Node;
+  return prop.type === 'Identifier' && !m.computed ? String(prop.name) : prop.type === 'Literal' ? String(prop.value) : '';
+};
+
+const inside = (path: string, dir: string): boolean => (path + sep).toLowerCase().startsWith((dir + sep).toLowerCase());
+
+/**
+ * RULE: SHARED CODE, THE SERVICE AND THE WALLET ARE REACHED ONLY FROM THE
+ * ADAPTERS. Outside the folder `adapters` (null: nowhere), a breach is: an
+ * import of a shared package (`SHARED_PACKAGES`), for its values or its types;
+ * an import, of either kind, by a path that leaves `own` (the files' own
+ * source folder), which is how the product's own code, the shared package's
+ * files or the wallet's would be reached; an `import()` whose module is worked
+ * out at run time; an `import.meta.glob` that leaves `own`; any name in
+ * `TALKS_OUT` (`fetch`, `WebSocket`, `postMessage`, `midnight`, ...); `open`
+ * on a global object (`window.open`); `postMessage`, `contentWindow`,
+ * `sendBeacon`, `onmessage` or `serviceWorker` on anything; listening for
+ * `message` events; a global reached by a name built at run time; and a global
+ * object handed on as a value (`const w = window`, `Reflect.get(window, k)`),
+ * since whatever it is handed to can reach all of the above. `typeof window`
+ * is only a question and is let through. `root` is the repository.
+ *
+ * NOT READ: a page loaded some other way, by an element's address (`<iframe
+ * src>`, `<img src>`, `<form action>`, `document.createElement('script')`) or
+ * by moving the page (`location`).
+ */
+export async function waysIntoSharedCode(files: readonly Source[], root: string, own: string, adapters: string | null): Promise<Breach[]> {
+  const ownDir = resolve(root, own);
+  const out: Breach[] = [];
+  for (const f of files) {
+    if (adapters !== null && inside(resolve(root, f.path), resolve(root, adapters))) continue;
+    const breach = (line: number, what: string) => out.push({ path: f.path, line, what });
+    for (const { specifier, line } of await everySpecifierOf(f)) {
+      if (isPath(specifier)) {
+        const target = specifier.startsWith('.') ? resolve(root, dirname(f.path), specifier) : resolve(root, `.${specifier}`);
+        if (!inside(target, ownDir)) breach(line, `reaches ${specifier}`);
+      } else if (SHARED_PACKAGES.has(packageOf(specifier))) breach(line, `imports ${specifier}`);
+    }
+    const program = parse(f).program;
+    /* A name the file binds itself (`const midnight = new Date()`) is its own, not the browser's. */
+    const bound = bindingsOf(program);
+    for (const { node, up } of walkDown(program)) {
+      const at = lineOf(f.text, node.start);
+      const p = up[up.length - 1];
+      const isName = (p?.type === 'MemberExpression' && p.property === node && !p.computed) || (p?.type === 'Property' && p.key === node && !p.computed && !p.shorthand);
+      const typeOnly = up.some((u) => u.type.startsWith('TS') && !RUNTIME_TS.has(u.type));
+      if (node.type === 'Identifier' && TALKS_OUT.has(String(node.name)) && !bound.has(String(node.name)) && !isName && !typeOnly) breach(at, String(node.name));
+      const aGlobal = (node.type === 'Identifier' && GLOBAL_SCOPES.has(String(node.name)) && !isName) || (node.type === 'MemberExpression' && isGlobalScope(node));
+      if (aGlobal && !typeOnly) {
+        /*
+         * A global object is read here only as the object of a property, asked
+         * about (`typeof window`), compared (`event.source === window`, `'x' in
+         * window`), or taken apart into plain names that reach nothing above.
+         */
+        const q = [...up].reverse().find((u) => !['TSAsExpression', 'TSSatisfiesExpression', 'TSNonNullExpression', 'TSTypeAssertion', 'ParenthesizedExpression', 'SequenceExpression'].includes(u.type));
+        const named = q?.type === 'MemberExpression' && unwrapped(q.object) === node;
+        const asked = q?.type === 'UnaryExpression' && q.operator === 'typeof';
+        const compared = q?.type === 'BinaryExpression' && (['===', '!==', '==', '!='].includes(String(q.operator)) || (q.operator === 'in' && unwrapped(q.right) === node));
+        const plainKey = (x: Node): boolean => x.type === 'Property' && !x.computed && (x.value as Node).type === 'Identifier'
+          && !TALKS_OUT_ON_A_GLOBAL.has(nameOf(x.key)) && !TALKS_OUT_ON_ANYTHING.has(nameOf(x.key)) && !GLOBAL_SCOPES.has(nameOf(x.key)) && nameOf(x.key) !== 'defaultView';
+        const takenApart = q?.type === 'VariableDeclarator' && unwrapped(q.init) === node && (q.id as Node).type === 'ObjectPattern' && ((q.id as Node).properties as Node[]).every(plainKey);
+        const label = node.type === 'Identifier' ? String(node.name) : propertyName(node);
+        if (!named && !asked && !compared && !takenApart) breach(at, `${label} handed on`);
+      }
+      if (node.type === 'MemberExpression' && node.computed && isGlobalScope(node.object) && propertyName(node) === '') breach(at, 'a global reached by a built name');
+      if (node.type === 'ImportExpression' && literalText(node.source as Node) === null) breach(at, 'import() of a module worked out at run time');
+      if (node.type === 'MemberExpression') {
+        const name = propertyName(node);
+        const onGlobal = isGlobalScope(node.object);
+        if ((onGlobal && TALKS_OUT_ON_A_GLOBAL.has(name)) || TALKS_OUT_ON_ANYTHING.has(name)) breach(at, onGlobal ? `${nameOf(unwrapped(node.object)) || 'window'}.${name}` : `.${name}`);
+      }
+      /* Taken apart from a global object: `const { fetch } = window`. */
+      if (node.type === 'VariableDeclarator' && (node.id as Node).type === 'ObjectPattern' && isGlobalScope(node.init)) {
+        for (const q of (node.id as Node).properties as Node[]) {
+          const key = q.type === 'Property' ? (q.computed && (q.key as Node).type !== 'Literal' ? '' : nameOf(q.key)) : '';
+          if (TALKS_OUT_ON_A_GLOBAL.has(key) || TALKS_OUT_ON_ANYTHING.has(key)) breach(lineOf(f.text, q.start), `${nameOf(unwrapped(node.init)) || 'window'}.${key}`);
+        }
+      }
+      if (node.type === 'CallExpression' && ['setTimeout', 'setInterval'].includes(nameOf((node.callee as Node).property ?? node.callee))) {
+        const [first] = node.arguments as Node[];
+        if (first !== undefined && (first.type === 'TemplateLiteral' || (first.type === 'Literal' && typeof first.value === 'string') || first.type === 'BinaryExpression')) breach(at, `${nameOf((node.callee as Node).property ?? node.callee)} given code as text`);
+      }
+      if (node.type === 'CallExpression' && nameOf((node.callee as Node).property ?? node.callee) === 'addEventListener') {
+        const [first] = node.arguments as Node[];
+        if (literalText(first) === 'message') breach(at, "addEventListener('message')");
+      }
+      if (node.type === 'CallExpression' && (node.callee as Node).type === 'MemberExpression' && ((node.callee as Node).object as Node).type === 'MetaProperty' && nameOf((node.callee as Node).property) === 'glob') {
+        for (const a of node.arguments as Node[]) {
+          const patterns = a.type === 'Literal' ? [a] : a.type === 'ArrayExpression' ? (a.elements as Node[]) : [];
+          for (const g of patterns) {
+            if (g?.type !== 'Literal' || typeof g.value !== 'string') continue;
+            const pattern = String(g.value).replace(/^!/, '');
+            const target = pattern.startsWith('/') ? resolve(root, `.${pattern}`) : resolve(root, dirname(f.path), pattern);
+            if (!inside(target, ownDir)) breach(at, `import.meta.glob ${pattern}`);
+          }
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * RULE: AN AMOUNT IS MADE ONLY IN THE ADAPTERS, where its decimals and code
+ * are read from the token's own record. Anywhere else, naming `tokenAmount`
+ * is a breach: a screen that made one would type the decimals, and a figure
+ * with the wrong decimals is a figure a thousand or a million times wrong.
+ * `adapters` is the folder allowed; null allows none.
+ */
+export function amountsMadeOutsideTheAdapters(files: readonly Source[], root: string, adapters: string | null): Breach[] {
+  const out: Breach[] = [];
+  for (const f of files) {
+    if (adapters !== null && inside(resolve(root, f.path), resolve(root, adapters))) continue;
+    /* An import's name is two nodes at one place, the name imported and the local one. */
+    const seen = new Set<string>();
+    for (const { node, up } of walkDown(parse(f).program)) {
+      const p = up[up.length - 1];
+      const grand = up[up.length - 2];
+      /* A key of an object the file writes is a name of its own; a key taken out of one (`const { tokenAmount: m } = kit`) is the constructor. */
+      const ownKey = p?.type === 'Property' && p.key === node && !p.computed && !p.shorthand && grand?.type === 'ObjectExpression';
+      const asProperty = p?.type === 'MemberExpression' && p.property === node;
+      const named = (node.type === 'Identifier' && node.name === 'tokenAmount' && !ownKey && !asProperty)
+        || (node.type === 'MemberExpression' && propertyName(node) === 'tokenAmount');
+      if (!named || seen.has(`${node.start}:${node.end}`)) continue;
+      seen.add(`${node.start}:${node.end}`);
+      out.push({ path: f.path, line: lineOf(f.text, node.start), what: 'tokenAmount' });
+    }
+  }
+  return out;
+}
+
 /* ------------------------------------------------------------------ what a file writes */
 
 /** A stylesheet or a page, read as text rather than parsed as code. */
 const isMarkup = (p: string) => /\.(css|html)$/.test(p);
+
+/**
+ * A page attribute's value, in any of the three ways a page may write one:
+ * double quotes, single quotes, or none (`<p title=Hello>`). The value is in
+ * one of three consecutive groups, the 2nd, 3rd and 4th of this pattern,
+ * shifted by any group a caller puts before it; `valueOf` takes the first of
+ * the three that matched.
+ */
+const ATTRIBUTE_VALUE = String.raw`\s*=\s*("([^"]*)"|'([^']*)'|([^\s"'=<>\x60]+))`;
+const valueOf = (m: RegExpMatchArray, first: number): string => (m[first] ?? m[first + 1] ?? m[first + 2])!;
 
 /** A stylesheet's text without its comments. */
 const withoutComments = (css: string) => css.replace(/\/\*[\s\S]*?\*\//g, (c) => c.replace(/[^\n]/g, ' '));
@@ -213,7 +467,7 @@ function cssOf(s: Source): { css: string; at: number }[] {
   if (s.path.endsWith('.css')) return [{ css: withoutComments(s.text), at: 0 }];
   const out: { css: string; at: number }[] = [];
   for (const m of s.text.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/gi)) out.push({ css: withoutComments(m[1]!), at: m.index });
-  for (const m of s.text.matchAll(/\sstyle\s*=\s*("([^"]*)"|'([^']*)')/gi)) out.push({ css: `{${m[2] ?? m[3]}}`, at: m.index });
+  for (const m of s.text.matchAll(new RegExp(String.raw`\sstyle` + ATTRIBUTE_VALUE, 'gi'))) out.push({ css: `{${valueOf(m, 2)}}`, at: m.index });
   return out;
 }
 
@@ -227,7 +481,7 @@ function declarationsOf(css: string): { property: string; value: string; at: num
 function markupClassWordsOf(s: Source): { word: string; at: number }[] {
   const out: { word: string; at: number }[] = [];
   for (const { css, at } of cssOf(s)) for (const m of css.matchAll(/@apply\s+([^;]+);/g)) for (const w of m[1]!.split(/\s+/)) if (w) out.push({ word: w, at: at + m.index });
-  if (s.path.endsWith('.html')) for (const m of s.text.matchAll(/\sclass\s*=\s*("([^"]*)"|'([^']*)')/gi)) for (const w of (m[2] ?? m[3])!.split(/\s+/)) if (w) out.push({ word: w, at: m.index });
+  if (s.path.endsWith('.html')) for (const m of s.text.matchAll(new RegExp(String.raw`\sclass` + ATTRIBUTE_VALUE, 'gi'))) for (const w of valueOf(m, 2).split(/\s+/)) if (w) out.push({ word: w, at: m.index });
   return out;
 }
 
@@ -647,8 +901,9 @@ function stringsOf(s: Source, codes: ReadonlySet<string>): { text: string; at: n
  * RULE: no wording outside the language files. Every string with a letter in
  * it, in every file given, is a breach unless it stands in a position named in
  * `WORDING_POSITIONS`; JSX text always is, but for an asset's code. A
- * stylesheet or page is read too: text in a page, a quoted attribute not named
- * in `ATTRIBUTES` (an unquoted one is not read), and a stylesheet's `content`.
+ * stylesheet or page is read too: text in a page, an attribute not named in
+ * `ATTRIBUTES` however its value is written (in either quotes or none), and a
+ * stylesheet's `content`.
  * `codes` are the codes of the assets.
  */
 export function wordingInCode(files: readonly Source[], codes: ReadonlySet<string>): Breach[] {
@@ -688,9 +943,9 @@ function wordingInMarkup(f: Source): Breach[] {
     for (const m of text.matchAll(/>([^<]+)</g)) if (hasLetter(m[1]!)) out.push({ path: f.path, line: at(m.index), what: m[1]!.trim() });
     for (const tag of text.matchAll(/<([a-zA-Z][\w-]*)\b([^>]*)>/g)) {
       const attrs = tag[2]!;
-      for (const a of attrs.matchAll(/([\w:-]+)\s*=\s*("([^"]*)"|'([^']*)')/g)) {
-        const name = a[1]!; const value = (a[3] ?? a[4])!;
-        const quiet = name === 'content' ? tag[1]!.toLowerCase() === 'meta' && /\bname\s*=\s*["']viewport["']/i.test(attrs)
+      for (const a of attrs.matchAll(new RegExp(String.raw`([\w:-]+)` + ATTRIBUTE_VALUE, 'g'))) {
+        const name = a[1]!; const value = valueOf(a, 3);
+        const quiet = name === 'content' ? tag[1]!.toLowerCase() === 'meta' && /\bname\s*=\s*["']?viewport["']?(?=[\s/>]|$)/i.test(attrs)
           : name.startsWith('data-') || (name in ATTRIBUTES && ATTRIBUTES[name]!.on === undefined);
         if (hasLetter(value) && !quiet) out.push({ path: f.path, line: at(tag.index), what: `${name}="${value}"` });
       }
@@ -765,13 +1020,20 @@ const FORMATTERS = new Set(['NumberFormat', 'toLocaleString', 'toFixed', 'toPrec
  * `parseInt` or `parseFloat` called, made with `new`, or handed on as a value
  * (`xs.map(String)`); `.toString`, `.join`, `.concat`, `JSON.stringify`,
  * `encodeURIComponent`; a unary `+`; a `+` or `+=` with a string or template
- * literal on either side; any template with a value in it; and a value
- * written into an element's `textContent`, `innerText` or `innerHTML`. In the
- * kit, the message of an error it throws may carry a value.
+ * literal on either side, beside a name the file gives a string, a template
+ * or a phrase (`const label = t('x'); label + amount`), or beside a phrase
+ * asked for in place (`t('x') + amount`); any template with a value in it; a
+ * value written into an element's `textContent`, `innerText` or `innerHTML`;
+ * and a global reached by a name built at run time (`globalThis['Str' +
+ * 'ing']`, `window[name]`). In the kit, the message of an error it throws may
+ * carry a value.
  *
- * NOT READ: a value rendered as a JSX child (`<span>{amount}</span>`), which
- * React writes as its digits; a `+` beside a string held in a variable; and a
- * conversion reached by a name the code builds (`globalThis['Str' + 'ing']`).
+ * WHAT THIS RULE DOES NOT READ, AND WHAT DOES. A value rendered as a JSX child
+ * (`<span>{amount}</span>`) is not read here: an amount is an object, which
+ * React refuses as a child, and every conversion of one throws, so it cannot
+ * reach a page that way. A `+` beside a string that arrives from elsewhere
+ * (a prop, a function's result) is not read either, and needs no rule: `+` on
+ * an amount throws.
  */
 export function amountsOutsideTheComponent(files: readonly Source[], homes: Readonly<Record<string, string>> = AMOUNT_HOMES): Breach[] {
   const out: Breach[] = [];
@@ -779,7 +1041,17 @@ export function amountsOutsideTheComponent(files: readonly Source[], homes: Read
     if (f.path in homes) continue;
     const seen = new Set<string>();
     const kit = f.path.startsWith('packages/ui/');
-    for (const { node, up } of walkDown(parse(f).program)) {
+    const program = parse(f).program;
+    const translators = translatorsOf(program);
+    const isPhrase = (n: Node | undefined): boolean => n?.type === 'CallExpression' && isTranslator(n.callee as Node, translators);
+    const isText = (n: Node | undefined): boolean => n?.type === 'TemplateLiteral' || (n?.type === 'Literal' && typeof n.value === 'string') || isPhrase(n);
+    /* The names this file gives a string, a template or a phrase. */
+    const textNames = new Set<string>();
+    for (const { node } of walk(program)) {
+      if (node.type === 'VariableDeclarator' && (node.id as Node).type === 'Identifier' && isText(node.init as Node | undefined)) textNames.add(nameOf(node.id));
+    }
+    const heldText = (n: Node | undefined): boolean => n?.type === 'Identifier' && textNames.has(String(n.name));
+    for (const { node, up } of walkDown(program)) {
       /* An import's name is two nodes at one place, the name imported and the local one. */
       const at = `${node.type}:${node.start}:${node.end}`;
       if (seen.has(at)) continue;
@@ -807,6 +1079,10 @@ export function amountsOutsideTheComponent(files: readonly Source[], homes: Read
       if (node.type === 'UnaryExpression' && node.operator === '+') breach('unary +');
       if (node.type === 'BinaryExpression' && node.operator === '+' && [node.left, node.right].some((s) => (s as Node).type === 'TemplateLiteral' || ((s as Node).type === 'Literal' && typeof (s as Node).value === 'string'))) breach('+ with a string');
       if (node.type === 'TemplateLiteral' && (node.expressions as unknown[]).length > 0) breach('template with a value');
+      if (node.type === 'BinaryExpression' && node.operator === '+' && [node.left, node.right].some((x) => heldText(x as Node))) breach('+ with a string held in a name');
+      if (node.type === 'BinaryExpression' && node.operator === '+' && [node.left, node.right].some((x) => isPhrase(x as Node))) breach('+ with a phrase');
+      if (node.type === 'AssignmentExpression' && node.operator === '+=' && (heldText(node.left as Node) || heldText(node.right as Node) || isPhrase(node.right as Node))) breach('+= with a string held in a name');
+      if (node.type === 'MemberExpression' && node.computed && isGlobalScope(node.object) && (node.property as Node).type !== 'Literal') breach('a global reached by a built name');
     }
   }
   return out;

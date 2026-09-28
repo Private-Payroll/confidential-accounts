@@ -3,14 +3,11 @@ import type { TokenAmount } from 'vaults-ui/format/token-amount';
 import { useText } from 'vaults-ui/i18n/provider';
 import { Amount } from 'vaults-ui/components/amount';
 
-/** One holding: an amount of one token. */
-export interface Holding { value: TokenAmount; decimals: number; code: string }
-
 export interface BalanceProps {
   /** What only the holder, and those they share it with, can read. */
-  private: Holding;
+  private: TokenAmount;
   /** What anyone can look up. */
-  public: Holding;
+  public: TokenAmount;
   className?: string;
 }
 
@@ -24,9 +21,9 @@ export function Balance({ private: held, public: shown, className }: BalanceProp
   return (
     <dl className={cn('grid grid-cols-[auto_1fr] items-center gap-x-4 gap-y-1 text-sm', className)} data-slot="balance">
       <dt className="text-muted-foreground">{t('kit.balance.private')}</dt>
-      <dd className="text-end"><Amount {...held} visibility="private" kind="balance" /></dd>
+      <dd className="text-end"><Amount value={held} visibility="private" kind="balance" /></dd>
       <dt className="text-muted-foreground">{t('kit.balance.public')}</dt>
-      <dd className="text-end"><Amount {...shown} visibility="public" kind="balance" /></dd>
+      <dd className="text-end"><Amount value={shown} visibility="public" kind="balance" /></dd>
     </dl>
   );
 }

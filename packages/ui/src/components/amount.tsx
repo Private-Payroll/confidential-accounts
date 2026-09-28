@@ -7,12 +7,8 @@ import { PublicPill, type AmountKind } from 'vaults-ui/components/public-pill';
 export type Visibility = 'private' | 'public';
 
 export interface AmountProps {
-  /** The amount, in the token's smallest unit. */
+  /** The amount, made by `tokenAmount`: its units, its token's decimals and its token's code. */
   value: TokenAmount;
-  /** How many decimals the token has, from the token's own record. */
-  decimals: number;
-  /** The token's code, shown as it is in every language. */
-  code: string;
   /** Required, with no default: an amount nobody marked cannot be shown. */
   visibility: Visibility;
   /** Whether it is a payment or a balance, which says what the Public pill explains. */
@@ -26,14 +22,14 @@ export interface AmountProps {
  * figures and the code are always written left to right, whatever the
  * language's direction.
  */
-export function Amount({ value, decimals, code, visibility, kind, className }: AmountProps) {
+export function Amount({ value, visibility, kind, className }: AmountProps) {
   if (visibility !== 'private' && visibility !== 'public') {
     throw new Error(`an amount is shown as private or public, and this one is ${String(visibility)}`);
   }
   const language = useLanguage();
   return (
     <span className={cn('inline-flex items-center gap-1.5', className)} data-slot="amount" data-visibility={visibility}>
-      <span dir="ltr">{formatTokenAmount(value, decimals, language)}{' '}{code}</span>
+      <span dir="ltr">{formatTokenAmount(value, language)}{' '}{value.code}</span>
       {visibility === 'public' ? <PublicPill kind={kind} /> : null}
     </span>
   );
