@@ -185,7 +185,8 @@ describe('the web process can reach a fee payer only through this client', () =>
    * the wallet that pays.
    */
   it('no shipped module builds a fee payer over a wallet', () => {
-    const building = walk(join(ROOT, 'src'))
+    /* The browser code both web applications share is a package of its own, and ships like `src/`. */
+    const building = [...walk(join(ROOT, 'src')), ...walk(join(ROOT, 'packages', 'web-shared', 'src'))]
       .filter(p => /new\s+WalletFeeSponsor\b|sponsorWalletOver|feePayerOver|bringUpWallet/.test(code(readFileSync(p, 'utf8'))))
       .map(p => relative(ROOT, p));
     expect(building).toEqual([]);

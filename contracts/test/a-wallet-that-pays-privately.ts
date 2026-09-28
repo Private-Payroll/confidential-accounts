@@ -1,7 +1,7 @@
 /**
  * **A STAND-IN FOR THE DEPOSITOR'S WALLET THAT PAYS FOR A PAGE'S DEPOSIT WITH
  * ITS OWN PRIVATE COIN, AND TAKES ITS CHANGE BACK.** The wallet's real
- * balancing is watched in `src/web/a-deposit-built-on-the-device.test.ts`,
+ * balancing is watched in `packages/web-shared/src/a-deposit-built-on-the-device.test.ts`,
  * over the wallet SDK's own coin choice; this one only has to leave nothing
  * stated in public, and the chains these watches run do not check balance.
  *

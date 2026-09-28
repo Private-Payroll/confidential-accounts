@@ -71,20 +71,20 @@ import { mountVaultRecords, vaultAccountFromTheIndexer } from '../../src/server/
 import { MemorySealedPoolStore, SealedNotePool } from '../../src/midnight/vault-pool.js';
 import { PaymentJournalInStore } from '../../src/midnight/vault-journal.js';
 import type { WireRecord } from '../../src/midnight/sealed-record-wire.js';
-import { HttpSealedPoolStore, type WireSend } from '../../src/web/http-sealed-pool-store.js';
-import { recordsReaderOf, type DeviceSigner } from '../../src/web/deposit-on-device.js';
-import { answerVaultAsk } from '../../src/web/vault-worker-entry.js';
-import { vaultBuilderOver, type VaultAnswer } from '../../src/web/vault-worker-client.js';
+import { HttpSealedPoolStore, type WireSend } from 'vaults-web-shared/http-sealed-pool-store.js';
+import { recordsReaderOf, type DeviceSigner } from 'vaults-web-shared/deposit-on-device.js';
+import { answerVaultAsk } from 'vaults-web-shared/vault-worker-entry.js';
+import { vaultBuilderOver, type VaultAnswer } from 'vaults-web-shared/vault-worker-client.js';
 import {
   createCompanyVault, depositIntoCompanyVault, openCompanyVaultPool, payPrivatelyFromCompanyVault,
   payPubliclyFromCompanyVault,
   type TemporaryKeys, type VaultService, type DepositInFlight, type DepositsInFlight, type PaymentInFlight, type PaymentsInFlight,
-} from '../../src/web/vault-operation.js';
-import { inFlightInMemory as inFlightRecordsInMemory, sealedOnThisDevice, type KeptOnThisDevice } from '../../src/web/in-flight-on-this-device.js';
+} from 'vaults-web-shared/vault-operation.js';
+import { inFlightInMemory as inFlightRecordsInMemory, sealedOnThisDevice, type KeptOnThisDevice } from 'vaults-web-shared/in-flight-on-this-device.js';
 import {
   readWhatThePageAsks, base64FromBytes, whyThePublicBalancingIsNotWhatWasApproved,
 } from '../../apps/wallet/src/chain/balance-for-page.js';
-import { depositFromSource, publicTokenFromTheWallet } from '../../src/web/deposit-source.js';
+import { depositFromSource, publicTokenFromTheWallet } from 'vaults-web-shared/deposit-source.js';
 import { StaticAssetRegistry, type Asset } from '../../src/core/assets.js';
 import { UNLOCK_PURPOSE, UNLOCK_WINDOW_MS, unlockAsk } from '../../src/core/wallet-unlock.js';
 import { fromHex, newSigningKeypair, newWrappingKeypair, toHex, type Hex } from '../../src/core/crypto.js';

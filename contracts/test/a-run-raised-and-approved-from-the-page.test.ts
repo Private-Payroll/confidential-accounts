@@ -34,9 +34,9 @@ import * as accountModule from '../managed/contract/index.js';
 import { witnesses, type AccountPrivateState } from '../src/witnesses.js';
 import { privateStateFor, leafOfDevice, change } from './simulator.js';
 import { DEPLOYED_CIRCUITS } from '../../src/midnight/deferral.js';
-import { answerVaultAsk } from '../../src/web/vault-worker-entry.js';
-import { vaultBuilderOver, type AccountCallChainOnTheWire, type VaultAnswer } from '../../src/web/vault-worker-client.js';
-import type { GovernedCallOrder, OpenedRound, SignerMaterial } from '../../src/web/governed-call-builder.js';
+import { answerVaultAsk } from 'vaults-web-shared/vault-worker-entry.js';
+import { vaultBuilderOver, type AccountCallChainOnTheWire, type VaultAnswer } from 'vaults-web-shared/vault-worker-client.js';
+import type { GovernedCallOrder, OpenedRound, SignerMaterial } from 'vaults-web-shared/governed-call-builder.js';
 import { refusalForProven } from '../../src/wiring/proven-submission.js';
 
 const NET = 'undeployed';
@@ -111,7 +111,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PAYROLL RUN RAISED AND APPROVED FROM THE SIGNE
    * What a signer's device opens from the company's own records for each run
    * written down, by identity: the run's payload, its vault, the sealed salt and
    * change. Every call is handed it, as the page hands it. The page's opening itself runs over real records in
-   * `src/web/the-device-proves-what-it-opened.test.ts`.
+   * `packages/web-shared/src/the-device-proves-what-it-opened.test.ts`.
    */
   const opened = new Map<string, OpenedRound>();
   const openedFor = (order: GovernedCallOrder): OpenedRound => {

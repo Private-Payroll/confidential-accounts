@@ -139,7 +139,10 @@ describe('§1 - the server under test sees only the settings its file named', ()
  * `testing` folder, since a helper that serves or imports on a test's behalf
  * is where the next one would hide.
  */
-const TREES = ['src', 'scripts', join('contracts', 'test'), join('packages', 'identity', 'src'), join('apps', 'wallet')];
+const TREES = [
+  'src', 'scripts', join('contracts', 'test'), join('packages', 'identity', 'src'), join('packages', 'web-shared', 'src'),
+  join('apps', 'wallet'),
+];
 const SKIP = new Set(['node_modules', 'dist', 'public', 'managed', 'managed-vault']);
 const scanned = (): string[] => {
   const out: string[] = [];

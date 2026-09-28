@@ -2,6 +2,7 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import wasm from 'vite-plugin-wasm';
 import { framingHeadersFor } from './packages/identity/src/profile/origin.js';
+import { SERVICE_PROXY } from './scripts/serve-rules.js';
 
 /**
  * The payroll interface.
@@ -61,7 +62,7 @@ import { framingHeadersFor } from './packages/identity/src/profile/origin.js';
  * building for a reason that has nothing to do with the interface.
  */
 export default defineConfig({
-  root: 'src/web',
+  root: 'src/web-legacy',
   plugins: [react(), wasm()],
   /*
    * The worker's own plugin list is separate from the page's, so the handling
@@ -84,16 +85,28 @@ export default defineConfig({
    * Listing entries replaces the default of every page in the root, so the page
    * is named too. A production build does not do this at all; it is the
    * development server only, and it is where the product is tried by hand.
+   * The workers are the shared package's and live outside this root, so each is
+   * named by its path from here.
    */
-  optimizeDeps: { entries: ['index.html', 'vault-worker-entry.ts', 'proving-worker-entry.ts', 'payslip-worker-entry.ts'] },
+  optimizeDeps: {
+    entries: [
+      'index.html',
+      '../../packages/web-shared/src/vault-worker-entry.ts',
+      '../../packages/web-shared/src/proving-worker-entry.ts',
+      '../../packages/web-shared/src/payslip-worker-entry.ts',
+    ],
+  },
   /*
    * **NOTHING MAY FRAME THIS APPLICATION.** It frames the person's wallet, and the
    * wallet answers it because it is the top of the tab; this page inside a
    * stranger's would put a stranger around both. `frame-ancestors` is honoured
    * only as a response header, so it is sent with every document here.
+   *
+   * The paths passed on to the service are the ones both applications use, read
+   * from one list.
    */
   server: {
-    port: 5173, host: true, proxy: { '/api': 'http://localhost:8787', '/artefacts/vault': 'http://localhost:8787' },
+    port: 5173, host: true, proxy: { ...SERVICE_PROXY },
     headers: { ...framingHeadersFor(null) },
   },
   preview: { headers: { ...framingHeadersFor(null) } },

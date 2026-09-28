@@ -185,9 +185,9 @@ describe('EVERY BROWSER BUILD IN THIS REPOSITORY', () => {
      * builder and its committee rule vanish from `files`. */
     const g = byName('payroll');
     expect(g.entries).toEqual([
-      'src/web/main.tsx', 'src/web/proving-worker-entry.ts', 'src/web/vault-worker-entry.ts', 'src/web/payslip-worker-entry.ts',
+      'src/web-legacy/main.tsx', 'packages/web-shared/src/proving-worker-entry.ts', 'packages/web-shared/src/vault-worker-entry.ts', 'packages/web-shared/src/payslip-worker-entry.ts',
     ]);
-    expect(g.files).toEqual(expect.arrayContaining(['src/web/vault-builder.ts', 'src/midnight/vault-committee.ts', 'src/midnight/authority-replacement.ts']));
+    expect(g.files).toEqual(expect.arrayContaining(['packages/web-shared/src/vault-builder.ts', 'src/midnight/vault-committee.ts', 'src/midnight/authority-replacement.ts']));
     /* RED WHEN: `midnight-identity`, linked into `node_modules` from this repository, stops being followed -
      * the page is served its built `lib/` files and they would go unexamined. */
     expect(g.files).toEqual(expect.arrayContaining(['packages/identity/lib/profile/fingerprint.js', 'packages/identity/lib/wallet/network.js']));

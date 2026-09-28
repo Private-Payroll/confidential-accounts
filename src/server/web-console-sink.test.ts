@@ -73,7 +73,7 @@ const HOSTILE = [
   {
     level: 'error',
     message: 'PUT /api/me/keys failed',
-    stack: `Error: stale\n    at seal (/src/web/keyring.ts:434:9)\n    authKey=${PLANTED.authKey}`,
+    stack: `Error: stale\n    at seal (/packages/web-shared/src/keyring.ts:434:9)\n    authKey=${PLANTED.authKey}`,
   },
 ];
 

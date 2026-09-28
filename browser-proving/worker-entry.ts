@@ -8,7 +8,7 @@
  * across an actual thread, and that the jobs are still there after the page
  * that created them is gone.
  */
-import { startJobWorker } from '../src/web/prover-worker.js';
+import { startJobWorker } from 'vaults-web-shared/prover-worker.js';
 import type { JobRunner } from '../src/core/jobs.js';
 
 const runner: JobRunner = {

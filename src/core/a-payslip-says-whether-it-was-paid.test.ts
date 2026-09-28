@@ -14,18 +14,18 @@ import { openPayslip } from './payslip-open.js';
 import { wrapKey, toHex, randomBytes, unwrapKey, unseal, type Hex } from './crypto.js';
 import { runMaterialFor, type RunMaterial } from '../midnight/run-material.js';
 import { paidMovementOfLeaf, payoutLeafOf } from '../midnight/payout-tree.js';
-import { movementOfPayslip, type PayslipCircuits } from '../web/payslip-movement.js';
+import { movementOfPayslip, type PayslipCircuits } from 'vaults-web-shared/payslip-movement.js';
 import { vaultDetails } from '../testing/vault-details.js';
 import { payeeFor } from '../testing/payees.js';
 import { registryWithTestPrivateForms, aVaultHolding } from '../testing/assets.js';
-import { fetchMyPayslips, paymentsOnTheChain, type Fetch } from '../web/my-payslips.js';
-import type { ChainReader } from '../web/payslip-worker-client.js';
+import { fetchMyPayslips, paymentsOnTheChain, type Fetch } from 'vaults-web-shared/my-payslips.js';
+import type { ChainReader } from 'vaults-web-shared/payslip-worker-client.js';
 
 /** The compiled contracts' own circuits, as the device's reader calls them. */
 const CIRCUITS: PayslipCircuits = { details: vaultDetails, leafOf: payoutLeafOf, movementOf: paidMovementOfLeaf };
 /** Every slip's address taken as confirmed by the payee's wallet; what an unconfirmed one reads is pinned elsewhere. */
 const CONFIRMED = () => true;
-import { paidWords } from '../web/YourPay.js';
+import { paidWords } from '../web-legacy/YourPay.js';
 import type { User } from './types.js';
 
 /**

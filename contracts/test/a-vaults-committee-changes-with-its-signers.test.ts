@@ -52,15 +52,15 @@ import { companyVaultRoutes, type VaultChain } from '../../src/server/company-va
 import { mountVaultRecords, vaultAccountFromTheIndexer } from '../../src/server/vault-records-authority.js';
 import { MemorySealedPoolStore } from '../../src/midnight/vault-pool.js';
 import type { WireRecord } from '../../src/midnight/sealed-record-wire.js';
-import { HttpSealedPoolStore, type WireSend } from '../../src/web/http-sealed-pool-store.js';
-import { recordsReaderOf, type DeviceSigner } from '../../src/web/deposit-on-device.js';
-import { answerVaultAsk } from '../../src/web/vault-worker-entry.js';
-import { vaultBuilderOver, type VaultAnswer } from '../../src/web/vault-worker-client.js';
+import { HttpSealedPoolStore, type WireSend } from 'vaults-web-shared/http-sealed-pool-store.js';
+import { recordsReaderOf, type DeviceSigner } from 'vaults-web-shared/deposit-on-device.js';
+import { answerVaultAsk } from 'vaults-web-shared/vault-worker-entry.js';
+import { vaultBuilderOver, type VaultAnswer } from 'vaults-web-shared/vault-worker-client.js';
 import {
   createCompanyVault, depositIntoCompanyVault, openCompanyVaultPool, payPrivatelyFromCompanyVault,
   type TemporaryKeys, type VaultService, type DepositInFlight, type DepositsInFlight, type PaymentInFlight,
-} from '../../src/web/vault-operation.js';
-import { inFlightInMemory as inFlightRecordsInMemory, sealedOnThisDevice, type KeptOnThisDevice } from '../../src/web/in-flight-on-this-device.js';
+} from 'vaults-web-shared/vault-operation.js';
+import { inFlightInMemory as inFlightRecordsInMemory, sealedOnThisDevice, type KeptOnThisDevice } from 'vaults-web-shared/in-flight-on-this-device.js';
 import { readWhatThePageAsks, base64FromBytes } from '../../apps/wallet/src/chain/balance-for-page.js';
 import { UNLOCK_PURPOSE, UNLOCK_WINDOW_MS, unlockAsk } from '../../src/core/wallet-unlock.js';
 import { fromHex, newSigningKeypair, newWrappingKeypair, toHex, type Hex } from '../../src/core/crypto.js';
@@ -68,8 +68,8 @@ import {
   accountHandoverWith, accountTemporaryVerifyingKey, accountVerifierKeysIn, committeeChangeWith,
 } from '../../src/server/vault-chain.js';
 import { committeeSignaturesFor, readCommitteeSignatures } from 'midnight-identity/profile/committee-sign';
-import { committeeAsk } from '../../src/web/wallet-committee.js';
-import { signCommitteeChangeOnDevice, type CommitteeChangeView } from '../../src/web/committee-change-on-device.js';
+import { committeeAsk } from 'vaults-web-shared/wallet-committee.js';
+import { signCommitteeChangeOnDevice, type CommitteeChangeView } from 'vaults-web-shared/committee-change-on-device.js';
 import { openAccount } from '../../src/core/account.js';
 import { DEPLOYED_CIRCUITS } from '../../src/midnight/deferral.js';
 import { fileURLToPath } from 'node:url';

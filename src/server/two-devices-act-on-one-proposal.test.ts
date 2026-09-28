@@ -55,7 +55,7 @@ const { registryWithTestPrivateForms, aVaultHolding } = await import('../testing
 const { addressOfSlot, signInWithAWallet } = await import('../testing/wallet-session.js');
 const { theNetwork } = await import('../midnight/network.js');
 const { sign, toHex } = await import('../core/crypto.js');
-const device = await import('../web/governed-call-on-device.js');
+const device = await import('vaults-web-shared/governed-call-on-device.js');
 type Hex = import('../core/crypto.js').Hex;
 type Proposal = import('../core/types.js').Proposal;
 
@@ -220,7 +220,7 @@ const apiAs = (who: keyof typeof USERS) => async (path: string, init?: RequestIn
 
 const aDevice = (who: keyof typeof USERS, company: { account: string }, signer: string) => {
   const stages: string[] = [];
-  const doors: import('../web/governed-call-on-device.js').RaiseDoors = {
+  const doors: import('vaults-web-shared/governed-call-on-device.js').RaiseDoors = {
     service: {
       ...device.governedCallServiceFor(apiAs(who)),
       callState: async () => ({ account: 'ac'.repeat(32), blockHash: 'b', accountState: 'AS', parameters: 'PP' }),
@@ -228,7 +228,7 @@ const aDevice = (who: keyof typeof USERS, company: { account: string }, signer: 
     builder: {
       governedCall: async ({ order, opened }) => {
         /* The worker's own check, with the contract's own pure circuits: every value is the one the device opened. */
-        const { refuseWhatThisDeviceDidNotOpen } = await import('../web/governed-call-builder.js');
+        const { refuseWhatThisDeviceDidNotOpen } = await import('vaults-web-shared/governed-call-builder.js');
         const { pureCircuits } = await import('../../contracts/managed/contract/index.js');
         refuseWhatThisDeviceDidNotOpen({ accountPure: pureCircuits as never }, order, opened);
         return { tx: Buffer.from(JSON.stringify({ signer, order: order as Built['order'] } satisfies Built)).toString('base64') };

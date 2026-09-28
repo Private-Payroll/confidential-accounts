@@ -58,10 +58,10 @@ import {
   openNewestNonceSecrets, depositNonceKeysOf, rotateNonceSecret, admitToNonceSecret, recordsKeypairFrom,
 } from '../../src/midnight/company-nonce-secret.js';
 import type { WireRecord } from '../../src/midnight/sealed-record-wire.js';
-import { HttpSealedPoolStore, type WireSend } from '../../src/web/http-sealed-pool-store.js';
+import { HttpSealedPoolStore, type WireSend } from 'vaults-web-shared/http-sealed-pool-store.js';
 import {
   depositCoinOnThisDevice, startVaultNonceSecretOnThisDevice, recordsReaderOf, type DeviceSigner,
-} from '../../src/web/deposit-on-device.js';
+} from 'vaults-web-shared/deposit-on-device.js';
 import { mountVaultRecords, vaultAccountFromTheIndexer, type CompanyRoster } from '../../src/server/vault-records-authority.js';
 import { UNLOCK_PURPOSE, UNLOCK_WINDOW_MS, unlockAsk } from '../../src/core/wallet-unlock.js';
 import {

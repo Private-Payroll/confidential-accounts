@@ -11,8 +11,8 @@
  */
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import App from '../web/App.js';
-import '../web/styles.css';
+import App from '../web-legacy/App.js';
+import '../web-legacy/styles.css';
 
 import { MemoryStore } from '../core/store.js';
 import { wiring, observerView } from '../wiring/selection.js';
@@ -64,7 +64,7 @@ const chosen = wiring();
  * **AN UNCAUGHT REFUSAL AT MODULE SCOPE IS A WHITE PAGE WITH NOTHING ON IT.**
  * Nothing below this line runs, React never mounts, and the person who opened
  * it has no sentence to report and nothing to act on - which is the exact
- * injury `src/web/no-wasm-in-the-page.test.ts` exists for, arrived at from a
+ * injury `src/web-legacy/no-wasm-in-the-page.test.ts` exists for, arrived at from a
  * different direction. So the refusal is written into the page BEFORE it is
  * re-raised: the message is on screen, and the throw that follows stops the
  * rest of this module from building a product on a ledger it has not got.

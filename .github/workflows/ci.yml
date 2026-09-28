@@ -68,9 +68,9 @@ jobs:
       - uses: ./.github/actions/build
 
   typecheck:
-    # FOUR CONFIGURATIONS, FOUR MARKS. They cover different trees with different
+    # ONE MARK PER typecheck SCRIPT IN package.json. They cover different trees with different
     # settings, and running them as one step means the first refusal hides the
-    # other three.
+    # others.
     name: typecheck (${{ matrix.what }})
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -147,7 +147,7 @@ jobs:
       # vault's generated caller reaches the account's generated module.
       - name: build the vault's proving and verifier keys
         run: npm run compact:vault -- --full
-      - run: npx vitest run src/midnight/ledger.test.ts src/midnight/deferred-set.test.ts src/midnight/the-key-reaches-the-circuit.test.ts src/midnight/the-secret-comes-from-the-keyring.test.ts src/wiring/vault-submission.test.ts src/web/a-deposit-built-on-the-device.test.ts contracts/test/a-company-vault-from-the-page.test.ts contracts/test/a-private-payment-from-the-page.test.ts contracts/test/a-run-raised-and-approved-from-the-page.test.ts contracts/test/a-company-seats-its-signers-from-the-page.test.ts contracts/test/a-vaults-committee-changes-with-its-signers.test.ts
+      - run: npx vitest run src/midnight/ledger.test.ts src/midnight/deferred-set.test.ts src/midnight/the-key-reaches-the-circuit.test.ts src/midnight/the-secret-comes-from-the-keyring.test.ts src/wiring/vault-submission.test.ts packages/web-shared/src/a-deposit-built-on-the-device.test.ts contracts/test/a-company-vault-from-the-page.test.ts contracts/test/a-private-payment-from-the-page.test.ts contracts/test/a-run-raised-and-approved-from-the-page.test.ts contracts/test/a-company-seats-its-signers-from-the-page.test.ts contracts/test/a-vaults-committee-changes-with-its-signers.test.ts
 
   rules:
     # THE RULES THE JOB BELOW APPLIES, CHECKED BEFORE IT APPLIES THEM.

@@ -52,7 +52,7 @@ const { addressOfSlot, signInWithAWallet } = await import('../testing/wallet-ses
 const { theNetwork } = await import('../midnight/network.js');
 const { toHex } = await import('../core/crypto.js');
 const { DEVICE_RAISE_VERSION, paymentsCheckedDigest } = await import('../core/device-raise.js');
-const device = await import('../web/governed-call-on-device.js');
+const device = await import('vaults-web-shared/governed-call-on-device.js');
 type Hex = import('../core/crypto.js').Hex;
 
 const NETWORK = theNetwork();

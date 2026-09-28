@@ -4893,7 +4893,7 @@ export class ProposerRoleGone extends Error {
  * same hazard deliberately on its own side — `approvalNullifier` folds
  * `kernel.self()` (`compact:903-914`) — and this value does not. **What stops
  * it today is that the reference client mints a fresh signing key per seat
- * (`src/web/App.tsx:2321`), which is a habit of one client and not a rule of
+ * (`src/web-legacy/App.tsx:2321`), which is a habit of one client and not a rule of
  * the system.**
  *
  * **THE VERSION TAG IS NOT DECORATION.** A signature made under the old

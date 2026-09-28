@@ -25,8 +25,8 @@
  * ── THE OTHER TWO HALVES OF THE CLAIM ARE ELSEWHERE, DELIBERATELY ─────────
  *
  * A route answering `404` says nothing about what SHIPPED to a browser, and
- * reading the source says less. `src/web/no-password-in-the-bundle.test.ts`
- * builds the app and looks in the output; `src/web/auth-screen.test.tsx`
+ * reading the source says less. `src/web-legacy/no-password-in-the-bundle.test.ts`
+ * builds the app and looks in the output; `src/web-legacy/auth-screen.test.tsx`
  * RENDERS the sign-in screen and counts the ways in.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';

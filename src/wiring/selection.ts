@@ -26,7 +26,7 @@
  *
  * ── WHAT IS IN THIS FILE AND WHAT IS NEXT DOOR, AND WHY IT IS SPLIT ──────
  *
- * **THE PAGE LOADS THIS MODULE.** `src/web/main.tsx` imports it to get the
+ * **THE PAGE LOADS THIS MODULE.** `src/web-legacy/main.tsx` imports it to get the
  * commitment scheme, because a device computes its own seat here - a signing
  * secret that must never leave it, and the leaf built from that secret. Under
  * the chain selection that derivation IS the contract's circuit, so the scheme

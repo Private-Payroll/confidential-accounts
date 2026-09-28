@@ -10,7 +10,7 @@
 import { canonical, seal, type Hex } from '../core/crypto.js';
 import { sealRecord } from '../core/sealed-records.js';
 import type { SealedProposal } from '../core/types.js';
-import type { OpenedRound } from '../web/governed-call-builder.js';
+import type { OpenedRound } from 'vaults-web-shared/governed-call-builder.js';
 
 export interface ARecord {
   readonly id: string;

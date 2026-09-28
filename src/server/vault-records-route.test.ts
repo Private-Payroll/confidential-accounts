@@ -10,7 +10,7 @@ import express from 'express';
 import type { AddressInfo } from 'node:net';
 import { readFileSync } from 'node:fs';
 import { vaultRecordsRoutes, VAULT_RECORD_BODY_LIMIT, type MayTouchVaultRecords } from './vault-records-route.js';
-import { HttpSealedPoolStore, pageWireSend, type WireSend } from '../web/http-sealed-pool-store.js';
+import { HttpSealedPoolStore, pageWireSend, type WireSend } from 'vaults-web-shared/http-sealed-pool-store.js';
 import {
   MemorySealedPoolStore, SealedNotePool, sealPool, VaultPoolVersionAlreadyFiled, VaultRecordRefused,
   type SealedPoolStore,

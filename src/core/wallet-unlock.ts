@@ -12,7 +12,7 @@ import { REQUEST_SCHEMA } from 'midnight-identity/profile/request';
  * the wallet exported handed one out. That was reported rather than worked
  * around. The wallet side then built the missing half — a third kind of ask,
  * `unlock`, which derives a key for one company and releases it after a press
- * on the wallet's own screen. This file and `src/web/wallet-unlock.ts` are the
+ * on the wallet's own screen. This file and `packages/web-shared/src/wallet-unlock.ts` are the
  * other end of it.
  *
  * ── THE ASK CARRIES NO ORIGIN AND NO ATTRIBUTES, AND HAS NOWHERE TO PUT ONE ─

@@ -230,7 +230,7 @@ describe('the new application\'s proving files, before it is served', () => {
   /*
    * RED WHEN: the new application is served without its proving files being put
    * in place first, the check runs after a wallet is brought up (a problem would
-   * then be said minutes late), or it runs for the application in src/web, whose
+   * then be said minutes late), or it runs for the application in src/web-legacy, whose
    * command must keep doing exactly what it did.
    */
   it('puts them in place for the new application only, before any wallet and before any page', () => {

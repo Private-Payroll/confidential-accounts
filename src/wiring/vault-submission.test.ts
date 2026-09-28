@@ -7,7 +7,7 @@ import * as contracts from '@midnight-ntwrk/midnight-js-contracts';
 import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
 import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 import * as vaultModule from '../../contracts/managed-vault/contract/index.js';
-import { buildDeposit, buildVaultDeploy, type VaultBuilderDeps } from '../web/vault-builder.js';
+import { buildDeposit, buildVaultDeploy, type VaultBuilderDeps } from 'vaults-web-shared/vault-builder.js';
 import { committeeReplacement, type Committee } from '../midnight/vault-committee.js';
 import { VAULT_CIRCUITS } from '../midnight/vault-contract.js';
 import type { AuthorityRead, OnChainAuthority } from '../midnight/ledger.js';

@@ -123,6 +123,7 @@ describe('a vault\'s public balance has one way in', () => {
 
   it('on the page, only the vault holdings reader reads the list the service sent', () => {
     /* RED WHEN a screen reads the served list itself and so skips the refusal of a list it cannot read. */
-    expect(where(SERVED_LIST).filter((f) => f.startsWith('src/web/'))).toEqual(['src/web/device-vault-holdings.ts']);
+    expect(where(SERVED_LIST).filter((f) => f.startsWith('src/web-legacy/') || f.startsWith('packages/web-shared/')))
+      .toEqual(['packages/web-shared/src/device-vault-holdings.ts']);
   });
 });

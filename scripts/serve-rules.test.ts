@@ -12,7 +12,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import {
   APPLICATION_PAGES, LAUNCHER_COMMAND, PAGE_SETTING, applicationPageFrom, commandOf, leadingAssignments,
-  originsNotStarted, pageStartsFor, refuseWhatTheServerSaid,
+  originsNotStarted, pageStartsFor, refuseWhatTheServerSaid, SERVICE_PROXY,
 } from './serve-rules.js';
 
 const ROOT = join(import.meta.dirname, '..');
@@ -132,9 +132,9 @@ describe('where each page is started', () => {
 describe('which application is served on the application\'s origin', () => {
   /*
    * RED WHEN: an unset or empty setting serves anything but the application in
-   * `src/web` - every command that does not set it would change what it serves.
+   * `src/web-legacy` - every command that does not set it would change what it serves.
    */
-  it('serves the application in src/web when nothing chooses', () => {
+  it('serves the application in src/web-legacy when nothing chooses', () => {
     expect(applicationPageFrom({})).toEqual({ page: 'legacy' });
     expect(applicationPageFrom({ [PAGE_SETTING]: '' })).toEqual({ page: 'legacy' });
     expect(PAGE_SETTING).toBe('PAYROLL_PAGE');
@@ -185,7 +185,7 @@ describe('which application is served on the application\'s origin', () => {
     expect(text).toMatch(/const chosen = applicationPageFrom\(process\.env\);\s*if \('refusal' in chosen\) throw new Error\(chosen\.refusal\);/);
     expect(text).toMatch(/const plan = pageStartsFor\(posture, chosen\.page\);/);
     expect(text).not.toMatch(/process\.argv/);
-    /* And the read-only command is untouched by it: it serves the application in src/web. */
+    /* And the read-only command is untouched by it: it serves the application in src/web-legacy. */
     expect(code('scripts/serve.ts')).toMatch(/const plan = pageStartsFor\(process\.env\);/);
   });
 });
@@ -268,5 +268,19 @@ describe('both commands start the product the same way', () => {
     expect(text).toMatch(/pageStartsFor\(/);
     expect(text, 'it spawns a process of its own').not.toMatch(/\bspawn\(/);
     expect(text, 'it loads the server by a route of its own').not.toMatch(/import\(pathToFileURL/);
+  });
+});
+
+describe('both applications pass the same list of paths on to the service', () => {
+  /*
+   * RED WHEN: either application's page configuration passes on a list that
+   * differs from the one list - a path added, dropped or sent elsewhere - so the
+   * two would reach the service differently from one origin. A copy identical to
+   * the list stays green; it is a difference that this refuses.
+   */
+  it.each(['vite.config.ts', 'apps/web/vite.config.ts'])('%s passes on exactly the one list', async (config) => {
+    const { default: loaded } = await import(/* @vite-ignore */ join(ROOT, config));
+    expect(loaded.server?.proxy).toEqual(SERVICE_PROXY);
+    expect(Object.keys(SERVICE_PROXY).sort()).toEqual(['/api', '/artefacts/vault']);
   });
 });

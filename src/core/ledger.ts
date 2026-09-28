@@ -16,7 +16,7 @@
  *   - `src/standalone/main.tsx` constructed the same two again, its own copy;
  *   - `src/core/account.ts` took the commitment scheme from a DEFAULT parameter,
  *     which the server accepted by passing only two arguments;
- *   - `src/web/App.tsx` imported a commitment scheme at module scope and
+ *   - `src/web-legacy/App.tsx` imported a commitment scheme at module scope and
  *     computed an invited signer's leaf from it, with no argument to change.
  *
  * Four files, and the fourth was not a wiring decision at all. Changing the

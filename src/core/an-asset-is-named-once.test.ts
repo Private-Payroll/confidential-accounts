@@ -338,7 +338,8 @@ function shippingSources(): string[] {
       }
     }
   };
-  for (const dir of ['src', 'scripts', 'contracts/src']) walk(join(ROOT, dir));
+  /* The browser code both applications share lives in its own package, and it moves money like the rest. */
+  for (const dir of ['src', 'scripts', 'contracts/src', 'packages/web-shared/src']) walk(join(ROOT, dir));
   return files;
 }
 
@@ -356,7 +357,7 @@ const NOT_AN_ASSET_BECOMING_A_TOKEN: Record<string, { count: number; why: string
   'src/core/store.ts inviteKeyOf(token)': { count: 1, why: 'an invitation kept under its old key, moved to its stored key' },
   'src/core/plugins.ts \' \' + nanoid(24)': { count: 1, why: 'a plug-in\'s capability, minted at random' },
   'src/testing/assets.ts token': { count: 1, why: 'a record of which token a test vault was asked about' },
-  'src/web/Join.tsx token': { count: 1, why: 'an invitation\'s token handed to the screen that accepts it' },
+  'src/web-legacy/Join.tsx token': { count: 1, why: 'an invitation\'s token handed to the screen that accepts it' },
 
   'src/midnight/vault-coins.ts token': { count: 1, why: 'the colour read off a coin in the ledger\'s own state' },
   'src/midnight/public-balance.ts token': { count: 1, why: 'the colour read off a contract\'s balance in the ledger\'s own state, to say how much of it the contract holds' },
@@ -368,9 +369,9 @@ const NOT_AN_ASSET_BECOMING_A_TOKEN: Record<string, { count: number; why: string
   'scripts/fund-vault.ts colour': { count: 1, why: 'the ledger\'s own native token, read from the ledger at run time' },
   'scripts/measure-call-cost.ts toHex(GBP)': { count: 1, why: 'a colour a measurement mints for itself, never a payment' },
   'src/midnight/vault-journal.ts token': { count: 1, why: 'the colour read off a journal line this reader has already checked is a coin, carried into the coin proposed to the chain' },
-  'src/web/device-vault-holdings.ts p.token as Hex': { count: 1, why: 'the token the service already read off the asset\'s row for this payment, carried into the question the worker is asked' },
-  'src/web/governed-call-on-device.ts String(p.token)': { count: 1, why: 'the token the service already read off the asset\'s row for this payment, carried into the check the device runs' },
-  'src/web/vault-builder.ts p.token as Hex': { count: 1, why: 'a payment\'s token as it arrived over the wire, checked as 64 hex characters and carried into the notes walk' },
+  'packages/web-shared/src/device-vault-holdings.ts p.token as Hex': { count: 1, why: 'the token the service already read off the asset\'s row for this payment, carried into the question the worker is asked' },
+  'packages/web-shared/src/governed-call-on-device.ts String(p.token)': { count: 1, why: 'the token the service already read off the asset\'s row for this payment, carried into the check the device runs' },
+  'packages/web-shared/src/vault-builder.ts p.token as Hex': { count: 1, why: 'a payment\'s token as it arrived over the wire, checked as 64 hex characters and carried into the notes walk' },
   'scripts/record-a-notes-transaction.ts target.token as Hex': { count: 1, why: 'the token of the note already in the pool, put back into the commitment so it can be compared with the one the chain holds' },
 };
 
@@ -397,10 +398,13 @@ describe('§3 the census: no second place turns an asset into a ledger token', (
     /* RED WHEN the walk silently reads nothing, which is a census that always passes. */
     expect(files.length).toBeGreaterThan(100);
     expect(files.some(f => f.endsWith('.mjs'))).toBe(true);
-    for (const f of ['src/core/movement.ts', 'src/core/payroll.ts', 'src/midnight/vault-ledger.ts', 'scripts/fund-vault.ts']) {
+    /* RED WHEN the shared browser package drops out of the walk: its vault builder is no longer read. */
+    const READ = ['src/core/movement.ts', 'src/core/payroll.ts', 'src/midnight/vault-ledger.ts', 'scripts/fund-vault.ts',
+      'packages/web-shared/src/vault-builder.ts'];
+    for (const f of READ) {
       expect(sources.has(f), `${f} names money and is read`).toBe(true);
     }
-    for (const f of ['src/core/movement.ts', 'src/core/payroll.ts', 'src/midnight/vault-ledger.ts', 'scripts/fund-vault.ts']) {
+    for (const f of READ) {
       expect(files).toContain(f);
     }
   });

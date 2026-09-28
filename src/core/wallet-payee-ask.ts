@@ -54,7 +54,8 @@ import { PUBLIC_RECEIVING_ADDRESS, RECEIVING_ADDRESS } from 'midnight-identity/p
  *
  * It imports one constant. The thing that VERIFIES what comes
  * back is `wallet-payee.ts` beside it, which reaches the wallet SDK and must
- * never be imported from `src/web/`; `no-wasm-in-the-page.test.ts` is what
+ * never be imported by a browser application (`src/web-legacy`, `apps/web`, or
+ * the shared code in `packages/web-shared`); `no-wasm-in-the-page.test.ts` is what
  * keeps that true rather than a convention.
  */
 

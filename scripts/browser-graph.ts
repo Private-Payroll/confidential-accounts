@@ -323,7 +323,7 @@ export const pagesIn = (root: string, repo: string): string[] =>
  * changed there must be changed here too.
  */
 export const BROWSER_BUILDS: BrowserBuild[] = [
-  { name: 'payroll', config: 'vite.config.ts', root: 'src/web', pages: ['src/web/index.html'], alias: [] },
+  { name: 'payroll', config: 'vite.config.ts', root: 'src/web-legacy', pages: ['src/web-legacy/index.html'], alias: [] },
   { name: 'web', config: 'apps/web/vite.config.ts', root: 'apps/web', pages: ['apps/web/index.html'], alias: [] },
   { name: 'standalone', config: 'vite.standalone.config.ts', root: 'src/standalone', pages: ['src/standalone/index.html'], alias: [] },
   {

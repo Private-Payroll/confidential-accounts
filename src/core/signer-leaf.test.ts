@@ -38,7 +38,7 @@
  *   · The device's material carries a `scope`, and a seat stored under a
  *     non-default one is reproduced rather than reported as a mismatch.
  *
- *   · **THE SOURCE PIN OVER `src/web/App.tsx` IS DELETED, NOT DOUBLED.**
+ *   · **THE SOURCE PIN OVER `src/web-legacy/App.tsx` IS DELETED, NOT DOUBLED.**
  *     It asserted that `openAccount` called the check exactly once, and then
  *     the fourth defeat its own comment predicted turned up: `loadDemo`
  *     built a session without entering `openAccount` at all, so a second door
@@ -351,7 +351,7 @@ describe('the stored signer leaf, against the device that has to reproduce it', 
 
   it('seatOnThisDevice REFUSES a mismatch and returns nothing a session can be built from', () => {
     /*
-     * **THIS REPLACES THE SOURCE PIN OVER `src/web/App.tsx`, AND THE PIN IS
+     * **THIS REPLACES THE SOURCE PIN OVER `src/web-legacy/App.tsx`, AND THE PIN IS
      * DELETED RATHER THAN LEFT BESIDE IT.**
      *
      * The pin asserted that `openAccount` called the check exactly once, with

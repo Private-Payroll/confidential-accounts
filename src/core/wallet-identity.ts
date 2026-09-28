@@ -52,7 +52,7 @@ import { NETWORKS, type NetworkName } from '../midnight/network.js';
  * `docs/NEXT.md` X5 §2.
  *
  * `signInAsk` builds a plain object and touches nothing. It was the ONLY thing
- * the browser wanted from this module — `src/web/wallet-sign-in.ts` imported it
+ * the browser wanted from this module — `packages/web-shared/src/wallet-sign-in.ts` imported it
  * and got the rest for free, because an import is all-or-nothing. The rest is
  * `verify`, which is `midnight-identity/profile/disclosure`, which is
  * `wallet-sdk-address-format`, which is `ledger-v9`, which is ten megabytes of

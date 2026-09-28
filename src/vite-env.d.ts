@@ -13,7 +13,7 @@ interface ImportMetaEnv {
   /**
    * WHETHER THE PAGE KEEPS A RECORD OF WHAT IT SAID. `X4`, and it is `C140`'s
    * shape: declared by the `dev` script in `package.json` and by nothing a
-   * person types. `src/web/error-sink.ts` also requires `import.meta.env.DEV`,
+   * person types. `packages/web-shared/src/error-sink.ts` also requires `import.meta.env.DEV`,
    * so setting this in a production build ships nothing.
    */
   readonly VITE_DEV_ERROR_SINK?: string;

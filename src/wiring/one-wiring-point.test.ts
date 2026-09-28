@@ -51,6 +51,8 @@ import { MidnightCommitments } from '../midnight/commitments.js';
 import { wiring, observerView } from './selection.js';
 
 const SRC = fileURLToPath(new URL('..', import.meta.url));
+/* The browser code both web applications share is a package of its own, and ships like `src/`. */
+const SHARED = fileURLToPath(new URL('../../packages/web-shared/src', import.meta.url));
 
 const NAMES = /Simulated(Ledger|ProofSystem|Commitments)/;
 
@@ -175,11 +177,13 @@ const sources = (dir: string): string[] => {
 };
 
 describe('one wiring point', () => {
-  const files = sources(SRC);
+  const files = [...sources(SRC), ...sources(SHARED)];
 
   it('read the tree it thinks it read', () => {
     expect(files.length).toBeGreaterThan(40);
     expect(files.map(f => relative(SRC, f))).toContain('wiring/selection.ts');
+    /* RED WHEN the shared browser package drops out of the walk. */
+    expect(files.map(f => relative(SHARED, f))).toContain('vault-worker-entry.ts');
   });
 
   /**
@@ -384,7 +388,7 @@ describe('one wiring point', () => {
      * case goes red on the tree if the cascade comes back, without pinning a
      * symbol somebody may rename.
      */
-    for (const rel of ['web/App.tsx', 'web/Join.tsx', 'web/Auth.tsx']) {
+    for (const rel of ['web-legacy/App.tsx', 'web-legacy/Join.tsx', 'web-legacy/Auth.tsx']) {
       const text = readFileSync(join(SRC, rel), 'utf8');
       const raw = text.split('\n');
       const seenLines = stripped(text).split('\n');
@@ -502,12 +506,12 @@ describe('one wiring point', () => {
     + 'rest', () => {
     /*
      * **THIS IS THE CHEAP HALF OF A GUARD THAT ALREADY EXISTS AND COSTS THREE
-     * MINUTES.** `src/web/no-wasm-in-the-page.test.ts` builds the page and
+     * MINUTES.** `src/web-legacy/no-wasm-in-the-page.test.ts` builds the page and
      * reports what went into it, which is the account of the graph worth
      * having. It is also the slowest thing in this suite, and the mistake it
      * catches is a one-line import.
      *
-     * **THE FAILURE: `src/web/main.tsx` IMPORTS THIS MODULE.** Anything that
+     * **THE FAILURE: `src/web-legacy/main.tsx` IMPORTS THIS MODULE.** Anything that
      * builds a chain ledger reaches a sealed-state store on a filesystem, so an
      * import of it here puts `node:fs` in a browser bundle - which does not
      * build - and the contract's whole runtime into the page. A dynamic import
@@ -524,7 +528,7 @@ describe('one wiring point', () => {
      * in the page just as effectively.
      *
      * Those are covered, and covered better, by
-     * `src/web/no-wasm-in-the-page.test.ts`, which builds the page and asserts
+     * `src/web-legacy/no-wasm-in-the-page.test.ts`, which builds the page and asserts
      * its WebAssembly list exactly - every route above reaches
      * `@midnightntwrk/ledger-v9` and that case names it. **This one is the cheap
      * end: it catches the mistake somebody actually makes, in milliseconds

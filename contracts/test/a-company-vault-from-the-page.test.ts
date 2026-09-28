@@ -50,15 +50,15 @@ import { companyVaultRoutes, type VaultChain } from '../../src/server/company-va
 import { mountVaultRecords, vaultAccountFromTheIndexer } from '../../src/server/vault-records-authority.js';
 import { MemorySealedPoolStore, SealedNotePool } from '../../src/midnight/vault-pool.js';
 import type { WireRecord } from '../../src/midnight/sealed-record-wire.js';
-import { HttpSealedPoolStore, type WireSend } from '../../src/web/http-sealed-pool-store.js';
-import { recordsReaderOf, type DeviceSigner } from '../../src/web/deposit-on-device.js';
-import { answerVaultAsk } from '../../src/web/vault-worker-entry.js';
-import { vaultBuilderOver, type VaultAnswer } from '../../src/web/vault-worker-client.js';
+import { HttpSealedPoolStore, type WireSend } from 'vaults-web-shared/http-sealed-pool-store.js';
+import { recordsReaderOf, type DeviceSigner } from 'vaults-web-shared/deposit-on-device.js';
+import { answerVaultAsk } from 'vaults-web-shared/vault-worker-entry.js';
+import { vaultBuilderOver, type VaultAnswer } from 'vaults-web-shared/vault-worker-client.js';
 import {
   createCompanyVault, depositIntoCompanyVault, openCompanyVaultPool, VaultHandoverOwed,
   type TemporaryKeys, type VaultService, type DepositInFlight, type DepositsInFlight,
-} from '../../src/web/vault-operation.js';
-import { inFlightInMemory as inFlightRecordsInMemory, sealedOnThisDevice, type KeptOnThisDevice } from '../../src/web/in-flight-on-this-device.js';
+} from 'vaults-web-shared/vault-operation.js';
+import { inFlightInMemory as inFlightRecordsInMemory, sealedOnThisDevice, type KeptOnThisDevice } from 'vaults-web-shared/in-flight-on-this-device.js';
 import { readWhatThePageAsks, base64FromBytes, bytesFromBase64 } from '../../apps/wallet/src/chain/balance-for-page.js';
 import { aWalletThatPaysPrivately, type AWalletThatPaysPrivately } from './a-wallet-that-pays-privately.js';
 import { UNLOCK_PURPOSE, UNLOCK_WINDOW_MS, unlockAsk } from '../../src/core/wallet-unlock.js';
@@ -67,7 +67,7 @@ import { committeeReplacement } from '../../src/midnight/vault-committee.js';
 import { accountHandoverWith, accountTemporaryVerifyingKey, accountVerifierKeysIn } from '../../src/server/vault-chain.js';
 import { DEPLOYED_CIRCUITS } from '../../src/midnight/deferral.js';
 import { fileURLToPath } from 'node:url';
-import { whyNotHandOver } from '../../src/web/handover-check.js';
+import { whyNotHandOver } from 'vaults-web-shared/handover-check.js';
 import { readProvenTransaction, readFinishedTransaction } from '../../src/wiring/proven-submission.js';
 import { startingLedgerFrom } from '../../src/wiring/vault-submission.js';
 import { signingKeyFromBip340 } from '@midnightntwrk/ledger-v9';
