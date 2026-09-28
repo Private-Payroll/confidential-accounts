@@ -1,19 +1,17 @@
 import './app.css';
 import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
-import { KitProvider } from 'vaults-ui';
-import { DocumentTitle } from './document-title.js';
-import { LANGUAGES } from './languages.js';
+import { browserStorage, computerIsDark, readPreferences, showAppearance, themeFor } from './preferences.js';
+import { Root } from './root.js';
 
 /**
- * THE NEW PAYROLL APPLICATION'S ENTRY. IT SHOWS NOTHING YET.
+ * THE NEW PAYROLL APPLICATION'S ENTRY.
  *
- * The application is built here one screen at a time while the one in
- * `src/web-legacy` keeps serving. What is mounted is what every screen will sit
- * inside, the kit's provider with the application's languages, and nothing
- * inside it but the page's title: this is the address the application will be
- * reached at, not a screen, so there is nothing on it to mistake for a working
- * product.
+ * The person's light or dark and colour are shown on the page before anything
+ * is drawn, so the first frame is already in them rather than flashing the
+ * default. Then the application is mounted.
  */
+const kept = readPreferences(browserStorage());
+showAppearance(document.documentElement, themeFor(kept.mode, computerIsDark()), kept.base);
 const root = document.getElementById('root');
-if (root !== null) createRoot(root).render(createElement(KitProvider, { languages: LANGUAGES }, createElement(DocumentTitle)));
+if (root !== null) createRoot(root).render(createElement(Root));

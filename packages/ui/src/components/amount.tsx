@@ -1,36 +1,50 @@
-import { cn } from 'vaults-ui/lib/utils';
-import { formatTokenAmount, type TokenAmount } from 'vaults-ui/format/token-amount';
+import { formatTokenAmount, visibilityOf, type TokenAmount } from 'vaults-ui/format/token-amount';
 import { useLanguage } from 'vaults-ui/i18n/provider';
 import { PublicPill, type AmountKind } from 'vaults-ui/components/public-pill';
 
-/** Whether anyone can look an amount up. Read from how the money is held or paid, never from a setting. */
-export type Visibility = 'private' | 'public';
-
 export interface AmountProps {
-  /** The amount, made by `tokenAmount`: its units, its token's decimals and its token's code. */
+  /** The amount, made by `publicAmount` or `privateAmount`: its units, its token's decimals and code, and whether anyone can look it up. */
   value: TokenAmount;
-  /** Required, with no default: an amount nobody marked cannot be shown. */
-  visibility: Visibility;
-  /** Whether it is a payment or a balance, which says what the Public pill explains. */
+  /** Whether it is a payment or a balance, which says what the Public pill explains. Required on every amount, private ones too. */
   kind: AmountKind;
-  className?: string;
+}
+
+/** Refuses a kind that is neither, so the pill never guesses what public means. */
+function checkedKind(kind: AmountKind): AmountKind {
+  if (kind !== 'payment' && kind !== 'balance') {
+    throw new Error(`an amount is a payment or a balance, and this one is ${String(kind)}`);
+  }
+  return kind;
 }
 
 /**
- * THE ONE WAY AN AMOUNT REACHES A SCREEN. Exact, in the person's language,
- * with its code, and with the `Public` pill when anyone can look it up. The
+ * THE FIGURE AND THE CODE, WITHOUT THE PILL, for the balance, which puts the
+ * pill in the line's label instead. Not re-exported by the kit, and the kit's
+ * own check refuses it anywhere but here and in the balance: a public amount
+ * shown through it anywhere else would have no pill.
+ */
+export function AmountFigure({ value }: { value: TokenAmount }) {
+  const language = useLanguage();
+  return <span dir="ltr">{formatTokenAmount(value, language)}{' '}{value.code}</span>;
+}
+
+/**
+ * THE ONE WAY AN AMOUNT REACHES A SCREEN, WITH THE BALANCE. Exact, in the
+ * person's language, with its code, and with the `Public` pill when anyone can
+ * look it up, which is read from the amount itself and never passed in. The
  * figures and the code are always written left to right, whatever the
  * language's direction.
+ *
+ * IT TAKES NO CLASS FROM A SCREEN: a class on the element that holds the pill
+ * could hide it. A screen places an amount by what it puts around it.
  */
-export function Amount({ value, visibility, kind, className }: AmountProps) {
-  if (visibility !== 'private' && visibility !== 'public') {
-    throw new Error(`an amount is shown as private or public, and this one is ${String(visibility)}`);
-  }
-  const language = useLanguage();
+export function Amount({ value, kind }: AmountProps) {
+  const visibility = visibilityOf(value);
+  const shown = checkedKind(kind);
   return (
-    <span className={cn('inline-flex items-center gap-1.5', className)} data-slot="amount" data-visibility={visibility}>
-      <span dir="ltr">{formatTokenAmount(value, language)}{' '}{value.code}</span>
-      {visibility === 'public' ? <PublicPill kind={kind} /> : null}
+    <span className="inline-flex items-center gap-1.5" data-slot="amount" data-visibility={visibility}>
+      <AmountFigure value={value} />
+      {visibility === 'public' ? <PublicPill kind={shown} /> : null}
     </span>
   );
 }

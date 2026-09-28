@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatTokenAmount, TokenAmount } from 'vaults-ui/format/token-amount';
+import { formatTokenAmount, PublicAmount, visibilityOf } from 'vaults-ui/format/token-amount';
 import { SEED_ASSETS, StaticAssetRegistry, type Asset } from '../../../../src/core/assets.js';
 import { vaultPublicMoney } from './vault-public-money.js';
 
@@ -13,21 +13,22 @@ const NIGHT_TOKEN = NIGHT.ledger.unshielded!;
 const UNLISTED = 'ab'.repeat(32);
 const view = (rows: unknown) => async () => ({ onChain: true, publicBalances: rows });
 
-/** Every value in an answer that is not an amount made by tokenAmount, with where it is. */
+/** Every value in an answer that is not a public amount made by publicAmount, with where it is. */
 function looseValues(value: unknown, at = 'answer'): string[] {
-  if (value instanceof TokenAmount) return [];
+  if (value instanceof PublicAmount) return [];
   if (Array.isArray(value)) return value.flatMap((v, i) => looseValues(v, `${at}[${i}]`));
   if (value !== null && typeof value === 'object') return Object.entries(value).flatMap(([k, v]) => looseValues(v, `${at}.${k}`));
   return [`${at}: ${typeof value}`];
 }
 
 describe('a vault\'s public money, through the adapter', () => {
-  /* RED WHEN: an amount leaves the adapter as a bare bigint or number, or with decimals or a code that are not the token's record. */
+  /* RED WHEN: an amount leaves the adapter as a bare bigint or number, with decimals or a code that are not the token's record, or marked private although anyone can look it up. */
   it('hands on each amount as an amount, with its token\'s decimals and code', async () => {
     const answer = await vaultPublicMoney(view([{ token: NIGHT_TOKEN, amount: '12500000' }]));
     expect(answer?.amounts.length).toBe(1);
     const [night] = answer!.amounts;
-    expect(night).toBeInstanceOf(TokenAmount);
+    expect(night).toBeInstanceOf(PublicAmount);
+    expect(visibilityOf(night!)).toBe('public');
     expect(night!.code).toBe('NIGHT');
     expect(NIGHT.decimals).toBe(6);
     expect(formatTokenAmount(night!, 'en')).toBe('12.500000');

@@ -6,6 +6,8 @@
   "private": true,
   "type": "module",
   "peerDependencies": {
+    "@hugeicons/core-free-icons": "4.3.0",
+    "@hugeicons/react": "1.1.9",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "vaults-ui": "0.0.0",

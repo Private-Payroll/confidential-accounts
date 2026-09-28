@@ -1,4 +1,4 @@
-import { tokenAmount, type TokenAmount } from 'vaults-ui';
+import { publicAmount, type PublicAmount } from 'vaults-ui';
 import { readPublicHoldings } from 'vaults-web-shared/device-vault-holdings.js';
 import { assets, type AssetRegistry } from '../../../../src/core/assets.js';
 
@@ -9,9 +9,10 @@ import { assets, type AssetRegistry } from '../../../../src/core/assets.js';
  * rules let reach the shared browser code, the product's own code, the service
  * or the person's wallet, and the only files that make an amount. This one
  * reads a vault's public money through the shared reader, which returns bare
- * `bigint` counts of a token's smallest unit, and makes each an amount with
- * `tokenAmount`, from the decimals and code of the token's record in the asset
- * registry, so a screen never holds a number it could show as money. None of
+ * `bigint` counts of a token's smallest unit, and makes each a public amount
+ * with `publicAmount`, from the decimals and code of the token's record in the
+ * asset registry, so a screen never holds a number it could show as money, and
+ * the Public pill is written for each without the screen being told. None of
  * the reader's words are handed on: a screen says what happened in its own
  * phrases.
  */
@@ -19,7 +20,7 @@ import { assets, type AssetRegistry } from '../../../../src/core/assets.js';
 /** What a vault holds publicly, as a screen shows it. */
 export interface VaultPublicMoney {
   /** One amount for each currency the registry names, in the order the service listed them. */
-  readonly amounts: readonly TokenAmount[];
+  readonly amounts: readonly PublicAmount[];
   /** How many currencies it holds that no asset in the registry names. They are counted, and never shown as a figure: with no record there are no decimals to write one with. */
   readonly unrecognised: number;
 }
@@ -46,12 +47,12 @@ export async function vaultPublicMoney(viewOfTheVault: () => Promise<unknown>, r
     if (byToken.has(token)) return null;
     byToken.set(token, asset);
   }
-  const amounts: TokenAmount[] = [];
+  const amounts: PublicAmount[] = [];
   let unrecognised = 0;
   for (const holding of answer.holdings) {
     const asset = byToken.get(holding.token);
     if (asset === undefined) unrecognised += 1;
-    else amounts.push(tokenAmount(holding.amount, asset.decimals, asset.code));
+    else amounts.push(publicAmount(holding.amount, asset.decimals, asset.code));
   }
   return { amounts, unrecognised };
 }

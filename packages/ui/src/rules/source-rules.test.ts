@@ -3,6 +3,7 @@ import {
   amountsOutsideTheComponent, arbitraryValues, classWordsOf, colourValues, declaredBy, englishSentences, gapsOf, gapsThatDiffer,
   hasPhrase, inlineStyles, keysAskedFor, missingPhrases, paletteClasses, pathsIntoTheKit, physicalClasses, pluralOf, secondCn,
   stateVariantsOf, undeclaredImports, utilityOf, waysIntoSharedCode, wordingCensus, wordingInCode, WORDING_POSITIONS, amountsMadeOutsideTheAdapters, type Source,
+  namedOutside, stylesReachingIntoComponents, variantsOf,
 } from './source-rules.test-support.js';
 
 /*
@@ -118,13 +119,13 @@ describe('the one way into shared code', () => {
     expect(whats(await waysIntoSharedCode([adapter], '/repo', OWN, null))).toEqual(['imports vaults-web-shared/device-vault-holdings.js', 'reaches ../../../../src/core/assets.js', 'fetch']);
   });
 
-  /* RED WHEN: an amount is made outside the adapters, by the name, through a namespace or taken apart from one, where its decimals would be typed rather than read from the token's record; or the adapters, or a key of the file's own object that happens to share the name, are refused. */
+  /* RED WHEN: an amount, public or private, is made outside the adapters, by the name, through a namespace or taken apart from one, where its decimals would be typed rather than read from the token's record, or its visibility said by a screen; or the adapters, or a key of the file's own object that happens to share the name, are refused. */
   it('names every amount made outside the adapters', () => {
-    const screen = src('apps/web/src/screens/x.tsx', "import { tokenAmount } from 'vaults-ui'; const a = tokenAmount(1n, 2, 'NIGHT'); const b = kit.tokenAmount; const c = { tokenAmount: 1 }; kit['tokenAmount']; const { tokenAmount: m } = kit;");
-    const adapter = src('apps/web/src/adapters/x.ts', "import { tokenAmount } from 'vaults-ui'; export const a = tokenAmount(1n, asset.decimals, asset.code);");
-    expect(whats(amountsMadeOutsideTheAdapters([screen, adapter], '/repo', LAYER))).toEqual(['tokenAmount', 'tokenAmount', 'tokenAmount', 'tokenAmount', 'tokenAmount']);
-    expect(amountsMadeOutsideTheAdapters([screen], '/repo', LAYER).map((b) => b.line)).toEqual([1, 1, 1, 1, 1]);
-    expect(whats(amountsMadeOutsideTheAdapters([adapter], '/repo', null))).toEqual(['tokenAmount', 'tokenAmount']);
+    const screen = src('apps/web/src/screens/x.tsx', "import { publicAmount, privateAmount } from 'vaults-ui'; const a = publicAmount(1n, 2, 'NIGHT'); const b = kit.privateAmount; const c = { publicAmount: 1 }; kit['publicAmount']; const { privateAmount: m } = kit;");
+    const adapter = src('apps/web/src/adapters/x.ts', "import { publicAmount } from 'vaults-ui'; export const a = publicAmount(1n, asset.decimals, asset.code);");
+    expect(whats(amountsMadeOutsideTheAdapters([screen, adapter], '/repo', LAYER))).toEqual(['publicAmount', 'privateAmount', 'publicAmount', 'privateAmount', 'publicAmount', 'privateAmount']);
+    expect(amountsMadeOutsideTheAdapters([screen], '/repo', LAYER).map((b) => b.line)).toEqual([1, 1, 1, 1, 1, 1]);
+    expect(whats(amountsMadeOutsideTheAdapters([adapter], '/repo', null))).toEqual(['publicAmount', 'publicAmount']);
   });
 
   /* RED WHEN: two imports of one module are reported as one, or at the line of a comment that mentions it rather than at their own. */
@@ -258,6 +259,75 @@ describe('start and end, not left and right', () => {
   });
 });
 
+describe('left and right named on purpose', () => {
+  /* RED WHEN: the one declaration allowed to name left and right lets another declaration, or the same name in another file, through. */
+  it('lets left and right stand only in the declaration named for them', () => {
+    const named = src('packages/ui/src/lib/direction.ts', "const POPUP_SIDE = { ltr: { end: 'right' } } as const; const OTHER = 'left';");
+    const elsewhere = src('packages/ui/src/components/x.tsx', "const POPUP_SIDE = { ltr: { end: 'right' } } as const;");
+    expect(whats(physicalClasses([named, elsewhere]))).toEqual(['left', 'right']);
+    expect(physicalClasses([named]).map((b) => b.line)).toEqual([1]);
+  });
+});
+
+describe('an application styles only what it writes', () => {
+  /*
+   * RED WHEN: an application may name a part of a kit component, in any case
+   * or string; write a class, anywhere it holds one, with a variant that can
+   * style another element (children, descendants, a bracketed selector); or
+   * put in its stylesheet anything but its two kinds of line, such as a
+   * selector, an `@apply`, a variant or a custom property.
+   */
+  it('names every part named, every class that can reach another element, and every stylesheet line but its own two', () => {
+    const screen = src('apps/web/src/screens/x.tsx', `const a = <div className="**:hidden *:*:last:hidden [&_[data-slot=public-pill]]:hidden" />;
+      const b = cn('[&>span]:truncate', 'md:[:is(&)>*>*:last-child]:hidden', '[:where(&)_button]:hidden');
+      const held = '*:nth-3:hidden'; const spread = { className: '*:last:hidden' };
+      document.querySelector('[DATA-SLOT=amount]');`);
+    const sheet = src('apps/web/src/app.css', `/* the kit's */
+      @import "vaults-ui/styles.css";
+      @source "./";
+      .quiet [data-visibility] > * + * { display: none; }
+      .money { @apply *:last:hidden; }
+      @custom-variant tail (& > * > :last-child);
+      :root { --foreground: transparent; }`);
+    const page = src('apps/web/index.html', '<div id="root" class="**:last:hidden"></div>');
+    expect(whats(stylesReachingIntoComponents([screen, sheet, page]))).toEqual([
+      'data-slot', 'DATA-SLOT', '**:hidden', '*:*:last:hidden', '[&_[data-slot=public-pill]]:hidden', '[&>span]:truncate',
+      'md:[:is(&)>*>*:last-child]:hidden', '[:where(&)_button]:hidden', '*:nth-3:hidden', '*:last:hidden',
+      '.quiet [data-visibility] > * + * { display: none; }', '.money { @apply *:last:hidden; }', '@custom-variant tail (& > * > :last-child);',
+      ':root { --foreground: transparent; }', '**:last:hidden',
+    ]);
+  });
+
+  /* RED WHEN: a class that styles only the element it is written on, by its own state or an ancestor's, is refused, or the stylesheet's own two kinds of line are. */
+  it('lets an element style itself, by its own state or an ancestor\'s', () => {
+    const screen = src('apps/web/src/screens/x.tsx', `const a = <label className="hover:bg-accent md:w-72 has-[[data-state=checked]]:ring-2 aria-[current=page]:bg-accent group-data-[collapsible=icon]:hidden data-vertical:h-4 whitespace-normal!" />;`);
+    const sheet = src('apps/web/src/app.css', `/*
+ * a comment
+ */
+@import "vaults-ui/styles.css";
+
+@source "./";
+`);
+    expect(whats(stylesReachingIntoComponents([screen, sheet]))).toEqual([]);
+  });
+
+  /* RED WHEN: a class's variants are split inside brackets or parentheses, or the utility is taken for a variant. */
+  it('reads a class word\'s variants, whole', () => {
+    expect(variantsOf('md:*:[&_p:first-child]:has-[a:b]:hidden')).toEqual(['md', '*', '[&_p:first-child]', 'has-[a:b]']);
+    expect(variantsOf('hidden')).toEqual([]);
+  });
+
+  /* RED WHEN: a name allowed only in some files is let through in another, or refused in one it is allowed in. */
+  it('names a name used outside the files allowed it', () => {
+    const own = src('packages/ui/src/components/amount.tsx', 'export function AmountFigure() { return null; }');
+    const allowed = src('packages/ui/src/components/balance.tsx', 'const x = <AmountFigure value={v} />;');
+    const other = src('packages/ui/src/components/row.tsx', "import { AmountFigure } from 'vaults-ui/components/amount'; const x = <AmountFigure value={v} />;");
+    expect(namedOutside([own, allowed, other], 'AmountFigure', [own.path, allowed.path]).map((b) => [b.path, b.what])).toEqual([
+      [other.path, 'AmountFigure'], [other.path, 'AmountFigure'], [other.path, 'AmountFigure'],
+    ]);
+  });
+});
+
 describe('state variants', () => {
   /* RED WHEN: a bare data- variant, grouped, named or multi-word, is missed, or a bracketed one is returned. */
   it('finds every bare data- variant a class uses', () => {
@@ -288,7 +358,7 @@ describe('wording', () => {
       const label = 'Label'; const d = <label>{label}</label>;
       const Inner = () => { const x = 'Inside'; return <p>{x}</p>; }; const e = <Inner />;
       const Tag = ok ? 'h1' : 'Heading'; const g = <Tag />; const Other = f('Called'); const h = <Other />;
-      const i = <Tooltip content="Hold to send" name="Alice" kind="Pay" visibility="Seen" />; const j = <Amount kind="balance" visibility="public" />;
+      const i = <Tooltip content="Hold to send" name="Alice" kind="Pay" visibility="Seen" />; const j = <Amount kind="balance" />;
       const k = 'Отправить';`);
     expect(whats(wordingInCode([f], codes))).toEqual(['Send', 'Send now', 'Pay', 'Paid', 'Payee', 'Owed', 'Label', 'Inside', 'Heading', 'Called', 'Hold to send', 'Alice', 'Pay', 'Seen', 'Отправить']);
   });
@@ -322,6 +392,12 @@ describe('wording', () => {
     expect(whats(wordingInCode([named, elsewhere], codes))).toEqual(['fr', 'en']);
     expect(wordingCensus([named], codes).byPosition).toEqual({ code: 1 });
     expect(wordingCensus([named], codes).codes).toEqual(['packages/ui/src/i18n/languages.ts#FALLBACK']);
+  });
+
+  /* RED WHEN: a declaration named in CODES lets a string through inside a function written within it, where words are asked for by key. */
+  it('lets a named declaration hold codes but not words inside a function within it', () => {
+    const pages = src('apps/web/src/pages.ts', "export const PAGES = { a: { path: '/a', name: (t) => t('page.a.name'), soon: (t) => (t('page.a.soon') || 'Soon') } };");
+    expect(whats(wordingInCode([pages], codes))).toEqual(['Soon']);
   });
 
   /* RED WHEN: a position meant for the kit alone lets the application through. */
@@ -402,6 +478,18 @@ describe('amounts', () => {
   });
 
   /* RED WHEN: the plain-number formatter may do more than reach the browser's number formatter, or a kit error may not carry a value. */
+  /* RED WHEN: a request body written with JSON.stringify is refused in the adapters, or let through anywhere else, or a way of reaching it other than by its name is let through there. */
+  it('lets the adapters write a request body, and nothing else', () => {
+    const adapter = src('apps/web/src/adapters/x.ts', "const a = JSON.stringify(body); const b = JSON['stringify'](body); const c = other.stringify(body);");
+    const screen = src('apps/web/src/screens/x.tsx', 'const a = JSON.stringify(body);');
+    expect(whats(amountsOutsideTheComponent([adapter, screen], undefined, 'apps/web/src/adapters'))).toEqual(['stringify', 'stringify', 'stringify']);
+    expect(amountsOutsideTheComponent([adapter, screen], undefined, 'apps/web/src/adapters').map((b) => b.path)).toEqual([adapter.path, adapter.path, screen.path]);
+    expect(whats(amountsOutsideTheComponent([adapter]))).toEqual(['stringify', 'stringify', 'stringify']);
+    /* A conversion taken out of an object by name is the conversion, outside the adapters. */
+    const taken = src('apps/web/src/screens/y.tsx', 'const { stringify } = JSON; const { join: j } = parts;');
+    expect(whats(amountsOutsideTheComponent([taken], undefined, 'apps/web/src/adapters'))).toEqual(['stringify taken out', 'join taken out']);
+  });
+
   it('lets the plain-number formatter reach only the number formatter, and a kit error carry a value', () => {
     const intl = src('packages/ui/src/format/intl.ts', "new Intl.NumberFormat(tag).format(v); String(v);");
     const kit = src('packages/ui/src/i18n/languages.ts', 'throw new Error(`${path} is not a language file`);');

@@ -415,11 +415,16 @@ export async function waysIntoSharedCode(files: readonly Source[], root: string,
   return out;
 }
 
+/** The functions that make an amount, one for each of whether anyone can look it up. */
+export const AMOUNT_MAKERS: ReadonlySet<string> = new Set(['publicAmount', 'privateAmount']);
+
 /**
  * RULE: AN AMOUNT IS MADE ONLY IN THE ADAPTERS, where its decimals and code
- * are read from the token's own record. Anywhere else, naming `tokenAmount`
- * is a breach: a screen that made one would type the decimals, and a figure
- * with the wrong decimals is a figure a thousand or a million times wrong.
+ * are read from the token's own record and whether it is public from how the
+ * money is held. Anywhere else, naming `publicAmount` or `privateAmount` is a
+ * breach: a screen that made one would type the decimals, and a figure with
+ * the wrong decimals is a figure a thousand or a million times wrong; or it
+ * would say private of money anyone can look up.
  * `adapters` is the folder allowed; null allows none.
  */
 export function amountsMadeOutsideTheAdapters(files: readonly Source[], root: string, adapters: string | null): Breach[] {
@@ -431,14 +436,14 @@ export function amountsMadeOutsideTheAdapters(files: readonly Source[], root: st
     for (const { node, up } of walkDown(parse(f).program)) {
       const p = up[up.length - 1];
       const grand = up[up.length - 2];
-      /* A key of an object the file writes is a name of its own; a key taken out of one (`const { tokenAmount: m } = kit`) is the constructor. */
+      /* A key of an object the file writes is a name of its own; a key taken out of one (`const { publicAmount: m } = kit`) is the maker. */
       const ownKey = p?.type === 'Property' && p.key === node && !p.computed && !p.shorthand && grand?.type === 'ObjectExpression';
       const asProperty = p?.type === 'MemberExpression' && p.property === node;
-      const named = (node.type === 'Identifier' && node.name === 'tokenAmount' && !ownKey && !asProperty)
-        || (node.type === 'MemberExpression' && propertyName(node) === 'tokenAmount');
-      if (!named || seen.has(`${node.start}:${node.end}`)) continue;
+      const name = node.type === 'Identifier' && !ownKey && !asProperty ? String(node.name)
+        : node.type === 'MemberExpression' ? propertyName(node) : '';
+      if (!AMOUNT_MAKERS.has(name) || seen.has(`${node.start}:${node.end}`)) continue;
       seen.add(`${node.start}:${node.end}`);
-      out.push({ path: f.path, line: lineOf(f.text, node.start), what: 'tokenAmount' });
+      out.push({ path: f.path, line: lineOf(f.text, node.start), what: name });
     }
   }
   return out;
@@ -574,6 +579,24 @@ export function paletteClasses(files: readonly Source[]): Breach[] {
   return wordBreaches(files, (u) => COLOUR_UTILITY.test(u));
 }
 
+/*
+ * DECLARATIONS WHOSE STRINGS NAME LEFT OR RIGHT ON PURPOSE, each with why. The
+ * left-or-right rule lets these through and nothing else; the kit's check
+ * requires every entry to name a declaration that exists.
+ */
+export const SIDE_NAMES: Readonly<Record<string, string>> = {
+  'packages/ui/src/lib/direction.ts#POPUP_SIDE': 'the popup library places a popup by left and right only, so this is the one place the reading direction\'s start and end are turned into them',
+};
+
+/** Where in a file each declaration named in `registry` stands, as start and end offsets. */
+export function spansOf(f: Source, registry: Readonly<Record<string, string>>): [number, number][] {
+  const out: [number, number][] = [];
+  for (const { node } of walk(parse(f).program)) {
+    if ((node.type === 'VariableDeclarator' || node.type === 'FunctionDeclaration') && `${f.path}#${nameOf(node.id)}` in registry) out.push([node.start, node.end]);
+  }
+  return out;
+}
+
 const PHYSICAL = /^(?:m[lr]|p[lr]|scroll-m[lr]|scroll-p[lr]|left|right|border-[lr]|rounded-(?:[lr]|tl|tr|bl|br)|text-(?:left|right)|float-(?:left|right)|clear-(?:left|right)|bg-(?:left|right)|object-(?:left|right)|origin-(?:top-|bottom-)?(?:left|right)|(?:top|bottom)-(?:left|right))(?:-|$)/;
 const LEFT_OR_RIGHT = /(?:^|[^\w])(?:left|right)(?:$|[^\w])/i;
 
@@ -587,7 +610,13 @@ const LEFT_OR_RIGHT = /(?:^|[^\w])(?:left|right)(?:$|[^\w])/i;
  * side the popup library places it on, which is itself left or right.
  */
 export function physicalClasses(files: readonly Source[]): Breach[] {
-  const out = wordBreaches(files, (u) => PHYSICAL.test(u));
+  const out: Breach[] = [];
+  for (const f of files) {
+    const spans = isMarkup(f.path) ? [] : spansOf(f, SIDE_NAMES);
+    for (const { word, at } of stringWordsOf(f)) {
+      if (PHYSICAL.test(utilityOf(word)) && !spans.some(([a, b]) => at >= a && at < b)) out.push({ path: f.path, line: lineOf(f.text, at), what: word });
+    }
+  }
   for (const f of files) {
     for (const { css, at } of cssOf(f)) {
       for (const d of declarationsOf(css)) if (LEFT_OR_RIGHT.test(`${d.property} ${d.value}`)) out.push({ path: f.path, line: lineOf(f.text, at + d.at), what: `${d.property}: ${d.value}` });
@@ -616,7 +645,11 @@ const VALUE_PART = /var\(--[\w-]+\)|--[\w-]+|\b(?:calc|min|max|clamp|color-mix)(
  * yet: an arbitrary property is how a class sets a colour or a side that no
  * utility or token allows, so each one a screen needs is added here with why.
  */
-export const ARBITRARY_PROPERTIES: Readonly<Record<string, string>> = {};
+export const ARBITRARY_PROPERTIES: Readonly<Record<string, string>> = {
+  '--sidebar-width': 'the left menu\'s width, a size, read by the menu\'s own classes',
+  '--sidebar-width-icon': 'the left menu\'s width folded to its icons, a size, read the same way',
+  '--card-spacing': 'the space inside a card, a spacing step, read by the card\'s own classes',
+};
 
 /**
  * RULE: every arbitrary value in a class is made of the parts named in
@@ -702,6 +735,78 @@ export function inlineStyles(files: readonly Source[]): Breach[] {
   return out;
 }
 
+/* ------------------------------------------------------------------ what an application may not reach inside a component */
+
+/** The variants of a class word, in order: `md:*:[&_p]:hidden` has `md`, `*` and `[&_p]`. Brackets and parentheses are read whole. */
+export function variantsOf(word: string): string[] {
+  const out: string[] = [];
+  let depth = 0; let from = 0;
+  for (let i = 0; i < word.length; i += 1) {
+    const c = word[i]!;
+    if (c === '[' || c === '(') depth += 1;
+    else if (c === ']' || c === ')') depth -= 1;
+    else if (c === ':' && depth === 0) { out.push(word.slice(from, i)); from = i + 1; }
+  }
+  return out;
+}
+
+/**
+ * A variant that can style another element than the one it is written on:
+ * the children and descendant variants (`*`, `**`), and any selector written
+ * in brackets (`[&_svg]`, `[:is(&)>*]`). A variant that styles the element
+ * itself by a state, its own or an ancestor's (`hover`, `has-[...]`,
+ * `group-data-[...]`, `aria-[...]`), is not one.
+ */
+const reaches = (variant: string): boolean => variant === '*' || variant === '**' || variant.startsWith('[');
+
+/** What an application's stylesheet may hold: comments, and the lines that load the kit's stylesheet and name the application's sources. */
+const STYLESHEET_LINE = /^@(?:import|source)\s+(?:"[^"]*"|'[^']*')\s*;$/;
+
+/**
+ * RULE: AN APPLICATION STYLES ONLY THE ELEMENTS IT WRITES. The Public pill is
+ * a part of the amount component, and anything that could style it could hide
+ * it, showing money anyone can look up as if it were private. So an
+ * application names no part of a kit component (`data-slot`, in any case, in
+ * any string, selector or page); writes no class, in any string, with a
+ * variant that styles another element (`*:`, `**:`, or any selector in
+ * brackets, `[&_p]:`, `[:is(&)>*]:`); and its stylesheet holds nothing but
+ * comments and the lines that load the kit's stylesheet and name its sources:
+ * no selector, no `@apply`, no variant or utility of its own, no custom
+ * property.
+ */
+export function stylesReachingIntoComponents(files: readonly Source[]): Breach[] {
+  const out: Breach[] = [];
+  for (const f of files) {
+    for (const m of f.text.matchAll(/data-slot/gi)) out.push({ path: f.path, line: lineOf(f.text, m.index), what: m[0] });
+    if (f.path.endsWith('.css')) {
+      const plain = f.text.replace(/\/\*[\s\S]*?\*\//g, (c) => c.replace(/[^\n]/g, ' '));
+      for (const statement of plain.matchAll(/[^;{}]+(?:;|\{[^}]*\})/g)) {
+        const text = statement[0].trim();
+        if (text !== '' && !STYLESHEET_LINE.test(text)) out.push({ path: f.path, line: lineOf(f.text, statement.index + statement[0].indexOf(text)), what: text.split('\n')[0]! });
+      }
+      continue;
+    }
+    for (const { word, at } of stringWordsOf(f)) if (variantsOf(word).some(reaches)) out.push({ path: f.path, line: lineOf(f.text, at), what: word });
+  }
+  return out;
+}
+
+/**
+ * RULE: A NAME USED ONLY WHERE IT IS ALLOWED. Every identifier `name` in
+ * `files` outside the paths in `allowed`: for a part of a component that must
+ * not be used anywhere else, such as the amount's figure without its pill.
+ */
+export function namedOutside(files: readonly Source[], name: string, allowed: readonly string[]): Breach[] {
+  const out: Breach[] = [];
+  for (const f of files) {
+    if (allowed.includes(f.path)) continue;
+    for (const { node } of walk(parse(f).program)) {
+      if ((node.type === 'Identifier' || node.type === 'JSXIdentifier') && node.name === name) out.push({ path: f.path, line: lineOf(f.text, node.start), what: name });
+    }
+  }
+  return out;
+}
+
 /* ------------------------------------------------------------------ wording */
 
 const hasLetter = (t: string) => /\p{L}/u.test(t);
@@ -753,8 +858,12 @@ export const ATTRIBUTES: Readonly<Record<string, Attribute>> = {
   variant: { why: 'which of a component\'s looks it takes' },
   size: { why: 'which of a component\'s sizes it takes' },
   align: { why: 'where a popup lines up against what opened it' },
-  visibility: { why: 'whether an amount is private or public, which the amount component turns into words', on: ['Amount'] },
   kind: { why: 'whether a public amount is a payment or a balance, which the Public pill turns into words', on: ['Amount', 'PublicPill'] },
+  orientation: { why: 'which way a separator or a group of controls runs' },
+  side: { why: 'which edge a panel or a popup opens from; the left-or-right rule still reads the value, so it is start, end, top or bottom' },
+  collapsible: { why: 'how the left menu folds away: to its icons, off the page, or not at all' },
+  'aria-current': { why: 'which link is the page shown, a word from assistive technology\'s fixed vocabulary that it announces in the person\'s own language' },
+  role: { why: 'what an element is to assistive technology, a word from its fixed vocabulary that it announces in the person\'s own language' },
 };
 /** Whether `name`'s value is never shown when written in code on `element` (null: a prop's default, whose component is the function it is declared in). */
 const isQuietAttribute = (name: string, element: string | null): boolean => {
@@ -776,7 +885,30 @@ export const CODES: Readonly<Record<string, string>> = {
   'packages/ui/src/theme/base-colors.ts#BASE_COLORS': 'the names of the stylesheet\'s theme blocks, matched against it by the theme check',
   'packages/ui/src/theme/base-colors.ts#DEFAULT_BASE_COLOR': 'one of those names',
   'packages/ui/src/theme/base-colors.ts#THEMES': 'the value of the root element\'s `data-theme`',
+  'packages/ui/src/format/token-amount.ts#visibilityOf': 'whether an amount is public or private, a value the code compares and the amount component turns into the pill',
+  'packages/ui/src/components/sidebar.tsx#STATE': 'the values of the left menu\'s `data-state`, which its classes are written against',
+  'packages/ui/src/hooks/use-mobile.ts#NARROW_SCREEN': 'a media query, read by the browser',
+  'packages/ui/src/lib/direction.ts#POPUP_SIDE': 'the side names the popup library places by, chosen from the reading direction',
+  'apps/web/src/pages.ts#PAGES': 'each page\'s address, menu group, audience and the page it sits inside; its name and what it will be are asked for by key',
+  'apps/web/src/pages.ts#VIEWS': 'the names of the two views, compared by the code',
+  'apps/web/src/pages.ts#HOME': 'the ids of the pages each view begins at',
+  'apps/web/src/pages.ts#SETTINGS_OF': 'the ids of each view\'s settings page',
+  'apps/web/src/router.tsx#BROWSER_EVENTS': 'the name of the browser event the router listens for',
+  'apps/web/src/router.tsx#RESOLVED': 'what an address opens, compared by the code',
+  'apps/web/src/shortcuts.ts#SHORTCUTS': 'the keys of each shortcut, which are the same in every language; what each does is asked for by key',
+  'apps/web/src/shortcuts.ts#BROWSER_EVENTS': 'the name of the browser event the shortcuts listen for',
+  'apps/web/src/preferences.ts#KEPT': 'where a choice is kept in the browser, and a media query',
+  'apps/web/src/preferences.ts#MODES': 'the names of the appearance modes, kept and compared by the code; each is shown by its key',
+  'apps/web/src/app.tsx#LOADING': 'the state of the page before the service has answered, compared by the code',
+  'apps/web/src/adapters/session.ts#SERVICE': 'the service\'s addresses and the words of its protocol, sent and compared, never shown',
+  'apps/web/src/adapters/session.ts#REFUSAL': 'why signing in did not happen, one of a fixed set that a screen turns into its own phrase',
+  'apps/web/src/adapters/session.ts#OF': 'what an answer from the adapter is, compared by the code',
+  'apps/web/src/shell/command-bar.tsx#COMPARED': 'the Unicode form text is compared in',
+  'apps/web/src/shell/company-switcher.tsx#DAY': 'the style a date is written in, which the browser\'s date format turns into the person\'s language',
 };
+
+/** The part of `CODES` naming declarations in files under `dir`. Each package's check holds its own entries to declarations it has. */
+export const codesUnder = (dir: string): string[] => Object.keys(CODES).filter((k) => k.startsWith(`${dir}/`)).sort();
 
 /** TypeScript nodes that stay in the code a browser runs; every other `TS...` node is a type, gone before the page is served. */
 const RUNTIME_TS = new Set(['TSAsExpression', 'TSSatisfiesExpression', 'TSNonNullExpression', 'TSTypeAssertion', 'TSInstantiationExpression', 'TSEnumDeclaration', 'TSEnumBody', 'TSEnumMember', 'TSModuleDeclaration', 'TSModuleBlock', 'TSParameterProperty', 'TSExportAssignment']);
@@ -861,8 +993,14 @@ export const WORDING_POSITIONS: Readonly<Record<string, Position>> = {
     allows: (n, up, r) => r.path.startsWith('packages/ui/') && someParent(n, up, (p) => p.type === 'ThrowStatement'),
   },
   code: {
-    why: 'a string in a declaration named in `CODES`',
-    allows: (n, up, r) => someParent(n, up, (p) => (p.type === 'VariableDeclarator' || p.type === 'FunctionDeclaration') && `${r.path}#${nameOf(p.id)}` in CODES),
+    why: 'a string in a declaration named in `CODES`, and not inside a function written within it: a function there, such as a page\'s name, asks for its words by key',
+    allows: (n, up, r) => {
+      for (const { parent } of parentsOf(n, up)) {
+        if ((parent.type === 'VariableDeclarator' || parent.type === 'FunctionDeclaration') && `${r.path}#${nameOf(parent.id)}` in CODES) return true;
+        if (parent.type === 'ArrowFunctionExpression' || parent.type === 'FunctionExpression' || parent.type === 'FunctionDeclaration') return false;
+      }
+      return false;
+    },
   },
   'asset code': {
     why: 'the code of an asset from the asset registry, written the same in every language',
@@ -1026,7 +1164,9 @@ const FORMATTERS = new Set(['NumberFormat', 'toLocaleString', 'toFixed', 'toPrec
  * value written into an element's `textContent`, `innerText` or `innerHTML`;
  * and a global reached by a name built at run time (`globalThis['Str' +
  * 'ing']`, `window[name]`). In the kit, the message of an error it throws may
- * carry a value.
+ * carry a value. In `adapters`, the folder that talks to the service, a
+ * request's body may be written with `JSON.stringify`: an amount in it throws
+ * rather than becoming its digits, because an amount refuses to become JSON.
  *
  * WHAT THIS RULE DOES NOT READ, AND WHAT DOES. A value rendered as a JSX child
  * (`<span>{amount}</span>`) is not read here: an amount is an object, which
@@ -1035,10 +1175,11 @@ const FORMATTERS = new Set(['NumberFormat', 'toLocaleString', 'toFixed', 'toPrec
  * (a prop, a function's result) is not read either, and needs no rule: `+` on
  * an amount throws.
  */
-export function amountsOutsideTheComponent(files: readonly Source[], homes: Readonly<Record<string, string>> = AMOUNT_HOMES): Breach[] {
+export function amountsOutsideTheComponent(files: readonly Source[], homes: Readonly<Record<string, string>> = AMOUNT_HOMES, adapters: string | null = null): Breach[] {
   const out: Breach[] = [];
   for (const f of files) {
     if (f.path in homes) continue;
+    const talksToTheService = adapters !== null && f.path.startsWith(`${adapters}/`);
     const seen = new Set<string>();
     const kit = f.path.startsWith('packages/ui/');
     const program = parse(f).program;
@@ -1063,7 +1204,8 @@ export function amountsOutsideTheComponent(files: readonly Source[], homes: Read
         const prop = node.property as Node;
         const name = prop.type === 'Identifier' && !node.computed ? String(prop.name) : prop.type === 'Literal' ? String(prop.value) : '';
         if (FORMATTERS.has(name) && !(f.path === NUMBER_FORMATTER && name === 'NumberFormat')) breach(name);
-        if (['toString', 'stringify', 'join', 'concat'].includes(name) || ((name === 'parseInt' || name === 'parseFloat' || name === 'String' || name === 'Number') && nameOf(node.object) !== '')) breach(name);
+        const aBody = talksToTheService && name === 'stringify' && nameOf(node.object) === 'JSON' && !node.computed;
+        if ((['toString', 'stringify', 'join', 'concat'].includes(name) && !aBody) || ((name === 'parseInt' || name === 'parseFloat' || name === 'String' || name === 'Number') && nameOf(node.object) !== '')) breach(name);
       }
       if (node.type === 'Identifier' && ['Number', 'String', 'parseInt', 'parseFloat', 'encodeURIComponent'].includes(String(node.name))) {
         const p = up[up.length - 1];
@@ -1075,6 +1217,8 @@ export function amountsOutsideTheComponent(files: readonly Source[], homes: Read
       if (node.type === 'AssignmentExpression' && ['textContent', 'innerText', 'innerHTML'].includes(nameOf((node.left as Node).property))) breach(nameOf((node.left as Node).property));
       if (node.type === 'AssignmentExpression' && node.operator === '+=' && ((node.right as Node).type === 'TemplateLiteral' || ((node.right as Node).type === 'Literal' && typeof (node.right as Node).value === 'string'))) breach('+= with a string');
       if (node.type === 'Property' && nameOf(node.key) === 'NumberFormat' && !(f.path === NUMBER_FORMATTER)) breach('NumberFormat');
+      /* A conversion taken out of an object by name (`const { stringify } = JSON`) is the conversion. */
+      if (node.type === 'Property' && up[up.length - 1]?.type === 'ObjectPattern' && ['toString', 'stringify', 'join', 'concat'].includes(nameOf(node.key)) && !talksToTheService) breach(`${nameOf(node.key)} taken out`);
       if ((node.type === 'CallExpression' || node.type === 'NewExpression') && callee?.type === 'Identifier' && ['Number', 'String', 'parseInt', 'parseFloat', 'encodeURIComponent'].includes(String(callee.name))) breach(`${String(callee.name)}(...)`);
       if (node.type === 'UnaryExpression' && node.operator === '+') breach('unary +');
       if (node.type === 'BinaryExpression' && node.operator === '+' && [node.left, node.right].some((s) => (s as Node).type === 'TemplateLiteral' || ((s as Node).type === 'Literal' && typeof (s as Node).value === 'string'))) breach('+ with a string');

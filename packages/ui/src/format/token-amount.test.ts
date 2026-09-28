@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { formatTokenAmount, tokenAmount, TokenAmount } from './token-amount.js';
+import { formatTokenAmount, privateAmount, PrivateAmount, publicAmount, PublicAmount, visibilityOf, type TokenAmount } from './token-amount.js';
 import { formatDate, formatNumber } from './intl.js';
 
 /** Larger than Number.MAX_SAFE_INTEGER by six orders of magnitude, so a number could not hold it. */
 const BIG = 12_345_678_901_234_567_890_123n;
 const NNBSP = ' ';
 /** The figure of `units` of a token with `decimals`, written in `tag`. */
-const fmt = (units: bigint, decimals: number, tag: string) => formatTokenAmount(tokenAmount(units, decimals, 'USDC'), tag);
+const fmt = (units: bigint, decimals: number, tag: string) => formatTokenAmount(privateAmount(units, decimals, 'USDC'), tag);
 
 describe('a token amount is written out exactly, in the language', () => {
   /*
@@ -55,48 +55,88 @@ describe('a token amount is written out exactly, in the language', () => {
     expect(fmt(0n, 2, 'en')).toBe('0.00');
   });
 
-  /* RED WHEN: the type or the function lets a Number through, or a negative amount or a bad decimals count is written. */
-  it('refuses what is not an exact amount', () => {
-    // @ts-expect-error a token amount is a bigint, never a number
-    expect(() => tokenAmount(1500000, 6, 'USDC')).toThrow(/bigint of the token's smallest unit, and this is a number/);
-    expect(() => tokenAmount(-1n, 6, 'USDC')).toThrow(/never below zero/);
-    expect(() => tokenAmount(1n, -1, 'USDC')).toThrow(/whole number from 0 up/);
-    expect(() => tokenAmount(1n, 1.5, 'USDC')).toThrow(/whole number from 0 up/);
-    expect(() => tokenAmount(1n, 2, '')).toThrow(/carries its token's code/);
+  /* RED WHEN: either maker, or its type, lets a Number through, or a negative amount or a bad decimals count is written. */
+  it('refuses what is not an exact amount, from either maker', () => {
+    for (const make of [publicAmount, privateAmount]) {
+      // @ts-expect-error a token amount is a bigint, never a number
+      expect(() => make(1500000, 6, 'USDC')).toThrow(/bigint of the token's smallest unit, and this is a number/);
+      expect(() => make(-1n, 6, 'USDC')).toThrow(/never below zero/);
+      expect(() => make(1n, -1, 'USDC')).toThrow(/whole number from 0 up/);
+      expect(() => make(1n, 1.5, 'USDC')).toThrow(/whole number from 0 up/);
+      expect(() => make(1n, 2, '')).toThrow(/carries its token's code/);
+    }
   });
 });
 
 describe('a token amount is an object that becomes text only through the formatter', () => {
-  const a = tokenAmount(12_345n, 2, 'USDC');
+  const a = privateAmount(12_345n, 2, 'USDC');
+  const p = publicAmount(12_345n, 2, 'USDC');
 
-  /* RED WHEN: an amount is a primitive again, so React would write it as its digits. */
-  it('is an object, made only by tokenAmount, whose code is readable and whose units are not', () => {
-    expect(typeof a).toBe('object');
-    expect(a).toBeInstanceOf(TokenAmount);
-    expect(a.code).toBe('USDC');
-    expect(Object.keys(a)).toEqual([]);
-    expect(Object.getOwnPropertyNames(a)).toEqual([]);
-    expect(Object.isFrozen(a)).toBe(true);
+  /* RED WHEN: an amount is a primitive again, so React would write it as its digits; or a constructor can be called from outside. */
+  it('is an object, made only by its maker, whose code is readable and whose units are not', () => {
+    for (const x of [a, p]) {
+      expect(typeof x).toBe('object');
+      expect(x.code).toBe('USDC');
+      expect(Object.keys(x)).toEqual([]);
+      expect(Object.getOwnPropertyNames(x)).toEqual([]);
+      expect(Object.isFrozen(x)).toBe(true);
+    }
+    expect(a).toBeInstanceOf(PrivateAmount);
+    expect(p).toBeInstanceOf(PublicAmount);
     // @ts-expect-error the constructor is not how an amount is made
-    expect(() => new TokenAmount(Symbol(), 1n, 0, 'USDC')).toThrow(/made by tokenAmount, and by nothing else/);
+    expect(() => new PrivateAmount(Symbol(), 1n, 0, 'USDC')).toThrow(/made by publicAmount or privateAmount, and by nothing else/);
+    // @ts-expect-error nor this one
+    expect(() => new PublicAmount(Symbol(), 1n, 0, 'USDC')).toThrow(/made by publicAmount or privateAmount, and by nothing else/);
   });
 
   /* RED WHEN: any way of turning an amount into text or a number, outside the formatter, writes its figure instead of refusing. */
   it('refuses every conversion to text or a number', () => {
-    const conversions: [string, () => unknown][] = [
-      ['String', () => String(a)], ['template', () => `${a as unknown as string}`], ['+ a string', () => (a as unknown as string) + ''],
-      ['unary +', () => +(a as unknown as number)], ['Number', () => Number(a)], ['BigInt', () => BigInt(a as unknown as bigint)],
-      ['toString', () => a.toString()], ['JSON', () => JSON.stringify({ a })], ['NumberFormat', () => new Intl.NumberFormat('en').format(a as unknown as bigint)],
-      ['toLocaleString', () => a.toLocaleString()], ['join', () => [a].join('')], ['comparison', () => (a as unknown as number) > 1],
-    ];
-    for (const [name, convert] of conversions) expect(convert, name).toThrow(/shown only by Amount/);
+    for (const x of [a, p]) {
+      const conversions: [string, () => unknown][] = [
+        ['String', () => String(x)], ['template', () => `${x as unknown as string}`], ['+ a string', () => (x as unknown as string) + ''],
+        ['unary +', () => +(x as unknown as number)], ['Number', () => Number(x)], ['BigInt', () => BigInt(x as unknown as bigint)],
+        ['toString', () => x.toString()], ['JSON', () => JSON.stringify({ x })], ['NumberFormat', () => new Intl.NumberFormat('en').format(x as unknown as bigint)],
+        ['toLocaleString', () => x.toLocaleString()], ['join', () => [x].join('')], ['comparison', () => (x as unknown as number) > 1],
+      ];
+      for (const [name, convert] of conversions) expect(convert, name).toThrow(/shown only by Amount/);
+    }
   });
 
-  /* RED WHEN: the formatter takes anything but an amount made by tokenAmount, so a bigint passed by a cast is written unmarked. */
+  /* RED WHEN: the formatter takes anything but an amount made by a maker, so a bigint passed by a cast is written unmarked. */
   it('is the only thing the formatter writes', () => {
     expect(formatTokenAmount(a, 'en')).toBe('123.45');
-    expect(() => formatTokenAmount(12_345n as unknown as TokenAmount, 'en')).toThrow(/made by tokenAmount, and this is a value of type bigint/);
-    expect(() => formatTokenAmount({ code: 'USDC' } as unknown as TokenAmount, 'en')).toThrow(/made by tokenAmount, and this is a value of type object/);
+    expect(formatTokenAmount(p, 'en')).toBe('123.45');
+    expect(() => formatTokenAmount(12_345n as unknown as TokenAmount, 'en')).toThrow(/made by publicAmount or privateAmount, and this is a value of type bigint/);
+    expect(() => formatTokenAmount({ code: 'USDC' } as unknown as TokenAmount, 'en')).toThrow(/made by publicAmount or privateAmount, and this is a value of type object/);
+  });
+});
+
+describe('an amount carries whether anyone can look it up', () => {
+  /* RED WHEN: the visibility is read from anything but how the amount was made, or a value that is not an amount is given one. */
+  it('is public when made public and private when made private, and nothing else has a visibility', () => {
+    expect(visibilityOf(publicAmount(1n, 0, 'NIGHT'))).toBe('public');
+    expect(visibilityOf(privateAmount(1n, 0, 'NIGHT'))).toBe('private');
+    expect(() => visibilityOf(1n as unknown as TokenAmount)).toThrow(/made by publicAmount or privateAmount/);
+    expect(() => visibilityOf({ code: 'NIGHT' } as unknown as TokenAmount)).toThrow(/made by publicAmount or privateAmount/);
+  });
+
+  /*
+   * RED WHEN: a public amount can stand where a private one is asked for, or
+   * the other way: the two types are told apart when the code is typechecked,
+   * not only when it runs. Each line below is an error the typecheck must
+   * report; if the two became one type, the typecheck fails on the unused
+   * expectation instead.
+   */
+  it('is a different type for each, so one is never taken for the other', () => {
+    const a = privateAmount(1n, 0, 'USDC');
+    const p = publicAmount(1n, 0, 'USDC');
+    const takesPrivate = (x: PrivateAmount) => visibilityOf(x);
+    const takesPublic = (x: PublicAmount) => visibilityOf(x);
+    // @ts-expect-error a public amount is not a private one
+    expect(takesPrivate(p)).toBe('public');
+    // @ts-expect-error a private amount is not a public one
+    expect(takesPublic(a)).toBe('private');
+    expect([takesPrivate(a), takesPublic(p)]).toEqual(['private', 'public']);
   });
 });
 
