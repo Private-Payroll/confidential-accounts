@@ -7,7 +7,7 @@
  * `persistentHash([pad(32, "midnight-accounts:signer:pk:"), sk])` — a
  * domain-separated hash of the SECRET — and `requireSigner()` builds the leaf
  * it looks for in the tree from that. For a long time both product writers
- * (`src/core/account.ts` at creation, `src/web/App.tsx` on the invite path)
+ * (`src/core/account.ts` at creation, `src/web-legacy/App.tsx` on the invite path)
  * passed `ed25519.getPublicKey(sk)` instead. **Different, uncorrelated 32
  * bytes.** Every seat this product had ever created was a seat whose own
  * device could never prove membership: it counts towards N, it can never
@@ -89,7 +89,7 @@ const payload = (n: number) => new Uint8Array(32).fill(n);
  * **THE PRODUCT'S WRITER ITSELF, IMPORTED — NOT A RE-SPELLING OF IT.**
  *
  * `storedSignerLeaf` is the one function `AccountService.create` and the
- * invite path in `src/web/App.tsx` both call. Spelling the three arguments out
+ * invite path in `src/web-legacy/App.tsx` both call. Spelling the three arguments out
  * here instead would make this file green for a derivation the product had
  * stopped using — the test would hold its own copy of the rule, which is the
  * shape a test must never take.

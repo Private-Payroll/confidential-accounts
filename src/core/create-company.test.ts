@@ -6,7 +6,7 @@ import { parseAsk } from 'midnight-identity/profile/request';
 import type { Ask, KeyringRequest } from 'midnight-identity/profile/request';
 import { READY_PING } from 'midnight-identity/profile/channel';
 import { keyringKeyFor, keyringReleaseFor, unlockKeyFor } from 'midnight-identity/profile/unlock';
-import type { Openable } from '../web/wallet-sign-in.js';
+import type { Openable } from 'vaults-web-shared/wallet-sign-in.js';
 import type { Sealed } from './crypto.js';
 import { fromHex, seal, toHex, unseal, unwrapKey, wrapKey } from './crypto.js';
 import { x25519 } from '@noble/curves/ed25519.js';
@@ -332,7 +332,7 @@ afterEach(async () => {
   journey.length = 0;
   /* The module holds a key and possibly a founder's secrets. A test that left
    * them there would hand the next one a signed-in tab. */
-  const keyring = await import('../web/keyring.js');
+  const keyring = await import('vaults-web-shared/keyring.js');
   keyring.forgetLocally();
 });
 
@@ -347,7 +347,7 @@ async function signedInWith(
 ) {
   const view = new WalletAtTheOtherEnd(honestly(words, address), origin);
   inABrowser(view, through(view), origin);
-  const keyring = await import('../web/keyring.js');
+  const keyring = await import('vaults-web-shared/keyring.js');
   await keyring.signInWithWallet(WALLET, undefined, thisBrowsersWindow());
   return { view, keyring };
 }
@@ -546,7 +546,7 @@ describe('§3 - NO PASSWORD, ANYWHERE ON THIS JOURNEY', () => {
      * that this journey did not touch it. There is no other path now — so what
      * this still catches is a REGRESSION that puts auth material back on the
      * wire, and the claim that none exists anywhere is made by
-     * `src/web/no-password-in-the-bundle.test.ts`, which builds the app.
+     * `src/web-legacy/no-password-in-the-bundle.test.ts`, which builds the app.
      */
     const server = aServer();
     const { view, keyring } = await signedInWith(server);
@@ -575,7 +575,7 @@ describe('§3 - NO PASSWORD, ANYWHERE ON THIS JOURNEY', () => {
      * to one here — and `no-password-in-the-bundle.test.ts` makes the
      * whole-file claim against the built output, where it belongs.
      */
-    const src = readFileSync(new URL('../web/keyring.ts', import.meta.url), 'utf8');
+    const src = readFileSync(new URL('../../packages/web-shared/src/keyring.ts', import.meta.url), 'utf8');
     const opens = src.indexOf('/* ---------------- bringing a company into being');
     const closes = src.indexOf(' * Derives the viewing key from the account');
     /* The markers are asserted before the slice is used. A slice taken between
@@ -740,7 +740,7 @@ describe('§5 - WHAT IS REFUSED, AND BEFORE WHAT', () => {
       const server = aServer();
       const view = new WalletAtTheOtherEnd(honestly(FOUNDER_WORDS, FOUNDER_ADDRESS));
       inABrowser(view, server.fetchImpl);
-      const keyring = await import('../web/keyring.js');
+      const keyring = await import('vaults-web-shared/keyring.js');
       expect(await keyring.resumeSession()).toMatchObject({ id: PERSON });
       expect(keyring.signedInWallet()).toBeNull();
 
@@ -775,7 +775,7 @@ describe('§5 - WHAT IS REFUSED, AND BEFORE WHAT', () => {
     const server = aServer();
     const view = new WalletAtTheOtherEnd(honestly(FOUNDER_WORDS, FOUNDER_ADDRESS));
     inABrowser(view, savesGo(server, FALLS_OVER, FALLS_OVER));
-    const keyring = await import('../web/keyring.js');
+    const keyring = await import('vaults-web-shared/keyring.js');
     await keyring.signInWithWallet(WALLET, undefined, thisBrowsersWindow());
     await expect(keyring.createCompanyWithWallet(NORTHWIND, WALLET, view, US)).rejects.toThrow(/fell over/);
     expect(server.wrote(), 'the save was tried once more before the company was left waiting').toHaveLength(2);
@@ -876,7 +876,7 @@ describe('§5 - WHAT IS REFUSED, AND BEFORE WHAT', () => {
       /* The other device holds the same person's key, so what it saved opens here. */
       const theirs = aCompanySavedElsewhere(view);
       inABrowser(view, savesGo(server, { anotherDeviceSaves: theirs }, { anotherDeviceSaves: theirs }));
-      const keyring = await import('../web/keyring.js');
+      const keyring = await import('vaults-web-shared/keyring.js');
       await keyring.signInWithWallet(WALLET, undefined, thisBrowsersWindow());
 
       await expect(keyring.createCompanyWithWallet(NORTHWIND, WALLET, view, US))
@@ -912,7 +912,7 @@ describe('§5 - WHAT IS REFUSED, AND BEFORE WHAT', () => {
         anotherDeviceSaves: () =>
           seal(JSON.stringify({ accounts: { [OTHER_DEVICE_ID]: OTHER_DEVICE_KEYS } }), 'ab'.repeat(32)),
       }));
-      const keyring = await import('../web/keyring.js');
+      const keyring = await import('vaults-web-shared/keyring.js');
       await keyring.signInWithWallet(WALLET, undefined, thisBrowsersWindow());
 
       await expect(keyring.createCompanyWithWallet(NORTHWIND, WALLET, view, US))
@@ -946,7 +946,7 @@ describe('§5 - WHAT IS REFUSED, AND BEFORE WHAT', () => {
     const server = aServer();
     const view = new WalletAtTheOtherEnd(honestly(FOUNDER_WORDS, FOUNDER_ADDRESS));
     inABrowser(view, savesGo(server, FALLS_OVER, FALLS_OVER));
-    const keyring = await import('../web/keyring.js');
+    const keyring = await import('vaults-web-shared/keyring.js');
     await keyring.signInWithWallet(WALLET, undefined, thisBrowsersWindow());
     await expect(keyring.createCompanyWithWallet(NORTHWIND, WALLET, view, US)).rejects.toThrow(/fell over/);
     expect(keyring.companyAwaitingSetupProblem()).toBeNull();
@@ -959,7 +959,7 @@ describe('§5 - WHAT IS REFUSED, AND BEFORE WHAT', () => {
     const server = aServer();
     const view = new WalletAtTheOtherEnd(honestly(FOUNDER_WORDS, FOUNDER_ADDRESS));
     inABrowser(view, savesGo(server, FALLS_OVER, FALLS_OVER));
-    const keyring = await import('../web/keyring.js');
+    const keyring = await import('vaults-web-shared/keyring.js');
     await keyring.signInWithWallet(WALLET, undefined, thisBrowsersWindow());
     await expect(keyring.createCompanyWithWallet(NORTHWIND, WALLET, view, US)).rejects.toThrow(/fell over/);
 

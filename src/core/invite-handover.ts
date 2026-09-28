@@ -33,7 +33,7 @@ import { sealToInbox, openFromInbox } from './sealed-records.js';
  * It reaches `sealed-records.ts`, which is `@noble` and nothing else.
  * The ADDRESS is a plain string here rather than a `PayeeAddress`, because
  * building one of those reaches `@midnightntwrk/wallet-sdk-address-format` and
- * therefore the ledger, and `src/web` may not contain it. **That is not a
+ * therefore the ledger, and the page's code may not contain it. **That is not a
  * loosening**: the checks happen on the invitee's device through
  * `midnight-identity/wallet/address-shape` before this is called, and `admit`
  * still rebuilds the value through the real `payeeAddress()` from this very

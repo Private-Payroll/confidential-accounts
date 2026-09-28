@@ -20,7 +20,7 @@ import { registryWithTestPrivateForms, aVaultHolding } from '../testing/assets.j
 import { buildRun } from '../midnight/payout-tree.js';
 import type { PaymentFacts } from '../midnight/payout-tree.js';
 import { payeeOf, recipientOf, type Payee } from '../midnight/payee-address.js';
-import { acceptedCodes } from '../web/accepted-address.js';
+import { acceptedCodes } from 'vaults-web-shared/accepted-address.js';
 import type { PayoutSeed, RunIdentity } from '../midnight/run-keys.js';
 import type { User } from './types.js';
 

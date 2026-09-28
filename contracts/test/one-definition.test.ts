@@ -219,7 +219,7 @@ const SCHEMES: Entry[] = [
      *
      *
      * It said the client *holds the result rather than recomputing it*. It did
-     * not hold it: `src/core/account.ts` and `src/web/App.tsx` passed an
+     * not hold it: `src/core/account.ts` and `src/web-legacy/App.tsx` passed an
      * ed25519 public key into `signerLeaf`, which is a SECOND ANSWER to what a
      * signer's public identity is, and the entry that was supposed to make a
      * second copy impossible to leave unchecked had a note saying there wasn't

@@ -486,7 +486,7 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
         if (dirs.some((d) => text.includes(d)) && text.includes(GATE)) out.push(child);
       }
     };
-    for (const tree of ['src', 'scripts', 'contracts/test']) walk(tree);
+    for (const tree of ['src', 'scripts', 'contracts/test', 'packages/web-shared/src']) walk(tree);
     return out.sort();
   };
 
@@ -561,11 +561,11 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
       'contracts/test/a-private-payment-from-the-page.test.ts',
       'contracts/test/a-run-raised-and-approved-from-the-page.test.ts',
       'contracts/test/a-vaults-committee-changes-with-its-signers.test.ts',
+      'packages/web-shared/src/a-deposit-built-on-the-device.test.ts',
       'src/midnight/deferred-set.test.ts',
       'src/midnight/ledger.test.ts',
       'src/midnight/the-key-reaches-the-circuit.test.ts',
       'src/midnight/the-secret-comes-from-the-keyring.test.ts',
-      'src/web/a-deposit-built-on-the-device.test.ts',
       'src/wiring/vault-submission.test.ts',
     ];
     expect(gated.filter((f) => !NAMED.includes(f)),
@@ -581,7 +581,7 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
       'contracts/test/a-private-payment-from-the-page.test.ts',
       'contracts/test/a-vaults-committee-changes-with-its-signers.test.ts',
       'src/wiring/vault-submission.test.ts',
-      'src/web/a-deposit-built-on-the-device.test.ts',
+      'packages/web-shared/src/a-deposit-built-on-the-device.test.ts',
     ];
     const vaultGated = gatedOnKeys([VAULT_KEY_DIR]);
     expect(vaultGated.filter((f) => !VAULT_NAMED.includes(f)),

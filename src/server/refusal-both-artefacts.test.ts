@@ -25,7 +25,7 @@ import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Server } from 'node:http';
-import { installErrorSink, type SinkPost, type SinkWindow } from '../web/error-sink.js';
+import { installErrorSink, type SinkPost, type SinkWindow } from 'vaults-web-shared/error-sink.js';
 
 const DIR = mkdtempSync(join(tmpdir(), 'mn-both-'));
 const REPORT = join(DIR, 'REPORT-REFUSALS.txt');
@@ -208,7 +208,7 @@ describe('a refusal, read the way a walk reads one', () => {
       const kept = posted[0].entries[0].message;
       expect(kept).toContain(`— ${shown}`);
       expect(written).toContain(`Error: ${shown}`);
-      /* The page redacted its own copy, independently — `src/web/error-sink.ts`.
+      /* The page redacted its own copy, independently — `packages/web-shared/src/error-sink.ts`.
        * That is the third boundary, and it is why the sink shows the same
        * placeholder as the disk while having never read the disk's copy. */
       expect(kept).not.toContain(secret);

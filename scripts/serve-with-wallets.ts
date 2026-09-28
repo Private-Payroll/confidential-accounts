@@ -138,7 +138,7 @@ async function main() {
   const ceiling = feeCeilingFrom(process.env);
   /*
    * **WHICH APPLICATION GOES ON THE APPLICATION'S ORIGIN.** Unset, it is the one
-   * in `src/web`, exactly as before; the new one is chosen by its own command.
+   * in `src/web-legacy`, exactly as before; the new one is chosen by its own command.
    */
   const chosen = applicationPageFrom(process.env);
   if ('refusal' in chosen) throw new Error(chosen.refusal);

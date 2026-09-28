@@ -22,7 +22,8 @@ import { REQUEST_SCHEMA } from 'midnight-identity/profile/request';
  *
  * ── THE RULE THIS FILE EXISTS TO KEEP ─────────────────────────────────────
  *
- * **NOTHING UNDER `src/web/` IMPORTS `wallet-identity.ts`.** It is not a style
+ * **NO BROWSER APPLICATION (`src/web-legacy`, `apps/web`, OR THE SHARED CODE IN
+ * `packages/web-shared`) IMPORTS `wallet-identity.ts`.** It is not a style
  * preference and it is not enforced by a linter: `no-wasm-in-the-page.test.ts`
  * builds the real application through the real configuration and fails if a
  * `.wasm` asset comes out of it. That is the only kind of check that can see
@@ -32,7 +33,7 @@ import { REQUEST_SCHEMA } from 'midnight-identity/profile/request';
  * ── IT IS THE SHAPE `wallet-unlock.ts` ALREADY HAD ────────────────────────
  *
  * `src/core/wallet-unlock.ts` is this file for the other ask: the wire shape and
- * the words, in `core/`, with `src/web/wallet-unlock.ts` as the browser plumbing
+ * the words, in `core/`, with `packages/web-shared/src/wallet-unlock.ts` as the browser plumbing
  * beside it and no service in between. **The sign-in pair was the odd one out**
  * — its ask lived inside the service — and that asymmetry is the whole defect
  * written in one sentence.

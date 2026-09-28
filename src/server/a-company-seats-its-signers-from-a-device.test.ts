@@ -52,15 +52,15 @@ const { sign, newSigningKeypair, newWrappingKeypair, newBlinding } = await impor
 const { storedSignerLeaf } = await import('../core/signer-leaf.js');
 const { newSeatInvitation, proveSeatKeys, seatInvitationFragment, seatInvitationFromFragment } =
   await import('../core/seat-invite-proof.js');
-const { acceptSeatOnThisDevice, newSeatKeys } = await import('../web/accept-seat.js');
-type PendingSeat = import('../web/keyring.js').PendingSeat;
-const device = await import('../web/governed-call-on-device.js');
+const { acceptSeatOnThisDevice, newSeatKeys } = await import('vaults-web-shared/accept-seat.js');
+type PendingSeat = import('vaults-web-shared/keyring.js').PendingSeat;
+const device = await import('vaults-web-shared/governed-call-on-device.js');
 const { refuseARaiseThatIsNotTheRecordedOne, refuseWhatThisDeviceDidNotOpen, recordForOneCall, NotWhatThisDeviceOpened } =
-  await import('../web/governed-call-builder.js');
+  await import('vaults-web-shared/governed-call-builder.js');
 const { unseal, parseCanonical } = await import('../core/crypto.js');
 const { pureCircuits } = await import('../../contracts/managed/contract/index.js');
 type Hex = import('../core/crypto.js').Hex;
-type Order = import('../web/governed-call-builder.js').GovernedCallOrder;
+type Order = import('vaults-web-shared/governed-call-builder.js').GovernedCallOrder;
 
 const NETWORK = theNetwork();
 const SLOTS = { ada: 81, blake: 82, cleo: 83, vic: 84, dora: 85 } as const;
@@ -238,7 +238,7 @@ const blindingsProvedWith: string[] = [];
  * circuits this device fails to build, as a device that stops part-way would.
  */
 const aDevice = (who: Who, signerId: string, signingSecret: Hex, refuse: string[] = [], accountId: string = company) => {
-  const doors: import('../web/governed-call-on-device.js').GovernedCallDoors = {
+  const doors: import('vaults-web-shared/governed-call-on-device.js').GovernedCallDoors = {
     service: {
       ...device.governedCallServiceFor(apiAs(who)),
       callState: async () => ({ account: 'ac'.repeat(32), blockHash: 'b', accountState: 'AS', parameters: 'PP' }),

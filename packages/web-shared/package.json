@@ -1,0 +1,11 @@
+{
+  "name": "vaults-web-shared",
+  "version": "0.0.0",
+  "description": "The browser code both payroll web applications are built on: keys, the wallet connection, proving and its workers, deposits, approvals on the device, and the vault and payslip readers.",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./*": "./src/*"
+  }
+}

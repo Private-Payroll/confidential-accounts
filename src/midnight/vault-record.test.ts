@@ -719,7 +719,7 @@ describe('nothing resolves a vault name to a vault outside this module', () => {
         else if (e.name.endsWith('.ts') && !e.name.endsWith('.test.ts')) out.push(full);
       }
     };
-    for (const d of ['src', 'scripts']) walk(join(root, d));
+    for (const d of ['src', 'scripts', join('packages', 'web-shared', 'src')]) walk(join(root, d));
     return out;
   };
 

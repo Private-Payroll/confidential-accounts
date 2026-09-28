@@ -20,7 +20,8 @@ import {
 import { NoCompanyAddress, companyForSession } from '../core/company-address.js';
 import { MemoryChallengeStore } from '../core/challenges.js';
 /* `X8` — the server half of taking a receiving address from a wallet. It
- * reaches the wallet SDK, which is why nothing under `src/web/` may. */
+ * reaches the wallet SDK, which is why no browser application (`src/web-legacy`,
+ * `apps/web`, or the shared code in `packages/web-shared`) may. */
 import { WalletPayeeError, payeeFromWallet } from '../core/wallet-payee.js';
 import {
   MemorySessionStore, PostgresSessionStore, type SessionStore,

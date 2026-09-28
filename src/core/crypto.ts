@@ -192,7 +192,7 @@ export const newProposalSalt = (): Hex => {
  *
  * **WHAT REDDENED A NARROWING BEFORE THIS CHECK EXISTED WAS AN ACCIDENT ON
  * SOMEBODY ELSE'S PATH** — `src/core/signer-leaf.ts:223`'s `HEX64`, reached
- * through `src/web/accept-seat.test.ts:128`, which is the SIGNER blinding: a
+ * through `packages/web-shared/src/accept-seat.test.ts:128`, which is the SIGNER blinding: a
  * different consumer of the same function. This is the check of its own that
  * replaces the accident.
  *

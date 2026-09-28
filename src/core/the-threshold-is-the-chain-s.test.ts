@@ -60,7 +60,7 @@ const provenBy = (
  *
  * **THE HONEST COST OF THAT, STATED RATHER THAN LEFT TO BE FOUND:** the outcome
  * is recorded correctly and nothing downstream is yet obliged to act on it.
- * `src/web/App.tsx` renders `p.approvals.length` against
+ * `src/web-legacy/App.tsx` renders `p.approvals.length` against
  * `account.policy.threshold` — the two numbers removed from the decision — so a
  * company looking at a screen during a chain outage is still shown "1 of 2" and
  * an enabled Approve button. **That failure stands today at the screen layer,

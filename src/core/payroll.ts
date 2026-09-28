@@ -1610,7 +1610,7 @@ export class PayrollService {
        *
        * **WHY THIS IS NOT THE OLD HAZARD RETURNING BY A SIDE DOOR.** §5's rule
        * is that the fingerprint an ADMIN reads is computed on the admin's
-       * machine, and it still is — `src/web/accepted-address.ts`, against
+       * machine, and it still is — `packages/web-shared/src/accepted-address.ts`, against
        * ciphertext from a route that has nowhere to put a key. This is not that
        * screen. It is `admit`, which has held the opened handover and rebuilt
        * the address through the decode below because it is the step that writes

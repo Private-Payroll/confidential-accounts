@@ -15,6 +15,8 @@ import { deploymentWriteCapability } from './write-capability-for-deployment.js'
 
 const ROOT = join(import.meta.dirname, '..', '..');
 const SRC = join(ROOT, 'src');
+/* The browser code both web applications share is a package of its own, and ships like `src/`. */
+const SHARED = join(ROOT, 'packages', 'web-shared', 'src');
 const DEFINED_IN = 'src/wiring/handed-in-wallets.ts';
 
 /** Source with comments removed, so prose that names a thing is not a use of it. */
@@ -39,7 +41,7 @@ describe('§1 - nothing the product ships can hand the server a wallet', () => {
    * it was started.
    */
   it('the setter is named only where it is defined', () => {
-    const naming = walk(SRC)
+    const naming = [...walk(SRC), ...walk(SHARED)]
       .filter(p => /handInFundedParties/.test(code(readFileSync(p, 'utf8'))))
       .map(p => relative(ROOT, p));
     expect(naming).toEqual([DEFINED_IN]);

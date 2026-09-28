@@ -553,7 +553,7 @@ describe('crypto.ts: fixed vectors, because a round trip agrees with itself', ()
      *
      * **WHAT REDDENED A NARROWING BEFORE THIS LINE EXISTED WAS AN ACCIDENT ON
      * SOMEBODY ELSE'S PATH:** `src/core/signer-leaf.ts:223`'s `HEX64`, reached
-     * through `src/web/accept-seat.test.ts:128` → `:141-143` — the SIGNER
+     * through `packages/web-shared/src/accept-seat.test.ts:128` → `:141-143` — the SIGNER
      * blinding, a different consumer of the same function. The obvious refactor
      * (a dedicated `newPayoutSeed()`) removes that guard and nothing else goes
      * red. **This is the check of its own, and it is written where the seed is

@@ -119,7 +119,8 @@ src/core/      isomorphic. runs identically on a server and in a browser
   payroll.ts   roster, runs, per-employee sealed payslips
   plugins.ts   capability tokens. propose-never-execute
 src/server/    Express. auth and membership gates on every route
-src/web/       React client. holds every key the server must not
+src/web-legacy/ React client. today's screens
+packages/web-shared/ browser code both web applications share. holds the keys the page keeps from the server
 src/midnight/  Midnight adapters, behind the boundary
 src/standalone/ single-file build. the whole product, no server
 packages/identity/ the key library. its own manifest, its own SECURITY.md

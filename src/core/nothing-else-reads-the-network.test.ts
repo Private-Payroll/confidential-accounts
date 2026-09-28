@@ -161,7 +161,7 @@ export const overridesAnEndpoint = (sources: Sources): string[] =>
  * first assertion below measures it.
  */
 const SOURCE_DIRS = [
-  '.', 'src', 'scripts', 'contracts/src', 'packages/identity/src', '.midnight', 'apps',
+  '.', 'src', 'scripts', 'contracts/src', 'packages/identity/src', 'packages/web-shared/src', '.midnight', 'apps',
   'browser-proving', 'db', '.github',
 ];
 /**

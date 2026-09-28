@@ -55,7 +55,7 @@ import { join } from 'node:path';
 import {
   derivedPrivateState, SignerMaterialHeldInMemory,
   type AccountHalfStore, type StorableHalf,
-} from '../web/private-state.js';
+} from 'vaults-web-shared/private-state.js';
 import { neverPersistedFieldsIn } from './what-a-device-may-persist.js';
 
 /** The compiled artefacts: the generated contract, the keys and the ABI. */

@@ -142,7 +142,7 @@ describe('ONE REFUSAL FOR EVERY REPLACEMENT OF A CONTRACT\'S RULES', () => {
      * but the four files listed below, which is how an alias would reach it.
      * WHAT IT CANNOT SEE: a name assembled at run time, or a construction in a helper that is not exported and is
      * declared after the named function. It reads source text, and says so. */
-    const roots = ['src', 'scripts', 'packages/identity/src', 'apps/wallet/src'];
+    const roots = ['src', 'scripts', 'packages/identity/src', 'packages/web-shared/src', 'apps/wallet/src'];
     const hits: string[] = [];
     const walk = (dir: string) => {
       for (const name of readdirSync(dir)) {

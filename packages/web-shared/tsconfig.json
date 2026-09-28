@@ -1,0 +1,23 @@
+{
+  /*
+   * THE SHARED BROWSER CODE'S SETTINGS, FOR A TYPECHECK OR AN EDITOR OPENED ON
+   * THIS PACKAGE, TESTS INCLUDED. The check that runs is the root
+   * `tsconfig.json`, which includes these files under the same settings.
+   *
+   * The settings are the ones this code was checked under before it moved, repeated
+   * rather than inherited, so a change to either application's settings does
+   * not quietly change what this package is held to. An application reaches a
+   * file here by the package's name; the files reach each other by relative
+   * path, and still reach the service's own modules in `src/` the same way.
+   *
+   * The page's declarations of `import.meta.env` are the application's, and
+   * this code reads them, so they are included from where they are declared.
+   */
+  "compilerOptions": {
+    "target": "ES2022", "module": "ESNext", "moduleResolution": "bundler",
+    "strict": true, "esModuleInterop": true, "skipLibCheck": true,
+    "resolveJsonModule": true, "jsx": "react-jsx", "types": ["node"],
+    "noEmit": true, "allowImportingTsExtensions": true
+  },
+  "include": ["src", "../../src/vite-env.d.ts"]
+}

@@ -29,9 +29,9 @@ import { registryWithTestPrivateForms, aVaultHolding } from '../../src/testing/a
 import { FileStore } from '../../src/core/store-file.js';
 import { assetIdBytes } from '../../src/core/assets.js';
 import { openPayslip } from '../../src/core/payslip-open.js';
-import { paymentsOnTheChain } from '../../src/web/my-payslips.js';
-import { answerPayslipAsk, realDeps, type PayslipReaderDeps } from '../../src/web/payslip-worker-entry.js';
-import type { ChainReader } from '../../src/web/payslip-worker-client.js';
+import { paymentsOnTheChain } from 'vaults-web-shared/my-payslips.js';
+import { answerPayslipAsk, realDeps, type PayslipReaderDeps } from 'vaults-web-shared/payslip-worker-entry.js';
+import type { ChainReader } from 'vaults-web-shared/payslip-worker-client.js';
 import { ledger as readLedger } from '../managed/contract/index.js';
 import { fromHex, toHex, unseal, parseCanonical, type Hex, type Sealed } from '../../src/core/crypto.js';
 

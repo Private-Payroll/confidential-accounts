@@ -16,8 +16,8 @@ import { NoCompanyAddress, companyForSession } from './company-address.js';
 import { KEYRING_PURPOSE, UNLOCK_PURPOSE, keyringAsk, unlockAsk } from './wallet-unlock.js';
 import {
   askWalletForKeys, askWalletToUnlock, askWalletToUnlockAndWhereItReads, UnlockRefused,
-} from '../web/wallet-unlock.js';
-import type { Openable } from '../web/wallet-sign-in.js';
+} from 'vaults-web-shared/wallet-unlock.js';
+import type { Openable } from 'vaults-web-shared/wallet-sign-in.js';
 
 /**
  * **THE WINDOW `inABrowser` INSTALLED, HANDED IN BY NAME.** The product now shows
@@ -395,7 +395,7 @@ describe('§3 — THE KEY IS IN NO LOG, NO URL AND NO STORED FIELD', () => {
     sourceOf(p).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 
   it('nothing on the unlock path writes to a log or to browser storage', () => {
-    for (const file of ['../web/wallet-unlock.ts', '../web/keyring.ts', './wallet-unlock.ts']) {
+    for (const file of ['../../packages/web-shared/src/wallet-unlock.ts', '../../packages/web-shared/src/keyring.ts', './wallet-unlock.ts']) {
       const code = codeOf(file);
       expect(code, file).not.toMatch(/console\.(log|info|warn|error|debug)/);
       expect(code, file).not.toMatch(/localStorage|sessionStorage|indexedDB|document\.cookie/);
@@ -413,7 +413,7 @@ describe('§3 — THE KEY IS IN NO LOG, NO URL AND NO STORED FIELD', () => {
   });
 
   it('and the key is not put in the URL, because the URL is built from an account id', () => {
-    const keyring = sourceOf('../web/keyring.ts');
+    const keyring = sourceOf('../../packages/web-shared/src/keyring.ts');
     /* The one request the unlock path adds. Its path carries an account id and
      * its body is not sent at all. */
     expect(keyring).toContain('await api(`/api/accounts/${accountId}/unlock`');
@@ -473,7 +473,7 @@ describe('§3 — AND THE SAME THING PROVED BY WATCHING, NOT BY READING', () => 
     }) as typeof fetch;
 
     try {
-      const keyring = await import('../web/keyring.js');
+      const keyring = await import('vaults-web-shared/keyring.js');
       await keyring.signInWithWallet(WALLET, undefined, thisBrowsersWindow());
       expect(keyring.canOpenCompanies()).toBe(false);
 
@@ -620,7 +620,7 @@ describe('§5 - A PAYSLIP KEY IS WORKED OUT ONLY FROM THIS COMPANY\'S KEY, FROM 
       if (answer === undefined) throw new Error(`no stub for ${String(init?.method ?? 'GET')} ${url}`);
       return { ok: true, status: 200, json: async () => answer } as Response;
     }) as typeof fetch;
-    const keyring = await import('../web/keyring.js');
+    const keyring = await import('vaults-web-shared/keyring.js');
     keyring.forgetLocally();
     await keyring.signInWithWallet(WALLET, undefined, thisBrowsersWindow());
     await keyring.openKeysWithWallet(WALLET, view, US);
@@ -628,7 +628,7 @@ describe('§5 - A PAYSLIP KEY IS WORKED OUT ONLY FROM THIS COMPANY\'S KEY, FROM 
   };
 
   afterEach(async () => {
-    const keyring = await import('../web/keyring.js');
+    const keyring = await import('vaults-web-shared/keyring.js');
     keyring.forgetLocally();
     globalThis.fetch = realFetch;
     if (realWindow === undefined) delete (globalThis as { window?: unknown }).window;

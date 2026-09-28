@@ -26,7 +26,7 @@ import {
   type DepositCoin,
 } from './deposit-nonce.js';
 import type { DepositJournal } from './vault-ledger.js';
-import { answerVaultAsk } from '../web/vault-worker-entry.js';
+import { answerVaultAsk } from 'vaults-web-shared/vault-worker-entry.js';
 import * as vaultModule from '../../contracts/managed-vault/contract/index.js';
 import { toHex, fromHex, type Hex } from '../core/crypto.js';
 

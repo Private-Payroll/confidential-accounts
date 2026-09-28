@@ -102,7 +102,7 @@ describe('removing a secret from a line of text', () => {
 
   it('THE ONE THAT KEEPS IT USABLE: a stack trace is not a secret', () => {
     const stack = 'TypeError: t is not a function\n'
-      + '    at App (/Users/somebody/work/confidential-accounts-v5/src/web/App.tsx:12:5)\n'
+      + '    at App (/Users/somebody/work/confidential-accounts-v5/src/web-legacy/App.tsx:12:5)\n'
       + '    at renderWithHooks (http://localhost:5173/node_modules/.vite/deps/react-dom.js:1234:9)';
     expect(redactSecrets(stack)).toBe(stack);
   });

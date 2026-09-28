@@ -1,0 +1,271 @@
+/**
+ * The proving worker, as the page starts it.
+ *
+ * ── THIS IS THE TWENTY LINES `prover-worker.ts` WAS WRITTEN FOR ──────────
+ *
+ * That file hosts a queue on whatever thread it finds itself on and takes its
+ * runner as an argument, so that a browser tab, a desktop application and a
+ * test can each supply their own without any of them owning a copy of the
+ * rules. It has been in this repository for weeks with exactly one caller: a
+ * probe, whose runner returned the string `'PROOF'` after fifty milliseconds.
+ *
+ * **THIS IS THE FIRST ONE THAT PROVES.**
+ *
+ * ── WHY THE SETTINGS ARRIVE IN THE WORKER'S NAME AND NOT IN A MESSAGE ────
+ *
+ * A module worker that is still evaluating its top-level `await` DROPS what is
+ * posted to it, and this worker's first act is to load a WebAssembly prover -
+ * so a settings message sent at construction is the message most likely to be
+ * lost, and losing it would leave a worker that runs and can never fetch
+ * anything. `name` is fixed before the worker exists and is readable from
+ * inside it with no round trip at all.
+ *
+ * **AND THE READY NOTICE IS THE OTHER HALF OF THE SAME HAZARD**, in the other
+ * direction: the page must not send until this listener stands. It is posted
+ * after `startJobWorker` returns, which is after `serveJobs` has registered.
+ */
+import { startJobWorker } from './prover-worker.js';
+import { provingRunner, type ProvingCapability, type SendProven } from './proving-runner.js';
+import { httpKeyMaterialSource, IndexedDbArtefactCache } from './key-material.js';
+import { configFromWorkerName } from './proving-session.js';
+import { NothingWasSent, type Job, type JobRunner } from '../../../src/core/jobs.js';
+import { ensureBuffer } from 'midnight-identity/browser';
+
+/**
+ * Where a job says its preimage can be fetched.
+ *
+ * A location and not the bytes, because the job record is persisted and an
+ * unproven transaction is the private input. See `proving-runner.ts`.
+ */
+interface PreimagePayload {
+  circuit?: unknown;
+  preimageUrl?: unknown;
+}
+
+/**
+ * Turns a job into the material to prove.
+ *
+ * **EXPORTED SO THAT IT CAN BE DRIVEN, WHICH IS A CORRECTION RATHER THAN A
+ * CONVENIENCE.** The case that claimed to cover this guard supplied its own
+ * copy of it and then asserted that its own copy threw - so deleting the real
+ * one changed nothing anywhere. A guard on the path between a persisted record
+ * and a network fetch is not a guard worth having on trust.
+ */
+export const preimageOver = (fetchImpl: typeof fetch) => async (job: Job) => {
+  const { circuit, preimageUrl } = job.payload as PreimagePayload;
+  if (typeof circuit !== 'string' || typeof preimageUrl !== 'string') {
+    throw new Error(
+      'this approval does not say what it is approving, so there is nothing to prove. ' +
+        'Raise it again.',
+    );
+  }
+  /*
+   * **SAME ORIGIN ONLY, AND THE JOB RECORD IS WHY.** This location comes off a
+   * persisted job, and the thing it points at is the proof preimage - the
+   * private input, which is the one value in this system that must never leave
+   * the device except to be proved on it. A record that named another origin
+   * would make this worker fetch it from there, and a relative path cannot.
+   */
+  if (!preimageUrl.startsWith('/') || preimageUrl.startsWith('//')) {
+    throw new Error(
+      'this approval points somewhere outside the application for the material it needs, ' +
+        'so it has not been fetched. Nothing has been sent. Raise it again.',
+    );
+  }
+  const res = await fetchImpl(preimageUrl);
+  if (!res.ok) {
+    throw new Error(
+      `the material for this approval is no longer available (${res.status}). ` +
+        'Nothing has been sent. Raise it again.',
+    );
+  }
+  return { circuit, unprovenTransaction: new Uint8Array(await res.arrayBuffer()) };
+};
+
+/** Bytes as base64, in a scope that may have no `Buffer`. */
+const base64Of = (bytes: Uint8Array): string => {
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(binary);
+};
+
+/**
+ * Sends a proven transaction to this application's own service.
+ *
+ * **WHAT THE ANSWER MEANS, AND IT IS THE WHOLE OF THIS FUNCTION.**
+ *
+ * - an answer carrying a reference: sent.
+ * - `nothingWasSent: true`: the service refused before submitting. Final.
+ * - `nothingWasSent: false`: the service's submission failed, and it may have
+ *   landed. Not final.
+ * - a refusal with no mark and a 4xx status: refused before any handler ran -
+ *   not signed in, not a member. Nothing was sent.
+ * - anything else, including no answer at all: the request may have been
+ *   acted on, so the outcome is unknown.
+ *
+ * Same origin, for the reason the preimage is: the sign-in is this
+ * application's, and the path is relative.
+ */
+export const sendOver = (fetchImpl: typeof fetch): SendProven => async (job, proven) => {
+  const res = await fetchImpl(`/api/accounts/${encodeURIComponent(job.accountId)}/proven`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ tx: base64Of(proven) }),
+  });
+  let body: { txRef?: unknown; error?: unknown; nothingWasSent?: unknown } = {};
+  try { body = await res.json(); } catch { /* an answer that is not ours */ }
+  if (res.ok && typeof body.txRef === 'string') return { txRef: body.txRef };
+  const why = typeof body.error === 'string'
+    ? body.error
+    : `the service answered ${res.status} to this approval`;
+  if (body.nothingWasSent === true) throw new NothingWasSent(why);
+  if (body.nothingWasSent !== false && res.status >= 400 && res.status < 500) {
+    throw new NothingWasSent(why);
+  }
+  throw new Error(why);
+};
+
+/**
+ * Assembles everything the runner needs, in a Worker.
+ *
+ * Exported and taking its scope as an argument so that the wiring can be read,
+ * and driven, without a Worker existing - the same reason `prover-worker.ts`
+ * takes one.
+ */
+export interface WorkerProvingDeps {
+  transactionCodec: ProvingCapability['transactionCodec'];
+  proofProvider: ProvingCapability['proofProvider'];
+}
+
+export const provingCapability = (
+  scope: any,
+  artefactBase: string,
+  onProgressJobId: () => string | null,
+  deps: WorkerProvingDeps,
+): ProvingCapability => ({
+  preimageFor: preimageOver(scope.fetch.bind(scope)),
+
+  keyMaterial: httpKeyMaterialSource(artefactBase, {
+    /* A store that will not keep a file costs a download; it is said in this thread's console. */
+    cache: new IndexedDbArtefactCache(scope.indexedDB, undefined, (why: string) => scope.console?.warn?.(why)),
+    fetchImpl: scope.fetch.bind(scope),
+    /*
+     * **THE ONLY PROGRESS THIS OPERATION HAS, SENT AS IT HAPPENS.** The prover
+     * itself emits nothing and there is nowhere to put a callback, so these
+     * bytes are the whole of what a screen can honestly draw a bar against.
+     * Reported against the job being worked, because the queue works one at a
+     * time and a byte count with no job on it is a number about nothing.
+     */
+    onProgress: (progress) => {
+      const jobId = onProgressJobId();
+      if (jobId === null) return;
+      scope.postMessage({ kind: 'fetch-progress', jobId, progress });
+    },
+  }),
+
+  transactionCodec: deps.transactionCodec,
+  proofProvider: deps.proofProvider,
+});
+
+/**
+ * **EVERY TASK THIS WORKER DOES FIRST PUTS A `Buffer` WHERE THE LEDGER AND THE
+ * CONTRACT RUNTIME LOOK FOR ONE.** Both reach for Node's `Buffer`, which a
+ * browser's worker does not have, and a task that met its absence would stop
+ * with `Buffer is not defined` before anything was sent. Each step the queue
+ * hands the runner (prove, submit, recover) is wrapped, not only proving. A
+ * step added to `JobRunner` later is NOT covered by the spread below: it has to
+ * be wrapped here, and named in the test that holds every step to this.
+ * Nothing is replaced where one is already there, and what a step throws comes
+ * out unchanged.
+ */
+export const withABuffer = (runner: JobRunner): JobRunner => {
+  const recover = runner.recover;
+  return {
+    ...runner,
+    prove: async (job) => { ensureBuffer(); return runner.prove(job); },
+    submit: async (job, proof) => { ensureBuffer(); return runner.submit(job, proof); },
+    ...(recover === undefined ? {} : { recover: async (job: Job) => { ensureBuffer(); return recover.call(runner, job); } }),
+  };
+};
+
+/**
+ * Starts the worker.
+ *
+ * **NOTHING HEAVY IS LOADED HERE, AND THAT IS DELIBERATE RATHER THAN TIDY.**
+ * The prover and the transaction reader are thirteen megabytes of WebAssembly
+ * between them, and most of the time a worker starts there is nothing to prove:
+ * a page opens, the queue drains, the queue is empty. So both arrive through
+ * functions that the runner calls at the moment it first has a proof to make,
+ * and a worker that finds an empty queue loads neither.
+ */
+export const startProvingWorker = async (scope: any): Promise<void> => {
+  const config = configFromWorkerName(scope.name ?? '');
+
+  /** Which job is being worked, so a byte count has something to be about. */
+  let working: string | null = null;
+
+  const capability = provingCapability(scope, config.artefactBase, () => working, {
+    proofProvider: async (source) => {
+      const { wasmProofProvider } = await import('../../../src/midnight/wasm-proving.js');
+      return (await wasmProofProvider(source)) as any;
+    },
+    transactionCodec: async () => {
+      const ledger: any = await import('@midnightntwrk/ledger-v9');
+      return {
+        /*
+         * The three markers are the transaction's own variant tags. Proven
+         * bytes read back under the unproven marker are REFUSED by the ledger,
+         * which is what makes the pair meaningful rather than decorative.
+         */
+        deserializeUnproven: (raw: Uint8Array) =>
+          ledger.Transaction.deserialize('signature', 'pre-proof', 'pre-binding', raw),
+        serializeProven: (tx: any) => tx.serialize(),
+      };
+    },
+  });
+
+  const runner = provingRunner(capability, sendOver(scope.fetch.bind(scope)));
+  startJobWorker(scope, withABuffer({
+    ...runner,
+    prove: async (job) => {
+      working = job.id;
+      try {
+        return await runner.prove(job);
+      } finally {
+        working = null;
+      }
+    },
+  }), config.dbName);
+
+  /*
+   * Only now: the queue is built and `serveJobs` has registered its listener,
+   * so nothing the page sends from this moment can be dropped.
+   */
+  scope.postMessage({ kind: 'proving-worker-ready' });
+};
+
+/*
+ * **THE FILE IS BOTH A MODULE AND AN ENTRY POINT, AND THE GUARD IS WHAT KEEPS
+ * IT IMPORTABLE.** Without it, a test that imports `provingCapability` would
+ * start a queue and open a database as a side effect of the import.
+ */
+declare const self: any;
+if (typeof self !== 'undefined' && typeof self.postMessage === 'function' && typeof (self as any).window === 'undefined') {
+  void startProvingWorker(self).catch((e) => {
+    /*
+     * An unhandled rejection inside a Worker is invisible from the page - the
+     * thread simply never answers - which is the worst way for an approval to
+     * die. This reports it as the queue's own change channel would.
+     */
+    self.postMessage({
+      kind: 'change',
+      job: {
+        id: 'worker', accountId: '', kind: 'approve', state: 'failed', signerId: '',
+        payload: {}, attempts: 0, createdAt: '', updatedAt: '',
+        error: `the proving worker could not start: ${String((e as any)?.message ?? e)}`,
+      },
+    });
+  });
+}

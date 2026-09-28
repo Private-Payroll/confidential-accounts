@@ -25,7 +25,7 @@ import { newWrappingKeypair } from '../core/crypto.js';
 import { sealHandover } from '../core/invite-handover.js';
 import { addressFingerprint } from 'midnight-identity/profile/fingerprint';
 import { payeeFor } from '../testing/payees.js';
-import { acceptedCodes } from '../web/accepted-address.js';
+import { acceptedCodes } from 'vaults-web-shared/accepted-address.js';
 import { emptyShape, walletKeyOf } from '../core/store.js';
 import { canonical } from '../core/crypto.js';
 import { addressOfSlot, signInWithAWallet } from '../testing/wallet-session.js';
@@ -808,7 +808,7 @@ describe('PI4c — AND WHAT A REAL INVITEE GETS TODAY, WHICH IS HIRED', () => {
        * code**, because it is of the address the WALLET showed and a
        * substituting page cannot recompute it without the wallet.
        *
-       * `src/web/accepted-address.ts` already showed the admin that
+       * `packages/web-shared/src/accepted-address.ts` already showed the admin that
        * disagreement — and an admin who pressed admit anyway was obeyed. This
        * asserts the service now refuses it, so the code is enforcement rather
        * than advice.

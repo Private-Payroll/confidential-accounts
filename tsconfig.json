@@ -5,5 +5,5 @@
     "resolveJsonModule": true, "jsx": "react-jsx", "types": ["node"],
     "noEmit": true, "allowImportingTsExtensions": true
   },
-  "include": ["src"]
+  "include": ["src", "packages/web-shared/src"]
 }

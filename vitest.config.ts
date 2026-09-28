@@ -112,6 +112,12 @@ export default defineConfig({
        * discovered missing later.
        */
       'apps/web/**/*.test.{ts,tsx}', 'packages/ui/**/*.test.{ts,tsx}',
+      /*
+       * AND THE BROWSER CODE BOTH WEB APPLICATIONS SHARE, which moved out of the
+       * application's folder with its tests. Its tests ran under the `src/` glob
+       * above until then; this line is what keeps them collected.
+       */
+      'packages/web-shared/src/**/*.test.{ts,tsx}',
     ],
     /*
      * **THE ROOT IS THIS FILE'S OWN DIRECTORY, SAID ABSOLUTELY.**
