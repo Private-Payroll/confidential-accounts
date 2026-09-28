@@ -1,4 +1,5 @@
 import { fileURLToPath } from 'node:url';
+import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'vite';
 import { framingHeadersFor } from '../../packages/identity/src/profile/origin.js';
 import { SERVICE_PROXY } from '../../scripts/serve-rules.js';
@@ -11,11 +12,14 @@ import { SERVICE_PROXY } from '../../scripts/serve-rules.js';
  * the address they already know. What differs is the folder served and, until
  * a screen needs them, the plugins.
  *
- * Nothing is rendered yet, so no React or WebAssembly plugin is loaded and no
+ * Tailwind's plugin is the one plugin: the kit's stylesheet is Tailwind, and
+ * without it the build stops on the stylesheet. JSX needs none, because the
+ * bundler compiles it for React itself. No WebAssembly plugin is loaded and no
  * worker is started; each is added with the first screen that needs it.
  */
 export default defineConfig({
   root: fileURLToPath(new URL('.', import.meta.url)),
+  plugins: [tailwindcss()],
   /*
    * The page is the only entry of the dependency scan. A worker, when one is
    * started from this application, is named here beside it, for the reason the

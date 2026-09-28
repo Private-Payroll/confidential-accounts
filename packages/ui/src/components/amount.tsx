@@ -1,0 +1,38 @@
+import { cn } from 'vaults-ui/lib/utils';
+import { formatTokenAmount, type TokenAmount } from 'vaults-ui/format/token-amount';
+import { useLanguage } from 'vaults-ui/i18n/provider';
+import { PublicPill } from 'vaults-ui/components/public-pill';
+
+/** Whether anyone can look an amount up. Read from how the money is held or paid, never from a setting. */
+export type Visibility = 'private' | 'public';
+
+export interface AmountProps {
+  /** The amount, in the token's smallest unit. */
+  value: TokenAmount;
+  /** How many decimals the token has, from the token's own record. */
+  decimals: number;
+  /** The token's code, shown as it is in every language. */
+  code: string;
+  /** Required, with no default: an amount nobody marked cannot be shown. */
+  visibility: Visibility;
+  className?: string;
+}
+
+/**
+ * THE ONE WAY AN AMOUNT REACHES A SCREEN. Exact, in the person's language,
+ * with its code, and with the `Public` pill when anyone can look it up. The
+ * figures and the code are always written left to right, whatever the
+ * language's direction.
+ */
+export function Amount({ value, decimals, code, visibility, className }: AmountProps) {
+  if (visibility !== 'private' && visibility !== 'public') {
+    throw new Error(`an amount is shown as private or public, and this one is ${String(visibility)}`);
+  }
+  const language = useLanguage();
+  return (
+    <span className={cn('inline-flex items-center gap-1.5', className)} data-slot="amount" data-visibility={visibility}>
+      <span dir="ltr">{formatTokenAmount(value, decimals, language)}{' '}{code}</span>
+      {visibility === 'public' ? <PublicPill /> : null}
+    </span>
+  );
+}

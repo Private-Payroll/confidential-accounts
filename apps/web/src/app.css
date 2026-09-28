@@ -1,0 +1,7 @@
+/*
+ * The application's stylesheet: the kit's, and this application's own files
+ * named as a source of class names.
+ */
+@import "vaults-ui/styles.css";
+
+@source "./";
