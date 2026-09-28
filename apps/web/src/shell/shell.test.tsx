@@ -44,7 +44,8 @@ const employee: Viewer = { signedIn: true, view: VIEWS.employee, signs: false };
 function sessionFor(viewer: Viewer, over: Partial<Session> = {}): Session {
   return {
     person: { id: 'u1', name: 'Priya' }, companies: viewer.signs ? COMPANIES : [], company: viewer.signs ? 'c-2' : null,
-    chooseCompany: vi.fn(), viewer, chooseView: vi.fn(), preferences: DEFAULT_PREFERENCES, choose: vi.fn(), signOut: vi.fn(), mac: true, ...over,
+    chooseCompany: vi.fn(), viewer, chooseView: vi.fn(), preferences: DEFAULT_PREFERENCES, choose: vi.fn(), signOut: vi.fn(), mac: true,
+    companiesChanged: vi.fn(async () => {}), ...over,
   };
 }
 
@@ -231,7 +232,9 @@ describe('the company switcher', () => {
     expect(menu.querySelector('[data-slot=amount]')).toBeNull();
     expect(menu.querySelector('[data-company-names] [data-slot=coming-soon]')).not.toBeNull();
     expect(menu.querySelector('[data-action=join-with-a-code] [data-slot=coming-soon]')).not.toBeNull();
-    expect(menu.querySelector('[data-action=create-company] [data-slot=coming-soon]')).not.toBeNull();
+    /* Create a company is built: it starts the setup wizard, and is not Coming soon. */
+    expect(menu.querySelector('[data-action=create-company]')).not.toBeNull();
+    expect(menu.querySelector('[data-action=create-company] [data-slot=coming-soon]')).toBeNull();
     expect(menu.querySelector('[data-public-facts]')?.textContent).toBe(EN['switcher.publicFacts']);
   });
 

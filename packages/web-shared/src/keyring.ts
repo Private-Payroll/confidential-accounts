@@ -419,6 +419,13 @@ const NOT_THE_SAME_WALLET = 'the wallet that answered gave a different key from 
  * **A PERSON'S FIRST KEYS ARE SAVED ONLY FROM A TAB THAT CAN TELL WHICH WALLET
  * SIGNED IN.** `keyCheckedAgainstSignIn` says why.
  */
+/**
+ * A person's first keys refused because this tab did not sign them in. Its own
+ * class so a screen can tell it apart and say it in its own words; its message
+ * is `FIRST_KEYS_NEED_THE_SIGN_IN`.
+ */
+export class FirstKeysNeedTheSignIn extends Error {}
+
 const FIRST_KEYS_NEED_THE_SIGN_IN = 'nothing is saved for you here yet, and this tab did not sign you '
   + 'in, so it cannot make sure that the wallet answering is the one you signed in with before your '
   + 'first keys are saved under its key. Nothing has been created or saved. Sign in again in this tab, '
@@ -673,6 +680,33 @@ async function finishWalletSignIn(
       ...(inviteToken ? { inviteToken } : {}),
     }),
   });
+  return takeTheSignIn(r);
+}
+
+/**
+ * **A SIGN-IN MADE IN THIS TAB BY ANOTHER SCREEN, TAKEN THE WAY THIS MODULE TAKES ITS OWN.**
+ *
+ * A screen that signs the person in with its own code, over the same routes,
+ * hands over the service's answer to `POST /api/auth/wallet` exactly as it
+ * came back. What this module keeps from it is what it keeps from its own
+ * sign-in, by the same lines: who signed in, the address the service says the
+ * sign-in was for, and whether the service created the person just now. The address only gates: the wallet gives the key a
+ * person's first keys are saved under only when one of its own accounts has
+ * that address, so an address the wallet does not hold saves nothing.
+ *
+ * An answer without a person or an address is refused, and this tab is left
+ * as it was.
+ */
+export function signedInByAnotherScreen(answer: unknown): Me {
+  const a = (answer ?? {}) as { user?: { id?: unknown; name?: unknown }; address?: unknown };
+  if (typeof a.user?.id !== 'string' || typeof a.user.name !== 'string' || typeof a.address !== 'string' || a.address === '') {
+    throw new Error('the sign-in answer handed over names no person or no address, so this tab did not take it.');
+  }
+  return takeTheSignIn(a as { user: Me; address: string; created?: unknown });
+}
+
+/** What this tab keeps from a sign-in the service answered, however this tab asked for it. */
+function takeTheSignIn(r: any): Me {
   /* NO TOKEN IS READ OFF THE ANSWER. A browser's sign-in answer does not carry
    * one: the server set the sign-in as a cookie this page cannot read. */
   sessionLive = true;
@@ -1394,7 +1428,7 @@ async function putBundle(next: Keyring) {
   /* **A PERSON'S FIRST KEYS ARE SAVED ONLY UNDER A KEY THIS TAB ASKED FOR WITH THE
    * ADDRESS IT SIGNED IN AS.** Every writer comes through here, so no writer can
    * be the one that forgets. `keyCheckedAgainstSignIn` says why. */
-  if (savedKeys !== 'some' && !keyCheckedAgainstSignIn) throw new Error(FIRST_KEYS_NEED_THE_SIGN_IN);
+  if (savedKeys !== 'some' && !keyCheckedAgainstSignIn) throw new FirstKeysNeedTheSignIn(FIRST_KEYS_NEED_THE_SIGN_IN);
   const key = encKey;
   const base = keyring;
   const r = await api('/api/me/keys', {
@@ -1504,7 +1538,7 @@ export async function createCompanyWithWallet(
      * company exists rather than after. */
     else await reopenSavedKeys();
     /* Asked before anything is created, so a refusal costs nothing. */
-    if (savedKeys !== 'some' && !keyCheckedAgainstSignIn) throw new Error(FIRST_KEYS_NEED_THE_SIGN_IN);
+    if (savedKeys !== 'some' && !keyCheckedAgainstSignIn) throw new FirstKeysNeedTheSignIn(FIRST_KEYS_NEED_THE_SIGN_IN);
 
     /*
      * **STEP 2.** What comes back is used for one thing: the founder's own

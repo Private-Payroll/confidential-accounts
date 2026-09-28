@@ -2,6 +2,7 @@ import { createContext, useContext, type ReactNode } from 'react';
 import type { Company, Person } from './adapters/session.js';
 import type { Viewer, View } from './pages.js';
 import type { Preferences } from './preferences.js';
+import { Fault, FAULT } from './faults.js';
 
 /**
  * WHAT EVERY SCREEN OF A SIGNED-IN PERSON MAY READ: who they are, the
@@ -20,6 +21,12 @@ export interface Session {
   preferences: Preferences;
   choose: (change: Partial<Preferences>) => void;
   signOut: () => void;
+  /**
+   * Ask the service again which companies the person signs for, after one was
+   * created, and show `choose` when given. The one list of companies every
+   * screen reads is the one this refreshes.
+   */
+  companiesChanged: (choose?: string) => Promise<void>;
   /** Whether this is a Mac, where the command key is held for shortcuts. */
   mac: boolean;
 }
@@ -34,7 +41,7 @@ export function SessionProvider({ session, children }: { session: Session; child
 export function useSession(): Session {
   const session = useContext(SessionContext);
   /* Only the frame of a signed-in person shows these screens, and it always provides the session. */
-  if (session === null) throw new RangeError();
+  if (session === null) throw new Fault(FAULT.noSession);
   return session;
 }
 

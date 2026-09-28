@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import tailwindcss from '@tailwindcss/vite';
-import { defineConfig } from 'vite';
+import { defineConfig, searchForWorkspaceRoot } from 'vite';
 import { framingHeadersFor } from '../../packages/identity/src/profile/origin.js';
 import { SERVICE_PROXY } from '../../scripts/serve-rules.js';
 
@@ -17,8 +17,23 @@ import { SERVICE_PROXY } from '../../scripts/serve-rules.js';
  * bundler compiles it for React itself. No WebAssembly plugin is loaded and no
  * worker is started; each is added with the first screen that needs it.
  */
+const ROOT = fileURLToPath(new URL('.', import.meta.url));
+
+/*
+ * THE FOLDERS THE DEVELOPMENT SERVER MAY SERVE A FILE FROM BY ITS PATH: this
+ * application's own, as the server would choose by itself, and the one font
+ * package the kit's stylesheet names, which is installed at the top of the
+ * repository, outside this folder. Without it the server refuses the font and
+ * the page falls back to another. Nothing else of the repository's packages
+ * is opened; the build bundles the font and needs none of this.
+ */
+export const SERVED_FROM = [
+  searchForWorkspaceRoot(ROOT),
+  fileURLToPath(new URL('../../node_modules/@fontsource-variable/inter', import.meta.url)),
+];
+
 export default defineConfig({
-  root: fileURLToPath(new URL('.', import.meta.url)),
+  root: ROOT,
   plugins: [tailwindcss()],
   /*
    * The development server prepares the dependencies it finds by following
@@ -40,6 +55,7 @@ export default defineConfig({
    */
   server: {
     host: 'localhost',
+    fs: { allow: SERVED_FROM },
     proxy: { ...SERVICE_PROXY },
     headers: { ...framingHeadersFor(null) },
   },
