@@ -1,9 +1,10 @@
 import { readdirSync, readFileSync } from 'node:fs';
+import { posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { EVERY_PAGE, HOME, isBuilt, mayOpen, MENU_GROUPS, outerOf, pagesByShortcut, PAGES, reachedByName, SETTINGS_OF, valuesOf, VIEWS, viewFor, type Page, type PageId, type Text, type Viewer } from './pages.js';
 import { MODE_NAMES, MODES } from './preferences.js';
-import { addressOf, resolve, RESOLVED } from './router.js';
+import { addressOf, pageAt, resolve, RESOLVED } from './router.js';
 import { EVERY_SHORTCUT, SHORTCUTS, type Chord } from './shortcuts.js';
 import { menuFor } from './shell/menu.js';
 
@@ -14,6 +15,29 @@ import { menuFor } from './shell/menu.js';
  */
 const SRC = fileURLToPath(new URL('.', import.meta.url));
 const read = (p: string): string => readFileSync(SRC + p, 'utf8');
+
+/**
+ * Every static import of one of `modules` (paths from this folder, as
+ * `screens/home.tsx`) written in `files`: `import ... from`, a bare
+ * `import '...'` and `export ... from`, by a relative path in any folder. A
+ * module loaded on demand is imported only by `import()`: any of these takes
+ * it out of its own piece loaded on demand, and from a file loaded up front
+ * puts it in the first download. An `import type` is gone before the page is
+ * built, and is not one of these.
+ */
+function staticImportsOf(files: { path: string; text: string }[], modules: readonly string[]): string[] {
+  const found: string[] = [];
+  for (const f of files) {
+    for (const m of f.text.matchAll(/^\s*(?:import|export)\b(?!\s+type\b)[^'"`;]*?(?:\bfrom\s*)?['"](\.{1,2}\/[^'"]+)['"]/gm)) {
+      const target = posix.normalize(posix.join(posix.dirname(f.path), m[1]!)).replace(/\.(js|tsx?)$/, '');
+      const hit = modules.find((mod) => mod.replace(/\.tsx?$/, '') === target);
+      if (hit !== undefined) found.push(`${f.path} ${hit}`);
+    }
+  }
+  return found;
+}
+const walkSrc = (dir: string): string[] => readdirSync(SRC + dir, { withFileTypes: true }).flatMap((d) =>
+  d.isDirectory() ? walkSrc(`${dir}${d.name}/`) : /\.tsx?$/.test(d.name) && !/\.test(-support)?\./.test(d.name) ? [`${dir}${d.name}`] : []);
 
 /** Every kind of person who looks at the application. */
 const VIEWERS: Record<string, Viewer> = {
@@ -82,6 +106,26 @@ describe('every page the design names is in the list', () => {
     }
     const eager = read('pages.ts').match(/^import .* from '\.\/screens\/[^']+';$/gm) ?? [];
     expect(eager.map((l) => l.replace(/.*\/screens\/|';$/g, '')).sort()).toEqual(['appearance.js', 'landing.js', 'language.js', 'settings.js']);
+    /* And no file anywhere in the application imports one of those pages' modules eagerly, which would put it back in the first download. */
+    const loaded = [...read('pages.ts').matchAll(/onDemand\(\(\) => import\('\.\/(screens\/[^']+)\.js'\)/g)].map((m) => `${m[1]}.tsx`);
+    expect(loaded.length).toBe(onDemand.length);
+    expect(staticImportsOf(walkSrc('').map((path) => ({ path, text: read(path) })), loaded)).toEqual([]);
+  });
+
+  /* RED WHEN: the eager-import rule misses an import of a page's module from another folder, by a bare import, a re-export or its source's own name, or reads a dynamic import, a type import or a similar name as one. */
+  it('finds a page module imported eagerly from any file', () => {
+    const mods = ['screens/home.tsx', 'screens/run.tsx'];
+    const files = [
+      { path: 'shell/menu.tsx', text: "import { Home } from '../screens/home.js';" },
+      { path: 'records/parts.tsx', text: "export { Run } from '../screens/run.js';" },
+      { path: 'main.ts', text: "import './screens/home.js';" },
+      { path: 'records/x/deep.tsx', text: "import {\n  Home,\n} from '../../screens/home.js';" },
+      { path: 'pages.ts', text: "const s = onDemand(() => import('./screens/home.js'), 'Home');" },
+      { path: 'screens/homely.tsx', text: "import { A } from './home-parts.js';\nimport { B } from '../screens/homely.js';" },
+      { path: 'shell/tsx.tsx', text: "import { Run } from '../screens/run.tsx';" },
+      { path: 'shell/types.ts', text: "import type { Home } from '../screens/home.js';" },
+    ];
+    expect(staticImportsOf(files, mods)).toEqual(['shell/menu.tsx screens/home.tsx', 'records/parts.tsx screens/run.tsx', 'main.ts screens/home.tsx', 'records/x/deep.tsx screens/home.tsx', 'shell/tsx.tsx screens/run.tsx']);
   });
 
   /* RED WHEN: a menu group is added that no page is in, or a page names a group the menu does not have. */
@@ -227,6 +271,21 @@ describe('no two pages share an address or a shortcut', () => {
     expect(resolve('/payroll/r%2F1', viewer).of).toBe(RESOLVED.nothing);
     const withShortcut = [{ ...EVERY_PAGE.find((p) => p.id === 'run')!, shortcut: 'create' }];
     expect(pagesByShortcut(withShortcut, viewer)).toEqual({});
+  });
+
+  /*
+   * RED WHEN: an address a page names outright is taken by a page whose
+   * address stands for a value there, whichever comes first in the list; or
+   * the value page is not taken for any other value.
+   */
+  it('takes an address named outright before a page standing for a value there', () => {
+    const run = EVERY_PAGE.find((p) => p.id === 'run')!;
+    const named = { ...EVERY_PAGE.find((p) => p.id === 'payroll')!, id: 'payroll' as PageId, path: '/payroll/new' };
+    for (const pages of [[run, named], [named, run]]) {
+      expect(pageAt(pages, '/payroll/new')).toEqual({ page: named, params: {} });
+      expect(pageAt(pages, '/payroll/r-1')).toEqual({ page: run, params: { run: 'r-1' } });
+      expect(pageAt(pages, '/payroll/r-1/more')).toBeNull();
+    }
   });
 
   /*

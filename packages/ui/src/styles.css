@@ -18,8 +18,10 @@
 @import "@fontsource-variable/inter";
 @import "./theme/themes.css";
 
-/* The kit's own components; an application names its own sources in its stylesheet. */
+/* The kit's own components, not its tests; an application names its own sources in its stylesheet. */
 @source "./";
+@source not "./**/*.test.*";
+@source not "./**/*.test-support.*";
 
 @custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
 

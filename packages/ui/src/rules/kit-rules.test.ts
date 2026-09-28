@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { SEED_ASSETS } from '../../../../src/core/assets.js';
 import {
   amountsMadeOutsideTheAdapters, amountsOutsideTheComponent, arbitraryValues, CODES, codesUnder, colourValues, declaredBy, filesUnder, hasPhrase, inlineStyles, isShippingCode,
-  keysAskedFor, namedOutside, paletteClasses, physicalClasses, secondCn, SIDE_NAMES, spansOf, stateVariantsOf, stringWordsOf, undeclaredImports, waysIntoSharedCode, wordingCensus, wordingInCode,
+  bracketedStatesOf, keysAskedFor, namedOutside, OWN_STATES, paletteClasses, RADIX_STATES, statesNothingSets, physicalClasses, secondCn, SIDE_NAMES, spansOf, stateVariantsOf, stringWordsOf, undeclaredImports, waysIntoSharedCode, wordingCensus, wordingInCode,
   type Source,
 } from './source-rules.test-support.js';
 
@@ -136,6 +136,33 @@ describe('every rule, over the kit', () => {
     const used = new Set(CODE.flatMap(stateVariantsOf));
     expect(used.size).toBeGreaterThan(0);
     expect([...used].filter((v) => !defined.has(v))).toEqual([]);
+  });
+
+  /*
+   * RED WHEN: a component uses a bracketed state (`data-[state=on]:`) that
+   * neither the primitive it is built on nor the component itself sets, so
+   * the class matches nothing and silently never applies.
+   */
+  it('uses only bracketed states something it draws sets', () => {
+    expect(CODE.flatMap(bracketedStatesOf).length).toBeGreaterThan(3);
+    expect(CODE.map((f) => ({ path: f.path, unset: statesNothingSets(f) })).filter((x) => x.unset.length > 0)).toEqual([]);
+  });
+
+  /*
+   * RED WHEN: the list of states a primitive sets names a value its built
+   * code does not set, or names a package that is not installed; or a kit
+   * file said to set a state itself does not write it.
+   */
+  it('lists only states the primitives and the kit set', () => {
+    for (const [name, { states, packages }] of Object.entries(RADIX_STATES)) {
+      const built = packages.map((p) => readFileSync(`${ROOT}node_modules/@radix-ui/${p}/dist/index.mjs`, 'utf8')).join('\n');
+      for (const v of states) expect(built.includes(`"${v}"`), `${name} ${v}`).toBe(true);
+    }
+    for (const [path, states] of Object.entries(OWN_STATES)) {
+      const file = CODE.find((f) => f.path === path);
+      expect(file, path).toBeDefined();
+      for (const v of states) expect(file!.text.includes(`"${v}"`), `${path} ${v}`).toBe(true);
+    }
   });
 });
 

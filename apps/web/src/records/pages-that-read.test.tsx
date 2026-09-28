@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { KitProvider, languagesFrom, privateAmount, publicAmount } from 'vaults-ui';
 import type { Company, CompanyRecords, PersonRow, ProposalRow, RunRow } from '../adapters/company-records.js';
+import { untilPageShown } from '../page-shown.test-support.js';
 
 /*
  * THE COMPANY PAGES THAT READ, DRAWN IN THE FRAME at their own addresses,
@@ -93,10 +94,7 @@ async function draw(id: Id, params: Record<string, string> = {}) {
     </KitProvider>,
   );
   /* The screen loads on demand, and the records are read after: both are waited for. */
-  for (let i = 0; i < 50 && (view.container.querySelector('[data-loading], [data-reading]') !== null || view.container.querySelector('[data-screen]') === null); i += 1) {
-    await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
-  }
-  await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
+  await untilPageShown(view.container);
   return view.container;
 }
 const q = (c: ParentNode, sel: string) => c.querySelector(sel) as HTMLElement | null;
@@ -266,6 +264,33 @@ describe('payroll and a run', () => {
     expect(q(c, '[data-run=r0] [data-status=settled]')?.textContent).toBe('Paid on Sep 30, 2026');
   });
 
+  /*
+   * RED WHEN: the Public pill of a run not paid yet, of a payee in it, or of
+   * a person's pay, says the amount was received; or a paid run's says it is
+   * still to come.
+   */
+  it('explains public money not paid yet as to come, and a paid run\'s as received', async () => {
+    /* The pill's words, opened from the keyboard, so a press does not also open the row it sits in. */
+    const explained = async (c: ParentNode, sel: string) => {
+      const pill = q(c, `${sel} [data-slot=amount][data-visibility=public] [data-slot=public-pill]`)!;
+      await act(async () => { fireEvent.focus(pill); });
+      const words = [EN['kit.public.explanation.toBePaid']!, EN['kit.public.explanation.payment']!].filter((w) => all(document.body, '[data-slot=tooltip-content]').some((e) => e.textContent?.includes(w)));
+      await act(async () => { fireEvent.blur(pill); });
+      return words;
+    };
+    const runs = await draw('payroll');
+    expect(await explained(runs, '[data-run=r1]')).toEqual([EN['kit.public.explanation.toBePaid']]);
+    expect(await explained(runs, '[data-run=r0]')).toEqual([EN['kit.public.explanation.payment']]);
+    cleanup();
+    const run = await draw('run', { run: 'r1' });
+    expect(await explained(run, '[data-payee=e2]')).toEqual([EN['kit.public.explanation.toBePaid']]);
+    cleanup();
+    const people = await draw('people');
+    expect(await explained(people, '[data-person=e5]')).toEqual([EN['kit.public.explanation.toBePaid']]);
+    await act(async () => { fireEvent.click(q(people, '[data-person=e5] td')!); });
+    expect(await explained(document.body, '[data-person-panel=e5]')).toEqual([EN['kit.public.explanation.toBePaid']]);
+  });
+
   /* RED WHEN: a run's page does not warn that some are paid publicly, marks a payee by anything but how they are paid, or leaves a currency without its approvals. */
   it('shows a run\'s currencies, approvals, public payees and who is paid how', async () => {
     const c = await draw('run', { run: 'r1' });
@@ -374,28 +399,5 @@ describe('people and invitations', () => {
     await act(async () => { fireEvent.mouseDown(q(c, '[data-tab=waiting]')!, { button: 0 }); });
     expect(all(c, '[data-waiting] [data-person]').map((e) => e.dataset.person)).toEqual(['e5']);
     expect(q(c, '[data-signers-waiting] [data-slot=coming-soon]')).not.toBeNull();
-  });
-});
-
-describe('no page adds a second menu', () => {
-  /*
-   * RED WHEN: a screen writes a menu of its own beside the main menu (a nav,
-   * or tabs made by hand) instead of the kit's tabs across the top. The
-   * wizard's and Settings' side menus are named, and are to be moved to tabs
-   * by the change that fixes them.
-   */
-  it('moves within a page only by the kit\'s tabs', () => {
-    const NAMED = ['screens/settings.tsx', 'screens/setup.tsx'];
-    const files = readdirSync(`${SRC}/screens`).filter((n) => /\.tsx$/.test(n));
-    const read = ['screens', 'records'].flatMap((d) => readdirSync(`${SRC}/${d}`).filter((n) => /\.tsx$/.test(n) && !/\.test\./.test(n)).map((n) => `${d}/${n}`));
-    const menu = /<nav\b|\brole=\{?\s*["'`](?:tablist|tab|menu|menubar|navigation)["'`]/;
-    const hand = read.filter((n) => !NAMED.includes(n)).filter((n) => menu.test(readFileSync(`${SRC}/${n}`, 'utf8')));
-    expect(hand).toEqual([]);
-    for (const probe of ['<nav />', '<div role="tablist" />', '<div role={"tablist"} />', "<div role={'tab'} />", '<ul role="menu" />']) expect(menu.test(probe), probe).toBe(true);
-    const tabbed = files.filter((n) => /\bTabsList\b/.test(readFileSync(`${SRC}/screens/${n}`, 'utf8')));
-    expect(tabbed.sort()).toEqual(['invitations.tsx', 'proposals.tsx']);
-    for (const n of tabbed) expect(readFileSync(`${SRC}/screens/${n}`, 'utf8'), n).toMatch(/import \{[^}]*\bTabsList\b[^}]*\} from 'vaults-ui'/);
-    /* The rule reads what it is for: Settings, one of the two named, does write a nav. */
-    expect(readFileSync(`${SRC}/screens/settings.tsx`, 'utf8')).toMatch(/<nav\b/);
   });
 });

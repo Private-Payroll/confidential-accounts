@@ -14,7 +14,7 @@ export { formatDate, formatNumber } from './format/intl.js';
 export { privateAmount, publicAmount, type PrivateAmount, type PublicAmount, type TokenAmount, type Visibility } from './format/token-amount.js';
 export { Amount, type AmountProps } from './components/amount.js';
 export { Balance, type BalanceProps } from './components/balance.js';
-export type { AmountKind } from './components/public-pill.js';
+export { AMOUNT_KIND, type AmountKind } from './components/public-pill.js';
 export { ComingSoon, type ComingSoonProps } from './components/coming-soon.js';
 export { ConfirmInYourAccount, type ConfirmInYourAccountProps } from './components/confirm-in-your-account.js';
 export { Badge } from './components/badge.js';

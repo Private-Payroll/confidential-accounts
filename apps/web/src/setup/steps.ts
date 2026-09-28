@@ -11,10 +11,11 @@ import { STEP, type StepId, type StepProps } from './step-ids.js';
  * EVERY SETUP STEP, IN ONE LIST.
  *
  * Each step is one entry: its words, its icon, how the application knows it
- * is done, whether it can be skipped, and either its component or what it will
- * be while it is not built yet. The setup wizard, its progress bar and its
- * list of steps read this list and nothing else, so adding a step is one entry
- * here, its phrases in the language files, and its component.
+ * is done, whether it can be skipped, whether it can be undone once done, and
+ * either its component or what it will be while it is not built yet. The
+ * setup wizard, its tabs and its progress bar read this list and nothing
+ * else, so adding a step is one entry here, its phrases in the language
+ * files, and its component.
  *
  * A STEP AND ITS PAGE ARE ONE COMPONENT. A step that is also done from a page
  * of its own names that page; the page shows the same component the wizard
@@ -32,7 +33,7 @@ export interface SetupFacts {
 }
 
 export interface SetupStep {
-  /** Its name, as the wizard's list and the step's own heading say it. */
+  /** Its name, as the wizard's tab and the step's own heading say it. */
   name: (t: Text) => string;
   /** One line on what the step does. */
   line: (t: Text) => string;
@@ -41,6 +42,12 @@ export interface SetupStep {
   done: (facts: SetupFacts) => boolean;
   /** Whether it can be skipped for now and returned to. */
   skippable: boolean;
+  /**
+   * Whether, once done, it can never be undone: a company created, or handed
+   * to its signers, stays so. Such a step, once done, shows as done and is
+   * never opened again, so its action is never offered a second time.
+   */
+  cannotBeUndone: boolean;
   /** Its component, or, while it is not built, what it will be. */
   shows: { action: ComponentType<StepProps> } | { comingSoon: (t: Text) => string };
   /** The page the same action is done from outside setup, if it has one. */
@@ -53,23 +60,23 @@ const never = (): boolean => false;
 export const SETUP_STEPS = {
   [STEP.createCompany]: {
     name: (t) => t('setup.step.createCompany.name'), line: (t) => t('setup.step.createCompany.line'), icon: Building03Icon,
-    done: (f) => f.company !== null, skippable: true, shows: { action: CreateCompany },
+    done: (f) => f.company !== null, skippable: true, cannotBeUndone: true, shows: { action: CreateCompany },
   },
   [STEP.signers]: {
     name: (t) => t('setup.step.signers.name'), line: (t) => t('setup.step.signers.line'), icon: UserAdd01Icon,
-    done: never, skippable: true, shows: { comingSoon: (t) => t('setup.step.signers.soon') }, page: 'settingsSigners',
+    done: never, skippable: true, cannotBeUndone: false, shows: { comingSoon: (t) => t('setup.step.signers.soon') }, page: 'settingsSigners',
   },
   [STEP.handOver]: {
     name: (t) => t('setup.step.handOver.name'), line: (t) => t('setup.step.handOver.line'), icon: ShieldUserIcon,
-    done: (f) => f.handover?.of === HANDOVER.held, skippable: true, shows: { action: HandOver }, page: 'settingsSigners',
+    done: (f) => f.handover?.of === HANDOVER.held, skippable: true, cannotBeUndone: true, shows: { action: HandOver }, page: 'settingsSigners',
   },
   [STEP.vault]: {
     name: (t) => t('setup.step.vault.name'), line: (t) => t('setup.step.vault.line'), icon: SafeIcon,
-    done: never, skippable: true, shows: { comingSoon: (t) => t('setup.step.vault.soon') }, page: 'vaults',
+    done: never, skippable: true, cannotBeUndone: true, shows: { comingSoon: (t) => t('setup.step.vault.soon') }, page: 'vaults',
   },
   [STEP.people]: {
     name: (t) => t('setup.step.people.name'), line: (t) => t('setup.step.people.line'), icon: UserGroupIcon,
-    done: never, skippable: true, shows: { comingSoon: (t) => t('setup.step.people.soon') }, page: 'people',
+    done: never, skippable: true, cannotBeUndone: false, shows: { comingSoon: (t) => t('setup.step.people.soon') }, page: 'people',
   },
 } as const satisfies Record<StepId, SetupStep>;
 

@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import tailwindcss from '@tailwindcss/vite';
-import { defineConfig, searchForWorkspaceRoot } from 'vite';
+import { defineConfig, searchForWorkspaceRoot, type Plugin } from 'vite';
 import { framingHeadersFor } from '../../packages/identity/src/profile/origin.js';
 import { SERVICE_PROXY } from '../../scripts/serve-rules.js';
 
@@ -12,9 +12,11 @@ import { SERVICE_PROXY } from '../../scripts/serve-rules.js';
  * the address they already know. What differs is the folder served and, until
  * a screen needs them, the plugins.
  *
- * Tailwind's plugin is the one plugin: the kit's stylesheet is Tailwind, and
- * without it the build stops on the stylesheet. JSX needs none, because the
- * bundler compiles it for React itself. No WebAssembly plugin is loaded and no
+ * Tailwind's plugin is the one plugin that changes what is built: the kit's
+ * stylesheet is Tailwind, and without it the build stops on the stylesheet.
+ * The other, the first download's budget (below), only measures what was
+ * built. JSX needs no plugin, because the bundler compiles it for React
+ * itself. No WebAssembly plugin is loaded and no
  * worker is started; each is added with the first screen that needs it.
  */
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
@@ -32,9 +34,69 @@ export const SERVED_FROM = [
   fileURLToPath(new URL('../../node_modules/@fontsource-variable/inter', import.meta.url)),
 ];
 
+/*
+ * THE FIRST DOWNLOAD HAS A BUDGET, AND IT CAN ONLY FALL.
+ *
+ * The first download is what a browser loads before any page is opened: the
+ * entry's script, every script it imports without waiting, and their
+ * stylesheets. Fonts are left out, since the browser fetches only those the
+ * page's characters need. A build whose first download is larger than the
+ * budget stops, and so does one with any file other than a font over the
+ * size at which the bundler warns (a font is fetched only for the characters
+ * a page uses, so its size is not what the person waits for). The budget is the first download as it was measured when it
+ * was set; a test holds it within a kilobyte of what is built, so when the
+ * download falls the budget is lowered with it.
+ */
+export const FIRST_DOWNLOAD_BUDGET = 637_700;
+
+/** One file of a build's output, as the bundler hands it to a plugin: a script, with what it imports, or anything else. */
+export type BuiltFile =
+  | { type: 'chunk'; fileName: string; code: string; isEntry: boolean; imports: readonly string[]; viteMetadata?: { importedCss?: ReadonlySet<string> } }
+  | { type: 'asset'; fileName: string; source: string | Uint8Array };
+
+const bytesOf = (f: BuiltFile): number => (f.type === 'chunk' ? Buffer.byteLength(f.code) : typeof f.source === 'string' ? Buffer.byteLength(f.source) : f.source.length);
+
+/** The files of the first download, and their size in bytes. */
+export function firstDownloadOf(bundle: Readonly<Record<string, BuiltFile>>): { files: string[]; bytes: number } {
+  const files = new Set<string>();
+  const take = (name: string): void => {
+    const f = bundle[name];
+    if (f === undefined || files.has(name)) return;
+    files.add(name);
+    if (f.type !== 'chunk') return;
+    for (const css of f.viteMetadata?.importedCss ?? []) take(css);
+    for (const i of f.imports) take(i);
+  };
+  for (const f of Object.values(bundle)) if (f.type === 'chunk' && f.isEntry) take(f.fileName);
+  return { files: [...files].sort(), bytes: [...files].reduce((n, name) => n + bytesOf(bundle[name]!), 0) };
+}
+
+/** What stops the build: the first download over `budget`, and each file of the build over `fileLimit`, each in bytes. */
+export function overBudget(bundle: Readonly<Record<string, BuiltFile>>, budget: number, fileLimit: number): string[] {
+  const over: string[] = [];
+  const first = firstDownloadOf(bundle);
+  if (first.bytes > budget) over.push(`the first download is ${first.bytes} bytes, over its budget of ${budget}: ${first.files.join(', ')}`);
+  for (const f of Object.values(bundle)) if (bytesOf(f) > fileLimit && !/\.woff2?$/.test(f.fileName)) over.push(`${f.fileName} is ${bytesOf(f)} bytes, over the bundler's warning at ${fileLimit}`);
+  return over;
+}
+
+/** The plugin that stops a build over the budget. The file limit is the bundler's own warning, read from the config. */
+export function firstDownloadBudget(budget = FIRST_DOWNLOAD_BUDGET): Plugin {
+  let fileLimit = 0;
+  return {
+    name: 'first-download-budget',
+    apply: 'build',
+    configResolved(c) { fileLimit = c.build.chunkSizeWarningLimit * 1000; },
+    generateBundle(_options, bundle) {
+      const over = overBudget(bundle as unknown as Record<string, BuiltFile>, budget, fileLimit);
+      if (over.length > 0) this.error(over.join('\n'));
+    },
+  };
+}
+
 export default defineConfig({
   root: ROOT,
-  plugins: [tailwindcss()],
+  plugins: [tailwindcss(), firstDownloadBudget()],
   /*
    * The development server prepares the dependencies it finds by following
    * imports out from the entries listed here, before the page loads. It does

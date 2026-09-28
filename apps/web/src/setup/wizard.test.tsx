@@ -3,12 +3,14 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
+import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { KitProvider, languagesFrom } from 'vaults-ui';
 import { CurrentPageProvider } from '../router.js';
 import { DEFAULT_PREFERENCES } from '../preferences.js';
 import { SessionProvider, type Session } from '../session.js';
 import { VIEWS } from '../pages.js';
+import { untilPageShown } from '../page-shown.test-support.js';
 
 /*
  * THE SETUP WIZARD AND ITS TWO BUILT STEPS, DRAWN, with the adapters that act
@@ -39,8 +41,8 @@ vi.mock('../adapters/create-company.js', () => ({
 const { Setup } = await import('../screens/setup.js');
 const { HandOver } = await import('../actions/hand-over.js');
 const { CreateCompany } = await import('../actions/create-company.js');
-const { EVERY_STEP, isBuiltStep, takeAsked } = await import('./steps.js');
-const { skippedFor } = await import('./standing.js');
+const { EVERY_STEP, isBuiltStep, startSetupAt, takeAsked } = await import('./steps.js');
+const { isDoneForGood, skippedFor } = await import('./standing.js');
 const { STEP } = await import('./step-ids.js');
 
 (globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} };
@@ -56,16 +58,26 @@ function sessionWith(over: Partial<Session> = {}): Session {
   };
 }
 
+const framed = (node: React.ReactNode, session: Session) => (
+  <KitProvider languages={LANGUAGES} pick="en">
+    <SessionProvider session={session}><CurrentPageProvider id="setup">{node}</CurrentPageProvider></SessionProvider>
+  </KitProvider>
+);
+/** A step's own component, drawn on its own. */
 async function draw(node: React.ReactNode, session: Session) {
-  const view = render(
-    <KitProvider languages={LANGUAGES} pick="en">
-      <SessionProvider session={session}><CurrentPageProvider id="setup">{node}</CurrentPageProvider></SessionProvider>
-    </KitProvider>,
-  );
+  const view = render(framed(node, session));
   await act(settle);
   return view;
 }
+/** The wizard, drawn as a page, and waited for until it is on screen. */
+async function drawWizard(session: Session) {
+  const view = render(framed(<Setup />, session));
+  await untilPageShown(view.container);
+  return view;
+}
 const q = (c: HTMLElement, sel: string) => c.querySelector(sel) as HTMLElement | null;
+/* The kit's tabs are chosen on mouse-down, as the browser sends it, not on click, so a test presses a tab that way. */
+const pick = async (c: HTMLElement, step: string) => { await act(async () => { fireEvent.mouseDown(q(c, `[data-setup-steps] [data-step=${step}]`)!, { button: 0 }); await settle(); }); };
 
 beforeEach(() => {
   vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -80,7 +92,7 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 describe('the wizard reads the one list', () => {
   /* RED WHEN: the wizard's list of steps or its progress bar is not the list's, one step left out or added, or in another order. */
   it('lists every step and marks each on the progress bar, in the list\'s order', async () => {
-    const { container } = await draw(<Setup />, sessionWith());
+    const { container } = await drawWizard(sessionWith());
     expect([...container.querySelectorAll('[data-setup-steps] [data-step]')].map((e) => e.getAttribute('data-step'))).toEqual(EVERY_STEP.map((s) => s.id));
     expect([...container.querySelectorAll('[data-progress] [data-mark]')].map((e) => e.getAttribute('data-mark'))).toEqual(EVERY_STEP.map((s) => s.id));
     expect(q(container, '[data-progress]')!.getAttribute('aria-valuemax')).toBe(String(EVERY_STEP.length));
@@ -88,9 +100,9 @@ describe('the wizard reads the one list', () => {
 
   /* RED WHEN: a step not built is shown without Coming soon and its line, or a built step does not show its own component. */
   it('shows a built step\'s component and a step not built Coming soon', async () => {
-    const { container } = await draw(<Setup />, sessionWith());
+    const { container } = await drawWizard(sessionWith());
     for (const s of EVERY_STEP) {
-      await act(async () => { fireEvent.click(q(container, `[data-setup-steps] [data-step=${s.id}]`)!); await settle(); });
+      await pick(container, s.id);
       expect(q(container, '[data-current-step]')!.getAttribute('data-current-step')).toBe(s.id);
       if (isBuiltStep(s)) expect(q(container, '[data-current-step] [data-action]'), s.id).not.toBeNull();
       else {
@@ -104,18 +116,103 @@ describe('the wizard reads the one list', () => {
 describe('moving between steps', () => {
   /* RED WHEN: a step that leads to another does not take the wizard there. */
   it('follows a step\'s lead to the step that fixes it', async () => {
-    const { container } = await draw(<Setup />, sessionWith());
-    await act(async () => { fireEvent.click(q(container, `[data-setup-steps] [data-step=${STEP.handOver}]`)!); await settle(); });
+    const { container } = await drawWizard(sessionWith());
+    await pick(container, STEP.handOver);
     await act(async () => { fireEvent.click(q(container, `[data-lead-to=${STEP.createCompany}]`)!); await settle(); });
     expect(q(container, '[data-current-step]')!.getAttribute('data-current-step')).toBe(STEP.createCompany);
   });
+});
 
-  /* RED WHEN: Continue is not offered on a step that is done, or does not go on to the next step. */
-  it('offers Continue on a step that is done, and goes on', async () => {
-    const { container } = await draw(<Setup />, sessionWith({ company: 'c-1' }));
-    await act(async () => { fireEvent.click(q(container, `[data-setup-steps] [data-step=${STEP.createCompany}]`)!); await settle(); });
-    expect((q(container, '[data-action=continue]') as HTMLButtonElement).disabled).toBe(false);
-    await act(async () => { fireEvent.click(q(container, '[data-action=continue]')!); await settle(); });
+describe('a step that cannot be undone', () => {
+  /* RED WHEN: a step whose action cannot be undone is not marked so in the list, or one that can be undone is. */
+  it('is marked so in the one list, step by step', () => {
+    expect(EVERY_STEP.filter((s) => s.cannotBeUndone).map((s) => s.id)).toEqual([STEP.createCompany, STEP.handOver, STEP.vault]);
+  });
+
+  /*
+   * RED WHEN: after the company is created the wizard stays on Create the
+   * company, or its tab does not say done, can be pressed, or shows the form
+   * again, blank.
+   */
+  it('moves on by itself once the company is created, and never reopens it blank', async () => {
+    /* As the application keeps it: the company created is asked for again and shown. */
+    function Wizard() {
+      const [company, setCompany] = useState<string | null>(null);
+      return (
+        <SessionProvider session={sessionWith({ company, companiesChanged: async (id) => { if (id !== undefined) setCompany(id); } })}>
+          <Setup />
+        </SessionProvider>
+      );
+    }
+    const view = render(<KitProvider languages={LANGUAGES} pick="en"><CurrentPageProvider id="setup"><Wizard /></CurrentPageProvider></KitProvider>);
+    const { container } = view;
+    await untilPageShown(container);
+    expect(q(container, '[data-current-step]')!.getAttribute('data-current-step')).toBe(STEP.createCompany);
+    fireEvent.change(container.querySelector('[data-action=create-company] input')!, { target: { value: 'Acme' } });
+    await act(async () => { fireEvent.click(q(container, '[data-action=create]')!); await settle(); });
+    await untilPageShown(container);
+    expect(q(container, '[data-current-step]')!.getAttribute('data-current-step')).toBe(STEP.signers);
+    const tab = q(container, `[data-setup-steps] [data-step=${STEP.createCompany}]`) as HTMLButtonElement;
+    expect(tab.getAttribute('data-standing')).toBe('done');
+    expect(tab.hasAttribute('data-done-for-good')).toBe(true);
+    expect(tab.querySelector('[data-done]')!.textContent).toBe(EN['setup.done']);
+    expect(tab.disabled).toBe(true);
+    await pick(container, STEP.createCompany);
+    expect(q(container, '[data-current-step]')!.getAttribute('data-current-step')).toBe(STEP.signers);
+    expect(q(container, '[data-action=create-company]')).toBeNull();
+  });
+
+  /* RED WHEN: a step done for good, asked for by name (from the setup card), is opened with its action again rather than the step after it. */
+  it('opens the step after one done for good, when that one is asked for', async () => {
+    startSetupAt(STEP.createCompany);
+    const { container } = await drawWizard(sessionWith({ company: 'c-1' }));
+    expect(q(container, '[data-current-step]')!.getAttribute('data-current-step')).toBe(STEP.signers);
+    expect(q(container, '[data-action=create-company]')).toBeNull();
+  });
+
+  /* RED WHEN: once the company is held by its signers, the handover step can be opened again, or does not say done. */
+  it('closes the handover once the company is held, and moves on', async () => {
+    state.handover = { of: 'held' };
+    startSetupAt(STEP.handOver);
+    const { container } = await drawWizard(sessionWith({ company: 'c-1' }));
+    expect(q(container, '[data-current-step]')!.getAttribute('data-current-step')).toBe(STEP.vault);
+    const tab = q(container, `[data-setup-steps] [data-step=${STEP.handOver}]`) as HTMLButtonElement;
+    expect(tab.disabled).toBe(true);
+    expect(tab.querySelector('[data-done]')).not.toBeNull();
+    expect(q(container, '[data-action=hand-over]')).toBeNull();
+  });
+
+  /*
+   * RED WHEN: before the company's handover is read, the handover step's
+   * action is drawn or its tab can be pressed, so a company already held is
+   * offered the handover again, even for a moment.
+   */
+  it('offers no step that cannot be undone while the company is still being read', async () => {
+    state.handover = { of: 'held' };
+    startSetupAt(STEP.handOver);
+    const { container } = render(framed(<Setup />, sessionWith({ company: 'c-1' })));
+    expect(q(container, '[data-screen=setup]')!.hasAttribute('data-reading')).toBe(true);
+    expect(q(container, '[data-action=hand-over]')).toBeNull();
+    expect((q(container, `[data-setup-steps] [data-step=${STEP.handOver}]`) as HTMLButtonElement).disabled).toBe(true);
+    expect((q(container, `[data-setup-steps] [data-step=${STEP.vault}]`) as HTMLButtonElement).disabled).toBe(true);
+    expect((q(container, `[data-setup-steps] [data-step=${STEP.people}]`) as HTMLButtonElement).disabled).toBe(false);
+    await untilPageShown(container);
+    expect(q(container, '[data-current-step]')!.getAttribute('data-current-step')).toBe(STEP.vault);
+    expect(q(container, '[data-action=hand-over]')).toBeNull();
+  });
+
+  /* RED WHEN: a skipped step, a step not done, or a step done that can be undone, is closed as if done for good. */
+  it('leaves every other step open to return to', async () => {
+    const facts = { company: 'c-1', handover: null };
+    const doneButUndoable = { ...EVERY_STEP.find((s) => s.id === STEP.people)!, done: () => true };
+    expect(isDoneForGood(doneButUndoable, facts)).toBe(false);
+    expect(isDoneForGood({ ...doneButUndoable, cannotBeUndone: true }, facts)).toBe(true);
+    const { container } = await drawWizard(sessionWith({ company: 'c-1' }));
+    await act(async () => { fireEvent.click(q(container, '[data-action=skip]')!); await settle(); });
+    for (const id of [STEP.signers, STEP.handOver, STEP.vault, STEP.people]) {
+      expect((q(container, `[data-setup-steps] [data-step=${id}]`) as HTMLButtonElement).disabled, id).toBe(false);
+    }
+    await pick(container, STEP.signers);
     expect(q(container, '[data-current-step]')!.getAttribute('data-current-step')).toBe(STEP.signers);
   });
 });
@@ -123,7 +220,7 @@ describe('moving between steps', () => {
 describe('skipping', () => {
   /* RED WHEN: a skipped step is shown as done (a tick, a filled mark, a count), is not shown as skipped, or cannot be returned to. */
   it('shows a skipped step as skipped, never done, and lets the person return to it', async () => {
-    const { container } = await draw(<Setup />, sessionWith());
+    const { container } = await drawWizard(sessionWith());
     expect(q(container, '[data-current-step]')!.getAttribute('data-current-step')).toBe(STEP.createCompany);
     await act(async () => { fireEvent.click(q(container, '[data-action=skip]')!); await settle(); });
     const row = q(container, `[data-setup-steps] [data-step=${STEP.createCompany}]`)!;
@@ -133,7 +230,7 @@ describe('skipping', () => {
     expect(q(container, `[data-mark=${STEP.createCompany}]`)!.className).not.toContain('bg-primary');
     expect(q(container, '[data-progress]')!.getAttribute('aria-valuenow')).toBe('0');
     expect(q(container, '[data-current-step]')!.getAttribute('data-current-step')).toBe(STEP.signers);
-    await act(async () => { fireEvent.click(row); await settle(); });
+    await pick(container, STEP.createCompany);
     expect(q(container, '[data-current-step]')!.getAttribute('data-current-step')).toBe(STEP.createCompany);
   });
 
@@ -143,7 +240,7 @@ describe('skipping', () => {
    * kept for a step no longer in the list is read back as a step.
    */
   it('keeps a skipped step through a reload of the tab, for its own company', async () => {
-    const { container } = await draw(<Setup />, sessionWith({ company: 'c-1' }));
+    const { container } = await drawWizard(sessionWith({ company: 'c-1' }));
     await act(async () => { fireEvent.click(q(container, '[data-action=skip]')!); await settle(); });
     expect(q(container, `[data-mark=${STEP.signers}]`)!.getAttribute('data-standing')).toBe('skipped');
     cleanup();
@@ -158,7 +255,7 @@ describe('skipping', () => {
         <sessions.SessionProvider session={sessionWith({ company: 'c-1' })}><router.CurrentPageProvider id="setup"><Reloaded /></router.CurrentPageProvider></sessions.SessionProvider>
       </ui.KitProvider>,
     );
-    await act(settle);
+    await untilPageShown(again.container);
     expect(q(again.container, `[data-mark=${STEP.signers}]`)!.getAttribute('data-standing')).toBe('skipped');
     expect(q(again.container, '[data-current-step]')!.getAttribute('data-current-step')).toBe(STEP.handOver);
     window.sessionStorage.setItem('private-vaults.setup-skipped', JSON.stringify({ 'c-1': ['deposit', STEP.vault], '': 'not a list' }));
@@ -167,14 +264,14 @@ describe('skipping', () => {
 
   /* RED WHEN: a step done is not counted and marked as done, or Continue is offered on a step that is not done. */
   it('counts and marks a step done only when it is, and offers Continue only then', async () => {
-    const { container } = await draw(<Setup />, sessionWith({ company: 'c-1' }));
+    const { container } = await drawWizard(sessionWith({ company: 'c-1' }));
     expect(q(container, `[data-mark=${STEP.createCompany}]`)!.getAttribute('data-standing')).toBe('done');
     expect(q(container, '[data-progress]')!.getAttribute('aria-valuenow')).toBe('1');
     expect(q(container, '[data-current-step]')!.getAttribute('data-current-step')).toBe(STEP.signers);
     expect((q(container, '[data-action=continue]') as HTMLButtonElement).disabled).toBe(true);
     state.handover = { of: 'held' };
     cleanup();
-    const again = await draw(<Setup />, sessionWith({ company: 'c-1' }));
+    const again = await drawWizard(sessionWith({ company: 'c-1' }));
     expect(q(again.container, `[data-mark=${STEP.handOver}]`)!.getAttribute('data-standing')).toBe('done');
     expect(q(again.container, '[data-progress]')!.getAttribute('aria-valuenow')).toBe('2');
   });

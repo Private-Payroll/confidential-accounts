@@ -95,12 +95,26 @@ export type Resolved =
  * stands for a value there.
  */
 export function resolve(address: string, viewer: Viewer): Resolved {
-  const at = normalised(address);
-  const outright = EVERY_PAGE.find((p) => p.path === at);
-  const found = outright !== undefined ? { page: outright, params: {} } : EVERY_PAGE.map((p) => ({ page: p, params: matchAddress(p.path, at) })).find((m) => m.params !== null);
-  if (found === undefined || found.params === null) return { of: RESOLVED.nothing };
+  const found = pageAt(EVERY_PAGE, normalised(address));
+  if (found === null) return { of: RESOLVED.nothing };
   const { page, params } = found;
   return mayOpen(page, viewer) ? { of: RESOLVED.page, id: page.id, page, params } : { of: RESOLVED.notYours, id: page.id, page };
+}
+
+/**
+ * The page of `pages` at the address `at`, and the values it takes from it.
+ * A page that names the address outright wins over every page whose address
+ * stands for a value there, wherever each sits in the list; among those, the
+ * first in the list wins. Null when no page is at the address.
+ */
+export function pageAt<P extends Page & { id: PageId }>(pages: readonly P[], at: string): { page: P; params: Params } | null {
+  const outright = pages.find((p) => p.path === at);
+  if (outright !== undefined) return { page: outright, params: {} };
+  for (const page of pages) {
+    const params = matchAddress(page.path, at);
+    if (params !== null) return { page, params };
+  }
+  return null;
 }
 
 /** The page to go to instead, when the address opens nothing the viewer may see: where their view begins. */

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { act, cleanup, fireEvent, render, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { KitProvider, languagesFrom } from 'vaults-ui';
+import { untilPageShown } from '../page-shown.test-support.js';
 const names = vi.hoisted(() => ({ opened: new Map<string, string>() }));
 vi.mock('../adapters/session.js', async (real) => ({
   ...(await real<typeof import('../adapters/session.js')>()),
@@ -58,15 +59,17 @@ function sessionFor(viewer: Viewer, over: Partial<Session> = {}): Session {
   };
 }
 
-function draw(session: Session, current: PageId, language = 'en') {
+async function draw(session: Session, current: PageId, language = 'en') {
   window.history.replaceState(null, '', PAGES[current].path);
-  return render(
+  const view = render(
     <KitProvider languages={TEST_LANGUAGES} pick={language}>
       <SessionProvider session={session}>
         <Shell current={current}><PageView id={current} /></Shell>
       </SessionProvider>
     </KitProvider>,
   );
+  await untilPageShown(view.container);
+  return view;
 }
 
 /** A key pressed on the page, as the browser sends it. */
@@ -81,8 +84,8 @@ describe('the left menu', () => {
    * one out, links a page to an address that is not its own, or shows a page
    * not built yet without the Coming soon pill (or a built one with it).
    */
-  it.each([['a signer', signer], ['an employee', employee]] as const)('shows %s exactly the list\'s pages, linked to their addresses', (_who, viewer) => {
-    const { container } = draw(sessionFor(viewer), viewer.signs ? 'settingsAppearance' : 'payAppearance');
+  it.each([['a signer', signer], ['an employee', employee]] as const)('shows %s exactly the list\'s pages, linked to their addresses', async (_who, viewer) => {
+    const { container } = await draw(sessionFor(viewer), viewer.signs ? 'settingsAppearance' : 'payAppearance');
     const items = [...container.querySelectorAll('[data-menu-page]')];
     const expected = menuFor(viewer).flatMap((g) => g.pages);
     expect(items.map((i) => i.getAttribute('data-menu-page'))).toEqual(expected.map((p) => p.id));
@@ -94,8 +97,8 @@ describe('the left menu', () => {
   });
 
   /* RED WHEN: the page shown, or the section a page sits in, is not marked as the one open. */
-  it('marks the page open, and Settings while one of its sections is open', () => {
-    const { container } = draw(sessionFor(signer), 'settingsLanguage');
+  it('marks the page open, and Settings while one of its sections is open', async () => {
+    const { container } = await draw(sessionFor(signer), 'settingsLanguage');
     expect([...container.querySelectorAll('[data-menu-page] a[aria-current=page]')].map((a) => a.closest('[data-menu-page]')?.getAttribute('data-menu-page'))).toEqual(['settings']);
   });
 });
@@ -107,7 +110,7 @@ describe('the command bar', () => {
 
   /* RED WHEN: the line saying how to open the bar is built from pieces, or loses the keys from where its phrase puts them. */
   it('says how to open it in one phrase, with the keys in the phrase\'s gap', async () => {
-    draw(sessionFor(signer), 'settingsAppearance');
+    await draw(sessionFor(signer), 'settingsAppearance');
     const bar = await open();
     const line = bar.querySelector('[data-command-bar-way-in]') as HTMLElement;
     const [before, after] = EN['commandBar.wayIn']!.split('{keys}');
@@ -122,7 +125,7 @@ describe('the command bar', () => {
    * Appearance); or the bar lists a page its viewer may not open.
    */
   it('finds a page by its name in the language shown and by its English name', async () => {
-    draw(sessionFor(signer), 'settingsAppearance', 'de');
+    await draw(sessionFor(signer), 'settingsAppearance', 'de');
     const bar = await open();
     expect(bar).not.toBeNull();
     /* The made-up language's word for Appearance is also in its words for the appearance commands, as it is in English. */
@@ -143,7 +146,7 @@ describe('the command bar', () => {
 
   /* RED WHEN: choosing a page does not go to its address, or the bar stays open over the page it went to. */
   it('goes to the page chosen', async () => {
-    draw(sessionFor(signer), 'settingsAppearance');
+    await draw(sessionFor(signer), 'settingsAppearance');
     const bar = await open();
     await search(bar, 'language');
     expect(linesOf(bar)).toEqual(['settingsLanguage']);
@@ -154,7 +157,7 @@ describe('the command bar', () => {
 
   /* RED WHEN: the bar can be opened only by its shortcut: the button at the top of every page is gone, or does not open it. */
   it('opens from the button at the top of the page, for a browser that keeps the shortcut', async () => {
-    const { container } = draw(sessionFor(signer), 'settingsAppearance');
+    const { container } = await draw(sessionFor(signer), 'settingsAppearance');
     await act(() => { fireEvent.click(container.querySelector('[data-action=open-command-bar]')!); });
     expect(document.querySelector('[data-command-bar]')).not.toBeNull();
     expect(document.querySelector('[data-command-bar-way-in] [data-shortcut=commandBar]')).not.toBeNull();
@@ -168,18 +171,18 @@ describe('the shortcuts', () => {
    * are not Latin, in the place of K, does not open the command bar.
    */
   it.each(['en', 'de'])('are the same keys in %s, and on a keyboard with other letters', async (language) => {
-    draw(sessionFor(signer), 'settingsAppearance', language);
+    await draw(sessionFor(signer), 'settingsAppearance', language);
     await press({ key: 'л', code: 'KeyK', metaKey: true });
     expect(document.querySelector('[data-command-bar]')).not.toBeNull();
   });
 
   /* RED WHEN: on a Mac, Ctrl is taken for the command key, or off a Mac the command key is taken for Ctrl. */
   it('hold the command key on a Mac and Ctrl elsewhere', async () => {
-    draw(sessionFor(signer, { mac: true }), 'settingsAppearance');
+    await draw(sessionFor(signer, { mac: true }), 'settingsAppearance');
     await press({ key: 'k', code: 'KeyK', ctrlKey: true });
     expect(document.querySelector('[data-command-bar]')).toBeNull();
     cleanup();
-    draw(sessionFor(signer, { mac: false }), 'settingsAppearance');
+    await draw(sessionFor(signer, { mac: false }), 'settingsAppearance');
     await press({ key: 'k', code: 'KeyK', metaKey: true });
     expect(document.querySelector('[data-command-bar]')).toBeNull();
     await press({ key: 'k', code: 'KeyK', ctrlKey: true });
@@ -188,7 +191,7 @@ describe('the shortcuts', () => {
 
   /* RED WHEN: the list of shortcuts leaves one of the table's out, or shows one whose page is not built without Coming soon. */
   it('lists every shortcut in the table, with Coming soon for one not built', async () => {
-    draw(sessionFor(signer), 'settingsAppearance');
+    await draw(sessionFor(signer), 'settingsAppearance');
     await press({ key: '?', code: 'Slash', shiftKey: true });
     const help = document.querySelector('[data-shortcuts-help]') as HTMLElement;
     expect([...help.querySelectorAll('[data-shortcut-line]')].map((l) => l.getAttribute('data-shortcut-line'))).toEqual(EVERY_SHORTCUT.map((s) => s.id));
@@ -199,7 +202,7 @@ describe('the shortcuts', () => {
 
   /* RED WHEN: a shortcut whose page is not built does something, or a letter typed into a field runs a shortcut. */
   it('runs nothing for a shortcut not built, nor for a letter typed into a field', async () => {
-    draw(sessionFor(signer), 'settingsAppearance');
+    await draw(sessionFor(signer), 'settingsAppearance');
     const before = document.body.innerHTML;
     await press({ key: 'c', code: 'KeyC' });
     await press({ key: '/', code: 'Slash' });
@@ -214,14 +217,14 @@ describe('the shortcuts', () => {
   /* RED WHEN: Cmd+Shift+L does not switch between light and dark, or switches to the one already shown. */
   it('switch between light and dark', async () => {
     const choose = vi.fn();
-    draw(sessionFor(signer, { choose, preferences: { ...DEFAULT_PREFERENCES, mode: 'light' } }), 'settingsAppearance');
+    await draw(sessionFor(signer, { choose, preferences: { ...DEFAULT_PREFERENCES, mode: 'light' } }), 'settingsAppearance');
     await press({ key: 'l', code: 'KeyL', metaKey: true, shiftKey: true });
     expect(choose).toHaveBeenCalledWith({ mode: 'dark' });
   });
 
   /* RED WHEN: Cmd+. does not open the company switcher. */
   it('open the company switcher', async () => {
-    draw(sessionFor(signer), 'settingsAppearance');
+    await draw(sessionFor(signer), 'settingsAppearance');
     await press({ key: '.', code: 'Period', metaKey: true });
     expect(document.querySelector('[data-company-switcher]')).not.toBeNull();
   });
@@ -236,7 +239,7 @@ describe('the company switcher', () => {
    */
   it('lists the companies in the order the service gave, with no amounts, and says where their names open', async () => {
     names.opened = new Map();
-    draw(sessionFor(signer), 'settingsAppearance');
+    await draw(sessionFor(signer), 'settingsAppearance');
     await press({ key: '.', code: 'Period', metaKey: true });
     const menu = document.querySelector('[data-company-switcher]') as HTMLElement;
     expect([...menu.querySelectorAll('[data-company]')].map((c) => c.getAttribute('data-company'))).toEqual(['c-2', 'c-3', 'c-1']);
@@ -258,7 +261,7 @@ describe('the company switcher', () => {
    */
   it('shows each company by its name once the keys saved for the person have opened it', async () => {
     names.opened = new Map([['c-2', 'Northwind'], ['c-1', 'Acme']]);
-    const { container } = draw(sessionFor(signer), 'settingsAppearance');
+    const { container } = await draw(sessionFor(signer), 'settingsAppearance');
     await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
     expect(container.querySelector('[data-shown-name]')?.textContent).toBe('Northwind');
     await press({ key: '.', code: 'Period', metaKey: true });
@@ -267,7 +270,7 @@ describe('the company switcher', () => {
     expect(menu.querySelector('[data-company-names=locked]')).not.toBeNull();
     names.opened = new Map([['c-2', 'Northwind'], ['c-3', 'Globex'], ['c-1', 'Acme']]);
     cleanup();
-    draw(sessionFor(signer), 'settingsAppearance');
+    await draw(sessionFor(signer), 'settingsAppearance');
     await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
     await press({ key: '.', code: 'Period', metaKey: true });
     expect(document.querySelector('[data-company-switcher] [data-company-names]')).toBeNull();
@@ -276,7 +279,7 @@ describe('the company switcher', () => {
   /* RED WHEN: choosing a company does not make it the one shown. */
   it('makes the company chosen the one shown', async () => {
     const chooseCompany = vi.fn();
-    draw(sessionFor(signer, { chooseCompany }), 'settingsAppearance');
+    await draw(sessionFor(signer, { chooseCompany }), 'settingsAppearance');
     await press({ key: '.', code: 'Period', metaKey: true });
     await act(() => { fireEvent.click(document.querySelector('[data-company=c-1]')!); });
     expect(chooseCompany).toHaveBeenCalledWith('c-1');
@@ -296,7 +299,7 @@ describe('the account menu', () => {
    * the language, switching view or signing out.
    */
   it('shows the account\'s addresses and balances Coming soon, and has light and dark, language, switching view and signing out', async () => {
-    const { container } = draw(sessionFor(signer), 'settingsAppearance');
+    const { container } = await draw(sessionFor(signer), 'settingsAppearance');
     const menu = await openMenu(container);
     expect(menu).not.toBeNull();
     const details = menu.querySelector('[data-account-details]') as HTMLElement;
@@ -308,7 +311,7 @@ describe('the account menu', () => {
 
   /* RED WHEN: switching view is offered to a person who signs for no company, where there is no company view to switch to. */
   it('offers switching view only to a person who signs for a company', async () => {
-    const { container } = draw(sessionFor(employee), 'payAppearance');
+    const { container } = await draw(sessionFor(employee), 'payAppearance');
     const menu = await openMenu(container);
     expect(menu.querySelector('[data-action=switch-view]')).toBeNull();
   });
@@ -316,7 +319,7 @@ describe('the account menu', () => {
   /* RED WHEN: choosing dark, or signing out, does not reach the one function that makes the change. */
   it('makes each change through the session', async () => {
     const choose = vi.fn(); const signOut = vi.fn();
-    const { container } = draw(sessionFor(signer, { choose, signOut }), 'settingsAppearance');
+    const { container } = await draw(sessionFor(signer, { choose, signOut }), 'settingsAppearance');
     let menu = await openMenu(container);
     await act(() => { fireEvent.click(menu.querySelector('[data-mode=dark]')!); });
     expect(choose).toHaveBeenCalledWith({ mode: 'dark' });
@@ -351,8 +354,8 @@ describe('the right-hand panel', () => {
 
 describe('the pages', () => {
   /* RED WHEN: a page not built yet shows anything but its name, the Coming soon pill and what it will be. */
-  it('shows a page not built yet as Coming soon, with what it will be', () => {
-    const { container } = draw(sessionFor(signer), 'transactions');
+  it('shows a page not built yet as Coming soon, with what it will be', async () => {
+    const { container } = await draw(sessionFor(signer), 'transactions');
     const page = container.querySelector('[data-screen=coming-soon]') as HTMLElement;
     expect(page.getAttribute('data-page')).toBe('transactions');
     expect(page.querySelector('h1')?.textContent).toBe(EN['page.transactions.name']);
@@ -362,8 +365,8 @@ describe('the pages', () => {
   });
 
   /* RED WHEN: a section of Settings is shown outside Settings, or Settings lists sections the list does not put in it. */
-  it('shows Appearance inside Settings, beside the sections the list puts there', () => {
-    const { container } = draw(sessionFor(signer), 'settingsAppearance');
+  it('shows Appearance inside Settings, below the sections the list puts there', async () => {
+    const { container } = await draw(sessionFor(signer), 'settingsAppearance');
     const settings = container.querySelector('[data-screen=settings]') as HTMLElement;
     expect(settings.querySelector('[data-screen=appearance]')).not.toBeNull();
     expect([...settings.querySelectorAll('[data-settings-section]')].map((s) => s.getAttribute('data-settings-section')))
@@ -373,13 +376,13 @@ describe('the pages', () => {
   /* RED WHEN: the colours offered are not the kit's list, the language list is not the application's language files, or a choice does not reach the session. */
   it('offers the kit\'s colours and the language files, and makes each choice through the session', async () => {
     const choose = vi.fn();
-    const { container } = draw(sessionFor(signer, { choose }), 'settingsAppearance');
+    const { container } = await draw(sessionFor(signer, { choose }), 'settingsAppearance');
     const { BASE_COLORS } = await import('vaults-ui');
     expect([...container.querySelectorAll('[data-colour]')].map((c) => c.getAttribute('data-colour'))).toEqual([...BASE_COLORS]);
     await act(() => { fireEvent.click(container.querySelector('[data-colour=olive] button')!); });
     expect(choose).toHaveBeenCalledWith({ base: 'olive' });
     cleanup();
-    const again = draw(sessionFor(signer, { choose }), 'settingsLanguage');
+    const again = await draw(sessionFor(signer, { choose }), 'settingsLanguage');
     expect([...again.container.querySelectorAll('[data-language]')].map((c) => c.getAttribute('data-language'))).toEqual(['', ...LANGUAGES.map((l) => l.tag)]);
     expect(again.container.querySelector('[data-number-format] [data-slot=coming-soon]')).not.toBeNull();
   });
@@ -387,11 +390,11 @@ describe('the pages', () => {
   /* RED WHEN: a signer looking at their own pay is not told so, or has no way back. */
   it('tells a signer looking at their own pay, with the way back', async () => {
     const chooseView = vi.fn();
-    const { container } = draw(sessionFor({ ...signer, view: VIEWS.employee }, { chooseView }), 'payAppearance');
+    const { container } = await draw(sessionFor({ ...signer, view: VIEWS.employee }, { chooseView }), 'payAppearance');
     const banner = container.querySelector('[data-view-banner]') as HTMLElement;
     await act(() => { fireEvent.click(within(banner).getByRole('button')); });
     expect(chooseView).toHaveBeenCalledWith(VIEWS.company);
     cleanup();
-    expect(draw(sessionFor(employee), 'payAppearance').container.querySelector('[data-view-banner]')).toBeNull();
+    expect((await draw(sessionFor(employee), 'payAppearance')).container.querySelector('[data-view-banner]')).toBeNull();
   });
 });

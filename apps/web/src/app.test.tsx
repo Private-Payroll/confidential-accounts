@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { readdirSync } from 'node:fs';
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { untilPageShown, untilShown } from './page-shown.test-support.js';
 import { PAGES } from './pages.js';
 import { Root } from './root.js';
 
@@ -21,19 +22,12 @@ const json = (status: number, body: unknown) => () => new Response(JSON.stringif
 const PERSON = { id: 'u1', email: null, name: 'Priya' };
 const COMPANY = { id: 'c1', createdAt: '2026-09-01T00:00:00.000Z', signerCount: 2, threshold: 2 };
 const settle = () => new Promise((r) => setTimeout(r, 0));
-/* A page loads when first opened, so a test waits until it is on screen, not for a fixed number of turns. */
-const untilShown = async (find: () => Element | null, ms = 10_000) => {
-  const end = Date.now() + ms;
-  while (find() === null && Date.now() < end) await act(async () => { await new Promise((r) => setTimeout(r, 10)); });
-};
 
 async function open(at: string) {
   window.history.replaceState(null, '', at);
   const view = render(<Root />);
-  /* Until the service has said who is signed in, the page is only a placeholder; the keyring it asks through loads on demand. */
-  for (let i = 0; i < 100 && view.container.querySelector(':scope > [aria-busy]') !== null; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
-  await act(settle);
-  await act(settle);
+  /* Until the service has said who is signed in, the page is only a placeholder; the keyring it asks through, and the page, load on demand. */
+  await untilPageShown(view.container);
   return view;
 }
 
@@ -67,7 +61,6 @@ describe('who is shown what', () => {
     expect(container.querySelector('[data-menu-page=payslips]')).toBeNull();
     /* Home is built, loaded when first opened, and never Coming soon. */
     expect(container.querySelector('[data-screen=coming-soon]')).toBeNull();
-    await act(async () => { for (let i = 0; i < 20 && container.querySelector('[data-screen=home]') === null; i += 1) await new Promise((r) => setTimeout(r, 10)); });
     expect(container.querySelector('[data-screen=home]')).not.toBeNull();
   });
 
@@ -160,6 +153,7 @@ describe('the landing page, once signed in', () => {
     const { container } = await open(PAGES.landing.path);
     await act(async () => { fireEvent.click(container.querySelector('[data-choose-a-company] [data-company=c-3]')!); await settle(); });
     expect(window.location.pathname).toBe(PAGES.home.path);
+    await untilPageShown(container);
     await act(async () => { document.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: '.', code: 'Period', ctrlKey: true })); await settle(); });
     const switcher = document.querySelector('[data-company-switcher]')!;
     expect([...switcher.querySelectorAll('[data-company]')].map((e) => e.getAttribute('data-company'))).toEqual(['c-2', 'c-3', 'c-1']);
@@ -176,13 +170,14 @@ describe('the landing page, once signed in', () => {
   it('starts the wizard from Create a company, for a new company', async () => {
     me = json(200, { user: PERSON, accounts: THREE });
     const { container } = await open(PAGES.landing.path);
-    await act(async () => { fireEvent.click(container.querySelector('[data-choose-a-company] [data-action=create-company]')!); await settle(); await settle(); });
+    await act(async () => { fireEvent.click(container.querySelector('[data-choose-a-company] [data-action=create-company]')!); await settle(); });
     expect(window.location.pathname).toBe(PAGES.setup.path);
-    await untilShown(() => container.querySelector('[data-screen=setup] [data-current-step]'));
+    await untilShown(() => container.querySelector('[data-screen=setup]'), 'the setup wizard');
+    await untilPageShown(container);
     expect(container.querySelector('[data-screen=setup] [data-current-step]')!.getAttribute('data-current-step')).toBe('createCompany');
     expect(container.querySelector('[data-mark=createCompany]')!.getAttribute('data-standing')).toBe('open');
     expect(container.querySelector('[data-progress]')!.getAttribute('aria-valuenow')).toBe('0');
-    await act(async () => { fireEvent.click(container.querySelector('[data-setup-steps] [data-step=handOver]')!); await settle(); });
+    await act(async () => { fireEvent.mouseDown(container.querySelector('[data-setup-steps] [data-step=handOver]')!, { button: 0 }); await settle(); });
     expect(container.querySelector('[data-action=hand-over] [data-why]')!.getAttribute('data-why')).toBe('no-company');
   });
 

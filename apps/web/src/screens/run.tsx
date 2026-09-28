@@ -2,7 +2,7 @@ import { Amount, useText } from 'vaults-ui';
 import { PAID, READ } from '../adapters/company-records.js';
 import { PAGE } from '../pages.js';
 import { PageLink, useCurrentPage } from '../router.js';
-import { Approvals, PaidWords, ReadOf, RunMoney, RunStatus, SoonAction, useMonth, WithRecords } from '../records/parts.js';
+import { Approvals, PaidWords, paymentKindOf, ReadOf, RunMoney, RunStatus, SoonAction, useMonth, WithRecords } from '../records/parts.js';
 
 /**
  * A PAYROLL RUN'S OWN PAGE: its month and where it stands; for each currency,
@@ -57,7 +57,7 @@ export function Run() {
                         {run.payees.map((p) => (
                           <tr key={p.id} className="border-t" data-payee={p.id}>
                             <td className="py-2">{p.name}</td>
-                            <td className="py-2">{p.amount === null ? t('records.unrecognisedOne') : <Amount value={p.amount} kind="payment" />}</td>
+                            <td className="py-2">{p.amount === null ? t('records.unrecognisedOne') : <Amount value={p.amount} kind={paymentKindOf(run)} />}</td>
                             <td className="py-2 text-muted-foreground"><PaidWords paid={p.paid} /></td>
                           </tr>
                         ))}

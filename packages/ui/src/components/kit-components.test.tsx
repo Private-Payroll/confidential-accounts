@@ -44,6 +44,24 @@ describe('an amount', () => {
     expect(screen.queryAllByText(EN['kit.public.explanation.balance']!)).toEqual([]);
   });
 
+  /*
+   * RED WHEN: a payment not made yet is explained as one made ("who received
+   * it"), a payment made is explained as one to come, or a payment to come
+   * uses the balance wording.
+   */
+  it('explains a payment not made yet as one to come, and only that one', async () => {
+    expect(new Set([EN['kit.public.explanation.toBePaid'], EN['kit.public.explanation.payment'], EN['kit.public.explanation.balance']]).size).toBe(3);
+    const { container } = inKit(<Amount value={publicAmount(1n, 0, 'NIGHT')} kind="to-be-paid" />);
+    await act(async () => { fireEvent.click(container.querySelector('[data-slot=public-pill]')!); });
+    expect(screen.queryAllByText(EN['kit.public.explanation.toBePaid']!).length).toBeGreaterThan(0);
+    expect(screen.queryAllByText(EN['kit.public.explanation.payment']!)).toEqual([]);
+    expect(screen.queryAllByText(EN['kit.public.explanation.balance']!)).toEqual([]);
+    cleanup();
+    const made = inKit(<Amount value={publicAmount(1n, 0, 'NIGHT')} kind="payment" />);
+    await act(async () => { fireEvent.click(made.container.querySelector('[data-slot=public-pill]')!); });
+    expect(screen.queryAllByText(EN['kit.public.explanation.toBePaid']!)).toEqual([]);
+  });
+
   /* RED WHEN: the language is not the one shown, so every language gets English grouping. */
   it('is written in the language shown', () => {
     const { container } = inKit(<Amount value={privateAmount(1_234_500n, 2, 'EUR')} kind="payment" />, 'de');
@@ -60,9 +78,9 @@ describe('an amount', () => {
     // @ts-expect-error whether an amount is public is read from it, and is never passed in
     inKit(<Amount value={privateAmount(1n, 0, 'USDC')} visibility="public" kind="payment" />);
     // @ts-expect-error whether it is a payment or a balance is required, so the pill never guesses what public means
-    expect(() => inKit(<Amount value={publicAmount(1n, 0, 'USDC')} />)).toThrow(/payment or a balance, and this one is undefined/);
+    expect(() => inKit(<Amount value={publicAmount(1n, 0, 'USDC')} />)).toThrow(/a payment, a payment to be made or a balance, and this one is undefined/);
     // @ts-expect-error and on a private amount too
-    expect(() => inKit(<Amount value={privateAmount(1n, 0, 'USDC')} />)).toThrow(/payment or a balance, and this one is undefined/);
+    expect(() => inKit(<Amount value={privateAmount(1n, 0, 'USDC')} />)).toThrow(/a payment, a payment to be made or a balance, and this one is undefined/);
     vi.restoreAllMocks();
   });
 

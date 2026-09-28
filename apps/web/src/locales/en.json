@@ -1,6 +1,7 @@
 {
   "kit.public.label": "Public",
   "kit.public.explanation.payment": "Anyone can look up this amount and who received it.",
+  "kit.public.explanation.toBePaid": "From the day each payment is made, anyone can look up the amount and who received it.",
   "kit.public.explanation.balance": "Anyone can look up this amount and the account it is in.",
   "kit.balance.private": "Private",
   "kit.comingSoon.label": "Coming soon",
@@ -185,6 +186,8 @@
   "setup.skip": "Skip for now",
   "setup.continue": "Continue",
   "setup.skipped": "Skipped",
+  "setup.done": "Done",
+  "setup.doneForGood": "Done. You cannot undo this.",
   "setup.progress_one": "{done} of {count} step done",
   "setup.progress_other": "{done} of {count} steps done",
   "setup.step.createCompany.name": "Create the company",

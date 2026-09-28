@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   LOADS_BY_ADDRESS, WALLET_GLOBALS, amountsOutsideTheComponent, arbitraryValues, classWordsOf, colourValues, declaredBy, englishSentences, gapsOf, gapsThatDiffer,
   hasPhrase, inlineStyles, keysAskedFor, missingPhrases, paletteClasses, pathsIntoTheKit, physicalClasses, pluralOf, secondCn,
-  stateVariantsOf, undeclaredImports, utilityOf, waysIntoSharedCode, wordingCensus, wordingInCode, WORDING_POSITIONS, amountsMadeOutsideTheAdapters, type Source,
+  stateVariantsOf, statesNothingSets, bracketedStatesOf, undeclaredImports, utilityOf, waysIntoSharedCode, wordingCensus, wordingInCode, WORDING_POSITIONS, amountsMadeOutsideTheAdapters, type Source,
   namedOutside, stylesReachingIntoComponents, variantsOf,
 } from './source-rules.test-support.js';
 
@@ -352,13 +352,14 @@ describe('an application styles only what it writes', () => {
     ]);
   });
 
-  /* RED WHEN: a class that styles only the element it is written on, by its own state or an ancestor's, is refused, or the stylesheet's own two kinds of line are. */
+  /* RED WHEN: a class that styles only the element it is written on, by its own state or an ancestor's, is refused, or the stylesheet's own kinds of line (a comment, an import, a source named or left out) are. */
   it('lets an element style itself, by its own state or an ancestor\'s', () => {
     const screen = src('apps/web/src/screens/x.tsx', `const a = <label className="hover:bg-accent md:w-72 has-[[data-state=checked]]:ring-2 aria-[current=page]:bg-accent group-data-[collapsible=icon]:hidden data-vertical:h-4 whitespace-normal!" />;`);
     const sheet = src('apps/web/src/app.css', `/*
  * a comment
  */
 @import "vaults-ui/styles.css";
+@source not "./**/*.test.*";
 
 @source "./";
 `);
@@ -387,6 +388,26 @@ describe('state variants', () => {
   it('finds every bare data- variant a class uses', () => {
     const f = src('x.tsx', "cn('data-open:a group-data-foo/button:bg-muted peer-data-checked:b data-state-open:c data-[side=top]:d has-data-[icon=x]:e')");
     expect(stateVariantsOf(f)).toEqual(['data-checked', 'data-foo', 'data-open', 'data-state-open']);
+  });
+
+  /* RED WHEN: a bracketed state, grouped, named or after another variant, is missed, or an attribute that is not the state is read as one. */
+  it('finds every bracketed state a class uses', () => {
+    const f = src('x.tsx', "cn('data-[state=on]:a group-data-[state=open]/button:b md:peer-data-[state=collapsed]:c data-[side=top]:d data-open:e has-data-[state=checked]:f')");
+    expect(bracketedStatesOf(f)).toEqual(['on', 'open', 'collapsed', 'checked']);
+  });
+
+  /* RED WHEN: a bracketed state no primitive the file imports sets is let through, or one the primitive or the file itself sets is refused. */
+  it('refuses a bracketed state nothing the file draws sets', () => {
+    const tabs = src('packages/ui/src/components/x.tsx', `import { Tabs as TabsPrimitive } from "radix-ui"
+      const a = <TabsPrimitive.Trigger className="data-[state=active]:a data-[state=on]:b data-[state=open]:c" />`);
+    expect(statesNothingSets(tabs)).toEqual(['on', 'open']);
+    const tooltip = src('packages/ui/src/components/y.tsx', `import { Slot, Tooltip as TooltipPrimitive } from "radix-ui"
+      const a = <TooltipPrimitive.Content className="data-[state=delayed-open]:a data-[state=closed]:b" />`);
+    expect(statesNothingSets(tooltip)).toEqual([]);
+    const none = src('packages/ui/src/components/z.tsx', `const a = <div className="data-[state=open]:a" />`);
+    expect(statesNothingSets(none)).toEqual(['open']);
+    const own = src('packages/ui/src/components/sidebar.tsx', `const a = <div data-state="collapsed" className="peer-data-[state=collapsed]:a" />`);
+    expect(statesNothingSets(own)).toEqual([]);
   });
 });
 
