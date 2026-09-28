@@ -24,37 +24,40 @@ const inKit = (ui: React.ReactNode, pick = 'en') => render(<KitProvider language
 describe('an amount', () => {
   /* RED WHEN: the figure loses a digit, is not written left to right, or a private amount carries the Public pill. */
   it('is exact, left to right, and private with no pill', () => {
-    const { container } = inKit(<Amount value={12_345_678_901_234_567_890n} decimals={6} code="USDC" visibility="private" />);
+    const { container } = inKit(<Amount value={12_345_678_901_234_567_890n} decimals={6} code="USDC" visibility="private" kind="payment" />);
     const figure = container.querySelector('[data-slot=amount] > span[dir=ltr]');
     expect(figure?.textContent).toBe('12,345,678,901,234.567890 USDC');
     expect(container.querySelector('[data-slot=public-pill]')).toBeNull();
   });
 
-  /* RED WHEN: a public amount has no Public pill, the pill's words are not the English file's, or its explanation cannot be opened by a tap. */
+  /* RED WHEN: a public amount has no Public pill, the pill's words are not the English file's, its explanation cannot be opened by a tap, or a payment's pill says the balance wording. */
   it('carries the Public pill when public, and explains it on a tap', async () => {
-    const { container } = inKit(<Amount value={1n} decimals={0} code="NIGHT" visibility="public" />);
+    const { container } = inKit(<Amount value={1n} decimals={0} code="NIGHT" visibility="public" kind="payment" />);
     const pill = container.querySelector('[data-slot=public-pill]') as HTMLElement;
     expect(pill.textContent).toBe(EN['kit.public.label']);
-    expect(screen.queryAllByText(EN['kit.public.explanation']!)).toEqual([]);
+    expect(screen.queryAllByText(EN['kit.public.explanation.payment']!)).toEqual([]);
     await act(async () => { fireEvent.click(pill); });
-    expect(screen.queryAllByText(EN['kit.public.explanation']!).length).toBeGreaterThan(0);
+    expect(screen.queryAllByText(EN['kit.public.explanation.payment']!).length).toBeGreaterThan(0);
+    expect(screen.queryAllByText(EN['kit.public.explanation.balance']!)).toEqual([]);
   });
 
   /* RED WHEN: the language is not the one shown, so every language gets English grouping. */
   it('is written in the language shown', () => {
-    const { container } = inKit(<Amount value={1_234_500n} decimals={2} code="EUR" visibility="private" />, 'de');
+    const { container } = inKit(<Amount value={1_234_500n} decimals={2} code="EUR" visibility="private" kind="payment" />, 'de');
     expect(container.querySelector('span[dir=ltr]')?.textContent).toBe('12.345,00 EUR');
   });
 
-  /* RED WHEN: an amount with no visibility, or another word for it, can be shown. */
+  /* RED WHEN: an amount with no visibility, or another word for it, can be shown, or a public amount can be shown without saying whether it is a payment or a balance. */
   it('cannot be shown without saying private or public', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     // @ts-expect-error visibility is required, with no default
-    expect(() => inKit(<Amount value={1n} decimals={0} code="USDC" />)).toThrow(/private or public, and this one is undefined/);
+    expect(() => inKit(<Amount value={1n} decimals={0} code="USDC" kind="payment" />)).toThrow(/private or public, and this one is undefined/);
     // @ts-expect-error visibility is private or public
-    expect(() => inKit(<Amount value={1n} decimals={0} code="USDC" visibility="hidden" />)).toThrow(/this one is hidden/);
+    expect(() => inKit(<Amount value={1n} decimals={0} code="USDC" visibility="hidden" kind="payment" />)).toThrow(/this one is hidden/);
     // @ts-expect-error an amount is a bigint, never a number
-    expect(() => inKit(<Amount value={1} decimals={0} code="USDC" visibility="private" />)).toThrow(/bigint/);
+    expect(() => inKit(<Amount value={1} decimals={0} code="USDC" visibility="private" kind="payment" />)).toThrow(/bigint/);
+    // @ts-expect-error whether it is a payment or a balance is required, so the pill never guesses what public means
+    expect(() => inKit(<Amount value={1n} decimals={0} code="USDC" visibility="public" />)).toThrow(/payment or a balance, and this one is undefined/);
     vi.restoreAllMocks();
   });
 });
@@ -68,6 +71,19 @@ describe('a balance', () => {
     expect(container.textContent).not.toContain('1.75');
     expect([...container.querySelectorAll('dt')].map((d) => d.textContent)).toEqual([EN['kit.balance.private'], EN['kit.balance.public']]);
     expect(amounts.map((a) => a.querySelector('[data-slot=public-pill]') !== null)).toEqual([false, true]);
+  });
+
+  /*
+   * RED WHEN: the public line of a balance explains itself as a payment. A
+   * balance's public amount says anyone can see the account it is in; a
+   * payment's, who received it.
+   */
+  it('explains its public line as a balance, not as a payment', async () => {
+    const { container } = inKit(<Balance private={{ value: 1n, decimals: 0, code: 'USDC' }} public={{ value: 2n, decimals: 0, code: 'USDC' }} />);
+    await act(async () => { fireEvent.click(container.querySelector('[data-slot=public-pill]') as HTMLElement); });
+    expect(EN['kit.public.explanation.balance']).not.toBe(EN['kit.public.explanation.payment']);
+    expect(screen.queryAllByText(EN['kit.public.explanation.balance']!).length).toBeGreaterThan(0);
+    expect(screen.queryAllByText(EN['kit.public.explanation.payment']!)).toEqual([]);
   });
 
   /* RED WHEN: the balance grows a prop for a total. */

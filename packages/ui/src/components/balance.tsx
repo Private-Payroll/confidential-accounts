@@ -24,9 +24,9 @@ export function Balance({ private: held, public: shown, className }: BalanceProp
   return (
     <dl className={cn('grid grid-cols-[auto_1fr] items-center gap-x-4 gap-y-1 text-sm', className)} data-slot="balance">
       <dt className="text-muted-foreground">{t('kit.balance.private')}</dt>
-      <dd className="text-end"><Amount {...held} visibility="private" /></dd>
+      <dd className="text-end"><Amount {...held} visibility="private" kind="balance" /></dd>
       <dt className="text-muted-foreground">{t('kit.balance.public')}</dt>
-      <dd className="text-end"><Amount {...shown} visibility="public" /></dd>
+      <dd className="text-end"><Amount {...shown} visibility="public" kind="balance" /></dd>
     </dl>
   );
 }

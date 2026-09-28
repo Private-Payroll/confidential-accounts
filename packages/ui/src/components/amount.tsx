@@ -1,7 +1,7 @@
 import { cn } from 'vaults-ui/lib/utils';
 import { formatTokenAmount, type TokenAmount } from 'vaults-ui/format/token-amount';
 import { useLanguage } from 'vaults-ui/i18n/provider';
-import { PublicPill } from 'vaults-ui/components/public-pill';
+import { PublicPill, type AmountKind } from 'vaults-ui/components/public-pill';
 
 /** Whether anyone can look an amount up. Read from how the money is held or paid, never from a setting. */
 export type Visibility = 'private' | 'public';
@@ -15,6 +15,8 @@ export interface AmountProps {
   code: string;
   /** Required, with no default: an amount nobody marked cannot be shown. */
   visibility: Visibility;
+  /** Whether it is a payment or a balance, which says what the Public pill explains. */
+  kind: AmountKind;
   className?: string;
 }
 
@@ -24,7 +26,7 @@ export interface AmountProps {
  * figures and the code are always written left to right, whatever the
  * language's direction.
  */
-export function Amount({ value, decimals, code, visibility, className }: AmountProps) {
+export function Amount({ value, decimals, code, visibility, kind, className }: AmountProps) {
   if (visibility !== 'private' && visibility !== 'public') {
     throw new Error(`an amount is shown as private or public, and this one is ${String(visibility)}`);
   }
@@ -32,7 +34,7 @@ export function Amount({ value, decimals, code, visibility, className }: AmountP
   return (
     <span className={cn('inline-flex items-center gap-1.5', className)} data-slot="amount" data-visibility={visibility}>
       <span dir="ltr">{formatTokenAmount(value, decimals, language)}{' '}{code}</span>
-      {visibility === 'public' ? <PublicPill /> : null}
+      {visibility === 'public' ? <PublicPill kind={kind} /> : null}
     </span>
   );
 }

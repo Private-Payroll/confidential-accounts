@@ -1,10 +1,12 @@
 {
   "kit.public.label": "Public",
-  "kit.public.explanation": "Anyone can look up this amount and who received it.",
+  "kit.public.explanation.payment": "Anyone can look up this amount and who received it.",
+  "kit.public.explanation.balance": "Anyone can look up this amount and the account it is in.",
   "kit.balance.private": "Private",
   "kit.balance.public": "Public",
   "kit.comingSoon.label": "Coming soon",
   "kit.confirm.title": "Confirm in your account",
   "kit.confirm.confirm": "Confirm",
-  "kit.confirm.cancel": "Cancel"
+  "kit.confirm.cancel": "Cancel",
+  "app.title": "Private Vaults"
 }

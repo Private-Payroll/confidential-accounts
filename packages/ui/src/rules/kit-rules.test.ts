@@ -3,8 +3,9 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { SEED_ASSETS } from '../../../../src/core/assets.js';
 import {
-  amountsOutsideTheComponent, colourValues, declaredBy, filesUnder, hasPhrase, isShippingCode, keysAskedFor,
-  paletteClasses, physicalClasses, secondCn, stateVariantsOf, undeclaredImports, wordingInCode, type Source,
+  amountsOutsideTheComponent, arbitraryValues, CODES, colourValues, declaredBy, filesUnder, hasPhrase, inlineStyles, isShippingCode,
+  keysAskedFor, paletteClasses, physicalClasses, secondCn, stateVariantsOf, stringWordsOf, undeclaredImports, wordingCensus, wordingInCode,
+  type Source,
 } from './source-rules.test-support.js';
 
 /*
@@ -17,7 +18,7 @@ const read = (p: string): Source => ({ path: p, text: readFileSync(ROOT + p, 'ut
 const CODE = filesUnder(ROOT, 'packages/ui/src', isShippingCode).map(read);
 const STYLES = read('packages/ui/src/styles.css');
 const ENGLISH = JSON.parse(readFileSync(ROOT + 'apps/web/src/locales/en.json', 'utf8')) as Record<string, string>;
-const CODES = new Set(SEED_ASSETS.map((a) => a.code));
+const ASSET_CODES = new Set(SEED_ASSETS.map((a) => a.code));
 
 describe('the kit is read', () => {
   /* RED WHEN: the walk reads nothing, so every rule below passes over an empty list. */
@@ -26,40 +27,61 @@ describe('the kit is read', () => {
     expect(CODE.map((f) => f.path)).toContain('packages/ui/src/format/token-amount.ts');
     expect(CODE.every((f) => !/\.test(-support)?\./.test(f.path))).toBe(true);
   });
+
+  /* RED WHEN: a rule that refuses by default reads nothing, so it passes over the kit because it saw nothing to refuse. */
+  it('reads every string, class word and conversion the refusing rules look at', () => {
+    const census = wordingCensus(CODE, ASSET_CODES);
+    expect(census.read).toBeGreaterThan(150);
+    expect(census.byPosition.class).toBeGreaterThan(20);
+    expect(census.byPosition['translation key']).toBeGreaterThan(5);
+    const words = CODE.flatMap(stringWordsOf).map((w) => w.word);
+    expect(words.length).toBeGreaterThan(300);
+    expect(words).toEqual(expect.arrayContaining(['bg-primary', 'text-muted-foreground', 'rounded-[min(var(--radius-md),10px)]']));
+    expect(stringWordsOf(STYLES).map((w) => w.word)).toEqual(expect.arrayContaining(['bg-background', 'text-foreground']));
+    /* With no homes, the amount rule finds the conversions the homes make. */
+    expect(new Set(amountsOutsideTheComponent(CODE, {}).map((b) => b.path))).toEqual(new Set(['packages/ui/src/components/amount.tsx', 'packages/ui/src/format/token-amount.ts']));
+  });
+
+  /* RED WHEN: an entry of CODES names a declaration that is not there, so it lets through whatever is written under that name later. */
+  it('names, in CODES, only declarations the kit has', () => {
+    expect(wordingCensus(CODE, ASSET_CODES).codes).toEqual(Object.keys(CODES).sort());
+  });
 });
 
 describe('every rule, over the kit', () => {
   /* RED WHEN: a kit file imports a package the kit's package.json does not declare. */
-  it('declares every package it imports', () => {
-    expect(undeclaredImports(CODE, declaredBy(readFileSync(ROOT + 'packages/ui/package.json', 'utf8')))).toEqual([]);
+  it('declares every package it imports', async () => {
+    expect(await undeclaredImports(CODE, declaredBy(readFileSync(ROOT + 'packages/ui/package.json', 'utf8')))).toEqual([]);
   });
 
   /* RED WHEN: a second cn is declared, or the cn package or what cn is made of is imported anywhere but the kit's cn. */
-  it('has one cn', () => {
-    expect(secondCn(CODE, 'packages/ui/src/lib/utils.ts')).toEqual([]);
+  it('has one cn', async () => {
+    expect(await secondCn(CODE, 'packages/ui/src/lib/utils.ts')).toEqual([]);
     const components = JSON.parse(readFileSync(ROOT + 'packages/ui/components.json', 'utf8')) as { aliases: { utils: string } };
     expect(components.aliases.utils.replace(/^vaults-ui\//, 'packages/ui/src/') + '.ts').toBe('packages/ui/src/lib/utils.ts');
   });
 
-  /* RED WHEN: a colour value appears in a component or in the stylesheet outside the theme blocks. */
+  /* RED WHEN: a colour value, a palette colour or an arbitrary value that is not a token is written in any string of a component or in the stylesheet, or a colour is set inline. */
   it('has no colour outside the theme', () => {
     expect(colourValues([...CODE, STYLES])).toEqual([]);
-    expect(paletteClasses(CODE)).toEqual([]);
+    expect(paletteClasses([...CODE, STYLES])).toEqual([]);
+    expect(arbitraryValues([...CODE, STYLES])).toEqual([]);
+    expect(inlineStyles([...CODE, STYLES])).toEqual([]);
   });
 
-  /* RED WHEN: a component spaces or aligns by left and right. */
+  /* RED WHEN: a component or the stylesheet spaces, aligns or places by left and right, in a class or any other string. */
   it('has no left or right', () => {
-    expect(physicalClasses(CODE)).toEqual([]);
+    expect(physicalClasses([...CODE, STYLES])).toEqual([]);
   });
 
-  /* RED WHEN: a component shows a word that does not come from a language file. */
+  /* RED WHEN: a string with a letter stands in the kit anywhere not named as a position. */
   it('shows no wording of its own', () => {
-    expect(wordingInCode(CODE, CODES)).toEqual([]);
+    expect(wordingInCode(CODE, ASSET_CODES)).toEqual([]);
   });
 
-  /* RED WHEN: a kit file turns an amount into text itself instead of through the amount component. */
+  /* RED WHEN: a kit file turns any value into text or a number outside the amount component and its helper. */
   it('turns an amount into text only in the amount component', () => {
-    expect(amountsOutsideTheComponent(CODE, ['packages/ui/src/components/amount.tsx', 'packages/ui/src/format/token-amount.ts', 'packages/ui/src/format/intl.ts'])).toEqual([]);
+    expect(amountsOutsideTheComponent(CODE)).toEqual([]);
   });
 
   /* RED WHEN: the kit asks for a key the English file lacks, a key outside kit., or a key built at run time. */

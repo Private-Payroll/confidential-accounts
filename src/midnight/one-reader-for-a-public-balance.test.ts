@@ -16,6 +16,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parseSync } from 'vite';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 /* Every tree that ships code: the product, its operator doors, the wallet and the shared library. */
@@ -37,8 +38,39 @@ const codeOf = (text: string): string => text
   .replace(/^\s*\/\/.*$/gmu, '')
   .replace(/\s\/\/\s.*$/gmu, '');
 
+/**
+ * A file with the text of every string blanked, found by the bundler's own
+ * parser, so a phrase key (`t('kit.balance.public')`) or a sentence is not read
+ * as a read of a property. Kept: the code inside a template's `${...}`, and a
+ * string that names a property, as a key in brackets (`state['balance']`) or in
+ * an object or a destructuring (`{ 'balance': b }`), because each of those is a
+ * read. Blanked to spaces of the same length, so nothing after it moves.
+ */
+function withoutStrings(file: string, text: string): string {
+  const parsed = parseSync(file.replace(/\.(m?ts|mjs)$/u, '.ts'), text);
+  if (parsed.errors.length > 0) throw new Error(`${file} did not parse: ${parsed.errors[0]!.message}`);
+  const spans: [number, number][] = [];
+  const visit = (n: unknown, parent: { type?: unknown; [k: string]: unknown } | null): void => {
+    if (Array.isArray(n)) { n.forEach((x) => visit(x, parent)); return; }
+    if (n === null || typeof n !== 'object') return;
+    const node = n as { type?: unknown; value?: unknown; start: number; end: number };
+    const namesAProperty = (parent?.type === 'MemberExpression' && parent.property === node) || (parent?.type === 'Property' && parent.key === node);
+    if (node.type === 'Literal' && typeof node.value === 'string' && !namesAProperty) spans.push([node.start, node.end]);
+    if (node.type === 'TemplateElement') spans.push([node.start, node.end]);
+    for (const [k, v] of Object.entries(node)) if (k !== 'type' && v !== null && typeof v === 'object') visit(v, typeof node.type === 'string' ? node as never : parent);
+  };
+  visit(parsed.program, null);
+  let out = text;
+  /* Each UTF-16 unit, not each character, becomes a space, so a character outside the basic plane keeps its length. */
+  for (const [a, b] of spans) out = out.slice(0, a) + out.slice(a, b).replace(/[^\n]/g, ' ') + out.slice(b);
+  return out;
+}
+
 const FILES = WALKED.flatMap((d) => sourceFiles(join(ROOT, d)))
-  .map((path) => ({ file: relative(ROOT, path).split('\\').join('/'), code: codeOf(readFileSync(path, 'utf8')) }));
+  .map((path) => {
+    const file = relative(ROOT, path).split('\\').join('/');
+    return { file, code: codeOf(withoutStrings(file, readFileSync(path, 'utf8'))) };
+  });
 
 /** The indexer's balance query, by name. */
 const BALANCE_QUERY = /\bqueryUnshieldedBalances\b/u;
@@ -62,9 +94,7 @@ const count = (pattern: RegExp) => Object.fromEntries(FILES
 
 /** What the broad read above finds that is not a walk over a contract state's balance, each with why. */
 const NOT_A_CONTRACT_BALANCE: Record<string, { count: number; why: string }> = {
-  'packages/ui/src/components/balance.tsx': { count: 2, why: 'two phrase keys in the language file, kit.balance.private and kit.balance.public' },
   'scripts/chain-probe.ts': { count: 2, why: 'a phase code named for the wallet\'s balancing step' },
-  'scripts/open-vault-pool.ts': { count: 1, why: 'a sentence printed to the operator' },
   'scripts/pay-from-vault.ts': { count: 1, why: 'a row of the vault client\'s own list, printed' },
   'scripts/run-preview.ts': { count: 2, why: 'a phase code named for the wallet\'s balancing step' },
   'src/core/ledger.ts': { count: 2, why: 'a proof\'s witness, not a contract state' },
@@ -77,17 +107,24 @@ describe('the census can see what it looks for', () => {
     /* RED WHEN a pattern is loosened into one that finds nothing, which would pass every file below vacuously. */
     expect(BALANCE_QUERY.test('await provider.queryUnshieldedBalances(vault)')).toBe(true);
     const reads = (code: string) => (code.match(BALANCE_READ) ?? []).length;
+    /* Each is read the way the files below are read: strings blanked, then comments. */
     for (const spelled of [
-      'if (state.balance instanceof Map)', 'const n = state.balance.get(key)', 'state.balance?.get(k)',
+      'if (state.balance instanceof Map) {}', 'const n = state.balance.get(key)', 'state.balance?.get(k)',
       'for (const [k] of (state as any).balance) void k;', 'const rows = [...state!.balance]',
       'const { balance } = state;', 'const { data, balance: b } = state;', "state['balance'].get(k)",
-      'for (const e of getState().balance) {}', 'Object.fromEntries((await ask(v)).balance)',
-    ]) expect(reads(spelled), spelled).toBe(1);
+      "const { 'balance': b } = state;", 'for (const e of getState().balance) {}', 'Object.fromEntries((await ask(v)).balance)',
+    ]) expect(reads(codeOf(withoutStrings('x.ts', spelled))), spelled).toBe(1);
     /* And a vault client's own balance call is not a read of a state's balance. */
     expect(reads('before = await ledger.balance(vault, colour);')).toBe(0);
     expect(READER_NAMED.test('return publicHoldingsOf(state)')).toBe(true);
     expect(READER_NAMED.test('import { publicHoldingsOf as read } from x')).toBe(true);
     expect(codeOf('/* publicHoldingsOf(state) */\n// queryUnshieldedBalances()\nconst a = 1;')).not.toMatch(/publicHoldingsOf|queryUnshieldedBalances/u);
+    /* A phrase key or a sentence is not a read; a read inside a template's value still is. */
+    const kept = withoutStrings('x.tsx', "t('kit.balance.public'); say(\"the .balance\"); `${state.balance} and .balance`;");
+    expect(reads(kept)).toBe(1);
+    expect(kept).toContain('state.balance');
+    /* And a character outside the basic plane in a string moves nothing after it. */
+    expect(withoutStrings('x.ts', "const a = '\u{1F600}'; state.balance.get(k);")).toContain('state.balance.get(k);');
     /* And it walked the tree: the reader and its two callers are among what it read. */
     expect(FILES.map((f) => f.file)).toEqual(expect.arrayContaining([
       'src/midnight/public-balance.ts', 'src/midnight/vault-ledger.ts', 'src/server/company-vaults.ts',
