@@ -1,4 +1,4 @@
-import { api } from 'vaults-web-shared/keyring.js';
+import { AnotherPersonError, api, AuthError } from 'vaults-web-shared/keyring.js';
 import { keyringFor } from './keyring-person.js';
 
 /*
@@ -32,12 +32,16 @@ export const HANDOVER = {
   heldByOtherKeys: 'held-by-other-keys',
   /** The chain could not be read. */
   unreadable: 'unreadable',
-  /** The service could not be asked, or the person is no longer signed in here. */
+  /** The service could not be asked. */
   unreachable: 'unreachable',
+  /** The person is no longer signed in here. */
+  notSignedIn: 'not-signed-in',
+  /** Somebody else has signed in on this browser since. */
+  anotherPerson: 'another-person',
 } as const;
 
 export type Handover =
-  | { of: typeof HANDOVER.notOnChain | typeof HANDOVER.held | typeof HANDOVER.waiting | typeof HANDOVER.heldByOtherKeys | typeof HANDOVER.unreadable | typeof HANDOVER.unreachable }
+  | { of: typeof HANDOVER.notOnChain | typeof HANDOVER.held | typeof HANDOVER.waiting | typeof HANDOVER.heldByOtherKeys | typeof HANDOVER.unreadable | typeof HANDOVER.unreachable | typeof HANDOVER.notSignedIn | typeof HANDOVER.anotherPerson }
   | { of: typeof HANDOVER.vaultKeysMissing; signers: number }
   | { of: typeof HANDOVER.tooFewApprovals; signers: number; needed: number }
   | { of: typeof HANDOVER.ready; everySignerNeeded: boolean; signers: number }
@@ -87,14 +91,38 @@ export function handoverFrom(a: Authority, owed: ChangeOwed | null): Handover {
   return { of: HANDOVER.heldByOtherKeys };
 }
 
-/** WHERE THE COMPANY `companyId` STANDS, for the person `personId`. */
+/**
+ * Where a failure to read leaves the company, told apart by its kind and
+ * never by its words: the person signed out, or somebody else signed in, in
+ * this browser; the service not reached at all; or the service answering
+ * with a refusal, which is a reading that did not happen.
+ */
+export function failureOf(e: unknown): Handover {
+  if (e instanceof AnotherPersonError) return { of: HANDOVER.anotherPerson };
+  if (e instanceof AuthError) return { of: HANDOVER.notSignedIn };
+  if (e instanceof TypeError) return { of: HANDOVER.unreachable };
+  return { of: HANDOVER.unreadable };
+}
+
+/**
+ * WHERE THE COMPANY `companyId` STANDS, for the person `personId`. The two
+ * reads are asked first and their answer read after, so an answer of a shape
+ * this does not know is unreadable, never taken for the service not being
+ * reached.
+ */
 export async function readHandover(personId: string, companyId: string): Promise<Handover> {
+  let authority: Authority;
+  let owed: ChangeOwed | null;
   try {
-    if (!(await keyringFor(personId))) return { of: HANDOVER.unreachable };
-    const authority = await api(companyRoute(companyId, SERVICE.authority)) as Authority;
-    const owed = authority.change.possible ? await api(companyRoute(companyId, SERVICE.change)) as ChangeOwed : null;
+    if (!(await keyringFor(personId))) return { of: HANDOVER.notSignedIn };
+    authority = await api(companyRoute(companyId, SERVICE.authority)) as Authority;
+    owed = authority?.change?.possible === true ? await api(companyRoute(companyId, SERVICE.change)) as ChangeOwed : null;
+  } catch (e) {
+    return failureOf(e);
+  }
+  try {
     return handoverFrom(authority, owed);
   } catch {
-    return { of: HANDOVER.unreachable };
+    return { of: HANDOVER.unreadable };
   }
 }

@@ -359,13 +359,17 @@ const inside = (path: string, dir: string): boolean => (path + sep).toLowerCase(
  * is only a question and is let through. `root` is the repository.
  *
  * It also names a page or file loaded by an element's address (the elements
- * and attributes in `LOADS_BY_ADDRESS`, written in JSX, made by
+ * and attributes in `LOADS_BY_ADDRESS`, written in JSX or spread onto one of
+ * those elements, made by
  * `document.createElement`, or `new Image()`), a module imported from another
  * server (`import('https://...')`), the page moved by `location` (written to,
  * or told to `assign`, `replace` or `reload`; reading where the page is stays
  * allowed), and any wallet on the page by the names in `WALLET_GLOBALS`.
  * Whoever meets a breach is told the way through: `THE_WAY_THROUGH`.
  */
+/** Where the kit's components are, whose elements take the props their callers give them. */
+const KIT_COMPONENTS = 'packages/ui/src/components/';
+
 export async function waysIntoSharedCode(files: readonly Source[], root: string, own: string, adapters: string | null): Promise<Breach[]> {
   const ownDir = resolve(root, own);
   const out: Breach[] = [];
@@ -411,6 +415,23 @@ export async function waysIntoSharedCode(files: readonly Source[], root: string,
         const element = nameOf(node.name);
         for (const a of (node.attributes as Node[]) ?? []) {
           if (a.type === 'JSXAttribute' && (LOADS_BY_ADDRESS[element] ?? []).includes(nameOf(a.name))) breach(lineOf(f.text, a.start), `<${element} ${nameOf(a.name)}>`);
+          /*
+           * A spread onto an element that loads by its address can carry the
+           * address: an object written in place is read for it, and anything
+           * else spread there (a name, a call) is refused, since what it holds
+           * cannot be read here.
+           */
+          /* The kit's own components pass their caller's props on to the element they draw; the caller, not the kit, writes what is in them. */
+          if (a.type === 'JSXSpreadAttribute' && element in LOADS_BY_ADDRESS && !f.path.startsWith(KIT_COMPONENTS)) {
+            const spread = unwrapped(a.argument as Node);
+            if (spread?.type !== 'ObjectExpression') breach(lineOf(f.text, a.start), `<${element} {...}>`);
+            else {
+              for (const k of (spread.properties as Node[]) ?? []) {
+                const key = k.type === 'Property' ? (literalText(k.key as Node) ?? ((k.key as Node).type === 'Identifier' && !k.computed ? nameOf(k.key) : null)) : null;
+                if (key === null || LOADS_BY_ADDRESS[element]!.includes(key)) breach(lineOf(f.text, k.start), `<${element} {...${key ?? ''}}>`);
+              }
+            }
+          }
         }
       }
       if (node.type === 'CallExpression' && nameOf((node.callee as Node).property ?? node.callee) === 'createElement') {
@@ -983,6 +1004,20 @@ export const CODES: Readonly<Record<string, string>> = {
   'apps/web/src/adapters/create-company.ts#FIRST_SIGNER': 'the role of the person creating a company, on its roster, a word of the service\'s protocol',
   'apps/web/src/actions/hand-over.tsx#ASKING': 'which confirmation is being asked for, compared by the code',
   'apps/web/src/actions/hand-over.tsx#DID': 'what the person did on the step, compared by the code and set as a mark tests find it by',
+  'apps/web/src/adapters/company-records.ts#SERVICE': 'the service\'s addresses, the purposes a record is sealed for, and the words of its answers, sent and compared, never shown',
+  'apps/web/src/adapters/reads.ts#OPENED': 'whether a company\'s records opened, one of a fixed set a screen turns into its own phrase',
+  'apps/web/src/adapters/company-records.ts#PAID': 'how a payment is made, one of a fixed set a screen turns into its own phrase',
+  'apps/web/src/adapters/company-records.ts#STANDING': 'where a person on the payroll stands, one of a fixed set a screen turns into its own phrase',
+  'apps/web/src/adapters/company-records.ts#VAULT': 'where a vault stands, the service\'s own words for it compared and a screen\'s phrase chosen by them',
+  'apps/web/src/adapters/company-records.ts#INVITED': 'who an invitation is for, the service\'s words compared, and a screen\'s phrase chosen by them',
+  'apps/web/src/adapters/reads.ts#READ': 'what a read is, compared by the code',
+  'apps/web/src/adapters/kept-skips.ts#KEPT': 'where the skipped setup steps are kept in the tab\'s storage',
+  'apps/web/src/records/parts.tsx#DAY': 'the style a day is written in, which the browser\'s date format turns into the person\'s language',
+  'apps/web/src/records/parts.tsx#MONTH': 'the style a run\'s month is written in, and the time zone it is read in, which the browser\'s date format turns into the person\'s language',
+  'apps/web/src/records/parts.tsx#KIND_SAYS': 'each kind of proposal by the word the service\'s record names it by; what it does is asked for by key',
+  'apps/web/src/screens/proposals.tsx#TABS': 'the ids of the proposals list\'s tabs, compared by the code and set as a mark tests find them by',
+  'apps/web/src/screens/invitations.tsx#TABS': 'the ids of the invitations page\'s tabs, compared by the code and set as a mark tests find them by',
+  'apps/web/src/screens/vault.tsx#PUBLIC': 'where the public money shown stands, compared by the code and set as a mark tests find it by',
 };
 
 /** The part of `CODES` naming declarations in files under `dir`. Each package's check holds its own entries to declarations it has. */

@@ -11,6 +11,7 @@ import { Amount } from './amount.js';
 import { Balance } from './balance.js';
 import { ComingSoon } from './coming-soon.js';
 import { ConfirmInYourAccount } from './confirm-in-your-account.js';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from './tabs.js';
 
 afterEach(cleanup);
 
@@ -191,5 +192,33 @@ describe('the confirm step', () => {
     expect([onConfirm.mock.calls.length, onCancel.mock.calls.length]).toEqual([1, 1]);
     rerender(<KitProvider languages={LANGUAGES} pick="en"><ConfirmInYourAccount summary={summary} onConfirm={onConfirm} onCancel={onCancel} busy /></KitProvider>);
     for (const b of screen.getAllByRole('button')) expect((b as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe('the tabs across the top of a page', () => {
+  /*
+   * RED WHEN: the tabs are not a tab list the browser reads as one, the tab
+   * shown is not marked, pressing a tab or an arrow key does not move to it,
+   * or only the shown tab's panel is on the page.
+   */
+  it('are one tab list, mark the tab shown, and move by press and by arrow key', async () => {
+    const { container } = inKit(
+      <Tabs defaultValue="a">
+        <TabsList><TabsTrigger value="a">A</TabsTrigger><TabsTrigger value="b">B</TabsTrigger></TabsList>
+        <TabsContent value="a">first</TabsContent><TabsContent value="b">second</TabsContent>
+      </Tabs>,
+    );
+    const list = container.querySelector('[data-slot=tabs-list]') as HTMLElement;
+    expect(list.getAttribute('role')).toBe('tablist');
+    const [a, b] = [...list.querySelectorAll('[data-slot=tabs-trigger]')] as HTMLElement[];
+    expect([a!.getAttribute('aria-selected'), b!.getAttribute('aria-selected')]).toEqual(['true', 'false']);
+    expect(container.textContent).toContain('first');
+    expect(container.textContent).not.toContain('second');
+    await act(async () => { fireEvent.mouseDown(b!, { button: 0 }); });
+    expect(b!.getAttribute('aria-selected')).toBe('true');
+    expect(container.textContent).toContain('second');
+    b!.focus();
+    await act(async () => { fireEvent.keyDown(b!, { key: 'ArrowLeft' }); await new Promise((r) => setTimeout(r, 0)); });
+    expect(document.activeElement).toBe(a);
   });
 });

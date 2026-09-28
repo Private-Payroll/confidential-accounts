@@ -72,6 +72,7 @@ beforeEach(() => {
   state.handover = { of: 'vault-keys-missing', signers: 1 }; state.acted = []; state.waiting = null; state.created = { of: 'done', companyId: 'c-new' };
   /* What a tab remembers between showings of the wizard starts empty for every test. */
   for (const c of [null, 'c-1']) skippedFor(c).clear();
+  window.sessionStorage.clear();
   takeAsked();
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
@@ -134,6 +135,34 @@ describe('skipping', () => {
     expect(q(container, '[data-current-step]')!.getAttribute('data-current-step')).toBe(STEP.signers);
     await act(async () => { fireEvent.click(row); await settle(); });
     expect(q(container, '[data-current-step]')!.getAttribute('data-current-step')).toBe(STEP.createCompany);
+  });
+
+  /*
+   * RED WHEN: a skipped step is forgotten when the tab reloads (the skip kept
+   * only in the page's memory), is kept under another company, or a skip
+   * kept for a step no longer in the list is read back as a step.
+   */
+  it('keeps a skipped step through a reload of the tab, for its own company', async () => {
+    const { container } = await draw(<Setup />, sessionWith({ company: 'c-1' }));
+    await act(async () => { fireEvent.click(q(container, '[data-action=skip]')!); await settle(); });
+    expect(q(container, `[data-mark=${STEP.signers}]`)!.getAttribute('data-standing')).toBe('skipped');
+    cleanup();
+    /* A reload: the modules start again, and read only what the tab kept. */
+    vi.resetModules();
+    const fresh = await import('./standing.js');
+    expect([...fresh.skippedFor('c-1')]).toEqual([STEP.signers]);
+    expect([...fresh.skippedFor(null)]).toEqual([]);
+    const [{ Setup: Reloaded }, ui, sessions, router] = await Promise.all([import('../screens/setup.js'), import('vaults-ui'), import('../session.js'), import('../router.js')]);
+    const again = render(
+      <ui.KitProvider languages={ui.languagesFrom({ './locales/en.json': EN })} pick="en">
+        <sessions.SessionProvider session={sessionWith({ company: 'c-1' })}><router.CurrentPageProvider id="setup"><Reloaded /></router.CurrentPageProvider></sessions.SessionProvider>
+      </ui.KitProvider>,
+    );
+    await act(settle);
+    expect(q(again.container, `[data-mark=${STEP.signers}]`)!.getAttribute('data-standing')).toBe('skipped');
+    expect(q(again.container, '[data-current-step]')!.getAttribute('data-current-step')).toBe(STEP.handOver);
+    window.sessionStorage.setItem('private-vaults.setup-skipped', JSON.stringify({ 'c-1': ['deposit', STEP.vault], '': 'not a list' }));
+    expect([...fresh.readSkips(window.sessionStorage).entries()].map(([c, v]) => [c, [...v]])).toEqual([['c-1', [STEP.vault]]]);
   });
 
   /* RED WHEN: a step done is not counted and marked as done, or Continue is offered on a step that is not done. */

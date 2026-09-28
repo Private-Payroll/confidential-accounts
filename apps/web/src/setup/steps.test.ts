@@ -40,9 +40,14 @@ const ACTS_FOR: Record<string, string> = {
 };
 
 describe('every step is in the list, and every entry is a step', () => {
-  /* RED WHEN: the list's steps, their order, or which are built changes without this test saying so: a step dropped, or a Coming soon step shown as built. */
-  it('has the steps, in order, and builds only creating the company and handing it over', () => {
-    expect(EVERY_STEP.map((s) => s.id)).toEqual([STEP.createCompany, STEP.signers, STEP.handOver, STEP.vault, STEP.deposit, STEP.people, STEP.payroll]);
+  /*
+   * RED WHEN: the list's steps, their order, or which are built changes without
+   * this test saying so: a step dropped, a Coming soon step shown as built, or
+   * an everyday action (depositing, running payroll) made a setup step again.
+   * The design's five steps, written out by hand.
+   */
+  it('has the design\'s five steps, in order, and builds only creating the company and handing it over', () => {
+    expect(EVERY_STEP.map((s) => s.id)).toEqual(['createCompany', 'signers', 'handOver', 'vault', 'people']);
     expect(EVERY_STEP.filter(isBuiltStep).map((s) => s.id)).toEqual([STEP.createCompany, STEP.handOver]);
     expect(Object.values(STEP).sort()).toEqual(Object.keys(SETUP_STEPS).sort());
   });
@@ -85,6 +90,22 @@ describe('a step and its page are one component', () => {
   });
 
   /*
+   * RED WHEN: a file names a module by a name built at run time (an import()
+   * of a template with a value, of a name, or of a sum), which the check above
+   * cannot read, so a copy of a step could reach an action's adapter unseen.
+   * Every module is named whole, so the check above reads every one.
+   */
+  it('names every module whole, so the check above reads each', () => {
+    const built = /\bimport\s*\(\s*(?!(['"])[^'"`$]*\1\s*\))/g;
+    const breaches = everyFile().flatMap((p) => [...read(p).matchAll(built)].map(() => p));
+    expect(breaches).toEqual([]);
+    /* The check reads what it is for: the list of pages names its screens whole, by import(). */
+    expect([...read('pages.ts').matchAll(/\bimport\s*\(\s*'\.\/screens\//g)].length).toBeGreaterThan(5);
+    const probe = "const a = import(`../adapters/${n}.js`); const b = import(name); const c = import('../adapters/' + n); const d = import('../x.js');";
+    expect([...probe.matchAll(built)].length).toBe(3);
+  });
+
+  /*
    * RED WHEN: a built page named by a step shows something other than that
    * step's component from actions/: a screen of its own, or a copy.
    */
@@ -95,7 +116,9 @@ describe('a step and its page are one component', () => {
       expect(Object.keys(PAGES), s.id).toContain(s.page);
       const page = PAGES[s.page] as Page;
       if (!isBuilt(page) || !isBuiltStep(s)) continue;
-      const screen = everyFile().find((p) => p.startsWith('screens/') && new RegExp(`export function ${page.shows.screen.name}\\b`).test(read(p)))!;
+      /* A screen loaded on demand is found by the name the list gives it. */
+      const name = (page.shows.screen as { screenName?: string }).screenName ?? page.shows.screen.name;
+      const screen = everyFile().find((p) => p.startsWith('screens/') && new RegExp(`export function ${name}\\b`).test(read(p)))!;
       expect(read(screen), s.id).toMatch(new RegExp(`import \\{[^}]*\\b${s.shows.action.name}\\b[^}]*\\} from '\\.\\./${ACTIONS}/`));
       checked.push(`${s.id} on ${s.page}`);
     }

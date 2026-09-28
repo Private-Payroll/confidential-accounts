@@ -8,7 +8,8 @@ import { HOME, VIEWS } from '../pages.js';
 import { go } from '../router.js';
 import { useSession } from '../session.js';
 import { STEP } from '../setup/step-ids.js';
-import { startSetupAt } from '../setup/steps.js';
+import { startSetupAt } from '../setup/asked.js';
+import { useCompanyRecords } from '../records/company-records.js';
 import { CompanyFacts, useCompanyWords } from './company-facts.js';
 import { SHORTCUT } from '../shortcuts.js';
 import { ShortcutKeys } from './shortcut-keys.js';
@@ -21,15 +22,16 @@ import { ShortcutKeys } from './shortcut-keys.js';
  *
  * NO LIST HERE IS RANKED BY MONEY, and none is ranked at all: a company is
  * shown where the service lists it. A company's name is sealed, and opens only
- * with the person's account, which is not asked here; until then each company
- * is shown by what the service lists of it, when it was made and how many of
- * its signers must approve, and its name is Coming soon. The last two anyone
- * can look up, and the list says so.
+ * with the keys saved for the person, which their account opens; each company
+ * is shown by its name once it is open, and always by what the service lists
+ * of it, when it was made and how many of its signers must approve. The last
+ * two anyone can look up, and the list says so.
  */
 export function CompanySwitcher({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const t = useText();
   const words = useCompanyWords();
   const { companies, company, chooseCompany, viewer } = useSession();
+  const { names } = useCompanyRecords();
   const { isMobile } = useSidebar();
   const { end } = usePopupSide();
   const shown = companies.find((c) => c.id === company) ?? null;
@@ -44,7 +46,7 @@ export function CompanySwitcher({ open, onOpenChange }: { open: boolean; onOpenC
                 <HugeiconsIcon icon={Building03Icon} strokeWidth={2} className="size-4" />
               </span>
               <span className="grid flex-1 text-start text-sm leading-tight">
-                <span className="truncate font-medium">{shown === null ? t('app.title') : words.made(shown)}</span>
+                <span className="truncate font-medium" data-shown-name={shown !== null && names.has(shown.id) ? true : undefined}>{shown === null ? t('app.title') : names.get(shown.id) ?? words.made(shown)}</span>
                 <span className="truncate text-xs text-muted-foreground">
                   {employee ? t('switcher.yourPay') : shown === null ? t('switcher.noCompany') : words.approvals(shown)}
                 </span>
@@ -69,16 +71,15 @@ export function CompanySwitcher({ open, onOpenChange }: { open: boolean; onOpenC
                     <span className="flex size-6 items-center justify-center rounded-md border">
                       <HugeiconsIcon icon={Building03Icon} strokeWidth={2} className="size-3.5" />
                     </span>
-                    <CompanyFacts company={c} />
+                    <CompanyFacts company={c} name={names.get(c.id) ?? null} />
                     {c.id === company ? <HugeiconsIcon icon={Tick02Icon} strokeWidth={2} className="size-4" /> : null}
                   </DropdownMenuItem>
                 ))}
                 {companies.length === 0 ? null : (
                   <>
-                    <div className="flex items-center justify-between gap-3 px-2 py-1.5 text-xs text-muted-foreground" data-company-names>
-                      <span>{t('switcher.names')}</span>
-                      <ComingSoon explanation={t('switcher.namesSoon')} />
-                    </div>
+                    {companies.every((c) => names.has(c.id)) ? null : (
+                      <p className="px-2 py-1.5 text-xs text-muted-foreground" data-company-names="locked">{t('switcher.namesLocked')}</p>
+                    )}
                     <p className="px-2 pb-1.5 text-xs text-muted-foreground" data-public-facts>{t('switcher.publicFacts')}</p>
                   </>
                 )}

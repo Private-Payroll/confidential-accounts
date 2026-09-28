@@ -5,6 +5,7 @@ import { go } from '../router.js';
 import { computerIsDark, MODES, themeFor } from '../preferences.js';
 import { useSession } from '../session.js';
 import { SHORTCUT, useShortcuts } from '../shortcuts.js';
+import { CompanyRecordsProvider } from '../records/company-records.js';
 import { AccountMenu } from './account-menu.js';
 import { CommandBar, CommandBarButton, type Command } from './command-bar.js';
 import { CompanySwitcher } from './company-switcher.js';
@@ -18,12 +19,16 @@ import { ViewBanner } from './view-banner.js';
  * the menu and the account menu down the start of the page, which fold to
  * icons; a bar across the top with the page's name and the command bar's
  * button; the page; and the right-hand panel, closed until a page opens it.
+ * The shown company's records are read once here, for every page and for the
+ * menu's counts and the switcher's names.
  */
 export function Shell({ current, children }: { current: PageId | null; children?: ReactNode }) {
   return (
     <SidebarProvider>
       <PanelProvider>
-        <Frame current={current}>{children}</Frame>
+        <CompanyRecordsProvider>
+          <Frame current={current}>{children}</Frame>
+        </CompanyRecordsProvider>
       </PanelProvider>
     </SidebarProvider>
   );

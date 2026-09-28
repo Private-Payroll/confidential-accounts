@@ -35,6 +35,8 @@ export { Label } from './components/label.js';
 export { RadioGroup, RadioGroupItem } from './components/radio-group.js';
 export { Separator } from './components/separator.js';
 export { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from './components/sheet.js';
+export { Skeleton } from './components/skeleton.js';
+export { Tabs, TabsContent, TabsList, TabsTrigger } from './components/tabs.js';
 export {
   Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarHeader, SidebarInset, SidebarMenu,
   SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarRail, SidebarTrigger, useSidebar,

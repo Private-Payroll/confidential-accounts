@@ -1,5 +1,6 @@
 import { HugeiconsIcon } from '@hugeicons/react';
-import { ComingSoon, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem, useText } from 'vaults-ui';
+import { Badge, ComingSoon, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem, useText } from 'vaults-ui';
+import { openRecords, useCompanyRecords } from '../records/company-records.js';
 import { EVERY_PAGE, isBuilt, MENU_GROUPS, mayOpen, outerOf, PAGES, type MenuGroup, type Page, type PageId, type Text } from '../pages.js';
 import { PageLink } from '../router.js';
 import { useSession } from '../session.js';
@@ -13,13 +14,16 @@ export function menuFor(viewer: Parameters<typeof mayOpen>[1]): { group: MenuGro
 
 /**
  * THE LEFT MENU'S PAGES, READ FROM THE ONE LIST. A page not built yet carries
- * the Coming soon pill after its name; folded to icons, each page's name is
- * shown when its icon is pointed at.
+ * the Coming soon pill after its name; a page whose entry counts something,
+ * such as the proposals waiting, carries the count once the shown company's
+ * records are read; folded to icons, each page's name is shown when its icon
+ * is pointed at.
  */
 export function Menu({ current }: { current: PageId | null }) {
   const t = useText();
   const { viewer } = useSession();
   const open = current === null ? null : (outerOf(PAGES[current] as Page) ?? current);
+  const records = openRecords(useCompanyRecords().company);
   return (
     <>
       {menuFor(viewer).map(({ group, pages }) => {
@@ -37,6 +41,7 @@ export function Menu({ current }: { current: PageId | null }) {
                         <span className="whitespace-normal!">{p.name(t)}</span>
                       </PageLink>
                     </SidebarMenuButton>
+                    {p.count === undefined || records === null ? null : <MenuCount count={p.count(records)} page={p.id} />}
                     {isBuilt(p) ? null : (
                       <div className="shrink-0 pe-1 group-data-[collapsible=icon]:hidden">
                         <ComingSoon explanation={(p.shows as { comingSoon: (t: Text) => string }).comingSoon(t)} />
@@ -50,5 +55,16 @@ export function Menu({ current }: { current: PageId | null }) {
         );
       })}
     </>
+  );
+}
+
+/** A count beside a page's name, with what it counts said to a reader of the page; nothing while it cannot be said, and nothing at none. */
+function MenuCount({ count, page }: { count: number | null; page: PageId }) {
+  const t = useText();
+  if (count === null || count === 0) return null;
+  return (
+    <div className="shrink-0 pe-1 group-data-[collapsible=icon]:hidden">
+      <Badge variant="secondary" aria-label={t('menu.count', { count })} data-count={page}>{count}</Badge>
+    </div>
   );
 }

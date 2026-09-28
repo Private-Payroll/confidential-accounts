@@ -170,6 +170,20 @@ describe('the one way into shared code', () => {
     expect(whats(await waysIntoSharedCode([onWindow], '/repo', OWN, LAYER))).toEqual([...wallets.map((w) => `window.${w}`), 'Audio']);
   });
 
+  /*
+   * RED WHEN: an address spread onto an element that loads by it is not read:
+   * written in place (`{...{ src: u }}`, a quoted key, a key worked out at run
+   * time), or spread from a name or a call whose contents cannot be read; or
+   * a spread with no address in it, or onto an element that loads nothing, is
+   * refused.
+   */
+  it('reads an address spread onto an element that loads by it', async () => {
+    const screen = src('apps/web/src/screens/s.tsx', `const a = <iframe {...{ src: u }} />; const b = <img {...{ 'srcSet': u }} />; const c = <script {...props} />;
+      const d = <link {...{ [k]: u }} />; const e = <form {...make()} />;
+      const f = <iframe {...{ title: 'x' }} />; const g = <span {...marks} />; const h = <div {...{ src: u }} />; console.log(a, b, c, d, e, f, g, h);`);
+    expect(whats(await waysIntoSharedCode([screen], '/repo', OWN, LAYER))).toEqual(['<iframe {...src}>', '<img {...srcSet}>', '<script {...}>', '<link {...}>', '<form {...}>']);
+  });
+
   /* RED WHEN: reading where the page is, a link to a page of the application, or the application's own history is refused as moving the page; or a name the file binds itself is taken for the browser's. */
   it('lets a screen read where the page is and link within the application', async () => {
     const screen = src('apps/web/src/screens/z.tsx', `const at = window.location.pathname; const q = location.search; window.history.pushState(null, '', to);

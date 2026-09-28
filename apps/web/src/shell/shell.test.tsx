@@ -5,9 +5,18 @@ import { fileURLToPath } from 'node:url';
 import { act, cleanup, fireEvent, render, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { KitProvider, languagesFrom } from 'vaults-ui';
-import { PageView } from '../app.js';
+const names = vi.hoisted(() => ({ opened: new Map<string, string>() }));
+vi.mock('../adapters/session.js', async (real) => ({
+  ...(await real<typeof import('../adapters/session.js')>()),
+  companyNamesFor: async () => names.opened,
+}));
+vi.mock('../adapters/company-records.js', async (real) => ({
+  ...(await real<typeof import('../adapters/company-records.js')>()),
+  readCompany: async () => ({ of: 'locked' }),
+}));
+const { PageView } = await import('../app.js');
 import type { Company } from '../adapters/session.js';
-import { EVERY_PAGE, isBuilt, mayOpen, PAGES, VIEWS, type PageId, type Viewer } from '../pages.js';
+import { EVERY_PAGE, isBuilt, mayOpen, PAGES, reachedByName, VIEWS, type PageId, type Viewer } from '../pages.js';
 import { LANGUAGES } from '../languages.js';
 import { DEFAULT_PREFERENCES } from '../preferences.js';
 import { SessionProvider, type Session } from '../session.js';
@@ -127,7 +136,8 @@ describe('the command bar', () => {
     expect(linesOf(bar)).toEqual([]);
     await search(bar, '');
     const listed = linesOf(bar).filter((l) => l !== null && l in PAGES);
-    expect(listed).toEqual(EVERY_PAGE.filter((p) => mayOpen(p, signer)).map((p) => p.id));
+    /* A page that stands for a value, such as one run's page, is opened from its row, never by name. */
+    expect(listed).toEqual(EVERY_PAGE.filter((p) => mayOpen(p, signer) && reachedByName(p)).map((p) => p.id));
     expect(listed).not.toContain('payslips');
   });
 
@@ -224,18 +234,43 @@ describe('the company switcher', () => {
    * creating one or joining one is shown as if it worked when it is Coming
    * soon; or the list does not say which of what it shows anyone can look up.
    */
-  it('lists the companies in the order the service gave, with no amounts, and their names Coming soon', async () => {
+  it('lists the companies in the order the service gave, with no amounts, and says where their names open', async () => {
+    names.opened = new Map();
     draw(sessionFor(signer), 'settingsAppearance');
     await press({ key: '.', code: 'Period', metaKey: true });
     const menu = document.querySelector('[data-company-switcher]') as HTMLElement;
     expect([...menu.querySelectorAll('[data-company]')].map((c) => c.getAttribute('data-company'))).toEqual(['c-2', 'c-3', 'c-1']);
     expect(menu.querySelector('[data-slot=amount]')).toBeNull();
-    expect(menu.querySelector('[data-company-names] [data-slot=coming-soon]')).not.toBeNull();
+    /* Names are built: none says Coming soon, and while none is open the list says where they open. */
+    expect(menu.querySelector('[data-company-names] [data-slot=coming-soon]')).toBeNull();
+    expect(menu.querySelector('[data-company-names=locked]')?.textContent).toBe(EN['switcher.namesLocked']);
     expect(menu.querySelector('[data-action=join-with-a-code] [data-slot=coming-soon]')).not.toBeNull();
     /* Create a company is built: it starts the setup wizard, and is not Coming soon. */
     expect(menu.querySelector('[data-action=create-company]')).not.toBeNull();
     expect(menu.querySelector('[data-action=create-company] [data-slot=coming-soon]')).toBeNull();
     expect(menu.querySelector('[data-public-facts]')?.textContent).toBe(EN['switcher.publicFacts']);
+  });
+
+  /*
+   * RED WHEN: a company's name, once the person's keys have opened it, is not
+   * shown in the switcher and at its top, is shown beside another company, or
+   * the line saying where names open stays when every name is open.
+   */
+  it('shows each company by its name once the keys saved for the person have opened it', async () => {
+    names.opened = new Map([['c-2', 'Northwind'], ['c-1', 'Acme']]);
+    const { container } = draw(sessionFor(signer), 'settingsAppearance');
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    expect(container.querySelector('[data-shown-name]')?.textContent).toBe('Northwind');
+    await press({ key: '.', code: 'Period', metaKey: true });
+    const menu = document.querySelector('[data-company-switcher]') as HTMLElement;
+    expect([...menu.querySelectorAll('[data-company]')].map((c) => c.querySelector('[data-company-name]')?.textContent ?? null)).toEqual(['Northwind', null, 'Acme']);
+    expect(menu.querySelector('[data-company-names=locked]')).not.toBeNull();
+    names.opened = new Map([['c-2', 'Northwind'], ['c-3', 'Globex'], ['c-1', 'Acme']]);
+    cleanup();
+    draw(sessionFor(signer), 'settingsAppearance');
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    await press({ key: '.', code: 'Period', metaKey: true });
+    expect(document.querySelector('[data-company-switcher] [data-company-names]')).toBeNull();
   });
 
   /* RED WHEN: choosing a company does not make it the one shown. */
@@ -317,12 +352,12 @@ describe('the right-hand panel', () => {
 describe('the pages', () => {
   /* RED WHEN: a page not built yet shows anything but its name, the Coming soon pill and what it will be. */
   it('shows a page not built yet as Coming soon, with what it will be', () => {
-    const { container } = draw(sessionFor(signer), 'payroll');
+    const { container } = draw(sessionFor(signer), 'transactions');
     const page = container.querySelector('[data-screen=coming-soon]') as HTMLElement;
-    expect(page.getAttribute('data-page')).toBe('payroll');
-    expect(page.querySelector('h1')?.textContent).toBe(EN['page.payroll.name']);
+    expect(page.getAttribute('data-page')).toBe('transactions');
+    expect(page.querySelector('h1')?.textContent).toBe(EN['page.transactions.name']);
     expect(page.querySelector('[data-slot=coming-soon]')).not.toBeNull();
-    expect(page.textContent).toContain(EN['page.payroll.soon']);
+    expect(page.textContent).toContain(EN['page.transactions.soon']);
     expect(page.querySelectorAll('button:not([data-slot=coming-soon]), input, a').length).toBe(0);
   });
 

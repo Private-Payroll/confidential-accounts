@@ -30,9 +30,15 @@ export interface VaultPublicMoney {
  * vault's view as the company's service reports it (`viewOfTheVault`), or
  * `null` when it could not be read: the service did not answer, the vault is
  * not on the chain yet, the service sent something that is not a list of
- * tokens and whole amounts, or two assets in the registry name the same token,
- * so which one a holding is in cannot be said. Null is never shown as nothing
- * held.
+ * tokens and whole amounts, two assets in the registry name the same token,
+ * so which one a holding is in cannot be said, or the service names one token
+ * in two rows. Null is never shown as nothing held.
+ *
+ * TWO ROWS FOR ONE TOKEN ARE REFUSED, NOT ADDED. The service reads a vault's
+ * public money as one row a token, so two rows mean a reading this cannot
+ * vouch for: adding them could show twice what the vault holds, and showing
+ * both would show one currency twice. Refusing says it could not be read,
+ * which is true.
  *
  * Every asset in the registry is read, not only those a person may choose
  * today: a currency switched off is still money a vault holds.
@@ -47,6 +53,8 @@ export async function vaultPublicMoney(viewOfTheVault: () => Promise<unknown>, r
     if (byToken.has(token)) return null;
     byToken.set(token, asset);
   }
+  const tokens = answer.holdings.map((h) => h.token.toLowerCase());
+  if (new Set(tokens).size !== tokens.length) return null;
   const amounts: PublicAmount[] = [];
   let unrecognised = 0;
   for (const holding of answer.holdings) {

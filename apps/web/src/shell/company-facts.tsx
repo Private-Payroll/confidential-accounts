@@ -16,13 +16,15 @@ export function useCompanyWords(): { made: (c: Company) => string; approvals: (c
 
 /**
  * A COMPANY, SHOWN BY WHAT THE SERVICE LISTS OF IT: when it was made, and how
- * many of its signers must approve. Its name is sealed and is not shown here.
- * The company switcher and the landing page both show a company this way.
+ * many of its signers must approve; and above them its name, when it is given
+ * (the switcher gives it once the saved keys have opened it). The company
+ * switcher and the landing page both show a company this way.
  */
-export function CompanyFacts({ company }: { company: Company }) {
+export function CompanyFacts({ company, name = null }: { company: Company; name?: string | null }) {
   const words = useCompanyWords();
   return (
     <span className="grid flex-1 text-start leading-tight">
+      {name === null ? null : <span className="font-medium" data-company-name>{name}</span>}
       <span>{words.made(company)}</span>
       <span className="text-xs text-muted-foreground">{words.approvals(company)}</span>
     </span>

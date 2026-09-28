@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react';
 import type { IconSvgElement } from '@hugeicons/react';
-import { Building03Icon, Invoice01Icon, MoneyReceive01Icon, SafeIcon, ShieldUserIcon, UserAdd01Icon, UserGroupIcon } from '@hugeicons/core-free-icons';
+import { Building03Icon, SafeIcon, ShieldUserIcon, UserAdd01Icon, UserGroupIcon } from '@hugeicons/core-free-icons';
 import { HandOver } from '../actions/hand-over.js';
 import { CreateCompany } from '../actions/create-company.js';
 import { HANDOVER, type Handover } from '../adapters/handover-state.js';
@@ -67,17 +67,9 @@ export const SETUP_STEPS = {
     name: (t) => t('setup.step.vault.name'), line: (t) => t('setup.step.vault.line'), icon: SafeIcon,
     done: never, skippable: true, shows: { comingSoon: (t) => t('setup.step.vault.soon') }, page: 'vaults',
   },
-  [STEP.deposit]: {
-    name: (t) => t('setup.step.deposit.name'), line: (t) => t('setup.step.deposit.line'), icon: MoneyReceive01Icon,
-    done: never, skippable: true, shows: { comingSoon: (t) => t('setup.step.deposit.soon') }, page: 'vaults',
-  },
   [STEP.people]: {
     name: (t) => t('setup.step.people.name'), line: (t) => t('setup.step.people.line'), icon: UserGroupIcon,
     done: never, skippable: true, shows: { comingSoon: (t) => t('setup.step.people.soon') }, page: 'people',
-  },
-  [STEP.payroll]: {
-    name: (t) => t('setup.step.payroll.name'), line: (t) => t('setup.step.payroll.line'), icon: Invoice01Icon,
-    done: never, skippable: true, shows: { comingSoon: (t) => t('setup.step.payroll.soon') }, page: 'payroll',
   },
 } as const satisfies Record<StepId, SetupStep>;
 
@@ -88,28 +80,4 @@ export const EVERY_STEP: readonly (SetupStep & { id: StepId })[] = (Object.keys(
 export const isBuiltStep = (step: SetupStep): step is SetupStep & { shows: { action: ComponentType<StepProps> } } =>
   (step.shows as { action?: unknown }).action !== undefined;
 
-/**
- * What the wizard was asked for, the next time it is shown: the step to open
- * at, and whether it is setting up a new company rather than the one shown.
- */
-export interface SetupAsked {
-  step: StepId;
-  newCompany: boolean;
-}
-
-/** Read once, by the wizard. */
-let asked: SetupAsked | null = null;
-
-/**
- * Open the wizard at `step` the next time it is shown. "Create a company"
- * asks for a new company, so the wizard sets up that one and not a company
- * the person already signs for.
- */
-export function startSetupAt(step: StepId, newCompany = false): void { asked = { step, newCompany }; }
-
-/** What the wizard was asked for, once; null after. */
-export function takeAsked(): SetupAsked | null {
-  const a = asked;
-  asked = null;
-  return a;
-}
+export { startSetupAt, takeAsked, type SetupAsked } from './asked.js';

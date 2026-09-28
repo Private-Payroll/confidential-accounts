@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Button, useText } from 'vaults-ui';
+import { Suspense, useCallback, useEffect, useState } from 'react';
+import { Button, Skeleton, useText } from 'vaults-ui';
 import { OF, signOut as endSignIn, whoIsSignedIn, type Company, type Person, type WhoIsSignedIn } from './adapters/session.js';
-import { HOME, isBuilt, mayOpen, outerOf, PAGES, VIEWS, viewFor, type Page, type PageId, type View, type Viewer } from './pages.js';
+import { HOME, isBuilt, mayOpen, outerOf, PAGES, VIEWS, viewFor, type Page, type PageId, type Params, type View, type Viewer } from './pages.js';
 import type { Preferences } from './preferences.js';
 import { go, homeOf, RESOLVED, resolve, useAddress, CurrentPageProvider } from './router.js';
 import { SessionProvider, type Session } from './session.js';
@@ -90,7 +90,7 @@ export function App({ preferences, choose, mac }: AppProps) {
   if (who.of === OF.unreachable) return <><ServiceUnreachable retry={() => { void ask(); }} /><AccountFrame /></>;
   if (who.of === OF.recordsApart) return <RecordsApart signOut={() => { void signOut(); }} />;
 
-  const page = resolved.of === RESOLVED.page ? <PageView id={resolved.id} /> : <NoPage home={homeOf(viewer)} />;
+  const page = resolved.of === RESOLVED.page ? <PageView id={resolved.id} params={resolved.params} /> : <NoPage home={homeOf(viewer)} />;
 
   if (signedIn === null) {
     return (
@@ -128,14 +128,15 @@ let wanted: PageId | null = null;
 
 /**
  * A PAGE, shown inside the pages it sits in: Appearance is shown inside
- * Settings. A page not built yet shows what it will be.
+ * Settings. A page not built yet shows what it will be. A screen loaded on
+ * demand shows a placeholder the shape of a page while it loads.
  */
-export function PageView({ id }: { id: PageId }) {
+export function PageView({ id, params = {} }: { id: PageId; params?: Params }) {
   const page = PAGES[id];
   const own = isBuilt(page) ? <page.shows.screen /> : <ComingSoonPage id={id} />;
   const inside = outerOf(page as Page);
   const framed = inside === undefined ? own : <OuterPage id={inside}>{own}</OuterPage>;
-  return <CurrentPageProvider id={id}>{framed}</CurrentPageProvider>;
+  return <CurrentPageProvider id={id} params={params}><Suspense fallback={<PageLoading />}>{framed}</Suspense></CurrentPageProvider>;
 }
 
 function OuterPage({ id, children }: { id: PageId; children: React.ReactNode }) {
@@ -143,6 +144,17 @@ function OuterPage({ id, children }: { id: PageId; children: React.ReactNode }) 
   if (!isBuilt(page)) return <>{children}</>;
   const Outer = page.shows.screen;
   return <Outer>{children}</Outer>;
+}
+
+/** What a page shows while its screen loads: the shape of a heading and a few rows, and nothing that could be read as an answer. */
+export function PageLoading() {
+  return (
+    <div className="flex flex-col gap-3" aria-busy={true} data-loading>
+      <Skeleton className="h-7 w-48" />
+      <Skeleton className="h-4 w-full max-w-prose" />
+      <Skeleton className="h-4 w-2/3 max-w-prose" />
+    </div>
+  );
 }
 
 /* ---------------- a visitor ---------------- */

@@ -70,6 +70,8 @@ export function HandOver({ leadTo, onChanged }: StepProps) {
     : state.of === HANDOVER.heldByOtherKeys ? t('setup.handOver.why.heldByOtherKeys')
     : state.of === HANDOVER.unreadable ? t('setup.handOver.why.unreadable')
     : state.of === HANDOVER.unreachable ? t('setup.handOver.why.unreachable')
+    : state.of === HANDOVER.notSignedIn ? t('act.refused.notSignedIn')
+    : state.of === HANDOVER.anotherPerson ? t('act.refused.anotherPerson')
     : null;
 
   return (

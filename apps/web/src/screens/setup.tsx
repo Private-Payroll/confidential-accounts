@@ -5,7 +5,7 @@ import { Badge, Button, ComingSoon, useText } from 'vaults-ui';
 import { readHandover, type Handover } from '../adapters/handover-state.js';
 import { SessionProvider, useSession } from '../session.js';
 import type { StepId } from '../setup/step-ids.js';
-import { firstOpen, skippedFor, STANDING, standingOf } from '../setup/standing.js';
+import { firstOpen, skippedFor, skipStep, STANDING, standingOf } from '../setup/standing.js';
 import { EVERY_STEP, isBuiltStep, takeAsked, type SetupFacts } from '../setup/steps.js';
 
 /**
@@ -44,7 +44,7 @@ export function Setup() {
   const standings = EVERY_STEP.map((s) => standingOf(s, facts, skipped));
   const doneCount = standings.filter((s) => s === STANDING.done).length;
   const next = (): void => { const n = EVERY_STEP[index + 1]; if (n !== undefined) setCurrent(n.id); };
-  const skip = (): void => { skipped.add(current); setSkips((n) => n + 1); next(); };
+  const skip = (): void => { skipStep(company, current); setSkips((n) => n + 1); next(); };
   const Action = isBuiltStep(step) ? step.shows.action : null;
 
   return (
