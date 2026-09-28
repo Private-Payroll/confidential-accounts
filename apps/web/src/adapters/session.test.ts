@@ -1,5 +1,10 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
+import { identityFromWords } from 'midnight-identity';
+import { READY_PING } from 'midnight-identity/profile/channel';
+import { parseAsk, type KeyringRequest } from 'midnight-identity/profile/request';
+import { keyringReleaseFor } from 'midnight-identity/profile/unlock';
 
 /*
  * SIGNING IN, WHO IS SIGNED IN, AND SIGNING OUT, THROUGH THE ADAPTER, WITH
@@ -43,7 +48,7 @@ beforeEach(() => {
     calls.push({ path, method: init.method ?? 'GET', headers: { ...(init.headers as Record<string, string>) }, body: init.body === undefined ? undefined : JSON.parse(String(init.body)) });
     const a = answers[path];
     if (a === undefined) throw new TypeError('network');
-    return a();
+    return (a as (init: RequestInit) => Response | Promise<Response>)(init);
   }));
 });
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
@@ -247,5 +252,117 @@ describe('signing out', () => {
     answers['/api/me'] = reply(401, {});
     await m.whoIsSignedIn();
     expect(calls.at(-1)!.headers['x-signed-in-as']).toBeUndefined();
+  });
+});
+
+describe('the shared keyring is told who signed in', () => {
+  /*
+   * RED WHEN: the service's answer to the sign-in is not handed to the keyring,
+   * or is handed without its address, so the keyring cannot ask the account
+   * for the key a person's first keys are saved under; or an answer it will not
+   * take leaves it holding an earlier person.
+   */
+  it('hands the keyring the answer to the sign-in, address and all', async () => {
+    const m = await load();
+    const keyring = await import('vaults-web-shared/keyring.js');
+    answers['/api/auth/wallet/challenge'] = reply(200, CHALLENGE);
+    answers['/api/auth/wallet'] = reply(200, { user: { id: 'u1', email: null, name: 'Priya' }, address: 'mn_addr_a', created: true });
+    const signing = m.signIn({ name: 'n', purpose: 'p' });
+    await settle();
+    fromTheAccount({ schema: READY });
+    fromTheAccount(SIGNED);
+    await signing;
+    expect(keyring.currentUser()?.id).toBe('u1');
+    expect(keyring.signedInWallet()).toBe('mn_addr_a');
+    /* An answer with no address: signed in, and the keyring knows nobody rather than the person before. */
+    answers['/api/auth/wallet/challenge'] = reply(200, CHALLENGE);
+    answers['/api/auth/wallet'] = reply(200, { user: { id: 'u2', name: 'Sam' }, created: false });
+    const again = m.signIn({ name: 'n', purpose: 'p' });
+    await settle();
+    fromTheAccount({ schema: READY });
+    fromTheAccount(SIGNED);
+    expect((await again).of).toBe(m.OF.signedIn);
+    expect(keyring.currentUser()).toBeNull();
+    expect(keyring.signedInWallet()).toBeNull();
+  });
+
+  /* RED WHEN: the keyring keeps a person's keys after they sign out, after the service says nobody is signed in, or once somebody else has signed in in another tab. */
+  it('has the keyring forget when the person goes, and when somebody else is signed in now', async () => {
+    const m = await load();
+    const keyring = await import('vaults-web-shared/keyring.js');
+    const signInAs = (id: string) => keyring.signedInByAnotherScreen({ user: { id, email: null, name: 'x' }, address: 'mn_addr_a' });
+    signInAs('u1');
+    answers['/api/me'] = reply(200, { user: { id: 'u1', name: 'Priya' }, accounts: [] });
+    await m.whoIsSignedIn();
+    expect(keyring.currentUser()?.id).toBe('u1');
+    answers['/api/me'] = reply(200, { user: { id: 'u2', name: 'Sam' }, accounts: [] });
+    await m.whoIsSignedIn();
+    expect(keyring.currentUser()).toBeNull();
+    signInAs('u2');
+    answers['/api/me'] = reply(401, {});
+    await m.whoIsSignedIn();
+    expect(keyring.currentUser()).toBeNull();
+    signInAs('u2');
+    answers['/api/auth/logout'] = reply(200, { ok: true });
+    await m.signOut();
+    expect(keyring.currentUser()).toBeNull();
+  });
+});
+
+describe('a company one person left unfinished is never handed to the next', () => {
+  const ADDRESS = 'mn_addr_test1qqqqqqqqqqqqqqqqqqqq';
+  /** Where this page is served, as the account is told. */
+  const US = 'https://payroll.example';
+  const identity = identityFromWords(TEST_MNEMONIC);
+  /** The person's account, answering the keyring's ask for the key their keys are saved under, as the account's own code does. */
+  class AccountStandIn {
+    private handler: ((event: MessageEvent) => void) | null = null;
+    private readonly tab = { postMessage: (m: unknown) => this.onAsk(m) };
+    open(): Window | null { return this.tab as unknown as Window; }
+    addEventListener(_t: 'message', h: (e: MessageEvent) => void): void { this.handler = h; queueMicrotask(() => this.deliver({ schema: READY_PING })); }
+    removeEventListener(): void { this.handler = null; }
+    setTimeout(): number { return 0; }
+    clearTimeout(): void { /* nothing to clear */ }
+    private deliver(data: unknown): void { this.handler?.({ origin: ACCOUNT, source: this.tab, data } as unknown as MessageEvent); }
+    private onAsk(message: unknown): void {
+      let answer: unknown;
+      try { answer = keyringReleaseFor(identity, parseAsk(message, US, Date.now()) as KeyringRequest, Date.now(), (a) => a === ADDRESS); } catch { answer = { schema: 'nothing-given' }; }
+      queueMicrotask(() => this.deliver(answer));
+    }
+  }
+
+  /** Person u1 has created a company whose keys the service refused to save, so it waits in this tab. */
+  async function aCompanyLeftUnfinished() {
+    const m = await load();
+    const keyring = await import('vaults-web-shared/keyring.js');
+    keyring.signedInByAnotherScreen({ user: { id: 'u1', email: null, name: 'Priya' }, address: ADDRESS, created: true });
+    answers['/api/me/keys'] = (init?: RequestInit) => (init?.method === 'PUT' ? reply(500, { error: 'x' }) : reply(200, { keyBundle: null, version: 0 }))();
+    answers['/api/accounts'] = reply(200, { account: { id: 'acc_1' }, secrets: [{ signerId: 's1', signingSecret: 'dd'.repeat(32), wrappingSecret: 'ee'.repeat(32), blinding: 'ff'.repeat(32), scope: 'ab'.repeat(32) }] });
+    await expect(keyring.createCompanyWithWallet({ name: 'Acme', signers: [{ name: 'Priya', role: 'admin' }], threshold: 1 }, ACCOUNT, new AccountStandIn(), US)).rejects.toThrow();
+    expect(keyring.companyAwaitingSetup()).toBe('acc_1');
+    return { m, keyring };
+  }
+
+  /* RED WHEN: a sign-out the service did not confirm leaves the person's keys, or a company they left unfinished, open in the tab. */
+  it('forgets them when the person signs out, whether or not the service confirms it', async () => {
+    const { m, keyring } = await aCompanyLeftUnfinished();
+    answers['/api/auth/logout'] = reply(500, { error: 'x' });
+    expect(await m.signOut()).toEqual({ of: m.OF.notConfirmed });
+    expect(keyring.companyAwaitingSetup()).toBeNull();
+    expect(keyring.currentUser()).toBeNull();
+  });
+
+  /* RED WHEN: somebody else signing in in the same tab is handed a company another person left unfinished, and could save its keys as their own. */
+  it('forgets them when somebody else signs in in the same tab', async () => {
+    const { m, keyring } = await aCompanyLeftUnfinished();
+    answers['/api/auth/wallet/challenge'] = reply(200, CHALLENGE);
+    answers['/api/auth/wallet'] = reply(200, { user: { id: 'u2', email: null, name: 'Sam' }, address: 'mn_addr_other', created: true });
+    const signing = m.signIn({ name: 'n', purpose: 'p' });
+    await settle();
+    fromTheAccount({ schema: READY });
+    fromTheAccount(SIGNED);
+    expect((await signing).of).toBe(m.OF.signedIn);
+    expect(keyring.currentUser()?.id).toBe('u2');
+    expect(keyring.companyAwaitingSetup()).toBeNull();
   });
 });

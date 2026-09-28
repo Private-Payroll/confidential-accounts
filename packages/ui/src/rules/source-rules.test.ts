@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  amountsOutsideTheComponent, arbitraryValues, classWordsOf, colourValues, declaredBy, englishSentences, gapsOf, gapsThatDiffer,
+  LOADS_BY_ADDRESS, WALLET_GLOBALS, amountsOutsideTheComponent, arbitraryValues, classWordsOf, colourValues, declaredBy, englishSentences, gapsOf, gapsThatDiffer,
   hasPhrase, inlineStyles, keysAskedFor, missingPhrases, paletteClasses, pathsIntoTheKit, physicalClasses, pluralOf, secondCn,
   stateVariantsOf, undeclaredImports, utilityOf, waysIntoSharedCode, wordingCensus, wordingInCode, WORDING_POSITIONS, amountsMadeOutsideTheAdapters, type Source,
   namedOutside, stylesReachingIntoComponents, variantsOf,
@@ -136,6 +136,46 @@ describe('the one way into shared code', () => {
       import { b } from 'vaults-web-shared/a.js';
       export const y: A | typeof b | number = x;`);
     expect((await waysIntoSharedCode([f], '/repo', OWN, LAYER)).map((b) => [b.line, b.what])).toEqual([[3, 'imports vaults-web-shared/a.js'], [4, 'imports vaults-web-shared/a.js']]);
+  });
+
+  /* RED WHEN: a screen loads a page or a file by an element's address, moves the page by `location`, imports a module from another server, or reaches a wallet other than through the adapters, and the route is not named. */
+  it('names a page loaded by an address, the page moved, a module from another server, and every wallet on the page', async () => {
+    const screen = src('apps/web/src/screens/x.tsx', `const a = <iframe src={u} />; const b = <img src="/logo.svg" />; const c = <script src={s} />; const d = <form action={to} />;
+      const e = <object data={x} />; const g = <link href={h} />; const h2 = <button formAction={to} />; const i = document.createElement('script');
+      const j = new Image(); location.href = u; window.location = u; document.location.assign(u); location.replace(u); window.location.reload();
+      const k = await import('https://example.com/m.js'); const l = await import('//cdn.example.com/m.js');
+      const m = window.ethereum; const n = window.cardano; const o = (globalThis as any).solana; const p = ethereum.request({});
+      console.log(a, b, c, d, e, g, h2, i, j, k, l, m, n, o, p);`);
+    expect(whats(await waysIntoSharedCode([screen], '/repo', OWN, LAYER))).toEqual([
+      'imports https://example.com/m.js from another server', 'imports //cdn.example.com/m.js from another server',
+      '<iframe src>', '<img src>', '<script src>', '<form action>', '<object data>', '<link href>', '<button formAction>', "createElement('script')",
+      'Image', 'location written to', 'location written to', 'location.assign', 'location.replace', 'location.reload',
+      'import() of https://example.com/m.js from another server', 'import() of //cdn.example.com/m.js from another server',
+      'window.ethereum', 'window.cardano', 'globalThis.solana', 'ethereum',
+    ]);
+    const statics = src('apps/web/src/screens/y.ts', "import { x } from 'https://example.com/m.js'; console.log(x);");
+    expect(whats(await waysIntoSharedCode([statics], '/repo', OWN, LAYER))).toEqual(['imports https://example.com/m.js from another server']);
+  });
+
+  /* RED WHEN: any element and attribute that loads by its address, or any wallet's name on the page, is dropped from the rule's lists or not read. Written out by hand, so a name dropped from a list is seen. */
+  it('names every element address and every wallet in its lists', async () => {
+    const pairs: [string, string][] = [['iframe', 'src'], ['iframe', 'srcDoc'], ['frame', 'src'], ['img', 'src'], ['img', 'srcSet'], ['script', 'src'], ['embed', 'src'], ['object', 'data'],
+      ['source', 'src'], ['source', 'srcSet'], ['video', 'src'], ['video', 'poster'], ['audio', 'src'], ['track', 'src'], ['link', 'href'], ['form', 'action'], ['button', 'formAction'], ['input', 'formAction'], ['input', 'src']];
+    expect(Object.entries(LOADS_BY_ADDRESS).flatMap(([e, as]) => as.map((a) => [e, a])).sort()).toEqual([...pairs].sort());
+    const tags = src('apps/web/src/screens/t.tsx', pairs.map(([e, a], i) => `const x${i} = <${e} ${a}={u} />;`).join('\n'));
+    expect(whats(await waysIntoSharedCode([tags], '/repo', OWN, LAYER))).toEqual(pairs.map(([e, a]) => `<${e} ${a}>`));
+    const wallets = ['midnight', 'cardano', 'ethereum', 'solana', 'phantom', 'keplr', 'bitcoin', 'unisat', 'tronWeb', 'aptos', 'sui', 'starknet', 'okxwallet', 'coinbaseWalletExtension', 'web3'];
+    expect([...WALLET_GLOBALS].sort()).toEqual([...wallets].sort());
+    const onWindow = src('apps/web/src/screens/w.ts', wallets.map((w, i) => `const w${i} = window.${w};`).join('\n') + '\nconst a = new Audio(u);');
+    expect(whats(await waysIntoSharedCode([onWindow], '/repo', OWN, LAYER))).toEqual([...wallets.map((w) => `window.${w}`), 'Audio']);
+  });
+
+  /* RED WHEN: reading where the page is, a link to a page of the application, or the application's own history is refused as moving the page; or a name the file binds itself is taken for the browser's. */
+  it('lets a screen read where the page is and link within the application', async () => {
+    const screen = src('apps/web/src/screens/z.tsx', `const at = window.location.pathname; const q = location.search; window.history.pushState(null, '', to);
+      const link = <a href={to} />; const pic = <HugeiconsIcon icon={i} />; const div = document.createElement('div');
+      const ethereum = 1; const location2 = { href: '' }; location2.href = 'x'; const place = { location: { href: '' } }; place.location.href = 'x'; console.log(at, q, link, pic, div, ethereum);`);
+    expect(whats(await waysIntoSharedCode([screen], '/repo', OWN, LAYER))).toEqual([]);
   });
 
   /* RED WHEN: a file is taken to be inside the adapters because its name starts the same way. */
@@ -398,6 +438,15 @@ describe('wording', () => {
   it('lets a named declaration hold codes but not words inside a function within it', () => {
     const pages = src('apps/web/src/pages.ts', "export const PAGES = { a: { path: '/a', name: (t) => t('page.a.name'), soon: (t) => (t('page.a.soon') || 'Soon') } };");
     expect(whats(wordingInCode([pages], codes))).toEqual(['Soon']);
+  });
+
+  /* RED WHEN: an attribute with a fixed vocabulary (role, aria-current) lets any value through, so English written there passes; or a word of the vocabulary is refused. */
+  it('lets role and aria-current carry only words of their vocabularies', () => {
+    const f = src('apps/web/src/a.tsx', `const a = <nav role="navigation" aria-current="page" />; const b = <div role="Send money" />; const c = <a aria-current="Current page" />;
+      const d = <li role="none presentation" />; const e = createElement('div', { role: 'Pay now' });`);
+    expect(whats(wordingInCode([f], codes))).toEqual(['Send money', 'Current page', 'Pay now']);
+    const page = src('apps/web/index.html', '<main role="main"></main><div role="Loading your pay"></div><a aria-current="step"></a>');
+    expect(whats(wordingInCode([page], codes))).toEqual(['role="Loading your pay"']);
   });
 
   /* RED WHEN: a position meant for the kit alone lets the application through. */

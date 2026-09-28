@@ -304,10 +304,33 @@ const literalText = (n: Node | undefined): string | null => n?.type === 'Literal
  * what a wallet extension puts on the page. Each is a breach outside the
  * adapters, whichever way it is written.
  */
+/*
+ * WHAT A WALLET EXTENSION PUTS ON THE PAGE, by the names the common ones use:
+ * a page that reads one talks to that wallet directly. The person's own
+ * account is reached through the adapters, and no other wallet is reached at all.
+ */
+export const WALLET_GLOBALS: ReadonlySet<string> = new Set(['midnight', 'cardano', 'ethereum', 'solana', 'phantom', 'keplr', 'bitcoin', 'unisat', 'tronWeb',
+  'aptos', 'sui', 'starknet', 'okxwallet', 'coinbaseWalletExtension', 'web3']);
 const TALKS_OUT = new Set(['fetch', 'XMLHttpRequest', 'WebSocket', 'EventSource', 'importScripts', 'Worker', 'SharedWorker', 'MessageChannel', 'BroadcastChannel', 'postMessage',
-  'RTCPeerConnection', 'WebTransport', 'midnight', 'eval', 'Function']);
+  'RTCPeerConnection', 'WebTransport', 'eval', 'Function', 'Image', 'Audio', ...WALLET_GLOBALS]);
 /** Reached through a global object only, since a name like `open` is also an ordinary name. */
-const TALKS_OUT_ON_A_GLOBAL = new Set([...TALKS_OUT, 'open', 'midnight']);
+const TALKS_OUT_ON_A_GLOBAL = new Set([...TALKS_OUT, 'open']);
+/*
+ * ELEMENTS THAT LOAD WHAT THEIR ADDRESS NAMES, each with the attributes that
+ * name it: a frame, script, embed or object runs or shows another server's
+ * content; an image, a media element or a link fetches from it; a form, or a
+ * button or input that submits one, sends its fields to it.
+ */
+export const LOADS_BY_ADDRESS: Readonly<Record<string, readonly string[]>> = {
+  iframe: ['src', 'srcDoc'], frame: ['src'], img: ['src', 'srcSet'], script: ['src'], embed: ['src'], object: ['data'],
+  source: ['src', 'srcSet'], video: ['src', 'poster'], audio: ['src'], track: ['src'], link: ['href'], form: ['action'], button: ['formAction'], input: ['formAction', 'src'],
+};
+/** A module named by an address on another server, rather than a file the bundler serves. */
+const isRemote = (spec: string): boolean => /^[a-z][a-z\d+.-]*:/i.test(spec) || spec.startsWith('//');
+/** Moving the page: what `location` does when it is written to or told to go. */
+const MOVES_THE_PAGE = new Set(['assign', 'replace', 'reload']);
+/** The one way through, said with every breach of the rule below, so whoever meets one knows what to do. */
+export const THE_WAY_THROUGH = 'Move it into an adapter, under the adapters folder, and hand the screen only what the adapter returns.';
 /** Whatever it is reached on. */
 const TALKS_OUT_ON_ANYTHING = new Set(['postMessage', 'contentWindow', 'sendBeacon', 'onmessage', 'serviceWorker']);
 
@@ -335,9 +358,13 @@ const inside = (path: string, dir: string): boolean => (path + sep).toLowerCase(
  * since whatever it is handed to can reach all of the above. `typeof window`
  * is only a question and is let through. `root` is the repository.
  *
- * NOT READ: a page loaded some other way, by an element's address (`<iframe
- * src>`, `<img src>`, `<form action>`, `document.createElement('script')`) or
- * by moving the page (`location`).
+ * It also names a page or file loaded by an element's address (the elements
+ * and attributes in `LOADS_BY_ADDRESS`, written in JSX, made by
+ * `document.createElement`, or `new Image()`), a module imported from another
+ * server (`import('https://...')`), the page moved by `location` (written to,
+ * or told to `assign`, `replace` or `reload`; reading where the page is stays
+ * allowed), and any wallet on the page by the names in `WALLET_GLOBALS`.
+ * Whoever meets a breach is told the way through: `THE_WAY_THROUGH`.
  */
 export async function waysIntoSharedCode(files: readonly Source[], root: string, own: string, adapters: string | null): Promise<Breach[]> {
   const ownDir = resolve(root, own);
@@ -346,7 +373,8 @@ export async function waysIntoSharedCode(files: readonly Source[], root: string,
     if (adapters !== null && inside(resolve(root, f.path), resolve(root, adapters))) continue;
     const breach = (line: number, what: string) => out.push({ path: f.path, line, what });
     for (const { specifier, line } of await everySpecifierOf(f)) {
-      if (isPath(specifier)) {
+      if (isRemote(specifier)) breach(line, `imports ${specifier} from another server`);
+      else if (isPath(specifier)) {
         const target = specifier.startsWith('.') ? resolve(root, dirname(f.path), specifier) : resolve(root, `.${specifier}`);
         if (!inside(target, ownDir)) breach(line, `reaches ${specifier}`);
       } else if (SHARED_PACKAGES.has(packageOf(specifier))) breach(line, `imports ${specifier}`);
@@ -379,6 +407,28 @@ export async function waysIntoSharedCode(files: readonly Source[], root: string,
       }
       if (node.type === 'MemberExpression' && node.computed && isGlobalScope(node.object) && propertyName(node) === '') breach(at, 'a global reached by a built name');
       if (node.type === 'ImportExpression' && literalText(node.source as Node) === null) breach(at, 'import() of a module worked out at run time');
+      if (node.type === 'JSXOpeningElement') {
+        const element = nameOf(node.name);
+        for (const a of (node.attributes as Node[]) ?? []) {
+          if (a.type === 'JSXAttribute' && (LOADS_BY_ADDRESS[element] ?? []).includes(nameOf(a.name))) breach(lineOf(f.text, a.start), `<${element} ${nameOf(a.name)}>`);
+        }
+      }
+      if (node.type === 'CallExpression' && nameOf((node.callee as Node).property ?? node.callee) === 'createElement') {
+        const made = literalText((node.arguments as Node[])[0]);
+        if (made !== null && made.toLowerCase() in LOADS_BY_ADDRESS) breach(at, `createElement('${made}')`);
+      }
+      /* `location`, `window.location` or `document.location`, written to or told to go somewhere. */
+      const isLocation = (n: Node | undefined): boolean => {
+        const u = n === undefined ? undefined : unwrapped(n);
+        if (u?.type === 'Identifier') return u.name === 'location' && !bound.has('location');
+        return u?.type === 'MemberExpression' && propertyName(u) === 'location' && (isGlobalScope(u.object) || nameOf(unwrapped(u.object as Node)) === 'document');
+      };
+      if (node.type === 'AssignmentExpression' && (isLocation(node.left as Node) || ((node.left as Node).type === 'MemberExpression' && isLocation(((node.left as Node).object) as Node)))) breach(at, 'location written to');
+      if (node.type === 'CallExpression' && (node.callee as Node).type === 'MemberExpression' && isLocation(((node.callee as Node).object) as Node) && MOVES_THE_PAGE.has(propertyName(node.callee as Node))) breach(at, `location.${propertyName(node.callee as Node)}`);
+      if (node.type === 'ImportExpression') {
+        const spec = literalText(node.source as Node);
+        if (spec !== null && isRemote(spec)) breach(at, `import() of ${spec} from another server`);
+      }
       if (node.type === 'MemberExpression') {
         const name = propertyName(node);
         const onGlobal = isGlobalScope(node.object);
@@ -842,7 +892,18 @@ const isTranslator = (callee: Node, names: ReadonlySet<string>): boolean => (cal
  * entry for every attribute that starts so. `on` limits an entry to the
  * elements or components named; `page` limits it to a page's own markup.
  */
-export interface Attribute { why: string; on?: readonly string[]; page?: true }
+export interface Attribute { why: string; on?: readonly string[]; page?: true; values?: readonly string[] }
+/** The values `aria-current` takes, from WAI-ARIA 1.2. */
+export const ARIA_CURRENT: readonly string[] = ['page', 'step', 'location', 'date', 'time', 'true', 'false'];
+/** The roles an element may be given, from WAI-ARIA 1.2, without the abstract ones and the deprecated `directory`. */
+export const ARIA_ROLES: readonly string[] = [
+  'alert', 'alertdialog', 'application', 'article', 'banner', 'blockquote', 'button', 'caption', 'cell', 'checkbox', 'code', 'columnheader', 'combobox',
+  'complementary', 'contentinfo', 'definition', 'deletion', 'dialog', 'document', 'emphasis', 'feed', 'figure', 'form', 'generic', 'grid', 'gridcell',
+  'group', 'heading', 'img', 'insertion', 'link', 'list', 'listbox', 'listitem', 'log', 'main', 'marquee', 'math', 'menu', 'menubar', 'menuitem',
+  'menuitemcheckbox', 'menuitemradio', 'meter', 'navigation', 'none', 'note', 'option', 'paragraph', 'presentation', 'progressbar', 'radio', 'radiogroup',
+  'region', 'row', 'rowgroup', 'rowheader', 'scrollbar', 'search', 'searchbox', 'separator', 'slider', 'spinbutton', 'status', 'strong', 'subscript',
+  'superscript', 'switch', 'tab', 'table', 'tablist', 'tabpanel', 'term', 'textbox', 'time', 'timer', 'toolbar', 'tooltip', 'tree', 'treegrid', 'treeitem',
+];
 export const ATTRIBUTES: Readonly<Record<string, Attribute>> = {
   className: { why: 'class names, which the colour and left-or-right rules read word by word' },
   class: { why: 'class names in a page, read the same way', page: true },
@@ -862,14 +923,20 @@ export const ATTRIBUTES: Readonly<Record<string, Attribute>> = {
   orientation: { why: 'which way a separator or a group of controls runs' },
   side: { why: 'which edge a panel or a popup opens from; the left-or-right rule still reads the value, so it is start, end, top or bottom' },
   collapsible: { why: 'how the left menu folds away: to its icons, off the page, or not at all' },
-  'aria-current': { why: 'which link is the page shown, a word from assistive technology\'s fixed vocabulary that it announces in the person\'s own language' },
-  role: { why: 'what an element is to assistive technology, a word from its fixed vocabulary that it announces in the person\'s own language' },
+  'aria-current': { why: 'which item is the current one (the page shown, the step being taken), a word from assistive technology\'s fixed vocabulary that it announces in the person\'s own language', values: ARIA_CURRENT },
+  role: { why: 'what an element is to assistive technology, a word from its fixed vocabulary that it announces in the person\'s own language', values: ARIA_ROLES },
 };
-/** Whether `name`'s value is never shown when written in code on `element` (null: a prop's default, whose component is the function it is declared in). */
-const isQuietAttribute = (name: string, element: string | null): boolean => {
+/**
+ * Whether `name`'s value `text` is never shown when written in code on
+ * `element` (null: a prop's default, whose component is the function it is
+ * declared in). An attribute with a fixed vocabulary is quiet only for a word
+ * of it: any other value is read as wording.
+ */
+const isQuietAttribute = (name: string, element: string | null, text: string): boolean => {
   if (name.startsWith('data-')) return true;
   const a = ATTRIBUTES[name];
   if (a === undefined || a.page === true) return false;
+  if (a.values !== undefined && !text.trim().split(/\s+/).every((w) => a.values!.includes(w))) return false;
   return a.on === undefined || (element !== null && a.on.includes(element));
 };
 
@@ -904,7 +971,18 @@ export const CODES: Readonly<Record<string, string>> = {
   'apps/web/src/adapters/session.ts#REFUSAL': 'why signing in did not happen, one of a fixed set that a screen turns into its own phrase',
   'apps/web/src/adapters/session.ts#OF': 'what an answer from the adapter is, compared by the code',
   'apps/web/src/shell/command-bar.tsx#COMPARED': 'the Unicode form text is compared in',
-  'apps/web/src/shell/company-switcher.tsx#DAY': 'the style a date is written in, which the browser\'s date format turns into the person\'s language',
+  'apps/web/src/shell/company-facts.tsx#DAY': 'the style a date is written in, which the browser\'s date format turns into the person\'s language',
+  'apps/web/src/faults.ts#FAULT': 'the code a mistake in the application\'s own code carries, read out from the console and reported; it names a place, not wording',
+  'apps/web/src/setup/step-ids.ts#STEP': 'the id of each setup step, which is its key in the list of steps',
+  'apps/web/src/setup/steps.ts#SETUP_STEPS': 'each setup step\'s id and the page it is also done from; its name, line and what it will be are asked for by key',
+  'apps/web/src/setup/standing.ts#STANDING': 'where a setup step stands, compared by the code and set as a mark tests find it by',
+  'apps/web/src/adapters/refusals.ts#ACT_REFUSAL': 'why an action on a company did not happen, one of a fixed set that a screen turns into its own phrase',
+  'apps/web/src/adapters/refusals.ts#ACTED': 'what an action\'s answer is, compared by the code',
+  'apps/web/src/adapters/handover-state.ts#HANDOVER': 'where a company stands on being held by its committee, one of a fixed set a screen turns into its own phrase',
+  'apps/web/src/adapters/handover-state.ts#SERVICE': 'the service\'s addresses and the words of its answer, sent and compared, never shown',
+  'apps/web/src/adapters/create-company.ts#FIRST_SIGNER': 'the role of the person creating a company, on its roster, a word of the service\'s protocol',
+  'apps/web/src/actions/hand-over.tsx#ASKING': 'which confirmation is being asked for, compared by the code',
+  'apps/web/src/actions/hand-over.tsx#DID': 'what the person did on the step, compared by the code and set as a mark tests find it by',
 };
 
 /** The part of `CODES` naming declarations in files under `dir`. Each package's check holds its own entries to declarations it has. */
@@ -947,12 +1025,12 @@ export const WORDING_POSITIONS: Readonly<Record<string, Position>> = {
   },
   attribute: {
     why: 'the value of an attribute or prop named in `ATTRIBUTES`, on an element it names, or its default where a component takes it',
-    allows: (n, up) => someParent(n, up, (p, c, above) => {
-      if (p.type === 'JSXAttribute' && c === p.value) return isQuietAttribute(nameOf(p.name), nameOf((above as Node | undefined)?.name));
+    allows: (n, up, _r, text) => someParent(n, up, (p, c, above) => {
+      if (p.type === 'JSXAttribute' && c === p.value) return isQuietAttribute(nameOf(p.name), nameOf((above as Node | undefined)?.name), text);
       if (p.type !== 'Property' || c !== p.value) return false;
-      if (above?.type === 'ObjectPattern') return isQuietAttribute(nameOf(p.key), null);
+      if (above?.type === 'ObjectPattern') return isQuietAttribute(nameOf(p.key), null, text);
       const call = up.find((u) => u.type === 'CallExpression' && isCreateElement(u.callee as Node) && (u.arguments as Node[])[1] === above);
-      return call !== undefined && isQuietAttribute(nameOf(p.key), nameOf((call.arguments as Node[])[0]));
+      return call !== undefined && isQuietAttribute(nameOf(p.key), nameOf((call.arguments as Node[])[0]), text);
     }),
   },
   type: {
@@ -1084,7 +1162,8 @@ function wordingInMarkup(f: Source): Breach[] {
       for (const a of attrs.matchAll(new RegExp(String.raw`([\w:-]+)` + ATTRIBUTE_VALUE, 'g'))) {
         const name = a[1]!; const value = valueOf(a, 3);
         const quiet = name === 'content' ? tag[1]!.toLowerCase() === 'meta' && /\bname\s*=\s*["']?viewport["']?(?=[\s/>]|$)/i.test(attrs)
-          : name.startsWith('data-') || (name in ATTRIBUTES && ATTRIBUTES[name]!.on === undefined);
+          : name.startsWith('data-') || (name in ATTRIBUTES && ATTRIBUTES[name]!.on === undefined
+            && (ATTRIBUTES[name]!.values === undefined || value.trim().split(/\s+/).every((w) => ATTRIBUTES[name]!.values!.includes(w))));
         if (hasLetter(value) && !quiet) out.push({ path: f.path, line: at(tag.index), what: `${name}="${value}"` });
       }
     }

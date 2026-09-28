@@ -27,6 +27,7 @@ const VIEWERS: Record<string, Viewer> = {
 
 /** Who may see each audience, written out by hand rather than worked out, so the rule is compared with the promise. */
 const WHO_SEES: Record<Page['audience'], string[]> = {
+  everyone: ['visitor', 'signerInTheCompanyView', 'signerSeeingTheirPay', 'employee', 'nonSignerInTheCompanyView'],
   visitor: ['visitor'],
   'signed-in': ['signerInTheCompanyView', 'signerSeeingTheirPay', 'employee', 'nonSignerInTheCompanyView'],
   company: ['signerInTheCompanyView'],
@@ -42,7 +43,7 @@ describe('every page the design names is in the list', () => {
   it('has the design\'s pages, views and menu groups', () => {
     const shape = EVERY_PAGE.map((p) => [p.id, p.audience, p.group ?? outerOf(p) ?? '-']);
     expect(shape).toEqual([
-      ['landing', 'visitor', '-'], ['join', 'visitor', '-'], ['setup', 'signed-in', '-'],
+      ['landing', 'everyone', '-'], ['join', 'visitor', '-'], ['setup', 'signed-in', '-'],
       ['home', 'company', 'top'], ['proposals', 'company', 'top'],
       ['payroll', 'company', 'money'], ['vaults', 'company', 'money'], ['transactions', 'company', 'money'], ['reports', 'company', 'money'],
       ['people', 'company', 'people'], ['invitations', 'company', 'people'],
@@ -60,7 +61,7 @@ describe('every page the design names is in the list', () => {
 
   /* RED WHEN: a page this round builds is shown as Coming soon, or a page no round has built yet is shown as working. */
   it('builds only the frame\'s pages, and shows every other page Coming soon', () => {
-    expect(EVERY_PAGE.filter(isBuilt).map((p) => p.id)).toEqual(['landing', 'settings', 'settingsAppearance', 'settingsLanguage', 'paySettings', 'payAppearance', 'payLanguage']);
+    expect(EVERY_PAGE.filter(isBuilt).map((p) => p.id)).toEqual(['landing', 'setup', 'settings', 'settingsAppearance', 'settingsLanguage', 'paySettings', 'payAppearance', 'payLanguage']);
   });
 
   /* RED WHEN: a menu group is added that no page is in, or a page names a group the menu does not have. */
@@ -153,7 +154,9 @@ describe('every entry is a page, and every page is an entry', () => {
     expect(mayOpen(PAGES[HOME.company], VIEWERS.signerInTheCompanyView!)).toBe(true);
     expect(mayOpen(PAGES[HOME.employee], VIEWERS.employee!)).toBe(true);
     expect(mayOpen(PAGES[HOME.visitor], VIEWERS.visitor!)).toBe(true);
-    expect(mayOpen(PAGES[HOME.newCompany], VIEWERS.employee!)).toBe(true);
+    expect(mayOpen(PAGES[HOME.setup], VIEWERS.employee!)).toBe(true);
+    /* The landing page is where a signed-in person chooses a company, so it opens for every kind of person. */
+    for (const [who, v] of Object.entries(VIEWERS)) expect(mayOpen(PAGES[HOME.visitor], v), who).toBe(true);
     expect(mayOpen(PAGES[SETTINGS_OF.company], VIEWERS.signerInTheCompanyView!)).toBe(true);
     expect(mayOpen(PAGES[SETTINGS_OF.employee], VIEWERS.employee!)).toBe(true);
   });
@@ -201,8 +204,9 @@ describe('no page opens for a person who may not see it', () => {
   /*
    * RED WHEN: a company page opens for an employee, or for a person who signs
    * for a company while they look at their own pay; an employee page opens in
-   * the company view; the landing page opens for a signed-in person; or any
-   * page but a visitor's opens for a visitor. Read for every page and every
+   * the company view; a visitor's page (joining) opens for a signed-in person;
+   * the landing page does not open for somebody; or any page but a visitor's
+   * or everyone's opens for a visitor. Read for every page and every
    * kind of person, through the rule and through the router.
    */
   it.each(Object.keys(VIEWERS))('%s', (who) => {

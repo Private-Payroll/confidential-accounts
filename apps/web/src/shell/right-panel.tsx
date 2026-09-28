@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from 'vaults-ui';
+import { Fault, FAULT } from '../faults.js';
 
 /**
  * THE RIGHT-HAND PANEL: the frame's one place for a detail or an action that
@@ -33,7 +34,7 @@ export function PanelProvider({ children }: { children?: ReactNode }) {
 export function usePanel(): Panel {
   const panel = useContext(PanelContext);
   /* The frame always provides it. */
-  if (panel === null) throw new RangeError();
+  if (panel === null) throw new Fault(FAULT.noRightPanel);
   return panel;
 }
 

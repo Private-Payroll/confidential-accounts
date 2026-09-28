@@ -44,26 +44,38 @@ export function App({ preferences, choose, mac }: AppProps) {
   /*
    * An address a visitor may not open takes them to the landing page, and the
    * page they asked for is kept, so signing in goes on to it. A signed-in
-   * person at the landing page is taken to where their view begins; any other
-   * page they may not open, such as a page of the other view, shows as no page.
+   * person at the landing page sees it change in place: their companies, and
+   * "Create a company". Any other page they may not open, such as a page of
+   * the other view, shows as no page.
    */
   const resolved = resolve(address, viewer);
   const ready = who.of === OF.signedIn || who.of === OF.nobody;
   useEffect(() => {
     if (!ready) return;
     if (resolved.of === RESOLVED.notYours && !viewer.signedIn) { wanted = resolved.id; go(HOME.visitor, true); }
-    else if (resolved.of === RESOLVED.notYours && resolved.id === HOME.visitor) go(homeOf(viewer), true);
   }, [ready, resolved.of, resolved.of === RESOLVED.nothing ? null : resolved.id, viewer.signedIn, viewer.view]);
 
-  const signedInNow = useCallback(async (firstTime: boolean) => {
+  /*
+   * After signing in, the person goes on to the page they asked for before,
+   * when they may open it; otherwise they stay where they are, and the landing
+   * page shows their companies in place of the sign-in.
+   */
+  const signedInNow = useCallback(async () => {
     const next = await whoIsSignedIn();
     setWho(next);
     const signsNow = next.of === OF.signedIn && next.companies.length > 0;
     const after: Viewer = { signedIn: next.of === OF.signedIn, view: viewFor(signsNow, VIEWS.company), signs: signsNow };
     setChosenView(VIEWS.company);
-    const target: PageId = firstTime && !signsNow ? HOME.newCompany : wanted !== null && mayOpen(PAGES[wanted], after) ? wanted : homeOf(after);
+    const target: PageId = wanted !== null && mayOpen(PAGES[wanted], after) ? wanted : HOME.visitor;
     wanted = null;
     go(target, true);
+  }, []);
+
+  /* The one list of companies, asked for again after one is created; the new one is shown. */
+  const companiesChanged = useCallback(async (choose?: string) => {
+    const next = await whoIsSignedIn();
+    setWho(next);
+    if (choose !== undefined) { setCompany(choose); setChosenView(VIEWS.company); }
   }, []);
 
   const signOut = useCallback(async () => {
@@ -92,8 +104,17 @@ export function App({ preferences, choose, mac }: AppProps) {
   const session: Session = {
     person: signedIn.person as Person, companies, company: shown, chooseCompany: setCompany, viewer,
     chooseView: (view) => { setChosenView(view); go(HOME[viewFor(signs, view)]); },
-    preferences, choose, signOut: () => { void signOut(); }, mac,
+    preferences, choose, signOut: () => { void signOut(); }, mac, companiesChanged,
   };
+  /* The landing page is a page of its own for a signed-in person too, outside the menu, as it is for a visitor. */
+  if (resolved.of === RESOLVED.page && resolved.id === HOME.visitor) {
+    return (
+      <SessionProvider session={session}>
+        {page}
+        <AccountFrame />
+      </SessionProvider>
+    );
+  }
   return (
     <SessionProvider session={session}>
       <Shell current={resolved.of === RESOLVED.page ? resolved.id : null}>{page}</Shell>
@@ -126,7 +147,7 @@ function OuterPage({ id, children }: { id: PageId; children: React.ReactNode }) 
 
 /* ---------------- a visitor ---------------- */
 
-function VisitorContext({ signedInNow, children }: { signedInNow: (firstTime: boolean) => Promise<void>; children?: React.ReactNode }) {
+function VisitorContext({ signedInNow, children }: { signedInNow: () => Promise<void>; children?: React.ReactNode }) {
   return <VisitorProvider signedInNow={signedInNow}>{children}</VisitorProvider>;
 }
 

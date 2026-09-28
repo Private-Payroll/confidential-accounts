@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -7,7 +7,7 @@ import { SEED_ASSETS } from '../../../src/core/assets.js';
 import {
   amountsMadeOutsideTheAdapters, amountsOutsideTheComponent, arbitraryValues, codesUnder, colourValues, declaredBy, namedOutside, stylesReachingIntoComponents, englishSentences, filesUnder, gapsThatDiffer, hasPhrase,
   inlineStyles, isShippingCode, keysAskedFor, missingPhrases, paletteClasses, pathsIntoTheKit, physicalClasses, SCREEN_FORMATTERS,
-  secondCn, undeclaredImports, waysIntoSharedCode, wordingCensus, wordingInCode, type Source,
+  secondCn, THE_WAY_THROUGH, undeclaredImports, waysIntoSharedCode, wordingCensus, wordingInCode, type Source,
 } from 'vaults-ui/rules/source-rules.test-support';
 
 /*
@@ -55,6 +55,14 @@ interface Walker {
   importsOf: (file: string, source: string) => Promise<{ specifier: string }[]>;
 }
 const ADAPTERS = 'apps/web/src/adapters';
+/**
+ * PACKAGES OF THE MIDNIGHT SDK THE ADAPTERS MAY REACH, because they are plain
+ * JavaScript and load no WebAssembly, each with why it is reached. The test
+ * below holds each to that.
+ */
+const PLAIN_SDK: Readonly<Record<string, string>> = {
+  '@midnightntwrk/wallet-sdk-hd': 'the shared keyring reaches the account\'s key derivation through midnight-identity, as the legacy page does; it is @scure/bip32 and @scure/bip39, with no WebAssembly',
+};
 const WALKER = new URL('../../../scripts/browser-graph.ts', import.meta.url).href;
 
 let graph: BuildGraph;
@@ -125,7 +133,7 @@ describe('every rule, over the application', () => {
   it('reaches shared code, the service and the wallet only through its adapters', async () => {
     const adapters = OWN.filter((f) => f.path.startsWith(`${ADAPTERS}/`));
     expect(adapters.map((f) => f.path)).toContain(`${ADAPTERS}/vault-public-money.ts`);
-    expect(await waysIntoSharedCode(OWN, ROOT, 'apps/web/src', ADAPTERS)).toEqual([]);
+    expect(await waysIntoSharedCode(OWN, ROOT, 'apps/web/src', ADAPTERS), THE_WAY_THROUGH).toEqual([]);
     /* Read as if they were screens, the adapters' own ways in are named, so the rule is reading them and not passing over them. */
     expect((await waysIntoSharedCode(adapters, ROOT, 'apps/web/src', null)).map((b) => b.what)).toEqual(expect.arrayContaining(['imports vaults-web-shared/device-vault-holdings.js']));
   });
@@ -152,7 +160,31 @@ describe('every rule, over the application', () => {
     expect(g.files).toEqual(expect.arrayContaining(['packages/web-shared/src/device-vault-holdings.ts', 'packages/web-shared/src/wallet-sign-in.ts', 'src/core/assets.ts']));
     const packages = new Set<string>();
     for (const f of g.files) for (const e of await importsOf(f, readFileSync(ROOT + f, 'utf8'))) if (!/^[./]/.test(e.specifier)) packages.add(e.specifier);
-    expect([...packages].filter((p) => /^@midnight(ntwrk|-ntwrk)\//.test(p))).toEqual([]);
+    expect([...packages].filter((p) => /^@midnight(ntwrk|-ntwrk)\//.test(p) && !(p in PLAIN_SDK))).toEqual([]);
+  });
+
+  /*
+   * RED WHEN: a package let through as plain JavaScript ships WebAssembly,
+   * depends on another package of the SDK, or is let through without a reason;
+   * or one is listed that the adapters no longer reach.
+   */
+  it('lets through only packages of the SDK that load no WebAssembly, each with why', async () => {
+    const { importsOf } = (await import(WALKER)) as Walker;
+    const g = await adaptersWalk();
+    const packages = new Set<string>();
+    for (const f of g.files) for (const e of await importsOf(f, readFileSync(ROOT + f, 'utf8'))) if (!/^[./]/.test(e.specifier)) packages.add(e.specifier);
+    for (const [name, why] of Object.entries(PLAIN_SDK)) {
+      expect(packages, name).toContain(name);
+      expect(why.length, name).toBeGreaterThan(20);
+      const dir = realpathSync(ROOT + 'node_modules/' + name);
+      expect(filesUnder(dir, '.', (p) => p.endsWith('.wasm')), name).toEqual([]);
+      /* Nor WebAssembly carried inside its JavaScript. */
+      const scripts = filesUnder(dir, '.', (p) => /\.(c|m)?js$/.test(p) && !p.includes('node_modules'));
+      expect(scripts.length, name).toBeGreaterThan(0);
+      expect(scripts.filter((p) => /\bWebAssembly\./.test(readFileSync(join(dir, p), 'utf8'))), name).toEqual([]);
+      const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as { dependencies?: Record<string, string> };
+      expect(Object.keys(pkg.dependencies ?? {}).filter((d) => /^@midnight(ntwrk|-ntwrk)\//.test(d)), name).toEqual([]);
+    }
   });
 
   /* RED WHEN: the application reaches into the kit's folder by a path instead of by the kit's name, for a value or only for a type. */

@@ -1,5 +1,6 @@
 import { askWalletToSignIn, openWalletDialog, WalletClosed, type WalletDialog } from 'vaults-web-shared/wallet-sign-in.js';
 import { closeWalletFrame, mountWalletFrame, onWalletFrame, walletFrameShown, walletInThisPage, WALLET_FRAME_ALLOW } from 'vaults-web-shared/wallet-frame.js';
+import { currentUser, forgetLocally, signedInByAnotherScreen } from 'vaults-web-shared/keyring.js';
 
 /*
  * WHO IS SIGNED IN, SIGNING IN WITH THE PERSON'S ACCOUNT, AND SIGNING OUT.
@@ -12,11 +13,17 @@ import { closeWalletFrame, mountWalletFrame, onWalletFrame, walletFrameShown, wa
  * the talk with the service, and keeps nothing but who is signed in.
  *
  * IT OPENS NO COMPANY AND HOLDS NO KEY. The keys that open a company's records
- * are released by the account separately and are not asked for here, so no
- * key is kept in this tab to go out of date when another tab changes them.
- * What a sign-in leaves in the tab is the person's id, sent with every
- * request, so a sign-in as somebody else in another tab is refused by the
- * service rather than acted on under the wrong person.
+ * are released by the account separately and are not asked for here. What a
+ * sign-in leaves in the tab is the person's id, sent with every request, so a
+ * sign-in as somebody else in another tab is refused by the service rather
+ * than acted on under the wrong person.
+ *
+ * THE SHARED KEYRING IS TOLD WHO SIGNED IN, AND FORGETS WHEN THEY GO. Creating
+ * or opening a company is the keyring's work, and it saves a person's first
+ * keys only under the account that holds the address they signed in as; so
+ * the service's answer to the sign-in is handed to it as it came back. When
+ * the person signs out, or the service says somebody else is signed in now,
+ * the keyring forgets this tab's keys.
  *
  * None of the service's or the shared code's words are handed on: a screen is
  * handed a reason, one of a fixed set, and says it in its own phrases.
@@ -41,7 +48,7 @@ const SERVICE = {
 } as const;
 
 /** Where the person's account is served, set when the page is built. Empty when it is not set. */
-const ACCOUNT_ORIGIN = (import.meta.env.VITE_WALLET_ORIGIN ?? '').replace(/\/+$/, '');
+export const ACCOUNT_ORIGIN = (import.meta.env.VITE_WALLET_ORIGIN ?? '').replace(/\/+$/, '');
 
 /** A person signed in. */
 export interface Person {
@@ -140,11 +147,13 @@ export async function whoIsSignedIn(): Promise<WhoIsSignedIn> {
   let r = await ask(SERVICE.me);
   if (r !== null && r.status === 409 && r.body.code === SERVICE.anotherPerson) { prepared = null; r = await ask(SERVICE.me); }
   if (r === null) return { of: OF.unreachable };
-  if (r.status === 401) { prepared = null; return { of: OF.nobody }; }
+  if (r.status === 401) { prepared = null; forgetLocally(); return { of: OF.nobody }; }
   if (r.status === 409 && r.body.code === SERVICE.mixedRecords) return { of: OF.recordsApart };
   const person = r.status === 200 ? personFrom(r.body.user) : null;
   if (person === null) return { of: OF.unreachable };
   prepared = person.id;
+  /* The keyring holds keys for one person; a tab now signed in as somebody else drops them. */
+  if (currentUser()?.id !== person.id) forgetLocally();
   return { of: OF.signedIn, person, companies: companiesFrom(r.body.accounts) };
 }
 
@@ -224,6 +233,16 @@ export async function signIn(asking: Asking): Promise<SignedIn> {
     const person = answer.status === 200 ? personFrom(answer.body.user) : null;
     if (person === null) return refused(REFUSAL.unavailable);
     prepared = person.id;
+    /*
+     * The keyring takes the answer as its own sign-in would. An answer it will
+     * not take (no address in it) leaves it knowing nobody: this tab is still
+     * signed in, and a company is opened only once the keyring has picked the
+     * sign-in up from the service, as a reloaded tab does; a person's first
+     * company cannot be created that way, and they are asked to sign in again.
+     */
+    /* Whatever the keyring held for somebody else is dropped first, a company they left unfinished included. */
+    if (currentUser()?.id !== person.id) forgetLocally();
+    try { signedInByAnotherScreen(answer.body); } catch { forgetLocally(); }
     return { of: OF.signedIn, person, firstTime: answer.body.created === true };
   } finally {
     /* However it ended, the account is put away: an ask that finished has closed it already, and a second close is not a second event. */
@@ -238,11 +257,17 @@ const retryAfter = (body: Record<string, unknown>): number | null =>
 /** Whether signing out worked: the service ended the sign-in, or could not be reached and the sign-in may still be live. */
 export type SignedOut = { of: typeof OF.signedOut } | { of: typeof OF.notConfirmed };
 
-/** SIGN OUT: the service ends the sign-in and clears its cookie. */
+/**
+ * SIGN OUT: the service ends the sign-in and clears its cookie. This tab
+ * forgets the person and the keyring forgets their keys however the service
+ * answers, so a screen that goes on to show nobody signed in is never showing
+ * it over keys still open.
+ */
 export async function signOut(): Promise<SignedOut> {
   const r = await ask(SERVICE.signOut, SERVICE.post);
-  if (r !== null && (r.status === 200 || r.status === 401)) { prepared = null; return { of: OF.signedOut }; }
-  return { of: OF.notConfirmed };
+  prepared = null;
+  forgetLocally();
+  return r !== null && (r.status === 200 || r.status === 401) ? { of: OF.signedOut } : { of: OF.notConfirmed };
 }
 
 

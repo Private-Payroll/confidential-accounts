@@ -10,6 +10,7 @@ import { Appearance } from './screens/appearance.js';
 import { Landing } from './screens/landing.js';
 import { LanguageSettings } from './screens/language.js';
 import { Settings } from './screens/settings.js';
+import { Setup } from './screens/setup.js';
 
 /**
  * EVERY PAGE OF THE APPLICATION, IN ONE LIST.
@@ -35,12 +36,14 @@ import { Settings } from './screens/settings.js';
 export type Text = ReturnType<typeof useText>;
 
 /**
- * Who may open a page. A visitor is anyone not signed in. A company page is
+ * Who may open a page. "everyone" is anyone, signed in or not; only the
+ * landing page has it, since it signs a visitor in and shows a signed-in
+ * person their companies. A visitor is anyone not signed in. A company page is
  * for a person who signs for a company, in the company view; an employee page
  * is for anyone signed in, in the view of their own pay. A page for anyone
  * signed in is reached from both views.
  */
-export type Audience = 'visitor' | 'signed-in' | 'company' | 'employee';
+export type Audience = 'everyone' | 'visitor' | 'signed-in' | 'company' | 'employee';
 
 /** The groups of the left menu, in the order it shows them. The first and the last have no heading. */
 export const MENU_GROUPS = {
@@ -81,7 +84,7 @@ export interface Page {
  */
 export const PAGES = {
   landing: {
-    path: '/', name: (t) => t('page.landing.name'), icon: Home01Icon, group: null, audience: 'visitor',
+    path: '/', name: (t) => t('page.landing.name'), icon: Home01Icon, group: null, audience: 'everyone',
     shows: { screen: Landing },
   },
   join: {
@@ -90,7 +93,7 @@ export const PAGES = {
   },
   setup: {
     path: '/setup', name: (t) => t('page.setup.name'), words: (t) => t('page.setup.words'), icon: Rocket01Icon, group: null, audience: 'signed-in',
-    shows: { comingSoon: (t) => t('page.setup.soon') },
+    shows: { screen: Setup },
   },
 
   home: {
@@ -230,8 +233,8 @@ export const VIEWS = { company: 'company', employee: 'employee' } as const;
 
 export type View = (typeof VIEWS)[keyof typeof VIEWS];
 
-/** Where each view begins, where a visitor begins, and where a person with no company yet sets one up. */
-export const HOME = { company: 'home', employee: 'payHome', visitor: 'landing', newCompany: 'setup' } as const satisfies Record<View | 'visitor' | 'newCompany', PageId>;
+/** Where each view begins; the landing page, where a visitor signs in and a signed-in person chooses a company; and the setup wizard. */
+export const HOME = { company: 'home', employee: 'payHome', visitor: 'landing', setup: 'setup' } as const satisfies Record<View | 'visitor' | 'setup', PageId>;
 
 /** Where each view's own settings are. */
 export const SETTINGS_OF = { company: 'settings', employee: 'paySettings' } as const satisfies Record<View, PageId>;
@@ -250,6 +253,7 @@ export interface Viewer {
  * would refuse.
  */
 export function mayOpen(page: Pick<Page, 'audience'>, viewer: Viewer): boolean {
+  if (page.audience === 'everyone') return true;
   if (page.audience === 'visitor') return !viewer.signedIn;
   if (!viewer.signedIn) return false;
   if (page.audience === 'signed-in') return true;

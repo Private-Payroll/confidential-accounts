@@ -1,5 +1,6 @@
 import { createContext, useContext, useSyncExternalStore, type AnchorHTMLAttributes, type MouseEvent, type ReactNode } from 'react';
 import { EVERY_PAGE, HOME, mayOpen, PAGES, type Page, type PageId, type Viewer } from './pages.js';
+import { Fault, FAULT } from './faults.js';
 
 /**
  * THE ROUTER. It knows the pages only from the one list: an address is a page
@@ -72,7 +73,7 @@ const CurrentPage = createContext<{ id: PageId; page: Page } | null>(null);
 export function useCurrentPage(): { id: PageId; page: Page } {
   const current = useContext(CurrentPage);
   /* Only the router shows a screen, and it always says which page; a screen shown any other way is a mistake in the code. */
-  if (current === null) throw new RangeError();
+  if (current === null) throw new Fault(FAULT.noCurrentPage);
   return current;
 }
 
