@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   amountsOutsideTheComponent, arbitraryValues, classWordsOf, colourValues, declaredBy, englishSentences, gapsOf, gapsThatDiffer,
   hasPhrase, inlineStyles, keysAskedFor, missingPhrases, paletteClasses, pathsIntoTheKit, physicalClasses, pluralOf, secondCn,
-  stateVariantsOf, undeclaredImports, utilityOf, wordingCensus, wordingInCode, WORDING_POSITIONS, type Source,
+  stateVariantsOf, undeclaredImports, utilityOf, waysIntoSharedCode, wordingCensus, wordingInCode, WORDING_POSITIONS, amountsMadeOutsideTheAdapters, type Source,
 } from './source-rules.test-support.js';
 
 /*
@@ -42,16 +42,105 @@ describe('imports', () => {
     expect(whats(await undeclaredImports([f], declared))).toEqual([]);
   });
 
-  /* RED WHEN: a path into the kit's folder, however spelled, is let through, or the package name is refused. */
+  /* RED WHEN: a path into the kit's folder, however spelled, or a module inside the kit named through the package, is let through, or the package name or its stylesheet is refused. */
   it('names every path into the kit', async () => {
     const f = src('apps/web/src/main.ts', `import 'vaults-ui/styles.css';
+      import * as formatter from 'vaults-ui/format/token-amount';
+      import { Amount } from 'vaults-ui';
       import { a } from '../../../packages/ui/src/index.js';
       import { b } from '../../../packages/uix/x.js';
       import { c } from '/packages/ui/src/lib/utils';
       import { e } from '../../../packages/UI/src/x.js';
       import { d } from './own.js';
-      console.log(a, b, c, d, e);`);
-    expect(whats(await pathsIntoTheKit([f], '/repo', 'packages/ui'))).toEqual(['../../../packages/ui/src/index.js', '/packages/ui/src/lib/utils', '../../../packages/UI/src/x.js']);
+      console.log(a, b, c, d, e, formatter, Amount);`);
+    expect(whats(await pathsIntoTheKit([f], '/repo', 'packages/ui'))).toEqual(['vaults-ui/format/token-amount', '../../../packages/ui/src/index.js', '/packages/ui/src/lib/utils', '../../../packages/UI/src/x.js']);
+  });
+
+  /* RED WHEN: a path into the kit used only for a type is let through because the browser is never served it. */
+  it('names a path into the kit that is used only for a type', async () => {
+    const f = src('apps/web/src/main.ts', `import type { X } from '../../../packages/ui/src/a.js';
+      import { type Y } from '../../../packages/ui/src/b.js';
+      export type { Z } from '../../../packages/ui/src/c.js';
+      type W = typeof import('../../../packages/ui/src/d.js');
+      import type { V } from 'vaults-ui';
+      export const v: X | Y | W | V = 1;`);
+    expect(whats(await pathsIntoTheKit([f], '/repo', 'packages/ui'))).toEqual(['../../../packages/ui/src/a.js', '../../../packages/ui/src/b.js', '../../../packages/ui/src/c.js', '../../../packages/ui/src/d.js']);
+  });
+});
+
+describe('the one way into shared code', () => {
+  const OWN = 'apps/web/src';
+  const LAYER = 'apps/web/src/adapters';
+
+  /* RED WHEN: a screen reaches the shared package, the product's code, the network or the wallet by any of these routes, however it is written, and the route is not named. */
+  it('names every way a file outside the adapters reaches shared code, the service or the wallet', async () => {
+    const screen = src('apps/web/src/screens/vault.tsx', `import { read } from 'vaults-web-shared/device-vault-holdings.js';
+      import type { Answer } from 'vaults-web-shared/public-payment.js';
+      import { assets } from '../../../../src/core/assets.js';
+      import { pay } from '../../../../packages/web-shared/src/public-payment.js';
+      const later = await import('vaults-web-shared/keyring.js');
+      const w = new Worker(new URL('../../../../packages/web-shared/src/vault-worker-entry.ts', import.meta.url));
+      fetch('/api/vault'); const f = globalThis.fetch; window['fetch']('/x'); const { fetch: g } = window;
+      new XMLHttpRequest(); new WebSocket('wss://x'); new EventSource('/e'); navigator.sendBeacon('/b', d);
+      frame.contentWindow.postMessage(m, origin); window.open(u); const wallet = window.midnight; postMessage(m);
+      window.addEventListener('message', h); self.onmessage = h; const mods = import.meta.glob('../../../../packages/web-shared/src/*.ts');
+      (window as any).fetch('/y'); const { open: o } = (globalThis as any);
+      midnight.mnLace.enable(); const alias = window; Reflect.get(globalThis, 'fetch'); (0, window).fetch('/z'); document.defaultView.fetch('/v');
+      window[pick()]; addEventListener(\`message\`, h); const mod = await import(\`vaults-web-shared/\${n}.js\`); navigator.serviceWorker.register('/sw.js'); eval(code);
+      new RTCPeerConnection(); new WebTransport(u); window.window.fetch('/a'); const t0 = window.top; const { window: w2 } = globalThis; const { ...rest } = window;
+      const v = document.defaultView; new Function('x')(); setTimeout('go()', 1);
+      console.log(read, assets, pay, later, w, f, g, wallet, mods);`);
+    expect(whats(await waysIntoSharedCode([screen], '/repo', OWN, LAYER))).toEqual([
+      'imports vaults-web-shared/keyring.js', 'reaches ../../../../packages/web-shared/src/vault-worker-entry.ts', 'imports vaults-web-shared/device-vault-holdings.js', 'imports vaults-web-shared/public-payment.js', 'reaches ../../../../src/core/assets.js', 'reaches ../../../../packages/web-shared/src/public-payment.js',
+      'Worker', 'fetch', 'globalThis.fetch', 'window.fetch', 'window.fetch', 'window handed on',
+      'XMLHttpRequest', 'WebSocket', 'EventSource', '.sendBeacon', '.postMessage', '.contentWindow',
+      'window.open', 'window.midnight', 'postMessage', "addEventListener('message')", 'self.onmessage', 'import.meta.glob ../../../../packages/web-shared/src/*.ts',
+      'window.fetch', 'globalThis.open', 'globalThis handed on', 'midnight', 'window handed on', 'globalThis handed on',
+      'window.fetch', 'window.fetch', 'a global reached by a built name', "addEventListener('message')", 'import() of a module worked out at run time', '.serviceWorker',
+      'eval', 'RTCPeerConnection', 'WebTransport', 'window.fetch', 'top handed on', 'globalThis handed on',
+      'window handed on', 'defaultView handed on', 'Function', 'setTimeout given code as text',
+    ]);
+  });
+
+  /* RED WHEN: the adapters are refused, the application's own files are, or an ordinary name that is also a browser's (a dialog's open state, a property named fetch) is taken for one. */
+  it('lets the adapters through, and the application reach its own files and the kit', async () => {
+    const adapter = src('apps/web/src/adapters/vault.ts', `import { readPublicHoldings } from 'vaults-web-shared/device-vault-holdings.js';
+      import { assets } from '../../../../src/core/assets.js'; fetch('/api');`);
+    const screen = src('apps/web/src/screens/vault.tsx', `import { vaultPublicMoney } from '../adapters/vault.js';
+      import { Amount } from 'vaults-ui'; import './vault.css'; import type { Props } from './props.js';
+      const [open, setOpen] = useState(false); const o = { fetch: 1, open: 2 }; o.fetch; menu.open(); type T = typeof fetch;
+      if (typeof window !== 'undefined') window.scrollTo(0, 0); type W = typeof window; const page = await import('./page.js');
+      if (event.source === window) go(); const touch = 'ontouchstart' in window; const midnight = new Date(); midnight.setHours(0);
+      const { innerWidth } = window; setTimeout(() => go(), 1);
+      el.addEventListener('click', h); console.log(vaultPublicMoney, Amount, open, setOpen);`);
+    expect(whats(await waysIntoSharedCode([adapter, screen], '/repo', OWN, LAYER))).toEqual([]);
+    /* With no adapters, the adapter's own routes are named: the rule is not passing for want of reading them. */
+    expect(whats(await waysIntoSharedCode([adapter], '/repo', OWN, null))).toEqual(['imports vaults-web-shared/device-vault-holdings.js', 'reaches ../../../../src/core/assets.js', 'fetch']);
+  });
+
+  /* RED WHEN: an amount is made outside the adapters, by the name, through a namespace or taken apart from one, where its decimals would be typed rather than read from the token's record; or the adapters, or a key of the file's own object that happens to share the name, are refused. */
+  it('names every amount made outside the adapters', () => {
+    const screen = src('apps/web/src/screens/x.tsx', "import { tokenAmount } from 'vaults-ui'; const a = tokenAmount(1n, 2, 'NIGHT'); const b = kit.tokenAmount; const c = { tokenAmount: 1 }; kit['tokenAmount']; const { tokenAmount: m } = kit;");
+    const adapter = src('apps/web/src/adapters/x.ts', "import { tokenAmount } from 'vaults-ui'; export const a = tokenAmount(1n, asset.decimals, asset.code);");
+    expect(whats(amountsMadeOutsideTheAdapters([screen, adapter], '/repo', LAYER))).toEqual(['tokenAmount', 'tokenAmount', 'tokenAmount', 'tokenAmount', 'tokenAmount']);
+    expect(amountsMadeOutsideTheAdapters([screen], '/repo', LAYER).map((b) => b.line)).toEqual([1, 1, 1, 1, 1]);
+    expect(whats(amountsMadeOutsideTheAdapters([adapter], '/repo', null))).toEqual(['tokenAmount', 'tokenAmount']);
+  });
+
+  /* RED WHEN: two imports of one module are reported as one, or at the line of a comment that mentions it rather than at their own. */
+  it('names each import at its own line', async () => {
+    const f = src('apps/web/src/x.ts', `// was: import type { A } from 'vaults-web-shared/a.js'
+      const x = 1;
+      import type { A } from 'vaults-web-shared/a.js';
+      import { b } from 'vaults-web-shared/a.js';
+      export const y: A | typeof b | number = x;`);
+    expect((await waysIntoSharedCode([f], '/repo', OWN, LAYER)).map((b) => [b.line, b.what])).toEqual([[3, 'imports vaults-web-shared/a.js'], [4, 'imports vaults-web-shared/a.js']]);
+  });
+
+  /* RED WHEN: a file is taken to be inside the adapters because its name starts the same way. */
+  it('reads the adapters as a folder, not as a prefix', async () => {
+    const lookalike = src('apps/web/src/adapters-old/x.ts', "fetch('/api');");
+    expect(whats(await waysIntoSharedCode([lookalike], '/repo', OWN, LAYER))).toEqual(['fetch']);
   });
 });
 
@@ -95,6 +184,25 @@ describe('colours', () => {
     expect(whats(paletteClasses([f, sheet, page]))).toEqual(['bg-red-500', 'text-white', 'border-zinc-300', 'text-rose-600', 'text-black']);
   });
 
+  /* RED WHEN: any colour of the palette is let through as a class; every name the rule knows is written out here, so a name dropped from it goes red. */
+  it('names a class in every colour of the palette', () => {
+    const names = ['red', 'orange', 'amber', 'yellow', 'lime', 'green', 'emerald', 'teal', 'cyan', 'sky', 'blue', 'indigo', 'violet', 'purple', 'fuchsia', 'pink', 'rose',
+      'slate', 'gray', 'zinc', 'neutral', 'stone', 'mauve', 'olive', 'mist', 'taupe'];
+    const f = src('x.tsx', `const a = '${names.map((n) => `bg-${n}-500`).join(' ')} text-black border-white';`);
+    expect(whats(paletteClasses([f]))).toEqual([...names.map((n) => `bg-${n}-500`), 'text-black', 'border-white']);
+  });
+
+  /* RED WHEN: a page attribute in single quotes or in none is not read: a class, a style, or words. */
+  it('reads a page attribute however its value is quoted', () => {
+    const page = src('apps/web/index.html', `<div class='text-black ml-2'></div><div class=bg-red-500></div>
+      <p style='color: red'></p><p style=color:red></p><p title='Hello'></p><p title=Hello></p><meta name=viewport content=width=device-width>`);
+    expect(whats(paletteClasses([page]))).toEqual(['text-black', 'bg-red-500']);
+    expect(whats(physicalClasses([page]))).toEqual(['ml-2']);
+    expect(whats(inlineStyles([page]))).toEqual(['color: red', 'color: red']);
+    /* `style` is not on the wording rule's list of attributes whose value never reaches the screen, so the wording rule names it too, as well as the inline-style rule. */
+    expect(whats(wordingInCode([page], new Set()))).toEqual(['style="color: red"', 'style="color:red"', 'title="Hello"', 'title="Hello"']);
+  });
+
   /* RED WHEN: an arbitrary value that is not a token, a size or a blend of tokens is let through, behind an opacity too, or one the kit writes is refused. */
   it('names every arbitrary value made of anything but tokens and sizes, and every arbitrary property', () => {
     const f = src('x.tsx', `const a = cn('bg-[red] text-[rebeccapurple] hover:fill-[currentColor] [margin-left:4px] [color:var(--x)] bg-[red]/50 [COLOR:red]/50');
@@ -109,11 +217,11 @@ describe('colours', () => {
     const f = src('x.tsx', `const a = <div style={{ color: 'red', marginLeft: 4 }} />; const b = <p style={s} />;
       createElement('div', { style: { background: 'red' } }); el.style.color = 'red'; el.setAttribute('style', 'left: 0');
       const c = <div {...{ style: { left: 0 } }} />; cloneElement(e, { style: s }); el['style'].left = '0';
-      new Intl.NumberFormat(tag, { style: 'percent' });`);
+      new Intl.NumberFormat(tag, { style: 'percent' }); rule.cssText = 'color: red';`);
     const sheet = src('x.css', ':root { --brand: red; } .a { color: red; background-color: var(--primary); border-color: transparent; font-variant-numeric: tabular-nums; } .c { border: 1px solid red; box-shadow: 0 0 0 1px var(--ring); outline: 2px solid var(--ring); outline-color: red; }');
     const page = src('x.html', '<p style="color: var(--x)"></p><p style="--brand: red"></p><style>.b { fill: blue }</style>');
-    expect(whats(inlineStyles([f, sheet, page]))).toEqual(['style color', 'style marginLeft', 'style', 'style background', '.style', "setAttribute('style')", 'style left', 'style', '.style', 'color: red', 'border: 1px solid red', 'outline-color: red', 'fill: blue', 'color: var(--x)', '--brand: red']);
-    expect(inlineStyles([f]).map((b) => b.line)).toEqual([1, 1, 1, 2, 2, 2, 3, 3, 3]);
+    expect(whats(inlineStyles([f, sheet, page]))).toEqual(['style color', 'style marginLeft', 'style', 'style background', '.style', "setAttribute('style')", 'style left', 'style', '.style', '.cssText', 'color: red', 'border: 1px solid red', 'outline-color: red', 'fill: blue', 'color: var(--x)', '--brand: red']);
+    expect(inlineStyles([f]).map((b) => b.line)).toEqual([1, 1, 1, 2, 2, 2, 3, 3, 3, 4]);
   });
 });
 
@@ -279,6 +387,18 @@ describe('amounts', () => {
       'String as a value', 'join', 'concat', 'String', 'encodeURIComponent(...)', 'textContent', '+= with a string',
     ]);
     expect(amountsOutsideTheComponent([other]).map((b) => b.line).slice(0, 3)).toEqual([1, 2, 2]);
+  });
+
+  /* RED WHEN: a + beside a name the file gives a string, a template or a phrase, a + beside a phrase asked for in place, or a global reached by a name built at run time is let through; or a sum of two counts is refused. */
+  it('names a + beside a string held in a name, and a global reached by a built name', () => {
+    const f = src('apps/web/src/x.tsx', `const label = t('run.paid'); const tpl = \`x\`; const say = useText(); const heading = say('run.title');
+      label + amount; amount + tpl; s += label; t('run.total') + amount; heading + amount;
+      globalThis[name](amount); window[k]; self[pick()]; (globalThis as any)[k]; (window!)[k];
+      const count = a + b; i += 1; const n = rows.length + 1; window['localStorage']; globalThis.crypto;`);
+    expect(whats(amountsOutsideTheComponent([f]))).toEqual([
+      '+ with a string held in a name', '+ with a string held in a name', '+= with a string held in a name', '+ with a phrase', '+ with a string held in a name',
+      'a global reached by a built name', 'a global reached by a built name', 'a global reached by a built name', 'a global reached by a built name', 'a global reached by a built name',
+    ]);
   });
 
   /* RED WHEN: the plain-number formatter may do more than reach the browser's number formatter, or a kit error may not carry a value. */

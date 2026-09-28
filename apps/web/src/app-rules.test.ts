@@ -1,11 +1,13 @@
-import { readdirSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { SEED_ASSETS } from '../../../src/core/assets.js';
 import {
-  amountsOutsideTheComponent, arbitraryValues, colourValues, declaredBy, englishSentences, filesUnder, gapsThatDiffer, hasPhrase,
+  amountsMadeOutsideTheAdapters, amountsOutsideTheComponent, arbitraryValues, colourValues, declaredBy, englishSentences, filesUnder, gapsThatDiffer, hasPhrase,
   inlineStyles, isShippingCode, keysAskedFor, missingPhrases, paletteClasses, pathsIntoTheKit, physicalClasses, SCREEN_FORMATTERS,
-  secondCn, undeclaredImports, wordingCensus, wordingInCode, type Source,
+  secondCn, undeclaredImports, waysIntoSharedCode, wordingCensus, wordingInCode, type Source,
 } from 'vaults-ui/rules/source-rules.test-support';
 
 /*
@@ -22,6 +24,12 @@ import {
  * English sentence, and to no call of a number formatter (`formatTokenAmount`,
  * `NumberFormat`, `toLocaleString`, `toFixed`, ...); its other conversions are
  * not read.
+ *
+ * THE ADAPTERS, `apps/web/src/adapters/`, are the only files that reach the
+ * shared browser code, the product's own code, the service or the wallet.
+ * They are the application's own files, so every rule above reads them too,
+ * and a test below walks what they reach from a page of its own, because no
+ * page the application serves reaches an adapter until a screen imports one.
  */
 const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 const read = (p: string): Source => ({ path: p, text: readFileSync(ROOT + p, 'utf8') });
@@ -38,8 +46,13 @@ const messagesOf = (name: string) => JSON.parse(readFileSync(`${ROOT}${LOCALES}/
  * is typechecked where it lives, under the scripts' settings, and not a second
  * time under this application's stricter ones. What is used of it is typed here.
  */
-interface BuildGraph { entries: string[]; files: string[]; unresolved: { file: string; specifier: string }[] }
-interface Walker { BROWSER_BUILDS: { name: string }[]; walkBuild: (build: unknown, root: string) => Promise<BuildGraph> }
+interface BuildGraph { entries: string[]; files: string[]; staticNode: unknown[]; dynamicNode: unknown[]; unresolved: { file: string; specifier: string }[] }
+interface Walker {
+  BROWSER_BUILDS: { name: string }[];
+  walkBuild: (build: unknown, root: string) => Promise<BuildGraph>;
+  importsOf: (file: string, source: string) => Promise<{ specifier: string }[]>;
+}
+const ADAPTERS = 'apps/web/src/adapters';
 const WALKER = new URL('../../../scripts/browser-graph.ts', import.meta.url).href;
 
 let graph: BuildGraph;
@@ -84,7 +97,49 @@ describe('every rule, over the application', () => {
     expect((await undeclaredImports([CONFIG], withDev)).filter((b) => !b.what.startsWith('node:'))).toEqual([]);
   });
 
-  /* RED WHEN: the application reaches into the kit's folder by a path instead of by the kit's name. */
+  /* RED WHEN: a file outside the adapters imports the shared browser package, reaches the product's code by a path, calls the network or talks to the wallet. */
+  it('reaches shared code, the service and the wallet only through its adapters', async () => {
+    const adapters = OWN.filter((f) => f.path.startsWith(`${ADAPTERS}/`));
+    expect(adapters.map((f) => f.path)).toContain(`${ADAPTERS}/vault-public-money.ts`);
+    expect(await waysIntoSharedCode(OWN, ROOT, 'apps/web/src', ADAPTERS)).toEqual([]);
+    /* Read as if they were screens, the adapters' own ways in are named, so the rule is reading them and not passing over them. */
+    expect((await waysIntoSharedCode(adapters, ROOT, 'apps/web/src', null)).map((b) => b.what)).toEqual(expect.arrayContaining(['imports vaults-web-shared/device-vault-holdings.js']));
+  });
+
+  /* RED WHEN: a file outside the adapters makes an amount, so its decimals would be typed instead of read from the token's record. */
+  it('makes amounts only in its adapters', () => {
+    expect(amountsMadeOutsideTheAdapters(OWN, ROOT, ADAPTERS)).toEqual([]);
+    expect(amountsMadeOutsideTheAdapters(OWN, ROOT, null).map((b) => b.path)).toContain(`${ADAPTERS}/vault-public-money.ts`);
+  });
+
+  /*
+   * RED WHEN: an adapter reaches a Node built-in, a module the walk cannot
+   * follow, or a package of the Midnight SDK, whose WebAssembly must not load
+   * in the page; or the walk stops reaching the shared reader and so passes for
+   * reading nothing. The adapters are walked from a page of their own, because
+   * no page the application serves reaches them until a screen imports one.
+   */
+  it('has adapters that reach nothing a page cannot load', async () => {
+    const { BROWSER_BUILDS, walkBuild, importsOf } = (await import(WALKER)) as Walker;
+    const web = BROWSER_BUILDS.find((b) => b.name === 'web')!;
+    const adapters = OWN.map((f) => f.path).filter((p) => p.startsWith(`${ADAPTERS}/`));
+    const dir = mkdtempSync(join(tmpdir(), 'adapters-'));
+    try {
+      const page = join(dir, 'index.html');
+      writeFileSync(page, adapters.map((p) => `<script type="module" src="${relative(dirname(page), ROOT + p)}"></script>`).join('\n'));
+      const g = await walkBuild({ ...web, name: 'adapters', pages: [relative(ROOT, page)] }, ROOT);
+      expect(g.entries).toEqual(adapters);
+      expect([g.staticNode, g.dynamicNode, g.unresolved]).toEqual([[], [], []]);
+      expect(g.files).toEqual(expect.arrayContaining(['packages/web-shared/src/device-vault-holdings.ts', 'src/core/assets.ts']));
+      const packages = new Set<string>();
+      for (const f of g.files) for (const e of await importsOf(f, readFileSync(ROOT + f, 'utf8'))) if (!/^[./]/.test(e.specifier)) packages.add(e.specifier);
+      expect([...packages].filter((p) => /^@midnight(ntwrk|-ntwrk)\//.test(p))).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  /* RED WHEN: the application reaches into the kit's folder by a path instead of by the kit's name, for a value or only for a type. */
   it('reaches the kit only as vaults-ui', async () => {
     expect(await pathsIntoTheKit([...OWN, CONFIG], ROOT, 'packages/ui')).toEqual([]);
   });

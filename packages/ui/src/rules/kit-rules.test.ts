@@ -3,8 +3,8 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { SEED_ASSETS } from '../../../../src/core/assets.js';
 import {
-  amountsOutsideTheComponent, arbitraryValues, CODES, colourValues, declaredBy, filesUnder, hasPhrase, inlineStyles, isShippingCode,
-  keysAskedFor, paletteClasses, physicalClasses, secondCn, stateVariantsOf, stringWordsOf, undeclaredImports, wordingCensus, wordingInCode,
+  amountsMadeOutsideTheAdapters, amountsOutsideTheComponent, arbitraryValues, CODES, colourValues, declaredBy, filesUnder, hasPhrase, inlineStyles, isShippingCode,
+  keysAskedFor, paletteClasses, physicalClasses, secondCn, stateVariantsOf, stringWordsOf, undeclaredImports, waysIntoSharedCode, wordingCensus, wordingInCode,
   type Source,
 } from './source-rules.test-support.js';
 
@@ -52,6 +52,18 @@ describe('every rule, over the kit', () => {
   /* RED WHEN: a kit file imports a package the kit's package.json does not declare. */
   it('declares every package it imports', async () => {
     expect(await undeclaredImports(CODE, declaredBy(readFileSync(ROOT + 'packages/ui/package.json', 'utf8')))).toEqual([]);
+  });
+
+  /* RED WHEN: a kit file imports the shared browser package, reaches outside the kit's own source by a path, calls the network or talks to the wallet: the kit reaches none of them, and only the application's adapters do. */
+  it('reaches no shared code, no service and no wallet', async () => {
+    expect(await waysIntoSharedCode(CODE, ROOT, 'packages/ui/src', null)).toEqual([]);
+  });
+
+  /* RED WHEN: a kit file other than the amount's own and the index that re-exports it makes an amount: the kit shows amounts it is given, and makes none. */
+  it('makes no amount of its own', () => {
+    const own = ['packages/ui/src/format/token-amount.ts', 'packages/ui/src/index.ts'];
+    expect(amountsMadeOutsideTheAdapters(CODE.filter((f) => !own.includes(f.path)), ROOT, null)).toEqual([]);
+    expect(new Set(amountsMadeOutsideTheAdapters(CODE, ROOT, null).map((b) => b.path))).toEqual(new Set(own));
   });
 
   /* RED WHEN: a second cn is declared, or the cn package or what cn is made of is imported anywhere but the kit's cn. */

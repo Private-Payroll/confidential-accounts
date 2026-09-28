@@ -1,0 +1,32 @@
+{
+  /*
+   * THE SHARED BROWSER CODE, BUILT INTO DECLARATIONS FOR THIS APPLICATION.
+   *
+   * This application reads the shared package (`vaults-web-shared`) through
+   * the declarations built here, not through its source, so that code is
+   * checked under the package's own settings, which this config extends, and
+   * never a second time under this application's stricter ones. The
+   * application's config names this one in its `references`, and building the
+   * application (`tsc -b --force`) builds this first.
+   *
+   * It includes the package, all of the product's own code under `src/` and
+   * the contract's code under `contracts/src/`. That is more than the package
+   * reaches: a config that another references must name every file its program
+   * reads, and the files the package reaches reach others across those folders.
+   * So each of those files must also be one a declaration can be written for.
+   * A new import of a file outside these folders is refused by name rather
+   * than read quietly. Tests are left out: nothing outside imports them.
+   *
+   * Only declarations are written, under `dist/`, which is never committed.
+   */
+  "extends": "../../packages/web-shared/tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "composite": true,
+    "emitDeclarationOnly": true,
+    "rootDir": "../..",
+    "outDir": "../../dist/declarations"
+  },
+  "include": ["../../packages/web-shared/src", "../../src", "../../src/**/*.json", "../../contracts/src"],
+  "exclude": ["../../**/*.test.ts", "../../**/*.test.tsx", "../../**/*.test-support.ts"]
+}

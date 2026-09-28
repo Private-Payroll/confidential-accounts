@@ -18,6 +18,7 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noEmit": true,
+    "tsBuildInfoFile": "../../dist/declarations/apps/web/tsconfig.tsbuildinfo",
     "skipLibCheck": true,
     "types": ["vite/client"],
     "jsx": "react-jsx",
@@ -32,6 +33,15 @@
       "vaults-ui/*": ["../../packages/ui/src/*"]
     }
   },
+  /*
+   * The shared browser code is read through its declarations, built under its
+   * own settings by the config named here, and never re-checked from source
+   * under this application's stricter ones: a file this application does not
+   * own is not held to rules its own package does not keep. Building this
+   * config (`tsc -b --force`) builds that one first, in full; the record of
+   * what was built is kept beside the declarations, under `dist/`.
+   */
+  "references": [{ "path": "./tsconfig.web-shared.json" }],
   "include": ["src/**/*.ts", "src/**/*.tsx", "vite.config.ts"],
   "exclude": ["dist", "node_modules"]
 }
