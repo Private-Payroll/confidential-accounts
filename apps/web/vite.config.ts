@@ -21,16 +21,22 @@ export default defineConfig({
   root: fileURLToPath(new URL('.', import.meta.url)),
   plugins: [tailwindcss()],
   /*
-   * The page is the only entry of the dependency scan. A worker, when one is
-   * started from this application, is named here beside it, for the reason the
-   * root `vite.config.ts`, which serves `src/web-legacy`, gives: a dependency only a worker imports would
-   * otherwise be prepared when the worker first starts, and the page reloaded.
+   * The development server prepares the dependencies it finds by following
+   * imports out from the entries listed here, before the page loads. It does
+   * not follow a worker started with `new Worker(new URL(...))`, so a
+   * dependency that only a worker imports would be found when the worker first
+   * starts, and the server would then reload the page, losing whatever the
+   * person had done on it. Listing entries replaces the default of every page
+   * in this folder, so the page is named; when this application starts a
+   * worker, the worker's entry file is added beside it.
    */
   optimizeDeps: { entries: ['index.html'] },
   /*
-   * **NOTHING MAY FRAME THIS APPLICATION**, for the same reason as the one in
-   * `src/web-legacy`: it frames the person's wallet, and the wallet answers it because
-   * it is the top of the tab.
+   * No page, on any site, may show this application in a frame. The
+   * application shows the person's wallet in a frame, and the wallet answers
+   * it because it is the page at the top of the tab; a stranger's page framing
+   * this one would sit around both. The development and preview servers send
+   * the headers that forbid it.
    */
   server: {
     host: 'localhost',

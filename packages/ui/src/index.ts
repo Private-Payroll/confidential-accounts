@@ -12,7 +12,7 @@ export { formatDate, formatNumber } from './format/intl.js';
 export type { TokenAmount } from './format/token-amount.js';
 export { Amount, type AmountProps, type Visibility } from './components/amount.js';
 export { Balance, type BalanceProps, type Holding } from './components/balance.js';
-export { PublicPill } from './components/public-pill.js';
+export { PublicPill, type AmountKind } from './components/public-pill.js';
 export { ComingSoon, type ComingSoonProps } from './components/coming-soon.js';
 export { ConfirmInYourAccount, type ConfirmInYourAccountProps } from './components/confirm-in-your-account.js';
 export { Badge } from './components/badge.js';

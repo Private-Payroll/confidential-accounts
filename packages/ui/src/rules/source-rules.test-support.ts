@@ -5,9 +5,16 @@
  * tests that hold the kit and the application run the same rule, and each rule
  * has its own test against text written to break it. Source is parsed with the
  * bundler's own parser, so what is read is what is served.
+ *
+ * THE WORDING, COLOUR AND LEFT-OR-RIGHT RULES REFUSE BY DEFAULT. Each reads
+ * every string or every class word in a file, and lets through only what
+ * stands in a position named in this file with the reason it is safe there. A
+ * position a screen needs and this file lacks is added as one entry with its
+ * reason. THE AMOUNT RULE CANNOT: nothing in source says which values are
+ * amounts, so it refuses every conversion it names, from any value, and says
+ * beside it which conversions it does not read.
  */
 import { readdirSync, statSync } from 'node:fs';
-import { builtinModules } from 'node:module';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { parseSync } from 'vite';
 
@@ -36,6 +43,30 @@ function* walk(root: unknown, parent: Node | null = null): Generator<{ node: Nod
   }
 }
 
+/** Every node under `root`, each with every node above it, the outermost first. */
+function* walkDown(root: unknown, up: readonly Node[] = []): Generator<{ node: Node; up: readonly Node[] }> {
+  if (Array.isArray(root)) { for (const r of root) yield* walkDown(r, up); return; }
+  if (root === null || typeof root !== 'object') return;
+  const node = root as Node;
+  const isNode = typeof node.type === 'string';
+  if (isNode) yield { node, up };
+  const below = isNode ? [...up, node] : up;
+  for (const [k, v] of Object.entries(node)) {
+    if (k === 'type' || k === 'start' || k === 'end' || k === 'parent') continue;
+    if (v !== null && typeof v === 'object') yield* walkDown(v, below);
+  }
+}
+
+/** Each node above `node` with the child it was reached through, the nearest first. */
+function* parentsOf(node: Node, up: readonly Node[]): Generator<{ parent: Node; child: Node; above: Node | undefined }> {
+  for (let i = up.length - 1; i >= 0; i -= 1) yield { parent: up[i]!, child: up[i + 1] ?? node, above: up[i - 1] };
+}
+
+const nameOf = (n: unknown): string => {
+  const x = n as Node | null | undefined;
+  return x?.type === 'Identifier' || x?.type === 'JSXIdentifier' ? String(x.name) : x?.type === 'Literal' ? String(x.value) : '';
+};
+
 /** A code file that ships: TypeScript or TSX, and not a test or a test's support. */
 export const isShippingCode = (p: string): boolean =>
   /\.(ts|tsx)$/.test(p) && !/\.test\.(ts|tsx)$/.test(p) && !/\.test-support\.ts$/.test(p) && !p.endsWith('.d.ts');
@@ -57,19 +88,35 @@ export function filesUnder(root: string, dir: string, keep: (p: string) => boole
 
 /* ------------------------------------------------------------------ imports */
 
-/** Every module a file names: static, re-exported and dynamic with a literal, with where. */
-export function specifiersOf(s: Source): { specifier: string; at: number }[] {
-  const { module } = parse(s);
-  const out: { specifier: string; at: number }[] = [];
-  for (const i of module.staticImports) out.push({ specifier: i.moduleRequest.value, at: i.start });
-  for (const e of module.staticExports) for (const en of e.entries) {
-    if (en.moduleRequest !== null) out.push({ specifier: en.moduleRequest.value, at: e.start });
-  }
-  for (const d of module.dynamicImports) {
-    const lit = /^(['"`])([^'"`$]+)\1$/.exec(s.text.slice(d.moduleRequest.start, d.moduleRequest.end).trim());
-    if (lit) out.push({ specifier: lit[2]!, at: d.start });
-  }
-  return out;
+/*
+ * ONE READER OF IMPORTS, THE BROWSER GRAPH'S (`scripts/browser-graph.ts`). It
+ * reads a file after the bundler's own TypeScript transform, so the rules here
+ * see the imports a browser is served and give the same answer as the walk
+ * that finds what a page reaches: an import used only for its types is gone,
+ * as it is from the page, and an import whose module is worked out at run time
+ * comes back as the code that works it out, which the package rule below
+ * refuses unless that code happens to be spelled like a declared package's name
+ * (`import(react)`). The reader is loaded
+ * by its address, as the application's rules load the walk, so it is
+ * typechecked where it lives and not a second time under the kit's settings.
+ */
+interface Edge { specifier: string; dynamic: boolean; worker: boolean }
+interface ImportReader { importsOf: (file: string, source: string) => Promise<Edge[]>; isNodeBuiltin: (specifier: string) => boolean }
+const READER = new URL('../../../../scripts/browser-graph.ts', import.meta.url).href;
+let reader: Promise<ImportReader> | undefined;
+const importReader = (): Promise<ImportReader> => (reader ??= import(/* @vite-ignore */ READER) as Promise<ImportReader>);
+
+/** Where a module is named in a file: the first place its name is written in quotes, else the first line. */
+const lineNaming = (text: string, specifier: string): number => {
+  for (const q of ["'", '"', '`']) { const at = text.indexOf(q + specifier + q); if (at >= 0) return lineOf(text, at); }
+  const bare = text.indexOf(specifier);
+  return bare >= 0 ? lineOf(text, bare) : 1;
+};
+
+/** Every module a file names, as the browser graph reads it, each with the line it is named on. */
+export async function specifiersOf(s: Source): Promise<{ specifier: string; line: number }[]> {
+  const { importsOf } = await importReader();
+  return (await importsOf(s.path, s.text)).map((e) => ({ specifier: e.specifier, line: lineNaming(s.text, e.specifier) }));
 }
 
 /** The package a bare specifier names: `@scope/name` or `name`. */
@@ -78,23 +125,22 @@ export const packageOf = (spec: string): string => {
   return spec.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0]!;
 };
 
-const BUILTINS = new Set(builtinModules);
-const isBuiltin = (spec: string) => spec.startsWith('node:') || BUILTINS.has(packageOf(spec));
+const isPath = (spec: string) => spec.startsWith('.') || spec.startsWith('/');
 
 /**
  * RULE: every package a file imports is declared by the package the file is
  * in. `declared` is that package's own dependencies and peer dependencies, and
  * its own name, which is how a package reaches its own files. A Node built-in
- * is never declared, so it is always a breach in code a browser is served.
+ * is never declared, so it is always a breach in code a browser is served, and
+ * so is an import whose module is worked out at run time.
  */
-export function undeclaredImports(files: readonly Source[], declared: ReadonlySet<string>): Breach[] {
+export async function undeclaredImports(files: readonly Source[], declared: ReadonlySet<string>): Promise<Breach[]> {
+  const { isNodeBuiltin } = await importReader();
   const out: Breach[] = [];
   for (const f of files) {
-    for (const { specifier, at } of specifiersOf(f)) {
-      if (specifier.startsWith('.') || specifier.startsWith('/')) continue;
-      if (isBuiltin(specifier) || !declared.has(packageOf(specifier))) {
-        out.push({ path: f.path, line: lineOf(f.text, at), what: specifier });
-      }
+    for (const { specifier, line } of await specifiersOf(f)) {
+      if (isPath(specifier)) continue;
+      if (isNodeBuiltin(specifier) || !declared.has(packageOf(specifier))) out.push({ path: f.path, line, what: specifier });
     }
   }
   return out;
@@ -111,15 +157,15 @@ export function declaredBy(packageJson: string): Set<string> {
  * or absolute path that lands inside the kit's folder is a breach. `root` is
  * the repository, `kit` the kit's folder in it.
  */
-export function pathsIntoTheKit(files: readonly Source[], root: string, kit: string): Breach[] {
+export async function pathsIntoTheKit(files: readonly Source[], root: string, kit: string): Promise<Breach[]> {
   /* Compared without case: the Mac's file system finds `packages/UI` as `packages/ui`. */
   const kitDir = (resolve(root, kit) + sep).toLowerCase();
   const out: Breach[] = [];
   for (const f of files) {
-    for (const { specifier, at } of specifiersOf(f)) {
+    for (const { specifier, line } of await specifiersOf(f)) {
       const target = specifier.startsWith('.') ? resolve(root, dirname(f.path), specifier)
         : specifier.startsWith('/') ? resolve(root, `.${specifier}`) : null;
-      if (target !== null && (target + sep).toLowerCase().startsWith(kitDir)) out.push({ path: f.path, line: lineOf(f.text, at), what: specifier });
+      if (target !== null && (target + sep).toLowerCase().startsWith(kitDir)) out.push({ path: f.path, line, what: specifier });
     }
   }
   return out;
@@ -132,23 +178,73 @@ export function pathsIntoTheKit(files: readonly Source[], root: string, kit: str
  * package, or of the two libraries `cn` is made from, anywhere but `home`;
  * an import of `cx`, the class joiner `class-variance-authority` also offers;
  * or a function, variable or export named `cn` declared anywhere but `home`.
+ * Which modules are imported is the reader's answer; which NAMES an import
+ * binds is not something the reader returns, so `cx` is found in the parsed file.
  */
-export function secondCn(files: readonly Source[], home: string): Breach[] {
+export async function secondCn(files: readonly Source[], home: string): Promise<Breach[]> {
   const out: Breach[] = [];
   for (const f of files) {
     if (f.path === home) continue;
-    for (const { specifier, at } of specifiersOf(f)) {
-      if (['cn', 'clsx', 'tailwind-merge'].includes(packageOf(specifier))) out.push({ path: f.path, line: lineOf(f.text, at), what: `imports ${specifier}` });
-    }
-    for (const i of parse(f).module.staticImports) {
-      if (i.moduleRequest.value !== 'class-variance-authority') continue;
-      for (const e of i.entries) if (e.importName.kind === 'Name' && e.importName.name === 'cx') out.push({ path: f.path, line: lineOf(f.text, i.start), what: 'imports cx' });
+    for (const { specifier, line } of await specifiersOf(f)) {
+      if (['cn', 'clsx', 'tailwind-merge'].includes(packageOf(specifier))) out.push({ path: f.path, line, what: `imports ${specifier}` });
     }
     for (const { node } of walk(parse(f).program)) {
+      if (node.type === 'ImportDeclaration' && (node.source as Node).value === 'class-variance-authority') {
+        for (const s of node.specifiers as Node[]) if (s.type === 'ImportSpecifier' && nameOf(s.imported) === 'cx') out.push({ path: f.path, line: lineOf(f.text, node.start), what: 'imports cx' });
+      }
       const id = (node.id ?? null) as Node | null;
       const named = (node.type === 'FunctionDeclaration' || node.type === 'VariableDeclarator') && id?.type === 'Identifier' && id.name === 'cn';
       if (named) out.push({ path: f.path, line: lineOf(f.text, node.start), what: 'declares cn' });
     }
+  }
+  return out;
+}
+
+/* ------------------------------------------------------------------ what a file writes */
+
+/** A stylesheet or a page, read as text rather than parsed as code. */
+const isMarkup = (p: string) => /\.(css|html)$/.test(p);
+
+/** A stylesheet's text without its comments. */
+const withoutComments = (css: string) => css.replace(/\/\*[\s\S]*?\*\//g, (c) => c.replace(/[^\n]/g, ' '));
+
+/** The CSS a file carries: a stylesheet whole, or a page's `<style>` blocks and `style` attributes. */
+function cssOf(s: Source): { css: string; at: number }[] {
+  if (s.path.endsWith('.css')) return [{ css: withoutComments(s.text), at: 0 }];
+  const out: { css: string; at: number }[] = [];
+  for (const m of s.text.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/gi)) out.push({ css: withoutComments(m[1]!), at: m.index });
+  for (const m of s.text.matchAll(/\sstyle\s*=\s*("([^"]*)"|'([^']*)')/gi)) out.push({ css: `{${m[2] ?? m[3]}}`, at: m.index });
+  return out;
+}
+
+/** Every declaration in some CSS: `color: red` is `color`, `red`. */
+function declarationsOf(css: string): { property: string; value: string; at: number }[] {
+  return [...css.matchAll(/(?:^|[{;])\s*(--?[A-Za-z][\w-]*|[A-Za-z][\w-]*)\s*:\s*([^;{}]*)(?=[;}]|$)/gm)]
+    .map((m) => ({ property: m[1]!.toLowerCase(), value: m[2]!.trim(), at: m.index }));
+}
+
+/** The class words a stylesheet or page writes: every word of an `@apply`, and of a page's `class` attribute. */
+function markupClassWordsOf(s: Source): { word: string; at: number }[] {
+  const out: { word: string; at: number }[] = [];
+  for (const { css, at } of cssOf(s)) for (const m of css.matchAll(/@apply\s+([^;]+);/g)) for (const w of m[1]!.split(/\s+/)) if (w) out.push({ word: w, at: at + m.index });
+  if (s.path.endsWith('.html')) for (const m of s.text.matchAll(/\sclass\s*=\s*("([^"]*)"|'([^']*)')/gi)) for (const w of (m[2] ?? m[3])!.split(/\s+/)) if (w) out.push({ word: w, at: m.index });
+  return out;
+}
+
+/**
+ * Every word of every string a file writes, with where: each string literal
+ * and each piece of template text in code, wherever it stands, and the class
+ * words of a stylesheet or page. A class held in a variable, a map or a
+ * function's return value is read the same as one written in `className`.
+ */
+export function stringWordsOf(s: Source): { word: string; at: number }[] {
+  if (isMarkup(s.path)) return markupClassWordsOf(s);
+  const out: { word: string; at: number }[] = [];
+  for (const { node } of walk(parse(s).program)) {
+    const text = node.type === 'Literal' && typeof node.value === 'string' ? node.value
+      : node.type === 'TemplateElement' ? (node.value as { raw: string }).raw : null;
+    if (text === null) continue;
+    for (const w of text.split(/\s+/)) if (w) out.push({ word: w, at: node.start });
   }
   return out;
 }
@@ -169,7 +265,9 @@ export function colourValues(files: readonly Source[]): Breach[] {
 /**
  * Every class name in a file, with where: each word of every string inside a
  * `className` prop or inside a call to `cn` or `cva`, the three places a class
- * name is written. A string anywhere else (`side="left"`, a key) is not one.
+ * name is written. The colour and left-or-right rules read `stringWordsOf`,
+ * every string; this narrower reading is for the state variants a stylesheet
+ * must define, where a word that is not a class would be a false alarm.
  */
 export function classWordsOf(s: Source): { word: string; at: number }[] {
   const roots: Node[] = [];
@@ -206,92 +304,400 @@ export function utilityOf(word: string): string {
   return word.slice(last).replace(/^!/, '').replace(/!$/, '').replace(/^-/, '');
 }
 
+const wordBreaches = (files: readonly Source[], bad: (utility: string) => boolean): Breach[] =>
+  files.flatMap((f) => stringWordsOf(f).filter(({ word }) => bad(utilityOf(word)))
+    .map(({ word, at }) => ({ path: f.path, line: lineOf(f.text, at), what: word })));
+
 const PALETTE = 'red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose|slate|gray|zinc|neutral|stone|mauve|olive|mist|taupe|black|white';
 const COLOUR_UTILITY = new RegExp(`^(?:bg|text|border(?:-[xytrblse])?|ring|ring-offset|outline|fill|stroke|decoration|divide|from|via|to|shadow|inset-shadow|inset-ring|accent|caret|placeholder)-(?:${PALETTE})(?:-\\d+)?(?:\\/\\S+)?$`);
 
-/** RULE: no Tailwind palette colour (`bg-red-500`, `text-white`); the kit's stylesheet switches the palette off, so one would silently draw nothing. */
+/**
+ * RULE: no Tailwind palette colour (`bg-red-500`, `text-white`) in any string
+ * a file writes, however it is held; the kit's stylesheet switches the palette
+ * off, so one would silently draw nothing.
+ */
 export function paletteClasses(files: readonly Source[]): Breach[] {
-  return files.flatMap((f) => classWordsOf(f).filter(({ word }) => COLOUR_UTILITY.test(utilityOf(word)))
-    .map(({ word, at }) => ({ path: f.path, line: lineOf(f.text, at), what: word })));
+  return wordBreaches(files, (u) => COLOUR_UTILITY.test(u));
 }
 
-const PHYSICAL = /^(?:m[lr]|p[lr]|scroll-m[lr]|scroll-p[lr]|left|right|border-[lr]|rounded-(?:[lr]|tl|tr|bl|br)|text-(?:left|right)|float-(?:left|right)|clear-(?:left|right))(?:-|$)/;
+const PHYSICAL = /^(?:m[lr]|p[lr]|scroll-m[lr]|scroll-p[lr]|left|right|border-[lr]|rounded-(?:[lr]|tl|tr|bl|br)|text-(?:left|right)|float-(?:left|right)|clear-(?:left|right)|bg-(?:left|right)|object-(?:left|right)|origin-(?:top-|bottom-)?(?:left|right)|(?:top|bottom)-(?:left|right))(?:-|$)/;
+const LEFT_OR_RIGHT = /(?:^|[^\w])(?:left|right)(?:$|[^\w])/i;
 
-/** RULE: no left or right; start and end (`ms-`, `pe-`, `text-start`), so a right-to-left language needs no redraw. */
+/**
+ * RULE: no left or right; start and end (`ms-`, `pe-`, `text-start`), so a
+ * right-to-left language needs no redraw. Read in every string a file writes,
+ * a prop's value included (`side="left"`, `position="bottom-right"`), and in
+ * every declaration of a stylesheet or a page (`margin-left: 4px`, `float: right`).
+ * A popup's slide-in animation named for the side it opens on
+ * (`data-[side=left]:slide-in-from-right-2`) is not refused: it follows the
+ * side the popup library places it on, which is itself left or right.
+ */
 export function physicalClasses(files: readonly Source[]): Breach[] {
-  return files.flatMap((f) => classWordsOf(f).filter(({ word }) => PHYSICAL.test(utilityOf(word)))
-    .map(({ word, at }) => ({ path: f.path, line: lineOf(f.text, at), what: word })));
+  const out = wordBreaches(files, (u) => PHYSICAL.test(u));
+  for (const f of files) {
+    for (const { css, at } of cssOf(f)) {
+      for (const d of declarationsOf(css)) if (LEFT_OR_RIGHT.test(`${d.property} ${d.value}`)) out.push({ path: f.path, line: lineOf(f.text, at + d.at), what: `${d.property}: ${d.value}` });
+    }
+  }
+  return out;
+}
+
+/*
+ * WHAT AN ARBITRARY VALUE MAY BE MADE OF, the only shapes allowed between the
+ * brackets of a class (`rounded-[min(var(--radius-md),10px)]`): a theme token,
+ * a size, and the functions that combine them. Anything else, a colour's name
+ * above all (`bg-[red]`), is refused.
+ */
+export const ARBITRARY_VALUE_PARTS: Readonly<Record<string, string>> = {
+  'var(--token), --token': 'a theme token, which follows the theme and the base colour',
+  'calc, min, max, clamp': 'arithmetic on sizes and tokens',
+  'color-mix(in_oklch|in_oklab|in_srgb, ...)': 'a blend of theme tokens, in a named colour space',
+  'a number, bare or in px, rem, em, ch, vh, vw, dvh, svh, lh, %, deg, ms, s or fr': 'a size, a time or an angle',
+  'auto, fr': 'a grid track sized by its content or its share of the space',
+};
+const VALUE_PART = /var\(--[\w-]+\)|--[\w-]+|\b(?:calc|min|max|clamp|color-mix)(?=\()|\bin_(?:oklch|oklab|srgb)\b|-?\d*\.?\d+(?:px|rem|em|ch|vh|vw|dvh|svh|lh|%|deg|ms|s|fr)?|(?<![A-Za-z])(?:auto|fr)(?![A-Za-z])/g;
+
+/*
+ * THE CSS PROPERTIES A CLASS MAY SET BY NAME (`[mask-type:luminance]`). None
+ * yet: an arbitrary property is how a class sets a colour or a side that no
+ * utility or token allows, so each one a screen needs is added here with why.
+ */
+export const ARBITRARY_PROPERTIES: Readonly<Record<string, string>> = {};
+
+/**
+ * RULE: every arbitrary value in a class is made of the parts named in
+ * `ARBITRARY_VALUE_PARTS`, and every arbitrary property is named in
+ * `ARBITRARY_PROPERTIES`. `bg-[red]` and `[margin-left:4px]` are refused.
+ */
+export function arbitraryValues(files: readonly Source[]): Breach[] {
+  const bad = (u: string): boolean => {
+    /* An opacity after the value (`bg-[red]/50`) does not hide the value. */
+    const property = /^\[([A-Za-z-]+):(.+)\](?:\/\S+)?$/.exec(u);
+    if (property) return !(property[1]!.toLowerCase() in ARBITRARY_PROPERTIES);
+    const value = /^[\w-]+?-(?:\[([^\]]+)\]|\(([^)]+(?:\([^)]*\)[^)]*)*)\))(?:\/\S+)?$/.exec(u);
+    if (!value) return false;
+    const inside = (value[1] ?? value[2])!;
+    return inside.replace(VALUE_PART, '').replace(/[\s_,()+*/-]/g, '') !== '';
+  };
+  return wordBreaches(files, bad);
+}
+
+/*
+ * THE PROPERTIES AN INLINE STYLE MAY SET. None yet: a colour or a side set
+ * inline escapes every class rule, so a screen that must set something inline
+ * (a measured width) adds that one property here, with why.
+ */
+export const INLINE_STYLE_PROPERTIES: Readonly<Record<string, string>> = {};
+
+/** A property whose value is, or may carry, a colour. */
+const COLOUR_PROPERTY = /^(?:color|fill|stroke|background(?:-image)?|border(?:-(?:top|bottom|left|right|block|inline|block-start|block-end|inline-start|inline-end))?|outline|box-shadow|text-shadow|column-rule|text-decoration)$|-color$/;
+/** What a colour-bearing value may be made of: a theme token, a size, and the words that name no colour. */
+const COLOUR_WORD = /^(?:var\(--[\w-]+\),?|transparent|currentcolor|inherit|initial|unset|none|solid|dashed|dotted|double|inset|-?\d*\.?\d+(?:px|rem|em|%)?,?)$/i;
+
+/**
+ * RULE: no inline style sets anything not named in `INLINE_STYLE_PROPERTIES`:
+ * a `style` prop, a `style` key in any object in code (the props of
+ * `createElement` or `cloneElement`, or an object spread into an element), a
+ * `.style` or `['style']` of an element in code, a `style` attribute or
+ * `<style>` block in a page, a custom property (`--x`) included. A style built
+ * where it cannot be read (`style={s}`) is refused whole. And in a stylesheet,
+ * a declaration of a colour property (`color`, `background`, `border`,
+ * `box-shadow`, any `...-color`) is made only of theme tokens, sizes and words
+ * that name no colour; a custom property there (`--x`) is the theme's and is
+ * not read.
+ */
+export function inlineStyles(files: readonly Source[]): Breach[] {
+  const out: Breach[] = [];
+  const allowed = (key: string) => key in INLINE_STYLE_PROPERTIES;
+  const objectBreaches = (f: Source, v: Node): void => {
+    if (v.type !== 'ObjectExpression') { out.push({ path: f.path, line: lineOf(f.text, v.start), what: 'style' }); return; }
+    for (const p of v.properties as Node[]) {
+      const key = p.type === 'Property' && !p.computed ? nameOf(p.key) : '';
+      if (!allowed(key)) out.push({ path: f.path, line: lineOf(f.text, p.start), what: `style ${key || f.text.slice(p.start, p.end)}` });
+    }
+  };
+  for (const f of files) {
+    if (isMarkup(f.path)) {
+      const sheet = f.path.endsWith('.css');
+      for (const { css, at } of cssOf(f)) {
+        for (const d of declarationsOf(css)) {
+          if (sheet && d.property.startsWith('--')) continue;
+          const colour = COLOUR_PROPERTY.test(d.property) && !d.value.split(/\s+/).every((w) => COLOUR_WORD.test(w));
+          if ((!sheet && !allowed(d.property)) || colour) out.push({ path: f.path, line: lineOf(f.text, at + d.at), what: `${d.property}: ${d.value}` });
+        }
+      }
+      continue;
+    }
+    for (const { node, parent } of walk(parse(f).program)) {
+      if (node.type === 'JSXAttribute' && nameOf(node.name) === 'style' && node.value) {
+        const v = node.value as Node;
+        objectBreaches(f, v.type === 'JSXExpressionContainer' ? v.expression as Node : v);
+      }
+      /* A style is an object; a `style` that is a word (`{ style: 'percent' }`, a formatter's option) is not one. */
+      const value = node.value as Node | undefined;
+      if (node.type === 'Property' && nameOf(node.key) === 'style' && parent?.type === 'ObjectExpression' && !(value?.type === 'Literal' && typeof value.value === 'string')) objectBreaches(f, value!);
+      if (node.type === 'MemberExpression' && ['style', 'cssText'].includes(nameOf(node.property))) {
+        out.push({ path: f.path, line: lineOf(f.text, node.start), what: `.${nameOf(node.property)}` });
+      }
+      if (node.type === 'CallExpression' && nameOf((node.callee as Node).property) === 'setAttribute') {
+        const [first] = node.arguments as Node[];
+        if (first?.type === 'Literal' && String(first.value).toLowerCase() === 'style') out.push({ path: f.path, line: lineOf(f.text, node.start), what: "setAttribute('style')" });
+      }
+    }
+  }
+  return out;
 }
 
 /* ------------------------------------------------------------------ wording */
-
-/** The props whose text a person reads or hears. */
-export const READ_PROPS = new Set([
-  'title', 'placeholder', 'alt', 'label', 'aria-label', 'aria-description', 'aria-placeholder', 'aria-roledescription',
-  'aria-valuetext', 'explanation', 'description', 'summary', 'heading', 'caption', 'message', 'text', 'tooltip', 'children',
-]);
 
 const hasLetter = (t: string) => /\p{L}/u.test(t);
 
 const isCreateElement = (callee: Node): boolean => (callee.type === 'Identifier' && ['createElement', 'jsx', 'jsxs'].includes(String(callee.name)))
   || (callee.type === 'MemberExpression' && (callee.property as Node).type === 'Identifier' && (callee.property as Node).name === 'createElement');
 
-/** The strings an expression shows when put on a screen, without looking inside a call: `t('key')` shows a translation, not its key. */
-function shownStrings(expr: Node): Node[] {
-  switch (expr.type) {
-    case 'Literal': return typeof expr.value === 'string' ? [expr] : [];
-    case 'TemplateLiteral': return [expr];
-    case 'ConditionalExpression': return [...shownStrings(expr.consequent as Node), ...shownStrings(expr.alternate as Node)];
-    case 'LogicalExpression': return [...shownStrings(expr.left as Node), ...shownStrings(expr.right as Node)];
-    case 'BinaryExpression': return [...shownStrings(expr.left as Node), ...shownStrings(expr.right as Node)];
-    case 'ArrayExpression': return (expr.elements as Node[]).filter(Boolean).flatMap(shownStrings);
-    case 'ParenthesizedExpression': return shownStrings(expr.expression as Node);
-    default: return [];
-  }
-}
-
-const textOf = (n: Node, src: string): string => n.type === 'Literal' ? String(n.value)
-  : n.type === 'TemplateLiteral' ? (n.quasis as { value: { raw: string } }[]).map((q) => q.value.raw).join(' ') : src.slice(n.start, n.end);
-
-/**
- * RULE: no wording outside the language files. A breach is text with a letter
- * in it put on a screen as JSX text, as a string in a child expression, or as
- * the value of a prop a person reads (`READ_PROPS`). `allowed` is what may be
- * shown as it is in every language: the codes of the assets.
- */
-export function wordingInCode(files: readonly Source[], allowed: ReadonlySet<string>): Breach[] {
-  const out: Breach[] = [];
-  for (const f of files) {
-    for (const { node, parent } of walk(parse(f).program)) {
-      let shown: Node[] = [];
-      if (node.type === 'JSXText') shown = [node];
-      else if (node.type === 'JSXExpressionContainer' && (parent?.type === 'JSXElement' || parent?.type === 'JSXFragment')) {
-        shown = shownStrings(node.expression as Node);
-      } else if (node.type === 'JSXAttribute') {
-        const name = node.name as Node;
-        const attr = name.type === 'JSXIdentifier' ? String(name.name) : '';
-        const value = node.value as Node | null;
-        if (READ_PROPS.has(attr) && value !== null) {
-          shown = value.type === 'JSXExpressionContainer' ? shownStrings(value.expression as Node) : [value];
-        }
-      }
-      else if (node.type === 'CallExpression' && isCreateElement(node.callee as Node)) {
-        /* `createElement(type, props, ...children)`: the children are shown, and so are the props a person reads. */
-        const [, props, ...children] = node.arguments as Node[];
-        shown = children.flatMap(shownStrings);
-        if (props?.type === 'ObjectExpression') {
-          for (const p of props.properties as Node[]) {
-            const key = p.key as Node | undefined;
-            const name = key?.type === 'Identifier' ? String(key.name) : key?.type === 'Literal' ? String(key.value) : '';
-            if (p.type === 'Property' && READ_PROPS.has(name)) shown.push(...shownStrings(p.value as Node));
-          }
-        }
-      }
-      for (const s of shown) {
-        const text = (s.type === 'JSXText' ? String(s.value) : textOf(s, f.text)).trim();
-        if (hasLetter(text) && !allowed.has(text)) out.push({ path: f.path, line: lineOf(f.text, s.start), what: text });
+/** Every name a translation function goes by in a file: `t`, and whatever `useText()`, `t` itself or a destructured `t` is given to. */
+function translatorsOf(program: unknown): Set<string> {
+  const names = new Set(['t']);
+  for (const { node } of walk(program)) {
+    if (node.type !== 'VariableDeclarator') continue;
+    const id = node.id as Node; const init = node.init as Node | null;
+    if (id.type === 'Identifier' && init !== null && ((init.type === 'CallExpression' && (init.callee as Node).type === 'Identifier' && (init.callee as Node).name === 'useText')
+      || (init.type === 'Identifier' && names.has(String(init.name))))) names.add(String(id.name));
+    if (id.type === 'ObjectPattern') {
+      for (const p of id.properties as Node[]) {
+        const key = p.key as Node | undefined; const value = p.value as Node | undefined;
+        if (key?.type === 'Identifier' && key.name === 't' && value?.type === 'Identifier') names.add(String(value.name));
       }
     }
+  }
+  return names;
+}
+
+const isTranslator = (callee: Node, names: ReadonlySet<string>): boolean => (callee.type === 'Identifier' && names.has(String(callee.name)))
+  || (callee.type === 'MemberExpression' && (callee.property as Node).type === 'Identifier' && (callee.property as Node).name === 't');
+
+/*
+ * THE ATTRIBUTES AND PROPS WHOSE VALUE IS NEVER SHOWN, each with why. A value
+ * given to any other attribute, `title`, `alt`, `aria-label`, `content` or a
+ * component's own `label`, is read as wording and refused. `data-...` is one
+ * entry for every attribute that starts so. `on` limits an entry to the
+ * elements or components named; `page` limits it to a page's own markup.
+ */
+export interface Attribute { why: string; on?: readonly string[]; page?: true }
+export const ATTRIBUTES: Readonly<Record<string, Attribute>> = {
+  className: { why: 'class names, which the colour and left-or-right rules read word by word' },
+  class: { why: 'class names in a page, read the same way', page: true },
+  'data-*': { why: 'a mark a stylesheet or a test finds an element by' },
+  type: { why: 'what kind of button, input or script an element is' },
+  dir: { why: 'which way text runs' },
+  lang: { why: 'a language tag' },
+  id: { why: 'the name code and labels find an element by' },
+  src: { why: 'the address a script or a picture is loaded from' },
+  charset: { why: 'how the page\'s bytes are read', page: true },
+  name: { why: 'the name a meta tag is read under', page: true },
+  content: { why: 'on the viewport meta tag only, how the browser lays the page out', page: true, on: ['meta name=viewport'] },
+  variant: { why: 'which of a component\'s looks it takes' },
+  size: { why: 'which of a component\'s sizes it takes' },
+  align: { why: 'where a popup lines up against what opened it' },
+  visibility: { why: 'whether an amount is private or public, which the amount component turns into words', on: ['Amount'] },
+  kind: { why: 'whether a public amount is a payment or a balance, which the Public pill turns into words', on: ['Amount', 'PublicPill'] },
+};
+/** Whether `name`'s value is never shown when written in code on `element` (null: a prop's default, whose component is the function it is declared in). */
+const isQuietAttribute = (name: string, element: string | null): boolean => {
+  if (name.startsWith('data-')) return true;
+  const a = ATTRIBUTES[name];
+  if (a === undefined || a.page === true) return false;
+  return a.on === undefined || (element !== null && a.on.includes(element));
+};
+
+/*
+ * DECLARATIONS WHOSE STRINGS ARE CODES A PROGRAM READS, NEVER WORDS A PERSON
+ * READS, each named by its file and name, with why. The kit's check requires
+ * every entry to name a declaration that exists.
+ */
+export const CODES: Readonly<Record<string, string>> = {
+  'packages/ui/src/i18n/languages.ts#FALLBACK': 'a language tag',
+  'packages/ui/src/i18n/languages.ts#RTL_SCRIPTS': 'script codes, compared with the script of a language',
+  'packages/ui/src/i18n/languages.ts#directionOf': 'a text direction, set as the page\'s `dir`',
+  'packages/ui/src/theme/base-colors.ts#BASE_COLORS': 'the names of the stylesheet\'s theme blocks, matched against it by the theme check',
+  'packages/ui/src/theme/base-colors.ts#DEFAULT_BASE_COLOR': 'one of those names',
+  'packages/ui/src/theme/base-colors.ts#THEMES': 'the value of the root element\'s `data-theme`',
+};
+
+/** TypeScript nodes that stay in the code a browser runs; every other `TS...` node is a type, gone before the page is served. */
+const RUNTIME_TS = new Set(['TSAsExpression', 'TSSatisfiesExpression', 'TSNonNullExpression', 'TSTypeAssertion', 'TSInstantiationExpression', 'TSEnumDeclaration', 'TSEnumBody', 'TSEnumMember', 'TSModuleDeclaration', 'TSModuleBlock', 'TSParameterProperty', 'TSExportAssignment']);
+
+interface Reading { path: string; translators: ReadonlySet<string>; elements: ReadonlySet<string>; codes: ReadonlySet<string> }
+
+/** A place a string may stand without being wording, and why nothing there reaches a person. */
+export interface Position { why: string; allows: (node: Node, up: readonly Node[], r: Reading, text: string) => boolean }
+
+const someParent = (node: Node, up: readonly Node[], test: (parent: Node, child: Node, above: Node | undefined) => boolean): boolean => {
+  for (const { parent, child, above } of parentsOf(node, up)) if (test(parent, child, above)) return true;
+  return false;
+};
+
+/*
+ * EVERY PLACE A STRING WITH A LETTER IN IT MAY STAND IN THE KIT OR THE
+ * APPLICATION, each with why. A string anywhere else is wording and must come
+ * from a language file: `const label = 'Send'`, `value="Send now"`,
+ * `{'Cancel'}` and `new Error('...')` in the application are all refused. A
+ * new place is one entry here with its reason.
+ */
+export const WORDING_POSITIONS: Readonly<Record<string, Position>> = {
+  'translation key': {
+    why: 'the key of a phrase, asked for by `t(...)`; what is shown is the phrase, and the key rule checks the English file has it',
+    allows: (n, up, r) => someParent(n, up, (p, c) => p.type === 'CallExpression' && isTranslator(p.callee as Node, r.translators) && c === (p.arguments as Node[])[0]),
+  },
+  module: {
+    why: 'the name of a module, in an import, an export or `import.meta.glob`; it tells the bundler which file to load',
+    allows: (n, up) => someParent(n, up, (p, c) => (['ImportDeclaration', 'ExportNamedDeclaration', 'ExportAllDeclaration', 'ImportExpression'].includes(p.type) && c === p.source)
+      || (p.type === 'CallExpression' && (p.callee as Node).type === 'MemberExpression' && ((p.callee as Node).object as Node).type === 'MetaProperty' && nameOf((p.callee as Node).property) === 'glob')),
+  },
+  class: {
+    why: 'a class string, inside `className`, `cn(...)` or `cva(...)`; the colour and left-or-right rules read it word by word',
+    allows: (n, up) => someParent(n, up, (p) => (p.type === 'JSXAttribute' && nameOf(p.name) === 'className')
+      || (p.type === 'CallExpression' && (p.callee as Node).type === 'Identifier' && ['cn', 'cva'].includes(nameOf(p.callee)))),
+  },
+  attribute: {
+    why: 'the value of an attribute or prop named in `ATTRIBUTES`, on an element it names, or its default where a component takes it',
+    allows: (n, up) => someParent(n, up, (p, c, above) => {
+      if (p.type === 'JSXAttribute' && c === p.value) return isQuietAttribute(nameOf(p.name), nameOf((above as Node | undefined)?.name));
+      if (p.type !== 'Property' || c !== p.value) return false;
+      if (above?.type === 'ObjectPattern') return isQuietAttribute(nameOf(p.key), null);
+      const call = up.find((u) => u.type === 'CallExpression' && isCreateElement(u.callee as Node) && (u.arguments as Node[])[1] === above);
+      return call !== undefined && isQuietAttribute(nameOf(p.key), nameOf((call.arguments as Node[])[0]));
+    }),
+  },
+  type: {
+    why: 'a type, which is gone before the page is served',
+    allows: (_n, up) => up.some((u) => u.type.startsWith('TS') && !RUNTIME_TS.has(u.type)),
+  },
+  directive: {
+    why: 'a directive to the bundler, such as `\'use client\'`',
+    allows: (n, up) => someParent(n, up, (p) => p.type === 'ExpressionStatement' && typeof p.directive === 'string'),
+  },
+  comparison: {
+    why: 'a value compared with `===`, `!==`, `==` or `!=`, or a `case` of a `switch`; it is tested, not shown',
+    allows: (n, up) => someParent(n, up, (p, c) => (p.type === 'BinaryExpression' && ['===', '!==', '==', '!='].includes(String(p.operator)) && (c === p.left || c === p.right))
+      || (p.type === 'SwitchCase' && c === p.test)),
+  },
+  element: {
+    why: 'the tag a component renders as, spelled as a tag (`span`, `my-tag`): the first argument of `createElement`, or the value of a capitalised variable written as a JSX tag, itself or one branch of a `?:` or `||`',
+    allows: (n, up, r, text) => {
+      if (!/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(text)) return false;
+      const [parent, grand] = [up[up.length - 1], up[up.length - 2]];
+      if (parent?.type === 'CallExpression' && isCreateElement(parent.callee as Node) && (parent.arguments as Node[])[0] === n) return true;
+      const declarator = parent?.type === 'VariableDeclarator' ? parent
+        : (parent?.type === 'ConditionalExpression' && (parent.consequent === n || parent.alternate === n)) || (parent?.type === 'LogicalExpression')
+          ? (grand?.type === 'VariableDeclarator' && grand.init === parent ? grand : undefined) : undefined;
+      return declarator !== undefined && (declarator.init === n || declarator.init === parent) && r.elements.has(nameOf(declarator.id));
+    },
+  },
+  'element id': {
+    why: 'the id `getElementById` looks an element up by',
+    allows: (n, up) => someParent(n, up, (p, c) => p.type === 'CallExpression' && nameOf((p.callee as Node).property) === 'getElementById' && c === (p.arguments as Node[])[0]),
+  },
+  'formatter option': {
+    why: 'an argument to one of the browser\'s own formatters, `new Intl.*(...)`: a language tag, or an option naming a style; the formatter writes the words in the person\'s language',
+    allows: (n, up) => someParent(n, up, (p) => p.type === 'NewExpression' && nameOf(((p.callee as Node).object as Node | undefined)) === 'Intl'),
+  },
+  'kit error': {
+    why: 'in the kit only, the message of an error it throws at a caller that used it wrongly; the kit shows no error\'s message, so it is read by whoever wrote the call',
+    allows: (n, up, r) => r.path.startsWith('packages/ui/') && someParent(n, up, (p) => p.type === 'ThrowStatement'),
+  },
+  code: {
+    why: 'a string in a declaration named in `CODES`',
+    allows: (n, up, r) => someParent(n, up, (p) => (p.type === 'VariableDeclarator' || p.type === 'FunctionDeclaration') && `${r.path}#${nameOf(p.id)}` in CODES),
+  },
+  'asset code': {
+    why: 'the code of an asset from the asset registry, written the same in every language',
+    allows: (_n, _up, r, text) => r.codes.has(text),
+  },
+};
+
+/** The first position that lets `node` stand, or null when it is wording. */
+function positionOf(node: Node, up: readonly Node[], r: Reading, text: string): string | null {
+  for (const [id, p] of Object.entries(WORDING_POSITIONS)) if (p.allows(node, up, r, text)) return id;
+  return null;
+}
+
+/** Every string with a letter in a code file, with the position that lets it stand, or null. */
+function stringsOf(s: Source, codes: ReadonlySet<string>): { text: string; at: number; position: string | null }[] {
+  const program = parse(s).program;
+  const elements = new Set<string>();
+  /* Only a capitalised name is a variable: `<span>` is the element, never a variable called span. */
+  for (const { node } of walk(program)) if (node.type === 'JSXOpeningElement' && (node.name as Node).type === 'JSXIdentifier' && /^\p{Lu}/u.test(nameOf(node.name))) elements.add(nameOf(node.name));
+  const r: Reading = { path: s.path, translators: translatorsOf(program), elements, codes };
+  const out: { text: string; at: number; position: string | null }[] = [];
+  for (const { node, up } of walkDown(program)) {
+    const raw = node.type === 'Literal' && typeof node.value === 'string' ? node.value
+      : node.type === 'TemplateElement' ? (node.value as { raw: string }).raw
+        : node.type === 'JSXText' ? String(node.value) : null;
+    if (raw === null) continue;
+    const text = raw.trim();
+    if (!hasLetter(text)) continue;
+    /* Text between tags stands in no position; only an asset's code may be written there as it is. */
+    out.push({ text, at: node.start, position: node.type === 'JSXText' ? (codes.has(text) ? 'asset code' : null) : positionOf(node, up, r, text) });
+  }
+  return out;
+}
+
+/**
+ * RULE: no wording outside the language files. Every string with a letter in
+ * it, in every file given, is a breach unless it stands in a position named in
+ * `WORDING_POSITIONS`; JSX text always is, but for an asset's code. A
+ * stylesheet or page is read too: text in a page, a quoted attribute not named
+ * in `ATTRIBUTES` (an unquoted one is not read), and a stylesheet's `content`.
+ * `codes` are the codes of the assets.
+ */
+export function wordingInCode(files: readonly Source[], codes: ReadonlySet<string>): Breach[] {
+  const out: Breach[] = [];
+  for (const f of files) {
+    if (isMarkup(f.path)) { out.push(...wordingInMarkup(f)); continue; }
+    for (const s of stringsOf(f, codes)) if (s.position === null) out.push({ path: f.path, line: lineOf(f.text, s.at), what: s.text });
+  }
+  return out;
+}
+
+/**
+ * How many strings with a letter the wording rule read in these files, and how
+ * many each position let stand: so a rule that reads nothing, or a position
+ * nothing uses any more, shows.
+ */
+export function wordingCensus(files: readonly Source[], codes: ReadonlySet<string>): { read: number; byPosition: Record<string, number>; codes: string[] } {
+  const byPosition: Record<string, number> = {};
+  const used = new Set<string>();
+  let read = 0;
+  for (const f of files) {
+    if (isMarkup(f.path)) continue;
+    for (const s of stringsOf(f, codes)) { read += 1; if (s.position !== null) byPosition[s.position] = (byPosition[s.position] ?? 0) + 1; }
+    for (const { node } of walk(parse(f).program)) {
+      if ((node.type === 'VariableDeclarator' || node.type === 'FunctionDeclaration') && `${f.path}#${nameOf(node.id)}` in CODES) used.add(`${f.path}#${nameOf(node.id)}`);
+    }
+  }
+  return { read, byPosition, codes: [...used].sort() };
+}
+
+/** The wording a page or stylesheet carries: a page's text and its attributes, a stylesheet's `content`. */
+function wordingInMarkup(f: Source): Breach[] {
+  const out: Breach[] = [];
+  const at = (i: number) => lineOf(f.text, i);
+  if (f.path.endsWith('.html')) {
+    const text = f.text.replace(/<!--[\s\S]*?-->/g, (c) => ' '.repeat(c.length)).replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, (c) => ' '.repeat(c.length));
+    for (const m of text.matchAll(/>([^<]+)</g)) if (hasLetter(m[1]!)) out.push({ path: f.path, line: at(m.index), what: m[1]!.trim() });
+    for (const tag of text.matchAll(/<([a-zA-Z][\w-]*)\b([^>]*)>/g)) {
+      const attrs = tag[2]!;
+      for (const a of attrs.matchAll(/([\w:-]+)\s*=\s*("([^"]*)"|'([^']*)')/g)) {
+        const name = a[1]!; const value = (a[3] ?? a[4])!;
+        const quiet = name === 'content' ? tag[1]!.toLowerCase() === 'meta' && /\bname\s*=\s*["']viewport["']/i.test(attrs)
+          : name.startsWith('data-') || (name in ATTRIBUTES && ATTRIBUTES[name]!.on === undefined);
+        if (hasLetter(value) && !quiet) out.push({ path: f.path, line: at(tag.index), what: `${name}="${value}"` });
+      }
+    }
+  }
+  for (const { css, at: from } of cssOf(f)) {
+    for (const d of declarationsOf(css)) if (d.property === 'content' && hasLetter(d.value.replace(/var\(--[\w-]+\)/g, '').replace(/\b(?:attr|counter|counters|open-quote|close-quote|no-open-quote|no-close-quote|none|normal)\b/g, ''))) out.push({ path: f.path, line: at(from + d.at), what: `content: ${d.value}` });
   }
   return out;
 }
@@ -307,40 +713,25 @@ export function englishSentences(files: readonly Source[]): Breach[] {
   for (const f of files) {
     for (const { node } of walk(parse(f).program)) {
       const text = node.type === 'Literal' && typeof node.value === 'string' ? node.value
-        : node.type === 'TemplateLiteral' ? textOf(node, f.text) : null;
+        : node.type === 'TemplateLiteral' ? textOf(node) : null;
       if (text !== null && (/^\s*\p{Lu}\p{Ll}*[\p{L}']*\s+\p{L}/u.test(text) || /\p{L}[\p{L}']*\s+\p{L}[\p{L}']*\s+\p{L}/u.test(text))) out.push({ path: f.path, line: lineOf(f.text, node.start), what: text.slice(0, 80) });
     }
   }
   return out;
 }
 
+const textOf = (n: Node): string => (n.quasis as { value: { raw: string } }[]).map((q) => q.value.raw).join(' ');
+
 /** Every key a file asks a translation for, as a literal: `t('kit.x')`, `i18n.t("kit.x")`. A key built at run time is returned as null. */
 export function keysAskedFor(s: Source): { key: string | null; line: number }[] {
   const out: { key: string | null; line: number }[] = [];
   const program = parse(s).program;
-  /* Every name a translation function goes by in this file: `t`, and whatever `useText()`, `t` itself or a destructured `t` is given to. */
-  const names = new Set(['t']);
+  const names = translatorsOf(program);
   for (const { node } of walk(program)) {
-    if (node.type !== 'VariableDeclarator') continue;
-    const id = node.id as Node; const init = node.init as Node | null;
-    if (id.type === 'Identifier' && init !== null && ((init.type === 'CallExpression' && (init.callee as Node).type === 'Identifier' && (init.callee as Node).name === 'useText')
-      || (init.type === 'Identifier' && names.has(String(init.name))))) names.add(String(id.name));
-    if (id.type === 'ObjectPattern') {
-      for (const p of id.properties as Node[]) {
-        const key = p.key as Node | undefined; const value = p.value as Node | undefined;
-        if (key?.type === 'Identifier' && key.name === 't' && value?.type === 'Identifier') names.add(String(value.name));
-      }
-    }
-  }
-  for (const { node } of walk(program)) {
-    if (node.type !== 'CallExpression') continue;
-    const callee = node.callee as Node;
-    const isT = (callee.type === 'Identifier' && names.has(String(callee.name)))
-      || (callee.type === 'MemberExpression' && (callee.property as Node).type === 'Identifier' && (callee.property as Node).name === 't');
-    if (!isT) continue;
+    if (node.type !== 'CallExpression' || !isTranslator(node.callee as Node, names)) continue;
     const arg = (node.arguments as Node[])[0];
     const key = arg?.type === 'Literal' && typeof arg.value === 'string' ? arg.value
-      : arg?.type === 'TemplateLiteral' && (arg.expressions as unknown[]).length === 0 ? textOf(arg, s.text) : null;
+      : arg?.type === 'TemplateLiteral' && (arg.expressions as unknown[]).length === 0 ? textOf(arg) : null;
     out.push({ key, line: lineOf(s.text, node.start) });
   }
   return out;
@@ -348,39 +739,81 @@ export function keysAskedFor(s: Source): { key: string | null; line: number }[] 
 
 /* ------------------------------------------------------------------ amounts */
 
-/**
- * RULE: an amount reaches a screen only through the amount component, which
- * says whether it is private or public. A breach is anything else that turns
- * an amount into text: the token-amount formatter named, or the browser's own
- * number formatting reached (`NumberFormat` however spelled, `toLocaleString`,
- * `toFixed`), anywhere but `homes`: the component, the token-amount
- * formatter and the plain-number formatter in `format/intl.ts`.
- * NOT SEEN: `String(amount)` and `formatNumber(Number(amount))`, which look
- * like any other conversion.
+/*
+ * WHERE AN AMOUNT MAY BECOME TEXT OR A NUMBER, each with why. Everywhere else
+ * in the kit and the application, the conversions `amountsOutsideTheComponent`
+ * names are refused, from any value, because nothing in source says which
+ * values are amounts.
  */
-export function amountsOutsideTheComponent(files: readonly Source[], homes: readonly string[]): Breach[] {
+export const AMOUNT_HOMES: Readonly<Record<string, string>> = {
+  'packages/ui/src/components/amount.tsx': 'the amount component, which writes an amount with its code and, when anyone can look it up, the Public pill',
+  'packages/ui/src/format/token-amount.ts': 'the token-amount helper the component writes with, exactly and in the person\'s language',
+};
+
+/** The plain-number formatter, which may call the browser's number formatter and nothing else refused below. */
+export const NUMBER_FORMATTER = 'packages/ui/src/format/intl.ts';
+
+/** The names the browser's own number formatting is reached by. */
+const FORMATTERS = new Set(['NumberFormat', 'toLocaleString', 'toFixed', 'toPrecision', 'toExponential']);
+
+/**
+ * RULE: an amount becomes text or a number only in `AMOUNT_HOMES`. A breach
+ * is, anywhere else: the token-amount helper named; the browser's number
+ * formatting reached (`NumberFormat` by name, in brackets with a literal, or
+ * destructured; `toLocaleString`, `toFixed`, `toPrecision`, `toExponential`),
+ * except `NumberFormat` by the plain-number formatter; `Number`, `String`,
+ * `parseInt` or `parseFloat` called, made with `new`, or handed on as a value
+ * (`xs.map(String)`); `.toString`, `.join`, `.concat`, `JSON.stringify`,
+ * `encodeURIComponent`; a unary `+`; a `+` or `+=` with a string or template
+ * literal on either side; any template with a value in it; and a value
+ * written into an element's `textContent`, `innerText` or `innerHTML`. In the
+ * kit, the message of an error it throws may carry a value.
+ *
+ * NOT READ: a value rendered as a JSX child (`<span>{amount}</span>`), which
+ * React writes as its digits; a `+` beside a string held in a variable; and a
+ * conversion reached by a name the code builds (`globalThis['Str' + 'ing']`).
+ */
+export function amountsOutsideTheComponent(files: readonly Source[], homes: Readonly<Record<string, string>> = AMOUNT_HOMES): Breach[] {
   const out: Breach[] = [];
   for (const f of files) {
-    if (homes.includes(f.path)) continue;
+    if (f.path in homes) continue;
     const seen = new Set<string>();
-    for (const { node } of walk(parse(f).program)) {
+    const kit = f.path.startsWith('packages/ui/');
+    for (const { node, up } of walkDown(parse(f).program)) {
       /* An import's name is two nodes at one place, the name imported and the local one. */
       const at = `${node.type}:${node.start}:${node.end}`;
       if (seen.has(at)) continue;
       seen.add(at);
-      if (node.type === 'Identifier' && node.name === 'formatTokenAmount') out.push({ path: f.path, line: lineOf(f.text, node.start), what: 'formatTokenAmount' });
+      const breach = (what: string) => { if (!(kit && up.some((u) => u.type === 'ThrowStatement'))) out.push({ path: f.path, line: lineOf(f.text, node.start), what }); };
+      const callee = node.callee as Node | undefined;
+      if (node.type === 'Identifier' && node.name === 'formatTokenAmount') breach('formatTokenAmount');
       if (node.type === 'MemberExpression') {
         const prop = node.property as Node;
         const name = prop.type === 'Identifier' && !node.computed ? String(prop.name) : prop.type === 'Literal' ? String(prop.value) : '';
-        if (['NumberFormat', 'toLocaleString', 'toFixed'].includes(name)) out.push({ path: f.path, line: lineOf(f.text, node.start), what: name });
+        if (FORMATTERS.has(name) && !(f.path === NUMBER_FORMATTER && name === 'NumberFormat')) breach(name);
+        if (['toString', 'stringify', 'join', 'concat'].includes(name) || ((name === 'parseInt' || name === 'parseFloat' || name === 'String' || name === 'Number') && nameOf(node.object) !== '')) breach(name);
       }
-      if (node.type === 'Property' && (node.key as Node).type === 'Identifier' && (node.key as Node).name === 'NumberFormat') {
-        out.push({ path: f.path, line: lineOf(f.text, node.start), what: 'NumberFormat' });
+      if (node.type === 'Identifier' && ['Number', 'String', 'parseInt', 'parseFloat', 'encodeURIComponent'].includes(String(node.name))) {
+        const p = up[up.length - 1];
+        const called = (p?.type === 'CallExpression' || p?.type === 'NewExpression') && p.callee === node;
+        const named = p?.type === 'MemberExpression' && p.object === node;
+        const typeOnly = up.some((u) => u.type.startsWith('TS') && !RUNTIME_TS.has(u.type));
+        if (!called && !named && !typeOnly && !(p?.type === 'MemberExpression' && p.property === node)) breach(`${String(node.name)} as a value`);
       }
+      if (node.type === 'AssignmentExpression' && ['textContent', 'innerText', 'innerHTML'].includes(nameOf((node.left as Node).property))) breach(nameOf((node.left as Node).property));
+      if (node.type === 'AssignmentExpression' && node.operator === '+=' && ((node.right as Node).type === 'TemplateLiteral' || ((node.right as Node).type === 'Literal' && typeof (node.right as Node).value === 'string'))) breach('+= with a string');
+      if (node.type === 'Property' && nameOf(node.key) === 'NumberFormat' && !(f.path === NUMBER_FORMATTER)) breach('NumberFormat');
+      if ((node.type === 'CallExpression' || node.type === 'NewExpression') && callee?.type === 'Identifier' && ['Number', 'String', 'parseInt', 'parseFloat', 'encodeURIComponent'].includes(String(callee.name))) breach(`${String(callee.name)}(...)`);
+      if (node.type === 'UnaryExpression' && node.operator === '+') breach('unary +');
+      if (node.type === 'BinaryExpression' && node.operator === '+' && [node.left, node.right].some((s) => (s as Node).type === 'TemplateLiteral' || ((s as Node).type === 'Literal' && typeof (s as Node).value === 'string'))) breach('+ with a string');
+      if (node.type === 'TemplateLiteral' && (node.expressions as unknown[]).length > 0) breach('template with a value');
     }
   }
   return out;
 }
+
+/** The breaches of the amount rule that are a call of a number formatter; its other conversions are not among them. */
+export const SCREEN_FORMATTERS = new Set(['formatTokenAmount', ...FORMATTERS]);
 
 /* ------------------------------------------------------------------ language files */
 
