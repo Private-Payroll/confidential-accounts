@@ -20,7 +20,17 @@
     "noEmit": true,
     "skipLibCheck": true,
     "types": ["vite/client"],
-    "jsx": "react-jsx"
+    "jsx": "react-jsx",
+    /*
+     * The kit by its name, to its source, the way the kit's own typecheck
+     * reaches it. The kit's package exports its files without extensions,
+     * which the bundler resolves and the typechecker, reading the exports,
+     * does not.
+     */
+    "paths": {
+      "vaults-ui": ["../../packages/ui/src/index.ts"],
+      "vaults-ui/*": ["../../packages/ui/src/*"]
+    }
   },
   "include": ["src/**/*.ts", "src/**/*.tsx", "vite.config.ts"],
   "exclude": ["dist", "node_modules"]

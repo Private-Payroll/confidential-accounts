@@ -10,6 +10,7 @@
     "cssVariables": true
   },
   "iconLibrary": "hugeicons",
+  "rtl": true,
   "aliases": {
     "components": "vaults-ui/components",
     "ui": "vaults-ui/components",
