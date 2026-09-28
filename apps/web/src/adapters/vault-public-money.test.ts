@@ -75,8 +75,20 @@ describe('a vault\'s public money, through the adapter', () => {
 
   /* RED WHEN: anything leaves the adapter but amounts and the one count: a bigint, a number posing as money, or a string a screen could show. */
   it('hands on nothing but amounts and the count', async () => {
-    const answer = await vaultPublicMoney(view([{ token: NIGHT_TOKEN, amount: '3' }, { token: UNLISTED, amount: '7' }, { token: NIGHT_TOKEN, amount: '4' }]));
+    const answer = await vaultPublicMoney(view([{ token: NIGHT_TOKEN, amount: '3' }, { token: UNLISTED, amount: '7' }, { token: 'cd'.repeat(32), amount: '4' }]));
     expect(looseValues(answer)).toEqual(['answer.unrecognised: number']);
-    expect(answer?.amounts.length).toBe(2);
+    expect([answer?.amounts.length, answer?.unrecognised]).toEqual([1, 2]);
+  });
+
+  /*
+   * RED WHEN: two rows for one token are added together, which could show twice
+   * what the vault holds, or shown as two amounts of one currency, or one of
+   * them dropped, a token the registry does not name included. The choice is
+   * to refuse.
+   */
+  it('refuses two rows for one token', async () => {
+    expect(await vaultPublicMoney(view([{ token: NIGHT_TOKEN, amount: '3' }, { token: NIGHT_TOKEN, amount: '4' }]))).toBeNull();
+    expect(await vaultPublicMoney(view([{ token: UNLISTED, amount: '3' }, { token: UNLISTED, amount: '4' }]))).toBeNull();
+    expect((await vaultPublicMoney(view([{ token: NIGHT_TOKEN, amount: '3' }, { token: UNLISTED, amount: '4' }])))?.amounts.length).toBe(1);
   });
 });

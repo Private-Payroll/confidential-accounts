@@ -1,4 +1,4 @@
-import type { ComponentType, ReactNode } from 'react';
+import { lazy, type ComponentType, type ReactNode } from 'react';
 import type { IconSvgElement } from '@hugeicons/react';
 import {
   Activity01Icon, Analytics01Icon, ArrowDataTransferHorizontalIcon, Building03Icon, CheckListIcon, CreditCardIcon, DocumentValidationIcon, File01Icon,
@@ -6,11 +6,13 @@ import {
   PaintBoardIcon, PolicyIcon, Rocket01Icon, SafeIcon, Settings01Icon, ShieldUserIcon, UserAccountIcon, UserGroupIcon, UserIcon,
 } from '@hugeicons/core-free-icons';
 import type { useText } from 'vaults-ui';
+import type { CompanyRecords } from './adapters/company-records.js';
+import { proposalsWaiting } from './records/counts.js';
+import { Fault, FAULT } from './faults.js';
 import { Appearance } from './screens/appearance.js';
 import { Landing } from './screens/landing.js';
 import { LanguageSettings } from './screens/language.js';
 import { Settings } from './screens/settings.js';
-import { Setup } from './screens/setup.js';
 
 /**
  * EVERY PAGE OF THE APPLICATION, IN ONE LIST.
@@ -59,6 +61,28 @@ export type MenuGroup = keyof typeof MENU_GROUPS;
 /** A screen, shown at its page's address; a screen that holds other pages shows the one opened inside it. */
 export type Screen = ComponentType<{ children?: ReactNode }>;
 
+/** The values a page's address stands for, by name: a run's page stands for its run, named run. */
+export type Params = Readonly<Record<string, string>>;
+
+/** A screen loaded the first time its page is opened, and how to load it without drawing it. */
+export type OnDemand = Screen & { readonly load: () => Promise<Screen>; readonly screenName: string };
+
+/**
+ * A SCREEN LOADED WHEN ITS PAGE IS FIRST OPENED, so the application's first
+ * download carries only what the first page needs. `load` names the module
+ * whole; `screenName` is the component it exports. The router shows a
+ * placeholder while it loads.
+ */
+export function onDemand(load: () => Promise<Record<string, unknown>>, screenName: string): OnDemand {
+  const screen = async (): Promise<Screen> => {
+    const found = (await load())[screenName];
+    /* The list names a screen its module does not export: a mistake in the code, which the list's test finds first. */
+    if (typeof found !== 'function') throw new Fault(FAULT.noScreenInModule);
+    return found as Screen;
+  };
+  return Object.assign(lazy(async () => ({ default: await screen() })) as unknown as Screen, { load: screen, screenName });
+}
+
 export interface Page {
   /** The address the page is reached at. Written the same in every language, and never shown as wording. */
   path: string;
@@ -76,6 +100,8 @@ export interface Page {
   shows: { screen: Screen } | { comingSoon: (t: Text) => string };
   /** A shortcut of its own, from the table in `shortcuts.ts`. */
   shortcut?: string;
+  /** A count the menu shows beside its name, read from the shown company's records; null while it cannot be said. */
+  count?: (records: CompanyRecords) => number | null;
 }
 
 /**
@@ -93,24 +119,32 @@ export const PAGES = {
   },
   setup: {
     path: '/setup', name: (t) => t('page.setup.name'), words: (t) => t('page.setup.words'), icon: Rocket01Icon, group: null, audience: 'signed-in',
-    shows: { screen: Setup },
+    shows: { screen: onDemand(() => import('./screens/setup.js'), 'Setup') },
   },
 
   home: {
     path: '/home', name: (t) => t('page.home.name'), icon: Home01Icon, group: 'top', audience: 'company',
-    shows: { comingSoon: (t) => t('page.home.soon') },
+    shows: { screen: onDemand(() => import('./screens/home.js'), 'Home') },
   },
   proposals: {
-    path: '/proposals', name: (t) => t('page.proposals.name'), words: (t) => t('page.proposals.words'), icon: CheckListIcon, group: 'top', audience: 'company',
-    shows: { comingSoon: (t) => t('page.proposals.soon') },
+    path: '/proposals', name: (t) => t('page.proposals.name'), words: (t) => t('page.proposals.words'), icon: CheckListIcon, group: 'top', audience: 'company', count: proposalsWaiting,
+    shows: { screen: onDemand(() => import('./screens/proposals.js'), 'Proposals') },
   },
   payroll: {
     path: '/payroll', name: (t) => t('page.payroll.name'), icon: Invoice01Icon, group: 'money', audience: 'company',
-    shows: { comingSoon: (t) => t('page.payroll.soon') },
+    shows: { screen: onDemand(() => import('./screens/payroll.js'), 'Payroll') },
+  },
+  run: {
+    path: '/payroll/:run', name: (t) => t('page.run.name'), icon: Invoice01Icon, group: null, inside: 'payroll', audience: 'company',
+    shows: { screen: onDemand(() => import('./screens/run.js'), 'Run') },
   },
   vaults: {
     path: '/vaults', name: (t) => t('page.vaults.name'), icon: SafeIcon, group: 'money', audience: 'company',
-    shows: { comingSoon: (t) => t('page.vaults.soon') },
+    shows: { screen: onDemand(() => import('./screens/vaults.js'), 'Vaults') },
+  },
+  vault: {
+    path: '/vaults/:vault', name: (t) => t('page.vault.name'), icon: SafeIcon, group: null, inside: 'vaults', audience: 'company',
+    shows: { screen: onDemand(() => import('./screens/vault.js'), 'Vault') },
   },
   transactions: {
     path: '/transactions', name: (t) => t('page.transactions.name'), icon: ArrowDataTransferHorizontalIcon, group: 'money', audience: 'company',
@@ -122,11 +156,11 @@ export const PAGES = {
   },
   people: {
     path: '/people', name: (t) => t('page.people.name'), icon: UserGroupIcon, group: 'people', audience: 'company',
-    shows: { comingSoon: (t) => t('page.people.soon') },
+    shows: { screen: onDemand(() => import('./screens/people.js'), 'People') },
   },
   invitations: {
     path: '/invitations', name: (t) => t('page.invitations.name'), icon: MailSend01Icon, group: 'people', audience: 'company',
-    shows: { comingSoon: (t) => t('page.invitations.soon') },
+    shows: { screen: onDemand(() => import('./screens/invitations.js'), 'Invitations') },
   },
   disclosures: {
     path: '/disclosures', name: (t) => t('page.disclosures.name'), icon: DocumentValidationIcon, group: 'compliance', audience: 'company',
@@ -225,6 +259,9 @@ export const PAGES = {
 
 export type PageId = keyof typeof PAGES;
 
+/** Every page's id, by itself, so a screen names a page it links to by the list's own id and never by writing it. */
+export const PAGE = Object.fromEntries(Object.keys(PAGES).map((id) => [id, id])) as { readonly [Id in PageId]: Id };
+
 /** Every page, with its id, in the list's order. */
 export const EVERY_PAGE: readonly (Page & { id: PageId })[] = (Object.keys(PAGES) as PageId[]).map((id) => ({ id, ...(PAGES[id] as Page) }));
 
@@ -279,9 +316,18 @@ export const outerOf = (page: Page): PageId | undefined => page.inside as PageId
  */
 export function pagesByShortcut(pages: readonly (Page & { id: PageId })[], viewer: Viewer): Partial<Record<string, PageId>> {
   const out: Partial<Record<string, PageId>> = {};
-  for (const p of pages) if (p.shortcut !== undefined && mayOpen(p, viewer)) out[p.shortcut] = p.id;
+  for (const p of pages) if (p.shortcut !== undefined && mayOpen(p, viewer) && reachedByName(p)) out[p.shortcut] = p.id;
   return out;
 }
+
+/** The names of the values a page's address stands for, in order; none for most pages. */
+export const valuesOf = (page: Pick<Page, 'path'>): string[] => page.path.split(/\//).filter((part) => part.startsWith(':')).map((part) => part.slice(1));
+
+/**
+ * Whether a page can be gone to by name alone, from the command bar or a
+ * shortcut: it stands for no value. A run's page is opened from its row.
+ */
+export const reachedByName = (page: Pick<Page, 'path'>): boolean => valuesOf(page).length === 0;
 
 /** Whether a page is built: it has a screen rather than a line on what it will be. */
 export const isBuilt = (page: Page): page is Page & { shows: { screen: Screen } } => (page.shows as { screen?: Screen }).screen !== undefined;

@@ -3,7 +3,7 @@ import { HugeiconsIcon } from '@hugeicons/react';
 import { Search01Icon } from '@hugeicons/core-free-icons';
 import { Button, ComingSoon, Dialog, DialogContent, DialogDescription, DialogTitle, Input, Kbd, useText } from 'vaults-ui';
 import { LANGUAGES } from '../languages.js';
-import { EVERY_PAGE, isBuilt, mayOpen, type Page, type PageId, type Text } from '../pages.js';
+import { EVERY_PAGE, isBuilt, mayOpen, reachedByName, type Page, type PageId, type Text } from '../pages.js';
 import { go } from '../router.js';
 import { useSession } from '../session.js';
 import { SHORTCUT, type ShortcutId } from '../shortcuts.js';
@@ -87,7 +87,8 @@ export function CommandBar({ open, onOpenChange, commands }: { open: boolean; on
   const [at, setAt] = useState(0);
   const listId = useId();
   const close = (): void => { onOpenChange(false); setSearch(''); setAt(0); };
-  const pages = EVERY_PAGE.filter((p) => mayOpen(p, viewer));
+  /* A page that stands for a value, such as one run's page, is opened from its row and not by name. */
+  const pages = EVERY_PAGE.filter((p) => mayOpen(p, viewer) && reachedByName(p));
   const lines = useMemo(() => found(linesFor(t, pages, commands, close), search), [t, pages.length, commands, search]);
   const chosen = Math.min(at, Math.max(lines.length - 1, 0));
 

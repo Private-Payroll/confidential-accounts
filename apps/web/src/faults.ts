@@ -11,6 +11,9 @@ export const FAULT = {
   noCurrentPage: 'web-3-no-current-page',
   noRightPanel: 'web-4-no-right-panel',
   companyDidNotOpen: 'web-5-company-did-not-open',
+  noValueForAddress: 'web-6-no-value-for-address',
+  noScreenInModule: 'web-7-no-screen-in-module',
+  noCompanyRecords: 'web-8-no-company-records',
 } as const;
 
 export type FaultCode = (typeof FAULT)[keyof typeof FAULT];

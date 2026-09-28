@@ -7,7 +7,7 @@ import { HOME, VIEWS } from '../pages.js';
 import { go } from '../router.js';
 import { useSessionIfAny, type Session } from '../session.js';
 import { STEP } from '../setup/step-ids.js';
-import { startSetupAt } from '../setup/steps.js';
+import { startSetupAt } from '../setup/asked.js';
 import { CompanyFacts } from '../shell/company-facts.js';
 import { useVisitor } from '../visitor.js';
 

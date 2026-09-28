@@ -1,6 +1,14 @@
 import { askWalletToSignIn, openWalletDialog, WalletClosed, type WalletDialog } from 'vaults-web-shared/wallet-sign-in.js';
 import { closeWalletFrame, mountWalletFrame, onWalletFrame, walletFrameShown, walletInThisPage, WALLET_FRAME_ALLOW } from 'vaults-web-shared/wallet-frame.js';
-import { currentUser, forgetLocally, signedInByAnotherScreen } from 'vaults-web-shared/keyring.js';
+import type { SealedAccount } from '../../../../src/core/types.js';
+
+/*
+ * The shared keyring, loaded after the service's first answer rather than
+ * with the page, so the first download does not carry the code that opens a
+ * company.
+ */
+const keyring = () => import('vaults-web-shared/keyring.js');
+
 
 /*
  * WHO IS SIGNED IN, SIGNING IN WITH THE PERSON'S ACCOUNT, AND SIGNING OUT.
@@ -147,14 +155,40 @@ export async function whoIsSignedIn(): Promise<WhoIsSignedIn> {
   let r = await ask(SERVICE.me);
   if (r !== null && r.status === 409 && r.body.code === SERVICE.anotherPerson) { prepared = null; r = await ask(SERVICE.me); }
   if (r === null) return { of: OF.unreachable };
-  if (r.status === 401) { prepared = null; forgetLocally(); return { of: OF.nobody }; }
+  if (r.status === 401) { prepared = null; (await keyring()).forgetLocally(); return { of: OF.nobody }; }
   if (r.status === 409 && r.body.code === SERVICE.mixedRecords) return { of: OF.recordsApart };
   const person = r.status === 200 ? personFrom(r.body.user) : null;
   if (person === null) return { of: OF.unreachable };
   prepared = person.id;
   /* The keyring holds keys for one person; a tab now signed in as somebody else drops them. */
+  const { currentUser, forgetLocally } = await keyring();
   if (currentUser()?.id !== person.id) forgetLocally();
+  listed = { person: person.id, rows: Array.isArray(r.body.accounts) ? r.body.accounts as unknown[] : [] };
   return { of: OF.signedIn, person, companies: companiesFrom(r.body.accounts) };
+}
+
+/** The service's rows of the one list of companies, as last asked for, and whom they were listed for. Each row's name is sealed. */
+let listed: { person: string; rows: readonly unknown[] } = { person: '', rows: [] };
+
+/**
+ * THE NAME OF EACH COMPANY IN THE ONE LIST, by id, opened with the keys saved
+ * for the person. A company this tab cannot open has none, and so does every
+ * company when the list was asked for somebody else. The list is not asked
+ * for again: it is the one `whoIsSignedIn` read. The keyring may ask the
+ * service who is signed in, when it does not know yet.
+ */
+export async function companyNamesFor(personId: string): Promise<ReadonlyMap<string, string>> {
+  const out = new Map<string, string>();
+  try {
+    if (listed.person !== personId) return out;
+    const [{ keyringFor }, { openAccount }] = await Promise.all([import('./keyring-person.js'), keyring()]);
+    if (!(await keyringFor(personId))) return out;
+    for (const row of listed.rows) {
+      const opened = openAccount(row as SealedAccount);
+      if (opened !== null && typeof opened.name === 'string') out.set(opened.id, opened.name);
+    }
+  } catch { /* a name not opened is not shown */ }
+  return out;
 }
 
 /** What the account is told about who is asking. The account shows these as the asker's own words, beside the address it saw. */
@@ -241,6 +275,7 @@ export async function signIn(asking: Asking): Promise<SignedIn> {
      * company cannot be created that way, and they are asked to sign in again.
      */
     /* Whatever the keyring held for somebody else is dropped first, a company they left unfinished included. */
+    const { currentUser, forgetLocally, signedInByAnotherScreen } = await keyring();
     if (currentUser()?.id !== person.id) forgetLocally();
     try { signedInByAnotherScreen(answer.body); } catch { forgetLocally(); }
     return { of: OF.signedIn, person, firstTime: answer.body.created === true };
@@ -266,7 +301,7 @@ export type SignedOut = { of: typeof OF.signedOut } | { of: typeof OF.notConfirm
 export async function signOut(): Promise<SignedOut> {
   const r = await ask(SERVICE.signOut, SERVICE.post);
   prepared = null;
-  forgetLocally();
+  (await keyring()).forgetLocally();
   return r !== null && (r.status === 200 || r.status === 401) ? { of: OF.signedOut } : { of: OF.notConfirmed };
 }
 

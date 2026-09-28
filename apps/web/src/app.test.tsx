@@ -21,10 +21,17 @@ const json = (status: number, body: unknown) => () => new Response(JSON.stringif
 const PERSON = { id: 'u1', email: null, name: 'Priya' };
 const COMPANY = { id: 'c1', createdAt: '2026-09-01T00:00:00.000Z', signerCount: 2, threshold: 2 };
 const settle = () => new Promise((r) => setTimeout(r, 0));
+/* A page loads when first opened, so a test waits until it is on screen, not for a fixed number of turns. */
+const untilShown = async (find: () => Element | null, ms = 10_000) => {
+  const end = Date.now() + ms;
+  while (find() === null && Date.now() < end) await act(async () => { await new Promise((r) => setTimeout(r, 10)); });
+};
 
 async function open(at: string) {
   window.history.replaceState(null, '', at);
   const view = render(<Root />);
+  /* Until the service has said who is signed in, the page is only a placeholder; the keyring it asks through loads on demand. */
+  for (let i = 0; i < 100 && view.container.querySelector(':scope > [aria-busy]') !== null; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
   await act(settle);
   await act(settle);
   return view;
@@ -58,7 +65,10 @@ describe('who is shown what', () => {
     expect(container.querySelector('[data-screen=landing]')).toBeNull();
     expect(container.querySelector('[data-menu-page=payroll]')).not.toBeNull();
     expect(container.querySelector('[data-menu-page=payslips]')).toBeNull();
-    expect(container.querySelector('[data-screen=coming-soon][data-page=home]')).not.toBeNull();
+    /* Home is built, loaded when first opened, and never Coming soon. */
+    expect(container.querySelector('[data-screen=coming-soon]')).toBeNull();
+    await act(async () => { for (let i = 0; i < 20 && container.querySelector('[data-screen=home]') === null; i += 1) await new Promise((r) => setTimeout(r, 10)); });
+    expect(container.querySelector('[data-screen=home]')).not.toBeNull();
   });
 
   /* RED WHEN: a person who signs for no company is shown the company view, or any company page. */
@@ -168,6 +178,7 @@ describe('the landing page, once signed in', () => {
     const { container } = await open(PAGES.landing.path);
     await act(async () => { fireEvent.click(container.querySelector('[data-choose-a-company] [data-action=create-company]')!); await settle(); await settle(); });
     expect(window.location.pathname).toBe(PAGES.setup.path);
+    await untilShown(() => container.querySelector('[data-screen=setup] [data-current-step]'));
     expect(container.querySelector('[data-screen=setup] [data-current-step]')!.getAttribute('data-current-step')).toBe('createCompany');
     expect(container.querySelector('[data-mark=createCompany]')!.getAttribute('data-standing')).toBe('open');
     expect(container.querySelector('[data-progress]')!.getAttribute('aria-valuenow')).toBe('0');

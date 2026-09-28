@@ -1,5 +1,5 @@
 import { createContext, useContext, useSyncExternalStore, type AnchorHTMLAttributes, type MouseEvent, type ReactNode } from 'react';
-import { EVERY_PAGE, HOME, mayOpen, PAGES, type Page, type PageId, type Viewer } from './pages.js';
+import { EVERY_PAGE, HOME, mayOpen, PAGES, type Page, type PageId, type Params, type Viewer } from './pages.js';
 import { Fault, FAULT } from './faults.js';
 
 /**
@@ -32,12 +32,47 @@ export function useAddress(): string {
 /** An address as the list writes it: no trailing slash, except for the root. */
 export const normalised = (path: string): string => path.replace(/\/+$/, '') || path.slice(0, 1);
 
-/** The page's address. */
-export const addressOf = (id: PageId): string => PAGES[id].path;
+/** What a value in a page's address may be written with: letters, digits, `_` and `-`, so it can never end the part it fills or be read as anything but itself. */
+const SAFE_VALUE = /^[A-Za-z0-9_-]+$/;
+/** A part of a page's address that stands for a value, such as `:run`. */
+const VALUE_PART = /^:[a-z]+$/;
+const VALUE_PARTS = /:([a-z]+)/g;
 
-/** Go to a page. `replace` leaves no step in the tab's history, for a page the person did not ask for by name. */
-export function go(id: PageId, replace = false): void {
-  const to = addressOf(id);
+/**
+ * THE PAGE'S ADDRESS, with each value it stands for filled in from `params`.
+ * A page that stands for a value, opened without it or with one that is not
+ * written in the letters a value may be, is a mistake in the code.
+ */
+export function addressOf(id: PageId, params: Params = {}): string {
+  return PAGES[id].path.replace(VALUE_PARTS, (_part, name: string) => {
+    const value = params[name];
+    if (value === undefined || !SAFE_VALUE.test(value)) throw new Fault(FAULT.noValueForAddress);
+    return value;
+  });
+}
+
+/**
+ * The values `address` gives the parts of `path` that stand for one, or null
+ * when `address` is not that page's: every other part the same, and every
+ * value there and written in the letters a value may be.
+ */
+export function matchAddress(path: string, address: string): Params | null {
+  const want = path.split(/\//);
+  const got = address.split(/\//);
+  if (want.length !== got.length) return null;
+  const params: Record<string, string> = {};
+  for (const [i, part] of want.entries()) {
+    const value = got[i]!;
+    if (!VALUE_PART.test(part)) { if (part !== value) return null; continue; }
+    if (!SAFE_VALUE.test(value)) return null;
+    params[part.slice(1)] = value;
+  }
+  return params;
+}
+
+/** Go to a page. `replace` leaves no step in the tab's history, for a page the person did not ask for by name. `params` fills the values the page's address stands for. */
+export function go(id: PageId, replace = false, params: Params = {}): void {
+  const to = addressOf(id, params);
   if (normalised(window.location.pathname) === to) return;
   if (replace) window.history.replaceState(null, '', to);
   else window.history.pushState(null, '', to);
@@ -48,49 +83,53 @@ export function go(id: PageId, replace = false): void {
 export const RESOLVED = { page: 'page', notYours: 'not-yours', nothing: 'nothing' } as const;
 
 export type Resolved =
-  | { of: typeof RESOLVED.page; id: PageId; page: Page }
+  | { of: typeof RESOLVED.page; id: PageId; page: Page; params: Params }
   | { of: typeof RESOLVED.notYours; id: PageId; page: Page }
   | { of: typeof RESOLVED.nothing };
 
 /**
  * WHAT `address` OPENS FOR `viewer`. The address is matched against the list
- * alone; a page the viewer may not open is never opened, whoever typed its
- * address.
+ * alone, a page whose address stands for a value taking that value from it;
+ * a page the viewer may not open is never opened, whoever typed its address.
+ * An address a page names outright is that page's before any page that
+ * stands for a value there.
  */
 export function resolve(address: string, viewer: Viewer): Resolved {
   const at = normalised(address);
-  const found = EVERY_PAGE.find((p) => p.path === at);
-  if (found === undefined) return { of: RESOLVED.nothing };
-  return mayOpen(found, viewer) ? { of: RESOLVED.page, id: found.id, page: found } : { of: RESOLVED.notYours, id: found.id, page: found };
+  const outright = EVERY_PAGE.find((p) => p.path === at);
+  const found = outright !== undefined ? { page: outright, params: {} } : EVERY_PAGE.map((p) => ({ page: p, params: matchAddress(p.path, at) })).find((m) => m.params !== null);
+  if (found === undefined || found.params === null) return { of: RESOLVED.nothing };
+  const { page, params } = found;
+  return mayOpen(page, viewer) ? { of: RESOLVED.page, id: page.id, page, params } : { of: RESOLVED.notYours, id: page.id, page };
 }
 
 /** The page to go to instead, when the address opens nothing the viewer may see: where their view begins. */
 export const homeOf = (viewer: Viewer): PageId => (viewer.signedIn ? HOME[viewer.view] : HOME.visitor);
 
-const CurrentPage = createContext<{ id: PageId; page: Page } | null>(null);
+const CurrentPage = createContext<{ id: PageId; page: Page; params: Params } | null>(null);
 
-/** The page being shown, for a screen that is shown at more than one address. */
-export function useCurrentPage(): { id: PageId; page: Page } {
+/** The page being shown, and the values its address gave, for a screen that is shown at more than one address. */
+export function useCurrentPage(): { id: PageId; page: Page; params: Params } {
   const current = useContext(CurrentPage);
   /* Only the router shows a screen, and it always says which page; a screen shown any other way is a mistake in the code. */
   if (current === null) throw new Fault(FAULT.noCurrentPage);
   return current;
 }
 
-export function CurrentPageProvider({ id, children }: { id: PageId; children?: ReactNode }) {
-  return <CurrentPage.Provider value={{ id, page: PAGES[id] }}>{children}</CurrentPage.Provider>;
+export function CurrentPageProvider({ id, params = {}, children }: { id: PageId; params?: Params; children?: ReactNode }) {
+  return <CurrentPage.Provider value={{ id, page: PAGES[id], params }}>{children}</CurrentPage.Provider>;
 }
 
 /**
  * A LINK TO A PAGE, BY ITS ID. It is a real link, so it can be opened in a new
  * tab, and a plain press goes to the page without reloading.
  */
-export function PageLink({ to, children, onClick, ...rest }: { to: PageId; children?: ReactNode } & Omit<AnchorHTMLAttributes<HTMLAnchorElement>, 'href'>) {
+export function PageLink({ to, params, children, onClick, ...rest }: { to: PageId; params?: Params; children?: ReactNode } & Omit<AnchorHTMLAttributes<HTMLAnchorElement>, 'href'>) {
   const follow = (e: MouseEvent<HTMLAnchorElement>): void => {
     onClick?.(e);
     if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
     e.preventDefault();
-    go(to);
+    go(to, false, params);
   };
-  return <a href={addressOf(to)} onClick={follow} {...rest}>{children}</a>;
+  return <a href={addressOf(to, params)} onClick={follow} {...rest}>{children}</a>;
 }

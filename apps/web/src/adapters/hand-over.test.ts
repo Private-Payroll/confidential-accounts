@@ -14,11 +14,13 @@ const kr = vi.hoisted(() => ({
   calls: [] as { path: string; method: string; body: unknown }[],
   answers: {} as Record<string, unknown>,
   keys: { signerId: 's1', signingSecret: 'aa', wrappingSecret: 'bb', blinding: 'cc' } as Record<string, string> | null,
-  roster: null as unknown, walletKey: null as unknown, signed: null as unknown, opened: 0,
+  roster: null as unknown, walletKey: null as unknown, signed: null as unknown, opened: 0, user: 'u1',
 }));
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
-  currentUser: () => ({ id: 'u1' }),
+  currentUser: () => ({ id: kr.user }),
+  forgetLocally: () => {},
+  resumeSession: async () => null,
   canOpenCompanies: () => kr.opened > 0,
   openKeysWithWallet: async () => { kr.opened += 1; },
   reopenSavedKeys: async () => {},
@@ -32,6 +34,7 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
     if (!(path in kr.answers)) throw new Error(`no answer for ${path}`);
     /* A list is answered one item a request, the last kept for every request after. */
     const a = kr.answers[path];
+    if (a instanceof Error) throw a;
     return Array.isArray(a) ? (a.length > 1 ? a.shift() : a[0]) : a;
   },
 }));
@@ -57,7 +60,7 @@ const AUTHORITY = (over: Record<string, unknown> = {}) => ({
   handover: { possible: true, why: null }, change: { possible: false, why: 'x' }, ...over,
 });
 
-beforeEach(() => { kr.calls = []; kr.answers = {}; kr.keys = { signerId: 's1', signingSecret: 'aa', wrappingSecret: 'bb', blinding: 'cc' }; kr.opened = 0; kr.walletKey = K(1); kr.roster = null; kr.signed = null; });
+beforeEach(() => { kr.user = 'u1'; kr.calls = []; kr.answers = {}; kr.keys = { signerId: 's1', signingSecret: 'aa', wrappingSecret: 'bb', blinding: 'cc' }; kr.opened = 0; kr.walletKey = K(1); kr.roster = null; kr.signed = null; });
 afterEach(() => { vi.unstubAllEnvs(); });
 
 describe('where a company stands, from the shape of the service\'s answer', () => {
@@ -81,10 +84,31 @@ describe('where a company stands, from the shape of the service\'s answer', () =
     expect(f(AUTHORITY({ contracts: account({ changes: '2', shape: 'committee' }), handover: { possible: false } }) as never, null)).toEqual({ of: 'held-by-other-keys' });
   });
 
-  /* RED WHEN: a service that cannot be asked is said as a state of the company. */
-  it('says unreachable when the service cannot be asked', async () => {
+  /*
+   * RED WHEN: a failure to read is not told apart by its kind: a service not
+   * reached, a service that refused, a person signed out, somebody else signed
+   * in, or an answer of a shape this does not know, each said as another (all
+   * as unreachable, say); or the two failures that are the person's are said as
+   * the company's state.
+   */
+  it('says each failure to read as what it is', async () => {
     const { state } = await load();
-    expect(await state.readHandover('u1', 'c1')).toEqual({ of: 'unreachable' });
+    const { AnotherPersonError, AuthError } = await import('vaults-web-shared/keyring.js');
+    const cases: [unknown, string][] = [
+      [new TypeError('fetch failed'), 'unreachable'],
+      [new Error('the chain could not be read'), 'unreadable'],
+      [new AuthError('not signed in'), 'not-signed-in'],
+      [new AnotherPersonError('someone else'), 'another-person'],
+      [{ company: { threshold: 1, signerCount: 1 }, change: null }, 'unreadable'],
+      [null, 'unreadable'],
+    ];
+    for (const [answer, of] of cases) {
+      kr.answers['/api/accounts/c1/authority'] = answer;
+      expect(await state.readHandover('u1', 'c1'), String(answer)).toEqual({ of });
+    }
+    delete kr.answers['/api/accounts/c1/authority'];
+    kr.user = 'somebody else';
+    expect(await state.readHandover('u1', 'c1')).toEqual({ of: 'not-signed-in' });
   });
 });
 
