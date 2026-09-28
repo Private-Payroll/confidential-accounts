@@ -1,5 +1,5 @@
 import { useState, type HTMLAttributes, type ReactNode } from 'react';
-import { Alert, AlertDescription, AlertTitle, Amount, Badge, Button, ComingSoon, formatDate, Skeleton, useLanguage, useText } from 'vaults-ui';
+import { Alert, AlertDescription, AlertTitle, Amount, AMOUNT_KIND, Badge, Button, ComingSoon, formatDate, Skeleton, useLanguage, useText, type AmountKind } from 'vaults-ui';
 import { OPENED, PAID, READ, VAULT, type CompanyRecords, type Paid, type ProposalRow, type Read, type RunRow, type VaultRow, type VaultStanding } from '../adapters/company-records.js';
 import type { ActRefusal } from '../adapters/refusals.js';
 import { ActRefused } from '../act-refused.js';
@@ -180,6 +180,13 @@ export function RunStatus({ run }: { run: RunRow }) {
   return <span data-status={run.status}>{run.status === 'draft' ? t('payroll.status.draft') : t('payroll.status.proposed')}</span>;
 }
 
+/**
+ * What a run's amounts are for the Public pill: payments made once the run is
+ * paid, and before that payments to be made, so the pill never says anyone
+ * received what has not been paid.
+ */
+export const paymentKindOf = (run: RunRow): AmountKind => (run.status === 'settled' ? AMOUNT_KIND.paid : AMOUNT_KIND.toBePaid);
+
 /** A run's money, one currency to a line and each split by how it is paid, never added into one figure. */
 export function RunMoney({ run }: { run: RunRow }) {
   const t = useText();
@@ -187,8 +194,8 @@ export function RunMoney({ run }: { run: RunRow }) {
     <div className="flex flex-col gap-1" data-run-money>
       {run.currencies.map((c) => (
         <div key={c.code} className="flex flex-col gap-0.5" data-currency={c.code}>
-          {c.privately === null ? null : <span className="flex flex-wrap items-center gap-1.5"><span className="text-xs text-muted-foreground">{t('payroll.runTotal.privately')}</span><Amount value={c.privately} kind="payment" /></span>}
-          {c.publicly === null ? null : <span className="flex flex-wrap items-center gap-1.5"><span className="text-xs text-muted-foreground">{t('payroll.runTotal.publicly')}</span><Amount value={c.publicly} kind="payment" /></span>}
+          {c.privately === null ? null : <span className="flex flex-wrap items-center gap-1.5"><span className="text-xs text-muted-foreground">{t('payroll.runTotal.privately')}</span><Amount value={c.privately} kind={paymentKindOf(run)} /></span>}
+          {c.publicly === null ? null : <span className="flex flex-wrap items-center gap-1.5"><span className="text-xs text-muted-foreground">{t('payroll.runTotal.publicly')}</span><Amount value={c.publicly} kind={paymentKindOf(run)} /></span>}
         </div>
       ))}
       {run.unrecognised === 0 ? null : <span className="text-xs text-muted-foreground" data-unrecognised={run.unrecognised}>{t('records.unrecognised', { count: run.unrecognised })}</span>}

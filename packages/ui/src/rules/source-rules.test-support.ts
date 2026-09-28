@@ -830,8 +830,8 @@ export function variantsOf(word: string): string[] {
  */
 const reaches = (variant: string): boolean => variant === '*' || variant === '**' || variant.startsWith('[');
 
-/** What an application's stylesheet may hold: comments, and the lines that load the kit's stylesheet and name the application's sources. */
-const STYLESHEET_LINE = /^@(?:import|source)\s+(?:"[^"]*"|'[^']*')\s*;$/;
+/** What an application's stylesheet may hold: comments, and the lines that load the kit's stylesheet and name, or leave out, the application's sources. */
+const STYLESHEET_LINE = /^@(?:import|source(?:\s+not)?)\s+(?:"[^"]*"|'[^']*')\s*;$/;
 
 /**
  * RULE: AN APPLICATION STYLES ONLY THE ELEMENTS IT WRITES. The Public pill is
@@ -850,7 +850,8 @@ export function stylesReachingIntoComponents(files: readonly Source[]): Breach[]
   for (const f of files) {
     for (const m of f.text.matchAll(/data-slot/gi)) out.push({ path: f.path, line: lineOf(f.text, m.index), what: m[0] });
     if (f.path.endsWith('.css')) {
-      const plain = f.text.replace(/\/\*[\s\S]*?\*\//g, (c) => c.replace(/[^\n]/g, ' '));
+      // Comments blanked, and only comments: a glob in quotes, such as the one that leaves out every test file, holds the same characters.
+      const plain = f.text.replace(/"[^"\n]*"|'[^'\n]*'|\/\*[\s\S]*?\*\//g, (c) => (c.startsWith('/*') ? c.replace(/[^\n]/g, ' ') : c));
       for (const statement of plain.matchAll(/[^;{}]+(?:;|\{[^}]*\})/g)) {
         const text = statement[0].trim();
         if (text !== '' && !STYLESHEET_LINE.test(text)) out.push({ path: f.path, line: lineOf(f.text, statement.index + statement[0].indexOf(text)), what: text.split('\n')[0]! });
@@ -940,7 +941,8 @@ export const ATTRIBUTES: Readonly<Record<string, Attribute>> = {
   variant: { why: 'which of a component\'s looks it takes' },
   size: { why: 'which of a component\'s sizes it takes' },
   align: { why: 'where a popup lines up against what opened it' },
-  kind: { why: 'whether a public amount is a payment or a balance, which the Public pill turns into words', on: ['Amount', 'PublicPill'] },
+  kind: { why: 'whether a public amount is a payment made, a payment to be made or a balance, which the Public pill turns into words', on: ['Amount', 'PublicPill'] },
+  activationMode: { why: 'whether a tab opens when it is focused or only when it is pressed', on: ['Tabs'], values: ['automatic', 'manual'] },
   orientation: { why: 'which way a separator or a group of controls runs' },
   side: { why: 'which edge a panel or a popup opens from; the left-or-right rule still reads the value, so it is start, end, top or bottom' },
   collapsible: { why: 'how the left menu folds away: to its icons, off the page, or not at all' },
@@ -975,6 +977,7 @@ export const CODES: Readonly<Record<string, string>> = {
   'packages/ui/src/theme/base-colors.ts#THEMES': 'the value of the root element\'s `data-theme`',
   'packages/ui/src/format/token-amount.ts#visibilityOf': 'whether an amount is public or private, a value the code compares and the amount component turns into the pill',
   'packages/ui/src/components/sidebar.tsx#STATE': 'the values of the left menu\'s `data-state`, which its classes are written against',
+  'packages/ui/src/components/public-pill.tsx#AMOUNT_KIND': 'the kinds of amount the Public pill explains, which a screen names and the pill turns into words',
   'packages/ui/src/hooks/use-mobile.ts#NARROW_SCREEN': 'a media query, read by the browser',
   'packages/ui/src/lib/direction.ts#POPUP_SIDE': 'the side names the popup library places by, chosen from the reading direction',
   'apps/web/src/pages.ts#PAGES': 'each page\'s address, menu group, audience and the page it sits inside; its name and what it will be are asked for by key',
@@ -1408,10 +1411,57 @@ export function hasPhrase(english: Readonly<Record<string, string>>, key: string
 }
 
 /**
+ * THE VALUES OF `data-state` EACH PRIMITIVE THE KIT IS BUILT ON SETS, by the
+ * name the kit imports it under from `radix-ui`, with the packages whose
+ * built code sets them, so a test can hold every value to that code. A
+ * primitive the kit imports that sets no `data-state` is not listed.
+ */
+export const RADIX_STATES: Readonly<Record<string, { states: readonly string[]; packages: readonly string[] }>> = {
+  Tooltip: { states: ['closed', 'delayed-open', 'instant-open'], packages: ['react-tooltip'] },
+  DropdownMenu: { states: ['open', 'closed', 'checked', 'unchecked', 'indeterminate'], packages: ['react-dropdown-menu', 'react-menu'] },
+  Dialog: { states: ['open', 'closed'], packages: ['react-dialog'] },
+  Popover: { states: ['open', 'closed'], packages: ['react-popover'] },
+  RadioGroup: { states: ['checked', 'unchecked'], packages: ['react-radio-group'] },
+  Tabs: { states: ['active', 'inactive'], packages: ['react-tabs'] },
+};
+
+/**
+ * The values of `data-state` a kit file sets itself, on an element it draws,
+ * rather than through a primitive. Each is also written as a string in that
+ * file, which the kit's own test checks.
+ */
+export const OWN_STATES: Readonly<Record<string, readonly string[]>> = {
+  'packages/ui/src/components/sidebar.tsx': ['expanded', 'collapsed'],
+};
+
+/** The values a file's classes name in a bracketed state variant (`data-[state=open]:`, `peer-data-[state=collapsed]:`), in the order written. */
+export function bracketedStatesOf(s: Source): string[] {
+  const out: string[] = [];
+  for (const { word } of classWordsOf(s)) {
+    const variants = word.slice(0, word.length - utilityOf(word).length);
+    for (const m of variants.matchAll(/data-\[state=([\w-]+)\]/g)) out.push(m[1]!);
+  }
+  return out;
+}
+
+/**
+ * The bracketed states a file's classes use that nothing it draws sets:
+ * neither a primitive it imports from `radix-ui` nor the file itself. Such a
+ * class matches nothing, so it silently never applies.
+ */
+export function statesNothingSets(s: Source): string[] {
+  const imported = [...s.text.matchAll(/import\s*\{([^}]*)\}\s*from\s*["']radix-ui["']/g)]
+    .flatMap((m) => m[1]!.split(',').map((n) => n.trim().split(/\s+as\s+/)[0]!).filter((n) => n !== ''));
+  const set = new Set([...imported.flatMap((n) => RADIX_STATES[n]?.states ?? []), ...(OWN_STATES[s.path] ?? [])]);
+  return [...new Set(bracketedStatesOf(s).filter((v) => !set.has(v)))];
+}
+
+/**
  * The bare `data-...` variants a file's classes use (`data-open:`,
  * `group-data-open/button:`), which Tailwind would read as a plain attribute
  * and a stylesheet must define. Bracketed ones (`data-[state=open]:`) say
- * their own selector and are not returned.
+ * their own selector and are not returned here; `bracketedStatesOf` reads
+ * them, and `statesNothingSets` holds them to what sets them.
  */
 export function stateVariantsOf(s: Source): string[] {
   const out = new Set<string>();

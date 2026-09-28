@@ -11,7 +11,7 @@ import { Fault, FAULT } from './faults.js';
  */
 const SRC = fileURLToPath(new URL('.', import.meta.url));
 const files = (dir = ''): string[] => readdirSync(SRC + dir, { withFileTypes: true }).flatMap((e) =>
-  e.isDirectory() ? files(`${dir}${e.name}/`) : /\.tsx?$/.test(e.name) && !/\.test\./.test(e.name) ? [`${dir}${e.name}`] : []);
+  e.isDirectory() ? files(`${dir}${e.name}/`) : /\.tsx?$/.test(e.name) && !/\.test(-support)?\./.test(e.name) ? [`${dir}${e.name}`] : []);
 
 describe('a mistake in the code', () => {
   /* RED WHEN: anything is thrown in the application's code but a Fault naming a code from the one table (an empty RangeError, an Error, a string). */

@@ -1,18 +1,18 @@
 import { formatTokenAmount, visibilityOf, type TokenAmount } from 'vaults-ui/format/token-amount';
 import { useLanguage } from 'vaults-ui/i18n/provider';
-import { PublicPill, type AmountKind } from 'vaults-ui/components/public-pill';
+import { AMOUNT_KINDS, PublicPill, type AmountKind } from 'vaults-ui/components/public-pill';
 
 export interface AmountProps {
   /** The amount, made by `publicAmount` or `privateAmount`: its units, its token's decimals and code, and whether anyone can look it up. */
   value: TokenAmount;
-  /** Whether it is a payment or a balance, which says what the Public pill explains. Required on every amount, private ones too. */
+  /** Whether it is a payment made, a payment to be made or a balance, which says what the Public pill explains. Required on every amount, private ones too. */
   kind: AmountKind;
 }
 
-/** Refuses a kind that is neither, so the pill never guesses what public means. */
+/** Refuses a kind that is not one of `AMOUNT_KIND`, so the pill never guesses what public means. */
 function checkedKind(kind: AmountKind): AmountKind {
-  if (kind !== 'payment' && kind !== 'balance') {
-    throw new Error(`an amount is a payment or a balance, and this one is ${String(kind)}`);
+  if (!AMOUNT_KINDS.includes(kind)) {
+    throw new Error(`an amount is a payment, a payment to be made or a balance, and this one is ${String(kind)}`);
   }
   return kind;
 }

@@ -37,6 +37,16 @@ export function standingOf(step: (typeof EVERY_STEP)[number], facts: SetupFacts,
   return skipped.has(step.id) ? STANDING.skipped : STANDING.open;
 }
 
+/** Whether `step` is done for good: done, and a step that cannot be undone. The wizard shows it as done and never opens it again. */
+export function isDoneForGood(step: (typeof EVERY_STEP)[number], facts: SetupFacts): boolean {
+  return step.cannotBeUndone && step.done(facts);
+}
+
+/** The first step after the one at `index`, in the list's order, that is not done for good; null when there is none. */
+export function nextAfter(index: number, facts: SetupFacts): StepId | null {
+  return EVERY_STEP.slice(index + 1).find((s) => !isDoneForGood(s, facts))?.id ?? null;
+}
+
 /** The first step that is neither done nor skipped, or the last step when every one is. A step asked for by name is taken before this, by the wizard. */
 export function firstOpen(facts: SetupFacts, skipped: ReadonlySet<StepId>): StepId {
   return EVERY_STEP.find((s) => standingOf(s, facts, skipped) === STANDING.open)?.id ?? EVERY_STEP[EVERY_STEP.length - 1]!.id;

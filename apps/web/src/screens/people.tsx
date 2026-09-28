@@ -31,7 +31,7 @@ export function People() {
                       <td className="py-2 font-medium">{p.name}</td>
                       <td>{p.title}</td>
                       <td><StandingBadge standing={p.standing} /></td>
-                      <td>{p.pay === null ? t('records.unrecognisedOne') : <Amount value={p.pay} kind="payment" />}</td>
+                      <td>{p.pay === null ? t('records.unrecognisedOne') : <Amount value={p.pay} kind="to-be-paid" />}</td>
                       <td className="text-muted-foreground"><PaidWords paid={p.paid} /></td>
                     </tr>
                   ))}
@@ -65,7 +65,7 @@ function PersonPanel({ person }: { person: PersonRow }) {
         <dt className="text-muted-foreground">{t('people.column.title')}</dt><dd>{person.title}</dd>
         <dt className="text-muted-foreground">{t('people.column.standing')}</dt><dd><StandingBadge standing={person.standing} /></dd>
         <dt className="text-muted-foreground">{t('people.started')}</dt><dd><Day at={person.startedAt} /></dd>
-        <dt className="text-muted-foreground">{t('people.column.pay')}</dt><dd>{person.pay === null ? t('records.unrecognisedOne') : <Amount value={person.pay} kind="payment" />}</dd>
+        <dt className="text-muted-foreground">{t('people.column.pay')}</dt><dd>{person.pay === null ? t('records.unrecognisedOne') : <Amount value={person.pay} kind="to-be-paid" />}</dd>
         <dt className="text-muted-foreground">{t('people.column.paid')}</dt><dd><PaidWords paid={person.paid} /></dd>
       </dl>
       <SoonAction label={t('people.payslips')} soon={t('people.payslips.soon')} data-action="payslips" />
