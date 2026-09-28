@@ -3,8 +3,8 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { SEED_ASSETS } from '../../../../src/core/assets.js';
 import {
-  amountsMadeOutsideTheAdapters, amountsOutsideTheComponent, arbitraryValues, CODES, colourValues, declaredBy, filesUnder, hasPhrase, inlineStyles, isShippingCode,
-  keysAskedFor, paletteClasses, physicalClasses, secondCn, stateVariantsOf, stringWordsOf, undeclaredImports, waysIntoSharedCode, wordingCensus, wordingInCode,
+  amountsMadeOutsideTheAdapters, amountsOutsideTheComponent, arbitraryValues, CODES, codesUnder, colourValues, declaredBy, filesUnder, hasPhrase, inlineStyles, isShippingCode,
+  keysAskedFor, namedOutside, paletteClasses, physicalClasses, secondCn, SIDE_NAMES, spansOf, stateVariantsOf, stringWordsOf, undeclaredImports, waysIntoSharedCode, wordingCensus, wordingInCode,
   type Source,
 } from './source-rules.test-support.js';
 
@@ -42,9 +42,10 @@ describe('the kit is read', () => {
     expect(new Set(amountsOutsideTheComponent(CODE, {}).map((b) => b.path))).toEqual(new Set(['packages/ui/src/components/amount.tsx', 'packages/ui/src/format/token-amount.ts']));
   });
 
-  /* RED WHEN: an entry of CODES names a declaration that is not there, so it lets through whatever is written under that name later. */
+  /* RED WHEN: an entry of CODES for the kit names a declaration that is not there, so it lets through whatever is written under that name later; or CODES names a file outside the kit and the application. */
   it('names, in CODES, only declarations the kit has', () => {
-    expect(wordingCensus(CODE, ASSET_CODES).codes).toEqual(Object.keys(CODES).sort());
+    expect(wordingCensus(CODE, ASSET_CODES).codes).toEqual(codesUnder('packages/ui'));
+    expect(Object.keys(CODES).filter((k) => !/^(packages\/ui|apps\/web)\//.test(k))).toEqual([]);
   });
 });
 
@@ -89,6 +90,26 @@ describe('every rule, over the kit', () => {
   /* RED WHEN: a string with a letter stands in the kit anywhere not named as a position. */
   it('shows no wording of its own', () => {
     expect(wordingInCode(CODE, ASSET_CODES)).toEqual([]);
+  });
+
+  /* RED WHEN: an entry of SIDE_NAMES names a declaration the kit does not have, so it lets through whatever left or right is written under that name later. */
+  it('names, in SIDE_NAMES, only declarations the kit has', () => {
+    for (const entry of Object.keys(SIDE_NAMES)) {
+      const [path] = entry.split('#');
+      const file = CODE.find((f) => f.path === path);
+      expect(file === undefined ? 0 : spansOf(file, { [entry]: '' }).length, entry).toBe(1);
+    }
+  });
+
+  /*
+   * RED WHEN: the amount's figure without its pill is used anywhere in the kit
+   * but the amount component and the balance, where a public amount shown
+   * through it would have no pill.
+   */
+  it('uses the figure without the pill only in the amount and the balance', () => {
+    const homes = ['packages/ui/src/components/amount.tsx', 'packages/ui/src/components/balance.tsx'];
+    expect(namedOutside(CODE, 'AmountFigure', homes)).toEqual([]);
+    expect(new Set(namedOutside(CODE, 'AmountFigure', []).map((b) => b.path))).toEqual(new Set(homes));
   });
 
   /* RED WHEN: a kit file turns any value into text or a number outside the amount component and its helper. */

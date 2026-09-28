@@ -76,6 +76,12 @@
   }
 }
 
+@custom-variant data-inset {
+  &:where([data-inset]:not([data-inset='false'])) {
+    @slot;
+  }
+}
+
 @custom-variant data-horizontal {
   &:where([data-orientation='horizontal']) {
     @slot;

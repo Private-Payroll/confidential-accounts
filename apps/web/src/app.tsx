@@ -1,0 +1,155 @@
+import { useCallback, useEffect, useState } from 'react';
+import { Button, useText } from 'vaults-ui';
+import { OF, signOut as endSignIn, whoIsSignedIn, type Company, type Person, type WhoIsSignedIn } from './adapters/session.js';
+import { HOME, isBuilt, mayOpen, outerOf, PAGES, VIEWS, viewFor, type Page, type PageId, type View, type Viewer } from './pages.js';
+import type { Preferences } from './preferences.js';
+import { go, homeOf, RESOLVED, resolve, useAddress, CurrentPageProvider } from './router.js';
+import { SessionProvider, type Session } from './session.js';
+import { AccountFrame } from './shell/account-frame.js';
+import { ComingSoonPage } from './shell/coming-soon-page.js';
+import { NoPage } from './shell/no-page.js';
+import { Shell } from './shell/shell.js';
+import { VisitorProvider } from './visitor.js';
+
+/** Where the page is while the service is first asked who is signed in. */
+const LOADING = { of: 'loading' } as const;
+
+export interface AppProps {
+  preferences: Preferences;
+  choose: (change: Partial<Preferences>) => void;
+  mac: boolean;
+}
+
+/**
+ * THE APPLICATION: who is signed in, the page their address opens, and the
+ * frame it is shown in. A visitor sees the landing page; a signed-in person
+ * sees the menu and the page; nothing is shown until the service has said
+ * which.
+ */
+export function App({ preferences, choose, mac }: AppProps) {
+  const [who, setWho] = useState<WhoIsSignedIn | typeof LOADING>(LOADING);
+  const [chosenView, setChosenView] = useState<View>(VIEWS.company);
+  const [company, setCompany] = useState<string | null>(null);
+  const address = useAddress();
+
+  const ask = useCallback(async () => { setWho(await whoIsSignedIn()); }, []);
+  useEffect(() => { void ask(); }, [ask]);
+
+  const signedIn = who.of === OF.signedIn ? who : null;
+  const companies: readonly Company[] = signedIn?.companies ?? [];
+  const signs = companies.length > 0;
+  const viewer: Viewer = { signedIn: signedIn !== null, view: viewFor(signs, chosenView), signs };
+  const shown = company !== null && companies.some((c) => c.id === company) ? company : companies[0]?.id ?? null;
+
+  /*
+   * An address a visitor may not open takes them to the landing page, and the
+   * page they asked for is kept, so signing in goes on to it. A signed-in
+   * person at the landing page is taken to where their view begins; any other
+   * page they may not open, such as a page of the other view, shows as no page.
+   */
+  const resolved = resolve(address, viewer);
+  const ready = who.of === OF.signedIn || who.of === OF.nobody;
+  useEffect(() => {
+    if (!ready) return;
+    if (resolved.of === RESOLVED.notYours && !viewer.signedIn) { wanted = resolved.id; go(HOME.visitor, true); }
+    else if (resolved.of === RESOLVED.notYours && resolved.id === HOME.visitor) go(homeOf(viewer), true);
+  }, [ready, resolved.of, resolved.of === RESOLVED.nothing ? null : resolved.id, viewer.signedIn, viewer.view]);
+
+  const signedInNow = useCallback(async (firstTime: boolean) => {
+    const next = await whoIsSignedIn();
+    setWho(next);
+    const signsNow = next.of === OF.signedIn && next.companies.length > 0;
+    const after: Viewer = { signedIn: next.of === OF.signedIn, view: viewFor(signsNow, VIEWS.company), signs: signsNow };
+    setChosenView(VIEWS.company);
+    const target: PageId = firstTime && !signsNow ? HOME.newCompany : wanted !== null && mayOpen(PAGES[wanted], after) ? wanted : homeOf(after);
+    wanted = null;
+    go(target, true);
+  }, []);
+
+  const signOut = useCallback(async () => {
+    const r = await endSignIn();
+    setWho({ of: OF.nobody });
+    setCompany(null);
+    go(HOME.visitor, true);
+    return r.of === OF.signedOut;
+  }, []);
+
+  if (who.of === LOADING.of) return <div className="min-h-svh bg-background" aria-busy={true} />;
+  if (who.of === OF.unreachable) return <><ServiceUnreachable retry={() => { void ask(); }} /><AccountFrame /></>;
+  if (who.of === OF.recordsApart) return <RecordsApart signOut={() => { void signOut(); }} />;
+
+  const page = resolved.of === RESOLVED.page ? <PageView id={resolved.id} /> : <NoPage home={homeOf(viewer)} />;
+
+  if (signedIn === null) {
+    return (
+      <VisitorContext signedInNow={signedInNow}>
+        {page}
+        <AccountFrame />
+      </VisitorContext>
+    );
+  }
+
+  const session: Session = {
+    person: signedIn.person as Person, companies, company: shown, chooseCompany: setCompany, viewer,
+    chooseView: (view) => { setChosenView(view); go(HOME[viewFor(signs, view)]); },
+    preferences, choose, signOut: () => { void signOut(); }, mac,
+  };
+  return (
+    <SessionProvider session={session}>
+      <Shell current={resolved.of === RESOLVED.page ? resolved.id : null}>{page}</Shell>
+      <AccountFrame />
+    </SessionProvider>
+  );
+}
+
+/** The page a visitor asked for before signing in, gone on to once they have. Kept for this tab only. */
+let wanted: PageId | null = null;
+
+/**
+ * A PAGE, shown inside the pages it sits in: Appearance is shown inside
+ * Settings. A page not built yet shows what it will be.
+ */
+export function PageView({ id }: { id: PageId }) {
+  const page = PAGES[id];
+  const own = isBuilt(page) ? <page.shows.screen /> : <ComingSoonPage id={id} />;
+  const inside = outerOf(page as Page);
+  const framed = inside === undefined ? own : <OuterPage id={inside}>{own}</OuterPage>;
+  return <CurrentPageProvider id={id}>{framed}</CurrentPageProvider>;
+}
+
+function OuterPage({ id, children }: { id: PageId; children: React.ReactNode }) {
+  const page = PAGES[id];
+  if (!isBuilt(page)) return <>{children}</>;
+  const Outer = page.shows.screen;
+  return <Outer>{children}</Outer>;
+}
+
+/* ---------------- a visitor ---------------- */
+
+function VisitorContext({ signedInNow, children }: { signedInNow: (firstTime: boolean) => Promise<void>; children?: React.ReactNode }) {
+  return <VisitorProvider signedInNow={signedInNow}>{children}</VisitorProvider>;
+}
+
+/* ---------------- when the service cannot answer ---------------- */
+
+function ServiceUnreachable({ retry }: { retry: () => void }) {
+  const t = useText();
+  return (
+    <main className="mx-auto flex min-h-svh max-w-md flex-col justify-center gap-4 p-6" data-screen="service-unreachable">
+      <h1 className="text-xl font-semibold">{t('service.unreachable.title')}</h1>
+      <p className="text-sm text-muted-foreground">{t('service.unreachable.body')}</p>
+      <div><Button onClick={retry}>{t('service.unreachable.retry')}</Button></div>
+    </main>
+  );
+}
+
+function RecordsApart({ signOut }: { signOut: () => void }) {
+  const t = useText();
+  return (
+    <main className="mx-auto flex min-h-svh max-w-md flex-col justify-center gap-4 p-6" data-screen="records-apart">
+      <h1 className="text-xl font-semibold">{t('service.recordsApart.title')}</h1>
+      <p className="text-sm text-muted-foreground">{t('service.recordsApart.body')}</p>
+      <div><Button variant="outline" onClick={signOut}>{t('account.signOut')}</Button></div>
+    </main>
+  );
+}

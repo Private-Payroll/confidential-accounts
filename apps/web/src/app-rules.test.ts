@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { SEED_ASSETS } from '../../../src/core/assets.js';
 import {
-  amountsMadeOutsideTheAdapters, amountsOutsideTheComponent, arbitraryValues, colourValues, declaredBy, englishSentences, filesUnder, gapsThatDiffer, hasPhrase,
+  amountsMadeOutsideTheAdapters, amountsOutsideTheComponent, arbitraryValues, codesUnder, colourValues, declaredBy, namedOutside, stylesReachingIntoComponents, englishSentences, filesUnder, gapsThatDiffer, hasPhrase,
   inlineStyles, isShippingCode, keysAskedFor, missingPhrases, paletteClasses, pathsIntoTheKit, physicalClasses, SCREEN_FORMATTERS,
   secondCn, undeclaredImports, waysIntoSharedCode, wordingCensus, wordingInCode, type Source,
 } from 'vaults-ui/rules/source-rules.test-support';
@@ -21,15 +21,17 @@ import {
  * rules refuse by default, and read the application's own files, its page and
  * stylesheet, and the kit's files the page reaches. The shared browser code the
  * page reaches is not written for this application alone: it is held to no
- * English sentence, and to no call of a number formatter (`formatTokenAmount`,
- * `NumberFormat`, `toLocaleString`, `toFixed`, ...); its other conversions are
- * not read.
+ * call of a number formatter (`formatTokenAmount`, `NumberFormat`,
+ * `toLocaleString`, `toFixed`, ...), its other conversions are not read, and it
+ * is held to no English sentence where the page reaches it other than through
+ * an adapter.
  *
  * THE ADAPTERS, `apps/web/src/adapters/`, are the only files that reach the
  * shared browser code, the product's own code, the service or the wallet.
  * They are the application's own files, so every rule above reads them too,
- * and a test below walks what they reach from a page of its own, because no
- * page the application serves reaches an adapter until a screen imports one.
+ * and a test below walks what they reach from a page of their own, so what
+ * they reach is read whether or not a screen imports them yet. Each adapter's
+ * own test shows it hands a screen no words.
  */
 const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 const read = (p: string): Source => ({ path: p, text: readFileSync(ROOT + p, 'utf8') });
@@ -64,6 +66,28 @@ beforeAll(async () => {
   graph = await walkBuild(web, ROOT);
   reached = graph.files.filter(isShippingCode).map(read);
 });
+/**
+ * What the adapters reach, walked from a page of their own that loads every
+ * adapter and nothing else. Walked once and kept.
+ */
+let adapterGraph: Promise<BuildGraph> | null = null;
+function adaptersWalk(): Promise<BuildGraph> {
+  adapterGraph ??= (async () => {
+    const { BROWSER_BUILDS, walkBuild } = (await import(WALKER)) as Walker;
+    const web = BROWSER_BUILDS.find((b) => b.name === 'web')!;
+    const adapters = OWN.map((f) => f.path).filter((p) => p.startsWith(`${ADAPTERS}/`));
+    const dir = mkdtempSync(join(tmpdir(), 'adapters-'));
+    try {
+      const page = join(dir, 'index.html');
+      writeFileSync(page, adapters.map((p) => `<script type="module" src="${relative(dirname(page), ROOT + p)}"></script>`).join('\n'));
+      return await walkBuild({ ...web, name: 'adapters', pages: [relative(ROOT, page)] }, ROOT);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  })();
+  return adapterGraph;
+}
+
 /** The application's code and the kit's code its page reaches, each once. */
 const ownAndKit = () => [...new Map([...OWN, ...reached.filter((f) => f.path.startsWith('packages/ui/'))].map((f) => [f.path, f])).values()];
 
@@ -120,23 +144,15 @@ describe('every rule, over the application', () => {
    * no page the application serves reaches them until a screen imports one.
    */
   it('has adapters that reach nothing a page cannot load', async () => {
-    const { BROWSER_BUILDS, walkBuild, importsOf } = (await import(WALKER)) as Walker;
-    const web = BROWSER_BUILDS.find((b) => b.name === 'web')!;
+    const { importsOf } = (await import(WALKER)) as Walker;
     const adapters = OWN.map((f) => f.path).filter((p) => p.startsWith(`${ADAPTERS}/`));
-    const dir = mkdtempSync(join(tmpdir(), 'adapters-'));
-    try {
-      const page = join(dir, 'index.html');
-      writeFileSync(page, adapters.map((p) => `<script type="module" src="${relative(dirname(page), ROOT + p)}"></script>`).join('\n'));
-      const g = await walkBuild({ ...web, name: 'adapters', pages: [relative(ROOT, page)] }, ROOT);
-      expect(g.entries).toEqual(adapters);
-      expect([g.staticNode, g.dynamicNode, g.unresolved]).toEqual([[], [], []]);
-      expect(g.files).toEqual(expect.arrayContaining(['packages/web-shared/src/device-vault-holdings.ts', 'src/core/assets.ts']));
-      const packages = new Set<string>();
-      for (const f of g.files) for (const e of await importsOf(f, readFileSync(ROOT + f, 'utf8'))) if (!/^[./]/.test(e.specifier)) packages.add(e.specifier);
-      expect([...packages].filter((p) => /^@midnight(ntwrk|-ntwrk)\//.test(p))).toEqual([]);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+    const g = await adaptersWalk();
+    expect(g.entries).toEqual(adapters);
+    expect([g.staticNode, g.dynamicNode, g.unresolved]).toEqual([[], [], []]);
+    expect(g.files).toEqual(expect.arrayContaining(['packages/web-shared/src/device-vault-holdings.ts', 'packages/web-shared/src/wallet-sign-in.ts', 'src/core/assets.ts']));
+    const packages = new Set<string>();
+    for (const f of g.files) for (const e of await importsOf(f, readFileSync(ROOT + f, 'utf8'))) if (!/^[./]/.test(e.specifier)) packages.add(e.specifier);
+    expect([...packages].filter((p) => /^@midnight(ntwrk|-ntwrk)\//.test(p))).toEqual([]);
   });
 
   /* RED WHEN: the application reaches into the kit's folder by a path instead of by the kit's name, for a value or only for a type. */
@@ -157,6 +173,17 @@ describe('every rule, over the application', () => {
     expect(inlineStyles([...OWN, ...STYLE])).toEqual([]);
   });
 
+  /*
+   * RED WHEN: the application names a part of a kit component, or writes a
+   * class that reaches inside an element it did not write, in its code, its
+   * stylesheet or its page: the Public pill is such a part, and a class that
+   * reached it could hide it.
+   */
+  it('styles only the elements it writes', () => {
+    expect(stylesReachingIntoComponents([...OWN, ...STYLE])).toEqual([]);
+    expect(namedOutside(OWN, 'AmountFigure', [])).toEqual([]);
+  });
+
   /* RED WHEN: the application, its stylesheet or its page spaces, aligns or places by left and right. */
   it('has no left or right', () => {
     expect(physicalClasses([...OWN, ...STYLE])).toEqual([]);
@@ -167,16 +194,37 @@ describe('every rule, over the application', () => {
     expect(wordingInCode([...ownAndKit(), ...STYLE], CODES)).toEqual([]);
   });
 
-  /* RED WHEN: a module of the shared browser code the page reaches carries an English sentence a screen could show. */
-  it('reaches no English sentence in the shared browser code', () => {
-    expect(englishSentences(reached.filter((f) => f.path.startsWith('packages/web-shared/')))).toEqual([]);
+  /*
+   * RED WHEN: a module of the shared browser code the page reaches other than
+   * through an adapter carries an English sentence a screen could show.
+   *
+   * Shared code reached through an adapter is not read for sentences: the
+   * legacy application shows its words, so it keeps them, and each adapter's
+   * own test shows that none of them is handed to a screen. What is read is
+   * the shared code the page reaches that the adapters do not, which the
+   * rule above, that only the adapters reach shared code, keeps empty; so a
+   * shared module reached any other way is read, and its sentences refused.
+   */
+  it('reaches no English sentence in the shared browser code outside the adapters', async () => {
+    const throughAdapters = new Set((await adaptersWalk()).files);
+    const shared = reached.filter((f) => f.path.startsWith('packages/web-shared/'));
+    /* The page does reach shared code with sentences in it, all of it through the adapters: the rule is not passing for want of reading any. */
+    expect(englishSentences(shared).length).toBeGreaterThan(0);
+    /* The rule: no shared module the page reaches is reached other than through an adapter, so there is no shared code outside them to hold a sentence. */
+    expect(shared.filter((f) => !throughAdapters.has(f.path)).map((f) => f.path)).toEqual([]);
   });
 
   /* RED WHEN: the application turns any value into text or a number, or shared browser code its page reaches puts a figure on a screen, anywhere but the kit's amount component. */
   it('shows an amount only through the amount component', () => {
-    expect(amountsOutsideTheComponent(ownAndKit())).toEqual([]);
+    expect(amountsOutsideTheComponent(ownAndKit(), undefined, ADAPTERS)).toEqual([]);
     const shared = reached.filter((f) => f.path.startsWith('packages/web-shared/'));
     expect(amountsOutsideTheComponent(shared).filter((b) => SCREEN_FORMATTERS.has(b.what))).toEqual([]);
+  });
+
+  /* RED WHEN: an entry of CODES for the application names a declaration it does not have, so it lets through whatever is written under that name later. */
+  it('names, in CODES, only declarations the application has', () => {
+    expect(wordingCensus(OWN, CODES).codes.filter((c) => c.startsWith('apps/web/'))).toEqual(codesUnder('apps/web'));
+    expect(codesUnder('apps/web').length).toBeGreaterThan(0);
   });
 
   /* RED WHEN: the application asks for a key the English file lacks, or builds a key at run time. */
