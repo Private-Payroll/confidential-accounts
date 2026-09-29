@@ -11,7 +11,7 @@ import { AmountLoading } from './amount.js';
 import { BalanceLoading } from './balance.js';
 import { Button } from './button.js';
 import { ComingSoon } from './coming-soon.js';
-import { DataTable, DataTableLoading } from './data-table.js';
+import { COLUMN_SIZE, DataTable, DataTableLoading } from './data-table.js';
 import { EmptyState } from './empty-state.js';
 import { FocusedLayout, PageLayout, PageLoading } from './page-layout.js';
 import { Progress } from './progress.js';
@@ -242,6 +242,19 @@ describe('the table', () => {
     await act(async () => { fireEvent.click(q(container, 'thead [role=checkbox]')!); });
     expect(chosen).toHaveBeenLastCalledWith(['r1', 'r2', 'r3', 'r4', 'r5']);
     expect(q(container, '[data-chosen]')!.textContent).toBe('5 of 12 rows selected');
+  });
+
+  /* RED WHEN: a wide column does not take half the table from a tablet up, a narrow one an eighth, the others an equal share of the rest; a centred column's heading and entries are not both centred; or a table given no size is laid out that way. */
+  it('sizes its columns and centres them where asked, heading and entries alike', () => {
+    const third = { id: 'more', header: 'More', cell: () => 'x', centred: true, size: COLUMN_SIZE.narrow };
+    const wide = table({ columns: [{ ...columns[0]!, size: COLUMN_SIZE.wide }, columns[1]!, third], rowActions: undefined });
+    expect(q(wide.container, 'table')!.className).toContain('md:table-fixed');
+    expect(all(wide.container, 'thead th').map((h) => [h.className.includes('md:w-1/2'), h.className.includes('md:w-1/8'), h.className.includes('text-center')])).toEqual([[true, false, false], [false, false, false], [false, true, true]]);
+    expect(all(wide.container, 'tbody tr[data-row=r1] td').map((d) => d.className.includes('text-center'))).toEqual([false, false, true]);
+    cleanup();
+    const plain = table();
+    expect(q(plain.container, 'table')!.className).not.toContain('table-fixed');
+    expect(all(plain.container, 'thead th').some((h) => /w-1\/(2|8)/.test(h.className))).toBe(false);
   });
 
   /* RED WHEN: a table with no rows, or a filter that keeps none of the rows there are, draws an empty table instead of the empty state. */

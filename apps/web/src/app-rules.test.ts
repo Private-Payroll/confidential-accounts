@@ -285,6 +285,8 @@ describe('every rule, over the application', () => {
   it('styles only the elements it writes', () => {
     expect(stylesReachingIntoComponents([...OWN, ...STYLE])).toEqual([]);
     expect(namedOutside(OWN, 'AmountFigure', [])).toEqual([]);
+    /* The figure alone, with no Public pill, only where a column of the same row says whether it is public. */
+    expect(namedOutside(OWN, 'AmountFigureOnly', ['apps/web/src/screens/vault.tsx'])).toEqual([]);
   });
 
   /* RED WHEN: the application, its stylesheet or its page spaces, aligns or places by left and right. */

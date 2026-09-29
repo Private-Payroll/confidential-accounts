@@ -13,6 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from 'v
 import { Skeleton } from 'vaults-ui/components/skeleton';
 import { Tabs, TabsList, TabsTrigger } from 'vaults-ui/components/tabs';
 import { useText } from 'vaults-ui/i18n/provider';
+import { cn } from 'vaults-ui/lib/utils';
 
 /** One column: its heading, and what it shows for a row. */
 export interface DataTableColumn<T> {
@@ -22,7 +23,19 @@ export interface DataTableColumn<T> {
   cell: (row: T) => ReactNode;
   /** Set against the end of the row, as figures are. */
   end?: boolean;
+  /** Set in the middle of the column, heading and entries alike, so each heading sits over its entries. */
+  centred?: boolean;
+  /**
+   * From a tablet up: `wide` takes half the table's width, `narrow` an eighth,
+   * and every column given neither takes an equal share of what is left, so
+   * the table reads evenly. A table with no column given one is laid out by
+   * its contents.
+   */
+  size?: (typeof COLUMN_SIZE)[keyof typeof COLUMN_SIZE];
 }
+
+/** How much of a table's width a column takes, compared by the code and never shown. */
+export const COLUMN_SIZE = { wide: 'wide', narrow: 'narrow' } as const;
 
 /** A filter: a tab above the table, with how many rows it keeps in a pill. */
 export interface DataTableFilter<T> {
@@ -125,6 +138,12 @@ function LoadedTable<T extends RowData>({ label, rows, rowId, columns, filters =
   useEffect(() => { onChosen?.(rows.map(rowId).filter((id) => chosen[id] === true)); }, [chosen, onChosen]);
 
   const endOf = (id: string): boolean => id === DATA_TABLE.rowActions || columns.find((c) => c.id === id)?.end === true;
+  const column = (id: string) => columns.find((c) => c.id === id);
+  const placed = (id: string): string | undefined => cn(
+    endOf(id) && 'text-end', column(id)?.centred === true && 'text-center',
+    column(id)?.size === COLUMN_SIZE.wide && 'md:w-1/2', column(id)?.size === COLUMN_SIZE.narrow && 'md:w-1/8',
+  ) || undefined;
+  const spaced = columns.some((c) => c.size !== undefined);
   const pages = Math.max(1, table.getPageCount());
   const chosenCount = Object.values(chosen).filter(Boolean).length;
   const paged = shown.length > PAGE_SIZES['5'] || onChosen !== undefined;
@@ -151,12 +170,12 @@ function LoadedTable<T extends RowData>({ label, rows, rowId, columns, filters =
       )}
       {shown.length === 0 ? empty : (
         <div className="overflow-hidden rounded-lg border">
-          <Table aria-label={label}>
+          <Table aria-label={label} className={spaced ? 'md:table-fixed' : undefined} data-spaced={spaced ? '' : undefined}>
             <TableHeader className="bg-muted">
               {table.getHeaderGroups().map((g) => (
                 <TableRow key={g.id}>
                   {g.headers.map((h) => (
-                    <TableHead key={h.id} className={endOf(h.column.id) ? 'text-end' : undefined}>
+                    <TableHead key={h.id} className={placed(h.column.id)}>
                       {h.isPlaceholder ? null : <FlexRender header={h} />}
                     </TableHead>
                   ))}
@@ -167,7 +186,7 @@ function LoadedTable<T extends RowData>({ label, rows, rowId, columns, filters =
               {table.getRowModel().rows.map((r) => (
                 <TableRow key={r.id} data-selected={r.getIsSelected()} data-row={r.id}>
                   {r.getAllCells().map((c) => (
-                    <TableCell key={c.id} className={endOf(c.column.id) ? 'text-end' : undefined}>
+                    <TableCell key={c.id} className={placed(c.column.id)}>
                       <FlexRender cell={c} />
                     </TableCell>
                   ))}

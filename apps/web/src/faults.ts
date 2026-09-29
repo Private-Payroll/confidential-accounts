@@ -15,6 +15,7 @@ export const FAULT = {
   noScreenInModule: 'web-7-no-screen-in-module',
   noCompanyRecords: 'web-8-no-company-records',
   vaultCompanyDidNotOpen: 'web-9-vault-company-did-not-open',
+  vaultPaymentsNotAsked: 'web-10-vault-payments-not-asked',
 } as const;
 
 export type FaultCode = (typeof FAULT)[keyof typeof FAULT];

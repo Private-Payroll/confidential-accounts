@@ -4,4 +4,4 @@
  * reached here rather than through the kit's index, which the first page
  * loads: through the index they would be in every first download.
  */
-export { DataTable, DataTableLoading, type DataTableColumn, type DataTableFilter, type DataTablePageSize, type DataTableProps } from './components/data-table.js';
+export { COLUMN_SIZE, DataTable, DataTableLoading, type DataTableColumn, type DataTableFilter, type DataTablePageSize, type DataTableProps } from './components/data-table.js';

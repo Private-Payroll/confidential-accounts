@@ -211,12 +211,25 @@ export async function createCompanyVault(
   return finishHandover(doors, vault);
 }
 
+/**
+ * **A READ OF THE CHAIN FOR A VAULT ALREADY SENT.** One that throws is the
+ * vault not finished, naming it, and never a failure that loses which vault
+ * was sent: the vault exists, or may, whatever the read said.
+ */
+async function chainOf(doors: CreateVaultDoors, vault: Hex): Promise<Awaited<ReturnType<VaultService['chain']>>> {
+  try {
+    return await doors.service.chain(vault);
+  } catch (e) {
+    throw new VaultHandoverOwed(vault, `the chain could not be read (${(e as Error)?.message ?? e}).`);
+  }
+}
+
 async function finishHandover(doors: CreateVaultDoors, vault: Hex): Promise<{ vault: Hex; state: 'held-by-committee' }> {
   const HANDOVER_TRIES = 3;
   for (let attempt = 1; attempt <= HANDOVER_TRIES; attempt += 1) {
     doors.progress?.('waiting for the chain');
     const view = await until(doors, async () => {
-      const v = await doors.service.chain(vault);
+      const v = await chainOf(doors, vault);
       return v.onChain ? v : null;
     });
     if (view === null) throw new VaultHandoverOwed(vault, 'the chain has not shown the vault yet.');
@@ -248,7 +261,7 @@ async function finishHandover(doors: CreateVaultDoors, vault: Hex): Promise<{ va
       continue;
     }
     doors.progress?.('waiting for the handover');
-    const held = await until(doors, async () => ((await doors.service.chain(vault)).heldByCommittee === true ? true : null));
+    const held = await until(doors, async () => ((await chainOf(doors, vault)).heldByCommittee === true ? true : null));
     if (held) {
       await doors.keys.forget(vault);
       doors.progress?.('done');
@@ -957,7 +970,8 @@ export class PaymentNotAsBuilt extends Error {
 
 const HEX64 = /^[0-9a-f]{64}$/u;
 
-const wireOf = (n: Note): NoteOnTheWire => ({
+/** A note as the page's vault worker is handed one: its value written as whole digits. */
+export const wireOf = (n: Note): NoteOnTheWire => ({
   nonce: n.nonce, token: n.token, value: n.value.toString(),
   ...(n.createdIn === undefined ? {} : { createdIn: n.createdIn }),
 });

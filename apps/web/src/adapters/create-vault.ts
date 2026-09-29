@@ -1,17 +1,17 @@
-import { NETWORK } from 'midnight-identity/network';
 import type { SealedAccount } from '../../../../src/core/types.js';
 import { rosterVaultKeys } from '../../../../src/core/vault-keys.js';
 import { whyNotTheCommittee } from 'vaults-web-shared/handover-check.js';
-import { api, canOpenCompanies, companyKeysForVaults, openAccount, openKeysWithWallet, viewingKeyFor } from 'vaults-web-shared/keyring.js';
+import { api, canOpenCompanies, openAccount, openKeysWithWallet, viewingKeyFor } from 'vaults-web-shared/keyring.js';
 import { createCompanyVault, VaultHandoverOwed, type VaultStage } from 'vaults-web-shared/vault-operation.js';
-import { browserTemporaryKeys, giveVaultKeys, vaultServiceFor } from 'vaults-web-shared/vault-page-doors.js';
+import { browserTemporaryKeys, vaultServiceFor } from 'vaults-web-shared/vault-page-doors.js';
 import type { VaultService } from 'vaults-web-shared/vault-operation.js';
-import { startVaultBuilder, type VaultBuilderClient } from 'vaults-web-shared/vault-worker-client.js';
 import { Fault, FAULT } from '../faults.js';
 import { companyRoute } from './handover-state.js';
 import { keyringFor, keysOnTheWayIn } from './keyring-person.js';
 import { ACT_REFUSAL, ACTED, refusalOf, type ActRefusal } from './refusals.js';
 import { ACCOUNT_ORIGIN } from './session.js';
+import { giveTheVaultKeys } from './vault-keys.js';
+import { theVaultBuilder } from './vault-builder.js';
 import { handoverOwed, readVaultRows } from './vault-rows.js';
 
 /*
@@ -146,18 +146,6 @@ export async function readVaultReadiness(personId: string, companyId: string): P
   }
 }
 
-/**
- * The part of the page that builds vault transactions, started the first time
- * a vault is created or handed over, and kept for the life of the page. A
- * start that failed is not kept, so the next press tries again.
- */
-let builder: Promise<VaultBuilderClient> | null = null;
-const theBuilder = (): Promise<VaultBuilderClient> => {
-  builder ??= startVaultBuilder(NETWORK);
-  builder.catch(() => { builder = null; });
-  return builder;
-};
-
 /** How long the operation waits between asks of the chain. */
 const pacing = (onStage: (stage: Creating) => void) => ({
   sleep: (ms: number) => new Promise<void>((r) => { setTimeout(r, ms); }),
@@ -180,15 +168,11 @@ async function run(personId: string, companyId: string, onStage: (stage: Creatin
   try {
     const o = await opened(personId, companyId, true);
     if (typeof o === 'string') return { of: ACTED.refused, why: o === LOCKED ? ACT_REFUSAL.didNotFinish : o };
-    const released = await companyKeysForVaults(companyId, ACCOUNT_ORIGIN);
-    await giveVaultKeys(api, companyId, {
-      committeeKey: released.committeeKey, companyKey: released.companyKey, signingSecret: o.keys.signingSecret,
-      signerId: o.keys.signerId, viewingKey: viewingKeyFor(o.sealed),
-    });
+    const released = await giveTheVaultKeys(companyId, o.keys, viewingKeyFor(o.sealed));
     service = vaultServiceFor(api, companyId, o.roster);
     const done = await createCompanyVault({
       ...pacing(onStage), account: released.company, service,
-      builder: await theBuilder(), keys: browserTemporaryKeys(),
+      builder: await theVaultBuilder(), keys: browserTemporaryKeys(),
     }, resume as Parameters<typeof createCompanyVault>[1]);
     return { of: ACTED.done, vault: done.vault };
   } catch (e) {
@@ -258,3 +242,19 @@ export const createVault = (personId: string, companyId: string, onStage: (stage
 /** FINISH HANDING OVER the vault `vault`, which this device sent and the committee does not hold yet. */
 export const finishHandingOver = (personId: string, companyId: string, vault: string, onStage: (stage: Creating) => void): Promise<VaultCreated> =>
   run(personId, companyId, onStage, vault);
+
+/**
+ * GIVE YOUR VAULT KEYS for the company `companyId`, where creating a vault
+ * waits on them, so a vault can be created once every signer has. Nothing but
+ * the keys is sent.
+ */
+export async function giveYourVaultKeys(personId: string, companyId: string): Promise<{ of: typeof ACTED.done } | { of: typeof ACTED.refused; why: ActRefusal }> {
+  try {
+    const o = await opened(personId, companyId, true);
+    if (typeof o === 'string') return { of: ACTED.refused, why: o === LOCKED ? ACT_REFUSAL.didNotFinish : o };
+    await giveTheVaultKeys(companyId, o.keys, viewingKeyFor(o.sealed));
+    return { of: ACTED.done };
+  } catch (e) {
+    return { of: ACTED.refused, why: refusalOf(e) };
+  }
+}

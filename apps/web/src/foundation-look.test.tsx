@@ -218,7 +218,7 @@ const NOT_MOVED_YET: Readonly<Record<string, Readonly<Record<string, string>>>> 
  * in for are drawn, never as a section or list left empty.
  */
 const READINGS_OF_NOTHING: Readonly<Record<string, { path: string; why: string }>> = {
-  'vault.publicMoney.none': { path: 'apps/web/src/records/parts.tsx', why: 'a vault\'s public money read and found to hold no currency, said on its tile and its page where the amounts would be' },
+  'vaults.money.none': { path: 'apps/web/src/records/parts.tsx', why: 'a vault\'s money read privately and publicly and found to hold none of the currencies this app shows, said on its tile where the amounts would be' },
 };
 const emptyStatesByHandBut = (s: Source): string[] => emptyStatesByHand(s).filter((k) => READINGS_OF_NOTHING[k]?.path !== s.path);
 const RULES = { background: paintsBackground, width: setsPageWidth, lists: buildsSectionsOrLists, empty: emptyStatesByHandBut } as const;
@@ -274,7 +274,7 @@ describe('no page draws what the kit draws', () => {
     const onDemand = new Set([...PAGES_TS.matchAll(/onDemand\(\(\) => import\('\.\/(screens\/[\w-]+)\.js'\)/g)].map((m) => `apps/web/src/${m[1]!}.tsx`));
     const everyFile = walk('apps/web/src');
     const importers = everyFile.filter((f) => Object.keys(KIT_ENTRIES).some((e) => f.text.includes(`from '${e}'`))).map((f) => f.path);
-    expect(importers).toEqual(['apps/web/src/screens/home.tsx']);
+    expect(importers).toEqual(['apps/web/src/screens/home.tsx', 'apps/web/src/screens/vault.tsx']);
     for (const p of importers) {
       expect(onDemand.has(p), p).toBe(true);
       const name = p.replace(/^apps\/web\/src\//, '').replace(/\.tsx$/, '');

@@ -16,3 +16,24 @@ export function formatNumber(value: number, tag: string, options?: Intl.NumberFo
 export function formatDate(value: Date, tag: string, options?: Intl.DateTimeFormatOptions): string {
   return new Intl.DateTimeFormat(tag, options ?? { dateStyle: 'medium' }).format(value);
 }
+
+/** The units a time ago is said in: the browser's names for them, passed and never shown. */
+const UNIT = { second: 'second', minute: 'minute', hour: 'hour', day: 'day' } as const;
+
+/** Below each number of seconds, the unit a time ago is said in: seconds under a minute, minutes under an hour, hours under a day. */
+const STEPS = [[60, UNIT.second], [3_600, UNIT.minute], [86_400, UNIT.hour]] as const;
+
+/**
+ * HOW LONG AGO `since` WAS, AT `now`, in the person's language: in seconds
+ * under a minute, minutes under an hour, hours under a day, and days after.
+ */
+export function formatTimeAgo(since: Date, now: Date, tag: string): string {
+  const seconds = Math.max(0, Math.floor((now.getTime() - since.getTime()) / 1000));
+  const words = new Intl.RelativeTimeFormat(tag, { numeric: 'auto' });
+  let per = 1;
+  for (const [below, unit] of STEPS) {
+    if (seconds < below) return words.format(-Math.floor(seconds / per), unit);
+    per = below;
+  }
+  return words.format(-Math.floor(seconds / 86_400), UNIT.day);
+}

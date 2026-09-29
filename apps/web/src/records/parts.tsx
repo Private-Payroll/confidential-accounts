@@ -1,7 +1,9 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { SquareLock02Icon } from '@hugeicons/core-free-icons';
-import { Alert, AlertDescription, AlertTitle, Amount, AMOUNT_KIND, AmountLoading, Badge, Button, EmptyState, formatDate, PageLoading, StatTile, useLanguage, useText, type AmountKind } from 'vaults-ui';
-import { OPENED, PAID, READ, readVaultPublicMoney, VAULT, type CompanyRecords, type Paid, type ProposalRow, type Read, type RunRow, type VaultRow, type VaultStanding } from '../adapters/company-records.js';
+import { Alert, AlertDescription, AlertTitle, Amount, AMOUNT_KIND, AmountLoading, Badge, Button, EmptyState, formatDate, PageLoading, PrivatePill, StatTile, useLanguage, useText, type AmountKind } from 'vaults-ui';
+import { isPending, PendingPill, useStandingSays } from './vault-pending.js';
+import { OPENED, PAID, READ, readVaultPublicMoney, type CompanyRecords, type Paid, type ProposalRow, type Read, type RunRow, type VaultRow } from '../adapters/company-records.js';
+import { readVaultPrivateMoney, type VaultPrivateMoney as VaultPrivateMoneyHeld } from '../adapters/vault-private-money.js';
 import type { VaultPublicMoney as VaultPublicMoneyHeld } from '../adapters/vault-public-money.js';
 import type { ActRefusal } from '../adapters/refusals.js';
 import { ActRefused } from '../act-refused.js';
@@ -193,97 +195,86 @@ export function RunMoney({ run }: { run: RunRow }) {
   );
 }
 
-/** Where a vault stands, in words. */
-export function VaultStandingWords({ standing }: { standing: VaultStanding }) {
-  const t = useText();
-  const says: Record<VaultStanding, string> = {
-    [VAULT.held]: t('vaults.standing.held'),
-    [VAULT.handoverOwed]: t('vaults.standing.handoverOwed'),
-    [VAULT.notOnChain]: t('vaults.standing.notOnChain'),
-    [VAULT.notFundable]: t('vaults.standing.notFundable'),
-    [VAULT.accountNotHandedOver]: t('vaults.standing.accountNotHandedOver'),
-    [VAULT.accountNotFundable]: t('vaults.standing.accountNotFundable'),
-    [VAULT.heldByOtherKeys]: t('vaults.standing.heldByOtherKeys'),
-    [VAULT.unknown]: t('vaults.standing.unknown'),
-  };
-  return <span data-standing={standing}>{says[standing]}</span>;
+/** Where one side of a vault's money is: being read, or not readable. */
+export const MONEY = { reading: 'reading', unreadable: 'unreadable' } as const;
+type Side<T> = T | (typeof MONEY)[keyof typeof MONEY];
+
+/** A vault's money, each side read on its own: what it holds privately, read on this device, and publicly, read from the company's service. */
+export interface VaultMoney {
+  private: Side<VaultPrivateMoneyHeld>;
+  public: Side<VaultPublicMoneyHeld>;
 }
 
-/** Where a vault's public money is: being read, read, or not readable. */
-const PUBLIC = { reading: 'reading', unreadable: 'unreadable' } as const;
-
 /**
- * WHAT A VAULT HOLDS IN PUBLIC MONEY, read from the company's service when it
- * is shown: one line a currency, each carrying the Public pill, and a count of
- * currencies this app does not know beside them. While that count is above
- * nothing it never says the vault holds no public money, and a read that
- * failed is said as that, never as nothing held. `again` offers to read it
- * again. `labelled` names the line, for where nothing else does.
+ * WHAT A VAULT HOLDS, READ WHEN IT IS SHOWN AND EACH TIME `asked` CHANGES:
+ * privately on this device, with this signer's own keys, and publicly from
+ * the company's service. Each side is read on its own, and one that could not
+ * be read is said as that, never as nothing held.
  */
-export function VaultPublicMoney({ company, vault, again = false, labelled = true }: { company: string; vault: string; again?: boolean; labelled?: boolean }) {
-  const t = useText();
+export function useVaultMoney(company: string, vault: string, asked = 0): VaultMoney {
   const { person } = useSession();
-  const [held, setHeld] = useState<VaultPublicMoneyHeld | (typeof PUBLIC)[keyof typeof PUBLIC]>(PUBLIC.reading);
-  const [asked, setAsked] = useState(0);
+  const [money, setMoney] = useState<VaultMoney>({ private: MONEY.reading, public: MONEY.reading });
   useEffect(() => {
     let alive = true;
-    setHeld(PUBLIC.reading);
-    void readVaultPublicMoney(person.id, company, vault).then((h) => { if (alive) setHeld(h ?? PUBLIC.unreadable); });
+    setMoney({ private: MONEY.reading, public: MONEY.reading });
+    void readVaultPrivateMoney(person.id, company, vault).then((h) => { if (alive) setMoney((m) => ({ ...m, private: h ?? MONEY.unreadable })); });
+    void readVaultPublicMoney(person.id, company, vault).then((h) => { if (alive) setMoney((m) => ({ ...m, public: h ?? MONEY.unreadable })); });
     return () => { alive = false; };
   }, [person.id, company, vault, asked]);
-  return (
-    <span className="flex flex-col gap-1" data-public-money={typeof held === 'string' ? held : 'read'}>
-      {labelled ? <span className="text-muted-foreground">{t('vaults.publicMoney')}</span> : null}
-      {held === PUBLIC.reading ? <AmountLoading /> : null}
-      {held === PUBLIC.unreadable ? <span className="text-muted-foreground" data-unreadable>{again ? t('vault.publicMoney.unreadable') : t('vaults.publicMoney.unreadable')}</span> : null}
-      {typeof held === 'string' ? null : (
-        <>
-          {held.amounts.map((a) => <span key={a.code} data-held={a.code}><Amount value={a} kind={AMOUNT_KIND.held} /></span>)}
-          {held.unrecognised === 0 ? null : <span data-unrecognised={held.unrecognised}>{t('vault.publicMoney.unrecognised', { count: held.unrecognised })}</span>}
-          {held.amounts.length === 0 && held.unrecognised === 0 ? <span className="text-muted-foreground" data-holds-none>{t('vault.publicMoney.none')}</span> : null}
-        </>
-      )}
-      {again ? <span><Button variant="outline" size="sm" disabled={held === PUBLIC.reading} onClick={() => setAsked((n) => n + 1)} data-action="read-public-money">{t('vault.publicMoney.readAgain')}</Button></span> : null}
-    </span>
-  );
+  return money;
 }
 
 /**
- * WHAT A VAULT HOLDS PRIVATELY, said plainly: this app does not read it yet.
- * Never shown as a figure or as nothing held. `labelled` names the line, for
- * where nothing else does.
+ * A VAULT'S MONEY ON ITS TILE: each currency it holds on a line of its own,
+ * with its Private or Public pill, never added together. A side being read is
+ * a bar; a side that could not be read says so; a currency the registry does
+ * not know is counted.
  */
-export function VaultPrivateMoney({ labelled = true }: { labelled?: boolean }) {
+function VaultMoneyLines({ money }: { money: VaultMoney }) {
   const t = useText();
+  const priv = money.private;
+  const pub = money.public;
+  const holdsNone = typeof priv !== 'string' && typeof pub !== 'string' && priv.amounts.length === 0 && pub.amounts.length === 0 && pub.unrecognised === 0;
   return (
-    <span className="flex flex-col gap-1" data-private-money>
-      {labelled ? <span className="text-muted-foreground">{t('vaults.privateMoney')}</span> : null}
-      <span data-private-not-read>{t('vaults.privateMoney.notRead')}</span>
+    <span className="flex flex-col gap-1" data-money-lines>
+      {priv === MONEY.reading ? <AmountLoading /> : null}
+      {priv === MONEY.unreadable ? <span className="text-muted-foreground" data-unreadable="private">{t('vaults.privateMoney.unreadable')}</span> : null}
+      {typeof priv === 'string' ? null : priv.amounts.map((a) => (
+        <span key={a.code} className="flex flex-wrap items-center gap-1.5" data-held={a.code} data-visibility="private"><Amount value={a} kind={AMOUNT_KIND.held} /><PrivatePill /></span>
+      ))}
+      {pub === MONEY.reading ? <AmountLoading /> : null}
+      {pub === MONEY.unreadable ? <span className="text-muted-foreground" data-unreadable="public">{t('vaults.publicMoney.unreadable')}</span> : null}
+      {typeof pub === 'string' ? null : (
+        <>
+          {pub.amounts.map((a) => <span key={a.code} data-held={a.code} data-visibility="public"><Amount value={a} kind={AMOUNT_KIND.held} /></span>)}
+          {pub.unrecognised === 0 ? null : <span data-unrecognised={pub.unrecognised}>{t('vault.publicMoney.unrecognised', { count: pub.unrecognised })}</span>}
+        </>
+      )}
+      {holdsNone ? <span className="text-muted-foreground" data-holds-none>{t('vaults.money.none')}</span> : null}
     </span>
   );
 }
 
 /**
  * A VAULT'S TILE, the kit's stat tile, linking to the vault's page: its name,
- * where it stands, when it was created, and its money on two lines, never
- * added together. The public line is read from the company's service when the
- * tile is shown; the private line says plainly that this app does not read it. No
- * change badge is shown: nothing here has an amount to compare with.
+ * with the Pending pill when it waits on something, where it stands when it
+ * does not, when it was created, and each currency it holds on a line with
+ * its Private or Public pill. No change badge is shown: nothing here has an
+ * amount to compare with.
  */
 export function VaultTile({ company, vault, index }: { company: string; vault: VaultRow; index: number }) {
   const t = useText();
   const day = useDay();
+  const says = useStandingSays();
+  const money = useVaultMoney(company, vault.vault);
   return (
     <StatTile
       link={<PageLink to={PAGE.vault} params={{ vault: vault.vault }} data-vault={vault.vault} />}
-      title={t('vaults.tile.name', { number: index + 1 })}
-      tagline={<VaultStandingWords standing={vault.standing} />}
+      title={<span className="flex flex-wrap items-center gap-2"><span>{t('vaults.tile.name', { number: index + 1 })}</span><PendingPill vault={vault} /></span>}
+      tagline={isPending(vault.standing) ? undefined : <span data-standing={vault.standing}>{says(vault.standing)}</span>}
       subtext={t('vaults.tile.created', { date: day(vault.createdAt) })}
     >
-      <span className="flex flex-col gap-3 pt-2" data-money-lines>
-        <VaultPublicMoney company={company} vault={vault.vault} />
-        <VaultPrivateMoney />
-      </span>
+      <span className="pt-2"><VaultMoneyLines money={money} /></span>
     </StatTile>
   );
 }
