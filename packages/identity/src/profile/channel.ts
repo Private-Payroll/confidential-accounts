@@ -1,6 +1,6 @@
 import type { BalancedAnswer } from './balance.js';
 import type { CommitteeSignatures } from './committee-sign.js';
-import { parseAsk } from './request.js';
+import { PROGRESS_SCHEMA, parseAsk } from './request.js';
 import type { Ask, RequestError } from './request.js';
 import type { DisclosureResponse } from './disclosure.js';
 import type { KeyringRelease, UnlockRelease } from './unlock.js';
@@ -48,6 +48,32 @@ import type { SealedAcceptance } from './inbox.js';
  */
 
 export const READY_PING = 'midnight-identity/wallet-ready/v1';
+
+/**
+ * **WHAT A WALLET SAYS WHILE IT WORKS, AND IT IS NEVER AN ANSWER.**
+ *
+ * A private deposit keeps a wallet busy for minutes: it reads the network to
+ * find its coins, then proves in the browser. A page that hears nothing for
+ * that long cannot tell a wallet at work from one that has gone, so the wallet
+ * says which of two things it is doing, each time something actually happens:
+ * a report from its read of the network, or a proof starting or ending.
+ *
+ * **ONLY ON AN EVENT, NEVER FROM A CLOCK.** A message sent on a timer keeps
+ * arriving after the read or the proof it describes has died, and a page that
+ * restarts its wait on each one would wait for ever on a dead wallet.
+ *
+ * **ONLY TO A PAGE THAT SAID IT KNOWS THIS MESSAGE** - `hearsProgress` on the
+ * ask. A page that does not know it takes anything else from the wallet as the
+ * answer, so a slow payment would reach it as a failed one. And it carries no
+ * figure: which of two stages, and nothing about coins, amounts or how far.
+ */
+export { PROGRESS_SCHEMA };
+export const PROGRESS_STAGES = ['reading', 'proving'] as const;
+export type ProgressStage = (typeof PROGRESS_STAGES)[number];
+export interface WalletProgress {
+  readonly schema: typeof PROGRESS_SCHEMA;
+  readonly stage: ProgressStage;
+}
 
 export type ChannelState =
   | { readonly of: 'waiting' }
@@ -162,15 +188,41 @@ export type Answer =
 export const PAYMENT_FAILURES = ['chain-unreadable', 'not-enough', 'not-as-approved', 'did-not-finish'] as const;
 export type PaymentFailure = (typeof PAYMENT_FAILURES)[number];
 
+/**
+ * **WHY A REQUEST WAS REFUSED WITHOUT ANYBODY BEING ASKED.** `declined` is a
+ * person saying no; `expired` is a deadline that had passed when it arrived;
+ * `unreadable` is this wallet refusing what was sent before a person could
+ * approve it - a request it could not read, or a transaction it will not pay
+ * for. The person declined nothing, so it is never said as a decline; nothing
+ * was approved, so it is never said as a failure.
+ */
+export type Refusal = 'declined' | 'expired' | 'unreadable';
+
+/**
+ * **ONE TERMINAL MESSAGE PER REQUEST, AND EVERY METHOD SAYS WHETHER IT SENT.**
+ *
+ * `answer` and `refuse` end the conversation. The first of them that reaches
+ * the asker is the only one: every later call sends nothing and answers
+ * `false`, so a caller that finishes second knows that what it holds was never
+ * handed over. A page that has already been told *nothing was paid* must never
+ * be handed a paid transaction afterwards, and one that was handed a paid
+ * transaction must never be told it failed.
+ */
 export interface Channel {
   /** Send the answer back — to the OBSERVED origin, and nowhere else. */
-  answer(answer: Answer): void;
-  /** Tell the requester the person said no, without saying anything else. */
-  refuse(reason: 'declined' | 'expired'): void;
+  answer(answer: Answer): boolean;
+  /** Tell the requester no, and which of three kinds of no, without saying anything else. */
+  refuse(reason: Refusal): boolean;
   /** Tell the requester a payment the person approved did not happen, and which of four reasons stopped it. */
-  refuse(reason: 'failed', why: PaymentFailure): void;
+  refuse(reason: 'failed', why: PaymentFailure): boolean;
+  /** Say what this wallet is doing now. Never ends anything; sent only to a page that asked to hear it. */
+  progress(stage: ProgressStage): boolean;
+  /** Whether the one terminal message has gone. */
+  over(): boolean;
   stop(): void;
 }
+
+const REFUSED_SCHEMA = 'midnight-identity/disclosure-refused/v1';
 
 /**
  * **WHO MAY ASK. THIS IS THE WHOLE ASKER CHECK, AND IT HAS TWO SHAPES.**
@@ -234,7 +286,24 @@ export function listen(
   let settled = false;
   let source: MessageEventSource | null = null;
   let origin: string | null = null;
+  /* Set once, from the parsed request; a request that did not parse hears nothing but its refusal. */
+  let hearsProgress = false;
+  let ended = false;
   const framing = framingOf(view, embedder);
+
+  const send = (message: unknown): boolean => {
+    if (source === null || origin === null) return false;
+    (source as unknown as { postMessage(m: unknown, t: string): void })
+      .postMessage(message, origin);
+    return true;
+  };
+  /* **THE ONE PLACE THE CONVERSATION ENDS.** Every terminal message passes here. */
+  const end = (message: unknown): boolean => {
+    if (ended) return false;
+    if (!send(message)) return false;
+    ended = true;
+    return true;
+  };
 
   const handler = (event: MessageEvent): void => {
     if (settled) return;
@@ -247,11 +316,27 @@ export function listen(
     source = event.source;
     /* THE ONE LINE THIS MODULE IS FOR. The browser's value, not the payload's. */
     origin = event.origin;
+    let request: Ask;
     try {
-      onState({ of: 'request', request: parseAsk(event.data, event.origin, now()) });
+      request = parseAsk(event.data, event.origin, now());
     } catch (e) {
+      /*
+       * **A REQUEST THIS WALLET WILL NOT SHOW IS STILL ANSWERED, AT ONCE.** The
+       * asker is known - its window and the origin the browser observed are
+       * held above - so it is told now rather than left waiting for a person
+       * who will never be asked. A request that arrived too late is told it
+       * expired, which the asker already has words for; anything else is
+       * `unreadable`.
+       */
+      end({
+        schema: REFUSED_SCHEMA,
+        reason: (e as Partial<RequestError> | null)?.code === 'expired' ? 'expired' : 'unreadable',
+      });
       onState({ of: 'refused', error: e as RequestError });
+      return;
     }
+    hearsProgress = request.hearsProgress === true;
+    onState({ of: 'request', request });
   };
 
   view.addEventListener('message', handler);
@@ -278,21 +363,22 @@ export function listen(
     (view.parent as Postable).postMessage({ schema: READY_PING }, framing.embedder);
   }
 
-  const send = (message: unknown): void => {
-    if (source === null || origin === null) return;
-    (source as unknown as { postMessage(m: unknown, t: string): void })
-      .postMessage(message, origin);
-  };
-
   return Object.freeze({
-    answer: (answer: Answer) => send(answer),
-    refuse: (reason: 'declined' | 'expired' | 'failed', why?: PaymentFailure) => send(reason === 'failed'
+    answer: (answer: Answer) => end(answer),
+    refuse: (reason: Refusal | 'failed', why?: PaymentFailure) => end(reason === 'failed'
       ? {
-        schema: 'midnight-identity/disclosure-refused/v1', reason,
+        schema: REFUSED_SCHEMA, reason,
         /* Only a word from the list crosses, whatever the caller handed in. */
         why: (PAYMENT_FAILURES as readonly unknown[]).includes(why) ? why : 'did-not-finish',
       }
-      : { schema: 'midnight-identity/disclosure-refused/v1', reason }),
+      : { schema: REFUSED_SCHEMA, reason }),
+    progress: (stage: ProgressStage) => {
+      if (ended || !hearsProgress) return false;
+      /* Only a stage from the list crosses, whatever the caller handed in. */
+      if (!(PROGRESS_STAGES as readonly unknown[]).includes(stage)) return false;
+      return send({ schema: PROGRESS_SCHEMA, stage });
+    },
+    over: () => ended,
     stop: () => view.removeEventListener('message', handler),
   });
 }

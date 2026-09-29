@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { Data, Effect } from 'effect';
+import { SyncProgress as PublicProgress } from '@midnightntwrk/wallet-sdk-unshielded-wallet/v1';
 import type { PaymentFailure } from 'midnight-identity/profile/channel';
 import * as L from '@midnightntwrk/ledger-v9';
 import {
-  BalanceRefused, CHAIN_SILENCE_GIVE_UP_MS, CHAIN_WOULD_NOT_ANSWER, ChainUnread, PAGE_TOKEN_KINDS, base64FromBytes,
-  payForThePage, readWhatThePageAsks, whyThePaymentFailed,
+  BalanceRefused, CHAIN_SILENCE_GIVE_UP_MS, CHAIN_WENT_QUIET, CHAIN_WOULD_NOT_ANSWER, ChainUnread, NotHandedOver,
+  PAGE_TOKEN_KINDS, base64FromBytes, payForThePage, readWhatThePageAsks, whyThePaymentFailed,
 } from './balance-for-page.js';
 import type {
   BalanceDoors, FacadeForBalancing, LedgerForBalancing, UnboundTransactionLike, WalletPartForBalancing,
@@ -35,8 +36,11 @@ const aPartStillReading = () => {
         return { unsubscribe: () => { unsubscribed += 1; } };
       },
     },
-    says: (isConnected: boolean, complete: boolean) =>
-      observer?.next({ progress: { isConnected, isStrictlyComplete: () => complete } }),
+    says: (isConnected: boolean, complete: boolean, applied?: bigint, highest?: bigint) =>
+      observer?.next({ progress: {
+        isConnected, isStrictlyComplete: () => complete,
+        ...(applied === undefined ? {} : { appliedIndex: applied, highestIndex: highest ?? applied }),
+      } }),
     breaks: (e: unknown) => observer?.error(e),
     ends: () => observer?.complete(),
     get unsubscribed() { return unsubscribed; },
@@ -213,6 +217,25 @@ describe('THE PRESS', () => {
     expect(log).toContain('revert failed');
   });
 
+  it('HANDS THE FINISHED TRANSACTION OVER ONCE, AND ONE THE PAGE WILL NOT TAKE IS LET GO, NOT KEPT AS PAID', async () => {
+    const log: string[] = []; const handed: string[] = [];
+    expect(await payForThePage(doorsWith({}, log), tx, undefined, { handOver: (f) => { handed.push(f); return true; } }))
+      .toBe(base64FromBytes(new Uint8Array([9, 9])));
+    /* RED WHEN: a transaction the page took is let go afterwards, or is handed over twice. */
+    expect(log).toEqual(['balance shielded ttl=1201000', 'sign recipe', 'finish signed']);
+    expect(handed).toEqual([base64FromBytes(new Uint8Array([9, 9]))]);
+    const refused: string[] = [];
+    const e = await payForThePage(doorsWith({}, refused), tx, undefined, { handOver: () => false }).catch((x: unknown) => x);
+    /* RED WHEN: a transaction the page already had an answer for is kept as paid, its coins still set aside. */
+    expect(e).toBeInstanceOf(NotHandedOver);
+    expect(refused.at(-1)).toBe('revert recipe');
+    const broke: string[] = [];
+    await expect(payForThePage(doorsWith({}, broke), tx, undefined, { handOver: () => { throw new Error('no asker'); } }))
+      .rejects.toThrow('no asker');
+    /* RED WHEN: a handing over that could not be made leaves the coins set aside. */
+    expect(broke.at(-1)).toBe('revert recipe');
+  });
+
   it('a balance that fails books nothing, so nothing is let go', async () => {
     const log: string[] = [];
     await expect(payForThePage(doorsWith({
@@ -307,26 +330,84 @@ describe('THE WALLET READS THE CHAIN BEFORE IT PAYS', () => {
     expect((e as Error).message).toBe(CHAIN_WOULD_NOT_ANSWER);
     expect(CHAIN_WOULD_NOT_ANSWER).toMatch(/could not reach the network to find your coins, so it paid nothing\. Check your connection and try again.*Nothing has been paid\.$/u);
     /* RED WHEN: the wait asks for any other delay than the one it names. */
-    expect(timers.asked).toEqual([CHAIN_SILENCE_GIVE_UP_MS]);
+    expect(new Set(timers.asked)).toEqual(new Set([CHAIN_SILENCE_GIVE_UP_MS]));
     expect(log).toEqual([]);
     expect(whyThePaymentFailed(e)).toBe('chain-unreadable');
     /* RED WHEN: the clock is brought back inside the 20 to 30 seconds a new wallet waited for its first answer from stagenet. */
     expect(CHAIN_SILENCE_GIVE_UP_MS).toBeGreaterThanOrEqual(90_000);
   });
 
-  it('ONCE THE CHAIN HAS ANSWERED, NO CLOCK ENDS THE READING', async () => {
-    const log: string[] = [];
+  it('A READ THAT KEEPS MOVING IS NEVER CUT SHORT, AND EACH MOVE IS SAID', async () => {
+    const log: string[] = []; let moved = 0;
     const shielded = aPartStillReading();
     const timers = handTimers();
-    const paid = payForThePage(doorsOver({ shielded }, log), tx, undefined, { timers });
+    const paid = payForThePage(doorsOver({ shielded }, log), tx, undefined, { timers, onRead: () => { moved += 1; } });
     await settle();
-    shielded.says(true, false);
-    /* RED WHEN: a long first read is cut off as though the chain were silent. */
-    expect(timers.armed).toBe(0);
-    timers.fireAll();
-    shielded.says(true, true);
+    const first = timers.asked.length;
+    for (let applied = 1n; applied <= 50n; applied += 1n) {
+      shielded.says(true, false, applied * 100n, 5_000n);
+      /* RED WHEN: a move does not start the silence again, so a long read that keeps moving is cut off at the first clock. */
+      expect(timers.asked.length).toBe(first + Number(applied));
+      /* RED WHEN: the clock a move replaces is left running beside the new one. */
+      expect(timers.armed).toBe(1);
+    }
+    /* RED WHEN: the read's moves are not passed on, so the page hears nothing from a wallet that is reading. */
+    expect(moved).toBe(50);
+    shielded.says(true, true, 5_000n, 5_000n);
     await paid;
     expect(log[0]).toBe('balance shielded');
+  });
+
+  it('A READ THAT STOPS MOVING AFTER IT CONNECTED IS GIVEN UP ON, WITH NOTHING BOOKED, AND SAYS WHERE IT STOPPED', async () => {
+    const log: string[] = []; let moved = 0;
+    const shielded = aPartStillReading();
+    const timers = handTimers();
+    const paid = payForThePage(doorsOver({ shielded }, log), tx, undefined, { timers, onRead: () => { moved += 1; } })
+      .catch((e: unknown) => e);
+    await settle();
+    shielded.says(true, false, 700n, 5_000n);
+    const armedBefore = timers.asked.length;
+    /* The same report again: a wallet that retries a lost connection quietly says nothing new. */
+    shielded.says(true, false, 700n, 5_000n);
+    shielded.says(true, false, 700n, 5_000n);
+    /* RED WHEN: a report that did not move keeps the read looking alive - the dead-socket wait that never ends. */
+    expect(timers.asked.length).toBe(armedBefore);
+    expect(moved).toBe(1);
+    timers.fireAll();
+    const e = await paid;
+    /* RED WHEN: a read that stopped part of the way through waits for ever, balances anyway, or reads as never having connected. */
+    expect(e).toBeInstanceOf(ChainUnread);
+    expect((e as Error).message).toBe(CHAIN_WENT_QUIET);
+    expect(whyThePaymentFailed(e)).toBe('chain-unreadable');
+    expect(log).toEqual([]);
+  });
+
+  it('THE PUBLIC PART\'S PROGRESS IS READ IN ITS OWN WORDS: THE SAME REPORT AGAIN IS SILENCE, A NEW ONE IS MOVEMENT', async () => {
+    let observer: Parameters<WalletPartForBalancing['state']['subscribe']>[0] | null = null;
+    const unshielded: WalletPartForBalancing = { state: { subscribe: (o) => { observer = o; return { unsubscribe: () => {} }; } } };
+    /* The SDK's own public progress, which says how far by transaction id and not by index. */
+    const says = (applied: bigint) => observer?.next({ progress: PublicProgress.createSyncProgress({ appliedId: applied, highestTransactionId: 9_000n, isConnected: true }) });
+    const log: string[] = []; let moved = 0;
+    const timers = handTimers();
+    const approved = { pays: 'public' as const, leaves: [{ token: '00'.repeat(32), amount: '700', kind: 'unshielded' as const }] };
+    const paid = payForThePage({ ...doorsOver({ shielded: aPartStillReading(), unshielded }, log), ownPublicAddress: () => 'me' },
+      tx, approved, { timers, onRead: () => { moved += 1; } }).catch((e: unknown) => e);
+    await settle();
+    says(700n);
+    const armedBefore = timers.asked.length;
+    /* The network repeats a public part's progress on a timer while nothing moves. */
+    says(700n);
+    says(700n);
+    /* RED WHEN: a public report that did not move keeps the read looking alive and tells the page it is still reading. */
+    expect(timers.asked.length).toBe(armedBefore);
+    expect(moved).toBe(1);
+    says(701n);
+    /* RED WHEN: a public report that did move is not heard as movement. */
+    expect(timers.asked.length).toBe(armedBefore + 1);
+    expect(moved).toBe(2);
+    timers.fireAll();
+    expect(await paid).toBeInstanceOf(ChainUnread);
+    expect(log).toEqual([]);
   });
 
   it('A WALLET WHOSE READING FAILS OR ENDS BEFORE IT HAS READ TO THE END PAYS NOTHING AND SAYS SO', async () => {

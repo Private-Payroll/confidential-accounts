@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest';
 import { REGISTRY } from './attributes.js';
-import { RequestError, asked, parseAsk, parseRequest } from './request.js';
+import { PROGRESS_SCHEMA, RequestError, asked, parseAsk, parseRequest } from './request.js';
 import { READY_PING, listen } from './channel.js';
 import type { ChannelState, ChannelWindow } from './channel.js';
 
@@ -299,5 +299,24 @@ describe('the channel observes the origin and answers only there', () => {
     const last = states[states.length - 1]!;
     expect(last.of).toBe('refused');
     expect(last.of === 'refused' && last.error.code).toBe('claims-its-own-origin');
+  });
+});
+
+describe('AN ASKER SAYS IT KNOWS THE WALLET\'S WORD FOR BEING AT WORK', () => {
+  it('only by naming exactly that message, and saying so widens nothing else', () => {
+    const plain = parseAsk(wire(), ORIGIN, NOW);
+    /* RED WHEN: an ask that said nothing is marked as hearing progress, or the field appears on every ask. */
+    expect('hearsProgress' in plain).toBe(false);
+    const hears = parseAsk(wire({ progress: PROGRESS_SCHEMA }), ORIGIN, NOW);
+    /* RED WHEN: the parser drops the field an asker set, so a page that knows the message is never told the wallet is at work. */
+    expect(hears.hearsProgress).toBe(true);
+    for (const other of ['midnight-identity/wallet-progress/v2', true, 1, { schema: PROGRESS_SCHEMA }]) {
+      /* RED WHEN: anything but the exact name is taken as knowing it. */
+      expect('hearsProgress' in parseAsk(wire({ progress: other }), ORIGIN, NOW), String(other)).toBe(false);
+    }
+    /* RED WHEN: saying it changes what the person is shown or asked for. */
+    const { hearsProgress: _said, ...rest } = hears;
+    expect(rest).toEqual(plain);
+    expect(PROGRESS_SCHEMA).toBe('midnight-identity/wallet-progress/v1');
   });
 });

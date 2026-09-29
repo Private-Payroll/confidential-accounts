@@ -8,6 +8,7 @@ import { parseAsk } from 'midnight-identity/profile/request';
 import type { BalanceRequest } from 'midnight-identity/profile/request';
 import type { Channel } from 'midnight-identity/profile/channel';
 import { settled } from '../testing/settled-channel.js';
+import { recordingChannel } from '../testing/recording-channel.js';
 import { ApproveBalance, liveBalanceDoors } from './approve-balance.js';
 import { PublicKey } from '@midnightntwrk/wallet-sdk';
 import { unshieldedKeystoreFor } from '../chain/unshielded.js';
@@ -79,9 +80,7 @@ const doorsWith = (log: string[], facade: Partial<FacadeForBalancing> = {}) => (
   ownPublicAddress: () => ME,
   now: () => NOW,
 });
-const channelFor = (answers: unknown[]): Channel => ({
-  answer: (a) => { answers.push(a); }, refuse: (r: string, why?: string) => { answers.push(why === undefined ? { refused: r } : { refused: r, why }); }, stop: () => {},
-} as Channel);
+const channelFor = (answers: unknown[]): Channel => recordingChannel(answers);
 const renderWith = (doors: () => BalanceDoors, answers: unknown[]) => render(
   <ApproveBalance
     request={ask} identity={identity} account={0} channel={channelFor(answers)} consent={{ ok: true } as never}

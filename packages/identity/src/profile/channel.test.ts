@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  FRAMED_BY_A_STRANGER, NOT_BUILT_TO_BE_FRAMED, PAYMENT_FAILURES, READY_PING, framingOf, listen,
+  FRAMED_BY_A_STRANGER, NOT_BUILT_TO_BE_FRAMED, PAYMENT_FAILURES, PROGRESS_SCHEMA, PROGRESS_STAGES, READY_PING,
+  framingOf, listen,
 } from './channel.js';
 import type { ChannelState, ChannelWindow } from './channel.js';
 
@@ -199,5 +200,81 @@ describe('A PAYMENT THAT FAILED AFTER THE PRESS IS NOT A DECLINE', () => {
     other.channel.refuse('declined');
     /* RED WHEN: a decline starts carrying a reason field. */
     expect(other.opener.posted).toStrictEqual([{ message: { schema: REFUSED, reason: 'declined' }, target: EMBEDDER }]);
+  });
+});
+
+describe('ONE TERMINAL MESSAGE PER REQUEST, AND EVERY END STATE ANSWERS', () => {
+  const REFUSED = 'midnight-identity/disclosure-refused/v1';
+  const asked = (data: Record<string, unknown>) => {
+    const opener = postable();
+    const view = walletView({ opener });
+    const states: ChannelState[] = [];
+    const channel = listen(view, () => NOW, (st) => states.push(st), null);
+    view.deliver({ source: opener as never, origin: EMBEDDER, data });
+    return { opener, channel, states, sent: () => opener.posted.slice(1) };
+  };
+
+  it('sends the first terminal message and no other, and says which calls sent', () => {
+    const first = asked(signIn());
+    /* RED WHEN: the send-side once is taken out of the channel - a second answer, or a refusal after an answer, crosses. */
+    expect(first.channel.answer({ schema: 'x' } as never)).toBe(true);
+    expect(first.channel.refuse('declined')).toBe(false);
+    expect(first.channel.refuse('failed', 'not-enough')).toBe(false);
+    expect(first.channel.answer({ schema: 'y' } as never)).toBe(false);
+    expect(first.sent()).toEqual([{ message: { schema: 'x' }, target: EMBEDDER }]);
+    expect(first.channel.over()).toBe(true);
+    const second = asked(signIn());
+    expect(second.channel.over()).toBe(false);
+    /* RED WHEN: a failure that went first is followed by a paid transaction - the page would send what it was told had failed. */
+    expect(second.channel.refuse('failed', 'did-not-finish')).toBe(true);
+    expect(second.channel.answer({ schema: 'late' } as never)).toBe(false);
+    expect(second.sent()).toEqual([{ message: { schema: REFUSED, reason: 'failed', why: 'did-not-finish' }, target: EMBEDDER }]);
+  });
+
+  it('sends nothing, and counts nothing as sent, before a request has arrived', () => {
+    const opener = postable();
+    const channel = listen(walletView({ opener }), () => NOW, () => {}, null);
+    /* RED WHEN: a terminal message with nowhere to go is taken as the one terminal message, and the real one is then dropped. */
+    expect(channel.refuse('declined')).toBe(false);
+    expect(channel.over()).toBe(false);
+    expect(opener.posted).toEqual([{ message: { schema: READY_PING }, target: '*' }]);
+  });
+
+  it('answers a request it refuses on arrival at once: `unreadable`, or `expired` for one that came too late', () => {
+    const bad = asked({ ...signIn(), requester: { name: 'A', rdns: 'a', origin: 'https://elsewhere.example' } });
+    expect(bad.states.map((st) => st.of)).toEqual(['waiting', 'refused']);
+    /* RED WHEN: a request the wallet will not show leaves the page waiting for a press that cannot come. */
+    expect(bad.sent()).toEqual([{ message: { schema: REFUSED, reason: 'unreadable' }, target: EMBEDDER }]);
+    /* RED WHEN: the screen's own decline after that is sent as a second terminal message. */
+    expect(bad.channel.refuse('declined')).toBe(false);
+    expect(bad.sent()).toHaveLength(1);
+    const late = asked({ ...signIn(), expiresAt: NOW });
+    /* RED WHEN: a request that arrived after its deadline is told it was unreadable rather than expired, which the page already has words for. */
+    expect(late.sent()).toEqual([{ message: { schema: REFUSED, reason: 'expired' }, target: EMBEDDER }]);
+  });
+
+  it('says what the wallet is doing only to a page that said it knows that message, only a stage from the list, and never after the end', () => {
+    const quiet = asked(signIn());
+    /* RED WHEN: a page that never said it knows the progress message is sent one, and takes it for the answer. */
+    expect(quiet.channel.progress('reading')).toBe(false);
+    expect(quiet.sent()).toEqual([]);
+    const other = asked({ ...signIn(), progress: 'midnight-identity/wallet-progress/v2' });
+    /* RED WHEN: any value of `progress` is taken as knowing this message, not exactly this one. */
+    expect(other.channel.progress('reading')).toBe(false);
+    const hears = asked({ ...signIn(), progress: PROGRESS_SCHEMA });
+    for (const stage of PROGRESS_STAGES) expect(hears.channel.progress(stage), stage).toBe(true);
+    /* RED WHEN: a stage the page does not know, or a caller's own words, crosses. */
+    expect((hears.channel.progress as (s: string) => boolean)('proving 2 of 3 coins: 4999 NIGHT')).toBe(false);
+    expect(hears.channel.over()).toBe(false);
+    hears.channel.refuse('declined');
+    /* RED WHEN: a wallet goes on saying it is at work after it has ended the conversation. */
+    expect(hears.channel.progress('proving')).toBe(false);
+    expect(hears.sent()).toEqual([
+      { message: { schema: PROGRESS_SCHEMA, stage: 'reading' }, target: EMBEDDER },
+      { message: { schema: PROGRESS_SCHEMA, stage: 'proving' }, target: EMBEDDER },
+      { message: { schema: REFUSED, reason: 'declined' }, target: EMBEDDER },
+    ]);
+    /* RED WHEN: the list of stages grows or shrinks without the page's reader being told. */
+    expect([...PROGRESS_STAGES]).toEqual(['reading', 'proving']);
   });
 });

@@ -26,6 +26,7 @@ import { establishCreatingTransaction, NoteIndexRefused, type ServedEvent } from
 import type { Hex } from '../../../src/core/crypto.js';
 import { ensureBuffer } from 'midnight-identity/browser';
 import { whyItFailed } from './why-it-failed.js';
+import { proofProviderOnWorkers } from './vault-proof-workers.js';
 
 /** Where this application serves the vault's public proving material. */
 export const VAULT_ARTEFACT_BASE = '/artefacts/vault';
@@ -133,7 +134,8 @@ const loadDeps = (scope: any) => {
           httpKeyMaterialSource(VAULT_ARTEFACT_BASE, options),
           httpKeyMaterialSource(`${VAULT_ARTEFACT_BASE}/account`, options)),
         httpKeyMaterialSource(`${VAULT_ARTEFACT_BASE}/builtin/zswap/9`, options));
-      const prover = await proving.wasmProofProvider(source);
+      /* Each proof on a thread of its own where this thread can start one (`vault-proof-workers.ts`); on this thread where it cannot. */
+      const prover = (await proofProviderOnWorkers(source, scope)) ?? await proving.wasmProofProvider(source);
       const CompiledContract = (compactJs as any).CompiledContract;
       const zkConfig = zkConfigOver(source, byCircuitName);
       const compiled = CompiledContract.make('Vault', (vault as any).Contract).pipe(

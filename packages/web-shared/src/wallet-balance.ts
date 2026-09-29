@@ -11,12 +11,17 @@
  * Every expectation the answer is checked against is this page's own: where it
  * is, the nonce it chose, and the company and vault it asked about.
  */
-import { REQUEST_SCHEMA } from 'midnight-identity/profile/request';
+import { PROGRESS_SCHEMA, REQUEST_SCHEMA } from 'midnight-identity/profile/request';
 import { readBalancedAnswer, type LeavesTheWallet } from 'midnight-identity/profile/balance';
 import { toHex, randomBytes } from '../../../src/core/crypto.js';
 import { askWallet, type Openable, type WalletDialog } from './wallet-sign-in.js';
 
-/** How long the wallet has to answer: long enough to synchronise and prove. */
+/**
+ * How long the wallet has to answer: long enough to synchronise and prove.
+ * **IT IS ALSO THE LONGEST THIS PAGE WAITS**, because the wait ends at the
+ * ask's own deadline; while it lasts, the deposit is held as in flight, so it
+ * must stay shorter than the time a deposit is kept as in flight.
+ */
 export const BALANCE_WINDOW_MS = 30 * 60_000;
 
 export const BALANCE_PURPOSE =
@@ -42,7 +47,12 @@ export interface BalanceAsked {
   readonly nonce?: string;
 }
 
-/** The ask on the wire. No amount travels: the wallet reads that from the transaction. */
+/**
+ * The ask on the wire. No amount travels: the wallet reads that from the
+ * transaction. **`progress` says this page knows the wallet's word for being
+ * at work**, so a private deposit's minutes of reading and proving reach this
+ * page as a wallet at work rather than as silence.
+ */
 export const balanceAsk = (parts: {
   name: string; rdns: string; purpose: string; nonce: string; expiresAt: number;
   company: string; vault: string; transaction: string;
@@ -53,6 +63,7 @@ export const balanceAsk = (parts: {
   purpose: parts.purpose,
   nonce: parts.nonce,
   expiresAt: parts.expiresAt,
+  progress: PROGRESS_SCHEMA,
   company: parts.company,
   vault: parts.vault,
   transaction: parts.transaction,

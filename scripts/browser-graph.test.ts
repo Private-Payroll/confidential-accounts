@@ -186,6 +186,8 @@ describe('EVERY BROWSER BUILD IN THIS REPOSITORY', () => {
     const g = byName('payroll');
     expect(g.entries).toEqual([
       'src/web-legacy/main.tsx', 'packages/web-shared/src/proving-worker-entry.ts', 'packages/web-shared/src/vault-worker-entry.ts', 'packages/web-shared/src/payslip-worker-entry.ts',
+      /* The vault worker starts one of its own for each proof of a private deposit (29 Sep). */
+      'packages/web-shared/src/vault-proof-worker-entry.ts',
     ]);
     expect(g.files).toEqual(expect.arrayContaining(['packages/web-shared/src/vault-builder.ts', 'src/midnight/vault-committee.ts', 'src/midnight/authority-replacement.ts']));
     /* RED WHEN: `midnight-identity`, linked into `node_modules` from this repository, stops being followed -

@@ -38,10 +38,12 @@ const input = { company: CO, vault: VAULT, transaction: 'AAECAw==', atOrigin: US
 describe('ASKING THE PERSON\'S WALLET TO PAY', () => {
   it('sends a balance ask with no amount in it, which the wallet\'s own parser accepts', () => {
     const wire = balanceAsk({ ...input, purpose: 'p', expiresAt: 2_000 });
-    expect(Object.keys(wire).sort()).toEqual(['company', 'expiresAt', 'kind', 'nonce', 'purpose', 'requester', 'schema', 'transaction', 'vault']);
+    expect(Object.keys(wire).sort()).toEqual(['company', 'expiresAt', 'kind', 'nonce', 'progress', 'purpose', 'requester', 'schema', 'transaction', 'vault']);
     const parsed = parseAsk(wire, US, 1_000) as BalanceRequest;
     expect(parsed.kind).toBe('balance');
     expect(parsed.transaction).toBe('AAECAw==');
+    /* RED WHEN: the page stops saying it knows the wallet's word for being at work, so a private deposit's minutes of work reach it as silence. */
+    expect(parsed.hearsProgress).toBe(true);
   });
 
   it('believes an answer to its own question, and nothing else', async () => {
