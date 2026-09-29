@@ -4,7 +4,7 @@ import {
   DepositNotSent, DepositStillInFlight, DepositLandedNotYetRecorded, settleDepositInFlight, DEPOSIT_TIME_TO_LIVE_MS,
   payPrivatelyFromCompanyVault, PaymentNotYetSeen, PaymentNotAsBuilt, PaymentLandedUnrecorded,
   payPubliclyFromCompanyVault, PublicPaymentNotYetSeen,
-  type TemporaryKeys, type VaultChainView, type VaultService, type DepositInFlight, type DepositsInFlight,
+  type TemporaryKeys, type VaultChainView, type VaultService, type DepositInFlight,
   type PaymentInFlight, type PaymentsInFlight,
   checkWhatThisBrowserSent, sayWhatTheCheckFound, DepositStartedElsewhere, PaymentStillInFlight, PaymentStartedElsewhere,
   settlePaymentInFlight,
@@ -182,6 +182,21 @@ describe('CREATING A VAULT', () => {
     }).catch((x) => x);
     expect(absent).toBeInstanceOf(VaultHandoverOwed);
     expect(absent.message).toMatch(/has not shown the vault yet/);
+  });
+
+  /* RED WHEN: a read of the chain that throws after the vault was sent, before or after the handover, escapes as a plain error that does not name the vault. */
+  it('A CHAIN READ THAT THROWS AFTER THE VAULT WAS SENT IS THE VAULT NOT FINISHED, NAMING IT', async () => {
+    for (const [name, reads] of [['before the handover', 0], ['after the handover', 1]] as const) {
+      const log: string[] = [];
+      let n = 0;
+      const service = serviceFrom([], log, {
+        chain: async () => { if (n++ < reads) return oneKey; throw new Error('the indexer did not answer'); },
+      });
+      const e = await createCompanyVault({ ...pacing, account: ACCOUNT, service, builder: builder(log), keys: memoryKeys(log).keys }).catch((x) => x);
+      expect(e, name).toBeInstanceOf(VaultHandoverOwed);
+      expect(e.vault, name).toBe(VAULT);
+      expect(e.message, name).toMatch(/the chain could not be read \(the indexer did not answer\)/);
+    }
   });
 
   it('A RESUME WITHOUT THE TEMPORARY KEY ON THIS DEVICE STOPS, AND SAYS ONLY THE DEPLOYING DEVICE CAN FINISH', async () => {

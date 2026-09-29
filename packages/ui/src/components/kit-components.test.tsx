@@ -7,7 +7,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { KitProvider } from '../kit-provider.js';
 import { languagesFrom } from '../i18n/languages.js';
 import { privateAmount, publicAmount, type PrivateAmount, type PublicAmount } from '../format/token-amount.js';
-import { Amount } from './amount.js';
+import { Amount, AmountFigureOnly } from './amount.js';
+import { AmountState, PrivatePill } from './public-pill.js';
+import { formatTimeAgo } from '../format/intl.js';
 import { Balance } from './balance.js';
 import { ComingSoon } from './coming-soon.js';
 import { ConfirmInYourAccount } from './confirm-in-your-account.js';
@@ -123,6 +125,49 @@ describe('an amount anywhere but in Amount', () => {
     expect(() => inKit(<span>{`${amount as unknown as string}`}</span>)).toThrow(/shown only by Amount/);
     expect(document.body.textContent).not.toContain('12345678901234567890');
     vi.restoreAllMocks();
+  });
+});
+
+describe('an amount in a table that says its asset and state in columns of their own', () => {
+  /* RED WHEN: the figure alone loses a digit, repeats the token's code, carries a pill, or is not written left to right. */
+  it('writes the figure alone, exact, with no code and no pill', () => {
+    const { container } = inKit(<AmountFigureOnly value={publicAmount(120_123_100n, 5, 'NIGHT')} />);
+    const figure = container.querySelector('[data-slot=amount-figure]')!;
+    expect(figure.textContent).toBe('1,201.23100');
+    expect(figure.getAttribute('dir')).toBe('ltr');
+    expect(figure.getAttribute('data-visibility')).toBe('public');
+    expect(container.querySelector('[data-slot=public-pill]')).toBeNull();
+  });
+
+  /* RED WHEN: the state is not read from the amount itself: a public amount without the Public pill and its explanation, or a private one without the Private pill. */
+  it('says private or public from the amount, with the Public pill\'s explanation', async () => {
+    const pub = inKit(<AmountState value={publicAmount(1n, 0, 'NIGHT')} kind="balance" />);
+    expect(pub.container.querySelector('[data-slot=public-pill]')?.textContent).toBe(EN['kit.public.label']);
+    await act(async () => { fireEvent.click(pub.container.querySelector('[data-slot=public-pill]')!); });
+    expect(document.body.textContent).toContain(EN['kit.public.explanation.balance']);
+    expect(document.body.textContent).not.toContain(EN['kit.public.explanation.payment']);
+    expect(pub.container.querySelector('[data-slot=private-pill]')).toBeNull();
+    cleanup();
+    const priv = inKit(<AmountState value={privateAmount(1n, 0, 'NIGHT')} kind="balance" />);
+    expect(priv.container.querySelector('[data-slot=private-pill]')?.textContent).toBe(EN['kit.balance.private']);
+    expect(priv.container.querySelector('[data-slot=public-pill]')).toBeNull();
+    cleanup();
+    expect(inKit(<PrivatePill />).container.textContent).toBe(EN['kit.balance.private']);
+  });
+});
+
+describe('how long ago', () => {
+  /* RED WHEN: a time ago is said in the wrong unit, rounded up, as a time to come, or not in the language shown. */
+  it('says seconds, minutes, hours and days ago, in the language shown', () => {
+    const at = new Date('2026-09-29T10:00:00.000Z');
+    const later = (ms: number) => new Date(at.getTime() + ms);
+    expect(formatTimeAgo(at, at, 'en')).toBe('now');
+    expect(formatTimeAgo(at, later(45_000), 'en')).toBe('45 seconds ago');
+    expect(formatTimeAgo(at, later(6 * 60_000 + 59_000), 'en')).toBe('6 minutes ago');
+    expect(formatTimeAgo(at, later(3 * 3_600_000), 'en')).toBe('3 hours ago');
+    expect(formatTimeAgo(at, later(2 * 86_400_000), 'en')).toBe('2 days ago');
+    expect(formatTimeAgo(at, later(-5_000), 'en')).toBe('now');
+    expect(formatTimeAgo(at, later(6 * 60_000), 'de')).toBe('vor 6 Minuten');
   });
 });
 

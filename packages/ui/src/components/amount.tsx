@@ -50,6 +50,17 @@ export function Amount({ value, kind }: AmountProps) {
   );
 }
 
+/**
+ * THE FIGURE ALONE, WITHOUT ITS CODE OR THE PUBLIC PILL: for a table whose own
+ * columns name the asset and say, with `AmountState`, whether it is private or
+ * public, so neither is said twice on a row. Exact, in the person's language,
+ * written left to right.
+ */
+export function AmountFigureOnly({ value }: { value: TokenAmount }) {
+  const language = useLanguage();
+  return <span dir="ltr" data-slot="amount-figure" data-visibility={visibilityOf(value)}>{formatTokenAmount(value, language)}</span>;
+}
+
 /** AN AMOUNT WHILE IT IS READ: a bar the width of a figure, in the line, with no figure and no pill, so nothing can be read as the amount. */
 export function AmountLoading() {
   return <span data-slot="amount-loading" aria-busy={true} className="inline-flex align-middle"><Skeleton data-bar="figure" className="h-4 w-24" /></span>;

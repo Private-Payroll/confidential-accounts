@@ -3,18 +3,20 @@
  *
  * What an application uses is re-exported here. An amount is made by
  * `publicAmount` or `privateAmount`, by whoever knows how the money is held,
- * and reaches a screen only through `Amount` or `Balance`: the formatter behind
- * them is not re-exported, and the application's source rules refuse any other
- * import of it.
+ * and reaches a screen only through `Amount` or `Balance`, or through
+ * `AmountFigureOnly` beside `AmountState` in a table that says whether each
+ * row is private or public: the formatter behind them is not re-exported, and
+ * the application's source rules refuse any other import of it, and any use of
+ * the figure alone but where it is named.
  */
 export { KitProvider } from './kit-provider.js';
 export { LanguageProvider, useLanguage, useText, type LanguageProviderProps } from './i18n/provider.js';
 export { FALLBACK, chooseLanguage, directionOf, languagesFrom, type Language, type Messages } from './i18n/languages.js';
-export { formatDate, formatNumber } from './format/intl.js';
+export { formatDate, formatNumber, formatTimeAgo } from './format/intl.js';
 export { privateAmount, publicAmount, type PrivateAmount, type PublicAmount, type TokenAmount, type Visibility } from './format/token-amount.js';
-export { Amount, AmountLoading, type AmountProps } from './components/amount.js';
+export { Amount, AmountFigureOnly, AmountLoading, type AmountProps } from './components/amount.js';
 export { Balance, BalanceLoading, type BalanceProps } from './components/balance.js';
-export { AMOUNT_KIND, type AmountKind } from './components/public-pill.js';
+export { AMOUNT_KIND, AmountState, PrivatePill, type AmountKind } from './components/public-pill.js';
 export { ComingSoon, type ComingSoonProps } from './components/coming-soon.js';
 export { SoonAction, type SoonActionProps } from './components/soon-action.js';
 export { FocusedLayout, PageHeader, PageLayout, PageLoading, type FocusedLayoutProps, type PageHeaderProps } from './components/page-layout.js';

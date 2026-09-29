@@ -156,6 +156,24 @@ describe('creating a vault', () => {
   });
 });
 
+describe('giving your vault keys where a vault is created', () => {
+  /* RED WHEN: the keys are given without the company's keys released by the account first, when this device holds no keys, or when the account refused; or anything is built or sent but the keys. */
+  it('gives this signer\'s vault keys, after the account releases the company\'s, and nothing else', async () => {
+    const m = await load();
+    expect(await m.giveYourVaultKeys('u1', 'c1')).toEqual({ of: 'done' });
+    expect(kr.log.filter((l) => l === 'account asked' || l === 'keys given')).toEqual(['account asked', 'keys given']);
+    expect(kr.log.filter((l) => l.startsWith('built') || l.startsWith('POST'))).toEqual([]);
+    kr.log = [];
+    kr.keys = null;
+    expect(await m.giveYourVaultKeys('u1', 'c1')).toEqual({ of: 'refused', why: 'no-keys-here' });
+    expect(kr.log).not.toContain('keys given');
+    kr.keys = { signerId: 's1', signingSecret: 'aa', wrappingSecret: 'bb', blinding: 'cc' };
+    kr.keysFail = new Error('the account said no');
+    expect((await m.giveYourVaultKeys('u1', 'c1')).of).toBe('refused');
+    expect(kr.log).not.toContain('keys given');
+  });
+});
+
 describe('what is said when it does not finish', () => {
   /*
    * RED WHEN: a failure the service did not mark as having sent nothing is
@@ -174,7 +192,8 @@ describe('what is said when it does not finish', () => {
     kr.answers[`GET ${ROUTE(`/vaults/${VAULT}/chain`)}`] = new TypeError('fetch failed');
     const after = await m.createVault('u1', 'c1', () => {});
     expect(after).not.toEqual({ of: 'refused', why: 'nothing-sent' });
-    expect(after).toEqual({ of: 'refused', why: 'unreachable' });
+    /* The vault was sent, so a read of the chain that fails after is the vault not finished, named, with its key here. */
+    expect(after).toEqual({ of: 'handover-owed', vault: VAULT });
     expect(kr.kept.has(VAULT)).toBe(true);
   });
 

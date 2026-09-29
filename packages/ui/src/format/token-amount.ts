@@ -15,7 +15,7 @@
  * balance's private side, its public side) refuses the other when the code is
  * typechecked.
  *
- * IT CANNOT BE SHOWN EXCEPT THROUGH `Amount` OR `Balance`. React refuses an object as a
+ * IT CANNOT BE SHOWN EXCEPT THROUGH `Amount`, `Balance` OR `AmountFigureOnly`. React refuses an object as a
  * child, so `<span>{amount}</span>` stops the page instead of writing digits
  * with no decimals and no Public pill. Turning one into text or a number any
  * other way (`String(amount)`, a template, `+amount`, `Number(amount)`,
@@ -167,7 +167,7 @@ function partsOf(tag: string): { decimal: string; digits: readonly string[] } {
   return { decimal, digits };
 }
 
-/** The figure of an amount, without its code, in the language `tag` names. Used by the amount component (`Amount`, and the balance through `AmountFigure`), and by nothing a screen reaches. */
+/** The figure of an amount, without its code, in the language `tag` names. Used by the amount component (`Amount`, the balance through `AmountFigure`, and `AmountFigureOnly` beside `AmountState`), and by nothing else a screen reaches. */
 export function formatTokenAmount(amount: TokenAmount, tag: string): string {
   if (!(amount instanceof HeldAmount)) {
     throw new TypeError(`a token amount is made by publicAmount or privateAmount, and this is a value of type ${typeof amount}`);

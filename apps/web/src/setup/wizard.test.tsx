@@ -20,6 +20,7 @@ import { untilPageShown } from '../page-shown.test-support.js';
 const state = vi.hoisted(() => ({
   handover: { of: 'vault-keys-missing', signers: 1 } as Record<string, unknown>,
   acted: [] as string[],
+  gaveKeys: { of: 'done' } as unknown,
   created: { of: 'done', companyId: 'c-new' } as Record<string, unknown>,
   waiting: null as string | null,
   /** The company's vaults as the service lists them, and whether one can be created, and what creating one comes to. */
@@ -46,6 +47,11 @@ vi.mock('../adapters/create-vault.js', async (real) => ({
   finishHandingOver: vi.fn(async (person: string, company: string, vault: string) => {
     state.acted.push(JSON.stringify(['finish-vault', person, company, vault]));
     return state.vaultCreated;
+  }),
+  giveYourVaultKeys: vi.fn(async (person: string, company: string) => {
+    state.acted.push(JSON.stringify(['give-vault-keys', person, company]));
+    state.ready = { of: 'others-missing' };
+    return state.gaveKeys;
   }),
 }));
 vi.mock('../adapters/handover-state.js', async (real) => ({
@@ -107,7 +113,7 @@ const pick = async (c: HTMLElement, step: string) => { await act(async () => { f
 
 beforeEach(() => {
   vi.spyOn(console, 'error').mockImplementation(() => {});
-  state.handover = { of: 'vault-keys-missing', signers: 1 }; state.acted = []; state.waiting = null; state.created = { of: 'done', companyId: 'c-new' };
+  state.handover = { of: 'vault-keys-missing', signers: 1 }; state.acted = []; state.gaveKeys = { of: 'done' }; state.waiting = null; state.created = { of: 'done', companyId: 'c-new' };
   state.vaults = []; state.ready = { of: 'ready' }; state.vaultCreated = { of: 'done', vault: 'v-new' }; state.owed = []; state.opened = [];
   /* What a tab remembers between showings of the wizard starts empty for every test. */
   for (const c of [null, 'c-1']) skippedFor(c).clear();
@@ -431,19 +437,19 @@ describe('creating a vault: one component, on the step and on the Vaults page', 
 
   /* RED WHEN: Create a vault is hidden, enabled, or says no reason while it cannot be used, or does not lead to the step that makes it possible. */
   it('is always shown, and disabled with why and the way on while it cannot be used', async () => {
-    const cases: [Record<string, unknown>, string, string | null][] = [
-      [{ of: 'yours-missing' }, 'createVault.why.yoursMissing', STEP.handOver],
-      [{ of: 'others-missing' }, 'createVault.why.othersMissing', null],
-      [{ of: 'roster-disagrees' }, 'createVault.why.rosterDisagrees', null],
-      [{ of: 'not-on-chain' }, 'createVault.why.notOnChain', null],
+    const cases: [Record<string, unknown>, string][] = [
+      [{ of: 'yours-missing' }, 'createVault.why.yoursMissing'],
+      [{ of: 'others-missing' }, 'createVault.why.othersMissing'],
+      [{ of: 'roster-disagrees' }, 'createVault.why.rosterDisagrees'],
+      [{ of: 'not-on-chain' }, 'createVault.why.notOnChain'],
     ];
-    for (const [ready, why, lead] of cases) {
+    for (const [ready, why] of cases) {
       state.ready = ready;
-      const leadTo = vi.fn();
-      const { container } = await draw(<CreateVault leadTo={leadTo} onChanged={() => {}} />, sessionWith({ company: 'c-1' }));
+      const { container } = await draw(<CreateVault leadTo={() => {}} onChanged={() => {}} />, sessionWith({ company: 'c-1' }));
       expect((q(container, '[data-action=create-vault-now]') as HTMLButtonElement).disabled, why).toBe(true);
       expect(q(container, '[data-why]')!.textContent, why).toBe(EN[why]);
-      if (lead !== null) { fireEvent.click(q(container, `[data-lead-to=${lead}]`)!); expect(leadTo).toHaveBeenCalledWith(lead); }
+      /* Giving your vault keys is offered only where they are what is missing. */
+      expect(q(container, '[data-action=give-vault-keys]') !== null, why).toBe(why === 'createVault.why.yoursMissing');
       cleanup();
     }
     const leadTo = vi.fn();
@@ -452,6 +458,30 @@ describe('creating a vault: one component, on the step and on the Vaults page', 
     expect(q(container, '[data-why]')!.textContent).toBe(EN['createVault.why.noCompany']);
     fireEvent.click(q(container, `[data-lead-to=${STEP.createCompany}]`)!);
     expect(leadTo).toHaveBeenCalledWith(STEP.createCompany);
+  });
+
+  /*
+   * RED WHEN: a person who has not given their vault keys is sent to another
+   * step to give them, rather than giving them where Create a vault is; the
+   * keys are given for another person or company; what happened is not said;
+   * or whether a vault can be created is not read again after.
+   */
+  it('gives the person\'s vault keys where Create a vault is, and reads again after', async () => {
+    for (const [gave, says] of [[{ of: 'done' }, EN['setup.handOver.done.giveKeys']], [{ of: 'refused', why: 'unreachable' }, null]] as const) {
+      state.ready = { of: 'yours-missing' }; state.acted = []; state.gaveKeys = gave;
+      const leadTo = vi.fn();
+      const onChanged = vi.fn();
+      const { container } = await draw(<CreateVault leadTo={leadTo} onChanged={onChanged} />, sessionWith({ company: 'c-1' }));
+      expect(q(container, `[data-lead-to=${STEP.handOver}]`)).toBeNull();
+      await act(async () => { fireEvent.click(q(container, '[data-action=give-vault-keys]')!); await settle(); });
+      expect(state.acted).toEqual([JSON.stringify(['give-vault-keys', 'u1', 'c-1'])]);
+      expect(leadTo).not.toHaveBeenCalled();
+      expect(onChanged).toHaveBeenCalled();
+      expect(q(container, '[data-why]')!.textContent).toBe(EN['createVault.why.othersMissing']);
+      if (says === null) expect(q(container, '[data-refusal=unreachable]')).not.toBeNull();
+      else expect(q(container, '[data-gave-keys]')!.textContent).toBe(says);
+      cleanup();
+    }
   });
 
   /* RED WHEN: a vault is created without the "Confirm in your account" step in front of it, or when that step is cancelled; or what it came to is not said, or the page is not told something changed. */

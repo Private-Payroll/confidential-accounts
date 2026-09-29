@@ -7,12 +7,12 @@ import {
   api, canOpenCompanies, companyKeysForVaults, openAccount, openKeysWithWallet, signCommitteeChangeFromTheWallet, viewingKeyFor,
   type AccountKeys,
 } from 'vaults-web-shared/keyring.js';
-import { giveVaultKeys } from 'vaults-web-shared/vault-page-doors.js';
 import { companyRoute, SERVICE } from './handover-state.js';
 import { keyringFor, keysOnTheWayIn } from './keyring-person.js';
 import { ACT_REFUSAL, ACTED, refusalOf, type ActRefusal } from './refusals.js';
 import { ACCOUNT_ORIGIN } from './session.js';
 import { Fault, FAULT } from '../faults.js';
+import { giveTheVaultKeys } from './vault-keys.js';
 
 /*
  * HANDING A COMPANY TO ITS COMMITTEE, OVER THE SAME SHARED STEPS
@@ -72,11 +72,7 @@ export async function giveMyVaultKeys(personId: string, companyId: string): Prom
   try {
     const o = await opened(personId, companyId);
     if (typeof o === 'string') return refused(o);
-    const released = await companyKeysForVaults(companyId, ACCOUNT_ORIGIN);
-    await giveVaultKeys(api, companyId, {
-      committeeKey: released.committeeKey, companyKey: released.companyKey, signingSecret: o.keys.signingSecret,
-      signerId: o.keys.signerId, viewingKey: o.viewingKey,
-    });
+    await giveTheVaultKeys(companyId, o.keys, o.viewingKey);
     return { of: ACTED.done };
   } catch (e) {
     return refused(refusalOf(e));

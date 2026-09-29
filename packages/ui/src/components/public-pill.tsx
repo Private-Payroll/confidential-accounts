@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Badge } from 'vaults-ui/components/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from 'vaults-ui/components/tooltip';
 import { useText } from 'vaults-ui/i18n/provider';
+import { visibilityOf, type TokenAmount } from 'vaults-ui/format/token-amount';
 
 /**
  * What a public amount is: a payment made, whose receiver anyone can see; a
@@ -39,4 +40,19 @@ export function PublicPill({ kind }: { kind: AmountKind }) {
       </TooltipContent>
     </Tooltip>
   );
+}
+
+/** THE `Private` PILL, where private and public money are listed together and each says which it is. */
+export function PrivatePill() {
+  const t = useText();
+  return <Badge variant="outline" data-slot="private-pill">{t('kit.balance.private')}</Badge>;
+}
+
+/**
+ * WHETHER AN AMOUNT IS PRIVATE OR PUBLIC, read from the amount itself and never
+ * passed in: the Private pill, or the Public pill with its explanation, for a
+ * column that says it apart from the figure.
+ */
+export function AmountState({ value, kind }: { value: TokenAmount; kind: AmountKind }) {
+  return visibilityOf(value) === 'public' ? <PublicPill kind={kind} /> : <PrivatePill />;
 }

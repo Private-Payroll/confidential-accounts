@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, AlertDescription, AlertTitle, Button, ConfirmInYourAccount, useText } from 'vaults-ui';
 import {
-  CREATING, createVault, finishHandingOver, openYourKeys, OWED, READY, readOwedVaults, readVaultReadiness,
+  CREATING, createVault, finishHandingOver, giveYourVaultKeys, openYourKeys, OWED, READY, readOwedVaults, readVaultReadiness,
   type Creating, type OwedVault, type Readiness, type VaultCreated,
 } from '../adapters/create-vault.js';
 import { ACTED, type ActRefusal } from '../adapters/refusals.js';
@@ -16,16 +16,20 @@ type Asking = { of: typeof ASKING.create } | { of: typeof ASKING.finish; vault: 
 /**
  * CREATE A VAULT: built and proved on this device, sent, and handed to the
  * company's signers as soon as the network has it. One component, shown by
- * the setup wizard's vault step and by the Vaults page.
+ * the setup wizard's vault step and in the right-hand panel the Vaults page
+ * and a vault's page open.
  *
  * Create a vault is always shown; while it cannot be used it is disabled and
- * the reason is said in plain words, with the step that makes it possible
- * when there is one. A vault sent and not yet held by the signers is named,
- * with Finish handing it over, because this app puts no money into it until
- * then; on a device that does not hold the key it was created with, Finish is
- * shown disabled, with why.
+ * the reason is said in plain words. A person who has not given their vault
+ * keys gives them here; the step that makes creating possible is led to
+ * only for a company not created yet. A vault sent and not yet held by the
+ * signers is named, with Finish handing it over, because this app puts no
+ * money into it until then; on a device that does not hold the key it was
+ * created with, Finish is shown disabled, with why. With `finishing`, the
+ * component opens asking to finish handing over that vault, once it is read
+ * as one this device can finish.
  */
-export function CreateVault({ leadTo, onChanged }: StepProps) {
+export function CreateVault({ leadTo, onChanged, finishing }: StepProps & { finishing?: string }) {
   const t = useText();
   const { person, company } = useSession();
   const [ready, setReady] = useState<Readiness | null>(null);
@@ -35,6 +39,8 @@ export function CreateVault({ leadTo, onChanged }: StepProps) {
   const [asking, setAsking] = useState<Asking | null>(null);
   const [stage, setStage] = useState<Creating | null>(null);
   const [result, setResult] = useState<VaultCreated | null>(null);
+  /* Whether this person's vault keys were just given here, or why not. */
+  const [gave, setGave] = useState<typeof ACTED.done | ActRefusal | null>(null);
 
   const read = useCallback(async () => {
     if (company === null) { setReady(null); setOwed([]); return; }
@@ -43,6 +49,10 @@ export function CreateVault({ leadTo, onChanged }: StepProps) {
     setOwed(o);
   }, [person.id, company]);
   useEffect(() => { void read(); }, [read]);
+  /* Asked to finish one vault: asked as soon as it is read as sent, not held, and finishable from this browser. */
+  useEffect(() => {
+    if (finishing !== undefined && owed.some((o) => o.vault === finishing && o.here)) setAsking((a) => a ?? { of: ASKING.finish, vault: finishing });
+  }, [finishing, owed]);
 
   const busy = stage !== null;
   const act = async (asked: Asking): Promise<void> => {
@@ -62,6 +72,15 @@ export function CreateVault({ leadTo, onChanged }: StepProps) {
     const r = await openYourKeys(person.id);
     setOpening(r.of === ACTED.refused ? r.why : null);
     await read();
+  };
+
+  const giveKeys = async (): Promise<void> => {
+    if (company === null) return;
+    setGave(null);
+    const r = await giveYourVaultKeys(person.id, company);
+    setGave(r.of === ACTED.refused ? r.why : ACTED.done);
+    await read();
+    onChanged();
   };
 
   const canCreate = company !== null && ready?.of === READY.ready && !busy;
@@ -103,7 +122,7 @@ export function CreateVault({ leadTo, onChanged }: StepProps) {
             <Button variant="outline" onClick={() => leadTo(STEP.createCompany)} data-lead-to={STEP.createCompany}>{t('createVault.goCreateCompany')}</Button>
           ) : null}
           {ready?.of === READY.yoursMissing ? (
-            <Button variant="outline" onClick={() => leadTo(STEP.handOver)} data-lead-to={STEP.handOver}>{t('createVault.goGiveKeys')}</Button>
+            <Button variant="outline" disabled={busy} onClick={() => { void giveKeys(); }} data-action="give-vault-keys">{t('createVault.goGiveKeys')}</Button>
           ) : null}
           {ready?.of === READY.locked ? (
             <Button variant="outline" disabled={busy} onClick={() => { void openKeys(); }} data-action="open-with-your-account">{t('records.locked.open')}</Button>
@@ -125,6 +144,8 @@ export function CreateVault({ leadTo, onChanged }: StepProps) {
       {result?.of === OWED.here ? <p className="text-sm" data-result={result.of}>{t('createVault.owed.now')}</p> : null}
       {result?.of === OWED.elsewhere ? <p className="text-sm" data-result={result.of}>{t('createVault.owed.elsewhere')}</p> : null}
       {result?.of === OWED.rosterDisagrees ? <p className="text-sm" data-result={result.of}>{t('createVault.owed.rosterDisagrees')}</p> : null}
+      {gave === ACTED.done ? <p className="text-sm" data-gave-keys>{t('setup.handOver.done.giveKeys')}</p> : null}
+      {gave === null || gave === ACTED.done ? null : <ActRefused why={gave} />}
       {opening === null ? null : <ActRefused why={opening} />}
       {result?.of === ACTED.refused ? <ActRefused why={result.why} /> : null}
     </div>
