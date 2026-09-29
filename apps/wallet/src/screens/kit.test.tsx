@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen } from '../testing/render.js';
 
 /*
  * THE GALLERY. Three claims, and each one is a thing that would be a
@@ -80,7 +80,7 @@ describe('the component gallery', () => {
    * one-filling test while the slot had quietly become a chevron holder. */
   it('shows the card-header action slot, filled two ways', () => {
     render(<SessionProvider><App /></SessionProvider>);
-    const slots = [...document.querySelectorAll('[data-card-action]')];
+    const slots = [...document.querySelectorAll('[data-slot="card-action"]')];
     expect(slots.length).toBeGreaterThanOrEqual(2);
     /* One NAVIGATES and one ACTS — the two kinds of thing the slot exists to
      * hold, and the reason its type is a node rather than an href. */

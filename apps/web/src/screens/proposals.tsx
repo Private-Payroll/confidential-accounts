@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { ComingSoon, Tabs, TabsList, TabsTrigger, useText } from 'vaults-ui';
 import type { ProposalRow } from '../adapters/company-records.js';
-import { Approvals, Day, ProposalStatus, ProposalWhat, ReadOf, SoonAction, WithRecords } from '../records/parts.js';
+import { Approvals, Day, ProposalStatus, ProposalWhat, ReadOf, UnbuiltAction, WithRecords } from '../records/parts.js';
 import { usePanel } from '../shell/right-panel.js';
 
 /** The tabs of the proposals list, and which proposals each shows. Declined is Coming soon: nothing declines a proposal today. */
@@ -16,7 +16,7 @@ const inTab: Record<Tab, (r: ProposalRow) => boolean> = {
 /**
  * PROPOSALS: every proposal the signers raised, newest first, with tabs for
  * all of them, those waiting and those approved. A row opens its panel.
- * Declining and approving are shown, and are Coming soon.
+ * Declining and approving are not built yet and are shown disabled.
  */
 export function Proposals() {
   const t = useText();
@@ -73,7 +73,7 @@ export function Proposals() {
   );
 }
 
-/** A proposal's panel: what it does, who raised it, how many have approved, and Approve and Decline, both Coming soon. */
+/** A proposal's panel: what it does, who raised it, how many have approved, and Approve and Decline, both not built yet and shown disabled. */
 function ProposalPanel({ row }: { row: ProposalRow }) {
   const t = useText();
   return (
@@ -86,8 +86,8 @@ function ProposalPanel({ row }: { row: ProposalRow }) {
         <dt className="text-muted-foreground">{t('proposals.column.status')}</dt><dd><ProposalStatus row={row} /></dd>
       </dl>
       <div className="flex flex-wrap gap-3">
-        <SoonAction label={t('proposals.approve')} soon={t('proposals.approve.soon')} data-action="approve" />
-        <SoonAction label={t('proposals.decline')} soon={t('proposals.declined.soon')} data-action="decline" />
+        <UnbuiltAction data-action="approve">{t('proposals.approve')}</UnbuiltAction>
+        <UnbuiltAction data-action="decline">{t('proposals.decline')}</UnbuiltAction>
       </div>
     </div>
   );

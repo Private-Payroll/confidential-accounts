@@ -9,11 +9,11 @@ import { splitShortAddress } from '../accounts/short-address.js';
 import {
   MAIN_ACCOUNT, OFFERED_UP_FRONT, SUBWALLET_ACCOUNTS, WALLET_ACCOUNTS,
 } from '../accounts/subwallets.js';
-import { GLYPH, Icon } from '../kit/icon.js';
-import { Button } from '../kit/button.js';
 import {
-  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger,
-} from '../kit/dialog.js';
+  Button, Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger,
+} from 'vaults-ui';
+import { Item } from 'vaults-ui/components/item';
+import { GLYPH, Glyph } from '../glyphs.js';
 import { Mark } from './mark.js';
 import { switchWallet, useWallets } from './wallets.js';
 import { WalletBalanceCell, rowFor, useWalletBalances } from './wallet-balances.js';
@@ -55,9 +55,9 @@ import { WalletBalanceCell, rowFor, useWalletBalances } from './wallet-balances.
 export function AddressEnds({ short }: { readonly short: string }): ReactNode {
   const parts = splitShortAddress(short);
   return (
-    <span className="font-mono text-xs whitespace-nowrap text-muted">
+    <span className="font-mono text-xs whitespace-nowrap text-muted-foreground">
       {parts.head}
-      {parts.tail !== null && <><span className="text-faint">…</span>{parts.tail}</>}
+      {parts.tail !== null && <><span className="text-muted-foreground">…</span>{parts.tail}</>}
     </span>
   );
 }
@@ -76,36 +76,27 @@ function WalletRow({ owned, current, balance, onChoose }: {
   readonly onChoose: () => void;
 }): ReactNode {
   return (
-    <button
-      type="button"
-      data-account={owned.account}
-      /* The hook the tests read, and it is an ATTRIBUTE rather than a
-       * class on purpose: `data-wallet-row` says *this is a row of the
-       * switcher* and survives any restyling, where the old `.wallet-row`
-       * carried an `app.css` rule as well and could not be moved without
-       * moving the look with it.
-       *
-       * `data-wallet-balance-row` arrives beside it, carrying the claim
-       * that came here from Home's every-wallet card: *this is one of the
-       * eleven, and what it says about its money is on it*. Two names on one
-       * row because there are two claims, and a test that wants one of them
-       * should not have to know about the other. */
-      data-wallet-balance-row=""
-      data-wallet-row=""
-      aria-current={current ? 'true' : undefined}
-      onClick={onChoose}
-      className={[
-        'flex min-h-touch w-full items-center gap-3 overflow-hidden rounded-tight border px-3 py-2 text-left',
-        'bg-transparent font-normal',
-        'transition-colors duration-(--motion-quick)',
-        current
-          ? 'border-line-strong bg-sunken'
-          : 'border-transparent hover:border-line hover:bg-sunken focus-visible:border-line',
-      ].join(' ')}
+    <Item
+      asChild
+      size="sm"
+      variant={current ? 'outline' : 'default'}
+      className={current ? 'flex-nowrap overflow-hidden bg-muted' : 'flex-nowrap overflow-hidden hover:bg-muted'}
     >
+      <button
+        type="button"
+        data-account={owned.account}
+        /* `data-wallet-row` says *this is a row of the switcher* and survives
+         * any restyling; `data-wallet-balance-row` says *this is one of the
+         * eleven, and what it says about its money is on it*. Two names on
+         * one row because there are two claims. */
+        data-wallet-balance-row=""
+        data-wallet-row=""
+        aria-current={current ? 'true' : undefined}
+        onClick={onChoose}
+      >
       <Mark address={owned.address.bech32} account={owned.account} size={30} />
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-semibold text-ink">{owned.name}</span>
+        <span className="block truncate text-sm font-semibold text-foreground">{owned.name}</span>
         <span className="block truncate">
           <AddressEnds short={shortPayee(owned.address)} />
         </span>
@@ -116,7 +107,7 @@ function WalletRow({ owned, current, balance, onChoose }: {
         * `whitespace-nowrap` (`shell/wallet-balances.tsx`): an unbreakable
         * forty-character run that the row's minimum width could not go below.
         * `DialogContent` is a `grid` with `overflow-y-auto` and no `overflow-x`
-        * (`kit/dialog.tsx:200`), so its implicit column sized itself to that
+        * (the kit's dialog), so its implicit column sized itself to that
         * minimum and the browser resolved the other axis to `auto` — which is
         * why the panel grew a horizontal scrollbar SECONDS after opening, when
         * the stored checkpoints answered and `never checked` became a number
@@ -133,14 +124,15 @@ function WalletRow({ owned, current, balance, onChoose }: {
         * a fixed 26rem and can spare the room; below it the panel is as wide as
         * the phone, and the address beside it is seventeen monospaced
         * characters that must not be shortened to buy space here. */}
-      <span className="w-28 shrink-0 text-right wide:w-32">
-        <span className="block truncate text-xs text-faint">{owned.slot}</span>
+      <span className="w-28 shrink-0 text-right md:w-32">
+        <span className="block truncate text-xs text-muted-foreground">{owned.slot}</span>
         {balance !== undefined && <span className="block">{balance}</span>}
       </span>
       {current
-        ? <Icon glyph={GLYPH.chosen} className="size-4 shrink-0 text-accent" />
-        : <span className="size-4 shrink-0" aria-hidden="true" />}
-    </button>
+          ? <Glyph icon={GLYPH.chosen} className="size-4 text-primary" />
+          : <span className="size-4 shrink-0" aria-hidden="true" />}
+      </button>
+    </Item>
   );
 }
 
@@ -217,16 +209,9 @@ function WalletList({ identity, names, account, onSwitch }: {
         />
       ))}
       {!showAll && (
-        <button
-          type="button"
-          className={[
-            'min-h-touch rounded-tight border-0 bg-transparent px-3 py-2 text-left',
-            'text-sm font-normal text-accent hover:underline',
-          ].join(' ')}
-          onClick={() => setShowAll(true)}
-        >
+        <Button type="button" variant="link" className="justify-start px-3" onClick={() => setShowAll(true)}>
           Show every slot
-        </button>
+        </Button>
       )}
 
       {/* THE SWEEP, AND ITS OWN PARAGRAPH — both moved here from Home's card
@@ -238,13 +223,15 @@ function WalletList({ identity, names, account, onSwitch }: {
         * phrase this wallet uses for anything planned (`screens/explore.tsx`
         * carries the decision). The admission itself is unchanged, and it is
         * the part that matters: the limit is SAID here rather than implied. */}
-      <p className="m-0 mt-3 text-xs text-faint">
+      <p className="m-0 mt-3 text-xs text-muted-foreground">
         Checking asks the indexer about each wallet in turn, one at a time — nothing
         syncs in the background unasked. These rows read the SHIELDED balance only; the
         open wallet&rsquo;s card reads both kinds. A sweep that reads unshielded NIGHT
         too is coming soon — said here rather than implied.
       </p>
       <Button
+        type="button"
+        variant="outline"
         className="mt-2 self-start"
         disabled={sweeping}
         onClick={() => { setShowAll(true); sweep(); }}
@@ -282,7 +269,7 @@ export function WalletSwitcher({ identity, secret, children }: {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>{children}</DialogTrigger>
-      <DialogContent aria-label="Your wallets">
+      <DialogContent aria-label="Your wallets" className="max-h-[calc(100svh-2rem)] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Which wallet</DialogTitle>
           {/* THE HEADER IS WHERE THE WALLET IDENTIFIES ITSELF AS A
@@ -291,7 +278,7 @@ export function WalletSwitcher({ identity, secret, children }: {
             * because "Main wallet" and "Subwallet 3" are accounts inside it
             * and the copy must not let those two ideas trade places. */}
           {wallet !== null && (
-            <p className="m-0 text-sm font-semibold text-ink" data-whole-wallet="">
+            <p className="m-0 text-sm font-semibold text-foreground" data-whole-wallet="">
               {wallet}
             </p>
           )}

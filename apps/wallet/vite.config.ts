@@ -108,7 +108,7 @@ export default defineConfig({
        * like it would swallow every scoped package. A STRING `find` matches
        * only when the import is exactly `@` or begins `@/`.
        * `@radix-ui/react-dialog` and `@midnightntwrk/ledger-v9` do not begin
-       * `@/` and are untouched - pinned by `apps/wallet/src/kit/alias.test.ts`,
+       * `@/` and are untouched - pinned by `apps/wallet/src/alias.test.ts`,
        * which resolves one of each.
        */
       { find: '@', replacement: fileURLToPath(new URL('./src', import.meta.url)) },

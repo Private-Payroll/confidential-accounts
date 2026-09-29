@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '../testing/render.js';
 import { IDBFactory } from 'fake-indexeddb';
 
 /*
@@ -237,11 +237,12 @@ describe('a place is framed; a flow and a condition are not', () => {
     }
     expect(screen.getAllByText('Coming soon')).toHaveLength(6);
     /* A tile that leads nowhere leads nowhere: no link and no button among
-     * them. The rail and the bottom bar are OUTSIDE `main`, so this counts
-     * only what the screen itself put on the page. */
-    const main = document.querySelector('main') as HTMLElement;
-    expect(main.querySelectorAll('a')).toHaveLength(0);
-    expect(main.querySelectorAll('button')).toHaveLength(0);
+     * them. The place's header and the bottom bar sit in `main` beside the
+     * page, so this counts only what the screen itself put on the page. */
+    const page = document.querySelector('[data-slot="page-layout"]') as HTMLElement;
+    expect(page).not.toBeNull();
+    expect(page.querySelectorAll('a')).toHaveLength(0);
+    expect(page.querySelectorAll('button')).toHaveLength(0);
   });
 
   it('settings is a place with the same frame, and is a screen now', async () => {

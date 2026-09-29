@@ -30,18 +30,22 @@ import { describe, expect, it } from 'vitest';
  * already used by `shell/mark.tsx`. **The assertion is unchanged**: a scoped
  * import resolves to the package and `typeof` its export is `'function'`.
  *
+ * AND THE KIT, BY ITS PACKAGE NAME. The wallet's parts come from the shared
+ * kit, reached as `vaults-ui` exactly as the payroll application reaches it.
+ *
  * The imports themselves ARE the assertions: a resolution failure is a
  * collection error, which is a red file, not a silent pass.
  */
-import { cn } from '@/kit/cn';
-import { cn as cnRelative } from './cn.js';
+import { glyphFor } from '@/glyphs';
+import { glyphFor as glyphForRelative } from './glyphs.js';
 import { parseRoute } from '@/routes.js';
+import { Button } from 'vaults-ui';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { Tooltip } from 'radix-ui';
 
 describe('the @/ alias the resolution change bought', () => {
   it('resolves an extensionless @/ import — shadcn’s own spelling', () => {
-    expect(cn('a', false, 'b')).toBe('a b');
+    expect(typeof glyphFor('home')).toBe('object');
   });
 
   it('resolves a @/ import that still carries the repo’s .js suffix', () => {
@@ -49,7 +53,7 @@ describe('the @/ alias the resolution change bought', () => {
   });
 
   it('is the same module the relative import reaches, not a second copy', () => {
-    expect(cn).toBe(cnRelative);
+    expect(glyphFor).toBe(glyphForRelative);
   });
 
   it('leaves scoped packages alone — @noble is not @/', () => {
@@ -63,5 +67,9 @@ describe('the @/ alias the resolution change bought', () => {
    * this repo's own code did until this change. */
   it('resolves the unified radix-ui package the fetched components import', () => {
     expect(typeof Tooltip.Root).toBe('function');
+  });
+
+  it('resolves the kit by its package name, as the payroll application does', () => {
+    expect(typeof Button).toBe('function');
   });
 });

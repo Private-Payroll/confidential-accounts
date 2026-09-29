@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from './testing/render.js';
 import { IDBFactory } from 'fake-indexeddb';
 
 /*
@@ -177,13 +177,13 @@ describe('the recover route refuses to open over a live wallet', () => {
 });
 
 describe('navigation moves focus to the new screen — keyboard and screen reader', () => {
-  it('a route change focuses the main region; the first render does not steal focus', async () => {
+  it('a route change focuses the page body; the first render does not steal focus', async () => {
     mount();
     expect(await screen.findByText('Your wallet on Midnight.')).toBeTruthy();
-    expect(document.activeElement === document.querySelector('main')).toBe(false);
+    expect(document.activeElement === document.querySelector('[data-page-body]')).toBe(false);
     window.location.hash = '#/recover';
     await screen.findByText('Recover an account.');
-    await waitFor(() => expect(document.activeElement).toBe(document.querySelector('main')));
+    await waitFor(() => expect(document.activeElement).toBe(document.querySelector('[data-page-body]')));
   });
 });
 
@@ -219,7 +219,7 @@ describe('recovery is resumable across navigation — §7.11', () => {
 describe('the footer stopped lying — §7.16, with balances the wallet talks to an indexer', () => {
   it('names the indexer and no longer claims there is no chain connection', () => {
     mount();
-    const foot = document.querySelector('.foot');
+    const foot = document.querySelector('footer');
     expect(foot?.textContent).toContain('indexer.stagenet.shielded.tools');
     expect(foot?.textContent).toContain('only when you ask');
     expect(foot?.textContent).not.toContain('No server, no chain connection');

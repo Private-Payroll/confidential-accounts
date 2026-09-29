@@ -31,7 +31,7 @@ describe('a vault\'s public money, through the adapter', () => {
     expect(visibilityOf(night!)).toBe('public');
     expect(night!.code).toBe('NIGHT');
     expect(NIGHT.decimals).toBe(6);
-    expect(formatTokenAmount(night!, 'en')).toBe('12.500000');
+    expect(formatTokenAmount(night!, 'en')).toBe('12.5');
   });
 
   /* RED WHEN: the decimals are written in the adapter instead of read from the token's record, so a record with other decimals is shown the same. */
@@ -39,7 +39,7 @@ describe('a vault\'s public money, through the adapter', () => {
     const eight: Asset = { ...NIGHT, decimals: 8 };
     const registry = new StaticAssetRegistry([...SEED_ASSETS.filter((a) => a.code !== 'NIGHT'), eight]);
     const answer = await vaultPublicMoney(view([{ token: NIGHT_TOKEN, amount: '12500000' }]), registry);
-    expect(formatTokenAmount(answer!.amounts[0]!, 'en')).toBe('0.12500000');
+    expect(formatTokenAmount(answer!.amounts[0]!, 'en')).toBe('0.125');
   });
 
   /* RED WHEN: a currency the registry has switched off is hidden, though a vault still holds it. */

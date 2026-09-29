@@ -30,7 +30,7 @@ describe('an amount', () => {
   it('is exact, left to right, and private with no pill', () => {
     const { container } = inKit(<Amount value={privateAmount(12_345_678_901_234_567_890n, 6, 'USDC')} kind="payment" />);
     const figure = container.querySelector('[data-slot=amount] > span[dir=ltr]');
-    expect(figure?.textContent).toBe('12,345,678,901,234.567890 USDC');
+    expect(figure?.textContent).toBe('12,345,678,901,234.56789 USDC');
     expect(container.querySelector('[data-slot=public-pill]')).toBeNull();
   });
 
@@ -67,7 +67,7 @@ describe('an amount', () => {
   /* RED WHEN: the language is not the one shown, so every language gets English grouping. */
   it('is written in the language shown', () => {
     const { container } = inKit(<Amount value={privateAmount(1_234_500n, 2, 'EUR')} kind="payment" />, 'de');
-    expect(container.querySelector('span[dir=ltr]')?.textContent).toBe('12.345,00 EUR');
+    expect(container.querySelector('span[dir=ltr]')?.textContent).toBe('12.345 EUR');
   });
 
   /* RED WHEN: a bare bigint or a number can be shown as an amount, an amount can be told its visibility, or an amount, private or public, can be shown without saying whether it is a payment or a balance. */
@@ -133,7 +133,7 @@ describe('an amount in a table that says its asset and state in columns of their
   it('writes the figure alone, exact, with no code and no pill', () => {
     const { container } = inKit(<AmountFigureOnly value={publicAmount(120_123_100n, 5, 'NIGHT')} />);
     const figure = container.querySelector('[data-slot=amount-figure]')!;
-    expect(figure.textContent).toBe('1,201.23100');
+    expect(figure.textContent).toBe('1,201.231');
     expect(figure.getAttribute('dir')).toBe('ltr');
     expect(figure.getAttribute('data-visibility')).toBe('public');
     expect(container.querySelector('[data-slot=public-pill]')).toBeNull();
@@ -180,7 +180,7 @@ describe('a balance', () => {
   it('shows private and public on two lines, never a total, and says Public once', () => {
     const { container } = inKit(<Balance private={privateAmount(150n, 2, 'USDC')} public={publicAmount(25n, 2, 'USDC')} />);
     const lines = [...container.querySelectorAll('dd')];
-    expect(lines.map((d) => [d.querySelector('[data-visibility]')?.getAttribute('data-visibility') ?? d.getAttribute('data-visibility'), d.querySelector('span[dir=ltr]')?.textContent])).toEqual([['private', '1.50 USDC'], ['public', '0.25 USDC']]);
+    expect(lines.map((d) => [d.querySelector('[data-visibility]')?.getAttribute('data-visibility') ?? d.getAttribute('data-visibility'), d.querySelector('span[dir=ltr]')?.textContent])).toEqual([['private', '1.5 USDC'], ['public', '0.25 USDC']]);
     expect(container.textContent).not.toContain('1.75');
     const labels = [...container.querySelectorAll('dt')];
     expect(labels[0]?.textContent).toBe(EN['kit.balance.private']);

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // @vitest-environment-options {"url":"https://identity.payroll.example/"}
 import { describe, expect, it, vi } from 'vitest';
-import { render } from '@testing-library/react';
+import { render } from './testing/render.js';
 import { IDBFactory } from 'fake-indexeddb';
 
 /* FRAMED BY THE PAGE IT WAS BUILT FOR. */
@@ -34,7 +34,8 @@ describe('a wallet inside the page it was built for', () => {
     const { unmount } = render(<SessionProvider><App /></SessionProvider>);
     expect(document.querySelector('[data-framed-refusal]')).toBeNull();
     expect(document.querySelector('[data-framed]')).not.toBeNull();
-    expect(document.querySelector('header.topbar')).toBeNull();
+    expect(document.querySelector('header')).toBeNull();
+    expect(document.querySelector('footer')).toBeNull();
     expect(document.querySelector('[data-framed-origin]')?.textContent).toContain('https://identity.payroll.example');
     unmount();
   });

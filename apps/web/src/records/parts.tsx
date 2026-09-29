@@ -107,8 +107,17 @@ export function WithRecords({ children }: { children: (records: CompanyRecords) 
   );
 }
 
-/* An action not built yet is the kit's; re-exported so the screens that read keep importing it from here. */
-export { SoonAction } from 'vaults-ui';
+/**
+ * AN ACTION NOT BUILT YET: the kit's button, where the action will be and at
+ * the size and weight it will have, disabled. Nothing is drawn beside it and
+ * nothing appears on hover; the menu entries and page headings of what is not
+ * built yet carry the Coming soon pill, never an action.
+ */
+export function UnbuiltAction({ children, variant = 'default', size = 'default', ...marks }: {
+  children: ReactNode; variant?: 'default' | 'outline'; size?: 'default' | 'sm'; 'data-action': string;
+}) {
+  return <Button variant={variant} size={size} disabled data-soon {...marks}>{children}</Button>;
+}
 
 /** How a payment is made, in words: privately, publicly, not set up yet, or not known. A public payment's amount, and one not known, carries the Public pill where it is shown. */
 export function PaidWords({ paid }: { paid: Paid }) {

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '../testing/render.js';
 import { IDBFactory } from 'fake-indexeddb';
 import { Buffer as PolyfillBuffer } from 'buffer/';
 import { identityFromSecret, newSecret, splitSecret } from 'midnight-identity';

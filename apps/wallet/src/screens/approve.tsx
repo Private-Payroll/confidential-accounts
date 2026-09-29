@@ -41,7 +41,7 @@ import type { Consent } from '../framing.js';
 function ConsentRefused({ consent }: { readonly consent: Consent }): ReactNode {
   if (consent.ok) return null;
   return (
-    <p className="m-0 w-full text-sm text-muted" data-consent-refused>
+    <p className="m-0 w-full text-sm text-muted-foreground" data-consent-refused>
       {consent.says.charAt(0).toUpperCase() + consent.says.slice(1)}
     </p>
   );
@@ -59,9 +59,8 @@ import { alsoUsedBy, chooseSlot } from '../accounts/slot-choice.js';
 import { WALLET_ACCOUNTS, displayNameOf } from '../accounts/subwallets.js';
 import { loadSubwallets } from '../accounts/storage.js';
 import { NETWORK } from 'midnight-identity/network';
-import {
-  Alert, Button, Card, CardContent, CardHeader, CardTitle, Input, Label, Section,
-} from '../kit/index.js';
+import { Button, Card, CardContent, CardHeader, CardTitle, Input, Label, Section } from 'vaults-ui';
+import { StatusAlert } from '../components/status.js';
 /* The code is COPIED, never transcribed. By design, nobody
  * reads anything down a phone line in this design. */
 import { CopyButton } from '../components/ui.js';
@@ -773,10 +772,10 @@ export function Approve({
     return (
       <>
         <h1>Nothing has been shared</h1>
-        <Alert tone={saying.tone} title={saying.title}>
+        <StatusAlert tone={saying.tone} title={saying.title}>
           <p className="m-0" data-unopenable-why>{saying.sentence}</p>
           <p className="m-0">Nothing has been sent and nothing has been changed.</p>
-        </Alert>
+        </StatusAlert>
       </>
     );
   }
@@ -785,9 +784,9 @@ export function Approve({
     return (
       <>
         <h1>Nothing has been shared</h1>
-        <Alert tone="danger" title="This request was refused before you saw it">
+        <StatusAlert tone="danger" title="This request was refused before you saw it">
           <p className="m-0">{channelState.error.message}</p>
-        </Alert>
+        </StatusAlert>
         <p style={{ marginTop: '1.5rem' }}><a href={hrefOf('home')}>← Your wallet</a></p>
       </>
     );
@@ -829,7 +828,7 @@ export function Approve({
             The application that opened this window is still preparing what it wants to
             ask. Nothing has been sent and nothing has been signed.
           </p>
-          <p className="m-0 text-sm text-muted">
+          <p className="m-0 text-sm text-muted-foreground">
             When it arrives, this wallet will tell you where the page actually came
             from — and nothing leaves here until you press something.
           </p>
@@ -872,22 +871,22 @@ export function Approve({
             </span>
             {' keeps for you.'}
           </p>
-          <p className="m-0 text-sm text-muted" style={{ marginTop: '0.5rem' }}>
+          <p className="m-0 text-sm text-muted-foreground" style={{ marginTop: '0.5rem' }}>
             That company’s address in full
           </p>
-          <p className="m-0 font-mono break-all text-sm text-muted">{request.company}</p>
+          <p className="m-0 font-mono break-all text-sm text-muted-foreground">{request.company}</p>
         </div>
         {/* §6 — NO REVOCATION LANGUAGE, ANYWHERE. And here it binds hardest:
           * a disclosure hands over a fact somebody already knew about
           * themselves; this hands over the ability to read. */}
-        <Alert tone="info" role={null} title="What they can do now">
+        <StatusAlert tone="info" role={null} title="What they can do now">
           <p className="m-0">
             {`${request.requester.origin} can open those records from now on, and this `}
             wallet cannot see them doing it. You can refuse the next time they ask. Nothing
             takes back a key that has gone.
           </p>
-        </Alert>
-        {problem !== null && <Alert tone="warning" title="One thing did not save">{problem}</Alert>}
+        </StatusAlert>
+        {problem !== null && <StatusAlert tone="warning" title="One thing did not save">{problem}</StatusAlert>}
         <p style={{ marginTop: '1.5rem' }}><a href={hrefOf('profile')}>My profile</a></p>
       </>
     );
@@ -905,14 +904,14 @@ export function Approve({
             {request.company !== null ? ', and the key to the records one company keeps for you.' : '.'}
           </p>
         </div>
-        <Alert tone="info" role={null} title="What they can do now">
+        <StatusAlert tone="info" role={null} title="What they can do now">
           <p className="m-0">
             {`${request.requester.origin} can use the keys this wallet saved under that account name from now on - `}
             for every company that account belongs to - and this wallet cannot see them doing
             it. You can refuse the next time they ask. Nothing takes back a key that has gone.
           </p>
-        </Alert>
-        {problem !== null && <Alert tone="warning" title="One thing did not save">{problem}</Alert>}
+        </StatusAlert>
+        {problem !== null && <StatusAlert tone="warning" title="One thing did not save">{problem}</StatusAlert>}
         <p style={{ marginTop: '1.5rem' }}><a href={hrefOf('profile')}>My profile</a></p>
       </>
     );
@@ -948,14 +947,14 @@ export function Approve({
           {` as ${displayNameOf(subwallet, loadSubwallets(secret).names)}.`}
         </p>
         {/* §6 — NO REVOCATION LANGUAGE, ANYWHERE. */}
-        <Alert tone="info" role={null} title="What they know now">
+        <StatusAlert tone="info" role={null} title="What they know now">
           <p className="m-0">
             {`${request.requester.origin} now holds a signed statement that the owner of `}
             this wallet address was here. You can stop signing in to them. Nothing can take
             back what has gone.
           </p>
-        </Alert>
-        {problem !== null && <Alert tone="warning" title="One thing did not save">{problem}</Alert>}
+        </StatusAlert>
+        {problem !== null && <StatusAlert tone="warning" title="One thing did not save">{problem}</StatusAlert>}
         <p style={{ marginTop: '1.5rem' }}><a href={hrefOf('profile')}>My profile</a></p>
       </>
     );
@@ -977,24 +976,24 @@ export function Approve({
           <span className="font-mono break-all">{request.requester.origin}</span>
           {', sealed so that only whoever holds the key below can read it.'}
         </p>
-        <p className="m-0 text-sm text-muted" style={{ marginTop: '0.5rem' }}>
+        <p className="m-0 text-sm text-muted-foreground" style={{ marginTop: '0.5rem' }}>
           The key it was sealed to, in full
         </p>
-        <p className="m-0 font-mono break-all text-sm text-muted" data-sealed-to>
+        <p className="m-0 font-mono break-all text-sm text-muted-foreground" data-sealed-to>
           {request.inboxPublicKey}
         </p>
         {/* §6 -- NO REVOCATION LANGUAGE, ANYWHERE. And the honest half of the
           * seal: it decides WHO CAN READ, and it decides nothing at all about
           * what a reader does next. */}
-        <Alert tone="info" role={null} title="What is sent, is sent">
+        <StatusAlert tone="info" role={null} title="What is sent, is sent">
           <p className="m-0">
             Whoever holds that key keeps their own copy of what you just sent, which is
             normally what you want &mdash; it is how they pay you. Sealing it decided who
             could read it on the way, and nothing more. You can stop sending them anything
             new. Nothing can take back what has gone.
           </p>
-        </Alert>
-        {problem !== null && <Alert tone="warning" title="One thing did not save">{problem}</Alert>}
+        </StatusAlert>
+        {problem !== null && <StatusAlert tone="warning" title="One thing did not save">{problem}</StatusAlert>}
         <p style={{ marginTop: '1.5rem' }}><a href={hrefOf('profile')}>My profile</a></p>
       </>
     );
@@ -1011,14 +1010,14 @@ export function Approve({
           {'.'}
         </p>
         {/* §6 — NO REVOCATION LANGUAGE, ANYWHERE. */}
-        <Alert tone="info" role={null} title="What is sent, is sent">
+        <StatusAlert tone="info" role={null} title="What is sent, is sent">
           <p className="m-0">
             {request.requester.origin} keeps their own copy of what you just sent, which is
             normally what you want — it is how they pay you. You can stop sending them
             anything new. Nothing can take back what has gone.
           </p>
-        </Alert>
-        {problem !== null && <Alert tone="warning" title="One thing did not save">{problem}</Alert>}
+        </StatusAlert>
+        {problem !== null && <StatusAlert tone="warning" title="One thing did not save">{problem}</StatusAlert>}
         <p style={{ marginTop: '1.5rem' }}><a href={hrefOf('profile')}>My profile</a></p>
       </>
     );
@@ -1038,7 +1037,7 @@ export function Approve({
    */
   const whoIsAsking = (
     <Card>
-      <CardHeader><CardTitle>Who is asking</CardTitle></CardHeader>
+      <CardHeader><CardTitle role="heading" aria-level={3}>Who is asking</CardTitle></CardHeader>
       <CardContent>
         <p className="m-0">
           {'They call themselves '}
@@ -1052,7 +1051,7 @@ export function Approve({
           {'. Your browser told this wallet that, not the request — anything that could '}
           name its own address could name somebody else&rsquo;s.
         </p>
-        <p className="m-0 text-sm text-muted" data-purpose>
+        <p className="m-0 text-sm text-muted-foreground" data-purpose>
           {`Why they say they want it: ${request.purpose}`}
         </p>
       </CardContent>
@@ -1095,13 +1094,13 @@ export function Approve({
   };
 
   const whichWallet = (title: string, description: string): ReactNode => (
-    <Section title={title} description={description}>
-      <Label htmlFor="approve-subwallet">Wallet</Label>
+    <Section list={false} box={false} aria-label={title} title={title} description={description}>
+      <Label htmlFor="approve-subwallet" className="mb-2">Wallet</Label>
       <select
         id="approve-subwallet"
         value={String(subwallet)}
         onChange={(e) => { setChoseWallet(true); setSubwallet(Number(e.target.value)); }}
-        className="block w-full rounded-tight border border-line-strong bg-bg px-3 py-2 text-base text-ink"
+        className="block w-full rounded-md border border-input bg-background px-3 py-2 text-base text-foreground"
       >
         {WALLET_ACCOUNTS.map((account) => (
           <option key={account} value={String(account)}>
@@ -1109,22 +1108,22 @@ export function Approve({
           </option>
         ))}
       </select>
-      <p className="m-0 font-mono text-sm text-muted" data-address>
+      <p className="m-0 font-mono text-sm text-muted-foreground" data-address>
         {unshieldedAddressFor(identity, subwallet)}
       </p>
       {whyThisWallet() !== '' && (
-        <p className="m-0 text-sm text-muted" data-why-wallet={choice?.because}>
+        <p className="m-0 text-sm text-muted-foreground" data-why-wallet={choice?.because}>
           {whyThisWallet()}
         </p>
       )}
       {shared.length > 0 && (
-        <Alert tone="warning" title="Another site already has this wallet's address">
+        <StatusAlert tone="warning" title="Another site already has this wallet's address">
           <div data-wallet-shared>
             {/* EACH ONE ON ITS OWN LINE — the same rule as the unlock screen's
               * warning, and for the same reason: a value a person is being
               * asked to recognise, wrapped mid-string, is unreadable. */}
             {shared.map((origin) => (
-              <p className="m-0 font-mono text-ink" key={origin}>{origin}</p>
+              <p className="m-0 font-mono text-foreground" key={origin}>{origin}</p>
             ))}
           </div>
           <p className="m-0">
@@ -1134,7 +1133,7 @@ export function Approve({
             it keeps them apart from each other, not from us: it is one wallet signing in
             either way.
           </p>
-        </Alert>
+        </StatusAlert>
       )}
     </Section>
   );
@@ -1203,17 +1202,18 @@ export function Approve({
           * presenting both as though the wallet checked them.
           */}
         <Section
+          list={false} box={false} aria-label="What is being opened, and who is asking"
           title="What is being opened, and who is asking"
           description="One of these your browser saw for itself. The other is what the page says."
         >
-          <p className="m-0 text-sm text-muted">This page really came from</p>
+          <p className="m-0 text-sm text-muted-foreground">This page really came from</p>
           <p
-            className={`m-0 font-mono break-all text-ink ${FACT_TEXT}`}
+            className={`m-0 font-mono break-all text-foreground ${FACT_TEXT}`}
             data-observed-origin
           >
             {request.requester.origin}
           </p>
-          <p className="m-0 text-sm text-muted" style={{ marginTop: '0.75rem' }}>
+          <p className="m-0 text-sm text-muted-foreground" style={{ marginTop: '0.75rem' }}>
             The company whose records it wants to open, as the page names it
           </p>
           {/*
@@ -1226,24 +1226,24 @@ export function Approve({
             * two digits `devices/pairing.ts` shows.
             */}
           <p
-            className={`m-0 font-mono tracking-wide text-ink ${FINGERPRINT_TEXT}`}
+            className={`m-0 font-mono tracking-wide text-foreground ${FINGERPRINT_TEXT}`}
             data-company-fingerprint
           >
             {companyFingerprint(request.company)}
           </p>
-          <p className="m-0 text-sm text-muted">
+          <p className="m-0 text-sm text-muted-foreground">
             Those twenty characters stand for this company and are the same in every wallet,
             for ever. If somebody told you which company to expect — in the invitation you
             accepted, or by email or over the phone — that is what they can tell you, and
             this is where you check it. Compare all of it, not the ends.
           </p>
-          <p className="m-0 text-sm text-muted" style={{ marginTop: '0.75rem' }}>
+          <p className="m-0 text-sm text-muted-foreground" style={{ marginTop: '0.75rem' }}>
             The address it stands for, in full
           </p>
-          <p className={`m-0 font-mono break-all text-ink ${FACT_TEXT}`} data-company>
+          <p className={`m-0 font-mono break-all text-foreground ${FACT_TEXT}`} data-company>
             {request.company}
           </p>
-          <p className="m-0 text-sm text-muted" style={{ marginTop: '0.75rem' }}>
+          <p className="m-0 text-sm text-muted-foreground" style={{ marginTop: '0.75rem' }}>
             This wallet cannot check that those two belong together. It can only show you
             both. If you do not recognise the company, do not give the key.
           </p>
@@ -1252,7 +1252,7 @@ export function Approve({
         {whoIsAsking}
 
         {elsewhere.length > 0 && (
-          <Alert
+          <StatusAlert
             tone="warning"
             title="You have given this company’s key to a different page before"
           >
@@ -1265,50 +1265,52 @@ export function Approve({
                 * in. The warning named two origins and left the company itself
                 * to be inferred from the section above. */}
               <p className="m-0">The company is</p>
-              <p className="m-0 font-mono tracking-wide text-ink" data-warning-fingerprint>
+              <p className="m-0 font-mono tracking-wide text-foreground" data-warning-fingerprint>
                 {companyFingerprint(request.company)}
               </p>
               <p className="m-0" style={{ marginTop: '0.5rem' }}>
                 Before now, this company’s key has gone to
               </p>
               {elsewhere.map((origin) => (
-                <p className="m-0 font-mono text-ink" key={origin}>{origin}</p>
+                <p className="m-0 font-mono text-foreground" key={origin}>{origin}</p>
               ))}
               <p className="m-0" style={{ marginTop: '0.5rem' }}>This page is</p>
-              <p className="m-0 font-mono text-ink">{request.requester.origin}</p>
+              <p className="m-0 font-mono text-foreground">{request.requester.origin}</p>
             </div>
             <p className="m-0">
               That can be perfectly ordinary — a company can move, or run its own copy of
               the same thing. It is shown because you are the only one who can tell the
               difference between that and somebody standing in the way.
             </p>
-          </Alert>
+          </StatusAlert>
         )}
 
         <Section
+          list={false} box={false} aria-label="What you are agreeing to"
           title="What you are agreeing to"
           description="This is not a fact about you. It is the ability to read."
         >
-          <p className="m-0 text-base text-ink" data-unlock-question>
+          <p className="m-0 text-base text-foreground" data-unlock-question>
             {`Do you want ${request.requester.origin} to be able to open the records this `}
             company keeps for you?
           </p>
-          <p className="m-0 text-sm text-muted">
+          <p className="m-0 text-sm text-muted-foreground">
             {`From the moment you press the button, ${request.requester.origin} can open `}
             those records whenever their page is running. This wallet cannot watch it
             happen and cannot tell you afterwards how often it did.
           </p>
-          <p className="m-0 text-sm text-muted" data-unlock-held-addresses>
+          <p className="m-0 text-sm text-muted-foreground" data-unlock-held-addresses>
             It also lets this page check whether a payslip was paid to one of your wallets. It
             does not tell the page any of your addresses.
           </p>
         </Section>
 
         <Section
+          list={false} box={false} aria-label="How long they have it"
           title="How long they have it"
           description="The honest answer, which is not “until you say stop”."
         >
-          <p className="m-0 text-sm text-muted">
+          <p className="m-0 text-sm text-muted-foreground">
             Their page holds the key while it is open, and this wallet never stores it. But
             nothing stops them keeping their own copy, and nothing here could tell. Treat
             this as given for good.
@@ -1321,10 +1323,11 @@ export function Approve({
           * which is also why a recovery gets the records back.
           */}
         <Section
+          list={false} box={false} aria-label="It does not matter which of this wallet's addresses you use, or which page asked"
           title="It does not matter which of this wallet's addresses you use, or which page asked"
           description="The key belongs to the company and to this wallet, not to this website."
         >
-          <p className="m-0 text-sm text-muted" data-not-per-wallet>
+          <p className="m-0 text-sm text-muted-foreground" data-not-per-wallet>
             This is one key, for this company and no other: no other company can be opened
             with it, and no other key of yours opens theirs. It is the same key on every
             device you sign in on, the same key again if you ever have to rebuild this
@@ -1337,20 +1340,20 @@ export function Approve({
         </Section>
 
         {notThisWallet !== null && (
-          <Alert tone="danger" title="Another wallet answered this page's last sign-in">
+          <StatusAlert tone="danger" title="Another wallet answered this page's last sign-in">
             <p className="m-0" data-not-this-wallet>{notThisWallet}</p>
             <p className="m-0">No key has been given.</p>
-          </Alert>
+          </StatusAlert>
         )}
 
         {/* §6 — NO REVOCATION LANGUAGE, ANYWHERE. */}
-        <Alert tone="warning" role={null} title="What is given, is given">
+        <StatusAlert tone="warning" role={null} title="What is given, is given">
           <p className="m-0">
             You can refuse the next time they ask. That is the whole of what stopping
             means: whoever is behind that page keeps everything they have already opened
             and anything they copied while it was open, and nothing can take back a key.
           </p>
-        </Alert>
+        </StatusAlert>
 
         <div className="flex flex-wrap gap-2">
           {/* THE BUTTON IS THE HEADLINE'S RULE AGAIN. The rule names the button
@@ -1359,10 +1362,12 @@ export function Approve({
           {/* Disabled for a wallet that did not answer this page's last sign-in: a
             * disabled button fires no press in React, by click or by key, so this is
             * the gate and `release` has no second copy of it. */}
-          <Button variant="primary" onClick={release} disabled={!consent.ok || notThisWallet !== null} data-approve data-unlock>
+          <Button size="lg" type="button" variant="default" onClick={release} disabled={!consent.ok || notThisWallet !== null} data-approve data-unlock>
             {`Give ${request.requester.origin} the key`}
           </Button>
           <Button
+            size="lg"
+            type="button"
             variant="ghost"
             data-decline
             onClick={() => { channel?.refuse('declined'); setChannelState({ of: 'waiting' }); }}
@@ -1390,41 +1395,42 @@ export function Approve({
         <h1 data-headline>{`Let ${request.requester.origin} use the keys saved under the account name it gives`}</h1>
 
         <Section
+          list={false} box={false} aria-label="Who is asking, and who they say you are"
           title="Who is asking, and who they say you are"
           description="One of these your browser saw for itself. The other is what the page says."
         >
-          <p className="m-0 text-sm text-muted">This page really came from</p>
-          <p className={`m-0 font-mono break-all text-ink ${FACT_TEXT}`} data-observed-origin>
+          <p className="m-0 text-sm text-muted-foreground">This page really came from</p>
+          <p className={`m-0 font-mono break-all text-foreground ${FACT_TEXT}`} data-observed-origin>
             {request.requester.origin}
           </p>
-          <p className="m-0 text-sm text-muted" style={{ marginTop: '0.75rem' }}>
+          <p className="m-0 text-sm text-muted-foreground" style={{ marginTop: '0.75rem' }}>
             The wallet address the page says you signed in to it with
           </p>
           {request.signedInAs !== null ? (
             <>
-              <p className={`m-0 font-mono break-all text-ink ${FACT_TEXT}`} data-signed-in-as>
+              <p className={`m-0 font-mono break-all text-foreground ${FACT_TEXT}`} data-signed-in-as>
                 {request.signedInAs}
               </p>
               {holder !== null && (
-                <p className="m-0 text-sm text-muted" data-signed-in-holder>
+                <p className="m-0 text-sm text-muted-foreground" data-signed-in-holder>
                   {`That is ${displayNameOf(holder, loadSubwallets(secret).names)}, in this wallet.`}
                 </p>
               )}
             </>
           ) : (
-            <p className="m-0 text-sm text-muted" data-signed-in-unknown>
+            <p className="m-0 text-sm text-muted-foreground" data-signed-in-unknown>
               The page does not say. It may be a tab that did not sign you in itself, such as one
               you reloaded. Keys that are already saved there only open with the wallet that saved
               them; nothing new is saved from such a tab until it signs you in.
             </p>
           )}
-          <p className="m-0 text-sm text-muted" style={{ marginTop: '0.75rem' }}>
+          <p className="m-0 text-sm text-muted-foreground" style={{ marginTop: '0.75rem' }}>
             The account name the page gives you there
           </p>
-          <p className={`m-0 font-mono break-all text-ink ${FACT_TEXT}`} data-keyring-person>
+          <p className={`m-0 font-mono break-all text-foreground ${FACT_TEXT}`} data-keyring-person>
             {request.person}
           </p>
-          <p className="m-0 text-sm text-muted" data-keyring-person-unchecked>
+          <p className="m-0 text-sm text-muted-foreground" data-keyring-person-unchecked>
             The key is made from this wallet and that name. Any page can give any name, and this
             wallet cannot check that it is yours - only show it to you.
           </p>
@@ -1432,20 +1438,21 @@ export function Approve({
 
         {request.company !== null && (
           <Section
+            list={false} box={false} aria-label="And the key to one company's records"
             title="And the key to one company's records"
             description="Asked for in the same answer, so the page knows both came from one wallet."
           >
-            <p className={`m-0 font-mono tracking-wide text-ink ${FINGERPRINT_TEXT}`} data-company-fingerprint>
+            <p className={`m-0 font-mono tracking-wide text-foreground ${FINGERPRINT_TEXT}`} data-company-fingerprint>
               {companyFingerprint(request.company)}
             </p>
-            <p className={`m-0 font-mono break-all text-ink ${FACT_TEXT}`} data-company>
+            <p className={`m-0 font-mono break-all text-foreground ${FACT_TEXT}`} data-company>
               {request.company}
             </p>
-            <p className="m-0 text-sm text-muted">
+            <p className="m-0 text-sm text-muted-foreground">
               That company&rsquo;s key is what your payslip key there is worked out from. This wallet
               cannot check that the company belongs to that page; it can only show you both.
             </p>
-            <p className="m-0 text-sm text-muted" data-committee-key-given>
+            <p className="m-0 text-sm text-muted-foreground" data-committee-key-given>
               The answer also carries the public half of the key you sit on that company&rsquo;s vault
               committee with, so the company can list it. The half that signs never leaves this wallet.
             </p>
@@ -1455,31 +1462,32 @@ export function Approve({
         {whoIsAsking}
 
         {elsewhere.length > 0 && request.company !== null && (
-          <Alert tone="warning" title="You have given this company’s key to a different page before">
+          <StatusAlert tone="warning" title="You have given this company’s key to a different page before">
             <div data-seen-elsewhere>
               <p className="m-0">The company is</p>
-              <p className="m-0 font-mono tracking-wide text-ink">{companyFingerprint(request.company)}</p>
+              <p className="m-0 font-mono tracking-wide text-foreground">{companyFingerprint(request.company)}</p>
               <p className="m-0" style={{ marginTop: '0.5rem' }}>Before now, this company’s key has gone to</p>
               {elsewhere.map((origin) => (
-                <p className="m-0 font-mono text-ink" key={origin}>{origin}</p>
+                <p className="m-0 font-mono text-foreground" key={origin}>{origin}</p>
               ))}
               <p className="m-0" style={{ marginTop: '0.5rem' }}>This page is</p>
-              <p className="m-0 font-mono text-ink">{request.requester.origin}</p>
+              <p className="m-0 font-mono text-foreground">{request.requester.origin}</p>
             </div>
-          </Alert>
+          </StatusAlert>
         )}
 
         {/* **NOT "THE ABILITY TO READ".** The keys saved for a person hold the
           * secrets they approve payments with, for every company they belong to
           * on that site, and the screen says so. */}
         <Section
+          list={false} box={false} aria-label="What you are agreeing to"
           title="What you are agreeing to"
           description="This is more than reading. It is your vote on payments, for every company there."
         >
-          <p className="m-0 text-base text-ink" data-keyring-question>
+          <p className="m-0 text-base text-foreground" data-keyring-question>
             {`Do you want ${request.requester.origin} to be able to use the keys this wallet saved under that account name?`}
           </p>
-          <p className="m-0 text-sm text-muted" data-keyring-power>
+          <p className="m-0 text-sm text-muted-foreground" data-keyring-power>
             Those keys are how you open the records of, and approve payments for, every company you
             belong to on that site - not only one. From the moment you press the button, whoever runs
             that page can use them whenever it is open. This wallet cannot watch it happen and cannot
@@ -1488,20 +1496,22 @@ export function Approve({
         </Section>
 
         <Section
+          list={false} box={false} aria-label="How long they have it"
           title="How long they have it"
           description="The honest answer, which is not “until you say stop”."
         >
-          <p className="m-0 text-sm text-muted">
+          <p className="m-0 text-sm text-muted-foreground">
             Their page holds the key while it is open, and this wallet never stores it. But nothing
             stops them keeping their own copy, and nothing here could tell. Treat this as given for good.
           </p>
         </Section>
 
         <Section
+          list={false} box={false} aria-label="Which keys this opens"
           title="Which keys this opens"
           description="Made from this wallet and the account name above, not from the web address."
         >
-          <p className="m-0 text-sm text-muted" data-keyring-whose>
+          <p className="m-0 text-sm text-muted-foreground" data-keyring-whose>
             It opens whatever is saved under that account name by this wallet, wherever that is kept -
             which is why the page asking matters as much as the name. It is the same key on every
             device and again if you rebuild this wallet from its recovery pieces. Another wallet gives
@@ -1510,7 +1520,7 @@ export function Approve({
         </Section>
 
         {notHeld && (
-          <Alert tone="danger" title="None of this wallet's addresses is the one that page signed in with">
+          <StatusAlert tone="danger" title="None of this wallet's addresses is the one that page signed in with">
             <p className="m-0" data-not-signed-in-here>
               {`The page at ${request.requester.origin} says you signed in to it as an address no account in `}
               this wallet has, so this is not the wallet you signed in with. A key from this wallet would
@@ -1518,33 +1528,35 @@ export function Approve({
               only ever be opened with this one. Open the wallet you signed in with.
             </p>
             <p className="m-0">No key has been given.</p>
-          </Alert>
+          </StatusAlert>
         )}
 
         {notThisWallet !== null && (
-          <Alert tone="danger" title="Another wallet answered this page's last sign-in">
+          <StatusAlert tone="danger" title="Another wallet answered this page's last sign-in">
             <p className="m-0" data-not-this-wallet>{notThisWallet}</p>
             <p className="m-0">No key has been given.</p>
-          </Alert>
+          </StatusAlert>
         )}
 
         {problem !== null && (
-          <Alert tone="danger" title="Nothing has been given">
+          <StatusAlert tone="danger" title="Nothing has been given">
             <p className="m-0" data-keyring-problem>{problem}</p>
-          </Alert>
+          </StatusAlert>
         )}
 
-        <Alert tone="warning" role={null} title="What is given, is given">
+        <StatusAlert tone="warning" role={null} title="What is given, is given">
           <p className="m-0">
             You can refuse the next time they ask. That is the whole of what stopping means: whoever is
             behind that page keeps everything they have already opened and anything they copied while it
             was open, and nothing can take back a key.
           </p>
-        </Alert>
+        </StatusAlert>
 
         <div className="flex flex-wrap gap-2">
           <Button
-            variant="primary"
+            size="lg"
+            type="button"
+            variant="default"
             onClick={releaseKeyring}
             disabled={!consent.ok || notHeld || notThisWallet !== null}
             data-approve
@@ -1553,6 +1565,8 @@ export function Approve({
             {`Give ${request.requester.origin} the key`}
           </Button>
           <Button
+            size="lg"
+            type="button"
             variant="ghost"
             data-decline
             onClick={() => { channel?.refuse('declined'); setChannelState({ of: 'waiting' }); }}
@@ -1579,6 +1593,7 @@ export function Approve({
           + 'you and it does not come back.')}
 
         <Section
+          list={false} box={false} aria-label="What you are agreeing to"
           title="What you are agreeing to"
           description="Nothing about you is sent. This is one question and one answer."
         >
@@ -1592,10 +1607,10 @@ export function Approve({
             * still shown, in the card above, labelled as what they call
             * themselves.
             */}
-          <p className="m-0 text-base text-ink" data-sign-in-question>
+          <p className="m-0 text-base text-foreground" data-sign-in-question>
             {`Do you want ${request.requester.origin} to know it is you?`}
           </p>
-          <p className="m-0 text-sm text-muted">
+          <p className="m-0 text-sm text-muted-foreground">
             There is nothing to tick here and nothing to choose. They asked to be told that
             the person in front of them owns this wallet, and pressing the button below is
             the whole of the answer.
@@ -1603,22 +1618,24 @@ export function Approve({
         </Section>
 
         {/* §6 — NO REVOCATION LANGUAGE, ANYWHERE. */}
-        <Alert tone="warning" role={null} title="What they learn, they keep">
+        <StatusAlert tone="warning" role={null} title="What they learn, they keep">
           <p className="m-0">
             {`${request.requester.origin} will keep a signed statement that you were here, `}
             and the address it was signed by. This wallet can stop signing you in to them
             later. Nothing can take back what has gone.
           </p>
-        </Alert>
+        </StatusAlert>
 
         <div className="flex flex-wrap gap-2">
           {/* THE BUTTON IS THE QUESTION'S RULE AGAIN. The rule names the button
             * as well as the headline: a person who skims reads those and
             * nothing else, so neither may be written in the asker's own words. */}
-          <Button variant="primary" onClick={approve} disabled={!consent.ok} data-approve data-sign-in>
+          <Button size="lg" type="button" variant="default" onClick={approve} disabled={!consent.ok} data-approve data-sign-in>
             {`Sign in to ${request.requester.origin}`}
           </Button>
           <Button
+            size="lg"
+            type="button"
             variant="ghost"
             data-decline
             onClick={() => { channel?.refuse('declined'); setChannelState({ of: 'waiting' }); }}
@@ -1680,23 +1697,24 @@ export function Approve({
         */}
       {join !== null && (
         <Section
+          list={false} box={false} aria-label="Where what you send can be read"
           title="Where what you send can be read"
           description="An invitation is answered in a sealed envelope. This is the key it is sealed to."
         >
-          <p className="m-0 text-sm text-muted">
+          <p className="m-0 text-sm text-muted-foreground">
             What you approve below is sealed on this device before it leaves it. The page
             that asked carries it; only whoever holds this key can open it.
           </p>
-          <p className="m-0 text-sm text-muted" style={{ marginTop: '0.75rem' }}>
+          <p className="m-0 text-sm text-muted-foreground" style={{ marginTop: '0.75rem' }}>
             The key it will be sealed to, in full
           </p>
           <p
-            className={`m-0 font-mono break-all text-ink ${FACT_TEXT}`}
+            className={`m-0 font-mono break-all text-foreground ${FACT_TEXT}`}
             data-inbox-key
           >
             {join.inboxPublicKey}
           </p>
-          <p className="m-0 text-sm text-muted">
+          <p className="m-0 text-sm text-muted-foreground">
             This wallet cannot check that this key belongs to the company you think you are
             joining. It can only show it to you. If you do not recognise who invited you,
             send nothing.
@@ -1715,10 +1733,11 @@ export function Approve({
             + 'also the wallet any address below is worked out from.')}
 
       <Section
+        list={false} box={false} aria-label="What they are asking for"
         title="What they are asking for"
         description="Approve each one. Saying no to an optional detail is a normal answer and they are told which ones you declined."
       >
-        {problem !== null && <Alert tone="danger" title="Not added">{problem}</Alert>}
+        {problem !== null && <StatusAlert tone="danger" title="Not added">{problem}</StatusAlert>}
         <ul className="m-0 flex list-none flex-col gap-3 p-0">
           {rows.map((row) => {
             const chosen = picked[row.attribute];
@@ -1731,14 +1750,14 @@ export function Approve({
                   key={row.attribute}
                   data-row={row.attribute}
                   data-unknown
-                  className="rounded-tight border border-line p-3"
+                  className="rounded-md border border-border p-3"
                 >
                   <p className="m-0">
                     {'They asked for '}
                     <strong className="font-mono">{row.attribute}</strong>
                     {row.required ? ' and marked it required.' : '.'}
                   </p>
-                  <p className="m-0 text-sm text-muted">
+                  <p className="m-0 text-sm text-muted-foreground">
                     This wallet does not hold anything of that kind, and it will not invent
                     it. Nothing will be sent for this.
                   </p>
@@ -1770,16 +1789,16 @@ export function Approve({
                   data-required={row.required ? 'yes' : 'no'}
                   data-sensitivity={definition.sensitivity}
                   data-derived
-                  className="rounded-tight border border-line p-3"
+                  className="rounded-md border border-border p-3"
                 >
-                  <p className="m-0 text-base text-ink">
+                  <p className="m-0 text-base text-foreground">
                     {definition.render.label}
-                    <span className="text-sm text-muted">
+                    <span className="text-sm text-muted-foreground">
                       {row.required ? ' — they require this' : ' — optional'}
                     </span>
                   </p>
                   {row.reason !== undefined && (
-                    <p className="m-0 text-sm text-muted" data-reason>
+                    <p className="m-0 text-sm text-muted-foreground" data-reason>
                       {`They say: ${row.reason}`}
                     </p>
                   )}
@@ -1806,7 +1825,7 @@ export function Approve({
                       {/* §3.1's rule, extended by the arm it needed: self and
                         * issued never look alike, and neither of them looks
                         * like a value nobody stated at all. */}
-                      <p className="m-0 text-sm text-muted" data-provenance="wallet">
+                      <p className="m-0 text-sm text-muted-foreground" data-provenance="wallet">
                         {`This wallet worked it out from ${owned.owner}. Nobody typed it, `}
                         and choosing a different wallet above changes it.
                       </p>
@@ -1829,25 +1848,26 @@ export function Approve({
                         */}
                       {row.code !== null && refused[row.attribute] !== true && (
                         <div
-                          className="mt-1 rounded-tight border border-line p-3"
+                          className="mt-1 rounded-md border border-border p-3"
                           data-confirmation
                         >
-                          <p className="m-0 text-sm text-muted">
+                          <p className="m-0 text-sm text-muted-foreground">
                             The code for this address
                           </p>
                           <p
-                            className={`m-0 font-mono ${FINGERPRINT_TEXT} text-ink`}
+                            className={`m-0 font-mono ${FINGERPRINT_TEXT} text-foreground`}
                             data-confirmation-code
                           >
                             {row.code}
                           </p>
-                          <p className="m-0 text-sm text-muted">
+                          <p className="m-0 text-sm text-muted-foreground">
                             Copy this and paste it where you were asked for it. Whoever
                             receives your address works out the same code from what
                             reaches them, so the two are compared and a different address
                             does not match.
                           </p>
                           <CopyButton
+                            kit
                             text={row.code}
                             label="Copy the code"
                             copied="Copied the code"
@@ -1868,7 +1888,7 @@ export function Approve({
                       </label>
                     </div>
                   ) : (
-                    <p className="m-0 text-sm text-muted" data-derived-refused>
+                    <p className="m-0 text-sm text-muted-foreground" data-derived-refused>
                       {derived.says}
                     </p>
                   )}
@@ -1881,23 +1901,23 @@ export function Approve({
                 data-row={row.attribute}
                 data-required={row.required ? 'yes' : 'no'}
                 data-sensitivity={definition.sensitivity}
-                className="rounded-tight border border-line p-3"
+                className="rounded-md border border-border p-3"
               >
-                <p className="m-0 text-base text-ink">
+                <p className="m-0 text-base text-foreground">
                   {definition.render.label}
-                  <span className="text-sm text-muted">
+                  <span className="text-sm text-muted-foreground">
                     {row.required ? ' — they require this' : ' — optional'}
                   </span>
                 </p>
                 {row.reason !== undefined && (
-                  <p className="m-0 text-sm text-muted" data-reason>
+                  <p className="m-0 text-sm text-muted-foreground" data-reason>
                     {`They say: ${row.reason}`}
                   </p>
                 )}
                 {row.options.length === 0 ? (
                   definition.selfAssertable ? (
                     <div className="flex flex-col gap-2" data-fill={row.attribute}>
-                      <p className="m-0 text-sm text-muted">
+                      <p className="m-0 text-sm text-muted-foreground">
                         You do not hold this yet. You can add it here, once, and it stays
                         for the next company that asks.
                       </p>
@@ -1909,6 +1929,8 @@ export function Approve({
                       />
                       <div>
                         <Button
+                          type="button"
+                          variant="outline"
                           size="sm"
                           onClick={() => fill(definition, typed[definition.name] ?? '')}
                         >
@@ -1917,7 +1939,7 @@ export function Approve({
                       </div>
                     </div>
                   ) : (
-                    <p className="m-0 text-sm text-muted">
+                    <p className="m-0 text-sm text-muted-foreground">
                       You hold nothing of this kind, and it is not something you can state
                       about yourself. Nothing will be sent for this.
                     </p>
@@ -1950,7 +1972,7 @@ export function Approve({
                             {dateOf(held.asserted.issuedAt)}
                           </span>
                         ) : (
-                          <span className="text-muted" data-provenance="self">
+                          <span className="text-muted-foreground" data-provenance="self">
                             you typed this; nobody has checked it
                           </span>
                         )}
@@ -1986,7 +2008,7 @@ export function Approve({
         * ends up holding their address. **Sealing is not a smaller warning** --
         * it decides who can read on the way and nothing about what a reader
         * keeps -- so the second half of the sentence does not soften. */}
-      <Alert tone="warning" role={null} title="What is sent, is sent">
+      <StatusAlert tone="warning" role={null} title="What is sent, is sent">
         {join === null ? (
           <p className="m-0">
             {`${request.requester.origin} will keep their own copy of whatever you send. `}
@@ -2001,7 +2023,7 @@ export function Approve({
             take back what has gone.
           </p>
         )}
-      </Alert>
+      </StatusAlert>
 
       {/*
         * **A DECLINED ADDRESS ON AN INVITATION IS A CONSEQUENCE, NOT A
@@ -2026,7 +2048,7 @@ export function Approve({
         */}
       {missingRequired.length > 0 && (
         join !== null && missingRequired.some((r) => r.attribute === RECEIVING_ADDRESS) ? (
-          <Alert
+          <StatusAlert
             tone="warning"
             title="You have said not to send where you are paid"
           >
@@ -2043,9 +2065,9 @@ export function Approve({
                   .join(', ')}.`}
               </p>
             )}
-          </Alert>
+          </StatusAlert>
         ) : (
-          <p className="m-0 text-sm text-muted" data-missing-required>
+          <p className="m-0 text-sm text-muted-foreground" data-missing-required>
             {`They require ${missingRequired.map(
               (row) => row.definition?.render.label ?? row.attribute).join(', ')}. `}
             {join === null
@@ -2058,7 +2080,9 @@ export function Approve({
       <div className="flex flex-wrap gap-2">
         {/* Observed, not claimed, on the button as on the question. */}
         <Button
-          variant="primary"
+          size="lg"
+          type="button"
+          variant="default"
           onClick={approve}
           disabled={!consent.ok}
           data-approve
@@ -2069,6 +2093,8 @@ export function Approve({
             : `Accept, and send these to ${request.requester.origin}`}
         </Button>
         <Button
+          size="lg"
+          type="button"
           variant="ghost"
           data-decline
           onClick={() => { channel?.refuse('declined'); setChannelState({ of: 'waiting' }); }}

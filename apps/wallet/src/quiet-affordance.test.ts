@@ -55,7 +55,8 @@ describe('§1 — a quiet button carries its affordance with no pointer on it', 
       const resting = rule('button.quiet');
       /* What was there before was `border-color: transparent;` — this
        * assertion is the one that goes red if it comes back. */
-      expect(resting).toMatch(/border-color:\s*var\(--border-strong\)/);
+      /* The control's border colour, from the kit's theme: `--input`. */
+      expect(resting).toMatch(/border-color:\s*var\(--input\)/);
       expect(resting).not.toMatch(/border-color:\s*transparent/);
     });
 
@@ -80,6 +81,7 @@ describe('§1 — a quiet button carries its affordance with no pointer on it', 
     const inline = rule('button.quiet.inline');
     expect(inline).toMatch(/border-color:\s*transparent/);
     expect(inline).toMatch(/text-decoration:\s*underline/);
-    expect(inline).toMatch(/color:\s*var\(--accent\)/);
+    /* The link colour, which is the kit's `--primary`. */
+    expect(inline).toMatch(/(?:^|[^-])color:\s*var\(--primary\)/);
   });
 });

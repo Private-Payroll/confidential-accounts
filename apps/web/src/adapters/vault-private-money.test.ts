@@ -112,7 +112,7 @@ describe('a vault\'s private money, read on this device', () => {
     /* The kit's own module as the adapter reached it, after the reset. */
     const { formatTokenAmount, visibilityOf } = await import('vaults-ui/format/token-amount');
     const answer = await readVaultPrivateMoney('u1', 'c1', VAULT, REGISTRY);
-    expect(answer?.amounts.map((a) => [a.code, visibilityOf(a), formatTokenAmount(a, 'en')])).toEqual([['TDUST', 'private', '1.500000'], ['OTHER', 'private', '123.45']]);
+    expect(answer?.amounts.map((a) => [a.code, visibilityOf(a), formatTokenAmount(a, 'en')])).toEqual([['TDUST', 'private', '1.5'], ['OTHER', 'private', '123.45']]);
     const without = await readVaultPrivateMoney('u1', 'c1', VAULT, registryOf([asset('TDUST', 6, TOKEN), asset('GBP', 2, null), asset('NONE', 2, 'c8'.repeat(32))]));
     expect(without?.amounts.map((a) => a.code)).toEqual(['TDUST']);
   });

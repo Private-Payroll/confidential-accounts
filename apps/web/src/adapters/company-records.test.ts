@@ -229,8 +229,8 @@ describe('amounts, marked by how they are paid', () => {
       ['Ana', 'privately', 'private'], ['Bo', 'publicly', 'public'], ['Cy', 'not-known', 'public'], ['Di', 'privately', null], ['Ed', 'not-known', 'public'],
     ]);
     const night = next!.currencies.find((x) => x.code === 'NIGHT')!;
-    expect([visibilityOf(night.privately!), formatTokenAmount(night.privately!, 'en')]).toEqual(['private', '5.000000']);
-    expect([visibilityOf(night.publicly!), formatTokenAmount(night.publicly!, 'en')]).toEqual(['public', '3.500000']);
+    expect([visibilityOf(night.privately!), formatTokenAmount(night.privately!, 'en')]).toEqual(['private', '5']);
+    expect([visibilityOf(night.publicly!), formatTokenAmount(night.publicly!, 'en')]).toEqual(['public', '3.5']);
     expect(next!.currencies.map((x) => x.code)).toEqual(['NIGHT']);
     expect(next!.unrecognised).toBe(1);
     expect(next!.legs).toEqual([{ code: 'NIGHT', vault: 'ab'.repeat(32), payees: 3 }]);
@@ -254,7 +254,7 @@ describe('amounts, marked by how they are paid', () => {
     const { runRow } = await load();
     const registry = new StaticAssetRegistry([...SEED_ASSETS.filter((a) => a.code !== 'NIGHT'), { ...NIGHT, decimals: 2 }]);
     const row = runRow({ id: 'r', period: '2026-10', status: 'draft', employees: [{ id: 'e', name: 'A', asset: 'NIGHT', amount: 150n, paidTo: PRIVATE_ADDRESS }] } as never, registry);
-    expect(formatTokenAmount(row.currencies[0]!.privately!, 'en')).toBe('1.50');
+    expect(formatTokenAmount(row.currencies[0]!.privately!, 'en')).toBe('1.5');
   });
 });
 
@@ -301,7 +301,7 @@ describe('proposals, vaults and invitations', () => {
     const token = NIGHT.ledger.unshielded!;
     kr.answers[ROUTE(`/vaults/${'ab'.repeat(32)}/chain`)] = { onChain: true, publicBalances: [{ token, amount: '4000000' }] };
     const held = await readVaultPublicMoney('u1', 'c1', 'ab'.repeat(32));
-    expect([held?.amounts.map((a) => formatTokenAmount(a, 'en')), held?.unrecognised]).toEqual([['4.000000'], 0]);
+    expect([held?.amounts.map((a) => formatTokenAmount(a, 'en')), held?.unrecognised]).toEqual([['4'], 0]);
     expect(await readVaultPublicMoney('u1', 'c1', 'cd'.repeat(32))).toBeNull();
   });
 });

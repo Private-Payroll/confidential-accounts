@@ -1,12 +1,12 @@
 import { Amount, Badge, useText } from 'vaults-ui';
 import { STANDING, type PersonRow, type PersonStanding } from '../adapters/company-records.js';
-import { Day, PaidWords, ReadOf, SoonAction, WithRecords } from '../records/parts.js';
+import { Day, PaidWords, ReadOf, UnbuiltAction, WithRecords } from '../records/parts.js';
 import { usePanel } from '../shell/right-panel.js';
 
 /**
  * PEOPLE: everyone the company pays, each with their title, where they stand,
  * their pay and whether they are paid privately or publicly. A row opens the
- * person's panel. Inviting someone is shown, and is Coming soon.
+ * person's panel. Inviting someone is not built yet and is shown disabled.
  */
 export function People() {
   const t = useText();
@@ -15,7 +15,7 @@ export function People() {
     <div className="flex flex-col gap-4" data-screen="people">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-xl font-semibold">{t('page.people.name')}</h1>
-        <SoonAction label={t('people.invite')} soon={t('people.invite.soon')} data-action="invite" />
+        <UnbuiltAction data-action="invite">{t('people.invite')}</UnbuiltAction>
       </div>
       <WithRecords>
         {(records) => (
@@ -56,7 +56,7 @@ function StandingBadge({ standing }: { standing: PersonStanding }) {
   return <Badge variant="outline" data-standing={standing}>{says[standing]}</Badge>;
 }
 
-/** A person's panel: their details and pay. Their payslips are Coming soon. */
+/** A person's panel: their details and pay. Their payslips are not built yet and are shown disabled. */
 function PersonPanel({ person }: { person: PersonRow }) {
   const t = useText();
   return (
@@ -68,7 +68,7 @@ function PersonPanel({ person }: { person: PersonRow }) {
         <dt className="text-muted-foreground">{t('people.column.pay')}</dt><dd>{person.pay === null ? t('records.unrecognisedOne') : <Amount value={person.pay} kind="to-be-paid" />}</dd>
         <dt className="text-muted-foreground">{t('people.column.paid')}</dt><dd><PaidWords paid={person.paid} /></dd>
       </dl>
-      <SoonAction label={t('people.payslips')} soon={t('people.payslips.soon')} data-action="payslips" />
+      <UnbuiltAction data-action="payslips">{t('people.payslips')}</UnbuiltAction>
     </div>
   );
 }

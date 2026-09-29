@@ -1,13 +1,13 @@
 import { useMemo } from 'react';
 import type { ReactNode } from 'react';
-import { GLYPH, Icon } from '../kit/icon.js';
+import { Button, SidebarMenuButton, useSidebar } from 'vaults-ui';
+import { GLYPH, Glyph } from '../glyphs.js';
 import { shortPayee } from 'midnight-identity';
 import type { Identity, Secret } from 'midnight-identity';
 import { NETWORK } from '../config.js';
 import { ownedAddressFor } from '../accounts/owned-address.js';
 import type { OwnedAddress } from '../accounts/owned-address.js';
 import { Mark } from './mark.js';
-import { SidebarMenuButton, useSidebar } from '../kit/sidebar.js';
 import { AddressEnds, WalletSwitcher, endsOf } from './switcher.js';
 import { useWallets } from './wallets.js';
 
@@ -62,14 +62,14 @@ function ChipFace({ owned, wallet }: {
       <Mark address={owned.address.bech32} account={owned.account} size={24} />
       <span className="min-w-0">
         {wallet !== null && (
-          <span className="block truncate text-xs text-faint" data-whole-wallet="">
+          <span className="block truncate text-xs text-muted-foreground" data-whole-wallet="">
             {wallet}
           </span>
         )}
         {/* Was `text-[0.82rem]`. `text-sm` is 0.875rem: the nearest
           * step up, and the chip's name is the line that may truncate, so a
           * slightly larger one costs nothing the layout was protecting. */}
-        <span className="block truncate text-sm font-semibold text-ink">
+        <span className="block truncate text-sm font-semibold text-foreground">
           {owned.name}
         </span>
         {/* The address is NOT allowed to truncate. A name is a label and a
@@ -84,10 +84,7 @@ function ChipFace({ owned, wallet }: {
   );
 }
 
-const CHIP_BOX = [
-  'flex min-h-touch min-w-0 items-center gap-2.5 rounded-card border border-line',
-  'bg-raised px-2.5 py-1.5 text-left font-normal',
-].join(' ');
+const CHIP_BOX = 'flex min-w-0 items-center gap-2 rounded-lg border bg-card px-2 py-1 text-start text-sm';
 
 /**
  * THE CHIP DURING A FLOW — SHOWN, NOT TAPPABLE. The design,
@@ -169,42 +166,38 @@ export function AccountChip({ identity, secret, variant }: {
         size="lg"
         data-account={account}
         aria-label={label}
-        className="border border-line bg-bg data-[state=open]:bg-sunken"
+        className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
       >
         <Mark address={owned.address.bech32} account={owned.account} size={28} />
         {!collapsed && (
           <>
-            <span className="grid min-w-0 flex-1 text-left">
+            <span className="grid min-w-0 flex-1 text-start">
               {wallet !== null && (
-                <span className="truncate text-xs text-faint" data-whole-wallet="">
+                <span className="truncate text-xs text-muted-foreground" data-whole-wallet="">
                   {wallet}
                 </span>
               )}
-              <span className="truncate text-sm font-semibold text-ink">{owned.name}</span>
+              <span className="truncate text-sm font-semibold text-foreground">{owned.name}</span>
               <span className="truncate">
                 <AddressEnds short={shortPayee(owned.address)} />
               </span>
             </span>
-            <Icon glyph={GLYPH.switcher} className="ml-auto size-3.5 text-faint" />
+            <Glyph icon={GLYPH.switcher} className="ms-auto size-3.5 text-muted-foreground" />
           </>
         )}
       </SidebarMenuButton>
     )
     : (
-      <button
+      <Button
         type="button"
+        variant="outline"
         data-account={account}
         aria-label={label}
-        className={[
-          CHIP_BOX,
-          'flex-1',
-          'transition-colors duration-(--motion-quick)',
-          'hover:border-line-strong focus-visible:border-line-strong',
-        ].join(' ')}
+        className="h-auto min-w-0 flex-1 justify-start gap-2 px-2 py-1 text-start font-normal"
       >
         <ChipFace owned={owned} wallet={wallet} />
-        <Icon glyph={GLYPH.switcher} className="size-3.5 text-faint" />
-      </button>
+        <Glyph icon={GLYPH.switcher} className="size-3.5 text-muted-foreground" />
+      </Button>
     );
 
   return (

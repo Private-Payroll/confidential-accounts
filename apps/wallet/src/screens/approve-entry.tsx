@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
+import { Button } from 'vaults-ui';
 import { framingOf, listen } from 'midnight-identity/profile/channel';
 import { EMBEDDER } from '../config.js';
 import type { ChannelState, ChannelWindow } from 'midnight-identity/profile/channel';
@@ -136,14 +137,14 @@ export function ApproveEntry({
               + 'open behind this window, exactly where you left it.'}
         </p>
         <div className="actions">
-          <button
+          <Button
             type="button"
-            className="primary big"
+            size="lg"
             onClick={() => { void createAccount(); }}
             disabled={busy !== null}
           >
             Create your wallet
-          </button>
+          </Button>
           <StatusNote message={busy} />
           <ErrorNote message={error} />
         </div>

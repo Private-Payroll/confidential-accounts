@@ -1008,7 +1008,6 @@ export const CODES: Readonly<Record<string, string>> = {
   'apps/web/src/adapters/session.ts#REFUSAL': 'why signing in did not happen, one of a fixed set that a screen turns into its own phrase',
   'apps/web/src/adapters/session.ts#OF': 'what an answer from the adapter is, compared by the code',
   'apps/web/src/shell/command-bar.tsx#COMPARED': 'the Unicode form text is compared in',
-  'apps/web/src/shell/company-facts.tsx#DAY': 'the style a date is written in, which the browser\'s date format turns into the person\'s language',
   'apps/web/src/faults.ts#FAULT': 'the code a mistake in the application\'s own code carries, read out from the console and reported; it names a place, not wording',
   'apps/web/src/screens/home.tsx#PASSED': 'the ids of the recently passed table\'s columns and filters, and the two statuses it filters by, compared by the code; each is shown by its key',
   'apps/web/src/adapters/kept-folds.ts#KEPT': 'where the folded setup cards are kept in the browser',

@@ -64,6 +64,15 @@ function FramedRefusal({ says }: { readonly says: string }): ReactNode {
  * unlocked secret rather than acquiring the guard as a retrofit.
  */
 
+/**
+ * A screen whose parts come one under another, spaced apart as the kit's page
+ * layouts space theirs: the pop-ups and My profile, which are a heading and a
+ * run of sections.
+ */
+function Stacked({ children }: { readonly children: ReactNode }): ReactNode {
+  return <div className="flex flex-col gap-6">{children}</div>;
+}
+
 /** The way in, for every phase that is not "in". Null only when unlocked. */
 function entryFor(phase: Phase): ReactNode | null {
   switch (phase.name) {
@@ -141,7 +150,7 @@ export function App(): ReactNode {
       navigated.current = true;
       return;
     }
-    document.querySelector<HTMLElement>('main')?.focus();
+    document.querySelector<HTMLElement>('[data-page-body]')?.focus();
   }, [route.name]);
 
   /*
@@ -326,7 +335,7 @@ export function App(): ReactNode {
      */
     case 'profile': {
       if (phase.name === 'unlocked') {
-        return <Shell><ProfileScreen identity={phase.identity} /></Shell>;
+        return <Shell><Stacked><ProfileScreen identity={phase.identity} /></Stacked></Shell>;
       }
       return <Shell narrow>{entryFor(phase)}</Shell>;
     }
@@ -334,7 +343,7 @@ export function App(): ReactNode {
       if (phase.name === 'unlocked') {
         return (
           <Shell bare={FRAMING.of === 'framed'}>
-            <Approve identity={phase.identity} secret={phase.secret} />
+            <Stacked><Approve identity={phase.identity} secret={phase.secret} /></Stacked>
           </Shell>
         );
       }

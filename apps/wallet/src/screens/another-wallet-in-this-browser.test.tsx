@@ -15,7 +15,7 @@
  * both what was sent and what was left in the store.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '../testing/render.js';
 import { Buffer as PolyfillBuffer } from 'buffer/';
 import { IDBFactory } from 'fake-indexeddb';
 import { identityFromSecret, newSecret } from 'midnight-identity/keys/derivation';

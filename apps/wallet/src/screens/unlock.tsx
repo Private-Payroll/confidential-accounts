@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { Button } from 'vaults-ui';
 import { hrefOf } from '../routes.js';
 import { useSession } from '../session.js';
 import { walletNameOnRecord } from '../accounts/storage.js';
@@ -58,14 +59,14 @@ export function Unlock(): ReactNode {
         )}
       </p>
       <div className="actions">
-        <button
+        <Button
           type="button"
-          className="primary big"
+          size="lg"
           onClick={() => { void unlock(); }}
           disabled={busy !== null}
         >
           Unlock with your passkey
-        </button>
+        </Button>
         <StatusNote message={busy} />
         <ErrorNote message={error} />
       </div>
@@ -94,14 +95,15 @@ export function Unlock(): ReactNode {
       <WalletsHere />
       <p className="faint small" style={{ marginTop: '2.5rem' }}>
         Passkey deleted or not offered any more?{' '}
-        <button
+        <Button
           type="button"
-          className="quiet"
+          variant="outline"
+          size="sm"
           onClick={() => { void adoptPasskey(); }}
           disabled={busy !== null}
         >
           Make a new passkey for this wallet
-        </button>
+        </Button>
       </p>
       <p className="faint small">
         <a href={hrefOf('recover')}>Recovery from your placed pieces</a> also gets

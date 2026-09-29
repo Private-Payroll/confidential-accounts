@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { GLYPH, Icon } from '../kit/icon.js';
+import {
+  Badge, Button, FocusedLayout, PageLayout, Separator, SidebarInset, SidebarProvider, SidebarTrigger,
+  Tooltip, TooltipContent, TooltipTrigger, useSidebar,
+} from 'vaults-ui';
+import { GLYPH, Glyph } from '../glyphs.js';
 import type { Identity, Secret } from 'midnight-identity';
 import { hrefOf } from '../routes.js';
 import type { RouteName } from '../routes.js';
@@ -8,7 +12,7 @@ import { useSession } from '../session.js';
 import { INDEXER_HOST, NETWORK, ORIGIN } from '../config.js';
 import { AccountChip, FlowAccountChip } from '../shell/account.js';
 import { BottomBar, Rail } from '../shell/nav.js';
-import { SidebarProvider, SidebarTrigger } from '../kit/sidebar.js';
+import { useRail } from '../shell/rail.js';
 import { ThemePicker, useTheme } from '../shell/theme.js';
 import type { Theme, ThemeChoice } from '../shell/themes.js';
 
@@ -37,18 +41,14 @@ export function StatusNote({ message }: { readonly message: string | null }): Re
  * fact in the confirmation — the address card names WHOSE address was just
  * copied (§3 of the subwallets rules: the name travels with the address,
  * because the address is the one thing people copy without reading). */
-export function CopyButton({ text, label, copied: copiedLabel, className }: {
+export function CopyButton({ text, label, copied: copiedLabel, kit }: {
   readonly text: string;
   readonly label: string;
   readonly copied?: string;
-  /** ADDITIVE, and omitting it renders exactly what it rendered before:
-   * React emits no `class` attribute for `undefined`, so every existing caller
-   * is byte-identical and `app.css`'s `button` rule still dresses them. It
-   * exists because `screens/send.tsx` is on the kit now and a legacy button in
-   * the middle of it would be the restyle half-done; the classes it passes come
-   * from `kit/button.tsx`'s own `buttonClasses`, never assembled at the call
-   * site. */
-  readonly className?: string;
+  /** A screen built from the kit's parts passes this and gets the kit's
+   * button; the screens still written as plain markup omit it and get the
+   * plain button their own rules dress. */
+  readonly kit?: boolean;
 }): ReactNode {
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -62,19 +62,20 @@ export function CopyButton({ text, label, copied: copiedLabel, className }: {
     setCopied(false);
     if (timer.current) clearTimeout(timer.current);
   }, [text]);
+  const onClick = (): void => {
+    void navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      if (timer.current) clearTimeout(timer.current);
+      timer.current = setTimeout(() => setCopied(false), 1600);
+    });
+  };
+  const words = copied ? (copiedLabel ?? 'Copied') : label;
+  if (kit === true) {
+    return <Button type="button" variant="outline" size="sm" onClick={onClick}>{words}</Button>;
+  }
   return (
-    <button
-      type="button"
-      className={className}
-      onClick={() => {
-        void navigator.clipboard.writeText(text).then(() => {
-          setCopied(true);
-          if (timer.current) clearTimeout(timer.current);
-          timer.current = setTimeout(() => setCopied(false), 1600);
-        });
-      }}
-    >
-      {copied ? (copiedLabel ?? 'Copied') : label}
+    <button type="button" onClick={onClick}>
+      {words}
     </button>
   );
 }
@@ -150,7 +151,7 @@ export function WalletNameField({ value, onChange, label, hint }: {
  */
 function Foot(): ReactNode {
   return (
-    <footer className="foot">
+    <footer className="border-t px-6 pt-4 pb-5 text-center text-xs text-muted-foreground">
       {/* §7.16: this sentence used to say "no server, no chain connection"
         * and that stopped being true the day balances arrived. Say what is
         * the case, not the reassuring version. */}
@@ -214,16 +215,10 @@ export interface FlowChrome {
  */
 export function Shell({ children, narrow, widePage, place, flow, bare }: {
   readonly children: ReactNode;
+  /** A column for one task: the entry screens and the ceremonies. */
   readonly narrow?: boolean;
-  /**
-   * **INSIDE THE PAGE THAT FRAMES IT: NO BAR, NO FOOTER, NO NAVIGATION.** The
-   * page around it draws the frame. What stays is one line naming this wallet's
-   * own address, because in a frame there is no address bar and this is the
-   * only place a person can read which site the screen came from.
-   */
+  /** Carried by `app.tsx` for `#/kit` alone, which lays out wide specimens. */
   readonly bare?: boolean;
-  /** The gallery at `#/kit` and nothing else — a workshop surface, wider than
-   * the reading column any real screen gets. */
   readonly widePage?: boolean;
   readonly place?: PlaceChrome;
   readonly flow?: FlowChrome;
@@ -231,166 +226,217 @@ export function Shell({ children, narrow, widePage, place, flow, bare }: {
   const { phase, lock } = useSession();
   const { theme, choice, setChoice } = useTheme();
 
-  const mainClass = narrow === true
-    ? 'content narrow'
-    : (widePage === true ? 'content wide-page' : 'content');
+  /* How wide the column is. The page around it is the kit's; the column keeps
+   * a screen of reading or of one task from running the width of a monitor. */
+  const column = narrow === true
+    ? 'mx-auto w-full max-w-md'
+    : (widePage === true ? 'mx-auto w-full' : 'mx-auto w-full max-w-2xl');
 
+  /*
+   * FRAMED: the wallet inside the page that asked, where it draws no frame of
+   * its own and says whose wallet this is, served from where.
+   */
   if (bare === true) {
     return (
-      <div className="shell" data-framed>
-        <main className={mainClass} tabIndex={-1}>
-          <p className="m-0 text-xs text-muted" data-framed-origin>
-            Your wallet, served from <span className="font-mono">{ORIGIN}</span>
-          </p>
-          {children}
+      <div className="min-h-svh bg-background text-foreground" data-framed>
+        <main className="px-4 py-4 outline-none" tabIndex={-1} data-page-body>
+          <div className={`${column} flex flex-col gap-4`}>
+            <p className="m-0 text-xs text-muted-foreground" data-framed-origin>
+              Your wallet, served from <span className="font-mono">{ORIGIN}</span>
+            </p>
+            {children}
+          </div>
         </main>
       </div>
     );
   }
 
+  /* A FLOW OR A CONDITION: the kit's focused layout - no menu, the wallet's
+   * name and network where a title goes, and the chip and Lock where a way
+   * out goes. */
   if (!place) {
     return (
-      <div className="shell">
-        <header className="topbar">
-          <a className="wordmark" href={hrefOf('home')}>
-            <Moon />
-            Midnight Identity
-          </a>
-          <span className="chip">{NETWORK}</span>
-          <span className="spacer" />
-          {/* Identity, not navigation. Rendered only where an account
-            * exists to name, which is why a welcome or an unlock screen still
-            * shows nothing here — there is no account yet to be about. */}
-          {flow !== undefined && (
-            <FlowAccountChip identity={flow.identity} secret={flow.secret} />
-          )}
-          {phase.name === 'unlocked' && (
-            <button type="button" className="quiet" onClick={lock}>Lock</button>
-          )}
-        </header>
+      <FocusedLayout
+        title={(
+          <span className="flex items-center gap-3">
+            <a className="wordmark" href={hrefOf('home')}>
+              <Moon />
+              Midnight Identity
+            </a>
+            <Badge variant="outline" className="font-mono font-normal text-muted-foreground">{NETWORK}</Badge>
+          </span>
+        )}
+        exit={(
+          <span className="flex items-center gap-2">
+            {/* Identity, not navigation. Rendered only where an account
+                exists to name - never on welcome, unlock or recover. */}
+            {flow !== undefined && (
+              <FlowAccountChip identity={flow.identity} secret={flow.secret} />
+            )}
+            {phase.name === 'unlocked' && (
+              <Button type="button" variant="outline" onClick={lock}>Lock</Button>
+            )}
+          </span>
+        )}
+      >
         {/* Focusable so navigation can move the keyboard and the screen reader
-          * to the new screen's start — the App drives it. */}
-        <main className={mainClass} tabIndex={-1}>{children}</main>
+            to the new screen, which is what a page load would have done. */}
+        <div className={`${column} outline-none`} tabIndex={-1} data-page-body>{children}</div>
         <Foot />
-      </div>
+      </FocusedLayout>
     );
   }
 
-  /* The provider is mounted for a PLACE and for nothing else, which is
-   * what keeps the ordering rules true of the SHORTCUT as well as of the chrome:
-   * Cmd/Ctrl+B is registered by `SidebarProvider`, so inside a ceremony there
-   * is no sidebar, no trigger, and no key that would summon one. */
   return (
-    <SidebarProvider>
+    <PlaceFrame
+      place={place}
+      theme={theme}
+      choice={choice}
+      onTheme={setChoice}
+      onLock={phase.name === 'unlocked' ? lock : null}
+      column={column}
+    >
+      {children}
+    </PlaceFrame>
+  );
+}
+
+/**
+ * A PLACE: the kit's sidebar in its inset layout, the place's header, the
+ * page, and the phone's bar.
+ *
+ * THE SIDEBAR REMEMBERS WHETHER IT WAS FOLDED. The kit's sidebar is told its
+ * state rather than keeping one, so the wallet's remembered choice is the only
+ * copy, and Cmd/Ctrl+B folds and unfolds it as it always has.
+ */
+function PlaceFrame({ place, theme, choice, onTheme, onLock, column, children }: {
+  readonly place: PlaceChrome;
+  readonly theme: Theme;
+  readonly choice: ThemeChoice;
+  readonly onTheme: (next: ThemeChoice) => void;
+  readonly onLock: (() => void) | null;
+  readonly column: string;
+  readonly children: ReactNode;
+}): ReactNode {
+  const rail = useRail();
+  const { collapsed, toggle } = rail;
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'b' && (event.metaKey || event.ctrlKey)) {
+        event.preventDefault();
+        toggle();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [toggle]);
+  return (
+    <SidebarProvider
+      /* The sidebar, and the space it holds beside the page, never reach a printed sheet. */
+      className="print:**:data-[slot=sidebar]:hidden"
+      open={!collapsed}
+      onOpenChange={(open) => { if (open === collapsed) toggle(); }}
+    >
       <Rail
         current={place.route}
         identity={place.identity}
         secret={place.secret}
         theme={theme}
         choice={choice}
-        onTheme={setChoice}
-        onLock={phase.name === 'unlocked' ? lock : null}
+        onTheme={onTheme}
+        onLock={onLock}
       />
-      <div className="flex min-h-svh min-w-0 flex-1 flex-col">
+      <SidebarInset className="min-w-0 outline-none" tabIndex={-1} data-page-body>
         <PlaceHead
           place={place}
           theme={theme}
           choice={choice}
-          onTheme={setChoice}
-          onLock={lock}
+          onTheme={onTheme}
+          onLock={onLock}
         />
-        {/* The same single `main`, focused on navigation, that the app has
-          * always had — there is exactly one on the page in either frame. */}
-        <main className={mainClass} tabIndex={-1}>{children}</main>
+        <div className="flex-1">
+          <PageLayout>
+            <div className={column}>{children}</div>
+          </PageLayout>
+        </div>
         <Foot />
         <BottomBar current={place.route} />
-      </div>
+      </SidebarInset>
     </SidebarProvider>
   );
 }
 
 /**
- * The top of a place.
- *
- * THE FOLD CONTROL IS THE FIRST THING IN IT, AND THAT IS THE CHANGE. The kit put it
- * at the bottom of the column it collapses and it could not be found. It is now
- * top-left of the window — where `sidebar-07` puts it, where every application
- * that has one puts it, and where it is the first stop in the header's tab
- * order. `wide:` only: below the breakpoint there is no sidebar to fold.
- *
- * Then WHICH WALLET on a phone — on a desktop the switcher is in the sidebar's
- * footer — then the network, then, again only where there is no sidebar to
- * hold them, the theme and the lock.
+ * The control that folds the sidebar, saying which way it will go. It keeps
+ * the kit's own `sidebar-trigger` mark: the tooltip around it would otherwise
+ * put its own in that place.
+ */
+function FoldControl(): ReactNode {
+  const { open } = useSidebar();
+  const label = open ? 'Hide the sidebar' : 'Show the sidebar';
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <SidebarTrigger
+          type="button"
+          data-slot="sidebar-trigger"
+          aria-label={label}
+          aria-expanded={open}
+          className="hidden md:inline-flex"
+        />
+      </TooltipTrigger>
+      <TooltipContent side="bottom" sideOffset={8}>{label}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+/**
+ * The place's header. On a desktop it carries the fold control, the network
+ * and My profile; on a phone, where there is no sidebar, it also carries the
+ * account chip, the theme and Lock.
  */
 function PlaceHead({ place, theme, choice, onTheme, onLock }: {
   readonly place: PlaceChrome;
   readonly theme: Theme;
   readonly choice: ThemeChoice;
   readonly onTheme: (next: ThemeChoice) => void;
-  readonly onLock: () => void;
+  readonly onLock: (() => void) | null;
 }): ReactNode {
   return (
     <header
       className={[
-        'sticky top-0 z-20 flex items-center gap-1.5 border-b border-line',
-        'bg-bg/95 px-2 py-2 backdrop-blur-sm wide:px-3',
+        'sticky top-0 z-20 flex h-12 shrink-0 items-center gap-2 rounded-t-xl border-b',
+        'bg-background/95 px-3 backdrop-blur-sm',
         'print:hidden',
       ].join(' ')}
     >
-      <SidebarTrigger className="hidden wide:flex" />
-      {/* The chip is the phone's; the sidebar's footer carries it on a desktop.
-        * Rendering both and letting CSS decide is the same split the two
-        * navigations have always used. */}
-      <span className="flex min-w-0 flex-1 wide:hidden">
+      <FoldControl />
+      <Separator orientation="vertical" className="me-1 hidden data-vertical:h-4 data-vertical:self-center md:block" />
+      <span className="flex min-w-0 flex-1 md:hidden">
         <AccountChip identity={place.identity} secret={place.secret} variant="bar" />
       </span>
-      <span className="hidden flex-1 wide:block" />
-      <span className="chip shrink-0">{NETWORK}</span>
-      {/*
-        * MY PROFILE — THE SAME CONTROL THE LOCK IS, BUILT THE SAME WAY: one
-        * 44px icon target, `title` and `aria-label` carrying the words,
-        * `GLYPH.details`, and the identical class list. It is the same mark
-        * Home's tile for this destination wears, and it is NOT `contacts` —
-        * `kit/icon.tsx` carries why. It is an `<a>` rather than a `<button>`
-        * because it
-        * NAVIGATES — the kit's rule, and the reason is that a button setting
-        * the hash cannot be opened in a new tab and is not in a screen
-        * reader's link list.
-        *
-        * **IT IS NOT INSIDE THE `wide:hidden` GROUP BESIDE IT, AND THAT IS THE
-        * ONE DEVIATION HERE.** The theme and lock controls hide at `wide:`
-        * because the sidebar carries both; the sidebar carries NOTHING for
-        * this destination — it is not a place and is not in the navigation —
-        * so hiding it there would remove the control at exactly the width the
-        * design asked for one. Same construction, different reason to hide.
-        */}
-      <a
-        href={hrefOf('profile')}
-        aria-label="My profile"
-        title="My profile"
-        className={[
-          'flex size-touch items-center justify-center rounded-tight border border-transparent',
-          'bg-transparent p-0 text-muted',
-          'transition-colors duration-(--motion-quick) hover:border-line hover:text-ink',
-        ].join(' ')}
-      >
-        <Icon glyph={GLYPH.details} />
-      </a>
-      <div className="flex shrink-0 items-center gap-1 wide:hidden">
+      <span className="hidden flex-1 md:block" />
+      <Badge variant="outline" className="shrink-0 font-mono font-normal text-muted-foreground">{NETWORK}</Badge>
+      <Button asChild variant="ghost" size="icon" className="text-muted-foreground">
+        <a href={hrefOf('profile')} aria-label="My profile" title="My profile">
+          <Glyph icon={GLYPH.details} />
+        </a>
+      </Button>
+      <div className="flex shrink-0 items-center gap-1 md:hidden">
         <ThemePicker choice={choice} theme={theme} onChoose={onTheme} />
-        <button
-          type="button"
-          onClick={onLock}
-          aria-label="Lock the wallet"
-          title="Lock the wallet"
-          className={[
-            'flex size-touch items-center justify-center rounded-tight border border-transparent',
-            'bg-transparent p-0 text-muted',
-            'transition-colors duration-(--motion-quick) hover:border-line hover:text-ink',
-          ].join(' ')}
-        >
-          <Icon glyph={GLYPH.lock} />
-        </button>
+        {onLock !== null && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={onLock}
+            aria-label="Lock the wallet"
+            title="Lock the wallet"
+            className="text-muted-foreground"
+          >
+            <Glyph icon={GLYPH.lock} />
+          </Button>
+        )}
       </div>
     </header>
   );

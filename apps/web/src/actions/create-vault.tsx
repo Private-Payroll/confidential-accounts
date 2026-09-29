@@ -4,6 +4,7 @@ import {
   CREATING, createVault, finishHandingOver, giveYourVaultKeys, openYourKeys, OWED, READY, readOwedVaults, readVaultReadiness,
   type Creating, type OwedVault, type Readiness, type VaultCreated,
 } from '../adapters/create-vault.js';
+import { HANDOVER, readHandover } from '../adapters/handover-state.js';
 import { ACTED, type ActRefusal } from '../adapters/refusals.js';
 import { ActRefused } from '../act-refused.js';
 import { useSession } from '../session.js';
@@ -39,6 +40,8 @@ export function CreateVault({ leadTo, onChanged, finishing }: StepProps & { fini
   const [asking, setAsking] = useState<Asking | null>(null);
   const [stage, setStage] = useState<Creating | null>(null);
   const [result, setResult] = useState<VaultCreated | null>(null);
+  /* Whether the company was read as held by its signers as they stand now, once a vault was created: only then is the line on putting money in left out. */
+  const [handedOver, setHandedOver] = useState(false);
   /* Whether this person's vault keys were just given here, or why not. */
   const [gave, setGave] = useState<typeof ACTED.done | ActRefusal | null>(null);
 
@@ -61,6 +64,8 @@ export function CreateVault({ leadTo, onChanged, finishing }: StepProps & { fini
     const r = asked.of === ASKING.create
       ? await createVault(person.id, company, setStage)
       : await finishHandingOver(person.id, company, asked.vault, setStage);
+    const handover = r.of === ACTED.done ? await readHandover(person.id, company) : null;
+    setHandedOver(handover?.of === HANDOVER.held);
     setResult(r);
     setStage(null);
     await read();
@@ -140,7 +145,12 @@ export function CreateVault({ leadTo, onChanged, finishing }: StepProps & { fini
         />
       )}
       {stage === null ? null : <p className="text-sm" role="status" data-stage={stage}>{STAGE_SAYS[stage]}</p>}
-      {result?.of === ACTED.done ? <p className="text-sm" data-created={result.vault}>{t('createVault.done')}</p> : null}
+      {result?.of === ACTED.done ? (
+        <p className="text-sm" data-created={result.vault}>
+          {t('createVault.done')}
+          {handedOver ? null : <> <span data-not-handed-over>{t('createVault.done.notHandedOver')}</span></>}
+        </p>
+      ) : null}
       {result?.of === OWED.here ? <p className="text-sm" data-result={result.of}>{t('createVault.owed.now')}</p> : null}
       {result?.of === OWED.elsewhere ? <p className="text-sm" data-result={result.of}>{t('createVault.owed.elsewhere')}</p> : null}
       {result?.of === OWED.rosterDisagrees ? <p className="text-sm" data-result={result.of}>{t('createVault.owed.rosterDisagrees')}</p> : null}

@@ -151,14 +151,17 @@ describe('the landing page, once signed in', () => {
   it('opens the company pressed, and the switcher lists the same companies', async () => {
     me = json(200, { user: PERSON, accounts: THREE });
     const { container } = await open(PAGES.landing.path);
+    /* Each company is shown by the word for a company and its approvals as M/N Approval, never by the day it was created. */
+    expect([...container.querySelectorAll('[data-choose-a-company] [data-company]')].map((e) => e.textContent))
+      .toEqual([`${EN['switcher.company']}2/3 Approval`, `${EN['switcher.company']}1/1 Approval`, `${EN['switcher.company']}3/5 Approval`]);
     await act(async () => { fireEvent.click(container.querySelector('[data-choose-a-company] [data-company=c-3]')!); await settle(); });
     expect(window.location.pathname).toBe(PAGES.home.path);
     await untilPageShown(container);
     await act(async () => { document.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: '.', code: 'Period', ctrlKey: true })); await settle(); });
     const switcher = document.querySelector('[data-company-switcher]')!;
     expect([...switcher.querySelectorAll('[data-company]')].map((e) => e.getAttribute('data-company'))).toEqual(['c-2', 'c-3', 'c-1']);
-    /* The company shown is the one pressed, not the first on the list: its date is on the switcher, and it alone is ticked. */
-    expect(document.querySelector('[data-action=company-switcher]')!.textContent).toContain('Sep 20, 2026');
+    /* The company shown is the one pressed, not the first on the list: its approvals, which no other company shares, are on the switcher, and it alone is ticked. */
+    expect(document.querySelector('[data-action=company-switcher]')!.textContent).toBe(`${EN['switcher.company']}1/1 Approval`);
     expect([...switcher.querySelectorAll('[data-company]')].map((e) => e.querySelectorAll('svg').length)).toEqual([1, 2, 1]);
   });
 

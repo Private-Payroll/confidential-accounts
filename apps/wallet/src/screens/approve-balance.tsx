@@ -6,7 +6,8 @@ import type { Channel } from 'midnight-identity/profile/channel';
 import { balancedAnswerFor } from 'midnight-identity/profile/balance';
 import type { LeavesTheWallet } from 'midnight-identity/profile/balance';
 import { companyFingerprint } from 'midnight-identity/profile/fingerprint';
-import { Alert, Button, Section } from '../kit/index.js';
+import { Button, Section } from 'vaults-ui';
+import { StatusAlert } from '../components/status.js';
 import { hrefOf } from '../routes.js';
 import {
   BalanceRefused, payForThePage, readWhatThePageAsks, whyThePaymentFailed,
@@ -164,19 +165,20 @@ export function ApproveBalance({
 
   const where = (
     <Section
+      list={false} box={false} aria-label="Where the money goes"
       title="Where the money goes"
       description={publicly
         ? 'What the page says. This wallet checked that the transaction calls this vault\'s public deposit and nothing else, and that it puts exactly the amount shown above into this vault.'
         : 'What the page says. This wallet checked that the transaction calls this vault and nothing else, and that the one coin it creates belongs to this vault.'}
     >
-      <p className="m-0 text-sm text-muted">The company, as the page names it</p>
-      <p className="m-0 font-mono tracking-wide text-ink text-xl" data-company-fingerprint>
+      <p className="m-0 text-sm text-muted-foreground">The company, as the page names it</p>
+      <p className="m-0 font-mono tracking-wide text-foreground text-xl" data-company-fingerprint>
         {companyFingerprint(request.company)}
       </p>
-      <p className="m-0 font-mono break-all text-sm text-muted" data-company>{request.company}</p>
-      <p className="m-0 text-sm text-muted" style={{ marginTop: '0.75rem' }}>The vault the transaction pays into</p>
-      <p className="m-0 font-mono break-all text-ink text-lg" data-vault>{request.vault}</p>
-      <p className="m-0 text-sm text-muted">
+      <p className="m-0 font-mono break-all text-sm text-muted-foreground" data-company>{request.company}</p>
+      <p className="m-0 text-sm text-muted-foreground" style={{ marginTop: '0.75rem' }}>The vault the transaction pays into</p>
+      <p className="m-0 font-mono break-all text-foreground text-lg" data-vault>{request.vault}</p>
+      <p className="m-0 text-sm text-muted-foreground">
         This wallet cannot check that the vault belongs to that company. The company&rsquo;s own service refuses a
         deposit into a vault whose rules its committee does not hold.
       </p>
@@ -187,8 +189,8 @@ export function ApproveBalance({
     <div data-leaves>
       {leaves.map((l) => (
         <div key={`${l.kind}:${l.token}`} style={{ marginBottom: '0.5rem' }}>
-          <p className="m-0 text-ink text-lg" data-leaving-amount>{describeLeaving(l)}</p>
-          <p className="m-0 font-mono break-all text-sm text-muted" data-leaving-token>{`${l.kind} token ${l.token}`}</p>
+          <p className="m-0 text-foreground text-lg" data-leaving-amount>{describeLeaving(l)}</p>
+          <p className="m-0 font-mono break-all text-sm text-muted-foreground" data-leaving-token>{`${l.kind} token ${l.token}`}</p>
         </div>
       ))}
     </div>
@@ -204,7 +206,7 @@ export function ApproveBalance({
           shows this money. Do not spend it elsewhere first, or this deposit will fail.
         </p>
         {leavingList(stage.leaves)}
-        <p className="m-0 font-mono break-all text-sm text-muted">{request.vault}</p>
+        <p className="m-0 font-mono break-all text-sm text-muted-foreground">{request.vault}</p>
         <p style={{ marginTop: '1.5rem' }}><a href={hrefOf('home')}>&larr; Your wallet</a></p>
       </>
     );
@@ -220,7 +222,7 @@ export function ApproveBalance({
           aside in this wallet. If the transaction is never sent, they may stay set aside.
         </p>
         {leavingList(stage.leaves)}
-        <p className="m-0 font-mono break-all text-sm text-muted">{request.vault}</p>
+        <p className="m-0 font-mono break-all text-sm text-muted-foreground">{request.vault}</p>
         <p style={{ marginTop: '1.5rem' }}><a href={hrefOf('home')}>&larr; Your wallet</a></p>
       </>
     );
@@ -231,23 +233,24 @@ export function ApproveBalance({
       {headline}
       {stage.of === 'reading' && <p className="lede" data-reading>Reading what the page sent. Nothing has been paid.</p>}
       {stage.of === 'refused' && (
-        <Alert tone="danger" title="This wallet will not pay for this">
+        <StatusAlert tone="danger" title="This wallet will not pay for this">
           <p className="m-0" data-balance-refused>{stage.says}</p>
-        </Alert>
+        </StatusAlert>
       )}
       {(stage.of === 'ready' || stage.of === 'paying' || stage.of === 'failed') && (
         <Section
+          list={false} box={false} aria-label="What leaves this wallet"
           title="What leaves this wallet"
           description="Worked out from the transaction itself, not from anything the page said."
         >
           {leavingList(stage.leaves)}
-          <p className="m-0 text-sm text-muted" data-no-fee>
+          <p className="m-0 text-sm text-muted-foreground" data-no-fee>
             You pay no network fee. The company pays it.
           </p>
         </Section>
       )}
       {publicly && (
-        <Alert tone="warning" role={null} title="This deposit is public">
+        <StatusAlert tone="warning" role={null} title="This deposit is public">
           <p className="m-0" data-public-deposit>
             The token and the amount above leave your public balance, and anyone reading the chain can see them, your
             wallet&rsquo;s public address, and the vault they went into.
@@ -257,7 +260,7 @@ export function ApproveBalance({
               NIGHT that goes into the vault no longer generates DUST for this wallet.
             </p>
           )}
-        </Alert>
+        </StatusAlert>
       )}
       {where}
       {whoIsAsking}
@@ -281,24 +284,26 @@ export function ApproveBalance({
         </p>
       )}
       {stage.of === 'failed' && (
-        <Alert tone="danger" title="Nothing was paid">
+        <StatusAlert tone="danger" title="Nothing was paid">
           <p className="m-0" data-balance-failed>{stage.says}</p>
-        </Alert>
+        </StatusAlert>
       )}
-      <Alert tone="warning" role={null} title="What is paid, is paid">
+      <StatusAlert tone="warning" role={null} title="What is paid, is paid">
         <p className="m-0">
           Once the company sends this transaction, the money is in its vault. Who can move it from there is decided by
           the company&rsquo;s account and its vault, not by this wallet, and nothing in this wallet can take it back.
         </p>
-      </Alert>
+      </StatusAlert>
       <div className="flex flex-wrap gap-2">
         <Button
-          variant="primary" onClick={pay} data-approve data-pay
+          size="lg"
+          type="button"
+          variant="default" onClick={pay} data-approve data-pay
           disabled={!consent.ok || stage.of !== 'ready' || channel === null}
         >
           {publicly ? 'Pay publicly into the vault' : 'Pay into the vault'}
         </Button>
-        <Button variant="ghost" data-decline onClick={decline} disabled={stage.of === 'paying' && !stage.reading}>
+        <Button size="lg" type="button" variant="ghost" data-decline onClick={decline} disabled={stage.of === 'paying' && !stage.reading}>
           Do not pay
         </Button>
       </div>

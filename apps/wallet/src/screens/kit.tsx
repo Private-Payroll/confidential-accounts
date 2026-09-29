@@ -1,16 +1,21 @@
 import type { ReactNode } from 'react';
 import {
-  ActionTile, ActionTiles,
-  Alert, Badge, Button, ButtonLink, Card, CardContent, CardDescription, CardFooter, CardHeader,
-  CardTitle, EmptyState, GLYPH, Icon, Input, Label, ListRow, ListRows, Separator, Skeleton, Table,
-  TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow, Textarea, Tooltip,
-  TooltipContent, TooltipProvider, TooltipTrigger,
-  Section,
-  SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem, sidebarMenuButtonVariants,
-  Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader,
-  DialogTitle, DialogTrigger,
-} from '../kit/index.js';
-import type { AlertTone, BadgeTone, ButtonSize, ButtonVariant } from '../kit/index.js';
+  Button, Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle,
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
+  EmptyState, Input, Label, Section, Separator, Skeleton, Tooltip, TooltipContent, TooltipTrigger,
+} from 'vaults-ui';
+import { DialogClose } from 'vaults-ui/components/dialog';
+import {
+  SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider,
+} from 'vaults-ui/components/sidebar';
+import {
+  Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow,
+} from 'vaults-ui/components/table';
+import { Textarea } from 'vaults-ui/components/textarea';
+import { GLYPH, Glyph } from '../glyphs.js';
+import { RowItem, RowItems, ShortcutTile, ShortcutTiles } from '../components/rows.js';
+import { StatusAlert, StatusBadge } from '../components/status.js';
+import type { AlertTone, BadgeTone } from '../components/status.js';
 import { THEME_ENTRIES, useTheme } from '../shell/theme.js';
 
 /**
@@ -45,9 +50,9 @@ function Chapter({ id, title, says, children }: {
 }): ReactNode {
   return (
     <section id={id} className="mb-12 scroll-mt-4">
-      <div className="mb-4 border-b border-line pb-2">
-        <h2 className="m-0 text-lg font-semibold text-ink">{title}</h2>
-        {says !== undefined && <p className="m-0 mt-1 text-sm text-muted">{says}</p>}
+      <div className="mb-4 border-b border-border pb-2">
+        <h2 className="m-0 text-lg font-semibold text-foreground">{title}</h2>
+        {says !== undefined && <p className="m-0 mt-1 text-sm text-muted-foreground">{says}</p>}
       </div>
       {children}
     </section>
@@ -65,7 +70,7 @@ function Spec({ label, children, className, badge }: {
 }): ReactNode {
   return (
     <div className={className}>
-      <p className="m-0 mb-2 flex flex-wrap items-center gap-2 font-mono text-xs text-faint">
+      <p className="m-0 mb-2 flex flex-wrap items-center gap-2 font-mono text-xs text-muted-foreground">
         <span>{label}</span>
         {badge}
       </p>
@@ -82,19 +87,28 @@ function Swatch({ token, name, note }: {
   return (
     <div className="flex items-center gap-3">
       <span
-        className="size-10 shrink-0 rounded-tight border border-line"
+        className="size-10 shrink-0 rounded-md border border-border"
         style={{ background: `var(${token})` }}
         aria-hidden="true"
       />
       <span className="min-w-0">
-        <span className="block font-mono text-xs text-ink">{name}</span>
-        {note !== undefined && <span className="block text-xs text-muted">{note}</span>}
+        <span className="block font-mono text-xs text-foreground">{name}</span>
+        {note !== undefined && <span className="block text-xs text-muted-foreground">{note}</span>}
       </span>
     </div>
   );
 }
 
 /* ---------- the specimens ---------- */
+
+/* The looks a screen asks for, by the names this page has always shown, and
+ * the kit's variant and size each one is drawn with. */
+type ButtonVariant = 'primary' | 'secondary' | 'outline' | 'ghost' | 'danger' | 'link';
+type ButtonSize = 'sm' | 'md' | 'lg' | 'icon';
+const KIT_VARIANT = {
+  primary: 'default', secondary: 'outline', outline: 'outline', ghost: 'ghost', danger: 'destructive', link: 'link',
+} as const satisfies Record<ButtonVariant, string>;
+const KIT_SIZE = { sm: 'sm', md: 'default', lg: 'lg', icon: 'icon' } as const satisfies Record<ButtonSize, string>;
 
 const BUTTON_VARIANTS: readonly ButtonVariant[] = [
   'primary', 'secondary', 'outline', 'ghost', 'danger', 'link',
@@ -131,7 +145,7 @@ const TYPE_STEPS: readonly { readonly cls: string; readonly name: string }[] = [
   { cls: 'text-lg', name: 'text-lg — 1.125rem' },
   { cls: 'text-xl', name: 'text-xl — 1.25rem' },
   { cls: 'text-2xl', name: 'text-2xl — 1.5rem' },
-  { cls: 'text-display', name: 'text-display — 2.75rem' },
+  { cls: 'text-[2.75rem]', name: 'text-display — 2.75rem' },
 ];
 
 /* The five chart colours. They are a PALETTE entry and not a chart
@@ -159,20 +173,21 @@ export function Kit(): ReactNode {
         and it exists so a component is argued about once here rather than once per screen.
       </p>
 
-      <div className="mb-10 flex flex-wrap items-center gap-2 rounded-card border border-line bg-raised p-3">
-        <span className="text-sm font-medium text-muted">Theme</span>
+      <div className="mb-10 flex flex-wrap items-center gap-2 rounded-xl border border-border bg-card p-3">
+        <span className="text-sm font-medium text-muted-foreground">Theme</span>
         {THEME_ENTRIES.map((option) => (
           <Button
+            type="button"
             key={option.value}
             size="sm"
-            variant={choice === option.value ? 'primary' : 'outline'}
+            variant={choice === option.value ? 'default' : 'outline'}
             aria-pressed={choice === option.value}
             onClick={() => setChoice(option.value)}
           >
             {option.label}
           </Button>
         ))}
-        <span className="ml-auto text-xs text-faint">
+        <span className="ml-auto text-xs text-muted-foreground">
           showing: {theme}
           {choice === 'system' && ' (from this machine)'}
           {' · '}
@@ -188,20 +203,20 @@ export function Kit(): ReactNode {
         says="Colour is roles, never values. The scales are finite: if a screen needs a step
               that is not here, the answer is the nearest one, not a new one."
       >
-        <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 wide:grid-cols-3">
+        <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
           {COLOUR_ROLES.map((role) => (
             <Swatch key={role.token} token={role.token} name={role.token} note={role.note} />
           ))}
         </div>
 
-        <div className="grid grid-cols-1 gap-6 wide:grid-cols-3">
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
           <Spec label="radius — three steps, derived from one anchor">
             <div className="flex items-end gap-3">
-              <span className="flex size-16 items-center justify-center rounded-tight border border-line-strong bg-raised text-xs text-muted">tight</span>
-              <span className="flex size-16 items-center justify-center rounded-card border border-line-strong bg-raised text-xs text-muted">card</span>
-              <span className="flex h-9 items-center justify-center rounded-pill border border-line-strong bg-raised px-4 text-xs text-muted">pill</span>
+              <span className="flex size-16 items-center justify-center rounded-md border border-input bg-card text-xs text-muted-foreground">tight</span>
+              <span className="flex size-16 items-center justify-center rounded-xl border border-input bg-card text-xs text-muted-foreground">card</span>
+              <span className="flex h-9 items-center justify-center rounded-full border border-input bg-card px-4 text-xs text-muted-foreground">pill</span>
             </div>
-            <p className="m-0 mt-3 text-sm text-muted">
+            <p className="m-0 mt-3 text-sm text-muted-foreground">
               <code>--radius-anchor</code> is <code>0.875rem</code>, which is what shadcn
               4.18.0 calls “large”. <code>tight</code> and <code>card</code> are{' '}
               <code>calc()</code> either side of it, so “rounder” is one edit.
@@ -211,10 +226,10 @@ export function Kit(): ReactNode {
           <Spec label="type — the scale, and no arbitrary values">
             <div className="flex flex-col gap-1">
               {TYPE_STEPS.map((step) => (
-                <p key={step.cls} className={`m-0 ${step.cls} text-ink`}>{step.name}</p>
+                <p key={step.cls} className={`m-0 ${step.cls} text-foreground`}>{step.name}</p>
               ))}
             </div>
-            <p className="m-0 mt-3 text-sm text-muted">
+            <p className="m-0 mt-3 text-sm text-muted-foreground">
               <code>text-display</code> is the step the kit added, and it is a ROLE rather than
               a size: there is one thing on a screen this big and it is the money. Tailwind’s
               own <code>text-3xl</code> and up exist and are not part of this scale.
@@ -226,13 +241,13 @@ export function Kit(): ReactNode {
               {CHART_STEPS.map((n) => (
                 <span
                   key={n}
-                  className="h-12 w-8 rounded-tight border border-line"
+                  className="h-12 w-8 rounded-md border border-border"
                   style={{ background: `var(--color-chart-${n})` }}
                   aria-hidden="true"
                 />
               ))}
             </div>
-            <p className="m-0 mt-3 text-sm text-muted">
+            <p className="m-0 mt-3 text-sm text-muted-foreground">
               All five are cool on purpose. A chart colour says <em>this series</em>, and a
               series drawn in the same red as a failed payment is a sentence the chart did
               not mean to say.
@@ -241,8 +256,8 @@ export function Kit(): ReactNode {
 
           <Spec label="the smallest touch target — 44px">
             <div className="flex items-center gap-3">
-              <span className="size-touch rounded-tight border border-dashed border-accent" aria-hidden="true" />
-              <span className="text-sm text-muted">
+              <span className="size-11 rounded-md border border-dashed border-primary" aria-hidden="true" />
+              <span className="text-sm text-muted-foreground">
                 <code>--spacing-touch</code>. Every control on a place is at least this,
                 because this app is meant to be wrapped in a native shell.
               </span>
@@ -266,45 +281,45 @@ export function Kit(): ReactNode {
               key={variant}
               label={`variant="${variant}"`}
               badge={BY_REQUEST_ONLY.includes(variant)
-                ? <Badge tone="warning">by request only</Badge>
+                ? <StatusBadge tone="warning">by request only</StatusBadge>
                 : undefined}
             >
               <div className="flex flex-wrap items-center gap-3">
                 {BUTTON_SIZES.map((size) => (
-                  <Button key={size} variant={variant} size={size}>
-                    {size === 'icon' ? <Icon glyph={GLYPH.send} /> : size}
-                    {size === 'icon' && <span className="visually-hidden">Send</span>}
+                  <Button key={size} type="button" variant={KIT_VARIANT[variant]} size={KIT_SIZE[size]}>
+                    {size === 'icon' ? <Glyph icon={GLYPH.send} className="size-5" /> : size}
+                    {size === 'icon' && <span className="sr-only">Send</span>}
                   </Button>
                 ))}
-                <Button variant={variant} disabled>disabled</Button>
+                <Button type="button" variant={KIT_VARIANT[variant]} disabled>disabled</Button>
               </div>
             </Spec>
           ))}
         </div>
 
-        <Alert tone="info" title="Four variants, not six" role={null} className="mt-2">
+        <StatusAlert tone="info" title="Four variants, not six" role={null} className="mt-2">
           <strong>primary</strong>, <strong>secondary</strong>, <strong>ghost</strong> and{' '}
           <strong>danger</strong> are what a screen reaches for.{' '}
           <strong>outline</strong> and <strong>link</strong> are <em>by request only</em> —
           they exist because shadcn’s shapes have them and a screen that wants one is asking
           for a decision, not picking a class. This label is the enforcement: this page is
           what a session reads before it builds a screen.
-        </Alert>
+        </StatusAlert>
 
         <Separator className="my-6" decorative />
 
-        <div className="grid grid-cols-1 gap-6 wide:grid-cols-2">
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
           <Spec label="with an icon — the ordinary case">
             <div className="flex flex-wrap gap-3">
-              <Button variant="primary"><Icon glyph={GLYPH.send} />Send</Button>
-              <Button variant="secondary"><Icon glyph={GLYPH.printer} />Print this sheet</Button>
-              <Button variant="danger"><Icon glyph={GLYPH.secured} />Cut a fresh set</Button>
+              <Button type="button" variant="default"><Glyph icon={GLYPH.send} className="size-5" />Send</Button>
+              <Button type="button" variant="outline"><Glyph icon={GLYPH.printer} className="size-5" />Print this sheet</Button>
+              <Button type="button" variant="destructive"><Glyph icon={GLYPH.secured} className="size-5" />Cut a fresh set</Button>
             </div>
           </Spec>
           <Spec label="ButtonLink — an anchor, because href means navigation">
             <div className="flex flex-wrap gap-3">
-              <ButtonLink href="#/kit" variant="primary">A link that looks like a button</ButtonLink>
-              <ButtonLink href="#/kit" variant="link">A link that looks like a link</ButtonLink>
+              <Button asChild variant="default"><a href="#/kit">A link that looks like a button</a></Button>
+              <Button asChild variant="link"><a href="#/kit">A link that looks like a link</a></Button>
             </div>
           </Spec>
         </div>
@@ -320,12 +335,12 @@ export function Kit(): ReactNode {
       >
         <div className="flex flex-wrap items-center gap-3">
           {BADGE_TONES.map((tone) => (
-            <Badge key={tone} tone={tone}>{tone}</Badge>
+            <StatusBadge key={tone} tone={tone}>{tone}</StatusBadge>
           ))}
         </div>
         <p className="muted small" style={{ marginTop: '1rem' }}>
-          In a list: <Badge tone="pending">Still confirming</Badge>{' '}
-          <Badge tone="sent">Sent</Badge> <Badge tone="failed">Did not go through</Badge>
+          In a list: <StatusBadge tone="pending">Still confirming</StatusBadge>{' '}
+          <StatusBadge tone="sent">Sent</StatusBadge> <StatusBadge tone="failed">Did not go through</StatusBadge>
         </p>
       </Chapter>
 
@@ -337,33 +352,33 @@ export function Kit(): ReactNode {
         says="Header, content, footer. The footer sits on a rule, and the header can carry
               one control on its right edge."
       >
-        <div className="grid grid-cols-1 gap-4 wide:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <Card>
             <CardHeader>
-              <CardTitle>Header, content and footer</CardTitle>
+              <CardTitle role="heading" aria-level={3}>Header, content and footer</CardTitle>
               <CardDescription>The description sits under the title, in muted text.</CardDescription>
             </CardHeader>
             <CardContent>
-              <p className="m-0 text-sm text-muted">
+              <p className="m-0 text-sm text-muted-foreground">
                 A card knows nothing about what is inside it. That is the same rule the shell
                 follows about a place.
               </p>
             </CardContent>
             <CardFooter>
-              <Button variant="primary" size="sm">Confirm</Button>
-              <Button variant="ghost" size="sm">Not now</Button>
+              <Button type="button" variant="default" size="sm">Confirm</Button>
+              <Button type="button" variant="ghost" size="sm">Not now</Button>
             </CardFooter>
           </Card>
 
           <Card>
             <CardHeader>
-              <CardTitle>Content only</CardTitle>
+              <CardTitle role="heading" aria-level={3}>Content only</CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="m-0 font-mono text-2xl font-semibold text-ink">
-                1,240.5000 <span className="font-sans text-sm font-medium text-muted">tNIGHT</span>
+              <p className="m-0 font-mono text-2xl font-semibold text-foreground">
+                1,240.5000 <span className="font-sans text-sm font-medium text-muted-foreground">tNIGHT</span>
               </p>
-              <p className="m-0 mt-1 text-xs text-faint">
+              <p className="m-0 mt-1 text-xs text-muted-foreground">
                 A number always carries when it was true. This one is invented.
               </p>
             </CardContent>
@@ -383,35 +398,32 @@ export function Kit(): ReactNode {
           * The chevron's href is `#/kit` because `kit.test.tsx` asserts every
           * link on this page points at the gallery itself: the gallery is
           * unlinked from the wallet, and a specimen is not an exception. */}
-        <p className="m-0 mt-8 mb-4 text-sm text-muted">
+        <p className="m-0 mt-8 mb-4 text-sm text-muted-foreground">
           The header can carry <strong>one</strong> control on its right edge. It is a
           slot, not a button: the kit fixes the position — right edge, aligned to the
           title and not to the block beneath it — and the screen decides what sits
           there. More than one control is a footer.
         </p>
-        <div className="grid grid-cols-1 gap-4 wide:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <Spec label="CardHeader action — a chevron to the place this card previews">
             <Card>
-              <CardHeader
-                action={(
-                  <ButtonLink
-                    variant="ghost"
-                    size="icon"
-                    href="#/kit"
-                    aria-label="All of this, in its own place"
-                  >
-                    <Icon glyph={GLYPH.next} className="size-5" />
-                  </ButtonLink>
-                )}
-              >
-                <CardTitle>A preview of somewhere</CardTitle>
+              <CardHeader>
+                <CardTitle role="heading" aria-level={3}>A preview of somewhere</CardTitle>
                 <CardDescription>
                   A card showing the first few of something says where the rest is, and
                   the chevron is a LINK — never a drawer.
                 </CardDescription>
+                <CardAction>
+                  <Button asChild variant="ghost" size="icon"><a
+                    href="#/kit"
+                    aria-label="All of this, in its own place"
+                  >
+                    <Glyph icon={GLYPH.next} className="size-5" />
+                  </a></Button>
+                </CardAction>
               </CardHeader>
               <CardContent>
-                <p className="m-0 text-sm text-muted">
+                <p className="m-0 text-sm text-muted-foreground">
                   Two callers: recent activity, and every wallet.
                 </p>
               </CardContent>
@@ -420,17 +432,16 @@ export function Kit(): ReactNode {
 
           <Spec label="CardHeader action — an icon button that acts">
             <Card>
-              <CardHeader
-                action={(
-                  <Button variant="ghost" size="icon" aria-label="Check again">
-                    <Icon glyph={GLYPH.switcher} className="size-5" />
+              <CardHeader>
+                <CardTitle role="heading" aria-level={3}>A card whose data can be refreshed</CardTitle>
+                <CardAction>
+                  <Button type="button" variant="ghost" size="icon" aria-label="Check again">
+                    <Glyph icon={GLYPH.switcher} className="size-5" />
                   </Button>
-                )}
-              >
-                <CardTitle>A card whose data can be refreshed</CardTitle>
+                </CardAction>
               </CardHeader>
               <CardContent>
-                <p className="m-0 text-sm text-muted">
+                <p className="m-0 text-sm text-muted-foreground">
                   The same slot, holding something that acts rather than navigates. The
                   money card&rsquo;s refresh control is this filling, and it is designed
                   in its own round rather than here.
@@ -442,19 +453,8 @@ export function Kit(): ReactNode {
 
         <Spec label="CardHeader with a long title and a control — the alignment claim" className="mt-6">
           <Card>
-            <CardHeader
-              action={(
-                <ButtonLink
-                  variant="ghost"
-                  size="icon"
-                  href="#/kit"
-                  aria-label="Somewhere else"
-                >
-                  <Icon glyph={GLYPH.next} className="size-5" />
-                </ButtonLink>
-              )}
-            >
-              <CardTitle>
+            <CardHeader>
+              <CardTitle role="heading" aria-level={3}>
                 A title long enough to wrap onto a second line at a narrow width, which is
                 where a control centred against the whole block starts to look wrong
               </CardTitle>
@@ -462,6 +462,14 @@ export function Kit(): ReactNode {
                 And a description under it, so the header is three lines tall. The control
                 stays level with the first line of the title.
               </CardDescription>
+              <CardAction>
+                <Button asChild variant="ghost" size="icon"><a
+                  href="#/kit"
+                  aria-label="Somewhere else"
+                >
+                  <Glyph icon={GLYPH.next} className="size-5" />
+                </a></Button>
+              </CardAction>
             </CardHeader>
           </Card>
         </Spec>
@@ -475,34 +483,34 @@ export function Kit(): ReactNode {
         says="A label is a caption above its field, never beside it. The error state is
               aria-invalid — the attribute is the fact and the colour follows it."
       >
-        <div className="grid grid-cols-1 gap-5 wide:grid-cols-2">
+        <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
           <Spec label="default">
-            <Label htmlFor="k-default">Amount</Label>
+            <Label htmlFor="k-default" className="mb-2">Amount</Label>
             <Input id="k-default" placeholder="0.0000" />
           </Spec>
 
           <Spec label="mono — addresses, identifiers, piece bytes">
-            <Label htmlFor="k-mono">Pay to</Label>
-            <Input id="k-mono" mono defaultValue="mn_shield-addr_test1vqqqq…8f3a91c7" />
+            <Label htmlFor="k-mono" className="mb-2">Pay to</Label>
+            <Input className="font-mono text-sm tracking-tight" id="k-mono"  defaultValue="mn_shield-addr_test1vqqqq…8f3a91c7" />
           </Spec>
 
           <Spec label="aria-invalid — with the message beside it">
-            <Label htmlFor="k-bad">Amount</Label>
+            <Label htmlFor="k-bad" className="mb-2">Amount</Label>
             <Input id="k-bad" aria-invalid="true" aria-describedby="k-bad-note" defaultValue="12.5" />
-            <p id="k-bad-note" className="m-0 mt-1.5 text-sm text-bad">
+            <p id="k-bad-note" className="m-0 mt-1.5 text-sm text-destructive">
               That is more than this wallet holds.
             </p>
           </Spec>
 
           <Spec label="disabled and read-only">
-            <Label htmlFor="k-dis">Network</Label>
+            <Label htmlFor="k-dis" className="mb-2">Network</Label>
             <Input id="k-dis" disabled defaultValue="Not available yet" />
             <Input className="mt-2" readOnly defaultValue="Read-only — shown, not editable" />
           </Spec>
 
-          <Spec label="textarea" className="wide:col-span-2">
-            <Label htmlFor="k-ta">Paste a recovery piece</Label>
-            <Textarea id="k-ta" mono placeholder="801f 4a2c 9b77 …" />
+          <Spec label="textarea" className="md:col-span-2">
+            <Label htmlFor="k-ta" className="mb-2">Paste a recovery piece</Label>
+            <Textarea className="font-mono text-sm tracking-tight" id="k-ta"  placeholder="801f 4a2c 9b77 …" />
           </Spec>
         </div>
       </Chapter>
@@ -517,31 +525,31 @@ export function Kit(): ReactNode {
               close button."
       >
         <div className="flex flex-col gap-3">
-          <Alert
+          <StatusAlert
             tone="warning"
             title="If you lose this device your money is gone"
             role={null}
           >
             Nobody can recover it, including us. Cutting your account into pieces takes about
             five minutes and a printer.
-          </Alert>
+          </StatusAlert>
 
           {ALERT_TONES.map((tone) => (
-            <Alert key={tone} tone={tone} title={`tone="${tone}"`} role={null}>
+            <StatusAlert key={tone} tone={tone} title={`tone="${tone}"`} role={null}>
               One sentence of body text, in muted, so the title carries the fact and this
               carries the detail.
-            </Alert>
+            </StatusAlert>
           ))}
 
-          <Alert tone="danger" title="A payment did not go through" role={null}>
+          <StatusAlert tone="danger" title="A payment did not go through" role={null}>
             <p className="m-0">
               The reason is printed verbatim and is never blank — that is the rule.
             </p>
-          </Alert>
+          </StatusAlert>
 
-          <Alert tone="info" role={null}>
+          <StatusAlert tone="info" role={null}>
             An alert with no title — body only.
-          </Alert>
+          </StatusAlert>
         </div>
       </Chapter>
 
@@ -553,11 +561,11 @@ export function Kit(): ReactNode {
         says="An empty room, said honestly. It is never a zero and never a wait that has quietly
               stopped waiting."
       >
-        <div className="grid grid-cols-1 gap-4 wide:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <EmptyState
             icon={GLYPH.inbox}
             title="No payments yet"
-            action={<Button variant="primary" size="sm">Show your address</Button>}
+            action={<Button type="button" variant="default" size="sm">Show your address</Button>}
           >
             When money arrives or leaves, it appears here.
           </EmptyState>
@@ -576,32 +584,32 @@ export function Kit(): ReactNode {
               displays is neither — so it is not a focus stop that does nothing."
       >
         <Card>
-          <CardContent className="pt-5">
-            <ListRows>
-              <ListRow
-                leading={<span className="flex size-9 items-center justify-center rounded-pill bg-sunken text-muted"><Icon glyph={GLYPH.send} className="size-4" /></span>}
+          <CardContent >
+            <RowItems>
+              <RowItem
+                leading={<span className="flex size-9 items-center justify-center rounded-full bg-muted text-muted-foreground"><Glyph icon={GLYPH.send} className="size-4" /></span>}
                 title="Sent to mn_shield-addr_test1…8f3a"
                 subtitle="21 August, 09:14"
                 trailing="−12.0000 tNIGHT"
-                meta={<Badge tone="sent">Sent</Badge>}
+                meta={<StatusBadge tone="sent">Sent</StatusBadge>}
                 href="#/kit"
               />
-              <ListRow
-                leading={<span className="flex size-9 items-center justify-center rounded-pill bg-sunken text-muted"><Icon glyph={GLYPH.send} className="size-4" /></span>}
+              <RowItem
+                leading={<span className="flex size-9 items-center justify-center rounded-full bg-muted text-muted-foreground"><Glyph icon={GLYPH.send} className="size-4" /></span>}
                 title="Sent to mn_shield-addr_test1…c701"
                 subtitle="21 August, 09:02"
                 trailing="−3.5000 tNIGHT"
-                meta={<Badge tone="pending">Still confirming</Badge>}
+                meta={<StatusBadge tone="pending">Still confirming</StatusBadge>}
                 onClick={() => undefined}
               />
-              <ListRow
+              <RowItem
                 title="A row that only displays"
                 subtitle="No href and no handler — not in the tab order"
                 trailing="—"
               />
-              <ListRow title="The current row" subtitle="aria-current" current onClick={() => undefined} />
-              <ListRow title="A disabled row" subtitle="Not pressable" disabled onClick={() => undefined} />
-            </ListRows>
+              <RowItem title="The current row" subtitle="aria-current" current onClick={() => undefined} />
+              <RowItem title="A disabled row" subtitle="Not pressable" disabled onClick={() => undefined} />
+            </RowItems>
           </CardContent>
         </Card>
       </Chapter>
@@ -615,40 +623,46 @@ export function Kit(): ReactNode {
               aria-labelledby, so a screen reader's landmark list is a way to skip to the
               part you want — which a div with a bold paragraph on top is not."
       >
-        <div className="grid gap-6 wide:grid-cols-2">
-          <Spec label="tone: default" badge={<Badge>no box</Badge>}>
+        <div className="grid gap-6 md:grid-cols-2">
+          <Spec label="tone: default" badge={<StatusBadge>no box</StatusBadge>}>
             <Section
+              list={false} box={false} aria-label="Network and hosts"
               title="Network and hosts"
               description="What this wallet is connected to. All of it is fixed, and none of it is a preference."
             >
               <Card>
-                <CardContent className="pt-5">
-                  <ListRows>
-                    <ListRow title="Network" trailing={<span className="font-mono">stagenet</span>} />
-                    <ListRow title="Balances are read from" trailing={<span className="font-mono">indexer.example</span>} />
-                  </ListRows>
+                <CardContent >
+                  <RowItems>
+                    <RowItem title="Network" trailing={<span className="font-mono">stagenet</span>} />
+                    <RowItem title="Balances are read from" trailing={<span className="font-mono">indexer.example</span>} />
+                  </RowItems>
                 </CardContent>
               </Card>
             </Section>
           </Spec>
           <Spec
             label="tone: danger"
-            badge={<Badge tone="failed">the only one that is not cosmetic</Badge>}
+            badge={<StatusBadge tone="failed">the only one that is not cosmetic</StatusBadge>}
           >
+            <div data-danger-frame className="rounded-xl border border-destructive/40 bg-destructive/10 p-4 md:p-5">
             <Section
-              tone="danger"
-              title="Forget this wallet"
+              list={false}
+              box={false}
+              aria-label="Forget this wallet"
+              data-tone="danger"
+              title={<span className="text-destructive">Forget this wallet</span>}
               description="Clears this browser and everything in it. Nothing on the chain changes."
             >
-              <p className="m-0 text-sm text-ink">
+              <p className="m-0 text-sm text-foreground">
                 Apart, so a destructive region cannot be mistaken for the rows above it.
                 It is a REGION and not an alert: an alert is a sentence that has just
                 become true, and this is always here.
               </p>
               <div>
-                <Button variant="danger" disabled>Forget this wallet</Button>
+                <Button type="button" variant="destructive" disabled>Forget this wallet</Button>
               </div>
             </Section>
+            </div>
           </Spec>
         </div>
       </Chapter>
@@ -662,15 +676,15 @@ export function Kit(): ReactNode {
               ACTS is a button — and on Home that distinction is load-bearing, because Send is
               a link and one surface approves anything that moves money."
       >
-        <ActionTiles>
-          <ActionTile
+        <ShortcutTiles>
+          <ShortcutTile
             href="#/kit"
             glyph={GLYPH.send}
             tone="accent"
             label="A tile that navigates"
             says="An anchor — openable in a new tab"
           />
-          <ActionTile
+          <ShortcutTile
             onClick={() => undefined}
             glyph={GLYPH.receive}
             tone="accent"
@@ -682,19 +696,19 @@ export function Kit(): ReactNode {
             * what a planned feature is called — `screens/explore.tsx` carries
             * the decision — and a specimen still reading `Not built yet` is
             * how the losing phrase gets copied back in. */}
-          <ActionTile
+          <ShortcutTile
             onClick={() => undefined}
             glyph={GLYPH.earn}
             label="A quiet tile"
             says="Coming soon"
           />
-          <ActionTile
+          <ShortcutTile
             href="#/kit"
             glyph={GLYPH.contacts}
             label="A tile with a very long label that has to be cut off somewhere"
             says="And a very long line under it, which is cut off in the same way"
           />
-        </ActionTiles>
+        </ShortcutTiles>
       </Chapter>
 
       {/* ---------------- table ---------------- */}
@@ -707,31 +721,31 @@ export function Kit(): ReactNode {
       >
         <Table>
           <TableCaption>Where this account’s pieces are — an invented example.</TableCaption>
-          <TableHead>
+          <TableHeader>
             <TableRow>
-              <TableHeader>Piece</TableHeader>
-              <TableHeader>Where it is</TableHeader>
-              <TableHeader>Locked with</TableHeader>
-              <TableHeader className="text-right">Last verified</TableHeader>
+              <TableHead>Piece</TableHead>
+              <TableHead>Where it is</TableHead>
+              <TableHead>Locked with</TableHead>
+              <TableHead className="text-right">Last verified</TableHead>
             </TableRow>
-          </TableHead>
+          </TableHeader>
           <TableBody>
             <TableRow>
               <TableCell>1</TableCell>
               <TableCell>A printed copy</TableCell>
-              <TableCell className="text-muted">Nothing — the paper is the lock</TableCell>
+              <TableCell className="text-muted-foreground">Nothing — the paper is the lock</TableCell>
               <TableCell className="text-right">21 Aug 2026</TableCell>
             </TableRow>
             <TableRow>
               <TableCell>2</TableCell>
               <TableCell>A cloud account of mine</TableCell>
-              <TableCell className="text-muted">A password</TableCell>
+              <TableCell className="text-muted-foreground">A password</TableCell>
               <TableCell className="text-right">21 Aug 2026</TableCell>
             </TableRow>
             <TableRow>
               <TableCell>3</TableCell>
               <TableCell>A second device</TableCell>
-              <TableCell className="text-muted">A passkey</TableCell>
+              <TableCell className="text-muted-foreground">A passkey</TableCell>
               <TableCell className="text-right text-warn">Never</TableCell>
             </TableRow>
           </TableBody>
@@ -746,10 +760,10 @@ export function Kit(): ReactNode {
         says="A skeleton says something is arriving. When nothing is arriving, the honest failure
               state has words — a skeleton must never be what a person is left looking at."
       >
-        <div className="grid grid-cols-1 gap-6 wide:grid-cols-2">
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
           <Spec label="Skeleton — a balance card that has not answered yet">
             <Card>
-              <CardContent className="pt-5" aria-busy="true">
+              <CardContent  aria-busy="true">
                 <Skeleton className="h-3 w-24" />
                 <Skeleton className="mt-3 h-8 w-48" />
                 <Skeleton className="mt-3 h-3 w-full" />
@@ -758,14 +772,14 @@ export function Kit(): ReactNode {
             </Card>
           </Spec>
           <Spec label="Separator — horizontal and vertical">
-            <div className="rounded-card border border-line bg-raised p-4">
-              <p className="m-0 text-sm text-muted">Above the rule</p>
+            <div className="rounded-xl border border-border bg-card p-4">
+              <p className="m-0 text-sm text-muted-foreground">Above the rule</p>
               <Separator className="my-3" />
-              <p className="m-0 text-sm text-muted">Below the rule</p>
+              <p className="m-0 text-sm text-muted-foreground">Below the rule</p>
               <div className="mt-4 flex h-10 items-center gap-3">
-                <span className="text-sm text-muted">left</span>
+                <span className="text-sm text-muted-foreground">left</span>
                 <Separator orientation="vertical" />
-                <span className="text-sm text-muted">right</span>
+                <span className="text-sm text-muted-foreground">right</span>
               </div>
             </div>
           </Spec>
@@ -781,26 +795,26 @@ export function Kit(): ReactNode {
               desktop rail folds to icons, and a glyph with no word beside it needs a label
               that a keyboard can reach."
       >
-        <TooltipProvider delayDuration={250}>
+        <>
           <div className="flex flex-wrap items-center gap-3">
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button variant="secondary" size="icon" aria-label="Send">
-                  <Icon glyph={GLYPH.send} />
+                <Button type="button" variant="outline" size="icon" aria-label="Send">
+                  <Glyph icon={GLYPH.send} className="size-5" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="right" sideOffset={8}>Send</TooltipContent>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button variant="ghost" size="sm">Hover me, or Tab to me</Button>
+                <Button type="button" variant="ghost" size="sm">Hover me, or Tab to me</Button>
               </TooltipTrigger>
               <TooltipContent side="top" sideOffset={8}>
                 Radix opens this on focus as well as hover
               </TooltipContent>
             </Tooltip>
           </div>
-        </TooltipProvider>
+        </>
         <p className="muted small" style={{ marginTop: '1rem' }}>
           Restyled onto this repo’s tokens and nothing else: <code>bg-ink</code>/
           <code>text-bg</code> for shadcn’s <code>bg-foreground</code>/
@@ -821,9 +835,9 @@ export function Kit(): ReactNode {
         <div className="flex flex-wrap gap-3">
           <Dialog>
             <DialogTrigger asChild>
-              <Button variant="secondary">Open a dialog</Button>
+              <Button type="button" variant="outline">Open a dialog</Button>
             </DialogTrigger>
-            <DialogContent>
+            <DialogContent className="max-h-[calc(100svh-2rem)] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>A dialog</DialogTitle>
                 <DialogDescription>
@@ -832,7 +846,7 @@ export function Kit(): ReactNode {
                   Every one of those is a thing a hand-rolled panel gets wrong quietly.
                 </DialogDescription>
               </DialogHeader>
-              <p className="m-0 text-sm text-muted">
+              <p className="m-0 text-sm text-muted-foreground">
                 Nothing on this page does anything — this dialog holds text and a way
                 out, and the way out is the specimen.
               </p>
@@ -842,9 +856,9 @@ export function Kit(): ReactNode {
 
           <Dialog>
             <DialogTrigger asChild>
-              <Button variant="secondary">…with no close button</Button>
+              <Button type="button" variant="outline">…with no close button</Button>
             </DialogTrigger>
-            <DialogContent showCloseButton={false}>
+            <DialogContent showCloseButton={false} className="max-h-[calc(100svh-2rem)] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>No corner control</DialogTitle>
                 <DialogDescription>
@@ -855,7 +869,7 @@ export function Kit(): ReactNode {
               </DialogHeader>
               <DialogFooter>
                 <DialogClose asChild>
-                  <Button variant="primary">Done</Button>
+                  <Button type="button" variant="default">Done</Button>
                 </DialogClose>
               </DialogFooter>
             </DialogContent>
@@ -880,7 +894,7 @@ export function Kit(): ReactNode {
               static: the live one is the app's frame, and it is looked at by opening the
               app rather than by visiting a workshop page."
       >
-        <div className="flex flex-wrap gap-6">
+        <SidebarProvider className="min-h-0 w-auto flex-wrap gap-6">
           {([false, true] as const).map((collapsed) => (
             <div
               key={String(collapsed)}
@@ -889,7 +903,7 @@ export function Kit(): ReactNode {
                * `group-data-[collapsible=icon]` variant inside reacts to. That
                * is the whole mechanism, and showing both states side by side is
                * only possible because it is an ATTRIBUTE and not a hook. */
-              className="group rounded-card border border-line bg-raised"
+              className="group rounded-xl border bg-sidebar text-sidebar-foreground"
               data-state={collapsed ? 'collapsed' : 'expanded'}
               data-collapsible={collapsed ? 'icon' : ''}
               style={{ width: collapsed ? '4.75rem' : '14rem' }}
@@ -909,21 +923,19 @@ export function Kit(): ReactNode {
                     ['Settings', GLYPH.settings, false],
                   ] as const).map(([label, glyph, active]) => (
                     <SidebarMenuItem key={label}>
-                      <span
-                        className={sidebarMenuButtonVariants({})}
-                        data-active={active}
-                        data-sidebar="menu-button"
-                      >
-                        <Icon glyph={glyph} />
-                        {!collapsed && <span>{label}</span>}
-                      </span>
+                      <SidebarMenuButton asChild isActive={active}>
+                        <span>
+                          <Glyph icon={glyph} />
+                          {!collapsed && <span>{label}</span>}
+                        </span>
+                      </SidebarMenuButton>
                     </SidebarMenuItem>
                   ))}
                 </SidebarMenu>
               </SidebarGroup>
             </div>
           ))}
-        </div>
+        </SidebarProvider>
         <p className="muted small" style={{ marginTop: '1rem' }}>
           Every specimen here is a <code>&lt;span&gt;</code>, not a link or a button:
           nothing on this page navigates, and the live sidebar’s rows are anchors.

@@ -2,13 +2,13 @@ import { Amount, useText } from 'vaults-ui';
 import { PAID, READ } from '../adapters/company-records.js';
 import { PAGE } from '../pages.js';
 import { PageLink, useCurrentPage } from '../router.js';
-import { Approvals, PaidWords, paymentKindOf, ReadOf, RunMoney, RunStatus, SoonAction, useMonth, WithRecords } from '../records/parts.js';
+import { Approvals, PaidWords, paymentKindOf, ReadOf, RunMoney, RunStatus, UnbuiltAction, useMonth, WithRecords } from '../records/parts.js';
 
 /**
  * A PAYROLL RUN'S OWN PAGE: its month and where it stands; for each currency,
  * what it pays privately and publicly and the approvals so far; and everyone
  * it pays, each with their amount and whether they are paid privately or
- * publicly. Approving is shown, and is Coming soon.
+ * publicly. Approving and exporting are not built yet and are shown disabled.
  */
 export function Run() {
   const t = useText();
@@ -43,7 +43,7 @@ export function Run() {
                           <div className="flex flex-wrap items-center gap-3 text-sm">
                             {proposals === null ? <span className="text-muted-foreground" data-unreadable>{t('run.approvalsUnreadable')}</span>
                               : proposal === undefined ? <span className="text-muted-foreground" data-not-sent>{t('run.notSentForApproval')}</span> : <Approvals row={proposal} />}
-                            <SoonAction label={t('proposals.approve')} soon={t('proposals.approve.soon')} data-action="approve" />
+                            <UnbuiltAction data-action="approve">{t('proposals.approve')}</UnbuiltAction>
                           </div>
                         </div>
                       );
@@ -64,7 +64,7 @@ export function Run() {
                       </tbody>
                     </table>
                   </section>
-                  <SoonAction label={t('run.export')} soon={t('run.export.soon')} data-action="export-run" />
+                  <UnbuiltAction data-action="export-run">{t('run.export')}</UnbuiltAction>
                 </>
               );
             }}

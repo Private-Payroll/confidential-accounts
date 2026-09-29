@@ -23,9 +23,8 @@ import { ShortcutKeys } from './shortcut-keys.js';
  * NO LIST HERE IS RANKED BY MONEY, and none is ranked at all: a company is
  * shown where the service lists it. A company's name is sealed, and opens only
  * with the keys saved for the person, which their account opens; each company
- * is shown by its name once it is open, and always by what the service lists
- * of it, when it was made and how many of its signers must approve. The last
- * two anyone can look up, and the list says so.
+ * is shown by its name once it is open, and always by how many of its
+ * signers must approve, of how many there are, which the service lists.
  */
 export function CompanySwitcher({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const t = useText();
@@ -46,7 +45,7 @@ export function CompanySwitcher({ open, onOpenChange }: { open: boolean; onOpenC
                 <HugeiconsIcon icon={Building03Icon} strokeWidth={2} className="size-4" />
               </span>
               <span className="grid flex-1 text-start text-sm leading-tight">
-                <span className="truncate font-medium" data-shown-name={shown !== null && names.has(shown.id) ? true : undefined}>{shown === null ? t('app.title') : names.get(shown.id) ?? words.made(shown)}</span>
+                <span className="truncate font-medium" data-shown-name={shown !== null && names.has(shown.id) ? true : undefined}>{shown === null ? t('app.title') : names.get(shown.id) ?? words.unnamed}</span>
                 <span className="truncate text-xs text-muted-foreground">
                   {employee ? t('switcher.yourPay') : shown === null ? t('switcher.noCompany') : words.approvals(shown)}
                 </span>
@@ -75,13 +74,8 @@ export function CompanySwitcher({ open, onOpenChange }: { open: boolean; onOpenC
                     {c.id === company ? <HugeiconsIcon icon={Tick02Icon} strokeWidth={2} className="size-4" /> : null}
                   </DropdownMenuItem>
                 ))}
-                {companies.length === 0 ? null : (
-                  <>
-                    {companies.every((c) => names.has(c.id)) ? null : (
-                      <p className="px-2 py-1.5 text-xs text-muted-foreground" data-company-names="locked">{t('switcher.namesLocked')}</p>
-                    )}
-                    <p className="px-2 pb-1.5 text-xs text-muted-foreground" data-public-facts>{t('switcher.publicFacts')}</p>
-                  </>
+                {companies.every((c) => names.has(c.id)) ? null : (
+                  <p className="px-2 py-1.5 text-xs text-muted-foreground" data-company-names="locked">{t('switcher.namesLocked')}</p>
                 )}
               </>
             )}
