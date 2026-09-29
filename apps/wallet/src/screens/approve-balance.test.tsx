@@ -10,6 +10,8 @@ import type { Channel, ChannelWindow } from 'midnight-identity/profile/channel';
 import type { BalancedAnswer } from 'midnight-identity/profile/balance';
 import { watchedStore } from '../testing/settled-store.js';
 import { afterTheAnswer, settled, watchedOpener } from '../testing/settled-channel.js';
+import { recordingChannel } from '../testing/recording-channel.js';
+import { readAskRecord } from '../lib/ask-record.js';
 import { ApproveBalance } from './approve-balance.js';
 import { Approve } from './approve.js';
 import type { BalanceDoors, FacadeForBalancing, WalletPartForBalancing } from '../chain/balance-for-page.js';
@@ -51,7 +53,9 @@ const stillReading = () => {
   let observer: Parameters<WalletPartForBalancing['state']['subscribe']>[0] | null = null;
   return {
     state: { subscribe: (o: Parameters<WalletPartForBalancing['state']['subscribe']>[0]) => { observer = o; return { unsubscribe: () => {} }; } },
-    says: (isConnected: boolean, complete: boolean) => observer?.next({ progress: { isConnected, isStrictlyComplete: () => complete } }),
+    says: (isConnected: boolean, complete: boolean, applied?: bigint) => observer?.next({ progress: {
+      isConnected, isStrictlyComplete: () => complete, ...(applied === undefined ? {} : { appliedIndex: applied, highestIndex: 9_000n }),
+    } }),
     breaks: (e: unknown) => observer?.error(e),
   };
 };
@@ -85,16 +89,12 @@ const doorsWith = (log: string[], facade: Partial<FacadeForBalancing> = {}, acti
   signSegment: () => async () => ({}) as never,
   now: () => NOW,
 });
-const channelFor = (answers: unknown[]): Channel => ({
-  answer: (a) => { answers.push(a); },
-  refuse: (r: string, why?: string) => { answers.push(why === undefined ? { refused: r } : { refused: r, why }); },
-  stop: () => {},
-} as Channel);
+const channelFor = (answers: unknown[]): Channel => recordingChannel(answers);
 const consented = { ok: true } as never;
 const renderWith = (doors: () => BalanceDoors, answers: unknown[], consent = consented, declined: string[] = []) => render(
   <ApproveBalance
     request={ask} identity={identity} account={0} channel={channelFor(answers)} consent={consent}
-    whoIsAsking={<p>asker</p>} whichWallet={<p>picker</p>} onDecline={() => declined.push('declined')}
+    whoIsAsking={<p>asker</p>} whichWallet={<p>picker</p>} onDecline={(why) => declined.push(why ?? 'declined')}
     doorsFor={doors} now={() => NOW} />);
 
 afterEach(() => { cleanup(); });
@@ -239,16 +239,22 @@ describe('A PAGE ASKING THIS WALLET TO PAY FOR A DEPOSIT', () => {
     expect((screen.getByText('Pay into the vault') as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it('A TRANSACTION INTO ANOTHER CONTRACT IS REFUSED ON SIGHT, AND THE BUTTON STAYS DOWN', async () => {
-    const log: string[] = []; const answers: unknown[] = [];
-    renderWith(doorsWith(log, {}, [{ address: CO, entryPoint: 'deposit' }]), answers);
+  it('A TRANSACTION INTO ANOTHER CONTRACT IS REFUSED ON SIGHT, THE BUTTON STAYS DOWN, AND THE PAGE IS TOLD AT ONCE', async () => {
+    const log: string[] = []; const answers: unknown[] = []; const closed: unknown[] = [];
+    renderWith(doorsWith(log, {}, [{ address: CO, entryPoint: 'deposit' }]), answers, consented, closed as string[]);
     expect(await screen.findByText(/calls a contract other than the vault it names/)).toBeTruthy();
     const button = screen.getByText('Pay into the vault') as HTMLButtonElement;
     expect(button.disabled).toBe(true);
     fireEvent.click(button);
     await settled(20);
     expect(log).toEqual([]);
-    expect(answers).toEqual([]);
+    /* RED WHEN: a refusal the wallet shows only to the person leaves the page waiting out its clock - the 28 Sep hang. */
+    expect(answers).toEqual([{ refused: 'unreadable' }]);
+    /* RED WHEN: the refused screen still offers "Do not pay", which tells the page the person declined something they were never asked. */
+    expect(screen.queryByText('Do not pay')).toBeNull();
+    fireEvent.click(screen.getByText('Close'));
+    /* RED WHEN: Close is sent as a decline. */
+    expect(closed).toEqual(['unreadable']);
   });
 
   it('a press the framing refuses does nothing, and declining is its own button', async () => {
@@ -259,6 +265,192 @@ describe('A PAGE ASKING THIS WALLET TO PAY FOR A DEPOSIT', () => {
     fireEvent.click(screen.getByText('Do not pay'));
     expect(declined).toEqual(['declined']);
     expect(log).toEqual([]);
+  });
+});
+
+/** Doors the test can tell apart, stop, and watch proofs through. */
+const trackedDoors = (log: string[], facade: Partial<FacadeForBalancing> = {}, extra: Partial<BalanceDoors> = {}) => {
+  const stopped: number[] = [];
+  const proofs = new Set<(e: { op: 'prove' | 'check'; at: 'start' | 'end' }) => void>();
+  const make = doorsWith(log, facade);
+  const doors = (): BalanceDoors => ({
+    ...make(),
+    watchProofs: (w) => { proofs.add(w); return () => { proofs.delete(w); }; },
+    stop: async () => { stopped.push(1); },
+    ...extra,
+  });
+  return {
+    doors, stopped,
+    proof: (at: 'start' | 'end') => { for (const w of proofs) w({ op: 'prove', at }); },
+    get watching() { return proofs.size; },
+  };
+};
+/** A signature the test lets finish when it chooses: the coins are booked while it waits. */
+const heldSign = (log: string[]) => {
+  let release: () => void = () => {};
+  const held = new Promise<void>((r) => { release = r; });
+  return { signRecipe: async () => { await held; log.push('sign'); return 'signed'; }, release: () => release() };
+};
+
+describe('ONE ANSWER PER REQUEST, AND A PRESS IN FLIGHT OWNS IT', () => {
+  it('while a press runs no second press starts, not even with another wallet, and the one press answers once', async () => {
+    const answers: unknown[] = []; const channel = recordingChannel(answers);
+    const first: string[] = []; const second: string[] = [];
+    const locks: boolean[] = [];
+    const hold = heldSign(first);
+    const a = trackedDoors(first, { signRecipe: hold.signRecipe as never });
+    const b = trackedDoors(second);
+    const byAccount = (_i: unknown, account: number) => (account === 0 ? a.doors() : b.doors());
+    const ui = (account: number) => (
+      <ApproveBalance
+        request={ask} identity={identity} account={account} channel={channel} consent={consented}
+        whoIsAsking={<p>asker</p>} whichWallet={<p>picker</p>} onDecline={() => {}}
+        doorsFor={byAccount as never} now={() => NOW} onBusy={(locked) => locks.push(locked)} />);
+    const view = render(ui(0));
+    expect(await screen.findByText(/2500 base units/)).toBeTruthy();
+    expect(locks.at(-1)).toBe(false);
+    fireEvent.click(screen.getByText('Pay into the vault'));
+    await settled(20);
+    expect(first).toEqual(['balance']);
+    /* RED WHEN: the wallet that pays can still be changed while its press runs. */
+    expect(locks.at(-1)).toBe(true);
+    /* RED WHEN: Pay is offered again while a press runs, or "no" once coins are set aside. */
+    expect((screen.getByText('Pay into the vault') as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByText('Do not pay') as HTMLButtonElement).disabled).toBe(true);
+    /* The screen is handed another wallet anyway, and Pay is pressed on it. */
+    view.rerender(ui(2));
+    expect(await screen.findByText(/2500 base units/)).toBeTruthy();
+    /* RED WHEN: "no" is offered on another wallet's screen while the first wallet's coins are set aside, and does nothing. */
+    expect((screen.getByText('Do not pay') as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByText('Pay into the vault'));
+    await settled(20);
+    /* RED WHEN: a second press starts while the first is still running, and the two race to the page. */
+    expect(second).toEqual([]);
+    hold.release();
+    await screen.findByText(`You paid for a deposit for ${ORIGIN}`);
+    await settled(20);
+    expect(first).toEqual(['balance', 'sign', 'finish']);
+    /* RED WHEN: the page is handed a second transaction, or told the paid one failed. */
+    expect(answers).toHaveLength(1);
+    expect(second).toEqual([]);
+    /* RED WHEN: the wallet can be changed after the page has its answer. */
+    expect(locks.at(-1)).toBe(true);
+  });
+
+  it('a wallet on screen that cannot read the request while another press is running sends nothing: that press answers', async () => {
+    const answers: unknown[] = []; const channel = recordingChannel(answers);
+    const first: string[] = [];
+    const hold = heldSign(first);
+    const a = trackedDoors(first, { signRecipe: hold.signRecipe as never });
+    const broken = trackedDoors([], {}, { ledger: () => Promise.reject(new Error('no ledger')) });
+    const byAccount = (_i: unknown, account: number) => (account === 0 ? a.doors() : broken.doors());
+    const ui = (account: number) => (
+      <ApproveBalance
+        request={ask} identity={identity} account={account} channel={channel} consent={consented}
+        whoIsAsking={<p>asker</p>} whichWallet={<p>picker</p>} onDecline={() => {}}
+        doorsFor={byAccount as never} now={() => NOW} />);
+    const view = render(ui(0));
+    expect(await screen.findByText(/2500 base units/)).toBeTruthy();
+    fireEvent.click(screen.getByText('Pay into the vault'));
+    await settled(20);
+    view.rerender(ui(2));
+    expect(await screen.findByText(/could not load what it reads a transaction with/)).toBeTruthy();
+    /* RED WHEN: the refusal races the press that is still running, and the page is told nothing was paid before it is handed a paid transaction. */
+    expect(answers).toEqual([]);
+    hold.release();
+    await settled(20);
+    expect(answers).toHaveLength(1);
+    expect((answers[0] as BalancedAnswer).schema).toBe('midnight-identity/balanced/v1');
+  });
+
+  it('a press whose screen went while it set coins aside still answers, and its wallet stops only after it has', async () => {
+    const answers: unknown[] = []; const log: string[] = [];
+    const hold = heldSign(log);
+    const a = trackedDoors(log, { signRecipe: hold.signRecipe as never });
+    const view = render(
+      <ApproveBalance
+        request={ask} identity={identity} account={0} channel={recordingChannel(answers)} consent={consented}
+        whoIsAsking={<p>asker</p>} whichWallet={<p>picker</p>} onDecline={() => {}}
+        doorsFor={a.doors} now={() => NOW} />);
+    expect(await screen.findByText(/2500 base units/)).toBeTruthy();
+    fireEvent.click(screen.getByText('Pay into the vault'));
+    await settled(20);
+    view.unmount();
+    await settled(5);
+    /* RED WHEN: the wallet's parts are stopped under a press that has set coins aside, cutting off a payment the person approved. */
+    expect(a.stopped).toEqual([]);
+    hold.release();
+    await settled(20);
+    expect(answers).toHaveLength(1);
+    /* RED WHEN: the parts of a wallet whose screen has gone are left running once its press is over. */
+    expect(a.stopped).toEqual([1]);
+  });
+
+  it('the wallet\'s parts stop when their screen goes with nothing pressed, and when another wallet is picked', async () => {
+    const a = trackedDoors([]); const b = trackedDoors([]);
+    const byAccount = (_i: unknown, account: number) => (account === 0 ? a.doors() : b.doors());
+    const ui = (account: number) => (
+      <ApproveBalance
+        request={ask} identity={identity} account={account} channel={recordingChannel([])} consent={consented}
+        whoIsAsking={<p>asker</p>} whichWallet={<p>picker</p>} onDecline={() => {}}
+        doorsFor={byAccount as never} now={() => NOW} />);
+    const view = render(ui(0));
+    expect(await screen.findByText(/2500 base units/)).toBeTruthy();
+    view.rerender(ui(2));
+    await settled(5);
+    /* RED WHEN: a wallet's facade, its DUST read included, runs on after the person picked another. */
+    expect(a.stopped).toEqual([1]);
+    view.unmount();
+    await settled(5);
+    /* RED WHEN: the Pay facade is never stopped, and runs until the frame goes. */
+    expect(b.stopped).toEqual([1]);
+  });
+});
+
+describe('THE WALLET SAYS WHAT IT IS DOING, ON EVENTS ONLY', () => {
+  it('reading on each report that moved, proving from the moment coins are added and on each proof', async () => {
+    const answers: unknown[] = []; const progress: string[] = [];
+    const shielded = stillReading();
+    const held = heldBalance();
+    let clock = NOW;
+    const t = trackedDoors([], { shielded, balanceUnboundTransaction: held.balanceUnboundTransaction as never });
+    render(
+      <ApproveBalance
+        request={ask} identity={identity} account={0} channel={recordingChannel(answers, progress as never)} consent={consented}
+        whoIsAsking={<p>asker</p>} whichWallet={<p>picker</p>} onDecline={() => {}}
+        doorsFor={t.doors} now={() => clock} />);
+    expect(await screen.findByText(/2500 base units/)).toBeTruthy();
+    fireEvent.click(screen.getByText('Pay into the vault'));
+    await screen.findByText(/Your wallet is reading the network/);
+    shielded.says(false, false);
+    clock += 400;
+    shielded.says(true, false);
+    clock += 2_000;
+    shielded.says(true, false, 200n);
+    /* RED WHEN: the read's reports are not passed on, so a long read reaches the page as silence; or each is sent without limit. */
+    expect(progress).toEqual(['reading', 'reading']);
+    clock += 2_000;
+    shielded.says(true, false, 200n);
+    /* RED WHEN: a report that says nothing new is passed on as if the wallet had moved. */
+    expect(progress).toEqual(['reading', 'reading']);
+    /* The read finishes: that is movement too. */
+    shielded.says(true, true);
+    await settled(10);
+    /* RED WHEN: nothing is said between the read and the proof, which is the longest silence of a private deposit. */
+    expect(progress).toEqual(['reading', 'reading', 'reading', 'proving']);
+    clock += 5_000;
+    t.proof('start');
+    clock += 90_000;
+    t.proof('end');
+    /* RED WHEN: a proof starting and ending is not said, so a wallet proving for ninety seconds looks like one that has gone. */
+    expect(progress).toEqual(['reading', 'reading', 'reading', 'proving', 'proving', 'proving']);
+    expect(t.watching).toBe(1);
+    held.release();
+    await screen.findByText(`You paid for a deposit for ${ORIGIN}`);
+    /* RED WHEN: the screen keeps listening to the proofs after its press is over. */
+    expect(t.watching).toBe(0);
+    t.proof('end');
+    expect(progress).toHaveLength(6);
   });
 });
 
@@ -281,6 +473,13 @@ describe('THE APPROVAL SURFACE ROUTES A BALANCE ASK TO THIS SCREEN', () => {
     expect((screen.getByText('Pay into the vault') as HTMLButtonElement).disabled).toBe(true);
     await settled(20);
     expect(opener.sent.filter((m) => (m.message as { schema?: string }).schema === 'midnight-identity/balanced/v1')).toEqual([]);
+    /* RED WHEN: the page that sent them is left waiting for a press that cannot come, rather than told at once. */
+    expect(opener.sent.filter((m) => (m.message as { schema?: string }).schema === 'midnight-identity/disclosure-refused/v1'))
+      .toEqual([{ message: { schema: 'midnight-identity/disclosure-refused/v1', reason: 'unreadable' }, target: ORIGIN }]);
+    /* RED WHEN: the wallet keeps no record of what it showed and sent for a request to pay, so the next wait that never ends cannot be told apart. */
+    expect(readAskRecord(port).map((l) => `${l.what} ${l.detail}`)).toEqual(expect.arrayContaining([
+      'asked balance', 'shown refused', 'sent refused:unreadable',
+    ]));
     void afterTheAnswer;
   });
 });

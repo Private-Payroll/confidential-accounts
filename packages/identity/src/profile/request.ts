@@ -150,6 +150,15 @@ import type { Registry } from './attributes.js';
 export const REQUEST_SCHEMA = 'midnight-identity/disclosure-request/v1';
 
 /**
+ * **THE ONE MESSAGE A WALLET SENDS WHILE IT WORKS**, named here so that an
+ * asker can say it knows it: an ask carrying `progress` set to exactly this
+ * string is told what the wallet is doing while it works. An ask without it,
+ * or with any other value, is told nothing until the answer - which is all a
+ * page that does not know this message can safely hear.
+ */
+export const PROGRESS_SCHEMA = 'midnight-identity/wallet-progress/v1';
+
+/**
  * THE KINDS THIS WALLET ANSWERS.
  *
  * `approve` is deliberately absent: it is the proposal signature, it needs a
@@ -188,6 +197,11 @@ export interface Asking {
   readonly purpose: string;
   readonly nonce: string;
   readonly expiresAt: number;
+  /**
+   * The asker said it knows `PROGRESS_SCHEMA`. Present only when it did, and
+   * it widens nothing: what it opens is a stage name while the wallet works.
+   */
+  readonly hearsProgress?: true;
 }
 
 /** The request, AFTER parsing — `origin` is the browser's, not the payload's. */
@@ -679,6 +693,7 @@ function common(
       purpose: body['purpose'],
       nonce: body['nonce'],
       expiresAt,
+      ...(body['progress'] === PROGRESS_SCHEMA ? { hearsProgress: true as const } : {}),
     },
   };
 }

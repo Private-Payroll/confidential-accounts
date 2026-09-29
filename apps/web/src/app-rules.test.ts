@@ -83,6 +83,7 @@ const WORKER_ENTRIES = Object.keys(WORKERS).map((p) => relative(ROOT, join(ROOT,
  */
 const STARTED_BY: Readonly<Record<string, { file: string; as: string }>> = {
   'packages/web-shared/src/vault-worker-entry.ts': { file: 'packages/web-shared/src/vault-worker-client.ts', as: './vault-worker-entry.js' },
+  'packages/web-shared/src/vault-proof-worker-entry.ts': { file: 'packages/web-shared/src/vault-proof-workers.ts', as: './vault-proof-worker-entry.js' },
 };
 const STAND_IN = 'apps/web/src/adapters/reads.ts';
 const pageSideOf = <B extends { alias: unknown[] }>(build: B): B =>

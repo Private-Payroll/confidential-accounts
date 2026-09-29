@@ -3,7 +3,7 @@ import type { DefaultConfiguration, InitParams } from '@midnightntwrk/wallet-sdk
 import type { ProvingService, UnboundTransaction } from '@midnightntwrk/wallet-sdk/proving';
 import type { Identity } from 'midnight-identity';
 import { INDEXER_HTTP_URL, INDEXER_WS_URL, NETWORK } from '../config.js';
-import { secretKeysFor, walletFor } from './balance.js';
+import { secretKeysFor, walletFor, walletRestoredFrom } from './balance.js';
 import { unshieldedWalletFor } from './unshielded.js';
 import { dustSecretKeyFor, dustWalletFor } from './dust.js';
 
@@ -74,13 +74,27 @@ export type FacadeServiceOverrides = Partial<Pick<
  * The facade over ONE account's three wallets. The caller chooses the
  * prover — that is the whole seam — and `start` is the caller's to invoke:
  * nothing syncs, proves or submits because this function ran.
+ *
+ * `restoreShieldedFrom` is a sealed checkpoint's snapshot of this account's
+ * private part: the part is rebuilt from it and reads only what is new. A
+ * snapshot the SDK refuses is a cache miss, never a dead end, and the part
+ * starts from nothing as before. **The caller must have taken it for THIS
+ * account** - the checkpoint store files each one under the account's own coin
+ * public key for exactly that reason.
  */
 export async function facadeFor(
   identity: Identity,
   account: number,
   provingService: ProvingService<UnboundTransaction>,
   overrides: FacadeServiceOverrides = {},
+  from: { readonly restoreShieldedFrom?: string } = {},
 ): Promise<WalletFacade> {
+  const shielded = () => {
+    if (from.restoreShieldedFrom !== undefined) {
+      try { return walletRestoredFrom(from.restoreShieldedFrom); } catch { /* a cache miss: the cold door below */ }
+    }
+    return walletFor(identity, account);
+  };
   return WalletFacade.init({
     /* History is later, audited work — the same no-op every wallet uses, so
      * no fact about payments enters any store through the facade either. */
@@ -88,12 +102,34 @@ export async function facadeFor(
       ...FACADE_CONFIG,
       txHistoryStorage: new NoOpTransactionHistoryStorage(),
     },
-    shielded: () => walletFor(identity, account),
+    shielded,
     unshielded: () => unshieldedWalletFor(identity, account),
     dust: () => dustWalletFor(identity, account),
     provingService: () => provingService,
     ...overrides,
   });
+}
+
+/**
+ * **STARTS WHAT A PAGE'S PAYMENT USES, AND NOT THE DUST WALLET.** `start`
+ * starts all three wallets and the pending-transactions service, always. A
+ * page's deposit balances private or public coins and never DUST - the
+ * company's fee payer pays the fee - so reading DUST from the beginning of the
+ * chain beside the private read only slowed the read the payment waits for
+ * (measured on 29 Sep: the private read 34.6 s alone, 68.2 s beside the DUST read). Balancing, signing,
+ * finishing and letting go all still work on the parts started here, and the
+ * pending-transactions service still runs, so a transaction that fails or
+ * expires is still let go by it.
+ */
+export async function startForAPage(
+  facade: Pick<WalletFacade, 'shielded' | 'unshielded' | 'pendingTransactionsService'>,
+  keys: { readonly shielded: ReturnType<typeof secretKeysFor> },
+): Promise<void> {
+  await Promise.all([
+    facade.shielded.start(keys.shielded),
+    facade.unshielded.start(),
+    facade.pendingTransactionsService.start(),
+  ]);
 }
 
 /** What `facade.start` needs, derived the same way everything else is. */

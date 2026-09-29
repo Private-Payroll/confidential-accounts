@@ -115,12 +115,23 @@ const guardAccount = (account: number): void => {
   }
 };
 
+/**
+ * **HOW MANY OF THE NETWORK'S EVENTS THE WALLET APPLIES AT A TIME.** The SDK
+ * groups ten by default. Measured on 29 Sep, reading stagenet from nothing in
+ * Chromium on a four-core machine: 34.6 s and 35.6 s at ten, 21.3 s at a
+ * hundred, and the spacing between groups made no difference. What is read and
+ * what is trusted do not change; there are fewer progress reports, and one
+ * group of a hundred is held at once.
+ */
+export const READ_BATCH_SIZE = 100;
+
 const configuredWallet = (): ShieldedWalletClass => ShieldedWallet({
   networkId: NETWORK,
   indexerClientConnection: {
     indexerHttpUrl: INDEXER_HTTP_URL,
     indexerWsUrl: INDEXER_WS_URL,
   },
+  batchUpdates: { size: READ_BATCH_SIZE },
   /* History is later work; the configuration merely requires that a storage
    * exists. A no-op keeps every fact about payments out of every store
    * until history is actually built and audited. */
@@ -141,6 +152,30 @@ export function walletFor(identity: Identity, account: number): RunningShieldedW
  * SDK's own; syncing then reads only the delta since the snapshot. */
 export function walletRestoredFrom(serialized: string): RunningShieldedWallet {
   return configuredWallet().restore(serialized);
+}
+
+/**
+ * **WHETHER A STATE MAY BE WRITTEN DOWN AS A CHECKPOINT: ONLY WITH NOTHING IN
+ * FLIGHT.**
+ *
+ * A snapshot carries the coins this wallet has set aside for a transaction it
+ * has not seen land, and the coins such a transaction would pay back to it.
+ * The ledger's own way of letting set-aside coins go after their deadline does
+ * nothing (`clearPending` in `ledger-v9.d.ts` says so), and letting them go by
+ * hand needs the transaction, which does not outlive the screen that built it.
+ * So a snapshot taken with coins set aside keeps them set aside in every wallet
+ * restored from it, and every later snapshot writes them back: the person's
+ * money reads as gone on this device for good. A snapshot is therefore written
+ * only when nothing is set aside and nothing is expected - and when that cannot
+ * be read, it is not written. Missing a checkpoint costs one slow read.
+ */
+export function nothingInFlight(state: unknown): boolean {
+  const local = (state as { state?: { state?: { pendingSpends?: unknown; pendingOutputs?: unknown } } } | null)
+    ?.state?.state;
+  const spends = local?.pendingSpends;
+  const outputs = local?.pendingOutputs;
+  if (!(spends instanceof Map) || !(outputs instanceof Map)) return false;
+  return spends.size === 0 && outputs.size === 0;
 }
 
 /** The shielded native token — tNIGHT — as the balances record keys it. */
@@ -243,7 +278,9 @@ const startBalanceRaw: BalanceEngine = (identity, account, onState) => {
             const { night, others, asOf } = synced;
             tell(synced);
             /* The checkpoint that makes the NEXT open cheap — sealed, and a
-             * failure to write is a failure to cache, nothing more. */
+             * failure to write is a failure to cache, nothing more. Never
+             * with anything in flight: `nothingInFlight` says why. */
+            if (!nothingInFlight(state)) return;
             try {
               void saveWalletCheckpoint(coinPublicKey, account, {
                 serialized: state.serialize(), night, others, asOf,

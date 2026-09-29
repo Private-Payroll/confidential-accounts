@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Buffer as PolyfillBuffer } from 'buffer/';
 import { IDBFactory } from 'fake-indexeddb';
-import { shieldedToken } from '@midnightntwrk/ledger-v9';
+import { ZswapLocalState, shieldedToken } from '@midnightntwrk/ledger-v9';
 import { identityFromSecret, newSecret } from 'midnight-identity';
 import type { BalanceState } from './balance.js';
 
@@ -27,6 +27,12 @@ const NIGHT_RAW = shieldedToken().raw;
 let reported: Record<string, bigint> = {};
 /** Which door the engine took: the cold one or the restore one. */
 const doors: string[] = [];
+/** What the stand-in wallet holds set aside and expected, as the SDK's local state keeps them. */
+let inFlight: { pendingSpends: Map<string, unknown>; pendingOutputs: Map<string, unknown> } = {
+  pendingSpends: new Map(), pendingOutputs: new Map(),
+};
+/** The configuration the app hands the SDK's shielded wallet. */
+const configured: unknown[] = [];
 
 vi.mock('@midnightntwrk/wallet-sdk/shielded', () => {
   const standIn = () => ({
@@ -36,6 +42,7 @@ vi.mock('@midnightntwrk/wallet-sdk/shielded', () => {
           progress: { isConnected: true, isStrictlyComplete: () => true },
           balances: reported,
           serialize: () => 'SNAPSHOT',
+          state: { state: inFlight },
         }));
         return { unsubscribe: () => {} };
       },
@@ -44,14 +51,17 @@ vi.mock('@midnightntwrk/wallet-sdk/shielded', () => {
     stop: () => Promise.resolve(),
   });
   return {
-    ShieldedWallet: () => ({
-      startWithSecretKeys: () => { doors.push('cold'); return standIn(); },
-      restore: () => { doors.push('restore'); return standIn(); },
-    }),
+    ShieldedWallet: (config: unknown) => {
+      configured.push(config);
+      return {
+        startWithSecretKeys: () => { doors.push('cold'); return standIn(); },
+        restore: () => { doors.push('restore'); return standIn(); },
+      };
+    },
   };
 });
 
-const { startBalance, coinPublicKeyOf } = await import('./balance.js');
+const { READ_BATCH_SIZE, nothingInFlight, startBalance, coinPublicKeyOf } = await import('./balance.js');
 const { loadWalletCheckpoint, saveWalletCheckpoint } = await import('../accounts/storage.js');
 const { ORIGINAL_SLOT, forgetOpenWallet } = await import('../accounts/wallets-held.js');
 
@@ -60,6 +70,7 @@ beforeEach(() => {
   (globalThis as { indexedDB?: unknown }).indexedDB = new IDBFactory();
   forgetOpenWallet();
   doors.length = 0;
+  inFlight = { pendingSpends: new Map(), pendingOutputs: new Map() };
 });
 
 /** Runs the engine until it has said `count` synced states, then stops it. */
@@ -120,5 +131,45 @@ describe('the engine reads the whole balance map and seals all of it', () => {
     /* RED WHEN the live answer after it still reads only NIGHT. */
     expect(live?.night).toBe(0n);
     expect(live?.others).toEqual({ [TOKEN]: 5_000n });
+  });
+});
+
+describe('A CHECKPOINT IS NEVER WRITTEN WITH ANYTHING IN FLIGHT', () => {
+  it('a state holding coins set aside, or coins expected, is shown and never written down', async () => {
+    for (const which of ['pendingSpends', 'pendingOutputs'] as const) {
+      localStorage.clear();
+      (globalThis as { indexedDB?: unknown }).indexedDB = new IDBFactory();
+      const identity = identityFromSecret(newSecret());
+      inFlight = { pendingSpends: new Map(), pendingOutputs: new Map() };
+      inFlight[which].set('a coin', ['coin', undefined]);
+      reported = { [NIGHT_RAW]: 5n };
+      const [synced] = await syncedStates(identity, 1);
+      expect(synced?.night, which).toBe(5n);
+      await new Promise((r) => { setTimeout(r, 50); });
+      /* RED WHEN: a snapshot with coins set aside is sealed, and every wallet restored from it keeps them set aside for good. */
+      expect(await loadWalletCheckpoint(coinPublicKeyOf(identity, 0), 0, ORIGINAL_SLOT), which).toBeNull();
+    }
+  });
+
+  it('reads the ledger\'s own local state, and refuses a state it cannot read', () => {
+    const local = new ZswapLocalState();
+    /* RED WHEN: the guard reads fields the ledger does not have, so no checkpoint is ever written again. */
+    expect(nothingInFlight({ state: { state: local } })).toBe(true);
+    /* RED WHEN: a state whose in-flight coins cannot be read is written down anyway. */
+    expect(nothingInFlight({ state: {} })).toBe(false);
+    expect(nothingInFlight(null)).toBe(false);
+    expect(nothingInFlight({ state: { state: { pendingSpends: new Map(), pendingOutputs: new Map([['x', 1]]) } } })).toBe(false);
+  });
+});
+
+describe('THE WALLET READS THE NETWORK A HUNDRED EVENTS AT A TIME', () => {
+  it('hands the SDK a batch of a hundred and nothing else about the read', async () => {
+    configured.length = 0;
+    const identity = identityFromSecret(newSecret());
+    reported = {};
+    await syncedStates(identity, 1);
+    /* RED WHEN: the batch goes back to the SDK's ten, and a cold private read takes about three fifths longer. */
+    expect((configured[0] as { batchUpdates?: unknown }).batchUpdates).toEqual({ size: READ_BATCH_SIZE });
+    expect(READ_BATCH_SIZE).toBe(100);
   });
 });

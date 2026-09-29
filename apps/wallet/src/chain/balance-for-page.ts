@@ -75,6 +75,12 @@ export interface UnboundTransactionLike {
 export interface ReadingProgress {
   readonly isConnected: boolean;
   isStrictlyComplete(): boolean;
+  /** How far the private part has applied, and the furthest it has heard of. */
+  readonly appliedIndex?: bigint;
+  readonly highestIndex?: bigint;
+  /** The same, as the public part reports it. */
+  readonly appliedId?: bigint;
+  readonly highestTransactionId?: bigint;
 }
 
 /** One part of the wallet - its private coins or its public ones - reduced to its reports of reading the chain. */
@@ -115,6 +121,10 @@ export interface BalanceDoors {
   /** This wallet's own public address, as the ledger writes it. Asked only for a public deposit, whose change comes back here. */
   readonly ownPublicAddress?: () => string;
   readonly now?: () => number;
+  /** Each proof starting and ending, as it happens. Returns the way to stop watching. */
+  readonly watchProofs?: (watch: (event: { readonly op: 'prove' | 'check'; readonly at: 'start' | 'end' }) => void) => () => void;
+  /** Stops the wallet's parts these doors started. Safe to call when nothing was started. */
+  readonly stop?: () => Promise<void>;
 }
 
 /** The only token kinds this wallet ever balances for a page's private deposit. */
@@ -153,16 +163,30 @@ export class NotAsApproved extends BalanceRefused {
 }
 
 /**
- * **HOW LONG THE WALLET WAITS FOR THE CHAIN TO ANSWER AT ALL.** It covers only
- * silence: once every part that pays has connected, the wait is for reading,
- * which is the person's to watch and to walk away from, and no clock ends it.
- * Measured once, on 27 Sep, from one machine: a wallet started from nothing
- * was still hearing nothing on its private part 20 seconds in and had its
- * first answer by 30, then read to the end at 85 seconds; its public part, for
- * an address with no history, answered within a second. The private read
- * starts from the beginning of the chain, so it grows as the chain does. The
- * clock is set well clear of that silence so that a wallet which is only slow
- * to hear back is not told it could not reach the network.
+ * The payment was finished and the page had already been answered, so it was
+ * not handed over and what it set aside was let go.
+ */
+export class NotHandedOver extends BalanceRefused {
+  constructor(message: string) {
+    super(message);
+    this.name = 'NotHandedOver';
+  }
+}
+
+/**
+ * **HOW LONG THE WALLET'S READ MAY GO WITHOUT MOVING BEFORE IT GIVES UP.** It
+ * is a silence and not a total: every report that shows the read has moved -
+ * connected, applied further, or heard of more - starts it again, so a long
+ * read that keeps moving is never cut short, and a read that has stopped is
+ * given up on however far it got. The wallet's reading retries a lost
+ * connection by itself and never says so, which without this clock would be a
+ * wait that does not end. Measured once, on 27 Sep, from one machine: a wallet
+ * started from nothing was still hearing nothing on its private part 20 seconds
+ * in and had its first answer by 30. The clock is set well clear of that so a
+ * wallet that is only slow to hear back is not told it could not reach the
+ * network. It is sound only while the read is behind or not yet connected - a
+ * wallet that has caught up hears nothing from a quiet chain either - and that
+ * is exactly the span this clock covers: it stops when the read is complete.
  */
 export const CHAIN_SILENCE_GIVE_UP_MS = 120_000;
 
@@ -175,13 +199,26 @@ const CHAIN_STOPPED =
   'this wallet stopped reading the network before it had found your coins, so it paid nothing. Check your '
   + 'connection and try again. Nothing has been paid.';
 
+export const CHAIN_WENT_QUIET =
+  'this wallet stopped hearing from the network part of the way through finding your coins, so it paid '
+  + 'nothing. Check your connection and try again. Nothing has been paid.';
+
 export interface WaitingForTheChain {
   /** Called once, when the wallet has to wait for the chain before it can pay. */
   readonly onReading?: () => void;
-  /** Called once the wallet has read the chain and is about to add its coins. */
+  /** Called on every report that shows the read has moved. Never from a clock. */
+  readonly onRead?: () => void;
+  /** Called once the wallet has read the chain and is about to add its coins: the last moment nothing is booked. */
   readonly onBalancing?: () => void;
   /** Asked after the wait and before anything is booked: false stops here. */
   readonly stillWanted?: () => boolean;
+  /**
+   * **HANDS THE FINISHED TRANSACTION TO THE PAGE, AND SAYS WHETHER IT WENT.**
+   * Called once, with what is booked still booked. `false` - the page had
+   * already been answered - lets the booked coins go and refuses, so a
+   * transaction nobody will send never reads as paid.
+   */
+  readonly handOver?: (finished: string) => boolean;
   readonly giveUpMs?: number;
   readonly timers?: {
     set(run: () => void, ms: number): unknown;
@@ -224,10 +261,13 @@ export function untilItHasReadTheChain(
       return;
     }
     const seen: (ReadingProgress | null)[] = parts.map(() => null);
+    /* What each part last said about how far it had got, to tell a report that moved from one that did not. */
+    const where: (string | null)[] = parts.map(() => null);
     const subscriptions: { unsubscribe(): void }[] = [];
     let over = false;
     let told = false;
     let silence: unknown = null;
+    let everConnected = false;
     const finish = (failure?: Error): void => {
       if (over) return;
       over = true;
@@ -236,20 +276,42 @@ export function untilItHasReadTheChain(
       for (const s of subscriptions) s.unsubscribe();
       if (failure) reject(failure); else resolve();
     };
+    /* **ARMED AGAIN ON EVERY REPORT THAT MOVED, AND ONLY ON ONE.** Never cleared while the read is incomplete. */
+    const armSilence = (): void => {
+      if (silence !== null) timers.clear(silence);
+      silence = timers.set(
+        () => finish(new ChainUnread(everConnected ? CHAIN_WENT_QUIET : CHAIN_WOULD_NOT_ANSWER)),
+        watch.giveUpMs ?? CHAIN_SILENCE_GIVE_UP_MS);
+    };
     const look = (): void => {
       if (over) return;
       if (seen.every((p) => p !== null && p.isConnected && p.isStrictlyComplete())) { finish(); return; }
       if (!told) { told = true; watch.onReading?.(); }
-      if (silence !== null && seen.every((p) => p !== null && p.isConnected)) {
-        timers.clear(silence);
-        silence = null;
-      }
     };
-    silence = timers.set(() => finish(new ChainUnread(CHAIN_WOULD_NOT_ANSWER)), watch.giveUpMs ?? CHAIN_SILENCE_GIVE_UP_MS);
+    const heard = (i: number, progress: ReadingProgress): void => {
+      seen[i] = progress;
+      if (progress.isConnected) everConnected = true;
+      /*
+       * **MOVED MEANS IT SAYS SOMETHING NEW**: connected or not, how far it has
+       * applied, the furthest it has heard of - each part in its own words (the
+       * private part's indices, the public part's transaction ids). The network
+       * repeats a public part's progress on a timer while nothing moves, so a
+       * report that says the same thing again is silence, and so is one that
+       * says nothing at all after the first.
+       */
+      const at = `${String(progress.isConnected)}|${String(progress.appliedIndex ?? progress.appliedId)}|${String(progress.highestIndex ?? progress.highestTransactionId)}`;
+      const moved = at !== where[i];
+      where[i] = at;
+      if (!moved) { look(); return; }
+      armSilence();
+      watch.onRead?.();
+      look();
+    };
+    armSilence();
     parts.forEach((part, i) => {
       if (over) return;
       const subscription = part!.state.subscribe({
-        next: (state) => { seen[i] = state.progress; look(); },
+        next: (state) => { heard(i, state.progress); },
         error: () => finish(new ChainUnread(CHAIN_STOPPED)),
         complete: () => finish(new ChainUnread(CHAIN_STOPPED)),
       });
@@ -621,8 +683,13 @@ export async function payForThePage(
       if (why !== null) throw new NotAsApproved(`${why}, so it signed nothing. Nothing has been paid.`);
     }
     const signed = await facade.signRecipe(recipe as never, doors.signSegment());
-    const finished = await facade.finalizeRecipe(signed as never);
-    return base64FromBytes(finished.serialize());
+    const finished = base64FromBytes((await facade.finalizeRecipe(signed as never)).serialize());
+    if (watch.handOver !== undefined && !watch.handOver(finished)) {
+      throw new NotHandedOver(
+        'This payment was not handed to the page, because the request had already ended there. '
+        + 'Nothing has been paid.');
+    }
+    return finished;
   } catch (e) {
     try { await facade.revert(recipe as never); } catch { /* the original failure is the one to report */ }
     throw e;

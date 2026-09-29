@@ -94,6 +94,8 @@ export default defineConfig({
       '../../packages/web-shared/src/vault-worker-entry.ts',
       '../../packages/web-shared/src/proving-worker-entry.ts',
       '../../packages/web-shared/src/payslip-worker-entry.ts',
+      /* Started by the vault worker, never by the page: a thread of its own for each proof of a private deposit. */
+      '../../packages/web-shared/src/vault-proof-worker-entry.ts',
     ],
   },
   /*

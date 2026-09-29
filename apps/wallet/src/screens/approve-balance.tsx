@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { Identity } from 'midnight-identity/keys/derivation';
 import type { BalanceRequest } from 'midnight-identity/profile/request';
-import type { Channel } from 'midnight-identity/profile/channel';
+import type { Channel, ProgressStage } from 'midnight-identity/profile/channel';
 import { balancedAnswerFor } from 'midnight-identity/profile/balance';
 import type { LeavesTheWallet } from 'midnight-identity/profile/balance';
 import { companyFingerprint } from 'midnight-identity/profile/fingerprint';
@@ -10,13 +10,17 @@ import { Button, Section } from 'vaults-ui';
 import { StatusAlert } from '../components/status.js';
 import { hrefOf } from '../routes.js';
 import {
-  BalanceRefused, payForThePage, readWhatThePageAsks, whyThePaymentFailed,
+  BalanceRefused, NotHandedOver, payForThePage, readWhatThePageAsks, whyThePaymentFailed,
 } from '../chain/balance-for-page.js';
 import type {
   BalanceDoors, FacadeForBalancing, LedgerForBalancing, PageAskPays, UnboundTransactionLike,
 } from '../chain/balance-for-page.js';
-import { facadeFor, facadeKeysFor } from '../chain/facade.js';
+import { facadeFor, facadeKeysFor, startForAPage } from '../chain/facade.js';
 import { makeBrowserProvingService } from '../chain/proving.js';
+import type { ProofEvent } from '../chain/proving.js';
+import { coinPublicKeyOf } from '../chain/balance.js';
+import { loadWalletCheckpoint } from '../accounts/storage.js';
+import { openWalletId } from '../accounts/wallets-held.js';
 import { unshieldedKeystoreFor } from '../chain/unshielded.js';
 import { nightFromStars } from '../chain/amount.js';
 import type { Consent } from '../framing.js';
@@ -35,14 +39,27 @@ import type { Consent } from '../framing.js';
  * The live doors: the wallet the person chose, on the real network, proving in
  * this browser. The wallet is started on the press and holds nothing until it
  * has read the chain; `payForThePage` waits for that before it adds a coin.
+ *
+ * **ITS PRIVATE PART STARTS FROM WHERE THIS WALLET LAST GOT TO**, when this
+ * browser holds a checkpoint for it, and reads only what is new; otherwise it
+ * reads from the beginning. Either way nothing is paid until it has heard the
+ * network say it is up to date: a restored wallet reports itself unconnected
+ * until then. **Nothing here ever writes a checkpoint**, and its DUST part is
+ * never started - a page's deposit pays no fee from here.
  */
 export const liveBalanceDoors = (identity: Identity, account: number): BalanceDoors & { stop: () => Promise<void> } => {
+  /* Decided now, while this wallet is the one on screen; the balance engine captures it for the same reason. */
+  const walletId = openWalletId();
+  const proofWatchers = new Set<(event: ProofEvent) => void>();
   let running: Promise<Awaited<ReturnType<typeof facadeFor>>> | null = null;
   const facade = () => {
     running ??= (async () => {
-      const started = await facadeFor(identity, account, makeBrowserProvingService());
-      const keys = facadeKeysFor(identity, account);
-      await started.start(keys.shielded, keys.dust);
+      const checkpoint = await loadWalletCheckpoint(coinPublicKeyOf(identity, account), account, walletId);
+      const proving = makeBrowserProvingService(undefined, {
+        onProof: (event) => { for (const watch of proofWatchers) watch(event); },
+      });
+      const started = await facadeFor(identity, account, proving, {}, { restoreShieldedFrom: checkpoint?.serialized });
+      await startForAPage(started, facadeKeysFor(identity, account));
       return started;
     })();
     return running as unknown as Promise<FacadeForBalancing>;
@@ -56,6 +73,7 @@ export const liveBalanceDoors = (identity: Identity, account: number): BalanceDo
     },
     signSegment: () => unshieldedKeystoreFor(identity, account).signDataAsync,
     ownPublicAddress: () => String(unshieldedKeystoreFor(identity, account).getAddress()),
+    watchProofs: (watch) => { proofWatchers.add(watch); return () => { proofWatchers.delete(watch); }; },
     stop: async () => {
       if (running === null) return;
       const f = await running.catch(() => null);
@@ -83,7 +101,7 @@ type Stage =
 
 export function ApproveBalance({
   request, identity, account, channel, consent, whoIsAsking, whichWallet, onDecline,
-  doorsFor = liveBalanceDoors, now = Date.now,
+  doorsFor = liveBalanceDoors, now = Date.now, onStage, onBusy,
 }: {
   readonly request: BalanceRequest;
   readonly identity: Identity;
@@ -92,9 +110,14 @@ export function ApproveBalance({
   readonly consent: Consent;
   readonly whoIsAsking: ReactNode;
   readonly whichWallet: ReactNode;
-  readonly onDecline: () => void;
+  /** The person turned the request down, or closed a request this wallet refused: `unreadable` says which. */
+  readonly onDecline: (why?: 'unreadable') => void;
   readonly doorsFor?: (identity: Identity, account: number) => BalanceDoors;
   readonly now?: () => number;
+  /** Told each stage as it goes on screen, for the wallet's own record. */
+  readonly onStage?: (stage: string) => void;
+  /** Told whether the wallet that pays may still be changed: not while a press runs, and not once the page has its answer. */
+  readonly onBusy?: (locked: boolean) => void;
 }): ReactNode {
   const doors = useMemo(() => doorsFor(identity, account), [doorsFor, identity, account]);
   const [stage, setStage] = useState<Stage>({ of: 'reading' });
@@ -105,54 +128,157 @@ export function ApproveBalance({
   /* The wallet on screen now. A press belongs to the wallet it was made with, and stops if the person picks another. */
   const onScreen = useRef(doors);
   useEffect(() => { onScreen.current = doors; }, [doors]);
-  const decline = useCallback((): void => { declined.current = true; onDecline(); }, [onDecline]);
+  const channelNow = useRef(channel);
+  channelNow.current = channel;
+  /*
+   * **A PRESS IN FLIGHT OWNS THE ANSWER.** Every wallet with a press still
+   * running, and how many of those presses have begun setting coins aside.
+   * While one runs, nothing else on this screen may end the request; once one
+   * has set coins aside, "no" can no longer be honoured without letting them go
+   * first, so it is not offered.
+   */
+  const pressing = useRef(new Set<BalanceDoors>());
+  const booking = useRef(0);
+  /*
+   * **ONE PRESS AT A TIME, AND THE SCREEN SHOWS IT.** While a press runs, Pay
+   * is not offered again and the wallet cannot be changed, so no second press
+   * can race the first to the page; once it has set coins aside, "no" and
+   * "close" are not offered either, because they could no longer be honoured.
+   */
+  const [busy, setBusy] = useState(false);
+  const [held, setHeld] = useState(false);
+  const tellBusy = useRef(onBusy);
+  tellBusy.current = onBusy;
+  const tellStage = useRef(onStage);
+  tellStage.current = onStage;
+  useEffect(() => { tellStage.current?.(stage.of === 'paying' && stage.reading ? 'paying-reading' : stage.of); }, [stage]);
+  /*
+   * **THE WALLET'S PARTS STOP WHEN THEIR SCREEN GOES**, or when the person picks
+   * another wallet - except a wallet whose press is still running, which stops
+   * the moment that press is over, so an approved payment is never cut off.
+   */
+  useEffect(() => () => { if (!pressing.current.has(doors)) void doors.stop?.(); }, [doors]);
+  const decline = useCallback((): void => {
+    if (booking.current > 0) return;
+    declined.current = true;
+    onDecline();
+  }, [onDecline]);
+  /* The request was refused before anybody could approve it; closing says so again, and the channel sends it once. */
+  const close = useCallback((): void => {
+    if (pressing.current.size > 0) return;
+    declined.current = true;
+    onDecline('unreadable');
+  }, [onDecline]);
 
   /* Read once per ask and per wallet. Reading pays nothing and books nothing. */
   useEffect(() => {
     let alive = true;
     setStage({ of: 'reading' });
+    /*
+     * **A REQUEST THIS WALLET WILL NOT PAY FOR IS ANSWERED AS IT IS REFUSED**,
+     * so the page is not left waiting for a press that cannot come - unless a
+     * press made with another wallet is still running, which owns the answer.
+     */
+    const refuse = (says: string): void => {
+      setStage({ of: 'refused', says });
+      if (pressing.current.size === 0) channelNow.current?.refuse('unreadable');
+    };
     void doors.ledger().then((ledger) => {
       if (!alive) return;
       try {
         const read = readWhatThePageAsks(ledger, request.transaction, request.vault);
         setStage({ of: 'ready', tx: read.tx, leaves: read.leaves, pays: read.pays });
       } catch (e) {
-        setStage({ of: 'refused', says: e instanceof BalanceRefused ? e.message : 'Nothing has been paid.' });
+        refuse(e instanceof BalanceRefused ? e.message : 'Nothing has been paid.');
       }
-    }, () => { if (alive) setStage({ of: 'refused', says: 'This wallet could not load what it reads a transaction with. Nothing has been paid.' }); });
+    }, () => { if (alive) refuse('This wallet could not load what it reads a transaction with. Nothing has been paid.'); });
     return () => { alive = false; };
   }, [doors, request.transaction, request.vault]);
 
   const pay = useCallback((): void => {
-    if (stage.of !== 'ready' || channel === null) return;
+    if (stage.of !== 'ready' || channel === null || channel.over() || pressing.current.size > 0) return;
     const { tx, leaves, pays } = stage;
     const pressedWith = doors;
     const stillThisWallet = (): boolean => onScreen.current === pressedWith;
+    let booked = false;
+    let sentAt = 0;
+    /*
+     * **WHAT THE WALLET IS DOING, SAID TO THE PAGE AS IT HAPPENS**: each report
+     * of the read that moved, the moment before coins are added, and each proof
+     * starting or ending. Never from a clock. A stage already said is said again
+     * at most once a second, which is still only ever on an event.
+     */
+    let said: { stage: ProgressStage; at: number } | null = null;
+    const say = (next: ProgressStage): void => {
+      const at = now();
+      if (said !== null && said.stage === next && at - said.at < 1_000) return;
+      said = { stage: next, at };
+      channel.progress(next);
+    };
+    const unwatch = pressedWith.watchProofs?.(() => say('proving'));
+    pressing.current.add(pressedWith);
+    setBusy(true);
+    const over = (): void => {
+      unwatch?.();
+      pressing.current.delete(pressedWith);
+      if (booked) booking.current -= 1;
+      if (mounted.current) { setBusy(pressing.current.size > 0); setHeld(booking.current > 0); }
+      if (!mounted.current || !stillThisWallet()) void pressedWith.stop?.();
+    };
     setStage({ of: 'paying', reading: false, leaves, pays });
-    void payForThePage(doors, tx, { pays, leaves }, {
+    void payForThePage(pressedWith, tx, { pays, leaves }, {
       onReading: () => { if (!declined.current && stillThisWallet()) setStage({ of: 'paying', reading: true, leaves, pays }); },
-      onBalancing: () => { if (stillThisWallet()) setStage({ of: 'paying', reading: false, leaves, pays }); },
+      onRead: () => say('reading'),
+      onBalancing: () => {
+        booked = true;
+        booking.current += 1;
+        if (mounted.current) setHeld(true);
+        say('proving');
+        if (stillThisWallet()) setStage({ of: 'paying', reading: false, leaves, pays });
+      },
       /* **ASKED LAST BEFORE ANY COIN IS SET ASIDE**: not if the person said no, left, or picked another wallet. */
       stillWanted: () => !declined.current && mounted.current && stillThisWallet(),
-    }).then((finished) => {
-      /* A "no" that landed in the moment before the button went down: the page was told so, and is handed nothing. */
-      if (declined.current) return;
-      const at = now();
-      channel.answer(balancedAnswerFor(request, finished, leaves, at));
-      setStage({ of: 'sent', at, leaves, pays });
+      /*
+       * **HANDED OVER ONLY IF THE PAGE HAS NOT ALREADY BEEN ANSWERED.** A "no"
+       * that landed in the moment before the button went down was sent then; a
+       * press made with another wallet may have answered first. Either way this
+       * one is not handed over, and what it set aside is let go.
+       */
+      handOver: (finished) => {
+        sentAt = now();
+        return !declined.current && channel.answer(balancedAnswerFor(request, finished, leaves, sentAt));
+      },
+    }).then(() => {
+      over();
+      setStage({ of: 'sent', at: sentAt, leaves, pays });
     }, (e: unknown) => {
-      /* The person said no while the wallet was reading, and the page was told so then; or picked another wallet, whose screen now stands. */
-      if (declined.current || !stillThisWallet()) return;
-      /* **THE PERSON APPROVED, SO THE PAGE IS TOLD IT FAILED, NEVER THAT THEY DECLINED.** */
-      channel.refuse('failed', whyThePaymentFailed(e));
+      over();
+      /* The person said no, and the page was told so then. */
+      if (declined.current) return;
+      /* Stopped before anything was set aside because another wallet was picked: that wallet's screen stands. */
+      if (!booked && !stillThisWallet()) return;
+      /*
+       * **THE PERSON APPROVED, SO THE PAGE IS TOLD IT FAILED, NEVER THAT THEY
+       * DECLINED** - and only now, after what was set aside has been let go.
+       * If the page was already answered, nothing more crosses, and a press
+       * made with a wallet no longer on screen leaves that screen as it is.
+       */
+      const told = channel.refuse('failed', whyThePaymentFailed(e));
+      if (!told && !stillThisWallet()) return;
       setStage({
         of: 'failed', leaves, pays,
-        says: pays === 'public'
-          ? `${e instanceof Error ? e.message : String(e)} The page was given nothing and has been told this payment failed.`
-          : `${e instanceof Error ? e.message : String(e)} Anything this wallet set aside for it has been let go. The page was given nothing and has been told this payment failed.`,
+        says: e instanceof NotHandedOver
+          ? e.message
+          : pays === 'public'
+            ? `${e instanceof Error ? e.message : String(e)} The page was given nothing and has been told this payment failed.`
+            : `${e instanceof Error ? e.message : String(e)} Anything this wallet set aside for it has been let go. The page was given nothing and has been told this payment failed.`,
       });
     });
   }, [stage, channel, doors, request, now]);
+
+  /* The wallet stays as it is while a press runs and once the page has been answered. */
+  const locked = busy || stage.of === 'sent' || stage.of === 'failed';
+  useEffect(() => { tellBusy.current?.(locked); }, [locked]);
 
   const publicly = stage.of !== 'reading' && stage.of !== 'refused' && stage.pays === 'public';
   const headline = (
@@ -299,13 +425,19 @@ export function ApproveBalance({
           size="lg"
           type="button"
           variant="default" onClick={pay} data-approve data-pay
-          disabled={!consent.ok || stage.of !== 'ready' || channel === null}
+          disabled={!consent.ok || stage.of !== 'ready' || channel === null || busy || channel.over()}
         >
           {publicly ? 'Pay publicly into the vault' : 'Pay into the vault'}
         </Button>
-        <Button size="lg" type="button" variant="ghost" data-decline onClick={decline} disabled={stage.of === 'paying' && !stage.reading}>
-          Do not pay
-        </Button>
+        {stage.of === 'refused' ? (
+          <Button size="lg" type="button" variant="ghost" data-close onClick={close} disabled={busy}>
+            Close
+          </Button>
+        ) : (
+          <Button size="lg" type="button" variant="ghost" data-decline onClick={decline} disabled={held || (stage.of === 'paying' && !stage.reading)}>
+            Do not pay
+          </Button>
+        )}
       </div>
     </>
   );

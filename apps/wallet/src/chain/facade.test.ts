@@ -6,10 +6,10 @@ import { MidnightBech32m } from '@midnightntwrk/wallet-sdk-address-format';
 import { NoOpTransactionHistoryStorage, WalletFacade } from '@midnightntwrk/wallet-sdk';
 import { addressFor, identityFromWords } from 'midnight-identity';
 import type { Identity } from 'midnight-identity';
-import { EMPTY } from 'rxjs';
+import { EMPTY, firstValueFrom } from 'rxjs';
 import { NETWORK } from '../config.js';
 import { walletFor } from './balance.js';
-import { FACADE_CONFIG, NODE_RPC_URL, facadeFor, facadeKeysFor, failingProving } from './facade.js';
+import { FACADE_CONFIG, NODE_RPC_URL, facadeFor, facadeKeysFor, failingProving, startForAPage } from './facade.js';
 import type { FacadeServiceOverrides } from './facade.js';
 import { unshieldedAddressFor, unshieldedWalletFor } from './unshielded.js';
 import { dustAddressFor, dustWalletFor } from './dust.js';
@@ -135,4 +135,45 @@ describe('the facade composes the SAME wallets the screens show', () => {
     expect(dustAddressFor(ours, 2)).toContain('mn_dust_stagenet1');
     expect(() => facadeKeysFor(ours, 1)).toThrow(/authority/);
   });
+});
+
+describe('A PAGE\'S PAYMENT STARTS WHAT IT PAYS FROM, FROM WHERE THIS WALLET LAST GOT TO', () => {
+  it('starts the private part, the public part and the pending transactions - and never the DUST wallet', async () => {
+    const started: string[] = [];
+    const part = (name: string) => ({ start: async () => { started.push(name); } });
+    await startForAPage({
+      shielded: part('shielded'), unshielded: part('unshielded'), pendingTransactionsService: part('pending'),
+      dust: part('dust'),
+    } as never, facadeKeysFor(ours, 2));
+    /* RED WHEN: the payment starts DUST's read from the beginning of the chain beside the one it waits for, or stops letting a failed transaction go. */
+    expect(started.sort()).toEqual(['pending', 'shielded', 'unshielded']);
+  });
+
+  it('rebuilds the private part from a snapshot of this account, which says it is not connected until it hears the network', async () => {
+    const cold = walletFor(ours, 2);
+    /* A snapshot that has read to event 4242, so a part rebuilt from it can be told apart from one started cold. */
+    const serialized = JSON.stringify({ ...JSON.parse(await cold.serializeState()) as object, offset: '4242' });
+    await cold.stop().catch(() => {});
+    const facade = await facadeFor(ours, 2, failingProving, offlineServices, { restoreShieldedFrom: serialized });
+    try {
+      /* RED WHEN: the snapshot is ignored and the part starts from nothing, or it comes back as another account's. */
+      expect(MidnightBech32m.encode(NETWORK, await facade.shielded.getAddress()).asString())
+        .toBe(addressFor(ours.moneyAt(2).zswap, NETWORK).bech32);
+      const first = await firstValueFrom(facade.shielded.state);
+      /* RED WHEN: the snapshot is not used, and the payment reads the private chain from the beginning again. */
+      expect(first.progress.appliedIndex).toBe(4242n);
+      /* RED WHEN: a restored part reports itself connected before it has heard the network - balancing could then run on the snapshot's own view. */
+      expect(first.progress.isConnected).toBe(false);
+    } finally {
+      await facade.stop().catch(() => {});
+    }
+    const damaged = await facadeFor(ours, 2, failingProving, offlineServices, { restoreShieldedFrom: 'not a snapshot' });
+    try {
+      /* RED WHEN: a snapshot the SDK refuses stops the payment instead of reading from the beginning. */
+      expect(MidnightBech32m.encode(NETWORK, await damaged.shielded.getAddress()).asString())
+        .toBe(addressFor(ours.moneyAt(2).zswap, NETWORK).bech32);
+    } finally {
+      await damaged.stop().catch(() => {});
+    }
+  }, 60_000);
 });

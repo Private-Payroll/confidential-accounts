@@ -60,7 +60,11 @@ export const SERVED_FROM = [
 // 674,000: the test's own measure rose from 671,451 to 673,808 when the kit's index began to export its item (1,491
 // bytes, drawn in the panels of a person and of a proposal) and the kit's table began to stack its rows on a phone
 // and to open a row from the keyboard (866 bytes, most of it stylesheet).
-export const FIRST_DOWNLOAD_BUDGET = 674_000;
+// 676,000: the test's own measure rose from 673,808 to 675,456 on a Linux machine on 30 Sep, the same build measured
+// without its stylesheet rising by the same 1,648 bytes, when the page began to hear the wallet say it is still
+// reading or proving, to say which of the two went quiet or that the ask ran out of time, and to tell the wallet it
+// can hear that (`wallet-sign-in.ts`, `wallet-balance.ts`).
+export const FIRST_DOWNLOAD_BUDGET = 676_000;
 
 /**
  * THE WORKERS THIS APPLICATION STARTS, by their entry's path from this folder,
@@ -71,6 +75,7 @@ export const FIRST_DOWNLOAD_BUDGET = 674_000;
  */
 export const WORKERS: Readonly<Record<string, string>> = {
   '../../packages/web-shared/src/vault-worker-entry.ts': 'builds and proves a vault\'s transactions, with the ledger and the prover, which are WebAssembly',
+  '../../packages/web-shared/src/vault-proof-worker-entry.ts': 'proves one part of a private deposit beside the others, started by the vault worker and never by the page; carries the prover, which is WebAssembly',
 };
 
 /** One file of a build's output, as the bundler hands it to a plugin: a script, with what it imports, or anything else. */

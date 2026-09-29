@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { Identity, Secret } from 'midnight-identity/keys/derivation';
 import { PUBLIC_RECEIVING_ADDRESS, RECEIVING_ADDRESS, REGISTRY } from 'midnight-identity/profile/attributes';
@@ -30,6 +30,7 @@ import { addressFingerprint, companyFingerprint } from 'midnight-identity/profil
 import { EMBEDDER, INDEXER_HTTP_URL, INDEXER_WS_URL } from '../config.js';
 import { useConsent } from '../framing.js';
 import { ApproveBalance } from './approve-balance.js';
+import { recordAsk, recordChannelState, recordedChannel } from '../lib/ask-record.js';
 import { ApproveCommittee } from './approve-committee.js';
 import type { Consent } from '../framing.js';
 
@@ -364,12 +365,24 @@ export function Approve({
   /** This wallet, by the fingerprint of the secret that is answering - not by the slot it sits in. */
   const thisWallet = useMemo(() => toBase64Url(fingerprintOf(secret)), [secret]);
 
+  /* Read through a ref so that the store can never restart the conversation below. */
+  const portNow = useRef(port);
+  portNow.current = port;
   useEffect(() => {
     const target = view ?? (window as unknown as ChannelWindow);
-    const opened2 = listen(target, now, setChannelState, embedder);
+    /* What arrived and what was sent is written down, so a wait that never ended can be told apart later. */
+    const opened2 = listen(target, now, (state) => {
+      recordChannelState(portNow.current, state, now());
+      setChannelState(state);
+    }, embedder);
     setChannel(opened2);
     return () => opened2.stop();
   }, [view, now, embedder]);
+  /* A request to pay, and only that, has every message it sends written down too. */
+  const payingChannel = useMemo(
+    () => (channel === null ? null : recordedChannel(channel, portNow.current, now)), [channel, now]);
+  /* A request to pay holds the wallet it is being paid from while a press runs and once it is answered. */
+  const [walletLocked, setWalletLocked] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -1093,12 +1106,13 @@ export function Approve({
       + 'is one another site can recognise.';
   };
 
-  const whichWallet = (title: string, description: string): ReactNode => (
+  const whichWallet = (title: string, description: string, locked = false): ReactNode => (
     <Section list={false} box={false} aria-label={title} title={title} description={description}>
       <Label htmlFor="approve-subwallet" className="mb-2">Wallet</Label>
       <select
         id="approve-subwallet"
         value={String(subwallet)}
+        disabled={locked}
         onChange={(e) => { setChoseWallet(true); setSubwallet(Number(e.target.value)); }}
         className="block w-full rounded-md border border-input bg-background px-3 py-2 text-base text-foreground"
       >
@@ -1157,13 +1171,15 @@ export function Approve({
         request={request}
         identity={identity}
         account={subwallet}
-        channel={channel}
+        channel={payingChannel}
         consent={consent}
         whoIsAsking={whoIsAsking}
         whichWallet={whichWallet(
           'Which of your wallets pays',
-          'The coins come from this wallet, and only from it.')}
-        onDecline={() => { channel?.refuse('declined'); setChannelState({ of: 'waiting' }); }}
+          'The coins come from this wallet, and only from it.', walletLocked)}
+        onDecline={(why) => { payingChannel?.refuse(why ?? 'declined'); setChannelState({ of: 'waiting' }); }}
+        onStage={(shown) => recordAsk(portNow.current, 'shown', shown, now())}
+        onBusy={setWalletLocked}
       />
     );
   }
