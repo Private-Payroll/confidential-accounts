@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { Badge, Button, ComingSoon, Skeleton, Tabs, TabsContent, TabsList, TabsTrigger, useText } from 'vaults-ui';
+import { Badge, Button, ComingSoon, Progress, SectionLoading, Tabs, TabsContent, TabsList, TabsTrigger, useText } from 'vaults-ui';
 import { readHandover, type Handover } from '../adapters/handover-state.js';
 import { SessionProvider, useSession } from '../session.js';
 import type { StepId } from '../setup/step-ids.js';
@@ -98,29 +98,16 @@ export function Setup() {
             : soon !== null
               ? <p className="max-w-prose text-sm text-muted-foreground" data-coming-soon-step>{soon}</p>
               : Action === null
-                ? <Skeleton className="h-24 w-full max-w-md" data-step-reading />
+                ? <SectionLoading rows={2} data-step-reading="" />
                 : <SessionProvider session={{ ...session, company }}><Action leadTo={setCurrent} onChanged={() => { void read(); }} /></SessionProvider>}
         </TabsContent>
       </Tabs>
       <footer className="mt-auto flex flex-col gap-3 border-t pt-4" data-setup-bar>
-        <div
-          className="flex gap-1"
-          role="progressbar"
-          aria-valuemin={0}
-          aria-valuemax={EVERY_STEP.length}
-          aria-valuenow={doneCount}
-          aria-valuetext={t('setup.progress', { done: doneCount, count: EVERY_STEP.length })}
+        <Progress
+          steps={EVERY_STEP.map((s, i) => ({ id: s.id, done: standings[i] === STANDING.done }))}
+          getValueLabel={() => t('setup.progress', { done: doneCount, count: EVERY_STEP.length })}
           data-progress
-        >
-          {EVERY_STEP.map((s, i) => (
-            <span
-              key={s.id}
-              className={standings[i] === STANDING.done ? 'h-1.5 flex-1 rounded-full bg-primary' : 'h-1.5 flex-1 rounded-full bg-muted'}
-              data-mark={s.id}
-              data-standing={standings[i]}
-            />
-          ))}
-        </div>
+        />
         <div className="flex items-center justify-between gap-3">
           <span className="text-sm text-muted-foreground" data-progress-words>{t('setup.progress', { done: doneCount, count: EVERY_STEP.length })}</span>
           <div className="flex gap-2">

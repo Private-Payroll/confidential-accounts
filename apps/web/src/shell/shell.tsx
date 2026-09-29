@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { Separator, Sidebar, SidebarContent, SidebarFooter, SidebarHeader, SidebarInset, SidebarProvider, SidebarRail, SidebarTrigger, useSidebar, useText } from 'vaults-ui';
+import { PageLayout, Separator, Sidebar, SidebarContent, SidebarFooter, SidebarHeader, SidebarInset, SidebarProvider, SidebarRail, SidebarTrigger, useSidebar, useText } from 'vaults-ui';
 import { EVERY_PAGE, pagesByShortcut, PAGES, VIEWS, type Page, type PageId, type Text } from '../pages.js';
 import { go } from '../router.js';
 import { computerIsDark, MODES, themeFor } from '../preferences.js';
@@ -19,6 +19,9 @@ import { ViewBanner } from './view-banner.js';
  * the menu and the account menu down the start of the page, which fold to
  * icons; a bar across the top with the page's name and the command bar's
  * button; the page; and the right-hand panel, closed until a page opens it.
+ * As in shadcn's inset layout, the menu and the frame are the darkest shade
+ * and the page is an inset panel on it, and every page is drawn in the kit's
+ * one page layout, which sets its width.
  * The shown company's records are read once here, for every page and for the
  * menu's counts and the switcher's names.
  */
@@ -73,7 +76,7 @@ function Frame({ current, children }: { current: PageId | null; children?: React
   const page = current === null ? null : PAGES[current] as Page;
   return (
     <>
-      <Sidebar collapsible="icon" data-menu>
+      <Sidebar collapsible="icon" variant="inset" data-menu>
         <SidebarHeader><CompanySwitcher open={switcher} onOpenChange={setSwitcher} /></SidebarHeader>
         <SidebarContent><Menu current={current} /></SidebarContent>
         <SidebarFooter><AccountMenu showShortcuts={() => setHelp(true)} /></SidebarFooter>
@@ -87,7 +90,7 @@ function Frame({ current, children }: { current: PageId | null; children?: React
           <div className="ms-auto"><CommandBarButton onOpen={() => setCommandBar(true)} /></div>
         </header>
         <ViewBanner />
-        <div className="flex-1 p-6" data-page-body>{children}</div>
+        <div className="flex-1" data-page-body><PageLayout>{children}</PageLayout></div>
       </SidebarInset>
       <RightPanel />
       <CommandBar open={commandBar} onOpenChange={setCommandBar} commands={commands} />

@@ -48,13 +48,15 @@ describe('imports', () => {
     const f = src('apps/web/src/main.ts', `import 'vaults-ui/styles.css';
       import * as formatter from 'vaults-ui/format/token-amount';
       import { Amount } from 'vaults-ui';
+      import { DataTable } from 'vaults-ui/data-table';
+      import { Table } from 'vaults-ui/components/table';
       import { a } from '../../../packages/ui/src/index.js';
       import { b } from '../../../packages/uix/x.js';
       import { c } from '/packages/ui/src/lib/utils';
       import { e } from '../../../packages/UI/src/x.js';
       import { d } from './own.js';
-      console.log(a, b, c, d, e, formatter, Amount);`);
-    expect(whats(await pathsIntoTheKit([f], '/repo', 'packages/ui'))).toEqual(['vaults-ui/format/token-amount', '../../../packages/ui/src/index.js', '/packages/ui/src/lib/utils', '../../../packages/UI/src/x.js']);
+      console.log(a, b, c, d, e, formatter, Amount, DataTable, Table);`);
+    expect(whats(await pathsIntoTheKit([f], '/repo', 'packages/ui'))).toEqual(['vaults-ui/format/token-amount', 'vaults-ui/components/table', '../../../packages/ui/src/index.js', '/packages/ui/src/lib/utils', '../../../packages/UI/src/x.js']);
   });
 
   /* RED WHEN: a path into the kit used only for a type is let through because the browser is never served it. */

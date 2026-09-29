@@ -78,7 +78,8 @@ describe('a test waits for a page through the one helper', () => {
     const NAMED = ['apps/web/src/records/page-loading.test.tsx', HERE];
     const opening = TESTS.filter((f) => OPENS.test(f.text) && !NAMED.includes(f.path));
     expect(opening.map((f) => f.path).sort()).toEqual([
-      'apps/web/src/app.test.tsx', 'apps/web/src/one-menu.test.tsx', 'apps/web/src/records/pages-that-read.test.tsx', 'apps/web/src/setup/wizard.test.tsx', 'apps/web/src/shell/shell.test.tsx',
+      'apps/web/src/app.test.tsx', 'apps/web/src/foundation-look.test.tsx', 'apps/web/src/one-menu.test.tsx', 'apps/web/src/records/pages-that-read.test.tsx', 'apps/web/src/setup/wizard.test.tsx',
+      'apps/web/src/shell/shell.test.tsx',
     ]);
     for (const f of opening) {
       expect(f.text, f.path).toMatch(/from '(\.\.?\/)+page-shown\.test-support\.js'/);

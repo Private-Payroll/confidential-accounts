@@ -48,6 +48,56 @@ describe('every base colour has a light and a dark block, and nothing else does'
   });
 });
 
+/** The three surfaces, each with the token of shadcn's inset layout it paints with: the frame and menu its sidebar, the page its background, a box its card. */
+const SURFACES = { '--surface-frame': '--sidebar', '--surface-page': '--background', '--surface-box': '--card' } as const;
+/** The least lightness between the frame and the page that still reads as the page set in it. */
+const ONE_SHADE = 0.012;
+
+/** A block's tokens and their values. */
+const valuesOf = (css: string, selector: string): Record<string, string> => {
+  const body = blocksOf(css).find((b) => b.selector === selector)!.body;
+  return Object.fromEntries([...body.matchAll(/(--[a-z0-9-]+)\s*:\s*([^;]+);/g)].map((m) => [m[1]!, m[2]!.trim()]));
+};
+/** The lightness of an `oklch()` colour, or null for any other value. */
+const lightnessOf = (value: string): number | null => {
+  const m = /^oklch\(\s*([\d.]+)(%?)\s/.exec(value);
+  return m === null ? null : Number(m[1]) / (m[2] === '%' ? 100 : 1);
+};
+
+describe('the three surfaces', () => {
+  const blocks = themeBlocks(THEMES_CSS);
+
+  /*
+   * RED WHEN: a block leaves out a surface, or a surface is not the value
+   * shadcn's inset layout paints that part with in that block (the frame its
+   * sidebar, the page its background, a box its card), in any base colour,
+   * light or dark; or the frame and the page are too close to tell apart.
+   */
+  it.each(BASE_COLORS.flatMap((c) => THEMES.map((t) => [c, t] as const)))('%s, %s: the surfaces are shadcn\'s inset layout\'s', (colour, theme) => {
+    const block = blocks.find((b) => b.colour === colour && b.theme === theme)!;
+    const values = valuesOf(THEMES_CSS, block.selector);
+    for (const [surface, token] of Object.entries(SURFACES)) {
+      expect(values[surface], `${colour} ${theme} ${surface}`).toBeDefined();
+      expect(values[surface], `${colour} ${theme} ${surface}`).toBe(values[token]);
+    }
+    const frame = lightnessOf(values['--surface-frame']!);
+    const page = lightnessOf(values['--surface-page']!);
+    expect(frame !== null && page !== null, `${colour} ${theme}`).toBe(true);
+    expect(Math.abs(frame! - page!), `${colour} ${theme} frame to page`).toBeGreaterThanOrEqual(ONE_SHADE);
+  });
+
+  /* RED WHEN: the menu, the page or a box is painted with anything but its surface, so a component painting one of them would choose its own shade. */
+  it('paints the menu, the page and every box with the surfaces', () => {
+    const painted = Object.fromEntries([...STYLES_CSS.matchAll(/(--color-(?:sidebar|background|card)):\s*var\((--[a-z0-9-]+)\)/g)].map((m) => [m[1]!, m[2]!]));
+    expect(painted).toEqual({ '--color-sidebar': '--surface-frame', '--color-background': '--surface-page', '--color-card': '--surface-box' });
+  });
+
+  /* RED WHEN: the lightness reader misreads a value, so the order above is checked against the wrong numbers. */
+  it('reads a colour\'s lightness', () => {
+    expect([lightnessOf('oklch(0.955 0.001 286)'), lightnessOf('oklch(95% 0 0)'), lightnessOf('oklch(1 0 0 / 10%)'), lightnessOf('#fff')]).toEqual([0.955, 0.95, 1, null]);
+  });
+});
+
 describe('the block reader', () => {
   /* RED WHEN: the reader takes a block with a colour it cannot name, or misreads which theme or colour a selector is. */
   it('reads each selector shape and nothing else', () => {

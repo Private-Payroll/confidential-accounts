@@ -1,4 +1,6 @@
-import { Button, useText } from 'vaults-ui';
+import { HugeiconsIcon } from '@hugeicons/react';
+import { Home01Icon, UnavailableIcon } from '@hugeicons/core-free-icons';
+import { Button, EmptyState, useText } from 'vaults-ui';
 import { PageLink } from '../router.js';
 import type { PageId } from '../pages.js';
 
@@ -12,10 +14,14 @@ import type { PageId } from '../pages.js';
 export function NoPage({ home }: { home: PageId }) {
   const t = useText();
   return (
-    <section className="flex flex-col items-start gap-3" data-screen="no-page">
-      <h1 className="text-xl font-semibold">{t('noPage.title')}</h1>
-      <p className="max-w-prose text-sm text-muted-foreground">{t('noPage.body')}</p>
-      <Button asChild variant="outline"><PageLink to={home}>{t('noPage.home')}</PageLink></Button>
-    </section>
+    <div className="flex flex-col gap-6" data-screen="no-page">
+      <EmptyState
+        icon={UnavailableIcon}
+        title={t('noPage.title')}
+        action={<Button asChild variant="outline"><PageLink to={home}><HugeiconsIcon icon={Home01Icon} strokeWidth={2} data-icon="inline-start" />{t('noPage.home')}</PageLink></Button>}
+      >
+        {t('noPage.body')}
+      </EmptyState>
+    </div>
   );
 }

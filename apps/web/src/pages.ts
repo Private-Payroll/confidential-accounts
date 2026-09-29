@@ -102,6 +102,12 @@ export interface Page {
   shortcut?: string;
   /** A count the menu shows beside its name, read from the shown company's records; null while it cannot be said. */
   count?: (records: CompanyRecords) => number | null;
+  /**
+   * Shown as one focused full page with no menu, for a task done from start
+   * to end. `exit` names the way back to the rest of the application,
+   * offered across the top.
+   */
+  focused?: { exit: (t: Text) => string };
 }
 
 /**
@@ -119,6 +125,7 @@ export const PAGES = {
   },
   setup: {
     path: '/setup', name: (t) => t('page.setup.name'), words: (t) => t('page.setup.words'), icon: Rocket01Icon, group: null, audience: 'signed-in',
+    focused: { exit: (t) => t('page.setup.exit') },
     shows: { screen: onDemand(() => import('./screens/setup.js'), 'Setup') },
   },
 

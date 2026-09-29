@@ -1,5 +1,6 @@
-import { useState, type HTMLAttributes, type ReactNode } from 'react';
-import { Alert, AlertDescription, AlertTitle, Amount, AMOUNT_KIND, Badge, Button, ComingSoon, formatDate, Skeleton, useLanguage, useText, type AmountKind } from 'vaults-ui';
+import { useState, type ReactNode } from 'react';
+import { SquareLock02Icon } from '@hugeicons/core-free-icons';
+import { Alert, AlertDescription, AlertTitle, Amount, AMOUNT_KIND, Badge, Button, ComingSoon, EmptyState, formatDate, PageLoading, StatTile, useLanguage, useText, type AmountKind } from 'vaults-ui';
 import { OPENED, PAID, READ, VAULT, type CompanyRecords, type Paid, type ProposalRow, type Read, type RunRow, type VaultRow, type VaultStanding } from '../adapters/company-records.js';
 import type { ActRefusal } from '../adapters/refusals.js';
 import { ActRefused } from '../act-refused.js';
@@ -44,15 +45,6 @@ export function useMonth(): (period: string) => string {
   };
 }
 
-/** Placeholder rows while something is read, the shape of what will be there and nothing that could be read as an answer. */
-export function Rows({ count = 3 }: { count?: number }) {
-  return (
-    <div className="flex flex-col gap-2" aria-busy={true} data-reading>
-      {Array.from({ length: count }, (_, i) => <Skeleton key={i} className="h-9 w-full" />)}
-    </div>
-  );
-}
-
 /**
  * ONE READ: its rows when it was read, and a line saying so when it could not
  * be. Each read on a page is shown this way on its own, so one that could not
@@ -66,7 +58,7 @@ export function ReadOf<T>({ read, children }: { read: Read<T>; children: (value:
 
 /**
  * THE SHOWN COMPANY'S RECORDS, OPENED, handed to `children`; or why they are
- * not, and what opens them. Placeholder rows while they are read.
+ * not, and what opens them. The kit's page loading while they are read.
  */
 export function WithRecords({ children }: { children: (records: CompanyRecords) => ReactNode }) {
   const t = useText();
@@ -75,7 +67,7 @@ export function WithRecords({ children }: { children: (records: CompanyRecords) 
   const [busy, setBusy] = useState(false);
   const [refused, setRefused] = useState<ActRefusal | null>(null);
   if (shown === null) return <p className="text-sm text-muted-foreground" data-no-company>{t('records.noCompany')}</p>;
-  if (company === null) return <Rows />;
+  if (company === null) return <PageLoading data-reading="" />;
   if (company.of === OPENED.open) return <>{children(company)}</>;
   if (company.of === OPENED.refused) {
     return (
@@ -99,24 +91,21 @@ export function WithRecords({ children }: { children: (records: CompanyRecords) 
     setBusy(false);
   };
   return (
-    <section className="flex max-w-xl flex-col gap-3" data-records={company.of}>
-      <h2 className="text-base font-semibold">{t('records.locked.title')}</h2>
-      <p className="text-sm text-muted-foreground">{t('records.locked.body')}</p>
-      <div><Button disabled={busy} onClick={() => { void open(); }} data-action="open-with-your-account">{t('records.locked.open')}</Button></div>
+    <div className="flex flex-col gap-3" data-records={company.of}>
+      <EmptyState
+        icon={SquareLock02Icon}
+        title={t('records.locked.title')}
+        action={<Button disabled={busy} onClick={() => { void open(); }} data-action="open-with-your-account">{t('records.locked.open')}</Button>}
+      >
+        {t('records.locked.body')}
+      </EmptyState>
       {refused === null ? null : <ActRefused why={refused} />}
-    </section>
+    </div>
   );
 }
 
-/** An action not built yet: always shown, never pressable, with the Coming soon pill saying what it will do. */
-export function SoonAction({ label, soon, ...marks }: { label: string; soon: string } & HTMLAttributes<HTMLSpanElement>) {
-  return (
-    <span className="inline-flex items-center gap-2" {...marks} data-soon>
-      <Button variant="outline" size="sm" disabled>{label}</Button>
-      <ComingSoon explanation={soon} />
-    </span>
-  );
-}
+/* An action not built yet is the kit's; re-exported so the screens that read keep importing it from here. */
+export { SoonAction } from 'vaults-ui';
 
 /** How a payment is made, in words: privately, publicly, not set up yet, or not known. A public payment's amount, and one not known, carries the Public pill where it is shown. */
 export function PaidWords({ paid }: { paid: Paid }) {
@@ -220,23 +209,27 @@ export function VaultStandingWords({ standing }: { standing: VaultStanding }) {
 }
 
 /**
- * A VAULT'S TILE: when it was created, where it stands, and its money on two
- * lines. The private line is read on a signer's device, which this page does
- * not do yet, so it is Coming soon and never shown as nothing; the public
- * line is read on the vault's page, when the person asks.
+ * A VAULT'S TILE, the kit's stat tile, linking to the vault's page: its name,
+ * where it stands, when it was created, and its money on two lines. The
+ * private line is read on a signer's device, which this page does not do yet,
+ * so it is Coming soon and never shown as nothing; the public line is read on
+ * the vault's page, when the person asks. No figure and no change badge are
+ * shown: nothing here has read an amount, or has one to compare it with.
  */
 export function VaultTile({ vault, index }: { vault: VaultRow; index: number }) {
   const t = useText();
   const day = useDay();
   return (
-    <PageLink to={PAGE.vault} params={{ vault: vault.vault }} className="flex flex-col gap-2 rounded-lg border p-4 hover:bg-accent" data-vault={vault.vault}>
-      <span className="font-medium">{t('vaults.tile.name', { number: index + 1 })}</span>
-      <span className="text-xs text-muted-foreground">{t('vaults.tile.created', { date: day(vault.createdAt) })}</span>
-      <span className="text-sm"><VaultStandingWords standing={vault.standing} /></span>
-      <span className="flex items-center gap-2 text-sm text-muted-foreground" data-private-line>
+    <StatTile
+      link={<PageLink to={PAGE.vault} params={{ vault: vault.vault }} data-vault={vault.vault} />}
+      title={t('vaults.tile.name', { number: index + 1 })}
+      tagline={<VaultStandingWords standing={vault.standing} />}
+      subtext={t('vaults.tile.created', { date: day(vault.createdAt) })}
+    >
+      <span className="flex items-center gap-2 text-muted-foreground" data-private-line>
         {t('vaults.privateMoney')}<ComingSoon explanation={t('vaults.privateMoney.soon')} />
       </span>
-      <span className="text-sm text-muted-foreground" data-public-line>{t('vaults.publicMoney.onItsPage')}</span>
-    </PageLink>
+      <span className="text-muted-foreground" data-public-line>{t('vaults.publicMoney.onItsPage')}</span>
+    </StatTile>
   );
 }

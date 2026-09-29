@@ -64,6 +64,12 @@
   }
 }
 
+@custom-variant data-placeholder {
+  &:where([data-placeholder]:not([data-placeholder='false'])) {
+    @slot;
+  }
+}
+
 @custom-variant data-disabled {
   &:where([data-disabled='true']),
   &:where([data-disabled]:not([data-disabled='false'])) {
@@ -100,12 +106,20 @@
   --color-*: initial;
 }
 
+/*
+ * THE THREE SURFACES. The menu's, the page's and a card's colours are the
+ * theme's three surface tokens: the frame, the inset page and a box, as
+ * shadcn's inset layout paints them (`theme/themes.css` says how each is
+ * set). Every component that paints `bg-sidebar`, `bg-background` or
+ * `bg-card` therefore paints a surface, and no component chooses a shade of
+ * its own.
+ */
 @theme inline {
   --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
   --font-heading: var(--font-sans);
-  --color-background: var(--background);
+  --color-background: var(--surface-page);
   --color-foreground: var(--foreground);
-  --color-card: var(--card);
+  --color-card: var(--surface-box);
   --color-card-foreground: var(--card-foreground);
   --color-popover: var(--popover);
   --color-popover-foreground: var(--popover-foreground);
@@ -126,7 +140,7 @@
   --color-chart-3: var(--chart-3);
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
-  --color-sidebar: var(--sidebar);
+  --color-sidebar: var(--surface-frame);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-primary: var(--sidebar-primary);
   --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);

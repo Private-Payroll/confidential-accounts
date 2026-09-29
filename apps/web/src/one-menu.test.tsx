@@ -33,8 +33,7 @@ vi.mock('./adapters/session.js', async (real) => ({
   companyNamesFor: async () => new Map<string, string>(),
 }));
 
-const { PageView } = await import('./app.js');
-const { Shell } = await import('./shell/shell.js');
+const { InFrame, PageView } = await import('./app.js');
 const { SessionProvider } = await import('./session.js');
 const { DEFAULT_PREFERENCES } = await import('./preferences.js');
 const { addressOf, resolve: resolveAddress, RESOLVED } = await import('./router.js');
@@ -76,7 +75,7 @@ const APP = walk('apps/web/src');
 const APP_CODE = APP.filter((f) => !/\.test(-support)?\.tsx?$/.test(f.path));
 const KIT_CODE = walk('packages/ui/src').filter((f) => !/\.test(-support)?\.tsx?$/.test(f.path));
 
-/** Draw a page in the frame, for a viewer who may open it, with every value its address stands for filled, and read nothing yet. */
+/** Draw a page in the frame its entry names, for a viewer who may open it, with every value its address stands for filled, and read nothing yet. */
 function drawNow(id: PageId) {
   const page = EVERY_PAGE.find((p) => p.id === id)!;
   const viewer = [SIGNER, EMPLOYEE, VISITOR].find((v) => mayOpen(page, v))!;
@@ -90,7 +89,7 @@ function drawNow(id: PageId) {
   const view = render(
     <KitProvider languages={LANGUAGES} pick="en">
       <SessionProvider session={session}>
-        {viewer.signedIn ? <Shell current={id}><PageView id={id} params={params} /></Shell> : <PageView id={id} params={params} />}
+        {viewer.signedIn ? <InFrame current={id}><PageView id={id} params={params} /></InFrame> : <PageView id={id} params={params} />}
       </SessionProvider>
     </KitProvider>,
   );
@@ -216,18 +215,29 @@ describe('one menu, in every file', () => {
    * RED WHEN: a file not named here goes to a page from code, so a column of
    * buttons could be a menu the link rules above do not see. Each file named
    * goes to one page for one reason: the router and the frame, the landing
-   * page's Create a company, Home's setup card and Settings' tabs.
+   * page's Create a company, Home's setup card, Settings' tabs, and the way
+   * out of a focused page.
    */
   it('goes to a page from code only where it is named', () => {
     expect(APP_CODE.filter((f) => GOES.test(f.text) && f.path !== 'apps/web/src/router.tsx').map((f) => f.path).sort()).toEqual([
       'apps/web/src/app.tsx', 'apps/web/src/screens/home.tsx', 'apps/web/src/screens/landing.tsx', 'apps/web/src/screens/settings.tsx',
-      'apps/web/src/shell/account-menu.tsx', 'apps/web/src/shell/command-bar.tsx', 'apps/web/src/shell/company-switcher.tsx', 'apps/web/src/shell/shell.tsx',
+      'apps/web/src/shell/account-menu.tsx', 'apps/web/src/shell/command-bar.tsx', 'apps/web/src/shell/company-switcher.tsx', 'apps/web/src/shell/focused-frame.tsx',
+      'apps/web/src/shell/shell.tsx',
     ]);
   });
 
-  /* RED WHEN: the kit builds tabs, or a tab, anywhere but its one tabs component. */
+  /*
+   * RED WHEN: the kit builds tabs, or a tab, anywhere but its one tabs
+   * component. A kit component that uses the tabs imports them from that
+   * component and takes no tabs primitive of its own; the table's filters are
+   * the one such component.
+   */
   it('has one tabs component in the kit', () => {
-    expect(KIT_CODE.filter((f) => /\bTabs\w*\b|\brole=\{?\s*["'`](?:tablist|tab)["'`]/.test(f.text)).map((f) => f.path).sort()).toEqual(['packages/ui/src/components/tabs.tsx', 'packages/ui/src/index.ts']);
+    const TABS = /\bTabs\w*\b|\brole=\{?\s*["'`](?:tablist|tab)["'`]/;
+    const USES_THE_KIT_TABS = (text: string): boolean => /from\s+['"]vaults-ui\/components\/tabs['"]/.test(text) && !/\brole=\{?\s*["'`](?:tablist|tab)["'`]/.test(text)
+      && ![...text.matchAll(TABS_IMPORTED)].some((m) => /\bTabs\w*\b/.test(m[1]!) && m[2] !== 'vaults-ui/components/tabs');
+    expect(KIT_CODE.filter((f) => TABS.test(f.text) && !USES_THE_KIT_TABS(f.text)).map((f) => f.path).sort()).toEqual(['packages/ui/src/components/tabs.tsx', 'packages/ui/src/index.ts']);
+    expect(KIT_CODE.filter((f) => TABS.test(f.text) && USES_THE_KIT_TABS(f.text)).map((f) => f.path)).toEqual(['packages/ui/src/components/data-table.tsx']);
   });
 
   /* RED WHEN: a rule above stops matching what it is written to refuse. */

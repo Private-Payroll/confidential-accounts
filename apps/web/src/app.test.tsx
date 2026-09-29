@@ -175,7 +175,12 @@ describe('the landing page, once signed in', () => {
     await untilShown(() => container.querySelector('[data-screen=setup]'), 'the setup wizard');
     await untilPageShown(container);
     expect(container.querySelector('[data-screen=setup] [data-current-step]')!.getAttribute('data-current-step')).toBe('createCompany');
-    expect(container.querySelector('[data-mark=createCompany]')!.getAttribute('data-standing')).toBe('open');
+    expect(container.querySelector('[data-setup-steps] [data-step=createCompany]')!.getAttribute('data-standing')).toBe('open');
+    expect(container.querySelector('[data-mark=createCompany]')!.getAttribute('data-filled')).toBe('false');
+    /* One focused page: no menu, and the way out across the top. */
+    expect(container.querySelector('[data-slot=focused-layout] [data-screen=setup]')).not.toBeNull();
+    expect(container.querySelector('[data-menu]')).toBeNull();
+    expect(container.querySelector('[data-slot=focused-layout] [data-action=exit-focused]')!.textContent).toBe(EN['page.setup.exit']);
     expect(container.querySelector('[data-progress]')!.getAttribute('aria-valuenow')).toBe('0');
     await act(async () => { fireEvent.mouseDown(container.querySelector('[data-setup-steps] [data-step=handOver]')!, { button: 0 }); await settle(); });
     expect(container.querySelector('[data-action=hand-over] [data-why]')!.getAttribute('data-why')).toBe('no-company');

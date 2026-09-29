@@ -1,6 +1,7 @@
 import { formatTokenAmount, visibilityOf, type TokenAmount } from 'vaults-ui/format/token-amount';
 import { useLanguage } from 'vaults-ui/i18n/provider';
 import { AMOUNT_KINDS, PublicPill, type AmountKind } from 'vaults-ui/components/public-pill';
+import { Skeleton } from 'vaults-ui/components/skeleton';
 
 export interface AmountProps {
   /** The amount, made by `publicAmount` or `privateAmount`: its units, its token's decimals and code, and whether anyone can look it up. */
@@ -47,4 +48,9 @@ export function Amount({ value, kind }: AmountProps) {
       {visibility === 'public' ? <PublicPill kind={shown} /> : null}
     </span>
   );
+}
+
+/** AN AMOUNT WHILE IT IS READ: a bar the width of a figure, in the line, with no figure and no pill, so nothing can be read as the amount. */
+export function AmountLoading() {
+  return <span data-slot="amount-loading" aria-busy={true} className="inline-flex align-middle"><Skeleton data-bar="figure" className="h-4 w-24" /></span>;
 }
