@@ -206,7 +206,7 @@ describe('one menu, in every file', () => {
     expect(APP_CODE.filter((f) => TABS_BY_HAND.test(f.text)).map((f) => f.path)).toEqual([]);
     const tabsFrom = APP_CODE.flatMap((f) => [...f.text.matchAll(TABS_IMPORTED)].filter((m) => /\bTabs\w*\b/.test(m[1]!)).map((m) => `${f.path} ${m[2]}`));
     expect(tabsFrom.filter((x) => !x.endsWith(' vaults-ui'))).toEqual([]);
-    expect(tabsFrom.map((x) => x.split(' ')[0]).sort()).toEqual(['apps/web/src/screens/invitations.tsx', 'apps/web/src/screens/proposals.tsx', 'apps/web/src/screens/settings.tsx', 'apps/web/src/screens/setup.tsx']);
+    expect(tabsFrom.map((x) => x.split(' ')[0]).sort()).toEqual(['apps/web/src/screens/invitations.tsx', 'apps/web/src/screens/settings.tsx', 'apps/web/src/screens/setup.tsx']);
     expect(APP_CODE.filter((f) => !FRAME.includes(f.path) && SIDEBAR.test(f.text)).map((f) => f.path)).toEqual([]);
     expect(APP_CODE.filter((f) => TABS_LAID_OUT.test(f.text)).map((f) => f.path)).toEqual([]);
   });

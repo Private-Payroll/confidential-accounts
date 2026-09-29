@@ -183,8 +183,6 @@ function emptyStatesByHand(s: Source): string[] {
 const NOT_MOVED_YET: Readonly<Record<string, Readonly<Record<string, string>>>> = {
   background: {
     'apps/web/src/screens/landing.tsx': 'the landing page, drawn before anyone is signed in, redrawn on the kit\'s layouts with the app\'s polish',
-    'apps/web/src/screens/people.tsx': 'the people list, moved to the kit\'s table with inviting and joining',
-    'apps/web/src/screens/proposals.tsx': 'the proposals list, moved to the kit\'s table with raising and approving proposals',
   },
   width: {
     'apps/web/src/screens/landing.tsx': 'the landing page, drawn before anyone is signed in, redrawn on the kit\'s layouts with the app\'s polish',
@@ -193,11 +191,6 @@ const NOT_MOVED_YET: Readonly<Record<string, Readonly<Record<string, string>>>> 
   },
   lists: {
     'apps/web/src/screens/landing.tsx': 'the landing page, redrawn on the kit\'s layouts with the app\'s polish',
-    'apps/web/src/screens/proposals.tsx': 'moved to the kit\'s table with raising and approving proposals',
-    'apps/web/src/screens/payroll.tsx': 'moved to the kit\'s table with raising payroll runs for approval',
-    'apps/web/src/screens/run.tsx': 'moved to the kit\'s table with raising payroll runs for approval',
-    'apps/web/src/screens/people.tsx': 'moved to the kit\'s table with inviting and joining',
-    'apps/web/src/screens/invitations.tsx': 'moved to the kit\'s table with inviting and joining',
     'apps/web/src/screens/appearance.tsx': 'moved to the kit\'s sections with the rest of Settings',
     'apps/web/src/screens/language.tsx': 'moved to the kit\'s sections with the rest of Settings',
     'apps/web/src/actions/create-company.tsx': 'the setup steps\' own forms, moved to the kit\'s sections with the setup wizard',
@@ -205,10 +198,6 @@ const NOT_MOVED_YET: Readonly<Record<string, Readonly<Record<string, string>>>> 
   },
   empty: {
     'apps/web/src/screens/landing.tsx': 'the landing page, redrawn on the kit\'s layouts with the app\'s polish',
-    'apps/web/src/screens/proposals.tsx': 'moved to the kit\'s table with raising and approving proposals',
-    'apps/web/src/screens/payroll.tsx': 'moved to the kit\'s table with raising payroll runs for approval',
-    'apps/web/src/screens/people.tsx': 'moved to the kit\'s table with inviting and joining',
-    'apps/web/src/screens/invitations.tsx': 'moved to the kit\'s table with inviting and joining',
   },
 };
 /**
@@ -274,7 +263,7 @@ describe('no page draws what the kit draws', () => {
     const onDemand = new Set([...PAGES_TS.matchAll(/onDemand\(\(\) => import\('\.\/(screens\/[\w-]+)\.js'\)/g)].map((m) => `apps/web/src/${m[1]!}.tsx`));
     const everyFile = walk('apps/web/src');
     const importers = everyFile.filter((f) => Object.keys(KIT_ENTRIES).some((e) => f.text.includes(`from '${e}'`))).map((f) => f.path);
-    expect(importers).toEqual(['apps/web/src/screens/home.tsx', 'apps/web/src/screens/vault.tsx']);
+    expect(importers).toEqual(['apps/web/src/screens/home.tsx', 'apps/web/src/screens/payroll.tsx', 'apps/web/src/screens/people.tsx', 'apps/web/src/screens/proposals.tsx', 'apps/web/src/screens/vault.tsx']);
     for (const p of importers) {
       expect(onDemand.has(p), p).toBe(true);
       const name = p.replace(/^apps\/web\/src\//, '').replace(/\.tsx$/, '');

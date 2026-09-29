@@ -1,76 +1,75 @@
-import { useState } from 'react';
-import { ComingSoon, Tabs, TabsList, TabsTrigger, useText } from 'vaults-ui';
+import { useMemo } from 'react';
+import { CheckListIcon } from '@hugeicons/core-free-icons';
+import { EmptyState, PageHeader, useText } from 'vaults-ui';
+import { DataTable, type DataTableColumn, type DataTableFilter } from 'vaults-ui/data-table';
 import type { ProposalRow } from '../adapters/company-records.js';
+import { Details } from '../records/details.js';
 import { Approvals, Day, ProposalStatus, ProposalWhat, ReadOf, UnbuiltAction, WithRecords } from '../records/parts.js';
 import { usePanel } from '../shell/right-panel.js';
 
-/** The tabs of the proposals list, and which proposals each shows. Declined is Coming soon: nothing declines a proposal today. */
-const TABS = { all: 'all', pending: 'pending', approved: 'approved' } as const;
-type Tab = (typeof TABS)[keyof typeof TABS];
-const inTab: Record<Tab, (r: ProposalRow) => boolean> = {
-  [TABS.all]: () => true,
-  [TABS.pending]: (r) => r.status === 'open',
-  [TABS.approved]: (r) => r.status === 'approved' || r.status === 'executed',
-};
+/** The ids of the proposals table's columns and filters, compared by the code and never shown. Declined is Coming soon: nothing declines a proposal today. */
+const COLUMN = { what: 'what', raisedBy: 'raised-by', approvals: 'approvals', raised: 'raised', status: 'status' } as const;
+const FILTER = { all: 'all', pending: 'pending', approved: 'approved', declined: 'declined' } as const;
 
 /**
- * PROPOSALS: every proposal the signers raised, newest first, with tabs for
- * all of them, those waiting and those approved. A row opens its panel.
+ * PROPOSALS: every proposal the signers raised, newest first, in the kit's
+ * table, filtered by all of them, those waiting and those approved; declined
+ * is not built yet and its tab is shown disabled. A row opens its panel.
  * Declining and approving are not built yet and are shown disabled.
  */
 export function Proposals() {
   const t = useText();
-  const [tab, setTab] = useState<Tab>(TABS.all);
-  const panel = usePanel();
-  const names: Record<Tab, string> = { [TABS.all]: t('proposals.tab.all'), [TABS.pending]: t('proposals.tab.pending'), [TABS.approved]: t('proposals.tab.approved') };
   return (
-    <div className="flex flex-col gap-4" data-screen="proposals">
-      <h1 className="text-xl font-semibold">{t('page.proposals.name')}</h1>
+    <div className="flex flex-col gap-6" data-screen="proposals">
+      <PageHeader title={t('page.proposals.name')} />
       <WithRecords>
-        {(records) => (
-          <ReadOf read={records.proposals}>
-            {(rows) => {
-              const shown = rows.filter(inTab[tab]).sort((a, b) => b.raisedAt.localeCompare(a.raisedAt));
-              return (
-                <>
-                  <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)} data-tabs>
-                    <TabsList>
-                      {(Object.values(TABS) as Tab[]).map((id) => (
-                        <TabsTrigger key={id} value={id} data-tab={id}>
-                          {names[id]} <span className="text-muted-foreground">{rows.filter(inTab[id]).length}</span>
-                        </TabsTrigger>
-                      ))}
-                      <span className="inline-flex items-center gap-1 px-3 py-2 text-sm text-muted-foreground" data-tab="declined">
-                        {t('proposals.tab.declined')}<ComingSoon explanation={t('proposals.declined.soon')} />
-                      </span>
-                    </TabsList>
-                  </Tabs>
-                  {shown.length === 0 ? <p className="text-sm text-muted-foreground" data-empty>{t('proposals.none')}</p> : (
-                    <table className="w-full text-sm" data-proposals>
-                      <thead className="text-start text-xs text-muted-foreground">
-                        <tr><th className="py-2 text-start font-normal">{t('proposals.column.what')}</th><th className="text-start font-normal">{t('proposals.column.raisedBy')}</th><th className="text-start font-normal">{t('proposals.column.approvals')}</th><th className="text-start font-normal">{t('proposals.column.raised')}</th><th className="text-start font-normal">{t('proposals.column.status')}</th></tr>
-                      </thead>
-                      <tbody>
-                        {shown.map((r) => (
-                          <tr key={r.id} className="cursor-pointer border-t hover:bg-accent" onClick={() => panel.open({ title: t('proposals.panel.title'), body: <ProposalPanel row={r} /> })} data-proposal={r.id}>
-                            <td className="py-2"><ProposalWhat row={r} /></td>
-                            <td>{r.raisedBy ?? t('proposals.raisedBy.unknown')}</td>
-                            <td><Approvals row={r} /></td>
-                            <td><Day at={r.raisedAt} /></td>
-                            <td><ProposalStatus row={r} /></td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
-                </>
-              );
-            }}
-          </ReadOf>
-        )}
+        {(records) => <ReadOf read={records.proposals}>{(rows) => <ProposalsTable rows={rows} />}</ReadOf>}
       </WithRecords>
     </div>
   );
+}
+
+/**
+ * The proposals, newest raised first, in the kit's table. The rows and the
+ * filters are made once for the proposals read, so the table keeps its page
+ * when the page is drawn again, as it is when a panel opens.
+ */
+function ProposalsTable({ rows }: { rows: readonly ProposalRow[] }) {
+  const t = useText();
+  const panel = usePanel();
+  const newestFirst = useMemo(() => [...rows].sort((a, b) => b.raisedAt.localeCompare(a.raisedAt)), [rows]);
+  const columns: DataTableColumn<ProposalRow>[] = [
+    { id: COLUMN.what, header: t('proposals.column.what'), cell: (r) => <ProposalWhat row={r} /> },
+    { id: COLUMN.raisedBy, header: t('proposals.column.raisedBy'), cell: (r) => <RaisedBy row={r} /> },
+    { id: COLUMN.approvals, header: t('proposals.column.approvals'), cell: (r) => <Approvals row={r} /> },
+    { id: COLUMN.raised, header: t('proposals.column.raised'), cell: (r) => <Day at={r.raisedAt} /> },
+    { id: COLUMN.status, header: t('proposals.column.status'), cell: (r) => <ProposalStatus row={r} /> },
+  ];
+  const filters = useMemo(() => {
+    const built: DataTableFilter<ProposalRow>[] = [
+      { id: FILTER.all, label: t('proposals.tab.all'), keeps: () => true },
+      { id: FILTER.pending, label: t('proposals.tab.pending'), keeps: (r) => r.status === 'open' },
+      { id: FILTER.approved, label: t('proposals.tab.approved'), keeps: (r) => r.status === 'approved' || r.status === 'executed' },
+    ];
+    return [...built, { id: FILTER.declined, label: t('proposals.tab.declined'), soon: t('proposals.declined.soon') }];
+  }, [t]);
+  return (
+    <DataTable
+      label={t('page.proposals.name')}
+      rows={newestFirst}
+      rowId={(r) => r.id}
+      columns={columns}
+      filters={filters}
+      onRowOpen={(r) => panel.open({ title: t('proposals.panel.title'), body: <ProposalPanel row={r} /> })}
+      empty={<EmptyState icon={CheckListIcon}>{t('proposals.none')}</EmptyState>}
+    />
+  );
+}
+
+/** Who raised a proposal, by the name the company's record gives them, or that the record no longer lists them. */
+function RaisedBy({ row }: { row: ProposalRow }) {
+  const t = useText();
+  return <>{row.raisedBy ?? t('proposals.raisedBy.unknown')}</>;
 }
 
 /** A proposal's panel: what it does, who raised it, how many have approved, and Approve and Decline, both not built yet and shown disabled. */
@@ -79,12 +78,14 @@ function ProposalPanel({ row }: { row: ProposalRow }) {
   return (
     <div className="flex flex-col gap-4 text-sm" data-proposal-panel={row.id}>
       <p className="font-medium"><ProposalWhat row={row} /></p>
-      <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2">
-        <dt className="text-muted-foreground">{t('proposals.column.raisedBy')}</dt><dd>{row.raisedBy ?? t('proposals.raisedBy.unknown')}</dd>
-        <dt className="text-muted-foreground">{t('proposals.column.raised')}</dt><dd><Day at={row.raisedAt} /></dd>
-        <dt className="text-muted-foreground">{t('proposals.column.approvals')}</dt><dd><Approvals row={row} /></dd>
-        <dt className="text-muted-foreground">{t('proposals.column.status')}</dt><dd><ProposalStatus row={row} /></dd>
-      </dl>
+      <Details
+        rows={[
+          [t('proposals.column.raisedBy'), <RaisedBy row={row} />],
+          [t('proposals.column.raised'), <Day at={row.raisedAt} />],
+          [t('proposals.column.approvals'), <Approvals row={row} />],
+          [t('proposals.column.status'), <ProposalStatus row={row} />],
+        ]}
+      />
       <div className="flex flex-wrap gap-3">
         <UnbuiltAction data-action="approve">{t('proposals.approve')}</UnbuiltAction>
         <UnbuiltAction data-action="decline">{t('proposals.decline')}</UnbuiltAction>

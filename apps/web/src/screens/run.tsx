@@ -1,4 +1,4 @@
-import { Amount, useText } from 'vaults-ui';
+import { Amount, PageHeader, Section, SectionRow, useText } from 'vaults-ui';
 import { PAID, READ } from '../adapters/company-records.js';
 import { PAGE } from '../pages.js';
 import { PageLink, useCurrentPage } from '../router.js';
@@ -6,9 +6,10 @@ import { Approvals, PaidWords, paymentKindOf, ReadOf, RunMoney, RunStatus, Unbui
 
 /**
  * A PAYROLL RUN'S OWN PAGE: its month and where it stands; for each currency,
- * what it pays privately and publicly and the approvals so far; and everyone
- * it pays, each with their amount and whether they are paid privately or
- * publicly. Approving and exporting are not built yet and are shown disabled.
+ * in a section of its own, what it pays privately and publicly and the
+ * approvals so far; and everyone it pays, each with their amount and whether
+ * they are paid privately or publicly. Approving and exporting are not built
+ * yet and are shown disabled.
  */
 export function Run() {
   const t = useText();
@@ -28,43 +29,42 @@ export function Run() {
               const publicly = run.payees.filter((p) => p.paid === PAID.publicly).length;
               return (
                 <>
-                  <div className="flex flex-col gap-1">
-                    <h1 className="text-xl font-semibold" data-run={run.id}>{month(run.period)}</h1>
-                    <RunStatus run={run} />
-                  </div>
+                  <PageHeader
+                    title={<span data-run={run.id}>{month(run.period)}</span>}
+                    description={<RunStatus run={run} />}
+                    actions={<UnbuiltAction data-action="export-run">{t('run.export')}</UnbuiltAction>}
+                  />
                   {publicly > 0 ? <p className="max-w-prose text-sm" data-public-payees>{t('run.publicPayees', { count: publicly })}</p> : null}
-                  <section className="flex flex-col gap-3" data-part="currencies">
+                  <div className="flex flex-col gap-4" data-part="currencies">
                     {run.currencies.map((c) => {
                       const proposal = proposals?.find((p) => p.pays?.currency === c.code);
                       return (
-                        <div key={c.code} className="flex flex-col gap-2 rounded-lg border p-4" data-currency={c.code}>
-                          <h2 className="font-medium">{t('run.currency', { currency: c.code })}</h2>
+                        <Section
+                          key={c.code}
+                          title={t('run.currency', { currency: c.code })}
+                          actions={<UnbuiltAction data-action="approve">{t('proposals.approve')}</UnbuiltAction>}
+                          list={false}
+                          data-currency={c.code}
+                        >
                           <RunMoney run={{ ...run, currencies: [c], unrecognised: 0 }} />
-                          <div className="flex flex-wrap items-center gap-3 text-sm">
+                          <div className="text-sm">
                             {proposals === null ? <span className="text-muted-foreground" data-unreadable>{t('run.approvalsUnreadable')}</span>
                               : proposal === undefined ? <span className="text-muted-foreground" data-not-sent>{t('run.notSentForApproval')}</span> : <Approvals row={proposal} />}
-                            <UnbuiltAction data-action="approve">{t('proposals.approve')}</UnbuiltAction>
                           </div>
-                        </div>
+                        </Section>
                       );
                     })}
                     {run.unrecognised === 0 ? null : <RunMoney run={{ ...run, currencies: [] }} />}
-                  </section>
-                  <section className="flex flex-col gap-2" data-part="payees">
-                    <h2 className="font-medium">{t('run.whoIsPaid')}</h2>
-                    <table className="w-full text-sm">
-                      <tbody>
-                        {run.payees.map((p) => (
-                          <tr key={p.id} className="border-t" data-payee={p.id}>
-                            <td className="py-2">{p.name}</td>
-                            <td className="py-2">{p.amount === null ? t('records.unrecognisedOne') : <Amount value={p.amount} kind={paymentKindOf(run)} />}</td>
-                            <td className="py-2 text-muted-foreground"><PaidWords paid={p.paid} /></td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </section>
-                  <UnbuiltAction data-action="export-run">{t('run.export')}</UnbuiltAction>
+                  </div>
+                  <Section title={t('run.whoIsPaid')} empty={null} data-part="payees">
+                    {run.payees.map((p) => (
+                      <SectionRow key={p.id} data-payee={p.id}>
+                        <span>{p.name}</span>
+                        <span>{p.amount === null ? t('records.unrecognisedOne') : <Amount value={p.amount} kind={paymentKindOf(run)} />}</span>
+                        <span className="text-muted-foreground"><PaidWords paid={p.paid} /></span>
+                      </SectionRow>
+                    ))}
+                  </Section>
                 </>
               );
             }}

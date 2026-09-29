@@ -157,8 +157,8 @@ describe('every page that reads is built, at its own address', () => {
     for (const [id, params] of [['home', {}], ['proposals', {}], ['payroll', {}], ['run', { run: 'r1' }], ['vault', { vault: VAULT }], ['people', {}], ['invitations', {}]] as const) {
       const c = await draw(id, params);
       /* The actions in a proposal's and a person's panel are drawn once the panel is open. */
-      if (id === 'proposals') await act(async () => { fireEvent.click(q(c, '[data-proposal=p1]')!); });
-      if (id === 'people') await act(async () => { fireEvent.click(q(c, 'tr[data-person]')!); });
+      if (id === 'proposals') await act(async () => { fireEvent.click(q(c, '[data-screen=proposals] tbody tr[data-row=p1]')!); });
+      if (id === 'people') await act(async () => { fireEvent.click(q(c, '[data-screen=people] tbody tr[data-row]')!); });
       /* Letting in someone who accepted is on the Waiting tab, collected with the tab of links. */
       const before = id === 'invitations' ? all(document.body, '[data-soon]') : [];
       if (id === 'invitations') await act(async () => { fireEvent.mouseDown(q(c, '[data-tab=waiting]')!, { button: 0 }); });
@@ -378,28 +378,38 @@ describe('the menu and the switcher', () => {
 describe('proposals', () => {
   /*
    * RED WHEN: a tab shows proposals that are not its (Pending not only those
-   * waiting, Approved not those approved or done), the tabs are not the kit's
-   * tabs across the top, Declined is offered as if it worked, or a row's panel
-   * offers Approve or Decline as if they worked.
+   * waiting, Approved not those approved or done), the proposals are not in
+   * the kit's table or its tabs are not the kit's tabs across the top,
+   * Declined is hidden or offered as if it worked, or a row's panel offers
+   * Approve or Decline as if they worked.
    */
-  it('filters by the kit\'s tabs, with Declined Coming soon, and opens a proposal\'s panel', async () => {
+  it('filters by the kit\'s table\'s tabs, with Declined shown disabled and Coming soon, and opens a proposal\'s panel', async () => {
     const c = await draw('proposals');
-    expect(q(c, '[data-screen=proposals] [data-slot=tabs-list]')).not.toBeNull();
-    expect(all(c, '[data-slot=tabs-trigger]').map((e) => e.dataset.tab)).toEqual(['all', 'pending', 'approved']);
-    expect(all(c, '[data-proposals] [data-proposal]').map((e) => e.dataset.proposal)).toEqual(['p1', 'p2', 'p9']);
+    const rowsShown = () => all(c, '[data-screen=proposals] [data-slot=data-table] tbody tr').map((e) => e.dataset.row);
+    expect(q(c, '[data-screen=proposals] [data-slot=data-table] [data-slot=tabs-list]')).not.toBeNull();
+    expect(all(c, '[data-slot=tabs-trigger]').map((e) => e.dataset.filter)).toEqual(['all', 'pending', 'approved', 'declined']);
+    expect(all(c, '[data-slot=tabs-trigger]').map((e) => e.hasAttribute('data-disabled'))).toEqual([false, false, false, true]);
+    expect(rowsShown()).toEqual(['p1', 'p2', 'p9']);
     /* A kind this app does not know is said as a change to the company, never as nothing. */
-    expect(q(c, '[data-proposal=p9] td')?.textContent).toBe(EN['proposals.kind.other']);
-    await act(async () => { fireEvent.mouseDown(q(c, '[data-tab=pending]')!, { button: 0 }); });
-    expect(all(c, '[data-proposals] [data-proposal]').map((e) => e.dataset.proposal)).toEqual(['p1', 'p9']);
-    await act(async () => { fireEvent.mouseDown(q(c, '[data-tab=approved]')!, { button: 0 }); });
-    expect(all(c, '[data-proposals] [data-proposal]').map((e) => e.dataset.proposal)).toEqual(['p2']);
-    expect(q(c, '[data-tab=declined] [data-slot=coming-soon]')).not.toBeNull();
-    expect(q(c, '[data-proposal=p2] [data-approvals]')?.textContent).toBe('2 approvals');
-    expect(q(c, '[data-proposal=p2] td')?.textContent).toBe(EN['proposals.kind.addSigner']);
-    await act(async () => { fireEvent.mouseDown(q(c, '[data-tab=all]')!, { button: 0 }); });
-    expect(q(c, '[data-proposal=p1] [data-approvals]')?.textContent).toBe('1 of 2');
-    expect(q(c, '[data-proposal=p1] td')?.textContent).toBe('Pay the October 2026 run in NIGHT');
-    await act(async () => { fireEvent.click(q(c, '[data-proposal=p1]')!); });
+    expect(q(c, '[data-row=p9] td [data-slot=data-table-value]')?.textContent).toBe(EN['proposals.kind.other']);
+    await act(async () => { fireEvent.mouseDown(q(c, '[data-filter=pending]')!, { button: 0 }); });
+    expect(rowsShown()).toEqual(['p1', 'p9']);
+    await act(async () => { fireEvent.mouseDown(q(c, '[data-filter=approved]')!, { button: 0 }); });
+    expect(rowsShown()).toEqual(['p2']);
+    expect(q(c, '[data-filter=declined]')!.textContent).toBe(EN['proposals.tab.declined']);
+    const declinedPill = q(c, '[data-filter-soon=declined] > [data-slot=coming-soon]')!;
+    await act(async () => { fireEvent.click(declinedPill); });
+    expect(document.body.textContent).toContain(EN['proposals.declined.soon']);
+    await act(async () => { fireEvent.click(declinedPill); });
+    await act(async () => { fireEvent.mouseDown(q(c, '[data-filter=declined]')!, { button: 0 }); });
+    expect(rowsShown()).toEqual(['p2']);
+    expect(q(c, '[data-filter=declined]')!.getAttribute('aria-selected')).toBe('false');
+    expect(q(c, '[data-row=p2] [data-approvals]')?.textContent).toBe('2 approvals');
+    expect(q(c, '[data-row=p2] td [data-slot=data-table-value]')?.textContent).toBe(EN['proposals.kind.addSigner']);
+    await act(async () => { fireEvent.mouseDown(q(c, '[data-filter=all]')!, { button: 0 }); });
+    expect(q(c, '[data-row=p1] [data-approvals]')?.textContent).toBe('1 of 2');
+    expect(q(c, '[data-row=p1] td [data-slot=data-table-value]')?.textContent).toBe('Pay the October 2026 run in NIGHT');
+    await act(async () => { fireEvent.click(q(c, '[data-row=p1] td:last-child')!); });
     const panel = document.querySelector('[data-proposal-panel=p1]') as HTMLElement;
     expect(all(panel, '[data-soon]').map((e) => [e.dataset.action, e.hasAttribute('disabled')])).toEqual([['approve', true], ['decline', true]]);
     expect(q(panel, '[data-slot=coming-soon]')).toBeNull();
@@ -410,12 +420,12 @@ describe('payroll and a run', () => {
   /* RED WHEN: a run's private and public money are shown as one figure, a public amount has no Public pill or a private one has one, or a paid run shows "Paid" without its day. */
   it('lists the runs, their money on a line each for private and public, and a paid run\'s day', async () => {
     const c = await draw('payroll');
-    expect(all(c, '[data-runs] [data-run]').map((e) => e.dataset.run)).toEqual(['r1', 'r0']);
-    const money = q(c, '[data-run=r1] [data-currency=NIGHT]')!;
+    expect(all(c, '[data-screen=payroll] [data-slot=data-table] tbody tr').map((e) => e.dataset.row)).toEqual(['r1', 'r0']);
+    const money = q(c, '[data-row=r1] [data-currency=NIGHT]')!;
     expect(all(money, '[data-slot=amount]').map((a) => a.dataset.visibility)).toEqual(['private', 'public']);
     expect(q(money, '[data-slot=amount][data-visibility=private] [data-slot=public-pill]')).toBeNull();
     expect(q(money, '[data-slot=amount][data-visibility=public]')!.textContent).toContain(EN['kit.public.label']);
-    expect(q(c, '[data-run=r0] [data-status=settled]')?.textContent).toBe('Paid on Sep 30, 2026');
+    expect(q(c, '[data-row=r0] [data-status=settled]')?.textContent).toBe('Paid on Sep 30, 2026');
   });
 
   /*
@@ -433,15 +443,15 @@ describe('payroll and a run', () => {
       return words;
     };
     const runs = await draw('payroll');
-    expect(await explained(runs, '[data-run=r1]')).toEqual([EN['kit.public.explanation.toBePaid']]);
-    expect(await explained(runs, '[data-run=r0]')).toEqual([EN['kit.public.explanation.payment']]);
+    expect(await explained(runs, '[data-row=r1]')).toEqual([EN['kit.public.explanation.toBePaid']]);
+    expect(await explained(runs, '[data-row=r0]')).toEqual([EN['kit.public.explanation.payment']]);
     cleanup();
     const run = await draw('run', { run: 'r1' });
     expect(await explained(run, '[data-payee=e2]')).toEqual([EN['kit.public.explanation.toBePaid']]);
     cleanup();
     const people = await draw('people');
-    expect(await explained(people, '[data-person=e5]')).toEqual([EN['kit.public.explanation.toBePaid']]);
-    await act(async () => { fireEvent.click(q(people, '[data-person=e5] td')!); });
+    expect(await explained(people, '[data-row=e5]')).toEqual([EN['kit.public.explanation.toBePaid']]);
+    await act(async () => { fireEvent.click(q(people, '[data-row=e5] td')!); });
     expect(await explained(document.body, '[data-person-panel=e5]')).toEqual([EN['kit.public.explanation.toBePaid']]);
   });
 
@@ -481,7 +491,9 @@ describe('a read that failed, on every page', () => {
     state.company = records(over as Partial<CompanyRecords>);
     const c = await draw(id, params);
     expect(all(c, '[data-unreadable]').length, id).toBeGreaterThan(0);
-    expect(q(c, '[data-empty], [data-not-sent], [data-holds-none]'), id).toBeNull();
+    expect(q(c, '[data-not-sent], [data-holds-none]'), id).toBeNull();
+    /* Home's recent activity, not built yet, is its empty state whatever was read. */
+    expect(all(c, '[data-slot=empty-state]').filter((e) => e.closest('[data-part=recent-activity]') === null), id).toEqual([]);
   });
 
   /* RED WHEN: the waiting tab shows nobody waiting when the people could not be read. */
@@ -490,7 +502,7 @@ describe('a read that failed, on every page', () => {
     const c = await draw('invitations');
     await act(async () => { fireEvent.mouseDown(q(c, '[data-tab=waiting]')!, { button: 0 }); });
     expect(q(c, '[data-waiting] [data-unreadable]')).not.toBeNull();
-    expect(q(c, '[data-waiting] [data-empty]')).toBeNull();
+    expect(q(c, '[data-waiting] [data-slot=empty-state]')).toBeNull();
   });
 });
 
@@ -572,7 +584,7 @@ describe('vaults and a vault', () => {
     const c = await draw('vault', { vault: VAULT });
     await settle();
     const table = q(c, '[data-part=money] [data-slot=data-table]')!;
-    const rows = () => all(table, 'tbody tr').map((r) => [r.dataset.row, ...all(r, 'td').slice(0, 3).map((d) => d.textContent)]);
+    const rows = () => all(table, 'tbody tr').map((r) => [r.dataset.row, ...all(r, 'td [data-slot=data-table-value]').slice(0, 3).map((d) => d.textContent)]);
     expect(all(table, 'thead th').map((h) => h.textContent)).toEqual([EN['vault.money.asset'], EN['vault.money.balance'], EN['vault.money.state'], EN['vault.money.actions']]);
     /* Asset takes half the table and Actions an eighth; Balance and State share the rest; the three after Asset are centred, heading and entries alike. */
     expect(all(table, 'thead th').map((h) => [h.className.includes('md:w-1/2'), h.className.includes('md:w-1/8'), h.className.includes('text-center')])).toEqual([[true, false, false], [false, false, true], [false, false, true], [false, true, true]]);
@@ -765,23 +777,97 @@ describe('vaults and a vault', () => {
 });
 
 describe('people and invitations', () => {
-  /* RED WHEN: a person's standing or how they are paid is not theirs, their pay has no Public pill when public, or their row does not open their panel. */
+  /* RED WHEN: the people are not in the kit's table, a person's standing or how they are paid is not theirs, their pay has no Public pill when public, or their row does not open their panel. */
   it('lists the people and opens a person\'s panel', async () => {
     const c = await draw('people');
-    expect(all(c, '[data-people] [data-person]').map((p) => [p.dataset.person, q(p, '[data-standing]')!.textContent, q(p, '[data-paid]')!.textContent, q(p, '[data-slot=amount]')!.dataset.visibility])).toEqual([
+    expect(all(c, '[data-screen=people] [data-slot=data-table] tbody tr').map((p) => [p.dataset.row, q(p, '[data-standing]')!.textContent, q(p, '[data-paid]')!.textContent, q(p, '[data-slot=amount]')!.dataset.visibility])).toEqual([
       ['e1', EN['people.standing.active'], EN['records.paid.privately'], 'private'], ['e5', EN['people.standing.waitingForCheck'], EN['records.paid.notSetUp'], 'public'],
     ]);
-    await act(async () => { fireEvent.click(q(c, '[data-person=e5]')!); });
+    await act(async () => { fireEvent.click(q(c, '[data-row=e5] td:last-child')!); });
     expect(document.querySelector('[data-person-panel=e5]')).not.toBeNull();
   });
 
-  /* RED WHEN: a sent link is not listed, a link that names nobody is given a name, the waiting tab leaves out someone waiting, or Codes received is offered as if it worked. */
+  /* RED WHEN: a sent link is not listed, a link that names nobody is given a name, the waiting tab leaves out someone waiting, or Codes received is hidden or offered as if it worked. */
   it('shows the sent links and the people waiting, by the kit\'s tabs', async () => {
     const c = await draw('invitations');
     expect(all(c, '[data-sent] [data-invitation]').map((e) => [e.dataset.invitation, e.querySelector('.font-medium')!.textContent])).toEqual([['signer', 'Tom'], ['employee', EN['invitations.noName']]]);
-    expect(q(c, '[data-tab=codes] [data-slot=coming-soon]')).not.toBeNull();
+    const codesPill = q(c, '[data-tab-soon=codes] > [data-slot=coming-soon]')!;
+    await act(async () => { fireEvent.click(codesPill); });
+    expect(document.body.textContent).toContain(EN['invitations.codes.soon']);
+    await act(async () => { fireEvent.click(codesPill); });
+    const codes = q(c, '[data-tab=codes]')!;
+    expect(codes.textContent).toBe(EN['invitations.tab.codes']);
+    expect([codes.dataset.slot, codes.getAttribute('role'), codes.hasAttribute('data-disabled'), codes.tagName]).toEqual(['tabs-trigger', 'tab', true, 'SPAN']);
+    await act(async () => { fireEvent.mouseDown(codes, { button: 0 }); });
+    expect([codes.getAttribute('aria-selected'), q(c, '[data-sent]') !== null]).toEqual(['false', true]);
     await act(async () => { fireEvent.mouseDown(q(c, '[data-tab=waiting]')!, { button: 0 }); });
     expect(all(c, '[data-waiting] [data-person]').map((e) => e.dataset.person)).toEqual(['e5']);
     expect(q(c, '[data-signers-waiting] [data-slot=coming-soon]')).not.toBeNull();
+  });
+});
+
+describe('people, payroll, proposals, a run and invitations, drawn from the kit', () => {
+  /* RED WHEN: one of the five pages draws its heading other than with the kit's page header, has a second heading, or an action of the page is not in the header's actions. */
+  it('heads each page with the kit\'s page header, its actions in it', async () => {
+    const EACH = [
+      ['people', {}, EN['page.people.name'], ['invite']], ['payroll', {}, EN['page.payroll.name'], ['new-run']], ['proposals', {}, EN['page.proposals.name'], []],
+      ['run', { run: 'r1' }, 'October 2026', ['export-run']], ['invitations', {}, EN['page.invitations.name'], []],
+    ] as const;
+    for (const [id, params, title, actions] of EACH) {
+      const c = await draw(id, params);
+      const header = q(c, `[data-screen=${id}] [data-slot=page-header]`)!;
+      expect(all(c, `[data-screen=${id}] h1`).map((h) => [h.closest('[data-slot=page-header]') === header, h.textContent]), id).toEqual([[true, title]]);
+      expect(all(header, '[data-action]').map((a) => a.dataset.action), id).toEqual([...actions]);
+      cleanup();
+    }
+  });
+
+  /* RED WHEN: a list with nothing in it is drawn as a bare line instead of the kit's empty state, or its words change. */
+  it('shows each list with nothing in it as the kit\'s empty state, in the same words', async () => {
+    state.company = records({ proposals: { of: 'read', value: [] }, runs: { of: 'read', value: [] }, people: { of: 'read', value: [] }, invitations: { of: 'read', value: [] } });
+    const line = (c: ParentNode) => all(c, '[data-screen] [data-slot=empty-state] [data-slot=empty-state-line]').map((e) => e.textContent);
+    for (const [id, key] of [['people', 'people.none'], ['payroll', 'payroll.none'], ['proposals', 'proposals.none'], ['invitations', 'invitations.sent.none']] as const) {
+      const c = await draw(id);
+      expect(line(c), id).toEqual([EN[key]]);
+      if (id === 'invitations') {
+        await act(async () => { fireEvent.mouseDown(q(c, '[data-tab=waiting]')!, { button: 0 }); });
+        expect(all(q(c, '[data-waiting]')!, '[data-slot=empty-state] [data-slot=empty-state-line]').map((e) => e.textContent), 'waiting').toEqual([EN['invitations.waiting.none']]);
+      }
+      cleanup();
+    }
+  });
+
+  /* RED WHEN: a run's currency is not a kit section with its approvals and Approve at the end of its title, or who is paid is not the kit's section of rows. */
+  it('draws a run\'s currencies and who it pays in the kit\'s sections', async () => {
+    const c = await draw('run', { run: 'r1' });
+    const night = q(c, '[data-part=currencies] [data-slot=section][data-currency=NIGHT]')!;
+    expect(q(night, '[data-slot=section-header] h2')!.textContent).toBe('NIGHT');
+    expect(q(night, '[data-slot=section-actions] button[data-action=approve]')!.hasAttribute('disabled')).toBe(true);
+    expect(q(night, '[data-approvals]')!.textContent).toBe('1 of 2');
+    const payees = q(c, '[data-slot=section][data-part=payees]')!;
+    expect(q(payees, '[data-slot=section-header] h2')!.textContent).toBe(EN['run.whoIsPaid']);
+    expect(all(payees, '[data-slot=section-row]').map((r) => r.dataset.payee)).toEqual(['e1', 'e2', 'e3']);
+  });
+
+  /* RED WHEN: a person's or a proposal's panel is drawn by hand instead of as the kit's items, or loses a line. */
+  it('draws a person\'s and a proposal\'s details as the kit\'s items', async () => {
+    const people = await draw('people');
+    await act(async () => { fireEvent.click(q(people, '[data-row=e1] td')!); });
+    const person = document.querySelector('[data-person-panel=e1]') as HTMLElement;
+    expect(all(person, '[data-slot=item]').map((i) => q(i, '[data-slot=item-description]')!.textContent)).toEqual([
+      EN['people.column.title'], EN['people.column.standing'], EN['people.started'], EN['people.column.pay'], EN['people.column.paid'],
+    ]);
+    expect(q(person, '[data-slot=item] [data-slot=item-title]')!.textContent).toBe('Engineer');
+    /* A value is never cut to its first line, as the kit's item title is by default. */
+    expect(all(person, '[data-slot=item-title]').map((e) => e.className.split(/\s+/).includes('line-clamp-none'))).toEqual([true, true, true, true, true]);
+    expect(q(person, 'dl, dt, dd')).toBeNull();
+    cleanup();
+    const proposals = await draw('proposals');
+    await act(async () => { fireEvent.click(q(proposals, '[data-row=p1] td')!); });
+    const proposal = document.querySelector('[data-proposal-panel=p1]') as HTMLElement;
+    expect(all(proposal, '[data-slot=item]').map((i) => [q(i, '[data-slot=item-description]')!.textContent, q(i, '[data-slot=item-title]')!.textContent])).toEqual([
+      [EN['proposals.column.raisedBy'], 'Sam'], [EN['proposals.column.raised'], 'Sep 21, 2026'], [EN['proposals.column.approvals'], '1 of 2'], [EN['proposals.column.status'], EN['proposals.status.open']],
+    ]);
+    expect(q(proposal, 'dl, dt, dd')).toBeNull();
   });
 });
