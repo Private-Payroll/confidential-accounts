@@ -8,7 +8,8 @@ import {
 } from 'midnight-identity/profile/committee-sign';
 import type { CommitteeChangeShown, CommitteeSigningLedger } from 'midnight-identity/profile/committee-sign';
 import { companyFingerprint } from 'midnight-identity/profile/fingerprint';
-import { Alert, Button, Section } from '../kit/index.js';
+import { Button, Section } from 'vaults-ui';
+import { StatusAlert } from '../components/status.js';
 import { hrefOf } from '../routes.js';
 import type { Consent } from '../framing.js';
 
@@ -79,7 +80,7 @@ export function ApproveCommittee({
 
   const isMine = (k: CommitteeKeyOnTheWire, shown: CommitteeChangeShown): boolean => k.value === shown.mine.value;
   const keyList = (keys: readonly CommitteeKeyOnTheWire[], shown: CommitteeChangeShown, attr: string) => (
-    <ul className="m-0" {...{ [attr]: true }}>
+    <ul className="m-0 list-disc ps-6" {...{ [attr]: true }}>
       {keys.map((k) => (
         <li key={k.value} className="font-mono text-sm">{keyText(k)}{isMine(k, shown) ? ' (your key)' : ''}</li>
       ))}
@@ -107,51 +108,54 @@ export function ApproveCommittee({
       <h1 data-headline>{`Change who holds a company's rules, for ${request.requester.origin}`}</h1>
       {stage.of === 'reading' && <p className="lede" data-reading>Reading what the page sent. Nothing has been signed.</p>}
       {stage.of === 'refused' && (
-        <Alert tone="danger" title="This wallet will not sign this">
+        <StatusAlert tone="danger" title="This wallet will not sign this">
           <p className="m-0" data-committee-refused>{stage.says}</p>
-        </Alert>
+        </StatusAlert>
       )}
       {change !== null && (
         <Section
+          list={false} box={false} aria-label="The committee after this change"
           title="The committee after this change"
           description="Worked out by this wallet from what the page sent. It replaces the whole list of keys on every contract below."
         >
-          <p className="m-0 text-ink text-lg" data-new-threshold>
+          <p className="m-0 text-foreground text-lg" data-new-threshold>
             {`${request.to.committee.length} key${request.to.committee.length === 1 ? '' : 's'}, and ${request.to.threshold} of them must sign any change to the company's rules.`}
           </p>
           {keyList(request.to.committee, change, 'data-new-committee')}
-          <p className="m-0 text-sm text-muted" data-list-is-what-holds>
+          <p className="m-0 text-sm text-muted-foreground" data-list-is-what-holds>
             This wallet cannot check who holds each contract now. The list above is what every contract will hold.
             Anyone not on it loses their seat.
           </p>
           {!change.staysOn && (
-            <Alert tone="warning" role={null} title="Your own key leaves">
+            <StatusAlert tone="warning" role={null} title="Your own key leaves">
               <p className="m-0" data-you-leave>
                 Your key is not on the new committee. Once this change reaches the chain, you can no longer sign any
                 change to this company&rsquo;s rules.
               </p>
-            </Alert>
+            </StatusAlert>
           )}
         </Section>
       )}
       {change !== null && change.contracts.map((c) => (
         <Section
+          list={false} box={false}
           key={c.address}
+          aria-label={c.contract === 'account' ? 'The company account' : 'A vault'}
           title={c.contract === 'account' ? 'The company account' : 'A vault'}
           description={`The page says ${c.keysNow} key${c.keysNow === 1 ? '' : 's'} hold${c.keysNow === 1 ? 's' : ''} this contract now and ${c.thresholdNow} of them must sign. After this change, only the keys listed above hold it, and ${c.thresholdAfter} of them must sign.`}
         >
-          <p className="m-0 font-mono break-all text-sm text-muted" data-contract={c.contract}>{c.address}</p>
+          <p className="m-0 font-mono break-all text-sm text-muted-foreground" data-contract={c.contract}>{c.address}</p>
           <p className="m-0 text-sm" data-threshold-change>{`Threshold: ${c.thresholdNow} before, ${c.thresholdAfter} after.`}</p>
-          <p className="m-0 text-sm text-muted">Joining: on the new list and, the page says, not on this contract now</p>
+          <p className="m-0 text-sm text-muted-foreground">Joining: on the new list and, the page says, not on this contract now</p>
           {c.joins.length === 0 ? <p className="m-0 text-sm" data-joins-none>Nobody, the page says.</p> : keyList(c.joins, change, 'data-joins')}
-          <p className="m-0 text-sm text-muted">Leaving: on this contract now, the page says, and not on the new list. They lose their seat.</p>
+          <p className="m-0 text-sm text-muted-foreground">Leaving: on this contract now, the page says, and not on the new list. They lose their seat.</p>
           {c.leaves.length === 0 ? <p className="m-0 text-sm" data-leaves-none>Nobody, the page says.</p> : keyList(c.leaves, change, 'data-leaves')}
         </Section>
       ))}
-      <Section title="The company, as the page names it" description="This wallet signs with the key it holds for this company and no other.">
-        <p className="m-0 font-mono tracking-wide text-ink text-xl" data-company-fingerprint>{companyFingerprint(request.company)}</p>
-        <p className="m-0 font-mono break-all text-sm text-muted" data-company>{request.company}</p>
-        <p className="m-0 text-sm text-muted">
+      <Section list={false} box={false} aria-label="The company, as the page names it" title="The company, as the page names it" description="This wallet signs with the key it holds for this company and no other.">
+        <p className="m-0 font-mono tracking-wide text-foreground text-xl" data-company-fingerprint>{companyFingerprint(request.company)}</p>
+        <p className="m-0 font-mono break-all text-sm text-muted-foreground" data-company>{request.company}</p>
+        <p className="m-0 text-sm text-muted-foreground">
           This wallet cannot tell who each key belongs to. Check the new list with the other signers before you sign.
           Whoever holds enough of its keys can change the rules the company account and every vault follow.
         </p>
@@ -159,12 +163,14 @@ export function ApproveCommittee({
       {whoIsAsking}
       <div className="flex flex-wrap gap-2">
         <Button
-          variant="primary" onClick={sign} data-approve data-sign-committee
+          size="lg"
+          type="button"
+          variant="default" onClick={sign} data-approve data-sign-committee
           disabled={!consent.ok || stage.of !== 'ready' || channel === null}
         >
           Sign this change
         </Button>
-        <Button variant="ghost" data-decline onClick={onDecline}>
+        <Button size="lg" type="button" variant="ghost" data-decline onClick={onDecline}>
           Do not sign
         </Button>
       </div>

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '../testing/render.js';
 import { IDBFactory } from 'fake-indexeddb';
 
 /*
@@ -251,7 +251,10 @@ describe('the navigation never reaches the printed page', () => {
      * armed piece card. This is the belt beside it: the chrome says so itself,
      * so a later change to the blanket's scope cannot silently put a sidebar
      * on somebody's recovery sheet. */
-    expect(sidebar()?.className).toContain('print:hidden');
+    /* The kit's sidebar is two boxes, the column and the space it keeps beside
+     * the page, so the frame hides both by the sidebar's own mark. */
+    expect(document.querySelector('[data-slot="sidebar-wrapper"]')?.className)
+      .toContain('print:**:data-[slot=sidebar]:hidden');
     const bar = document.querySelector('nav[aria-label="Places"]:not([data-collapsed])');
     expect(bar?.className).toContain('print:hidden');
     expect(document.querySelector('header')?.className).toContain('print:hidden');

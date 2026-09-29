@@ -54,7 +54,10 @@ export const SERVED_FROM = [
  * was measured when it was set; a test holds it within a kilobyte of what is built, so when the
  * download falls the budget is lowered with it.
  */
-export const FIRST_DOWNLOAD_BUDGET = 668_400;
+// 672,000: on the Mac on 29 Sep the build plugin measured 669,922 and the test's own measure 671,451 for the same
+// build (the two measures differ); the budget holds the larger. The rise is the wallet's two new kit parts
+// (textarea, item) and the Apps catalogue's words, which load with every page until a screen's words load with it.
+export const FIRST_DOWNLOAD_BUDGET = 672_000;
 
 /**
  * THE WORKERS THIS APPLICATION STARTS, by their entry's path from this folder,

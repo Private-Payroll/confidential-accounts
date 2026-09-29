@@ -8,7 +8,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   act, cleanup, fireEvent, render, screen, waitFor, within,
-} from '@testing-library/react';
+} from '../testing/render.js';
 import { Buffer as PolyfillBuffer } from 'buffer/';
 import { IDBFactory } from 'fake-indexeddb';
 import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
@@ -539,9 +539,9 @@ describe('zero and “I do not know” are different sentences — §4', () => {
     expect(screen.getByText(/measured on stagenet/)).toBeTruthy();
     expect(screen.queryByText(/assumption still riding/)).toBeNull();
     /* The owner rule, extended: the number sits under the wallet's own name.
-     * `.card` -> `[data-hero]`: the hero is a kit `Card`, which
-     * deliberately does not wear the `.card` class (`kit/card.tsx` — `app.css`
-     * owns that name and eleven screens are built on it). Same claim, same
+     * `.card` -> `[data-hero]`: the hero is the kit's `Card`, which does not
+     * wear the `.card` class (`app.css` owns that name for the screens still
+     * written as plain markup). Same claim, same
      * `.wallet-owner strong` inside it. */
     const card = container.querySelector('.balance-big')?.closest('[data-hero]');
     expect(card?.querySelector('.wallet-owner strong')?.textContent).toBe('Main wallet');
@@ -849,8 +849,8 @@ describe('checkpoints: sealed, named by their wallet, and only ever a cache', ()
   }, 60_000);
 });
 
-/* `.wallet-balance-row` -> `[data-wallet-balance-row]`. The rows are kit
- * `ListRow`s now; the class carried an `app.css` rule as well as being the
+/* `.wallet-balance-row` -> `[data-wallet-balance-row]`. The rows are the
+ * kit's items now; the class carried an `app.css` rule as well as being the
  * hook, so the hook is an attribute and the look comes from the kit. Every
  * assertion below — eleven rows, the exact accounts, the warning words, the
  * age beside the number, the sweep's order — is the one that was here.

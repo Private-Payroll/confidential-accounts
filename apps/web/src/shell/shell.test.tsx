@@ -237,7 +237,9 @@ describe('the company switcher', () => {
    * RED WHEN: the companies are put in any order but the service's, such as
    * by what they hold, or a company is shown with an amount; a company's name,
    * creating one or joining one is shown as if it worked when it is Coming
-   * soon; or the list does not say which of what it shows anyone can look up.
+   * soon; a company is shown by the day it was created, or by anything but its
+   * name or the word for a company and its approvals as M/N Approval; or the
+   * line on what anyone can look up is still in the menu.
    */
   it('lists the companies in the order the service gave, with no amounts, and says where their names open', async () => {
     names.opened = new Map();
@@ -253,7 +255,10 @@ describe('the company switcher', () => {
     /* Create a company is built: it starts the setup wizard, and is not Coming soon. */
     expect(menu.querySelector('[data-action=create-company]')).not.toBeNull();
     expect(menu.querySelector('[data-action=create-company] [data-slot=coming-soon]')).toBeNull();
-    expect(menu.querySelector('[data-public-facts]')?.textContent).toBe(EN['switcher.publicFacts']);
+    expect(menu.querySelector('[data-public-facts]')).toBeNull();
+    expect([...menu.querySelectorAll('[data-company]')].map((c) => c.textContent)).toEqual(['Company2/3 Approval', 'Company1/1 Approval', 'Company3/5 Approval']);
+    expect(document.querySelector('[data-action=company-switcher]')!.textContent).toBe('Company2/3 Approval');
+    expect(document.body.textContent).not.toMatch(/2026|created/i);
   });
 
   /*
@@ -366,6 +371,14 @@ describe('the pages', () => {
     expect(page.querySelectorAll('button:not([data-slot=coming-soon]), input, a').length).toBe(0);
   });
 
+  /* RED WHEN: the Apps entry of the menu carries a Coming soon pill, or Apps is not its own built page. */
+  it('shows Apps in the menu with no Coming soon pill', async () => {
+    const { container } = await draw(sessionFor(signer), 'apps');
+    expect(container.querySelector('[data-menu-page=apps]')).not.toBeNull();
+    expect(container.querySelector('[data-menu-page=apps] [data-slot=coming-soon]')).toBeNull();
+    expect(container.querySelector('[data-screen=apps]')).not.toBeNull();
+  });
+
   /* RED WHEN: a section of Settings is shown outside Settings, or Settings lists sections the list does not put in it. */
   it('shows Appearance inside Settings, below the sections the list puts there', async () => {
     const { container } = await draw(sessionFor(signer), 'settingsAppearance');
@@ -386,7 +399,29 @@ describe('the pages', () => {
     cleanup();
     const again = await draw(sessionFor(signer, { choose }), 'settingsLanguage');
     expect([...again.container.querySelectorAll('[data-language]')].map((c) => c.getAttribute('data-language'))).toEqual(['', ...LANGUAGES.map((l) => l.tag)]);
-    expect(again.container.querySelector('[data-number-format] [data-slot=coming-soon]')).not.toBeNull();
+    /* Date and number format is not built, so it is not shown at all. */
+    expect(again.container.querySelector('[data-screen=language] [data-slot=coming-soon]')).toBeNull();
+    expect(again.container.querySelector('[data-screen=language]')!.textContent).not.toMatch(/format/i);
+  });
+
+  /*
+   * RED WHEN: a tab of Settings carries a Coming soon pill; the Company tab
+   * does not show the day the company shown was created, or stops saying the
+   * rest is Coming soon; or the line on what anyone can look up is not on the
+   * Signers tab, or that tab stops saying the rest is Coming soon.
+   */
+  it('shows no pill on Settings\' tabs, the day created on Company and the public line on Signers', async () => {
+    const company = await draw(sessionFor(signer, { company: 'c-3' }), 'settingsCompany');
+    expect(company.container.querySelector('[data-settings-sections] [data-slot=coming-soon]')).toBeNull();
+    expect(company.container.querySelector('[data-company-created]')!.textContent).toBe('Created Sep 20, 2026');
+    expect(company.container.querySelector('[data-screen=coming-soon] [data-slot=page-header] [data-slot=coming-soon]')).not.toBeNull();
+    expect(company.container.textContent).toContain(EN['page.settingsCompany.soon']);
+    cleanup();
+    const signers = await draw(sessionFor(signer), 'settingsSigners');
+    expect(signers.container.querySelector('[data-public-facts]')!.textContent).toBe(EN['settingsSigners.publicFacts']);
+    expect(EN['settingsSigners.publicFacts']).toMatch(/^Anyone can look up how many sign/);
+    expect(signers.container.querySelector('[data-company-created]')).toBeNull();
+    expect(signers.container.querySelector('[data-screen=coming-soon] [data-slot=page-header] [data-slot=coming-soon]')).not.toBeNull();
   });
 
   /* RED WHEN: a signer looking at their own pay is not told so, or has no way back. */

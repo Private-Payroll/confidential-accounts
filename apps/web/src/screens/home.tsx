@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { Activity01Icon, Add01Icon, ArrowDown01Icon, ArrowUp01Icon, CheckListIcon, Invoice01Icon, SafeIcon, UserAdd01Icon } from '@hugeicons/core-free-icons';
-import { Badge, Button, ComingSoon, EmptyState, PageHeader, Progress, Section, SectionRow, SoonAction, StatTiles, useText } from 'vaults-ui';
+import { Badge, Button, ComingSoon, EmptyState, PageHeader, Progress, Section, SectionRow, StatTiles, useText } from 'vaults-ui';
 import { DataTable, type DataTableColumn, type DataTableFilter } from 'vaults-ui/data-table';
 import { READ, STANDING as PERSON, type CompanyRecords, type ProposalRow, type Read } from '../adapters/company-records.js';
 import { readHandover, type Handover } from '../adapters/handover-state.js';
@@ -12,7 +12,7 @@ import { useSession } from '../session.js';
 import { skippedFor, STANDING, standingOf, stepsLeft } from '../setup/standing.js';
 import { startSetupAt } from '../setup/asked.js';
 import { EVERY_STEP } from '../setup/steps.js';
-import { Approvals, Day, ProposalStatus, ProposalWhat, ReadOf, RunMoney, RunStatus, useMonth, VaultTile, WithRecords } from '../records/parts.js';
+import { Approvals, Day, ProposalStatus, ProposalWhat, ReadOf, RunMoney, RunStatus, UnbuiltAction, useMonth, VaultTile, WithRecords } from '../records/parts.js';
 
 /** How many rows of a list Home shows before "View all". */
 const SHOWN = 3;
@@ -28,8 +28,8 @@ const PASSED = { what: 'what', approvals: 'approvals', status: 'status', raised:
  * kit's section, tile, table or empty state, and each is read on its own, so
  * one that could not be read says so and hides nothing else.
  *
- * AN ACTION NOT BUILT YET IS SHOWN WHERE IT WILL BE, DISABLED, with its Coming
- * soon pill saying what it will do.
+ * AN ACTION NOT BUILT YET IS SHOWN WHERE IT WILL BE, DISABLED, with nothing
+ * beside it.
  */
 export function Home() {
   const t = useText();
@@ -135,10 +135,10 @@ function SetupCard({ company, vaults }: { company: string; vaults: CompanyRecord
   );
 }
 
-/** Proposals waiting for approval. Approving and declining are built together with raising a proposal; until then both are shown disabled, with their Coming soon pills. */
+/** Proposals waiting for approval. Approving and declining are built together with raising a proposal; until then both are shown disabled. */
 function ProposalsWaiting({ records }: { records: CompanyRecords }) {
   const t = useText();
-  const create = <SoonAction label={t('home.proposals.create')} soon={t('home.proposals.create.soon')} icon={<HugeiconsIcon icon={Add01Icon} strokeWidth={2} data-icon="inline-start" />} data-action="create-proposal" />;
+  const create = <UnbuiltAction data-action="create-proposal">{<HugeiconsIcon icon={Add01Icon} strokeWidth={2} data-icon="inline-start" />}{t('home.proposals.create')}</UnbuiltAction>;
   return (
     <Part read={records.proposals} title={t('page.proposals.name')} data-part="proposals-waiting">
       {(rows) => {
@@ -157,8 +157,8 @@ function ProposalsWaiting({ records }: { records: CompanyRecords }) {
                 data-proposal={r.id}
                 actions={(
                   <>
-                    <SoonAction size="sm" label={t('proposals.approve')} soon={t('proposals.approve.soon')} data-action="approve" />
-                    <SoonAction size="sm" variant="outline" label={t('proposals.decline')} soon={t('home.decline.soon')} data-action="decline" />
+                    <UnbuiltAction size="sm" data-action="approve">{t('proposals.approve')}</UnbuiltAction>
+                    <UnbuiltAction size="sm" variant="outline" data-action="decline">{t('proposals.decline')}</UnbuiltAction>
                   </>
                 )}
               >
@@ -176,7 +176,7 @@ function ProposalsWaiting({ records }: { records: CompanyRecords }) {
 /** People to be paid waiting to join. Inviting and the fingerprint check that lets a person in are built together with joining; until then both are shown disabled. */
 function PeopleWaiting({ records }: { records: CompanyRecords }) {
   const t = useText();
-  const invite = <SoonAction label={t('people.invite')} soon={t('people.invite.soon')} icon={<HugeiconsIcon icon={Add01Icon} strokeWidth={2} data-icon="inline-start" />} data-action="invite" />;
+  const invite = <UnbuiltAction data-action="invite">{<HugeiconsIcon icon={Add01Icon} strokeWidth={2} data-icon="inline-start" />}{t('people.invite')}</UnbuiltAction>;
   return (
     <Part read={records.people} title={t('page.people.name')} data-part="people-waiting">
       {(rows) => {
@@ -190,7 +190,7 @@ function PeopleWaiting({ records }: { records: CompanyRecords }) {
             data-part="people-waiting"
           >
             {waiting.slice(0, SHOWN).map((p) => (
-              <SectionRow key={p.id} data-person={p.id} actions={<SoonAction size="sm" label={t('people.checkFingerprint')} soon={t('people.checkFingerprint.soon')} data-action="check-fingerprint" />}>
+              <SectionRow key={p.id} data-person={p.id} actions={<UnbuiltAction size="sm" data-action="check-fingerprint">{t('people.checkFingerprint')}</UnbuiltAction>}>
                 <span className="font-medium">{p.name}</span>
               </SectionRow>
             ))}
@@ -223,7 +223,7 @@ function Vaults({ records }: { records: CompanyRecords }) {
 function LatestRun({ records }: { records: CompanyRecords }) {
   const t = useText();
   const month = useMonth();
-  const newRun = <SoonAction label={t('payroll.newRun')} soon={t('payroll.newRun.soon')} data-action="new-run" />;
+  const newRun = <UnbuiltAction data-action="new-run">{t('payroll.newRun')}</UnbuiltAction>;
   return (
     <Part read={records.runs} title={t('home.nextRun')} data-part="next-run">
       {(runs) => {

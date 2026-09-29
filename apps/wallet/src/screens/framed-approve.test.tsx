@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '../testing/render.js';
 import { IDBFactory } from 'fake-indexeddb';
 
 vi.mock('midnight-identity/browser', () => ({

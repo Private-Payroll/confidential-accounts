@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // @vitest-environment-options {"url":"https://identity.payroll.example/"}
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from './testing/render.js';
 import { IDBFactory } from 'fake-indexeddb';
 import type { ReactNode } from 'react';
 

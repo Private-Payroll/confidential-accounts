@@ -12,7 +12,7 @@ import { untilPageShown, untilShown } from '../page-shown.test-support.js';
  * THE COMPANY PAGES THAT READ, DRAWN IN THE FRAME at their own addresses,
  * over records handed to them as the adapter hands them: what each page shows,
  * what it marks public, what it says when a read failed, and that every action
- * not built yet is shown, disabled, with the Coming soon pill.
+ * not built yet is shown, disabled, with nothing beside it or on hover.
  */
 const state = vi.hoisted(() => ({
   company: null as unknown, handover: { of: 'vault-keys-missing', signers: 1 } as unknown, publicMoney: null as unknown, privateMoney: null as unknown,
@@ -142,24 +142,42 @@ describe('every page that reads is built, at its own address', () => {
   /*
    * RED WHEN: an action these pages do not do yet (starting a run, approving,
    * declining, depositing, paying out, inviting, withdrawing, checking a
-   * fingerprint) is hidden, or can be pressed, or is shown without the Coming
-   * soon pill saying what it will do; or creating a vault, which is built, is
-   * still shown Coming soon anywhere.
+   * fingerprint, exporting) is hidden, or can be pressed, or has a Coming soon
+   * pill beside it, or shows anything on hover; or a Coming soon pill sits
+   * among a page's actions instead of in a heading, a tab or a line of text;
+   * or creating a vault, which is built, is still shown Coming soon anywhere.
    */
-  it('shows every action not built yet, disabled, with the Coming soon pill', async () => {
+  it('shows every action not built yet, disabled, with nothing beside it or on hover', async () => {
+    /* Each page's own actions not built yet, so one hidden on one page is not covered by the same action drawn on another. */
+    const EACH: Record<string, string[]> = {
+      home: ['approve', 'check-fingerprint', 'create-proposal', 'decline', 'invite'], proposals: ['approve', 'decline'], payroll: ['new-run'], run: ['approve', 'export-run'],
+      vault: ['check-last-deposit', 'deposit', 'pay-out'], people: ['invite', 'payslips'], invitations: ['check-fingerprint', 'withdraw'],
+    };
     const seen = new Set<string>();
-    for (const [id, params] of [['home', {}], ['payroll', {}], ['run', { run: 'r1' }], ['vault', { vault: VAULT }], ['people', {}], ['invitations', {}]] as const) {
+    for (const [id, params] of [['home', {}], ['proposals', {}], ['payroll', {}], ['run', { run: 'r1' }], ['vault', { vault: VAULT }], ['people', {}], ['invitations', {}]] as const) {
       const c = await draw(id, params);
-      const soon = all(c, '[data-soon]');
-      expect(soon.length, id).toBeGreaterThan(0);
+      /* The actions in a proposal's and a person's panel are drawn once the panel is open. */
+      if (id === 'proposals') await act(async () => { fireEvent.click(q(c, '[data-proposal=p1]')!); });
+      if (id === 'people') await act(async () => { fireEvent.click(q(c, 'tr[data-person]')!); });
+      /* Letting in someone who accepted is on the Waiting tab, collected with the tab of links. */
+      const before = id === 'invitations' ? all(document.body, '[data-soon]') : [];
+      if (id === 'invitations') await act(async () => { fireEvent.mouseDown(q(c, '[data-tab=waiting]')!, { button: 0 }); });
+      const soon = [...before, ...all(document.body, '[data-soon]').filter((s) => !before.includes(s))];
+      expect([...new Set(soon.map((s) => s.dataset.action!))].sort(), id).toEqual(EACH[id]);
       for (const s of soon) {
-        expect(q(s, 'button:not([data-slot=coming-soon])')!.hasAttribute('disabled'), `${id} ${s.dataset.action}`).toBe(true);
-        expect(q(s, '[data-slot=coming-soon]'), `${id} ${s.dataset.action}`).not.toBeNull();
+        const at = `${id} ${s.dataset.action}`;
+        expect([s.tagName, s.hasAttribute('disabled')], at).toEqual(['BUTTON', true]);
+        expect(q(s.parentElement!, ':scope > [data-slot=coming-soon]'), at).toBeNull();
+        expect([s.closest('[title]'), s.getAttribute('aria-describedby'), s.closest('[data-state=closed], [data-state=delayed-open], [data-state=instant-open]'), s.closest('[data-slot$=-trigger]')], at).toEqual([null, null, null, null]);
         seen.add(s.dataset.action!);
+      }
+      for (const pill of all(c, '[data-screen] [data-slot=coming-soon]')) {
+        expect(pill.closest('[data-slot=section-actions], [data-slot=section-row-actions], [data-slot=page-header] > :last-child:not(:first-child), td'), id).toBeNull();
+        expect(q(pill.parentElement!, ':scope > button:not([data-slot=coming-soon])'), id).toBeNull();
       }
       cleanup();
     }
-    expect([...seen].sort()).toEqual(['approve', 'check-fingerprint', 'check-last-deposit', 'create-proposal', 'decline', 'deposit', 'export-run', 'invite', 'new-run', 'pay-out', 'withdraw']);
+    expect([...seen].sort()).toEqual(['approve', 'check-fingerprint', 'check-last-deposit', 'create-proposal', 'decline', 'deposit', 'export-run', 'invite', 'new-run', 'pay-out', 'payslips', 'withdraw']);
     const vaults = await draw('vaults');
     expect(all(vaults, '[data-soon]')).toEqual([]);
     await act(async () => { fireEvent.click(q(vaults, '[data-action=create-vault]')!); await new Promise((r) => setTimeout(r, 5)); });
@@ -215,8 +233,8 @@ describe('home', () => {
    * RED WHEN: pending approval loses its proposals or its people section, a
    * section its count or its actions, or an action not built yet (creating
    * approving and declining a proposal, inviting, letting a person in) is missing,
-   * pressable, or without its Coming soon pill; or View all does not go to
-   * Proposals.
+   * pressable, or has a Coming soon pill beside it; inviting is not called
+   * Invite; or View all does not go to Proposals.
    */
   it('shows pending approval: proposals and people, with their counts and actions', async () => {
     const c = await draw('home');
@@ -224,18 +242,20 @@ describe('home', () => {
     expect(q(pending, 'h2')!.textContent).toBe(EN['home.pendingApproval']);
     const proposals = q(pending, '[data-part=proposals-waiting]')!;
     expect(q(proposals, '[data-slot=section-header] h2')!.textContent).toBe(EN['page.proposals.name']);
-    expect(q(proposals, '[data-slot=section-actions] [data-action=create-proposal] button:not([data-slot=coming-soon])')!.hasAttribute('disabled')).toBe(true);
+    expect(q(proposals, '[data-slot=section-actions] button[data-action=create-proposal]')!.hasAttribute('disabled')).toBe(true);
     expect(q(proposals, '[data-slot=section-actions] [data-action=view-all-proposals]')!.getAttribute('href')).toBe(PAGES.proposals.path);
     for (const row of all(proposals, '[data-proposal]')) {
       for (const action of ['approve', 'decline']) {
-        expect(q(row, `[data-action=${action}] button:not([data-slot=coming-soon])`)!.hasAttribute('disabled'), action).toBe(true);
-        expect(q(row, `[data-action=${action}] [data-slot=coming-soon]`), action).not.toBeNull();
+        expect(q(row, `button[data-action=${action}]`)!.hasAttribute('disabled'), action).toBe(true);
       }
     }
     const people = q(pending, '[data-part=people-waiting]')!;
     expect(q(people, '[data-slot=count-pill]')!.textContent).toBe('1');
-    expect(q(people, '[data-slot=section-actions] [data-action=invite] [data-slot=coming-soon]')).not.toBeNull();
-    expect(q(people, '[data-person=e5] [data-action=check-fingerprint] button:not([data-slot=coming-soon])')!.hasAttribute('disabled')).toBe(true);
+    const invite = q(people, '[data-slot=section-actions] button[data-action=invite]')!;
+    expect([invite.textContent, invite.hasAttribute('disabled')]).toEqual([EN['people.invite'], true]);
+    expect(EN['people.invite']).toBe('Invite');
+    expect(q(pending, '[data-slot=coming-soon]')).toBeNull();
+    expect(q(people, '[data-person=e5] button[data-action=check-fingerprint]')!.hasAttribute('disabled')).toBe(true);
   });
 
   /* RED WHEN: a part with nothing in it shows a bare line instead of the kit's empty state, or its next action. */
@@ -381,7 +401,8 @@ describe('proposals', () => {
     expect(q(c, '[data-proposal=p1] td')?.textContent).toBe('Pay the October 2026 run in NIGHT');
     await act(async () => { fireEvent.click(q(c, '[data-proposal=p1]')!); });
     const panel = document.querySelector('[data-proposal-panel=p1]') as HTMLElement;
-    expect(all(panel, '[data-soon]').map((e) => [e.dataset.action, q(e, 'button')!.hasAttribute('disabled')])).toEqual([['approve', true], ['decline', true]]);
+    expect(all(panel, '[data-soon]').map((e) => [e.dataset.action, e.hasAttribute('disabled')])).toEqual([['approve', true], ['decline', true]]);
+    expect(q(panel, '[data-slot=coming-soon]')).toBeNull();
   });
 });
 
@@ -493,8 +514,8 @@ describe('vaults and a vault', () => {
       await settle();
       const tile = q(c, `[data-slot=stat-tile][data-vault="${VAULT}"]`)!;
       expect(heldLines(tile), id).toEqual([
-        ['TDUST', 'private', `1.500000 TDUST${EN['kit.balance.private']}`],
-        ['NIGHT', 'public', `4.000000 NIGHT${EN['kit.public.label']}`],
+        ['TDUST', 'private', `1.5 TDUST${EN['kit.balance.private']}`],
+        ['NIGHT', 'public', `4 NIGHT${EN['kit.public.label']}`],
       ]);
       expect(q(tile, '[data-held=TDUST] [data-slot=private-pill]'), id).not.toBeNull();
       expect(q(tile, '[data-held=NIGHT] [data-slot=public-pill]'), id).not.toBeNull();
@@ -558,9 +579,9 @@ describe('vaults and a vault', () => {
     expect(all(table, 'tbody tr:first-child td').map((d) => d.className.includes('text-center'))).toEqual([false, true, true, true]);
     expect(q(table, 'table')!.className).toContain('md:table-fixed');
     expect(rows()).toEqual([
-      ['TDUSTprivate', 'TDUST', '1.500000', EN['kit.balance.private']],
-      ['NIGHTprivate', 'NIGHT', '2.000000', EN['kit.balance.private']],
-      ['NIGHTpublic', 'NIGHT', '4.000000', EN['kit.public.label']],
+      ['TDUSTprivate', 'TDUST', '1.5', EN['kit.balance.private']],
+      ['NIGHTprivate', 'NIGHT', '2', EN['kit.balance.private']],
+      ['NIGHTpublic', 'NIGHT', '4', EN['kit.public.label']],
     ]);
     expect(q(table, '[data-row="NIGHTpublic"] [data-slot=public-pill]')).not.toBeNull();
     expect(q(table, '[data-row="NIGHTprivate"] [data-slot=private-pill]')).not.toBeNull();
@@ -724,13 +745,13 @@ describe('vaults and a vault', () => {
     expect(q(quiet, '[data-pending]')).toBeNull();
   });
 
-  /* RED WHEN: a standing phrase says as a fact about the vault that no money can go in, or the vault-created line leaves out that this app puts money in only once the company is handed over. */
+  /* RED WHEN: a standing phrase says as a fact about the vault that no money can go in, or the vault-created line's second sentence stops saying this app puts money in only once the company is handed over. */
   it('says only that this app puts no money in, and says the company account must be handed over too', () => {
     for (const k of ['notFundable', 'accountNotHandedOver', 'accountNotFundable', 'heldByOtherKeys']) {
       expect(EN[`vaults.standing.${k}`], k).not.toMatch(/no money can go/i);
       expect(EN[`vaults.standing.${k}`], k).toMatch(/this app puts no money|it puts no money/i);
     }
-    expect(EN['createVault.done']).toMatch(/only once your company is handed to its signers/);
+    expect(EN['createVault.done.notHandedOver']).toMatch(/only once your company is handed to its signers/);
   });
 
   /* RED WHEN: a vault's payouts are not the runs that pay out of it, or the tiles lead anywhere but the vault's own page. */

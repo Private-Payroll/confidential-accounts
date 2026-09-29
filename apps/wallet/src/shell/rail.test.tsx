@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '../testing/render.js';
 import { IDBFactory } from 'fake-indexeddb';
 
 /*
@@ -206,20 +206,36 @@ describe('a folded link is still a named link', () => {
    * into a word — which is the entire reason this change fetched a component
    * rather than writing one. Radix marks its trigger, so "is there a tooltip on
    * this link" is a fact about the DOM rather than a hover to simulate. */
-  it('every folded place is a tooltip trigger, and no unfolded one is', async () => {
+  /*
+   * The kit's sidebar puts a tooltip on every place, and shows it only while
+   * the sidebar is folded. RED WHEN: a folded place stops naming itself on
+   * focus, or an unfolded one - whose word is already beside its icon - starts.
+   */
+  it('a folded place names itself on focus, and an unfolded one does not', async () => {
+    /* jsdom measures nothing; the tooltip only asks to be told of a size change. */
+    (globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    };
     await unlocked();
-    const unfolded = [...(rail()?.querySelectorAll('a[data-place]') ?? [])];
-    expect(unfolded).toHaveLength(4);
-    expect(unfolded.filter((a) => a.getAttribute('data-slot') === 'tooltip-trigger')).toEqual([]);
+    const unfolded = railLink('home') as HTMLElement;
+    fireEvent.focus(unfolded);
+    await new Promise((resolve) => { setTimeout(resolve, 50); });
+    expect(screen.queryByRole('tooltip')).toBeNull();
+    fireEvent.blur(unfolded);
 
     fireEvent.click(foldButton());
     await waitFor(() => expect(rail()?.getAttribute('data-collapsed')).toBe('true'));
 
-    const folded = [...(rail()?.querySelectorAll('a[data-place]') ?? [])];
-    expect(folded).toHaveLength(4);
-    for (const link of folded) {
-      expect(link.getAttribute('data-slot'), link.getAttribute('data-place') ?? '')
-        .toBe('tooltip-trigger');
+    for (const [route, name] of [
+      ['home', 'Home'], ['activity', 'Activity'], ['explore', 'Explore'], ['settings', 'Settings'],
+    ] as const) {
+      const link = railLink(route) as HTMLElement;
+      fireEvent.focus(link);
+      expect((await screen.findByRole('tooltip')).textContent, route).toBe(name);
+      fireEvent.blur(link);
+      await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull());
     }
   });
 
@@ -276,7 +292,11 @@ describe('the theme picker is the list, not a toggle', () => {
     expect(localStorage.getItem('identity-ui:theme')).toBe('light');
   });
 
-  it('following the machine stores nothing and writes no attribute', async () => {
+  /* The root always carries the theme that is on, because the kit's theme is
+   * chosen by that attribute alone. RED WHEN: following the machine stores a
+   * choice, or leaves the root without the machine's theme. This test's
+   * machine has no colour-scheme query, so the machine's theme is dark. */
+  it('following the machine stores nothing and writes the machine\'s theme', async () => {
     await unlocked();
     const open = async (): Promise<void> => {
       const trigger = document.querySelector('[data-theme-choice]');
@@ -290,11 +310,39 @@ describe('the theme picker is the list, not a toggle', () => {
     await open();
     fireEvent.click(screen.getByText('Follow this machine'));
     await waitFor(() => {
-      expect(document.documentElement.getAttribute('data-theme')).toBeNull();
+      expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
     });
-    /* Removed, not stored as the string "system" — the stylesheet's
-     * `prefers-color-scheme` default is what answers, and it can only answer
-     * when no attribute is present. */
+    /* Removed, not stored as the string "system": the machine answers each
+     * time the wallet opens, and a stored word would outlive the machine's
+     * own setting. */
     expect(localStorage.getItem('identity-ui:theme')).toBeNull();
+  });
+
+  /*
+   * THE MACHINE'S OWN SETTING, READ AND FOLLOWED. With nothing chosen the
+   * wallet asks the machine and writes what it says, and changes when the
+   * machine changes. RED WHEN: the machine's light setting is not read, or
+   * its change is not followed.
+   */
+  it('following a light machine writes light, and follows the machine when it changes', async () => {
+    let light = true;
+    const listeners = new Set<() => void>();
+    const was = window.matchMedia;
+    window.matchMedia = ((query: string) => ({
+      get matches() { return query.includes('light') ? light : !light; },
+      media: query,
+      addEventListener: (_: string, f: () => void) => { listeners.add(f); },
+      removeEventListener: (_: string, f: () => void) => { listeners.delete(f); },
+    })) as unknown as typeof window.matchMedia;
+    try {
+      await unlocked();
+      await waitFor(() => expect(document.documentElement.getAttribute('data-theme')).toBe('light'));
+      light = false;
+      for (const f of [...listeners]) f();
+      await waitFor(() => expect(document.documentElement.getAttribute('data-theme')).toBe('dark'));
+      expect(localStorage.getItem('identity-ui:theme')).toBeNull();
+    } finally {
+      window.matchMedia = was;
+    }
   });
 });

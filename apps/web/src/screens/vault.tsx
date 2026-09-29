@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { HugeiconsIcon, type IconSvgElement } from '@hugeicons/react';
 import { Invoice01Icon, RefreshIcon, SafeIcon, SentIcon, Shield01Icon, ShieldOffIcon } from '@hugeicons/core-free-icons';
 import {
-  AMOUNT_KIND, AmountFigureOnly, AmountState, Button, EmptyState, formatTimeAgo, PageHeader, Section, SectionRow, SoonAction, Tooltip, TooltipContent, TooltipTrigger,
+  AMOUNT_KIND, AmountFigureOnly, AmountState, Button, EmptyState, formatTimeAgo, PageHeader, Section, SectionRow, Tooltip, TooltipContent, TooltipTrigger,
   useLanguage, useText, type PrivateAmount, type PublicAmount,
 } from 'vaults-ui';
 import { COLUMN_SIZE, DataTable, type DataTableColumn, type DataTableFilter } from 'vaults-ui/data-table';
@@ -10,13 +10,13 @@ import { isPending, PendingPill, useStandingSays } from '../records/vault-pendin
 import type { CompanyRecords } from '../adapters/company-records.js';
 import { PAGE } from '../pages.js';
 import { PageLink, useCurrentPage } from '../router.js';
-import { MONEY, ReadOf, useDay, useMonth, useVaultMoney, WithRecords, type VaultMoney } from '../records/parts.js';
+import { MONEY, ReadOf, UnbuiltAction, useDay, useMonth, useVaultMoney, WithRecords, type VaultMoney } from '../records/parts.js';
 
 /**
  * A VAULT'S OWN PAGE: its name, with the Pending pill when it waits on
  * something and where it stands when it does not; the money it holds, in the
  * kit's table; its payouts; and depositing and checking the last deposit,
- * both shown and Coming soon.
+ * both not built yet and shown disabled.
  *
  * ITS MONEY IS READ WHEN THE PAGE IS SHOWN, and can be read again: privately
  * on this device, with this signer's own keys, and publicly from the
@@ -45,8 +45,8 @@ export function Vault() {
                     description={t('vaults.tile.created', { date: day(vault.createdAt) })}
                     actions={(
                       <>
-                        <SoonAction label={t('vault.deposit')} soon={t('vault.deposit.soon')} data-action="deposit" />
-                        <SoonAction label={t('vault.checkLastDeposit')} soon={t('vault.checkLastDeposit.soon')} data-action="check-last-deposit" />
+                        <UnbuiltAction data-action="deposit">{t('vault.deposit')}</UnbuiltAction>
+                        <UnbuiltAction data-action="check-last-deposit">{t('vault.checkLastDeposit')}</UnbuiltAction>
                       </>
                     )}
                   />
@@ -176,7 +176,7 @@ function MoneyHeld({ company, vault }: { company: string; vault: string }) {
 function Payouts({ records, vault }: { records: CompanyRecords; vault: string }) {
   const t = useText();
   const month = useMonth();
-  const payOut = <SoonAction label={t('vault.payOut')} soon={t('vault.payOut.soon')} data-action="pay-out" />;
+  const payOut = <UnbuiltAction data-action="pay-out">{t('vault.payOut')}</UnbuiltAction>;
   return (
     <ReadOf read={records.runs}>
       {(runs) => {

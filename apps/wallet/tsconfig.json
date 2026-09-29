@@ -43,7 +43,9 @@
       "midnight-identity": ["../../packages/identity/src/index.ts"],
       "midnight-identity/browser": ["../../packages/identity/src/browser/index.ts"],
       "midnight-identity/network": ["../../packages/identity/src/wallet/network.ts"],
-      "midnight-identity/*": ["../../packages/identity/src/*"]
+      "midnight-identity/*": ["../../packages/identity/src/*"],
+      "vaults-ui": ["../../packages/ui/src/index.ts"],
+      "vaults-ui/*": ["../../packages/ui/src/*"]
     },
     "lib": ["ES2022", "DOM"],
     "strict": true,

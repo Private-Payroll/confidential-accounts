@@ -5,9 +5,10 @@ import { refreshInbox, useInbox } from '../accounts/inbox-live.js';
 import type { InboxSnapshot } from '../accounts/inbox-live.js';
 import { CopyButton } from './ui.js';
 import {
-  Alert, Button, Card, CardContent, CardDescription, CardFooter, CardHeader,
-  CardTitle, EmptyState, GLYPH,
-} from '../kit/index.js';
+  Button, Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle, EmptyState,
+} from 'vaults-ui';
+import { StatusAlert } from './status.js';
+import { GLYPH } from '../glyphs.js';
 
 /**
  * WHAT IS WAITING FOR YOU SOMEWHERE ELSE.
@@ -20,7 +21,7 @@ import {
  * everything on this card is a REPORT and nothing on it is a decision. Four
  * things keep it that way, and all four are deliberate rather than incidental:
  *
- *   1. **NO ROW IS PRESSABLE.** A notice is a `div`, not a `ListRow` with an
+ *   1. **NO ROW IS PRESSABLE.** A notice is a `div`, not a `RowItem` with an
  *      `onClick` and not a link. There is nothing to press because there is
  *      nothing here that could be agreed to.
  *   2. **THE ONLY BUTTON ON THE CARD ASKS THE HOST**, and it is the refresh
@@ -83,30 +84,30 @@ const asMoment = (ms: number): string =>
  */
 function NoticeRow({ notice }: { readonly notice: Notice }): ReactNode {
   return (
-    <div className="rounded-tight border border-line p-3" data-notice={notice.kind}>
+    <div className="rounded-md border border-border p-3" data-notice={notice.kind}>
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-sm font-medium text-ink">{NOTICE_SAYS[notice.kind]}</span>
+        <span className="text-sm font-medium text-foreground">{NOTICE_SAYS[notice.kind]}</span>
         {/* CLAIMED, and said so. The sender's clock, not this browser's. */}
-        <span className="text-xs text-faint">said to be from {asMoment(notice.at)}</span>
+        <span className="text-xs text-muted-foreground">said to be from {asMoment(notice.at)}</span>
       </div>
       {/* TEXT CHILDREN. The sender's own words about itself — the rule,
         * which the approval surface applies to `requester.name`: a claim is
         * never drawn larger than a fact, and here there is no fact to draw. */}
-      <p className="mb-0 mt-2 text-sm text-ink">
-        {notice.from.name} <span className="text-faint">({notice.from.rdns})</span> says this
+      <p className="mb-0 mt-2 text-sm text-foreground">
+        {notice.from.name} <span className="text-muted-foreground">({notice.from.rdns})</span> says this
         is waiting for you.
       </p>
       {notice.says !== undefined && (
-        <p className="mb-0 mt-1 text-sm text-muted">{notice.says}</p>
+        <p className="mb-0 mt-1 text-sm text-muted-foreground">{notice.says}</p>
       )}
-      <p className="mb-0 mt-2 text-xs text-muted" data-go-there-yourself>
+      <p className="mb-0 mt-2 text-xs text-muted-foreground" data-go-there-yourself>
         Nothing here approves anything and nothing has been sent. To act on it, go to
         this address yourself — this wallet has not checked that it belongs to whoever
         wrote to you, and does not link to it:
       </p>
       <p className="mb-0 mt-1 flex flex-wrap items-center gap-2">
         <span className="font-mono text-sm break-all" data-notice-where>{notice.where}</span>
-        <CopyButton text={notice.where} label="Copy the address" copied="Copied" />
+        <CopyButton kit text={notice.where} label="Copy the address" copied="Copied" />
       </p>
     </div>
   );
@@ -124,17 +125,17 @@ function UnopenableRow({ opening }: {
   readonly opening: Extract<Opening, { of: 'unopenable' }>;
 }): ReactNode {
   return (
-    <Alert tone="warning" title="Something is here that this wallet cannot open" role={null}>
+    <StatusAlert tone="warning" title="Something is here that this wallet cannot open" role={null}>
       <p className="m-0 text-sm" data-unopenable-why>{opening.why}</p>
-      <p className="m-0 text-sm text-muted">
+      <p className="m-0 text-sm text-muted-foreground">
         It is not being hidden and it is not empty — it is here, and this wallet could
         not read it. The host cannot read it either.
       </p>
-      <p className="m-0 text-xs text-faint">
+      <p className="m-0 text-xs text-muted-foreground">
         The host calls it <span className="font-mono break-all">{opening.id}</span>, which
         is the host&rsquo;s own reference and not anything the sender wrote.
       </p>
-    </Alert>
+    </StatusAlert>
   );
 }
 
@@ -145,7 +146,7 @@ function UnopenableRow({ opening }: {
 function WhatTheHostLearns({ host }: { readonly host: string }): ReactNode {
   const seconds = Math.round(POLL_EVERY_MS / 1000);
   return (
-    <p className="m-0 text-xs text-muted" data-what-the-host-learns>
+    <p className="m-0 text-xs text-muted-foreground" data-what-the-host-learns>
       While this wallet is open it asks {host} for your inbox about every {seconds} seconds,
       and <em>Check now</em> asks again. {host} cannot read a word of what it holds — every
       item is sealed to this wallet and opened here. What it does learn is when you look and
@@ -160,7 +161,7 @@ function WhatTheHostLearns({ host }: { readonly host: string }): ReactNode {
 function Body({ view }: { readonly view: InboxSnapshot['view'] }): ReactNode {
   if (view.of === 'no-host') {
     return (
-      /* `EmptyState` puts its children inside its own `<p>` (`kit/empty-state.tsx`),
+      /* The kit's `EmptyState` puts its children inside its own `<p>`,
        * so the words go in as text rather than as a second paragraph. */
       <EmptyState icon={GLYPH.inbox} title="Nothing is being asked">
         This build has no inbox host. Nothing is polled, nothing is sent, and there is
@@ -170,20 +171,20 @@ function Body({ view }: { readonly view: InboxSnapshot['view'] }): ReactNode {
     );
   }
   if (view.of === 'never-asked') {
-    return <p className="m-0 text-sm text-muted">Not asked yet.</p>;
+    return <p className="m-0 text-sm text-muted-foreground">Not asked yet.</p>;
   }
   if (view.of === 'asking') {
-    return <p className="m-0 text-sm text-muted">Asking&hellip;</p>;
+    return <p className="m-0 text-sm text-muted-foreground">Asking&hellip;</p>;
   }
   if (view.of === 'failed') {
     return (
-      <Alert tone="danger" title="The inbox could not be reached" role={null}>
+      <StatusAlert tone="danger" title="The inbox could not be reached" role={null}>
         <p className="m-0 text-sm">{view.why}</p>
-        <p className="m-0 text-sm text-muted">
+        <p className="m-0 text-sm text-muted-foreground">
           This is not an empty inbox. It is a question that got no answer, so nothing is
           known either way about what is waiting.
         </p>
-      </Alert>
+      </StatusAlert>
     );
   }
   if (view.openings.length === 0) {
@@ -202,7 +203,7 @@ function Body({ view }: { readonly view: InboxSnapshot['view'] }): ReactNode {
             : <UnopenableRow opening={opening} />}
         </div>
       ))}
-      <p className="m-0 text-xs text-faint">Asked at {asMoment(view.at)}.</p>
+      <p className="m-0 text-xs text-muted-foreground">Asked at {asMoment(view.at)}.</p>
     </div>
   );
 }
@@ -212,7 +213,7 @@ export function InboxCard(): ReactNode {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Waiting for you elsewhere</CardTitle>
+        <CardTitle role="heading" aria-level={3}>Waiting for you elsewhere</CardTitle>
         <CardDescription>
           Sealed notices that something is waiting. Nothing on this card approves
           anything — each one names a place to go, and the approval happens there.
@@ -224,14 +225,14 @@ export function InboxCard(): ReactNode {
       <CardFooter className="flex flex-col items-start gap-2">
         {host === null
           ? (
-            <p className="m-0 text-xs text-muted" data-no-host-yet>
+            <p className="m-0 text-xs text-muted-foreground" data-no-host-yet>
               When an inbox host exists, this is where this card will name it and say what
               it learns by being asked.
             </p>
           )
           : (
             <>
-              <Button size="sm" onClick={() => { refreshInbox(); }}>Check now</Button>
+              <Button type="button" variant="outline" size="sm" onClick={() => { refreshInbox(); }}>Check now</Button>
               <WhatTheHostLearns host={host} />
             </>
           )}

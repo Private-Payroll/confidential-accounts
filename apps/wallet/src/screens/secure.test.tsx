@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '../testing/render.js';
 import { IDBFactory } from 'fake-indexeddb';
 import { newSecret } from 'midnight-identity/keys/derivation';
 import { fingerprintOf } from 'midnight-identity/recovery/pieces';

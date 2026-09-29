@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { ComingSoon, Tabs, TabsList, TabsTrigger, useText } from 'vaults-ui';
 import { INVITED, STANDING, type InvitationRow } from '../adapters/company-records.js';
-import { ReadOf, SoonAction, useDay, WithRecords } from '../records/parts.js';
+import { ReadOf, UnbuiltAction, useDay, WithRecords } from '../records/parts.js';
 
 /** The tabs of the invitations page that are built. Codes received is Coming soon: nothing receives a code yet. */
 const TABS = { sent: 'sent', waiting: 'waiting' } as const;
@@ -10,8 +10,8 @@ type Tab = (typeof TABS)[keyof typeof TABS];
 /**
  * INVITATIONS: the links sent and not yet used, withdrawn or expired; and the
  * people who accepted and are waiting for the fingerprint check. Withdrawing a
- * link and checking a fingerprint are shown, and are Coming soon; so is the
- * tab of codes received.
+ * link and checking a fingerprint are not built yet and are shown disabled;
+ * the tab of codes received is Coming soon.
  */
 export function Invitations() {
   const t = useText();
@@ -49,7 +49,7 @@ export function Invitations() {
                     {waiting.map((p) => (
                       <li key={p.id} className="flex flex-wrap items-center justify-between gap-2 border-t pt-2" data-person={p.id}>
                         <span>{p.name}</span>
-                        <SoonAction label={t('people.checkFingerprint')} soon={t('people.checkFingerprint.soon')} data-action="check-fingerprint" />
+                        <UnbuiltAction data-action="check-fingerprint">{t('people.checkFingerprint')}</UnbuiltAction>
                       </li>
                     ))}
                   </ul>
@@ -66,7 +66,7 @@ export function Invitations() {
   );
 }
 
-/** A link sent: to a signer or to someone to be paid, who it names, when it was sent and when it expires. Withdrawing it is Coming soon. */
+/** A link sent: to a signer or to someone to be paid, who it names, when it was sent and when it expires. Withdrawing it is not built yet and is shown disabled. */
 function SentLink({ row }: { row: InvitationRow }) {
   const t = useText();
   const day = useDay();
@@ -80,7 +80,7 @@ function SentLink({ row }: { row: InvitationRow }) {
           {row.expiresAt === null ? null : <span>{t('invitations.expires', { date: day(row.expiresAt) })}</span>}
         </span>
       </span>
-      <SoonAction label={t('invitations.withdraw')} soon={t('invitations.withdraw.soon')} data-action="withdraw" />
+      <UnbuiltAction data-action="withdraw">{t('invitations.withdraw')}</UnbuiltAction>
     </li>
   );
 }

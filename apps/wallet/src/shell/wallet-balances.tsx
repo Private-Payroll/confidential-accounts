@@ -335,7 +335,7 @@ export function WalletBalanceCell({ row }: { readonly row: WalletBalanceRow }): 
         <span className="text-xs text-warn-text">never checked</span>
       )}
       {row.kind === 'checking' && (
-        <span className="text-xs text-muted">checking…</span>
+        <span className="text-xs text-muted-foreground">checking…</span>
       )}
       {row.kind === 'failed' && (
         <span className="text-xs text-warn-text">
@@ -352,7 +352,7 @@ export function WalletBalanceCell({ row }: { readonly row: WalletBalanceRow }): 
         * switcher's dialog could not go below (`shell/switcher.tsx`, the
         * right column), and the dialog scrolled sideways. */}
       {row.kind === 'known' && (
-        <span className="text-xs break-words text-muted">
+        <span className="text-xs break-words text-muted-foreground">
           {nightFromStars(row.night)} tNIGHT shielded &middot; {asMoment(row.asOf)}
           {row.others === undefined
             ? <> &middot; other private tokens not recorded</>

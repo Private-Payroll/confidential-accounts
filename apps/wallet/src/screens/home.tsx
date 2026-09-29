@@ -32,11 +32,11 @@ import type { PendingSend, ResolutionDoors } from '../chain/pending.js';
 import { CopyButton } from '../components/ui.js';
 import { QrPanel } from '../components/qr.js';
 import {
-  ActionTile, ActionTiles, Alert, Badge, Button, ButtonLink, Card, CardContent,
-  CardDescription, CardFooter, CardHeader, CardTitle, Dialog, DialogContent,
-  DialogDescription, DialogHeader, DialogTitle, EmptyState, GLYPH, Icon, Input, Label,
-  ListRow, ListRows, Separator, Skeleton,
-} from '../kit/index.js';
+  Button, CardAction, Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle, Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, EmptyState, Input, Label, Separator, Skeleton,
+} from 'vaults-ui';
+import { RowItem, RowItems, ShortcutTile, ShortcutTiles } from '../components/rows.js';
+import { StatusAlert, StatusBadge } from '../components/status.js';
+import { GLYPH, Glyph } from '../glyphs.js';
 
 /**
  * HOME — the screen that decides whether a tester continues.
@@ -85,7 +85,8 @@ import {
  *   the agent and the payroll integration both depend on — so Send is a LINK to
  *   a screen and will never be a modal.
  *
- *   EVERY VISIBLE THING COMES FROM `apps/wallet/src/kit/`. No component is defined in
+ *   EVERY VISIBLE THING IS THE SHARED KIT'S, or the wallet's rows and notices
+ *   built from it (`components/`). No component is defined in
  *   this file that a second screen could want; the switcher is the shell's own
  *   and is reached through `shell/switcher.tsx` rather than reimplemented,
  *   which is the rule *"one switcher, two doors"*.
@@ -144,13 +145,13 @@ export function Home({ identity, secret, justRecovered = false }: {
       </div>
 
       {sheetStale && (
-        <Alert tone="warning" title="Your printed sheet of pieces is now out of date">
+        <StatusAlert tone="warning" title="Your printed sheet of pieces is now out of date">
           It was made before this name.{' '}
-          <a className="text-accent underline-offset-4 hover:underline" href={hrefOf('secure')}>
+          <a className="text-primary underline-offset-4 hover:underline" href={hrefOf('secure')}>
             Reprint it from the securing screen.
           </a>{' '}
           The pieces themselves are untouched; only the names on the paper age.
-        </Alert>
+        </StatusAlert>
       )}
 
       {/* ABOVE THE BALANCE, AND GONE THE MOMENT IT IS UNTRUE. */}
@@ -234,7 +235,7 @@ export function Home({ identity, secret, justRecovered = false }: {
  */
 function UnsecuredNotice(): ReactNode {
   return (
-    <Alert
+    <StatusAlert
       tone="warning"
       role={null}
       title="If you lose this device, the money in this wallet is gone."
@@ -249,9 +250,10 @@ function UnsecuredNotice(): ReactNode {
         including subwallets you first use years from now.
       </p>
       <p className="mt-3 mb-0">
-        <ButtonLink variant="primary" href={hrefOf('secure')}>Secure your account</ButtonLink>
+        {/* The alert underlines the links in its words; this one is a button. */}
+        <Button asChild variant="default" className="no-underline!"><a href={hrefOf('secure')}>Secure your account</a></Button>
       </p>
-    </Alert>
+    </StatusAlert>
   );
 }
 
@@ -367,18 +369,19 @@ function HeroCard({ identity, secret, owned, names, onRename, onEstablished }: {
           * belongs to, and a personal name never travels without its slot. */}
         <div className="wallet-owner flex flex-wrap items-center gap-2">
           <Mark address={owned.address.bech32} account={account} size={28} />
-          <Badge tone="accent" data-wallet-name="">
+          <StatusBadge tone="accent" data-wallet-name="">
             <strong className="font-semibold">{name}</strong>
-          </Badge>
-          {owned.owner !== name && <span className="text-xs text-faint">{owned.slot}</span>}
+          </StatusBadge>
+          {owned.owner !== name && <span className="text-xs text-muted-foreground">{owned.slot}</span>}
           <span className="flex-1" />
           <WalletSwitcher identity={identity} secret={secret}>
-            <Button variant="outline" size="sm">
-              <Icon glyph={GLYPH.switcher} className="size-4" />
+            <Button type="button" variant="outline" size="sm">
+              <Glyph icon={GLYPH.switcher} className="size-4" />
               Switch wallet
             </Button>
           </WalletSwitcher>
           <Button
+            type="button"
             variant="ghost"
             size="sm"
             aria-label={personal ? 'Rename this wallet' : 'Name this wallet'}
@@ -389,7 +392,7 @@ function HeroCard({ identity, secret, owned, names, onRename, onEstablished }: {
               setRenaming((now) => !now);
             }}
           >
-            <Icon glyph={GLYPH.rename} className="size-4" />
+            <Glyph icon={GLYPH.rename} className="size-4" />
           </Button>
         </div>
         <CardDescription>
@@ -403,14 +406,14 @@ function HeroCard({ identity, secret, owned, names, onRename, onEstablished }: {
       <CardContent className="flex flex-col gap-4">
         {renaming && (
           <form
-            className="flex flex-col gap-2 rounded-tight border border-line bg-sunken p-3"
+            className="flex flex-col gap-2 rounded-md border border-border bg-muted p-3"
             onSubmit={(e) => {
               e.preventDefault();
               onRename(draft);
               setRenaming(false);
             }}
           >
-            <Label htmlFor="wallet-name">
+            <Label htmlFor="wallet-name" className="mb-2">
               {account === MAIN_ACCOUNT
                 ? 'A name for the main wallet'
                 : `A name for ${owned.slot}`}
@@ -423,10 +426,10 @@ function HeroCard({ identity, secret, owned, names, onRename, onEstablished }: {
               onChange={(e) => setDraft(e.target.value)}
             />
             <div className="flex flex-wrap gap-2">
-              <Button type="submit" variant="primary" size="sm">Save the name</Button>
-              <Button size="sm" onClick={() => setRenaming(false)}>Cancel</Button>
+              <Button type="submit" variant="default" size="sm">Save the name</Button>
+              <Button type="button" variant="outline" size="sm" onClick={() => setRenaming(false)}>Cancel</Button>
             </div>
-            <p className="m-0 text-xs text-faint">
+            <p className="m-0 text-xs text-muted-foreground">
               Naming a wallet is what makes it yours to find again. Names live in this
               browser only — after a recovery every wallet comes back and the names are
               the part you re-type. Leave it empty to go back to the slot&rsquo;s own name.
@@ -436,13 +439,13 @@ function HeroCard({ identity, secret, owned, names, onRename, onEstablished }: {
 
         {!asked ? (
           <div>
-            <p className="m-0 text-sm text-muted">
+            <p className="m-0 text-sm text-muted-foreground">
               Not asked yet. Checking reads all three balances — unshielded NIGHT,
               shielded, and DUST, which pays fees — and asks the indexer at{' '}
               {INDEXER_HOST}, which learns this wallet&rsquo;s addresses. Nothing is sent
               until you press.
             </p>
-            <Button variant="primary" className="mt-3" onClick={check}>
+            <Button type="button" variant="default" className="mt-3" onClick={check}>
               Check the balance
             </Button>
           </div>
@@ -461,14 +464,14 @@ function HeroCard({ identity, secret, owned, names, onRename, onEstablished }: {
               </div>
             ))}
             {anySynced && (
-              <p className="m-0 text-xs text-faint">
+              <p className="m-0 text-xs text-muted-foreground">
                 1 NIGHT = 1,000,000 STARs and 1 DUST = 10^15 SPECKs — the
                 Foundation&rsquo;s own figures. The NIGHT split was
                 measured on stagenet on 19 Aug: 5000 tNIGHT from the faucet read back as
                 exactly 5,000,000,000 STARs.
               </p>
             )}
-            {anyFailed && <Button onClick={check}>Try again</Button>}
+            {anyFailed && <Button type="button" variant="outline" onClick={check}>Try again</Button>}
           </>
         )}
       </CardContent>
@@ -507,19 +510,19 @@ function BalanceLine({ kind, title, hero, state, owner }: {
   const arriving = state?.name === 'connecting' || state?.name === 'syncing';
   return (
     <div data-kind={kind} aria-busy={arriving ? 'true' : undefined}>
-      <h3 className={hero ? 'm-0 text-sm font-medium text-muted' : 'm-0 text-sm font-medium text-muted'}>
+      <h3 className={hero ? 'm-0 text-sm font-medium text-muted-foreground' : 'm-0 text-sm font-medium text-muted-foreground'}>
         {title}
       </h3>
 
       {state === null && (
-        <p className="m-0 mt-1 text-sm text-muted" role="status">Not asked yet.</p>
+        <p className="m-0 mt-1 text-sm text-muted-foreground" role="status">Not asked yet.</p>
       )}
 
       {arriving && <Skeleton className={hero ? 'mt-2 h-11 w-56' : 'mt-2 h-6 w-32'} />}
 
       {state?.name === 'connecting' && (state.quietMs === undefined
         ? (
-          <p className="m-0 mt-2 text-sm text-muted" role="status">
+          <p className="m-0 mt-2 text-sm text-muted-foreground" role="status">
             Asking {INDEXER_HOST}… nothing is known yet — this is a wait, not a zero.
           </p>
         )
@@ -532,7 +535,7 @@ function BalanceLine({ kind, title, hero, state, owner }: {
         ))}
 
       {state?.name === 'syncing' && (
-        <p className="m-0 mt-2 text-sm text-muted" role="status">
+        <p className="m-0 mt-2 text-sm text-muted-foreground" role="status">
           Reading {owner}&rsquo;s coins — {state.applied.toLocaleString()}{' '}
           {kind === 'unshielded' ? 'transactions' : 'events'} applied; the newest the
           indexer has reported is{' '}
@@ -545,13 +548,13 @@ function BalanceLine({ kind, title, hero, state, owner }: {
         <>
           <div
             className={hero
-              ? 'balance-big mt-1 font-sans text-display font-semibold text-ink'
-              : 'balance-big mt-1 font-sans text-xl font-semibold text-ink'}
+              ? 'balance-big mt-1 font-sans text-3xl tracking-tight font-semibold text-foreground'
+              : 'balance-big mt-1 font-sans text-xl font-semibold text-foreground'}
             aria-label={`${title} balance of ${owner}`}
           >
-            {big(state.night)} <span className="balance-unit text-muted">{unit}</span>
+            {big(state.night)} <span className="balance-unit text-muted-foreground">{unit}</span>
           </div>
-          <p className="m-0 mt-1 text-xs text-muted">
+          <p className="m-0 mt-1 text-xs text-muted-foreground">
             Exactly {exact(state.night)}, as of {asClock(state.asOf)}.
           </p>
           {kind !== 'dust' && state.others !== undefined
@@ -562,17 +565,17 @@ function BalanceLine({ kind, title, hero, state, owner }: {
                * amount is in the token's smallest unit and the token is named by
                * its colour: short, with the whole colour beside it. Only held
                * tokens get a line; there is no zero line for a token not held. */
-              <p key={colour} className="m-0 mt-1 text-sm text-ink" data-token={colour}>
+              <p key={colour} className="m-0 mt-1 text-sm text-foreground" data-token={colour}>
                 {smallestUnits(amount)} of token{' '}
                 <span className="font-mono" title={colour}>{shortColour(colour)}</span>
-                <span className="block break-all font-mono text-xs text-faint">{colour}</span>
+                <span className="block break-all font-mono text-xs text-muted-foreground">{colour}</span>
               </p>
             ))}
           {kind === 'shielded' && state.others === undefined && (
             /* A SAVED FIGURE FROM BEFORE OTHER TOKENS WERE RECORDED. It knows
              * NIGHT and nothing else, so it says that, rather than showing no
              * other token as if there were none. */
-            <p className="m-0 mt-1 text-xs text-muted" data-others="not-recorded">
+            <p className="m-0 mt-1 text-xs text-muted-foreground" data-others="not-recorded">
               Other private tokens are not recorded in this saved figure. A completed
               check of this wallet&rsquo;s balance reads them.
             </p>
@@ -584,7 +587,7 @@ function BalanceLine({ kind, title, hero, state, owner }: {
              * record even though the coin it makes is private, so the sentence
              * says so rather than calling everything on this line private from
              * the start. A zero is what the last completed read found. */
-            <p className="m-0 mt-1 text-xs text-faint">
+            <p className="m-0 mt-1 text-xs text-muted-foreground">
               Money sent to you privately appears here: NIGHT above, and any other
               token on its own line, in that token&rsquo;s smallest unit. Private value on
               this ledger is minted by a contract, and the amount of a mint is public on
@@ -593,7 +596,7 @@ function BalanceLine({ kind, title, hero, state, owner }: {
             </p>
           )}
           {kind === 'dust' && state.night === 0n && (
-            <p className="m-0 mt-1 text-xs text-faint">
+            <p className="m-0 mt-1 text-xs text-muted-foreground">
               A real zero, not an unknown: DUST is not paid in — it grows over time from
               NIGHT that has been <strong>registered</strong> for generation, and this
               wallet has registered none yet. Without DUST no fee can be paid, so nothing
@@ -641,8 +644,8 @@ function BalanceLine({ kind, title, hero, state, owner }: {
  */
 function QuickActions({ owned }: { readonly owned: OwnedAddress }): ReactNode {
   return (
-    <ActionTiles aria-label="Shortcuts">
-      <ActionTile
+    <ShortcutTiles aria-label="Shortcuts">
+      <ShortcutTile
         href={hrefOf('send')}
         glyph={GLYPH.send}
         tone="accent"
@@ -655,7 +658,7 @@ function QuickActions({ owned }: { readonly owned: OwnedAddress }): ReactNode {
         * words on a tile are what a person reads and the route name is what
         * the code and every recorded hash refer to — renaming the second to
         * follow the first would change a URL people may already have. */}
-      <ActionTile
+      <ShortcutTile
         href={hrefOf('address-book')}
         glyph={GLYPH.contacts}
         label="Contacts"
@@ -674,13 +677,13 @@ function QuickActions({ owned }: { readonly owned: OwnedAddress }): ReactNode {
         * `quiet`, like its neighbours — **Send is the one accented tile on
         * this screen** and a second accent is no hierarchy at all.
         */}
-      <ActionTile
+      <ShortcutTile
         href={hrefOf('profile')}
         glyph={GLYPH.details}
         label="My profile"
         says="A company can ask; you decide what it gets"
       />
-    </ActionTiles>
+    </ShortcutTiles>
   );
 }
 
@@ -703,8 +706,8 @@ function ReceiveRow({ owned }: { readonly owned: OwnedAddress }): ReactNode {
    * CONSTRAINT RATHER THAN A PREFERENCE. `asChild` goes through Radix's `Slot`,
    * which clones the child and hands it the trigger's own props and ref. `Slot`
    * can only do that to a component that SPREADS what it is given —
-   * `kit/button.tsx` does, which is why the switcher's trigger is a `Button` —
-   * and `kit/list-row.tsx` deliberately does not: it takes a fixed prop list so
+   * the kit's `Button` does, which is why the switcher's trigger is a `Button` —
+   * and `RowItem` (`components/rows.tsx`) deliberately does not: it takes a fixed prop list so
    * a row cannot acquire arbitrary attributes at a call site. So the row keeps
    * its own `onClick` and this component owns the open state. Radix still
    * returns focus to the row on close, because it remembers what was focused
@@ -712,14 +715,14 @@ function ReceiveRow({ owned }: { readonly owned: OwnedAddress }): ReactNode {
   const [open, setOpen] = useState(false);
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <ActionTile
+      <ShortcutTile
         onClick={() => setOpen(true)}
         glyph={GLYPH.receive}
         tone="accent"
         label="Receive"
         says="Your address and a code to scan"
       />
-      <DialogContent>
+      <DialogContent className="max-h-[calc(100svh-2rem)] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Receive into {name}</DialogTitle>
           <DialogDescription>
@@ -730,8 +733,8 @@ function ReceiveRow({ owned }: { readonly owned: OwnedAddress }): ReactNode {
         </DialogHeader>
         <p className="wallet-owner m-0 flex items-center gap-2">
           <Mark address={address.bech32} account={owned.account} size={22} />
-          <strong className="text-sm font-semibold text-ink">{name}</strong>
-          {owner !== name && <span className="text-xs text-faint">{slot}</span>}
+          <strong className="text-sm font-semibold text-foreground">{name}</strong>
+          {owner !== name && <span className="text-xs text-muted-foreground">{slot}</span>}
         </p>
         <AddressBlock
           kind="unshielded"
@@ -779,9 +782,9 @@ function AddressBlock({ kind, title, says, bech32, short, owner }: {
 }): ReactNode {
   const parts = splitShortAddress(short);
   return (
-    <div data-addr={kind} className="rounded-tight border border-line p-3">
-      <h3 className="m-0 text-sm font-semibold text-ink">{title}</h3>
-      <p className="m-0 mt-1 text-xs text-muted">{says}</p>
+    <div data-addr={kind} className="rounded-md border border-border p-3">
+      <h3 className="m-0 text-sm font-semibold text-foreground">{title}</h3>
+      <p className="m-0 mt-1 text-xs text-muted-foreground">{says}</p>
       <div
         className="address-short"
         aria-label={`${title} address of ${owner}, short form: ${short}`}
@@ -806,6 +809,7 @@ function AddressBlock({ kind, title, says, bech32, short, owner }: {
         />
       </div>
       <CopyButton
+        kit
         text={bech32}
         label={`Copy the ${kind} address`}
         copied={`Copied — the ${kind} address of ${owner}`}
@@ -852,13 +856,13 @@ function EarnRow(): ReactNode {
   const [open, setOpen] = useState(false);
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <ActionTile
+      <ShortcutTile
         onClick={() => setOpen(true)}
         glyph={GLYPH.earn}
         label="Earn"
         says="Coming soon"
       />
-      <DialogContent>
+      <DialogContent className="max-h-[calc(100svh-2rem)] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Earn is coming soon</DialogTitle>
           <DialogDescription>
@@ -866,7 +870,7 @@ function EarnRow(): ReactNode {
             handing it to anybody.
           </DialogDescription>
         </DialogHeader>
-        <p className="m-0 text-sm text-muted">
+        <p className="m-0 text-sm text-muted-foreground">
           There is no date for it and this screen will not invent one. When it exists it
           will name every host it dials, the way the rest of this wallet does, and
           nothing will move without going through the same approval screen a payment
@@ -906,20 +910,17 @@ function EarnRow(): ReactNode {
 function RecentActivity(): ReactNode {
   return (
     <Card>
-      <CardHeader
-        action={(
-          <ButtonLink
-            variant="ghost"
-            size="icon"
+      <CardHeader>
+        <CardTitle role="heading" aria-level={3}>Recent activity</CardTitle>
+        <CardAction>
+          <Button asChild variant="ghost" size="icon"><a
             href={hrefOf('activity')}
             aria-label="View all activity"
             title="View all activity"
           >
-            <Icon glyph={GLYPH.next} className="size-5" />
-          </ButtonLink>
-        )}
-      >
-        <CardTitle>Recent activity</CardTitle>
+            <Glyph icon={GLYPH.next} className="size-5" />
+          </a></Button>
+        </CardAction>
       </CardHeader>
       <CardContent>
         <EmptyState icon={GLYPH.inbox} title="Payment history is not read on this screen yet">
@@ -943,18 +944,18 @@ function RecoveredUnknownCard(): ReactNode {
   return (
     <Card aria-label="Where this account's pieces are is not known here">
       <CardHeader>
-        <CardTitle>This account was just put back from its pieces.</CardTitle>
+        <CardTitle role="heading" aria-level={3}>This account was just put back from its pieces.</CardTitle>
       </CardHeader>
       <CardContent>
-        <p className="m-0 text-sm text-muted">
+        <p className="m-0 text-sm text-muted-foreground">
           The pieces you used exist — you fetched them yourself. This browser could not
           write its own note of where they are, so it does not know, and this screen
           cannot tell you whether the account is secured. It does not follow that
           anything is wrong.
         </p>
-        <p className="m-0 mt-3 text-xs text-faint">
+        <p className="m-0 mt-3 text-xs text-muted-foreground">
           Cutting a new set from{' '}
-          <a className="text-accent underline-offset-4 hover:underline" href={hrefOf('secure')}>
+          <a className="text-primary underline-offset-4 hover:underline" href={hrefOf('secure')}>
             the securing screen
           </a>{' '}
           adds a way in — it never switches the pieces you already have off.
@@ -974,17 +975,17 @@ function PairedUnknownCard({ at }: { readonly at: number }): ReactNode {
   return (
     <Card aria-label="Where this account's pieces are is not known here">
       <CardHeader>
-        <CardTitle>This wallet arrived from another device on {day(at)}.</CardTitle>
+        <CardTitle role="heading" aria-level={3}>This wallet arrived from another device on {day(at)}.</CardTitle>
       </CardHeader>
       <CardContent>
-        <p className="m-0 text-sm text-muted">
+        <p className="m-0 text-sm text-muted-foreground">
           Whether it is secured — where its pieces are, if it has any — is recorded on
           the machine it came from, not here. This browser cannot tell, and does not
           guess.
         </p>
-        <p className="m-0 mt-3 text-xs text-faint">
+        <p className="m-0 mt-3 text-xs text-muted-foreground">
           You can check on the other machine, or cut a set from{' '}
-          <a className="text-accent underline-offset-4 hover:underline" href={hrefOf('secure')}>
+          <a className="text-primary underline-offset-4 hover:underline" href={hrefOf('secure')}>
             the securing screen
           </a>{' '}
           here — a new set adds a way in and never switches an old one off.
@@ -1014,7 +1015,7 @@ function SecuredCard({ setup }: { readonly setup: SecuredSetup }): ReactNode {
   return (
     <Card aria-label="This account is secured">
       <CardHeader>
-        <CardTitle className="flex items-center gap-2">
+        <CardTitle role="heading" aria-level={3} className="flex items-center gap-2">
           <span className="ok" aria-hidden="true">✓</span> Account secured
         </CardTitle>
         <CardDescription>
@@ -1041,7 +1042,7 @@ function SecuredCard({ setup }: { readonly setup: SecuredSetup }): ReactNode {
             </div>
           ))}
         </div>
-        <p className="m-0 mt-3 text-xs text-faint">
+        <p className="m-0 mt-3 text-xs text-muted-foreground">
           These pieces cover every subwallet too: all of them grow out of the one secret
           the pieces rebuild — including subwallets first used after the pieces were
           placed.
@@ -1144,9 +1145,9 @@ function ThisDeviceCard({ secret }: { readonly secret: Secret }): ReactNode {
   if (!made && !linked) return null;
   return (
     <Card aria-label="When this browser got this account">
-      <CardContent className="flex items-center gap-3 pt-5">
-        <Icon glyph={GLYPH.wallet} className="text-muted" />
-        <p className="m-0 text-sm text-ink">
+      <CardContent className="flex items-center gap-3">
+        <Glyph icon={GLYPH.wallet} className="size-5 text-muted-foreground" />
+        <p className="m-0 text-sm text-foreground">
           {made
             ? `Created in this browser on ${day(made.at)}.`
             : `Linked on ${day(linked!.at)}.`}
@@ -1182,13 +1183,13 @@ function SetUp({ state }: {
   return (
     <Card aria-label="What to do next">
       <CardHeader>
-        <CardTitle>Set up</CardTitle>
+        <CardTitle role="heading" aria-level={3}>Set up</CardTitle>
       </CardHeader>
       <CardContent>
-        <ListRows>
-          <ListRow
+        <RowItems>
+          <RowItem
             href={hrefOf('secure')}
-            leading={<Icon glyph={GLYPH.secured} className="text-muted" />}
+            leading={<Glyph icon={GLYPH.secured} className="size-5 text-muted-foreground" />}
             title="Secure your account"
             subtitle={state === 'secured'
               ? 'Done — revisit the pieces, re-verify them, or change the plan'
@@ -1196,25 +1197,25 @@ function SetUp({ state }: {
                 ? 'The one thing worth doing first'
                 : 'This browser does not know where this account’s pieces are'}
           />
-          <ListRow
+          <RowItem
             href={hrefOf('add-device')}
-            leading={<Icon glyph={GLYPH.wallet} className="text-muted" />}
+            leading={<Glyph icon={GLYPH.wallet} className="size-5 text-muted-foreground" />}
             title="Add another device"
-            /* `ListRow` truncates a subtitle on purpose (`kit/list-row.tsx`),
+            /* `RowItem` truncates a subtitle on purpose (`components/rows.tsx`),
              * so these fit one line rather than the row growing to hold them.
              * The full sentence lives on the screen each one leads to. */
             subtitle="Scan a code and compare two digits on both screens"
 
           />
-          <ListRow
+          <RowItem
             href={hrefOf('advanced')}
-            leading={<Icon glyph={GLYPH.settings} className="text-muted" />}
+            leading={<Glyph icon={GLYPH.settings} className="size-5 text-muted-foreground" />}
             title="Advanced"
             subtitle="The recovery phrase, and the key others lock pieces to"
-            trailing={<Badge>Coming soon</Badge>}
+            trailing={<StatusBadge>Coming soon</StatusBadge>}
           />
-        </ListRows>
-        <p className="m-0 mt-3 text-xs text-faint">
+        </RowItems>
+        <p className="m-0 mt-3 text-xs text-muted-foreground">
           Recovering a <em>different</em> account onto this machine starts from the lock
           screen — press Lock first. It replaces the wallet stored here, and says so
           before it does.
@@ -1295,23 +1296,22 @@ function AllWalletsCard({ identity, secret, names, changed }: {
 
   return (
     <Card aria-label="Every wallet's last known balance">
-      <CardHeader
-        action={(
-          <WalletSwitcher identity={identity} secret={secret}>
-            <Button variant="ghost" size="icon" aria-label="See every wallet" title="See every wallet">
-              <Icon glyph={GLYPH.next} className="size-5" />
-            </Button>
-          </WalletSwitcher>
-        )}
-      >
-        <CardTitle>Every wallet</CardTitle>
+      <CardHeader>
+        <CardTitle role="heading" aria-level={3}>Every wallet</CardTitle>
         <CardDescription>
           Live checking follows the wallet that is open. The others show the last time
           anyone looked — and how long ago that was.
         </CardDescription>
+        <CardAction>
+          <WalletSwitcher identity={identity} secret={secret}>
+            <Button type="button" variant="ghost" size="icon" aria-label="See every wallet" title="See every wallet">
+              <Glyph icon={GLYPH.next} className="size-5" />
+            </Button>
+          </WalletSwitcher>
+        </CardAction>
       </CardHeader>
       <CardContent>
-        <ListRows>
+        <RowItems>
           {shown.map((account) => (
             <div
               key={account}
@@ -1324,16 +1324,16 @@ function AllWalletsCard({ identity, secret, names, changed }: {
               data-account={account}
               style={{ '--wallet-hue': String(hueOf(account)) } as CSSProperties}
             >
-              <ListRow
+              <RowItem
                 leading={<span className="wallet-swatch small" aria-hidden="true" />}
                 title={displayNameOf(account, names)}
                 trailing={<WalletBalanceCell row={rowFor(rows, account)} />}
               />
             </div>
           ))}
-        </ListRows>
+        </RowItems>
         {hidden > 0 && (
-          <p className="m-0 mt-3 text-xs text-faint">
+          <p className="m-0 mt-3 text-xs text-muted-foreground">
             {hidden === 1
               ? 'One more slot is not shown here.'
               : `${hidden} more slots are not shown here.`}{' '}
@@ -1424,7 +1424,7 @@ export function PendingSendsCard({ secret, resolution }: {
         return r.outcome.name === 'sent' ? (
           <Card role="status" key={r.key} aria-label="A payment went through">
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
+              <CardTitle role="heading" aria-level={3} className="flex items-center gap-2">
                 <span className="ok" aria-hidden="true">✓</span> That payment went through.
               </CardTitle>
               <CardDescription>
@@ -1433,13 +1433,13 @@ export function PendingSendsCard({ secret, resolution }: {
               </CardDescription>
             </CardHeader>
             <CardFooter>
-              <Button onClick={() => dismiss(r.key)}>Understood</Button>
+              <Button type="button" variant="outline" onClick={() => dismiss(r.key)}>Understood</Button>
             </CardFooter>
           </Card>
         ) : (
           <Card role="alert" key={r.key} aria-label="A payment did not go through">
             <CardHeader>
-              <CardTitle>A payment did not go through.</CardTitle>
+              <CardTitle role="heading" aria-level={3}>A payment did not go through.</CardTitle>
               <CardDescription>
                 {amount} to {to} — submitted {new Date(r.submittedAt).toLocaleString()}.
               </CardDescription>
@@ -1448,7 +1448,7 @@ export function PendingSendsCard({ secret, resolution }: {
               <div className="error">{r.outcome.reason}</div>
             </CardContent>
             <CardFooter>
-              <Button onClick={() => dismiss(r.key)}>Understood</Button>
+              <Button type="button" variant="outline" onClick={() => dismiss(r.key)}>Understood</Button>
             </CardFooter>
           </Card>
         );

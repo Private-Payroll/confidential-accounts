@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '../testing/render.js';
 import { Buffer as PolyfillBuffer } from 'buffer/';
 import * as L from '@midnightntwrk/ledger-v9';
 import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';

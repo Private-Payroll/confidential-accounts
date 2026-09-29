@@ -13,10 +13,10 @@ import { renameThisWallet, useWallets } from '../shell/wallets.js';
 import { ThemePicker, useTheme } from '../shell/theme.js';
 import { day, verifiedWords } from '../components/piece-map.js';
 import type { Passkey } from 'midnight-identity/passkey/verify';
-import {
-  Alert, Badge, Button, ButtonLink, Card, CardContent, GLYPH, Icon, Input, Label,
-  ListRow, ListRows, Section,
-} from '../kit/index.js';
+import { Button, Card, CardContent, Input, Label, Section } from 'vaults-ui';
+import { RowItem, RowItems } from '../components/rows.js';
+import { StatusAlert, StatusBadge } from '../components/status.js';
+import { GLYPH, Glyph } from '../glyphs.js';
 
 /**
  * SETTINGS — almost nothing here is new capability.
@@ -127,25 +127,26 @@ function ThisWallet({ secret, name, wallet }: {
   const { theme, choice, setChoice } = useTheme();
   return (
     <Section
+      list={false} box={false} aria-label="This wallet, this device"
       title="This wallet, this device"
       description="What is open here, how it got here, and how this browser looks."
     >
       <Card>
-        <CardContent className="pt-5">
-          <ListRows>
+        <CardContent >
+          <RowItems>
             <WalletNameRow secret={secret} wallet={wallet} />
-            <ListRow
-              leading={<Icon glyph={GLYPH.wallet} className="text-muted" />}
+            <RowItem
+              leading={<Glyph icon={GLYPH.wallet} className="size-5 text-muted-foreground" />}
               title="Wallet open"
               subtitle="Switch wallets from the account chip"
               trailing={<span className="font-medium">{name}</span>}
             />
-            <ListRow
-              leading={<Icon glyph={GLYPH.home} className="text-muted" />}
+            <RowItem
+              leading={<Glyph icon={GLYPH.home} className="size-5 text-muted-foreground" />}
               title="This browser"
               /* Three states, and the third one is silence. */
               trailing={
-                <span className="font-normal text-muted">
+                <span className="font-normal text-muted-foreground">
                   {made
                     ? `Created here on ${day(made.at)}`
                     : linked
@@ -154,17 +155,17 @@ function ThisWallet({ secret, name, wallet }: {
                 </span>
               }
             />
-            <ListRow
-              leading={<Icon glyph={GLYPH.themeSystem} className="text-muted" />}
+            <RowItem
+              leading={<Glyph icon={GLYPH.themeSystem} className="size-5 text-muted-foreground" />}
               title="Theme"
               subtitle="The same control that is in the sidebar"
               trailing={<ThemePicker choice={choice} theme={theme} onChoose={setChoice} />}
             />
-          </ListRows>
+          </RowItems>
         </CardContent>
       </Card>
 
-      <Alert tone="info" role={null} title="There is no way to throw a device off.">
+      <StatusAlert tone="info" role={null} title="There is no way to throw a device off.">
         <p className="m-0">
           A device that has this account keeps it. Pairing hands the account to another
           machine and the two are then strangers — there is no register of them, no
@@ -173,12 +174,12 @@ function ThisWallet({ secret, name, wallet }: {
         </p>
         <p className="mt-2 mb-0">
           So the answer to a lost or stolen device is not to revoke it. It is to{' '}
-          <a className="text-accent underline-offset-4 hover:underline" href={hrefOf('send')}>
+          <a className="text-primary underline-offset-4 hover:underline" href={hrefOf('send')}>
             move the money
           </a>{' '}
           to a wallet that machine does not have.
         </p>
-      </Alert>
+      </StatusAlert>
     </Section>
   );
 }
@@ -209,8 +210,8 @@ function WalletNameRow({ secret, wallet }: {
   const [draft, setDraft] = useState('');
   return (
     <>
-      <ListRow
-        leading={<Icon glyph={GLYPH.rename} className="text-muted" />}
+      <RowItem
+        leading={<Glyph icon={GLYPH.rename} className="size-5 text-muted-foreground" />}
         title="This wallet's name"
         subtitle="Covers every account in the switcher, not just the open one"
         trailing={(
@@ -219,6 +220,7 @@ function WalletNameRow({ secret, wallet }: {
               {wallet ?? 'Not named'}
             </span>
             <Button
+              type="button"
               size="sm"
               variant="ghost"
               /* Deliberately NOT "Rename this wallet": Home's pencil already
@@ -234,21 +236,21 @@ function WalletNameRow({ secret, wallet }: {
                 setEditing((now) => !now);
               }}
             >
-              <Icon glyph={GLYPH.rename} className="size-4" />
+              <Glyph icon={GLYPH.rename} className="size-4" />
             </Button>
           </span>
         )}
       />
       {editing && (
         <form
-          className="flex flex-col gap-2 rounded-tight border border-line bg-sunken p-3"
+          className="flex flex-col gap-2 rounded-md border border-border bg-muted p-3"
           onSubmit={(e) => {
             e.preventDefault();
             renameThisWallet(secret, draft);
             setEditing(false);
           }}
         >
-          <Label htmlFor="whole-wallet-rename">A name for this wallet</Label>
+          <Label htmlFor="whole-wallet-rename" className="mb-2">A name for this wallet</Label>
           <Input
             id="whole-wallet-rename"
             value={draft}
@@ -257,10 +259,10 @@ function WalletNameRow({ secret, wallet }: {
             onChange={(e) => setDraft(e.target.value)}
           />
           <div className="flex flex-wrap gap-2">
-            <Button type="submit" variant="primary" size="sm">Save the name</Button>
-            <Button size="sm" onClick={() => setEditing(false)}>Cancel</Button>
+            <Button type="submit" variant="default" size="sm">Save the name</Button>
+            <Button type="button" variant="outline" size="sm" onClick={() => setEditing(false)}>Cancel</Button>
           </div>
-          <p className="m-0 text-xs text-faint">
+          <p className="m-0 text-xs text-muted-foreground">
             This changes the name inside the wallet only. <strong>Your browser&rsquo;s
             passkey list keeps the name it already has</strong> — a passkey&rsquo;s
             label is fixed when it is made and nothing here can change it; only your
@@ -307,12 +309,13 @@ function Backup({ setup, arrivedAt }: {
   if (setup === null) {
     return (
       <Section
+        list={false} box={false} aria-label="Security"
         title="Security"
         description="Where the pieces that rebuild this account are, and when they were last proved."
       >
         <Card>
-          <CardContent className="pt-5">
-            <p className="m-0 text-sm text-muted">
+          <CardContent >
+            <p className="m-0 text-sm text-muted-foreground">
               {arrivedAt !== null
                 ? 'This browser holds no record of any pieces. This account arrived here from '
                   + `another device on ${day(arrivedAt)}, and whether it is secured is written `
@@ -322,9 +325,9 @@ function Backup({ setup, arrivedAt }: {
                   + 'and nobody can put it back — including us.'}
             </p>
             <p className="m-0 mt-4">
-              <ButtonLink variant="primary" href={hrefOf('secure')}>
+              <Button asChild variant="default"><a href={hrefOf('secure')}>
                 Cut this account into pieces
-              </ButtonLink>
+              </a></Button>
             </p>
           </CardContent>
         </Card>
@@ -337,14 +340,15 @@ function Backup({ setup, arrivedAt }: {
 
   return (
     <Section
+      list={false} box={false} aria-label="Security"
       title="Security"
       description="Where the pieces that rebuild this account are, and when they were last proved."
     >
       <Card>
-        <CardContent className="pt-5">
-          <ListRows>
-            <ListRow
-              leading={<Icon glyph={GLYPH.secured} className="text-muted" />}
+        <CardContent >
+          <RowItems>
+            <RowItem
+              leading={<Glyph icon={GLYPH.secured} className="size-5 text-muted-foreground" />}
               title="How many pieces put it back"
               subtitle="The quorum, taken off the pieces themselves"
               trailing={
@@ -353,23 +357,23 @@ function Backup({ setup, arrivedAt }: {
                 </span>
               }
             />
-            <ListRow
-              leading={<Icon glyph={GLYPH.success} className="text-muted" />}
+            <RowItem
+              leading={<Glyph icon={GLYPH.success} className="size-5 text-muted-foreground" />}
               title="Last proved"
               subtitle="The last time it was actually rebuilt from real pieces"
               trailing={<span className="font-medium">{day(setup.rebuiltAt)}</span>}
             />
-          </ListRows>
+          </RowItems>
 
           {/* §7.12, said rather than implied. */}
-          <p className="m-0 mt-3 text-xs text-faint">
+          <p className="m-0 mt-3 text-xs text-muted-foreground">
             That is a dated past fact and nothing more. It is not a statement about today,
             and it is not the day the pieces were placed — it is the day the account was
             put back together from them and the result matched.
           </p>
 
           {setup.partial && (
-            <Alert
+            <StatusAlert
               tone="warning"
               role={null}
               className="mt-4"
@@ -378,10 +382,10 @@ function Backup({ setup, arrivedAt }: {
               The record was written by a recovery, from the pieces that were actually
               fetched and used. There may be others placed elsewhere that this browser has
               never heard of, and their absence below says nothing about them.
-            </Alert>
+            </StatusAlert>
           )}
 
-          <h3 className="mt-5 mb-2 text-sm font-semibold text-ink">Where the pieces are</h3>
+          <h3 className="mt-5 mb-2 text-sm font-semibold text-foreground">Where the pieces are</h3>
           <div>
             {setup.pieces.map((piece) => (
               <div className="piece-row" key={`${piece.holder}:${piece.label}`}>
@@ -396,14 +400,14 @@ function Backup({ setup, arrivedAt }: {
               </div>
             ))}
           </div>
-          <p className="m-0 mt-3 text-xs text-faint">
+          <p className="m-0 mt-3 text-xs text-muted-foreground">
             A piece that <em>cannot be checked</em> is not a piece that failed a check — paper
             cannot answer, ever, and that is its honest permanent answer. A piece that has{' '}
             <em>not yet been checked</em> is one that could be asked and has not been.
           </p>
 
           {ownOld.length > 0 && (
-            <Alert
+            <StatusAlert
               tone="warning"
               role={null}
               className="mt-4"
@@ -417,19 +421,19 @@ function Backup({ setup, arrivedAt }: {
                 switch them off.
               </p>
               {ownOld.map((old) => (
-                <p className="mt-2 mb-0 text-xs text-faint" key={old.supersededAt}>
+                <p className="mt-2 mb-0 text-xs text-muted-foreground" key={old.supersededAt}>
                   Replaced {day(old.supersededAt)} (any {old.threshold} of {old.pieces.length}):{' '}
                   {old.pieces.map((piece) => piece.label).join('; ')}
                 </p>
               ))}
-            </Alert>
+            </StatusAlert>
           )}
 
           {foreignOld.length > 0 && (
             /* A kept map is only this account's history if its
              * fingerprint says so. The rest is a different account's map, kept
              * because destroying a map is never this wallet's call. */
-            <p className="m-0 mt-4 text-sm text-muted">
+            <p className="m-0 mt-4 text-sm text-muted-foreground">
               A different account&rsquo;s piece list is also on file in this browser. Its
               pieces do <strong>not</strong> open this account:{' '}
               {foreignOld.flatMap((old) => old.pieces.map((piece) => piece.label)).join('; ')}.
@@ -437,9 +441,9 @@ function Backup({ setup, arrivedAt }: {
           )}
 
           <p className="m-0 mt-5">
-            <ButtonLink variant="secondary" href={hrefOf('secure')}>
+            <Button asChild variant="outline"><a href={hrefOf('secure')}>
               Re-verify or cut a fresh set
-            </ButtonLink>
+            </a></Button>
           </p>
         </CardContent>
       </Card>
@@ -484,7 +488,7 @@ function Backup({ setup, arrivedAt }: {
  *
  * **BUILT SO REMOVAL IS ADDITIVE LATER, WHICH IS ONE REQUIREMENT AND NOT A
  * DESIGN**: every row is keyed on `credentialId`, and the
- * state that a control will sit beside is in `ListRow`'s existing `trailing`
+ * state that a control will sit beside is in `RowItem`'s existing `trailing`
  * slot. `forgetPasskey` already exists in `storage.ts`. Done this way, adding
  * removal later is a control and a guard; done any other way it is a rewrite
  * of the list.
@@ -527,15 +531,16 @@ function Passkeys(): ReactNode {
 
   return (
     <Section
+      list={false} box={false} aria-label="Passkeys"
       title="Passkeys"
       description="What opens this wallet on this device, and what happens to each one if the device disappears."
     >
-      {damaged !== null && <Alert tone="danger" title="This browser cannot read its passkey record.">{damaged}</Alert>}
+      {damaged !== null && <StatusAlert tone="danger" title="This browser cannot read its passkey record.">{damaged}</StatusAlert>}
 
       {damaged === null && passkeys.length === 0 && (
         <Card>
-          <CardContent className="pt-5">
-            <p className="m-0 text-sm text-muted">
+          <CardContent >
+            <p className="m-0 text-sm text-muted-foreground">
               No passkeys are recorded in this browser.
             </p>
           </CardContent>
@@ -544,20 +549,20 @@ function Passkeys(): ReactNode {
 
       {damaged === null && passkeys.length > 0 && (
         <Card>
-          <CardContent className="pt-5">
-            <ListRows>
+          <CardContent >
+            <RowItems>
               {passkeys.map((passkey) => {
                 const cloud = cloudStateOf(passkey);
                 return (
                   /* KEYED ON `credentialId` — the design's one
                    * requirement, so a row keeps its identity when a control
                    * is added beside its state later. */
-                  <ListRow
+                  <RowItem
                     key={passkey.credentialId}
-                    leading={<Icon glyph={GLYPH.passkey} className="text-muted" />}
+                    leading={<Glyph icon={GLYPH.passkey} className="size-5 text-muted-foreground" />}
                     title={<span className="font-mono">{shortCredential(passkey.credentialId)}</span>}
                     subtitle={`Bound to ${passkey.rpId}`}
-                    trailing={<Badge tone={cloud.tone}>{cloud.words}</Badge>}
+                    trailing={<StatusBadge tone={cloud.tone}>{cloud.words}</StatusBadge>}
                     meta={passkey.provenBySignIn
                       ? (passkey.signCount > 0
                         ? `has signed in · counter at ${passkey.signCount}`
@@ -566,7 +571,7 @@ function Passkeys(): ReactNode {
                   />
                 );
               })}
-            </ListRows>
+            </RowItems>
             {/*
               * THE LABEL ABOVE CANNOT BE CHANGED FROM HERE, AND THE
               * THING THAT ACTUALLY SAVES THE WALLET IS NOT THE LABEL.
@@ -601,14 +606,14 @@ function Passkeys(): ReactNode {
               * every credential regardless, so saying them over all of them
               * costs a named credential nothing.
               */}
-            <p className="mt-4 mb-0 text-sm text-muted">
+            <p className="mt-4 mb-0 text-sm text-muted-foreground">
               The name your password manager shows for each of these was fixed when the
               credential was made — a browser writes it then, and nothing in this wallet
               can change it afterwards. Some carry this wallet&rsquo;s name and some say
               only <span className="font-mono">Midnight wallet</span>, depending on when
               they were made.
             </p>
-            <p className="mt-2 mb-0 text-sm text-muted">
+            <p className="mt-2 mb-0 text-sm text-muted-foreground">
               What makes this wallet survive losing one of them is not its name.{' '}
               <strong>Cutting recovery pieces is what does that</strong> — pieces put this
               wallet back on another machine whatever becomes of the credentials above.
@@ -618,7 +623,7 @@ function Passkeys(): ReactNode {
       )}
 
       {strandable.length > 0 && (
-        <Alert
+        <StatusAlert
           tone="warning"
           role={null}
           title={strandable.length === passkeys.length
@@ -636,11 +641,11 @@ function Passkeys(): ReactNode {
             back on any machine, and a new passkey is made there. It <em>is</em> the reason
             the pieces matter.
           </p>
-        </Alert>
+        </StatusAlert>
       )}
 
       {unproven.length > 0 && (
-        <Alert
+        <StatusAlert
           tone="info"
           role={null}
           title="“Never signed in” means something specific."
@@ -649,10 +654,10 @@ function Passkeys(): ReactNode {
           credential recorded wrongly registers perfectly happily and then can never open
           anything again. A passkey that has signed in once has demonstrated that somebody
           holds its private half; one that has not, has not.
-        </Alert>
+        </StatusAlert>
       )}
 
-      <p className="m-0 text-xs text-faint">
+      <p className="m-0 text-xs text-muted-foreground">
         There is deliberately no way to remove a passkey here yet. Removing the last one
         locks this account out of this browser, and that guard is worth designing rather
         than passing.
@@ -686,70 +691,71 @@ function NetworkAndHosts(): ReactNode {
   const terms = loadTermsSeen();
   return (
     <Section
+      list={false} box={false} aria-label="Network and hosts"
       title="Network and hosts"
       description="What this wallet is connected to. All of it is fixed, and none of it is a preference."
     >
       <Card>
-        <CardContent className="pt-5">
-          <ListRows>
-            <ListRow
-              leading={<Icon glyph={GLYPH.network} className="text-muted" />}
+        <CardContent >
+          <RowItems>
+            <RowItem
+              leading={<Glyph icon={GLYPH.network} className="size-5 text-muted-foreground" />}
               title="Network"
               subtitle="Part of every address this wallet shows"
               trailing={<span className="font-mono">{NETWORK}</span>}
             />
-            {/* THE SUBTITLES ARE SHORT BECAUSE `ListRow` TRUNCATES THEM, and
+            {/* THE SUBTITLES ARE SHORT BECAUSE `RowItem` TRUNCATES THEM, and
               * a sentence that carries the privacy trade must not end in an
-              * ellipsis. `kit/list-row.tsx` truncates on purpose — a row grows
+              * ellipsis. `components/rows.tsx` truncates on purpose — a row grows
               * otherwise — and Home's own rows are commented with the same
               * rule: *"the full sentence lives on the screen each one leads
               * to."* These rows lead nowhere, so the full sentences are in the
               * paragraph under the card instead, where nothing clips them.
               * Found by looking at the first screenshot of this screen. */}
-            <ListRow
+            <RowItem
               title="Balances are read from"
               subtitle="Only when you ask"
               trailing={<span className="font-mono break-all">{INDEXER_HOST}</span>}
             />
-            <ListRow
+            <RowItem
               title="Payments are submitted through"
               subtitle="Only when you send"
               trailing={<span className="font-mono break-all">{new URL(NODE_RPC_URL).host}</span>}
             />
-            <ListRow
+            <RowItem
               title="Proof key material comes from"
               subtitle="Checked against pinned fingerprints"
               trailing={<span className="font-mono break-all">{ORIGIN}</span>}
             />
-            <ListRow
-              leading={<Icon glyph={GLYPH.passkey} className="text-muted" />}
+            <RowItem
+              leading={<Glyph icon={GLYPH.passkey} className="size-5 text-muted-foreground" />}
               title="Your passkeys are bound to"
               subtitle="It will not work from anywhere else"
               trailing={<span className="font-mono break-all">{RP_ID}</span>}
             />
-          </ListRows>
+          </RowItems>
         </CardContent>
       </Card>
 
       <Card>
-        <CardContent className="pt-5">
-          <h3 className="m-0 mb-1 text-sm font-semibold text-ink">The network’s terms</h3>
+        <CardContent >
+          <h3 className="m-0 mb-1 text-sm font-semibold text-foreground">The network’s terms</h3>
           {terms === null ? (
-            <p className="m-0 text-sm text-muted">
+            <p className="m-0 text-sm text-muted-foreground">
               Not fetched yet. They are shown once, on the first real send screen, and the
               hash is recorded here then. Fetching them is a call to the indexer, which is
               why nothing does it before you ask to send.
             </p>
           ) : (
             <>
-              <p className="m-0 text-sm text-muted">
+              <p className="m-0 text-sm text-muted-foreground">
                 Shown in this browser on {day(terms.seenAt)}. The hash below is what the
                 indexer reported for the document at that moment.
               </p>
-              <p className="m-0 mt-2 font-mono text-xs break-all text-ink">{terms.hash}</p>
+              <p className="m-0 mt-2 font-mono text-xs break-all text-foreground">{terms.hash}</p>
               <p className="m-0 mt-2 text-sm">
                 <a
-                  className="text-accent underline-offset-4 hover:underline"
+                  className="text-primary underline-offset-4 hover:underline"
                   href={terms.url}
                   target="_blank"
                   rel="noreferrer noopener"
@@ -762,7 +768,7 @@ function NetworkAndHosts(): ReactNode {
         </CardContent>
       </Card>
 
-      <div className="max-w-prose text-xs text-faint">
+      <div className="max-w-prose text-xs text-muted-foreground">
         <p className="m-0">
           Nothing above is asked anything until you ask for something. Reading a balance tells
           the indexer this wallet&rsquo;s address, which is why it happens on a press and not
@@ -802,21 +808,22 @@ function NetworkAndHosts(): ReactNode {
 function AddressBookRow(): ReactNode {
   return (
     <Section
+      list={false} box={false} aria-label="Contacts"
       title="Contacts"
       description="The people you pay, so an address is never typed twice."
     >
       <Card>
-        <CardContent className="pt-5">
-          <ListRows>
-            <ListRow
+        <CardContent >
+          <RowItems>
+            <RowItem
               href={hrefOf('address-book')}
-              leading={<Icon glyph={GLYPH.contacts} className="text-muted" />}
+              leading={<Glyph icon={GLYPH.contacts} className="size-5 text-muted-foreground" />}
               title="Manage your contacts"
               subtitle="One book shared across your wallets"
-              trailing={<Badge>Coming soon</Badge>}
+              trailing={<StatusBadge>Coming soon</StatusBadge>}
             />
-          </ListRows>
-          <p className="m-0 mt-3 text-xs text-faint">
+          </RowItems>
+          <p className="m-0 mt-3 text-xs text-muted-foreground">
             A name in it will help you <em>find</em> an address. It will never stand in place
             of one on the screen that approves a payment.
           </p>
@@ -844,26 +851,27 @@ function AddressBookRow(): ReactNode {
 function YourDetailsRow(): ReactNode {
   return (
     <Section
+      list={false} box={false} aria-label="My profile"
       title="My profile"
       description="Facts about you — your name, your email — that you can hand to a company that needs them."
     >
       <Card>
-        <CardContent className="pt-5">
-          <ListRows>
-            <ListRow
+        <CardContent >
+          <RowItems>
+            <RowItem
               href={hrefOf('profile')}
-              leading={<Icon glyph={GLYPH.contacts} className="text-muted" />}
+              leading={<Glyph icon={GLYPH.contacts} className="size-5 text-muted-foreground" />}
               title="What this wallet holds about you"
               subtitle="Encrypted here, on no server of ours"
             />
-            <ListRow
+            <RowItem
               href={hrefOf('approve')}
-              leading={<Icon glyph={GLYPH.passkey} className="text-muted" />}
+              leading={<Glyph icon={GLYPH.passkey} className="size-5 text-muted-foreground" />}
               title="When a company asks"
               subtitle="What the screen looks like, and what it will not promise"
             />
-          </ListRows>
-          <p className="m-0 mt-3 text-xs text-faint">
+          </RowItems>
+          <p className="m-0 mt-3 text-xs text-muted-foreground">
             Nothing leaves this wallet without you approving it, one detail at a time — and
             what is sent, is sent. This wallet can stop sending a company anything new. It
             cannot reach into their records and take anything back.
@@ -877,20 +885,21 @@ function YourDetailsRow(): ReactNode {
 function AgentRow(): ReactNode {
   return (
     <Section
+      list={false} box={false} aria-label="The agent"
       title="The agent"
       description="Asking for something in words, and having it built for you to approve."
     >
       <Card>
-        <CardContent className="pt-5">
-          <ListRows>
-            <ListRow
-              leading={<Icon glyph={GLYPH.earn} className="text-muted" />}
+        <CardContent >
+          <RowItems>
+            <RowItem
+              leading={<Glyph icon={GLYPH.earn} className="size-5 text-muted-foreground" />}
               title="Bring your own provider and key"
               subtitle="Configured here, in a round of its own"
-              trailing={<Badge>Coming soon</Badge>}
+              trailing={<StatusBadge>Coming soon</StatusBadge>}
             />
-          </ListRows>
-          <p className="m-0 mt-3 text-xs text-faint">
+          </RowItems>
+          <p className="m-0 mt-3 text-xs text-muted-foreground">
             Two things are already settled about it. The key you paste is a bearer credential
             — whoever reads it can spend your inference budget — so it goes through this
             wallet&rsquo;s sealed storage rather than into the browser&rsquo;s ordinary
@@ -907,20 +916,21 @@ function AgentRow(): ReactNode {
 function AdvancedRow(): ReactNode {
   return (
     <Section
+      list={false} box={false} aria-label="Advanced"
       title="Advanced"
       description="The two things that are dangerous to look at, behind their own door."
     >
       <Card>
-        <CardContent className="pt-5">
-          <ListRows>
-            <ListRow
+        <CardContent >
+          <RowItems>
+            <RowItem
               href={hrefOf('advanced')}
-              leading={<Icon glyph={GLYPH.settings} className="text-muted" />}
+              leading={<Glyph icon={GLYPH.settings} className="size-5 text-muted-foreground" />}
               title="The recovery phrase, and your recovery key"
               subtitle="Anyone who reads the phrase owns the account"
-              trailing={<Badge>Coming soon</Badge>}
+              trailing={<StatusBadge>Coming soon</StatusBadge>}
             />
-          </ListRows>
+          </RowItems>
         </CardContent>
       </Card>
     </Section>
@@ -1002,10 +1012,16 @@ function DangerSection({ secret, account, secured }: {
    * to nothing else. */
   void secret;
 
+  /* DRAWN APART, IN THE KIT'S DESTRUCTIVE COLOUR, because it is the one control
+   * here that can take a wallet off this machine for good. */
   return (
+    <div data-danger-frame className="rounded-xl border border-destructive/40 bg-destructive/10 p-4 md:p-5">
     <Section
-      tone="danger"
-      title="Forget this wallet"
+      list={false}
+      box={false}
+      aria-label="Forget this wallet"
+      data-tone="danger"
+      title={<span className="text-destructive">Forget this wallet</span>}
       description={others.length === 0
         ? 'Takes this wallet off this browser. Nothing on the chain changes.'
         : `Takes this wallet off this browser. The other ${others.length === 1
@@ -1013,7 +1029,7 @@ function DangerSection({ secret, account, secured }: {
           + 'nothing on the chain changes.'}
     >
       {others.length > 0 && (
-        <p className="m-0 max-w-prose text-sm text-ink">
+        <p className="m-0 max-w-prose text-sm text-foreground">
           <strong>
             This is about this wallet only.
           </strong>{' '}
@@ -1026,14 +1042,14 @@ function DangerSection({ secret, account, secured }: {
         </p>
       )}
       {secured ? (
-        <p className="m-0 max-w-prose text-sm text-ink">
+        <p className="m-0 max-w-prose text-sm text-foreground">
           Your pieces are what puts this account back, and they are not in this browser —
           they are wherever you placed them. Forgetting here does not touch them, and it does
           not touch anything that has ever been paid to your addresses. It empties this
           machine.
         </p>
       ) : (
-        <p className="m-0 max-w-prose text-sm text-ink">
+        <p className="m-0 max-w-prose text-sm text-foreground">
           <strong>
             This account has never been cut into pieces from this browser, so there is
             nothing to put it back with.
@@ -1041,17 +1057,17 @@ function DangerSection({ secret, account, secured }: {
           If you do this, the account is gone — and everything ever paid to its addresses is
           gone with it, permanently, for everybody, including us. There is no copy anywhere
           and nothing to find later.{' '}
-          <a className="text-accent underline-offset-4 hover:underline" href={hrefOf('secure')}>
+          <a className="text-primary underline-offset-4 hover:underline" href={hrefOf('secure')}>
             Cut it into pieces first
           </a>{' '}
           if you might want it back.
         </p>
       )}
 
-      <div className="grid gap-4 wide:grid-cols-2">
+      <div className="grid gap-4 md:grid-cols-2">
         <div>
-          <h3 className="m-0 mb-1 text-sm font-semibold text-ink">What this clears</h3>
-          <ul className="m-0 list-disc pl-5 text-sm text-muted">
+          <h3 className="m-0 mb-1 text-sm font-semibold text-foreground">What this clears</h3>
+          <ul className="m-0 list-disc pl-5 text-sm text-muted-foreground">
             <li>the sealed account keys in this browser</li>
             <li>the record of this browser&rsquo;s passkeys</li>
             <li>the record of where your pieces are</li>
@@ -1062,8 +1078,8 @@ function DangerSection({ secret, account, secured }: {
           </ul>
         </div>
         <div>
-          <h3 className="m-0 mb-1 text-sm font-semibold text-ink">What it does not</h3>
-          <ul className="m-0 list-disc pl-5 text-sm text-muted">
+          <h3 className="m-0 mb-1 text-sm font-semibold text-foreground">What it does not</h3>
+          <ul className="m-0 list-disc pl-5 text-sm text-muted-foreground">
             <li>the pieces themselves, wherever you placed them</li>
             <li>this account on any other device</li>
             <li>any other wallet in this browser</li>
@@ -1074,7 +1090,7 @@ function DangerSection({ secret, account, secured }: {
       </div>
 
       <div className="max-w-prose">
-        <Label htmlFor="forget-confirm">
+        <Label htmlFor="forget-confirm" className="mb-2">
           Type the account&rsquo;s name — <strong>{account}</strong> — to confirm
         </Label>
         <Input
@@ -1088,7 +1104,8 @@ function DangerSection({ secret, account, secured }: {
 
       <div>
         <Button
-          variant="danger"
+          type="button"
+          variant="destructive"
           disabled={!armed}
           onClick={startOver}
         >
@@ -1096,5 +1113,6 @@ function DangerSection({ secret, account, secured }: {
         </Button>
       </div>
     </Section>
+    </div>
   );
 }

@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { EVERY_PAGE, HOME, isBuilt, mayOpen, MENU_GROUPS, outerOf, pagesByShortcut, PAGES, reachedByName, SETTINGS_OF, valuesOf, VIEWS, viewFor, type Page, type PageId, type Text, type Viewer } from './pages.js';
+import { EVERY_PAGE, HOME, isBuilt, mayOpen, MENU_GROUPS, outerOf, pagesByShortcut, PAGES, reachedByName, SETTINGS_OF, valuesOf, VIEWS, viewFor, type Page, type PageId, type Screen, type Text, type Viewer } from './pages.js';
 import { MODE_NAMES, MODES } from './preferences.js';
 import { addressOf, pageAt, resolve, RESOLVED } from './router.js';
 import { EVERY_SHORTCUT, SHORTCUTS, type Chord } from './shortcuts.js';
@@ -87,7 +87,7 @@ describe('every page the design names is in the list', () => {
   /* RED WHEN: a page that is built is shown as Coming soon, or a page not built yet is shown as working. */
   it('builds the frame\'s pages and the company pages that read, and shows every other page Coming soon', () => {
     expect(EVERY_PAGE.filter(isBuilt).map((p) => p.id)).toEqual([
-      'landing', 'setup', 'home', 'proposals', 'payroll', 'run', 'vaults', 'vault', 'people', 'invitations',
+      'landing', 'setup', 'home', 'proposals', 'payroll', 'run', 'vaults', 'vault', 'people', 'invitations', 'apps',
       'settings', 'settingsAppearance', 'settingsLanguage', 'paySettings', 'payAppearance', 'payLanguage',
     ]);
   });
@@ -99,16 +99,20 @@ describe('every page the design names is in the list', () => {
    */
   it('loads every company page and the setup wizard when it is first opened', async () => {
     const onDemand = EVERY_PAGE.filter((p) => isBuilt(p) && typeof (p.shows.screen as { load?: unknown }).load === 'function').map((p) => p.id);
-    expect(onDemand).toEqual(['setup', 'home', 'proposals', 'payroll', 'run', 'vaults', 'vault', 'people', 'invitations']);
+    expect(onDemand).toEqual(['setup', 'home', 'proposals', 'payroll', 'run', 'vaults', 'vault', 'people', 'invitations', 'apps']);
     for (const id of onDemand) {
       const screen = PAGES[id].shows as { screen: { load: () => Promise<unknown>; screenName: string } };
       expect(typeof await screen.screen.load(), id).toBe('function');
     }
+    /* The part already built of a page not built yet is loaded the same way. */
+    const partsOnDemand = EVERY_PAGE.filter((p) => typeof (p.shows as { already?: { load?: unknown } }).already?.load === 'function').map((p) => p.id);
+    expect(partsOnDemand).toEqual(['settingsCompany', 'settingsSigners']);
+    for (const id of partsOnDemand) expect(typeof await (PAGES[id].shows as { already: { load: () => Promise<unknown> } }).already.load(), id).toBe('function');
     const eager = read('pages.ts').match(/^import .* from '\.\/screens\/[^']+';$/gm) ?? [];
     expect(eager.map((l) => l.replace(/.*\/screens\/|';$/g, '')).sort()).toEqual(['appearance.js', 'landing.js', 'language.js', 'settings.js']);
     /* And no file anywhere in the application imports one of those pages' modules eagerly, which would put it back in the first download. */
     const loaded = [...read('pages.ts').matchAll(/onDemand\(\(\) => import\('\.\/(screens\/[^']+)\.js'\)/g)].map((m) => `${m[1]}.tsx`);
-    expect(loaded.length).toBe(onDemand.length);
+    expect(loaded.length).toBe(onDemand.length + partsOnDemand.length);
     expect(staticImportsOf(walkSrc('').map((path) => ({ path, text: read(path) })), loaded)).toEqual([]);
   });
 
@@ -141,7 +145,8 @@ describe('every entry is a page, and every page is an entry', () => {
    * RED WHEN: a screen is written with no entry that shows it (a file in
    * screens/ the list does not use), or an entry names a screen that is not a
    * page's screen. Every exported component of every file in screens/ must be
-   * shown by an entry.
+   * shown by an entry, as its screen or as the part already built of a page
+   * not built yet.
    */
   it('shows every screen in screens/ and its folders from an entry', async () => {
     /* A screen loaded on demand is compared by what it loads, not by the placeholder that loads it. */
@@ -150,7 +155,9 @@ describe('every entry is a page, and every page is an entry', () => {
       return typeof screen?.load === 'function' ? screen.load() : screen;
     };
     const screens = await Promise.all(EVERY_PAGE.filter(isBuilt).map(async (p) => ({ id: p.id, screen: await screenOf(p) })));
-    const shown = new Set(screens.map((x) => x.screen));
+    const already = await Promise.all(EVERY_PAGE.filter((p) => (p.shows as { already?: unknown }).already !== undefined)
+      .map(async (p) => ({ id: p.id, screen: await screenOf({ ...p, shows: { screen: (p.shows as { already: Screen }).already } }) })));
+    const shown = new Set([...screens, ...already].map((x) => x.screen));
     const walk = (dir: string): string[] => readdirSync(SRC + dir, { withFileTypes: true })
       .flatMap((d) => (d.isDirectory() ? walk(`${dir}/${d.name}`) : [`${dir}/${d.name}`.slice('screens/'.length)]));
     const files = walk('screens').filter((n) => /\.tsx?$/.test(n) && !/\.test\./.test(n));
@@ -166,7 +173,7 @@ describe('every entry is a page, and every page is an entry', () => {
     /* And every screen an entry shows is one of those files'. */
     const fromScreens = new Set<unknown>();
     for (const f of files) for (const v of Object.values((await import(`./screens/${f}`)) as Record<string, unknown>)) fromScreens.add(v);
-    expect(screens.filter((x) => !fromScreens.has(x.screen)).map((x) => x.id)).toEqual([]);
+    expect([...screens, ...already].filter((x) => !fromScreens.has(x.screen)).map((x) => x.id)).toEqual([]);
   });
 
   /*

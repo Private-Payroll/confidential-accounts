@@ -1,6 +1,8 @@
 import type { ReactNode } from 'react';
-import { ActionTile, ActionTiles, Badge, GLYPH } from '../kit/index.js';
-import type { IconSvgElement } from '../kit/index.js';
+import { ShortcutTile, ShortcutTiles } from '../components/rows.js';
+import { StatusBadge } from '../components/status.js';
+import { GLYPH } from '../glyphs.js';
+import type { IconSvgElement } from '../glyphs.js';
 
 /**
  * EXPLORE — SIX THINGS, NAMED BEFORE THEY EXIST, AND NOTHING ELSE ON THE PAGE.
@@ -21,9 +23,9 @@ import type { IconSvgElement } from '../kit/index.js';
  * and a plausible figure is the one thing on it a person could mistake for
  * real. There is no state in this file, and no import that could acquire any.
  *
- * THE TILES LEAD NOWHERE, AND THE KIT NOW SHOWS THAT. `ActionTile` with
- * neither `href` nor `onClick` has always rendered a plain `div`; this file also
- * takes the hover and the focus ring off that case (`kit/action-tile.tsx`), so
+ * THE TILES LEAD NOWHERE, AND THEY LOOK IT. A `ShortcutTile` with neither
+ * `href` nor `onClick` renders a plain item, with no hover and no focus ring
+ * (`components/rows.tsx`), so
  * six tiles that do nothing no longer light up under a pointer as though they
  * would.
  *
@@ -65,9 +67,9 @@ interface Coming {
 /**
  * THE SIX, IN THE ORDER THE DESIGN NAMES THEM.
  *
- * THE GLYPHS ARE ALL EXISTING NAMES OUT OF `kit/icon.tsx`, and none of them is
+ * THE GLYPHS ARE ALL EXISTING NAMES OUT OF `glyphs.tsx`, and none of them is
  * one the navigation is wearing at the same moment. That is the constraint
- * `icon.tsx` states for `details`/`contacts` — *two things side by side under
+ * `glyphs.tsx` states for `details`/`contacts` — *two things side by side under
  * one drawing is two things a person has to read rather than recognise* — and
  * on this screen the rail is beside the tiles, so `home`, `activity`,
  * `explore` and `settings` are all spoken for and none of them appears below.
@@ -130,15 +132,15 @@ export function Explore(): ReactNode {
         * highlighting it. It is the place's name and no sentence follows it. */}
       <h1 className="m-0">Explore</h1>
 
-      {/* THREE ACROSS ABOVE THE LAYOUT SWITCH, NOT FOUR. `ActionTiles` is
-        * built for Home's set of four (`kit/action-tile.tsx`); six tiles in a
+      {/* THREE ACROSS ABOVE THE LAYOUT SWITCH, NOT FOUR. `ShortcutTiles` is
+        * built for Home's set of four (`components/rows.tsx`); six tiles in a
         * four-wide grid is a row of four and an orphaned pair. The override
         * goes through `cn`, which is `tailwind-merge` and REPLACES rather than
         * appends — measured. Two across on a phone is
         * the kit's own default and is untouched. */}
-      <ActionTiles className="wide:grid-cols-3">
+      <ShortcutTiles className="md:grid-cols-3">
         {SIX.map((one) => (
-          <ActionTile
+          <ShortcutTile
             key={one.name}
             glyph={one.glyph}
             label={one.name}
@@ -146,10 +148,10 @@ export function Explore(): ReactNode {
             /* The line is the point of the tile and there is no screen behind
              * this one to read it on — so it wraps instead of being cut. */
             saysWraps
-            trailing={<Badge>Coming soon</Badge>}
+            trailing={<StatusBadge>Coming soon</StatusBadge>}
           />
         ))}
-      </ActionTiles>
+      </ShortcutTiles>
     </div>
   );
 }

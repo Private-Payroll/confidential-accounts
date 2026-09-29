@@ -1,45 +1,37 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { createElement } from 'react';
+import { render as renderBare } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from './testing/render.js';
 import {
-  Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader,
-  DialogTitle, DialogTrigger,
-} from './dialog.js';
-import { Button } from './button.js';
+  Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+  DialogTrigger, KitProvider, languagesFrom,
+} from 'vaults-ui';
+import { DialogClose } from 'vaults-ui/components/dialog';
 
 /*
- * THE FETCHED DIALOG. Four claims, and each one is a thing that would be a
- * defect rather than an ugly panel if it stopped being true.
+ * THE WALLET'S DIALOGS ARE THE KIT'S DIALOG. Three claims, and each one is a
+ * thing that would be a defect rather than an ugly panel if it stopped being
+ * true for the switcher, Receive and every other panel the wallet opens.
  *
- *   1. THE BEHAVIOUR IS WHY IT WAS FETCHED. The design puts `dialog` on
- *      the Radix list because *"the behaviour is hard and getting it wrong is a
- *      keyboard trap"*. So the tests are about the keyboard and the accessible
- *      name, not about how it looks: Escape closes it, focus goes in and comes
- *      back, and the panel has a name a screen reader can read.
+ *   1. THE BEHAVIOUR IS WHY IT IS A LIBRARY PART. The keyboard and the
+ *      accessible name, not the look: Escape closes it, focus goes in and comes
+ *      back, and the panel has a name a screen reader can read. A panel
+ *      without a title is silent - Radix writes `aria-labelledby` only when a
+ *      title mounted - so the name test is what keeps every call site honest.
  *
- *   2. THE SUBSTITUTION THAT FAILS INVISIBLY IS PINNED BY NAME.
- *      `data-[state=open]:bg-accent` EMITS A RULE against this repo's `@theme`
- *      and it is the WRONG one — shadcn's `accent` is a neutral hover surface,
- *      ours is the indigo brand accent. A
- *      screenshot would not catch it going back; this does.
+ *   2. ITS WORDS ARE THE WALLET'S. The corner control is named by the kit
+ *      from the language file the wallet hands it, so a wallet whose file
+ *      lost the phrase would show a key where the word "Close" should be.
  *
- *   3. A `DialogContent` WITHOUT A `DialogTitle` IS SILENT, NOT A WARNING —
- *      read in the shipped source, not assumed. `aria-labelledby` is written
- *      only when a title mounted (`@radix-ui/react-dialog/dist/index.mjs:233`,
- *      `titlePresent ? context.titleId : void 0`), so a missing title is an
- *      omitted attribute and a modal a screen reader can only call "dialog".
- *      Nothing makes it a compile error, so the accessible-name test below is
- *      what keeps every call site honest.
- *
- *   4. NOTHING HERE LEAVES THE RUNNER. Every specimen is text and
- *      a way out; not one has a handler that does anything.
+ *   3. NOTHING HERE LEAVES THE RUNNER. Every specimen is text and a way out.
  */
 
 function Specimen({ showCloseButton = true }: { readonly showCloseButton?: boolean }) {
   return (
     <Dialog>
       <DialogTrigger asChild>
-        <Button variant="secondary">Open it</Button>
+        <Button type="button" variant="outline">Open it</Button>
       </DialogTrigger>
       <DialogContent showCloseButton={showCloseButton}>
         <DialogHeader>
@@ -49,7 +41,7 @@ function Specimen({ showCloseButton = true }: { readonly showCloseButton?: boole
         <p>Body text.</p>
         <DialogFooter>
           <DialogClose asChild>
-            <Button variant="primary">Done</Button>
+            <Button type="button">Done</Button>
           </DialogClose>
         </DialogFooter>
       </DialogContent>
@@ -112,7 +104,7 @@ describe('the ways out, and there is always one', () => {
   it('the corner control closes it, and it has a name rather than only a glyph', () => {
     render(<Specimen />);
     fireEvent.click(screen.getByText('Open it'));
-    const close = screen.getByLabelText('Close');
+    const close = screen.getByRole('button', { name: 'Close' });
     fireEvent.click(close);
     expect(panel()).toBeNull();
   });
@@ -123,7 +115,7 @@ describe('the ways out, and there is always one', () => {
      * *"a refusal with no way back is worse than a refusal."* */
     render(<Specimen showCloseButton={false} />);
     fireEvent.click(screen.getByText('Open it'));
-    expect(screen.queryByLabelText('Close')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Close' })).toBeNull();
     fireEvent.keyDown(document.body, { key: 'Escape' });
     expect(panel()).toBeNull();
   });
@@ -141,35 +133,22 @@ describe('the ways out, and there is always one', () => {
   });
 });
 
-describe('the substitution that fails invisibly — the collision table', () => {
-  it('the close control never wears bg-accent, which here is the indigo', () => {
-    /* THE PAYLOAD SHIPPED `data-[state=open]:bg-accent`. It compiles here, it
-     * renders here, and it is wrong here: shadcn means a neutral hover surface
-     * by `accent` and this repo's `--color-accent` is the one brand indigo. Put
-     * the fetched class back and this goes red; nothing else would. */
+describe('its words are the wallet\'s', () => {
+  /* RED WHEN: the wallet's language file loses the close control's phrase. */
+  it('the corner control is named from the wallet\'s language file', () => {
     render(<Specimen />);
     fireEvent.click(screen.getByText('Open it'));
-    const close = screen.getByLabelText('Close');
-    expect(close.className).not.toMatch(/(^|[^-\w])bg-accent(\b|$)/);
-    expect(close.className).toContain('data-[state=open]:bg-sunken');
-    /* And the same family: shadcn's `text-muted-foreground` emits NOTHING
-     * against this `@theme`, so a control wearing it would have no colour at
-     * all rather than the wrong one. */
-    expect(close.className).not.toContain('muted-foreground');
+    expect(screen.getByRole('button', { name: 'Close' })).toBeTruthy();
   });
 
-  it('and the panel is drawn from this repo’s roles, not shadcn’s', () => {
-    render(<Specimen />);
+  /* And the test above can fail: with a file that lacks the phrase, the
+   * control is named by its key, so the name really comes from the file. */
+  it('and a file without the phrase names it by its key instead', () => {
+    const bare = languagesFrom({ './locales/en.json': {} });
+    renderBare(createElement(KitProvider, { languages: bare }, createElement(Specimen)));
     fireEvent.click(screen.getByText('Open it'));
-    const className = panel()?.className ?? '';
-    /* `bg-background` emits nothing here — a transparent dialog. */
-    expect(className).not.toContain('bg-background');
-    expect(className).toContain('bg-raised');
-    /* The radius scale has three steps and `lg` is not one of them. */
-    expect(className).not.toMatch(/\brounded-lg\b/);
-    /* Motion is the shell's, and it is `motion-safe:` at the call site. */
-    expect(className).toContain('motion-safe:');
-    expect(className).not.toContain('animate-in');
+    expect(screen.queryByRole('button', { name: 'Close' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'kit.close' })).toBeTruthy();
   });
 });
 
@@ -177,10 +156,9 @@ describe('nothing on a specimen leaves the runner', () => {
   it('every control inside is either a close or an ordinary button with no handler', () => {
     render(<Specimen />);
     fireEvent.click(screen.getByText('Open it'));
-    /* Pressing everything in the panel must not throw and must not navigate. */
     const before = window.location.hash;
     for (const control of panel()!.querySelectorAll('button')) {
-      if (control.getAttribute('aria-label') === 'Close') continue;
+      if (control.textContent === 'Close') continue;
       fireEvent.click(control);
     }
     expect(window.location.hash).toBe(before);

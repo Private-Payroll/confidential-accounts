@@ -25,8 +25,9 @@ import { Settings } from './screens/settings.js';
  * here, its phrases in the language files, and its screen.
  *
  * A PAGE NOT BUILT YET IS IN THE LIST, SHOWN AS COMING SOON, with a line on
- * what it will be. The screen that builds it replaces the line with the
- * screen, and every place that lists the page follows.
+ * what it will be, and the part of it already built, when there is one, above
+ * that line. The screen that builds it replaces the line with the screen, and
+ * every place that lists the page follows.
  *
  * Names and explanations are asked for by their key in the language files,
  * so every language names a page the same way the menu does. Going to a page
@@ -96,8 +97,8 @@ export interface Page {
   /** The id of the page it is shown inside, such as Settings for Appearance. The list's test holds it to a page in the list. */
   inside?: string;
   audience: Audience;
-  /** Its screen, or, while it is not built, what it will be. */
-  shows: { screen: Screen } | { comingSoon: (t: Text) => string };
+  /** Its screen, or, while it is not built, what it will be, and the part of it already built when there is one. */
+  shows: { screen: Screen } | { comingSoon: (t: Text) => string; already?: Screen };
   /** A shortcut of its own, from the table in `shortcuts.ts`. */
   shortcut?: string;
   /** A count the menu shows beside its name, read from the shown company's records; null while it cannot be said. */
@@ -183,7 +184,7 @@ export const PAGES = {
   },
   apps: {
     path: '/apps', name: (t) => t('page.apps.name'), icon: GridViewIcon, group: 'bottom', audience: 'company',
-    shows: { comingSoon: (t) => t('page.apps.soon') },
+    shows: { screen: onDemand(() => import('./screens/apps.js'), 'Apps') },
   },
   settings: {
     path: '/settings', name: (t) => t('page.settings.name'), icon: Settings01Icon, group: 'bottom', audience: 'company',
@@ -191,11 +192,11 @@ export const PAGES = {
   },
   settingsCompany: {
     path: '/settings/company', name: (t) => t('page.settingsCompany.name'), icon: Building03Icon, group: null, inside: 'settings', audience: 'company',
-    shows: { comingSoon: (t) => t('page.settingsCompany.soon') },
+    shows: { comingSoon: (t) => t('page.settingsCompany.soon'), already: onDemand(() => import('./screens/settings-sections.js'), 'CompanyCreated') },
   },
   settingsSigners: {
     path: '/settings/signers', name: (t) => t('page.settingsSigners.name'), icon: ShieldUserIcon, group: null, inside: 'settings', audience: 'company',
-    shows: { comingSoon: (t) => t('page.settingsSigners.soon') },
+    shows: { comingSoon: (t) => t('page.settingsSigners.soon'), already: onDemand(() => import('./screens/settings-sections.js'), 'SignersPublicFacts') },
   },
   settingsRoles: {
     path: '/settings/roles', name: (t) => t('page.settingsRoles.name'), icon: Key01Icon, group: null, inside: 'settings', audience: 'company',

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '../testing/render.js';
 import { IDBFactory } from 'fake-indexeddb';
 
 /*
@@ -511,7 +511,7 @@ describe('§4 — network and hosts, read-only', () => {
   });
 
   /**
-   * THE TRADE IS SAID IN FULL, NOT IN A TRUNCATED ROW. `ListRow` clips a
+   * THE TRADE IS SAID IN FULL, NOT IN A TRUNCATED ROW. `RowItem` clips a
    * subtitle on purpose, and the first screenshot of this screen showed these
    * sentences ending in an ellipsis — *"Only when you ask — asking tells it
    * this w…"*. A row that leads nowhere cannot put the rest of the sentence on
@@ -614,6 +614,8 @@ describe('§7 — the danger section', () => {
     const sections = [...document.querySelectorAll('main section, section')];
     const last = sections[sections.length - 1];
     expect(last?.getAttribute('data-tone')).toBe('danger');
+    /* And it is drawn apart, in the destructive colour, not as one more card. */
+    expect(last?.closest('[data-danger-frame]')?.className).toContain('border-destructive');
   });
 
   /**

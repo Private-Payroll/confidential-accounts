@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from './testing/render.js';
 import { IDBFactory } from 'fake-indexeddb';
 
 /*
@@ -162,7 +162,7 @@ import { ORIGINAL_SLOT } from './accounts/wallets-held.js';
  *
  * AND THE WALK DOES NOT HARVEST FROM AN EXEMPT SURFACE, which is the half of
  * this that was nearly a hole. The gallery is FULL of anchors — every
- * `ListRow` and `ActionTile` specimen has one — and they are specimens rather
+ * row and tile specimen has one — and they are specimens rather
  * than navigation. Counting them would mean a specimen written as
  * `href="#/settings"` could satisfy this pin for the real Settings route while
  * the wallet itself had no door to it: the defect alive, with the pin holding the

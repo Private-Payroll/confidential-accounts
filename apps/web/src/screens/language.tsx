@@ -1,4 +1,4 @@
-import { ComingSoon, Label, RadioGroup, RadioGroupItem, useLanguage, useText } from 'vaults-ui';
+import { Label, RadioGroup, RadioGroupItem, useLanguage, useText } from 'vaults-ui';
 import { LANGUAGES, languageName } from '../languages.js';
 import { useCurrentPage } from '../router.js';
 import { FOLLOW_BROWSER } from '../preferences.js';
@@ -43,10 +43,6 @@ export function LanguageSettings() {
           ))}
         </RadioGroup>
       </fieldset>
-      <div className="flex flex-wrap items-center gap-3 rounded-lg border p-3 text-sm" data-number-format>
-        <span className="flex-1">{t('language.numberFormat')}</span>
-        <ComingSoon explanation={t('language.numberFormat.soon')} />
-      </div>
     </section>
   );
 }

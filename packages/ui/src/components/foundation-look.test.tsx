@@ -290,6 +290,7 @@ describe('loading states', () => {
     'dropdown-menu.tsx': 'a menu of choices the page already has',
     'empty-state.tsx': 'shown once a read has finished with nothing in it',
     'input.tsx': 'a field the person types into',
+    'item.tsx': 'one row of something the page already holds; a list still being read shows its section\'s loading state',
     'kbd.tsx': 'the keys of a shortcut, fixed',
     'label.tsx': 'the name of a field, fixed',
     'popover.tsx': 'an overlay; what it holds has its own loading state',
@@ -304,6 +305,7 @@ describe('loading states', () => {
     'soon-action.tsx': 'an action not built yet; nothing is read to draw it',
     'table.tsx': 'the rows of the kit\'s table, which has its own loading state',
     'tabs.tsx': 'a page\'s own tabs, from what the page already holds',
+    'textarea.tsx': 'a field the person types into, over several lines',
     'tooltip.tsx': 'an overlay of words the page already has',
   };
   const HERE = dirname(fileURLToPath(import.meta.url));

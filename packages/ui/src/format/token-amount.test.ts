@@ -12,19 +12,22 @@ describe('a token amount is written out exactly, in the language', () => {
   /*
    * RED WHEN: the amount passes through a Number (the last digits change), the
    * whole part is grouped like English whatever the language, the separator is
-   * not the language's, or a trailing zero is dropped.
+   * not the language's, a trailing zero is written, or a zero before the last
+   * significant digit is dropped.
    */
-  const cases: [string, [string, string, string]][] = [
-    ['en', ['12,345,678,901,234,567.890123', '1.500000', '1,234']],
-    ['en-IN', ['12,34,56,78,90,12,34,567.890123', '1.500000', '1,234']],
-    ['de', ['12.345.678.901.234.567,890123', '1,500000', '1.234']],
-    ['fr', [`12${NNBSP}345${NNBSP}678${NNBSP}901${NNBSP}234${NNBSP}567,890123`, '1,500000', `1${NNBSP}234`]],
-    ['es', ['12.345.678.901.234.567,890123', '1,500000', '1234']],
+  const cases: [string, [string, string, string, string, string]][] = [
+    ['en', ['12,345,678,901,234,567.890123', '1.5', '1,234', '4', '1.000001']],
+    ['en-IN', ['12,34,56,78,90,12,34,567.890123', '1.5', '1,234', '4', '1.000001']],
+    ['de', ['12.345.678.901.234.567,890123', '1,5', '1.234', '4', '1,000001']],
+    ['fr', [`12${NNBSP}345${NNBSP}678${NNBSP}901${NNBSP}234${NNBSP}567,890123`, '1,5', `1${NNBSP}234`, '4', '1,000001']],
+    ['es', ['12.345.678.901.234.567,890123', '1,5', '1234', '4', '1,000001']],
   ];
-  it.each(cases)('%s', (tag, [big, trailing, whole]) => {
+  it.each(cases)('%s', (tag, [big, trailing, whole, wholeWithDecimals, inner]) => {
     expect(fmt(BIG, 6, tag)).toBe(big);
     expect(fmt(1_500_000n, 6, tag)).toBe(trailing);
     expect(fmt(1234n, 0, tag)).toBe(whole);
+    expect(fmt(4_000_000n, 6, tag)).toBe(wholeWithDecimals);
+    expect(fmt(1_000_001n, 6, tag)).toBe(inner);
   });
 
   /*
@@ -37,8 +40,8 @@ describe('a token amount is written out exactly, in the language', () => {
   it('ar, in whichever digits the runtime writes Arabic with', () => {
     const system = new Intl.NumberFormat('ar').resolvedOptions().numberingSystem;
     const expected: Record<string, [string, string]> = {
-      latn: ['12,345,678,901,234,567.890123', '1.500000'],
-      arab: ['١٢٬٣٤٥٬٦٧٨٬٩٠١٬٢٣٤٬٥٦٧٫٨٩٠١٢٣', '١٫٥٠٠٠٠٠'],
+      latn: ['12,345,678,901,234,567.890123', '1.5'],
+      arab: ['١٢٬٣٤٥٬٦٧٨٬٩٠١٬٢٣٤٬٥٦٧٫٨٩٠١٢٣', '١٫٥'],
     };
     expect(Object.keys(expected)).toContain(system);
     expect([fmt(BIG, 6, 'ar'), fmt(1_500_000n, 6, 'ar')]).toEqual(expected[system]);
@@ -49,10 +52,13 @@ describe('a token amount is written out exactly, in the language', () => {
     expect(fmt(BIG, 6, 'ar-EG')).toBe('١٢٬٣٤٥٬٦٧٨٬٩٠١٬٢٣٤٬٥٦٧٫٨٩٠١٢٣');
   });
 
-  /* RED WHEN: the smallest unit of an eighteen-decimal token rounds to zero, or leading zeros of the fraction go. */
-  it('writes the smallest unit of a token with many decimals', () => {
+  /* RED WHEN: the smallest unit of an eighteen-decimal token rounds to zero, leading zeros of the fraction go, nothing is written with a separator and zeros, or a zero of the whole part is dropped. */
+  it('writes the smallest unit of a token with many decimals, and nothing as 0', () => {
     expect(fmt(5n, 18, 'en')).toBe('0.000000000000000005');
-    expect(fmt(0n, 2, 'en')).toBe('0.00');
+    expect(fmt(10n ** 18n + 5n, 18, 'en')).toBe('1.000000000000000005');
+    /* A whole part ending in zeros keeps them: only the fraction's trailing zeros go. */
+    expect([fmt(40_000_000n, 6, 'en'), fmt(10_500_000n, 6, 'en'), fmt(100n, 0, 'en'), fmt(1_000_000_000n, 6, 'de')]).toEqual(['40', '10.5', '100', '1.000']);
+    expect(fmt(0n, 2, 'en')).toBe('0');
   });
 
   /* RED WHEN: either maker, or its type, lets a Number through, or a negative amount or a bad decimals count is written. */

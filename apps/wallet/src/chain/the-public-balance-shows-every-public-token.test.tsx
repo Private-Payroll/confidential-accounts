@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '../testing/render.js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Buffer as PolyfillBuffer } from 'buffer/';
 import { IDBFactory } from 'fake-indexeddb';

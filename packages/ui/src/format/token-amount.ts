@@ -25,9 +25,11 @@
  *
  * The whole part is formatted as a `bigint` by `Intl.NumberFormat`, so it is
  * exact and grouped the way the language groups (`1,23,45,678` in `en-IN`,
- * `1234` in `es`). The decimal separator is the language's own, and every
- * fractional digit is written, trailing zeros included, in the language's
- * digits: nothing is rounded and nothing is dropped.
+ * `1234` in `es`). The decimal separator is the language's own, and the
+ * fraction is written in the language's digits up to its last digit that is
+ * not zero: `4 NIGHT`, `1.5 TESTUSD`, never `4.000000`. Only zeros after the
+ * last significant digit are left off, so nothing is rounded and no digit
+ * that changes the amount is dropped.
  *
  * How many decimals a token has, and its code, are the caller's to say, from
  * the token's own record; nothing here knows any token.
@@ -176,8 +178,9 @@ export function formatTokenAmount(amount: TokenAmount, tag: string): string {
   const decimals = decimalsOf(amount);
   const unit = 10n ** BigInt(decimals);
   const whole = new Intl.NumberFormat(tag).format(units / unit);
-  if (decimals === 0) return whole;
+  /* The fraction's digits up to its last one that is not zero; none when the amount is whole. */
+  const fraction = decimals === 0 ? '' : (units % unit).toString().padStart(decimals, '0').replace(/0+$/, '');
+  if (fraction === '') return whole;
   const { decimal, digits } = partsOf(tag);
-  const fraction = (units % unit).toString().padStart(decimals, '0');
   return whole + decimal + [...fraction].map((d) => digits[Number(d)]).join('');
 }

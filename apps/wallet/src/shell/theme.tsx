@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import type { ReactNode } from 'react';
-import { DropdownMenu as Menu } from 'radix-ui';
-import { GLYPH, Icon, glyphFor } from '../kit/icon.js';
+import {
+  Button, DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger,
+} from 'vaults-ui';
+import { Glyph, glyphFor } from '../glyphs.js';
 import { readPref, writePref } from './prefs.js';
 import { FALLBACK_THEME, THEMES, isTheme } from './themes.js';
 import type { Theme, ThemeChoice } from './themes.js';
@@ -99,11 +101,12 @@ export function useTheme(): ThemeControl {
     return () => query.removeEventListener('change', onChange);
   }, []);
 
+  /* The root carries the theme that is ON, the machine's when the person
+   * follows it, because the kit's theme is chosen by that attribute alone. */
+  const shown: Theme = choice === 'system' ? fromSystem : choice;
   useEffect(() => {
-    const root = document.documentElement;
-    if (choice === 'system') root.removeAttribute('data-theme');
-    else root.setAttribute('data-theme', choice);
-  }, [choice]);
+    document.documentElement.setAttribute('data-theme', shown);
+  }, [shown]);
 
   const setChoice = useCallback((next: ThemeChoice): void => {
     writePref(KEY, next === 'system' ? null : next);
@@ -111,7 +114,7 @@ export function useTheme(): ThemeControl {
     for (const listener of [...listeners]) listener();
   }, []);
 
-  return { choice, theme: choice === 'system' ? fromSystem : choice, setChoice };
+  return { choice, theme: shown, setChoice };
 }
 
 /** `dark` -> `themeDark`. One rule, so a third theme brings its glyph by
@@ -169,26 +172,22 @@ export function ThemePicker({ choice, theme, onChoose, wide }: {
     ? `Theme: following this machine (${theme}) — change`
     : `Theme: ${current.label} — change`;
   return (
-    <Menu.Root>
-      <Menu.Trigger asChild>
-        <button
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
           type="button"
+          variant="ghost"
+          size={wide === true ? 'default' : 'icon'}
           data-theme-choice={choice}
           aria-label={label}
           title={label}
-          className={[
-            'flex min-h-touch items-center gap-2 rounded-tight border border-transparent',
-            'bg-transparent px-2 py-2 text-sm font-normal text-muted',
-            'transition-colors duration-(--motion-quick)',
-            'hover:border-line hover:text-ink focus-visible:border-line focus-visible:text-ink',
-            wide === true ? 'w-full justify-start' : 'size-touch justify-center p-0',
-          ].join(' ')}
+          className={wide === true ? 'flex-1 justify-start font-normal text-muted-foreground' : 'text-muted-foreground'}
         >
           {/* The trigger shows the theme that is ACTUALLY ON. Following the
             * machine at night and following it at noon are the same choice and
             * two different screens, and the icon says which one you are
             * looking at. */}
-          <Icon glyph={glyphFor(glyphNameFor(theme, choice, current.glyph))} />
+          <Glyph icon={glyphFor(glyphNameFor(theme, choice, current.glyph))} />
           {/* THE WORD IS THE THEME THAT IS ON, NEVER THE CHOICE. "Follow this
             * machine" is three words wide in a rail that is fourteen
             * characters, and it names a rule rather than a state — a person
@@ -196,36 +195,20 @@ export function ThemePicker({ choice, theme, onChoose, wide }: {
             * be. The accessible name carries both, and the menu's tick carries
             * which choice is set. */}
           {wide === true && <span className="truncate">{resolvedLabel}</span>}
-        </button>
-      </Menu.Trigger>
-      <Menu.Portal>
-        <Menu.Content
-          side="top"
-          align="start"
-          sideOffset={8}
-          className={[
-            'z-50 min-w-52 rounded-card border border-line bg-raised p-1.5 shadow-lg',
-            'motion-safe:data-[state=open]:animate-[shell-fade_var(--motion-quick)_var(--motion-ease)]',
-          ].join(' ')}
-        >
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent side="top" align="start" sideOffset={8} className="w-auto min-w-52">
+        {/* The choices are one set and one is on, so they are a radio group:
+            a screen reader hears which is chosen, and the kit draws the tick. */}
+        <DropdownMenuRadioGroup value={choice} onValueChange={(next) => onChoose(next as ThemeChoice)}>
           {THEME_ENTRIES.map((entry) => (
-            <Menu.Item
-              key={entry.value}
-              data-theme-option={entry.value}
-              onSelect={() => onChoose(entry.value)}
-              className={[
-                'flex min-h-touch cursor-pointer items-center gap-3 rounded-tight px-3 py-2',
-                'text-sm text-ink outline-none',
-                'data-highlighted:bg-sunken data-highlighted:text-ink',
-              ].join(' ')}
-            >
-              <Icon glyph={glyphFor(entry.glyph)} className="text-muted" />
+            <DropdownMenuRadioItem key={entry.value} value={entry.value} data-theme-option={entry.value}>
+              <Glyph icon={glyphFor(entry.glyph)} className="text-muted-foreground" />
               <span className="flex-1">{entry.label}</span>
-              {entry.value === choice && <Icon glyph={GLYPH.chosen} className="size-4 text-accent" />}
-            </Menu.Item>
+            </DropdownMenuRadioItem>
           ))}
-        </Menu.Content>
-      </Menu.Portal>
-    </Menu.Root>
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
