@@ -27,13 +27,13 @@
  * ABOUT A REFUSAL WAS THEREFORE THE WRONG NUMBER.**
  *
  * The limit is expressed in `block_usage`, and `block_usage` is `est_size()` —
- * `midnight-ledger@crate-ledger-9.1.0.0-rc.3`, `ledger/src/structure.rs:1926`:
+ * `midnight-ledger` at `ledger-9.1.0.0-rc.3`, `ledger/src/structure.rs:2036`:
  *
  *     res.block_usage = self.est_size() as u64;
  *
- * `est_size()` (`:1937`) is `P::estimated_tx_size(self)`, which is per proof
- * marker. For a PROVEN transaction it is `tx.serialized_size()` (`:492-499`).
- * For an UNPROVEN one (`:584-614`) it is `serialized_size()` PLUS the proofs
+ * `est_size()` (`:2093-2095`) is `P::estimated_tx_size(self)`, which is per proof
+ * marker. For a PROVEN transaction it is `tx.serialized_size()` (`:511-518`).
+ * For an UNPROVEN one (`:557-564`, which erases the proofs and uses `:594-625`) it is `serialized_size()` PLUS the proofs
  * that are not there yet — a fixed size per call, per Zswap input, per Zswap
  * output and per dust spend — so on an unproven transaction the two numbers are
  * not even close.
@@ -62,25 +62,27 @@
  *
  * ── (b) WHAT THE LIMITS ARE ──────────────────────────────────────────────────
  *
- * `midnight-ledger@crate-ledger-9.1.0.0-rc.3`, `ledger/src/structure.rs:1180`
- * (this citation said `:1272`, which is now `overall_price`; the three
- * citations in section (a) had rotted the same way and are corrected there):
+ * `midnight-ledger` at `ledger-9.1.0.0-rc.3`, `ledger/src/structure.rs:1272-1285`.
+ * (For a while this citation said `:1180`: that was the line in a ledger-8 reading
+ * copy, and `:1272` was right for ledger 9 all along. The same holds for the
+ * section (a) citations, now back on ledger-9 lines.)
  *
  *     pub const INITIAL_LIMITS: TransactionLimits = TransactionLimits {
- *         transaction_byte_limit: 1 << 20,          // :1181   1 MiB
- *         time_to_dismiss_per_byte: 2_000_000 ps,   // :1182
- *         min_time_to_dismiss: 15 ms,               // :1183
+ *         transaction_byte_limit: 1 << 20,          // :1273   1 MiB
+ *         time_to_dismiss_per_byte: 2_000_000 ps,   // :1274
+ *         min_time_to_dismiss: 15 ms,               // :1275
  *         block_limits: SyntheticCost {
- *             read_time:     CostDuration::SECOND,  // :1185
- *             compute_time:  CostDuration::SECOND,  // :1186
- *             block_usage:   200_000,               // :1187   <-- BYTES
- *             bytes_written: 50_000,                // :1188
- *             bytes_churned: 1_000_000,             // :1189
+ *             read_time:     CostDuration::SECOND,  // :1277
+ *             compute_time:  CostDuration::SECOND,  // :1278
+ *             block_usage:   200_000,               // :1279   <-- BYTES
+ *             bytes_written: 50_000,                // :1280
+ *             bytes_churned: 1_000_000,             // :1281
  *         },
  *         ...
  *
- * The five inner line numbers said `:1277` to `:1281` and were about ninety
- * lines adrift, the same rot as the three corrected in section (a). The two
+ * The five inner line numbers are `:1277` to `:1281` at ledger 9. A later edit
+ * moved them about ninety lines, onto the ledger-8 reading copy, and they are
+ * back; the limits themselves did not change between the two. The two
  * constants above the block limits are quoted because they are the ones a
  * refusal for being too cheap relative to size turns on, and leaving them out
  * of the excerpt is what made this file look like it was only about blocks.

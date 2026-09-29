@@ -137,7 +137,7 @@ Next
                            to Midnight's SRS bucket on first run)
 
   docker run -d --name midnight-proof-server-9.0.0-rc.3 -p 6301:6300 \
-      midnightntwrk/proof-server:9.0.0-rc.3 midnight-proof-server -v
+      midnightntwrk/proof-server:9.0.0-rc.3 midnight-proof-server
                            (6301, not 6300: an 8.1.0 server has answered on 6300
                             on this machine and the two must not share a port)
 

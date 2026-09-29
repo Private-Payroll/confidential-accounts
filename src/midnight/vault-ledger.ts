@@ -28,7 +28,7 @@
  * pointing a vault at a contract that would answer "approved, pay me".
  */
 import type { Hex } from '../core/crypto.js';
-import { recipientOf, type Payee, type PayeeAddress } from './payee-address.js';
+import { type Payee, type PayeeAddress } from './payee-address.js';
 import { arityFrom, assertArity } from './circuit-arity.js';
 import { fromHex, toHex } from '../core/crypto.js';
 import type { MidnightConfig, FeeSponsor } from './ledger.js';
@@ -1118,7 +1118,7 @@ export class VaultLedger {
          * payment's token is a correct thing to ask about. The sum is discarded:
          * `paymentsFit` below is the real question.
          */
-        await this.balance(vaultAddress, priv[0].token);
+        await this.balance(vaultAddress, priv[0]!.token);
       } catch (cause) {
         if (cause instanceof VaultChainUnreadable) {
           throw new VaultCannotAfford(
@@ -1171,7 +1171,7 @@ export class VaultLedger {
         /*
          * NAMED AS A TOTAL, because that is what would fail. The ledger
          * subtracts each payment's `unshielded_outputs` from one number
-         * (`semantics.rs:1422-1435`), so a run whose total exceeds the balance
+         * (`ledger/src/semantics.rs:1477-1490` at `ledger-9.1.0.0-rc.3`), so a run whose total exceeds the balance
          * pays until it stops — the same mid-run split `C203` is about,
          * arriving through the half of the vault that has no pool.
          */
@@ -1482,7 +1482,7 @@ export class VaultLedger {
    * per contract per colour, moved only by a call's declared effects and
    * defended by the chain itself — `unshielded_inputs` added with `checked_add`
    * and `unshielded_outputs` subtracted with `checked_sub`, an underflow being
-   * `BalanceCheckOutOfBounds` (`ledger/src/semantics.rs:1408-1435`). **There is
+   * `BalanceCheckOutOfBounds` (`midnight-ledger` `ledger-9.1.0.0-rc.3`, `ledger/src/semantics.rs:1462-1490`). **There is
    * no note, no nonce, no commitment, no merkle index, no pool, no ciphertext
    * and no recovery on that side.**
    *
@@ -1711,7 +1711,7 @@ export class VaultLedger {
       attemptedAt: new Date().toISOString(),
     });
 
-    const { result, spent, notes: spentFrom, readAt } = await this.call(vaultAddress, 'payout', [
+    const { result, spent } = await this.call(vaultAddress, 'payout', [
       fromHex(p.proposal), fromHex(p.root), p.payees, p.opensAt, p.closesAt, fromHex(p.salt),
       fromHex(payee.coinPublicKey), fromHex(p.token), p.amount,
       fromHex(p.blinding), fromHex(p.nonce), p.path,
@@ -1807,9 +1807,11 @@ export class VaultLedger {
      * a note's place in the commitment tree from the chain at the moment it
      * spends (`indexForSpend`), never from the pool, so a number stored here has
      * no reader that should trust it and is one a later change could hand over by
-     * mistake. `spentFrom` carried no indexes because `call` dropped them; a
-     * fresh load may hold some from an older write, so they are dropped here for
-     * the same reason and the written shape is unchanged.     *
+     * mistake. `call` kept an index only on the note it spent, and that note
+     * leaves the pool here; a fresh load may hold some from an older write, so
+     * they are dropped here for the same reason and the written shape is
+     * unchanged.
+     *
      * **AND THE RECOVERY IS STILL LOAD-BEARING, MORE SO RATHER THAN LESS.** The
      * pool is still written AFTER the money moves, so a crash BETWEEN the call
      * above and this write still leaves the chain holding a note the pool has

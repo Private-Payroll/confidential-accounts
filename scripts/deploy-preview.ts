@@ -129,8 +129,9 @@ const PRIVATE_STATE_KEY = privateStateKey(PRIVATE_STATE_ID, ACCOUNT_ID);
  * release the running node is built from
  * (midnight-node@d9729c13/Cargo.toml:445 -> crate-ledger-9.1.0.0-rc.3 ->
  * proof-server/Cargo.toml 9.0.0-rc.3), alongside ledger 1.0.0-rc.3, onchain
- * runtime 4.0.0-rc.3, midnight.js 5.0.0-beta.4 and compiler 0.33.0 — every one
- * of which we already match.
+ * runtime 4.0.0-rc.3 and midnight.js 5.0.0-beta.4, every one of which we match.
+ * The product's compiler is 0.34.0 (language 0.26.0, runtime 0.19.0); this said
+ * 0.33.0 until the compiler pin moved.
  *
  * IT SAID `9.0.0-rc.5_experimental` UNTIL 28 AUG 2026, on the authority of
  * Midnight's Stagenet delivery document — a draft edited forward of the running

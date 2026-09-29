@@ -45,8 +45,12 @@
  *
  * `mint-64/issue` is one statement — `mintShieldedToken` and nothing else. It
  * receives nothing, so there is nothing to strand and no unshielded offer.
- * **It is compiled at this project's pin** (`compiler/contract-info.json`:
+ * **It was compiled at this project's pin OF THE TIME** (`compiler/contract-info.json`:
  * compiler 0.33.0, language 0.25.0, runtime 0.18.0-rc.1) **with keys on disk**,
+ * and it has not been recompiled since the pin moved to compiler 0.34.0 and
+ * runtime 0.19.0. The installed runtime refuses code compiled for a different
+ * 0.x minor (`compact` `compactc-v0.34.0`, `runtime/export-version.ss:32-36`),
+ * so this minter must be recompiled at 0.34.0 before this script can load it,
  * `keys/issue.prover` 5,204,344 bytes and `keys/issue.verifier` 2,119 bytes,
  * both dated 15 Aug — read off the directory, not remembered.
  *
@@ -109,14 +113,14 @@
  *
  * `per_tx_cost_reserve` counts Zswap items off the **contract's effects** —
  * `claimed_nullifiers` and `claimed_shielded_receives`,
- * `midnight-src/midnight-ledger/ledger/src/construct.rs:898-905` — and adds
- * the Pedersen pair only when that count is above zero (`:938-942`).
+ * `midnight-ledger` `ledger-9.1.0.0-rc.3`, `ledger/src/construct.rs:896-907` — and
+ * adds the Pedersen pair only when that count is above zero (`:941-944`).
  * **`mintShieldedToken` claims a SPEND, not a receive** — the standard
  * library's own `kernel.claimZswapCoinSpend(cm)`, generated into
  * `contracts/probe-out4/mint-64/contract/index.js` as effects index 2 — so for
  * this transaction the reserve counts **zero** Zswap items and skips the
  * Pedersen pair, exactly as it did on the run `V-176` measured. The enforcing
- * side counts the balanced offer (`structure.rs:1879-1888`), where the minted
+ * side counts the balanced offer (`ledger/src/structure.rs:1983-1998`), where the minted
  * output is plainly present.
  *
  * **So the expected refusal at the node is `OutsideTimeToDismiss`, and it is
@@ -174,9 +178,11 @@ async function loadMinterContract(): Promise<any> {
     return (await import(MINTER_CONTRACT)).Contract;
   } catch (e: any) {
     throw new Error(
-      `this needs a compiled minter at contracts/probe-out4/mint-64, and it is not there.\n` +
-      `  That directory is compiler output for a throwaway contract; nothing in this repository builds it,\n` +
-      `  and it is never committed. Compile it with the pinned compiler first.\n` +
+      `this needs a compiled minter at contracts/probe-out4/mint-64, and it did not load.\n` +
+      `  Either it is not there, or the reason below says "Version mismatch": it was compiled by an\n` +
+      `  older compiler than the one whose runtime is installed. That directory is compiler output for a\n` +
+      `  throwaway contract and is never committed. Rebuild it, its keys included, with the compiler\n` +
+      `  pinned in .github/checks/toolchain.mjs, then run this again.\n` +
       `  (${e?.message ?? e})`,
     );
   }
@@ -504,8 +510,8 @@ async function main(): Promise<Verdict> {
   if (!existsSync(proverKey)) {
     throw new Error(
       'contracts/probe-out4/mint-64/keys/issue.prover does not exist, so this mint cannot be ' +
-      'proved.\nThose keys were built on 15 Aug and are committed with the probe. If they are ' +
-      'gone, the door that rebuilds them is COMPILE-CONTRACT.command\x27s compiler — and note ' +
+      'proved.\nThose keys were built on 15 Aug with the probe, which is never committed. If they are ' +
+      'gone, PROBE-MINT.command rebuilds them with the installed compiler — and note ' +
       'that MUTATE.command\x27s last restore leaves no keys for anything.');
   }
   good('the proving key for issue is on disk');

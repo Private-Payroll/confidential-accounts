@@ -28,7 +28,7 @@
  * is the test author stating what the chain would say, and it is a SECOND MODEL of
  * the ledger's arithmetic in exactly the sense `CLAUDE.md` warns about. What is real
  * is everything on this side of that line — the effects the circuits DECLARE, which
- * is what the ledger actually applies (`ledger/src/semantics.rs:1408-1435`, where
+ * is what the ledger actually applies (`midnight-ledger` `ledger-9.1.0.0-rc.3`, `ledger/src/semantics.rs:1462-1490`, where
  * `unshielded_outputs` are subtracted with `checked_sub` and an underflow is
  * `BalanceCheckOutOfBounds`). So the tests below assert on the DECLARED EFFECTS, and
  * use the hand-set balance only to reach the branches that read one.
@@ -157,7 +157,7 @@ describe('a vault holds public money as well as private', () => {
       ctxFor('depositUnshielded', chainSays()), NIGHT, 500n);
     adopt(r as never);
 
-    /* The DECLARED EFFECT is what the ledger credits — semantics.rs:1408. */
+    /* The DECLARED EFFECT is what the ledger credits — semantics.rs:1463-1476 at ledger-9.1.0.0-rc.3. */
     const inputs = [...(r as never as {
       context: { callContext: { currentQueryContext: { effects: { unshieldedInputs: Map<{ tag: string; raw: string }, bigint> } } } }
     }).context.callContext.currentQueryContext.effects.unshieldedInputs];

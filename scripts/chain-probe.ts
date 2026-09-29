@@ -87,9 +87,11 @@ async function loadProbeContract(): Promise<void> {
     mod = await import(PROBE_CONTRACT);
   } catch (e: any) {
     throw new Error(
-      `this probe reads a compiled contract at contracts/chainprobe/managed, and it is not there.\n` +
-      `  That directory is compiler output for a throwaway contract; nothing in this repository builds it,\n` +
-      `  and it is never committed. Compile contracts/chainprobe with the pinned compiler first.\n` +
+      `this probe reads a compiled contract at contracts/chainprobe/managed, and it did not load.\n` +
+      `  Either it is not there, or the reason below says "Version mismatch": it was compiled by an\n` +
+      `  older compiler than the one whose runtime is installed. It is never committed. Compile the\n` +
+      `  probe contract into that directory with the compiler pinned in .github/checks/toolchain.mjs,\n` +
+      `  then run this again.\n` +
       `  (${e?.message ?? e})`,
     );
   }
@@ -152,8 +154,9 @@ const PRIVATE_STATE_PASSWORD =
  * release the running node is built from
  * (midnight-node@d9729c13/Cargo.toml:445 -> crate-ledger-9.1.0.0-rc.3 ->
  * proof-server/Cargo.toml 9.0.0-rc.3), alongside ledger 1.0.0-rc.3, onchain
- * runtime 4.0.0-rc.3, midnight.js 5.0.0-beta.4 and compiler 0.33.0 — every one
- * of which we already match.
+ * runtime 4.0.0-rc.3 and midnight.js 5.0.0-beta.4, every one of which we match.
+ * The product's compiler is 0.34.0 (language 0.26.0, runtime 0.19.0); this said
+ * 0.33.0 until the compiler pin moved.
  *
  * IT SAID `9.0.0-rc.5_experimental` UNTIL 28 AUG 2026, on the authority of
  * Midnight's Stagenet delivery document — a draft edited forward of the running
