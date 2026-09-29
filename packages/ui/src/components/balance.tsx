@@ -2,6 +2,7 @@ import { visibilityOf, type PrivateAmount, type PublicAmount } from 'vaults-ui/f
 import { useText } from 'vaults-ui/i18n/provider';
 import { Amount, AmountFigure } from 'vaults-ui/components/amount';
 import { PublicPill } from 'vaults-ui/components/public-pill';
+import { Skeleton } from 'vaults-ui/components/skeleton';
 
 export interface BalanceProps {
   /** What only the holder, and those they share it with, can read. A public amount here does not typecheck. */
@@ -35,5 +36,15 @@ export function Balance({ private: held, public: shown }: BalanceProps) {
       <dt><PublicPill kind="balance" /></dt>
       <dd className="text-end" data-slot="amount" data-visibility="public"><AmountFigure value={shown} /></dd>
     </dl>
+  );
+}
+
+/** A BALANCE WHILE IT IS READ: its two lines, each a bar where the label and the figure will be, and no figure on either, so neither can be read as money. */
+export function BalanceLoading() {
+  return (
+    <div data-slot="balance-loading" aria-busy={true} className="grid grid-cols-2 items-center gap-x-4 gap-y-2">
+      <Skeleton data-bar="label" className="h-4 w-16" /><Skeleton data-bar="figure" className="h-4 w-24 justify-self-end" />
+      <Skeleton data-bar="label" className="h-4 w-16" /><Skeleton data-bar="figure" className="h-4 w-24 justify-self-end" />
+    </div>
   );
 }

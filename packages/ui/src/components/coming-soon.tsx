@@ -13,6 +13,10 @@ export interface ComingSoonProps {
  * The same everywhere, in the theme's muted colour, never shortened. Hovering
  * or pressing it opens a line saying what the feature will be; nothing about
  * it pretends to work.
+ *
+ * IT IS THE QUIETEST THING BESIDE IT: shorter than any button, in normal
+ * weight, outlined rather than filled, and in the muted colour, so an action
+ * beside it always reads as the heavier of the two.
  */
 export function ComingSoon({ explanation }: ComingSoonProps) {
   const t = useText();
@@ -20,7 +24,7 @@ export function ComingSoon({ explanation }: ComingSoonProps) {
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
-        <Badge asChild variant="secondary" className="bg-muted text-muted-foreground">
+        <Badge asChild variant="outline" className="h-4 px-1.5 font-normal text-muted-foreground">
           <button type="button" data-slot="coming-soon">{t('kit.comingSoon.label')}</button>
         </Badge>
       </PopoverTrigger>

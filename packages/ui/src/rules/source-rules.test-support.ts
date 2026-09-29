@@ -193,14 +193,23 @@ export function declaredBy(packageJson: string): Set<string> {
 }
 
 /**
+ * THE KIT'S ENTRIES BESIDE ITS INDEX, each named in the kit's `package.json`
+ * and each with why it is not in the index: what is reached through the index
+ * is in the first download of every page.
+ */
+export const KIT_ENTRIES: Readonly<Record<string, string>> = {
+  'vaults-ui/data-table': 'the table and the library it is built on, used only by pages loaded when they are opened',
+};
+
+/**
  * RULE: the application reaches the kit only by its package name, and only
  * what the kit's index exports. A relative or absolute path that lands inside
  * the kit's folder is a breach, and so is one used only for a type; so is a
  * module inside the kit named through the package (`vaults-ui/format/...`),
  * which reaches what the index keeps back, the amount formatter above all. A
- * stylesheet (`vaults-ui/styles.css`) is not code and is let through. `root`
- * is the repository, `kit` the kit's folder in it; `name` is the kit's package
- * name.
+ * stylesheet (`vaults-ui/styles.css`) is not code and is let through, and so
+ * is each of the kit's own entries in `KIT_ENTRIES`. `root` is the
+ * repository, `kit` the kit's folder in it; `name` is the kit's package name.
  */
 export async function pathsIntoTheKit(files: readonly Source[], root: string, kit: string, name = 'vaults-ui'): Promise<Breach[]> {
   /* Compared without case: the Mac's file system finds `packages/UI` as `packages/ui`. */
@@ -211,7 +220,7 @@ export async function pathsIntoTheKit(files: readonly Source[], root: string, ki
       const target = specifier.startsWith('.') ? resolve(root, dirname(f.path), specifier)
         : specifier.startsWith('/') ? resolve(root, `.${specifier}`) : null;
       if (target !== null && (target + sep).toLowerCase().startsWith(kitDir)) out.push({ path: f.path, line, what: specifier });
-      if (target === null && specifier.startsWith(`${name}/`) && !specifier.endsWith('.css')) out.push({ path: f.path, line, what: specifier });
+      if (target === null && specifier.startsWith(`${name}/`) && !specifier.endsWith('.css') && !(specifier in KIT_ENTRIES)) out.push({ path: f.path, line, what: specifier });
     }
   }
   return out;
@@ -980,6 +989,9 @@ export const CODES: Readonly<Record<string, string>> = {
   'packages/ui/src/components/public-pill.tsx#AMOUNT_KIND': 'the kinds of amount the Public pill explains, which a screen names and the pill turns into words',
   'packages/ui/src/hooks/use-mobile.ts#NARROW_SCREEN': 'a media query, read by the browser',
   'packages/ui/src/lib/direction.ts#POPUP_SIDE': 'the side names the popup library places by, chosen from the reading direction',
+  'packages/ui/src/components/data-table.tsx#DATA_TABLE': 'the ids of the table\'s own columns and the primitive\'s name for a box partly ticked, compared by the code',
+  'packages/ui/src/components/stat-tile.tsx#CHANGE': 'which way a figure moved, compared by the code and set as a mark tests find it by',
+  'packages/ui/src/components/select.tsx#SELECT_POSITION': 'the names of the two places the choice primitive opens its list, read by the primitive',
   'apps/web/src/pages.ts#PAGES': 'each page\'s address, menu group, audience and the page it sits inside; its name and what it will be are asked for by key',
   'apps/web/src/pages.ts#VIEWS': 'the names of the two views, compared by the code',
   'apps/web/src/pages.ts#HOME': 'the ids of the pages each view begins at',
@@ -997,6 +1009,8 @@ export const CODES: Readonly<Record<string, string>> = {
   'apps/web/src/shell/command-bar.tsx#COMPARED': 'the Unicode form text is compared in',
   'apps/web/src/shell/company-facts.tsx#DAY': 'the style a date is written in, which the browser\'s date format turns into the person\'s language',
   'apps/web/src/faults.ts#FAULT': 'the code a mistake in the application\'s own code carries, read out from the console and reported; it names a place, not wording',
+  'apps/web/src/screens/home.tsx#PASSED': 'the ids of the recently passed table\'s columns and filters, and the two statuses it filters by, compared by the code; each is shown by its key',
+  'apps/web/src/adapters/kept-folds.ts#KEPT': 'where the folded setup cards are kept in the browser',
   'apps/web/src/setup/step-ids.ts#STEP': 'the id of each setup step, which is its key in the list of steps',
   'apps/web/src/setup/steps.ts#SETUP_STEPS': 'each setup step\'s id and the page it is also done from; its name, line and what it will be are asked for by key',
   'apps/web/src/setup/standing.ts#STANDING': 'where a setup step stands, compared by the code and set as a mark tests find it by',

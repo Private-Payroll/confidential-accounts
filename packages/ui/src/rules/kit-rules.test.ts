@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { SEED_ASSETS } from '../../../../src/core/assets.js';
 import {
   amountsMadeOutsideTheAdapters, amountsOutsideTheComponent, arbitraryValues, CODES, codesUnder, colourValues, declaredBy, filesUnder, hasPhrase, inlineStyles, isShippingCode,
-  bracketedStatesOf, keysAskedFor, namedOutside, OWN_STATES, paletteClasses, RADIX_STATES, statesNothingSets, physicalClasses, secondCn, SIDE_NAMES, spansOf, stateVariantsOf, stringWordsOf, undeclaredImports, waysIntoSharedCode, wordingCensus, wordingInCode,
+  bracketedStatesOf, KIT_ENTRIES, keysAskedFor, namedOutside, OWN_STATES, paletteClasses, RADIX_STATES, statesNothingSets, physicalClasses, secondCn, SIDE_NAMES, spansOf, stateVariantsOf, stringWordsOf, undeclaredImports, waysIntoSharedCode, wordingCensus, wordingInCode,
   type Source,
 } from './source-rules.test-support.js';
 
@@ -65,6 +65,14 @@ describe('every rule, over the kit', () => {
     const own = ['packages/ui/src/format/token-amount.ts', 'packages/ui/src/index.ts'];
     expect(amountsMadeOutsideTheAdapters(CODE.filter((f) => !own.includes(f.path)), ROOT, null)).toEqual([]);
     expect(new Set(amountsMadeOutsideTheAdapters(CODE, ROOT, null).map((b) => b.path))).toEqual(new Set(own));
+  });
+
+  /* RED WHEN: the kit's package names an entry beside its index that the rule letting the application import it does not, or the other way round, or an entry points at no file. */
+  it('names the same entries beside its index as the rule that lets them be imported', () => {
+    const exported = (JSON.parse(readFileSync(ROOT + 'packages/ui/package.json', 'utf8')) as { exports: Record<string, string> }).exports;
+    const entries = Object.entries(exported).filter(([k]) => k !== '.' && !k.includes('*'));
+    expect(entries.map(([k]) => `vaults-ui/${k.slice(2)}`).sort()).toEqual(Object.keys(KIT_ENTRIES).sort());
+    for (const [, file] of entries) expect(existsSync(ROOT + 'packages/ui/' + file.slice(2)), file).toBe(true);
   });
 
   /* RED WHEN: a second cn is declared, or the cn package or what cn is made of is imported anywhere but the kit's cn. */

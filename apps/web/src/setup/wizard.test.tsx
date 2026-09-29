@@ -185,7 +185,8 @@ describe('a step that cannot be undone', () => {
   /*
    * RED WHEN: before the company's handover is read, the handover step's
    * action is drawn or its tab can be pressed, so a company already held is
-   * offered the handover again, even for a moment.
+   * offered the handover again, even for a moment; or the step is drawn as
+   * anything but the kit's section loading while it is read.
    */
   it('offers no step that cannot be undone while the company is still being read', async () => {
     state.handover = { of: 'held' };
@@ -193,6 +194,9 @@ describe('a step that cannot be undone', () => {
     const { container } = render(framed(<Setup />, sessionWith({ company: 'c-1' })));
     expect(q(container, '[data-screen=setup]')!.hasAttribute('data-reading')).toBe(true);
     expect(q(container, '[data-action=hand-over]')).toBeNull();
+    /* The step is drawn as the kit's section loading while it is read, not as loose lines. */
+    expect(q(container, '[data-step-reading]')!.getAttribute('data-slot')).toBe('section-loading');
+    expect(q(container, '[data-step-reading]')!.getAttribute('aria-busy')).toBe('true');
     expect((q(container, `[data-setup-steps] [data-step=${STEP.handOver}]`) as HTMLButtonElement).disabled).toBe(true);
     expect((q(container, `[data-setup-steps] [data-step=${STEP.vault}]`) as HTMLButtonElement).disabled).toBe(true);
     expect((q(container, `[data-setup-steps] [data-step=${STEP.people}]`) as HTMLButtonElement).disabled).toBe(false);
@@ -226,8 +230,7 @@ describe('skipping', () => {
     const row = q(container, `[data-setup-steps] [data-step=${STEP.createCompany}]`)!;
     expect(row.getAttribute('data-standing')).toBe('skipped');
     expect(row.querySelector('[data-skipped]')!.textContent).toBe(EN['setup.skipped']);
-    expect(q(container, `[data-mark=${STEP.createCompany}]`)!.getAttribute('data-standing')).toBe('skipped');
-    expect(q(container, `[data-mark=${STEP.createCompany}]`)!.className).not.toContain('bg-primary');
+    expect(q(container, `[data-mark=${STEP.createCompany}]`)!.getAttribute('data-filled')).toBe('false');
     expect(q(container, '[data-progress]')!.getAttribute('aria-valuenow')).toBe('0');
     expect(q(container, '[data-current-step]')!.getAttribute('data-current-step')).toBe(STEP.signers);
     await pick(container, STEP.createCompany);
@@ -242,7 +245,8 @@ describe('skipping', () => {
   it('keeps a skipped step through a reload of the tab, for its own company', async () => {
     const { container } = await drawWizard(sessionWith({ company: 'c-1' }));
     await act(async () => { fireEvent.click(q(container, '[data-action=skip]')!); await settle(); });
-    expect(q(container, `[data-mark=${STEP.signers}]`)!.getAttribute('data-standing')).toBe('skipped');
+    expect(q(container, `[data-setup-steps] [data-step=${STEP.signers}]`)!.getAttribute('data-standing')).toBe('skipped');
+    expect(q(container, `[data-mark=${STEP.signers}]`)!.getAttribute('data-filled')).toBe('false');
     cleanup();
     /* A reload: the modules start again, and read only what the tab kept. */
     vi.resetModules();
@@ -256,7 +260,7 @@ describe('skipping', () => {
       </ui.KitProvider>,
     );
     await untilPageShown(again.container);
-    expect(q(again.container, `[data-mark=${STEP.signers}]`)!.getAttribute('data-standing')).toBe('skipped');
+    expect(q(again.container, `[data-setup-steps] [data-step=${STEP.signers}]`)!.getAttribute('data-standing')).toBe('skipped');
     expect(q(again.container, '[data-current-step]')!.getAttribute('data-current-step')).toBe(STEP.handOver);
     window.sessionStorage.setItem('private-vaults.setup-skipped', JSON.stringify({ 'c-1': ['deposit', STEP.vault], '': 'not a list' }));
     expect([...fresh.readSkips(window.sessionStorage).entries()].map(([c, v]) => [c, [...v]])).toEqual([['c-1', [STEP.vault]]]);
@@ -265,14 +269,14 @@ describe('skipping', () => {
   /* RED WHEN: a step done is not counted and marked as done, or Continue is offered on a step that is not done. */
   it('counts and marks a step done only when it is, and offers Continue only then', async () => {
     const { container } = await drawWizard(sessionWith({ company: 'c-1' }));
-    expect(q(container, `[data-mark=${STEP.createCompany}]`)!.getAttribute('data-standing')).toBe('done');
+    expect(q(container, `[data-mark=${STEP.createCompany}]`)!.getAttribute('data-filled')).toBe('true');
     expect(q(container, '[data-progress]')!.getAttribute('aria-valuenow')).toBe('1');
     expect(q(container, '[data-current-step]')!.getAttribute('data-current-step')).toBe(STEP.signers);
     expect((q(container, '[data-action=continue]') as HTMLButtonElement).disabled).toBe(true);
     state.handover = { of: 'held' };
     cleanup();
     const again = await drawWizard(sessionWith({ company: 'c-1' }));
-    expect(q(again.container, `[data-mark=${STEP.handOver}]`)!.getAttribute('data-standing')).toBe('done');
+    expect(q(again.container, `[data-mark=${STEP.handOver}]`)!.getAttribute('data-filled')).toBe('true');
     expect(q(again.container, '[data-progress]')!.getAttribute('aria-valuenow')).toBe('2');
   });
 });

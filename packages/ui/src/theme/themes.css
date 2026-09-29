@@ -10,6 +10,18 @@
  * in the kit or the application but here. The values are shadcn's own for
  * each base colour; they were generated, not written by hand, and are
  * replaced the same way rather than edited one at a time.
+ *
+ * THE THREE SURFACES, the last three tokens of every block, are what the
+ * page is painted with, and they are shadcn's inset layout's own, in light
+ * and dark: the frame (the menu and everything around the page) is the
+ * block's `--sidebar`, the page, an inset panel on it, is its
+ * `--background`, and every box and card on the page is its `--card`. In
+ * light the frame is the darker and a box is the page's white, set apart by
+ * its ring and shadow; in dark the page is the darkest and the frame and a
+ * box are one shade lighter, as shadcn draws it. Each is written out in its
+ * block, equal to the value it is named for, so the stylesheet can point
+ * the background, card and sidebar colours at them and every component
+ * that paints one of those paints a surface.
  */
 
 :root[data-base='neutral'] {
@@ -44,6 +56,9 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+  --surface-frame: oklch(0.985 0 0);
+  --surface-page: oklch(1 0 0);
+  --surface-box: oklch(1 0 0);
 }
 
 :root[data-base='neutral'][data-theme='dark'] {
@@ -78,6 +93,9 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
+  --surface-frame: oklch(0.205 0 0);
+  --surface-page: oklch(0.145 0 0);
+  --surface-box: oklch(0.205 0 0);
 }
 
 :root[data-base='stone'] {
@@ -112,6 +130,9 @@
   --sidebar-accent-foreground: oklch(0.216 0.006 56.043);
   --sidebar-border: oklch(0.923 0.003 48.717);
   --sidebar-ring: oklch(0.709 0.01 56.259);
+  --surface-frame: oklch(0.985 0.001 106.423);
+  --surface-page: oklch(1 0 0);
+  --surface-box: oklch(1 0 0);
 }
 
 :root[data-base='stone'][data-theme='dark'] {
@@ -146,6 +167,9 @@
   --sidebar-accent-foreground: oklch(0.985 0.001 106.423);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.553 0.013 58.071);
+  --surface-frame: oklch(0.216 0.006 56.043);
+  --surface-page: oklch(0.147 0.004 49.25);
+  --surface-box: oklch(0.216 0.006 56.043);
 }
 
 :root,
@@ -181,6 +205,9 @@
   --sidebar-accent-foreground: oklch(0.21 0.006 285.885);
   --sidebar-border: oklch(0.92 0.004 286.32);
   --sidebar-ring: oklch(0.705 0.015 286.067);
+  --surface-frame: oklch(0.985 0 0);
+  --surface-page: oklch(1 0 0);
+  --surface-box: oklch(1 0 0);
 }
 
 :root[data-theme='dark'],
@@ -216,6 +243,9 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.552 0.016 285.938);
+  --surface-frame: oklch(0.21 0.006 285.885);
+  --surface-page: oklch(0.141 0.005 285.823);
+  --surface-box: oklch(0.21 0.006 285.885);
 }
 
 :root[data-base='mauve'] {
@@ -250,6 +280,9 @@
   --sidebar-accent-foreground: oklch(0.212 0.019 322.12);
   --sidebar-border: oklch(0.922 0.005 325.62);
   --sidebar-ring: oklch(0.711 0.019 323.02);
+  --surface-frame: oklch(0.985 0 0);
+  --surface-page: oklch(1 0 0);
+  --surface-box: oklch(1 0 0);
 }
 
 :root[data-base='mauve'][data-theme='dark'] {
@@ -284,6 +317,9 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.542 0.034 322.5);
+  --surface-frame: oklch(0.212 0.019 322.12);
+  --surface-page: oklch(0.145 0.008 326);
+  --surface-box: oklch(0.212 0.019 322.12);
 }
 
 :root[data-base='olive'] {
@@ -318,6 +354,9 @@
   --sidebar-accent-foreground: oklch(0.228 0.013 107.4);
   --sidebar-border: oklch(0.93 0.007 106.5);
   --sidebar-ring: oklch(0.737 0.021 106.9);
+  --surface-frame: oklch(0.988 0.003 106.5);
+  --surface-page: oklch(1 0 0);
+  --surface-box: oklch(1 0 0);
 }
 
 :root[data-base='olive'][data-theme='dark'] {
@@ -352,6 +391,9 @@
   --sidebar-accent-foreground: oklch(0.988 0.003 106.5);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.58 0.031 107.3);
+  --surface-frame: oklch(0.228 0.013 107.4);
+  --surface-page: oklch(0.153 0.006 107.1);
+  --surface-box: oklch(0.228 0.013 107.4);
 }
 
 :root[data-base='mist'] {
@@ -386,6 +428,9 @@
   --sidebar-accent-foreground: oklch(0.218 0.008 223.9);
   --sidebar-border: oklch(0.925 0.005 214.3);
   --sidebar-ring: oklch(0.723 0.014 214.4);
+  --surface-frame: oklch(0.987 0.002 197.1);
+  --surface-page: oklch(1 0 0);
+  --surface-box: oklch(1 0 0);
 }
 
 :root[data-base='mist'][data-theme='dark'] {
@@ -420,6 +465,9 @@
   --sidebar-accent-foreground: oklch(0.987 0.002 197.1);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.56 0.021 213.5);
+  --surface-frame: oklch(0.218 0.008 223.9);
+  --surface-page: oklch(0.148 0.004 228.8);
+  --surface-box: oklch(0.218 0.008 223.9);
 }
 
 :root[data-base='taupe'] {
@@ -454,6 +502,9 @@
   --sidebar-accent-foreground: oklch(0.214 0.009 43.1);
   --sidebar-border: oklch(0.922 0.005 34.3);
   --sidebar-ring: oklch(0.714 0.014 41.2);
+  --surface-frame: oklch(0.986 0.002 67.8);
+  --surface-page: oklch(1 0 0);
+  --surface-box: oklch(1 0 0);
 }
 
 :root[data-base='taupe'][data-theme='dark'] {
@@ -488,4 +539,7 @@
   --sidebar-accent-foreground: oklch(0.986 0.002 67.8);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.547 0.021 43.1);
+  --surface-frame: oklch(0.214 0.009 43.1);
+  --surface-page: oklch(0.147 0.004 49.3);
+  --surface-box: oklch(0.214 0.009 43.1);
 }

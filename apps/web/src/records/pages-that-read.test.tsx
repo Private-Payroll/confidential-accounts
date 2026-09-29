@@ -6,7 +6,7 @@ import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { KitProvider, languagesFrom, privateAmount, publicAmount } from 'vaults-ui';
 import type { Company, CompanyRecords, PersonRow, ProposalRow, RunRow } from '../adapters/company-records.js';
-import { untilPageShown } from '../page-shown.test-support.js';
+import { untilPageShown, untilShown } from '../page-shown.test-support.js';
 
 /*
  * THE COMPANY PAGES THAT READ, DRAWN IN THE FRAME at their own addresses,
@@ -81,7 +81,8 @@ const records = (over: Partial<CompanyRecords> = {}): Company => ({
 });
 
 type Id = keyof typeof PAGES;
-async function draw(id: Id, params: Record<string, string> = {}) {
+/** Draw a page in the frame, and read nothing yet. */
+function drawNow(id: Id, params: Record<string, string> = {}) {
   window.history.replaceState(null, '', addressOf(id, params));
   const session = {
     person: { id: 'u1', name: 'Priya' }, companies: [{ id: 'c-1', createdAt: '2026-09-01T00:00:00.000Z', signers: 1, approvalsNeeded: 1 }], company: 'c-1',
@@ -93,9 +94,14 @@ async function draw(id: Id, params: Record<string, string> = {}) {
       <SessionProvider session={session}><Shell current={id}><PageView id={id} params={params} /></Shell></SessionProvider>
     </KitProvider>,
   );
-  /* The screen loads on demand, and the records are read after: both are waited for. */
-  await untilPageShown(view.container);
   return view.container;
+}
+
+/** Draw a page, and wait for it: the screen loads on demand, and the records are read after. */
+async function draw(id: Id, params: Record<string, string> = {}) {
+  const container = drawNow(id, params);
+  await untilPageShown(container);
+  return container;
 }
 const q = (c: ParentNode, sel: string) => c.querySelector(sel) as HTMLElement | null;
 const all = (c: ParentNode, sel: string) => [...c.querySelectorAll(sel)] as HTMLElement[];
@@ -137,7 +143,7 @@ describe('every page that reads is built, at its own address', () => {
       }
       cleanup();
     }
-    expect([...seen].sort()).toEqual(['approve', 'check-fingerprint', 'check-last-deposit', 'create-vault', 'deposit', 'export-run', 'invite', 'new-run', 'pay-out', 'withdraw']);
+    expect([...seen].sort()).toEqual(['approve', 'check-fingerprint', 'check-last-deposit', 'create-proposal', 'create-vault', 'decline', 'deposit', 'export-run', 'invite', 'new-run', 'pay-out', 'withdraw']);
   });
 });
 
@@ -160,6 +166,90 @@ describe('home', () => {
     expect(takeAsked()).toEqual({ step: 'vault', newCompany: false });
   });
 
+  /*
+   * RED WHEN: the setup card loses its bar or its "n of 5 steps done"; folding
+   * it does not hide its steps; or a fold is not kept for the company when
+   * Home is opened again.
+   */
+  it('shows how far setup has come, and folds, kept for the company', async () => {
+    window.localStorage.clear();
+    const c = await draw('home');
+    const card = q(c, '[data-part=setup-card]')!;
+    expect(all(card, '[data-slot=progress-mark]').map((m) => m.dataset.filled)).toEqual(['true', 'false', 'false', 'false', 'false']);
+    expect(q(card, '[data-steps-done]')!.textContent).toBe('1 of 5 steps done');
+    fireEvent.click(q(card, '[data-action=fold-setup]')!);
+    expect(q(c, '[data-part=setup-card] [data-step]')).toBeNull();
+    expect(q(c, '[data-part=setup-card] [data-slot=progress]')).not.toBeNull();
+    expect(q(c, '[data-action=fold-setup]')!.getAttribute('aria-expanded')).toBe('false');
+    cleanup();
+    const again = await draw('home');
+    expect(q(again, '[data-part=setup-card]')!.hasAttribute('data-folded')).toBe(true);
+    expect(q(again, '[data-part=setup-card] [data-step]')).toBeNull();
+    fireEvent.click(q(again, '[data-action=fold-setup]')!);
+    expect(all(again, '[data-part=setup-card] [data-step]').length).toBe(4);
+    window.localStorage.clear();
+  });
+
+  /*
+   * RED WHEN: pending approval loses its proposals or its people section, a
+   * section its count or its actions, or an action not built yet (creating
+   * approving and declining a proposal, inviting, letting a person in) is missing,
+   * pressable, or without its Coming soon pill; or View all does not go to
+   * Proposals.
+   */
+  it('shows pending approval: proposals and people, with their counts and actions', async () => {
+    const c = await draw('home');
+    const pending = q(c, '[data-part=pending-approval]')!;
+    expect(q(pending, 'h2')!.textContent).toBe(EN['home.pendingApproval']);
+    const proposals = q(pending, '[data-part=proposals-waiting]')!;
+    expect(q(proposals, '[data-slot=section-header] h2')!.textContent).toBe(EN['page.proposals.name']);
+    expect(q(proposals, '[data-slot=section-actions] [data-action=create-proposal] button:not([data-slot=coming-soon])')!.hasAttribute('disabled')).toBe(true);
+    expect(q(proposals, '[data-slot=section-actions] [data-action=view-all-proposals]')!.getAttribute('href')).toBe(PAGES.proposals.path);
+    for (const row of all(proposals, '[data-proposal]')) {
+      for (const action of ['approve', 'decline']) {
+        expect(q(row, `[data-action=${action}] button:not([data-slot=coming-soon])`)!.hasAttribute('disabled'), action).toBe(true);
+        expect(q(row, `[data-action=${action}] [data-slot=coming-soon]`), action).not.toBeNull();
+      }
+    }
+    const people = q(pending, '[data-part=people-waiting]')!;
+    expect(q(people, '[data-slot=count-pill]')!.textContent).toBe('1');
+    expect(q(people, '[data-slot=section-actions] [data-action=invite] [data-slot=coming-soon]')).not.toBeNull();
+    expect(q(people, '[data-person=e5] [data-action=check-fingerprint] button:not([data-slot=coming-soon])')!.hasAttribute('disabled')).toBe(true);
+  });
+
+  /* RED WHEN: a part with nothing in it shows a bare line instead of the kit's empty state, or its next action. */
+  it('shows each part with nothing in it as the kit\'s empty state, with what comes next', async () => {
+    state.company = records({ proposals: { of: 'read', value: [] }, people: { of: 'read', value: [] }, vaults: { of: 'read', value: [] }, runs: { of: 'read', value: [] } });
+    const c = await draw('home');
+    for (const part of ['proposals-waiting', 'people-waiting', 'vaults', 'next-run', 'recently-passed']) {
+      expect(q(c, `[data-part=${part}] [data-slot=empty-state]`), part).not.toBeNull();
+    }
+    expect(q(c, '[data-part=vaults] [data-slot=empty-state] [data-action=create-vault]')).not.toBeNull();
+    expect(q(c, '[data-part=next-run] [data-slot=empty-state] [data-action=new-run]')).not.toBeNull();
+    expect(q(c, '[data-part=proposals-waiting] [data-slot=count-pill]')!.textContent).toBe('0');
+  });
+
+  /* RED WHEN: a vault's tile is not the kit's tile linking to its page, or shows a change it has nothing to compare with. */
+  it('shows each vault as a tile, with no change', async () => {
+    const c = await draw('home');
+    const tile = q(c, `[data-part=vaults] [data-vault="${VAULT}"]`)!;
+    expect(tile.getAttribute('data-slot')).toBe('stat-tile');
+    expect(q(tile, '[data-slot=stat-tile-change]')).toBeNull();
+    expect(q(tile, '[data-slot=stat-tile-title]')!.textContent).toBe('Vault 1');
+  });
+
+  /* RED WHEN: what passed recently is not in the kit's table, its filters lose their counts, or a filter keeps rows it should not. */
+  it('shows what passed recently in the kit\'s table, filtered by its tabs', async () => {
+    state.company = records({ proposals: { of: 'read', value: [...PROPOSALS, { ...PROPOSALS[2]!, id: 'p3', status: 'approved', raisedAt: '2026-09-22T00:00:00.000Z' }] } });
+    const c = await draw('home');
+    const table = q(c, '[data-part=recently-passed] [data-slot=data-table]')!;
+    expect(all(table, 'tbody tr').map((r) => r.dataset.row)).toEqual(['p3', 'p2']);
+    expect(all(table, '[data-filter]').map((t) => [t.dataset.filter, q(t, '[data-slot=count-pill]')!.textContent])).toEqual([['all', '2'], ['approved', '1'], ['executed', '1']]);
+    await act(async () => { fireEvent.mouseDown(q(table, '[data-filter=executed]')!, { button: 0 }); });
+    expect(all(table, 'tbody tr').map((r) => r.dataset.row)).toEqual(['p2']);
+    expect(q(table, 'tbody tr [data-action=view-proposal]')!.getAttribute('href')).toBe(PAGES.proposals.path);
+  });
+
   /* RED WHEN: a step the application knows is done stays on the card. */
   it('leaves a done step off the card', async () => {
     state.handover = { of: 'held' };
@@ -176,7 +266,7 @@ describe('home', () => {
     expect(all(c, '[data-part=people-waiting] [data-person]').map((e) => e.dataset.person)).toEqual(['e5']);
     expect(all(c, '[data-part=vaults] [data-vault]').map((e) => e.dataset.vault)).toEqual([VAULT]);
     expect(q(c, '[data-part=next-run] [data-run]')!.dataset.run).toBe('r1');
-    expect(all(c, '[data-part=recently-passed] [data-proposal]').map((e) => e.dataset.proposal)).toEqual(['p2']);
+    expect(all(c, '[data-part=recently-passed] [data-row]').map((e) => e.dataset.row)).toEqual(['p2']);
     expect(q(c, '[data-part=recent-activity] [data-slot=coming-soon]')).not.toBeNull();
     /* The latest run is the newest month, whatever the record says of it: the record does not say whether it was paid. */
     cleanup();
@@ -194,6 +284,22 @@ describe('home', () => {
     expect(q(c, '[data-part=vaults] [data-unreadable]')).not.toBeNull();
     expect(q(c, '[data-part=proposals-waiting] [data-count]')!.dataset.count).toBe('2');
     expect(q(c, '[data-part=next-run] [data-run]')).not.toBeNull();
+  });
+
+  /*
+   * RED WHEN: while the company's records are read, the page shows anything
+   * but the kit's page loading: nothing, loose lines, or something that could
+   * be read as an answer.
+   */
+  it('shows the kit\'s page loading while the records are read', async () => {
+    state.company = new Promise(() => {});
+    const c = drawNow('home');
+    const reading = await untilShown(() => q(c, '[data-screen=home] [data-reading]'), 'Home reading its records');
+    expect(reading.getAttribute('data-slot')).toBe('page-loading');
+    expect(reading.getAttribute('aria-busy')).toBe('true');
+    expect(reading.querySelectorAll('[data-slot=section-loading]').length).toBe(2);
+    expect(reading.textContent).toBe('');
+    expect(q(c, '[data-part]')).toBeNull();
   });
 
   /* RED WHEN: locked records show anything but the way to open them, or opening them does not ask the account and read again. */
