@@ -309,6 +309,68 @@ describe('the shared keyring is told who signed in', () => {
   });
 });
 
+describe('the address a sign-in was for, across a reload of the tab', () => {
+  const KEPT = 'private-vaults.signed-in-as';
+  beforeEach(() => { window.sessionStorage.clear(); });
+
+  async function signInAs(m: Awaited<ReturnType<typeof load>>, body: Record<string, unknown>) {
+    answers['/api/auth/wallet/challenge'] = reply(200, CHALLENGE);
+    answers['/api/auth/wallet'] = reply(200, body);
+    const signing = m.signIn({ name: 'n', purpose: 'p' });
+    await settle();
+    fromTheAccount({ schema: READY });
+    fromTheAccount(SIGNED);
+    expect((await signing).of).toBe(m.OF.signedIn);
+  }
+
+  /*
+   * RED WHEN: the address the sign-in was for is not kept in the tab, is kept
+   * for a person other than the one signed in, or is not handed back to the
+   * keyring when a reloaded tab picks the sign-in up; so a person creating
+   * their first company after a reload must sign in again.
+   */
+  it('is kept at the sign-in and handed back to the keyring after a reload', async () => {
+    await signInAs(await load(), { user: { id: 'u1', email: null, name: 'Priya' }, address: 'mn_addr_a', created: true });
+    expect(JSON.parse(window.sessionStorage.getItem(KEPT)!)).toEqual({ personId: 'u1', address: 'mn_addr_a' });
+    /* The reload: every module, the keyring among them, starts again knowing nobody. */
+    await load();
+    const keyring = await import('vaults-web-shared/keyring.js');
+    const { keyringFor } = await import('./keyring-person.js');
+    expect(keyring.signedInWallet()).toBeNull();
+    answers['/api/me'] = reply(200, { user: { id: 'u1', email: null, name: 'Priya' }, accounts: [] });
+    expect(await keyringFor('u1')).toBe(true);
+    expect(keyring.signedInWallet()).toBe('mn_addr_a');
+  });
+
+  /* RED WHEN: what was kept outlives the sign-in: it stays after the person signs out, after the service says nobody is signed in, or after a sign-in whose answer carried no address. */
+  it('goes when the sign-in goes', async () => {
+    const m = await load();
+    const person = { user: { id: 'u1', email: null, name: 'Priya' }, address: 'mn_addr_a', created: false };
+    await signInAs(m, person);
+    answers['/api/auth/logout'] = reply(500, { error: 'x' });
+    await m.signOut();
+    expect(window.sessionStorage.getItem(KEPT)).toBeNull();
+    await signInAs(m, person);
+    answers['/api/me'] = reply(401, {});
+    await m.whoIsSignedIn();
+    expect(window.sessionStorage.getItem(KEPT)).toBeNull();
+    await signInAs(m, person);
+    await signInAs(m, { user: { id: 'u2', email: null, name: 'Sam' }, created: false });
+    expect(window.sessionStorage.getItem(KEPT)).toBeNull();
+  });
+
+  /* RED WHEN: an address kept for one person is handed to the keyring as the address of another signed in since. */
+  it('is not taken for anybody else', async () => {
+    await signInAs(await load(), { user: { id: 'u1', email: null, name: 'Priya' }, address: 'mn_addr_a', created: true });
+    await load();
+    const keyring = await import('vaults-web-shared/keyring.js');
+    const { keyringFor } = await import('./keyring-person.js');
+    answers['/api/me'] = reply(200, { user: { id: 'u2', email: null, name: 'Sam' }, accounts: [] });
+    expect(await keyringFor('u2')).toBe(true);
+    expect(keyring.signedInWallet()).toBeNull();
+  });
+});
+
 describe('a company one person left unfinished is never handed to the next', () => {
   const ADDRESS = 'mn_addr_test1qqqqqqqqqqqqqqqqqqqq';
   /** Where this page is served, as the account is told. */

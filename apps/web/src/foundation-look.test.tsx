@@ -198,7 +198,6 @@ const NOT_MOVED_YET: Readonly<Record<string, Readonly<Record<string, string>>>> 
     'apps/web/src/screens/run.tsx': 'moved to the kit\'s table with raising payroll runs for approval',
     'apps/web/src/screens/people.tsx': 'moved to the kit\'s table with inviting and joining',
     'apps/web/src/screens/invitations.tsx': 'moved to the kit\'s table with inviting and joining',
-    'apps/web/src/screens/vault.tsx': 'moved to the kit\'s sections with putting money into vaults',
     'apps/web/src/screens/appearance.tsx': 'moved to the kit\'s sections with the rest of Settings',
     'apps/web/src/screens/language.tsx': 'moved to the kit\'s sections with the rest of Settings',
     'apps/web/src/actions/create-company.tsx': 'the setup steps\' own forms, moved to the kit\'s sections with the setup wizard',
@@ -210,11 +209,19 @@ const NOT_MOVED_YET: Readonly<Record<string, Readonly<Record<string, string>>>> 
     'apps/web/src/screens/payroll.tsx': 'moved to the kit\'s table with raising payroll runs for approval',
     'apps/web/src/screens/people.tsx': 'moved to the kit\'s table with inviting and joining',
     'apps/web/src/screens/invitations.tsx': 'moved to the kit\'s table with inviting and joining',
-    'apps/web/src/screens/vaults.tsx': 'moved to the kit\'s sections with putting money into vaults',
-    'apps/web/src/screens/vault.tsx': 'moved to the kit\'s sections with putting money into vaults',
   },
 };
-const RULES = { background: paintsBackground, width: setsPageWidth, lists: buildsSectionsOrLists, empty: emptyStatesByHand } as const;
+/**
+ * PHRASES THAT SAY A READING CAME TO NOTHING, NOT THAT A PART OF A PAGE HAS
+ * NOTHING IN IT, each in the one file that asks for it, with why. They end in
+ * `.none` because they say "none", and are drawn where the amounts they stand
+ * in for are drawn, never as a section or list left empty.
+ */
+const READINGS_OF_NOTHING: Readonly<Record<string, { path: string; why: string }>> = {
+  'vault.publicMoney.none': { path: 'apps/web/src/records/parts.tsx', why: 'a vault\'s public money read and found to hold no currency, said on its tile and its page where the amounts would be' },
+};
+const emptyStatesByHandBut = (s: Source): string[] => emptyStatesByHand(s).filter((k) => READINGS_OF_NOTHING[k]?.path !== s.path);
+const RULES = { background: paintsBackground, width: setsPageWidth, lists: buildsSectionsOrLists, empty: emptyStatesByHandBut } as const;
 
 describe('no page draws what the kit draws', () => {
   /* RED WHEN: the files a page is drawn from are not read, so every rule below passes over nothing. */
@@ -232,6 +239,17 @@ describe('no page draws what the kit draws', () => {
   it.each(Object.keys(RULES) as (keyof typeof RULES)[])('%s', (rule) => {
     const found = PAGE_CODE.filter((f) => !(f.path in NOT_MOVED_YET[rule]!)).map((f) => ({ path: f.path, found: RULES[rule](f) })).filter((x) => x.found.length > 0);
     expect(found).toEqual([]);
+  });
+
+  /* RED WHEN: a phrase let through as a reading of nothing is no longer asked for where it is named (so the exception outlives its line), or is let through anywhere else, or gives no reason. */
+  it('lets through as a reading of nothing only the phrases named, where they are named', () => {
+    for (const [key, { path, why }] of Object.entries(READINGS_OF_NOTHING)) {
+      const f = PAGE_CODE.find((x) => x.path === path);
+      expect(f, key).toBeDefined();
+      expect(emptyStatesByHand(f!), key).toContain(key);
+      expect(why.length, key).toBeGreaterThan(40);
+      expect(emptyStatesByHandBut({ path: 'apps/web/src/screens/elsewhere.tsx', text: `t('${key}')` }), key).toEqual([key]);
+    }
   });
 
   /* RED WHEN: a file named as not moved yet no longer breaks its rule and is left on the list, or the list names a file that is not there, or gives no reason. */

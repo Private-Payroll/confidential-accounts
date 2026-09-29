@@ -39,7 +39,7 @@ export function Home() {
         {(records) => (
           <>
             <PageHeader title={<span data-company-name>{records.name}</span>} />
-            <SetupCard company={records.id} />
+            <SetupCard company={records.id} vaults={records.vaults} />
             <div className="flex flex-col gap-3" data-part="pending-approval">
               <h2 className="text-sm font-medium text-muted-foreground">{t('home.pendingApproval')}</h2>
               <div className="grid gap-4 lg:grid-cols-2">
@@ -82,7 +82,7 @@ function Part<T>({ read, title, children, ...marks }: { read: Read<T>; title: Re
  * bar, and stays as the person left it for this company, in this browser. It
  * goes when every step is done.
  */
-function SetupCard({ company }: { company: string }) {
+function SetupCard({ company, vaults }: { company: string; vaults: CompanyRecords['vaults'] }) {
   const t = useText();
   const { person } = useSession();
   const [handover, setHandover] = useState<Handover | null>(null);
@@ -93,7 +93,8 @@ function SetupCard({ company }: { company: string }) {
     return () => { alive = false; };
   }, [person.id, company]);
   useEffect(() => { fold(readFolds(browserKeep()).has(company)); }, [company]);
-  const facts = { company, handover };
+  /* Vaults that could not be read are read as none created, so the step is never shown done on a guess. */
+  const facts = { company, handover, vaults: vaults.of === READ.read ? vaults.value : [] };
   const left = stepsLeft(facts);
   if (left.length === 0) return null;
   const skipped = skippedFor(company);
@@ -200,17 +201,18 @@ function PeopleWaiting({ records }: { records: CompanyRecords }) {
   );
 }
 
-/** One tile per vault, or the empty state; creating one is shown, disabled, until it is built. */
+/** One tile per vault, or the empty state; creating one leads to the Vaults page. */
 function Vaults({ records }: { records: CompanyRecords }) {
   const t = useText();
-  const create = <SoonAction label={t('vaults.create')} soon={t('vaults.create.soon')} icon={<HugeiconsIcon icon={Add01Icon} strokeWidth={2} data-icon="inline-start" />} data-action="create-vault" />;
+  /* Creating a vault is done on the Vaults page, from the one component the setup wizard's step shows too. */
+  const create = <Button variant="outline" asChild><PageLink to={PAGE.vaults} data-action="create-vault"><HugeiconsIcon icon={Add01Icon} strokeWidth={2} data-icon="inline-start" />{t('vaults.create')}</PageLink></Button>;
   return (
     <Part read={records.vaults} title={t('page.vaults.name')} data-part="vaults">
       {(rows) => (
         <Section title={t('page.vaults.name')} count={rows.length} actions={rows.length === 0 ? undefined : create} list={false} box={false} data-part="vaults">
           {rows.length === 0
             ? <EmptyState icon={SafeIcon} action={create}>{t('vaults.none')}</EmptyState>
-            : <StatTiles>{rows.map((v, i) => <VaultTile key={v.vault} vault={v} index={i} />)}</StatTiles>}
+            : <StatTiles>{rows.map((v, i) => <VaultTile key={v.vault} company={records.id} vault={v} index={i} />)}</StatTiles>}
         </Section>
       )}
     </Part>

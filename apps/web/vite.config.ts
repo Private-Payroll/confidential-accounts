@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import tailwindcss from '@tailwindcss/vite';
 import { defineConfig, searchForWorkspaceRoot, type Plugin } from 'vite';
+import wasm from 'vite-plugin-wasm';
 import { framingHeadersFor } from '../../packages/identity/src/profile/origin.js';
 import { SERVICE_PROXY } from '../../scripts/serve-rules.js';
 
@@ -12,12 +13,18 @@ import { SERVICE_PROXY } from '../../scripts/serve-rules.js';
  * the address they already know. What differs is the folder served and, until
  * a screen needs them, the plugins.
  *
- * Tailwind's plugin is the one plugin that changes what is built: the kit's
- * stylesheet is Tailwind, and without it the build stops on the stylesheet.
- * The other, the first download's budget (below), only measures what was
- * built. JSX needs no plugin, because the bundler compiles it for React
- * itself. No WebAssembly plugin is loaded and no
- * worker is started; each is added with the first screen that needs it.
+ * Tailwind's plugin is the one plugin that changes what the page is built
+ * from: the kit's stylesheet is Tailwind, and without it the build stops on
+ * the stylesheet. The other, the first download's budget (below), only
+ * measures what was built. JSX needs no plugin, because the bundler compiles
+ * it for React itself.
+ *
+ * ONE WORKER, THE VAULT'S. Creating a vault builds and proves its transactions
+ * in the shared package's vault worker, where the ledger and the prover load;
+ * they are WebAssembly, and never load on the page. The worker is built with
+ * its own plugin list, which is the WebAssembly plugin alone, as the legacy
+ * application builds it: a worker renders nothing, so it takes neither
+ * Tailwind nor the budget.
  */
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
 
@@ -47,7 +54,18 @@ export const SERVED_FROM = [
  * was measured when it was set; a test holds it within a kilobyte of what is built, so when the
  * download falls the budget is lowered with it.
  */
-export const FIRST_DOWNLOAD_BUDGET = 662_100;
+export const FIRST_DOWNLOAD_BUDGET = 667_200;
+
+/**
+ * THE WORKERS THIS APPLICATION STARTS, by their entry's path from this folder,
+ * each with why. What a worker loads is loaded when it starts, never with the
+ * page, so it is outside the first download; and the ledger and prover it
+ * carries are larger than the bundler's warning, so a worker's own files are
+ * held to no file limit here.
+ */
+export const WORKERS: Readonly<Record<string, string>> = {
+  '../../packages/web-shared/src/vault-worker-entry.ts': 'builds and proves a vault\'s transactions, with the ledger and the prover, which are WebAssembly',
+};
 
 /** One file of a build's output, as the bundler hands it to a plugin: a script, with what it imports, or anything else. */
 export type BuiltFile =
@@ -71,12 +89,20 @@ export function firstDownloadOf(bundle: Readonly<Record<string, BuiltFile>>): { 
   return { files: [...files].sort(), bytes: [...files].reduce((n, name) => n + bytesOf(bundle[name]!), 0) };
 }
 
-/** What stops the build: the first download over `budget`, and each file of the build over `fileLimit`, each in bytes. */
+/**
+ * WHETHER A FILE OF THE BUILD IS A WORKER'S: a script or WebAssembly the
+ * bundler hands over as an asset. The page's own scripts are chunks; a
+ * worker is built on its own and its files come into the page's build as
+ * assets, loaded only when the worker starts.
+ */
+export const isWorkers = (f: BuiltFile): boolean => f.type === 'asset' && /\.(m?js|wasm)$/.test(f.fileName);
+
+/** What stops the build: the first download over `budget`, and each file of the build over `fileLimit`, each in bytes; a font and a worker's files are held to no file limit. */
 export function overBudget(bundle: Readonly<Record<string, BuiltFile>>, budget: number, fileLimit: number): string[] {
   const over: string[] = [];
   const first = firstDownloadOf(bundle);
   if (first.bytes > budget) over.push(`the first download is ${first.bytes} bytes, over its budget of ${budget}: ${first.files.join(', ')}`);
-  for (const f of Object.values(bundle)) if (bytesOf(f) > fileLimit && !/\.woff2?$/.test(f.fileName)) over.push(`${f.fileName} is ${bytesOf(f)} bytes, over the bundler's warning at ${fileLimit}`);
+  for (const f of Object.values(bundle)) if (bytesOf(f) > fileLimit && !/\.woff2?$/.test(f.fileName) && !isWorkers(f)) over.push(`${f.fileName} is ${bytesOf(f)} bytes, over the bundler's warning at ${fileLimit}`);
   return over;
 }
 
@@ -104,10 +130,11 @@ export default defineConfig({
    * dependency that only a worker imports would be found when the worker first
    * starts, and the server would then reload the page, losing whatever the
    * person had done on it. Listing entries replaces the default of every page
-   * in this folder, so the page is named; when this application starts a
-   * worker, the worker's entry file is added beside it.
+   * in this folder, so the page is named, and each worker's entry beside it.
    */
-  optimizeDeps: { entries: ['index.html'] },
+  optimizeDeps: { entries: ['index.html', ...Object.keys(WORKERS)] },
+  /* The worker's own plugins: WebAssembly alone. */
+  worker: { format: 'es', plugins: () => [wasm()] },
   /*
    * No page, on any site, may show this application in a frame. The
    * application shows the person's wallet in a frame, and the wallet answers

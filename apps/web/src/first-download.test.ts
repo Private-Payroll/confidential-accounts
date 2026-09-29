@@ -1,7 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { build, type Rolldown } from 'vite';
-import config, { FIRST_DOWNLOAD_BUDGET, firstDownloadOf, overBudget, type BuiltFile } from '../vite.config.js';
+import config, { FIRST_DOWNLOAD_BUDGET, firstDownloadOf, isWorkers, overBudget, WORKERS, type BuiltFile } from '../vite.config.js';
 
 /*
  * THE FIRST DOWNLOAD'S BUDGET: what a browser loads before any page is
@@ -43,6 +43,20 @@ describe('the first download', () => {
     expect(overBudget({ ...BUNDLE, 'page.js': chunk('page.js', 101) }, 175, 100)).toEqual(['page.js is 101 bytes, over the bundler\'s warning at 100']);
   });
 
+  /*
+   * RED WHEN: a worker's script or WebAssembly, which a worker loads when it
+   * starts and never with the page, is held to the file limit and stops the
+   * build; or anything else is let past the limit as if it were a worker's:
+   * a page's script, a stylesheet, or a picture.
+   */
+  it('holds a worker\'s files to no file limit, and nothing else', () => {
+    const worker = { 'w.js': asset('assets/vault-worker-entry-x.js', 101), 'w.wasm': asset('assets/ledger-x.wasm', 101), 'w.mjs': asset('assets/y.mjs', 101) };
+    expect(Object.values(worker).map(isWorkers)).toEqual([true, true, true]);
+    expect(overBudget({ ...BUNDLE, ...worker }, 175, 100)).toEqual([]);
+    expect([chunk('page.js', 1), asset('x.css', 1), asset('x.png', 1), asset('x.svg', 1)].map(isWorkers)).toEqual([false, false, false, false]);
+    expect(overBudget({ ...BUNDLE, 'x.css': asset('x.css', 101) }, 175, 100)).toEqual(['x.css is 101 bytes, over the bundler\'s warning at 100']);
+  });
+
   /* RED WHEN: the application's build does not carry the budget. */
   it('is held by the application\'s build', () => {
     const names = ((config as { plugins?: unknown[] }).plugins ?? []).flat().map((p) => (p as { name?: string }).name);
@@ -67,5 +81,12 @@ describe('the first download', () => {
     expect(first.files.some((f) => /\.css$/.test(f))).toBe(true);
     expect(overBudget(bundle, FIRST_DOWNLOAD_BUDGET, 500_000)).toEqual([]);
     expect(FIRST_DOWNLOAD_BUDGET - first.bytes).toBeLessThan(1000);
+    /* RED WHEN: a worker the build names is not built, or a worker's file is in the first download. */
+    const workers = outputs.filter(isWorkers).map((f) => f.fileName);
+    for (const entry of Object.keys(WORKERS)) {
+      const name = entry.split('/').pop()!.replace(/\.ts$/, '');
+      expect(workers.some((w) => w.startsWith(`assets/${name}-`)), entry).toBe(true);
+    }
+    expect(first.files.filter((f) => workers.includes(f))).toEqual([]);
   }, 60_000);
 });

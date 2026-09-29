@@ -1,0 +1,132 @@
+import { useCallback, useEffect, useState } from 'react';
+import { Alert, AlertDescription, AlertTitle, Button, ConfirmInYourAccount, useText } from 'vaults-ui';
+import {
+  CREATING, createVault, finishHandingOver, openYourKeys, OWED, READY, readOwedVaults, readVaultReadiness,
+  type Creating, type OwedVault, type Readiness, type VaultCreated,
+} from '../adapters/create-vault.js';
+import { ACTED, type ActRefusal } from '../adapters/refusals.js';
+import { ActRefused } from '../act-refused.js';
+import { useSession } from '../session.js';
+import { STEP, type StepProps } from '../setup/step-ids.js';
+
+/** What the person is being asked to confirm, if anything: creating a vault, or finishing the handover of the one named. */
+const ASKING = { create: 'create', finish: 'finish' } as const;
+type Asking = { of: typeof ASKING.create } | { of: typeof ASKING.finish; vault: string };
+
+/**
+ * CREATE A VAULT: built and proved on this device, sent, and handed to the
+ * company's signers as soon as the network has it. One component, shown by
+ * the setup wizard's vault step and by the Vaults page.
+ *
+ * Create a vault is always shown; while it cannot be used it is disabled and
+ * the reason is said in plain words, with the step that makes it possible
+ * when there is one. A vault sent and not yet held by the signers is named,
+ * with Finish handing it over, because this app puts no money into it until
+ * then; on a device that does not hold the key it was created with, Finish is
+ * shown disabled, with why.
+ */
+export function CreateVault({ leadTo, onChanged }: StepProps) {
+  const t = useText();
+  const { person, company } = useSession();
+  const [ready, setReady] = useState<Readiness | null>(null);
+  /* Each vault sent and not yet held by the signers, with its number among the company's vaults, as its tile names it. */
+  const [owed, setOwed] = useState<readonly OwedVault[]>([]);
+  const [opening, setOpening] = useState<ActRefusal | null>(null);
+  const [asking, setAsking] = useState<Asking | null>(null);
+  const [stage, setStage] = useState<Creating | null>(null);
+  const [result, setResult] = useState<VaultCreated | null>(null);
+
+  const read = useCallback(async () => {
+    if (company === null) { setReady(null); setOwed([]); return; }
+    const [r, o] = await Promise.all([readVaultReadiness(person.id, company), readOwedVaults(person.id, company)]);
+    setReady(r);
+    setOwed(o);
+  }, [person.id, company]);
+  useEffect(() => { void read(); }, [read]);
+
+  const busy = stage !== null;
+  const act = async (asked: Asking): Promise<void> => {
+    if (company === null) return;
+    setAsking(null); setResult(null); setStage(CREATING.checking);
+    const r = asked.of === ASKING.create
+      ? await createVault(person.id, company, setStage)
+      : await finishHandingOver(person.id, company, asked.vault, setStage);
+    setResult(r);
+    setStage(null);
+    await read();
+    onChanged();
+  };
+
+  const openKeys = async (): Promise<void> => {
+    setOpening(null);
+    const r = await openYourKeys(person.id);
+    setOpening(r.of === ACTED.refused ? r.why : null);
+    await read();
+  };
+
+  const canCreate = company !== null && ready?.of === READY.ready && !busy;
+  const why = company === null ? t('createVault.why.noCompany')
+    : ready === null ? t('createVault.why.reading')
+    : ready.of === READY.yoursMissing ? t('createVault.why.yoursMissing')
+    : ready.of === READY.othersMissing ? t('createVault.why.othersMissing')
+    : ready.of === READY.rosterDisagrees ? t('createVault.why.rosterDisagrees')
+    : ready.of === READY.notOnChain ? t('createVault.why.notOnChain')
+    : ready.of === READY.locked ? t('createVault.why.locked')
+    : null;
+  const STAGE_SAYS: Record<Creating, string> = {
+    [CREATING.checking]: t('createVault.stage.checking'),
+    [CREATING.building]: t('createVault.stage.building'),
+    [CREATING.sending]: t('createVault.stage.sending'),
+    [CREATING.waitingForChain]: t('createVault.stage.waitingForChain'),
+    [CREATING.handingOver]: t('createVault.stage.handingOver'),
+    [CREATING.waitingForHandover]: t('createVault.stage.waitingForHandover'),
+    [CREATING.done]: t('createVault.stage.done'),
+  };
+
+  return (
+    <div className="flex max-w-xl flex-col gap-4" data-action="create-vault" data-state={ready?.of ?? undefined}>
+      <p className="text-sm text-muted-foreground">{t('createVault.what')}</p>
+      {owed.map(({ vault, number, here }) => (
+        <Alert key={vault} data-owed={vault} data-here={here ? '' : undefined}>
+          <AlertTitle>{t('createVault.owed.title', { number })}</AlertTitle>
+          <AlertDescription>{here ? t('createVault.owed.body') : t('createVault.owed.notHere')}</AlertDescription>
+          <div><Button variant="outline" disabled={!here || busy || asking !== null} onClick={() => setAsking({ of: ASKING.finish, vault })} data-action="finish-handover">{t('createVault.finish')}</Button></div>
+        </Alert>
+      ))}
+      {why === null ? null : <p className="text-sm" data-why={ready?.of ?? 'no-company'}>{why}</p>}
+      {ready?.of === ACTED.refused ? <ActRefused why={ready.why} /> : null}
+
+      {asking === null ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <Button disabled={!canCreate || busy} onClick={() => setAsking({ of: ASKING.create })} data-action="create-vault-now">{t('vaults.create')}</Button>
+          {company === null ? (
+            <Button variant="outline" onClick={() => leadTo(STEP.createCompany)} data-lead-to={STEP.createCompany}>{t('createVault.goCreateCompany')}</Button>
+          ) : null}
+          {ready?.of === READY.yoursMissing ? (
+            <Button variant="outline" onClick={() => leadTo(STEP.handOver)} data-lead-to={STEP.handOver}>{t('createVault.goGiveKeys')}</Button>
+          ) : null}
+          {ready?.of === READY.locked ? (
+            <Button variant="outline" disabled={busy} onClick={() => { void openKeys(); }} data-action="open-with-your-account">{t('records.locked.open')}</Button>
+          ) : null}
+          {ready?.of === READY.othersMissing || ready?.of === READY.notOnChain || ready?.of === ACTED.refused ? (
+            <Button variant="outline" disabled={busy} onClick={() => { void read(); }} data-action="read-again">{t('createVault.readAgain')}</Button>
+          ) : null}
+        </div>
+      ) : (
+        <ConfirmInYourAccount
+          summary={asking.of === ASKING.create ? t('createVault.confirm') : t('createVault.confirmFinish')}
+          busy={busy}
+          onCancel={() => setAsking(null)}
+          onConfirm={() => { void act(asking); }}
+        />
+      )}
+      {stage === null ? null : <p className="text-sm" role="status" data-stage={stage}>{STAGE_SAYS[stage]}</p>}
+      {result?.of === ACTED.done ? <p className="text-sm" data-created={result.vault}>{t('createVault.done')}</p> : null}
+      {result?.of === OWED.here ? <p className="text-sm" data-result={result.of}>{t('createVault.owed.now')}</p> : null}
+      {result?.of === OWED.elsewhere ? <p className="text-sm" data-result={result.of}>{t('createVault.owed.elsewhere')}</p> : null}
+      {result?.of === OWED.rosterDisagrees ? <p className="text-sm" data-result={result.of}>{t('createVault.owed.rosterDisagrees')}</p> : null}
+      {opening === null ? null : <ActRefused why={opening} />}
+      {result?.of === ACTED.refused ? <ActRefused why={result.why} /> : null}
+    </div>
+  );
+}

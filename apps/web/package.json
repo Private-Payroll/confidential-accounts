@@ -8,6 +8,7 @@
   "peerDependencies": {
     "@hugeicons/core-free-icons": "4.3.0",
     "@hugeicons/react": "1.1.9",
+    "midnight-identity": "0.1.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "vaults-ui": "0.0.0",
@@ -15,6 +16,7 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "4.3.3",
-    "vite": "8.2.1"
+    "vite": "8.2.1",
+    "vite-plugin-wasm": "3.6.0"
   }
 }

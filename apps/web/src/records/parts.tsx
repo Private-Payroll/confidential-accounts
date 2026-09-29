@@ -1,7 +1,8 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { SquareLock02Icon } from '@hugeicons/core-free-icons';
-import { Alert, AlertDescription, AlertTitle, Amount, AMOUNT_KIND, Badge, Button, ComingSoon, EmptyState, formatDate, PageLoading, StatTile, useLanguage, useText, type AmountKind } from 'vaults-ui';
-import { OPENED, PAID, READ, VAULT, type CompanyRecords, type Paid, type ProposalRow, type Read, type RunRow, type VaultRow, type VaultStanding } from '../adapters/company-records.js';
+import { Alert, AlertDescription, AlertTitle, Amount, AMOUNT_KIND, AmountLoading, Badge, Button, EmptyState, formatDate, PageLoading, StatTile, useLanguage, useText, type AmountKind } from 'vaults-ui';
+import { OPENED, PAID, READ, readVaultPublicMoney, VAULT, type CompanyRecords, type Paid, type ProposalRow, type Read, type RunRow, type VaultRow, type VaultStanding } from '../adapters/company-records.js';
+import type { VaultPublicMoney as VaultPublicMoneyHeld } from '../adapters/vault-public-money.js';
 import type { ActRefusal } from '../adapters/refusals.js';
 import { ActRefused } from '../act-refused.js';
 import { PAGE } from '../pages.js';
@@ -208,15 +209,68 @@ export function VaultStandingWords({ standing }: { standing: VaultStanding }) {
   return <span data-standing={standing}>{says[standing]}</span>;
 }
 
+/** Where a vault's public money is: being read, read, or not readable. */
+const PUBLIC = { reading: 'reading', unreadable: 'unreadable' } as const;
+
+/**
+ * WHAT A VAULT HOLDS IN PUBLIC MONEY, read from the company's service when it
+ * is shown: one line a currency, each carrying the Public pill, and a count of
+ * currencies this app does not know beside them. While that count is above
+ * nothing it never says the vault holds no public money, and a read that
+ * failed is said as that, never as nothing held. `again` offers to read it
+ * again. `labelled` names the line, for where nothing else does.
+ */
+export function VaultPublicMoney({ company, vault, again = false, labelled = true }: { company: string; vault: string; again?: boolean; labelled?: boolean }) {
+  const t = useText();
+  const { person } = useSession();
+  const [held, setHeld] = useState<VaultPublicMoneyHeld | (typeof PUBLIC)[keyof typeof PUBLIC]>(PUBLIC.reading);
+  const [asked, setAsked] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    setHeld(PUBLIC.reading);
+    void readVaultPublicMoney(person.id, company, vault).then((h) => { if (alive) setHeld(h ?? PUBLIC.unreadable); });
+    return () => { alive = false; };
+  }, [person.id, company, vault, asked]);
+  return (
+    <span className="flex flex-col gap-1" data-public-money={typeof held === 'string' ? held : 'read'}>
+      {labelled ? <span className="text-muted-foreground">{t('vaults.publicMoney')}</span> : null}
+      {held === PUBLIC.reading ? <AmountLoading /> : null}
+      {held === PUBLIC.unreadable ? <span className="text-muted-foreground" data-unreadable>{again ? t('vault.publicMoney.unreadable') : t('vaults.publicMoney.unreadable')}</span> : null}
+      {typeof held === 'string' ? null : (
+        <>
+          {held.amounts.map((a) => <span key={a.code} data-held={a.code}><Amount value={a} kind={AMOUNT_KIND.held} /></span>)}
+          {held.unrecognised === 0 ? null : <span data-unrecognised={held.unrecognised}>{t('vault.publicMoney.unrecognised', { count: held.unrecognised })}</span>}
+          {held.amounts.length === 0 && held.unrecognised === 0 ? <span className="text-muted-foreground" data-holds-none>{t('vault.publicMoney.none')}</span> : null}
+        </>
+      )}
+      {again ? <span><Button variant="outline" size="sm" disabled={held === PUBLIC.reading} onClick={() => setAsked((n) => n + 1)} data-action="read-public-money">{t('vault.publicMoney.readAgain')}</Button></span> : null}
+    </span>
+  );
+}
+
+/**
+ * WHAT A VAULT HOLDS PRIVATELY, said plainly: this app does not read it yet.
+ * Never shown as a figure or as nothing held. `labelled` names the line, for
+ * where nothing else does.
+ */
+export function VaultPrivateMoney({ labelled = true }: { labelled?: boolean }) {
+  const t = useText();
+  return (
+    <span className="flex flex-col gap-1" data-private-money>
+      {labelled ? <span className="text-muted-foreground">{t('vaults.privateMoney')}</span> : null}
+      <span data-private-not-read>{t('vaults.privateMoney.notRead')}</span>
+    </span>
+  );
+}
+
 /**
  * A VAULT'S TILE, the kit's stat tile, linking to the vault's page: its name,
- * where it stands, when it was created, and its money on two lines. The
- * private line is read on a signer's device, which this page does not do yet,
- * so it is Coming soon and never shown as nothing; the public line is read on
- * the vault's page, when the person asks. No figure and no change badge are
- * shown: nothing here has read an amount, or has one to compare it with.
+ * where it stands, when it was created, and its money on two lines, never
+ * added together. The public line is read from the company's service when the
+ * tile is shown; the private line says plainly that this app does not read it. No
+ * change badge is shown: nothing here has an amount to compare with.
  */
-export function VaultTile({ vault, index }: { vault: VaultRow; index: number }) {
+export function VaultTile({ company, vault, index }: { company: string; vault: VaultRow; index: number }) {
   const t = useText();
   const day = useDay();
   return (
@@ -226,10 +280,10 @@ export function VaultTile({ vault, index }: { vault: VaultRow; index: number }) 
       tagline={<VaultStandingWords standing={vault.standing} />}
       subtext={t('vaults.tile.created', { date: day(vault.createdAt) })}
     >
-      <span className="flex items-center gap-2 text-muted-foreground" data-private-line>
-        {t('vaults.privateMoney')}<ComingSoon explanation={t('vaults.privateMoney.soon')} />
+      <span className="flex flex-col gap-3 pt-2" data-money-lines>
+        <VaultPublicMoney company={company} vault={vault.vault} />
+        <VaultPrivateMoney />
       </span>
-      <span className="text-muted-foreground" data-public-line>{t('vaults.publicMoney.onItsPage')}</span>
     </StatTile>
   );
 }

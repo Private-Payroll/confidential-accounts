@@ -20,6 +20,7 @@ export function ActRefused({ why }: { why: ActRefusal }) {
     [ACT_REFUSAL.noKeysHere]: t('act.refused.noKeysHere'),
     [ACT_REFUSAL.rosterDisagrees]: t('act.refused.rosterDisagrees'),
     [ACT_REFUSAL.nothingToSign]: t('act.refused.nothingToSign'),
+    [ACT_REFUSAL.nothingSent]: t('act.refused.nothingSent'),
     [ACT_REFUSAL.unreachable]: t('act.refused.unreachable'),
     [ACT_REFUSAL.didNotFinish]: t('act.refused.didNotFinish'),
   };

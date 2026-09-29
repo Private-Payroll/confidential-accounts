@@ -3,7 +3,10 @@ import type { IconSvgElement } from '@hugeicons/react';
 import { Building03Icon, SafeIcon, ShieldUserIcon, UserAdd01Icon, UserGroupIcon } from '@hugeicons/core-free-icons';
 import { HandOver } from '../actions/hand-over.js';
 import { CreateCompany } from '../actions/create-company.js';
+import { CreateVault } from '../actions/create-vault.js';
 import { HANDOVER, type Handover } from '../adapters/handover-state.js';
+import type { VaultRow } from '../adapters/company-records.js';
+import { wasHandedOver } from '../adapters/vault-rows.js';
 import type { PageId, Text } from '../pages.js';
 import { STEP, type StepId, type StepProps } from './step-ids.js';
 
@@ -30,6 +33,8 @@ export interface SetupFacts {
   company: string | null;
   /** Where it stands on being held by its committee; null while that is not known. */
   handover: Handover | null;
+  /** Its vaults and where each stands; null while they are not known. */
+  vaults: readonly Pick<VaultRow, 'standing'>[] | null;
 }
 
 export interface SetupStep {
@@ -72,7 +77,7 @@ export const SETUP_STEPS = {
   },
   [STEP.vault]: {
     name: (t) => t('setup.step.vault.name'), line: (t) => t('setup.step.vault.line'), icon: SafeIcon,
-    done: never, skippable: true, cannotBeUndone: true, shows: { comingSoon: (t) => t('setup.step.vault.soon') }, page: 'vaults',
+    done: (f) => f.vaults?.some(wasHandedOver) === true, skippable: true, cannotBeUndone: true, shows: { action: CreateVault }, page: 'vaults',
   },
   [STEP.people]: {
     name: (t) => t('setup.step.people.name'), line: (t) => t('setup.step.people.line'), icon: UserGroupIcon,

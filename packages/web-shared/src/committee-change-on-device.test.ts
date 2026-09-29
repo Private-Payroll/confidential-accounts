@@ -3,7 +3,7 @@ import type { Account } from '../../../src/core/types.js';
 import { newSigningKeypair, type Hex } from '../../../src/core/crypto.js';
 import { signVaultKeys } from '../../../src/core/vault-keys.js';
 import {
-  NothingToSign, contractsForMe, signCommitteeChangeOnDevice, whyNotSignCommitteeChange,
+  COMMITTEE_CHANGE_REFUSAL, NothingToSign, committeeChangeRefusal, contractsForMe, signCommitteeChangeOnDevice, whyNotSignCommitteeChange,
   type CommitteeChangeDoors, type CommitteeChangeView,
 } from './committee-change-on-device.js';
 
@@ -64,6 +64,39 @@ describe('WHAT A SIGNER\'S DEVICE CHECKS BEFORE ITS WALLET IS ASKED TO SIGN A CO
     expect(whyNotSignCommitteeChange(view({ to: { committee: [k(1), k(2)], threshold: 1 } }), k(1), withPolicy, ME))
       .toMatch(/the service says 1 of the company's signers must sign a change after this one, and the company's own record says 2/);
     expect(whyNotSignCommitteeChange(view({ to: null, why: 'no committee yet' }), k(1), roster, ME)).toBe('no committee yet');
+  });
+});
+
+describe('WHICH KIND OF REFUSAL IT IS, AS A CODE', () => {
+  /*
+   * RED WHEN: a screen can tell "nothing to sign" from a refusal only by its
+   * sentence: either kind of nothing to sign is given another code, a refusal
+   * is given the nothing-to-sign code, the sentence differs from the one the
+   * check gives, or the flow's error stops carrying the code.
+   */
+  it('gives "nothing to sign" its own code, for both reasons there is nothing, and every other refusal the other', async () => {
+    const withPolicy = { ...roster, policy: { threshold: 2 } } as unknown as Account;
+    const cases: [CommitteeChangeView, { tag: string; value: string }, Account, string | null][] = [
+      [view({ contracts: [view().contracts[1]!] }), k(1), roster, COMMITTEE_CHANGE_REFUSAL.nothingToSign],
+      [view({ contracts: [view().contracts[2]!] }), k(1), roster, COMMITTEE_CHANGE_REFUSAL.nothingToSign],
+      [view({ to: { committee: [k(1), k(5)], threshold: 2 } }), k(1), roster, COMMITTEE_CHANGE_REFUSAL.refused],
+      [view(), k(7), roster, COMMITTEE_CHANGE_REFUSAL.refused],
+      [view({ contracts: [] }), k(1), roster, COMMITTEE_CHANGE_REFUSAL.refused],
+      [view({ to: { committee: [k(1), k(2)], threshold: 1 } }), k(1), withPolicy, COMMITTEE_CHANGE_REFUSAL.refused],
+      [view({ to: null, why: 'no committee yet' }), k(1), roster, COMMITTEE_CHANGE_REFUSAL.refused],
+      [view(), k(1), roster, null],
+    ];
+    for (const [v, mine, r, code] of cases) {
+      const got = committeeChangeRefusal(v, mine, r, ME);
+      expect(got?.code ?? null).toBe(code);
+      expect(got?.why ?? null).toBe(whyNotSignCommitteeChange(v, mine, r, ME));
+    }
+    const thrown = await signCommitteeChangeOnDevice({
+      view: async () => view({ contracts: [view().contracts[1]!] }), walletKey: async () => k(1), roster: async () => roster,
+      askWallet: async () => { throw new Error('the wallet was asked'); }, send: async () => ({ results: [] }),
+    }, ME).catch((e: unknown) => e);
+    expect(thrown).toBeInstanceOf(NothingToSign);
+    expect((thrown as NothingToSign).code).toBe(COMMITTEE_CHANGE_REFUSAL.nothingToSign);
   });
 });
 

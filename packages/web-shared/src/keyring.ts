@@ -230,10 +230,10 @@ let bundleVersion = 0;
 /**
  * THE SUBWALLET THIS TAB SIGNED IN AS, or null for a password sign-in.
  *
- * In memory only, like `encKey` and for the same reason — a reload signs you
- * out, and putting it in storage would put it where any script on the page can
- * read it. The server holds only a hash of it (`walletKeyOf`), so this is the
- * one place the address itself exists on this side.
+ * This module keeps it in memory only, like `encKey`, and writes it nowhere. The
+ * server holds only a hash of it (`walletKeyOf`), so after a reload it is back
+ * only when the screen that made the sign-in chose to carry it across in its
+ * own tab and hands it to `resumeSession` (`SignInCarried`).
  */
 let walletAddress: string | null = null;
 /**
@@ -431,6 +431,18 @@ const FIRST_KEYS_NEED_THE_SIGN_IN = 'nothing is saved for you here yet, and this
   + 'first keys are saved under its key. Nothing has been created or saved. Sign in again in this tab, '
   + 'with the same wallet address, and try again.';
 
+/**
+ * The company this tab is waiting to finish was started by somebody other than
+ * the person signed in here now. Its own class so a screen can tell it apart
+ * and say it in its own words; nothing is saved and the company stays waiting
+ * for the person who started it.
+ */
+export class CompanyStartedBySomebodyElse extends Error {}
+
+const STARTED_BY_SOMEBODY_ELSE = 'the company waiting to be finished in this tab was started by '
+  + 'somebody else, who is not the person signed in here now. Its keys are never saved into yours. '
+  + 'Nothing has been saved; the person who started it can sign in again in this tab to finish it.';
+
 const cannotBeSavedSentence = (): string => 'this company\'s keys cannot be saved: the keys now '
   + 'saved for you here do not open with the key this tab holds, and saving would mean writing over '
   + 'keys this tab cannot open, which nothing here does. Its keys are only in this tab, so closing '
@@ -442,6 +454,7 @@ const cannotBeSavedSentence = (): string => 'this company\'s keys cannot be save
  * after reading what is saved now.
  */
 export function companyAwaitingSetupProblem(): { canFinish: boolean; why: string } | null {
+  if (!startedByTheSignedIn(pendingCompany)) return null;
   if (pendingCompany?.savingFailed === 'cannot-be-saved') return { canFinish: false, why: cannotBeSavedSentence() };
   return null;
 }
@@ -726,6 +739,18 @@ function takeTheSignIn(r: any): Me {
 }
 
 /**
+ * **THE ADDRESS A SIGN-IN WAS FOR, CARRIED ACROSS A RELOAD BY THE SCREEN THAT
+ * MADE IT**, and whom it was for. The service does not say the address again
+ * after a reload, so a screen that wants a first company to need no second
+ * sign-in keeps what the sign-in answer said, in its own tab, and hands it back
+ * to `resumeSession`.
+ */
+export interface SignInCarried {
+  readonly personId: string;
+  readonly address: string;
+}
+
+/**
  * **PICKING UP THE SIGN-IN THIS BROWSER ALREADY HAS, AFTER A RELOAD.**
  *
  * The page cannot see the cookie, so it asks the server who it is. An answer
@@ -734,15 +759,25 @@ function takeTheSignIn(r: any): Me {
  * past. **It opens no company**: the key that does is the wallet's to release
  * again, and nothing here pretends otherwise.
  *
+ * **`carried`, WHEN A SCREEN KEPT IT, GIVES BACK THE ADDRESS THE SIGN-IN WAS
+ * FOR**, and is taken only when it names the person the service says is signed
+ * in now. The address only gates, as it does after a sign-in in this tab: the
+ * wallet gives the key a person's first keys are saved under only when one of
+ * its own accounts has exactly that address. With nothing carried, or carried
+ * for somebody else, the address is left as it was.
+ *
  * Null for nobody. Any other failure is thrown, so a server that is down is not
  * reported as a person who is signed out.
  */
-export async function resumeSession(): Promise<Me | null> {
+export async function resumeSession(carried: SignInCarried | null = null): Promise<Me | null> {
   try {
     const r = await api('/api/me');
     sessionLive = true;
     firstSignInHere = false;
     me = r.user as Me;
+    if (carried !== null && carried.personId === me.id && typeof carried.address === 'string' && carried.address !== '') {
+      walletAddress = carried.address;
+    }
     return me;
   } catch (e) {
     if (e instanceof AuthError) return null;
@@ -1469,6 +1504,12 @@ async function putBundle(next: Keyring) {
  */
 let pendingCompany: {
   accountId: string;
+  /**
+   * **WHO STARTED IT.** Its keys are saved only into that person's saved keys:
+   * a tab can be signed in as somebody else before it is finished, and the
+   * keys it would then be saved under are theirs.
+   */
+  personId: string;
   keys: AccountKeys;
   /**
    * **`cannot-be-saved` WHEN THIS TAB HAS SEEN THAT IT NEVER CAN BE.** A save was
@@ -1479,8 +1520,15 @@ let pendingCompany: {
   savingFailed: 'cannot-be-saved' | null;
 } | null = null;
 
-/** The company this tab created and has not finished saving the keys of, if there is one. */
-export const companyAwaitingSetup = (): string | null => pendingCompany?.accountId ?? null;
+/** Whether `waiting` was started by the person this tab is signed in as now. */
+const startedByTheSignedIn = (waiting: { personId: string } | null): boolean => waiting !== null && me !== null && waiting.personId === me.id;
+
+/**
+ * The company this tab created and has not finished saving the keys of, if
+ * there is one, and only for the person who started it: to anybody else signed
+ * in here since, there is none they can finish.
+ */
+export const companyAwaitingSetup = (): string | null => (startedByTheSignedIn(pendingCompany) ? pendingCompany!.accountId : null);
 
 /**
  * **SOMEBODY WITH A WALLET STARTS A COMPANY.**
@@ -1520,8 +1568,11 @@ export async function createCompanyWithWallet(
   view: Openable = walletInThisPage(window),
   atOrigin: string = window.location.origin,
 ): Promise<{ accountId: string }> {
-  if (!sessionLive) throw new Error('not signed in');
+  if (!sessionLive || me === null) throw new Error('not signed in');
+  const startedBy = me.id;
   if (pendingCompany !== null) {
+    /* Somebody else's unfinished company is not theirs to finish, so they are not told to finish it. */
+    if (!startedByTheSignedIn(pendingCompany)) throw new CompanyStartedBySomebodyElse(STARTED_BY_SOMEBODY_ELSE);
     throw new Error('a company this tab started is not finished yet, and its keys are only in '
       + 'this tab. Finish setting it up before starting another.');
   }
@@ -1553,6 +1604,7 @@ export async function createCompanyWithWallet(
     const mine = created.secrets[0];
     pendingCompany = {
       accountId,
+      personId: startedBy,
       savingFailed: null,
       keys: {
         signerId: mine.signerId,
@@ -1567,6 +1619,8 @@ export async function createCompanyWithWallet(
 
     /* **STEP 3.** The slot is cleared only after the keys are written. */
     try {
+      /* Somebody else signed in while the company was being made: its keys wait, bound to who started it. */
+      if (!startedByTheSignedIn(pendingCompany)) throw new CompanyStartedBySomebodyElse(STARTED_BY_SOMEBODY_ELSE);
       await rememberAccount(accountId, pendingCompany.keys);
     } catch (refused) {
       /*
@@ -1602,6 +1656,8 @@ export async function finishCompanyCreation(): Promise<{ accountId: string }> {
   if (!waiting) {
     throw new Error('there is no company waiting to be set up in this tab.');
   }
+  /* **ONLY INTO THE SAVED KEYS OF THE PERSON WHO STARTED IT.** Asked before anything is read or written. */
+  if (!startedByTheSignedIn(waiting)) throw new CompanyStartedBySomebodyElse(STARTED_BY_SOMEBODY_ELSE);
   if (waiting.savingFailed === 'cannot-be-saved') throw new Error(cannotBeSavedSentence());
   try {
     await reopenSavedKeys();
@@ -1612,6 +1668,8 @@ export async function finishCompanyCreation(): Promise<{ accountId: string }> {
     }
     throw e;
   }
+  /* And again after the read: a sign-in as somebody else may have come in while it was on its way. */
+  if (!startedByTheSignedIn(waiting)) throw new CompanyStartedBySomebodyElse(STARTED_BY_SOMEBODY_ELSE);
   await rememberAccount(waiting.accountId, waiting.keys);
   if (pendingCompany?.accountId === waiting.accountId) pendingCompany = null;
   return { accountId: waiting.accountId };

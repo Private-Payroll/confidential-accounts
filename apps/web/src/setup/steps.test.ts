@@ -37,6 +37,7 @@ const modulesNamed = (file: string, text: string): string[] => [...text.matchAll
 const ACTS_FOR: Record<string, string> = {
   'create-company.tsx': 'adapters/create-company.js',
   'hand-over.tsx': 'adapters/hand-over.js',
+  'create-vault.tsx': 'adapters/create-vault.js',
 };
 
 describe('every step is in the list, and every entry is a step', () => {
@@ -46,9 +47,9 @@ describe('every step is in the list, and every entry is a step', () => {
    * an everyday action (depositing, running payroll) made a setup step again.
    * The design's five steps, written out by hand.
    */
-  it('has the design\'s five steps, in order, and builds only creating the company and handing it over', () => {
+  it('has the design\'s five steps, in order, and builds only creating the company, handing it over and creating a vault', () => {
     expect(EVERY_STEP.map((s) => s.id)).toEqual(['createCompany', 'signers', 'handOver', 'vault', 'people']);
-    expect(EVERY_STEP.filter(isBuiltStep).map((s) => s.id)).toEqual([STEP.createCompany, STEP.handOver]);
+    expect(EVERY_STEP.filter(isBuiltStep).map((s) => s.id)).toEqual([STEP.createCompany, STEP.handOver, STEP.vault]);
     expect(Object.values(STEP).sort()).toEqual(Object.keys(SETUP_STEPS).sort());
   });
 
@@ -122,14 +123,35 @@ describe('a step and its page are one component', () => {
       expect(read(screen), s.id).toMatch(new RegExp(`import \\{[^}]*\\b${s.shows.action.name}\\b[^}]*\\} from '\\.\\./${ACTIONS}/`));
       checked.push(`${s.id} on ${s.page}`);
     }
-    /* No built step's page is built yet; the change that builds one adds it here, and the check above then reads it. */
-    expect(checked).toEqual([]);
+    /* Each built step whose page is built, named here, so the check above is seen reading it. */
+    expect(checked).toEqual(['vault on vaults']);
+  });
+});
+
+describe('the vault step', () => {
+  /*
+   * RED WHEN: a vault of a standing other than one the company's committee
+   * holds closes the vault step, which cannot be undone: one not finished,
+   * not yet on the chain, held by keys that are not the committee now, or of
+   * a standing not known; or one the committee holds does not.
+   */
+  it('is done only by a vault the company\'s committee holds', async () => {
+    const { VAULT } = await import('../adapters/company-records.js');
+    const { wasHandedOver } = await import('../adapters/vault-rows.js');
+    const held = Object.values(VAULT).filter((standing) => wasHandedOver({ standing }));
+    expect(held.sort()).toEqual([VAULT.accountNotFundable, VAULT.accountNotHandedOver, VAULT.held, VAULT.notFundable].sort());
+    const vault = EVERY_STEP.find((s) => s.id === STEP.vault)!;
+    for (const standing of Object.values(VAULT)) {
+      expect(vault.done({ company: 'c-1', handover: null, vaults: [{ standing }] }), standing).toBe(held.includes(standing));
+    }
+    expect(vault.done({ company: 'c-1', handover: null, vaults: null })).toBe(false);
+    expect(vault.done({ company: 'c-1', handover: null, vaults: [] })).toBe(false);
   });
 });
 
 describe('where a step stands', () => {
-  const none = { company: null, handover: null };
-  const created = { company: 'c-1', handover: null };
+  const none = { company: null, handover: null, vaults: null };
+  const created = { company: 'c-1', handover: null, vaults: null };
 
   /* RED WHEN: a step skipped is shown as done, a step done is shown as skipped, or a step neither is shown as either. */
   it('never shows a skipped step as done', () => {

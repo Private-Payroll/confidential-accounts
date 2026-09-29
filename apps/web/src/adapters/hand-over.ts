@@ -1,14 +1,15 @@
+import type { SealedAccount } from '../../../../src/core/types.js';
 import { whyNotHandOver } from 'vaults-web-shared/handover-check.js';
 import {
-  contractsForMe, nothingForMe, signCommitteeChangeOnDevice, whyNotSignCommitteeChange, type CommitteeChangeView,
+  COMMITTEE_CHANGE_REFUSAL, committeeChangeRefusal, signCommitteeChangeOnDevice, type CommitteeChangeView,
 } from 'vaults-web-shared/committee-change-on-device.js';
 import {
-  api, canOpenCompanies, companyKeysForVaults, keysFor, openAccount, openKeysWithWallet, reopenSavedKeys, signCommitteeChangeFromTheWallet, viewingKeyFor,
+  api, canOpenCompanies, companyKeysForVaults, openAccount, openKeysWithWallet, signCommitteeChangeFromTheWallet, viewingKeyFor,
   type AccountKeys,
 } from 'vaults-web-shared/keyring.js';
 import { giveVaultKeys } from 'vaults-web-shared/vault-page-doors.js';
 import { companyRoute, SERVICE } from './handover-state.js';
-import { keyringFor } from './keyring-person.js';
+import { keyringFor, keysOnTheWayIn } from './keyring-person.js';
 import { ACT_REFUSAL, ACTED, refusalOf, type ActRefusal } from './refusals.js';
 import { ACCOUNT_ORIGIN } from './session.js';
 import { Fault, FAULT } from '../faults.js';
@@ -44,14 +45,14 @@ const refused = (why: ActRefusal): Acted => ({ of: ACTED.refused, why });
 /**
  * THIS PERSON'S KEYS FOR THE COMPANY, AND THE COMPANY AS THIS DEVICE OPENS IT.
  * The keys saved for this person are opened with their account when this tab
- * has not opened them yet, and read again when they do not hold this company.
+ * has not opened them yet, read again when they do not hold this company, and
+ * a seat this device did not finish is finished first.
  */
 async function opened(personId: string, companyId: string): Promise<{ keys: AccountKeys; roster: () => Promise<NonNullable<ReturnType<typeof openAccount>>>; viewingKey: ReturnType<typeof viewingKeyFor> } | ActRefusal> {
   if (ACCOUNT_ORIGIN === '') return ACT_REFUSAL.notSetUp;
   if (!(await keyringFor(personId))) return ACT_REFUSAL.notSignedIn;
   if (!canOpenCompanies()) await openKeysWithWallet(ACCOUNT_ORIGIN);
-  if (keysFor(companyId) === null) await reopenSavedKeys();
-  const keys = keysFor(companyId);
+  const keys = await keysOnTheWayIn(companyId, async () => await api(companyRoute(companyId)) as SealedAccount);
   if (keys === null) return ACT_REFUSAL.noKeysHere;
   const sealed = await api(companyRoute(companyId));
   const roster = async () => {
@@ -109,16 +110,13 @@ export async function signChange(personId: string, companyId: string): Promise<A
      * The shared step's own check, asked first so that a refusal comes back as
      * a refusal rather than a thrown error; the step asks it again before the
      * account is asked to sign. "Nothing to sign" is told from the other
-     * refusals the way the shared step tells it: the check's sentence is
-     * compared with the one `nothingForMe` gives.
+     * refusals by the code the check gives, never by its sentence.
      */
     const [now, mine, roster] = [await view(), await committeeKeyFor(companyId), await o.roster()];
     const me = { signerId: o.keys.signerId };
-    const why = whyNotSignCommitteeChange(now, mine, roster, me);
-    if (why !== null) {
-      const nothing = now.to !== null && now.contracts.length > 0 && contractsForMe(now, mine).length === 0
-        && why === nothingForMe(now, mine);
-      return refused(nothing ? ACT_REFUSAL.nothingToSign : ACT_REFUSAL.rosterDisagrees);
+    const check = committeeChangeRefusal(now, mine, roster, me);
+    if (check !== null) {
+      return refused(check.code === COMMITTEE_CHANGE_REFUSAL.nothingToSign ? ACT_REFUSAL.nothingToSign : ACT_REFUSAL.rosterDisagrees);
     }
     await signCommitteeChangeOnDevice({
       view,

@@ -16,7 +16,7 @@ import { untilPageShown, untilShown } from '../page-shown.test-support.js';
  */
 const state = vi.hoisted(() => ({
   company: null as unknown, handover: { of: 'vault-keys-missing', signers: 1 } as unknown, publicMoney: null as unknown,
-  opened: 0, names: new Map<string, string>(),
+  opened: 0, names: new Map<string, string>(), ready: { of: 'ready' } as unknown,
 }));
 vi.mock('../adapters/company-records.js', async (real) => ({
   ...(await real<typeof import('../adapters/company-records.js')>()),
@@ -27,6 +27,15 @@ vi.mock('../adapters/company-records.js', async (real) => ({
 vi.mock('../adapters/handover-state.js', async (real) => ({
   ...(await real<typeof import('../adapters/handover-state.js')>()),
   readHandover: async () => state.handover,
+}));
+vi.mock('../adapters/create-vault.js', async (real) => ({
+  ...(await real<typeof import('../adapters/create-vault.js')>()),
+  readVaultReadiness: async () => state.ready,
+  readOwedVaults: async () => [],
+}));
+vi.mock('../adapters/vault-rows.js', async (real) => ({
+  ...(await real<typeof import('../adapters/vault-rows.js')>()),
+  readVaultRows: async () => [],
 }));
 vi.mock('../adapters/session.js', async (real) => ({
   ...(await real<typeof import('../adapters/session.js')>()),
@@ -108,7 +117,7 @@ const all = (c: ParentNode, sel: string) => [...c.querySelectorAll(sel)] as HTML
 
 beforeEach(() => {
   vi.spyOn(console, 'error').mockImplementation(() => {});
-  state.company = records(); state.handover = { of: 'vault-keys-missing', signers: 1 }; state.publicMoney = null; state.opened = 0; state.names = new Map();
+  state.company = records(); state.handover = { of: 'vault-keys-missing', signers: 1 }; state.publicMoney = null; state.opened = 0; state.names = new Map(); state.ready = { of: 'ready' };
   skippedFor('c-1').clear(); window.sessionStorage.clear(); takeAsked();
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
@@ -127,12 +136,13 @@ describe('every page that reads is built, at its own address', () => {
   /*
    * RED WHEN: an action these pages do not do yet (starting a run, approving,
    * declining, depositing, paying out, inviting, withdrawing, checking a
-   * fingerprint, creating a vault) is hidden, or can be pressed, or is shown
-   * without the Coming soon pill saying what it will do.
+   * fingerprint) is hidden, or can be pressed, or is shown without the Coming
+   * soon pill saying what it will do; or creating a vault, which is built, is
+   * still shown Coming soon anywhere.
    */
   it('shows every action not built yet, disabled, with the Coming soon pill', async () => {
     const seen = new Set<string>();
-    for (const [id, params] of [['home', {}], ['payroll', {}], ['run', { run: 'r1' }], ['vaults', {}], ['vault', { vault: VAULT }], ['people', {}], ['invitations', {}]] as const) {
+    for (const [id, params] of [['home', {}], ['payroll', {}], ['run', { run: 'r1' }], ['vault', { vault: VAULT }], ['people', {}], ['invitations', {}]] as const) {
       const c = await draw(id, params);
       const soon = all(c, '[data-soon]');
       expect(soon.length, id).toBeGreaterThan(0);
@@ -143,7 +153,10 @@ describe('every page that reads is built, at its own address', () => {
       }
       cleanup();
     }
-    expect([...seen].sort()).toEqual(['approve', 'check-fingerprint', 'check-last-deposit', 'create-proposal', 'create-vault', 'decline', 'deposit', 'export-run', 'invite', 'new-run', 'pay-out', 'withdraw']);
+    expect([...seen].sort()).toEqual(['approve', 'check-fingerprint', 'check-last-deposit', 'create-proposal', 'decline', 'deposit', 'export-run', 'invite', 'new-run', 'pay-out', 'withdraw']);
+    const vaults = await draw('vaults');
+    expect(all(vaults, '[data-soon]')).toEqual([]);
+    expect((q(vaults, '[data-action=create-vault-now]') as HTMLButtonElement).disabled).toBe(false);
   });
 });
 
@@ -155,6 +168,7 @@ describe('home', () => {
    */
   it('shows the setup card with the steps left, a skipped one marked, each opening the wizard at it', async () => {
     skipStep('c-1', 'signers');
+    state.company = records({ vaults: { of: 'read', value: [] } });
     const c = await draw('home');
     expect(all(c, '[data-part=setup-card] [data-step]').map((e) => [e.dataset.step, e.dataset.standing])).toEqual([
       ['signers', 'skipped'], ['handOver', 'open'], ['vault', 'open'], ['people', 'open'],
@@ -175,8 +189,8 @@ describe('home', () => {
     window.localStorage.clear();
     const c = await draw('home');
     const card = q(c, '[data-part=setup-card]')!;
-    expect(all(card, '[data-slot=progress-mark]').map((m) => m.dataset.filled)).toEqual(['true', 'false', 'false', 'false', 'false']);
-    expect(q(card, '[data-steps-done]')!.textContent).toBe('1 of 5 steps done');
+    expect(all(card, '[data-slot=progress-mark]').map((m) => m.dataset.filled)).toEqual(['true', 'false', 'false', 'true', 'false']);
+    expect(q(card, '[data-steps-done]')!.textContent).toBe('2 of 5 steps done');
     fireEvent.click(q(card, '[data-action=fold-setup]')!);
     expect(q(c, '[data-part=setup-card] [data-step]')).toBeNull();
     expect(q(c, '[data-part=setup-card] [data-slot=progress]')).not.toBeNull();
@@ -186,7 +200,7 @@ describe('home', () => {
     expect(q(again, '[data-part=setup-card]')!.hasAttribute('data-folded')).toBe(true);
     expect(q(again, '[data-part=setup-card] [data-step]')).toBeNull();
     fireEvent.click(q(again, '[data-action=fold-setup]')!);
-    expect(all(again, '[data-part=setup-card] [data-step]').length).toBe(4);
+    expect(all(again, '[data-part=setup-card] [data-step]').length).toBe(3);
     window.localStorage.clear();
   });
 
@@ -250,11 +264,17 @@ describe('home', () => {
     expect(q(table, 'tbody tr [data-action=view-proposal]')!.getAttribute('href')).toBe(PAGES.proposals.path);
   });
 
-  /* RED WHEN: a step the application knows is done stays on the card. */
+  /* RED WHEN: a step the application knows is done stays on the card; or a vault not yet held by the signers, or vaults that could not be read, take the vault step off it. */
   it('leaves a done step off the card', async () => {
     state.handover = { of: 'held' };
     const c = await draw('home');
-    expect(all(c, '[data-part=setup-card] [data-step]').map((e) => e.dataset.step)).toEqual(['signers', 'vault', 'people']);
+    expect(all(c, '[data-part=setup-card] [data-step]').map((e) => e.dataset.step)).toEqual(['signers', 'people']);
+    for (const vaults of [{ of: 'read', value: [{ vault: VAULT, createdAt: '2026-09-01T00:00:00.000Z', standing: 'handover-owed' }] }, { of: 'unreadable' }] as const) {
+      cleanup();
+      state.company = records({ vaults: vaults as CompanyRecords['vaults'] });
+      const again = await draw('home');
+      expect(all(again, '[data-part=setup-card] [data-step]').map((e) => e.dataset.step), vaults.of).toEqual(['signers', 'vault', 'people']);
+    }
   });
 
   /* RED WHEN: proposals waiting, people waiting, the vaults, the next run or what passed recently is not the records', or a paid run is taken for the next one. */
@@ -449,31 +469,73 @@ describe('a read that failed, on every page', () => {
 describe('vaults and a vault', () => {
   /*
    * RED WHEN: a vault's private money is shown as a figure (nothing reads it
-   * here) or as nothing; its public money is read before it is asked for; a
-   * public amount has no pill; or while a currency the registry does not know
-   * is counted, the page says the vault holds no public money.
+   * here), as nothing, or without saying plainly that it is not read here;
+   * its public money is not read when the page is shown, or cannot be read
+   * again; a public amount has no pill; or while a currency the registry does
+   * not know is counted, or the read failed, the page says the vault holds no
+   * public money.
    */
   it('never says a vault holds nothing publicly while it holds a currency this app does not know', async () => {
+    const readAgain = async (c: HTMLElement) => { await act(async () => { fireEvent.click(q(c, '[data-action=read-public-money]')!); await new Promise((r) => setTimeout(r, 5)); }); };
     state.publicMoney = { amounts: [], unrecognised: 2 };
     const c = await draw('vault', { vault: VAULT });
-    expect(q(c, '[data-private-line] [data-slot=coming-soon]')).not.toBeNull();
-    expect(q(c, '[data-private-line] [data-slot=amount]')).toBeNull();
-    expect(q(c, '[data-public-money]')!.dataset.publicMoney).toBe('not-asked');
-    await act(async () => { fireEvent.click(q(c, '[data-action=show-public-money]')!); await new Promise((r) => setTimeout(r, 5)); });
+    await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
+    expect(q(c, '[data-private-money] [data-private-not-read]')?.textContent).toBe(EN['vaults.privateMoney.notRead']);
+    expect(q(c, '[data-private-money] [data-slot=amount]')).toBeNull();
     expect(q(c, '[data-unrecognised]')?.textContent).toBe(EN['vault.publicMoney.unrecognised_other']!.replace('{count}', '2'));
     expect(q(c, '[data-holds-none]')).toBeNull();
     state.publicMoney = { amounts: [NIGHT(4_000_000n, 'public')], unrecognised: 1 };
-    await act(async () => { fireEvent.click(q(c, '[data-action=show-public-money]')!); await new Promise((r) => setTimeout(r, 5)); });
+    await readAgain(c);
     expect(q(c, '[data-held=NIGHT] [data-slot=amount]')!.dataset.visibility).toBe('public');
     expect(q(c, '[data-held=NIGHT]')!.textContent).toContain(EN['kit.public.label']);
     expect(q(c, '[data-holds-none]')).toBeNull();
     state.publicMoney = { amounts: [], unrecognised: 0 };
-    await act(async () => { fireEvent.click(q(c, '[data-action=show-public-money]')!); await new Promise((r) => setTimeout(r, 5)); });
+    await readAgain(c);
     expect(q(c, '[data-holds-none]')?.textContent).toBe(EN['vault.publicMoney.none']);
     state.publicMoney = null;
-    await act(async () => { fireEvent.click(q(c, '[data-action=show-public-money]')!); await new Promise((r) => setTimeout(r, 5)); });
+    await readAgain(c);
     expect(q(c, '[data-public-money=unreadable]')).not.toBeNull();
     expect(q(c, '[data-holds-none]')).toBeNull();
+  });
+
+  /*
+   * RED WHEN: a vault's tile, on the Vaults page or on Home, shows no money:
+   * its public money is not read onto it with the Public pill, or its private
+   * line shows a figure, nothing, or does not say plainly that it is not read.
+   */
+  it('shows each vault\'s money on its tile, public read and private said plainly', async () => {
+    state.publicMoney = { amounts: [NIGHT(4_000_000n, 'public')], unrecognised: 0 };
+    for (const id of ['vaults', 'home'] as const) {
+      const c = await draw(id);
+      await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
+      const tile = q(c, `[data-slot=stat-tile][data-vault="${VAULT}"]`)!;
+      expect(q(tile, '[data-held=NIGHT] [data-slot=amount]')!.dataset.visibility, id).toBe('public');
+      expect(q(tile, '[data-held=NIGHT]')!.textContent, id).toContain(EN['kit.public.label']);
+      expect(q(tile, '[data-private-not-read]')?.textContent, id).toBe(EN['vaults.privateMoney.notRead']);
+      expect(q(tile, '[data-private-money] [data-slot=amount]'), id).toBeNull();
+      cleanup();
+    }
+  });
+
+  /* RED WHEN: the Vaults page's way to the step that makes creating a vault possible opens anything but the setup wizard at that step. */
+  it('leads from the Vaults page to the setup step that makes creating a vault possible', async () => {
+    state.ready = { of: 'yours-missing' };
+    const c = await draw('vaults');
+    await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
+    fireEvent.click(q(c, '[data-lead-to=handOver]')!);
+    expect(window.location.pathname).toBe(PAGES.setup.path);
+    expect(takeAsked()).toEqual({ step: 'handOver', newCompany: false });
+  });
+
+  /* RED WHEN: a tile whose public money could not be read says so in the page's words, which name a button the tile does not have. */
+  it('says on a tile, in its own words, that its public money could not be read', async () => {
+    const c = await draw('vaults');
+    await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
+    expect(q(c, `[data-slot=stat-tile][data-vault="${VAULT}"] [data-unreadable]`)?.textContent).toBe(EN['vaults.publicMoney.unreadable']);
+    cleanup();
+    const page = await draw('vault', { vault: VAULT });
+    await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
+    expect(q(page, '[data-part=money] [data-unreadable]')?.textContent).toBe(EN['vault.publicMoney.unreadable']);
   });
 
   /* RED WHEN: a vault's payouts are not the runs that pay out of it, or the tiles lead anywhere but the vault's own page. */

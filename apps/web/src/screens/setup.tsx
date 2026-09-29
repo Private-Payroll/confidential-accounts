@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { Badge, Button, ComingSoon, Progress, SectionLoading, Tabs, TabsContent, TabsList, TabsTrigger, useText } from 'vaults-ui';
 import { readHandover, type Handover } from '../adapters/handover-state.js';
+import { readVaultRows } from '../adapters/vault-rows.js';
 import { SessionProvider, useSession } from '../session.js';
 import type { StepId } from '../setup/step-ids.js';
 import { firstOpen, isDoneForGood, nextAfter, skippedFor, skipStep, STANDING, standingOf } from '../setup/standing.js';
@@ -37,13 +38,17 @@ export function Setup() {
   const [shownWhenAsked] = useState(() => (asked?.newCompany === true ? session.company : undefined));
   const company = shownWhenAsked !== undefined && session.company === shownWhenAsked ? null : session.company;
   const [handover, setHandover] = useState<Handover | null>(null);
+  const [vaults, setVaults] = useState<SetupFacts['vaults']>(null);
   const [, setSkips] = useState(0);
   const skipped = skippedFor(company);
-  const facts: SetupFacts = { company, handover };
+  const facts: SetupFacts = { company, handover, vaults };
   const [chosen, setCurrent] = useState<StepId>(() => asked?.step ?? firstOpen(facts, skipped));
 
   const read = useCallback(async () => {
-    setHandover(company === null ? null : await readHandover(person.id, company));
+    const [h, v] = company === null ? [null, null] : await Promise.all([readHandover(person.id, company), readVaultRows(person.id, company)]);
+    setHandover(h);
+    /* Vaults that could not be read are read as none created: the step stays open, and is never shown done on a guess. */
+    setVaults(company === null ? null : v ?? []);
   }, [person.id, company]);
   useEffect(() => { void read(); }, [read]);
 
@@ -58,8 +63,8 @@ export function Setup() {
   const step = EVERY_STEP[index]!;
   const standings = EVERY_STEP.map((s) => standingOf(s, facts, skipped));
   const forGood = EVERY_STEP.map((s) => isDoneForGood(s, facts));
-  /* The company's handover is read after the wizard is drawn; until it is, whether a step is done for good is not known. */
-  const reading = company !== null && handover === null;
+  /* The company's handover and vaults are read after the wizard is drawn; until they are, whether a step is done for good is not known. */
+  const reading = company !== null && (handover === null || vaults === null);
   const closed = EVERY_STEP.map((s, i) => forGood[i]! || (reading && s.cannotBeUndone));
   const doneCount = standings.filter((s) => s === STANDING.done).length;
   const next = (): void => { const n = nextAfter(index, facts); if (n !== null) setCurrent(n); };

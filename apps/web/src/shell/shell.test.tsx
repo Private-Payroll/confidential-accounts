@@ -16,6 +16,8 @@ vi.mock('../adapters/company-records.js', async (real) => ({
   readCompany: async () => ({ of: 'locked' }),
 }));
 const { PageView } = await import('../app.js');
+/* The records are read lazily by the page; loaded here, once, so no test ends with that read still arriving (it did, 29 Sep, as 25 errors after the run). */
+await import('../adapters/company-records.js');
 import type { Company } from '../adapters/session.js';
 import { EVERY_PAGE, isBuilt, mayOpen, PAGES, reachedByName, VIEWS, type PageId, type Viewer } from '../pages.js';
 import { LANGUAGES } from '../languages.js';

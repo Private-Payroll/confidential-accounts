@@ -215,13 +215,14 @@ describe('one menu, in every file', () => {
    * RED WHEN: a file not named here goes to a page from code, so a column of
    * buttons could be a menu the link rules above do not see. Each file named
    * goes to one page for one reason: the router and the frame, the landing
-   * page's Create a company, Home's setup card, Settings' tabs, and the way
-   * out of a focused page.
+   * page's Create a company, Home's setup card, Settings' tabs, the way out
+   * of a focused page, and the Vaults page's way to the setup step that makes
+   * creating a vault possible.
    */
   it('goes to a page from code only where it is named', () => {
     expect(APP_CODE.filter((f) => GOES.test(f.text) && f.path !== 'apps/web/src/router.tsx').map((f) => f.path).sort()).toEqual([
       'apps/web/src/app.tsx', 'apps/web/src/screens/home.tsx', 'apps/web/src/screens/landing.tsx', 'apps/web/src/screens/settings.tsx',
-      'apps/web/src/shell/account-menu.tsx', 'apps/web/src/shell/command-bar.tsx', 'apps/web/src/shell/company-switcher.tsx', 'apps/web/src/shell/focused-frame.tsx',
+      'apps/web/src/screens/vaults.tsx', 'apps/web/src/shell/account-menu.tsx', 'apps/web/src/shell/command-bar.tsx', 'apps/web/src/shell/company-switcher.tsx', 'apps/web/src/shell/focused-frame.tsx',
       'apps/web/src/shell/shell.tsx',
     ]);
   });

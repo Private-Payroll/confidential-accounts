@@ -22,6 +22,31 @@ const state = vi.hoisted(() => ({
   acted: [] as string[],
   created: { of: 'done', companyId: 'c-new' } as Record<string, unknown>,
   waiting: null as string | null,
+  /** The company's vaults as the service lists them, and whether one can be created, and what creating one comes to. */
+  vaults: [] as { vault: string; createdAt: string; standing: string }[] | null,
+  ready: { of: 'ready' } as Record<string, unknown>,
+  vaultCreated: { of: 'done', vault: 'v-new' } as Record<string, unknown>,
+  owed: [] as { vault: string; number: number; here: boolean }[],
+  opened: [] as string[],
+}));
+vi.mock('../adapters/vault-rows.js', async (real) => ({
+  ...(await real<typeof import('../adapters/vault-rows.js')>()),
+  readVaultRows: vi.fn(async () => state.vaults),
+}));
+vi.mock('../adapters/create-vault.js', async (real) => ({
+  ...(await real<typeof import('../adapters/create-vault.js')>()),
+  readVaultReadiness: vi.fn(async () => state.ready),
+  readOwedVaults: vi.fn(async () => state.owed),
+  openYourKeys: vi.fn(async (person: string) => { state.opened.push(person); state.ready = { of: 'ready' }; return { of: 'done' }; }),
+  createVault: vi.fn(async (person: string, company: string, onStage: (s: string) => void) => {
+    onStage('building');
+    state.acted.push(JSON.stringify(['create-vault', person, company]));
+    return state.vaultCreated;
+  }),
+  finishHandingOver: vi.fn(async (person: string, company: string, vault: string) => {
+    state.acted.push(JSON.stringify(['finish-vault', person, company, vault]));
+    return state.vaultCreated;
+  }),
 }));
 vi.mock('../adapters/handover-state.js', async (real) => ({
   ...(await real<typeof import('../adapters/handover-state.js')>()),
@@ -41,6 +66,7 @@ vi.mock('../adapters/create-company.js', () => ({
 const { Setup } = await import('../screens/setup.js');
 const { HandOver } = await import('../actions/hand-over.js');
 const { CreateCompany } = await import('../actions/create-company.js');
+const { CreateVault } = await import('../actions/create-vault.js');
 const { EVERY_STEP, isBuiltStep, startSetupAt, takeAsked } = await import('./steps.js');
 const { isDoneForGood, skippedFor } = await import('./standing.js');
 const { STEP } = await import('./step-ids.js');
@@ -82,6 +108,7 @@ const pick = async (c: HTMLElement, step: string) => { await act(async () => { f
 beforeEach(() => {
   vi.spyOn(console, 'error').mockImplementation(() => {});
   state.handover = { of: 'vault-keys-missing', signers: 1 }; state.acted = []; state.waiting = null; state.created = { of: 'done', companyId: 'c-new' };
+  state.vaults = []; state.ready = { of: 'ready' }; state.vaultCreated = { of: 'done', vault: 'v-new' }; state.owed = []; state.opened = [];
   /* What a tab remembers between showings of the wizard starts empty for every test. */
   for (const c of [null, 'c-1']) skippedFor(c).clear();
   window.sessionStorage.clear();
@@ -207,7 +234,7 @@ describe('a step that cannot be undone', () => {
 
   /* RED WHEN: a skipped step, a step not done, or a step done that can be undone, is closed as if done for good. */
   it('leaves every other step open to return to', async () => {
-    const facts = { company: 'c-1', handover: null };
+    const facts = { company: 'c-1', handover: null, vaults: null };
     const doneButUndoable = { ...EVERY_STEP.find((s) => s.id === STEP.people)!, done: () => true };
     expect(isDoneForGood(doneButUndoable, facts)).toBe(false);
     expect(isDoneForGood({ ...doneButUndoable, cannotBeUndone: true }, facts)).toBe(true);
@@ -353,6 +380,121 @@ describe('signing a change owed', () => {
     await act(async () => { fireEvent.click([...again.container.querySelectorAll('button')].find((b) => b.textContent === EN['kit.confirm.confirm'])!); await settle(); });
     expect(q(again.container, '[data-acted]')).toBeNull();
     expect(q(again.container, '[data-why]')!.textContent).toBe(EN['setup.handOver.why.held']);
+  });
+});
+
+describe('creating a vault: one component, on the step and on the Vaults page', () => {
+  const HELD = { vault: 'v-1', createdAt: '2026-09-01T00:00:00.000Z', standing: 'held-by-committee' };
+  const OWED = { vault: 'v-2', createdAt: '2026-09-02T00:00:00.000Z', standing: 'handover-owed' };
+
+  /* RED WHEN: once a vault is held by the signers the vault step can be opened again or does not say done; or a vault sent and not handed over is taken for done. */
+  it('closes the vault step once a vault is held by the signers, and only then', async () => {
+    state.handover = { of: 'held' };
+    state.vaults = [OWED];
+    startSetupAt(STEP.vault);
+    const first = await drawWizard(sessionWith({ company: 'c-1' }));
+    expect(q(first.container, '[data-current-step]')!.getAttribute('data-current-step')).toBe(STEP.vault);
+    expect(q(first.container, '[data-action=create-vault]')).not.toBeNull();
+    cleanup();
+    state.vaults = [OWED, HELD];
+    startSetupAt(STEP.vault);
+    const { container } = await drawWizard(sessionWith({ company: 'c-1' }));
+    expect(q(container, '[data-current-step]')!.getAttribute('data-current-step')).toBe(STEP.people);
+    const tab = q(container, `[data-setup-steps] [data-step=${STEP.vault}]`) as HTMLButtonElement;
+    expect(tab.disabled).toBe(true);
+    expect(tab.querySelector('[data-done]')).not.toBeNull();
+    expect(q(container, '[data-action=create-vault]')).toBeNull();
+  });
+
+  /* RED WHEN: vaults that could not be read close the step as if one were held, or the step is offered before they are read. */
+  it('keeps the step open when the vaults could not be read, and closed while they are read', async () => {
+    state.handover = { of: 'held' };
+    state.vaults = null;
+    startSetupAt(STEP.vault);
+    const { container } = render(framed(<Setup />, sessionWith({ company: 'c-1' })));
+    expect((q(container, `[data-setup-steps] [data-step=${STEP.vault}]`) as HTMLButtonElement).disabled).toBe(true);
+    await untilPageShown(container);
+    expect(q(container, '[data-current-step]')!.getAttribute('data-current-step')).toBe(STEP.vault);
+    expect(q(container, `[data-setup-steps] [data-step=${STEP.vault}]`)!.getAttribute('data-standing')).toBe('open');
+  });
+
+  /* RED WHEN: keys not open in this tab are said as anything but that, or there is no way to open them with the account from the step. */
+  it('with the keys not open, offers to open them with the account', async () => {
+    state.ready = { of: 'locked' };
+    const { container } = await draw(<CreateVault leadTo={() => {}} onChanged={() => {}} />, sessionWith({ company: 'c-1' }));
+    expect((q(container, '[data-action=create-vault-now]') as HTMLButtonElement).disabled).toBe(true);
+    expect(q(container, '[data-why]')!.textContent).toBe(EN['createVault.why.locked']);
+    await act(async () => { fireEvent.click(q(container, '[data-action=open-with-your-account]')!); await settle(); });
+    expect(state.opened).toEqual(['u1']);
+    expect((q(container, '[data-action=create-vault-now]') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  /* RED WHEN: Create a vault is hidden, enabled, or says no reason while it cannot be used, or does not lead to the step that makes it possible. */
+  it('is always shown, and disabled with why and the way on while it cannot be used', async () => {
+    const cases: [Record<string, unknown>, string, string | null][] = [
+      [{ of: 'yours-missing' }, 'createVault.why.yoursMissing', STEP.handOver],
+      [{ of: 'others-missing' }, 'createVault.why.othersMissing', null],
+      [{ of: 'roster-disagrees' }, 'createVault.why.rosterDisagrees', null],
+      [{ of: 'not-on-chain' }, 'createVault.why.notOnChain', null],
+    ];
+    for (const [ready, why, lead] of cases) {
+      state.ready = ready;
+      const leadTo = vi.fn();
+      const { container } = await draw(<CreateVault leadTo={leadTo} onChanged={() => {}} />, sessionWith({ company: 'c-1' }));
+      expect((q(container, '[data-action=create-vault-now]') as HTMLButtonElement).disabled, why).toBe(true);
+      expect(q(container, '[data-why]')!.textContent, why).toBe(EN[why]);
+      if (lead !== null) { fireEvent.click(q(container, `[data-lead-to=${lead}]`)!); expect(leadTo).toHaveBeenCalledWith(lead); }
+      cleanup();
+    }
+    const leadTo = vi.fn();
+    const { container } = await draw(<CreateVault leadTo={leadTo} onChanged={() => {}} />, sessionWith());
+    expect((q(container, '[data-action=create-vault-now]') as HTMLButtonElement).disabled).toBe(true);
+    expect(q(container, '[data-why]')!.textContent).toBe(EN['createVault.why.noCompany']);
+    fireEvent.click(q(container, `[data-lead-to=${STEP.createCompany}]`)!);
+    expect(leadTo).toHaveBeenCalledWith(STEP.createCompany);
+  });
+
+  /* RED WHEN: a vault is created without the "Confirm in your account" step in front of it, or when that step is cancelled; or what it came to is not said, or the page is not told something changed. */
+  it('asks to confirm in the account, then creates, says where it got to and what it came to', async () => {
+    const onChanged = vi.fn();
+    const { container } = await draw(<CreateVault leadTo={() => {}} onChanged={onChanged} />, sessionWith({ company: 'c-1' }));
+    await act(async () => { fireEvent.click(q(container, '[data-action=create-vault-now]')!); await settle(); });
+    expect(state.acted).toEqual([]);
+    expect(q(container, '[data-slot=confirm-in-your-account]')!.textContent).toContain(EN['createVault.confirm']);
+    await act(async () => { fireEvent.click([...container.querySelectorAll('button')].find((b) => b.textContent === EN['kit.confirm.cancel'])!); await settle(); });
+    expect(state.acted).toEqual([]);
+    await act(async () => { fireEvent.click(q(container, '[data-action=create-vault-now]')!); await settle(); });
+    await act(async () => { fireEvent.click([...container.querySelectorAll('button')].find((b) => b.textContent === EN['kit.confirm.confirm'])!); await settle(); });
+    expect(state.acted).toEqual([JSON.stringify(['create-vault', 'u1', 'c-1'])]);
+    expect(q(container, '[data-created]')!.textContent).toBe(EN['createVault.done']);
+    expect(onChanged).toHaveBeenCalled();
+    for (const [result, key] of [[{ of: 'handover-owed', vault: 'v-3' }, 'createVault.owed.now'], [{ of: 'handover-owed-elsewhere', vault: 'v-3' }, 'createVault.owed.elsewhere'], [{ of: 'handover-owed-roster-disagrees', vault: 'v-3' }, 'createVault.owed.rosterDisagrees']] as const) {
+      state.vaultCreated = result;
+      await act(async () => { fireEvent.click(q(container, '[data-action=create-vault-now]')!); await settle(); });
+      await act(async () => { fireEvent.click([...container.querySelectorAll('button')].find((b) => b.textContent === EN['kit.confirm.confirm'])!); await settle(); });
+      expect(q(container, '[data-result]')!.textContent).toBe(EN[key]);
+    }
+    state.vaultCreated = { of: 'refused', why: 'nothing-sent' };
+    await act(async () => { fireEvent.click(q(container, '[data-action=create-vault-now]')!); await settle(); });
+    await act(async () => { fireEvent.click([...container.querySelectorAll('button')].find((b) => b.textContent === EN['kit.confirm.confirm'])!); await settle(); });
+    expect(q(container, '[data-refusal]')!.textContent).toContain(EN['act.refused.nothingSent']);
+  });
+
+  /* RED WHEN: a vault sent and not handed over is not named, with its number, or finishing it sends another vault rather than handing that one over; or Finish is offered on a device that does not hold the vault's key, or hidden there rather than disabled with why. */
+  it('names a vault not handed over yet, and finishes handing that one over', async () => {
+    state.owed = [{ vault: 'v-2', number: 2, here: true }, { vault: 'v-9', number: 3, here: false }];
+    const elsewhere = await draw(<CreateVault leadTo={() => {}} onChanged={() => {}} />, sessionWith({ company: 'c-1' }));
+    const notHere = q(elsewhere.container, '[data-owed=v-9]')!;
+    expect((q(notHere, '[data-action=finish-handover]') as HTMLButtonElement).disabled).toBe(true);
+    expect(notHere.textContent).toContain(EN['createVault.owed.notHere']);
+    cleanup();
+    state.owed = [{ vault: 'v-2', number: 2, here: true }];
+    const { container } = await draw(<CreateVault leadTo={() => {}} onChanged={() => {}} />, sessionWith({ company: 'c-1' }));
+    expect(q(container, '[data-owed=v-2]')!.textContent).toContain(EN['createVault.owed.title']!.replace('{number}', '2'));
+    await act(async () => { fireEvent.click(q(container, '[data-action=finish-handover]')!); await settle(); });
+    expect(q(container, '[data-slot=confirm-in-your-account]')!.textContent).toContain(EN['createVault.confirmFinish']);
+    await act(async () => { fireEvent.click([...container.querySelectorAll('button')].find((b) => b.textContent === EN['kit.confirm.confirm'])!); await settle(); });
+    expect(state.acted).toEqual([JSON.stringify(['finish-vault', 'u1', 'c-1', 'v-2'])]);
   });
 });
 
