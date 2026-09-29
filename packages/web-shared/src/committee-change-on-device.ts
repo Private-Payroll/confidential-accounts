@@ -75,21 +75,40 @@ export function nothingForMe(view: CommitteeChangeView, mine: Key): string {
 export function whyNotSignCommitteeChange(
   view: CommitteeChangeView, mine: Key, roster: Roster & { policy?: { threshold: number } }, me: { signerId: string },
 ): string | null {
-  if (view.to === null || view.company === null) return view.why ?? 'this company has no committee yet.';
-  const refused = whyNotTheCommittee(view.to.committee, roster);
-  if (refused !== null) return `${refused} No change is signed from here.`;
+  return committeeChangeRefusal(view, mine, roster, me)?.why ?? null;
+}
+
+/**
+ * **WHICH KIND OF REFUSAL IT IS**, as a code a screen compares: nothing for this
+ * person to sign, which is not a fault; or anything else, which stops the
+ * change being signed from here.
+ */
+export const COMMITTEE_CHANGE_REFUSAL = { nothingToSign: 'nothing-to-sign', refused: 'refused' } as const;
+export type CommitteeChangeRefusalCode = (typeof COMMITTEE_CHANGE_REFUSAL)[keyof typeof COMMITTEE_CHANGE_REFUSAL];
+
+/**
+ * **THE SAME CHECK AS `whyNotSignCommitteeChange`, WITH ITS KIND AS A CODE**, or
+ * null when the wallet may be asked. `why` is the sentence that function gives.
+ */
+export function committeeChangeRefusal(
+  view: CommitteeChangeView, mine: Key, roster: Roster & { policy?: { threshold: number } }, me: { signerId: string },
+): { code: CommitteeChangeRefusalCode; why: string } | null {
+  const refused = (why: string) => ({ code: COMMITTEE_CHANGE_REFUSAL.refused, why });
+  if (view.to === null || view.company === null) return refused(view.why ?? 'this company has no committee yet.');
+  const notTheRosters = whyNotTheCommittee(view.to.committee, roster);
+  if (notTheRosters !== null) return refused(`${notTheRosters} No change is signed from here.`);
   if (roster.policy !== undefined && roster.policy.threshold !== view.to.threshold) {
-    return `the service says ${view.to.threshold} of the company's signers must sign a change after this one, and the `
+    return refused(`the service says ${view.to.threshold} of the company's signers must sign a change after this one, and the `
       + `company's own record says ${roster.policy.threshold}. No change is signed from here. Reload the page, and if it `
-      + 'happens again, contact support.';
+      + 'happens again, contact support.');
   }
   const myEntry = rosterVaultKeys(roster).find((r) => r.signerId === me.signerId);
   if (!myEntry?.keys || !same(myEntry.keys.committeeKey, mine)) {
-    return 'the company\'s roster does not carry the key your wallet gives for this company as yours, so no change is '
-      + 'signed from here. Open the company with the wallet your vault keys were set up from.';
+    return refused('the company\'s roster does not carry the key your wallet gives for this company as yours, so no change is '
+      + 'signed from here. Open the company with the wallet your vault keys were set up from.');
   }
-  if (view.contracts.length === 0) return 'every contract of this company is already held by its committee as it stands now.';
-  if (contractsForMe(view, mine).length === 0) return nothingForMe(view, mine);
+  if (view.contracts.length === 0) return refused('every contract of this company is already held by its committee as it stands now.');
+  if (contractsForMe(view, mine).length === 0) return { code: COMMITTEE_CHANGE_REFUSAL.nothingToSign, why: nothingForMe(view, mine) };
   return null;
 }
 
@@ -113,6 +132,7 @@ export interface CommitteeChangeDoors {
 
 /** Nothing was wrong: there is simply nothing for this person to sign. The wallet was not asked. */
 export class NothingToSign extends Error {
+  readonly code = COMMITTEE_CHANGE_REFUSAL.nothingToSign;
   constructor(message: string) {
     super(message);
     this.name = 'NothingToSign';
@@ -125,12 +145,9 @@ export async function signCommitteeChangeOnDevice(
 ): Promise<{ results: ReadonlyArray<Record<string, unknown>> }> {
   const view = await doors.view();
   const mine = await doors.walletKey();
-  const refused = whyNotSignCommitteeChange(view, mine, await doors.roster(), me);
+  const refused = committeeChangeRefusal(view, mine, await doors.roster(), me);
   if (refused !== null) {
-    throw view.to !== null && view.contracts.length > 0 && contractsForMe(view, mine).length === 0
-      && refused === nothingForMe(view, mine)
-      ? new NothingToSign(refused)
-      : new Error(refused);
+    throw refused.code === COMMITTEE_CHANGE_REFUSAL.nothingToSign ? new NothingToSign(refused.why) : new Error(refused.why);
   }
   const to = view.to!;
   const contracts = contractsForMe(view, mine).map((c) => ({ contract: c.contract, address: c.address, counter: c.counter, now: c.now }));

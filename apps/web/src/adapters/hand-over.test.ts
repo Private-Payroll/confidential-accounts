@@ -14,8 +14,14 @@ const kr = vi.hoisted(() => ({
   calls: [] as { path: string; method: string; body: unknown }[],
   answers: {} as Record<string, unknown>,
   keys: { signerId: 's1', signingSecret: 'aa', wrappingSecret: 'bb', blinding: 'cc' } as Record<string, string> | null,
-  roster: null as unknown, walletKey: null as unknown, signed: null as unknown, opened: 0, user: 'u1',
+  roster: null as unknown, walletKey: null as unknown, signed: null as unknown, opened: 0, user: 'u1', seat: false,
+  /** When set, what the shared check answers, in place of its own answer. */
+  check: undefined as undefined | null | { code: string; why: string },
 }));
+vi.mock('vaults-web-shared/committee-change-on-device.js', async (real) => {
+  const shared = await real<typeof import('vaults-web-shared/committee-change-on-device.js')>();
+  return { ...shared, committeeChangeRefusal: (...a: Parameters<typeof shared.committeeChangeRefusal>) => (kr.check === undefined ? shared.committeeChangeRefusal(...a) : kr.check) };
+});
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
   currentUser: () => ({ id: kr.user }),
@@ -25,6 +31,8 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   openKeysWithWallet: async () => { kr.opened += 1; },
   reopenSavedKeys: async () => {},
   keysFor: () => kr.keys,
+  pendingSeatsFor: () => (kr.seat ? [{ accountId: 'c1' }] : []),
+  finishPendingSeat: async () => { if (!kr.seat) return false; kr.seat = false; kr.keys = { signerId: 's1', signingSecret: 'aa', wrappingSecret: 'bb', blinding: 'cc' }; return true; },
   viewingKeyFor: () => 'vk',
   openAccount: () => kr.roster,
   companyKeysForVaults: async () => ({ companyKey: '11'.repeat(32), committeeKey: kr.walletKey, company: 'addr' }),
@@ -60,7 +68,7 @@ const AUTHORITY = (over: Record<string, unknown> = {}) => ({
   handover: { possible: true, why: null }, change: { possible: false, why: 'x' }, ...over,
 });
 
-beforeEach(() => { kr.user = 'u1'; kr.calls = []; kr.answers = {}; kr.keys = { signerId: 's1', signingSecret: 'aa', wrappingSecret: 'bb', blinding: 'cc' }; kr.opened = 0; kr.walletKey = K(1); kr.roster = null; kr.signed = null; });
+beforeEach(() => { kr.check = undefined; kr.seat = false; kr.user = 'u1'; kr.calls = []; kr.answers = {}; kr.keys = { signerId: 's1', signingSecret: 'aa', wrappingSecret: 'bb', blinding: 'cc' }; kr.opened = 0; kr.walletKey = K(1); kr.roster = null; kr.signed = null; });
 afterEach(() => { vi.unstubAllEnvs(); });
 
 describe('where a company stands, from the shape of the service\'s answer', () => {
@@ -153,6 +161,15 @@ describe('handing it over', () => {
     expect(kr.calls).toEqual([]);
   });
 
+  /* RED WHEN: a seat this device left unfinished is not finished before this person's keys for the company are read, so the handover is refused on the one device holding them. */
+  it('finishes a seat this device left unfinished, and then acts', async () => {
+    const { acts } = await load();
+    kr.keys = null; kr.seat = true;
+    kr.answers['/api/accounts/c1'] = {};
+    expect(await acts.giveMyVaultKeys('u1', 'c1')).toEqual({ of: 'done' });
+    expect(kr.seat).toBe(false);
+  });
+
   /* RED WHEN: the vault keys given are not this person's own, from their own entry, with the key their account gives. */
   it('gives this person\'s own vault keys', async () => {
     const { acts } = await load();
@@ -175,6 +192,21 @@ describe('signing a change', () => {
     kr.answers['/api/accounts/c1/committee-change'] = { ...OWED, contracts: [{ ...OWED.contracts[0], signedSeats: [0] }] };
     kr.roster = rosterWith(K(1));
     expect(await acts.signChange('u1', 'c1')).toEqual({ of: 'refused', why: 'nothing-to-sign' });
+    expect(kr.calls.filter((c) => c.method === 'POST')).toEqual([]);
+  });
+
+  /* RED WHEN: "nothing to sign" is told from a refusal by the check's sentence rather than its code. */
+  it('reads the check\'s code, never its sentence', async () => {
+    const { acts } = await load();
+    const { COMMITTEE_CHANGE_REFUSAL, nothingForMe } = await import('vaults-web-shared/committee-change-on-device.js');
+    kr.answers['/api/accounts/c1'] = {};
+    kr.answers['/api/accounts/c1/committee-change'] = OWED;
+    kr.roster = rosterWith(K(1));
+    const signed = { ...OWED, contracts: [{ ...OWED.contracts[0]!, signedSeats: [0] }] } as never;
+    kr.check = { code: COMMITTEE_CHANGE_REFUSAL.nothingToSign, why: 'words no sentence of the check has ever been' };
+    expect(await acts.signChange('u1', 'c1')).toEqual({ of: 'refused', why: 'nothing-to-sign' });
+    kr.check = { code: COMMITTEE_CHANGE_REFUSAL.refused, why: nothingForMe(signed, K(1)) };
+    expect(await acts.signChange('u1', 'c1')).toEqual({ of: 'refused', why: 'roster-disagrees' });
     expect(kr.calls.filter((c) => c.method === 'POST')).toEqual([]);
   });
 

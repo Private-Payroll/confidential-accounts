@@ -14,6 +14,7 @@ export const FAULT = {
   noValueForAddress: 'web-6-no-value-for-address',
   noScreenInModule: 'web-7-no-screen-in-module',
   noCompanyRecords: 'web-8-no-company-records',
+  vaultCompanyDidNotOpen: 'web-9-vault-company-did-not-open',
 } as const;
 
 export type FaultCode = (typeof FAULT)[keyof typeof FAULT];

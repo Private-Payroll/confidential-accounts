@@ -16,7 +16,7 @@ const NIGHT = SEED_ASSETS.find((a) => a.code === 'NIGHT')!;
 const PRIVATE_ADDRESS = 'mn_shield-addr_preview1qqqq';
 const PUBLIC_ADDRESS = 'mn_addr_preview1qqqq';
 const kr = vi.hoisted(() => ({
-  answers: {} as Record<string, unknown>, asked: [] as string[], keys: true, canOpen: true, user: 'u1', opened: 0,
+  answers: {} as Record<string, unknown>, asked: [] as string[], keys: true, canOpen: true, user: 'u1', opened: 0, seat: false,
   account: { id: 'c1', name: 'Northwind', signers: [{ id: 's1', name: 'Priya' }, { id: 's2', name: 'Sam' }] } as unknown,
 }));
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
@@ -27,6 +27,9 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   keysFor: () => (kr.keys ? { signerId: 's1' } : null),
   canOpenCompanies: () => kr.canOpen,
   reopenSavedKeys: async () => {},
+  /* A seat this device left unfinished: finishing it is what gives this device the company's keys. */
+  pendingSeatsFor: () => (kr.seat ? [{ accountId: 'c1' }] : []),
+  finishPendingSeat: async () => { if (!kr.seat) return false; kr.seat = false; kr.keys = true; return true; },
   openAccount: () => kr.account,
   viewingKeyFor: () => VK,
   openKeysWithWallet: async () => { kr.opened += 1; },
@@ -131,6 +134,10 @@ describe('opening a company', () => {
     const { readCompany } = await load();
     kr.keys = false; kr.canOpen = false;
     expect(await readCompany('u1', 'c1')).toEqual({ of: 'locked' });
+    /* RED WHEN: a seat this device left unfinished is not finished on the way in, so the one device holding the company's keys is told they are elsewhere. */
+    kr.canOpen = true; kr.seat = true;
+    expect((await readCompany('u1', 'c1')).of).toBe('open');
+    kr.keys = false; kr.canOpen = false;
     kr.canOpen = true;
     expect(await readCompany('u1', 'c1')).toEqual({ of: 'no-keys-here' });
     kr.keys = true; kr.account = null;

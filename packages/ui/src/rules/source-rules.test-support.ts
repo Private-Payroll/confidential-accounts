@@ -1034,7 +1034,15 @@ export const CODES: Readonly<Record<string, string>> = {
   'apps/web/src/records/parts.tsx#KIND_SAYS': 'each kind of proposal by the word the service\'s record names it by; what it does is asked for by key',
   'apps/web/src/screens/proposals.tsx#TABS': 'the ids of the proposals list\'s tabs, compared by the code and set as a mark tests find them by',
   'apps/web/src/screens/invitations.tsx#TABS': 'the ids of the invitations page\'s tabs, compared by the code and set as a mark tests find them by',
-  'apps/web/src/screens/vault.tsx#PUBLIC': 'where the public money shown stands, compared by the code and set as a mark tests find it by',
+  'apps/web/src/records/parts.tsx#PUBLIC': 'where a vault\'s public money shown stands, compared by the code and set as a mark tests find it by',
+  'apps/web/src/adapters/create-vault.ts#CREATING': 'where creating a vault has got to, one of a fixed set a screen turns into its own phrase',
+  'apps/web/src/adapters/create-vault.ts#STAGE': 'the shared operation\'s own words for its stages, compared and never shown, each to the one a screen says',
+  'apps/web/src/adapters/create-vault.ts#READY': 'whether a vault can be created now, one of a fixed set a screen turns into its own phrase',
+  'apps/web/src/adapters/create-vault.ts#OWED': 'a vault sent and not yet held by its committee, one of a fixed set a screen turns into its own phrase',
+  'apps/web/src/adapters/create-vault.ts#SERVICE': 'the service\'s addresses, sent and never shown',
+  'apps/web/src/adapters/vault-rows.ts#SERVICE': 'the service\'s address for a company\'s vaults, sent and never shown',
+  'apps/web/src/adapters/kept-sign-in.ts#KEPT': 'where the sign-in is kept in the tab\'s storage',
+  'apps/web/src/actions/create-vault.tsx#ASKING': 'which confirmation is being asked for, compared by the code',
 };
 
 /** The part of `CODES` naming declarations in files under `dir`. Each package's check holds its own entries to declarations it has. */

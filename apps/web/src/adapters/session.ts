@@ -1,6 +1,8 @@
 import { askWalletToSignIn, openWalletDialog, WalletClosed, type WalletDialog } from 'vaults-web-shared/wallet-sign-in.js';
 import { closeWalletFrame, mountWalletFrame, onWalletFrame, walletFrameShown, walletInThisPage, WALLET_FRAME_ALLOW } from 'vaults-web-shared/wallet-frame.js';
 import type { SealedAccount } from '../../../../src/core/types.js';
+import { keepSignIn } from './kept-sign-in.js';
+import { tabStorage } from './kept-skips.js';
 
 /*
  * The shared keyring, loaded after the service's first answer rather than
@@ -29,9 +31,11 @@ const keyring = () => import('vaults-web-shared/keyring.js');
  * THE SHARED KEYRING IS TOLD WHO SIGNED IN, AND FORGETS WHEN THEY GO. Creating
  * or opening a company is the keyring's work, and it saves a person's first
  * keys only under the account that holds the address they signed in as; so
- * the service's answer to the sign-in is handed to it as it came back. When
- * the person signs out, or the service says somebody else is signed in now,
- * the keyring forgets this tab's keys.
+ * the service's answer to the sign-in is handed to it as it came back, and
+ * who signed in and the address it was for are kept in this tab
+ * (`kept-sign-in.ts`), so a reload can hand the address back. When the person
+ * signs out, or the service says nobody or somebody else is signed in now,
+ * the keyring forgets this tab's keys and what was kept goes too.
  *
  * None of the service's or the shared code's words are handed on: a screen is
  * handed a reason, one of a fixed set, and says it in its own phrases.
@@ -155,7 +159,7 @@ export async function whoIsSignedIn(): Promise<WhoIsSignedIn> {
   let r = await ask(SERVICE.me);
   if (r !== null && r.status === 409 && r.body.code === SERVICE.anotherPerson) { prepared = null; r = await ask(SERVICE.me); }
   if (r === null) return { of: OF.unreachable };
-  if (r.status === 401) { prepared = null; (await keyring()).forgetLocally(); return { of: OF.nobody }; }
+  if (r.status === 401) { prepared = null; keepSignIn(tabStorage(), null); (await keyring()).forgetLocally(); return { of: OF.nobody }; }
   if (r.status === 409 && r.body.code === SERVICE.mixedRecords) return { of: OF.recordsApart };
   const person = r.status === 200 ? personFrom(r.body.user) : null;
   if (person === null) return { of: OF.unreachable };
@@ -277,7 +281,12 @@ export async function signIn(asking: Asking): Promise<SignedIn> {
     /* Whatever the keyring held for somebody else is dropped first, a company they left unfinished included. */
     const { currentUser, forgetLocally, signedInByAnotherScreen } = await keyring();
     if (currentUser()?.id !== person.id) forgetLocally();
-    try { signedInByAnotherScreen(answer.body); } catch { forgetLocally(); }
+    keepSignIn(tabStorage(), null);
+    try {
+      signedInByAnotherScreen(answer.body);
+      /* Kept only once the keyring has taken it, so what is kept is what the keyring holds. */
+      keepSignIn(tabStorage(), { personId: person.id, address: answer.body.address as string });
+    } catch { forgetLocally(); }
     return { of: OF.signedIn, person, firstTime: answer.body.created === true };
   } finally {
     /* However it ended, the account is put away: an ask that finished has closed it already, and a second close is not a second event. */
@@ -301,6 +310,7 @@ export type SignedOut = { of: typeof OF.signedOut } | { of: typeof OF.notConfirm
 export async function signOut(): Promise<SignedOut> {
   const r = await ask(SERVICE.signOut, SERVICE.post);
   prepared = null;
+  keepSignIn(tabStorage(), null);
   (await keyring()).forgetLocally();
   return r !== null && (r.status === 200 || r.status === 401) ? { of: OF.signedOut } : { of: OF.notConfirmed };
 }
