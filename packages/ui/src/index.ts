@@ -38,6 +38,7 @@ export {
   DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger,
 } from './components/dropdown-menu.js';
 export { Input } from './components/input.js';
+export { Item, ItemContent, ItemDescription, ItemTitle } from './components/item.js';
 export { Kbd, KbdGroup } from './components/kbd.js';
 export { Label } from './components/label.js';
 export { RadioGroup, RadioGroupItem } from './components/radio-group.js';

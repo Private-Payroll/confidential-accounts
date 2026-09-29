@@ -7,6 +7,7 @@ import {
 } from '@tanstack/react-table';
 import { Button } from 'vaults-ui/components/button';
 import { Checkbox } from 'vaults-ui/components/checkbox';
+import { ComingSoon } from 'vaults-ui/components/coming-soon';
 import { CountPill } from 'vaults-ui/components/section';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from 'vaults-ui/components/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from 'vaults-ui/components/table';
@@ -43,6 +44,21 @@ export interface DataTableFilter<T> {
   /** The tab's name, already in the person's language. */
   label: ReactNode;
   keeps: (row: T) => boolean;
+  soon?: never;
+}
+
+/**
+ * A filter not built yet: its tab is shown where it will be, disabled, with
+ * the Coming soon pill saying what it will be. It keeps no rows, has no count
+ * and can never be chosen.
+ */
+interface DataTableFilterSoon {
+  id: string;
+  /** The tab's name, already in the person's language. */
+  label: ReactNode;
+  /** What the filter will be, in a line or two, already in the person's language. */
+  soon: ReactNode;
+  keeps?: never;
 }
 
 export interface DataTableProps<T> {
@@ -52,12 +68,14 @@ export interface DataTableProps<T> {
   /** Each row's own id: a row chosen stays chosen as the rows change. */
   rowId: (row: T) => string;
   columns: readonly DataTableColumn<T>[];
-  /** The filters, as tabs above the table; the first is shown first. None, and there are no tabs. */
-  filters?: readonly DataTableFilter<T>[];
+  /** The filters, as tabs above the table; the first built one is shown first. None, and there are no tabs. */
+  filters?: readonly (DataTableFilter<T> | DataTableFilterSoon)[];
   /** What can be done with the table, at the end of the line above it. */
   actions?: ReactNode;
   /** What can be done with one row, at the end of the row. */
   rowActions?: (row: T) => ReactNode;
+  /** Given, pressing a row opens it: this is called with the row pressed. */
+  onRowOpen?: (row: T) => void;
   /** Given, rows can be chosen one by one or a page at a time, and this is called with the ids chosen, in the order listed. */
   onChosen?: (ids: readonly string[]) => void;
   /** How many rows a page of the table shows at first. */
@@ -75,6 +93,9 @@ export type DataTablePageSize = (typeof PAGE_SIZES)[keyof typeof PAGE_SIZES];
 
 /** The ids of the table's own columns, and the primitive's name for a box that is partly ticked. Compared by the code, never shown. */
 const DATA_TABLE = { choose: 'choose', rowActions: 'row-actions', someChosen: 'indeterminate' } as const;
+
+/** No filters: one list, so a table given none keeps the same rows, and the same page, each time it is drawn. */
+const NO_FILTERS: readonly never[] = [];
 
 const features = /* @__PURE__ */ tableFeatures({ rowPaginationFeature, rowSelectionFeature, paginatedRowModel: /* @__PURE__ */ createPaginatedRowModel() });
 
@@ -94,8 +115,13 @@ export function DataTable<T extends RowData>(props: DataTableProps<T>) {
   return <LoadedTable {...props} />;
 }
 
-function LoadedTable<T extends RowData>({ label, rows, rowId, columns, filters = [], actions, rowActions, onChosen, pageSize = 10, empty }: DataTableProps<T>) {
+/** Whether a filter is built: it keeps rows and can be chosen. */
+const isBuilt = <T,>(f: DataTableFilter<T> | DataTableFilterSoon): f is DataTableFilter<T> => f.keeps !== undefined;
+
+function LoadedTable<T extends RowData>({ label, rows, rowId, columns, filters: every = NO_FILTERS, actions, rowActions, onRowOpen, onChosen, pageSize = 10, empty }: DataTableProps<T>) {
   const t = useText();
+  /* Kept while the filters given are the same, so the rows shown, and the page they are on, are not made again on every draw. */
+  const filters = useMemo(() => every.filter(isBuilt), [every]);
   const [filter, setFilter] = useState<string | undefined>(filters[0]?.id);
   const [chosen, setChosen] = useState<RowSelectionState>({});
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize });
@@ -139,8 +165,9 @@ function LoadedTable<T extends RowData>({ label, rows, rowId, columns, filters =
 
   const endOf = (id: string): boolean => id === DATA_TABLE.rowActions || columns.find((c) => c.id === id)?.end === true;
   const column = (id: string) => columns.find((c) => c.id === id);
+  /* Below a tablet's width a cell wraps its words, so a line of a row fits a phone rather than scrolling sideways. */
   const placed = (id: string): string | undefined => cn(
-    endOf(id) && 'text-end', column(id)?.centred === true && 'text-center',
+    'whitespace-normal md:whitespace-nowrap', endOf(id) && 'text-end', column(id)?.centred === true && 'text-center',
     column(id)?.size === COLUMN_SIZE.wide && 'md:w-1/2', column(id)?.size === COLUMN_SIZE.narrow && 'md:w-1/8',
   ) || undefined;
   const spaced = columns.some((c) => c.size !== undefined);
@@ -151,17 +178,31 @@ function LoadedTable<T extends RowData>({ label, rows, rowId, columns, filters =
 
   return (
     <div className="flex flex-col gap-3" data-slot="data-table">
-      {filters.length === 0 && actions === undefined ? null : (
+      {every.length === 0 && actions === undefined ? null : (
         <div className="flex flex-wrap items-center justify-between gap-2" data-slot="data-table-bar">
-          {filters.length === 0 ? <span /> : (
+          {every.length === 0 ? <span /> : (
             <Tabs value={filter} onValueChange={setFilter}>
               <TabsList aria-label={label}>
-                {filters.map((f) => (
-                  <TabsTrigger key={f.id} value={f.id} data-filter={f.id}>
-                    {f.label}
-                    <CountPill count={rows.filter(f.keeps).length} />
-                  </TabsTrigger>
-                ))}
+                {every.map((f) => (isBuilt(f)
+                  ? (
+                    <TabsTrigger key={f.id} value={f.id} data-filter={f.id}>
+                      {f.label}
+                      <CountPill count={rows.filter(f.keeps).length} />
+                    </TabsTrigger>
+                  )
+                  /*
+                   * The tab, disabled, and its pill beside it rather than in it: the pill is a
+                   * button that can still be pressed to say what the filter will be, and a
+                   * tab holds nothing that can be pressed on its own.
+                   */
+                  : (
+                    <span key={f.id} className="inline-flex items-center" data-filter-soon={f.id}>
+                      <TabsTrigger value={f.id} disabled asChild data-filter={f.id}>
+                        <span className="cursor-default opacity-50 hover:text-muted-foreground">{f.label}</span>
+                      </TabsTrigger>
+                      <ComingSoon explanation={f.soon} />
+                    </span>
+                  )))}
               </TabsList>
             </Tabs>
           )}
@@ -170,8 +211,17 @@ function LoadedTable<T extends RowData>({ label, rows, rowId, columns, filters =
       )}
       {shown.length === 0 ? empty : (
         <div className="overflow-hidden rounded-lg border">
-          <Table aria-label={label} className={spaced ? 'md:table-fixed' : undefined} data-spaced={spaced ? '' : undefined}>
-            <TableHeader className="bg-muted">
+          {/*
+            * ON A PHONE, below a tablet's width, each row is drawn as a block,
+            * one line to a column, the column's heading at the start of the
+            * line and its entry at the end, so every column is still there and
+            * nothing scrolls sideways. The headings row is kept for a screen
+            * reader and not shown, and the heading beside each entry is hidden
+            * from a screen reader, which has the headings row. From a tablet up
+            * the table is drawn as a table.
+            */}
+          <Table aria-label={label} className={cn('max-md:block', spaced && 'md:table-fixed')} data-spaced={spaced ? '' : undefined}>
+            <TableHeader className="bg-muted max-md:sr-only">
               {table.getHeaderGroups().map((g) => (
                 <TableRow key={g.id}>
                   {g.headers.map((h) => (
@@ -182,14 +232,31 @@ function LoadedTable<T extends RowData>({ label, rows, rowId, columns, filters =
                 </TableRow>
               ))}
             </TableHeader>
-            <TableBody>
+            <TableBody className="max-md:block">
               {table.getRowModel().rows.map((r) => (
-                <TableRow key={r.id} data-selected={r.getIsSelected()} data-row={r.id}>
-                  {r.getAllCells().map((c) => (
-                    <TableCell key={c.id} className={placed(c.column.id)}>
-                      <FlexRender cell={c} />
-                    </TableCell>
-                  ))}
+                <TableRow
+                  key={r.id}
+                  data-selected={r.getIsSelected()}
+                  data-row={r.id}
+                  className={cn('max-md:flex max-md:flex-col max-md:py-2', onRowOpen !== undefined && 'cursor-pointer outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:ring-inset')}
+                  /* A row that opens is reached with the keyboard too, and opened with Enter or Space, as it is by a press. */
+                  tabIndex={onRowOpen === undefined ? undefined : 0}
+                  onClick={onRowOpen === undefined ? undefined : () => onRowOpen(r.original)}
+                  onKeyDown={onRowOpen === undefined ? undefined : (e) => {
+                    if (e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return;
+                    e.preventDefault();
+                    onRowOpen(r.original);
+                  }}
+                >
+                  {r.getAllCells().map((c) => {
+                    const heading = column(c.column.id)?.header;
+                    return (
+                      <TableCell key={c.id} className={cn(placed(c.column.id), 'max-md:flex max-md:items-center max-md:justify-between max-md:gap-4 max-md:py-1 max-md:text-end')}>
+                        {heading === undefined ? null : <span aria-hidden className="text-start font-medium text-muted-foreground md:hidden" data-slot="data-table-label">{heading}</span>}
+                        <div data-slot="data-table-value"><FlexRender cell={c} /></div>
+                      </TableCell>
+                    );
+                  })}
                 </TableRow>
               ))}
             </TableBody>

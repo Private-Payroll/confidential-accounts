@@ -57,7 +57,10 @@ export const SERVED_FROM = [
 // 672,000: on the Mac on 29 Sep the build plugin measured 669,922 and the test's own measure 671,451 for the same
 // build (the two measures differ); the budget holds the larger. The rise is the wallet's two new kit parts
 // (textarea, item) and the Apps catalogue's words, which load with every page until a screen's words load with it.
-export const FIRST_DOWNLOAD_BUDGET = 672_000;
+// 674,000: the test's own measure rose from 671,451 to 673,808 when the kit's index began to export its item (1,491
+// bytes, drawn in the panels of a person and of a proposal) and the kit's table began to stack its rows on a phone
+// and to open a row from the keyboard (866 bytes, most of it stylesheet).
+export const FIRST_DOWNLOAD_BUDGET = 674_000;
 
 /**
  * THE WORKERS THIS APPLICATION STARTS, by their entry's path from this folder,

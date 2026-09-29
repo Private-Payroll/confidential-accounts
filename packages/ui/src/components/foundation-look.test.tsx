@@ -271,6 +271,110 @@ describe('the table', () => {
   });
 });
 
+describe('the table, what it adds for a page', () => {
+  interface Row { id: string; name: string; done: boolean }
+  const rows: Row[] = [{ id: 'r1', name: 'One', done: true }, { id: 'r2', name: 'Two', done: false }];
+  const columns = [{ id: 'name', header: 'Name', cell: (r: Row) => r.name }];
+
+  /*
+   * RED WHEN: a filter not built yet is hidden, can be chosen, is counted or
+   * keeps rows, loses its Coming soon pill or what the pill says, is drawn
+   * other than as the kit's disabled tab or does not look disabled, holds the
+   * pill (a button inside a tab, which holds nothing that can be pressed on
+   * its own), or the table opens on it rather than on the first filter built.
+   */
+  it('shows a filter not built yet as a disabled tab with its Coming soon pill, never chosen', async () => {
+    const { container } = inKit(
+      <DataTable<Row> label="Things" rows={rows} rowId={(r) => r.id} columns={columns} empty={<span data-t="empty" />}
+        filters={[{ id: 'later', label: 'Later', soon: 'What later will be' }, { id: 'all', label: 'All', keeps: () => true }, { id: 'done', label: 'Done', keeps: (r) => r.done }]} />,
+    );
+    const tabs = all(container, '[data-slot=tabs-list] [data-filter]');
+    expect(tabs.map((t) => t.dataset.filter)).toEqual(['later', 'all', 'done']);
+    const later = tabs[0]!;
+    expect([later.dataset.slot, later.getAttribute('role'), later.hasAttribute('data-disabled'), later.tagName]).toEqual(['tabs-trigger', 'tab', true, 'SPAN']);
+    expect(later.textContent).toBe('Later');
+    expect(later.className.split(/\s+/)).toContain('opacity-50');
+    expect(q(later, 'button, [data-slot=coming-soon], [data-slot=count-pill]')).toBeNull();
+    expect(q(container, '[data-filter-soon=later] [data-slot=count-pill]')).toBeNull();
+    const pill = q(container, '[data-filter-soon=later] > [data-slot=coming-soon]')!;
+    expect([pill.tagName, pill.textContent, pill.previousElementSibling === later]).toEqual(['BUTTON', EN['kit.comingSoon.label'], true]);
+    await act(async () => { fireEvent.click(pill); });
+    expect(document.body.textContent).toContain('What later will be');
+    expect(q(container, '[data-filter=all]')!.getAttribute('aria-selected')).toBe('true');
+    expect(all(container, 'tbody tr').map((r) => r.dataset.row)).toEqual(['r1', 'r2']);
+    await act(async () => { fireEvent.mouseDown(later, { button: 0 }); });
+    expect(later.getAttribute('aria-selected')).toBe('false');
+    expect(all(container, 'tbody tr').map((r) => r.dataset.row)).toEqual(['r1', 'r2']);
+    expect(q(container, '[data-t=empty]')).toBeNull();
+  });
+
+  /*
+   * RED WHEN: pressing a row does not open it where the page asks, opens
+   * another, the row cannot be reached and opened with the keyboard (Enter or
+   * Space on the row itself), a key pressed inside the row opens it, or a
+   * table that does not ask draws its rows as pressable or reachable.
+   */
+  it('opens a row pressed, or chosen with the keyboard, only where the page asks', async () => {
+    const opened = vi.fn();
+    const { container } = inKit(<DataTable<Row> label="Things" rows={rows} rowId={(r) => r.id} columns={[...columns, { id: 'go', header: 'Go', cell: () => <button type="button" data-t="inside">x</button> }]} empty={null} onRowOpen={opened} />);
+    const row = q(container, 'tbody tr[data-row=r2]')!;
+    await act(async () => { fireEvent.click(q(row, 'td')!); });
+    expect(opened.mock.calls).toEqual([[rows[1]]]);
+    expect([row.className.includes('cursor-pointer'), row.getAttribute('tabindex')]).toEqual([true, '0']);
+    /* A row reached with the keyboard shows it is the one reached. */
+    expect(row.className.split(/\s+/)).toEqual(expect.arrayContaining(['focus-visible:ring-[3px]', 'focus-visible:ring-ring/50']));
+    await act(async () => { fireEvent.keyDown(row, { key: 'Enter' }); fireEvent.keyDown(row, { key: ' ' }); fireEvent.keyDown(row, { key: 'a' }); });
+    await act(async () => { fireEvent.keyDown(q(row, '[data-t=inside]')!, { key: 'Enter' }); });
+    expect(opened.mock.calls).toEqual([[rows[1]], [rows[1]], [rows[1]]]);
+    cleanup();
+    const plain = inKit(<DataTable<Row> label="Things" rows={rows} rowId={(r) => r.id} columns={columns} empty={null} />);
+    const still = q(plain.container, 'tbody tr[data-row=r2]')!;
+    expect([still.className.includes('cursor-pointer'), still.hasAttribute('tabindex')]).toEqual([false, false]);
+  });
+
+  /* RED WHEN: a table given no filters goes back to its first page whenever the page around it is drawn again, as it is when a panel opens. */
+  it('keeps its page when drawn again with the same rows', async () => {
+    const many: Row[] = Array.from({ length: 12 }, (_, i) => ({ id: `m${i + 1}`, name: `M ${i + 1}`, done: false }));
+    const draw = () => <KitProvider languages={LANGUAGES} pick="en"><DataTable<Row> label="Things" rows={many} rowId={(r) => r.id} columns={[...columns]} empty={null} pageSize={5} /></KitProvider>;
+    const view = render(draw());
+    await act(async () => { fireEvent.click(q(view.container, '[data-action=next-page]')!); });
+    expect(q(view.container, '[data-page]')!.textContent).toBe('Page 2 of 3');
+    view.rerender(draw());
+    expect(q(view.container, '[data-page]')!.textContent).toBe('Page 2 of 3');
+    expect(all(view.container, 'tbody tr')[0]!.dataset.row).toBe('m6');
+  });
+
+  /*
+   * RED WHEN: on a phone a row is not drawn as a block of lines, one to a
+   * column with the column's heading beside its entry, so the table scrolls
+   * sideways there; the headings row is shown on a phone or taken from a
+   * screen reader; a cell keeps its words on one line on a phone; or from a
+   * tablet up the table is not drawn as a table with its words on one line.
+   */
+  it('stacks each row on a phone, a line to a column with its heading, and is a table from a tablet up', () => {
+    const { container } = inKit(<DataTable<Row> label="Things" rows={rows} rowId={(r) => r.id} columns={[...columns, { id: 'more', header: <b>More</b>, cell: () => 'x' }]} empty={null} />);
+    const classes = (e: Element) => e.className.split(/\s+/);
+    expect(classes(q(container, 'table')!)).toContain('max-md:block');
+    expect(classes(q(container, 'thead')!)).toEqual(expect.arrayContaining(['max-md:sr-only']));
+    expect(classes(q(container, 'thead')!)).not.toContain('sr-only');
+    expect(classes(q(container, 'tbody')!)).toContain('max-md:block');
+    for (const row of all(container, 'tbody tr')) expect(classes(row), row.dataset.row).toEqual(expect.arrayContaining(['max-md:flex', 'max-md:flex-col']));
+    expect(all(container, 'tbody tr[data-row=r1] td').map((d) => [q(d, ':scope > [data-slot=data-table-label]')?.innerHTML, q(d, ':scope > [data-slot=data-table-value]')?.textContent])).toEqual([['Name', 'One'], ['<b>More</b>', 'x']]);
+    for (const label of all(container, '[data-slot=data-table-label]')) {
+      expect([label.getAttribute('aria-hidden'), classes(label).includes('md:hidden'), classes(label).includes('hidden')]).toEqual(['true', true, false]);
+    }
+    for (const cell of all(container, 'tbody td')) {
+      expect(classes(cell)).toEqual(expect.arrayContaining(['max-md:flex', 'max-md:justify-between']));
+    }
+    for (const cell of all(container, 'th, td')) {
+      expect(classes(cell), cell.textContent ?? '').toEqual(expect.arrayContaining(['whitespace-normal', 'md:whitespace-nowrap']));
+      expect(classes(cell), cell.textContent ?? '').not.toContain('whitespace-nowrap');
+      expect(classes(cell).filter((c) => !c.startsWith('max-md:') && /^(?:block|flex|hidden|sr-only)$/.test(c)), cell.textContent ?? '').toEqual([]);
+    }
+  });
+});
+
+
 describe('loading states', () => {
   /**
    * THE KIT'S FILES THAT DRAW NOTHING A PAGE WAITS TO READ, each with why. Every
