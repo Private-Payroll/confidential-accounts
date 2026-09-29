@@ -72,11 +72,10 @@
  */
 import type {
   Ledger, LedgerAddress, LedgerRecord, TxRef, ProofSystem, Circuit,
-  StateView, StateChange, LedgerStatus, SignerRef, AccountOpening,
+  StateChange, LedgerStatus, SignerRef, AccountOpening,
   SealedStateAt, PaymentsAmong,
 } from '../core/ledger.js';
 import { viewDigestOf } from '../core/ledger.js';
-import type { AssetId } from '../core/assets.js';
 import { assetIdBytes, NO_ASSET } from '../core/assets.js';
 import { MidnightCommitments } from './commitments.js';
 import type { Sealed, Hex } from '../core/crypto.js';
@@ -1851,17 +1850,6 @@ export class MidnightLedger implements Ledger {
     return address;
   }
 
-  /*
-   * `assetKeyOf`, without the await.
-   *
-   * `MidnightCommitments` is the one place the generated pure circuits are
-   * wrapped for synchronous use, and reusing it here is what keeps the count of
-   * definitions at one (decision 0004).
-   */
-  private assetKeyOfSync(asset: AssetId, assetBlinding: Hex): Hex {
-    return MidnightCommitments.assetKey(asset, assetBlinding);
-  }
-
 
 
   /*
@@ -2636,12 +2624,12 @@ export class MidnightProofSystem implements ProofSystem {
  * **WHICH IS WHY THE COMPARISON IS OVER THE VALUE AND NOT THE LABEL** —
  * `SC6b`'s rule stated concretely: compare the LIVE AUTHORITY against the
  * intended END STATE, not against a counter. `ReplaceAuthority` replaces
- * WHOLESALE (`semantics.rs:1488-1490`), so *did my change land* is a whole-value
+ * WHOLESALE (`midnight-ledger` at `ledger-9.1.0.0-rc.3`, `ledger/src/semantics.rs:1566-1567`), so *did my change land* is a whole-value
  * equality test and not a diff.
  *
  * **AND THE COUNTER IS DELIBERATELY EXCLUDED.** It increments once per applied
- * update (`semantics.rs:1484-1485`), so a byte-identical resubmission hits
- * `ReplayCounterMismatch` — and that error carries only the address (`:1482`)
+ * update (`semantics.rs:1562-1563`), so a byte-identical resubmission hits
+ * `ReplayCounterMismatch` — and that error carries only the address (`:1559-1560`)
  * and cannot say whose update landed. Comparing counters would make a settled
  * contract look unsettled for ever. **MEASURED: the counter IS part of the
  * serialized value (`0` and `7` differ in bytes), so excluding it is a decision
@@ -2674,12 +2662,13 @@ export class MidnightProofSystem implements ProofSystem {
  *
  * **`anyone` EXISTS BECAUSE `S61`'s money-safety pass CAUGHT THIS ROUND
  * REPORTING THE MOST DANGEROUS VALUE ON CHAIN WITH THE NAME OF THE SAFEST.**
- * A threshold of ZERO is not *unmaintainable*: `verify.rs:1789` is
+ * A threshold of ZERO is not *unmaintainable*: `verify.rs:1857` is
  * `if self.signatures.len() < authority.threshold as usize`, and it is the ONLY
- * FUNCTIONAL read of `threshold` in that crate at 8.2 — so at `0`, `0 < 0` is false
+ * FUNCTIONAL read of `threshold` in that crate (at 8.2, and still at
+ * `ledger-9.1.0.0-rc.3`) — so at `0`, `0 < 0` is false
  * and a maintenance update carrying NO SIGNATURES AT ALL is well-formed.
  * **Anybody in the world can rewrite that contract's rules.**
- * *(This paragraph used to continue "and the verification loop at `:1775` never
+ * *(This paragraph used to continue "and the verification loop at `:1775` (8.2; `:1843-1856` at ledger 9) never
  * runs, so committee membership is never consulted either". **That is FALSE and was
  * measured false on ledger 9 by `S74`'s platform fact-check:** the loop iterates
  * the SIGNATURES, not the threshold, so at threshold zero an out-of-range seat and a
@@ -2713,15 +2702,16 @@ export interface OnChainAuthority {
    * attached at three seats holding the same key, satisfies `[K,K,K]` at threshold
    * 3 and the transaction is WELL-FORMED.** `MAINTENANCE-INSTRUCTION-CHECK.command`
    * variant (b) is where a person re-takes that measurement.
-   * `committee` is a plain `Vec<VerifyingKey>` (`state.rs:701`) and nothing
+   * `committee` is a plain `Vec<ContractMaintenanceVerifyingKey>`, each a Schnorr
+   * or an ECDSA key (`onchain-state/src/state.rs:700`, `:724-728`), and nothing
    * anywhere requires its entries to be distinct; `data_to_sign`
-   * (`structure.rs:2737-2747`) covers address, updates and counter and NOT the
+   * (`ledger/src/structure.rs:2997-3005`, `:3020-3022`) covers address, updates and counter and NOT the
    * signer index, so ONE signature value is valid at EVERY index whose slot
    * holds that key. A committee of `[K, K, K]` at threshold 3 is therefore
    * satisfied by the single holder of `K` signing once and attaching it at
    * indices 0, 1 and 2 — strictly ascending, so the ordering guard at
-   * `verify.rs:1757` passes; each verifies against its own slot at `:1782`; and
-   * `len() == 3 >= 3` at `:1789`. **`requireMaintenanceAuthority`
+   * `verify.rs:1824-1830` passes; each verifies against its own slot at `:1843-1856`;
+   * and `len() == 3 >= 3` at `:1857`. **`requireMaintenanceAuthority`
    * (`partial-contract.ts:174-205`) checks the committee's SIZE and the
    * threshold's RANGE and does not check for duplicates.** So this is read back
    * and reported rather than assumed away.
@@ -3075,10 +3065,10 @@ export function compareAuthority(
  * available and it is not a measurement. `docs/corrections.md`, 1 Sep, twice, for exactly
  * this shape.
  *
- * **AND WHERE THIS BLOCK CITES RUST IT IS CITING LEDGER `8.2.0-rc.1`** — the vendored
- * `midnight-src/midnight-ledger/` tree (`Cargo.toml:4`), which is NOT what the chain runs.
- * Every such citation was checked against the ledger-9 measurement standing beside it and
- * they agree.
+ * **AND WHERE THIS BLOCK CITES RUST IT CITES `midnight-ledger` AT `ledger-9.1.0.0-rc.3`**,
+ * whose `ledger-wasm` crate is `1.0.0-rc.3` (`ledger-wasm/Cargo.toml:3`), the version of
+ * the package measured here. It used to cite `8.2.0-rc.1`; every citation was re-read at
+ * the ledger-9 tag and each still agrees with the ledger-9 measurement beside it.
  *
  * **THE MEASUREMENTS THAT CHANGED THE DESIGN, RATHER THAN CONFIRMING IT:**
  *
@@ -3102,7 +3092,8 @@ export function compareAuthority(
  *     Measured: an update built against counter 1 for a contract sitting at
  *     counter 0 is WELL-FORMED, and fails at APPLY with *"the signed counter …
  *     did not match the expected one"* as a `partialSuccess` — on chain, with the
- *     fee spent (`semantics.rs:1481`, and `2.2`'s note that maintenance is
+ *     fee spent (`semantics.rs:1559-1560`; maintenance is skipped in the guaranteed
+ *     segment at `:1552`, and `2.2`'s note that maintenance is
  *     fallible-segment only). **Rule 14: no screen and no door may read a
  *     well-formed verdict as *this will land*.**
  *   - **AND A NEGATIVE THRESHOLD IS NOT REFUSED — IT WRAPS.** Measured: passing `-1` to
@@ -3112,9 +3103,11 @@ export function compareAuthority(
  *     well as a value below one, which is why that check tests both and not just the sign.
  *   - **A THRESHOLD ABOVE THE COMMITTEE SIZE INSTALLS.** Measured: replacing a
  *     1-of-1 with a 2-of-1 is WELL-FORMED and applies. The ledger validates
- *     nothing about a new authority except its counter
- *     (`verify.rs:1749-1798`; apply is `cstate.maintenance_authority = auth`,
- *     `semantics.rs:1488-1490`). **Every refusal below is ours or it is nobody's
+ *     nothing about a new authority except its counter (`verify.rs:1831-1842`)
+ *     and, at apply, its serialized size against `max_contract_metadata_size`
+ *     (`semantics.rs:1632-1653`, `verify.rs:384-391`; 50,000 bytes by default,
+ *     `structure.rs:1284`); apply is `cstate.maintenance_authority = auth.clone()`,
+ *     `semantics.rs:1566-1567`. Threshold against committee size is not checked. **Every refusal below is ours or it is nobody's
  *     — rule 27, and this block is the code that makes it not-nobody's.**
  *
  * The refusals of the authority VALUE itself - the threshold, the committee,
@@ -3210,7 +3203,7 @@ export type MaintenancePlan =
  *
  * **THE NO-OP IS NOT A RETRY AND THAT IS THE POINT OF THE ROW.** Resubmitting a
  * byte-identical signed update after it landed hits `ReplayCounterMismatch`
- * (`semantics.rs:1481-1485`), and that error carries only the address (`:1482`) —
+ * (`semantics.rs:1559-1563`), and that error carries only the address (`:1560`) —
  * it cannot say whose update landed. So *did my change land* is asked of the LIVE
  * AUTHORITY against the INTENDED END STATE, whole-value, before anything is
  * built. Equal: do nothing, and doing nothing is the correct outcome rather than
@@ -3308,7 +3301,8 @@ export function planAuthorityReplacement(
  * correct — `ReplaceAuthority` replaces wholesale, so the VALUE is the
  * settlement, and comparing counters would make every settled contract look
  * unsettled for ever. **But the counter can never be rolled back or reset**
- * (`semantics.rs:1481`, `:1484-1485`; `verify.rs:1771`), which makes it the one
+ * (`semantics.rs:1559-1563`; `verify.rs:1831-1842`), below `u32::MAX`, where the
+ * `saturating_add` stops it advancing, which makes it the one
  * monotonic witness the chain offers. Without an expected value, `agree` cannot
  * tell *we installed this* from *somebody replaced it, did something else in the
  * same update, and put an identical authority back* — and one `MaintenanceUpdate`
@@ -3522,8 +3516,8 @@ export interface BuiltMaintenanceInstruction {
  * **THE COMMITTEE THAT SIGNS IS THE ONE ON CHAIN NOW, NOT THE ONE BEING
  * INSTALLED**, and this is the mistake worth naming because it reads backwards.
  * A 2-of-3 being replaced by a 5-of-7 is signed by two of the OLD three: the
- * ledger verifies each signature against the CURRENT committee (`verify.rs:1782`)
- * and counts against the CURRENT threshold (`:1789`). `signWith` and
+ * ledger verifies each signature against the CURRENT committee (`verify.rs:1843-1856`)
+ * and counts against the CURRENT threshold (`:1857-1863`). `signWith` and
  * `signaturesRequired` are therefore taken off the chain read and never off the
  * intended value.
  *
@@ -3720,18 +3714,24 @@ export function signatureProgress(
  * key itself (`ledger-v9.d.ts:816`, `:822`, `:752`). One query answers both
  * questions.
  *
- * **AND IT SEES ONLY THE LATEST VERSION OF EACH KEY, WHICH IS A LIMIT OF THE
- * RUNTIME AND IS SAID HERE RATHER THAN DISCOVERED.** `ledger-v9.d.ts:742-745`:
- * a `ContractOperation` holds verifier keys *"potentially for different versions of
- * the proving system"* and **"Only the latest available version is exposed to this
- * API."** Versions are the closed pair `'v3' | 'v4'` (`:2239`). So a contract can
- * hold a key at a version this read cannot reach, and nothing here can say whether
- * such a key could verify a call — **the ledger-9 apply path is not vendored, the
- * same limit `docs/scope-the-maintenance-list.md` 2.6 records for `IrRemove` and
- * `IrInsert`.** And the version cannot be stated on any evidence this project
- * holds: the node's `transactionVersion` and this enum's `'v4'` are different
- * numbering schemes that happen to share a digit, so the coincidence licenses
- * nothing. **The
+ * **AND IT SEES ONE KEY PER OPERATION, WHICH IS A LIMIT OF THE RUNTIME'S GETTER
+ * AND IS SAID HERE RATHER THAN DISCOVERED.** A `ContractOperation` holds up to two
+ * verifier keys, one per proving-system version (`midnight-ledger` at
+ * `ledger-9.1.0.0-rc.3`, `onchain-state/src/state.rs:892-899`), and `verifierKey`
+ * returns the newer slot when it is filled and the older one otherwise
+ * (`onchain-runtime-wasm/src/state.rs:501-510`; `ledger-v9.d.ts:742-745` says *"Only
+ * the latest available version is exposed to this API."*). Every key this product
+ * compiles is the OLDER version (its file starts `midnight:verifier-key[v6]`, and
+ * that key is stored in the older slot, `ledger/src/structure.rs:2861-2884`), so today
+ * the getter returns the only key there is, and both ways an authority holder could
+ * change it show up here: inserting a newer-version key, which the getter then
+ * returns, or removing and re-inserting the older one, since inserting over it is
+ * refused (`ledger/src/semantics.rs:1592-1597`). **That stops being true the day a
+ * newer-version key is inserted BESIDE an older one:** a call is checked against the
+ * key of its own proof's version (`ledger/src/structure.rs:455-509`), so the older key
+ * goes on verifying calls and this read no longer sees it. The whole operation, both
+ * slots and its IR, is `operation(name).serialize()`
+ * (`onchain-runtime-wasm/src/state.rs:524-526`). **The
  * `agree` sentence below says what it cannot see rather than claiming more than
  * it looked at.**
  *

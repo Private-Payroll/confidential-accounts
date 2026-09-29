@@ -39,8 +39,8 @@
  *     the runtime does not override it.
  *  5. `midnight-node` `pallets/midnight/src/lib.rs:618` prices a transaction
  *     by scaling the largest of the ledger's five normalised dimensions
- *     (`midnight-ledger@crate-ledger-9.1.0.0-rc.3`,
- *     `ledger/src/versions/common/mod.rs:1165`, a `max`) by
+ *     (`midnight-node@d9729c13`, `ledger/src/versions/common/mod.rs:1165`, a
+ *     `max`; that file is the node's own ledger bridge, not `midnight-ledger`) by
  *     `BlockWeights::get().max_block.ref_time()` — the WHOLE block. So a
  *     transaction's weight fraction IS its worst dimension's fraction of that
  *     dimension's ledger limit, and the per-extrinsic weight budget maps back

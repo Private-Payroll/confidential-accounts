@@ -51,10 +51,10 @@
  *     one is refused by the chain itself as
  *     `MalformedTransaction::VerifierKeyNotPresent` — the ledger looks the
  *     entry point up in the deployed operations map and it is not there
- *     (`midnight-src/midnight-ledger/ledger/src/verify.rs:104-119`).
+ *     (`midnight-ledger` at `ledger-9.1.0.0-rc.3`, `ledger/src/verify.rs:109-124`).
  *   - They do not arrive later in the same contract. A maintenance update
  *     could insert them (`SingleUpdate::VerifierKeyInsert`,
- *     `ledger/src/structure.rs:2692-2696`), and that path is rejected as a
+ *     `ledger/src/structure.rs:2951-2968`), and that path is rejected as a
  *     design: whoever may sign a maintenance update may change which proofs
  *     the contract accepts. They arrive in a NEW deployment.
  */

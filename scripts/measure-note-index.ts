@@ -43,7 +43,7 @@
  * indexer never assigns the field.** `extract_contract_zswap_state` builds
  * `ZswapStateV9::new()` and then replaces **only** `coin_coms` with
  * `ledger_state.zswap.filter(&[address])`
- * (`midnight-src/midnight-indexer/indexer-common/src/domain/ledger/ledger_state.rs:909-919`),
+ * (`midnight-indexer` `v4.4.0-pre-alpha.16`, `indexer-common/src/domain/ledger/ledger_state.rs:757-767`),
  * and `State::default()` has `first_free: 0`
  * (`midnight-src/midnight-ledger/zswap/src/ledger.rs:51-56`). `filter` returns
  * a `MerkleTree` rather than a `State` (`:211-236`), so there is no count for
@@ -1412,7 +1412,7 @@ async function stageThree(v: VaultSubject): Promise<Attempt> {
        * inclusive, and the indexer passes the argument straight into
        * `MerkleTreeCollapsedUpdate::new`
        * (`indexer-api/src/infra/api/v4/query.rs:106-131`,
-       * `ledger_state.rs:924-947`). So the range B reports as [start, end)
+       * `ledger_state.rs:772-795`). So the range B reports as [start, end)
        * is asked for as (start, end - 1) — AND the unconverted form is asked
        * for too, immediately below, because a reader should not have to take
        * this paragraph on trust.
@@ -1682,7 +1682,7 @@ async function stageThree(v: VaultSubject): Promise<Attempt> {
          * under a whitelist this contract is not on
          * (`zswap/src/ledger.rs:118-120`, `:159-161`, `:167-179`). Today the
          * indexer applies with `whitelist: None`
-         * (`indexer-common/src/domain/ledger/ledger_state.rs:540`, `:624`) —
+         * (`indexer-common/src/domain/ledger/ledger_state.rs:396`, `:476`) —
          * **a default in somebody else's repository, which nothing here reads
          * or pins.** A positive control would close it, and a positive control
          * is the very thing `C244` is trying to obtain.
@@ -1730,7 +1730,8 @@ async function stageThree(v: VaultSubject): Promise<Attempt> {
         say(`     ${B}WHAT WOULD CLOSE IT, AND IT IS ONE ACCESSOR:${O} ${D}the Rust has${O}`);
         say(`     ${D}MerkleTree::iter_aux(), which yields (index, (hash, contract address)),${O}`);
         say(`     ${D}and MerkleTree::index(i), which returns None for a collapsed or stubbed${O}`);
-        say(`     ${D}leaf and Some for a retained one (merkle_tree.rs:1154-1183, :770-786).${O}`);
+        say(`     ${D}leaf and Some for a retained one (merkle_tree.rs:1169-1184, :1150-1152${O}`);
+        say(`     ${D}and :778-800, midnight-ledger at ledger-9.1.0.0-rc.3).${O}`);
         say(`     ${D}NEITHER IS EXPOSED TO JS. docs/foundation-divergences.md entry 11 is${O}`);
         say(`     ${D}the row, and this is the second run to arrive at the same door.${O}`);
       }

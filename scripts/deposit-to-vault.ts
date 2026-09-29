@@ -20,7 +20,7 @@
  *
  * **AN OUTPUT ADDRESSED TO A CONTRACT CARRIES NO CIPHERTEXT** — `newContractOwned`
  * passes `None` where a user-addressed output passes a coin ciphertext
- * (`midnight-src/midnight-ledger/zswap/src/construct.rs:297-304`), which is
+ * (`midnight-ledger` `ledger-9.1.0.0-rc.3`, `zswap/src/construct.rs:297-304`), which is
  * `V-111`'s true half; it is a `receiveShielded` output rather than a mint, and
  * naming the wrong mechanism for the right consequence is how a paraphrase
  * starts. So nothing on chain says what the vault now holds beyond one
@@ -95,9 +95,9 @@
  *
  * `per_tx_cost_reserve` counts Zswap items off the **contract's effects** —
  * `claimed_nullifiers` and `claimed_shielded_receives`,
- * `midnight-src/midnight-ledger/ledger/src/construct.rs:898-905`. The enforcing
- * `validation_cost` counts them off the **balanced offer**,
- * `structure.rs:1879-1888`. `deposit` claims a receive, so the Pedersen term
+ * `midnight-ledger` `ledger-9.1.0.0-rc.3`, `ledger/src/construct.rs:896-907`. The
+ * enforcing `validation_cost` counts them off the **balanced offer**,
+ * `ledger/src/structure.rs:1983-1998`. `deposit` claims a receive, so the Pedersen term
  * `V-176` measured does get charged here — **but the coin the WALLET spends to
  * fund the created output is claimed by no circuit, so the reserve cannot see
  * it, and neither can it see a shielded change output if the deposit is smaller

@@ -119,7 +119,7 @@ describe('a vault driven by the client\'s own note pool', () => {
    *     model of the ledger's arithmetic**, in the sense `CLAUDE.md` warns
    *     about, and it is why that test asserts on the DECLARED EFFECTS —
    *     `unshieldedOutputs`, which is what the ledger actually subtracts
-   *     (`semantics.rs:1408-1435`) — and not on any balance.
+   *     (`midnight-ledger` `ledger-9.1.0.0-rc.3`, `ledger/src/semantics.rs:1462-1490`) — and not on any balance.
    *
    * **THE SIMULATOR STILL HAS THE HOLE**, and it stays open: nothing here
    * fixes `AccountSimulator`, and a test that asked a balance question through

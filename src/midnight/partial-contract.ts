@@ -55,15 +55,19 @@
  *   EVERY call dies there — deferred or not — with an error that reads as key
  *   corruption.
  *
- * What the protocol itself says, also from source: a partial operations map is
- * a supported state, not a loophole. `ContractDeploy::well_formed` checks
- * balance-zero and charged-state consistency and nothing about which
- * operations exist (`midnight-src/midnight-ledger/ledger/src/verify.rs:
- * 1707-1730`); the operation set is deliberately mutable after deploy
- * (`SingleUpdate::VerifierKeyInsert`/`Remove`, `structure.rs:2692-2696`); and
- * a call to an operation the contract does not hold is refused by name —
+ * What the protocol itself says, also from source (`midnight-ledger` at
+ * `ledger-9.1.0.0-rc.3`): a partial operations map is a supported state, not a
+ * loophole. `ContractDeploy::well_formed` checks that every operation it does
+ * carry has a verifier key, that the starting authority's counter is zero,
+ * that the balance is zero, that the charged state is consistent, and that no
+ * entry point or authority exceeds the metadata size limit, and nothing about
+ * WHICH operations exist (`ledger/src/verify.rs:1754-1798`, with `:401-440`
+ * and `:384-399`); the operation set is deliberately mutable after deploy
+ * (`SingleUpdate::VerifierKeyInsert`/`VerifierKeyRemove`, and at this version
+ * `IrInsert`/`IrRemove` too, `ledger/src/structure.rs:2951-2968`); and a call
+ * to an operation the contract does not hold is refused by name —
  * `MalformedTransaction::VerifierKeyNotPresent { address, operation }`
- * (`verify.rs:104-119`). A contract IS its operations map.
+ * (`ledger/src/verify.rs:109-124`). A contract IS its operations map.
  *
  * So this module builds the deployment the decision describes — the contract
  * state carrying exactly the deployed operations `src/midnight/deferral.ts`
@@ -102,7 +106,9 @@ import {
 
 /**
  * A signing or verifying key as the runtime structures it: `{ tag, value }`,
- * the tag naming the signature scheme (today `'schnorr'`). Structural rather
+ * the tag naming the signature scheme: `'schnorr'` for every key this product
+ * makes, while the ledger's committee also admits `'ecdsa'` (`midnight-ledger` at
+ * `ledger-9.1.0.0-rc.3`, `onchain-state/src/state.rs:724-728`). Structural rather
  * than imported so this boundary states what it relies on.
  */
 export interface TaggedKey {
@@ -123,7 +129,7 @@ export interface TaggedKey {
  *                     exactly one key. The ledger verifies each signature
  *                     against the committee key its index names and refuses
  *                     below the threshold with `ThresholdMissed`
- *                     (`ledger/src/verify.rs:1775-1795`).
+ *                     (`ledger/src/verify.rs:1843-1864`).
  *   'single-key'      one key, DELIBERATELY, as a recorded temporary state.
  *                     `temporary.fixedBy` names the round that replaces it —
  *                     required, so the record exists the day the state does.

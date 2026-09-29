@@ -81,8 +81,9 @@ export function authorityValueRefusals(
 
   /* FIRST AND IT MUST STAY FIRST. MEASURED on ledger 9: a contract at
    * threshold 0 accepts a maintenance update carrying NO SIGNATURES AT ALL, and
-   * `wellFormed` returns cleanly. `verify.rs:1789` at LEDGER 8.2 — `signatures.len()
-   * < threshold` — is the only functional read of `threshold` in that crate, so
+   * `wellFormed` returns cleanly. `ledger/src/verify.rs:1857` at `ledger-9.1.0.0-rc.3`
+   * (it was `:1789` at 8.2) — `signatures.len() < threshold` — is the only functional
+   * read of `threshold` in that crate, so
    * `0 < 0` is false. **It is NOT that membership goes unchecked: measured on ledger
    * 9, a signature at an out-of-range seat is still refused at threshold zero and so
    * is a wrong one at a valid seat. What is missing is any REQUIREMENT to attach
@@ -193,7 +194,9 @@ export interface AuthorityReplacementPrimitives {
  * through no other.
  *
  * **WHY IT HAS TO BE ONE PLACE.** The ledger checks nothing about the authority
- * a replacement installs except its counter, and it applies the new value whole.
+ * a replacement installs except its counter and its serialized size (at most
+ * `max_contract_metadata_size`, `midnight-ledger` `ledger-9.1.0.0-rc.3`,
+ * `ledger/src/semantics.rs:1632-1653`), and it applies the new value whole.
  * There is no instruction that removes one member: removing a member IS a
  * replacement, so a replacement with one field wrong is how a committee reaches
  * a threshold of zero, which anybody at all can then satisfy with no signature.

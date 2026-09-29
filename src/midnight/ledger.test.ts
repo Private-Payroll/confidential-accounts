@@ -785,9 +785,9 @@ describe('MidnightLedger: the rest of the round', () => {
     const { ledger, calls } = harness({ openProposals: [] });
     await ledger.propose('acct', PAYLOAD_HASH, CHANGE, BY, MidnightCommitments.noVault());
     expect(calls).toHaveLength(1);
-    expect(calls[0].circuit).toBe('propose');
-    expect(calls[0].args).toHaveLength(7);
-    expect(argHex(calls[0].args[0])).toBe(PAYLOAD_HASH);
+    expect(calls[0]!.circuit).toBe('propose');
+    expect(calls[0]!.args).toHaveLength(7);
+    expect(argHex(calls[0]!.args[0])).toBe(PAYLOAD_HASH);
     /*
      * S11: one merged circuit, so the run's four slots and the discriminator
      * travel too. `isRun` is false and the fillers are zero — the branch that
@@ -795,12 +795,12 @@ describe('MidnightLedger: the rest of the round', () => {
      * path already used. The vault sentinel is still asserted EXPLICITLY:
      * the point is which scope, not that some scope arrived.
      */
-    expect(argHex(calls[0].args[1])).toBe('00'.repeat(32));
-    expect(calls[0].args[2]).toBe(0n);
-    expect(calls[0].args[3]).toBe(0n);
-    expect(calls[0].args[4]).toBe(0n);
-    expect(calls[0].args[5]).toBe(false);
-    expect(argHex(calls[0].args[6])).toBe(toHex(pureCircuits.noVault()));
+    expect(argHex(calls[0]!.args[1])).toBe('00'.repeat(32));
+    expect(calls[0]!.args[2]).toBe(0n);
+    expect(calls[0]!.args[3]).toBe(0n);
+    expect(calls[0]!.args[4]).toBe(0n);
+    expect(calls[0]!.args[5]).toBe(false);
+    expect(argHex(calls[0]!.args[6])).toBe(toHex(pureCircuits.noVault()));
   });
 
   /*
@@ -859,12 +859,12 @@ describe('MidnightLedger: the rest of the round', () => {
     const { ledger, staged } = harness({ openProposals: [] });
     await ledger.propose('acct', PAYLOAD_HASH, CHANGE, BY, MidnightCommitments.noVault());
     expect(staged).toHaveLength(1);
-    expect(staged[0].value.changeAmount).toBe(20_000n);
+    expect(staged[0]!.value.changeAmount).toBe(20_000n);
     // Which asset leaves, because since M-125 that is part of what the signers
     // approve rather than something the executor picks.
-    expect(staged[0].value.assetId).toEqual(assetIdBytes(ASSET));
+    expect(staged[0]!.value.assetId).toEqual(assetIdBytes(ASSET));
     // The proposer's salt, which execute must reuse or nothing settles.
-    expect(staged[0].value.proposalSalt).toBeInstanceOf(Uint8Array);
+    expect(staged[0]!.value.proposalSalt).toBeInstanceOf(Uint8Array);
   });
 
   /*
@@ -909,9 +909,9 @@ describe('MidnightLedger: the rest of the round', () => {
      */
     const { ledger, calls } = harness({});
     await ledger.approve('acct', PROPOSAL_ID, BY);
-    expect(calls[0].circuit).toBe('approve');
-    expect(calls[0].args).toHaveLength(1);
-    expect(argHex(calls[0].args[0])).toBe(PROPOSAL_ID);
+    expect(calls[0]!.circuit).toBe('approve');
+    expect(calls[0]!.args).toHaveLength(1);
+    expect(argHex(calls[0]!.args[0])).toBe(PROPOSAL_ID);
   });
 
   it('approve refuses when that proposal is not open', async () => {
@@ -928,8 +928,8 @@ describe('MidnightLedger: the rest of the round', () => {
       ],
     });
     await ledger.cancel('acct', PROPOSAL_ID, BY);
-    expect(calls[0].circuit).toBe('cancel');
-    expect(argHex(calls[0].args[0])).toBe(PROPOSAL_ID);
+    expect(calls[0]!.circuit).toBe('cancel');
+    expect(argHex(calls[0]!.args[0])).toBe(PROPOSAL_ID);
     // The other proposal is untouched: there is no round to rotate, so nobody
     // else's approvals are burned.
     expect((await ledger.status('acct'))?.openProposals.map(p => p.id)).toEqual([other]);
@@ -1196,17 +1196,17 @@ describe('V-73: a payroll run, raised and swept through the client', () => {
 
     expect(calls).toHaveLength(1);
     /* S11: the run travels through the MERGED `propose`, `isRun` true. */
-    expect(calls[0].circuit).toBe('propose');
-    expect(calls[0].args).toHaveLength(7);
+    expect(calls[0]!.circuit).toBe('propose');
+    expect(calls[0]!.args).toHaveLength(7);
     /* The opaque payload slot is a filler the run branch never reads. */
-    expect(argHex(calls[0].args[0])).toBe('00'.repeat(32));
-    expect(argHex(calls[0].args[1])).toBe(RUN.root);
-    expect(calls[0].args[2]).toBe(50n);
-    expect(calls[0].args[3]).toBe(RUN.opensAt);
-    expect(calls[0].args[4]).toBe(RUN.closesAt);
-    expect(calls[0].args[5]).toBe(true);
-    expect(argHex(calls[0].args[6])).toBe(RUN.vault);
-    expect(argHex(calls[0].args[6])).not.toBe(toHex(pureCircuits.noVault()));
+    expect(argHex(calls[0]!.args[0])).toBe('00'.repeat(32));
+    expect(argHex(calls[0]!.args[1])).toBe(RUN.root);
+    expect(calls[0]!.args[2]).toBe(50n);
+    expect(calls[0]!.args[3]).toBe(RUN.opensAt);
+    expect(calls[0]!.args[4]).toBe(RUN.closesAt);
+    expect(calls[0]!.args[5]).toBe(true);
+    expect(argHex(calls[0]!.args[6])).toBe(RUN.vault);
+    expect(argHex(calls[0]!.args[6])).not.toBe(toHex(pureCircuits.noVault()));
   });
 
   /*
@@ -1302,7 +1302,7 @@ describe('V-73: a payroll run, raised and swept through the client', () => {
 
       const { ledger, calls } = harness({ openProposals: [] });
       await ledger.proposeRun('acct', RUN, CHANGE, BY);
-      const args = calls[0].args;
+      const args = calls[0]!.args;
 
       expect(argHex(args[slot('root')])).toBe(RUN.root);
       expect(args[slot('payees')]).toBe(RUN.payees);
@@ -1348,7 +1348,7 @@ describe('V-73: a payroll run, raised and swept through the client', () => {
     const { ledger, staged } = harness({ openProposals: [] });
     await ledger.proposeRun('acct', RUN, CHANGE, BY);
     expect(staged).toHaveLength(1);
-    expect(staged[0].value.proposalSalt).toBeInstanceOf(Uint8Array);
+    expect(staged[0]!.value.proposalSalt).toBeInstanceOf(Uint8Array);
   });
 
   it('REFUSES A WINDOW IN MILLISECONDS, which would build a run that opens in the year 56000',
@@ -1397,7 +1397,7 @@ describe('V-73: a payroll run, raised and swept through the client', () => {
     const r = await ledger.raiseAndApproveRun('acct', RUN, CHANGE, BY);
 
     expect(calls.map(c => c.circuit)).toEqual(['propose', 'approve']);
-    expect(argHex(calls[1].args[0])).toBe(r.proposalId);
+    expect(argHex(calls[1]!.args[0])).toBe(r.proposalId);
     expect(r.approved).not.toBeNull();
     expect(r.approvalError).toBeUndefined();
   });
@@ -1762,7 +1762,7 @@ describe('R5b/C188: the boundary tells an empty map apart from a missing one', (
     const { ledger } = harness({ approvals: 3n });
     const status = await ledger.status('acct');
     expect(status!.openProposals).toHaveLength(1);
-    expect(status!.openProposals[0].approvals).toBe(3);
+    expect(status!.openProposals[0]!.approvals).toBe(3);
   });
 });
 
@@ -2302,7 +2302,7 @@ describe('T-324: a refused run leaves no salt behind, because nothing was staged
     const { ledger, staged } = harness({ openProposals: [] });
     await ledger.proposeRun('acct', RUN, CHANGE, BY);
     expect(staged).toHaveLength(1);
-    expect(staged[0].value.proposalSalt).toBeInstanceOf(Uint8Array);
+    expect(staged[0]!.value.proposalSalt).toBeInstanceOf(Uint8Array);
   });
 });
 
@@ -2489,7 +2489,8 @@ describe('reading a deployed contract\'s maintenance authority back off the chai
     /*
      * **THE MOST DANGEROUS VALUE ON CHAIN, AND THE FIRST DRAFT REPORTED IT WITH
      * THE NAME OF THE SAFEST.** Found by `S61`'s money-safety pass.
-     * `verify.rs:1789` — `if self.signatures.len() < authority.threshold` — is
+     * `ledger/src/verify.rs:1857` at `ledger-9.1.0.0-rc.3` (`:1789` at 8.2) —
+     * `if self.signatures.len() < authority.threshold` — is
      * the ONLY read of `threshold` in the ledger crate, so at zero an update
      * with NO signatures is well-formed and the committee is never consulted.
      * `no-one` is this codebase's word for `unmaintainable`
@@ -2506,8 +2507,9 @@ describe('reading a deployed contract\'s maintenance authority back off the chai
   it('reports a committee that lists one key more than once, because its threshold is not what it looks like', async () => {
     /*
      * Raised by `S61`'s platform fact-check, as a READING of ledger
-     * 8.2.0-rc.1 rather than a measurement: `data_to_sign`
-     * (`structure.rs:2737-2747`) does not cover the signer index, so one
+     * 8.2.0-rc.1 rather than a measurement, and it reads the same at
+     * `ledger-9.1.0.0-rc.3`: `data_to_sign`
+     * (`ledger/src/structure.rs:2997-3005`, `:3020-3022`) does not cover the signer index, so one
      * signature is valid at every index whose committee slot holds that key —
      * and `[K,K,K]` at threshold 3 is satisfied by one holder of `K`.
      * `requireMaintenanceAuthority` checks size and range and not distinctness.
@@ -2978,8 +2980,8 @@ describe('S74: the end-state record, and the counter that says something else ha
   });
 
   it('UNEXPLAINED when the value matches and the counter has moved past it — `T-361`', async () => {
-    /* The counter can never be rolled back or reset (`semantics.rs:1481`,
-     * `:1484-1485`; `verify.rs:1771`), so it is the one monotonic witness the
+    /* The counter can never be rolled back or reset below `u32::MAX`
+     * (`ledger/src/semantics.rs:1559-1563`; `verify.rs:1831-1842`), so it is the one monotonic witness the
      * chain offers. Without it, `agree` cannot tell *we installed this* from
      * *somebody replaced it, did something else in the same update, and put an
      * identical authority back* — and one `MaintenanceUpdate` carries a
@@ -3021,9 +3023,11 @@ describe('S74: the end-state record, and the counter that says something else ha
  * (`ledger-v9.d.ts:2508`) with proofs disabled and signature verification ON.
  *
  * **`T-360` IS THE ROW THIS ANSWERS, AND IT IS ANSWERED BY MEASUREMENT RATHER
- * THAN BY READING RUST.** Every maintenance citation this project holds is scoped
- * to ledger `8.2.0-rc.1`; the chain runs ledger 9, whose verification source is
- * nowhere in this tree. These run against the shipped artefact instead.
+ * THAN BY READING RUST.** The maintenance citations this project held were read
+ * off ledger `8.2.0-rc.1` until the reading copy was pinned to
+ * `ledger-9.1.0.0-rc.3`, where this verification source is
+ * `ledger/src/verify.rs:1816-1866`. These run against the shipped artefact, which
+ * is the measurement; the source is the reading.
  *
  * **THE SIGNING KEYS ARE THE INTEGERS 1, 2 AND 3.** Their verifying keys are the
  * secp256k1 generator and its first two multiples — the values already pinned
@@ -3099,8 +3103,8 @@ describe('S74/T-360: what ledger 9 actually accepts, measured rather than read o
 
   it('builds a committee update the chain accepts, signed by the OLD committee at the OLD threshold', async () => {
     /* The mistake that reads backwards: a 2-of-3 being replaced is signed by two
-     * of the OLD three. `verify.rs:1782` verifies each signature against the
-     * CURRENT committee and `:1789` counts against the CURRENT threshold. */
+     * of the OLD three. `verify.rs:1843-1856` verifies each signature against the
+     * CURRENT committee and `:1857-1863` counts against the CURRENT threshold. */
     const { L, sks, vks, deployWith, wellFormed, primitives } = await load();
     const { planAuthorityReplacement, buildMaintenanceInstruction, attachMaintenanceSignature,
       signatureProgress } = await import('./ledger.js');
@@ -3238,7 +3242,8 @@ describe('S74/T-360: what ledger 9 actually accepts, measured rather than read o
   it('well-formed is NOT `this will land`: a stale counter passes here and fails on chain — rule 14', async () => {
     /* MEASURED: an update built against counter 1 for a contract sitting at
      * counter 0 is WELL-FORMED. The counter is checked at APPLY
-     * (`semantics.rs:1481`), and maintenance runs in the fallible segment only,
+     * (`ledger/src/semantics.rs:1559-1560`), and maintenance runs in the fallible
+     * segment only (`:1552`),
      * so the failure lands as `partialSuccess` WITH THE FEE ALREADY SPENT. **No
      * door and no screen may read a well-formed verdict as a prediction that the
      * update will apply** — which is exactly why `planAuthorityReplacement` reads
@@ -3372,7 +3377,7 @@ describe.skipIf(!KEYS_ON_DISK)('S74/T-359: reading the verifier keys back, which
      * True, and it reads as more than it says. */
     const { file, address, state } = await load();
     const { operationsFromContractState, compareVerifierKeys } = await import('./ledger.js');
-    const swapped = new Uint8Array(file); swapped[swapped.length - 1] ^= 0xff;
+    const swapped = new Uint8Array(file); swapped[swapped.length - 1]! ^= 0xff;
     const c = compareVerifierKeys(operationsFromContractState(state, address),
       new Map([['adopt', swapped]]));
     expect(c.verdict).toBe('disagree');

@@ -12,7 +12,8 @@
  * THEY ARE MEASUREMENTS, NOT HAND-WRITTEN FIXTURES, and that distinction is the
  * point. A hand-written `contract-info.json` asserting what a sixteen-field
  * compile looks like would be this repository asserting its own belief about
- * the compiler; these came out of compactc 0.33.0. Rule 9.
+ * the compiler; these came out of compactc 0.34.0, which each fixture's own
+ * `contract-info.json` records. Rule 9.
  *
  * WHAT WOULD MAKE THEM STALE: a compiler upgrade. The two fixtures record which
  * version produced them, and the guard reads real artifacts compiled by

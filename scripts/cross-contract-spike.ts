@@ -59,9 +59,10 @@ async function loadProbeContracts(): Promise<void> {
     ({ Contract: Acct, ledger: acctLedger } = acctMod);
   } catch (e: any) {
     throw new Error(
-      `this probe reads two compiled contracts under contracts/probe-out-vault4, and they are not there.\n` +
-      `  That directory is compiler output for throwaway contracts; nothing in this repository builds it,\n` +
-      `  and it is never committed. Compile them with the pinned compiler first.\n` +
+      `this probe reads two compiled contracts under contracts/probe-out-vault4, and they did not load.\n` +
+      `  Either they are not there, or the reason below says "Version mismatch": they were compiled by an\n` +
+      `  older compiler than the one whose runtime is installed. They are never committed. Rebuild them\n` +
+      `  with the compiler pinned in .github/checks/toolchain.mjs; Acct/ is a copy of callee-per-circuit/.\n` +
       `  (${e?.message ?? e})`,
     );
   }

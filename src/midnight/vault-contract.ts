@@ -623,7 +623,7 @@ export async function findDeployedVaultContract(
  *      directions BEFORE the loop, building from that decided list, and
  *      asserting the built map again after.** A vault missing `payout` is money
  *      that can be deposited and never leave (`VerifierKeyNotPresent`,
- *      `verify.rs:104-119`; `retire` refuses a non-empty vault,
+ *      `ledger/src/verify.rs:109-124` at `ledger-9.1.0.0-rc.3`; `retire` refuses a non-empty vault,
  *      `Vault.compact:1071` and `:1088`), so it is refused by name before a fee is
  *      spent rather than discovered on chain.
  *   2. `assertKnownCircuitSet` IS ACCOUNT-ONLY BY CONSTRUCTION
@@ -633,7 +633,7 @@ export async function findDeployedVaultContract(
  *      had only ever been called at one; this path supplies the other.
  *   3. `pruned.data = full.data` CARRIES THE VAULT'S `account` PIN
  *      (`Vault.compact:262-264`). The loud failure is `IncorrectChargedState`
- *      (`verify.rs:1724-1730`); **the quiet one is a `data` that round-trips
+ *      (`verify.rs:1773-1777`); **the quiet one is a `data` that round-trips
  *      carrying a different account, and neither find checks it.** Answered by
  *      reading the vault's own ledger off the state this deploy is about to
  *      submit and comparing `account` against the address the caller gave,
@@ -1033,7 +1033,7 @@ export function buildVaultDeployState(
 
   /*
    * DEPENDENCY 3, THE QUIET HALF. The loud failure of a wrong `data` is
-   * IncorrectChargedState (verify.rs:1724-1730) and the chain catches it. The
+   * IncorrectChargedState (midnight-ledger ledger-9.1.0.0-rc.3, ledger/src/verify.rs:1773-1777) and the chain catches it. The
    * quiet one is a data that round-trips carrying a DIFFERENT account, and
    * neither find in this repository checks it: the vault's own find checks the
    * operations map and the verifier keys and never opens the ledger.

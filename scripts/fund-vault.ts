@@ -511,8 +511,8 @@ async function main(): Promise<MovementVerdict | 'not-read'> {
    * Verified from source, both directions: DUST generation is minted per NIGHT
    * OUTPUT of an `UnshieldedOffer` whose `owner` has an entry in
    * `address_delegation: Map<UserAddress, DustPublicKey>`
-   * (`midnight-ledger/ledger/src/dust.rs:921, 1240-1253`), and spending a NIGHT
-   * input sets that generation's `dtime` (`:1205-1231`). **A contract's
+   * (`midnight-ledger` `ledger-9.1.0.0-rc.3`, `ledger/src/dust.rs:954`, `:1280-1300`),
+   * and spending a NIGHT input sets that generation's `dtime` (`:1246-1265`). **A contract's
    * unshielded holding is a balance and not a UTXO, and `UtxoOutput.owner` has
    * no contract variant at all** (`C236`, from `structure.rs`).
    *
