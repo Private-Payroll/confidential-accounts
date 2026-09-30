@@ -398,6 +398,15 @@ export class AccountSimulator {
    */
   blockTime = 1_800_000_000;
 
+  /**
+   * The effects of the last call that succeeded: what it claimed, received, sent
+   * and minted. **This simulator does not run the network's balancing check**, so a
+   * receipt the account receives with nothing minted behind it is accepted here;
+   * a test that means to show the refusal reads these effects, or builds the
+   * transaction (`a-payment-needs-a-vaults-receipt.test.ts`).
+   */
+  lastEffects: any = undefined;
+
   /** Moves the simulated clock. Returns `this`, so it reads inline in a test. */
   at(secondsSinceEpoch: number | bigint): this {
     this.blockTime = Number(secondsSinceEpoch);
@@ -560,6 +569,7 @@ export class AccountSimulator {
   ): Promise<T> {
     const out = await fn(this.contextFor(circuitId));
     const call = out.context.callContext;
+    this.lastEffects = call.currentQueryContext.effects;
     this.contractState = call.currentQueryContext.state;
     if (call.currentPrivateState !== undefined) this.privateState = call.currentPrivateState;
     if (call.currentZswapLocalState !== undefined) this.zswap = call.currentZswapLocalState;
@@ -669,17 +679,23 @@ export class AccountSimulator {
   }
 
   /**
-   * What a vault calls to pay ONE PAYEE of an approved run.
+   * What a vault calls to pay ONE PAYEE of an approved run, with its receipt.
    *
    * **Every argument, and not one witness.** A cross-contract callee is
    * proved by whoever built the transaction, and the vault does not hold this
    * account's private state. That is also what makes the tests here honest —
    * a wrong salt, a wrong nonce or somebody else's path is handed over
    * directly, rather than approximated by pretending to be a different device.
+   *
+   * `vault` is the vault the run names; `payingVault`, the contract whose receipt
+   * the account receives, defaults to it. They differ only on a company-wide run.
+   * **The receipt itself is not minted here**: this simulator has no balancing
+   * check, so the call succeeds as though the vault had minted it.
    */
-  recordPayment(args: {
+  recordPaymentFromVault(args: {
     proposal: Uint8Array;
     vault: Uint8Array;
+    payingVault?: Uint8Array;
     root: Uint8Array;
     payees: bigint;
     from: bigint;
@@ -689,10 +705,32 @@ export class AccountSimulator {
     nonce: Uint8Array;
     path: unknown;
   }) {
-    return this.run('recordPayment',
-      (c) => this.contract.impureCircuits.recordPayment(
-        c, args.proposal, args.vault, args.root, args.payees, args.from, args.until,
-        args.salt, args.details, args.nonce, args.path as never));
+    return this.run('recordPaymentFromVault',
+      (c) => this.contract.impureCircuits.recordPaymentFromVault(
+        c, args.proposal, args.vault, args.payingVault ?? args.vault, args.root, args.payees,
+        args.from, args.until, args.salt, args.details, args.nonce, args.path as never));
+  }
+
+  /**
+   * Adopts `vault` through the approved path, with `approvers` voting: the only way
+   * a contract becomes one this account accepts a payment from. Does nothing for a
+   * vault already adopted.
+   */
+  async adoptVault(
+    vault: Uint8Array,
+    approvers: AccountPrivateState[],
+    seed = 391,
+  ): Promise<void> {
+    if (this.ledger.vaults.member(vault)) return;
+    const c = change(0n, seed);
+    const payload = pureCircuits.adoptVaultPayload(vault);
+    const by = approvers[0]!;
+    const acting = this.privateState;
+    await this.as(this.applying(by, c)).propose(payload);
+    const id = this.proposalId(payload, c.salt);
+    for (const a of approvers) await this.as(a).approve(id);
+    await this.as(this.applying(by, c)).adopt(vault, id);
+    this.as(acting);
   }
 
   /**
@@ -751,16 +789,24 @@ export class AccountSimulator {
   /**
    * Declares a vault to be this company's, through an approved round.
    *
-   * THERE IS NO `retireVault` HERE, and its absence is the design rather than a
-   * gap: retirement is refused while the vault still holds notes, only the
-   * vault can see its own pool, so the account's half is reachable ONLY as a
-   * cross-contract call from `Vault.retire`. A simulator method would let a
-   * test retire a vault by a route no caller has, which is the shape of test
-   * that passes while the product cannot do the thing.
+   * Retiring is `retireVault` above. The vault refuses its own `retire` while
+   * it holds money; the account's half has no caller check, so a direct call
+   * with the approved proposal and its salt is a route that exists, and it is
+   * the one a test of "a retired vault still pays" takes.
    */
   adopt(vault: Uint8Array, proposal: Uint8Array) {
     return this.run('adopt',
       (c) => this.contract.impureCircuits.adopt(c, vault, proposal));
+  }
+
+  /**
+   * The account's half of retiring a vault, called directly with an approved
+   * retire proposal and its salt. The circuit has no caller check, so this is a
+   * route every holder of the salt has, and the one a vault's `retire` takes.
+   */
+  retireVault(proposal: Uint8Array, vault: Uint8Array, salt: Uint8Array) {
+    return this.run('retireVault',
+      (c) => this.contract.impureCircuits.retireVault(c, proposal, vault, salt));
   }
 
   /** Which vaults this account has adopted, as the chain holds them. */

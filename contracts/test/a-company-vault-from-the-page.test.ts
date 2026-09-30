@@ -68,7 +68,7 @@ import { accountHandoverWith, accountTemporaryVerifyingKey, accountVerifierKeysI
 import { DEPLOYED_CIRCUITS } from '../../src/midnight/deferral.js';
 import { fileURLToPath } from 'node:url';
 import { whyNotHandOver } from 'vaults-web-shared/handover-check.js';
-import { readProvenTransaction, readFinishedTransaction } from '../../src/wiring/proven-submission.js';
+import { readProvenTransaction } from '../../src/wiring/proven-submission.js';
 import { startingLedgerFrom } from '../../src/wiring/vault-submission.js';
 import { signingKeyFromBip340 } from '@midnightntwrk/ledger-v9';
 
@@ -161,7 +161,7 @@ const accountKeys = accountVerifierKeysIn(fileURLToPath(new URL('../..', import.
  * Derived from this file's own location, not the working directory.
  */
 const KEYS_ON_DISK = existsSync(new URL('../managed-vault/keys/deposit.verifier', import.meta.url))
-  && existsSync(new URL('../managed/keys/recordPayment.verifier', import.meta.url));
+  && existsSync(new URL('../managed/keys/recordPaymentFromVault.verifier', import.meta.url));
 if (!KEYS_ON_DISK) {
   console.log(
     '  NOT CHECKED HERE: the vault\'s verifier keys are not on disk, so a company vault was not'

@@ -103,7 +103,7 @@ describe('a run reports its progress from the chain', () => {
     },
     sim.ledger as never, pureCircuits.paidMovementOf, now);
 
-  const payOne = (i: number) => sim.as(carrying(sim, A, c)).recordPayment({
+  const payOne = (i: number) => sim.as(carrying(sim, A, c)).recordPaymentFromVault({
     proposal: id, vault: PAYROLL, root: fromHex(tree.root), payees: tree.payees,
     from: OPENS, until: CLOSES,
     salt: c.salt, details: fromHex(payments[i].details),
@@ -113,6 +113,7 @@ describe('a run reports its progress from the chain', () => {
   beforeEach(async () => {
     sim = await AccountSimulator.liveAccount([A, B], 2n);
     sim.at(NOW);
+    await sim.adoptVault(PAYROLL, [A, B]);
     c = govChange(51);
     payments = runOf(5);
     tree = buildPayoutTree(payments);

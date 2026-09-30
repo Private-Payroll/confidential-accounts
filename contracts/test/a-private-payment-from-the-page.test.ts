@@ -103,6 +103,7 @@ import { unshieldedPayeeFor } from '../../src/testing/payees.js';
 import { assemblePrivatePayments } from '../../src/midnight/private-payment-wire.js';
 import { witnessesOver } from '../../src/midnight/vault-notes.js';
 import { payFor } from '../../src/testing/payees.js';
+import { itPaysOutOfTodaysVault } from './until-the-vault-pays-with-a-receipt.js';
 
 /** Deposits or payments on their way, kept for the length of one test, sealed as the page keeps them. */
 const keptOnThisDevice = <T,>(kind: 'deposit' | 'payment'): KeptOnThisDevice<T> =>
@@ -188,7 +189,7 @@ const TEMPORARY = { kind: 'single-key', signingKey: TEMPORARY_ACCOUNT_KEY, tempo
  * there by name, and the job that builds the keys runs this file by name.
  */
 const KEYS_ON_DISK = ['deposit', 'payout', 'payoutUnshielded'].every((c) => existsSync(new URL(`../managed-vault/keys/${c}.verifier`, import.meta.url)))
-  && ['propose', 'approve', 'recordPayment'].every((c) => existsSync(new URL(`../managed/keys/${c}.verifier`, import.meta.url)));
+  && ['propose', 'approve', 'recordPaymentFromVault'].every((c) => existsSync(new URL(`../managed/keys/${c}.verifier`, import.meta.url)));
 if (!KEYS_ON_DISK) {
   console.log(
     '  NOT CHECKED HERE: the vault\'s and the account\'s verifier keys are not on disk, so a private payment'
@@ -527,7 +528,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     return { order, payeeKeys, leaf: run.tree.leaves[0]!, id };
   };
 
-  it('ONE PERSON IS PAID: THE ACCOUNT RECORDS IT, THE VAULT SPENDS ITS NOTE AND KEEPS THE CHANGE, THE POOL SAYS SO, AND THE PAYEE HOLDS A COIN', async () => {
+  itPaysOutOfTodaysVault('ONE PERSON IS PAID: THE ACCOUNT RECORDS IT, THE VAULT SPENDS ITS NOTE AND KEEPS THE CHANGE, THE POOL SAYS SO, AND THE PAYEE HOLDS A COIN', async () => {
     const { vault, note } = await aFundedVault();
     expect(chain.applied.map((a) => a.ok)).toEqual([true, true, true, true]);
     const run = await anApprovedRun(vault, 250n);
@@ -579,7 +580,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     }
   });
 
-  it('THE SAME PERSON IS NOT OFFERED TWICE, AND A SECOND PAYMENT BUILT ANYWAY IS REFUSED BY THE ACCOUNT', async () => {
+  itPaysOutOfTodaysVault('THE SAME PERSON IS NOT OFFERED TWICE, AND A SECOND PAYMENT BUILT ANYWAY IS REFUSED BY THE ACCOUNT', async () => {
     const { vault } = await aFundedVault();
     const run = await anApprovedRun(vault, 100n);
     const doors = { ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records, builder: builder(), inFlight: paymentsInFlight() };
@@ -604,7 +605,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     expect(poolAfter.notes).toEqual(poolBefore.notes);
   });
 
-  it('A PAYMENT FOR SOMEBODY THE SIGNERS DID NOT APPROVE IS BUILT AND REFUSED BY THE ACCOUNT, AND THE SERVICE READS IT AS A PAYMENT OUT', async () => {
+  itPaysOutOfTodaysVault('A PAYMENT FOR SOMEBODY THE SIGNERS DID NOT APPROVE IS BUILT AND REFUSED BY THE ACCOUNT, AND THE SERVICE READS IT AS A PAYMENT OUT', async () => {
     const { vault } = await aFundedVault();
     const run = await anApprovedRun(vault, 100n);
     const order = run.order();
@@ -620,7 +621,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     expect(arrivals.filter((a) => a === 'proven-moving-the-vaults-own-coins')).toEqual([]);
   });
 
-  it('THE SERVICE\'S READER ACCEPTS THE PAYMENT THE DEVICE BUILT, AND ONLY FOR THIS VAULT AND THIS COMPANY', async () => {
+  itPaysOutOfTodaysVault('THE SERVICE\'S READER ACCEPTS THE PAYMENT THE DEVICE BUILT, AND ONLY FOR THIS VAULT AND THIS COMPANY', async () => {
     const { vault, note } = await aFundedVault();
     const run = await anApprovedRun(vault, 250n);
     const order = run.order();
@@ -684,7 +685,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     paidYet: async () => accountLedgerOf(chain.contract(company)).movements.member(accountCircuits.paidMovementOf(fromHex(run.leaf))),
   });
 
-  it('ONE PERSON IS PAID PUBLICLY: THE VAULT\'S PUBLIC PAYOUT PAYS THEIR PUBLIC ADDRESS, AND THE ACCOUNT RECORDS IT', async () => {
+  itPaysOutOfTodaysVault('ONE PERSON IS PAID PUBLICLY: THE VAULT\'S PUBLIC PAYOUT PAYS THEIR PUBLIC ADDRESS, AND THE ACCOUNT RECORDS IT', async () => {
     const { vault } = await aFundedVault();
     await holdingPublicly(vault, 1_000n);
     expect(publicBalance(vault)).toBe(1_000n);
@@ -721,7 +722,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     expect(refusalForPayout(tx, { vault, account: company })).toMatch(/^this is not a private payment out of this company's vault/);
   });
 
-  it('A PUBLIC PAYEE IS NOT PAID TWICE: NOT OFFERED AGAIN, AND A SECOND PAYMENT BUILT ANYWAY IS REFUSED BY THE ACCOUNT', async () => {
+  itPaysOutOfTodaysVault('A PUBLIC PAYEE IS NOT PAID TWICE: NOT OFFERED AGAIN, AND A SECOND PAYMENT BUILT ANYWAY IS REFUSED BY THE ACCOUNT', async () => {
     const { vault } = await aFundedVault();
     await holdingPublicly(vault, 1_000n);
     const run = await anApprovedRun(vault, 100n, { payee: unshieldedPayeeFor(USER, NET), token: PUBLIC_TOKEN });
@@ -741,7 +742,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     expect(publicBalance(vault)).toBe(900n);
   });
 
-  it('A PRIVATE PAYEE IS NEVER PAID PUBLICLY, AND A PUBLIC PAYEE NEVER PRIVATELY', async () => {
+  itPaysOutOfTodaysVault('A PRIVATE PAYEE IS NEVER PAID PUBLICLY, AND A PUBLIC PAYEE NEVER PRIVATELY', async () => {
     const { vault } = await aFundedVault();
     await holdingPublicly(vault, 1_000n);
     const privateRun = await anApprovedRun(vault, 100n);
@@ -862,7 +863,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     expect(refusalForDeposit(tx, { vault })).not.toBeNull();
   });
 
-  it('A VAULT FUNDED BY A PUBLIC DEPOSIT FROM THE PAGE PAYS A PUBLIC PAYEE FROM THE PAGE', async () => {
+  itPaysOutOfTodaysVault('A VAULT FUNDED BY A PUBLIC DEPOSIT FROM THE PAGE PAYS A PUBLIC PAYEE FROM THE PAGE', async () => {
     const { vault } = await aFundedVault();
     const { pay } = await aPublicWallet([1_000n]);
     const doors = {

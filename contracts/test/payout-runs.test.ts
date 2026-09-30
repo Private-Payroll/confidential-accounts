@@ -69,6 +69,7 @@ const approvedRun = async (
   sim: AccountSimulator, vault: Uint8Array, payments: PayoutLeafInput[], c: Change,
   window: { from: bigint; until: bigint } = { from: OPENS, until: CLOSES },
 ) => {
+  await sim.adoptVault(vault, [A, B]);
   const tree = buildPayoutTree(payments);
   const payload = pureCircuits.runPayload(
     fromHex(tree.root), tree.payees, window.from, window.until);
@@ -114,7 +115,7 @@ describe('a run is paid one payee at a time', () => {
 
     for (let i = 0; i < 5; i++) {
       expect(sim.isOpen(run.id)).toBe(true);
-      await sim.as(carrying(sim, A, c)).recordPayment(claimFor(run, payments, PAYROLL, c, i));
+      await sim.as(carrying(sim, A, c)).recordPaymentFromVault(claimFor(run, payments, PAYROLL, c, i));
     }
 
     /*
@@ -154,11 +155,11 @@ describe('a run is paid one payee at a time', () => {
     const future = { from: BigInt(NOW + 86_400), until: BigInt(NOW + 172_800) };
     const run = await approvedRun(sim, PAYROLL, payments, c, future);
 
-    await expect(sim.as(carrying(sim, A, c)).recordPayment(claimFor(run, payments, PAYROLL, c, 0)))
+    await expect(sim.as(carrying(sim, A, c)).recordPaymentFromVault(claimFor(run, payments, PAYROLL, c, 0)))
       .rejects.toThrow(/has not started/i);
 
     await sim.at(NOW + 86_400).as(carrying(sim, A, c))
-      .recordPayment(claimFor(run, payments, PAYROLL, c, 0));
+      .recordPaymentFromVault(claimFor(run, payments, PAYROLL, c, 0));
     sim.at(NOW);
   });
 
@@ -172,11 +173,11 @@ describe('a run is paid one payee at a time', () => {
     const run = await approvedRun(sim, PAYROLL, payments, c);
 
     for (let i = 0; i < 3; i++) {
-      await sim.as(carrying(sim, A, c)).recordPayment(claimFor(run, payments, PAYROLL, c, i));
+      await sim.as(carrying(sim, A, c)).recordPaymentFromVault(claimFor(run, payments, PAYROLL, c, i));
     }
 
     sim.at(Number(CLOSES));
-    await expect(sim.as(carrying(sim, A, c)).recordPayment(claimFor(run, payments, PAYROLL, c, 3)))
+    await expect(sim.as(carrying(sim, A, c)).recordPaymentFromVault(claimFor(run, payments, PAYROLL, c, 3)))
       .rejects.toThrow(/window for this run has closed/i);
 
     // The three that landed stay landed. Nothing is unwound by expiry.
@@ -198,25 +199,25 @@ describe('a run is paid one payee at a time', () => {
     const payments = runOf(4);
     const run = await approvedRun(sim, PAYROLL, payments, c);
 
-    await sim.as(carrying(sim, A, c)).recordPayment(claimFor(run, payments, PAYROLL, c, 0));
-    await sim.as(carrying(sim, A, c)).recordPayment(claimFor(run, payments, PAYROLL, c, 1));
+    await sim.as(carrying(sim, A, c)).recordPaymentFromVault(claimFor(run, payments, PAYROLL, c, 0));
+    await sim.as(carrying(sim, A, c)).recordPaymentFromVault(claimFor(run, payments, PAYROLL, c, 1));
 
     // The operator retries the two that were missed, REUSING their leaves.
     const c2 = govChange(34);
     const outstanding = [payments[2], payments[3]];
     const retry = await approvedRun(sim, PAYROLL, outstanding, c2);
 
-    await sim.as(carrying(sim, A, c2)).recordPayment(claimFor(retry, outstanding, PAYROLL, c2, 0));
+    await sim.as(carrying(sim, A, c2)).recordPaymentFromVault(claimFor(retry, outstanding, PAYROLL, c2, 0));
 
     // Now the ORIGINAL run tries the same person. Both proposals are open.
     expect(sim.isOpen(run.id)).toBe(true);
     expect(sim.isOpen(retry.id)).toBe(true);
-    await expect(sim.as(carrying(sim, A, c)).recordPayment(claimFor(run, payments, PAYROLL, c, 2)))
+    await expect(sim.as(carrying(sim, A, c)).recordPaymentFromVault(claimFor(run, payments, PAYROLL, c, 2)))
       .rejects.toThrow(/already been made/i);
 
     // And the one nobody has paid yet still goes through, from either run.
-    await sim.as(carrying(sim, A, c)).recordPayment(claimFor(run, payments, PAYROLL, c, 3));
-    await expect(sim.as(carrying(sim, A, c2)).recordPayment(claimFor(retry, outstanding, PAYROLL, c2, 1)))
+    await sim.as(carrying(sim, A, c)).recordPaymentFromVault(claimFor(run, payments, PAYROLL, c, 3));
+    await expect(sim.as(carrying(sim, A, c2)).recordPaymentFromVault(claimFor(retry, outstanding, PAYROLL, c2, 1)))
       .rejects.toThrow(/already been made/i);
   });
 
@@ -225,7 +226,7 @@ describe('a run is paid one payee at a time', () => {
     const payments = runOf(1);
     const run = await approvedRun(sim, PAYROLL, payments, c);
 
-    await sim.as(carrying(sim, A, c)).recordPayment(claimFor(run, payments, PAYROLL, c, 0));
+    await sim.as(carrying(sim, A, c)).recordPaymentFromVault(claimFor(run, payments, PAYROLL, c, 0));
     // Open until its window shuts, exactly like a run of five hundred.
     expect(sim.isOpen(run.id)).toBe(true);
   });
@@ -235,13 +236,13 @@ describe('a run is paid one payee at a time', () => {
     const payments = runOf(3);
     const run = await approvedRun(sim, PAYROLL, payments, c);
 
-    await sim.as(carrying(sim, A, c)).recordPayment(claimFor(run, payments, PAYROLL, c, 1));
-    await expect(sim.as(carrying(sim, A, c)).recordPayment(claimFor(run, payments, PAYROLL, c, 1)))
+    await sim.as(carrying(sim, A, c)).recordPaymentFromVault(claimFor(run, payments, PAYROLL, c, 1));
+    await expect(sim.as(carrying(sim, A, c)).recordPaymentFromVault(claimFor(run, payments, PAYROLL, c, 1)))
       .rejects.toThrow(/already been made/i);
 
     // And the run is still payable for everybody else.
-    await sim.as(carrying(sim, A, c)).recordPayment(claimFor(run, payments, PAYROLL, c, 0));
-    await sim.as(carrying(sim, A, c)).recordPayment(claimFor(run, payments, PAYROLL, c, 2));
+    await sim.as(carrying(sim, A, c)).recordPaymentFromVault(claimFor(run, payments, PAYROLL, c, 0));
+    await sim.as(carrying(sim, A, c)).recordPaymentFromVault(claimFor(run, payments, PAYROLL, c, 2));
   });
 
   it('RETRYING A HALF-FINISHED RUN IS SAFE, which a status report depends on', async () => {
@@ -254,13 +255,13 @@ describe('a run is paid one payee at a time', () => {
     const payments = runOf(4);
     const run = await approvedRun(sim, PAYROLL, payments, c);
 
-    await sim.as(carrying(sim, A, c)).recordPayment(claimFor(run, payments, PAYROLL, c, 0));
-    await sim.as(carrying(sim, A, c)).recordPayment(claimFor(run, payments, PAYROLL, c, 1));
+    await sim.as(carrying(sim, A, c)).recordPaymentFromVault(claimFor(run, payments, PAYROLL, c, 0));
+    await sim.as(carrying(sim, A, c)).recordPaymentFromVault(claimFor(run, payments, PAYROLL, c, 1));
 
     const outcomes: string[] = [];
     for (let i = 0; i < 4; i++) {
       try {
-        await sim.as(carrying(sim, A, c)).recordPayment(claimFor(run, payments, PAYROLL, c, i));
+        await sim.as(carrying(sim, A, c)).recordPaymentFromVault(claimFor(run, payments, PAYROLL, c, i));
         outcomes.push('paid');
       } catch { outcomes.push('refused'); }
     }
@@ -277,7 +278,7 @@ describe('a run is paid one payee at a time', () => {
     const stranger = runOf(1, 900);
     const strangerTree = buildPayoutTree(stranger);
 
-    await expect(sim.as(carrying(sim, A, c)).recordPayment({
+    await expect(sim.as(carrying(sim, A, c)).recordPaymentFromVault({
       ...claimFor(run, payments, PAYROLL, c, 0),
       details: fromHex(stranger[0].details),
       nonce: fromHex(stranger[0].nonce),
@@ -296,13 +297,13 @@ describe('a run is paid one payee at a time', () => {
     const payments = runOf(3);
     const run = await approvedRun(sim, PAYROLL, payments, c);
 
-    await sim.as(carrying(sim, A, c)).recordPayment(claimFor(run, payments, PAYROLL, c, 0));
+    await sim.as(carrying(sim, A, c)).recordPaymentFromVault(claimFor(run, payments, PAYROLL, c, 0));
     await expect(sim.as(carrying(sim, A, c)).cancel(run.id))
       .rejects.toThrow(/already started/i);
     expect(sim.isOpen(run.id)).toBe(true);
 
     // The other two are still payable, which is the whole point.
-    await sim.as(carrying(sim, A, c)).recordPayment(claimFor(run, payments, PAYROLL, c, 1));
+    await sim.as(carrying(sim, A, c)).recordPaymentFromVault(claimFor(run, payments, PAYROLL, c, 1));
   });
 
   it('a run whose window has NOT opened can still be cancelled, which is what makes a schedule changeable',
@@ -378,6 +379,7 @@ describe('a run is paid one payee at a time', () => {
 
   it('refuses a claim before the run has enough approvals', async () => {
     const c = govChange(16);
+    await sim.adoptVault(PAYROLL, [A, B]);
     const payments = runOf(2);
     const tree = buildPayoutTree(payments);
     const payload = pureCircuits.runPayload(fromHex(tree.root), tree.payees, OPENS, CLOSES);
@@ -387,7 +389,7 @@ describe('a run is paid one payee at a time', () => {
     const id = sim.proposalId(payload, c.salt, PAYROLL);
     await sim.as(carrying(sim, A, c)).approve(id);   // one of two
 
-    await expect(sim.as(carrying(sim, A, c)).recordPayment({
+    await expect(sim.as(carrying(sim, A, c)).recordPaymentFromVault({
       proposal: id, vault: PAYROLL, root: fromHex(tree.root), payees: tree.payees,
       from: OPENS, until: CLOSES,
       salt: c.salt, details: fromHex(payments[0].details),
@@ -399,9 +401,11 @@ describe('a run is paid one payee at a time', () => {
     const c = govChange(17);
     const payments = runOf(2);
     const run = await approvedRun(sim, PAYROLL, payments, c);
+    /* Both are the company's vaults, so what refuses is the run, not the adoption. */
+    await sim.adoptVault(TREASURY, [A, B], 393);
 
     await expect(sim.as(carrying(sim, A, c))
-      .recordPayment(claimFor(run, payments, TREASURY, c, 0)))
+      .recordPaymentFromVault(claimFor(run, payments, TREASURY, c, 0)))
       .rejects.toThrow(/not this proposal|were not given it/i);
   });
 });
@@ -425,7 +429,7 @@ describe('what a watcher learns from one payment', () => {
     const payments = runOf(2);
     const run = await approvedRun(sim, PAYROLL, payments, c);
 
-    await sim.as(carrying(sim, A, c)).recordPayment(claimFor(run, payments, PAYROLL, c, 0));
+    await sim.as(carrying(sim, A, c)).recordPaymentFromVault(claimFor(run, payments, PAYROLL, c, 0));
 
     // What the watcher can see: payee 1's leaf, from the path they just read.
     const leafTheyCanSee = payoutLeafOf(payments[1]);
@@ -436,14 +440,14 @@ describe('what a watcher learns from one payment', () => {
      * (details, nonce) pair behind it, so every claim they can construct is a
      * claim for a leaf that is not in the run.
      */
-    await expect(sim.as(carrying(sim, A, c)).recordPayment({
+    await expect(sim.as(carrying(sim, A, c)).recordPaymentFromVault({
       ...claimFor(run, payments, PAYROLL, c, 1),
       details: bytes(200),
       nonce: bytes(201),
     })).rejects.toThrow(/not for this payee/i);
 
     // The real payee is still payable, which is the point: no denial of service.
-    await sim.as(carrying(sim, A, c)).recordPayment(claimFor(run, payments, PAYROLL, c, 1));
+    await sim.as(carrying(sim, A, c)).recordPaymentFromVault(claimFor(run, payments, PAYROLL, c, 1));
     expect(sim.isOpen(run.id)).toBe(true);
   });
 
@@ -452,7 +456,7 @@ describe('what a watcher learns from one payment', () => {
     const payments = runOf(2);
     const run = await approvedRun(sim, PAYROLL, payments, c);
 
-    await expect(sim.as(carrying(sim, A, c)).recordPayment({
+    await expect(sim.as(carrying(sim, A, c)).recordPaymentFromVault({
       ...claimFor(run, payments, PAYROLL, c, 0),
       nonce: bytes(250),
     })).rejects.toThrow(/not for this payee/i);
@@ -466,7 +470,7 @@ describe('what a watcher learns from one payment', () => {
     const mine = runOf(1, 700);
     const myTree = buildPayoutTree(mine);
 
-    await expect(sim.as(carrying(sim, A, c)).recordPayment({
+    await expect(sim.as(carrying(sim, A, c)).recordPaymentFromVault({
       ...claimFor(run, payments, PAYROLL, c, 0),
       root: fromHex(myTree.root),
       payees: myTree.payees,
@@ -487,7 +491,7 @@ describe('what a watcher learns from one payment', () => {
     const payments = runOf(4);
     const run = await approvedRun(sim, PAYROLL, payments, c);
 
-    await expect(sim.as(carrying(sim, A, c)).recordPayment({
+    await expect(sim.as(carrying(sim, A, c)).recordPaymentFromVault({
       ...claimFor(run, payments, PAYROLL, c, 0),
       payees: 1n,
     })).rejects.toThrow(/not this proposal|were not given it/i);
@@ -498,7 +502,7 @@ describe('what a watcher learns from one payment', () => {
     const payments = runOf(2);
     const run = await approvedRun(sim, PAYROLL, payments, c);
 
-    await expect(sim.as(carrying(sim, A, c)).recordPayment({
+    await expect(sim.as(carrying(sim, A, c)).recordPaymentFromVault({
       ...claimFor(run, payments, PAYROLL, c, 0),
       salt: govChange(99).salt,
     })).rejects.toThrow(/not this proposal|were not given it/i);
@@ -883,7 +887,7 @@ describe('a run whose root has a zero top byte', () => {
     expect(run.tree.leaves).toHaveLength(ZERO_TOP_BYTE.length);
 
     for (let i = 0; i < ZERO_TOP_BYTE.length; i++) {
-      await sim.as(carrying(sim, A, c)).recordPayment(claimFor(run, ZERO_TOP_BYTE, PAYROLL, c, i));
+      await sim.as(carrying(sim, A, c)).recordPaymentFromVault(claimFor(run, ZERO_TOP_BYTE, PAYROLL, c, i));
     }
     for (const leaf of run.tree.leaves) {
       expect(sim.ledger.movements.member(pureCircuits.paidMovementOf(fromHex(leaf)))).toBe(true);
@@ -901,7 +905,7 @@ describe('a run whose root has a zero top byte', () => {
     const run = await approvedRun(sim, PAYROLL, ORDINARY, c);
     expect(run.tree.root.endsWith('00')).toBe(false);
     for (let i = 0; i < ORDINARY.length; i++) {
-      await sim.as(carrying(sim, A, c)).recordPayment(claimFor(run, ORDINARY, PAYROLL, c, i));
+      await sim.as(carrying(sim, A, c)).recordPaymentFromVault(claimFor(run, ORDINARY, PAYROLL, c, i));
     }
     for (const leaf of run.tree.leaves) {
       expect(sim.ledger.movements.member(pureCircuits.paidMovementOf(fromHex(leaf)))).toBe(true);
@@ -927,7 +931,7 @@ describe('a run whose root has a zero top byte', () => {
 
     expect(() => pureCircuits.runPayload(short, run.tree.payees, OPENS, CLOSES))
       .toThrow(/Bytes<32>/);
-    await expect(sim.as(carrying(sim, A, c)).recordPayment(
+    await expect(sim.as(carrying(sim, A, c)).recordPaymentFromVault(
       { ...claimFor(run, ZERO_TOP_BYTE, PAYROLL, c, 0), root: short },
     )).rejects.toThrow(/Bytes<32>/);
   });

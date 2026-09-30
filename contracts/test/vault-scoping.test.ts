@@ -62,6 +62,7 @@ const RUN_CLOSES = BigInt(RUN_NOW + 3_600);
 const approvedFor = async (
   sim: AccountSimulator, vault: Uint8Array, p: Uint8Array, c: Change,
 ) => {
+  await sim.adoptVault(vault, [A, B]);
   const payee = { details: toHex(p), nonce: toHex(payload(0x5a)) };
   const tree = buildPayoutTree([payee]);
   const runPayload = pureCircuits.runPayload(
@@ -107,7 +108,7 @@ describe('a threshold per vault', () => {
     const c = govChange(21);
     const run = await approvedFor(sim, PAYROLL, payload(7), c);
     // Two approvals against an account threshold of two: payable.
-    await sim.as(carrying(sim, A, c)).recordPayment(run.claim);
+    await sim.as(carrying(sim, A, c)).recordPaymentFromVault(run.claim);
     // Open until its window shuts; the payment is what proves it went through.
     expect(sim.ledger.movements.member(
       pureCircuits.paidMovementOf(pureCircuits.payoutLeaf(
@@ -127,13 +128,13 @@ describe('a threshold per vault', () => {
     // Two approvals is no longer enough for the treasury…
     const c = govChange(23);
     const run = await approvedFor(sim, TREASURY, payload(8), c);
-    await expect(sim.as(carrying(sim, A, c)).recordPayment(run.claim))
+    await expect(sim.as(carrying(sim, A, c)).recordPaymentFromVault(run.claim))
       .rejects.toThrow(/not enough approvals/i);
 
     // …while payroll, which has no rule of its own, still needs only two.
     const c2 = govChange(24);
     const run2 = await approvedFor(sim, PAYROLL, payload(9), c2);
-    await sim.as(carrying(sim, A, c2)).recordPayment(run2.claim);
+    await sim.as(carrying(sim, A, c2)).recordPaymentFromVault(run2.claim);
     expect(sim.ledger.movements.member(
       pureCircuits.paidMovementOf(pureCircuits.payoutLeaf(
         run2.claim.details, run2.claim.nonce)))).toBe(true);

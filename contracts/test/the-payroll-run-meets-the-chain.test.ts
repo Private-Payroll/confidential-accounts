@@ -41,7 +41,7 @@ import {
   SimulatedLedger, SimulatedProofSystem, type StateChange,
 } from '../../src/core/ledger.js';
 import { MidnightCommitments } from '../../src/midnight/commitments.js';
-import { buildRun, rootOfLeaves } from '../../src/midnight/payout-tree.js';
+import { buildRun } from '../../src/midnight/payout-tree.js';
 import { runMaterialFor } from '../../src/midnight/run-material.js';
 import { vaultDetails } from '../../src/testing/vault-details.js';
 import { registryWithTestPrivateForms, aVaultHolding } from '../../src/testing/assets.js';
@@ -199,6 +199,7 @@ describe('a payroll run the PRODUCT raised is one a VAULT can pay', () => {
       await sim.seatLeaf(
         fromHex(r.created.account.signers[0]!.leafCommitment!), [privateStateFor(9)], 47);
       sim.at(NOW);
+      await sim.adoptVault(PAYROLL_VAULT, [privateStateFor(9)]);
 
       const device = deviceCarrying(r.created.secrets[0]!, r.change);
 
@@ -252,7 +253,7 @@ describe('a payroll run the PRODUCT raised is one a VAULT can pay', () => {
       expect(rebuilt.tree.leaves).toEqual(r.material.leaves);
 
       const args = rebuilt.payeeArgs(0);
-      await sim.as(device).recordPayment({
+      await sim.as(device).recordPaymentFromVault({
         proposal: id,
         vault: PAYROLL_VAULT,
         root: fromHex(r.material.run.root),

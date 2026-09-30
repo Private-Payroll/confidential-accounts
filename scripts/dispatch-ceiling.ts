@@ -47,23 +47,36 @@
  *     onto each ledger dimension as the same fraction of that dimension's
  *     limit.
  *
+ *  6. The node does not weigh a transaction by its ledger cost alone.
+ *     `pallets/midnight/src/lib.rs:633-638` (`get_tx_weight`, the weight of
+ *     every `send_mn_transaction`, `:375`) is the ledger cost PLUS
+ *     `ConfigurableTransactionSizeWeight`, an on-chain setting (`:184-186`)
+ *     whose default is `EXTRA_WEIGHT_TX_SIZE` (`:173-176`), 20,000,000,000 ps
+ *     of ref_time (`:108`) — 1% of the block. The same lines in the newest
+ *     node release are `:635-640`, `:186-188`, `:175-178` and `:110`.
+ *
  * So, for a NORMAL extrinsic, in fractions of the block:
  *
  *     max_extrinsic = 0.75 − 0.10 − (108,157,000 / 2,000,000,000,000)
- *                   = 0.65 − 0.0000540785
  *                   = 0.6499459215
+ *     room for the ledger cost = max_extrinsic − (20,000,000,000 / 2,000,000,000,000)
+ *                   = 0.6399459215
  *
- * and against the ledger's bytesWritten limit of 50,000 that is 32,497 —
- * not 37,500. 31,201 (accepted) fits it; 35,748 (refused) does not; both
- * agree with 65% and neither agrees with 75%. `calibrate()` below turns the
- * two real submissions into a permanent test.
+ * and against the ledger's bytesWritten limit of 50,000 that is 31,997 —
+ * not 37,500, and not the 32,497 this file gave before the node's size
+ * weight was counted. 31,201 (accepted) fits it; 35,748 (refused) does not.
+ * `calibrate()` below turns the two real submissions into a permanent test.
  *
  * ── WHAT COULD AND COULD NOT BE DERIVED AT RUN TIME ─────────────────────────
  *
  * The five LEDGER limits are derived live, from our own `LedgerParameters`
- * (`limitsFromLedger` in `scripts/tx-size.ts`). The four numbers above CANNOT
- * be: they are Substrate class limits, a different layer than the ledger, and
- * `LedgerParameters` does not express them. They are therefore NAMED, CITED,
+ * (`limitsFromLedger` in `scripts/tx-size.ts`). The five numbers above CANNOT
+ * be: four are Substrate class limits, a different layer than the ledger, and
+ * `LedgerParameters` does not express them; the fifth is the node's own
+ * setting, which the chain's root can change at any time (`set_tx_size_weight`,
+ * `:434-440`) and which no source file fixes. The default is used here. The
+ * accepted 31,201 deploy bounds the value live when it was accepted: at most
+ * about 51,850,000,000 ps, or that deploy would have been refused. They are therefore NAMED, CITED,
  * DERIVED-BY-HAND values — held as the exact integers the sources state, never
  * as a pre-multiplied decimal — and the full chain is printed beside every
  * verdict they produce. If the node's runtime changes any of them, the
@@ -85,20 +98,29 @@ export const MAX_BLOCK_REF_TIME_PS = 2_000_000_000_000n;
  * `polkadot-stable2606`; reached through `frame/system/src/limits.rs:419`.
  */
 export const BASE_EXTRINSIC_REF_TIME_PS = 108_157_000n;
+/**
+ * What the node adds to every transaction's ledger cost: `ConfigurableTransactionSizeWeight`
+ * at its default, `EXTRA_WEIGHT_TX_SIZE`, 20,000,000,000 ps of ref_time.
+ * `midnight-node` `pallets/midnight/src/lib.rs:108`, `:173-176`, `:633-638`.
+ * An on-chain setting: the live value can differ, and nothing in source says what it is.
+ */
+export const TX_SIZE_WEIGHT_REF_TIME_PS = 20_000_000_000n;
 
 const PERBILL = 1_000_000_000n;
 
 /**
- * The derived per-extrinsic fraction of the block, as an exact rational
- * NUM/DEN, so nothing is rounded until a ceiling is taken against a limit.
+ * The share of the block one extrinsic's LEDGER COST may take, as an exact
+ * rational NUM/DEN, so nothing is rounded until a ceiling is taken against a
+ * limit.
  *
- *   0.75 − 0.10 − base/block
- * = (0.65 × block − base) / block, over a Perbill-scaled denominator.
+ *   0.75 − 0.10 − base/block − sizeWeight/block
+ * = (0.65 × block − base − sizeWeight) / block.
  */
 export const EXTRINSIC_FRACTION = {
   num:
     ((NORMAL_DISPATCH_RATIO_PERBILL - AVG_BLOCK_INIT_PERBILL) * MAX_BLOCK_REF_TIME_PS) / PERBILL
-    - BASE_EXTRINSIC_REF_TIME_PS,
+    - BASE_EXTRINSIC_REF_TIME_PS
+    - TX_SIZE_WEIGHT_REF_TIME_PS,
   den: MAX_BLOCK_REF_TIME_PS,
 } as const;
 
@@ -107,8 +129,8 @@ export const EXTRINSIC_FRACTION = {
 export const CLASS_FRACTION = { num: NORMAL_DISPATCH_RATIO_PERBILL, den: PERBILL } as const;
 
 /**
- * What a single NORMAL extrinsic may take of one ledger dimension.
- * Floor, because a budget is a floor: 50,000 → 32,497.
+ * What a single NORMAL extrinsic may take of one ledger dimension, once the
+ * node's size weight is added. Floor, because a budget is a floor: 50,000 → 31,997.
  */
 export const extrinsicCeiling = (limit: number): number =>
   Number((BigInt(Math.trunc(limit)) * EXTRINSIC_FRACTION.num) / EXTRINSIC_FRACTION.den);
@@ -171,12 +193,15 @@ export const printDerivation = (line: (s?: string) => void, bytesWrittenLimit: n
   line('                                              frame/support/.../extrinsic_weights.rs:55-56');
   line('    max_extrinsic = max_total − init_weight − base_extrinsic');
   line('                                              frame/system/src/limits.rs:489-492');
-  line(`                  = 0.75 − 0.10 − 0.0000540785 = ${extrinsicFraction().toFixed(10)} of the block`);
+  line('    the node adds a size weight to every transaction: 20,000,000,000 ps');
+  line('    (1% of the block) by default, an on-chain setting that can change');
+  line('                                              pallets/midnight/src/lib.rs:633-638, :108');
+  line(`    room for the ledger cost = 0.75 − 0.10 − 0.0000540785 − 0.01 = ${extrinsicFraction().toFixed(10)} of the block`);
   line('    one transaction is priced by its WORST dimension scaled to the whole');
   line('    block — pallets/midnight/src/lib.rs:618, ledger common/mod.rs:1165 —');
   line('    so the same fraction applies to each ledger dimension.');
   line(`    bytesWritten ${lim.toLocaleString()}: the CLASS may write ${classCeiling(lim).toLocaleString()} a block (75%);`);
-  line(`    ONE EXTRINSIC may write ${extrinsicCeiling(lim).toLocaleString()} (~65%). The second decides a deploy.`);
+  line(`    ONE EXTRINSIC may write ${extrinsicCeiling(lim).toLocaleString()} (~64%). The second decides a deploy.`);
   const c = calibrate(extrinsicCeiling(lim === BYTES_WRITTEN_LIMIT ? lim : BYTES_WRITTEN_LIMIT));
   line(`    calibration: accepted ${ACCEPTED_BYTES_WRITTEN.toLocaleString()} < ceiling < refused ${REFUSED_BYTES_WRITTEN.toLocaleString()} — `
     + (c === null ? 'HOLDS' : `FAILS: ${c}`));

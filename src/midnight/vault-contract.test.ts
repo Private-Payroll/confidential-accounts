@@ -786,7 +786,7 @@ describe('the vault\'s circuit list is the vault\'s', () => {
      * keeps the hand-written names true — if the account's split ever defers
      * all three, the "this is an account" refusal stops firing and this fails.
      */
-    const tells = ['adopt', 'recordPayment', 'setVaultThreshold'];
+    const tells = ['adopt', 'recordPaymentFromVault', 'setVaultThreshold'];
     expect(tells.some((t) => ACCOUNT_OPS.includes(t as never))).toBe(true);
   });
 
@@ -1120,9 +1120,9 @@ describe('the hand-built vault deploy, and the second custody surface', () => {
       { compiledContract: {}, accountAddress: ACCOUNT_PIN, maintenanceAuthority: COMMITTEE },
       pa.prims,
     );
-    expect(pa.seen.authorities[0].committee).toEqual(COMMITTEE.committee);
-    expect(pa.seen.authorities[0].threshold).toBe(2);
-    expect(pa.seen.authorities[0].counter).toBe(0n);
+    expect(pa.seen.authorities[0]!.committee).toEqual(COMMITTEE.committee);
+    expect(pa.seen.authorities[0]!.threshold).toBe(2);
+    expect(pa.seen.authorities[0]!.counter).toBe(0n);
     expect(pa.seen.serialized[0]).toContain('placeholder-verifying-key-two');
 
     const b = handBuiltWorld();
@@ -1157,7 +1157,7 @@ describe('the hand-built vault deploy, and the second custody surface', () => {
   });
 
   it('DEPENDENCY 1: an EXTRA circuit refuses too, and it is not a vault', async () => {
-    const { providers } = handBuiltWorld({ ops: [...VAULT_CIRCUITS, 'recordPayment'] });
+    const { providers } = handBuiltWorld({ ops: [...VAULT_CIRCUITS, 'recordPaymentFromVault'] });
     const failure = await submitHandBuiltVaultDeployTx(
       providers,
       { compiledContract: {}, accountAddress: ACCOUNT_PIN, maintenanceAuthority: COMMITTEE },

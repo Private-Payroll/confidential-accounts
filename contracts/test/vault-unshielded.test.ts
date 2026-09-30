@@ -44,6 +44,7 @@ import { pureCircuits, ledger as accountLedger } from '../managed/contract/index
 import { AccountSimulator, privateStateFor, change, type Change } from './simulator.js';
 import { buildPayoutTree, type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
 import { toHex, fromHex } from '../../src/core/crypto.js';
+import { itPaysOutOfTodaysVault } from './until-the-vault-pays-with-a-receipt.js';
 
 const VAULT_NOW = 1_800_000_000;
 const WIN_FROM = BigInt(VAULT_NOW - 3_600);
@@ -180,7 +181,7 @@ describe('a vault holds public money as well as private', () => {
 
   /* ----------------------------------------------------------------- payout */
 
-  it('THE WHOLE THING IN PUBLIC MONEY: approved, claimed and paid in one call', async () => {
+  itPaysOutOfTodaysVault('THE WHOLE THING IN PUBLIC MONEY: approved, claimed and paid in one call', async () => {
     const c = govChange(71);
     adopt(await vault.impureCircuits.depositUnshielded(
       ctxFor('depositUnshielded', chainSays()), NIGHT, 500n) as never);
@@ -224,7 +225,7 @@ describe('a vault holds public money as well as private', () => {
       pureCircuits.paidMovementOf(fromHex(run.tree.leaves[0])))).toBe(true);
   });
 
-  it('THE ONE THAT LOSES THE MONEY: an approval for a SHIELDED payment cannot be paid in public money', async () => {
+  itPaysOutOfTodaysVault('THE ONE THAT LOSES THE MONEY: an approval for a SHIELDED payment cannot be paid in public money', async () => {
     const c = govChange(72);
     adopt(await vault.impureCircuits.depositUnshielded(
       ctxFor('depositUnshielded', chainSays()), NIGHT, 500n) as never);
@@ -245,7 +246,7 @@ describe('a vault holds public money as well as private', () => {
       .rejects.toThrow(/not for this payee|not in the approved run/i);
   });
 
-  it('and the reverse: an approval for a PUBLIC payment is not a shielded one either', async () => {
+  itPaysOutOfTodaysVault('and the reverse: an approval for a PUBLIC payment is not a shielded one either', async () => {
     const c = govChange(73);
     const run = await approvedRun('unshielded', [{ to: ALICE, amount: 250n, nonce: 0xc3 }], c);
 
@@ -261,7 +262,7 @@ describe('a vault holds public money as well as private', () => {
       .rejects.toThrow(/not for this payee|not in the approved run/i);
   });
 
-  it('refuses to pay a different AMOUNT of public money than the one approved', async () => {
+  itPaysOutOfTodaysVault('refuses to pay a different AMOUNT of public money than the one approved', async () => {
     const c = govChange(77);
     adopt(await vault.impureCircuits.depositUnshielded(
       ctxFor('depositUnshielded', chainSays()), NIGHT, 500n) as never);
@@ -272,7 +273,7 @@ describe('a vault holds public money as well as private', () => {
       .rejects.toThrow(/not for this payee|not in the approved run/i);
   });
 
-  it('refuses to pay public money to somebody the signers did not approve', async () => {
+  itPaysOutOfTodaysVault('refuses to pay public money to somebody the signers did not approve', async () => {
     const c = govChange(74);
     adopt(await vault.impureCircuits.depositUnshielded(
       ctxFor('depositUnshielded', chainSays()), NIGHT, 500n) as never);
@@ -282,7 +283,7 @@ describe('a vault holds public money as well as private', () => {
       .rejects.toThrow(/not for this payee|not in the approved run/i);
   });
 
-  it('refuses to pay more public money than the chain says it holds', async () => {
+  itPaysOutOfTodaysVault('refuses to pay more public money than the chain says it holds', async () => {
     const c = govChange(75);
     adopt(await vault.impureCircuits.depositUnshielded(
       ctxFor('depositUnshielded', chainSays()), NIGHT, 100n) as never);
@@ -292,7 +293,7 @@ describe('a vault holds public money as well as private', () => {
       .rejects.toThrow(/does not hold enough of that token/i);
   });
 
-  it('pays a payee once, ever', async () => {
+  itPaysOutOfTodaysVault('pays a payee once, ever', async () => {
     const c = govChange(76);
     adopt(await vault.impureCircuits.depositUnshielded(
       ctxFor('depositUnshielded', chainSays()), NIGHT, 500n) as never);

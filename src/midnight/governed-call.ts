@@ -80,7 +80,7 @@ export type PrivateStateAnswer = string | null;
  *   `closeExpiredRun`  the contract leaves it open to anybody on purpose, so
  *                      that a round nobody closed can still be closed by
  *                      whoever notices.
- *   `recordPayment`    entered from the vault across the contract boundary. Its
+ *   `recordPaymentFromVault` entered from the vault across the contract boundary. Its
  *                      salt is an argument rather than a witness, which is what
  *                      lets the vault make it at all.
  *   `retireVault`      reads ledger state and writes ledger state.
@@ -96,7 +96,7 @@ export type PrivateStateAnswer = string | null;
  * claiming a signer check it does not open with.
  */
 export const CIRCUITS_THAT_READ_NO_WITNESS: ReadonlySet<string> =
-  new Set(['closeExpiredRun', 'recordPayment', 'retireVault']);
+  new Set(['closeExpiredRun', 'recordPaymentFromVault', 'retireVault']);
 
 /**
  * Why this call may not be built, or `null` when it may.

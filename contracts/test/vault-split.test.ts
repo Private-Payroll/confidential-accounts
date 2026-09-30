@@ -30,6 +30,7 @@ import { pureCircuits } from '../managed/contract/index.js';
 import { AccountSimulator, privateStateFor, change, type Change } from './simulator.js';
 import { buildPayoutTree, type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
 import { toHex, fromHex } from '../../src/core/crypto.js';
+import { itPaysOutOfTodaysVault } from './until-the-vault-pays-with-a-receipt.js';
 
 const VAULT_NOW = 1_800_000_000;
 const WIN_FROM = BigInt(VAULT_NOW - 3_600);
@@ -156,7 +157,7 @@ describe('a vault splits one of its own notes', () => {
       vaultBytes(), { nonce: bytes(0x77), color: GBP, value: 1_000n }))).toBe(false);
   });
 
-  it('THE ONE THAT MATTERS: a half of a split really SPENDS', async () => {
+  itPaysOutOfTodaysVault('THE ONE THAT MATTERS: a half of a split really SPENDS', async () => {
     /*
      * A commitment the vault cannot reproduce is money that is visibly on chain
      * and permanently stuck, and nothing about a split LOOKS wrong when that

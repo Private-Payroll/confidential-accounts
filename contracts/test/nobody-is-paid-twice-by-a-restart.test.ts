@@ -338,6 +338,7 @@ describe('against the compiled circuits: what the chain refuses, and what it doe
     await sim.seatLeaf(
       fromHex(r.created.account.signers[0]!.leafCommitment!), [privateStateFor(9)], 61);
     sim.at(NOW);
+    await sim.adoptVault(PAYROLL_VAULT, [privateStateFor(9)]);
     const legDevice = deviceCarrying(r.created.secrets[0]!, legChange);
     await sim.as(legDevice).proposeRun({
       root: fromHex(first.run.root), payees: first.run.payees,
@@ -355,7 +356,7 @@ describe('against the compiled circuits: what the chain refuses, and what it doe
     const whole = buildRun(rebuild.seeds, rebuild.identity, rebuild.facts, vaultDetails, rebuild.pay);
     const payUnderTheLeg = (at: number) => {
       const args = whole.payeeArgs(at);
-      return sim.as(legDevice).recordPayment({
+      return sim.as(legDevice).recordPaymentFromVault({
         proposal: legId, vault: PAYROLL_VAULT, root: fromHex(first.run.root),
         payees: first.run.payees, from: OPENS, until: CLOSES,
         salt: fromHex(legChange.salt), details: fromHex(args.details),

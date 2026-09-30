@@ -50,6 +50,7 @@ import {
 import { walkCompanyRecords, type CompanyRecords } from '../../src/midnight/rebuild-from-records.js';
 import { UNLOCK_PURPOSE, UNLOCK_WINDOW_MS, unlockAsk } from '../../src/core/wallet-unlock.js';
 import { toHex, fromHex, newWrappingKeypair, randomBytes, type Hex } from '../../src/core/crypto.js';
+import { itPaysOutOfTodaysVault } from './until-the-vault-pays-with-a-receipt.js';
 
 const VAULT_NOW = 1_800_000_000;
 const WIN_FROM = BigInt(VAULT_NOW - 3_600);
@@ -260,7 +261,7 @@ describe('a vault whose every record of ours is gone', () => {
     return { stores, opener, deposit, payFromThePool };
   };
 
-  it('THE POOL DELETED, THE VAULT REBUILT FROM THE COMPANY\'S SEED AND ITS OWN RECORDS, AND A NOTE THAT COMES BACK SPENT', async () => {
+  itPaysOutOfTodaysVault('THE POOL DELETED, THE VAULT REBUILT FROM THE COMPANY\'S SEED AND ITS OWN RECORDS, AND A NOTE THAT COMES BACK SPENT', async () => {
     const work = await aCompanyAtWork(depositNonceKeyFor(releasedCompanyKey(WORDS, company), vaultAddr));
 
     const first = await work.deposit(1_000n, { slot: 1 });

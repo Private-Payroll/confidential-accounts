@@ -46,6 +46,8 @@ import { existsSync, readdirSync } from 'node:fs';
 import {
   DEPLOYED_CIRCUITS,
   DEFERRED_CIRCUITS,
+  FIRST_STEP_CIRCUITS,
+  SECOND_STEP_CIRCUITS,
   assertKnownCircuitSet,
   isDeferredCircuit,
   isDeployedCircuit,
@@ -167,7 +169,7 @@ describe('the deferral list: S25\'s decision, stated where a diff will show it',
   });
 
   it('deploys the three circuits the vault system needs', () => {
-    for (const needed of ['adopt', 'recordPayment', 'setVaultThreshold']) {
+    for (const needed of ['adopt', 'recordPaymentFromVault', 'setVaultThreshold']) {
       expect(DEPLOYED_CIRCUITS).toContain(needed);
       expect(isDeployedCircuit(needed)).toBe(true);
       expect(isDeferredCircuit(needed)).toBe(false);
@@ -337,11 +339,19 @@ describe('findDeployedPartialContract: the kept circuits must match byte-for-byt
     await expect(call).rejects.toThrow(/undefined or have mismatched verifier keys/);
   });
 
-  it.each([...DEPLOYED_CIRCUITS])(
+  it.each([...FIRST_STEP_CIRCUITS])(
     'refuses a deployment missing the kept circuit "%s"',
     async (kept) => {
       const { call } = await find(stateWith(DEPLOYED_CIRCUITS.filter((n) => n !== kept)));
       await expect(call).rejects.toThrow(new RegExp(`${kept}.*undefined or have mismatched`));
+    });
+
+  it.each([...SECOND_STEP_CIRCUITS])(
+    'refuses an account whose creation did not finish, missing "%s", and says so by name',
+    async (inserted) => {
+      const { call } = await find(stateWith(DEPLOYED_CIRCUITS.filter((n) => n !== inserted)));
+      /* RED WHEN a half-created account is reported as a key mismatch, or accepted. */
+      await expect(call).rejects.toThrow(new RegExp(`creation was not finished: it does not carry ${inserted}`));
     });
 
   it('refuses a deployment whose kept key differs by one byte', async () => {

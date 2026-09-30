@@ -558,10 +558,12 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
     const NAMED = [
       'contracts/test/a-company-seats-its-signers-from-the-page.test.ts',
       'contracts/test/a-company-vault-from-the-page.test.ts',
+      'contracts/test/a-payment-needs-a-vaults-receipt.test.ts',
       'contracts/test/a-private-payment-from-the-page.test.ts',
       'contracts/test/a-run-raised-and-approved-from-the-page.test.ts',
       'contracts/test/a-vaults-committee-changes-with-its-signers.test.ts',
       'packages/web-shared/src/a-deposit-built-on-the-device.test.ts',
+      'src/midnight/a-company-is-created-in-two-steps.test.ts',
       'src/midnight/deferred-set.test.ts',
       'src/midnight/ledger.test.ts',
       'src/midnight/the-key-reaches-the-circuit.test.ts',

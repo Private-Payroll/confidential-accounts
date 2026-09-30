@@ -92,6 +92,7 @@ describe('a payment made by a retry reads as paid on its payee\'s page', () => {
     const sim = await AccountSimulator.create(privateStateFor(9));
     await sim.seatLeaf(fromHex(created.account.signers[0]!.leafCommitment!), [privateStateFor(9)], 61);
     sim.at(NOW);
+    await sim.adoptVault(PAYROLL_VAULT, [privateStateFor(9)]);
     const legDevice = deviceCarrying(created.secrets[0]!, legChange);
     await sim.as(legDevice).proposeRun({
       root: fromHex(material.run.root), payees: material.run.payees,
@@ -102,7 +103,7 @@ describe('a payment made by a retry reads as paid on its payee\'s page', () => {
     const rebuild = (await payroll.payoutRebuildOf(run.id, viewingKey))!;
     const whole = buildRun(rebuild.seeds, rebuild.identity, rebuild.facts, vaultDetails, rebuild.pay);
     const first = whole.payeeArgs(0);
-    await sim.as(legDevice).recordPayment({
+    await sim.as(legDevice).recordPaymentFromVault({
       proposal: legId, vault: PAYROLL_VAULT, root: fromHex(material.run.root),
       payees: material.run.payees, from: OPENS, until: CLOSES,
       salt: fromHex(legChange.salt), details: fromHex(first.details),
@@ -127,7 +128,7 @@ describe('a payment made by a retry reads as paid on its payee\'s page', () => {
     await sim.as(retryDevice).approve(retryId);
     const smaller = buildRetryRun(whole, [1]);
     const onlyOne = smaller.payeeArgs(0);
-    await sim.as(retryDevice).recordPayment({
+    await sim.as(retryDevice).recordPaymentFromVault({
       proposal: retryId, vault: PAYROLL_VAULT, root: fromHex(retry.run.root),
       payees: retry.run.payees, from: RETRY_OPENS, until: RETRY_CLOSES,
       salt: fromHex(retryChange.salt), details: fromHex(onlyOne.details),

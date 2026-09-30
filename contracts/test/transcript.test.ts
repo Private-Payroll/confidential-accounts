@@ -30,8 +30,10 @@ import { Contract as Vault, pureCircuits as vaultCircuits } from '../managed-vau
 import { pureCircuits } from '../managed/contract/index.js';
 import { AccountSimulator, privateStateFor, change, type Change } from './simulator.js';
 import { buildPayoutTree, type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
-import { toHex, fromHex } from '../../src/core/crypto.js';
+import { toHex, fromHex, newWrappingKeypair } from '../../src/core/crypto.js';
+import { payKeyCommitmentOf, payKeyPayloadOf, sealPayKeyTo } from '../../src/midnight/run-keys.js';
 import { Transcript, encodeUint, asHex } from './transcript.js';
+import { itPaysOutOfTodaysVault } from './until-the-vault-pays-with-a-receipt.js';
 
 /* §7 constructs its own vault, so the fixture pieces §3 uses are shared. */
 
@@ -223,7 +225,7 @@ describe('§3 — the three privacy priorities, over a real cross-contract payou
     return { run, transcript: Transcript.of(r.context) };
   };
 
-  it('THE HEADLINE: a real payout publishes neither the amount nor the payee', async () => {
+  itPaysOutOfTodaysVault('THE HEADLINE: a real payout publishes neither the amount nor the payee', async () => {
     const { transcript } = await payAlice(govChange(51));
 
     /*
@@ -249,7 +251,7 @@ describe('§3 — the three privacy priorities, over a real cross-contract payou
     });
   });
 
-  it('§3a HOW MUCH — the amount survives being the thing the whole call is about', async () => {
+  itPaysOutOfTodaysVault('§3a HOW MUCH — the amount survives being the thing the whole call is about', async () => {
     /*
      * The amount is an argument to `payout` and it is in `PartialProofData.input`
      * in the clear. **`input` IS NOT PUBLIC** — it is the proof's witness, and
@@ -267,7 +269,7 @@ describe('§3 — the three privacy priorities, over a real cross-contract payou
     expect(transcript.occurrences(5_000n)).toHaveLength(0); // nor the vault's balance
   });
 
-  it('§3b WHO — the payee is thirty-two bytes and none of them reach the transcript', async () => {
+  itPaysOutOfTodaysVault('§3b WHO — the payee is thirty-two bytes and none of them reach the transcript', async () => {
     /*
      * A 32-byte needle cannot collide with a ledger field index or a small
      * constant, so a hit here would not need reading. **THAT IS A STATEMENT
@@ -299,7 +301,7 @@ describe('§3 — the three privacy priorities, over a real cross-contract payou
     });
   });
 
-  it('and BOTH contract addresses are published, which absence claims must not obscure', async () => {
+  itPaysOutOfTodaysVault('and BOTH contract addresses are published, which absence claims must not obscure', async () => {
     /*
      * It is already accepted that which contract a transaction calls is public
      * on Midnight. This is that fact, measured for the first time rather than
@@ -314,7 +316,7 @@ describe('§3 — the three privacy priorities, over a real cross-contract payou
     });
   });
 
-  it('§3c HOW MANY — NOT COVERED, and this test records why rather than pretending', async () => {
+  itPaysOutOfTodaysVault('§3c HOW MANY — NOT COVERED, and this test records why rather than pretending', async () => {
     const { transcript, run } = await payAlice(govChange(54));
     expect(run.tree.payees).toBe(3n);
 
@@ -404,6 +406,7 @@ describe('§4 — the worked example: what a LEDGER READ does to the transcript'
     const sim = await AccountSimulator.liveAccount([A, B], 2n);
     sim.at(NOW);
     const VAULT = bytes(0xa1);
+    await sim.adoptVault(VAULT, [A, B]);
     const c = govChange(61);
     const payments = [{ details: toHex(bytes(1)), nonce: toHex(bytes(101)) }];
     const tree = buildPayoutTree(payments);
@@ -421,7 +424,7 @@ describe('§4 — the worked example: what a LEDGER READ does to the transcript'
     const before = JSON.stringify(sim.ledger, (_k, v) =>
       v instanceof Uint8Array ? hex(v) : typeof v === 'bigint' ? String(v) : v);
 
-    await sim.as(sim.applying(A, c)).recordPayment({
+    await sim.as(sim.applying(A, c)).recordPaymentFromVault({
       proposal: id, vault: VAULT, root: fromHex(tree.root), payees: tree.payees,
       from: WIN_FROM, until: WIN_UNTIL, salt: c.salt,
       details: fromHex(payments[0]!.details), nonce: fromHex(payments[0]!.nonce),
@@ -514,6 +517,7 @@ describe('§5 — THE SENSITIVITY CONTROL: the instrument goes red, and what tha
     sim.at(NOW);
     /* The payee's own key, put where the contract performs a ledger read. */
     const LEAKED = ALICE;
+    await sim.adoptVault(LEAKED, [A, B]);
     const c = govChange(71);
     const payments = [{ details: toHex(bytes(1)), nonce: toHex(bytes(101)) }];
     const tree = buildPayoutTree(payments);
@@ -533,7 +537,7 @@ describe('§5 — THE SENSITIVITY CONTROL: the instrument goes red, and what tha
       (v instanceof Uint8Array ? hex(v) : typeof v === 'bigint' ? String(v) : v));
     const before = publicState();
 
-    await sim.as(sim.applying(A, c)).recordPayment({
+    await sim.as(sim.applying(A, c)).recordPaymentFromVault({
       proposal: id, vault: LEAKED, root: fromHex(tree.root), payees: tree.payees,
       from: WIN_FROM, until: WIN_UNTIL, salt: c.salt,
       details: fromHex(payments[0]!.details), nonce: fromHex(payments[0]!.nonce),
@@ -556,7 +560,7 @@ describe('§5 — THE SENSITIVITY CONTROL: the instrument goes red, and what tha
     expect(caught!.message).toContain('PUBLISHES A VALUE THIS TEST CALLS PRIVATE');
     expect(caught!.message).toContain('the payee being paid');
     /* It names the operation, because "expected 1 to be 0" teaches nobody. */
-    expect(caught!.message).toMatch(/recordPayment op \d+ as a push/);
+    expect(caught!.message).toMatch(/recordPaymentFromVault op \d+ as a push/);
   });
 
   it('and the LEDGER-STATE guard rail stays green on the same call', async () => {
@@ -663,6 +667,7 @@ describe('§6 — THE DEFECT FOUND IN THIS INSTRUMENT, PINNED', () => {
   it('FINDS a published 32-byte value whose last byte is zero', async () => {
     const sim = await AccountSimulator.liveAccount([A, B], 2n);
     sim.at(NOW);
+    await sim.adoptVault(TRAILING_ZERO, [A, B]);
     const c = govChange(91);
     const payments = [{ details: toHex(bytes(1)), nonce: toHex(bytes(101)) }];
     const tree = buildPayoutTree(payments);
@@ -676,7 +681,7 @@ describe('§6 — THE DEFECT FOUND IN THIS INSTRUMENT, PINNED', () => {
     await sim.as(sim.applying(B, c)).approve(id);
 
     const tape = Transcript.watch(sim.contract).clear();
-    await sim.as(sim.applying(A, c)).recordPayment({
+    await sim.as(sim.applying(A, c)).recordPaymentFromVault({
       proposal: id, vault: TRAILING_ZERO, root: fromHex(tree.root), payees: tree.payees,
       from: WIN_FROM, until: WIN_UNTIL, salt: c.salt,
       details: fromHex(payments[0]!.details), nonce: fromHex(payments[0]!.nonce),
@@ -710,7 +715,7 @@ describe('§7 — the tape keeps the whole call tree, not the entry circuit', ()
    * obvious next use of this instrument and the reason it is pinned now rather
    * than left. A guard whose written reason no longer matches its behaviour.
    */
-  it('one watched cross-contract payout hands back BOTH contracts\' transcripts', async () => {
+  itPaysOutOfTodaysVault('one watched cross-contract payout hands back BOTH contracts\' transcripts', async () => {
     const sim = await AccountSimulator.liveAccount([A, B], 2n);
     sim.at(NOW);
     const vault: any = new (Vault as any)(vaultWitnesses as never);
@@ -763,5 +768,82 @@ describe('§7 — the tape keeps the whole call tree, not the entry circuit', ()
     expect(t.calls.map((x) => x.circuitId)).toEqual(['recordPayment', 'payout']);
     /* And the absence claim still holds when it is made over the whole tree. */
     t.assertAbsent({ 'the payee': ALICE, 'the amount': TO_ALICE });
+  });
+});
+
+describe('§8 — what sealing the pay-record key publishes', () => {
+  /*
+   * `sealPayKey` writes into the shared map in the clear, by design: the
+   * commitment to the company's pay-record key, and four 32-byte parts of the
+   * calling signer's sealed copy under four keys only that signer can derive.
+   * The first call also closes the approved proposal that named the commitment.
+   * What must never reach the transcript is the key itself or the signer's
+   * secret key. These tests pin both halves on real calls.
+   */
+  const KEY = '3c'.repeat(32);
+  const commitment = fromHex(payKeyCommitmentOf(KEY));
+
+  const sealing = async () => {
+    const sim = await AccountSimulator.liveAccount([A, B], 2n);
+    sim.at(NOW);
+    const c = govChange(81);
+    const payload = fromHex(payKeyPayloadOf(toHex(commitment)));
+    await sim.as(sim.applying(A, c)).propose(payload);
+    const id = sim.proposalId(payload, c.salt);
+    await sim.as(sim.applying(A, c)).approve(id);
+    await sim.as(sim.applying(B, c)).approve(id);
+    return { sim, c, id };
+  };
+  const entryKeys = (sim: AccountSimulator, sk: Uint8Array) =>
+    [0n, 1n, 2n, 3n].map((part) =>
+      pureCircuits.payKeyWrapKeyOf(Uint8Array.from(Buffer.from(String(sim.address), 'hex')), sk, part));
+
+  it('THE FIRST COPY publishes the commitment, the proposal it closes, and four entry keys and four parts', async () => {
+    const { sim, c, id } = await sealing();
+    const wrap = sealPayKeyTo(KEY, newWrappingKeypair().publicKey).map(fromHex);
+    const tape = Transcript.watch(sim.contract).clear();
+    await sim.as(sim.applying(A, c)).sealPayKey(wrap, commitment, id);
+    const t = tape.last;
+    tape.stop();
+
+    t.assertNotVacuous();
+    expect(t.calls.map((x) => x.circuitId)).toEqual(['sealPayKey']);
+    /* RED WHEN it stops writing any of these where the chain can read them. */
+    const keys = entryKeys(sim, A.secretKey);
+    t.assertPublishes({
+      'the commitment to the pay-record key': commitment,
+      'the proposal the first copy closes': id,
+      'part 1 of the sealed copy': wrap[0]!, 'part 2': wrap[1]!, 'part 3': wrap[2]!, 'part 4': wrap[3]!,
+      'entry key 1': keys[0]!, 'entry key 2': keys[1]!, 'entry key 3': keys[2]!, 'entry key 4': keys[3]!,
+    });
+    /* RED WHEN the key itself, or the signer's secret key, reaches the transcript. */
+    t.assertAbsent({
+      'the pay-record key itself': fromHex(KEY),
+      'the sealing signer\'s secret key': A.secretKey,
+    });
+  });
+
+  it('A LATER COPY names the stored commitment and its own four entries, and closes no proposal', async () => {
+    const { sim, c, id } = await sealing();
+    await sim.as(sim.applying(A, c)).sealPayKey(
+      sealPayKeyTo(KEY, newWrappingKeypair().publicKey).map(fromHex), commitment, id);
+    const wrapB = sealPayKeyTo(KEY, newWrappingKeypair().publicKey).map(fromHex);
+    const tape = Transcript.watch(sim.contract).clear();
+    await sim.as(B).sealPayKey(wrapB, commitment);
+    const t = tape.last;
+    tape.stop();
+
+    const keys = entryKeys(sim, B.secretKey);
+    t.assertPublishes({
+      'the commitment it is compared with': commitment,
+      'part 1': wrapB[0]!, 'part 4': wrapB[3]!, 'entry key 1': keys[0]!, 'entry key 4': keys[3]!,
+    });
+    /* RED WHEN a later copy starts reading or writing the proposal again. */
+    expect(t.occurrences(id)).toEqual([]);
+    t.assertAbsent({
+      'the pay-record key itself': fromHex(KEY),
+      'B\'s secret key': B.secretKey,
+      'A\'s entry key, which B has no business naming': entryKeys(sim, A.secretKey)[0]!,
+    });
   });
 });
