@@ -162,6 +162,10 @@ describe('the circuits that read no witness', () => {
         sealPayKey: 'sealPayKey',
         setPolicy: 'setPolicy',
         clearRun: 'clearRun',
+        holdRun: 'holdRun',
+        releaseHold: 'releaseHold',
+        reseatSigner: 'reseatSigner',
+        setPolicyBar: 'setPolicyBar',
       });
   });
 

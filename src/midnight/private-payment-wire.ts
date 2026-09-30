@@ -79,29 +79,31 @@ export const pathToWire = (path: readonly SumStep[]): Hex[] =>
     intToHex(step.sibling, WIDTHS[0]), intToHex(step.siblingSum, WIDTHS[1]), step.goesLeft ? '01' : '00',
   ]);
 
+/** What every refusal of a damaged path says, with the reason in the middle. */
+const damaged = (reason: string): Error => new Error(
+  `the payment details this device received are damaged (${reason}), so nothing was sent. ` +
+    'Open the run\'s payments again; if this repeats, the service is sending a bad record.');
+
 /** A payee's path back off the wire, in the shape the account's circuit takes. Refuses anything but that shape. */
 export const pathFromWire = (hex: readonly string[]): SumStep[] => {
   if (!Array.isArray(hex) || hex.some((h) => typeof h !== 'string' || !/^(?:[0-9a-f]{2})*$/u.test(h))) {
-    throw new Error('this payment\'s path is not a list of byte strings, so nothing was built.');
+    throw damaged('the path is not a list of byte strings');
   }
   const expected = PAYOUT_TREE_DEPTH * WIDTHS.length;
-  if (hex.length > expected) {
-    throw new Error('this payment\'s path carries more than one path, so nothing was built.');
-  }
-  if (hex.length < expected) {
-    throw new Error(`this payment's path has ${hex.length} values where a path has ${expected}, so nothing was built.`);
+  if (hex.length !== expected) {
+    throw damaged(`the path has ${hex.length} values where a path has ${expected}`);
   }
   const path: SumStep[] = [];
   for (let level = 0; level < PAYOUT_TREE_DEPTH; level++) {
     const [node, sum, side] = WIDTHS.map((width, k) => {
       const bytes = fromHex(hex[level * WIDTHS.length + k] as Hex);
       if (bytes.length !== width) {
-        throw new Error(`level ${level} of this payment's path has a value of the wrong width, so nothing was built.`);
+        throw damaged(`level ${level} of the path has a value of the wrong width`);
       }
       return bytes;
     }) as [Uint8Array, Uint8Array, Uint8Array];
     if (side[0] !== 0 && side[0] !== 1) {
-      throw new Error(`level ${level} of this payment's path names no side, so nothing was built.`);
+      throw damaged(`level ${level} of the path names no side`);
     }
     path.push({ sibling: intOf(node), siblingSum: intOf(sum), goesLeft: side[0] === 1 });
   }

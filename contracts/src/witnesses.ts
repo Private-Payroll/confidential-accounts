@@ -53,18 +53,33 @@ export interface AccountPrivateState {
    */
   blinding: Uint8Array;
   /**
-   * WHICH VAULTS THIS SIGNER MAY ACT ON. Reserved, not yet enforced.
+   * WHAT THIS SIGNER MAY DO, as their leaf commits to it.
    *
-   * Every signer is seated with `ALL_VAULTS` and no circuit branches on it
-   * today. It is here because it is part of the signer's LEAF, and a leaf's
-   * shape cannot change later without removing and re-seating every signer on
-   * the account — the one operation on a live account holding money that must
-   * never be forced.
+   * `ALL_VAULTS` is every right on every vault. Anything else is the hash of
+   * the rights record in `rights` below (`rightsScopeOf`), and the contract
+   * checks it when this signer raises, approves or holds a run. A governance
+   * proposal is never checked against it: a seat is enough to raise and approve
+   * one, so no set of rights can leave the company unable to change them back.
    *
-   * Reserving it now costs 32 bytes inside a commitment. Not reserving it costs
-   * a migration of the one thing that must never go wrong.
+   * It is part of the signer's LEAF, so changing it is a re-seat: the old leaf
+   * is replaced by a new one in the same slot, and the chain counts that as a
+   * removal.
    */
   scope: Uint8Array;
+  /**
+   * The rights record `scope` is the hash of, for a seat given rights rather
+   * than every right on every vault. Absent, or null, for a seat with
+   * `ALL_VAULTS`. Held on this device only; the chain sees its hash inside the
+   * leaf and nothing else.
+   */
+  rights?: SignerRights | null;
+  /**
+   * What the runs this device acts on open to, keyed by the run's id in hex:
+   * the payload, the vault and the salt. A seat with rights proves with it that
+   * the run's vault is one it may act on. A seat with `ALL_VAULTS` is asked too
+   * and answers with nothing, which the contract never reads.
+   */
+  runOpenings?: Record<string, RunOpening>;
   /**
    * Hides WHICH ASSETS this account holds.
    *
@@ -157,6 +172,60 @@ export interface AccountPrivateState {
   periodSpent?: bigint;
 }
 
+/**
+ * What a signer seated with rights may do: raise runs, approve runs and hold
+ * runs, on every vault or on up to four named ones. There is no right to stop a
+ * run before its window, because any signer may.
+ */
+export interface SignerRights {
+  mayRaise: boolean;
+  mayApprove: boolean;
+  mayHold: boolean;
+  everyVault: boolean;
+  /** Up to four vault addresses. Fewer are padded with 32 zero bytes, which name no vault. */
+  vaults: Uint8Array[];
+}
+
+/** What a run's id opens to: the payload its signers approved, the vault it names and its salt. */
+export interface RunOpening {
+  payload: Uint8Array;
+  vault: Uint8Array;
+  salt: Uint8Array;
+}
+
+/** How many vaults a rights record can name. */
+export const RIGHTS_VAULT_PLACES = 4;
+
+/** Refuses a rights record the contract could not hold; returns it with its vaults padded to four. */
+export const rightsRecordOf = (rights: SignerRights): SignerRights => {
+  if (rights.vaults.length > RIGHTS_VAULT_PLACES) {
+    throw new Error(
+      `a signer's rights can name at most ${RIGHTS_VAULT_PLACES} vaults; give this signer every vault, ` +
+        'or name fewer');
+  }
+  for (const v of rights.vaults) {
+    if (v.length !== 32) throw new Error('a vault in a signer\'s rights must be a 32-byte address');
+  }
+  const vaults = [...rights.vaults];
+  while (vaults.length < RIGHTS_VAULT_PLACES) vaults.push(new Uint8Array(32));
+  return { ...rights, vaults };
+};
+
+/** The scope a leaf commits to for this rights record, from the contract's own definition. */
+export const scopeOfRights = (rights: SignerRights): Uint8Array =>
+  pureCircuits.rightsScopeOf(rightsRecordOf(rights));
+
+/** What a seat with `ALL_VAULTS` answers when the contract asks for a rights record: nothing granted. */
+const NO_RIGHTS: SignerRights = rightsRecordOf({
+  mayRaise: false, mayApprove: false, mayHold: false, everyVault: false, vaults: [],
+});
+
+const NO_OPENING: RunOpening = {
+  payload: new Uint8Array(32), vault: new Uint8Array(32), salt: new Uint8Array(32),
+};
+
+const hexOf = (b: Uint8Array): string => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+
 /** One band of a spending policy: a run whose total is at most `ceiling` needs `approvals`. */
 export interface PolicyBand {
   ceiling: bigint;
@@ -232,6 +301,32 @@ export const witnesses = {
 
   signerScope: ({ privateState }: WitnessContext<Ledger, AccountPrivateState>):
     [AccountPrivateState, Uint8Array] => [same(privateState), privateState.scope],
+
+  /**
+   * This signer's rights record. Asked of every seat when it raises, approves
+   * or holds a run; a seat with `ALL_VAULTS` answers with nothing granted and
+   * the contract never reads it. A seat with rights and no record on this
+   * device is refused here, before anything is proved.
+   */
+  signerRights: ({ privateState }: WitnessContext<Ledger, AccountPrivateState>):
+    [AccountPrivateState, SignerRights] => {
+    if (privateState.rights) return [same(privateState), rightsRecordOf(privateState.rights)];
+    if (!sameBytes(privateState.scope, ALL_VAULTS)) {
+      throw new Error(
+        'this device does not hold the rights your seat was given, so it cannot raise, approve or hold a run. ' +
+          'Restore your seat on this device from your backup, or use the device you were seated from.');
+    }
+    return [same(privateState), NO_RIGHTS];
+  },
+
+  /**
+   * What one run's id opens to. Asked when a signer approves or holds a run;
+   * only a seat with rights needs a true answer, and one that has none for the
+   * run proves nothing and is refused by the contract.
+   */
+  runOpening: ({ privateState }: WitnessContext<Ledger, AccountPrivateState>, proposal: Uint8Array):
+    [AccountPrivateState, RunOpening] =>
+    [same(privateState), privateState.runOpenings?.[hexOf(proposal)] ?? NO_OPENING],
 
   /**
    * Resolves a path to a leaf in the signer tree.

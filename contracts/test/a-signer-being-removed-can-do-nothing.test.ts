@@ -231,7 +231,7 @@ describe('a removal voids the governance proposals raised before it, and a run r
     expect(sim.approvalsFor(seatD)).toBe(2n);
     /* RED WHEN: requireApproved stops comparing the hold's removal count with the account's. */
     await expect(sim.as(carrying(sim, B, c)).addSigner(sim.leafOf(D), seatD))
-      .rejects.toThrow(/a signer has been removed since this was raised; raise it again/);
+      .rejects.toThrow(/a signer has been removed or replaced since this was raised; raise it again/);
 
     /* The control: the same change raised after the removal passes with B and C. */
     const again = govChange(43);

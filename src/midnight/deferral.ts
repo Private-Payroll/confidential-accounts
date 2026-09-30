@@ -88,12 +88,16 @@ export const DEPLOYED_CIRCUITS = [
   'cancel',
   'clearRun',
   'closeExpiredRun',
+  'holdRun',
   'propose',
   'recordPaymentFromVault',
+  'releaseHold',
   'removeSignerAndSetThreshold',
+  'reseatSigner',
   'retireVault',
   'sealPayKey',
   'setPolicy',
+  'setPolicyBar',
   'setThreshold',
   'setVaultThreshold',
 ] as const;
@@ -149,16 +153,21 @@ export const FIRST_STEP_CIRCUITS = [
  * THE SECOND STEP: THE CIRCUITS ONE MAINTENANCE UPDATE INSERTS, straight after
  * the deploy, signed by the maintenance authority the deploy installed. It only
  * inserts: it never removes a key and never replaces the authority. Measured the
- * same way: 12,935 bytes written for the six keys, 40.4% of the ceiling. The
- * spending policy's two circuits, `setPolicy` and `clearRun`, are here with the
- * other circuits that move money or depend on a vault.
+ * same way: 21,485 bytes written for the ten keys, 67.1% of the ceiling. The
+ * spending policy's circuits, `setPolicy`, `setPolicyBar` and `clearRun`, the
+ * hold and its release, and the re-seat that changes a signer's rights are here
+ * with the other circuits that move money or depend on a vault.
  */
 export const SECOND_STEP_CIRCUITS = [
   'clearRun',
+  'holdRun',
   'recordPaymentFromVault',
+  'releaseHold',
+  'reseatSigner',
   'retireVault',
   'sealPayKey',
   'setPolicy',
+  'setPolicyBar',
   'setVaultThreshold',
 ] as const satisfies readonly DeployedCircuit[];
 

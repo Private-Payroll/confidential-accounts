@@ -264,11 +264,11 @@ describe("setPolicy: a vault's policy for one token, under governance and the po
 
   it("REFUSES A CHANGE SHORT OF THE POLICY'S OWN BAR, set above the account's", async () => {
     const tc = change(0n, 502);
-    const bar = pureCircuits.setVaultThresholdPayload(pureCircuits.policyBarKey(), 3n);
+    const bar = pureCircuits.setPolicyBarPayload(3n);
     await sim.as(sim.applying(A, tc)).propose(bar);
     const bid = sim.proposalId(bar, tc.salt);
     for (const a of [A, B]) await sim.as(a).approve(bid);
-    await sim.as(sim.applying(A, tc)).setVaultThreshold(pureCircuits.policyBarKey(), 3n, bid);
+    await sim.as(sim.applying(A, tc)).setPolicyBar(3n, bid);
 
     const set = await setPolicyOn(sim, PAYROLL, POLICY, 503);
     /* RED WHEN setPolicy stops comparing its approvals with the policy's own bar. */
@@ -287,14 +287,46 @@ describe("setPolicy: a vault's policy for one token, under governance and the po
     const other = pureCircuits.policyCommitmentOf({ ...POLICY, blinding: bytes(901) });
     /* RED WHEN the round's payload stops binding the commitment written. */
     await expect(sim.as(sim.applying(A, change(0n, 505))).setPolicy(PAYROLL, other, set.id))
-      .rejects.toThrow(/does not authorise this policy/);
+      .rejects.toThrow(/that proposal is for a different policy, vault or currency/);
     /* RED WHEN the round's payload stops binding the vault. */
     await expect(sim.as(sim.applying(A, change(0n, 505))).setPolicy(TREASURY, set.commitment, set.id))
-      .rejects.toThrow(/does not authorise this policy/);
+      .rejects.toThrow(/that proposal is for a different policy, vault or currency/);
 
     const company = await setPolicyOn(sim, pureCircuits.companyWide(), POLICY, 506);
     /* RED WHEN setPolicy accepts the company-wide marker as a vault. */
     await expect(company.apply()).rejects.toThrow(/set on one vault, not on the company/);
+
+    const none = await setPolicyOn(sim, pureCircuits.noVault(), POLICY, 507);
+    /* RED WHEN setPolicy accepts the governance marker as a vault. */
+    await expect(none.apply()).rejects.toThrow(/a spending policy is set on a vault; name the vault it is for/);
+
+    const bar = await setPolicyOn(sim, pureCircuits.policyBarKey(), POLICY, 508);
+    /* RED WHEN setPolicy accepts the key of the approvals a policy change needs as a vault. */
+    await expect(bar.apply()).rejects.toThrow(/that is not a vault; name the vault the policy is for/);
+  });
+
+  it('refuses an empty policy', async () => {
+    const c = change(0n, 509);
+    const empty = new Uint8Array(32);
+    const payload = pureCircuits.setPolicyPayload(PAYROLL, assetKeyOf(GBP), empty);
+    await sim.as(sim.applying(A, c)).propose(payload);
+    const id = sim.proposalId(payload, c.salt);
+    for (const a of [A, B]) await sim.as(a).approve(id);
+    /* RED WHEN setPolicy stops refusing a commitment of zero bytes. */
+    await expect(sim.as(sim.applying(A, c)).setPolicy(PAYROLL, empty, id))
+      .rejects.toThrow(/that policy is empty; set its bands, limit and periods/);
+  });
+
+  it("a total that fits only the last band needs the last band's approvals", () => {
+    const bands = [
+      { ceiling: 1_000n, approvals: 1n },
+      { ceiling: 5_000n, approvals: 2n },
+      { ceiling: 10_000n, approvals: 3n },
+      { ceiling: 100_000n, approvals: 4n },
+    ];
+    /* RED WHEN bandApprovals answers a total above the third band with anything but the fourth band's approvals. */
+    expect(pureCircuits.bandApprovals(bands, 50_000n)).toBe(4n);
+    expect(pureCircuits.bandApprovals(bands, 10_000n)).toBe(3n);
   });
 });
 
@@ -422,6 +454,31 @@ describe('clearRun: an approved run charged to its period once, inside its windo
     await expect(clear(sim, other, { spent: 1_000n })).rejects.toThrow(/past its limit for the period/);
   });
 
+  it("A RETRY OVER ITS OWN TREE OF ONLY THE PEOPLE IT NAMES pays them and nobody else, and is charged their total again", async () => {
+    const run = await raise(sim, PAYROLL, [600n, 400n], 40);
+    await clear(sim, run);
+    await pay(sim, run, 0);
+    /* The retry's tree holds only the payee the run did not reach, with the leaf they already had. */
+    const payments = [run.payments[1]!];
+    const tree = payoutTreeOf(payments, [400n]);
+    const c = change(0n, 41);
+    await sim.as(sim.applying(A, c)).proposeRun({
+      root: fromHex(tree.root), payees: tree.payees, from: OPENS, until: CLOSES, vault: PAYROLL, required: 2n,
+    });
+    const id = sim.proposalId(pureCircuits.runPayload(fromHex(tree.root), tree.payees, OPENS, CLOSES, 2n), c.salt, PAYROLL);
+    for (const a of [A, B]) await sim.as(sim.applying(a, c)).approve(id);
+    const retry: Run = { tree, id, c, payments, required: 2n, from: OPENS, until: CLOSES, vault: PAYROLL };
+    /* A new tree is a new charge: the period goes from 1,000 to 1,400, which only tightens the limit. RED WHEN clearRun stops adding a new tree's total to its period. */
+    await clear(sim, retry, { spent: 1_000n });
+    expect(sim.roleEntry(periodKeyOf(PAYROLL, GBP, POLICY))).toEqual(periodTotalOf(POLICY, 1_400n));
+    /* The payee the run already paid is not in the retry's tree at all. RED WHEN the receipt step stops walking the payee's path to the root. */
+    await expect(pay(sim, retry, 0, { details: fromHex(run.payments[0]!.details), nonce: fromHex(run.payments[0]!.nonce) }))
+      .rejects.toThrow(/that payee is not in the approved run/);
+    await pay(sim, retry, 0);
+    /* The same leaf, so the original run cannot pay them a second time. RED WHEN a payment is recorded per run rather than per leaf. */
+    await expect(pay(sim, run, 1)).rejects.toThrow(/already been made/);
+  });
+
   it("A NEW POLICY STARTS THE PERIOD AFRESH, because the period's key includes the policy", async () => {
     const run = await raise(sim, PAYROLL, [1_000n], 40);
     await clear(sim, run);
@@ -475,7 +532,7 @@ describe('clearRun: an approved run charged to its period once, inside its windo
 
 /* ------------------------------------------------------------------ */
 
-describe('the receipt step with a policy: only a cleared run of the vault\'s own, at the approvals it needs', () => {
+describe("the receipt step with a policy: only a cleared run of the vault's own, at the approvals it needs", () => {
   let sim: AccountSimulator;
   beforeEach(async () => { sim = await live(); });
 
