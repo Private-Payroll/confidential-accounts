@@ -170,7 +170,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PAYROLL RUN RAISED AND APPROVED FROM THE SIGNE
       root: hex(new Uint8Array(randomBytes(32))), payees: '3',
       opensAt: String(now - 60n), closesAt: String(now + 3_600n), vault: hex(new Uint8Array(randomBytes(32))),
     };
-    const payload = circuits.runPayload(Buffer.from(run.root, 'hex'), 3n, BigInt(run.opensAt), BigInt(run.closesAt));
+    const payload = circuits.runPayload(Buffer.from(run.root, 'hex'), 3n, BigInt(run.opensAt), BigInt(run.closesAt), 0n);
     const id = hex(circuits.proposalIdOf(payload, Buffer.from(run.vault, 'hex'), c.salt));
     const order: GovernedCallOrder = {
       circuit: 'propose', run, proposal: id,

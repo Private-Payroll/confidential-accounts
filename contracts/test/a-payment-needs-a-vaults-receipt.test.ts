@@ -23,7 +23,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
-  AccountSimulator, change, privateStateFor, type Change,
+  AccountSimulator, change, privateStateFor, type Change, payoutTreeOf, sumArgsOf,
 } from './simulator.js';
 import { Contract, pureCircuits } from '../managed/contract/index.js';
 import { witnesses } from '../src/witnesses.js';
@@ -53,13 +53,13 @@ const approvedRun = async (
   sim: AccountSimulator, vault: Uint8Array, payments: PayoutLeafInput[], c: Change,
   approvers: ReturnType<typeof privateStateFor>[] = [A, B],
 ) => {
-  const tree = buildPayoutTree(payments);
+  const tree = payoutTreeOf(payments);
   const by = approvers[0]!;
   await sim.as(sim.applying(by, c)).proposeRun({
     root: fromHex(tree.root), payees: tree.payees, from: OPENS, until: CLOSES, vault,
   });
   const id = sim.proposalId(
-    pureCircuits.runPayload(fromHex(tree.root), tree.payees, OPENS, CLOSES), c.salt, vault);
+    pureCircuits.runPayload(fromHex(tree.root), tree.payees, OPENS, CLOSES, 0n), c.salt, vault);
   for (const a of approvers) await sim.as(sim.applying(a, c)).approve(id);
   return { tree, id };
 };
@@ -71,7 +71,7 @@ const claim = (
 ) => ({
   proposal: run.id, vault, payingVault, root: fromHex(run.tree.root), payees: run.tree.payees,
   from: OPENS, until: CLOSES, salt: c.salt,
-  details: fromHex(payments[i]!.details), nonce: fromHex(payments[i]!.nonce), path: run.tree.pathFor(i),
+  details: fromHex(payments[i]!.details), nonce: fromHex(payments[i]!.nonce), ...sumArgsOf(run.tree, i),
 });
 
 const oneRun = (seed: number): PayoutLeafInput[] =>
@@ -146,20 +146,21 @@ describe.skipIf(!STAND_IN_KEY)("a direct call, built as the real transaction, le
     sim.at(WALL);
     await sim.adoptVault(PAYROLL, [A, B]);
     const payments = oneRun(1);
-    const tree = buildPayoutTree(payments);
+    const tree = payoutTreeOf(payments);
     const from = BigInt(WALL - 3_600);
     const until = BigInt(WALL + 3_600);
     const c = change(0n, 11);
     await sim.as(sim.applying(A, c)).proposeRun({
       root: fromHex(tree.root), payees: tree.payees, from, until, vault: PAYROLL,
     });
-    const id = sim.proposalId(pureCircuits.runPayload(fromHex(tree.root), tree.payees, from, until), c.salt, PAYROLL);
+    const id = sim.proposalId(pureCircuits.runPayload(fromHex(tree.root), tree.payees, from, until, 0n), c.salt, PAYROLL);
     await sim.as(sim.applying(A, c)).approve(id);
     await sim.as(sim.applying(B, c)).approve(id);
 
     const { tx, L } = await build(sim, [
-      id, PAYROLL, PAYROLL, fromHex(tree.root), tree.payees, from, until, c.salt,
-      fromHex(payments[0]!.details), fromHex(payments[0]!.nonce), tree.pathFor(0),
+      id, PAYROLL, PAYROLL, fromHex(tree.root), tree.payees, from, until, 0n, c.salt,
+      fromHex(payments[0]!.details), fromHex(payments[0]!.nonce), tree.amounts[0]!, fromHex(tree.asset),
+      tree.pathFor(0),
     ]);
     /* The ledger's own derivation of the vault's token, not the contract's. */
     const receipt = L.rawTokenType(pureCircuits.paymentReceiptTag(), hex(PAYROLL));
@@ -194,8 +195,8 @@ describe('the roads a payment could be recorded on without a vault paying, each 
     const noVault = pureCircuits.noVault();
     await sim.adoptVault(noVault, [A, B]);
     const payments = oneRun(2);
-    const tree = buildPayoutTree(payments);
-    const payload = pureCircuits.runPayload(fromHex(tree.root), tree.payees, OPENS, CLOSES);
+    const tree = payoutTreeOf(payments);
+    const payload = pureCircuits.runPayload(fromHex(tree.root), tree.payees, OPENS, CLOSES, 0n);
     const c = change(0n, 21);
     await sim.as(sim.applying(A, c)).propose(payload);
     const id = sim.proposalId(payload, c.salt);
@@ -423,7 +424,7 @@ describe('a company-wide run: any vault ever adopted may pay its own leaf, never
       /* RED WHEN the account stops binding a company-wide leaf to the vault paying it. */
       await expect(sim.as(sim.applying(A, c)).recordPaymentFromVault(
         claim(run, payments, pureCircuits.companyWide(), c, 0, payer)))
-        .rejects.toThrow(/that path is not for this payee/);
+        .rejects.toThrow(/that payee is not in the approved run/);
     }
     expect(sim.ledger.movements.size()).toBe(0n);
   });

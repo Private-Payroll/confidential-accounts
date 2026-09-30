@@ -114,7 +114,7 @@ const openWith = async (wallet: TheWallet, slips: OpenedPayslip[]) => openAddres
 const NIGHT_PUBLICLY = ledgerTokenOf('NIGHT', 'unshielded');
 const PAID = 25_000_000n;
 const run = buildRun([{ epoch: 0, seed: '5e'.repeat(32) }], { accountId: 'acc_1', runId: 'run_1', epoch: 0 },
-  [{ payee: payeeOf(publicOf(mine, 0), NETWORK), token: NIGHT_PUBLICLY, amount: PAID }], vaultDetails, payFor([{ payee: payeeOf(publicOf(mine, 0), NETWORK), token: NIGHT_PUBLICLY, amount: PAID }]));
+  [{ payee: payeeOf(publicOf(mine, 0), NETWORK), token: NIGHT_PUBLICLY, amount: PAID }], vaultDetails, payFor([{ payee: payeeOf(publicOf(mine, 0), NETWORK), token: NIGHT_PUBLICLY, amount: PAID }]), 'NIGHT');
 const args = run.payeeArgs(0);
 const RECORDED = new Set(run.tree.leaves.map(paidMovementOfLeaf));
 

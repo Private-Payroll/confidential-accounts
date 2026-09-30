@@ -27,8 +27,8 @@ import {
   Contract as Vault, ledger as vaultLedger, pureCircuits as vaultCircuits,
 } from '../managed-vault/contract/index.js';
 import { pureCircuits } from '../managed/contract/index.js';
-import { AccountSimulator, privateStateFor, change, type Change } from './simulator.js';
-import { buildPayoutTree, type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
+import { AccountSimulator, privateStateFor, change, type Change, payoutTreeOf } from './simulator.js';
+import { type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
 import { changeCoinOf } from '../../src/midnight/vault-coins.js';
 import {
   reconcileVaultPool, commitmentForNote, changeNonceOf, describeRecovery,
@@ -161,8 +161,8 @@ describe('a vault whose every record of ours is gone', () => {
       details: toHex(vaultCircuits.payoutDetails(p.to, GBP, p.amount, bytes(0x40 + i))),
       nonce: toHex(bytes(p.nonce)),
     }));
-    const tree = buildPayoutTree(leaves);
-    const payload = pureCircuits.runPayload(fromHex(tree.root), tree.payees, WIN_FROM, WIN_UNTIL);
+    const tree = payoutTreeOf(leaves);
+    const payload = pureCircuits.runPayload(fromHex(tree.root), tree.payees, WIN_FROM, WIN_UNTIL, 0n);
     const vaultBytes = fromHex(vaultAddr);
     await sim.as(sim.applying(A, c)).proposeRun({
       root: fromHex(tree.root), payees: tree.payees, from: WIN_FROM, until: WIN_UNTIL, vault: vaultBytes,

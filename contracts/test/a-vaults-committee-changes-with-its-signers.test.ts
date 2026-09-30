@@ -42,7 +42,7 @@ import * as vaultModule from '../managed-vault/contract/index.js';
 import * as accountModule from '../managed/contract/index.js';
 import { witnesses, type AccountPrivateState } from '../src/witnesses.js';
 import { aWalletThatPaysPrivately, type AWalletThatPaysPrivately } from './a-wallet-that-pays-privately.js';
-import { privateStateFor, leafOfDevice, change, ZERO_32, COMPANY_LABEL } from './simulator.js';
+import { privateStateFor, leafOfDevice, change, ZERO_32, COMPANY_LABEL, rootOfTestLeaves } from './simulator.js';
 import { MemoryStore } from '../../src/core/store.js';
 import { AccountService, sealAccount } from '../../src/core/account.js';
 import { MidnightCommitments } from '../../src/midnight/commitments.js';
@@ -76,7 +76,7 @@ import { fileURLToPath } from 'node:url';
 import { readProvenTransaction } from '../../src/wiring/proven-submission.js';
 import { startingLedgerFrom } from '../../src/wiring/vault-submission.js';
 import { signingKeyFromBip340 } from '@midnightntwrk/ledger-v9';
-import { buildRun, rootOfLeaves } from '../../src/midnight/payout-tree.js';
+import { buildRun } from '../../src/midnight/payout-tree.js';
 import { vaultDetails } from '../../src/testing/vault-details.js';
 import { payeeAddressFromKeys, type Payee } from '../../src/midnight/payee-address.js';
 import { assemblePrivatePayments } from '../../src/midnight/private-payment-wire.js';
@@ -498,12 +498,12 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
     const facts = [{ payee, token: paying?.token ?? TOKEN, amount }];
     const run = buildRun([{ epoch: 0, seed: toHex(new Uint8Array(randomBytes(32))) }], { accountId: ACCOUNT_ID, runId: 'run_1', epoch: 0 }, facts, vaultDetails,
       /* A different person on every run, so the account records each as its own payment. */
-      payFor(facts, { people: [`person-${toHex(new Uint8Array(randomBytes(8)))}`] }));
+      payFor(facts, { people: [`person-${toHex(new Uint8Array(randomBytes(8)))}`] }), 'GBP');
     const now = BigInt(Math.floor(Date.now() / 1000));
     const window = { from: now - 600n, until: now + 3_600n };
     const c = change(0n, 41);
     const idFrom = (leaves: Hex[], w: { from: bigint; until: bigint }) => toHex(accountCircuits.proposalIdOf(
-      accountCircuits.runPayload(fromHex(rootOfLeaves(leaves)), BigInt(leaves.length), w.from, w.until), fromHex(vault), c.salt));
+      accountCircuits.runPayload(fromHex(rootOfTestLeaves(leaves, leaves.map(() => amount))), BigInt(leaves.length), w.from, w.until, 0n), fromHex(vault), c.salt));
     const id = idFrom(run.tree.leaves, window);
     const staged = { ...founder, assetId: c.asset, changeAmount: c.amount, changeBatchDigest: c.batch, proposalSalt: c.salt };
     await callAccount('propose', [ZERO_32, fromHex(run.tree.root), run.tree.payees, window.from, window.until, true, fromHex(vault)], staged);

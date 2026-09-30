@@ -66,7 +66,7 @@ const aCompany = async (name: string) => {
   const seat = created.secrets[0]!;
   at(0);
   const leg = await payroll.proposeRun(run.id, viewingKey, seat.signerId, await runMaterialFor({
-    accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds, facts: inputs.facts, pay: inputs.pay,
+    accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds, facts: inputs.facts, pay: inputs.pay, asset: inputs.asset,
     opensAt: BigInt(LEG.opensAt), closesAt: BigInt(LEG.closesAt), vault: VAULT, detailsOf: vaultDetails,
   }));
   if (!leg.raisedAt) throw new Error(`the ${name} leg did not reach the chain`);

@@ -515,7 +515,7 @@ export interface ShieldedEntry {
  * `balances: Record<AssetId, bigint>` STOOD BESIDE `entries` AND IS GONE. It
  * mirrored the contract's `assetBalances`, which is also gone: the account is
  * an authority over a vault's money, not a holder of any. Every payment out is
- * recorded on chain in `movements` by `recordPayment`, and the entry log here
+ * recorded on chain in `movements` by `recordPaymentFromVault`, and the entry log here
  * is the readable account of the same events.
  */
 export interface ShieldedState {
@@ -673,7 +673,7 @@ export interface Proposal {
    *
    * **SEALED, NOT READABLE, AND THE CONTRACT MAKES THE SAME CHOICE.** The chain
    * learns the vault only when a payment is recorded against the round
-   * (`recordPayment` discloses it, `compact:2639`); at propose time it holds a
+   * (`recordPaymentFromVault` discloses it, `compact:2639`); at propose time it holds a
    * commitment and nothing more. Which pot of money an OPEN round is reaching
    * into is a live signal about a pending payment — the same reason `propose`
    * refuses to disclose the asset key (`compact:2105`). Every path that needs it
@@ -1298,13 +1298,13 @@ export interface RunSkips {
 /**
  * **ONE APPROVED LEG'S PAYOUT MATERIAL.**
  *
- * The first five fields are exactly what the chain was asked to open the run
- * with, and they are kept because nothing can recover them: what the chain holds
+ * The root, count, window, vault and required approvals are exactly what the
+ * chain was asked to open the run with, and they are kept because nothing can recover them: what the chain holds
  * is a hash of them. The last three are what makes the leg payable again from
  * another machine.
  */
 export interface RunPayout {
-  /** The merkle root over this leg's payout leaves. What the signers approved. */
+  /** The sum tree's root over this leg's payout leaves. What the signers approved. */
   root: Hex;
   /** How many leaves. Bound into the payload beside the root. */
   payees: bigint;
@@ -1313,6 +1313,8 @@ export interface RunPayout {
   closesAt: bigint;
   /** The vault that will pay this leg. Folded into the proposal's identity. */
   vault: Hex;
+  /** The approvals the leg's total needs under its vault's policy, bound into its identity. Absent is zero. */
+  required?: bigint;
   /**
    * The leaves, in tree order.
    *
@@ -1617,18 +1619,24 @@ export interface Proposal {
 export interface RunRetry {
   /**
    * Which of the leg's people this attempt pays: positions in the leg's own
-   * recorded leaves, in the order this attempt's tree was built.
+   * recorded leaves, in the order the attempt named them.
    */
   originalIndices: number[];
-  /** The merkle root over those people's leaves. What the signers approve. */
+  /**
+   * The root this attempt was raised with: the leg's own, because an attempt is
+   * raised over the leg's own tree and pays only the people it names. What the
+   * signers approve.
+   */
   root: Hex;
-  /** How many of them. Always the length of `originalIndices`. */
+  /** The leg's payee count, which the root's tree holds. */
   payees: bigint;
   /** Seconds since the Unix epoch, because block time is compared against it. */
   opensAt: bigint;
   closesAt: bigint;
   /** The vault that will pay this attempt. */
   vault: Hex;
+  /** The approvals the leg's total needs, since an attempt is raised over the leg's tree; bound into its identity. Absent is zero. */
+  required?: bigint;
   /**
    * The proposal this attempt was raised as. Absent between the moment the
    * attempt is written down and the moment the raise returns, which is the

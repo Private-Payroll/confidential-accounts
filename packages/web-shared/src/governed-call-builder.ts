@@ -102,6 +102,8 @@ export interface RunOnTheWire {
   readonly opensAt: string;
   readonly closesAt: string;
   readonly vault: string;
+  /** The approvals the run's total needs, bound into its identity. Absent is zero. */
+  readonly required?: string;
 }
 
 /**
@@ -243,7 +245,7 @@ export interface GovernedCallDeps {
   readonly prove: (unproven: any, circuit?: string) => Promise<{ serialize(): Uint8Array }>;
   /** The company account's own pure circuits, which make a proposal's identity from its parts. */
   readonly accountPure: {
-    runPayload(root: Uint8Array, payees: bigint, opensAt: bigint, closesAt: bigint): Uint8Array;
+    runPayload(root: Uint8Array, payees: bigint, opensAt: bigint, closesAt: bigint, required: bigint): Uint8Array;
     proposalIdOf(payload: Uint8Array, vault: Uint8Array, salt: Uint8Array): Uint8Array;
     signerAddPayload(leaf: Uint8Array): Uint8Array;
     setThresholdPayload(threshold: bigint): Uint8Array;
@@ -363,7 +365,7 @@ export function argumentsFor(order: GovernedCallOrder): unknown[] {
      * The payload and that vault are made where the call is built, from the
      * contract's own functions, so they are not arguments this file can get wrong.
      */
-    return [GOVERNANCE_PAYLOAD, ZERO_32, 0n, 0n, 0n, false, NO_VAULT];
+    return [GOVERNANCE_PAYLOAD, ZERO_32, 0n, 0n, 0n, 0n, false, NO_VAULT];
   }
   const r = order.run;
   const payees = digitsOf('number of people paid', r.payees);
@@ -372,7 +374,8 @@ export function argumentsFor(order: GovernedCallOrder): unknown[] {
   if (payees < 1n) throw new Error('a run pays at least one person, and this one names none. Nothing was built.');
   if (opensAt >= closesAt) throw new Error('this run\'s window closes before it opens. Nothing was built.');
   /* The merged circuit on its run branch: no opaque payload, and `isRun` set. */
-  return [ZERO_32, bytesOf('payout root', r.root), payees, opensAt, closesAt, true, bytesOf('vault', r.vault)];
+  const required = digitsOf('approvals the run needs', r.required ?? '0');
+  return [ZERO_32, bytesOf('payout root', r.root), payees, opensAt, closesAt, required, true, bytesOf('vault', r.vault)];
 }
 
 /** Stand-ins in a governance raise's arguments, replaced with the contract's own values before the call is built. */
@@ -440,8 +443,8 @@ export function refuseARaiseThatIsNotTheRecordedOne(deps: Pick<GovernedCallDeps,
   if (order.circuit === 'approve') {
     made = P.proposalIdOf(governancePayloadOf(deps, order.of!.governance), P.noVault(), bytesOf('proposal\'s salt', order.of!.proposalSalt));
   } else if (order.circuit === 'propose' && raisesARun(order)) {
-    const [, root, payees, opensAt, closesAt, , vault] = argumentsFor(order) as [unknown, Uint8Array, bigint, bigint, bigint, unknown, Uint8Array];
-    made = P.proposalIdOf(P.runPayload(root, payees, opensAt, closesAt), vault, bytesOf('proposal\'s salt', order.half.proposalSalt));
+    const [, root, payees, opensAt, closesAt, required, , vault] = argumentsFor(order) as [unknown, Uint8Array, bigint, bigint, bigint, bigint, unknown, Uint8Array];
+    made = P.proposalIdOf(P.runPayload(root, payees, opensAt, closesAt, required), vault, bytesOf('proposal\'s salt', order.half.proposalSalt));
   } else if (order.circuit === 'propose') {
     made = P.proposalIdOf(governancePayloadOf(deps, order.governance), P.noVault(), bytesOf('proposal\'s salt', order.half.proposalSalt));
   } else if (order.circuit === 'amendSigner') {
@@ -531,8 +534,8 @@ export function refuseWhatThisDeviceDidNotOpen(
   }
   if (raisesARun(order)) {
     if (g !== undefined) refuse('change');
-    const [, root, payees, opensAt, closesAt, , vault] = argumentsFor(order) as [unknown, Uint8Array, bigint, bigint, bigint, unknown, Uint8Array];
-    if (!same(hexOf(P.runPayload(root, payees, opensAt, closesAt)), opened.digest)) refuse('run');
+    const [, root, payees, opensAt, closesAt, required, , vault] = argumentsFor(order) as [unknown, Uint8Array, bigint, bigint, bigint, bigint, unknown, Uint8Array];
+    if (!same(hexOf(P.runPayload(root, payees, opensAt, closesAt, required)), opened.digest)) refuse('run');
     if (!same(hexOf(vault), opened.vault)) refuse('run vault');
   } else if (g === undefined || !sameGovernance(order.governance, g)) {
     refuse(changeNamed(order.governance));

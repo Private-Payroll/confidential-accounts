@@ -54,7 +54,7 @@ async function aCompany(people = 3) {
   const by = created.secrets[0]!.signerId;
   const inputs = (runId: string) => payroll.runMaterialInputs(runId, viewingKey);
   const materialFrom = (i: Awaited<ReturnType<typeof inputs>>) => runMaterialFor({
-    accountId: i.accountId, runId: i.runId, seeds: i.seeds, facts: i.facts, pay: i.pay,
+    accountId: i.accountId, runId: i.runId, seeds: i.seeds, facts: i.facts, pay: i.pay, asset: i.asset,
     opensAt: OPENS, closesAt: CLOSES, vault: PAYROLL_VAULT, detailsOf: vaultDetails,
   });
   const raise = async (runId: string) => payroll.proposeRun(runId, viewingKey, by, await materialFrom(await inputs(runId)));

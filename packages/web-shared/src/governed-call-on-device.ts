@@ -447,6 +447,9 @@ async function refusePaymentsTheVaultCannotPay(
         + 'proposal and raise the run again.');
     }
     payees = BigInt(input.order.order.run.payees);
+    /* A retry is raised over its leg's own tree and pays only the people it names. */
+    const named = (input.order as { indices?: unknown }).indices;
+    if (Array.isArray(named)) payees = BigInt(named.length);
   }
   await refuseWhatTheVaultCannotPay(doors.holdings, {
     vault: input.vault,

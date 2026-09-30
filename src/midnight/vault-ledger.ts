@@ -10,7 +10,8 @@
  * ------------------------------------------------------------------------
  * WHAT THIS DELIBERATELY DOES NOT DO: RESOLVE THE ACCOUNT
  *
- * `payout` calls the account's `recordPayment`, and every offline test in this
+ * `payout` is to call the account's `recordPaymentFromVault` (the vault contract still
+ * calls the step's older form until the vault round rebuilds it), and every offline test in this
  * repo builds that call by hand with a `ContractStateProvider` so the runtime
  * can read the callee. **The client needs none of it.** midnight-js supplies
  * the provider itself, on every call, unconditionally: both call sites in
@@ -1636,7 +1637,8 @@ export class VaultLedger {
    *
    * **WHAT IS NOT ABSENT IS THE RULEBOOK.** The account's approval, `V-64`'s
    * paid-once record, `V-67`'s window and the run's root are checked by exactly
-   * the same `recordPayment` call the shielded circuit makes, from inside
+   * the same account call the shielded circuit makes (`recordPaymentFromVault` once
+   * the vault contract is rebuilt against it), from inside
    * `payoutUnshielded`. That is the argument for this whole path: **it drops
    * the entire note model and keeps the entire rulebook.**
    *

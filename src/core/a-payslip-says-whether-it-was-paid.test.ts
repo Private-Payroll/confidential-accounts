@@ -114,7 +114,7 @@ const raise = async (h: H, c: C, period: string): Promise<{ runId: string; mater
 const raiseLeg = async (h: H, c: C, runId: string, asset?: 'GBP' | 'EUR'): Promise<RunMaterial> => {
   const inputs = await h.payroll.runMaterialInputs(runId, c.viewingKey, asset);
   const material = await runMaterialFor({
-    accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds, facts: inputs.facts, pay: inputs.pay,
+    accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds, facts: inputs.facts, pay: inputs.pay, asset: inputs.asset,
     opensAt: BigInt(NOW), closesAt: BigInt(CLOSES), vault: VAULT, detailsOf: vaultDetails,
   });
   await h.payroll.proposeRun(runId, c.viewingKey, c.by, material, asset);
@@ -656,7 +656,7 @@ describe('a leg is raised only with its payments in its people\'s order', () => 
     const inputs = await h.payroll.runMaterialInputs(run.id, c.viewingKey);
     const reversed = await runMaterialFor({
       accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds, facts: [...inputs.facts].reverse(), pay: payFor([...inputs.facts].reverse()),
-      opensAt: BigInt(NOW), closesAt: BigInt(CLOSES), vault: VAULT, detailsOf: vaultDetails,
+      asset: inputs.asset, opensAt: BigInt(NOW), closesAt: BigInt(CLOSES), vault: VAULT, detailsOf: vaultDetails,
     });
     const before = JSON.stringify(h.store.getRun(run.id));
     /*

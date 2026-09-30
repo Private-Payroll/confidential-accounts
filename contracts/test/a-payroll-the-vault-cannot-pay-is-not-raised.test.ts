@@ -100,7 +100,7 @@ async function aDraftedRun(people: number, asset = 'GBP', opts: { registry?: Ass
   const materialFor = async () => {
     const i = await s.payroll.runMaterialInputs(run.id, viewingKey);
     return runMaterialFor({
-      accountId: i.accountId, runId: i.runId, seeds: i.seeds, facts: i.facts, pay: i.pay,
+      accountId: i.accountId, runId: i.runId, seeds: i.seeds, facts: i.facts, pay: i.pay, asset: i.asset,
       opensAt: OPENS, closesAt: CLOSES, vault: VAULT, detailsOf: vaultDetails,
     });
   };

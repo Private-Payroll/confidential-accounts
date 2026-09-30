@@ -55,9 +55,18 @@ import {
 import { privateStateFor } from './simulator.js';
 
 describe('the private half hands back the state it was given', () => {
+  /** A policy opening, so the witness that reads one has one to hand back. */
+  const policy = {
+    terms: {
+      bands: [1n, 2n, 3n, 4n].map((n) => ({ ceiling: n * 100n, approvals: n })),
+      periodLimit: 1_000n, periodStart: 0n, periodLength: 60n,
+    },
+    blinding: new Uint8Array(32).fill(7),
+  };
+
   /** A device replaying a path it captured. `signerPath` short-circuits. */
   const pinned = (): AccountPrivateState =>
-    ({ ...privateStateFor(1), pinnedPath: PINNED_PATH, pinAnyLeaf: true });
+    ({ ...privateStateFor(1), pinnedPath: PINNED_PATH, pinAnyLeaf: true, policy, periodSpent: 5n });
 
   /**
    * A device with no pin, which is every real one. `signerPath` goes to the
@@ -65,7 +74,7 @@ describe('the private half hands back the state it was given', () => {
    * pinned would never execute.
    */
   const unpinned = (): AccountPrivateState =>
-    ({ ...privateStateFor(1), pinnedPath: null, pinAnyLeaf: false });
+    ({ ...privateStateFor(1), pinnedPath: null, pinAnyLeaf: false, policy, periodSpent: 5n });
 
   const real = witnesses as unknown as Record<string, WitnessFn>;
 
@@ -116,7 +125,7 @@ describe('the private half hands back the state it was given', () => {
       'a witness has been added or removed and the check was not told how to call it, so it '
       + 'has been walking past it',
     ).toEqual(declared);
-    expect(declared).toHaveLength(11);
+    expect(declared).toHaveLength(13);
   });
 
   /**
@@ -125,7 +134,7 @@ describe('the private half hands back the state it was given', () => {
    * Each REAL witness is wrapped in turn so that it returns a spread of the
    * state it was handed - deeply equal, different object - which is the exact
    * change this file exists to catch and the exact change a deep comparison
-   * would miss. Nine mutations, nine red results, so the green case above is
+   * would miss. One mutation per witness, one red result each, so the green case above is
    * known to be a claim that CAN fail rather than a loop that reports nothing.
    */
   it.each(Object.keys(witnesses))('goes red when %s returns a copy instead', (name) => {

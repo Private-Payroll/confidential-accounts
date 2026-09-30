@@ -2889,10 +2889,10 @@ export class PayrollService {
      *
      * That door's payload hash is an APPLICATION digest — `commit(canonical(
      * {accountId, kind, sealedPayload, proposedBy}), '')`,
-     * `src/core/account.ts:2252-2254` — and `recordPayment` recomputes
-     * `proposalIdOf(runPayload(root, payees, opensAt, closesAt), forVault,
+     * `src/core/account.ts:2252-2254` — and `recordPaymentFromVault` recomputes
+     * `proposalIdOf(runPayload(root, payees, opensAt, closesAt, required), forRun,
      * salt)` and matches only a `runPayload`
-     * (`contracts/src/ConfidentialAccount.compact:2606-2609`). The two can
+     * (`contracts/src/ConfidentialAccount.compact`). The two can
      * never be equal. **So every payroll run this product has ever raised was
      * raised as a governance round: no `runWindow` row, and a payload hash no
      * vault can ever present. Approved, paid for, and unpayable for ever** —
@@ -2943,7 +2943,7 @@ export class PayrollService {
      *
      * This is the strongest of the three agreements and it is the one that costs
      * a whole payroll: a run approved against a root that does not describe its
-     * own payees is refused at every `recordPayment`, on payday, after the
+     * own payees is refused at every `recordPaymentFromVault`, on payday, after the
      * signatures are in and the fee is spent. **The material's TYPE cannot carry
      * this** — the brand says the value was built rather than typed out, and a
      * spread carries the brand across while replacing a field — so the
@@ -2954,7 +2954,7 @@ export class PayrollService {
      * computed a second way here would build a check that agrees with itself and
      * with nothing the chain will do.
      */
-    if (payable.rootOf(payable.leaves) !== payable.run.root) {
+    if (payable.rootOf(payable.leaves, payable.facts, leg) !== payable.run.root) {
       throw new Error(
         'this run material\'s payout root is not the root over its own leaves, so the run the ' +
           'signers would approve is not the run these payees are in. Every payment against it ' +
@@ -3126,6 +3126,7 @@ export class PayrollService {
       opensAt: payable.run.opensAt,
       closesAt: payable.run.closesAt,
       vault: payable.run.vault,
+      ...(payable.run.required ? { required: payable.run.required } : {}),
       leaves: payable.leaves,
       facts: payable.facts,
       records: payRecords,
@@ -3435,14 +3436,21 @@ export class PayrollService {
         + 'The leaf is the payment - the same leaf is refused a second time and a different one is '
         + 'not - so a retry over different leaves would pay those people again.');
     }
-    if (payable.run.payees !== BigInt(indices.length)) {
+    /*
+     * **A RETRY IS RAISED OVER THE LEG'S OWN TREE**: its root and payee count are
+     * the leg's, and it pays only the people it names. A vault under a spending
+     * policy charges a tree to its period once, so a retry over the same tree in
+     * the same period is not charged again; the people already paid cannot be
+     * paid through it, because the account refuses a leaf it has recorded.
+     */
+    if (payable.run.payees !== BigInt(recorded.leaves.length)) {
       throw new Error(
-        `this retry names ${indices.length} people and its material binds ${payable.run.payees}. `
-        + 'The count is part of what the signers approve.');
+        `a retry is raised over the leg's own tree, which pays ${recorded.leaves.length} people, and `
+        + `this retry's material binds ${payable.run.payees}. The count is part of what the signers approve.`);
     }
-    if (payable.rootOf(payable.leaves) !== payable.run.root) {
+    if (payable.rootOf(recorded.leaves, recorded.facts, leg) !== payable.run.root) {
       throw new Error(
-        'this retry\'s payout root is not the root over its own leaves, so what the signers '
+        'this retry\'s payout root is not the root over its leg\'s own leaves, so what the signers '
         + 'would approve is not the proposal these people are in. Every payment against it would be '
         + 'refused, after the signatures were collected and the fee was spent.');
     }
@@ -3518,6 +3526,7 @@ export class PayrollService {
         opensAt: payable.run.opensAt,
         closesAt: payable.run.closesAt,
         vault: payable.run.vault,
+        ...(payable.run.required ? { required: payable.run.required } : {}),
         proposedBy,
         at,
       };
@@ -3533,8 +3542,10 @@ export class PayrollService {
       payload: { runId: run.id, entries, retry: [...indices] },
       asset: leg,
       run: payable.run,
-      /* The leg's own payments for the people this retries, in the retry's tree order. */
+      /* The leg's own payments for the people this retries, in the order it names them. */
       payments: indices.map(i => recorded.facts[i]!),
+      /* Raised over the leg's own tree, it pays only the people it names. */
+      paying: BigInt(indices.length),
       proposedBy,
       ...(again !== undefined ? { again } : {}),
       ...(how?.onDevice ? { onDevice: true as const } : {}),
@@ -4057,8 +4068,8 @@ export class PayrollService {
    * rather than at a later one.
    *
    * WHAT REPLACES IT IS KNOWN AND IS NOT BUILT: an approved run is presented at
-   * a VAULT, which pays each payee and calls `recordPayment` on this account —
-   * already in the contract, and the only circuit a vault calls. `run.status`
+   * a VAULT, which pays each payee and calls `recordPaymentFromVault` on this account —
+   * already in the contract, and the only payment circuit a vault is to call. `run.status`
    * and `run.settledAt` are kept because runs already settled must still read
    * correctly.
    */
@@ -4430,6 +4441,8 @@ export class PayrollService {
      * chain, so raising it again builds the same leaves. Absent means current.
      */
     epoch?: number;
+    /** The leg's asset, which the run's root commits to. */
+    asset: AssetId;
   }> {
     const run = this.requireRun(runId, viewingKey);
     const leg = legOf(run, asset);
@@ -4466,6 +4479,7 @@ export class PayrollService {
           records: recorded.records ?? payRecordsOf(run, people),
         },
         epoch: recorded.epoch,
+        asset: leg,
       };
     }
     return {
@@ -4477,6 +4491,7 @@ export class PayrollService {
         key: await this.accounts.payRecordKeyOf(run.accountId, viewingKey),
         records: payRecordsOf(run, legEmployees(run, leg)),
       },
+      asset: leg,
     };
   }
 
@@ -4589,6 +4604,8 @@ export class PayrollService {
     seeds: PayoutSeed[];
     /** The pay-record key and what each payment of the leg is for, as the leg recorded it. */
     pay: PayRecords;
+    /** The leg's asset, which its root commits to. */
+    asset: AssetId;
   } | null> {
     const run = this.requireRun(runId, viewingKey);
     const leg = raisedLegOf(run, asset);
@@ -4602,6 +4619,7 @@ export class PayrollService {
         key: await this.accounts.payRecordKeyOf(run.accountId, viewingKey),
         records: payout.records ?? payRecordsOf(run, legEmployees(run, leg)),
       },
+      asset: leg,
     };
   }
 
@@ -4631,7 +4649,7 @@ export class PayrollService {
   async raiseOrderOf(runId: string, viewingKey: Hex, asset?: AssetId): Promise<{
     proposalId: string;
     chainId: Hex;
-    run: { root: Hex; payees: bigint; opensAt: bigint; closesAt: bigint; vault: Hex };
+    run: { root: Hex; payees: bigint; opensAt: bigint; closesAt: bigint; vault: Hex; required?: bigint };
     half: RaiseHalf;
     /** The digest of the payments written down, over what a device is handed to check them. */
     paymentsChecked: string;
@@ -4648,6 +4666,7 @@ export class PayrollService {
       chainId: raised.chainId,
       run: {
         root: payout.root, payees: payout.payees, opensAt: payout.opensAt, closesAt: payout.closesAt, vault: payout.vault,
+        ...(payout.required ? { required: payout.required } : {}),
       },
       half: await this.accounts.raiseHalfOf(proposalId, viewingKey),
       paymentsChecked: paymentsCheckedDigest(payout.facts.map(paymentChecked)),
@@ -4732,7 +4751,7 @@ export class PayrollService {
   async retryRaiseOrderOf(runId: string, viewingKey: Hex, proposalId: string, asset?: AssetId): Promise<{
     proposalId: string;
     chainId: Hex;
-    run: { root: Hex; payees: bigint; opensAt: bigint; closesAt: bigint; vault: Hex };
+    run: { root: Hex; payees: bigint; opensAt: bigint; closesAt: bigint; vault: Hex; required?: bigint };
     half: RaiseHalf;
     indices: number[];
     /** The digest of the retry's payments, over what a device is handed to check them. */
@@ -4748,7 +4767,10 @@ export class PayrollService {
     return {
       proposalId,
       chainId: raised.chainId,
-      run: { root: retry.root, payees: retry.payees, opensAt: retry.opensAt, closesAt: retry.closesAt, vault: retry.vault },
+      run: {
+        root: retry.root, payees: retry.payees, opensAt: retry.opensAt, closesAt: retry.closesAt, vault: retry.vault,
+        ...(retry.required ? { required: retry.required } : {}),
+      },
       half: await this.accounts.raiseHalfOf(proposalId, viewingKey),
       indices: [...retry.originalIndices],
       paymentsChecked: paymentsCheckedDigest(retry.originalIndices.map(i => paymentChecked(payout.facts[i]!))),
@@ -4786,10 +4808,10 @@ export class PayrollService {
    * Everything is read off the retry as it was written onto the leg and the
    * proposal it was raised as - its root, count, window and vault, and that
    * round's salt and identity - never off the request. `indices` are the
-   * people it pays, as positions in the leg, in the retry's own tree order, and
-   * `leaves` are the leg's own leaves for them: the retry pays each person with
-   * the leaf they already had, which is why the account can pay each of them
-   * once whichever round reaches them first.
+   * people it pays, as positions in the leg, in the order the retry named them,
+   * and `leaves` are the leg's own leaves: the retry is raised over the leg's
+   * own tree and pays each person with the leaf they already had, which is why
+   * the account can pay each of them once whichever round reaches them first.
    *
    * `null` when this leg has no retry raised as that proposal, or the chain was
    * never seen to hold it: a round with no raise has no identity a vault could
@@ -4798,7 +4820,7 @@ export class PayrollService {
   retryPaymentOrderOf(
     runId: string, viewingKey: Hex, proposalId: string, asset: AssetId | undefined,
     /** The payout tree's own root function, passed in for the reason `payoutMaterialOf` gives. */
-    rootOf: (leaves: Hex[]) => Hex,
+    rootOf: (leaves: Hex[], facts: readonly PaymentFacts[], asset: AssetId) => Hex,
   ): {
     order: {
       asset: AssetId; vault: Hex; proposal: Hex; salt: Hex;
@@ -4828,10 +4850,11 @@ export class PayrollService {
         closesAt: retry.closesAt,
       },
       indices: [...retry.originalIndices],
-      leaves: retry.originalIndices.map((i) => payout.leaves[i]!),
+      /* The leg's own leaves: a retry is raised over the leg's own tree. */
+      leaves: [...payout.leaves],
       window: { from: retry.opensAt, until: retry.closesAt },
       idFrom: (leaves, w) => this.accounts.runProposalIdFrom(proposalId, viewingKey, {
-        root: rootOf(leaves), payees: BigInt(leaves.length), opensAt: w.from, closesAt: w.until,
+        root: rootOf(leaves, payout.facts, leg), payees: BigInt(leaves.length), opensAt: w.from, closesAt: w.until,
       }),
     };
   }
@@ -4873,7 +4896,7 @@ export class PayrollService {
        * an unverified view, clearly marked as one — and it is passed in rather
        * than imported because this layer must not reach that runtime at all.
        */
-      rootOf?: (leaves: Hex[]) => Hex;
+      rootOf?: (leaves: Hex[], facts: readonly PaymentFacts[], asset: AssetId) => Hex;
     } = {},
   ): RunInputs | null {
     /* Read for the refusal it carries: a run nobody may open is not a run whose
@@ -4909,7 +4932,7 @@ export class PayrollService {
         proposal = {
           id: raised.chainId,
           idFrom: (leaves, w) => this.accounts.runProposalIdFrom(proposalId, viewingKey, {
-            root: rootOf(leaves),
+            root: rootOf(leaves, payout.facts, leg),
             payees: BigInt(leaves.length),
             opensAt: w.from,
             closesAt: w.until,

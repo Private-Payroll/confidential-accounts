@@ -18,7 +18,7 @@ import { wiring, observerView } from '../wiring/selection.js';
 import { AccountService } from '../core/account.js';
 import { PayrollService, RecordingInviteDelivery, canonicalPeriod } from '../core/payroll.js';
 import { runPayments } from '../midnight/run-status.js';
-import { rootOfLeaves } from '../midnight/payout-tree.js';
+import { rootOfPayments } from '../midnight/payout-tree.js';
 import { runMaterialFor, retryMaterialFor } from '../midnight/run-material.js';
 import { bigintJsonReplacer, type Hex } from '../core/crypto.js';
 
@@ -600,6 +600,7 @@ async function route(url: URL, init?: RequestInit): Promise<Response> {
         seeds: inputs.seeds,
         facts: inputs.facts,
         pay: inputs.pay,
+        asset: inputs.asset,
         opensAt: BigInt(String(body.opensAt)),
         closesAt: BigInt(String(body.closesAt)),
         vault: String(body.vault) as Hex,
@@ -666,7 +667,7 @@ async function route(url: URL, init?: RequestInit): Promise<Response> {
        * id is rebuilt from the leaves in hand and a list that belongs to
        * another payroll is refused rather than reported on. */
       const material = payroll.payoutMaterialOf(
-        runId, viewingKey, { asset: body.asset, rootOf: rootOfLeaves });
+        runId, viewingKey, { asset: body.asset, rootOf: rootOfPayments });
       const among = material ? await ledger.paidAmong(run.accountId, material.leaves) : null;
       return ok(runPayments(material, among));
     }

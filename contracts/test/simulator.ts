@@ -50,6 +50,10 @@ import {
   ALL_VAULTS,
   NO_VAULT,
 } from '../src/witnesses.js';
+import {
+  buildPayoutTree, rootOfLeaves, type PayoutLeafInput, type PayoutTree,
+} from '../../src/midnight/payout-tree.js';
+import { toHex } from '../../src/core/crypto.js';
 
 /**
  * Thirty-two zero bytes.
@@ -99,6 +103,33 @@ export const assetBytes = (code: string): Uint8Array => {
 /** The default asset for tests that are not about assets. Two decimals. */
 export const GBP = assetBytes('GBP');
 export const USDC = assetBytes('USDC');
+
+/** What each payee of a test run is paid, unless the test names amounts. */
+export const TEST_AMOUNT = 100n;
+
+/**
+ * A run's sum tree over `payments`, through the product's own builder: at
+ * `amounts` (each `TEST_AMOUNT` unless named), in `asset` (GBP unless named).
+ */
+export const payoutTreeOf = (
+  payments: PayoutLeafInput[],
+  amounts: bigint[] = payments.map(() => TEST_AMOUNT),
+  asset: Uint8Array = GBP,
+): PayoutTree => buildPayoutTree(payments, amounts, toHex(asset));
+
+/** The root over `leaves` at `amounts` in `asset`, with `payoutTreeOf`'s defaults. */
+export const rootOfTestLeaves = (
+  leaves: string[],
+  amounts: bigint[] = leaves.map(() => TEST_AMOUNT),
+  asset: Uint8Array = GBP,
+): string => rootOfLeaves(leaves, amounts, toHex(asset));
+
+/** What a payment of payee `i` hands the account beside its leaf: the amount, the token and the path. */
+export const sumArgsOf = (tree: PayoutTree, i: number) => ({
+  amount: tree.amounts[i]!,
+  asset: Uint8Array.from(Buffer.from(tree.asset, 'hex')),
+  path: tree.pathFor(i),
+});
 
 /*
  * `view(balance, seed)` STOOD HERE.
@@ -675,7 +706,7 @@ export class AccountSimulator {
   propose(payloadHash: Uint8Array, vault: Uint8Array = NO_VAULT) {
     /* The opaque path of the merged `propose`: `isRun` false, run parts zero. */
     return this.run('propose', (c) => this.contract.impureCircuits.propose(
-      c, payloadHash, ZERO_32, 0n, 0n, 0n, false, vault));
+      c, payloadHash, ZERO_32, 0n, 0n, 0n, 0n, false, vault));
   }
 
   /**
@@ -691,6 +722,9 @@ export class AccountSimulator {
    * the account receives, defaults to it. They differ only on a company-wide run.
    * **The receipt itself is not minted here**: this simulator has no balancing
    * check, so the call succeeds as though the vault had minted it.
+   *
+   * `amount` and `asset` are what the payee's path in the run's sum tree carries;
+   * `required` is the approvals the run was raised with, zero when omitted.
    */
   recordPaymentFromVault(args: {
     proposal: Uint8Array;
@@ -700,15 +734,61 @@ export class AccountSimulator {
     payees: bigint;
     from: bigint;
     until: bigint;
+    required?: bigint;
     salt: Uint8Array;
     details: Uint8Array;
     nonce: Uint8Array;
+    amount: bigint;
+    asset: Uint8Array;
     path: unknown;
   }) {
     return this.run('recordPaymentFromVault',
       (c) => this.contract.impureCircuits.recordPaymentFromVault(
         c, args.proposal, args.vault, args.payingVault ?? args.vault, args.root, args.payees,
-        args.from, args.until, args.salt, args.details, args.nonce, args.path as never));
+        args.from, args.until, args.required ?? 0n, args.salt, args.details, args.nonce,
+        args.amount, args.asset, args.path as never));
+  }
+
+  /**
+   * Sets `vault`'s spending policy for the token the acting device names, under
+   * an approved round over `setPolicyPayload(vault, assetKey, commitment)`.
+   */
+  setPolicy(vault: Uint8Array, commitment: Uint8Array, proposal: Uint8Array) {
+    return this.run('setPolicy',
+      (c) => this.contract.impureCircuits.setPolicy(c, vault, commitment, proposal));
+  }
+
+  /**
+   * Charges an approved run to its vault's period. The acting device must hold
+   * the policy's opening and what the period has been charged so far.
+   */
+  clearRun(args: {
+    proposal: Uint8Array;
+    vault: Uint8Array;
+    root: Uint8Array;
+    payees: bigint;
+    from: bigint;
+    until: bigint;
+    required?: bigint;
+    salt: Uint8Array;
+    top: bigint;
+    total: bigint;
+    period: bigint;
+  }) {
+    return this.run('clearRun',
+      (c) => this.contract.impureCircuits.clearRun(
+        c, args.proposal, args.vault, args.root, args.payees, args.from, args.until,
+        args.required ?? 0n, args.salt, args.top, args.total, args.period));
+  }
+
+  /** What the account's shared map holds under `key`, or undefined. */
+  roleEntry(key: Uint8Array): Uint8Array | undefined {
+    return this.ledger.signerRoles.member(key) ? this.ledger.signerRoles.lookup(key) : undefined;
+  }
+
+  /** The change commitment an open proposal holds, or undefined: a cleared run holds the cleared mark. */
+  openChange(proposal: Uint8Array): Uint8Array | undefined {
+    return this.ledger.openProposals.member(proposal) ? this.ledger.openProposals.lookup(proposal) : undefined;
   }
 
   /**
@@ -744,11 +824,12 @@ export class AccountSimulator {
     from: bigint;
     until: bigint;
     vault?: Uint8Array;
+    required?: bigint;
   }) {
     /* The run path of the merged `propose`: `isRun` true, opaque hash zero. */
     return this.run('propose',
       (c) => this.contract.impureCircuits.propose(
-        c, ZERO_32, args.root, args.payees, args.from, args.until, true,
+        c, ZERO_32, args.root, args.payees, args.from, args.until, args.required ?? 0n, true,
         args.vault ?? NO_VAULT));
   }
 

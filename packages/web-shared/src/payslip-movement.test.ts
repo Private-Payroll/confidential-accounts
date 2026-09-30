@@ -24,7 +24,7 @@ const facts = [1, 2, 3].map((i) => ({
 
 describe('what the payee\'s device looks for is what the account records', () => {
   it('EVERY PAYEE\'S VALUE, BUILT FROM WHAT THAT PAYEE HOLDS, IS THE VALUE OF THEIR OWN LEAF', async () => {
-    const run = buildRun(seeds, identity, facts, vaultDetails, payFor(facts));
+    const run = buildRun(seeds, identity, facts, vaultDetails, payFor(facts), 'GBP');
     /* The worker's own loader: the vault's and the account's compiled contracts, loaded side by side. */
     const circuits = await contractCircuits();
     facts.forEach((f, i) => {
@@ -42,7 +42,7 @@ describe('what the payee\'s device looks for is what the account records', () =>
   });
 
   it('A COLLEAGUE\'S SECRETS, OR ANOTHER ADDRESS, BUILD A VALUE THAT IS NOBODY\'S', async () => {
-    const run = buildRun(seeds, identity, facts, vaultDetails, payFor(facts));
+    const run = buildRun(seeds, identity, facts, vaultDetails, payFor(facts), 'GBP');
     const circuits = await contractCircuits();
     const all = new Set(run.tree.leaves.map(paidMovementOfLeaf));
     const eli = run.payeeArgs(1);
@@ -54,7 +54,7 @@ describe('what the payee\'s device looks for is what the account records', () =>
 
   it('A MAINNET ADDRESS, WHICH NAMES NO NETWORK, BUILDS THE SAME VALUE AS ITS OWN LEAF', async () => {
     const onMainnet = [{ ...facts[0]!, payee: payeeFor(toHex(new Uint8Array(32).fill(1)), 'mainnet') }];
-    const run = buildRun(seeds, identity, onMainnet, vaultDetails, payFor(onMainnet));
+    const run = buildRun(seeds, identity, onMainnet, vaultDetails, payFor(onMainnet), 'GBP');
     const args = run.payeeArgs(0);
     /*
      * A CONTROL, NOT A GUARD: the platform's parse answers a symbol for a mainnet
@@ -76,7 +76,7 @@ describe('what the payee\'s device looks for is what the account records', () =>
       { payee: unshieldedPayeeFor(bytes, 'undeployed'), token: TOKEN, amount: 4_000n },
       { payee: payeeFor(bytes, 'undeployed'), token: TOKEN, amount: 4_000n },
     ];
-    const run = buildRun(seeds, identity, mixed, vaultDetails, payFor(mixed));
+    const run = buildRun(seeds, identity, mixed, vaultDetails, payFor(mixed), 'GBP');
     const circuits = await contractCircuits();
     mixed.forEach((f, i) => {
       const args = run.payeeArgs(i);

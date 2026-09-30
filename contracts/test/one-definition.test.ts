@@ -56,7 +56,7 @@ import { pureCircuits } from '../managed/contract/index.js';
 import { MidnightCommitments } from '../../src/midnight/commitments.js';
 import { SimulatedCommitments } from '../../src/core/ledger.js';
 import { toHex, fromHex } from '../../src/core/crypto.js';
-import { payoutLeafOf } from '../../src/midnight/payout-tree.js';
+import { payoutLeafOf, sumTreeOfLeaves } from '../../src/midnight/payout-tree.js';
 
 const bytes = (n: number): Uint8Array => Uint8Array.from({ length: 32 }, (_, i) => (i + n) & 0xff);
 const hex = (b: Uint8Array) => toHex(b);
@@ -346,8 +346,8 @@ const SCHEMES: Entry[] = [
      */
     circuit: 'runPayload',
     mirrored: () => ({
-      fromContract: hex(pureCircuits.runPayload(ROOT, 5n, 1_800_000_000n, 1_800_604_800n)),
-      fromClient: MidnightCommitments.runPayload(hex(ROOT), 5n, 1_800_000_000n, 1_800_604_800n),
+      fromContract: hex(pureCircuits.runPayload(ROOT, 5n, 1_800_000_000n, 1_800_604_800n, 3n)),
+      fromClient: MidnightCommitments.runPayload(hex(ROOT), 5n, 1_800_000_000n, 1_800_604_800n, 3n),
     }),
   },
   {
@@ -533,6 +533,88 @@ const SCHEMES: Entry[] = [
     contractOnly:
       'what signers approve to commit the account to its pay-record key; run-keys.ts calls this ' +
       'circuit off pureCircuits to raise the proposal, and sealPayKey recomputes it inside the proof.',
+  },
+  {
+    /*
+     * The client BUILDS a run's sum tree and the account WALKS one payee's path
+     * up it at every payment, so a node computed two ways is a run that is
+     * approved and then pays nobody. The client calls the three node circuits
+     * off `pureCircuits`; this pins that its root is the root the contract's
+     * own walk reaches.
+     */
+    circuit: 'sumPathRoot',
+    mirrored: () => {
+      const leaves = [PAYLOAD, SALT, ROOT].map(hex);
+      const tree = sumTreeOfLeaves(leaves, [3n, 5n, 7n], hex(PAYLOAD));
+      return {
+        fromContract: hex(pureCircuits.sumPathRoot(SALT, 5n, tree.pathFor(1) as never, PAYLOAD)),
+        fromClient: tree.root,
+      };
+    },
+  },
+  {
+    circuit: 'sumLeafNode',
+    contractOnly: 'a payee node of the sum tree; payout-tree.ts calls this circuit off pureCircuits, and sumPathRoot is pinned above.',
+  },
+  {
+    circuit: 'sumInnerNode',
+    contractOnly: 'an inner node of the sum tree; payout-tree.ts calls this circuit off pureCircuits, and sumPathRoot is pinned above.',
+  },
+  {
+    circuit: 'sumRootOf',
+    contractOnly: 'a run root over its top node, total and token; payout-tree.ts calls this circuit off pureCircuits.',
+  },
+  {
+    circuit: 'bandApprovals',
+    contractOnly: 'the approvals a total needs under a policy; spending-policy.ts calls this circuit off pureCircuits, and clearRun runs it inside the proof.',
+  },
+  {
+    circuit: 'policyCommitmentOf',
+    contractOnly: 'a spending policy\'s commitment; spending-policy.ts calls this circuit off pureCircuits, and clearRun recomputes it inside the proof.',
+  },
+  {
+    circuit: 'setPolicyPayload',
+    contractOnly: 'what signers approve to set a policy; spending-policy.ts calls this circuit off pureCircuits, and setPolicy recomputes it inside the proof.',
+  },
+  {
+    circuit: 'policyKeyOf',
+    contractOnly: 'where a policy sits in the shared map; derived inside setPolicy and clearRun, and read by spending-policy.ts off pureCircuits.',
+  },
+  {
+    circuit: 'policyOnKeyOf',
+    contractOnly: 'where the marker that a vault is under a policy sits; derived inside setPolicy and the receipt step.',
+  },
+  {
+    circuit: 'policyOnMark',
+    contractOnly: 'the marker\'s value; written by setPolicy and nowhere else.',
+  },
+  {
+    circuit: 'periodKeyOf',
+    contractOnly: 'where a period\'s running total sits; derived inside clearRun, and read by spending-policy.ts off pureCircuits.',
+  },
+  {
+    circuit: 'periodBlindingOf',
+    contractOnly: 'the blinding of a period\'s total; derived inside clearRun, and by spending-policy.ts off pureCircuits.',
+  },
+  {
+    circuit: 'periodTotalOf',
+    contractOnly: 'a period\'s running total as the chain holds it; clearRun computes it inside the proof, and spending-policy.ts off pureCircuits.',
+  },
+  {
+    circuit: 'chargedKeyOf',
+    contractOnly: 'where the record that a tree was charged in a period sits; derived inside clearRun only.',
+  },
+  {
+    circuit: 'chargedMark',
+    contractOnly: 'the value written under a charged key; clearRun writes it and nothing reads it.',
+  },
+  {
+    circuit: 'clearedMark',
+    contractOnly: 'what a cleared run\'s change commitment is overwritten with; clearRun writes it and the receipt step compares against it.',
+  },
+  {
+    circuit: 'policyBarKey',
+    contractOnly: 'the key in the per-vault thresholds for the approvals a policy change needs; setPolicy reads it, spending-policy.ts off pureCircuits.',
   },
 ];
 
@@ -778,10 +860,13 @@ describe('one definition: the contract and the client agree', () => {
       + 'governance payloads are — do not write a second derivation. If it is a passthrough '
       + 'that reads the circuit, declare it as one in SCHEME_MEMBERS and say so.',
     ).toEqual([
-      'adoptVaultPayload', 'anchorKey', 'companyLabelKey', 'companyWide', 'companyWideDetailsOf',
+      'adoptVaultPayload', 'anchorKey', 'bandApprovals', 'chargedKeyOf', 'chargedMark', 'clearedMark',
+      'companyLabelKey', 'companyWide', 'companyWideDetailsOf',
       'paidMovementOf', 'paidOnceOf', 'payKeyCommitmentKey', 'payKeyCommitmentOf', 'payKeyPayload',
-      'payKeyWrapKeyOf', 'paymentReceiptTag', 'removalCountKey', 'removeAndSetThresholdPayload', 'retireVaultPayload', 'slotOf',
-      'vacantSlot', 'withdrawKeyOf', 'withdrawSecretOf',
+      'payKeyWrapKeyOf', 'paymentReceiptTag', 'periodBlindingOf', 'periodKeyOf', 'periodTotalOf',
+      'policyBarKey', 'policyCommitmentOf', 'policyKeyOf', 'policyOnKeyOf', 'policyOnMark',
+      'removalCountKey', 'removeAndSetThresholdPayload', 'retireVaultPayload', 'setPolicyPayload', 'slotOf',
+      'sumInnerNode', 'sumLeafNode', 'sumRootOf', 'vacantSlot', 'withdrawKeyOf', 'withdrawSecretOf',
     ]);
   });
 
@@ -822,15 +907,15 @@ describe('one definition: the contract and the client agree', () => {
    */
   it('the run payload differs between the schemes and carries all four arguments', () => {
     const r = hex(ROOT);
-    expect(SimulatedCommitments.runPayload(r, 5n, 1_800_000_000n, 1_800_604_800n))
-      .not.toBe(MidnightCommitments.runPayload(r, 5n, 1_800_000_000n, 1_800_604_800n));
+    expect(SimulatedCommitments.runPayload(r, 5n, 1_800_000_000n, 1_800_604_800n, 0n))
+      .not.toBe(MidnightCommitments.runPayload(r, 5n, 1_800_000_000n, 1_800_604_800n, 0n));
 
     for (const scheme of [MidnightCommitments, SimulatedCommitments]) {
-      const base = scheme.runPayload(r, 5n, 1_800_000_000n, 1_800_604_800n);
-      expect(scheme.runPayload(hex(LEAF), 5n, 1_800_000_000n, 1_800_604_800n)).not.toBe(base);
-      expect(scheme.runPayload(r, 6n, 1_800_000_000n, 1_800_604_800n)).not.toBe(base);
-      expect(scheme.runPayload(r, 5n, 1_800_000_001n, 1_800_604_800n)).not.toBe(base);
-      expect(scheme.runPayload(r, 5n, 1_800_000_000n, 1_800_604_801n)).not.toBe(base);
+      const base = scheme.runPayload(r, 5n, 1_800_000_000n, 1_800_604_800n, 0n);
+      expect(scheme.runPayload(hex(LEAF), 5n, 1_800_000_000n, 1_800_604_800n, 0n)).not.toBe(base);
+      expect(scheme.runPayload(r, 6n, 1_800_000_000n, 1_800_604_800n, 0n)).not.toBe(base);
+      expect(scheme.runPayload(r, 5n, 1_800_000_001n, 1_800_604_800n, 0n)).not.toBe(base);
+      expect(scheme.runPayload(r, 5n, 1_800_000_000n, 1_800_604_801n, 0n)).not.toBe(base);
     }
   });
 

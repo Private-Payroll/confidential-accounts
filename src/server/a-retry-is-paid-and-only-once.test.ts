@@ -123,7 +123,7 @@ const aCompany = async (name: string, legWindowOpen = false) => {
   const inputs = await payroll.runMaterialInputs(run.id, viewingKey);
   const window = legWindowOpen ? WINDOW : LEG_WINDOW;
   const material = await runMaterialFor({
-    accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds, facts: inputs.facts, pay: inputs.pay,
+    accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds, facts: inputs.facts, pay: inputs.pay, asset: inputs.asset,
     opensAt: BigInt(window.opensAt), closesAt: BigInt(window.closesAt), vault: VAULT, detailsOf: vaultDetails,
   });
   const seat = created.secrets[0]!;
@@ -196,7 +196,7 @@ const overAnotherRun = await (async () => {
     roster.map((e) => ({ name: e.name, asset: e.asset, amount: e.baseAmount + 1n })), c.viewingKey, roster);
   const inputs = await payroll.runMaterialInputs(run.id, c.viewingKey);
   const other = await payroll.proposeRun(run.id, c.viewingKey, c.seat.signerId, await runMaterialFor({
-    accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds, facts: inputs.facts, pay: inputs.pay,
+    accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds, facts: inputs.facts, pay: inputs.pay, asset: inputs.asset,
     opensAt: BigInt(WINDOW.opensAt), closesAt: BigInt(WINDOW.closesAt), vault: VAULT, detailsOf: vaultDetails,
   }));
   if (!other.raisedAt) throw new Error('the second run did not reach the chain');
@@ -264,21 +264,22 @@ describe('1. AN APPROVED PRIVATE RETRY IS PAID, AND ONLY ITS PEOPLE ARE PAID', (
     const r = await post(`/api/runs/${c.runId}/private-payments`, { viewingKey: c.viewingKey, proposalId: approvedRetry.id });
     /* RED WHEN: the door reads only the leg's own round - an approved retry then has nothing a vault can pay. */
     expect(r.status, JSON.stringify(r.body)).toBe(200);
-    /* RED WHEN: the order is the leg's - its round, its root, its count or its window - so a vault pays against the wrong approval. */
+    /* RED WHEN: the order names the leg's round, so a vault pays against the wrong approval. The root, count and window are the leg's own, since a retry is raised over the leg's tree. */
     expect(r.body.proposal).toBe(retryRecord.chainId);
     expect(r.body.proposal).not.toBe(c.leg.chainId);
     const written = retriesOf(c).find((x) => x.proposalId === approvedRetry.id)!;
     expect(r.body.root).toBe(written.root);
-    expect(r.body.payees).toBe('2');
+    /* The leg's own tree, which the retry is raised over: three payees, of whom it pays two. */
+    expect(r.body.payees).toBe('3');
     expect([r.body.opensAt, r.body.closesAt]).toEqual([WINDOW.opensAt, WINDOW.closesAt]);
     expect(r.body.salt).toBe(accounts.runSaltOf(approvedRetry.id, c.viewingKey));
     /* RED WHEN: anybody the retry does not name is offered to pay - #1 was paid by the leg, or is some other round's. */
     expect(r.body.payments.map((p: any) => p.index)).toEqual([1, 2]);
     /* RED WHEN: a person is paid at a leaf other than the one the leg already holds for them - a second payment nothing would refuse. */
     expect(r.body.payments.map((p: any) => p.leaf)).toEqual([c.legLeaves[1], c.legLeaves[2]]);
-    /* RED WHEN: a payment's path is the leg's tree's, not the retry's - the vault then finds it is not in the approved round. */
+    /* RED WHEN: a payment's path is not its place in the leg's tree, which the retry is raised over - the vault then finds it is not in the approved round. */
     const rebuild = (await payroll.payoutRebuildOf(c.runId, c.viewingKey))!;
-    const retryTree = buildRetryRun(buildRun(rebuild.seeds, rebuild.identity, rebuild.facts, vaultDetails, rebuild.pay), [1, 2]);
+    const retryTree = buildRetryRun(buildRun(rebuild.seeds, rebuild.identity, rebuild.facts, vaultDetails, rebuild.pay, rebuild.asset), [1, 2]);
     expect(r.body.payments.map((p: any) => p.path)).toEqual([0, 1].map((i) => pathToWire(retryTree.payeeArgs(i).path)));
     expect(retryTree.tree.root).toBe(written.root);
 

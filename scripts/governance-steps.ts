@@ -283,7 +283,7 @@ export async function runGovernanceSteps(ctx: GovernanceContext): Promise<void> 
     note(`${label}: proposal id ${hex(id).slice(0, 24)}…`);
 
     await becomeSigner(A, 'A');
-    await callCircuit(`propose (${label})`, () => found.callTx.propose(payloadHash, ZERO_32, 0n, 0n, 0n, false, pureCircuits.noVault()),
+    await callCircuit(`propose (${label})`, () => found.callTx.propose(payloadHash, ZERO_32, 0n, 0n, 0n, 0n, false, pureCircuits.noVault()),
       async () => isOpen(await readState(), id));
 
     for (const [name, who] of approvers) {
@@ -488,7 +488,7 @@ export async function runGovernanceSteps(ctx: GovernanceContext): Promise<void> 
   setProposalSalt(survivorSalt);
   await becomeSigner(A, 'A');
   await callCircuit('propose (can the survivors still act?)',
-    () => found.callTx.propose(survivorPayload, ZERO_32, 0n, 0n, 0n, false, pureCircuits.noVault()),
+    () => found.callTx.propose(survivorPayload, ZERO_32, 0n, 0n, 0n, 0n, false, pureCircuits.noVault()),
     async () => isOpen(await readState(), survivorId));
   for (const [name, who] of [['C', C], ['D', D]] as [string, AccountPrivateState][]) {
     await becomeSigner(who, name);
@@ -579,7 +579,7 @@ export async function runGovernanceSteps(ctx: GovernanceContext): Promise<void> 
   setProposalSalt(biteSalt);
   await becomeSigner(A, 'A');
   await callCircuit('propose (is the new threshold visible on a fresh proposal?)',
-    () => found.callTx.propose(bitePayload, ZERO_32, 0n, 0n, 0n, false, pureCircuits.noVault()),
+    () => found.callTx.propose(bitePayload, ZERO_32, 0n, 0n, 0n, 0n, false, pureCircuits.noVault()),
     async () => isOpen(await readState(), biteId));
   /*
    * ONE SHORT OF THE RAISED THRESHOLD, then the one more it now demands.

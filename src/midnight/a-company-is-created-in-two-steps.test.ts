@@ -1,7 +1,7 @@
 /**
  * A COMPANY IS CREATED IN TWO STEPS: A DEPLOY, THEN ONE UPDATE THAT ONLY INSERTS.
  *
- * The account's twelve circuits no longer fit one transaction under the
+ * The account's fourteen circuits no longer fit one transaction under the
  * per-transaction ceiling (`scripts/dispatch-ceiling.ts`, 31,997 bytes written).
  * So the deploy carries `FIRST_STEP_CIRCUITS`, and one maintenance update, signed
  * by the key the deploy installed, inserts `SECOND_STEP_CIRCUITS`.
@@ -63,7 +63,7 @@ describe('the two steps, as lists', () => {
 
   it('the second step inserts the rest, the payment step among them', () => {
     expect([...SECOND_STEP_CIRCUITS]).toEqual([
-      'recordPaymentFromVault', 'retireVault', 'sealPayKey', 'setVaultThreshold',
+      'clearRun', 'recordPaymentFromVault', 'retireVault', 'sealPayKey', 'setPolicy', 'setVaultThreshold',
     ]);
   });
 
@@ -241,5 +241,6 @@ describe.skipIf(!KEYED)('both steps, applied to an empty ledger and measured wit
     expect(r.wholeWritten).toBeGreaterThan(ceiling);
     /* Unproven and unbalanced: a proven deploy has moved by about 260 either way, so keep that room. */
     expect(ceiling - r.firstWritten).toBeGreaterThan(260);
+    expect(ceiling - r.secondWritten).toBeGreaterThan(260);
   });
 });

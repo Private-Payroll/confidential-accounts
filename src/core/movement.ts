@@ -1,5 +1,5 @@
 import { nanoid } from 'nanoid';
-import type { Payee, PayeeAddress } from '../midnight/payee-address.js';
+import type { Payee } from '../midnight/payee-address.js';
 import type { AssetId, AssetRegistry } from './assets.js';
 import { assets as defaultAssets, ledgerTokenOf, privateForm } from './assets.js';
 import type { PaymentFacts } from '../midnight/payout-tree.js';
@@ -31,9 +31,10 @@ import type { EntryKind } from './types.js';
  *
  * ── AND THE CONTRACT DOES NOT KNOW ANY OF THIS ───────────────────────────
  *
- * `recordPayment` (`ConfidentialAccount.compact:2118-2300`) checks the proposal
- * id, the payment window, approval at the vault's threshold, leaf membership in
- * the approved root, and double-spend. **It has never known what a payroll is**
+ * `recordPaymentFromVault` (`ConfidentialAccount.compact`) checks the proposal
+ * id, the payment window, approval at the bar the run needs, the leaf and its
+ * amount and currency against the approved root, a vault's spending-policy
+ * charge, and double-spend. **It has never known what a payroll is**
  * and it must not learn: the recipient is opaque bytes inside `details`.
  *
  * **So the distinction is a PRODUCT concept and lives entirely here.** No
@@ -146,7 +147,7 @@ export function payrollPayee(name: string, payee: Payee): Payee {
  * screen, its own ledger line. Any surface for it is built against this type.
  *
  * **Approved at the vault's threshold like any other movement, and that is
- * `recordPayment`'s doing rather than this file's.** The contract checks the
+ * `recordPaymentFromVault`'s doing rather than this file's.** The contract checks the
  * proposal, the window, approval at the vault's threshold and leaf membership,
  * and it has never known what a payroll is — so nothing about being a transfer
  * can relax governance, because governance never learns that it is one. Said
@@ -313,7 +314,7 @@ export function transferOf(spec: TransferSpec): Transfer {
  * **WHAT THE CHAIN NEEDS TO SETTLE A TRANSFER, AND IT IS A ONE-PAYEE RUN.**
  *
  *
- * `recordPayment` never checks who the recipient is: it checks the proposal,
+ * `recordPaymentFromVault` never checks who the recipient is: it checks the proposal,
  * the window, approval at the vault's threshold, leaf membership in the
  * approved root, and double-spend. **So a transfer is not a new kind of
  * settlement.** It is a run with one payee, built by `buildRun` from

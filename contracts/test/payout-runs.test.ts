@@ -12,10 +12,10 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
-  AccountSimulator, privateStateFor, change, type Change,
+  AccountSimulator, privateStateFor, change, type Change, payoutTreeOf, rootOfTestLeaves, sumArgsOf,
 } from './simulator.js';
 import { pureCircuits } from '../managed/contract/index.js';
-import { buildPayoutTree, payoutLeafOf, rootOfLeaves, type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
+import { buildPayoutTree, payoutLeafOf, type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
 import { toHex, fromHex } from '../../src/core/crypto.js';
 
 const A = privateStateFor(1);
@@ -70,9 +70,9 @@ const approvedRun = async (
   window: { from: bigint; until: bigint } = { from: OPENS, until: CLOSES },
 ) => {
   await sim.adoptVault(vault, [A, B]);
-  const tree = buildPayoutTree(payments);
+  const tree = payoutTreeOf(payments);
   const payload = pureCircuits.runPayload(
-    fromHex(tree.root), tree.payees, window.from, window.until);
+    fromHex(tree.root), tree.payees, window.from, window.until, 0n);
   await sim.as(carrying(sim, A, c)).proposeRun({
     root: fromHex(tree.root), payees: tree.payees,
     from: window.from, until: window.until, vault,
@@ -101,7 +101,7 @@ const claimFor = (
   salt: c.salt,
   details: fromHex(payments[i].details),
   nonce: fromHex(payments[i].nonce),
-  path: run.tree.pathFor(i),
+  ...sumArgsOf(run.tree, i),
 });
 
 describe('a run is paid one payee at a time', () => {
@@ -276,13 +276,13 @@ describe('a run is paid one payee at a time', () => {
 
     // Somebody who was never in this payroll, with a well-formed path of their own.
     const stranger = runOf(1, 900);
-    const strangerTree = buildPayoutTree(stranger);
+    const strangerTree = payoutTreeOf(stranger);
 
     await expect(sim.as(carrying(sim, A, c)).recordPaymentFromVault({
       ...claimFor(run, payments, PAYROLL, c, 0),
       details: fromHex(stranger[0].details),
       nonce: fromHex(stranger[0].nonce),
-      path: strangerTree.pathFor(0),
+      ...sumArgsOf(strangerTree, 0),
     })).rejects.toThrow(/not for this payee|not in the approved run/i);
   });
 
@@ -361,7 +361,7 @@ describe('a run is paid one payee at a time', () => {
 
   it('refuses a run whose window ends before it opens', async () => {
     const c = govChange(37);
-    const tree = buildPayoutTree(runOf(2));
+    const tree = payoutTreeOf(runOf(2));
     await expect(sim.as(carrying(sim, A, c)).proposeRun({
       root: fromHex(tree.root), payees: tree.payees,
       from: CLOSES, until: OPENS, vault: PAYROLL,
@@ -370,7 +370,7 @@ describe('a run is paid one payee at a time', () => {
 
   it('refuses a run with nobody in it, on chain as well as in the client', async () => {
     const c = govChange(38);
-    const tree = buildPayoutTree(runOf(1));
+    const tree = payoutTreeOf(runOf(1));
     await expect(sim.as(carrying(sim, A, c)).proposeRun({
       root: fromHex(tree.root), payees: 0n,
       from: OPENS, until: CLOSES, vault: PAYROLL,
@@ -381,8 +381,8 @@ describe('a run is paid one payee at a time', () => {
     const c = govChange(16);
     await sim.adoptVault(PAYROLL, [A, B]);
     const payments = runOf(2);
-    const tree = buildPayoutTree(payments);
-    const payload = pureCircuits.runPayload(fromHex(tree.root), tree.payees, OPENS, CLOSES);
+    const tree = payoutTreeOf(payments);
+    const payload = pureCircuits.runPayload(fromHex(tree.root), tree.payees, OPENS, CLOSES, 0n);
     await sim.as(carrying(sim, A, c)).proposeRun({
       root: fromHex(tree.root), payees: tree.payees,
       from: OPENS, until: CLOSES, vault: PAYROLL });
@@ -393,7 +393,7 @@ describe('a run is paid one payee at a time', () => {
       proposal: id, vault: PAYROLL, root: fromHex(tree.root), payees: tree.payees,
       from: OPENS, until: CLOSES,
       salt: c.salt, details: fromHex(payments[0].details),
-      nonce: fromHex(payments[0].nonce), path: tree.pathFor(0),
+      nonce: fromHex(payments[0].nonce), ...sumArgsOf(tree, 0),
     })).rejects.toThrow(/not enough approvals/i);
   });
 
@@ -444,7 +444,7 @@ describe('what a watcher learns from one payment', () => {
       ...claimFor(run, payments, PAYROLL, c, 1),
       details: bytes(200),
       nonce: bytes(201),
-    })).rejects.toThrow(/not for this payee/i);
+    })).rejects.toThrow(/that payee is not in the approved run/i);
 
     // The real payee is still payable, which is the point: no denial of service.
     await sim.as(carrying(sim, A, c)).recordPaymentFromVault(claimFor(run, payments, PAYROLL, c, 1));
@@ -459,7 +459,7 @@ describe('what a watcher learns from one payment', () => {
     await expect(sim.as(carrying(sim, A, c)).recordPaymentFromVault({
       ...claimFor(run, payments, PAYROLL, c, 0),
       nonce: bytes(250),
-    })).rejects.toThrow(/not for this payee/i);
+    })).rejects.toThrow(/that payee is not in the approved run/i);
   });
 
   it('the run root cannot be swapped for one the claimant prefers', async () => {
@@ -468,7 +468,7 @@ describe('what a watcher learns from one payment', () => {
     const run = await approvedRun(sim, PAYROLL, payments, c);
 
     const mine = runOf(1, 700);
-    const myTree = buildPayoutTree(mine);
+    const myTree = payoutTreeOf(mine);
 
     await expect(sim.as(carrying(sim, A, c)).recordPaymentFromVault({
       ...claimFor(run, payments, PAYROLL, c, 0),
@@ -476,7 +476,7 @@ describe('what a watcher learns from one payment', () => {
       payees: myTree.payees,
       details: fromHex(mine[0].details),
       nonce: fromHex(mine[0].nonce),
-      path: myTree.pathFor(0),
+      ...sumArgsOf(myTree, 0),
     })).rejects.toThrow(/not this proposal|were not given it/i);
   });
 
@@ -528,7 +528,7 @@ describe('the tree the client builds', () => {
      * and one person is silently unpayable. Caught before anybody signs.
      */
     const p = runOf(1, 500)[0];
-    expect(() => buildPayoutTree([p, p])).toThrow(/same leaf|nonce has been reused/i);
+    expect(() => payoutTreeOf([p, p])).toThrow(/same leaf|nonce has been reused/i);
   });
 
   it('allows two payees who differ only by their nonce', () => {
@@ -536,17 +536,17 @@ describe('the tree the client builds', () => {
      * in one run, or two people owed identical amounts. */
     const a = runOf(1, 600)[0];
     const b = { details: a.details, nonce: toHex(bytes(0xee)) };
-    expect(() => buildPayoutTree([a, b])).not.toThrow();
+    expect(() => payoutTreeOf([a, b])).not.toThrow();
   });
 
   it('refuses a run with nobody in it, rather than producing an unfinishable proposal', () => {
-    expect(() => buildPayoutTree([])).toThrow(/at least one payee/i);
+    expect(() => payoutTreeOf([])).toThrow(/at least one payee/i);
   });
 
   it('gives two runs with the same people in a different order different roots', () => {
     const people = runOf(3, 400);
-    const a = buildPayoutTree(people);
-    const b = buildPayoutTree([people[2], people[1], people[0]]);
+    const a = payoutTreeOf(people);
+    const b = payoutTreeOf([people[2], people[1], people[0]]);
     expect(a.root).not.toBe(b.root);
   });
 });
@@ -564,7 +564,7 @@ describe('the tree the client builds', () => {
  * `runPayload` is an EXPORTED PURE circuit, so any caller can evaluate it off
  * chain, and both branches take their salt from the same `proposalSalt()`
  * witness. So a signer calling the governance branch with
- * `payloadHash = runPayload(root, payees, opensAt, closesAt)` and a real vault
+ * `payloadHash = runPayload(root, payees, opensAt, closesAt, 0n)` and a real vault
  * produced an id **bit-identical** to the run branch's, with the same
  * `openProposals` and `approvalCounts` rows — **and no window row at all.**
  *
@@ -597,11 +597,11 @@ describe('a run cannot be raised through the governance branch', () => {
   beforeEach(async () => { sim = await liveAccount(); });
 
   const runPayloadFor = (payments: PayoutLeafInput[]) => {
-    const tree = buildPayoutTree(payments);
+    const tree = payoutTreeOf(payments);
     return {
       tree,
       payload: pureCircuits.runPayload(
-        fromHex(tree.root), tree.payees, OPENS, CLOSES),
+        fromHex(tree.root), tree.payees, OPENS, CLOSES, 0n),
     };
   };
 
@@ -687,7 +687,7 @@ describe('a run cannot be raised at the no-vault sentinel', () => {
      * resolves — the run lands, signers approve it, the fee is paid, and it is
      * discovered on payday by a vault that cannot recompute its id.
      */
-    const tree = buildPayoutTree(runOf(3, 70));
+    const tree = payoutTreeOf(runOf(3, 70));
     const c = govChange(150);
     await expect(sim.as(carrying(sim, A, c)).proposeRun({
       root: fromHex(tree.root), payees: tree.payees,
@@ -695,7 +695,7 @@ describe('a run cannot be raised at the no-vault sentinel', () => {
     })).rejects.toThrow(/a run must name the vault that will pay it/);
     expect(sim.ledger.openProposals.size()).toBe(0n);
     expect(sim.runWindow(sim.proposalId(
-      pureCircuits.runPayload(fromHex(tree.root), tree.payees, OPENS, CLOSES),
+      pureCircuits.runPayload(fromHex(tree.root), tree.payees, OPENS, CLOSES, 0n),
       c.salt, NO_VAULT))).toBeUndefined();
   });
 
@@ -707,7 +707,7 @@ describe('a run cannot be raised at the no-vault sentinel', () => {
      * walked here, because a default nothing exercises is a default nothing
      * notices changing.
      */
-    const tree = buildPayoutTree(runOf(2, 80));
+    const tree = payoutTreeOf(runOf(2, 80));
     const c = govChange(151);
     await expect(sim.as(carrying(sim, A, c)).proposeRun({
       root: fromHex(tree.root), payees: tree.payees, from: OPENS, until: CLOSES,
@@ -792,50 +792,56 @@ describe('a run whose root has a zero top byte', () => {
    * a counter written big-endian into the last four bytes of thirty-two —
    * `details = n, n+1, n+2` and `nonce = n+1e6, n+2e6, n+3e6` — over
    * `n = 0…3999`, and collected every `n` whose root came back sixty-two hex
-   * characters instead of sixty-four. **The first was `n = 114`, and these are
-   * its six values written out.**
+   * characters instead of sixty-four. The first was `n = 114`.
+   *
+   * **ENUMERATED AGAIN WHEN THE ROOT BECAME A SUM TREE'S**, over the same family
+   * at `payoutTreeOf`'s amounts and token, collecting every `n` whose root's
+   * last byte is zero. **The first was `n = 121`, and these are its six values
+   * written out.** The root is now the contract's `sumRootOf`, typed
+   * `Bytes<32>`, so it cannot come back short; what this block still guards is
+   * that a root whose top byte is zero raises and pays like any other.
    *
    * `runOf` is deliberately not called: a fixture somebody can edit is a
    * fixture that can lose the one property this block exists for, silently.
    */
   const ZERO_TOP_BYTE: PayoutLeafInput[] = [
     {
-      details: '0000000000000000000000000000000000000000000000000000000000000072',
-      nonce: '00000000000000000000000000000000000000000000000000000000000f42b2',
+      details: '0000000000000000000000000000000000000000000000000000000000000079',
+      nonce: '00000000000000000000000000000000000000000000000000000000000f42b9',
     },
     {
-      details: '0000000000000000000000000000000000000000000000000000000000000073',
-      nonce: '00000000000000000000000000000000000000000000000000000000001e84f2',
+      details: '000000000000000000000000000000000000000000000000000000000000007a',
+      nonce: '00000000000000000000000000000000000000000000000000000000001e84f9',
     },
     {
-      details: '0000000000000000000000000000000000000000000000000000000000000074',
-      nonce: '00000000000000000000000000000000000000000000000000000000002dc732',
+      details: '000000000000000000000000000000000000000000000000000000000000007b',
+      nonce: '00000000000000000000000000000000000000000000000000000000002dc739',
     },
   ];
 
   /**
-   * **THE CONTROL, AND IT IS THE SAME FAMILY AT `n = 115`** — a value that
+   * **THE CONTROL, AND IT IS THE SAME FAMILY AT `n = 122`** — a value that
    * enumeration examined and did NOT collect. It is here because a fix that
    * padded only when short and mangled every other root would satisfy every
    * assertion about the case above it.
    */
   const ORDINARY: PayoutLeafInput[] = [
     {
-      details: '0000000000000000000000000000000000000000000000000000000000000073',
-      nonce: '00000000000000000000000000000000000000000000000000000000000f42b3',
+      details: '000000000000000000000000000000000000000000000000000000000000007a',
+      nonce: '00000000000000000000000000000000000000000000000000000000000f42ba',
     },
     {
-      details: '0000000000000000000000000000000000000000000000000000000000000074',
-      nonce: '00000000000000000000000000000000000000000000000000000000001e84f3',
+      details: '000000000000000000000000000000000000000000000000000000000000007b',
+      nonce: '00000000000000000000000000000000000000000000000000000000001e84fa',
     },
     {
-      details: '0000000000000000000000000000000000000000000000000000000000000075',
-      nonce: '00000000000000000000000000000000000000000000000000000000002dc733',
+      details: '000000000000000000000000000000000000000000000000000000000000007c',
+      nonce: '00000000000000000000000000000000000000000000000000000000002dc73a',
     },
   ];
 
   it('THE DEFECT: the root is thirty-two bytes, and the input still has a zero top byte', () => {
-    const tree = buildPayoutTree(ZERO_TOP_BYTE);
+    const tree = payoutTreeOf(ZERO_TOP_BYTE);
     /*
      * The second assertion is the guard on the first. `endsWith('00')` IS the
      * zero-top-byte property under a little-endian encoding, so an edit that
@@ -857,17 +863,17 @@ describe('a run whose root has a zero top byte', () => {
      * it live. Dropping the length line as redundant would leave a tautology
      * behind.
      */
-    const tree = buildPayoutTree(ZERO_TOP_BYTE);
-    expect(rootOfLeaves(tree.leaves)).toHaveLength(64);
-    expect(rootOfLeaves(tree.leaves)).toBe(tree.root);
+    const tree = payoutTreeOf(ZERO_TOP_BYTE);
+    expect(rootOfTestLeaves(tree.leaves)).toHaveLength(64);
+    expect(rootOfTestLeaves(tree.leaves)).toBe(tree.root);
   });
 
   it('THE ORDINARY CASE IS NOT MANGLED, at both sites, and is still thirty-two bytes', () => {
-    const tree = buildPayoutTree(ORDINARY);
+    const tree = payoutTreeOf(ORDINARY);
     expect(tree.root).toHaveLength(64);
     expect(tree.root.endsWith('00')).toBe(false);
-    expect(rootOfLeaves(tree.leaves)).toHaveLength(64);
-    expect(rootOfLeaves(tree.leaves)).toBe(tree.root);
+    expect(rootOfTestLeaves(tree.leaves)).toHaveLength(64);
+    expect(rootOfTestLeaves(tree.leaves)).toBe(tree.root);
   });
 
   it('THE END THE PADDING GOES ON: the run raises AND every payee is paid from it', async () => {
@@ -929,7 +935,7 @@ describe('a run whose root has a zero top byte', () => {
     const short = fromHex(run.tree.root).slice(0, 31);
     expect(short).toHaveLength(31);
 
-    expect(() => pureCircuits.runPayload(short, run.tree.payees, OPENS, CLOSES))
+    expect(() => pureCircuits.runPayload(short, run.tree.payees, OPENS, CLOSES, 0n))
       .toThrow(/Bytes<32>/);
     await expect(sim.as(carrying(sim, A, c)).recordPaymentFromVault(
       { ...claimFor(run, ZERO_TOP_BYTE, PAYROLL, c, 0), root: short },

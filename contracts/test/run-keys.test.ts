@@ -51,8 +51,8 @@ describe('a run is derived, not generated', () => {
      * but the account's sealed seeds and the run's identity — both of which
      * every signer already holds.
      */
-    const byA = buildRun(seeds, ID, staff(50), detailsOf, payFor(staff(50)));
-    const byB = buildRun(seeds, ID, staff(50), detailsOf, payFor(staff(50)));
+    const byA = buildRun(seeds, ID, staff(50), detailsOf, payFor(staff(50)), 'GBP');
+    const byB = buildRun(seeds, ID, staff(50), detailsOf, payFor(staff(50)), 'GBP');
 
     expect(byB.tree.root).toBe(byA.tree.root);
     expect(byB.tree.leaves).toEqual(byA.tree.leaves);
@@ -67,22 +67,22 @@ describe('a run is derived, not generated', () => {
   });
 
   it('a different run on the same account derives different blindings and THE SAME NONCES, so the account refuses paying one person twice for one month', () => {
-    const one = buildRun(seeds, ID, staff(3), detailsOf, payFor(staff(3)));
-    const two = buildRun(seeds, { ...ID, runId: 'payroll-2026-10' }, staff(3), detailsOf, payFor(staff(3)));
+    const one = buildRun(seeds, ID, staff(3), detailsOf, payFor(staff(3)), 'GBP');
+    const two = buildRun(seeds, { ...ID, runId: 'payroll-2026-10' }, staff(3), detailsOf, payFor(staff(3)), 'GBP');
     expect(two.tree.root).not.toBe(one.tree.root);
     expect(two.payeeArgs(0).blinding).not.toBe(one.payeeArgs(0).blinding);
     expect(two.payeeArgs(0).nonce).toBe(one.payeeArgs(0).nonce);
   });
 
   it('a different ACCOUNT derives different blindings from the same seed and run id', () => {
-    const one = buildRun(seeds, ID, staff(3), detailsOf, payFor(staff(3)));
-    const two = buildRun(seeds, { ...ID, accountId: 'acct-2' }, staff(3), detailsOf, payFor(staff(3)));
+    const one = buildRun(seeds, ID, staff(3), detailsOf, payFor(staff(3)), 'GBP');
+    const two = buildRun(seeds, { ...ID, accountId: 'acct-2' }, staff(3), detailsOf, payFor(staff(3)), 'GBP');
     expect(two.payeeArgs(0).blinding).not.toBe(one.payeeArgs(0).blinding);
   });
 
   it('a different EPOCH derives different blindings and keeps every nonce, so a month paid before a removal stays paid after it', () => {
-    const one = buildRun(seeds, ID, staff(3), detailsOf, payFor(staff(3)));
-    const two = buildRun(seeds, { ...ID, epoch: 1 }, staff(3), detailsOf, payFor(staff(3)));
+    const one = buildRun(seeds, ID, staff(3), detailsOf, payFor(staff(3)), 'GBP');
+    const two = buildRun(seeds, { ...ID, epoch: 1 }, staff(3), detailsOf, payFor(staff(3)), 'GBP');
     expect(two.payeeArgs(0).blinding).not.toBe(one.payeeArgs(0).blinding);
     expect(two.payeeArgs(0).nonce).toBe(one.payeeArgs(0).nonce);
   });
@@ -111,10 +111,10 @@ describe('a run is derived, not generated', () => {
   });
 
   it('refuses a run whose records do not name every payment', () => {
-    expect(() => buildRun(seeds, ID, staff(3), detailsOf, payFor(staff(2))))
+    expect(() => buildRun(seeds, ID, staff(3), detailsOf, payFor(staff(2)), 'GBP'))
       .toThrow(/3 payments and says what 2 of them are for/);
     /* And one record too many: a record that names nobody's payment is a record nobody checked. */
-    expect(() => buildRun(seeds, ID, staff(3), detailsOf, payFor(staff(4))))
+    expect(() => buildRun(seeds, ID, staff(3), detailsOf, payFor(staff(4)), 'GBP'))
       .toThrow(/3 payments and says what 4 of them are for/);
   });
 
@@ -124,9 +124,9 @@ describe('a run is derived, not generated', () => {
      * That would be a new way to lose access to money, introduced by the fix
      * for a way to lose access to money.
      */
-    const before = buildRun(seeds.slice(0, 1), ID, staff(4), detailsOf, payFor(staff(4)));
+    const before = buildRun(seeds.slice(0, 1), ID, staff(4), detailsOf, payFor(staff(4)), 'GBP');
     const afterRotation: PayoutSeed[] = [...seeds, { epoch: 2, seed: 'c'.repeat(64) }];
-    const rebuilt = buildRun(afterRotation, ID, staff(4), detailsOf, payFor(staff(4)));
+    const rebuilt = buildRun(afterRotation, ID, staff(4), detailsOf, payFor(staff(4)), 'GBP');
     expect(rebuilt.tree.root).toBe(before.tree.root);
   });
 
@@ -136,12 +136,12 @@ describe('a run is derived, not generated', () => {
      * that already has approvals against the old ones — every payment refused,
      * with nothing to say why.
      */
-    expect(() => buildRun(seeds, { ...ID, epoch: 7 }, staff(2), detailsOf, payFor(staff(2))))
+    expect(() => buildRun(seeds, { ...ID, epoch: 7 }, staff(2), detailsOf, payFor(staff(2)), 'GBP'))
       .toThrow(/no payout seed for epoch 7/i);
   });
 
   it('every payee gets a different nonce, and a nonce is never a blinding', () => {
-    const run = buildRun(seeds, ID, staff(20), detailsOf, payFor(staff(20)));
+    const run = buildRun(seeds, ID, staff(20), detailsOf, payFor(staff(20)), 'GBP');
     const all = new Set<string>();
     for (let i = 0; i < 20; i++) {
       const a = run.payeeArgs(i);
@@ -176,22 +176,24 @@ describe('a run is derived, not generated', () => {
   });
 
   it('a retry run reuses the original secrets, so the same person cannot be paid twice', () => {
-    const run = buildRun(seeds, ID, staff(10), detailsOf, payFor(staff(10)));
+    const run = buildRun(seeds, ID, staff(10), detailsOf, payFor(staff(10)), 'GBP');
     const retry = buildRetryRun(run, [7, 9]);
 
-    // Different tree — it is a different run — and identical leaves.
-    expect(retry.tree.root).not.toBe(run.tree.root);
-    expect(retry.tree.leaves).toEqual([run.tree.leaves[7], run.tree.leaves[9]]);
+    // The same tree - a retry is raised over the run's own, so a spending policy charges it once -
+    // and each person paid with the leaf and path they already had.
+    expect(retry.tree.root).toBe(run.tree.root);
+    expect([retry.payeeArgs(0).leaf, retry.payeeArgs(1).leaf]).toEqual([run.tree.leaves[7], run.tree.leaves[9]]);
 
     const first = retry.payeeArgs(0);
     expect(first.originalIndex).toBe(7);
+    expect(first.path).toEqual(run.payeeArgs(7).path);
     expect(first.nonce).toBe(run.payeeArgs(7).nonce);
     expect(first.blinding).toBe(run.payeeArgs(7).blinding);
     expect(first.amount).toBe(run.payeeArgs(7).amount);
   });
 
   it('refuses a retry that names somebody twice, or somebody who is not in the run', () => {
-    const run = buildRun(seeds, ID, staff(4), detailsOf, payFor(staff(4)));
+    const run = buildRun(seeds, ID, staff(4), detailsOf, payFor(staff(4)), 'GBP');
     expect(() => buildRetryRun(run, [1, 1])).toThrow(/listed twice/i);
     expect(() => buildRetryRun(run, [9])).toThrow(/not in the original run/i);
     expect(() => buildRetryRun(run, [])).toThrow(/nothing outstanding/i);

@@ -174,13 +174,13 @@ describe('a vault driven by the client\'s own note pool', () => {
   const approvedRun = async (payroll: PaymentFacts[], c: Change, runId: string) => {
     const seeds: PayoutSeed[] = [{ epoch: 0, seed: toHex(bytes(0x77)) }];
     const identity: RunIdentity = { accountId: 'acct-v74', runId, epoch: 0 };
-    const run = buildRun(seeds, identity, payroll, vaultDetails, payFor(payroll));
+    const run = buildRun(seeds, identity, payroll, vaultDetails, payFor(payroll), 'GBP');
     await sim.as(carrying(sim, A, c)).proposeRun({
       root: fromHex(run.tree.root), payees: run.tree.payees,
       from: FROM, until: UNTIL, vault: vaultBytes(),
     });
     const id = sim.proposalId(
-      pureCircuits.runPayload(fromHex(run.tree.root), run.tree.payees, FROM, UNTIL),
+      pureCircuits.runPayload(fromHex(run.tree.root), run.tree.payees, FROM, UNTIL, 0n),
       c.salt, vaultBytes());
     await sim.as(carrying(sim, A, c)).approve(id);
     await sim.as(carrying(sim, B, c)).approve(id);

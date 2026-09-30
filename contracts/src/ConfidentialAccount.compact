@@ -34,6 +34,16 @@ import CompactStandardLibrary;
  * and occurrence, and any change that leaves fewer signers than the account
  * threshold.
  *
+ * A run's root is a sum tree: each node commits both children and both their
+ * sums, and the root commits the run's total and the one asset it pays in, so
+ * what a run can pay is at most the total its signers approved. A run names the
+ * approvals its total needs, inside its id. A company may put a vault under a
+ * spending policy per asset: four bands, each a ceiling on a run's total and the
+ * approvals it needs, and a limit per period. `clearRun` charges an approved run
+ * to its period once, inside its window; a vault under a policy pays only its
+ * own runs once charged, and refuses an asset it has no policy for. A vault with
+ * no policy is paid at its approvals, with no limit.
+ *
  * A signer being removed can do nothing against the company. A proposal needs
  * the higher of the threshold when it was raised and the threshold now, so a
  * fall never releases approvals already given. A governance proposal is
@@ -145,6 +155,33 @@ witness withdrawKey(proposal: Bytes<32>): Bytes<32>;
 // The proposer's withdraw secret for one proposal. Held on their device only.
 witness withdrawSecret(proposal: Bytes<32>): Bytes<32>;
 
+// One band of a spending policy: a run whose total is at most `ceiling` needs `approvals`.
+struct Band {
+  ceiling: Uint<128>;
+  approvals: Uint<64>;
+}
+
+// A vault's spending policy for one token: four bands, a limit per period, and the periods.
+// Period `n` runs from `periodStart + n * periodLength` for `periodLength` seconds.
+struct PolicyTerms {
+  bands: Vector<4, Band>;
+  periodLimit: Uint<128>;
+  periodStart: Uint<64>;
+  periodLength: Uint<64>;
+}
+
+// A policy as the signers hold it: its terms and the blinding its commitment is made under.
+struct Policy {
+  terms: PolicyTerms;
+  blinding: Bytes<32>;
+}
+
+// The opening of the policy a run is charged against. Held by the signers only.
+witness policyOpening(): Policy;
+
+// What the vault has already been charged in the run's period, which the stored total opens to.
+witness periodSpent(): Uint<128>;
+
 // A signer's public identity: a domain-tagged hash of their secret key.
 export circuit signerPublicKey(sk: Bytes<32>): Bytes<32> {
   return persistentHash<Vector<2, Bytes<32>>>([
@@ -230,19 +267,22 @@ export circuit paidMovementOf(leaf: Bytes<32>): Bytes<32> {
     pad(32, "midnight-accounts:paid:"), leaf]);
 }
 
-// What signers approve for a run: its root, its payee count and its window.
+// What signers approve for a run: its root, which commits its total and its token, its payee
+// count, its window, and the approvals its total needs.
 export circuit runPayload(
   root: Bytes<32>,
   payees: Uint<64>,
   opensAt: Uint<64>,
   closesAt: Uint<64>,
+  required: Uint<64>,
 ): Bytes<32> {
-  return persistentHash<Vector<5, Bytes<32>>>([
+  return persistentHash<Vector<6, Bytes<32>>>([
     pad(32, "midnight-accounts:run:"),
     root,
     payees as Field as Bytes<32>,
     opensAt as Field as Bytes<32>,
     closesAt as Field as Bytes<32>,
+    required as Field as Bytes<32>,
   ]);
 }
 
@@ -307,6 +347,175 @@ export circuit withdrawKeyOf(secret: Bytes<32>): Bytes<32> {
   return persistentHash<Vector<2, Bytes<32>>>([
     pad(32, "midnight-accounts:withdraw:"), secret
   ]);
+}
+
+// One level of a payee's path in a run's sum tree: the sibling node, its sum, and which side
+// the path is on.
+struct SumStep {
+  sibling: Field;
+  siblingSum: Uint<128>;
+  goesLeft: Boolean;
+}
+
+// A node of a run's sum tree, and the sum of the amounts under it.
+struct SumNode {
+  node: Field;
+  sum: Uint<128>;
+}
+
+struct SumLeafPreimage {
+  tag: Field;
+  leaf: Bytes<32>;
+  amount: Uint<128>;
+}
+
+struct SumInnerPreimage {
+  tag: Field;
+  left: Field;
+  leftSum: Uint<128>;
+  right: Field;
+  rightSum: Uint<128>;
+}
+
+struct SumRootPreimage {
+  tag: Field;
+  top: Field;
+  total: Uint<128>;
+  asset: Bytes<32>;
+}
+
+// A payee's node in a run's sum tree: their leaf and the amount it pays.
+export circuit sumLeafNode(leaf: Bytes<32>, amount: Uint<128>): Field {
+  return transientHash<SumLeafPreimage>(SumLeafPreimage { tag: 5 as Field, leaf: leaf, amount: amount });
+}
+
+// An inner node: both children and both children's sums, so a path's sibling sum is fixed by
+// the node above it and the amounts a root can pay add up to its total.
+export circuit sumInnerNode(left: Field, leftSum: Uint<128>, right: Field, rightSum: Uint<128>): Field {
+  return transientHash<SumInnerPreimage>(
+    SumInnerPreimage { tag: 7 as Field, left: left, leftSum: leftSum, right: right, rightSum: rightSum });
+}
+
+// A run's root: the top node, the total it pays and the one token it pays in.
+export circuit sumRootOf(top: Field, total: Uint<128>, asset: Bytes<32>): Bytes<32> {
+  return transientHash<SumRootPreimage>(
+    SumRootPreimage { tag: 9 as Field, top: top, total: total, asset: asset }) as Bytes<32>;
+}
+
+// One step up a path. The sum is cast back to 128 bits, which refuses a sum that overflows.
+circuit sumStepUp(below: SumNode, step: SumStep): SumNode {
+  const left = step.goesLeft ? below.node : step.sibling;
+  const leftSum = step.goesLeft ? below.sum : step.siblingSum;
+  const right = step.goesLeft ? step.sibling : below.node;
+  const rightSum = step.goesLeft ? step.siblingSum : below.sum;
+  return SumNode {
+    node: sumInnerNode(left, leftSum, right, rightSum),
+    sum: (below.sum + step.siblingSum) as Uint<128>,
+  };
+}
+
+// The root a payee's path reaches, from their leaf, the amount and the token.
+export circuit sumPathRoot(
+  leaf: Bytes<32>,
+  amount: Uint<128>,
+  path: Vector<16, SumStep>,
+  asset: Bytes<32>,
+): Bytes<32> {
+  const top = fold(sumStepUp, SumNode { node: sumLeafNode(leaf, amount), sum: amount }, path);
+  return sumRootOf(top.node, top.sum, asset);
+}
+
+// Where a vault's policy for one token sits in `signerRoles`: the vault and the token's
+// blinded key, so the key does not name the token.
+export circuit policyKeyOf(vault: Bytes<32>, assetKey: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>([
+    pad(32, "midnight-accounts:roles:policy:"), vault, assetKey
+  ]);
+}
+
+// Where the marker that a vault is under a spending policy sits in `signerRoles`.
+export circuit policyOnKeyOf(vault: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([
+    pad(32, "midnight-accounts:roles:pol-on:"), vault
+  ]);
+}
+
+// The marker's value.
+export circuit policyOnMark(): Bytes<32> {
+  return pad(32, "midnight-accounts:policy-on");
+}
+
+// A policy's commitment, made under its own blinding. Persistent, so it opens after an upgrade.
+export circuit policyCommitmentOf(policy: Policy): Bytes<32> {
+  return persistentCommit<PolicyTerms>(policy.terms, policy.blinding);
+}
+
+// Where one period's running total sits: the policy's key, its commitment and the period, so
+// a new policy starts every period afresh.
+export circuit periodKeyOf(policyKey: Bytes<32>, commitment: Bytes<32>, period: Uint<64>): Bytes<32> {
+  return persistentHash<Vector<4, Bytes<32>>>([
+    pad(32, "midnight-accounts:roles:period:"), policyKey, commitment, period as Field as Bytes<32>
+  ]);
+}
+
+// The blinding of one period's running total, from the policy's blinding and the period, so
+// any signer holding the policy can open it.
+export circuit periodBlindingOf(blinding: Bytes<32>, period: Uint<64>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>([
+    pad(32, "midnight-accounts:period-blind:"), blinding, period as Field as Bytes<32>
+  ]);
+}
+
+// One period's running total, committed under that period's blinding.
+export circuit periodTotalOf(total: Uint<128>, blinding: Bytes<32>): Bytes<32> {
+  return persistentCommit<Vector<2, Bytes<32>>>([
+    pad(32, "midnight-accounts:period-total:"), total as Field as Bytes<32>
+  ], blinding);
+}
+
+// Where the record that a run's root was charged in a period sits. A run raised again over
+// the same tree in the same period is not charged a second time.
+export circuit chargedKeyOf(periodKey: Bytes<32>, root: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>([
+    pad(32, "midnight-accounts:roles:charged:"), periodKey, root
+  ]);
+}
+
+// The value written under a charged key.
+export circuit chargedMark(): Bytes<32> {
+  return pad(32, "midnight-accounts:charged");
+}
+
+// What a cleared run's change commitment is overwritten with. No commitment can equal it.
+export circuit clearedMark(): Bytes<32> {
+  return pad(32, "midnight-accounts:cleared");
+}
+
+// The key in `thresholds` for the approvals a policy change needs. No vault address can equal it.
+export circuit policyBarKey(): Bytes<32> {
+  return persistentHash<Bytes<32>>(pad(32, "midnight-accounts:vault:policy"));
+}
+
+// What signers approve to set one vault's policy for one token.
+export circuit setPolicyPayload(vault: Bytes<32>, assetKey: Bytes<32>, commitment: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<4, Bytes<32>>>([
+    pad(32, "midnight-accounts:set-policy:"), vault, assetKey, commitment
+  ]);
+}
+
+// The approvals a run's total needs under a policy: the first band whose ceiling it fits.
+// Refuses a total above every band.
+export circuit bandApprovals(bands: Vector<4, Band>, total: Uint<128>): Uint<64> {
+  const fits0 = !(bands[0].ceiling < total);
+  const fits1 = !(bands[1].ceiling < total);
+  const fits2 = !(bands[2].ceiling < total);
+  const fits3 = !(bands[3].ceiling < total);
+  assert(fits0 || fits1 || fits2 || fits3,
+    "that run's total is above every band of this vault's policy, so no number of approvals can pay it");
+  return fits0 ? bands[0].approvals
+       : fits1 ? bands[1].approvals
+       : fits2 ? bands[2].approvals
+       : bands[3].approvals;
 }
 
 // The record that a person was paid for one month, kind and occurrence, which the nonce
@@ -442,12 +651,13 @@ circuit thresholdFor(vault: Bytes<32>): Uint<64> {
   return thresholds.member(vault) ? thresholds.lookup(vault) : threshold;
 }
 
-// Refuses a run short of the higher of its bar when raised and the vault's today, plus one
-// for every signer removed since it was raised. Returns its change.
-circuit requireApprovedForVault(proposal: Bytes<32>, vault: Bytes<32>): Bytes<32> {
+// Refuses a run short of the highest of its bar when raised, the vault's today and the
+// approvals its total needs, plus one for every signer removed since it was raised.
+// Returns its change.
+circuit requireApprovedForVault(proposal: Bytes<32>, vault: Bytes<32>, required: Uint<64>): Bytes<32> {
   assert(openProposals.member(proposal), "there is no open proposal with that id");
   const hold = holdOf(proposal);
-  const bar = higher(hold.needed, thresholdFor(vault));
+  const bar = higher(higher(hold.needed, thresholdFor(vault)), required);
   // Each removed signer's approval may be among those given, so one more is needed for each.
   const needed = (bar + (removalsSoFar() - hold.removals)) as Uint<64>;
   assert(!(approvalCounts.lookup(proposal) < needed), "not enough approvals yet");
@@ -623,13 +833,15 @@ export circuit removeSignerAndSetThreshold(
   closeProposal(id);
 }
 
-// Opens a proposal at zero approvals: a run built from its parts, or a governance payload.
+// Opens a proposal at zero approvals: a run built from its parts, with the approvals its
+// total needs, or a governance payload.
 export circuit propose(
   payloadHash: Bytes<32>,
   root: Bytes<32>,
   payees: Uint<64>,
   opensAt: Uint<64>,
   closesAt: Uint<64>,
+  required: Uint<64>,
   isRun: Boolean,
   vault: Bytes<32>,
 ): [] {
@@ -640,7 +852,7 @@ export circuit propose(
   const change = disclose(changeCommitmentOf(
     assetKeyOf(assetId(), assetBlinding()), changeAmount(), changeBatchDigest(), salt));
   const payload = disclose(isRun)
-    ? runPayload(disclose(root), disclose(payees), disclose(opensAt), disclose(closesAt))
+    ? runPayload(disclose(root), disclose(payees), disclose(opensAt), disclose(closesAt), disclose(required))
     : payloadHash;
   const id = disclose(proposalIdOf(payload, disclose(vault), salt));
   assert(!openProposals.member(id), "that proposal is already open");
@@ -659,9 +871,10 @@ export circuit propose(
 
   openProposals.insert(id, change);
   approvalCounts.insert(id, 0);
-  // The bar it was raised at, who may withdraw it, and the removals so far.
+  // The bar it was raised at, who may withdraw it, and the removals so far. A run's bar is
+  // the higher of its vault's threshold and the approvals its total needs.
   proposalHolds.insert(id, Hold {
-    needed: disclose(isRun) ? thresholdFor(disclose(vault)) : threshold,
+    needed: disclose(isRun) ? higher(thresholdFor(disclose(vault)), disclose(required)) : threshold,
     withdrawKey: disclose(withdrawKey(id)),
     removals: removalsSoFar(),
     runHold: default<RunHold>,
@@ -712,7 +925,10 @@ export circuit closeExpiredRun(proposal: Bytes<32>): [] {
 // of `tokenType(paymentReceiptTag(), payingVault)`, minted by that vault to this account in
 // the same transaction. Returns this account's address, which the vault mints to.
 // A run names one vault, which must pay it; a company-wide run may be paid by any vault
-// ever adopted whose own bar is not stricter than the company's.
+// ever adopted whose own bar is not stricter than the company's and that has no spending
+// policy. A vault with a spending policy pays only its own runs, and only once each is
+// charged to its period. The amount and token are the ones the payee's path in the run's
+// sum tree carries, so what a run pays is at most the total its root commits to.
 export circuit recordPaymentFromVault(
   proposal: Bytes<32>,
   runVault: Bytes<32>,
@@ -721,10 +937,13 @@ export circuit recordPaymentFromVault(
   payees: Uint<64>,
   opensAt: Uint<64>,
   closesAt: Uint<64>,
+  required: Uint<64>,
   salt: Bytes<32>,
   details: Bytes<32>,
   nonce: Bytes<32>,
-  path: MerkleTreePath<16, Bytes<32>>,
+  amount: Uint<128>,
+  asset: Bytes<32>,
+  path: Vector<16, SumStep>,
 ): ContractAddress {
   const id = disclose(proposal);
   const forRun = disclose(runVault);
@@ -752,7 +971,7 @@ export circuit recordPaymentFromVault(
   // The arguments must recompute this proposal's id, which needs its salt.
   assert(
     disclose(proposalIdOf(
-      runPayload(disclose(root), disclose(payees), disclose(opensAt), disclose(closesAt)),
+      runPayload(disclose(root), disclose(payees), disclose(opensAt), disclose(closesAt), disclose(required)),
       forRun, disclose(salt)) == id),
     "that is not this proposal, or you were not given it");
 
@@ -760,15 +979,23 @@ export circuit recordPaymentFromVault(
   assert(blockTimeGte(disclose(opensAt)), "that run has not started yet");
   assert(blockTimeLt(disclose(closesAt)), "the payment window for this run has closed");
 
-  // With the run's approvals: the higher of its bar when raised and the vault's today,
-  // plus one for every signer removed since.
-  requireApprovedForVault(id, forRun);
+  // With the run's approvals: the highest of its bar when raised, the vault's today and the
+  // approvals its total needs, plus one for every signer removed since.
+  const change = requireApprovedForVault(id, forRun, disclose(required));
 
-  // The payee must be a leaf of the approved run; a company-wide leaf names its vault.
+  // A vault under a spending policy pays only its own runs, each charged to its period first.
+  if (signerRoles.member(disclose(policyOnKeyOf(payer)))) {
+    assert(!companyRun,
+           "that vault has a spending policy, so it pays only its own runs; raise this payment on a run for that vault");
+    assert(change == clearedMark(),
+           "that vault has a spending policy, so each run is charged to its period before it pays; charge this run to its period, then pay it");
+  }
+
+  // The payee must be a leaf of the approved run, at the amount and in the token its path
+  // carries to the root; a company-wide leaf names its vault.
   const leaf = payoutLeaf(companyRun ? companyWideDetailsOf(details, payer) : details, nonce);
-  assert(path.leaf == leaf, "that path is not for this payee");
-  assert(merkleTreePathRoot<16, Bytes<32>>(path).field as Bytes<32> == root,
-         "that payee is not in the approved run");
+  assert(sumPathRoot(leaf, amount, path, asset) == root,
+         "that payee is not in the approved run, at that amount and in that currency, from that vault");
 
   // Once ever, in any run.
   const movement = disclose(paidMovementOf(leaf));
@@ -871,4 +1098,114 @@ export circuit retireVault(
   vaults.remove(forVault);
   retiredAt.insert(forVault, 1);
   closeProposal(id);
+}
+
+// Sets one vault's spending policy for one currency under an approved proposal: the policy's
+// commitment under a key derived here from the vault and the currency, and the marker that the
+// vault is under a policy. It needs the higher of the account's bar and the bar the company
+// set for policy changes.
+export circuit setPolicy(
+  vault: Bytes<32>,
+  commitment: Bytes<32>,
+  proposal: Bytes<32>,
+): [] {
+  requireSigner();
+  const id = disclose(proposal);
+  const forVault = disclose(vault);
+  const assetKey = assetKeyOf(assetId(), assetBlinding());
+  assert(
+    disclose(proposalIdOf(
+      setPolicyPayload(forVault, assetKey, commitment), noVault(), proposalSalt()) == id),
+    "that proposal does not authorise this policy");
+  requireApproved(id);
+  assert(!(approvalCounts.lookup(id) < thresholdFor(policyBarKey())),
+    "a change to a spending policy needs the approvals the company set for policy changes");
+
+  assert(forVault != noVault(), "a policy needs a vault");
+  assert(forVault != companyWide(), "a policy is set on one vault, not on the company");
+  assert(forVault != policyBarKey(), "a policy is set on one vault");
+  assert(commitment != default<Bytes<32>>, "that is not a usable policy");
+
+  signerRoles.insert(disclose(policyKeyOf(forVault, assetKey)), disclose(commitment));
+  signerRoles.insert(disclose(policyOnKeyOf(forVault)), policyOnMark());
+  closeProposal(id);
+}
+
+// Charges an approved run to its vault's period, once, inside its window. Refuses a run not
+// approved at the bar it needs, outside its window, already charged, paying a token its
+// vault has no policy for, needing more approvals than it was raised with, whose window
+// leaves the period, or taking the period past its limit. A run raised again over the same
+// tree in the same period is marked cleared without being charged again.
+export circuit clearRun(
+  proposal: Bytes<32>,
+  vault: Bytes<32>,
+  root: Bytes<32>,
+  payees: Uint<64>,
+  opensAt: Uint<64>,
+  closesAt: Uint<64>,
+  required: Uint<64>,
+  salt: Bytes<32>,
+  top: Field,
+  total: Uint<128>,
+  period: Uint<64>,
+): [] {
+  const id = disclose(proposal);
+  const forVault = disclose(vault);
+  const forRoot = disclose(root);
+  assert(
+    disclose(proposalIdOf(
+      runPayload(forRoot, disclose(payees), disclose(opensAt), disclose(closesAt), disclose(required)),
+      forVault, disclose(salt)) == id),
+    "that is not this run, or you were not given it");
+
+  // Only once its window has opened, so a run that can still be withdrawn is never charged.
+  assert(blockTimeGte(disclose(opensAt)), "that run has not started yet, so it cannot be charged to a period");
+  assert(blockTimeLt(disclose(closesAt)), "the payment window for this run has closed");
+
+  // Only at the bar it needs, so no signer can charge a period alone.
+  const change = requireApprovedForVault(id, forVault, disclose(required));
+  assert(change != clearedMark(), "that run has already been charged to its period");
+
+  // The total and token the run's root commits to are the ones the policy is looked up by.
+  const asset = assetId();
+  assert(sumRootOf(top, total, asset) == forRoot,
+         "that total or currency is not the one the signers approved for this run");
+
+  const policyKey = disclose(policyKeyOf(forVault, assetKeyOf(asset, assetBlinding())));
+  assert(signerRoles.member(policyKey),
+         "this vault has no spending policy for the currency this run pays in, so there is nothing to charge the run to; a vault with no policy at all is paid without a charge, and one with a policy for another currency needs a policy set for this one first");
+  const commitment = signerRoles.lookup(policyKey);
+  const policy = policyOpening();
+  assert(policyCommitmentOf(policy) == commitment, "that is not this vault's current policy for this currency; get the current policy and try again");
+
+  // The band its total falls in, against the approvals it was raised with.
+  assert(!(disclose(required) < bandApprovals(policy.terms.bands, total)),
+         "this run's total needs more approvals than it was raised with; raise it again with the approvals its band needs");
+
+  // The period is the one its whole window lies in.
+  const starts = policy.terms.periodStart + disclose(period) * policy.terms.periodLength;
+  assert(!(disclose(opensAt) < starts), "that run's window starts before the period it is charged to; if its window crosses two periods, raise the run again inside one");
+  assert(!(starts + policy.terms.periodLength < disclose(closesAt)),
+         "that run's window ends after the period it is charged to; if its window crosses two periods, raise the run again inside one");
+
+  const periodKey = disclose(periodKeyOf(policyKey, commitment, disclose(period)));
+  const blinding = periodBlindingOf(policy.blinding, disclose(period));
+  const spent = periodSpent();
+  if (signerRoles.member(periodKey)) {
+    assert(signerRoles.lookup(periodKey) == periodTotalOf(spent, blinding),
+           "that is not what this vault has spent in the period; refresh the total for the period on this device and try again");
+  } else {
+    assert(spent == 0, "this device says the vault has spent something this period, but the account has nothing charged to it; refresh the total for the period and try again");
+  }
+
+  const charged = disclose(chargedKeyOf(periodKey, forRoot));
+  if (!signerRoles.member(charged)) {
+    const after = (spent + total) as Uint<128>;
+    assert(!(policy.terms.periodLimit < after),
+           "this run would take the vault past its limit for the period; pay it in a later period, pay less, or raise the limit for the period");
+    signerRoles.insert(periodKey, disclose(periodTotalOf(after, blinding)));
+    signerRoles.insert(charged, chargedMark());
+  }
+
+  openProposals.insert(id, clearedMark());
 }

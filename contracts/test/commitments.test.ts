@@ -384,7 +384,7 @@ describe('what a commitment names, which no mirror can check', () => {
    *
    * **WHAT IS STILL UNPINNED, SO NOBODY READS THIS AS MORE THAN IT IS.**
    * `signerLeaf(pk, blinding, scope)`, `proposalIdOf(payloadHash, vault, salt)`,
-   * `runPayload(root, payees, opensAt, closesAt)` and `payoutLeaf(details,
+   * `runPayload(root, payees, opensAt, closesAt, 0n)` and `payoutLeaf(details,
    * nonce)` each carry same-typed arguments and have no vector.
    *
    * **AND `changeCommitmentOf` HAS JOINED THEM, WHICH IS A LOSS AND IS WRITTEN

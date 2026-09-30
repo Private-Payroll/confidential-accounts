@@ -143,6 +143,39 @@ export interface AccountPrivateState {
    * make them fire, and a mutation removing either would survive.
    */
   pinAnyLeaf?: boolean;
+  /**
+   * The opening of the spending policy a run is charged against: its terms and
+   * the blinding its commitment was made under. Only a device that clears a run
+   * needs it, and only a signer holds it.
+   */
+  policy?: PolicyOpening | null;
+  /**
+   * What the vault has already been charged in the period a run is charged to,
+   * which the account's stored total for that period must open to. Zero when
+   * nothing has been charged to the period yet.
+   */
+  periodSpent?: bigint;
+}
+
+/** One band of a spending policy: a run whose total is at most `ceiling` needs `approvals`. */
+export interface PolicyBand {
+  ceiling: bigint;
+  approvals: bigint;
+}
+
+/**
+ * A vault's spending policy for one token, as the contract opens it: four
+ * bands, a limit per period, and the periods, which run for `periodLength`
+ * seconds from `periodStart`.
+ */
+export interface PolicyOpening {
+  terms: {
+    bands: PolicyBand[];
+    periodLimit: bigint;
+    periodStart: bigint;
+    periodLength: bigint;
+  };
+  blinding: Uint8Array;
 }
 
 /**
@@ -281,4 +314,21 @@ export const witnesses = {
   /** This signer's withdraw secret for one proposal. Never leaves the proof. */
   withdrawSecret: (context: WitnessContext<Ledger, AccountPrivateState>, proposal: Uint8Array):
     [AccountPrivateState, Uint8Array] => [same(context.privateState), withdrawSecretFor(context, proposal)],
+
+  /* ---------------- charging a run to its period ---------------- */
+
+  /** The opening of the policy the run is charged against. Refuses a device that holds none. */
+  policyOpening: ({ privateState }: WitnessContext<Ledger, AccountPrivateState>):
+    [AccountPrivateState, PolicyOpening] => {
+    if (!privateState.policy) {
+      throw new Error(
+        'this device holds no opening of the vault\'s spending policy, so it cannot charge a run to ' +
+          'its period. Ask a signer who holds the policy to charge the run.');
+    }
+    return [same(privateState), privateState.policy];
+  },
+
+  /** What the vault has already been charged in the run's period. */
+  periodSpent: ({ privateState }: WitnessContext<Ledger, AccountPrivateState>):
+    [AccountPrivateState, bigint] => [same(privateState), privateState.periodSpent ?? 0n],
 };

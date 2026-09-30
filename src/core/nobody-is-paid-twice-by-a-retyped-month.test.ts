@@ -73,7 +73,7 @@ async function aCompany(people: number) {
   const materialFor = async (runId: string) => {
     const i = await payroll.runMaterialInputs(runId, viewingKey);
     return runMaterialFor({
-      accountId: i.accountId, runId: i.runId, seeds: i.seeds, facts: i.facts, pay: i.pay,
+      accountId: i.accountId, runId: i.runId, seeds: i.seeds, facts: i.facts, pay: i.pay, asset: i.asset,
       opensAt: OPENS, closesAt: CLOSES, vault: toHex(PAYROLL_VAULT), detailsOf: vaultDetails,
       ...(i.epoch !== undefined ? { epoch: i.epoch } : {}),
     });

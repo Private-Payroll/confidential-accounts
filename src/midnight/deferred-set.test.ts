@@ -176,7 +176,7 @@ describe('the deferral list: S25\'s decision, stated where a diff will show it',
     }
   });
 
-  it('the two lists name twelve circuits between them, none twice', () => {
+  it('the two lists name fourteen circuits between them, none twice', () => {
     // Fifteen before the S11 merges (addSigner+removeSigner → amendSigner,
     // propose+proposeRun → propose), thirteen after them, eleven once S23 shed
     // credit and attestSolvency, ten since `C292`/`S26` removed `execute` with
@@ -189,8 +189,8 @@ describe('the deferral list: S25\'s decision, stated where a diff will show it',
     // the concatenation has no duplicate — which can fail — and that
     // assertKnownCircuitSet accepts the set it was built from.
     const all = [...DEPLOYED_CIRCUITS, ...DEFERRED_CIRCUITS];
-    expect(all).toHaveLength(12);
-    expect(new Set(all).size).toBe(12);
+    expect(all).toHaveLength(14);
+    expect(new Set(all).size).toBe(14);
     expect(() => assertKnownCircuitSet(all)).not.toThrow();
   });
 
@@ -227,7 +227,7 @@ describe('the deferral list: S25\'s decision, stated where a diff will show it',
         .map((f) => f.replace(/\.verifier$/, '')),
     )].sort();
 
-    expect(keyed).toHaveLength(12);
+    expect(keyed).toHaveLength(14);
     expect([...DEPLOYED_CIRCUITS]).toEqual(keyed);
     expect(() => assertKnownCircuitSet(keyed)).not.toThrow();
   });

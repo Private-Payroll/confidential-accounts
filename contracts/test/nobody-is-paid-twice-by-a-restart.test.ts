@@ -129,7 +129,7 @@ async function aCompanyWithADraftedRun(people: number) {
   const materialFor = async (runId: string, vk: Hex = viewingKey) => {
     const i = await s.payroll.runMaterialInputs(runId, vk);
     return runMaterialFor({
-      accountId: i.accountId, runId: i.runId, seeds: i.seeds, facts: i.facts, pay: i.pay,
+      accountId: i.accountId, runId: i.runId, seeds: i.seeds, facts: i.facts, pay: i.pay, asset: i.asset,
       opensAt: OPENS, closesAt: CLOSES, vault: toHex(PAYROLL_VAULT), detailsOf: vaultDetails,
       ...(i.epoch !== undefined ? { epoch: i.epoch } : {}),
     });
@@ -162,7 +162,7 @@ describe('the hazard: a run identifier is what tells two payments apart', () => 
     /* Everything held equal except the identifier - the same facts object, window and vault. */
     const minted = await runMaterialFor({
       accountId: recorded.identity.accountId, runId: 'run_startedagainbyhand:GBP',
-      seeds: recorded.seeds, facts: recorded.facts, pay: recorded.pay, epoch: recorded.identity.epoch,
+      seeds: recorded.seeds, facts: recorded.facts, pay: recorded.pay, asset: recorded.asset, epoch: recorded.identity.epoch,
       opensAt: OPENS, closesAt: CLOSES, vault: toHex(PAYROLL_VAULT), detailsOf: vaultDetails,
     });
 
@@ -179,9 +179,9 @@ describe('the hazard: a run identifier is what tells two payments apart', () => 
     /* RED WHEN the nonce starts depending on the run's identifier again: a second attempt
        would then be a payment the account records separately and refuses nothing of. Read
        off the two builds' own payee arguments, not recomputed from the records. */
-    const asRecorded = buildRun(recorded.seeds, recorded.identity, recorded.facts, vaultDetails, recorded.pay);
+    const asRecorded = buildRun(recorded.seeds, recorded.identity, recorded.facts, vaultDetails, recorded.pay, recorded.asset);
     const asMinted = buildRun(recorded.seeds, { ...recorded.identity, runId: 'run_startedagainbyhand:GBP' },
-      recorded.facts, vaultDetails, recorded.pay);
+      recorded.facts, vaultDetails, recorded.pay, recorded.asset);
     for (let i = 0; i < 3; i++) {
       expect(asMinted.payeeArgs(i).nonce).toBe(asRecorded.payeeArgs(i).nonce);
       expect(asMinted.payeeArgs(i).nonce).toBe(payRecordNonceOf(recorded.pay.key, recorded.pay.records[i]!));
@@ -304,7 +304,7 @@ describe('every way a person can start a failed run again', () => {
 
       const mintedLeg = await runMaterialFor({
         accountId: foreign.accountId, runId: foreign.runId, seeds: rebuild.seeds,
-        facts: rebuild.facts, pay: rebuild.pay, epoch: foreign.epoch, opensAt: OPENS, closesAt: CLOSES,
+        facts: rebuild.facts, pay: rebuild.pay, asset: rebuild.asset, epoch: foreign.epoch, opensAt: OPENS, closesAt: CLOSES,
         vault: toHex(PAYROLL_VAULT), detailsOf: vaultDetails,
       });
       /* The control: this is not a relabelling of the same payments. */
@@ -353,14 +353,14 @@ describe('against the compiled circuits: what the chain refuses, and what it doe
     const rotated = await r.accounts.rotate(r.account, r.viewingKey);
     const rebuild = (await r.payroll.payoutRebuildOf(r.run.id, rotated.viewingKey))!;
     /* Rebuilt from the record the way a paying device rebuilds it, on another machine. */
-    const whole = buildRun(rebuild.seeds, rebuild.identity, rebuild.facts, vaultDetails, rebuild.pay);
+    const whole = buildRun(rebuild.seeds, rebuild.identity, rebuild.facts, vaultDetails, rebuild.pay, rebuild.asset);
     const payUnderTheLeg = (at: number) => {
       const args = whole.payeeArgs(at);
       return sim.as(legDevice).recordPaymentFromVault({
         proposal: legId, vault: PAYROLL_VAULT, root: fromHex(first.run.root),
         payees: first.run.payees, from: OPENS, until: CLOSES,
         salt: fromHex(legChange.salt), details: fromHex(args.details),
-        nonce: fromHex(args.nonce), path: args.path,
+        nonce: fromHex(args.nonce), amount: args.amount, asset: fromHex(args.asset), path: args.path,
       });
     };
 
@@ -378,7 +378,7 @@ describe('against the compiled circuits: what the chain refuses, and what it doe
        derived under a minted identifier, is a leaf the account has never seen. */
     const minted = await runMaterialFor({
       accountId: rebuild.identity.accountId, runId: 'run_startedagainbyhand:GBP',
-      seeds: rebuild.seeds, facts: rebuild.facts, pay: rebuild.pay, epoch: rebuild.identity.epoch,
+      seeds: rebuild.seeds, facts: rebuild.facts, pay: rebuild.pay, asset: rebuild.asset, epoch: rebuild.identity.epoch,
       opensAt: OPENS, closesAt: CLOSES, vault: toHex(PAYROLL_VAULT), detailsOf: vaultDetails,
     });
     /* RED WHEN a minted identifier derives the leaf the leg already paid, which would make

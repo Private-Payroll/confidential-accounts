@@ -163,7 +163,7 @@ describe('§4 the record written before the first fee', () => {
 describe('§5 the run and the payment built from the record', () => {
   it('builds the same root, leaf and secrets every time the same record is read', async () => {
     const details = await vaultDetailsOf();
-    const r = record();
+    const r = record({ asset: 'NIGHT', token: NIGHT });
     const a = runOf(r, factsFor(10n), details, 'default');
     const b = runOf(JSON.parse(JSON.stringify(r)), factsFor(10n), details, 'default');
     expect(a.run.tree.root).toBe(b.run.tree.root);
@@ -176,7 +176,7 @@ describe('§5 the run and the payment built from the record', () => {
   });
 
   it('commits the leaf to the PUBLIC payment: the recipient, NIGHT, the amount, under the vault\'s unshielded details', async () => {
-    const built = runOf(record(), factsFor(10n), await vaultDetailsOf(), 'default');
+    const built = runOf(record({ asset: 'NIGHT', token: NIGHT }), factsFor(10n), await vaultDetailsOf(), 'default');
     const expected = toHex(vaultCircuits.unshieldedPayoutDetails(
       fromHex(PAYEE.userAddress), fromHex(NIGHT), 10n, fromHex(built.args.blinding)));
     expect(built.args.details).toBe(expected);
@@ -184,12 +184,17 @@ describe('§5 the run and the payment built from the record', () => {
     expect(built.run.tree.leaves).toEqual([built.args.leaf]);
   });
 
+  it('REFUSES to build a run from a record that names no asset, because the root commits to one', async () => {
+    /* RED WHEN the run is built without the asset its root commits to. */
+    expect(() => runOf(record(), factsFor(10n), {} as never, 'default')).toThrow(/written before records kept their currency/);
+  });
+
   it('REFUSES to build a run whose payment disagrees with the record\'s amount', async () => {
-    expect(() => runOf(record(), factsFor(11n), {} as never, 'default')).toThrow(/pays 11 and the record says 10/);
+    expect(() => runOf(record({ asset: 'NIGHT', token: NIGHT }), factsFor(11n), {} as never, 'default')).toThrow(/pays 11 and the record says 10/);
   });
 
   it('hands the vault every argument from the run and the record, and none from anywhere else', async () => {
-    const r = record();
+    const r = record({ asset: 'NIGHT', token: NIGHT });
     const built = runOf(r, factsFor(10n), await vaultDetailsOf(), 'default');
     const p = vaultPaymentOf(r, built, 'd7'.repeat(32) as Hex);
     expect(p.proposal).toBe('d7'.repeat(32));

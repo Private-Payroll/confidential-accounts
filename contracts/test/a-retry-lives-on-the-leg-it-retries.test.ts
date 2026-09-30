@@ -111,7 +111,7 @@ async function aRaisedLeg() {
   const { run } = await payroll.createRunFromRoster(created.account.id, '2026-08', viewingKey);
   const inputs = await payroll.runMaterialInputs(run.id, viewingKey);
   const material = await runMaterialFor({
-    accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds, facts: inputs.facts, pay: inputs.pay,
+    accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds, facts: inputs.facts, pay: inputs.pay, asset: inputs.asset,
     opensAt: OPENS, closesAt: CLOSES, vault: toHex(PAYROLL_VAULT), detailsOf: vaultDetails,
   });
   const by = created.secrets[0]!.signerId;
@@ -147,9 +147,11 @@ describe('a retry lives on the leg it retries', () => {
     expect(after.proposalIds.GBP).toBe(r.proposal.id);
     /* RED WHEN the retry is not written down, or its proposal is not recorded against it. */
     expect(after.payout!.GBP!.retries).toEqual([expect.objectContaining({
-      originalIndices: [0, 2], root: retry.run.root, payees: 2n,
+      originalIndices: [0, 2], root: retry.run.root, payees: 3n,
       opensAt: RETRY_OPENS, closesAt: RETRY_CLOSES, proposalId: raised.id,
     })]);
+    /* RED WHEN a retry is raised over a tree of its own rather than the leg's, and a policy would charge it again. */
+    expect(retry.run.root).toBe(before.payout!.GBP!.root);
     /* RED WHEN a run cannot be found by the round its retry was raised as. */
     expect(r.store.getRun(r.run.id)!.proposalIds).toContain(raised.id);
     /* RED WHEN the retry is written outside the sealed envelope, where the store can read it. */
@@ -176,13 +178,13 @@ describe('a retry lives on the leg it retries', () => {
 
       /* The leg pays person 0, from a rebuild of what the product wrote down. */
       const rebuild = (await r.payroll.payoutRebuildOf(r.run.id, r.viewingKey))!;
-      const whole = buildRun(rebuild.seeds, rebuild.identity, rebuild.facts, vaultDetails, rebuild.pay);
+      const whole = buildRun(rebuild.seeds, rebuild.identity, rebuild.facts, vaultDetails, rebuild.pay, rebuild.asset);
       const first = whole.payeeArgs(0);
       await sim.as(legDevice).recordPaymentFromVault({
         proposal: legId, vault: PAYROLL_VAULT, root: fromHex(r.material.run.root),
         payees: r.material.run.payees, from: OPENS, until: CLOSES,
         salt: fromHex(legChange.salt), details: fromHex(first.details),
-        nonce: fromHex(first.nonce), path: first.path,
+        nonce: fromHex(first.nonce), amount: first.amount, asset: fromHex(first.asset), path: first.path,
       });
 
       /* A retry over persons 0 and 2, raised through the product. */
@@ -209,7 +211,7 @@ describe('a retry lives on the leg it retries', () => {
           proposal: retryId, vault: PAYROLL_VAULT, root: fromHex(retry.run.root),
           payees: retry.run.payees, from: RETRY_OPENS, until: RETRY_CLOSES,
           salt: fromHex(retryChange.salt), details: fromHex(a.details),
-          nonce: fromHex(a.nonce), path: a.path,
+          nonce: fromHex(a.nonce), amount: a.amount, asset: fromHex(a.asset), path: a.path,
         });
       };
 
@@ -343,7 +345,7 @@ describe('a retry lives on the leg it retries', () => {
     const { run } = await payroll.createRunFromRoster(created.account.id, '2026-08', vk);
     const inputs = await payroll.runMaterialInputs(run.id, vk);
     const material = await runMaterialFor({
-      accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds, facts: inputs.facts, pay: inputs.pay,
+      accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds, facts: inputs.facts, pay: inputs.pay, asset: inputs.asset,
       opensAt: OPENS, closesAt: CLOSES, vault: toHex(PAYROLL_VAULT), detailsOf: vaultDetails,
     });
     const by = created.secrets[0]!.signerId;

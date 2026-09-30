@@ -480,13 +480,13 @@ async function main() {
     details: toHex(vaultCircuits.payoutDetails(ALICE, GBP, 250n, fill(0x40))),
     nonce: toHex(fill(0xc1)),
   }];
-  const tree = buildPayoutTree(leaves);
-  const runPayload = pureCircuits.runPayload(fromHex(tree.root), tree.payees, LIVE_FROM, LIVE_UNTIL);
+  const tree = buildPayoutTree(leaves, [250n], toHex(GBP));
+  const runPayload = pureCircuits.runPayload(fromHex(tree.root), tree.payees, LIVE_FROM, LIVE_UNTIL, 0n);
 
   const runProposer = sim.applying(ada, runChange);
   await measure('propose (run)', 'raises a payroll run: a payout root, a count and a window',
     accountOpts('propose',
-      [ZERO_32, fromHex(tree.root), tree.payees, LIVE_FROM, LIVE_UNTIL, true, vaultAddrBytes],
+      [ZERO_32, fromHex(tree.root), tree.payees, LIVE_FROM, LIVE_UNTIL, 0n, true, vaultAddrBytes],
       runProposer), accountZk);
   await sim.as(runProposer).proposeRun({
     root: fromHex(tree.root), payees: tree.payees,
@@ -510,7 +510,7 @@ async function main() {
 
   /* A second run, already expired, so the sweep has something to sweep. */
   const pastChange = change(0n, 33);
-  const pastPayload = pureCircuits.runPayload(fromHex(tree.root), tree.payees, PAST_FROM, PAST_UNTIL);
+  const pastPayload = pureCircuits.runPayload(fromHex(tree.root), tree.payees, PAST_FROM, PAST_UNTIL, 0n);
   await sim.as(sim.applying(ada, pastChange)).proposeRun({
     root: fromHex(tree.root), payees: tree.payees,
     from: PAST_FROM, until: PAST_UNTIL, vault: vaultAddrBytes });
@@ -819,10 +819,10 @@ async function measureVault(
     details: toHex(vaultCircuits.payoutDetails(ALICE, GBP, 250n, fill(0x40))),
     nonce: toHex(fill(0xc1)),
   }];
-  const tree = buildPayoutTree(leaves);
+  const tree = buildPayoutTree(leaves, [250n], toHex(GBP));
   const runChange = change(0n, 31);
   const runPayload = pureCircuits.runPayload(
-    fromHex(tree.root), tree.payees, LIVE_FROM, LIVE_UNTIL);
+    fromHex(tree.root), tree.payees, LIVE_FROM, LIVE_UNTIL, 0n);
   await sim.as(sim.applying(ada, runChange)).proposeRun({
     root: fromHex(tree.root), payees: tree.payees,
     from: LIVE_FROM, until: LIVE_UNTIL, vault: vaultBytes });

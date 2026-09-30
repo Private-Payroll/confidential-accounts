@@ -110,7 +110,7 @@ describe('no route that does not take the viewing key returns a salt or a path',
     const { run } = await payroll.createRunFromRoster(created.account.id, '2026-08', created.viewingKey);
     const inputs = await payroll.runMaterialInputs(run.id, created.viewingKey);
     const material = await runMaterialFor({
-      accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds, facts: inputs.facts, pay: inputs.pay,
+      accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds, facts: inputs.facts, pay: inputs.pay, asset: inputs.asset,
       opensAt: 1_800_000_000n, closesAt: 1_800_086_400n, vault: toHex(new Uint8Array(32).fill(0xa1)), detailsOf: vaultDetails,
     });
     await payroll.proposeRun(run.id, created.viewingKey, created.secrets[0]!.signerId, material);

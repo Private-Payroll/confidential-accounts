@@ -2,8 +2,10 @@
  * EVERY KEY WRITTEN INTO THE ACCOUNT'S TWO SHARED MAPS, AND WHY NONE COLLIDE.
  *
  * `signerRoles` holds the company's label, the commitment to the pay-record key
- * and each signer's sealed copy of it, and one key is reserved for a later anchor
- * entry. `proposalHolds` holds each open proposal's hold and, under one fixed key,
+ * and each signer's sealed copy of it, each vault's spending policy per token,
+ * the marker that a vault is under a policy, each period's running total, and
+ * the record that a run's tree was charged in a period; one key is reserved for
+ * a later anchor entry. `proposalHolds` holds each open proposal's hold and, under one fixed key,
  * the account's removal count. In a shared map every writer is a boundary: a key
  * two derivations could both produce would let one writer overwrite the other's
  * entry.
@@ -46,6 +48,10 @@ const SIGNER_ROLES_WRITES = [
   'disclose(payKeyWrapKeyOf(account, sk, 1))',
   'disclose(payKeyWrapKeyOf(account, sk, 2))',
   'disclose(payKeyWrapKeyOf(account, sk, 3))',
+  'disclose(policyKeyOf(forVault, assetKey))',
+  'disclose(policyOnKeyOf(forVault))',
+  'periodKey',
+  'charged',
 ];
 const PROPOSAL_HOLDS_WRITES = ['removalCountKey()', 'removalCountKey()', 'id'];
 
@@ -77,6 +83,15 @@ describe('every insert into the two shared maps is one this file knows', () => {
     expect(SRC).toContain('const first = disclose(payKeyWrapKeyOf(account, sk, 0));');
   });
 
+  it("the policy's writers derive every key in the circuit, from the vault, the token and the period, never from a caller", () => {
+    /* RED WHEN setPolicy's token key is taken from anything but the device's own asset and blinding. */
+    expect(SRC).toContain('const assetKey = assetKeyOf(assetId(), assetBlinding());');
+    /* RED WHEN clearRun's keys are read from an argument rather than derived. */
+    expect(SRC).toContain('const policyKey = disclose(policyKeyOf(forVault, assetKeyOf(asset, assetBlinding())));');
+    expect(SRC).toContain('const periodKey = disclose(periodKeyOf(policyKey, commitment, disclose(period)));');
+    expect(SRC).toContain('const charged = disclose(chargedKeyOf(periodKey, forRoot));');
+  });
+
   it('proposalHolds: the removal count under its fixed key, twice, and each proposal under its id', () => {
     /* RED WHEN a new writer of proposalHolds appears. */
     expect(insertsInto('proposalHolds')).toEqual(PROPOSAL_HOLDS_WRITES);
@@ -89,6 +104,7 @@ describe('the derivations are separated by their tags', () => {
   const DERIVATIONS = [
     'companyLabelKey', 'payKeyCommitmentKey', 'payKeyWrapKeyOf', 'anchorKey',
     'removalCountKey', 'proposalIdOf',
+    'policyKeyOf', 'policyOnKeyOf', 'periodKeyOf', 'chargedKeyOf',
   ];
 
   it("every derivation has its own tag, and the anchor's is reserved as ruled", () => {
@@ -107,6 +123,11 @@ describe('the derivations are separated by their tags', () => {
     }
     expect(bodyOf('payKeyWrapKeyOf')).toMatch(/persistentHash<Vector<4, Bytes<32>>>\(\[\s*pad\(32, "midnight-accounts:roles:wrap:"\), account, sk,/);
     expect(bodyOf('proposalIdOf')).toMatch(/persistentCommit<Vector<3, Bytes<32>>>\(\s*\[pad\(32, "midnight-accounts:proposal-id:"\)/);
+    /* RED WHEN a policy key stops hashing its own tag first. */
+    expect(bodyOf('policyKeyOf')).toMatch(/persistentHash<Vector<3, Bytes<32>>>\(\[\s*pad\(32, "midnight-accounts:roles:policy:"\), vault, assetKey/);
+    expect(bodyOf('policyOnKeyOf')).toMatch(/persistentHash<Vector<2, Bytes<32>>>\(\[\s*pad\(32, "midnight-accounts:roles:pol-on:"\), vault/);
+    expect(bodyOf('periodKeyOf')).toMatch(/persistentHash<Vector<4, Bytes<32>>>\(\[\s*pad\(32, "midnight-accounts:roles:period:"\), policyKey, commitment,/);
+    expect(bodyOf('chargedKeyOf')).toMatch(/persistentHash<Vector<3, Bytes<32>>>\(\[\s*pad\(32, "midnight-accounts:roles:charged:"\), periodKey, root/);
     /* The removal count's key is the padded tag itself, which no hash is expected to produce. */
     expect(bodyOf('removalCountKey')).toMatch(/return pad\(32, "midnight-accounts:removal-count"\);/);
   });
@@ -122,6 +143,17 @@ describe('and computed for real inputs, every key differs', () => {
     for (const account of [bytes(0xa0), bytes(0xa1)]) {
       for (const sk of [bytes(1), bytes(2)]) {
         for (const part of [0n, 1n, 2n, 3n]) keys.push(pureCircuits.payKeyWrapKeyOf(account, sk, part));
+      }
+    }
+    for (const vault of [bytes(0xb0), bytes(0xb1)]) {
+      keys.push(pureCircuits.policyOnKeyOf(vault));
+      for (const assetKey of [bytes(0xc0), bytes(0xc1)]) {
+        const policyKey = pureCircuits.policyKeyOf(vault, assetKey);
+        keys.push(policyKey);
+        for (const period of [0n, 1n]) {
+          const periodKey = pureCircuits.periodKeyOf(policyKey, bytes(0xd0), period);
+          keys.push(periodKey, pureCircuits.chargedKeyOf(periodKey, bytes(0xe0)));
+        }
       }
     }
     /* RED WHEN any two derivations produce the same key. */

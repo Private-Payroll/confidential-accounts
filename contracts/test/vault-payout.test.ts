@@ -23,10 +23,8 @@ import {
 import { Contract as Vault, ledger as vaultLedger } from '../managed-vault/contract/index.js';
 import { pureCircuits as vaultCircuits } from '../managed-vault/contract/index.js';
 import { pureCircuits, ledger as accountLedger } from '../managed/contract/index.js';
-import { AccountSimulator, privateStateFor, change, type Change } from './simulator.js';
-import {
-  buildPayoutTree, buildRun, buildRetryRun, type PayoutLeafInput, type PaymentFacts,
-} from '../../src/midnight/payout-tree.js';
+import { AccountSimulator, privateStateFor, change, type Change, payoutTreeOf } from './simulator.js';
+import { buildRun, buildRetryRun, type PayoutLeafInput, type PaymentFacts } from '../../src/midnight/payout-tree.js';
 import { payeeFor } from '../../src/testing/payees.js';
 import { vaultDetails } from '../../src/testing/vault-details.js';
 import { recipientOf } from '../../src/midnight/payee-address.js';
@@ -147,9 +145,9 @@ describe('a vault pays one payee of an approved run', () => {
       details: toHex(vaultCircuits.payoutDetails(p.to, GBP, p.amount, bytes(0x40 + i))),
       nonce: toHex(bytes(p.nonce)),
     }));
-    const tree = buildPayoutTree(leaves);
+    const tree = payoutTreeOf(leaves);
     const payload = pureCircuits.runPayload(
-      fromHex(tree.root), tree.payees, WIN_FROM, WIN_UNTIL);
+      fromHex(tree.root), tree.payees, WIN_FROM, WIN_UNTIL, 0n);
     const vaultBytes = Uint8Array.from(Buffer.from(vaultAddr, 'hex'));
     await sim.as(carrying(sim, A, c)).proposeRun({
       root: fromHex(tree.root), payees: tree.payees,
@@ -383,11 +381,11 @@ describe('a vault pays one payee of an approved run', () => {
     ];
 
     /* --- A's machine --- */
-    const byA = buildRun(seeds, identity, payroll, vaultDetails, payFor(payroll));
+    const byA = buildRun(seeds, identity, payroll, vaultDetails, payFor(payroll), 'GBP');
     const c = govChange(63);
     const vaultBytes = vaultAddrBytes();
     const payload = pureCircuits.runPayload(
-      fromHex(byA.tree.root), byA.tree.payees, WIN_FROM, WIN_UNTIL);
+      fromHex(byA.tree.root), byA.tree.payees, WIN_FROM, WIN_UNTIL, 0n);
     await sim.as(carrying(sim, A, c)).proposeRun({
       root: fromHex(byA.tree.root), payees: byA.tree.payees,
       from: WIN_FROM, until: WIN_UNTIL, vault: vaultBytes });
@@ -422,7 +420,7 @@ describe('a vault pays one payee of an approved run', () => {
     /* --- A's laptop dies here. Nothing of A's crosses to B. --- */
 
     /* --- B's machine: the same account seeds, the same run identity --- */
-    const byB = buildRun(seeds, identity, payroll, vaultDetails, payFor(payroll));
+    const byB = buildRun(seeds, identity, payroll, vaultDetails, payFor(payroll), 'GBP');
     expect(byB.tree.root).toBe(byA.tree.root);
 
     await pay(byB, 1);
@@ -446,11 +444,11 @@ describe('a vault pays one payee of an approved run', () => {
       { payee: payeeFor(BOB, 'undeployed'), token: toHex(GBP), amount: 200n },
     ];
 
-    const byA = buildRun(seeds, identity, payroll, vaultDetails, payFor(payroll));
+    const byA = buildRun(seeds, identity, payroll, vaultDetails, payFor(payroll), 'GBP');
     const c = govChange(64);
     const vaultBytes = vaultAddrBytes();
     const payload = pureCircuits.runPayload(
-      fromHex(byA.tree.root), byA.tree.payees, WIN_FROM, WIN_UNTIL);
+      fromHex(byA.tree.root), byA.tree.payees, WIN_FROM, WIN_UNTIL, 0n);
     await sim.as(carrying(sim, A, c)).proposeRun({
       root: fromHex(byA.tree.root), payees: byA.tree.payees,
       from: WIN_FROM, until: WIN_UNTIL, vault: vaultBytes });
@@ -469,10 +467,10 @@ describe('a vault pays one payee of an approved run', () => {
 
     /* B rebuilds and, not knowing what landed, retries BOTH people. */
     const retry = buildRetryRun(
-      buildRun(seeds, identity, payroll, vaultDetails, payFor(payroll)), [0, 1]);
+      buildRun(seeds, identity, payroll, vaultDetails, payFor(payroll), 'GBP'), [0, 1]);
     const r0 = retry.payeeArgs(0);
     const retryPayload = pureCircuits.runPayload(
-      fromHex(retry.tree.root), retry.tree.payees, WIN_FROM, WIN_UNTIL);
+      fromHex(retry.tree.root), retry.tree.payees, WIN_FROM, WIN_UNTIL, 0n);
     const c2 = govChange(65);
     await sim.as(carrying(sim, A, c2)).proposeRun({
       root: fromHex(retry.tree.root), payees: retry.tree.payees,

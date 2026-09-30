@@ -11,9 +11,9 @@
  * **It is not `deploy-preview.ts` with a different contract in it.** Three
  * things differ and each of them is the subject of a rule:
  *
- *   · **The deploy is FULL.** The account is eleven of thirteen circuits and
+ *   · **The deploy is FULL.** The account no longer fits one deploy and
  *     `submitPartialDeployTx` exists entirely for that. A vault is four
- *     circuits, 16,040 `bytesWritten`, 49.4% of the 32,497 per-extrinsic
+ *     circuits, 16,040 `bytesWritten`, 50.1% of the 31,997 per-extrinsic
  *     ceiling — it fits, so it deploys whole, through the SDK's ordinary
  *     `deployContract`. `src/midnight/vault-contract.ts` carries the deploy and
  *     the vault's own find, and says why neither of the two existing finds is
@@ -79,7 +79,7 @@ import {
   vaultRegistryForDisk,
   type VaultEntry, type VaultRegistry,
 } from '../src/midnight/vault-record.js';
-import { applyNetworkId, theNetwork, ENDPOINTS } from '../src/midnight/network.js';
+import { applyNetworkId, theNetwork } from '../src/midnight/network.js';
 import { explainNodeError, NODE_ERROR_CODES } from './node-errors.js';
 import { testEnvironmentFor, startEnvironment } from './test-environment.js';
 import { bringUpWallet } from './wallet-bringup.js';
@@ -190,8 +190,8 @@ function printTxSize() {
     for (const line of compareCost(last.cost, limits)) say(`    ${line}`);
   }
   say();
-  say('    MEASURED OFFLINE, THE VAULT DEPLOY IS 16,040 bytesWritten — 49.4% of the');
-  say('    32,497 per-extrinsic ceiling (MEASURE-DEPLOY-SHAPE-VAULT.command). Anything');
+  say('    MEASURED OFFLINE, THE VAULT DEPLOY IS 16,040 bytesWritten — 50.1% of the');
+  say('    31,997 per-extrinsic ceiling (MEASURE-DEPLOY-SHAPE-VAULT.command). Anything');
   say('    far from that is the finding, whichever direction it is in.');
 }
 
@@ -760,7 +760,7 @@ main().then(
  *   WHAT TO RUN, IN ORDER, BY THE PERSON AT THE MACHINE
  *     1. COMPILE-VAULT.command          the vault's keys. Minutes. Once.
  *     2. MEASURE-DEPLOY-SHAPE-VAULT.command   the gate: expect 16,040
- *                                       bytesWritten, 49.4% of 32,497. If it
+ *                                       bytesWritten, 50.1% of 31,997. If it
  *                                       prints OVER, stop — that is the finding.
  *     3. CHOOSE-AUTHORITY.command        it asks which contract; type this
  *                                       vault's name. Back the file it writes

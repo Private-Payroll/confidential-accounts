@@ -7,15 +7,17 @@ import type { Hex } from '../core/crypto.js';
 import { payFor } from '../testing/payees.js';
 
 /*
- * A payee's merkle path crosses from the service to the device's builder as the
- * runtime's own aligned value, and comes back as exactly the path the tree gave.
+ * A payee's path in the sum tree crosses from the service to the device's builder as
+ * fixed-width byte strings, and comes back as exactly the path the tree gave.
  */
 const leaf = (n: number) => ({ details: n.toString(16).padStart(2, '0').repeat(32), nonce: (n + 1).toString(16).padStart(2, '0').repeat(32) }) as never;
+const IN = 'cd'.repeat(32) as Hex;
+const treeOf = (...ns: number[]) => buildPayoutTree(ns.map(leaf), ns.map((n) => BigInt(n) * 100n), IN);
 
 describe('A PAYEE\'S PATH ON THE WIRE', () => {
   it('comes back as the path the payout tree gave, for every payee', () => {
     /* RED WHEN: either direction drops or reorders a value - the rebuilt path then differs from the tree's. */
-    const tree = buildPayoutTree([leaf(1), leaf(3), leaf(5)]);
+    const tree = treeOf(1, 3, 5);
     for (const i of [0, 1, 2]) {
       const wire = pathToWire(tree.pathFor(i));
       expect(wire.every((h) => /^([0-9a-f]{2})*$/u.test(h))).toBe(true);
@@ -25,7 +27,7 @@ describe('A PAYEE\'S PATH ON THE WIRE', () => {
   });
 
   it('REFUSES A PATH THAT IS NOT BYTE STRINGS, OR CARRIES MORE THAN ONE PATH', () => {
-    const wire = pathToWire(buildPayoutTree([leaf(1)]).pathFor(0));
+    const wire = pathToWire(treeOf(1).pathFor(0));
     /* RED WHEN: the trailing-values check is removed - a longer list would be read as its first path. */
     expect(() => pathFromWire([...wire, ...wire])).toThrow(/more than one path/);
     expect(() => pathFromWire([...wire.slice(0, -1), 'zz'])).toThrow(/not a list of byte strings/);
@@ -43,7 +45,7 @@ describe('ONE APPROVED LEG\'S PAYMENTS, AS THE SERVICE HANDS THEM TO A DEVICE', 
     { payee: payeeFor('a1'.repeat(32), NET), token: TOKEN, amount: 250n },
     { payee: payeeFor('a2'.repeat(32), NET), token: TOKEN, amount: 90n },
   ];
-  const built = buildRun(seeds, identity, facts, vaultDetails, payFor(facts));
+  const built = buildRun(seeds, identity, facts, vaultDetails, payFor(facts), 'GBP');
   const window = { from: 100n, until: 200n };
   /* A stand-in for the contract's identity: a function of exactly the values it folds, so any change shows. */
   const idFrom = (leaves: Hex[], w: { from: bigint; until: bigint }) =>
@@ -85,7 +87,7 @@ describe('ONE APPROVED LEG\'S PAYMENTS, AS THE SERVICE HANDS THEM TO A DEVICE', 
 
   it('REFUSES A REBUILD WHOSE LEAVES, ROOT, COUNT OR IDENTITY ARE NOT WHAT THE SIGNERS APPROVED', () => {
     const refused = /not the ones its signers approved/;
-    const other = buildRun(seeds, { ...identity, runId: 'run_2' }, facts, vaultDetails, payFor(facts));
+    const other = buildRun(seeds, { ...identity, runId: 'run_2' }, facts, vaultDetails, payFor(facts), 'GBP');
     /* RED WHEN: any one of the four comparisons is dropped. */
     expect(assemblePrivatePayments(input({ leaves: other.tree.leaves }))).toEqual({ refusal: expect.stringMatching(refused) });
     expect(assemblePrivatePayments(input({ leaves: built.tree.leaves.slice(0, 1) }))).toEqual({ refusal: expect.stringMatching(refused) });
@@ -100,8 +102,10 @@ describe('ONE APPROVED LEG\'S PAYMENTS, AS THE SERVICE HANDS THEM TO A DEVICE', 
     const retry = buildRetryRun(built, [1]);
     const retryInput = input({
       built: retry, facts: [facts[1]!], leaves: retry.tree.leaves, indices: [1],
-      order: { ...input().order, root: retry.tree.root, payees: 1n, proposal: idFrom(retry.tree.leaves, window) },
+      order: { ...input().order, root: retry.tree.root, payees: retry.tree.payees, proposal: idFrom(retry.tree.leaves, window) },
     });
+    /* RED WHEN: a retry is raised over a tree of its own rather than the leg's. */
+    expect([retry.tree.root, retry.tree.payees]).toEqual([built.tree.root, 2n]);
     const out = assemblePrivatePayments(retryInput);
     if ('refusal' in out) throw new Error(out.refusal);
     /* RED WHEN: a retry's payment is numbered by its place in the retry's tree - the screen then names the leg's first person. */
@@ -114,7 +118,7 @@ describe('ONE APPROVED LEG\'S PAYMENTS, AS THE SERVICE HANDS THEM TO A DEVICE', 
 
   it('HANDS OVER EACH PAYMENT IN THE FORM ITS PAYEE\'S ADDRESS IS, AGAINST THE LEAF BUILT FOR THAT FORM', () => {
     const publicFacts = [facts[0]!, { payee: unshieldedPayeeFor('c3'.repeat(32), NET), token: TOKEN, amount: 90n }];
-    const mixed = buildRun(seeds, identity, publicFacts, vaultDetails, payFor(publicFacts));
+    const mixed = buildRun(seeds, identity, publicFacts, vaultDetails, payFor(publicFacts), 'GBP');
     const out = assemblePrivatePayments(input({
       built: mixed, facts: publicFacts, leaves: mixed.tree.leaves,
       order: { ...input().order, root: mixed.tree.root, proposal: idFrom(mixed.tree.leaves, window) },
@@ -127,7 +131,7 @@ describe('ONE APPROVED LEG\'S PAYMENTS, AS THE SERVICE HANDS THEM TO A DEVICE', 
     ]);
     /* RED WHEN: the public payee's leaf is built by the private details circuit, which the public payout cannot pay. */
     const asPrivate = buildRun(seeds, identity,
-      [facts[0]!, { payee: payeeFor('c3'.repeat(32), NET), token: TOKEN, amount: 90n }], vaultDetails, payFor([facts[0]!, { payee: payeeFor('c3'.repeat(32), NET), token: TOKEN, amount: 90n }]));
+      [facts[0]!, { payee: payeeFor('c3'.repeat(32), NET), token: TOKEN, amount: 90n }], vaultDetails, payFor([facts[0]!, { payee: payeeFor('c3'.repeat(32), NET), token: TOKEN, amount: 90n }]), 'GBP');
     expect(out.order.payments[1]!.leaf).toBe(mixed.payeeArgs(1).leaf);
     expect(out.order.payments[1]!.leaf).not.toBe(asPrivate.payeeArgs(1).leaf);
   });

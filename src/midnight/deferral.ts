@@ -63,9 +63,9 @@
  */
 
 /**
- * The twelve circuits a finished company account carries — every circuit the
- * contract has. **They no longer fit one deploy**: all twelve measure 32,445
- * bytes written against a per-transaction ceiling of 31,997
+ * The fourteen circuits a finished company account carries — every circuit the
+ * contract has. **They no longer fit one deploy**: all fourteen measure 37,466
+ * bytes written, with no authority, against a per-transaction ceiling of 31,997
  * (`scripts/dispatch-ceiling.ts`). So a company is created in two steps, a
  * deploy carrying `FIRST_STEP_CIRCUITS` and then one maintenance update that
  * only inserts `SECOND_STEP_CIRCUITS`. This list is what the account carries
@@ -86,12 +86,14 @@ export const DEPLOYED_CIRCUITS = [
   'amendSigner',
   'approve',
   'cancel',
+  'clearRun',
   'closeExpiredRun',
   'propose',
   'recordPaymentFromVault',
   'removeSignerAndSetThreshold',
   'retireVault',
   'sealPayKey',
+  'setPolicy',
   'setThreshold',
   'setVaultThreshold',
 ] as const;
@@ -147,12 +149,16 @@ export const FIRST_STEP_CIRCUITS = [
  * THE SECOND STEP: THE CIRCUITS ONE MAINTENANCE UPDATE INSERTS, straight after
  * the deploy, signed by the maintenance authority the deploy installed. It only
  * inserts: it never removes a key and never replaces the authority. Measured the
- * same way: 8,664 bytes written for the four keys, 27.1% of the ceiling.
+ * same way: 12,935 bytes written for the six keys, 40.4% of the ceiling. The
+ * spending policy's two circuits, `setPolicy` and `clearRun`, are here with the
+ * other circuits that move money or depend on a vault.
  */
 export const SECOND_STEP_CIRCUITS = [
+  'clearRun',
   'recordPaymentFromVault',
   'retireVault',
   'sealPayKey',
+  'setPolicy',
   'setVaultThreshold',
 ] as const satisfies readonly DeployedCircuit[];
 
@@ -192,10 +198,10 @@ export const isDeferredCircuit = (name: string): boolean => DEFERRED.has(name);
 export const isDeployedCircuit = (name: string): boolean => DEPLOYED.has(name);
 
 /**
- * Refuses a contract whose circuit list is not exactly these twelve.
+ * Refuses a contract whose circuit list is not exactly these fourteen.
  *
  * Called by the deploy path with the names the COMPILED contract actually
- * exports, before anything is pruned. If the contract ever gains a twelfth
+ * exports, before anything is pruned. If the contract ever gains a fifteenth
  * circuit, or renames one, the deploy stops here with both lists printed —
  * rather than quietly deploying a shape this file no longer describes. The
  * alternative failure is `C224`'s: a deployment smaller than anyone decided.
