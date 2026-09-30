@@ -182,7 +182,7 @@ export const ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE: readonly string[] = Object.fre
  * has never had; any one of them appearing in a state a vault client is reading
  * settles the question on its own.
  */
-const ACCOUNT_TELLS = ['adopt', 'recordPayment', 'setVaultThreshold'];
+const ACCOUNT_TELLS = ['adopt', 'recordPaymentFromVault', 'setVaultThreshold'];
 
 /** Entry-point names as strings, whatever the runtime hands back. */
 const opNames = (state: { operations(): Array<string | Uint8Array> }): string[] =>

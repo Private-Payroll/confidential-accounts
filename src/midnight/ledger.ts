@@ -679,11 +679,14 @@ export class MidnightLedger implements Ledger {
      * refuses to run without a deliberate maintenance authority, which is
      * C225's fix.
      */
-    const { submitPartialDeployTx, findDeployedPartialContract, requireMaintenanceAuthority } =
-      await import('./partial-contract.js');
+    const {
+      submitPartialDeployTx, submitCreationInsertTx, findDeployedPartialContract,
+      requireCreatableAuthority,
+    } = await import('./partial-contract.js');
     // Validated BEFORE the retry loop: a missing or malformed authority is a
-    // refusal to explain, not a transient to retry.
-    requireMaintenanceAuthority(this.deployment.maintenanceAuthority);
+    // refusal to explain, not a transient to retry. And an authority that could
+    // not sign the creation's second step is refused here, before a fee is spent.
+    requireCreatableAuthority(this.deployment.maintenanceAuthority);
     const providers = await this.providers();
 
     /*
@@ -808,6 +811,22 @@ export class MidnightLedger implements Ledger {
     // down is an account nobody can reach again, which is worse than a failed
     // verification we can retry.
     await this.deployment.register(accountId, address);
+
+    /*
+     * THE SECOND STEP OF THE CREATION. The deploy carried only the circuits a
+     * company needs to govern itself; one maintenance update, signed by the key
+     * the deploy installed, inserts the rest. Until it lands the account can pay
+     * nothing, and the read-back below refuses it by name. It is safe to retry:
+     * it reads the account first and refuses to insert twice.
+     */
+    await withRetry(
+      'finish the creation',
+      () => submitCreationInsertTx(providers as any, {
+        contractAddress: address,
+        maintenanceAuthority: this.deployment!.maintenanceAuthority,
+      }),
+      this.deployment.retry,
+    );
 
     /*
      * The real check, not a formality — M-9's property, kept through the

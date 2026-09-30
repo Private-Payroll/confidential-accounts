@@ -41,6 +41,7 @@ import {
 } from './simulator.js';
 import { buildPayoutTree, type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
 import { toHex, fromHex } from '../../src/core/crypto.js';
+import { itPaysOutOfTodaysVault } from './until-the-vault-pays-with-a-receipt.js';
 
 const VAULT_NOW = 1_800_000_000;
 const WIN_FROM = BigInt(VAULT_NOW - 3_600);
@@ -352,7 +353,7 @@ describe('an account keeps a register of its own vaults', () => {
     expect(sim.adopted(vaultBytes())).toBe(true);
   });
 
-  it('A RETIRED VAULT CAN STILL PAY, and that is the decision rather than an oversight',
+  itPaysOutOfTodaysVault('A RETIRED VAULT CAN STILL PAY, and that is the decision rather than an oversight',
     async () => {
     /*
      * Nothing on the spend path consults `vaults`, deliberately. The list

@@ -511,6 +511,24 @@ const SCHEMES: Entry[] = [
       'circuit off pureCircuits and has no TypeScript copy.',
   },
   {
+    circuit: 'anchorKey',
+    contractOnly:
+      'a key reserved in signerRoles for a later anchor entry, derived inside the contract. No ' +
+      'circuit writes it and no client computes it; key-collisions.test.ts pins it apart.',
+  },
+  {
+    circuit: 'paymentReceiptTag',
+    contractOnly:
+      'the tag a vault mints its payment receipt under. The account receives tokenType of it ' +
+      'and the paying vault inside the proof; no client derives the token.',
+  },
+  {
+    circuit: 'companyWideDetailsOf',
+    contractOnly:
+      'binds a company-wide run\'s leaf to the vault paying it; the account computes it inside ' +
+      'recordPaymentFromVault. No client builds a company-wide run yet.',
+  },
+  {
     circuit: 'payKeyPayload',
     contractOnly:
       'what signers approve to commit the account to its pay-record key; run-keys.ts calls this ' +
@@ -760,9 +778,9 @@ describe('one definition: the contract and the client agree', () => {
       + 'governance payloads are — do not write a second derivation. If it is a passthrough '
       + 'that reads the circuit, declare it as one in SCHEME_MEMBERS and say so.',
     ).toEqual([
-      'adoptVaultPayload', 'companyLabelKey', 'companyWide', 'paidMovementOf', 'paidOnceOf',
-      'payKeyCommitmentKey', 'payKeyCommitmentOf', 'payKeyPayload', 'payKeyWrapKeyOf',
-      'removalCountKey', 'removeAndSetThresholdPayload', 'retireVaultPayload', 'slotOf',
+      'adoptVaultPayload', 'anchorKey', 'companyLabelKey', 'companyWide', 'companyWideDetailsOf',
+      'paidMovementOf', 'paidOnceOf', 'payKeyCommitmentKey', 'payKeyCommitmentOf', 'payKeyPayload',
+      'payKeyWrapKeyOf', 'paymentReceiptTag', 'removalCountKey', 'removeAndSetThresholdPayload', 'retireVaultPayload', 'slotOf',
       'vacantSlot', 'withdrawKeyOf', 'withdrawSecretOf',
     ]);
   });

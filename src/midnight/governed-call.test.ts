@@ -254,7 +254,7 @@ describe('the set is the contract\'s, and a dropped one says so', () => {
    */
   it('holds every circuit on this contract that reads no witness', () => {
     expect([...CIRCUITS_THAT_READ_NO_WITNESS].sort())
-      .toEqual(['closeExpiredRun', 'recordPayment', 'retireVault']);
+      .toEqual(['closeExpiredRun', 'recordPaymentFromVault', 'retireVault']);
   });
 
   /*

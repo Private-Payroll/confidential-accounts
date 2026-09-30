@@ -34,6 +34,7 @@ import type { PayoutSeed, RunIdentity } from '../../src/midnight/run-keys.js';
 import { changeCoinOf } from '../../src/midnight/vault-coins.js';
 import { toHex, fromHex } from '../../src/core/crypto.js';
 import { payFor } from '../../src/testing/payees.js';
+import { itPaysOutOfTodaysVault } from './until-the-vault-pays-with-a-receipt.js';
 
 /*
  * THE CLOCK AND THE RUN'S WINDOW.
@@ -159,7 +160,7 @@ describe('a vault pays one payee of an approved run', () => {
     return { tree, id, leaves };
   };
 
-  it('THE WHOLE THING: approved, claimed and paid in one call', async () => {
+  itPaysOutOfTodaysVault('THE WHOLE THING: approved, claimed and paid in one call', async () => {
     const c = govChange(31);
     const run = await approvedRun([{ to: ALICE, amount: 250n, nonce: 0xc1 }], c);
 
@@ -188,7 +189,7 @@ describe('a vault pays one payee of an approved run', () => {
     expect(acct.openProposals.member(run.id)).toBe(true);
   });
 
-  it('refuses to pay somebody the signers did not approve', async () => {
+  itPaysOutOfTodaysVault('refuses to pay somebody the signers did not approve', async () => {
     const c = govChange(32);
     const run = await approvedRun([{ to: ALICE, amount: 250n, nonce: 0xc2 }], c);
 
@@ -200,7 +201,7 @@ describe('a vault pays one payee of an approved run', () => {
       .rejects.toThrow(/not for this payee|not in the approved run/i);
   });
 
-  it('refuses to pay a different AMOUNT than the one approved', async () => {
+  itPaysOutOfTodaysVault('refuses to pay a different AMOUNT than the one approved', async () => {
     const c = govChange(33);
     const run = await approvedRun([{ to: ALICE, amount: 250n, nonce: 0xc3 }], c);
 
@@ -211,7 +212,7 @@ describe('a vault pays one payee of an approved run', () => {
       .rejects.toThrow(/not for this payee|not in the approved run/i);
   });
 
-  it('refuses to pay more than it holds', async () => {
+  itPaysOutOfTodaysVault('refuses to pay more than it holds', async () => {
     const c = govChange(34);
     const run = await approvedRun([{ to: ALICE, amount: 5_000n, nonce: 0xc4 }], c);
 
@@ -222,7 +223,7 @@ describe('a vault pays one payee of an approved run', () => {
       .rejects.toThrow(/does not hold enough/i);
   });
 
-  it('refuses a note the witness invented, however well-formed', async () => {
+  itPaysOutOfTodaysVault('refuses a note the witness invented, however well-formed', async () => {
     /*
      * A witness is UNTRUSTED INPUT by the language's own warning. The vault's
      * only tie between the private coin and the public record is the
@@ -239,7 +240,7 @@ describe('a vault pays one payee of an approved run', () => {
       .rejects.toThrow(/not in this vault.s pool/i);
   });
 
-  it('KEEPS THE CHANGE, and commits to it — the silent way to lose money', async () => {
+  itPaysOutOfTodaysVault('KEEPS THE CHANGE, and commits to it — the silent way to lose money', async () => {
     /*
      * `sendShielded` hands the change back and the contract must manage it. A
      * vault that dropped it would lose the difference between what it held and
@@ -279,7 +280,7 @@ describe('a vault pays one payee of an approved run', () => {
       { nonce: fromHex(back!.nonce), color: GBP, value: back!.value }))).toBe(true);
   });
 
-  it('a SECOND payment spends the change, which is the proof the derivation is right', async () => {
+  itPaysOutOfTodaysVault('a SECOND payment spends the change, which is the proof the derivation is right', async () => {
     /*
      * The test above says the client can reconstruct the change coin. This one
      * says the reconstruction actually spends: pay twice from one deposit,
@@ -319,7 +320,7 @@ describe('a vault pays one payee of an approved run', () => {
       .toBe(2n);
   });
 
-  it('REFUSES TO SPEND THE SAME NOTE TWICE, which is the pool\'s whole safety property', async () => {
+  itPaysOutOfTodaysVault('REFUSES TO SPEND THE SAME NOTE TWICE, which is the pool\'s whole safety property', async () => {
     /*
      * The pool had no test for this for a long time — found by a mutation that
      * deleted `notes.remove(spent)` and was not caught by the test named for
@@ -362,7 +363,7 @@ describe('a vault pays one payee of an approved run', () => {
     expect(vaultLedger(vaultState as never).payments).toBe(1n);
   });
 
-  it('END TO END: a run built from the ACCOUNT\'S SEED pays, and a second admin finishes it',
+  itPaysOutOfTodaysVault('END TO END: a run built from the ACCOUNT\'S SEED pays, and a second admin finishes it',
     async () => {
     /*
      * The proof that the derivation is not merely self-consistent: the leaves
@@ -432,7 +433,7 @@ describe('a vault pays one payee of an approved run', () => {
     expect(vaultLedger(vaultState as never).payments).toBe(3n);
   });
 
-  it('a rebuilt RETRY run cannot pay somebody the original already paid', async () => {
+  itPaysOutOfTodaysVault('a rebuilt RETRY run cannot pay somebody the original already paid', async () => {
     /*
      * The two fixes meeting. B rebuilds the run, retries the stragglers — and
      * the person A already paid is refused, because a retry reuses the original
@@ -488,7 +489,7 @@ describe('a vault pays one payee of an approved run', () => {
       .rejects.toThrow(/already been made/i);
   });
 
-  it('counts its payments, which is the one number an auditor can check with no key', async () => {
+  itPaysOutOfTodaysVault('counts its payments, which is the one number an auditor can check with no key', async () => {
     const c = govChange(37);
     const run = await approvedRun([
       { to: ALICE, amount: 100n, nonce: 0xc7 },
@@ -503,7 +504,7 @@ describe('a vault pays one payee of an approved run', () => {
     expect(vaultLedger(vaultState as never).payments).toBe(1n);
   });
 
-  it('refuses a note of the WRONG TOKEN with a message that says so', async () => {
+  itPaysOutOfTodaysVault('refuses a note of the WRONG TOKEN with a message that says so', async () => {
     /*
      * The commitment check would refuse this too — a commitment covers the
      * coin's colour — so this pins WHICH refusal fires. An error saying "the

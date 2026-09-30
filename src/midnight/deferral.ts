@@ -5,7 +5,7 @@
  * The history matters, because the shape of this file is the record of it. The
  * account contract used to compile fifteen circuits, then thirteen after the
  * `S11` merges, and the chain would not accept a deploy carrying them: the
- * per-extrinsic ceiling is 32,497 bytesWritten (~65% of 50,000, derived in
+ * per-extrinsic ceiling is 31,997 bytesWritten (~64% of 50,000, derived in
  * scripts/dispatch-ceiling.ts — NOT the 37,500 this file used to cite), and the
  * node refuses a deploy over it with
  * `1010: Invalid Transaction: Transaction would exhaust the block limits`.
@@ -52,17 +52,25 @@
  *     `MalformedTransaction::VerifierKeyNotPresent` — the ledger looks the
  *     entry point up in the deployed operations map and it is not there
  *     (`midnight-ledger` at `ledger-9.1.0.0-rc.3`, `ledger/src/verify.rs:109-124`).
- *   - They do not arrive later in the same contract. A maintenance update
- *     could insert them (`SingleUpdate::VerifierKeyInsert`,
- *     `ledger/src/structure.rs:2951-2968`), and that path is rejected as a
- *     design: whoever may sign a maintenance update may change which proofs
- *     the contract accepts. They arrive in a NEW deployment.
+ *   - They do not arrive later in the same contract. That is what separates
+ *     a deferred circuit from a SECOND-STEP one (below): a company's creation
+ *     inserts its second-step circuits by one maintenance update straight after
+ *     the deploy (`SingleUpdate::VerifierKeyInsert`), signed by the key the
+ *     deploy installed. Whoever may sign a maintenance update may change which
+ *     proofs the contract accepts at any time, second step or not, and that is
+ *     the maintenance authority's risk, not this list's. A deferred circuit
+ *     arrives only in a NEW deployment.
  */
 
 /**
- * The twelve circuits the deployment carries — every circuit the contract has.
- * Eleven fit one deploy: 29,618 bytes written of the 32,497 ceiling, measured
- * unproven and unbalanced with the ledger's own cost function.
+ * The twelve circuits a finished company account carries — every circuit the
+ * contract has. **They no longer fit one deploy**: all twelve measure 32,445
+ * bytes written against a per-transaction ceiling of 31,997
+ * (`scripts/dispatch-ceiling.ts`). So a company is created in two steps, a
+ * deploy carrying `FIRST_STEP_CIRCUITS` and then one maintenance update that
+ * only inserts `SECOND_STEP_CIRCUITS`. This list is what the account carries
+ * once both have landed, and every reader that asks "which circuits does a
+ * company have" reads it.
  *
  * `retireVault` IS IN THIS LIST, and `S25` put it there. It was deferred by
  * `S9` on the reasoning that "a vault cannot be retired on this deployment,
@@ -80,7 +88,7 @@ export const DEPLOYED_CIRCUITS = [
   'cancel',
   'closeExpiredRun',
   'propose',
-  'recordPayment',
+  'recordPaymentFromVault',
   'removeSignerAndSetThreshold',
   'retireVault',
   'sealPayKey',
@@ -107,6 +115,75 @@ export const DEPLOYED_CIRCUITS = [
 export const DEFERRED_CIRCUITS: readonly string[] = [];
 
 export type DeployedCircuit = (typeof DEPLOYED_CIRCUITS)[number];
+
+/**
+ * THE FIRST STEP: THE CIRCUITS THE DEPLOY ITSELF CARRIES. Everything a company
+ * needs to exist and to govern itself: seat and remove signers, raise, approve
+ * and withdraw proposals, set its threshold, adopt a vault. Measured with the
+ * ledger's own cost function, unproven and unbalanced, under a one-key
+ * authority: 22,272 bytes written, 69.6% of the 31,997 ceiling, 9,725 bytes of
+ * headroom. Read it as about ±260
+ * once proven and balanced.
+ *
+ * **WHY THESE EIGHT AND NOT THE ELEVEN THAT WOULD FIT.** The second step
+ * carries every circuit that moves money or depends on a vault's receipt: a
+ * company whose second step never lands can seat its signers and approve
+ * proposals, and can pay nothing, because the chain refuses a call to an
+ * operation the contract does not hold. It fails closed. The room left in the
+ * deploy is kept for the circuits the next contract changes add.
+ */
+export const FIRST_STEP_CIRCUITS = [
+  'adopt',
+  'amendSigner',
+  'approve',
+  'cancel',
+  'closeExpiredRun',
+  'propose',
+  'removeSignerAndSetThreshold',
+  'setThreshold',
+] as const satisfies readonly DeployedCircuit[];
+
+/**
+ * THE SECOND STEP: THE CIRCUITS ONE MAINTENANCE UPDATE INSERTS, straight after
+ * the deploy, signed by the maintenance authority the deploy installed. It only
+ * inserts: it never removes a key and never replaces the authority. Measured the
+ * same way: 8,664 bytes written for the four keys, 27.1% of the ceiling.
+ */
+export const SECOND_STEP_CIRCUITS = [
+  'recordPaymentFromVault',
+  'retireVault',
+  'sealPayKey',
+  'setVaultThreshold',
+] as const satisfies readonly DeployedCircuit[];
+
+const FIRST = new Set<string>(FIRST_STEP_CIRCUITS);
+const SECOND = new Set<string>(SECOND_STEP_CIRCUITS);
+
+/** Which step of a company's creation adds a circuit, or null for a name the account does not have. */
+export const creationStepOf = (name: string): 1 | 2 | null =>
+  FIRST.has(name) ? 1 : SECOND.has(name) ? 2 : null;
+
+/**
+ * Refuses two steps that do not add up to the whole account: a circuit in both,
+ * or in neither. Called by the deploy before anything is built, so a list edited
+ * on one side only stops a creation instead of leaving a company without a circuit.
+ */
+export function assertCreationSteps(): void {
+  const both = FIRST_STEP_CIRCUITS.filter((n) => SECOND.has(n));
+  const all = new Set<string>([...FIRST_STEP_CIRCUITS, ...SECOND_STEP_CIRCUITS]);
+  const neither = DEPLOYED_CIRCUITS.filter((n) => !all.has(n));
+  const stray = [...all].filter((n) => !(DEPLOYED_CIRCUITS as readonly string[]).includes(n));
+  if (both.length > 0 || neither.length > 0 || stray.length > 0) {
+    throw new Error(
+      'the two steps of a company\'s creation do not add up to the account: ' +
+        (both.length ? `in both steps: ${both.join(', ')}. ` : '') +
+        (neither.length ? `in neither step: ${neither.join(', ')}. ` : '') +
+        (stray.length ? `not circuits of the account: ${stray.join(', ')}. ` : '') +
+        'Put every circuit in exactly one of FIRST_STEP_CIRCUITS and SECOND_STEP_CIRCUITS in ' +
+        'src/midnight/deferral.ts, and measure the deploy against the ceiling again.',
+    );
+  }
+}
 
 const DEFERRED = new Set<string>(DEFERRED_CIRCUITS);
 const DEPLOYED = new Set<string>(DEPLOYED_CIRCUITS);

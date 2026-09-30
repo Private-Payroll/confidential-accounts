@@ -58,6 +58,7 @@ const aTransaction = (): Hex => {
 import { changeCoinOf } from '../../src/midnight/vault-coins.js';
 import { toHex, fromHex, type Hex } from '../../src/core/crypto.js';
 import { payFor } from '../../src/testing/payees.js';
+import { itPaysOutOfTodaysVault } from './until-the-vault-pays-with-a-receipt.js';
 
 const NOW = 1_800_000_000;
 const FROM = BigInt(NOW - 3_600);
@@ -226,7 +227,7 @@ describe('a vault driven by the client\'s own note pool', () => {
     return r;
   };
 
-  it('THE ONE THAT MATTERS: pays three people from a derived pool, with nothing carried by hand',
+  itPaysOutOfTodaysVault('THE ONE THAT MATTERS: pays three people from a derived pool, with nothing carried by hand',
     async () => {
     /*
      * Every earlier vault test in this repo carried the change blinding forward
@@ -254,7 +255,7 @@ describe('a vault driven by the client\'s own note pool', () => {
     expect([...vaultLedger(vaultState as never).notes]).toHaveLength(1);
   });
 
-  it('spends the SMALLEST covering note, leaving the big one whole', async () => {
+  itPaysOutOfTodaysVault('spends the SMALLEST covering note, leaving the big one whole', async () => {
     await deposit(0x81, 1_000n);
     await deposit(0x82, 300n);
 
@@ -266,7 +267,7 @@ describe('a vault driven by the client\'s own note pool', () => {
     expect(notes.notes.map(n => n.value).sort((a, b) => Number(a - b))).toEqual([100n, 1_000n]);
   });
 
-  it('a note spent EXACTLY leaves no change, and the pool agrees with the chain', async () => {
+  itPaysOutOfTodaysVault('a note spent EXACTLY leaves no change, and the pool agrees with the chain', async () => {
     await deposit(0x91, 500n);
     await deposit(0x92, 1_000n);
 
@@ -280,7 +281,7 @@ describe('a vault driven by the client\'s own note pool', () => {
     expect([...vaultLedger(vaultState as never).notes]).toHaveLength(1);
   });
 
-  it('THROUGH THE COMPILED CIRCUIT: a note that records no transaction is passed over, the larger one is spent, and the passed-over note is still the vault\'s', async () => {
+  itPaysOutOfTodaysVault('THROUGH THE COMPILED CIRCUIT: a note that records no transaction is passed over, the larger one is spent, and the passed-over note is still the vault\'s', async () => {
     await deposit(0xc1, 5_000n);
     await deposit(0xc2, 150n);
     /* The 150 as a note recorded before its transaction was kept. */
@@ -302,7 +303,7 @@ describe('a vault driven by the client\'s own note pool', () => {
     expect(notes.notes.find((n) => n.value === 150n)).not.toHaveProperty('createdIn');
   });
 
-  it('REFUSES A PAYMENT NO SINGLE NOTE COVERS rather than paying part of it', async () => {
+  itPaysOutOfTodaysVault('REFUSES A PAYMENT NO SINGLE NOTE COVERS rather than paying part of it', async () => {
     await deposit(0xa1, 60n);
     await deposit(0xa2, 60n);
 
@@ -376,7 +377,7 @@ describe('a vault driven by the client\'s own note pool', () => {
       ALICE, NIGHT, 100n, fromHex(run.secrets[1].blinding))));
   });
 
-  it('ONE APPROVED RUN PAYS BOTH PEOPLE, one privately and one publicly', async () => {
+  itPaysOutOfTodaysVault('ONE APPROVED RUN PAYS BOTH PEOPLE, one privately and one publicly', async () => {
     await deposit(0xb1, 1_000n);
     /* And public money arrives with no note, no nonce and nothing in the pool. */
     const funded = await vault.impureCircuits.depositUnshielded(
@@ -423,7 +424,7 @@ describe('a vault driven by the client\'s own note pool', () => {
       pureCircuits.paidMovementOf(fromHex(run.tree.leaves[1])))).toBe(true);
   });
 
-  it('THE ONE THAT LOSES THE MONEY: a payee the client approved PRIVATELY cannot be paid publicly',
+  itPaysOutOfTodaysVault('THE ONE THAT LOSES THE MONEY: a payee the client approved PRIVATELY cannot be paid publicly',
     async () => {
     await deposit(0xb2, 1_000n);
     vaultState = (await vault.impureCircuits.depositUnshielded(
@@ -447,7 +448,7 @@ describe('a vault driven by the client\'s own note pool', () => {
     expect(vaultLedger(vaultState as never).payments).toBe(0n);
   });
 
-  it('AND THE REVERSE: a payee the client approved PUBLICLY is not a private one either',
+  itPaysOutOfTodaysVault('AND THE REVERSE: a payee the client approved PUBLICLY is not a private one either',
     async () => {
     /* A note the vault genuinely holds, so the refusal cannot come from the pool. */
     await deposit(0xb3, 1_000n);

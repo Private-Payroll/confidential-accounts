@@ -301,7 +301,13 @@ describe('the real sources', () => {
     const account = scanSourceFile(ROOT, 'contracts/src/ConfidentialAccount.compact');
     const vault = scanSourceFile(ROOT, 'contracts/src/Vault.compact');
     const sites = (cs: typeof account) => cs.reduce((n, c) => n + c.discloses.filter((d) => d.via.length === 0).length, 0);
-    expect(sites(account)).toBe(95);
+    // AND 95 -> 96: A PAYMENT IS RECORDED ONLY WITH A VAULT'S RECEIPT. The old
+    // payment step went and its replacement discloses what it disclosed, plus
+    //   `recordPaymentFromVault` `payingVault`: NEW. The vault whose receipt the
+    //     account receives. On a run that names a vault it must equal that vault,
+    //     which the run's reads already publish; on a company-wide run it names
+    //     the vault paying, which that vault's own call publishes anyway.
+    expect(sites(account)).toBe(96);
     expect(sites(vault)).toBe(48);
   });
 

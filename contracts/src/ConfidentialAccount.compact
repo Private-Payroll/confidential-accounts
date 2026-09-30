@@ -11,22 +11,28 @@ import CompactStandardLibrary;
  * signer agreed without naming them. The threshold, the approvals so far and
  * the existence of each proposal are public on purpose.
  *
- * It holds no money and can neither receive nor send any. A vault calls
- * `recordPayment` to ask whether one payee of an approved run may be paid, and
- * the account records two values: one for the payee's leaf, so no leaf is paid
- * twice, and one for the person, month, kind and occurrence the payee's nonce
- * was derived from, so nobody is paid twice for one month at another amount,
- * address or form. A real second payment is a later occurrence.
+ * It holds no money and sends none. A payment is recorded only with a receipt:
+ * the paying vault mints one unit of its own token to this account in the same
+ * transaction, and `recordPaymentFromVault` receives it, accepting only a vault
+ * this account has ever adopted. A call with no real payment behind it leaves
+ * that token unbalanced, and the network refuses the whole transaction. The
+ * receipts accumulate here as tokens with no value; nothing can spend them.
+ *
+ * For each payment the account records two values: one for the payee's leaf,
+ * so no leaf is paid twice, and one for the person, month, kind and occurrence
+ * the payee's nonce was derived from, so nobody is paid twice for one month at
+ * another amount, address or form. A real second payment is a later occurrence.
  *
  * The key those nonces are derived from is kept in `signerRoles`, sealed to
  * each signer by that signer, beside one commitment to it written under an
  * approved proposal.
  *
  * It refuses a signer-only call from anyone else, a second approval from one
- * signer, a proposal short of its threshold, a payment outside its run's
- * window or not in its run, a payee leaf already paid, a person already paid
- * for that month, kind and occurrence, and any change that leaves fewer
- * signers than the account threshold.
+ * signer, a proposal short of its threshold, a payment without a vault's
+ * receipt, from a contract it never adopted, outside its run's window or not in
+ * its run, a payee leaf already paid, a person already paid for that month, kind
+ * and occurrence, and any change that leaves fewer signers than the account
+ * threshold.
  *
  * A signer being removed can do nothing against the company. A proposal needs
  * the higher of the threshold when it was raised and the threshold now, so a
@@ -61,7 +67,7 @@ export ledger threshold: Uint<64>;
 // Per-vault thresholds. A vault with no row uses the account's.
 export ledger thresholds: Map<Bytes<32>, Uint<64>>;
 
-// The vaults this account has adopted: a register for recovery, not an access check.
+// The vaults this account has adopted. With `retiredAt`, the only contracts a payment is accepted from.
 export ledger vaults: Set<Bytes<32>>;
 
 // When a run may be paid: from `opensAt`, and before `closesAt`.
@@ -340,6 +346,25 @@ export circuit payKeyPayload(commitment: Bytes<32>): Bytes<32> {
 // Where the company's label sits in `signerRoles`.
 export circuit companyLabelKey(): Bytes<32> {
   return persistentHash<Bytes<32>>(pad(32, "midnight-accounts:roles:label"));
+}
+
+// Reserved: where a later anchor entry will sit in `signerRoles`. No circuit writes it yet.
+export circuit anchorKey(): Bytes<32> {
+  return persistentHash<Bytes<32>>(pad(32, "midnight-accounts:roles:anchor"));
+}
+
+// The tag a vault mints its payment receipt under: the token `tokenType(tag, vault)`,
+// which only that vault can mint.
+export circuit paymentReceiptTag(): Bytes<32> {
+  return pad(32, "midnight-accounts:receipt:pay");
+}
+
+// A company-wide run's leaf details, bound to the vault paying it, so no vault can
+// spend another vault's leaf.
+export circuit companyWideDetailsOf(details: Bytes<32>, vault: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>([
+    pad(32, "midnight-accounts:company-leaf:"), details, vault
+  ]);
 }
 
 // Where the account's removal count sits in `proposalHolds`. No proposal id can equal it.
@@ -683,10 +708,15 @@ export circuit closeExpiredRun(proposal: Bytes<32>): [] {
   closeProposal(id);
 }
 
-// Records one payee of an approved run as paid. No caller check: the run and its salt stand in.
-export circuit recordPayment(
+// Records one payee of an approved run as paid, against the paying vault's receipt: one unit
+// of `tokenType(paymentReceiptTag(), payingVault)`, minted by that vault to this account in
+// the same transaction. Returns this account's address, which the vault mints to.
+// A run names one vault, which must pay it; a company-wide run may be paid by any vault
+// ever adopted whose own bar is not stricter than the company's.
+export circuit recordPaymentFromVault(
   proposal: Bytes<32>,
-  vault: Bytes<32>,
+  runVault: Bytes<32>,
+  payingVault: Bytes<32>,
   root: Bytes<32>,
   payees: Uint<64>,
   opensAt: Uint<64>,
@@ -695,26 +725,47 @@ export circuit recordPayment(
   details: Bytes<32>,
   nonce: Bytes<32>,
   path: MerkleTreePath<16, Bytes<32>>,
-): Bytes<32> {
+): ContractAddress {
   const id = disclose(proposal);
-  const forVault = disclose(vault);
+  const forRun = disclose(runVault);
+  const payer = disclose(payingVault);
+
+  // A governance proposal names no vault, so nothing can ever be paid against it.
+  assert(forRun != noVault(), "a governance proposal pays nobody");
+
+  // Only a contract this account adopted, now or before it was retired.
+  assert(vaults.member(payer) || retiredAt.member(payer),
+         "that contract is not a vault this company has adopted, so it cannot record a payment");
+
+  const companyRun = forRun == companyWide();
+  if (!companyRun) {
+    assert(payer == forRun, "that run is for another vault");
+  } else {
+    // A vault whose own bar is stricter than the company's is never paid on the company's.
+    assert(!(thresholds.member(payer) && threshold < thresholds.lookup(payer)),
+           "that vault needs more approvals than the company's threshold; pay it through a run of its own");
+  }
+
+  // The receipt. With no mint behind it the token does not balance, and the transaction fails.
+  receiveUnshielded(tokenType(paymentReceiptTag(), ContractAddress { bytes: payer }), 1);
 
   // The arguments must recompute this proposal's id, which needs its salt.
   assert(
     disclose(proposalIdOf(
       runPayload(disclose(root), disclose(payees), disclose(opensAt), disclose(closesAt)),
-      forVault, disclose(salt)) == id),
+      forRun, disclose(salt)) == id),
     "that is not this proposal, or you were not given it");
 
   // Only inside the approved window.
   assert(blockTimeGte(disclose(opensAt)), "that run has not started yet");
   assert(blockTimeLt(disclose(closesAt)), "the payment window for this run has closed");
 
-  // With this vault's threshold of approvals.
-  const change = requireApprovedForVault(id, forVault);
+  // With the run's approvals: the higher of its bar when raised and the vault's today,
+  // plus one for every signer removed since.
+  requireApprovedForVault(id, forRun);
 
-  // The payee must be a leaf of the approved run.
-  const leaf = payoutLeaf(details, nonce);
+  // The payee must be a leaf of the approved run; a company-wide leaf names its vault.
+  const leaf = payoutLeaf(companyRun ? companyWideDetailsOf(details, payer) : details, nonce);
   assert(path.leaf == leaf, "that path is not for this payee");
   assert(merkleTreePathRoot<16, Bytes<32>>(path).field as Bytes<32> == root,
          "that payee is not in the approved run");
@@ -731,7 +782,7 @@ export circuit recordPayment(
          "a payment is already recorded for this person, kind of pay and month. Pay a real second payment as a numbered extra");
   movements.insert(once);
 
-  return change;
+  return kernel.self();
 }
 
 // Seals the pay-record key to the calling signer: four parts under keys only they can derive.

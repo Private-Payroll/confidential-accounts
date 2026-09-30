@@ -222,7 +222,7 @@ describe('the real artifacts, read end to end', () => {
     expect(approve?.witnesses.map((w) => w.witness).sort()).toEqual(['localSecretKey', 'signerBlinding', 'signerPath', 'signerScope']);
     expect(approve?.witnesses.every((w) => w.via.length > 0)).toBe(true);
     // And the three cross-contract callees read no witness at all, by design.
-    for (const name of ['recordPayment', 'retireVault', 'closeExpiredRun']) {
+    for (const name of ['recordPaymentFromVault', 'retireVault', 'closeExpiredRun']) {
       expect(account.circuits.find((c) => c.name === name)?.witnesses).toEqual([]);
     }
   });

@@ -173,7 +173,7 @@ describe('the circuits that read no witness', () => {
    * Both of the circuits named here are real ones on this contract that read no
    * witness today, which is why they are the example.
    */
-  it.each(['recordPayment', 'retireVault', 'closeExpiredRun'])(
+  it.each(['recordPaymentFromVault', 'retireVault', 'closeExpiredRun'])(
     'reports it when %s falls off the client\'s set while still reading nothing',
     async (dropped) => {
       const model = await account();
@@ -203,7 +203,7 @@ describe('the circuits that read no witness', () => {
     expect(disagreement(readsNone, driven(), asItWasBefore))
       .toEqual({ treatedAsNeedingState: [], treatedAsNeedingNone: [] });
     expect(disagreement(readsNone, judged(), asItWasBefore))
-      .toEqual({ treatedAsNeedingState: ['recordPayment', 'retireVault'], treatedAsNeedingNone: [] });
+      .toEqual({ treatedAsNeedingState: ['recordPaymentFromVault', 'retireVault'], treatedAsNeedingNone: [] });
   });
 
   /** **THE LOUD DIRECTION, WATCHED.** A circuit that reads a witness on the list. */
@@ -222,7 +222,7 @@ describe('the circuits that read no witness', () => {
 
     expect(disagreement(readsNone, judged(), new Set()))
       .toEqual({
-        treatedAsNeedingState: ['closeExpiredRun', 'recordPayment', 'retireVault'],
+        treatedAsNeedingState: ['closeExpiredRun', 'recordPaymentFromVault', 'retireVault'],
         treatedAsNeedingNone: [],
       });
   });

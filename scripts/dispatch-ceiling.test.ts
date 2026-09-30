@@ -18,8 +18,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  ACCEPTED_BYTES_WRITTEN, BYTES_WRITTEN_LIMIT, REFUSED_BYTES_WRITTEN,
-  calibrate, classCeiling, extrinsicCeiling,
+  ACCEPTED_BYTES_WRITTEN, BYTES_WRITTEN_LIMIT, EXTRINSIC_FRACTION, REFUSED_BYTES_WRITTEN,
+  TX_SIZE_WEIGHT_REF_TIME_PS, calibrate, classCeiling, extrinsicCeiling,
 } from './dispatch-ceiling.js';
 
 describe('the per-extrinsic ceiling, calibrated against the two real submissions', () => {
@@ -30,9 +30,16 @@ describe('the per-extrinsic ceiling, calibrated against the two real submissions
     expect(calibrate()).toBeNull();
   });
 
-  it('is the arithmetic the derivation says: 0.75 − 0.10 − base, of 50,000', () => {
-    // (0.65 × 2e12 − 108,157,000) / 2e12 × 50,000 = 32,497.29…, floored.
-    expect(extrinsicCeiling(50_000)).toBe(32_497);
+  it('is the arithmetic the derivation says: 0.75 − 0.10 − base − the node\'s size weight, of 50,000', () => {
+    // (0.65 × 2e12 − 108,157,000 − 20,000,000,000) / 2e12 × 50,000 = 31,997.29…, floored.
+    expect(extrinsicCeiling(50_000)).toBe(31_997);
+  });
+
+  it('counts the node\'s size weight: without it the ceiling would be 500 bytes higher', () => {
+    expect(TX_SIZE_WEIGHT_REF_TIME_PS).toBe(20_000_000_000n);
+    // 20,000,000,000 ps of a 2 s block is 1%, and 1% of 50,000 is 500.
+    const without = Number((50_000n * (EXTRINSIC_FRACTION.num + TX_SIZE_WEIGHT_REF_TIME_PS)) / EXTRINSIC_FRACTION.den);
+    expect(without - extrinsicCeiling(50_000)).toBe(500);
   });
 
   it('would have caught C238: the 75% class ceiling FAILS the same calibration', () => {

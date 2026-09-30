@@ -44,6 +44,7 @@ import { pureCircuits, ledger as accountLedger } from '../managed/contract/index
 import { AccountSimulator, privateStateFor, change, type Change } from './simulator.js';
 import { buildPayoutTree, type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
 import { toHex, fromHex } from '../../src/core/crypto.js';
+import { itPaysOutOfTodaysVault } from './until-the-vault-pays-with-a-receipt.js';
 
 /* The clock and the run's window, pinned for the reason the simulator's own
  * comment gives: nothing here measures real time. */
@@ -162,7 +163,7 @@ describe('a vault whose threshold nobody can meet is recovered, and pays', () =>
     return { tree, id };
   };
 
-  it('THE FOUR STEPS: raised above the seats, refused with its reason, lowered by a governed round, raised again and paid',
+  itPaysOutOfTodaysVault('THE FOUR STEPS: raised above the seats, refused with its reason, lowered by a governed round, raised again and paid',
     async () => {
     /* --- 1. RAISE IT ABOVE THE SEATS ---------------------------------------
      *

@@ -23,7 +23,7 @@
  * and changing its approval threshold is the existing path and is not run
  * here, so the payroll run below is approved by the founder alone.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, expect, beforeEach, afterEach } from 'vitest';
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import express from 'express';
@@ -82,6 +82,7 @@ import { payeeAddressFromKeys, type Payee } from '../../src/midnight/payee-addre
 import { assemblePrivatePayments } from '../../src/midnight/private-payment-wire.js';
 import { witnessesOver } from '../../src/midnight/vault-notes.js';
 import { payFor } from '../../src/testing/payees.js';
+import { itPaysOutOfTodaysVault } from './until-the-vault-pays-with-a-receipt.js';
 
 /** Deposits or payments on their way, kept for the length of one test, sealed as the page keeps them. */
 const keptOnThisDevice = <T,>(kind: 'deposit' | 'payment'): KeptOnThisDevice<T> =>
@@ -176,7 +177,7 @@ const TEMPORARY = { kind: 'single-key', signingKey: TEMPORARY_ACCOUNT_KEY, tempo
  * there by name, and the job that builds the keys runs this file by name.
  */
 const KEYS_ON_DISK = ['deposit', 'payout', 'payoutUnshielded'].every((c) => existsSync(new URL(`../managed-vault/keys/${c}.verifier`, import.meta.url)))
-  && ['propose', 'approve', 'recordPayment'].every((c) => existsSync(new URL(`../managed/keys/${c}.verifier`, import.meta.url)));
+  && ['propose', 'approve', 'recordPaymentFromVault'].every((c) => existsSync(new URL(`../managed/keys/${c}.verifier`, import.meta.url)));
 if (!KEYS_ON_DISK) {
   console.log(
     '  NOT CHECKED HERE: the vault\'s and the account\'s verifier keys are not on disk, so a company\'s committee'
@@ -621,7 +622,7 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
     return payPrivatelyFromCompanyVault(payDoors(), { order, payment: order.payments[0]! });
   };
 
-  it('A SIGNER JOINS: EVERY PAYMENT STOPS UNTIL THE COMMITTEE CHANGES, THE FOUNDER SIGNS IT IN THEIR WALLET, AND PAYMENTS CARRY ON', async () => {
+  itPaysOutOfTodaysVault('A SIGNER JOINS: EVERY PAYMENT STOPS UNTIL THE COMMITTEE CHANGES, THE FOUNDER SIGNS IT IN THEIR WALLET, AND PAYMENTS CARRY ON', async () => {
     asked = [];
     const { vault } = await aFundedVault();
     await pay(vault, 100n);
@@ -671,7 +672,7 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
     expect(L.verifySignature(committeeKeyOf('ada') as never, updateFor(vault, sortedKeys('ada'), 1, 1n).dataToSign, sig as never)).toBe(false);
   });
 
-  it('A SIGNER WHO LEAVES LOSES EVERY SEAT: TWO SIGNERS SIGN ON THEIR OWN, AND THE ONE WHO LEFT CAN SIGN NOTHING AFTERWARDS', async () => {
+  itPaysOutOfTodaysVault('A SIGNER WHO LEAVES LOSES EVERY SEAT: TWO SIGNERS SIGN ON THEIR OWN, AND THE ONE WHO LEFT CAN SIGN NOTHING AFTERWARDS', async () => {
     const { vault } = await aFundedVault();
     await seat('bo');
     await seat('cy');

@@ -58,6 +58,7 @@ const payment = (
 
 /** Raises and approves a run of `payments` for `vault`, and hands back what a payer needs. */
 const approvedRun = async (sim: AccountSimulator, vault: Uint8Array, payments: PayoutLeafInput[], seed: number) => {
+  await sim.adoptVault(vault, [A, B]);
   const c = change(0n, seed);
   const leaves = payments.map(payoutLeafOf);
   const root = rootOfLeaves(leaves);
@@ -74,7 +75,7 @@ const pay = (sim: AccountSimulator, vault: Uint8Array, run: Awaited<ReturnType<t
   payments: PayoutLeafInput[], i: number) => {
   /* The path is built over the raw leaves, so a run `buildPayoutTree` would refuse can still be driven at the account. */
   const path = pathFor(run.leaves, i);
-  return sim.as(carrying(sim, A, run.c)).recordPayment({
+  return sim.as(carrying(sim, A, run.c)).recordPaymentFromVault({
     proposal: run.id, vault, root: fromHex(run.root), payees: BigInt(run.leaves.length),
     from: OPENS, until: CLOSES, salt: run.c.salt,
     details: fromHex(payments[i]!.details), nonce: fromHex(payments[i]!.nonce), path,

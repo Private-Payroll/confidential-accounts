@@ -2094,6 +2094,28 @@ describe('C334: MidnightLedger.open refuses an opening it cannot honour', () => 
     expect(why).toMatch(/single-key maintenance authority is accepted only as a RECORDED/);
   });
 
+  it('refuses, before anything is deployed, an authority that could never sign the second step of the creation', async () => {
+    /*
+     * A company is created in two steps and the second is a maintenance update
+     * signed by the authority the deploy installed. An unmaintainable account, or
+     * one held by a committee whose keys this process does not hold, could be
+     * deployed and never finished: it could govern itself and pay nobody. RED WHEN
+     * the gate is dropped, or moved after the deploy - MEASURED: the call then goes
+     * on into the deploy path, which this harness has no chain for, and the test
+     * fails by its 30-second timeout rather than by the assertions below.
+     */
+    for (const [authority, refusal] of [
+      [{ kind: 'unmaintainable' }, /can never take the second\. Nothing was deployed/],
+      [{ kind: 'committee', committee: [{ tag: 'schnorr', value: 'cd'.repeat(32) }], threshold: 1 },
+        /holds\s+none of their signing keys/],
+    ] as const) {
+      const h = harness({}, { register: async () => {}, maintenanceAuthority: authority as never });
+      const why = await h.ledger.open('acct', opening()).then(() => '', (e: Error) => e.message);
+      expect(why).toMatch(refusal);
+      expect(why).not.toMatch(/submitPartialDeployTx was reached/);
+    }
+  });
+
   it('lets a well-formed opening past all three', async () => {
     /*
      * **THE POSITIVE CONTROL, AND WITHOUT IT THE THREE ABOVE PASS ON A METHOD

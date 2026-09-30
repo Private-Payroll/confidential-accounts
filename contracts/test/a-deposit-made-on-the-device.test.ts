@@ -67,6 +67,7 @@ import { UNLOCK_PURPOSE, UNLOCK_WINDOW_MS, unlockAsk } from '../../src/core/wall
 import {
   toHex, fromHex, newWrappingKeypair, newSigningKeypair, type Hex,
 } from '../../src/core/crypto.js';
+import { itPaysOutOfTodaysVault } from './until-the-vault-pays-with-a-receipt.js';
 
 const VAULT_NOW = 1_800_000_000;
 const WIN_FROM = BigInt(VAULT_NOW - 3_600);
@@ -309,7 +310,7 @@ describe('a deposit whose record is made on the device', () => {
     return { opened, walk, rebuilt, ms: performance.now() - started };
   };
 
-  it('A DEPOSIT\'S RECORD MADE ON THE DEVICE, FILED THROUGH THE MOUNTED ROUTE, AND THE VAULT REBUILT BY A SIGNER WHO DEPOSITED NOTHING, WITH A NOTE THAT COMES BACK SPENT', async () => {
+  itPaysOutOfTodaysVault('A DEPOSIT\'S RECORD MADE ON THE DEVICE, FILED THROUGH THE MOUNTED ROUTE, AND THE VAULT REBUILT BY A SIGNER WHO DEPOSITED NOTHING, WITH A NOTE THAT COMES BACK SPENT', async () => {
     const adas = deviceOf(ada);
     await startVaultNonceSecretOnThisDevice(vaultAddr, ada.device, [recordsReaderOf(bo.device.companyKey)], adas.records, new Set(chainNotes()));
     await adas.pool.create(vaultAddr, { notes: [] });

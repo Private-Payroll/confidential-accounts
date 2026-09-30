@@ -46,6 +46,7 @@ const carrying = (sim: AccountSimulator, d: Device, c: Change) => sim.applying(d
 const live = async (devices: Device[], threshold: bigint) => {
   const sim = await AccountSimulator.liveAccount(devices, threshold);
   sim.at(NOW);
+  await sim.adoptVault(VAULT, devices.slice(0, Number(threshold)));
   return sim;
 };
 
@@ -63,7 +64,7 @@ const raiseRun = async (sim: AccountSimulator, by: Device, c: Change, nonce: num
   });
   const id = sim.proposalId(
     pureCircuits.runPayload(fromHex(tree.root), tree.payees, OPENS, CLOSES), c.salt, VAULT);
-  const pay = () => sim.recordPayment({
+  const pay = () => sim.recordPaymentFromVault({
     proposal: id, vault: VAULT, root: fromHex(tree.root), payees: tree.payees,
     from: OPENS, until: CLOSES, salt: c.salt,
     details: bytes(0x10), nonce: bytes(nonce), path: tree.pathFor(0),

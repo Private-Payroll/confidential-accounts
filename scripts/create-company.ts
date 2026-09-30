@@ -242,7 +242,8 @@ async function main() {
 
   /* ---------------------------------------------------------------- 5 */
   step(5, 6, 'Creating the company through the product\'s own service');
-  line('      this is a deploy: it proves, it submits, and it spends a fee.');
+  line('      two transactions, each spending a fee: the deploy, then one update that');
+  line('      adds the circuits that pay. The company is not finished until both land.');
 
   const accounts = new AccountService(store, ledger, startup.wiring.commitments);
   const began = Date.now();

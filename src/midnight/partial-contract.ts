@@ -89,6 +89,9 @@
 import {
   DEPLOYED_CIRCUITS,
   DEFERRED_CIRCUITS,
+  FIRST_STEP_CIRCUITS,
+  SECOND_STEP_CIRCUITS,
+  assertCreationSteps,
   assertKnownCircuitSet,
 } from './deferral.js';
 
@@ -249,8 +252,36 @@ export interface PartialDeployResult {
     public: Record<string, unknown> & { contractAddress: string };
     private: { initialPrivateState: unknown };
   };
-  circuits: { deployed: string[]; deferred: string[] };
+  /**
+   * `deployed` is what this transaction carried, `inserted` what the second
+   * step of the creation must still add (`submitCreationInsertTx`).
+   */
+  circuits: { deployed: string[]; inserted: string[]; deferred: string[] };
   authority: MaintenanceAuthorityDescription;
+}
+
+/**
+ * Refuses an authority that could never sign the second step of a company's
+ * creation, BEFORE anything is deployed or spent. A company is created in two
+ * steps, and the second is a maintenance update signed by the authority the
+ * deploy installs; with no authority, or one whose keys are not in this
+ * process, the deploy would leave an account that can never be finished.
+ */
+export function requireCreatableAuthority(
+  choice: MaintenanceAuthorityChoice | undefined,
+): Extract<MaintenanceAuthorityChoice, { kind: 'single-key' }> {
+  const authority = requireMaintenanceAuthority(choice);
+  if (authority.kind === 'single-key') return authority;
+  throw new Error(
+    authority.kind === 'unmaintainable'
+      ? 'an unmaintainable account cannot be created: a company is created in two steps, a deploy ' +
+          'and then one maintenance update that adds the payment circuits, and an account with no ' +
+          'maintenance authority can never take the second. Nothing was deployed.'
+      : `a committee of ${authority.committee.length} cannot finish a company's creation from here: ` +
+          'the second step is a maintenance update its members must sign, and this process holds ' +
+          'none of their signing keys. Create the company with the recorded single key, and hand ' +
+          'the account to the committee afterwards. Nothing was deployed.',
+  );
 }
 
 /** Entry-point names as strings, whatever the runtime hands back. */
@@ -272,7 +303,8 @@ export async function submitPartialDeployTx(
   providers: any,
   options: PartialDeployOptions,
 ): Promise<PartialDeployResult> {
-  const authority = requireMaintenanceAuthority(options.maintenanceAuthority);
+  const authority = requireCreatableAuthority(options.maintenanceAuthority);
+  assertCreationSteps();
 
   const {
     createUnprovenDeployTx, submitTx, DeployTxFailedError,
@@ -319,16 +351,14 @@ export async function submitPartialDeployTx(
   assertKnownCircuitSet(opNames(full));
 
   /* The state the chain gets: the constructor's data, the chosen authority,
-   * and exactly the deployed operations the deferral list names. */
+   * and exactly the first step's operations. The second step inserts the rest. */
   const pruned: any = new ContractState();
   pruned.data = full.data;
-  pruned.maintenanceAuthority =
-    authority.kind === 'committee'
-      ? new ContractMaintenanceAuthority(authority.committee as any, authority.threshold, 0n)
-      : authority.kind === 'unmaintainable'
-        ? new ContractMaintenanceAuthority([], 1, 0n)
-        : full.maintenanceAuthority; // single-key: built by the runtime from the key we passed
-  for (const name of DEPLOYED_CIRCUITS) {
+  // Single key: built by the runtime from the key passed above. The other two kinds are
+  // refused before this point, because neither could sign the second step.
+  pruned.maintenanceAuthority = full.maintenanceAuthority;
+  void ContractMaintenanceAuthority;
+  for (const name of FIRST_STEP_CIRCUITS) {
     const op = full.operation(name);
     if (!op || !op.verifierKey) {
       throw new Error(
@@ -378,9 +408,144 @@ export async function submitPartialDeployTx(
       public: { ...finalizedTxData, contractAddress },
       private: { initialPrivateState: unproven.private.initialPrivateState },
     },
-    circuits: { deployed: [...DEPLOYED_CIRCUITS], deferred: [...DEFERRED_CIRCUITS] },
+    circuits: {
+      deployed: [...FIRST_STEP_CIRCUITS],
+      inserted: [...SECOND_STEP_CIRCUITS],
+      deferred: [...DEFERRED_CIRCUITS],
+    },
     authority: describeMaintenanceAuthority(authority),
   };
+}
+
+/* ------------------------------------------------------------------ *
+ * the second step of a company's creation
+ * ------------------------------------------------------------------ */
+
+/** The ledger pieces the second step is built from, passed in so it can be tested without a chain. */
+export interface CreationInsertPrimitives {
+  VerifierKeyInsert: new (operation: string, vk: object) => object;
+  ContractOperationVersionedVerifierKey: new (version: 'v3' | 'v4', rawVk: Uint8Array) => object;
+  MaintenanceUpdate: new (address: string, updates: object[], counter: bigint) => {
+    readonly dataToSign: Uint8Array;
+    addSignature(idx: bigint, signature: { tag: string; value: string }): unknown;
+  };
+}
+
+/**
+ * BUILDS THE SECOND STEP: ONE MAINTENANCE UPDATE THAT ONLY INSERTS.
+ *
+ * One `VerifierKeyInsert` for each of `SECOND_STEP_CIRCUITS`, in that order, and
+ * nothing else: no key is removed and the authority is not replaced. Refuses a
+ * key set that is not exactly those circuits, a key that is not a compiled
+ * verifier key of the version this product builds, and a contract that already
+ * carries one of them, because the ledger refuses an insert over a key already
+ * there and the fee would be spent for nothing.
+ */
+export function buildCreationInsert(
+  P: CreationInsertPrimitives,
+  args: {
+    address: string;
+    /** The contract's maintenance counter now: zero straight after its deploy. */
+    counter: bigint;
+    /** The operations the contract carries now, read from the chain. */
+    onChain: readonly string[];
+    keys: ReadonlyMap<string, Uint8Array>;
+  },
+): { update: InstanceType<CreationInsertPrimitives['MaintenanceUpdate']>; inserted: string[] } {
+  const wanted = [...SECOND_STEP_CIRCUITS] as string[];
+  const given = [...args.keys.keys()].sort();
+  if (given.length !== wanted.length || [...wanted].sort().some((n, i) => n !== given[i])) {
+    throw new Error(
+      `the second step inserts exactly ${wanted.join(', ')}, and was handed keys for ` +
+        `${given.join(', ') || 'nothing'}. Nothing was built.`,
+    );
+  }
+  const already = wanted.filter((n) => args.onChain.includes(n));
+  if (already.length > 0) {
+    throw new Error(
+      `the account at ${args.address} already carries ${already.join(', ')}, so its second step ` +
+        'has already landed, or somebody else changed it. Read the account again before doing ' +
+        'anything; nothing was built.',
+    );
+  }
+  const missingFirst = FIRST_STEP_CIRCUITS.filter((n) => !args.onChain.includes(n));
+  if (missingFirst.length > 0) {
+    throw new Error(
+      `the account at ${args.address} does not carry ${missingFirst.join(', ')}, which its deploy ` +
+        'should have. It is not an account this product created; nothing was built.',
+    );
+  }
+  const HEADER = 'midnight:verifier-key[v6]:';
+  const updates = wanted.map((name) => {
+    const vk = args.keys.get(name)!;
+    const head = new TextDecoder().decode(vk.slice(0, HEADER.length));
+    if (head !== HEADER) {
+      throw new Error(
+        `the key handed in for ${name} is not a compiled verifier key of the version this product ` +
+          'builds. Rebuild the keys; nothing was built.',
+      );
+    }
+    return new P.VerifierKeyInsert(name, new P.ContractOperationVersionedVerifierKey('v3', vk));
+  });
+  return {
+    update: new P.MaintenanceUpdate(args.address, updates, args.counter),
+    inserted: wanted,
+  };
+}
+
+/**
+ * THE SECOND STEP, SIGNED AND SUBMITTED. Reads the account, builds the insert,
+ * signs it with the single key the deploy installed, and submits it.
+ *
+ * It can be run again after a failure: it reads what the account carries first,
+ * does nothing when the step has already landed, and refuses a half-landed one
+ * rather than inserting twice.
+ */
+export async function submitCreationInsertTx(
+  providers: any,
+  options: {
+    contractAddress: string;
+    maintenanceAuthority: MaintenanceAuthorityChoice | undefined;
+  },
+): Promise<{ inserted: string[]; public: Record<string, unknown> }> {
+  const authority = requireCreatableAuthority(options.maintenanceAuthority);
+  assertCreationSteps();
+  const { submitTx, InsertVerifierKeyTxFailedError } = await import('@midnight-ntwrk/midnight-js-contracts');
+  const { SucceedEntirely, Transaction } = await import('@midnight-ntwrk/midnight-js-types');
+  const { ttlOneHour } = await import('@midnight-ntwrk/midnight-js-utils');
+  const { getNetworkId } = await import('@midnight-ntwrk/midnight-js-network-id');
+  const L: any = await import('@midnight-ntwrk/midnight-js-protocol/ledger');
+
+  const state: any = await providers.publicDataProvider.queryContractState(options.contractAddress);
+  if (!state) throw new Error(`no contract is deployed at '${options.contractAddress}'`);
+  const counter = state.maintenanceAuthority?.counter;
+  if (typeof counter !== 'bigint') {
+    throw new Error(`the account at '${options.contractAddress}' reports no maintenance counter; nothing was built.`);
+  }
+  // Already landed, for instance by an earlier attempt whose answer was lost: nothing to do.
+  // `verifyContractState` in the read-back still compares every key byte for byte.
+  if (SECOND_STEP_CIRCUITS.every((name) => opNames(state).includes(name))) {
+    return { inserted: [], public: {} };
+  }
+  const keys = new Map<string, Uint8Array>(
+    await providers.zkConfigProvider.getVerifierKeys([...SECOND_STEP_CIRCUITS]) as Array<[string, Uint8Array]>,
+  );
+  const built = buildCreationInsert(L as CreationInsertPrimitives, {
+    address: options.contractAddress,
+    counter,
+    onChain: opNames(state),
+    keys,
+  });
+  const update = built.update as any;
+  const signed = update.addSignature(0n, L.signData(authority.signingKey as any, update.dataToSign));
+  const unprovenTx = (Transaction as any).fromParts(
+    getNetworkId(), undefined, undefined, (L.Intent as any).new(ttlOneHour()).addMaintenanceUpdate(signed),
+  );
+  const result: any = await submitTx(providers, { unprovenTx } as any);
+  if (result.status !== SucceedEntirely) {
+    throw new (InsertVerifierKeyTxFailedError as any)(result);
+  }
+  return { inserted: built.inserted, public: result };
 }
 
 /* ------------------------------------------------------------------ *
@@ -441,6 +606,18 @@ export async function findDeployedPartialContract(
   const state: any = await providers.publicDataProvider.queryContractState(contractAddress);
   if (!state) {
     throw new Error(`no contract is deployed at '${contractAddress}'`);
+  }
+
+  /* A company whose second step has not landed is not finished, and is refused by
+   * name before the key comparison would report it as a key mismatch. */
+  const unfinished = SECOND_STEP_CIRCUITS.filter((name) => !state.operation(name));
+  if (unfinished.length > 0 && FIRST_STEP_CIRCUITS.every((name) => state.operation(name))) {
+    throw new Error(
+      `the account at '${contractAddress}' was deployed and its creation was not finished: it does ` +
+        `not carry ${unfinished.join(', ')}, which the second step of a company's creation inserts. ` +
+        'Run the second step (submitCreationInsertTx) with the authority the deploy installed; ' +
+        'until then the account can pay nothing.',
+    );
   }
 
   const verifierKeys = await providers.zkConfigProvider.getVerifierKeys([...DEPLOYED_CIRCUITS]);

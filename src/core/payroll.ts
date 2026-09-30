@@ -5040,18 +5040,8 @@ const canonicalOrAsWritten = (period: string): string => {
   }
 };
 
-const samePeriod = (a: string, b: string): boolean => {
-  if (a === b) return true;
-  let left: string;
-  let right: string;
-  try {
-    left = canonicalPeriod(a);
-    right = canonicalPeriod(b);
-  } catch {
-    return false;
-  }
-  return left === right;
-};
+const samePeriod = (a: string, b: string): boolean =>
+  canonicalOrAsWritten(a) === canonicalOrAsWritten(b);
 
 /**
  * **WHAT A RUN PAYS, AS ONE COMPARABLE VALUE.** Names, currencies and amounts,
