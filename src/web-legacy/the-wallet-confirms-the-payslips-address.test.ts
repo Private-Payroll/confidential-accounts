@@ -4,6 +4,7 @@ import { Buffer as PolyfillBuffer } from 'buffer/';
 import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
 import { READY_PING } from 'midnight-identity/profile/channel';
 import { NETWORK } from 'midnight-identity/network';
+import { readAccountAddress, readCompanyLabel } from 'midnight-identity/profile/company-label';
 /*
  * **THE WALLET'S SIDE IS THE WALLET'S OWN SOURCE, AND THE PAGE'S SIDE IS THE
  * LIBRARY AS THE PAGE LOADS IT.** The wallet is built from `packages/identity/src`
@@ -48,7 +49,8 @@ const { WALLET_ACCOUNTS } = await import(/* @vite-ignore */ `${WALLET_APP}subwal
 
 const US = 'https://payroll.example';
 const WALLET = 'https://wallet.example';
-const ACME = 'a1'.repeat(32);
+const ACME = readCompanyLabel('co_' + 'a1'.repeat(32))!;
+const ACME_ACCOUNT = readAccountAddress('a2'.repeat(32))!;
 const AT = 1_756_000_000_000;
 const INDEXER = { indexerUri: 'https://indexer.example/graphql', indexerWsUri: 'wss://indexer.example/graphql/ws' };
 
@@ -88,12 +90,12 @@ const pressed = (identity = mine) => (ask: UnlockRequest) =>
 const slipPaidTo = (runId: string, paidTo: string): OpenedPayslip => ({
   runId, period: runId, status: 'proposed', settledAt: null, wiring: 'chain', issuedBy: ACME,
   payslip: { employeeId: 'emp_1', name: 'Dana', asset: 'TESTUSD', amount: 1n, period: runId, paidTo },
-  receipt: { runId, nonce: '01'.repeat(32), blinding: '09'.repeat(32), company: ACME, until: AT / 1000 + 3_600 },
+  receipt: { runId, nonce: '01'.repeat(32), blinding: '09'.repeat(32), company: ACME_ACCOUNT, label: ACME, until: AT / 1000 + 3_600 },
 });
 
-const openWith = async (wallet: TheWallet, slips: OpenedPayslip[]) => openAddresses([ACME],
+const openWith = async (wallet: TheWallet, slips: OpenedPayslip[]) => openAddresses([{ label: ACME, account: ACME_ACCOUNT }],
   (company) => askWalletToUnlockAndWhereItReads(wallet, WALLET, {
-    company, atOrigin: US, name: 'Confidential Accounts', rdns: 'social.lemonade.confidential-accounts',
+    company: company.label, account: company.account, atOrigin: US, name: 'Confidential Accounts', rdns: 'social.lemonade.confidential-accounts',
     now: () => AT,
   }),
   async (): Promise<MyPayslips> => ({ opened: slips, sealed: [], unopened: 0, refused: 0 }));
@@ -131,7 +133,7 @@ describe('the wallet confirms the payslip\'s address, and only its own', () => {
     const reader = { recorded: async (_i: unknown, _c: string, ps: Array<{ paidTo: string }>) => {
       asked.push(...ps.map(p => p.paidTo)); return ps.map(() => true);
     } };
-    const read = await readTheChain(slips, reader, INDEXER, got.confirmed, AT / 1000);
+    const read = await readTheChain(slips, reader, INDEXER, got.confirmed, AT / 1000, undefined, got.openedAt);
     expect(read.chain.get('main')).toBe('paid');
     /* RED WHEN an address the wallet did not confirm is asked about. */
     expect(read.chain.get('theirs')).toBe('cannot-tell');
@@ -146,8 +148,10 @@ describe('the wallet confirms the payslip\'s address, and only its own', () => {
     const said = JSON.stringify(wallet.asked);
     /* RED WHEN the ask carries an address, or a list of them. */
     expect(said).not.toContain('shield-addr');
+    /* The one address it names is the company's account, public on the chain, for the wallet to read the label off. */
     expect(Object.keys(wallet.asked[0] as object).sort())
-      .toEqual(['company', 'expiresAt', 'kind', 'nonce', 'purpose', 'requester', 'schema']);
+      .toEqual(['account', 'company', 'expiresAt', 'kind', 'nonce', 'purpose', 'requester', 'schema']);
+    expect((wallet.asked[0] as { account: string }).account).toBe(ACME_ACCOUNT);
     /* RED WHEN an address, rather than its digest, leaves the wallet. */
     const answered = JSON.stringify(answers);
     for (const a of receivingAddressesOf(mine, NETWORK)) expect(answered).not.toContain(a);

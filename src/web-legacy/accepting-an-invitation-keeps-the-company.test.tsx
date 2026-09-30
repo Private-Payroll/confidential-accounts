@@ -15,7 +15,6 @@
  * keeps the tab that signed the person in, and the unlock that then saves the
  * company with them.
  */
-import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/react';
 import { bech32m } from '@scure/base';
@@ -34,7 +33,9 @@ const US = 'https://payroll.example';
 const WALLET = 'https://wallet.example';
 const SIGNED_IN = 'mn_addr_test1qqqqqqqqqqqqqqqqqqqq';
 const PERSON = 'usr_1';
-const ACME = 'ab'.repeat(32);
+/* The company that invited this person, by its label, and the account that carries it. */
+const ACME = `co_${'ab'.repeat(32)}`;
+const ACME_ACCOUNT = 'ac'.repeat(32);
 const TOKEN = 'the-invitation';
 const identity = identityFromWords(TEST_MNEMONIC);
 /** Where this person is paid: a well-formed stagenet shielded address, both keys 32 bytes. */
@@ -97,7 +98,7 @@ const keyring = await import('vaults-web-shared/keyring.js');
 /** The keyring key the wallet above gives this person. */
 const keyringHex = () => toHex(keyringKeyFor(identity, parseAsk(keyringAsk({
   name: 'n', rdns: 'r', purpose: KEYRING_PURPOSE, nonce: 'n', expiresAt: Date.now() + 60_000,
-  person: PERSON, signedInAs: null, company: null,
+  person: PERSON, signedInAs: null, company: null, account: null,
 }), US, Date.now()) as KeyringRequest));
 
 const realFetch = globalThis.fetch;
@@ -113,7 +114,7 @@ function aServer() {
   const writes: Array<{ keyBundle: unknown }> = [];
   const accepted: unknown[] = [];
   const offer = {
-    company: 'Acme Ltd', companyAddress: ACME, inboxPublicKey: newWrappingKeypair().publicKey,
+    company: 'Acme Ltd', companyLabel: ACME, companyAccount: ACME_ACCOUNT, inboxPublicKey: newWrappingKeypair().publicKey,
     name: 'Dana', title: 'Engineer', email: null, asset: 'TESTUSD', baseAmount: { $n: '5000000000' },
     startDate: '2026-10-01T00:00:00.000Z', expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
   };

@@ -15,6 +15,7 @@
  * in and this is the test that dies.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { importTheServer, useOnlyTheseSettings } from '../testing/server-under-test.js';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -131,26 +132,33 @@ let n = 10;
 const withACompany = async () => {
   const { token } = await signInWithAWallet(call,
     { slot: ++n, origin: ORIGIN, network: NETWORK });
+  const label = drawCompanyLabel();
   const made = await call('POST', '/api/accounts', {
     token,
-    body: { name: 'Acme', signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 },
+    body: { companyLabel: label, name: 'Acme', signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 },
   });
   expect(made.status, JSON.stringify(made.body)).toBe(200);
-  return { token, accountId: made.body.account.id as string };
+  return {
+    token, accountId: made.body.account.id as string, label,
+    account: String(made.body.account.contractAddress).toLowerCase(),
+  };
 };
 
 /** A complete, well-formed address that belongs to somebody else. */
 const NOT_THEIRS = 'f0'.repeat(32);
 
 describe('POST /api/accounts/:id/unlock', () => {
-  it('answers with the company\'s own address on the chain', async () => {
-    const { token, accountId } = await withACompany();
+  it('answers with the company\'s label, and the account on the chain that carries it', async () => {
+    const { token, accountId, label, account } = await withACompany();
     const r = await call('POST', `/api/accounts/${accountId}/unlock`, { token });
 
     expect(r.status, JSON.stringify(r.body)).toBe(200);
-    expect(r.body.company).toMatch(/^[0-9a-f]{64}$/);
+    /* RED WHEN the account's address, or any label but the one the wallet drew, is answered as the company. */
+    expect(r.body.company).toBe(label);
+    /* RED WHEN the account answered is not the one the company was created with. */
+    expect(r.body.account).toBe(account);
     /* Nothing else comes back. Not a key, not a member list, not an id. */
-    expect(Object.keys(r.body)).toEqual(['company']);
+    expect(Object.keys(r.body)).toEqual(['company', 'account']);
   });
 
   it('A CALLER THAT NAMES ITS OWN COMPANY IS NOT SERVED — the session decides', async () => {
@@ -168,11 +176,15 @@ describe('POST /api/accounts/:id/unlock', () => {
       { company: NOT_THEIRS },
       { contractAddress: NOT_THEIRS },
       { company: NOT_THEIRS, accountId: 'acc_somebody_else' },
+      /* And in the shape a company is named in now: another label, and another account. */
+      { company: drawCompanyLabel(), account: NOT_THEIRS },
+      { companyLabel: drawCompanyLabel(), account: NOT_THEIRS },
     ]) {
       const r = await call('POST', `/api/accounts/${accountId}/unlock`, { token, body });
       expect(r.status, JSON.stringify(r.body)).toBe(200);
       expect(r.body.company).toBe(honest.body.company);
       expect(r.body.company).not.toBe(NOT_THEIRS);
+      expect(r.body.account).toBe(honest.body.account);
     }
   });
 
@@ -202,5 +214,33 @@ describe('POST /api/accounts/:id/unlock', () => {
   it('no session, no company', async () => {
     const { accountId } = await withACompany();
     expect((await call('POST', `/api/accounts/${accountId}/unlock`)).status).toBe(401);
+  });
+});
+
+describe('POST /api/accounts takes the label the founding signer\'s wallet drew, once', () => {
+  const create = async (token: string, companyLabel: unknown) => call('POST', '/api/accounts', {
+    token, body: { companyLabel, name: 'Acme', signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 },
+  });
+
+  it('REFUSES A CREATION WITH NO LABEL, OR WITH ANYTHING ELSE WHERE THE LABEL BELONGS, AND CREATES NOTHING', async () => {
+    const { token } = await signInWithAWallet(call, { slot: ++n, origin: ORIGIN, network: NETWORK });
+    /* RED WHEN the service makes up a label, or takes an address or another spelling for one. */
+    expect((await create(token, undefined)).status).toBe(400);
+    for (const notOne of ['ab'.repeat(32), drawCompanyLabel().toUpperCase(), 'co_' + '00'.repeat(32)]) {
+      const r = await create(token, notOne);
+      expect(r.status, notOne).toBe(400);
+      expect(r.body.code).toBe('not-a-company-label');
+    }
+    expect((await call('GET', '/api/accounts', { token })).body).toEqual([]);
+  });
+
+  it('REFUSES A LABEL ANOTHER COMPANY ALREADY HAS, BY NAME', async () => {
+    const first = await withACompany();
+    const { token } = await signInWithAWallet(call, { slot: ++n, origin: ORIGIN, network: NETWORK });
+    const r = await create(token, first.label);
+    /* RED WHEN the refusal is not caught: the answer is then a 500 with no code. */
+    expect(r.status, JSON.stringify(r.body)).toBe(409);
+    expect(r.body.code).toBe('company-label-taken');
+    expect((await call('GET', '/api/accounts', { token })).body).toEqual([]);
   });
 });

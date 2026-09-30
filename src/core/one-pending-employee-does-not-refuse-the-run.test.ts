@@ -25,6 +25,7 @@
  * for before.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -89,7 +90,7 @@ describe('one pending employee does not refuse the whole run', () => {
 
   /** Ada and Ben are payable; Nina has an open invitation; Otto has handed over. */
   const company = async () => {
-    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const ada = h.payroll.hireDirect(account.id, {
       name: 'Ada Paid', email: 'ada@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
     }, viewingKey).employee;

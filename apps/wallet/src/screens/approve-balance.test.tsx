@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
+import type { LabelReader } from './company-on-chain.js';
 import { cleanup, fireEvent, render, screen } from '../testing/render.js';
 import { Buffer as PolyfillBuffer } from 'buffer/';
 import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
@@ -27,7 +29,12 @@ const NOW = 1_755_000_000_000;
 const identity = identityFromWords(TEST_MNEMONIC);
 const SECRET = secretFromWords(TEST_MNEMONIC);
 const ORIGIN = 'https://payroll-a.example';
-const CO = 'dbe119a304f8e7ea882353435c1d536cf2faf4298236a9aae77670e750af65c8';
+/* The company's label, and the account that carries it on the chain. */
+const CO = 'co_1f2e3d4c5b6a79880a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f6071' as CompanyLabel;
+const ACCOUNT = 'dbe119a304f8e7ea882353435c1d536cf2faf4298236a9aae77670e750af65c8' as AccountAddress;
+/* The chain, as this wallet reads it: the account carries the company's label. */
+/* Answers for the request's own account only: RED WHEN the screen reads any other address, such as the vault's. */
+const carries: LabelReader = async (account) => (account === ACCOUNT ? { of: 'carries', label: CO } : { of: 'no-account' });
 const VAULT = '54ef954a25aefff8e1675af10a852ef29d5de5c63a51b64b978bf7bd0eaeca4e';
 const TOKEN = 'ab'.repeat(32);
 
@@ -38,7 +45,7 @@ const wire = (over: Record<string, unknown> = {}) => ({
   purpose: 'Put money into your company vault.',
   nonce: 'b1',
   expiresAt: NOW + 600_000,
-  company: CO,
+  company: CO, account: ACCOUNT,
   vault: VAULT,
   transaction: 'AAECAw==',
   ...over,
@@ -91,8 +98,10 @@ const doorsWith = (log: string[], facade: Partial<FacadeForBalancing> = {}, acti
 });
 const channelFor = (answers: unknown[]): Channel => recordingChannel(answers);
 const consented = { ok: true } as never;
-const renderWith = (doors: () => BalanceDoors, answers: unknown[], consent = consented, declined: string[] = []) => render(
-  <ApproveBalance
+const renderWith = (
+  doors: () => BalanceDoors, answers: unknown[], consent = consented, declined: string[] = [], readLabel: LabelReader = carries,
+) => render(
+  <ApproveBalance readLabel={readLabel}
     request={ask} identity={identity} account={0} channel={channelFor(answers)} consent={consent}
     whoIsAsking={<p>asker</p>} whichWallet={<p>picker</p>} onDecline={(why) => declined.push(why ?? 'declined')}
     doorsFor={doors} now={() => NOW} />);
@@ -100,6 +109,37 @@ const renderWith = (doors: () => BalanceDoors, answers: unknown[], consent = con
 afterEach(() => { cleanup(); });
 
 describe('A PAGE ASKING THIS WALLET TO PAY FOR A DEPOSIT', () => {
+  it('PAYS NOTHING UNTIL THE ACCOUNT IS READ AND CARRIES THE LABEL THE PAGE NAMES', async () => {
+    /*
+     * The fingerprint a person pays on must be the fingerprint of the company
+     * the page names: its label, on an account that carries it. It says
+     * nothing about the vault, which this wallet does not read.
+     * RED WHEN: the press is open, or a fingerprint is shown, before the account is found to carry the label.
+     */
+    const other = 'co_2222222222222222222222222222222222222222222222222222222222222222' as CompanyLabel;
+    for (const [reader, shown] of [
+      [async () => ({ of: 'carries', label: other }), 'another-company'],
+      [async () => ({ of: 'no-label' }), 'no-label'],
+      [async () => ({ of: 'no-account' }), 'no-account'],
+      [async () => ({ of: 'unreadable', why: 'offline.' }), 'unreadable'],
+      [() => new Promise<never>(() => {}), 'checking'],
+    ] as [LabelReader, string][]) {
+      const log: string[] = []; const answers: unknown[] = [];
+      const { container } = renderWith(doorsWith(log), answers, consented, [], reader);
+      expect(await screen.findByText(`2500 base units of the private token below`)).toBeTruthy();
+      await settled(5);
+      expect(container.querySelector(`[data-company-check="${shown}"]`), shown).not.toBeNull();
+      expect(container.querySelector('[data-company-fingerprint]'), shown).toBeNull();
+      const button = screen.getByText('Pay into the vault') as HTMLButtonElement;
+      expect(button.disabled, shown).toBe(true);
+      fireEvent.click(button);
+      await settled(5);
+      expect(log, shown).toEqual([]);
+      expect(answers, shown).toEqual([]);
+      cleanup();
+    }
+  });
+
   it('shows what leaves, read from the transaction, and the vault whole - and sends nothing before the press', async () => {
     const log: string[] = []; const answers: unknown[] = [];
     renderWith(doorsWith(log), answers);
@@ -130,7 +170,7 @@ describe('A PAGE ASKING THIS WALLET TO PAY FOR A DEPOSIT', () => {
     expect(log).toEqual(['balance', 'sign', 'finish']);
     const answer = answers[0] as BalancedAnswer;
     expect(answer).toMatchObject({
-      schema: 'midnight-identity/balanced/v1', origin: ORIGIN, company: CO, vault: VAULT, nonce: 'b1', at: NOW,
+      schema: 'midnight-identity/balanced/v1', origin: ORIGIN, company: CO, account: ACCOUNT, vault: VAULT, nonce: 'b1', at: NOW,
       transaction: 'BAI=', leaves: [{ token: TOKEN, amount: '2500', kind: 'shielded' }],
     });
   });
@@ -196,7 +236,7 @@ describe('A PAGE ASKING THIS WALLET TO PAY FOR A DEPOSIT', () => {
       const shielded = stillReading();
       const doors = doorsWith(log, { shielded });
       const view = render(
-        <ApproveBalance
+        <ApproveBalance readLabel={carries}
           request={ask} identity={identity} account={0} channel={channelFor(answers)} consent={consented}
           whoIsAsking={<p>asker</p>} whichWallet={<p>picker</p>} onDecline={() => {}}
           doorsFor={doors} now={() => NOW} />);
@@ -206,7 +246,7 @@ describe('A PAGE ASKING THIS WALLET TO PAY FOR A DEPOSIT', () => {
       if (how === 'leaves') view.unmount();
       else {
         view.rerender(
-          <ApproveBalance
+          <ApproveBalance readLabel={carries}
             request={ask} identity={identity} account={2} channel={channelFor(answers)} consent={consented}
             whoIsAsking={<p>asker</p>} whichWallet={<p>picker</p>} onDecline={() => {}}
             doorsFor={doors} now={() => NOW} />);
@@ -241,7 +281,7 @@ describe('A PAGE ASKING THIS WALLET TO PAY FOR A DEPOSIT', () => {
 
   it('A TRANSACTION INTO ANOTHER CONTRACT IS REFUSED ON SIGHT, THE BUTTON STAYS DOWN, AND THE PAGE IS TOLD AT ONCE', async () => {
     const log: string[] = []; const answers: unknown[] = []; const closed: unknown[] = [];
-    renderWith(doorsWith(log, {}, [{ address: CO, entryPoint: 'deposit' }]), answers, consented, closed as string[]);
+    renderWith(doorsWith(log, {}, [{ address: ACCOUNT, entryPoint: 'deposit' }]), answers, consented, closed as string[]);
     expect(await screen.findByText(/calls a contract other than the vault it names/)).toBeTruthy();
     const button = screen.getByText('Pay into the vault') as HTMLButtonElement;
     expect(button.disabled).toBe(true);
@@ -302,7 +342,7 @@ describe('ONE ANSWER PER REQUEST, AND A PRESS IN FLIGHT OWNS IT', () => {
     const b = trackedDoors(second);
     const byAccount = (_i: unknown, account: number) => (account === 0 ? a.doors() : b.doors());
     const ui = (account: number) => (
-      <ApproveBalance
+      <ApproveBalance readLabel={carries}
         request={ask} identity={identity} account={account} channel={channel} consent={consented}
         whoIsAsking={<p>asker</p>} whichWallet={<p>picker</p>} onDecline={() => {}}
         doorsFor={byAccount as never} now={() => NOW} onBusy={(locked) => locks.push(locked)} />);
@@ -345,7 +385,7 @@ describe('ONE ANSWER PER REQUEST, AND A PRESS IN FLIGHT OWNS IT', () => {
     const broken = trackedDoors([], {}, { ledger: () => Promise.reject(new Error('no ledger')) });
     const byAccount = (_i: unknown, account: number) => (account === 0 ? a.doors() : broken.doors());
     const ui = (account: number) => (
-      <ApproveBalance
+      <ApproveBalance readLabel={carries}
         request={ask} identity={identity} account={account} channel={channel} consent={consented}
         whoIsAsking={<p>asker</p>} whichWallet={<p>picker</p>} onDecline={() => {}}
         doorsFor={byAccount as never} now={() => NOW} />);
@@ -368,7 +408,7 @@ describe('ONE ANSWER PER REQUEST, AND A PRESS IN FLIGHT OWNS IT', () => {
     const hold = heldSign(log);
     const a = trackedDoors(log, { signRecipe: hold.signRecipe as never });
     const view = render(
-      <ApproveBalance
+      <ApproveBalance readLabel={carries}
         request={ask} identity={identity} account={0} channel={recordingChannel(answers)} consent={consented}
         whoIsAsking={<p>asker</p>} whichWallet={<p>picker</p>} onDecline={() => {}}
         doorsFor={a.doors} now={() => NOW} />);
@@ -390,7 +430,7 @@ describe('ONE ANSWER PER REQUEST, AND A PRESS IN FLIGHT OWNS IT', () => {
     const a = trackedDoors([]); const b = trackedDoors([]);
     const byAccount = (_i: unknown, account: number) => (account === 0 ? a.doors() : b.doors());
     const ui = (account: number) => (
-      <ApproveBalance
+      <ApproveBalance readLabel={carries}
         request={ask} identity={identity} account={account} channel={recordingChannel([])} consent={consented}
         whoIsAsking={<p>asker</p>} whichWallet={<p>picker</p>} onDecline={() => {}}
         doorsFor={byAccount as never} now={() => NOW} />);
@@ -415,7 +455,7 @@ describe('THE WALLET SAYS WHAT IT IS DOING, ON EVENTS ONLY', () => {
     let clock = NOW;
     const t = trackedDoors([], { shielded, balanceUnboundTransaction: held.balanceUnboundTransaction as never });
     render(
-      <ApproveBalance
+      <ApproveBalance readLabel={carries}
         request={ask} identity={identity} account={0} channel={recordingChannel(answers, progress as never)} consent={consented}
         whoIsAsking={<p>asker</p>} whichWallet={<p>picker</p>} onDecline={() => {}}
         doorsFor={t.doors} now={() => clock} />);
@@ -466,7 +506,7 @@ describe('THE APPROVAL SURFACE ROUTES A BALANCE ASK TO THIS SCREEN', () => {
       addEventListener: (_t, h) => { handlers.push(h); },
       removeEventListener: () => {},
     };
-    render(<Approve identity={identity} secret={SECRET} port={port} view={view} now={() => NOW} />);
+    render(<Approve readLabel={carries} identity={identity} secret={SECRET} port={port} view={view} now={() => NOW} />);
     for (const h of handlers) h({ source: opener, origin: ORIGIN, data: wire() } as unknown as MessageEvent);
     expect(await screen.findByText(`Pay into a company vault for ${ORIGIN}`)).toBeTruthy();
     expect(await screen.findByText(/not a proven transaction this wallet can read/)).toBeTruthy();

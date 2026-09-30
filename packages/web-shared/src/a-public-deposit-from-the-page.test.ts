@@ -9,6 +9,7 @@
  * `contracts/test/a-private-payment-from-the-page.test.ts`.
  */
 import { describe, it, expect } from 'vitest';
+import type { AccountAddress, CompanyLabel, VaultAddress } from 'midnight-identity/profile/company-label';
 import { StaticAssetRegistry, type Asset } from '../../../src/core/assets.js';
 import type { WireRecord } from '../../../src/midnight/sealed-record-wire.js';
 import { MemorySealedPoolStore } from '../../../src/midnight/vault-pool.js';
@@ -24,8 +25,10 @@ import {
   depositFromSource, depositKindFor, privateTokenFromTheWallet, publicTokenFromTheWallet, sourceFor, type DepositAsk, type PaidIn,
 } from './deposit-source.js';
 
-const VAULT = 'ab'.repeat(32) as Hex;
-const ACCOUNT = 'c0'.repeat(32) as Hex;
+const VAULT = 'ab'.repeat(32) as VaultAddress;
+/* The company's account, and the label it carries. */
+const ACCOUNT = 'c0'.repeat(32) as AccountAddress;
+const LABEL = `co_${'c1'.repeat(32)}` as CompanyLabel;
 const PRIVATE_TOKEN = '5e'.repeat(32);
 const PUBLIC_TOKEN = 'cd'.repeat(32);
 const BOTH_PRIVATE = '6e'.repeat(32);
@@ -81,7 +84,7 @@ const setUp = (over: { view?: Partial<VaultChainView>; send?: VaultService['depo
     me: { signerId: 'ada', wrappingSecret: wrapping.secret, companyKey: new Uint8Array(32).fill(9) },
     myRecordsKey: 'ff'.repeat(32) as Hex,
     signers: async () => [{ id: 'ada', wrappingPublicKey: wrapping.publicKey }],
-    company: ACCOUNT, builder,
+    company: LABEL, account: ACCOUNT, builder,
     inFlight: sealedOnThisDevice<DepositInFlight>(inFlightInMemory(inFlight), { signerId: 'ada', wrappingSecret: wrapping.secret }, 'deposit') as DepositsInFlight,
   };
   return { log, doors, inFlight };
@@ -96,8 +99,8 @@ describe('A PUBLIC DEPOSIT FROM THE PAGE', () => {
     /* RED WHEN: the public source goes down the private step, is built with another token, amount or vault, or is sent anywhere but the public route. */
     expect(log).toEqual(['chain', `built ab ${PUBLIC_TOKEN.slice(0, 2)} 40 true`, 'wallet', `sent PROVEN+public-coins ${PUBLIC_TOKEN.slice(0, 2)} 40`]);
     expect(done).toEqual({ txRef: 'r1', transactionHash: 'h1', token: PUBLIC_TOKEN, value: 40n });
-    /* RED WHEN: the wallet is handed anything beyond the company, the vault and the proven deposit. */
-    expect(asked).toEqual([{ company: ACCOUNT, vault: VAULT, transaction: 'PROVEN' }]);
+    /* RED WHEN: the wallet is handed anything beyond the company, its account, the vault and the proven deposit. */
+    expect(asked).toEqual([{ company: LABEL, account: ACCOUNT, vault: VAULT, transaction: 'PROVEN' }]);
     /* RED WHEN: a public deposit keeps a record in this browser, as a private one must. */
     expect(inFlight.size).toBe(0);
   });

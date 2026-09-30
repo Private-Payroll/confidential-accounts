@@ -17,12 +17,22 @@
 import { whyNotTheCommittee, type Roster } from './handover-check.js';
 import { rosterVaultKeys } from '../../../src/core/vault-keys.js';
 
+import { readAccountAddress, readCompanyLabel } from 'midnight-identity/profile/company-label';
+import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
+
 type Key = { tag: string; value: string };
 type CommitteeValue = { committee: Key[]; threshold: number };
 
 /** What the service says about the change owed, as the settings screen reads it. */
 export interface CommitteeChangeView {
+  /** The address of the company's account, the contract every change here reaches first. */
   readonly company: string | null;
+  /**
+   * The company's label, from the same record: what the wallet derives the key
+   * it signs with from, and reads back off the account above before it signs.
+   * Null for a company created without one, which no wallet can sign for.
+   */
+  readonly label: string | null;
   readonly to: CommitteeValue | null;
   readonly why: string | null;
   readonly contracts: ReadonlyArray<{
@@ -95,6 +105,10 @@ export function committeeChangeRefusal(
 ): { code: CommitteeChangeRefusalCode; why: string } | null {
   const refused = (why: string) => ({ code: COMMITTEE_CHANGE_REFUSAL.refused, why });
   if (view.to === null || view.company === null) return refused(view.why ?? 'this company has no committee yet.');
+  if (readCompanyLabel(view.label) === null || readAccountAddress(view.company) === null) {
+    return refused('the service did not say which company this is in a way a wallet can check - its label, and the '
+      + 'account that carries it - so no change is signed from here.');
+  }
   const notTheRosters = whyNotTheCommittee(view.to.committee, roster);
   if (notTheRosters !== null) return refused(`${notTheRosters} No change is signed from here.`);
   if (roster.policy !== undefined && roster.policy.threshold !== view.to.threshold) {
@@ -121,7 +135,7 @@ export interface CommitteeChangeDoors {
   readonly roster: () => Promise<Roster & { policy?: { threshold: number } }>;
   /** Asks the wallet to sign; resolves with what it signed. */
   readonly askWallet: (ask: {
-    company: string; to: CommitteeValue;
+    company: CompanyLabel; account: AccountAddress; to: CommitteeValue;
     contracts: Array<{ contract: 'account' | 'vault'; address: string; counter: string; now: CommitteeValue }>;
   }) => Promise<{ signer: Key; signatures: ReadonlyArray<{ address: string; counter: string; seat: number; signature: Key }> }>;
   /** Hands the signatures to the service. */
@@ -151,7 +165,9 @@ export async function signCommitteeChangeOnDevice(
   }
   const to = view.to!;
   const contracts = contractsForMe(view, mine).map((c) => ({ contract: c.contract, address: c.address, counter: c.counter, now: c.now }));
-  const signed = await doors.askWallet({ company: view.company!, to, contracts });
+  const signed = await doors.askWallet({
+    company: readCompanyLabel(view.label)!, account: readAccountAddress(view.company)!, to, contracts,
+  });
   if (!same(signed.signer, mine)) {
     throw new Error('the wallet signed with a key other than the one it gives for this company, so nothing was handed on.');
   }

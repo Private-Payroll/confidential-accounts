@@ -171,7 +171,7 @@ async function run(personId: string, companyId: string, onStage: (stage: Creatin
     const released = await giveTheVaultKeys(companyId, o.keys, viewingKeyFor(o.sealed));
     service = vaultServiceFor(api, companyId, o.roster);
     const done = await createCompanyVault({
-      ...pacing(onStage), account: released.company, service,
+      ...pacing(onStage), account: released.account, service,
       builder: await theVaultBuilder(), keys: browserTemporaryKeys(),
     }, resume as Parameters<typeof createCompanyVault>[1]);
     return { of: ACTED.done, vault: done.vault };

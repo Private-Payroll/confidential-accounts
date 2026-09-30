@@ -1,5 +1,7 @@
 import type { BalanceRequest } from './request.js';
 import { usableOrigin } from './origin.js';
+import { readAccountAddress, readCompanyLabel, readVaultAddress } from './company-label.js';
+import type { AccountAddress, CompanyLabel, VaultAddress } from './company-label.js';
 
 /**
  * WHAT A WALLET HANDS BACK WHEN A PERSON AGREES TO PAY FOR A TRANSACTION.
@@ -27,8 +29,10 @@ export interface BalancedAnswer {
   readonly schema: typeof BALANCED_SCHEMA;
   /** OBSERVED. A convenience for the requester, never an authority. */
   readonly origin: string;
-  readonly company: string;
-  readonly vault: string;
+  /** The company's label, the account the page named as carrying it, and the vault. Echoed. */
+  readonly company: CompanyLabel;
+  readonly account: AccountAddress;
+  readonly vault: VaultAddress;
   readonly nonce: string;
   readonly at: number;
   /** Base64 of the finished transaction. */
@@ -54,6 +58,7 @@ export function balancedAnswerFor(
     schema: BALANCED_SCHEMA,
     origin: ask.requester.origin,
     company: ask.company,
+    account: ask.account,
     vault: ask.vault,
     nonce: ask.nonce,
     at,
@@ -83,8 +88,9 @@ export function readBalancedAnswer(
   expecting: {
     readonly atOrigin: string;
     readonly expectingNonce: string;
-    readonly company: string;
-    readonly vault: string;
+    readonly company: CompanyLabel;
+    readonly account: AccountAddress;
+    readonly vault: VaultAddress;
   },
 ): BalancedRead {
   const body = message as Partial<BalancedAnswer> | null;
@@ -100,8 +106,9 @@ export function readBalancedAnswer(
   if (body.nonce !== expecting.expectingNonce) {
     return { ok: false, code: 'nonce-mismatch', says: 'this answers a different request from the one that was sent.' };
   }
-  if (String(body.company).toLowerCase() !== expecting.company.toLowerCase()
-    || String(body.vault).toLowerCase() !== expecting.vault.toLowerCase()) {
+  if (readCompanyLabel(body.company) !== expecting.company
+    || readAccountAddress(body.account) !== expecting.account
+    || readVaultAddress(body.vault) !== expecting.vault) {
     return {
       ok: false, code: 'other-transaction',
       says: 'this pays into a different company or vault from the one that was asked about. It is refused.',

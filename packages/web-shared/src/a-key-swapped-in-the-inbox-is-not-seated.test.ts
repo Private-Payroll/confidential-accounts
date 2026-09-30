@@ -13,6 +13,7 @@
  * a refusal of the swap and not of every seat.
  */
 import { describe, it, expect } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -45,7 +46,7 @@ const ledger = new SimulatedLedger(MidnightCommitments);
 const store = new FileStore(join(mkdtempSync(join(tmpdir(), 'mn-swapped-')), 'db.json'));
 const accounts = new AccountService(store, ledger, MidnightCommitments);
 /* Two signers, so two devices each read the seat for themselves. */
-const created = await accounts.create('Swapped', [{ name: 'Ada', role: 'admin' }, { name: 'Bo', role: 'approver' }], 1);
+const created = await accounts.create('Swapped', [{ name: 'Ada', role: 'admin' }, { name: 'Bo', role: 'approver' }], 1, undefined, drawCompanyLabel());
 const company = created.account.id;
 const viewingKey = created.viewingKey;
 const [ada, bo] = created.secrets as [typeof created.secrets[0], typeof created.secrets[0]];
@@ -208,7 +209,7 @@ describe('A KEY THAT DID NOT COME FROM THE INVITED PERSON IS NOT SEATED', () => 
  * stored record and nothing else.
  */
 const recorded = async () => {
-  const made = await accounts.create('Recorded', [{ name: 'Ada', role: 'admin' }], 1);
+  const made = await accounts.create('Recorded', [{ name: 'Ada', role: 'admin' }], 1, undefined, drawCompanyLabel());
   const at = made.account.id;
   const adaHere = made.secrets[0]!;
   const adaRef = { signerId: adaHere.signerId, leaf: made.account.signers[0]!.leafCommitment as Hex };

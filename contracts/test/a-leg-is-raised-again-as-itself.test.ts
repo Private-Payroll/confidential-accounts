@@ -24,6 +24,7 @@
  * repeat nobody confirmed is not raised.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -95,7 +96,7 @@ const services = () => {
 
 async function aDraftedRun(people = 2) {
   const s = services();
-  const created = await s.accounts.create('Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1);
+  const created = await s.accounts.create('Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1, undefined, drawCompanyLabel());
   const viewingKey = created.viewingKey;
   for (let i = 0; i < people; i++) {
     s.payroll.hireDirect(created.account.id, {

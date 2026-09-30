@@ -6,19 +6,28 @@ import type { SealedPayslip } from '../core/payslip-open.js';
 import { payslipPublicKeyOf } from '../core/payslip-open.js';
 import { assets } from '../core/assets.js';
 import {
-  fetchMyPayslips, payslipAddressesFor, rememberCompany, rememberedCompanies, tidyCompanyAddress,
+  fetchMyPayslips, payslipAddressesFor, rememberCompany, rememberedCompanies, tidyCompanyLabel,
   forgetRememberedCompanies, PageOutOfDate, type Fetch,
 } from 'vaults-web-shared/my-payslips.js';
 import { PAGE_OUT_OF_DATE, PAYSLIP_PAGE_HEADER, PAYSLIP_PAGE_VERSION } from '../core/payslip-page.js';
 import { hiringAssets, invitingAssets } from './hiring-assets.js';
 import { paymentWords } from './YourPay.js';
 
+/** The value, or a failure that says one was missing: an index that finds nothing is a broken test, not a value to carry on with. */
+function present<T>(value: T | undefined): T {
+  if (value === undefined) throw new Error('expected a value here, and there was none');
+  return value;
+}
+
+const CO = 'co_' + 'ab'.repeat(32);
+const OTHER_CO = 'co_' + 'cd'.repeat(32);
+
 /** A slip sealed to one public key, as the service stores it. */
 const slipFor = (publicKey: string, name: string, period: string): SealedPayslip => {
   const key = newSymmetricKey();
   return {
     runId: 'run_' + period, period, status: 'settled', settledAt: '2026-09-01T00:00:00.000Z',
-    wiring: 'chain', issuedBy: 'ab'.repeat(32),
+    wiring: 'chain', issuedBy: CO,
     wrapped: wrapKey(key, publicKey),
     slip: seal(canonical({ employeeId: 'emp_1', name, asset: 'TESTUSD', amount: 5_000_000n, period }), key),
     receipt: null,
@@ -60,9 +69,9 @@ describe('a payee\'s own payslips are fetched sealed and opened on this device',
       slipFor(me.publicKey, 'Dana', '2026-08'),
       slipFor(someoneElse.publicKey, 'Eli', '2026-08'),
     ]);
-    const got = await fetchMyPayslips(me, 'ab'.repeat(32), fetcher);
+    const got = await fetchMyPayslips(me, CO, fetcher);
     expect(got.opened.map(s => s.payslip.name)).toEqual(['Dana']);
-    expect(got.opened[0].payslip.amount).toBe(5_000_000n);
+    expect(present(got.opened[0]).payslip.amount).toBe(5_000_000n);
     /* A slip sent for this key that it does not open is counted, not shown. */
     expect(got.unopened).toBe(1);
     expect(seen.map(r => r.url)).toEqual(['/api/payslips/proof', '/api/payslips']);
@@ -82,30 +91,33 @@ describe('a payee\'s own payslips are fetched sealed and opened on this device',
     const stale: Fetch = async () => new Response(
       JSON.stringify({ code: 'payslip-page-out-of-date', error: PAGE_OUT_OF_DATE }), { status: 409 });
     /* RED WHEN the refusal is read as an ordinary failure. */
-    const failed = await fetchMyPayslips(me, 'ab'.repeat(32), stale).catch((e: unknown) => e);
+    const failed = await fetchMyPayslips(me, CO, stale).catch((e: unknown) => e);
     expect(failed).toBeInstanceOf(PageOutOfDate);
     expect((failed as Error).message).toBe('This page is out of date. Reload it and open your payslips again.');
-    await expect(payslipAddressesFor('ab'.repeat(32), stale)).rejects.toBeInstanceOf(PageOutOfDate);
+    await expect(payslipAddressesFor(CO, stale)).rejects.toBeInstanceOf(PageOutOfDate);
   });
 
   it('SOMETHING THAT IS NOT A SLIP AT ALL IS AN ERROR, NOT A SLIP THAT DID NOT OPEN', async () => {
     const me = newWrappingKeypair();
     const { fetcher } = service([null as unknown as SealedPayslip]);
     /* RED WHEN every failure is counted as a slip that did not open. */
-    await expect(fetchMyPayslips(me, 'ab'.repeat(32), fetcher)).rejects.toThrow(TypeError);
+    await expect(fetchMyPayslips(me, CO, fetcher)).rejects.toThrow(TypeError);
   });
 
   it('THE ADDRESSES ARE ASKED FOR WITH THE SIGN-IN TOO', async () => {
     const seen: Array<{ url: string; init?: RequestInit }> = [];
     const fetcher: Fetch = async (url, init) => {
       seen.push({ url, init });
-      return new Response(JSON.stringify({ addresses: ['cd'.repeat(32)] }));
+      return new Response(JSON.stringify({ companies: [
+        { label: OTHER_CO, account: 'EF'.repeat(32) }, { label: 'ef'.repeat(32), account: 'ef'.repeat(32) },
+      ] }));
     };
-    expect(await payslipAddressesFor('ab'.repeat(32), fetcher)).toEqual(['cd'.repeat(32)]);
-    expect(seen[0].url).toBe(`/api/payslips/addresses?company=${'ab'.repeat(32)}`);
+    /* RED WHEN an entry without a well-formed label is kept, or the account is not folded. */
+    expect(await payslipAddressesFor(CO, fetcher)).toEqual([{ label: OTHER_CO, account: 'ef'.repeat(32) }]);
+    expect(present(seen[0]).url).toBe(`/api/payslips/addresses?company=${CO}`);
     /* RED WHEN it goes without the sign-in, or without naming the page. */
-    expect(seen[0].init?.credentials).toBe('same-origin');
-    expect((seen[0].init?.headers as Record<string, string>)[PAYSLIP_PAGE_HEADER]).toBe(PAYSLIP_PAGE_VERSION);
+    expect(present(seen[0]).init?.credentials).toBe('same-origin');
+    expect((present(seen[0]).init?.headers as Record<string, string>)[PAYSLIP_PAGE_HEADER]).toBe(PAYSLIP_PAGE_VERSION);
   });
 
   it('A PUBLIC KEY WORKED OUT FROM THE SECRET IS THE ONE THE SLIPS ARE SEALED TO', () => {
@@ -123,22 +135,26 @@ describe('which companies this browser holds for one person', () => {
     };
   };
 
-  it('KEEPS COMPANY ADDRESSES AND NOTHING ELSE', () => {
+  it('KEEPS COMPANY LABELS AND NOTHING ELSE', () => {
     const s = memory();
-    expect(rememberCompany('usr_a', '0x' + 'AB'.repeat(32), s)).toEqual(['ab'.repeat(32)]);
-    expect(rememberCompany('usr_a', 'ab'.repeat(32), s)).toEqual(['ab'.repeat(32)]);
-    expect(rememberCompany('usr_a', 'not an address', s)).toEqual(['ab'.repeat(32)]);
-    expect(rememberedCompanies('usr_a', s)).toEqual(['ab'.repeat(32)]);
-    expect(tidyCompanyAddress('12')).toBeNull();
+    expect(rememberCompany('usr_a', ' ' + CO + ' ', s)).toEqual([CO]);
+    expect(rememberCompany('usr_a', CO, s)).toEqual([CO]);
+    /* RED WHEN an account's address is taken for a company's label. */
+    expect(rememberCompany('usr_a', 'ab'.repeat(32), s)).toEqual([CO]);
+    /* RED WHEN a label is folded to lower case rather than refused. */
+    expect(rememberCompany('usr_a', 'co_' + 'AB'.repeat(32), s)).toEqual([CO]);
+    expect(rememberCompany('usr_a', 'not a label', s)).toEqual([CO]);
+    expect(rememberedCompanies('usr_a', s)).toEqual([CO]);
+    expect(tidyCompanyLabel('co_12')).toBeNull();
   });
 
   it('ANOTHER PERSON IN THE SAME BROWSER IS NEVER SHOWN IT', () => {
     const s = memory();
-    rememberCompany('usr_a', 'ab'.repeat(32), s);
+    rememberCompany('usr_a', CO, s);
     /* RED WHEN the list is kept for the browser rather than for the person. */
     expect(rememberedCompanies('usr_b', s)).toEqual([]);
     /* And the list from before, kept for nobody in particular, is shown to nobody. */
-    s.setItem('payslip-companies', JSON.stringify(['cd'.repeat(32)]));
+    s.setItem('payslip-companies', JSON.stringify([OTHER_CO]));
     expect(rememberedCompanies('usr_b', s)).toEqual([]);
     forgetRememberedCompanies('usr_a', s);
     expect(rememberedCompanies('usr_a', s)).toEqual([]);
@@ -175,7 +191,7 @@ describe('what the hiring form offers', () => {
     for (const code of ['GBP', 'USD', 'EUR', 'USDC']) expect(codes).not.toContain(code);
     expect(codes[0]).toBe('TESTUSD');
     expect(codes).toContain('NIGHT');
-    expect(assets.require(codes[0]).ledger.shielded).not.toBeNull();
+    expect(assets.require(present(codes[0])).ledger.shielded).not.toBeNull();
     /* An employee can be invited in anything they can be hired in, NIGHT among
      * it: the invitation asks their wallet for a public address when the money
      * has no private form. RED WHEN the invitation form offers less than hiring,

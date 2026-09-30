@@ -10,6 +10,7 @@
  * the account's asset blinding, is pinned as exactly that.
  */
 import { describe, it, expect } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { createHash } from 'node:crypto';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -213,7 +214,7 @@ describe('THE BUILDER PROVES ONLY WHAT THIS DEVICE READ', () => {
 const ledger = new SimulatedLedger(MidnightCommitments);
 const store = new FileStore(join(mkdtempSync(join(tmpdir(), 'mn-opened-')), 'db.json'));
 const accounts = new AccountService(store, ledger, MidnightCommitments);
-const created = await accounts.create('Opened', [{ name: 'Ada', role: 'admin' }, { name: 'Bo', role: 'approver' }], 1);
+const created = await accounts.create('Opened', [{ name: 'Ada', role: 'admin' }, { name: 'Bo', role: 'approver' }], 1, undefined, drawCompanyLabel());
 const company = created.account.id;
 const viewingKey = created.viewingKey;
 const ada = created.secrets[0]!;

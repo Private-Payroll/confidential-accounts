@@ -101,8 +101,8 @@ export class IdentityService {
    * called the three routes it sat behind.
    *
    * **A person who has lost access rebuilds their wallet from its twenty-four
-   * words and signs in.** The key that opens their keyring is derived from that
-   * seed and the company's address, so it comes back with them; it was never
+   * words and signs in.** The keys that open their company's records are derived
+   * from that seed and the company's label, so they come back with them; they were never
    * something this platform could reissue, and the flow deleted here never
    * pretended to — its own words were *"this does not open the key bundle, and
    * cannot"*.

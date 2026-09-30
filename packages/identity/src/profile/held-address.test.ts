@@ -10,6 +10,8 @@ import {
 import { readRelease, releaseFor } from './unlock.js';
 import { checkShieldedAddress } from '../wallet/address-shape.js';
 import { bech32m } from '@scure/base';
+import { sha256 } from '@noble/hashes/sha2.js';
+import type { CompanyLabel } from './company-label.js';
 
 /**
  * **THE WALLET SAYS WHICH ADDRESSES IT HOLDS WITHOUT NAMING ONE, AND THE PAGE
@@ -18,7 +20,8 @@ import { bech32m } from '@scure/base';
 
 const NOW = 1_755_000_000_000;
 const ORIGIN = 'https://payroll-a.example';
-const COMPANY = 'dbe119a304f8e7ea882353435c1d536cf2faf4298236a9aae77670e750af65c8';
+const COMPANY = 'co_dbe119a304f8e7ea882353435c1d536cf2faf4298236a9aae77670e750af65c8' as CompanyLabel;
+const OTHER_COMPANY = 'co_54ef954a25aefff8e1675af10a852ef29d5de5c63a51b64b978bf7bd0eaeca4e' as CompanyLabel;
 const mine = identityFromWords(TEST_MNEMONIC);
 const theirs = identityFromWords(
   'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon '
@@ -36,7 +39,7 @@ const swapEncryptionKey = (address: string): string => {
 };
 
 /** The ask a list answers, as the page holds it: its own nonce, its own origin, the company it asked about. */
-const S = (nonce: string, origin = ORIGIN, company = COMPANY) => ({ nonce, origin, company });
+const S = (nonce: string, origin = ORIGIN, company: CompanyLabel = COMPANY) => ({ nonce, origin, company });
 
 const ask = (nonce: string): UnlockRequest => parseAsk({
   schema: 'midnight-identity/disclosure-request/v1',
@@ -67,10 +70,17 @@ describe('ONE DIGEST, OVER THE ADDRESS AND THE ASK\'S NONCE', () => {
      * their lists and tell they are serving one wallet.
      */
     expect(heldAddressDigest(S('n1', 'https://other-payroll.example'), MY_MAIN)).not.toBe(d);
-    expect(heldAddressDigest(S('n1', ORIGIN, '54ef954a25aefff8e1675af10a852ef29d5de5c63a51b64b978bf7bd0eaeca4e'), MY_MAIN))
-      .not.toBe(d);
-    /* The one spelling a company address has: RED WHEN the company is hashed as it arrived. */
-    expect(heldAddressDigest(S('n1', ORIGIN, COMPANY.toUpperCase()), MY_MAIN)).toBe(d);
+    expect(heldAddressDigest(S('n1', ORIGIN, OTHER_COMPANY), MY_MAIN)).not.toBe(d);
+    /* RED WHEN the domain is left at `v1` or the label goes in as anything but written. */
+    const lp = (b: Uint8Array): Uint8Array => { const o = new Uint8Array(4 + b.length); new DataView(o.buffer).setUint32(0, b.length); o.set(b, 4); return o; };
+    const t = (x: string): Uint8Array => lp(new TextEncoder().encode(x));
+    const checked = checkShieldedAddress(MY_MAIN, 'stagenet');
+    const keys = Uint8Array.from((checked.coinPublicKey + checked.encryptionPublicKey).match(/../gu)!.map((b) => parseInt(b, 16)));
+    const parts = [new TextEncoder().encode('midnight-identity/held-address/v2'), t('n1'), t(ORIGIN), t(COMPANY), t(checked.network), keys];
+    const whole = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+    let at = 0;
+    for (const p of parts) { whole.set(p, at); at += p.length; }
+    expect(d).toBe(Buffer.from(sha256(whole)).toString('hex'));
     /* RED WHEN only the coin key is digested: an address differing in its encryption key alone is another address. */
     expect(heldAddressDigest(S('n1'), swapEncryptionKey(MY_MAIN))).not.toBe(d);
   });
@@ -130,7 +140,7 @@ describe('THE WALLET\'S LIST', () => {
 describe('THE RELEASE CARRIES IT, AND THE PAGE TESTS ONLY WHAT IT HAS', () => {
   it('a slip paid to one of the wallet\'s own addresses is confirmed; a colleague\'s is not', () => {
     const released = releaseFor(mine, ask('page-nonce'), NOW, undefined, [MY_MAIN, MY_SUB]);
-    const read = readRelease(released, { atOrigin: ORIGIN, expectingNonce: 'page-nonce', forCompany: COMPANY });
+    const read = readRelease(released, { atOrigin: ORIGIN, expectingNonce: 'page-nonce', forCompany: COMPANY, forAccount: null });
     expect(read.ok).toBe(true);
     const held = read.ok ? read.held : null;
     expect(held).not.toBeNull();
@@ -144,12 +154,12 @@ describe('THE RELEASE CARRIES IT, AND THE PAGE TESTS ONLY WHAT IT HAS', () => {
   });
 
   it('TWO SITES THAT SEND THE SAME NONCE GET LISTS THAT SHARE NOTHING, SO THEY CANNOT TELL THEY SERVE ONE WALLET', () => {
-    const at = (origin: string, company: string) => parseAsk({
+    const at = (origin: string, company: CompanyLabel) => parseAsk({
       schema: 'midnight-identity/disclosure-request/v1', kind: 'unlock',
       requester: { name: 'A payroll', rdns: 'example.payroll' }, purpose: 'Payslips.',
       company, nonce: 'the-same-nonce', expiresAt: NOW + 60_000,
     }, origin, NOW) as UnlockRequest;
-    const OTHER_CO = '54ef954a25aefff8e1675af10a852ef29d5de5c63a51b64b978bf7bd0eaeca4e';
+    const OTHER_CO = OTHER_COMPANY;
     const first = releaseFor(mine, at(ORIGIN, COMPANY), NOW, undefined, [MY_MAIN, MY_SUB]).held!;
     const otherSite = releaseFor(mine, at('https://other-payroll.example', COMPANY), NOW, undefined, [MY_MAIN, MY_SUB]).held!;
     const otherCompany = releaseFor(mine, at(ORIGIN, OTHER_CO), NOW, undefined, [MY_MAIN, MY_SUB]).held!;
@@ -176,7 +186,7 @@ describe('THE RELEASE CARRIES IT, AND THE PAGE TESTS ONLY WHAT IT HAS', () => {
 
   it('a wallet that says nothing reads as nothing, and still releases', () => {
     const read = readRelease(releaseFor(mine, ask('page-nonce'), NOW),
-      { atOrigin: ORIGIN, expectingNonce: 'page-nonce', forCompany: COMPANY });
+      { atOrigin: ORIGIN, expectingNonce: 'page-nonce', forCompany: COMPANY, forAccount: null });
     expect(read.ok).toBe(true);
     /* RED WHEN an absent list reads as an empty list that could be tested. */
     expect(read.ok && read.held).toBeNull();

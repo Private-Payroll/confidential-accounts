@@ -54,6 +54,7 @@ import { floorKnownAbsent } from './dust-fee-floor.js';
 import { testEnvironmentFor, startEnvironment } from './test-environment.js';
 import { readOrCreatePreviewSigners } from './preview-signers.js';
 import { storedSignerLeaf } from '../src/core/signer-leaf.js';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { MidnightCommitments } from '../src/midnight/commitments.js';
 import { collapseRepeatedLines, describeDropped, serialiseWholeDetailed } from './error-report.js';
 import {
@@ -1190,6 +1191,13 @@ async function main() {
     // one.
     signerLeaves: [foundingLeaf],
     threshold: Number(THRESHOLD),
+    /*
+     * THE COMPANY'S LABEL. The founding signer here is signer A, whose material
+     * this script made and holds, so it draws the label as A's wallet would:
+     * with the wallet's own draw. Every signer's wallet derives this company's
+     * keys from the label it reads back off the account.
+     */
+    companyLabel: drawCompanyLabel(),
     assetBlinding,
     sealedState: { keyEpoch: GENESIS_KEY_EPOCH, sealed: { iv: '', tag: '', body: '' } },
   };

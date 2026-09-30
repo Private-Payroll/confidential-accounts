@@ -18,10 +18,12 @@ import { framingOf, listen } from 'midnight-identity/profile/channel';
 import type { Channel, ChannelState, ChannelWindow } from 'midnight-identity/profile/channel';
 import { mint } from 'midnight-identity/profile/disclosure';
 import { keyringReleaseFor, releaseFor } from 'midnight-identity/profile/unlock';
+import { CompanyOnChain, accountCarriesTheLabel, liveLabelReader, useCompanyCheck } from './company-on-chain.js';
+import type { LabelReader } from './company-on-chain.js';
 /* The envelope an acceptance travels in, and the wire contract that
  * decides its shape. Nothing else in this app seals anything to a stranger. */
 import { sealToInbox } from 'midnight-identity/profile/inbox';
-/* A RENDERING of the company's address. It is not, and must never
+/* A RENDERING of the company's label and its account together. It is not, and must never
  * become, an input to anything derived; `profile/fingerprint.ts` says why.
  * THE SECOND SUBJECT: a rendering of the RECEIVING ADDRESS this
  * screen is about to disclose, for the person to carry back to the page that
@@ -136,7 +138,7 @@ import { toBase64Url } from 'midnight-identity/passkey/bytes';
  * -- THE WALLET CAN SAY WHERE TO PAY YOU, AND IT IS A ROW RATHER THAN A
  * FOURTH KIND -------------------------------------------------------------
  *
- * A founder who signs in with their wallet could not be paid, because nothing
+ * A founding signer who signs in with their wallet could not be paid, because nothing
  * in this protocol hands over a receiving address. **The shape taken is (a):
  * the disclosure ask asks for it BY NAME, like any other attribute, and this
  * screen fills it in from the subwallet the person chose — never from `held`,
@@ -230,7 +232,7 @@ const dateOf = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
  * larger than the fact that checks it is a claim this interface has endorsed.**
  *
  * So the two are named here rather than typed at each call site: a FACT — the
- * observed origin, the company's own address — is never smaller than a CLAIM,
+ * observed origin, the company's fingerprint — is never smaller than a CLAIM,
  * which is anything the asking site chose to call itself. `unlock-screen.test`
  * ranks the tokens and fails if that inverts.
  */
@@ -309,7 +311,7 @@ const rowsFor = (
 
 export function Approve({
   identity, secret, registry = REGISTRY, port = browserPort(), view, now = Date.now,
-  embedder = EMBEDDER,
+  embedder = EMBEDDER, readLabel = liveLabelReader,
 }: {
   readonly identity: Identity;
   readonly secret: Secret;
@@ -320,6 +322,8 @@ export function Approve({
   readonly now?: () => number;
   /** The one page allowed to frame this wallet. Injected so a test can frame it. */
   readonly embedder?: string | null;
+  /** How a company's account is read off the chain. Injected so a test can answer. */
+  readonly readLabel?: LabelReader;
 }): ReactNode {
   /*
    * **EVERY PRESS THAT SENDS SOMETHING IS GATED ON WHAT CAN BE SEEN.** In a
@@ -395,6 +399,18 @@ export function Approve({
   }, [identity, port, now]);
 
   const request: Ask | null = channelState.of === 'request' ? channelState.request : null;
+  /*
+   * **THE COMPANY AN UNLOCK OR A KEYRING ASK NAMES, READ OFF ITS ACCOUNT BY
+   * THIS WALLET** (`company-on-chain.tsx`). A key for a company is given only
+   * once the account the page names has been read and carries the label the
+   * page names. An ask to start a company names neither, and reads nothing.
+   */
+  const labelAsked = request !== null && (request.kind === 'unlock' || request.kind === 'keyring')
+    ? request.company : null;
+  const accountAsked = request !== null && (request.kind === 'unlock' || request.kind === 'keyring')
+    ? request.account : null;
+  const companyCheck = useCompanyCheck(labelAsked, accountAsked, readLabel);
+  const companyOnChain = accountCarriesTheLabel(companyCheck, labelAsked);
   /* The dwell is timed from the moment THIS request is on screen, not from when
    * the screen mounted: a page that holds its request back until the wait has
    * run out would otherwise put a pressable button up the instant it arrives. */
@@ -671,7 +687,7 @@ export function Approve({
    */
   const release = useCallback((): void => {
     if (request === null || request.kind !== 'unlock' || profile === null
-      || channel === null) return;
+      || channel === null || !companyOnChain) return;
     const at = now();
     /* The origin is read off the PARSED ask, which the parser put there from
      * `MessageEvent.origin`. `releaseFor` takes the ask rather than a string,
@@ -696,15 +712,17 @@ export function Approve({
         name: request.requester.name,
         rdns: request.requester.rdns,
       },
-      /* WHICH COMPANY, so a later ask for the same one from a different
-       * host can be shown as such. **Read to warn, never read into a key.** */
+      /* WHICH COMPANY, and on which account, so a later ask for the same one
+       * from a different host can be shown as such. **Read to warn, never read
+       * into a key.** */
       company: request.company,
+      account: request.account,
     }, at);
     setProfile(next);
     setSentAt(at);
     void save(port, identity, next).catch(
       () => setProblem('The key was given, and this wallet could not write down that it was.'));
-  }, [request, profile, channel, identity, port, now]);
+  }, [request, profile, channel, identity, port, now, companyOnChain]);
 
   /**
    * **WHICH OF THIS WALLET'S OWN ACCOUNTS HAS THE ADDRESS A KEYRING ASK SAYS THE
@@ -730,6 +748,8 @@ export function Approve({
   const releaseKeyring = useCallback((): void => {
     if (request === null || request.kind !== 'keyring' || profile === null
       || channel === null) return;
+    /* A company's key goes only once its account has been read and carries its label. */
+    if (request.company !== null && !companyOnChain) return;
     const at = now();
     /* With no address named, this browser's note of which wallet answered that
      * page's last sign-in is the only gate there is, and it is checked here as
@@ -748,9 +768,10 @@ export function Approve({
     channel.answer(answer);
     setSentAt(at);
     /* A company's key given in the same answer is written down as any company's
-     * key is, so a later ask for it from a different host is shown as such. The
-     * keyring key has no company, and nothing about it is written down. */
-    if (request.company === null) return;
+     * key is, so a later ask for it from a different host is shown as such -
+     * including the key for a company this wallet has just drawn the label of.
+     * The keyring key has no company, and nothing about it is written down. */
+    if (answer.company === null) return;
     const next = recordRelease(profile, {
       at,
       nonce: request.nonce,
@@ -759,12 +780,13 @@ export function Approve({
         name: request.requester.name,
         rdns: request.requester.rdns,
       },
-      company: request.company,
+      company: answer.company,
+      account: answer.account,
     }, at);
     setProfile(next);
     void save(port, identity, next).catch(
       () => setProblem('The key was given, and this wallet could not write down that it was.'));
-  }, [request, profile, channel, identity, port, now, addressesHeld, thisWallet]);
+  }, [request, profile, channel, identity, port, now, addressesHeld, thisWallet, companyOnChain]);
 
   /*
    * ── THE THREE STATES THAT DO NOT KNOW WHICH KIND OF ASK THIS IS ──────────
@@ -880,12 +902,16 @@ export function Approve({
             <span className="font-mono break-all">{request.requester.origin}</span>
             {' the key to the records company '}
             <span className="font-mono tracking-wide" data-given-fingerprint>
-              {companyFingerprint(request.company)}
+              {request.account !== null ? companyFingerprint(request.company, request.account) : request.company}
             </span>
             {' keeps for you.'}
           </p>
           <p className="m-0 text-sm text-muted-foreground" style={{ marginTop: '0.5rem' }}>
-            That company’s address in full
+            That company’s account in full
+          </p>
+          <p className="m-0 font-mono break-all text-sm text-muted-foreground">{request.account}</p>
+          <p className="m-0 text-sm text-muted-foreground" style={{ marginTop: '0.5rem' }}>
+            And its label
           </p>
           <p className="m-0 font-mono break-all text-sm text-muted-foreground">{request.company}</p>
         </div>
@@ -914,7 +940,8 @@ export function Approve({
             {`On ${dateOf(sentAt)} you gave `}
             <span className="font-mono break-all">{request.requester.origin}</span>
             {' the key to the keys this wallet saved under the account name it gave'}
-            {request.company !== null ? ', and the key to the records one company keeps for you.' : '.'}
+            {request.company !== null ? ', and the key to the records one company keeps for you.'
+              : request.drawLabel ? ', and your keys for the new company it is setting up.' : '.'}
           </p>
         </div>
         <StatusAlert tone="info" role={null} title="What they can do now">
@@ -1161,6 +1188,7 @@ export function Approve({
         consent={consent}
         whoIsAsking={whoIsAsking}
         onDecline={() => { channel?.refuse('declined'); setChannelState({ of: 'waiting' }); }}
+        readLabel={readLabel}
       />
     );
   }
@@ -1180,6 +1208,7 @@ export function Approve({
         onDecline={(why) => { payingChannel?.refuse(why ?? 'declined'); setChannelState({ of: 'waiting' }); }}
         onStage={(shown) => recordAsk(portNow.current, 'shown', shown, now())}
         onBusy={setWalletLocked}
+        readLabel={readLabel}
       />
     );
   }
@@ -1194,7 +1223,7 @@ export function Approve({
      * stopped depending on one. Losing every row costs this warning and cannot
      * cost access.
      */
-    const elsewhere = originsFor(profile ?? emptyProfile(now()), request.company)
+    const elsewhere = originsFor(profile ?? emptyProfile(now()), request.company, request.account)
       .filter((origin) => origin !== request.requester.origin);
     /* Read at render, from this browser's own record of which wallet signed in to this page. */
     const notThisWallet = whyNotThisWallet(port, request.requester.origin, thisWallet);
@@ -1233,35 +1262,19 @@ export function Approve({
             The company whose records it wants to open, as the page names it
           </p>
           {/*
-            * **THE THING A PERSON CAN ACTUALLY COMPARE.** This screen
-            * asked somebody to recognise a company and then showed them
-            * sixty-four characters of hex — the one instruction on the page a
-            * person must follow being the one no person can. This is that same
-            * address, rendered twenty characters wide; `profile/fingerprint.ts`
-            * carries the arithmetic for the width and the reason it is not the
-            * two digits `devices/pairing.ts` shows.
+            * **THE THING A PERSON CAN ACTUALLY COMPARE**, rendered twenty
+            * characters wide from the company's label and its account together,
+            * and only once this wallet has read the account and found the label
+            * on it. `profile/fingerprint.ts` carries the arithmetic for the
+            * width and the reason it covers both.
             */}
-          <p
-            className={`m-0 font-mono tracking-wide text-foreground ${FINGERPRINT_TEXT}`}
-            data-company-fingerprint
-          >
-            {companyFingerprint(request.company)}
-          </p>
-          <p className="m-0 text-sm text-muted-foreground">
-            Those twenty characters stand for this company and are the same in every wallet,
-            for ever. If somebody told you which company to expect — in the invitation you
-            accepted, or by email or over the phone — that is what they can tell you, and
-            this is where you check it. Compare all of it, not the ends.
-          </p>
+          <CompanyOnChain
+            label={request.company} account={request.account} check={companyCheck}
+            fingerprintClass={FINGERPRINT_TEXT}
+          />
           <p className="m-0 text-sm text-muted-foreground" style={{ marginTop: '0.75rem' }}>
-            The address it stands for, in full
-          </p>
-          <p className={`m-0 font-mono break-all text-foreground ${FACT_TEXT}`} data-company>
-            {request.company}
-          </p>
-          <p className="m-0 text-sm text-muted-foreground" style={{ marginTop: '0.75rem' }}>
-            This wallet cannot check that those two belong together. It can only show you
-            both. If you do not recognise the company, do not give the key.
+            This wallet cannot check that the company belongs to the page asking. It can only
+            show you both. If you do not recognise the company, do not give the key.
           </p>
         </Section>
 
@@ -1282,7 +1295,7 @@ export function Approve({
                 * to be inferred from the section above. */}
               <p className="m-0">The company is</p>
               <p className="m-0 font-mono tracking-wide text-foreground" data-warning-fingerprint>
-                {companyFingerprint(request.company)}
+                {companyOnChain && request.account !== null ? companyFingerprint(request.company, request.account) : 'The company named above, once this wallet has checked it'}
               </p>
               <p className="m-0" style={{ marginTop: '0.5rem' }}>
                 Before now, this company’s key has gone to
@@ -1378,7 +1391,7 @@ export function Approve({
           {/* Disabled for a wallet that did not answer this page's last sign-in: a
             * disabled button fires no press in React, by click or by key, so this is
             * the gate and `release` has no second copy of it. */}
-          <Button size="lg" type="button" variant="default" onClick={release} disabled={!consent.ok || notThisWallet !== null} data-approve data-unlock>
+          <Button size="lg" type="button" variant="default" onClick={release} disabled={!consent.ok || notThisWallet !== null || !companyOnChain} data-approve data-unlock>
             {`Give ${request.requester.origin} the key`}
           </Button>
           <Button
@@ -1403,7 +1416,7 @@ export function Approve({
      * note of which wallet answered that page's last sign-in is what is left. */
     const notThisWallet = request.signedInAs === null
       ? whyNotThisWallet(port, request.requester.origin, thisWallet) : null;
-    const elsewhere = request.company === null ? [] : originsFor(profile ?? emptyProfile(now()), request.company)
+    const elsewhere = request.company === null ? [] : originsFor(profile ?? emptyProfile(now()), request.company, request.account)
       .filter((origin) => origin !== request.requester.origin);
     return (
       <>
@@ -1452,18 +1465,38 @@ export function Approve({
           </p>
         </Section>
 
+        {request.drawLabel && (
+          <Section
+            list={false} box={false} aria-label="And the keys to a new company"
+            title="And the keys to a new company"
+            description="The page is setting up a company, and you are its founding signer."
+          >
+            <p className="m-0 text-sm text-foreground" data-new-company>
+              This wallet makes up the new company&rsquo;s label itself, when you press the button, and gives the page
+              that label with your keys for it. The page does not choose it. Every other signer&rsquo;s wallet works
+              out their own keys from the same label later.
+            </p>
+            <p className="m-0 text-sm text-muted-foreground" data-new-company-no-fingerprint>
+              The company has no account on the chain yet, so there is no fingerprint to compare. Give the keys only
+              if you are setting this company up yourself, on this page, now.
+            </p>
+            <p className="m-0 text-sm text-muted-foreground" data-committee-key-given>
+              The answer also carries the public half of the key you will sit on the company&rsquo;s committee with, so
+              the company can list it. The half that signs never leaves this wallet.
+            </p>
+          </Section>
+        )}
+
         {request.company !== null && (
           <Section
             list={false} box={false} aria-label="And the key to one company's records"
             title="And the key to one company's records"
             description="Asked for in the same answer, so the page knows both came from one wallet."
           >
-            <p className={`m-0 font-mono tracking-wide text-foreground ${FINGERPRINT_TEXT}`} data-company-fingerprint>
-              {companyFingerprint(request.company)}
-            </p>
-            <p className={`m-0 font-mono break-all text-foreground ${FACT_TEXT}`} data-company>
-              {request.company}
-            </p>
+            <CompanyOnChain
+              label={request.company} account={request.account} check={companyCheck}
+              fingerprintClass={FINGERPRINT_TEXT}
+            />
             <p className="m-0 text-sm text-muted-foreground">
               That company&rsquo;s key is what your payslip key there is worked out from. This wallet
               cannot check that the company belongs to that page; it can only show you both.
@@ -1481,7 +1514,9 @@ export function Approve({
           <StatusAlert tone="warning" title="You have given this company’s key to a different page before">
             <div data-seen-elsewhere>
               <p className="m-0">The company is</p>
-              <p className="m-0 font-mono tracking-wide text-foreground">{companyFingerprint(request.company)}</p>
+              <p className="m-0 font-mono tracking-wide text-foreground">
+                {companyOnChain && request.account !== null ? companyFingerprint(request.company, request.account) : 'The company named above, once this wallet has checked it'}
+              </p>
               <p className="m-0" style={{ marginTop: '0.5rem' }}>Before now, this company’s key has gone to</p>
               {elsewhere.map((origin) => (
                 <p className="m-0 font-mono text-foreground" key={origin}>{origin}</p>
@@ -1574,7 +1609,7 @@ export function Approve({
             type="button"
             variant="default"
             onClick={releaseKeyring}
-            disabled={!consent.ok || notHeld || notThisWallet !== null}
+            disabled={!consent.ok || notHeld || notThisWallet !== null || (request.company !== null && !companyOnChain)}
             data-approve
             data-keyring
           >

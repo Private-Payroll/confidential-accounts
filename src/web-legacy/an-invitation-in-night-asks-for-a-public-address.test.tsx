@@ -11,7 +11,6 @@
  * before it is stood in for too, answering a fixed key, as in that file; the
  * count of asks below is of address asks only.
  */
-import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/react';
 import { bech32m } from '@scure/base';
@@ -110,7 +109,7 @@ afterEach(() => {
 function aServer(asset: string) {
   const accepted: unknown[] = [];
   const offer = {
-    company: 'Acme Ltd', companyAddress: ACME, inboxPublicKey: newWrappingKeypair().publicKey,
+    company: 'Acme Ltd', companyLabel: 'co_' + ACME, companyAccount: ACME, inboxPublicKey: newWrappingKeypair().publicKey,
     name: 'Dana', title: 'Engineer', email: null, asset, baseAmount: { $n: '5000000000' },
     startDate: '2026-10-01T00:00:00.000Z', expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
   };

@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import {
   createCompanyVault, depositIntoCompanyVault, openCompanyVaultPool, DepositNotYetSeen, VaultHandoverOwed,
   DepositNotSent, DepositStillInFlight, DepositLandedNotYetRecorded, settleDepositInFlight, DEPOSIT_TIME_TO_LIVE_MS,
@@ -47,7 +48,9 @@ const inFlightInMemory = <T,>(kept = new Map<string, Kept<T>>()): KeptOnThisDevi
  * `contracts/test/a-company-vault-from-the-page.test.ts`.
  */
 const VAULT = 'ab'.repeat(32);
-const ACCOUNT = 'c0'.repeat(32);
+/* The company's account, and the label it carries. */
+const ACCOUNT = 'c0'.repeat(32) as AccountAddress;
+const LABEL = `co_${'c1'.repeat(32)}` as CompanyLabel;
 const committee = { committee: [{ tag: 'schnorr', value: '11'.repeat(32) }], threshold: 1 };
 const pacing = { sleep: async () => {}, waitMs: 3, everyMs: 1 };
 /* Stand-in ledger parameters: the header the ledger writes them under, and nothing a ledger could read. */
@@ -251,7 +254,7 @@ describe('THE POOL AND A DEPOSIT', () => {
     /* The chain has the vault and its state, so the only thing refusing is who holds it. */
     const stillOurs = view({ ...oneKey, state: 'AAAA', notes: [], everCreated: [] });
     await expect(depositIntoCompanyVault({
-      ...poolDoors(serviceFrom([stillOurs], log), records), company: ACCOUNT, inFlight: inFlightInMemory(), builder: builder(log),
+      ...poolDoors(serviceFrom([stillOurs], log), records), company: LABEL, account: ACCOUNT, inFlight: inFlightInMemory(), builder: builder(log),
       pay: async () => { log.push('paid'); return { transaction: 'X', leaves: [] }; },
     }, VAULT, { token: 'ab'.repeat(32), value: 1n })).rejects.toThrow(/not held by the company's committee/);
     expect(log).toEqual([]);
@@ -269,7 +272,7 @@ describe('THE POOL AND A DEPOSIT', () => {
     });
     await openCompanyVaultPool(poolDoors(serviceFrom([vaultOnly], log), records), VAULT);
     await expect(depositIntoCompanyVault({
-      ...poolDoors(serviceFrom([vaultOnly], log), records), company: ACCOUNT, inFlight: inFlightInMemory(), builder: builder(log),
+      ...poolDoors(serviceFrom([vaultOnly], log), records), company: LABEL, account: ACCOUNT, inFlight: inFlightInMemory(), builder: builder(log),
       pay: async () => { log.push('paid'); return { transaction: 'X', leaves: [] }; },
     }, VAULT, { token: 'ab'.repeat(32), value: 7n })).rejects.toThrow(/account is still held by the temporary key/);
     expect(log).toEqual([]);
@@ -282,7 +285,7 @@ describe('THE POOL AND A DEPOSIT', () => {
     const ready = view({ heldByCommittee: true, fundable: true, state: 'AAAA', notes: [], everCreated: [] });
     await openCompanyVaultPool(poolDoors(serviceFrom([ready], log), records), VAULT);
     const e = await depositIntoCompanyVault({
-      ...poolDoors(serviceFrom([ready], log), records), company: ACCOUNT, inFlight: inFlightInMemory(), builder: builder(log),
+      ...poolDoors(serviceFrom([ready], log), records), company: LABEL, account: ACCOUNT, inFlight: inFlightInMemory(), builder: builder(log),
       pay: async () => { log.push('paid'); return { transaction: 'X', leaves: [] }; },
     }, VAULT, { token: 'ab'.repeat(32), value: 7n }).catch((x) => x);
     expect(e).toBeInstanceOf(DepositNotYetSeen);
@@ -324,7 +327,7 @@ describe('THE POOL AND A DEPOSIT', () => {
     })).held));
     const taken = view({ heldByCommittee: true, fundable: true, state: 'AAAA', notes: await heldAt([4, 5, 6]), everCreated: await madeAt([1, 2, 3]) });
     const e = await depositIntoCompanyVault({
-      ...poolDoors(serviceFrom([taken], log), records), company: ACCOUNT, inFlight: inFlightInMemory(), builder: real(log),
+      ...poolDoors(serviceFrom([taken], log), records), company: LABEL, account: ACCOUNT, inFlight: inFlightInMemory(), builder: real(log),
       pay: async () => { log.push('paid'); return { transaction: 'X', leaves: [] }; },
     }, VAULT, money).catch((x) => x);
     /* RED WHEN: the worker's `output` is not the ledger's commitment (the held one, say), or the history is not asked. */
@@ -336,7 +339,7 @@ describe('THE POOL AND A DEPOSIT', () => {
     const built: string[] = [];
     const two = view({ heldByCommittee: true, fundable: true, state: 'AAAA', notes: [], everCreated: [...await madeAt([1, 3]), 'f1'.repeat(32)] });
     await depositIntoCompanyVault({
-      ...poolDoors(serviceFrom([two], log2), records), company: ACCOUNT, inFlight: inFlightInMemory(),
+      ...poolDoors(serviceFrom([two], log2), records), company: LABEL, account: ACCOUNT, inFlight: inFlightInMemory(),
       builder: { ...real(log2), deposit: async (i) => { built.push(i.coin.nonce); return { tx: 'P' }; } },
       pay: async () => ({ transaction: 'X', leaves: [] }),
     }, VAULT, money).catch(() => undefined);
@@ -361,7 +364,7 @@ describe('THE POOL AND A DEPOSIT', () => {
       /* RED WHEN: the parameters are read after the coin is chosen, or a failed or foreign read is let through -
        * the journal then holds a coin, and the log carries 'build deposit' or 'paid'. */
       const said = await depositIntoCompanyVault({
-        ...poolDoors(serviceFrom([ready], log, over), records), company: ACCOUNT, inFlight: inFlightInMemory(), builder: builder(log),
+        ...poolDoors(serviceFrom([ready], log, over), records), company: LABEL, account: ACCOUNT, inFlight: inFlightInMemory(), builder: builder(log),
         pay: async () => { log.push('paid'); return { transaction: 'X', leaves: [] }; },
       }, VAULT, { token: 'ab'.repeat(32), value: 7n }).then(() => 'it went ahead', (x: Error) => x.message);
       /* RED WHEN: a block that cannot be read is called an answer the service got wrong, or the other way round. */
@@ -387,7 +390,7 @@ describe('THE POOL AND A DEPOSIT', () => {
       await openCompanyVaultPool(poolDoors(serviceFrom([ready], log), records), VAULT);
       const e = await depositIntoCompanyVault({
         ...poolDoors(serviceFrom([ready], log, { payoutState: async () => { throw new Error(said); } }), records),
-        company: ACCOUNT, inFlight: inFlightInMemory(), builder: builder(log),
+        company: LABEL, account: ACCOUNT, inFlight: inFlightInMemory(), builder: builder(log),
         pay: async () => { log.push('paid'); return { transaction: 'X', leaves: [] }; },
       }, VAULT, { token: 'ab'.repeat(32), value: 7n }).catch((x: Error) => x);
       expect((e as Error).message, said).toMatch(/current parameters could not be read.*no coin was chosen/);
@@ -409,7 +412,7 @@ describe('THE POOL AND A DEPOSIT', () => {
         ...poolDoors(serviceFrom([ready], log, {
           payoutState: async (v) => ({ vault: v, account: ACCOUNT, blockHash: 'B1', vaultState: 'V', zswapState: 'Z', parameters: served, accountState: 'A' }),
         }), records),
-        company: ACCOUNT, inFlight: inFlightInMemory(), builder: builder(log),
+        company: LABEL, account: ACCOUNT, inFlight: inFlightInMemory(), builder: builder(log),
         pay: async () => { log.push('paid'); return { transaction: 'X', leaves: [] }; },
       }, VAULT, { token: 'ab'.repeat(32), value: 7n }).catch((x: Error) => x);
       /* RED WHEN: only the header's start is checked, so another version reaches the worker after the journal line is filed. */
@@ -486,7 +489,7 @@ describe('A DEPOSIT THAT DOES NOT FINISH', () => {
     const doors = {
       ...pacing, service: t.service, me, myRecordsKey: 'ff'.repeat(32), records,
       signers: async () => [{ id: 'ada', wrappingPublicKey: wrapping.publicKey }],
-      company: ACCOUNT, builder: t.b, inFlight: inFlightInMemory(kept), clock: () => now,
+      company: LABEL, account: ACCOUNT, builder: t.b, inFlight: inFlightInMemory(kept), clock: () => now,
       pay: async (ask: { transaction: string }) => ({ transaction: `${ask.transaction}+coins`, leaves: [] }),
     };
     await openCompanyVaultPool(doors, VAULT);
@@ -804,7 +807,7 @@ describe('WHAT THIS BROWSER LAST SENT, CHECKED ON ITS OWN, AND TWO TABS OR TWO B
     const browser = (kept = new Map<string, Kept<DepositInFlight>>()) => ({
       kept,
       doors: {
-        ...pacing, service, me, myRecordsKey: 'ff'.repeat(32), records, signers, company: ACCOUNT, builder: b,
+        ...pacing, service, me, myRecordsKey: 'ff'.repeat(32), records, signers, company: LABEL, account: ACCOUNT, builder: b,
         inFlight: inFlightInMemory<DepositInFlight>(kept), payments: inFlightInMemory<PaymentInFlight>(),
         pay: async (ask: { transaction: string }) => {
           w.asked += 1;
@@ -1318,7 +1321,7 @@ describe('A PRIVATE PAYMENT OUT', () => {
     paymentEvents.set(PAID_IN, await eventsOfAPayment(PAID_IN, CHANGE));
     const d = t.doors({}, [view({ heldByCommittee: true, fundable: true, notes: [heldChange] })]);
     const found = await checkWhatThisBrowserSent({
-      ...d, builder: withRealOutputs(d.builder), company: ACCOUNT, inFlight: inFlightInMemory<DepositInFlight>(), payments: d.inFlight,
+      ...d, builder: withRealOutputs(d.builder), company: LABEL, account: ACCOUNT, inFlight: inFlightInMemory<DepositInFlight>(), payments: d.inFlight,
       pay: async () => { throw new Error('a check asks no wallet'); }, clock: () => NOW.getTime(),
     }, VAULT);
     /* RED WHEN: the check does not settle a payment on its way - the payment messages send people to it for nothing. */

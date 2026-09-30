@@ -55,6 +55,7 @@ import { identityFromWords, newWords } from 'midnight-identity';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
 import { parseAsk } from 'midnight-identity/profile/request';
 import { unlockKeyFor } from 'midnight-identity/profile/unlock';
+import { companyLabelOf, readAccountAddress } from 'midnight-identity/profile/company-label';
 import * as vaultModule from '../managed-vault/contract/index.js';
 import * as accountModule from '../managed/contract/index.js';
 import { witnesses, type AccountPrivateState } from '../src/witnesses.js';
@@ -121,10 +122,13 @@ const vaultLedgerOf = (state: { serialize(): Uint8Array }) => (vaultModule as an
 const accountLedgerOf = (state: { serialize(): Uint8Array }) => (accountModule as any).ledger(asRuntime(state).data);
 const accountCircuits = (accountModule as any).pureCircuits;
 
-const releasedCompanyKey = (words: string, company: string): Uint8Array => {
+/** The label the account below carries, as its founding signer's wallet drew it. */
+const LABEL = companyLabelOf(COMPANY_LABEL);
+
+const releasedCompanyKey = (words: string, account: string): Uint8Array => {
   const ask = parseAsk(unlockAsk({
     name: 'Confidential Accounts', rdns: 'social.lemonade.confidential-accounts', purpose: UNLOCK_PURPOSE,
-    nonce: 'derivation-has-no-conversation', expiresAt: UNLOCK_WINDOW_MS, company,
+    nonce: 'derivation-has-no-conversation', expiresAt: UNLOCK_WINDOW_MS, company: LABEL, account: readAccountAddress(account),
   }), 'https://payroll.example', 0);
   if (ask.kind !== 'unlock') throw new Error('not an unlock');
   return unlockKeyFor(identityFromWords(words), ask);
@@ -304,7 +308,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     /* A company of one, with its roster sealed under a viewing key the page holds, as the product keeps it. */
     viewingKey = toHex(new Uint8Array(32).fill(0x5e));
     store.putAccount(sealAccount({
-      id: ACCOUNT_ID, createdAt: new Date().toISOString(), name: 'Northwind',
+      id: ACCOUNT_ID, createdAt: new Date().toISOString(), name: 'Northwind', companyLabel: LABEL,
       signers: [{
         id: 'ada', userId: 'ada', name: 'Ada', status: 'active', role: 'admin', leafCommitment: null,
         signingPublicKey: signing.publicKey, wrappingPublicKey: wrapping.publicKey,
@@ -483,16 +487,16 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
       body: {
         viewingKey,
         ...signVaultKeys(ACCOUNT_ID, 'ada', {
-          committeeKey: committeeKeyFor(identityFromWords(words), company), recordsKey: recordsReaderOf(me.companyKey).publicKey,
+          committeeKey: committeeKeyFor(identityFromWords(words), LABEL), recordsKey: recordsReaderOf(me.companyKey).publicKey,
         }, signing.secret),
       },
     });
-    const { vault } = await createCompanyVault({ ...pacing, account: company, service, builder: builder(), keys });
+    const { vault } = await createCompanyVault({ ...pacing, account: readAccountAddress(company)!, service, builder: builder(), keys });
     const poolDoors = { ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records };
     await openCompanyVaultPool(poolDoors, vault);
     const authority = await http(`${at}/authority`);
     await http(`${at}/authority/handover`, { method: 'POST', body: { committee: authority.committee } });
-    const deposited = await depositIntoCompanyVault({ ...poolDoors, company, builder: builder(), pay: wallet, inFlight: inFlightInMemory() }, vault, { token: TOKEN, value: 1_000n });
+    const deposited = await depositIntoCompanyVault({ ...poolDoors, company: LABEL, account: readAccountAddress(company)!, builder: builder(), pay: wallet, inFlight: inFlightInMemory() }, vault, { token: TOKEN, value: 1_000n });
     return { vault, note: deposited.note };
   };
 
@@ -827,7 +831,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     const notesBefore = [...vaultLedgerOf(chain.contract(vault)).notes].map((c: Uint8Array) => hex(c));
     const doors = {
       ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records,
-      company, builder: builder(), inFlight: inFlightInMemory(),
+      company: LABEL, account: readAccountAddress(company)!, builder: builder(), inFlight: inFlightInMemory(),
     };
 
     const done = await depositFromSource(doors, vault, publicTokenFromTheWallet(pay, PUBLIC_REGISTRY), { code: 'PUBT', value: 900n });
@@ -868,7 +872,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     const { pay } = await aPublicWallet([1_000n]);
     const doors = {
       ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records,
-      company, builder: builder(), inFlight: inFlightInMemory(),
+      company: LABEL, account: readAccountAddress(company)!, builder: builder(), inFlight: inFlightInMemory(),
     };
     await depositFromSource(doors, vault, publicTokenFromTheWallet(pay, PUBLIC_REGISTRY), { code: 'PUBT', value: 1_000n });
     expect(publicBalance(vault)).toBe(1_000n);
@@ -893,7 +897,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     const { pay } = await aPublicWallet([1_000n, 1_000n, 1_000n, 1_000n]);
     const doors = {
       ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records,
-      company, builder: builder(), inFlight: inFlightInMemory(),
+      company: LABEL, account: readAccountAddress(company)!, builder: builder(), inFlight: inFlightInMemory(),
     };
     const applied = chain.applied.length;
     const refusedBy = async (svc: VaultService) => {

@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { RequestError, parseAsk } from './request.js';
 import type { BalanceRequest } from './request.js';
 import { BALANCED_SCHEMA, balancedAnswerFor, readBalancedAnswer } from './balance.js';
+import type { AccountAddress, CompanyLabel, VaultAddress } from './company-label.js';
 
 const NOW = 1_755_000_000_000;
 const A = 'https://payroll-a.example';
-const CO = 'dbe119a304f8e7ea882353435c1d536cf2faf4298236a9aae77670e750af65c8';
-const VAULT = '54ef954a25aefff8e1675af10a852ef29d5de5c63a51b64b978bf7bd0eaeca4e';
+const CO = 'co_1f2e3d4c5b6a79880a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f6071' as CompanyLabel;
+const ACCOUNT = 'dbe119a304f8e7ea882353435c1d536cf2faf4298236a9aae77670e750af65c8' as AccountAddress;
+const VAULT = '54ef954a25aefff8e1675af10a852ef29d5de5c63a51b64b978bf7bd0eaeca4e' as VaultAddress;
 const TX = 'AAECAwQFBgc=';
 const TOKEN = 'ab'.repeat(32);
 
@@ -18,6 +20,7 @@ const wire = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
   nonce: 'b1',
   expiresAt: NOW + 60_000,
   company: CO,
+  account: ACCOUNT,
   vault: VAULT,
   transaction: TX,
   ...over,
@@ -30,21 +33,27 @@ const codeOf = (raw: Record<string, unknown>): string => {
 const without = (key: string) => { const w = wire(); delete w[key]; return w; };
 
 describe('A BALANCE ASK', () => {
-  it('parses, folds both addresses to one spelling, and carries the transaction untouched', () => {
-    const ask = parseAsk(wire({ company: CO.toUpperCase(), vault: VAULT.toUpperCase() }), A, NOW);
+  it('parses, folds both addresses to one spelling, keeps the label as written, and carries the transaction untouched', () => {
+    const ask = parseAsk(wire({ account: ACCOUNT.toUpperCase(), vault: VAULT.toUpperCase() }), A, NOW);
     expect(ask.kind).toBe('balance');
     const b = ask as BalanceRequest;
     expect(b.company).toBe(CO);
+    expect(b.account).toBe(ACCOUNT);
     expect(b.vault).toBe(VAULT);
     expect(b.transaction).toBe(TX);
     expect(b.requester.origin).toBe(A);
     expect(Object.keys(b).sort()).toEqual(
-      ['company', 'expiresAt', 'kind', 'nonce', 'purpose', 'requester', 'schema', 'transaction', 'vault']);
+      ['account', 'company', 'expiresAt', 'kind', 'nonce', 'purpose', 'requester', 'schema', 'transaction', 'vault']);
   });
 
   it('refuses a company, a vault or a transaction it cannot read, each by name', () => {
-    expect(codeOf(without('company'))).toBe('not-a-company-address');
-    expect(codeOf(wire({ company: `0x${CO.slice(2)}` }))).toBe('not-a-company-address');
+    expect(codeOf(without('company'))).toBe('not-a-company-label');
+    /* RED WHEN: the balance kind takes an address for the company, or a label for the account. */
+    expect(codeOf(wire({ company: ACCOUNT }))).toBe('not-a-company-label');
+    expect(codeOf(wire({ company: CO.toUpperCase() }))).toBe('not-a-company-label');
+    expect(codeOf(without('account'))).toBe('not-an-account-address');
+    expect(codeOf(wire({ account: CO }))).toBe('not-an-account-address');
+    expect(codeOf(wire({ vault: CO }))).toBe('not-a-vault-address');
     expect(codeOf(without('vault'))).toBe('not-a-vault-address');
     expect(codeOf(wire({ vault: VAULT.slice(1) }))).toBe('not-a-vault-address');
     expect(codeOf(without('transaction'))).toBe('not-a-transaction');
@@ -77,7 +86,7 @@ describe('THE ANSWER, AND THE PAGE READING IT', () => {
   const ask = parseAsk(wire(), A, NOW) as BalanceRequest;
   const leaves = [{ token: TOKEN, amount: '1000', kind: 'shielded' as const }];
   const answer = balancedAnswerFor(ask, 'ZmluaXNoZWQ=', leaves, NOW);
-  const expecting = { atOrigin: A, expectingNonce: 'b1', company: CO, vault: VAULT };
+  const expecting = { atOrigin: A, expectingNonce: 'b1', company: CO, account: ACCOUNT, vault: VAULT };
 
   it('carries the finished transaction and what left the wallet, addressed to the origin that asked', () => {
     expect(answer.schema).toBe(BALANCED_SCHEMA);
@@ -96,6 +105,9 @@ describe('THE ANSWER, AND THE PAGE READING IT', () => {
     expect(code({ nonce: 'b2' })).toBe('nonce-mismatch');
     expect(code({ vault: CO })).toBe('other-transaction');
     expect(code({ company: VAULT })).toBe('other-transaction');
+    /* RED WHEN: the reader does not compare the account. */
+    expect(code({ account: VAULT })).toBe('other-transaction');
+    expect(code({ company: CO.toUpperCase() })).toBe('other-transaction');
     expect(code({ transaction: 'x' })).toBe('not-an-answer');
     expect(code({ leaves: [{ token: TOKEN, amount: '-1', kind: 'shielded' }] })).toBe('not-an-answer');
     expect(code({ leaves: [{ token: TOKEN, amount: '01', kind: 'shielded' }] })).toBe('not-an-answer');

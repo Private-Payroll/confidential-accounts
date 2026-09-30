@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -174,7 +175,7 @@ describe('§2 a proposal raised against the chain\'s answer, through the vault c
   const raise = async (
     h: ReturnType<typeof harness>, asset: string, kind: 'shielded' | 'unshielded', token: string, amounts: bigint[],
   ) => {
-    const created = await h.accounts.create('Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1);
+    const created = await h.accounts.create('Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1, undefined, drawCompanyLabel());
     return h.accounts.proposeRun({
       accountId: created.account.id, viewingKey: created.viewingKey, summary: 'paying from the vault',
       payload: { entries: amounts.map((amount, i) => ({

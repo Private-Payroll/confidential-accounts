@@ -35,7 +35,7 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   finishPendingSeat: async () => { if (!kr.seat) return false; kr.seat = false; kr.keys = { signerId: 's1', signingSecret: 'aa', wrappingSecret: 'bb', blinding: 'cc' }; return true; },
   viewingKeyFor: () => 'vk',
   openAccount: () => kr.roster,
-  companyKeysForVaults: async () => ({ companyKey: '11'.repeat(32), committeeKey: kr.walletKey, company: 'addr' }),
+  companyKeysForVaults: async () => ({ companyKey: '11'.repeat(32), committeeKey: kr.walletKey, company: 'co_' + 'a1'.repeat(32), account: 'a0'.repeat(32) }),
   signCommitteeChangeFromTheWallet: async () => kr.signed,
   api: async (path: string, opts?: RequestInit) => {
     kr.calls.push({ path, method: String(opts?.method ?? 'GET'), body: opts?.body === undefined ? undefined : JSON.parse(String(opts.body)) });
@@ -181,8 +181,8 @@ describe('handing it over', () => {
 
 describe('signing a change', () => {
   const OWED = {
-    company: 'a', to: { committee: [K(1)], threshold: 1 }, why: null, notChangeable: [],
-    contracts: [{ contract: 'account', address: 'a', counter: '3', now: { committee: [K(1), K(9)], threshold: 2 }, signedSeats: [] as number[], required: 2 }],
+    company: 'a0'.repeat(32), label: 'co_' + 'a1'.repeat(32), to: { committee: [K(1)], threshold: 1 }, why: null, notChangeable: [],
+    contracts: [{ contract: 'account', address: 'a0'.repeat(32), counter: '3', now: { committee: [K(1), K(9)], threshold: 2 }, signedSeats: [] as number[], required: 2 }],
   };
 
   /* RED WHEN: a change this person has already signed is asked of their account again, or said as a failure rather than nothing to sign. */

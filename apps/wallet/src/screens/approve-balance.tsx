@@ -5,7 +5,8 @@ import type { BalanceRequest } from 'midnight-identity/profile/request';
 import type { Channel, ProgressStage } from 'midnight-identity/profile/channel';
 import { balancedAnswerFor } from 'midnight-identity/profile/balance';
 import type { LeavesTheWallet } from 'midnight-identity/profile/balance';
-import { companyFingerprint } from 'midnight-identity/profile/fingerprint';
+import { CompanyOnChain, accountCarriesTheLabel, liveLabelReader, useCompanyCheck } from './company-on-chain.js';
+import type { LabelReader } from './company-on-chain.js';
 import { Button, Section } from 'vaults-ui';
 import { StatusAlert } from '../components/status.js';
 import { hrefOf } from '../routes.js';
@@ -101,7 +102,7 @@ type Stage =
 
 export function ApproveBalance({
   request, identity, account, channel, consent, whoIsAsking, whichWallet, onDecline,
-  doorsFor = liveBalanceDoors, now = Date.now, onStage, onBusy,
+  doorsFor = liveBalanceDoors, now = Date.now, onStage, onBusy, readLabel = liveLabelReader,
 }: {
   readonly request: BalanceRequest;
   readonly identity: Identity;
@@ -118,8 +119,17 @@ export function ApproveBalance({
   readonly onStage?: (stage: string) => void;
   /** Told whether the wallet that pays may still be changed: not while a press runs, and not once the page has its answer. */
   readonly onBusy?: (locked: boolean) => void;
+  /** How the company's account is read off the chain. Replaceable so a test can answer. */
+  readonly readLabel?: LabelReader;
 }): ReactNode {
   const doors = useMemo(() => doorsFor(identity, account), [doorsFor, identity, account]);
+  /* **NOTHING IS PAID UNTIL THE COMPANY'S ACCOUNT IS READ OFF THE CHAIN AND
+   * CARRIES THE LABEL THE PAGE NAMES**, so the fingerprint a person compares is
+   * the fingerprint of the company the page names. It says nothing about the
+   * vault: this wallet does not read which account a vault belongs to, and
+   * says so beside the vault below. */
+  const check = useCompanyCheck(request.company, request.account, readLabel);
+  const onChain = accountCarriesTheLabel(check, request.company);
   const [stage, setStage] = useState<Stage>({ of: 'reading' });
   /* A person who says no while the wallet is still reading the chain has already been answered for. */
   const declined = useRef(false);
@@ -196,7 +206,7 @@ export function ApproveBalance({
   }, [doors, request.transaction, request.vault]);
 
   const pay = useCallback((): void => {
-    if (stage.of !== 'ready' || channel === null || channel.over() || pressing.current.size > 0) return;
+    if (stage.of !== 'ready' || channel === null || channel.over() || pressing.current.size > 0 || !onChain) return;
     const { tx, leaves, pays } = stage;
     const pressedWith = doors;
     const stillThisWallet = (): boolean => onScreen.current === pressedWith;
@@ -274,7 +284,7 @@ export function ApproveBalance({
             : `${e instanceof Error ? e.message : String(e)} Anything this wallet set aside for it has been let go. The page was given nothing and has been told this payment failed.`,
       });
     });
-  }, [stage, channel, doors, request, now]);
+  }, [stage, channel, doors, request, now, onChain]);
 
   /* The wallet stays as it is while a press runs and once the page has been answered. */
   const locked = busy || stage.of === 'sent' || stage.of === 'failed';
@@ -298,10 +308,7 @@ export function ApproveBalance({
         : 'What the page says. This wallet checked that the transaction calls this vault and nothing else, and that the one coin it creates belongs to this vault.'}
     >
       <p className="m-0 text-sm text-muted-foreground">The company, as the page names it</p>
-      <p className="m-0 font-mono tracking-wide text-foreground text-xl" data-company-fingerprint>
-        {companyFingerprint(request.company)}
-      </p>
-      <p className="m-0 font-mono break-all text-sm text-muted-foreground" data-company>{request.company}</p>
+      <CompanyOnChain label={request.company} account={request.account} check={check} doing="paid" />
       <p className="m-0 text-sm text-muted-foreground" style={{ marginTop: '0.75rem' }}>The vault the transaction pays into</p>
       <p className="m-0 font-mono break-all text-foreground text-lg" data-vault>{request.vault}</p>
       <p className="m-0 text-sm text-muted-foreground">
@@ -425,7 +432,7 @@ export function ApproveBalance({
           size="lg"
           type="button"
           variant="default" onClick={pay} data-approve data-pay
-          disabled={!consent.ok || stage.of !== 'ready' || channel === null || busy || channel.over()}
+          disabled={!consent.ok || stage.of !== 'ready' || channel === null || busy || channel.over() || !onChain}
         >
           {publicly ? 'Pay publicly into the vault' : 'Pay into the vault'}
         </Button>

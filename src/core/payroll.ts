@@ -5,14 +5,15 @@ import {
 } from './crypto.js';
 import { sha256 as sha256Bytes } from '@noble/hashes/sha2.js';
 import { inviteKeyOf } from './store.js';
-import { companyAddressForOffer } from './company-address.js';
+import { companyForOffer, companyLabelOfRecord } from './company-address.js';
+import { readCompanyLabel } from 'midnight-identity/profile/company-label';
 import { newWords } from 'midnight-identity';
 /* The code the payee's wallet produced, checked where the roster is
  * written. Same function the admin's browser runs, one module, so the two
  * sides of the comparison cannot drift apart. */
 import { addressFingerprint, FingerprintError } from 'midnight-identity/profile/fingerprint';
 import { payslipKeypairForWallet } from './payslip-key.js';
-import { NO_COMPANY, NO_LEAF, untilText, type SealedPayslip } from './payslip-open.js';
+import { NO_COMPANY, NO_LABEL, NO_LEAF, untilText, type SealedPayslip } from './payslip-open.js';
 
 /**
  * **THE ORIGIN THE SEED'S STAND-IN WALLET IS ASKED AT, AND IT IS NOT AN
@@ -341,6 +342,8 @@ type RunSecrets = Pick<PayrollRun, 'employees' | 'totals' | 'proposalIds' | 'pay
 function sealReceipt(
   runId: string, publicKey: Hex, company: string | null,
   paid: { nonce: Hex; blinding: Hex; until: bigint | null } | null,
+  /** The company's label: which company the account the payment is read at belongs to. */
+  label: string | null,
 ): NonNullable<PayrollRun['payslips'][number]['receipt']> {
   const key = newSymmetricKey();
   const sealed = seal(canonical({
@@ -348,6 +351,7 @@ function sealReceipt(
     nonce: paid ? paid.nonce.toLowerCase() : NO_LEAF,
     blinding: paid ? paid.blinding.toLowerCase() : NO_LEAF,
     company: company === null ? NO_COMPANY : company.toLowerCase(),
+    label: label === null ? NO_LABEL : label,
     until: untilText(paid ? paid.until : null),
   }), key);
   return { wrapped: wrapKey(key, publicKey), sealed };
@@ -779,11 +783,12 @@ export class PayrollService {
        * **THE OFFER NAMES THE COMPANY TWICE, AND THE SECOND ONE IS NOT A
        * LABEL.**
        *
-       * `company` is a NAME, for a person to read. **`companyAddress` is the
-       * company's own account contract address**, and it is here because the
-       * key that opens this person's payslips is
-       * `payslipKeypairFrom(companyKey)` and the wallet derives that company
-       * key from the address and from nothing else. An invitee is by definition
+       * `company` is a NAME, for a person to read. **`companyLabel` is the
+       * company's label**, and it is here because the key that opens this
+       * person's payslips is `payslipKeypairFrom(companyKey)` and the wallet
+       * derives that company key from the label and from nothing else.
+       * **`companyAccount` is the account that carries the label**, which the
+       * invitee's wallet reads the label back from before it gives the key. An invitee is by definition
        * not a member, so `companyForSession` cannot serve them and `POST
        * /api/accounts/:id/unlock` is shut to them — **and inventing a second
        * key path for invitees is forbidden by name.** It travels here or the
@@ -797,20 +802,21 @@ export class PayrollService {
        * needs the account's viewing key, which no invitee ever holds.
        *
        * **WHY PUTTING THEM HERE IS SAFE, IN ONE SENTENCE EACH.** Both are
-       * public by construction — a contract address is on a chain and an inbox
-       * key is a public key — so nothing secret has been added to this
+       * public by construction — the label is on the company's account, an
+       * account's address is on a chain, and an inbox key is a public key — so
+       * nothing secret has been added to this
        * envelope. And they are sealed anyway, under a key derived from the raw
        * token, so the only party who can read them is the one already holding
        * the capability they belong to.
        *
-       * `companyAddress` is null when this company has no address a chain
-       * assigned. That is the address gate, unchanged and in the same words:
-       * the refusal arrives on the invitee's screen rather than stopping a
-       * hire.
+       * `companyLabel` is null when this company was created without a label,
+       * and `companyAccount` when no chain has given it an account. Either way
+       * the refusal arrives on the invitee's screen rather than stopping a hire.
        */
       offer: seal(canonical({
         company: this.accounts.open(accountId, viewingKey).name,
-        companyAddress: companyAddressForOffer(this.store, accountId),
+        companyLabel: companyForOffer(this.store, accountId)?.label ?? null,
+        companyAccount: companyForOffer(this.store, accountId)?.account ?? null,
         inboxPublicKey: this.accounts.require(accountId).inboxPublicKey,
         name: spec.name, title: spec.title, email: spec.email,
         asset: spec.asset, baseAmount: spec.baseAmount,
@@ -1002,8 +1008,8 @@ export class PayrollService {
         {
           wrappingPublicKey: handover.wrappingPublicKey,
           address: handover.address.bech32,
-          /* A member's own key is worked out from the company's address now. */
-          keyFrom: companyAddressForOffer(this.store, accountId),
+          /* A member's own key is worked out from the company's label. */
+          keyFrom: companyLabelOfRecord(this.store, accountId),
           /*
            * **NO CODE, BECAUSE THERE IS NOBODY TO COMPARE ONE WITH.**
            * The comparison exists so an admin can check that the address which
@@ -1250,8 +1256,10 @@ export class PayrollService {
    */
   offerFor(token: string): {
     company: string;
-    /** Null when no chain has given this company an address. */
-    companyAddress: string | null;
+    /** The company's label; null when it was created without one. */
+    companyLabel: string | null;
+    /** The account that carries the label; null when no chain has given it one. */
+    companyAccount: string | null;
     /** What the invitee's own browser seals the handover to. */
     inboxPublicKey: Hex;
     name: string; title: string; email: string;
@@ -1269,7 +1277,7 @@ export class PayrollService {
     if (!invite.offer) throw new Error('this invite carries no offer to show');
     return {
       ...parseCanonical<{
-        company: string; companyAddress: string | null; inboxPublicKey: Hex;
+        company: string; companyLabel: string | null; companyAccount: string | null; inboxPublicKey: Hex;
         name: string; title: string; email: string;
         asset: AssetId; baseAmount: bigint; startDate: string;
       }>(unseal(invite.offer, offerKeyOf(token))),
@@ -1700,23 +1708,23 @@ export class PayrollService {
     const address = payeeOf(handover.address, this.network);
 
     /*
-     * **THE ADDRESS THE PAYSLIP KEY CAME FROM IS ONE OF THIS COMPANY'S.** Every
-     * payslip sealed to this person will name it, and their page asks their
-     * wallet for it, so an address that is not this company's would send them,
-     * and every colleague whose page lists this company's addresses, to ask
-     * their wallet about somebody else's contract. It is taken when it is the
-     * company's address now or one this company's payslips already name;
-     * otherwise refused and the invitation put back, and accepting again works
-     * the key out from the address the company has now.
+     * **THE LABEL THE PAYSLIP KEY CAME FROM IS THIS COMPANY'S.** Every payslip
+     * sealed to this person will name it, and their page asks their wallet for
+     * it, so a label that is not this company's would send them, and every
+     * colleague whose page lists this company, to ask their wallet about
+     * somebody else's company. It is taken when it is the company's label or
+     * one this company's payslips already name; otherwise refused and the
+     * invitation put back, and accepting again works the key out from the
+     * company's label.
      */
-    const companyNow = companyAddressForOffer(this.store, rec.accountId);
+    const companyNow = companyLabelOfRecord(this.store, rec.accountId);
     if (handover.keyFrom && handover.keyFrom !== companyNow
       && !this.payslipAddressesNamedBy(rec.accountId).has(handover.keyFrom)) {
       putBack();
       throw new Error(
-        `the key this person handed over was worked out from company address ${handover.keyFrom}, `
-        + 'which is not this company\'s address and is named by none of its payslips. Every payslip '
-        + 'sealed to them would send them to that address to open it. It has been refused and the '
+        `the key this person handed over was worked out from company label ${handover.keyFrom}, `
+        + 'which is not this company\'s label and is named by none of its payslips. Every payslip '
+        + 'sealed to them would send them to that company to open it. It has been refused and the '
         + 'invitation put back; ask them to accept again from their invitation link.');
     }
 
@@ -1751,10 +1759,10 @@ export class PayrollService {
         ...person,
         wrappingPublicKey: handover.wrappingPublicKey,
         /*
-         * Which company address the key was worked out from, as the payee's
-         * own device said. A handover that does not say is taken to be the
-         * company's address now: every key derived before a company first
-         * moves was derived from that address.
+         * Which company label the key was worked out from, as the payee's own
+         * device said. A handover that does not say is taken to be the
+         * company's label: a company keeps its label, so every key a payee
+         * derives for it is derived from that.
          */
         payslipKeyFrom: handover.keyFrom ?? companyNow,
         status: 'active',
@@ -1875,15 +1883,15 @@ export class PayrollService {
      * never reach us; only `wrappingPublicKey` does. What the seed buys is that
      * the whole flow can be walked without eight browsers.
      */
-    const company = this.store.getAccount(accountId)?.contractAddress;
-    if (!company) {
+    const company = readCompanyLabel(this.store.getAccount(accountId)?.companyLabel);
+    if (company === null) {
       /*
        * REFUSED BY NAME RATHER THAN FALLING BACK TO A RANDOM KEY. A silent
        * fallback would put the minted key back for exactly the accounts the
        * derivation cannot serve, and nothing would say so.
        */
       throw new Error(
-        'this company has no address, so a payslip key cannot be derived for anybody on '
+        'this company has no label, so a payslip key cannot be derived for anybody on '
         + 'it — and one will not be invented instead.');
     }
     const words = newWords();
@@ -2739,11 +2747,11 @@ export class PayrollService {
        * not a defence today and must not be counted as one.**
        */
       /*
-       * **THE ADDRESS THE PAYEE ASKS THEIR WALLET FOR, WRITTEN ON THE SLIP.**
-       * A roster payee's key was worked out from one company address, and
-       * that is the address that opens this slip for as long as it exists,
-       * whatever the company's address becomes. An ad hoc payee's key was
-       * minted above and no address produces it, so there is none to name.
+       * **THE COMPANY THE PAYEE ASKS THEIR WALLET ABOUT, WRITTEN ON THE SLIP.**
+       * A roster payee's key was worked out from one company's label, and
+       * that is the label that opens this slip for as long as it exists,
+       * whatever account the company has. An ad hoc payee's key was minted
+       * above and no company produces it, so there is none to name.
        *
        * **IT IS SEALED INSIDE THE SLIP AS WELL AS WRITTEN BESIDE IT.** The copy
        * beside it is what the slip is filed and found by; the sealed one is
@@ -2751,7 +2759,7 @@ export class PayrollService {
        * an address the page then refuses rather than one it shows.
        */
       const issuedBy = existing
-        ? (existing.payslipKeyFrom ?? companyAddressForOffer(this.store, accountId))
+        ? (existing.payslipKeyFrom ?? companyLabelOfRecord(this.store, accountId))
         : null;
       const slipKey = newSymmetricKey();
       const slip = seal(canonical({
@@ -2764,7 +2772,8 @@ export class PayrollService {
         /* The public key it is wrapped to, which is what its payee asks by. */
         sealedTo: publicKey.toLowerCase(),
         /* A stand-in until the payee's leg is raised; see `withReceipts`. */
-        receipt: sealReceipt(runId, publicKey, companyAddressForOffer(this.store, accountId), null),
+        receipt: sealReceipt(runId, publicKey, companyForOffer(this.store, accountId)?.account ?? null, null,
+          companyLabelOfRecord(this.store, accountId)),
       });
     });
 
@@ -3111,11 +3120,11 @@ export class PayrollService {
     this.refuseALegThatIsProposed(beforeRaising, leg, viewingKey);
     /*
      * A leg raised again is the same round, so it keeps the address it was
-     * first raised at; a new leg takes the company's address now.
+     * first raised at; a new leg takes the company's account's address now.
      */
     const legCompany = again !== undefined && earlierMaterial && earlierMaterial.company !== undefined
       ? earlierMaterial.company
-      : companyAddressForOffer(this.store, run.accountId);
+      : companyForOffer(this.store, run.accountId)?.account ?? null;
     beforeRaising.payslips = this.withReceipts(beforeRaising, seeds, payKey, {
       leg, leaves: payable.leaves, closesAt: payable.run.closesAt, company: legCompany,
       identity: payable.identity, records: payRecords,
@@ -3262,7 +3271,9 @@ export class PayrollService {
       records: PayRecord[];
     },
   ): PayrollRun['payslips'] {
-    const now = companyAddressForOffer(this.store, run.accountId);
+    const now = companyForOffer(this.store, run.accountId)?.account ?? null;
+    /* The company's label, which every receipt carries beside the account it is read at. */
+    const label = companyLabelOfRecord(this.store, run.accountId);
     const paidAt = new Map<string, { nonce: Hex; blinding: Hex; company: string | null; until: bigint }>();
     const legs = new Set<AssetId>([
       ...(raising ? [raising.leg] : []), ...(Object.keys(run.payout ?? {}) as AssetId[])]);
@@ -3303,9 +3314,9 @@ export class PayrollService {
       return {
         ...p,
         receipt: paid === undefined
-          ? sealReceipt(run.id, publicKey, now, null)
+          ? sealReceipt(run.id, publicKey, now, null, label)
           : sealReceipt(run.id, publicKey, paid.company,
-            { nonce: paid.nonce, blinding: paid.blinding, until: paid.until }),
+            { nonce: paid.nonce, blinding: paid.blinding, until: paid.until }, label),
       };
     });
   }
@@ -4092,11 +4103,11 @@ export class PayrollService {
   payslipsFor(
     wrappingPublicKey: Hex,
     /**
-     * **THE COMPANY ADDRESS THE ASKER'S KEY WAS WORKED OUT FROM.** A payee's
-     * key is derived from one company's address, and that is the only company
-     * they handed it to; a slip naming any other address was put there by a
+     * **THE LABEL OF THE COMPANY THE ASKER'S KEY WAS WORKED OUT FROM.** A
+     * payee's key is derived from one company's label, and that is the only
+     * company they handed it to; a slip naming any other was put there by a
      * company the payee never accepted, and it is not sent. `null` for a key
-     * no address produced, which is sent only slips that name no address.
+     * no company produced, which is sent only slips that name none.
      * Omitted, nothing is filtered: that is for a caller inside the service.
      */
     from?: string | null,
@@ -4126,29 +4137,30 @@ export class PayrollService {
   }
 
   /**
-   * **EVERY ADDRESS A COMPANY'S PAYSLIPS WERE SEALED UNDER, FROM ANY ONE OF
-   * THEM.** A payee who knows their company only by the address it has today
-   * would otherwise ask their wallet for that address alone, and every slip
-   * sealed before the company moved would stay closed to them. So the answer is
-   * the company's address now and every address a slip of theirs names.
+   * **EVERY COMPANY LABEL A COMPANY'S PAYSLIPS NAME, FROM ANY ONE OF THEM, EACH
+   * WITH THE ACCOUNT THAT CARRIES IT NOW.** A company keeps its label, so this
+   * is ordinarily the one label; a slip naming another that this company's own
+   * payslips name is included so it still opens. The account is what the
+   * payee's wallet reads the label back from before it gives the key, and is
+   * null for a company no chain has given an account.
    *
-   * These are contract addresses, which a chain publishes; nothing here says
-   * who was paid, how much, or how many.
+   * Labels are public on the companies' accounts and accounts' addresses on the
+   * chain; nothing here says who was paid, how much, or how many.
    */
-  payslipAddressesOf(companyAddress: string): string[] {
-    const asked = companyAddress.toLowerCase();
-    const found = new Set<string>();
+  payslipAddressesOf(label: string): Array<{ label: string; account: string | null }> {
+    const asked = label.toLowerCase();
+    const found = new Map<string, string | null>();
     for (const accountId of this.store.accountsAtPayslipAddress(asked)) {
-      const now = companyAddressForOffer(this.store, accountId);
+      const now = companyForOffer(this.store, accountId);
       const named = this.payslipAddressesNamedBy(accountId);
-      if (now !== asked && !named.has(asked)) continue;
-      if (now) found.add(now);
-      for (const a of named) found.add(a);
+      if (now?.label !== asked && !named.has(asked)) continue;
+      if (now) found.set(now.label, now.account);
+      for (const a of named) if (!found.has(a)) found.set(a, now?.account ?? null);
     }
-    return [...found].sort();
+    return [...found.entries()].map(([l, account]) => ({ label: l, account })).sort((x, y) => (x.label < y.label ? -1 : 1));
   }
 
-  /** Every company address one company's payslips name, lower-cased. */
+  /** Every company label one company's payslips name. */
   private payslipAddressesNamedBy(accountId: string): Set<string> {
     return new Set(this.store.payslipAddressesNamedBy(accountId));
   }

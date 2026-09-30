@@ -3,6 +3,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { newWords } from 'midnight-identity';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { FileStore } from './store-file.js';
 import { SimulatedLedger, SimulatedProofSystem, SimulatedCommitments } from './ledger.js';
 import { AccountService } from './account.js';
@@ -87,20 +88,20 @@ describe('a founder pays themselves — the first end-to-end money path', () => 
    */
   const company = async () => {
     const { account, viewingKey } = await h.accounts.create(
-      'Solo', [{ name: 'Founder', role: 'admin' as const }], 1);
+      'Solo', [{ name: 'Founder', role: 'admin' as const }], 1, undefined, drawCompanyLabel());
     const founder = signIn(h.store, 'founder@solo.example');
     (h.store as any).putAccount({
       ...h.accounts.require(account.id), memberUserIds: [founder],
     });
-    const address = h.accounts.require(account.id).contractAddress;
+    const label = h.accounts.require(account.id).companyLabel;
     /*
-     * A company with no address cannot derive anybody a payslip key, and
+     * A company with no label cannot derive anybody a payslip key, and
      * `hireDirect` refuses by name rather than minting one. If this ever goes
      * null the walk below would be testing a state the product refuses, so it
      * is asserted here rather than discovered three steps later.
      */
-    expect(address, 'the ledger assigned this company no address').toBeTruthy();
-    return { account, viewingKey, founder, company: address as string, words: newWords() };
+    expect(label, 'this company was created with no label').toBeTruthy();
+    return { account, viewingKey, founder, company: label!, words: newWords() };
   };
 
   it('§2 THE WALK: one payable person, a run, and a payslip they can read', async () => {
@@ -157,7 +158,7 @@ describe('a founder pays themselves — the first end-to-end money path', () => 
     /*
      * ── AND A SECOND DEVICE OPENS IT, WHICH IS WHY THE KEY IS DERIVED ─────
      *
-     * The same words and the same company address, at a DIFFERENT origin,
+     * The same words and the same company label, at a DIFFERENT origin,
      * because the wallet gates on the origin and derives from the company
      * alone. Nothing was carried from the first device: no secret was stored,
      * sent or kept anywhere in the walk above.

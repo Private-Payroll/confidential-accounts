@@ -117,6 +117,7 @@ export function VaultPanel({ account, me, viewingKey }: {
     const signedInAs = () => keyring.currentUser()?.id ?? null;
     return {
       company: released.company,
+      account: released.account,
       device: deviceSignerFrom(me, released.companyKey),
       records: deviceRecordsFor(me.signingSecret, roster.filers, signedInAs),
       signers: roster.signers,
@@ -166,7 +167,7 @@ export function VaultPanel({ account, me, viewingKey }: {
   const create = run('Creating the vault', async () => {
     const k = await withKeys();
     const done = await createCompanyVault({
-      ...pacing, account: k.company, service, builder: await builder(), keys: browserTemporaryKeys(),
+      ...pacing, account: k.account, service, builder: await builder(), keys: browserTemporaryKeys(),
     });
     return `The vault is created and held by the company's committee (${done.vault}).`;
   });
@@ -174,7 +175,7 @@ export function VaultPanel({ account, me, viewingKey }: {
   const finish = (vault: Hex) => run('Handing the vault over', async () => {
     const k = await withKeys();
     await createCompanyVault({
-      ...pacing, account: k.company, service, builder: await builder(), keys: browserTemporaryKeys(),
+      ...pacing, account: k.account, service, builder: await builder(), keys: browserTemporaryKeys(),
     }, vault);
     return 'The vault is now held by the company\'s committee.';
   });
@@ -197,7 +198,7 @@ export function VaultPanel({ account, me, viewingKey }: {
     const k = await withKeys();
     const done = await depositFromSource({
       ...pacing, service, me: k.device, myRecordsKey: k.myRecordsKey, signers: k.signers, records: k.records,
-      company: k.company, builder: await builder(),
+      company: k.company, account: k.account, builder: await builder(),
       inFlight: browserDepositsInFlight({ signerId: me.signerId, wrappingSecret: me.wrappingSecret }),
     }, vault, source, { code: chosen.code, value });
     setAmount('');
@@ -221,7 +222,7 @@ export function VaultPanel({ account, me, viewingKey }: {
     const opener = { signerId: me.signerId, wrappingSecret: me.wrappingSecret };
     const found = await checkWhatThisBrowserSent({
       ...pacing, service, me: k.device, myRecordsKey: k.myRecordsKey, signers: k.signers, records: k.records,
-      company: k.company, builder: await builder(),
+      company: k.company, account: k.account, builder: await builder(),
       pay: async () => { throw new Error('checking a deposit puts no money in.'); },
       inFlight: browserDepositsInFlight(opener),
       payments: browserPaymentsInFlight(opener),

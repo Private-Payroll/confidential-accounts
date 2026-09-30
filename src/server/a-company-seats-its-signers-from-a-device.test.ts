@@ -22,6 +22,7 @@
  *     `contracts/test/a-company-seats-its-signers-from-the-page.test.ts`.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { importTheServer, useOnlyTheseSettings } from '../testing/server-under-test.js';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -132,7 +133,7 @@ for (const who of Object.keys(USERS) as Who[]) {
 }
 const accounts = new AccountService(store, ledger, MidnightCommitments);
 throughTheDoor = true;
-const created = await accounts.create('Seats', [{ name: 'Ada', role: 'admin', userId: USERS.ada }], 1);
+const created = await accounts.create('Seats', [{ name: 'Ada', role: 'admin', userId: USERS.ada }], 1, undefined, drawCompanyLabel());
 throughTheDoor = false;
 const company = created.account.id;
 const viewingKey = created.viewingKey;
@@ -158,7 +159,7 @@ const waiting = { blake: invited('blake'), cleo: invited('cleo') };
 /* A second company, where Vic holds a viewer's seat beside Ada and one person waits for access. */
 const viewed = await accounts.create('Viewed', [
   { name: 'Ada', role: 'admin', userId: USERS.ada }, { name: 'Vic', role: 'viewer', userId: USERS.vic },
-], 1);
+], 1, undefined, drawCompanyLabel());
 const viewedWaiting = (() => {
   const pair = newSigningKeypair();
   const raw = accounts.inviteSigner(viewed.account.id, 'Dora', 'dora@seats.example', 'approver');
@@ -173,7 +174,7 @@ const viewedWaiting = (() => {
 /* A third company, two of two, where an invitation is raised on one device and seated from two. */
 const joined = await accounts.create('Joined', [
   { name: 'Ada', role: 'admin', userId: USERS.ada }, { name: 'Blake', role: 'approver', userId: USERS.blake },
-], 2);
+], 2, undefined, drawCompanyLabel());
 for (const [i, sg] of joined.account.signers.entries()) {
   leaves.set(`${joined.account.id} ${joined.secrets[i]!.signerId}`, sg.leafCommitment as Hex);
 }

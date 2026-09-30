@@ -253,7 +253,7 @@ describe('§1 — THE WINDOW IS OPENED IN THE CLICK, BEFORE ANYTHING IS AWAITED'
           nonce: 'n1', handle: 'h1', expiresAt: new Date(Date.now() + 600_000).toISOString(),
           session: { token: 'tok' }, address: SIGNED_IN, created: true,
           user: { id: 'usr_1', email: null, name: '' },
-          company: 'a1'.repeat(32),
+          company: 'co_' + 'a1'.repeat(32), account: 'a2'.repeat(32),
         }),
       } as Response;
     }) as typeof fetch;
@@ -794,7 +794,7 @@ describe('§3 — A JOURNEY WHOSE SERVER CALL FAILS PUTS ITS WALLET AWAY', () =>
           session: { expiresAt: new Date(Date.now() + 600_000).toISOString() },
           address: SIGNED_IN, created: true,
           user: { id: 'usr_1', email: null, name: '' },
-          company: 'a1'.repeat(32),
+          company: 'co_' + 'a1'.repeat(32), account: 'a2'.repeat(32),
         }),
       } as Response;
     }) as typeof fetch;

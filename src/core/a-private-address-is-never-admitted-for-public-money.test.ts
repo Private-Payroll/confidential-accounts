@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -46,7 +47,7 @@ const aCompany = async (nightBothWays = false) => {
     id: 'usr_founder', email: 'founder@acme.example', name: 'founder', keyBundle: null,
     keyBundleVersion: 0, identityPublicKey: null, walletKey: null, createdAt: '2026-09-25T00:00:00.000Z',
   } as unknown as User);
-  const created = await accounts.create('Acme', [{ name: 'Ada', role: 'admin', userId: 'usr_founder' }], 1);
+  const created = await accounts.create('Acme', [{ name: 'Ada', role: 'admin', userId: 'usr_founder' }], 1, undefined, drawCompanyLabel());
   return { store, payroll, invites, viewingKey: created.viewingKey, account: created.account.id };
 };
 

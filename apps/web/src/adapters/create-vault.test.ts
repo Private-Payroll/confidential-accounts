@@ -38,7 +38,7 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   companyKeysForVaults: async () => {
     kr.log.push('account asked');
     if (kr.keysFail !== null) throw kr.keysFail;
-    return { companyKey: '11'.repeat(32), committeeKey: K(1), company: COMPANY };
+    return { companyKey: '11'.repeat(32), committeeKey: K(1), company: 'co_' + 'c1'.repeat(32), account: COMPANY };
   },
   api: async (path: string, opts?: RequestInit) => {
     const method = String(opts?.method ?? 'GET');

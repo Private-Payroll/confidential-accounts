@@ -2,6 +2,8 @@ import type { AttributeName } from './definition.js';
 import { usableOrigin, whyNotUsable } from './origin.js';
 import { RECEIVING_ADDRESS } from './attributes.js';
 import type { Registry } from './attributes.js';
+import { readAccountAddress, readCompanyLabel, readVaultAddress } from './company-label.js';
+import type { AccountAddress, CompanyLabel, VaultAddress } from './company-label.js';
 
 /**
  * WHAT AN APPLICATION SENDS, AND THE ONE FIELD IT MAY NEVER SEND.
@@ -120,8 +122,8 @@ import type { Registry } from './attributes.js';
  * -- AN UNLOCK NAMES A COMPANY, AND THAT IS THE ONE CLAIMED VALUE -----------
  *
  * **The key an unlock asks for
- * is no longer derived from the origin; it is derived from the COMPANY'S OWN
- * ACCOUNT CONTRACT ADDRESS**, because a hostname is a deployment detail and
+ * is no longer derived from the origin; it is derived from the COMPANY'S
+ * LABEL** (`company-label.ts`), because a hostname is a deployment detail and
  * anything sealed under one can only ever be opened at it.
  *
  * **SO AN UNLOCK CARRIES ONE FIELD THAT SELECTS A KEY, AND THIS FILE'S OLDEST
@@ -133,12 +135,13 @@ import type { Registry } from './attributes.js';
  * sealed data.** What is owed in return is that a person can SEE the mismatch,
  * and that debt is paid on the screen rather than here.
  *
- * **WHAT THIS FILE OWES IS THE SHAPE.** A company is named by a plain,
- * complete, correctly-shaped contract address -- sixty-four lowercase hex
- * characters, measured from `sampleContractAddress()` in
- * `@midnightntwrk/ledger-v9` -- and anything else is refused BY NAME. **A
- * malformed identifier is a request that does not know what it is asking for**,
- * and deriving a key for one would mint bytes no chain will ever match.
+ * **WHAT THIS FILE OWES IS THE SHAPE.** A company is named by its label --
+ * `co_` and sixty-four lower-case hex characters -- and anything else, a
+ * contract address included, is refused BY NAME. **A malformed identifier is a
+ * request that does not know what it is asking for.** The account that carries
+ * the label is named beside it, by its contract address, in a field of its
+ * own; the wallet reads the label off that account itself before it gives or
+ * signs anything.
  *
  * **AND THE OTHER TWO KINDS REFUSE THE FIELD.** A disclosure and a sign-in do
  * not open records and have no company to name, so one that carries the field
@@ -229,23 +232,24 @@ export interface SignInRequest extends Asking {
  * THAT REACHES A KEY**, and it was put there deliberately.
  * `origin` is still absent from the wire and still supplied by the parser from
  * the browser; what changed is that the origin no longer selects the key, so
- * something durable had to, and the only durable identifier of a company is one
- * the chain assigned it.
+ * something durable had to: the company's label, which its founding signer's
+ * wallet drew and its account carries on the chain.
  *
- * **THE ADDRESS IS NEVER SHORTENED ANYWHERE IN THIS PROTOCOL.** A selector
+ * **THE LABEL IS NEVER SHORTENED ANYWHERE IN THIS PROTOCOL.** A selector
  * narrower than the thing it selects can be ground -- two origins were ground onto
  * one 31-bit index in 2.86 billion tries -- so it travels whole, is checked
  * whole, is derived from whole, and is shown to the person whole.
  */
 export interface UnlockRequest extends Asking {
   readonly kind: 'unlock';
+  /** The company's label. CLAIMED, checked for shape, and shown on the screen. */
+  readonly company: CompanyLabel;
   /**
-   * The company's own account contract address, **in the canonical lower-case
-   * spelling** -- it arrives in any spelling and is folded here.
-   * CLAIMED, checked for shape, and shown on the screen beside the origin that
-   * was observed.
+   * The account that carries the label, or null for a company that has no
+   * account yet. CLAIMED: the wallet reads the label off this account itself
+   * before it gives anything, and never derives from it.
    */
-  readonly company: string;
+  readonly account: AccountAddress | null;
 }
 
 /**
@@ -335,8 +339,16 @@ export interface KeyringRequest extends Asking {
   readonly person: string;
   /** The address the page signed in as, or null when it does not know. Never an ingredient. */
   readonly signedInAs: string | null;
-  /** A company whose key is wanted in the same answer, canonical lower case, or null. */
-  readonly company: string | null;
+  /** The label of a company whose key is wanted in the same answer, or null. */
+  readonly company: CompanyLabel | null;
+  /** The account that carries that label, or null for none or none yet. Claimed; read off the chain. */
+  readonly account: AccountAddress | null;
+  /**
+   * **TRUE WHEN THE PAGE IS STARTING A COMPANY**: the wallet draws the new
+   * company's label itself and answers with it and its keys. Never together
+   * with `company` or `account`.
+   */
+  readonly drawLabel: boolean;
 }
 
 /**
@@ -357,10 +369,12 @@ export interface KeyringRequest extends Asking {
  */
 export interface BalanceRequest extends Asking {
   readonly kind: 'balance';
-  /** The company's own account address, canonical lower case. Claimed; shown. */
-  readonly company: string;
+  /** The company's label. Claimed; shown. */
+  readonly company: CompanyLabel;
+  /** The account that carries the label. Claimed; read off the chain before anything is paid. */
+  readonly account: AccountAddress;
   /** The contract the transaction calls, canonical lower case. Claimed; checked against the transaction. */
-  readonly vault: string;
+  readonly vault: VaultAddress;
   /** Base64 of a proven transaction that is not yet bound. */
   readonly transaction: string;
 }
@@ -381,7 +395,7 @@ export interface CommitteeOnTheWire {
 export interface CommitteeChangeOfAContract {
   readonly contract: 'account' | 'vault';
   /** The contract's address, canonical lower case. Claimed; shown whole. */
-  readonly address: string;
+  readonly address: AccountAddress | VaultAddress;
   /** The counter the chain holds for the contract's rules now, in decimal. Claimed; signed over. */
   readonly counter: string;
   /** The committee that holds the contract now, which is the one that signs. Claimed; shown. */
@@ -414,8 +428,14 @@ export interface CommitteeChangeOfAContract {
  */
 export interface CommitteeRequest extends Asking {
   readonly kind: 'committee';
-  /** The company's own account address, canonical lower case. It selects the key that signs. */
-  readonly company: string;
+  /** The company's label. It selects the key that signs. */
+  readonly company: CompanyLabel;
+  /**
+   * The account that carries the label. Claimed; read off the chain before
+   * anything is signed, and equal to the address of any `account` contract
+   * the ask names.
+   */
+  readonly account: AccountAddress;
   /** The committee to install, the same on every contract. */
   readonly to: CommitteeOnTheWire;
   /** Never empty, and no address twice. */
@@ -449,8 +469,11 @@ export type RequestFailure =
   /* Its own code, because a refusal that named the wrong kind would be
    * this module telling a requester something untrue about its own message. */
   | 'attributes-on-an-unlock'
-  /* The company an unlock names, and the two kinds that may not name one. */
-  | 'not-a-company-address'
+  /* The company an unlock names, and the two kinds that may not name one. A
+   * contract address where a label is asked is refused here; a label where an
+   * address is asked, with `not-an-account-address`. */
+  | 'not-a-company-label'
+  | 'not-an-account-address'
   | 'company-on-a-disclosure'
   | 'company-on-a-sign-in'
   /* The key an acceptance is sealed to, and the three kinds that may
@@ -510,43 +533,19 @@ const MAX_TEXT = 300;
 const MAX_WANTS = 32;
 
 /**
- * **THE SHAPE OF A COMPANY'S ACCOUNT CONTRACT ADDRESS, MEASURED.**
- * **AND IT IS FOLDED TO ONE SPELLING RATHER THAN REFUSED.**
+ * **THE SHAPE OF A CONTRACT ADDRESS, MEASURED.** Used for the contracts a
+ * committee change names, and never for a company: a company is named by its
+ * label (`company-label.ts`), which carries a prefix no address has.
  *
  * `sampleContractAddress()` in `@midnightntwrk/ledger-v9` returns sixty-four
  * LOWERCASE hex characters and `encodeContractAddress` turns one into thirty-two
- * bytes. The uppercase spelling decodes too, because the hex reader underneath
- * is case-insensitive.
- *
- * **THE OTHER SPELLINGS WERE REFUSED AND THAT WAS STRICTER THAN MIDNIGHT ITSELF.**
- * The SDK's own validator accepts `[0-9A-Fa-f]` and rejects only a `0x` prefix:
- * `@midnight-ntwrk/midnight-js-utils/dist/index.mjs:576` is the pattern,
- * `:660` `assertIsHex`, and `:986` `assertIsContractAddress`, which calls
- * `assertIsHex(contractAddress, 32)` and then throws
- * *"Unexpected '0x' prefix in contract address"* at `:991`. So an address every
- * Midnight tool calls valid was handed to this wallet and refused, and the
- * person was told their company is not a company.
- *
- * **THE INSTINCT WAS RIGHT AND LANDED IN THE WRONG PLACE.** The danger it was
- * guarding — two spellings of one company becoming two keys — is real, and for
- * an ORIGIN refusing rather than normalising is the correct answer, because
- * text has many spellings that look identical and folding them is how a wallet
- * is tricked into handing one site another's key. **Hex is not text in that
- * sense.** It has exactly one canonical form, and folding its case is TOTAL:
- * every spelling of one address maps to that one form and no two addresses ever
- * meet. So folding prevents the danger just as completely as refusing did, and
- * unlike refusing it does not also reject valid input.
- *
- * **A `0x` PREFIX IS STILL REFUSED**, as the SDK refuses it — and here it needs
- * no clause of its own: this pattern is sixty-four characters exactly, so
- * `0x` and sixty-four hex is sixty-six and `0x` and sixty-two ends in `x`.
- *
- * **THE FOLD HAPPENS AT THIS DOOR AND THE CANONICAL FORM IS WHAT TRAVELS.** A
- * parsed ask carries the lower-case spelling, so the screen shows one spelling,
- * the record keeps one, and the derivation is handed one — rather than each of
- * them folding for itself and one of them one day forgetting to.
+ * bytes. The SDK's own validator accepts `[0-9A-Fa-f]` and rejects only a `0x`
+ * prefix (`@midnight-ntwrk/midnight-js-utils/dist/index.mjs:576`, `:986`,
+ * `:991`), so this accepts either case and folds: hex has one lower-case
+ * spelling, and two spellings of one contract must never be two contracts. A
+ * `0x` prefix fails by length.
  */
-const COMPANY_ADDRESS = /^[0-9a-fA-F]{64}$/u;
+const CONTRACT_ADDRESS = /^[0-9a-fA-F]{64}$/u;
 
 /**
  * **THE SITE'S IDENTIFIER FOR A PERSON, AS A SITE MINTS ONE.** Letters, digits,
@@ -567,7 +566,7 @@ const SIGNED_IN_ADDRESS = /^[a-z][a-z0-9_]{0,82}1[02-9ac-hj-np-z]{6,200}$/u;
  * **THE SHAPE OF AN X25519 PUBLIC KEY ON THIS WIRE.** Thirty-two bytes,
  * written as sixty-four hex characters.
  *
- * **IT IS THE SAME PATTERN AS `COMPANY_ADDRESS` ABOVE AND THE TWO ARE NOT THE
+ * **IT IS THE SAME PATTERN AS `CONTRACT_ADDRESS` ABOVE AND THE TWO ARE NOT THE
  * SAME FIELD**, which is why this is its own constant rather than the other one
  * reused: they are thirty-two bytes each by coincidence of the curve and of the
  * chain, they are refused with different codes, and the day either changes
@@ -803,6 +802,40 @@ const MAX_COMMITTEE = 64;
 const COMMITTEE_KEY = /^[0-9a-fA-F]{64}$/u;
 const COUNTER = /^[0-9]{1,20}$/u;
 
+/*
+ * **A COMPANY IS NAMED BY ITS LABEL AND ITS ACCOUNT BY AN ADDRESS, AND EACH
+ * READER REFUSES THE OTHER.** One sentence each, so every kind says the same
+ * thing about the same mistake. `asks` opens the sentence in the kind's own
+ * words, and `nothing` closes it with what was not done.
+ */
+const labelIn = (value: unknown, asks: string, nothing: string): CompanyLabel => {
+  const label = readCompanyLabel(value);
+  if (label === null) {
+    throw new RequestError(
+      'not-a-company-label',
+      `${asks} and does not name a company this wallet can make sense of. A company is named by `
+      + 'its label - co_ and sixty-four lower-case characters - and an account\'s address is not '
+      + `one. ${nothing}`);
+  }
+  return label;
+};
+
+const accountIn = (value: unknown, asks: string, nothing: string): AccountAddress => {
+  const account = readAccountAddress(value);
+  if (account === null) {
+    throw new RequestError(
+      'not-an-account-address',
+      `${asks} and does not name the company's account by an address this wallet can make sense of. `
+      + 'An account is named by its sixty-four character address on the chain, and a company\'s label '
+      + `is not one. ${nothing}`);
+  }
+  return account;
+};
+
+/** An account that may be absent: `null` when it is, the address when it reads as one, refused otherwise. */
+const accountMaybeIn = (value: unknown, asks: string, nothing: string): AccountAddress | null =>
+  value === undefined || value === null ? null : accountIn(value, asks, nothing);
+
 const notACommitteeChange = (why: string): RequestError => new RequestError(
   'not-a-committee-change',
   `this asks your wallet to sign a change to who holds a company's rules, and ${why}. Nothing has been shown to `
@@ -852,14 +885,10 @@ function committeeChangeOf(body: Record<string, unknown>, asking: Asking): Commi
       + 'answer to. The signatures are handed back to the page that asked, so the key is refused rather than '
       + 'ignored. Nothing has been shown to them and nothing has been signed.');
   }
-  const company = body['company'];
-  if (typeof company !== 'string' || !COMPANY_ADDRESS.test(company)) {
-    throw new RequestError(
-      'not-a-company-address',
-      'this asks your wallet to sign a change to who holds a company\'s rules and does not name a company this '
-      + 'wallet can make sense of. A company is named by its own address on the chain - sixty-four characters, '
-      + 'exactly as the chain writes it. Nothing has been shown to them and nothing has been signed.');
-  }
+  const committeeAsks = 'this asks your wallet to sign a change to who holds a company\'s rules';
+  const committeeNothing = 'Nothing has been shown to them and nothing has been signed.';
+  const company = labelIn(body['company'], committeeAsks, committeeNothing);
+  const account = accountIn(body['account'], committeeAsks, committeeNothing);
   const to = committeeOnTheWire(body['to'], 'the committee to install');
   if (new Set(to.committee.map((k) => k.value)).size !== to.committee.length) {
     throw notACommitteeChange('the committee to install lists one key twice, so its threshold is not what it reads as');
@@ -878,7 +907,7 @@ function committeeChangeOf(body: Record<string, unknown>, asking: Asking): Commi
     if (contract !== 'account' && contract !== 'vault') {
       throw notACommitteeChange('one of the contracts is neither the company\'s account nor one of its vaults');
     }
-    if (typeof address !== 'string' || !COMPANY_ADDRESS.test(address)) {
+    if (typeof address !== 'string' || !CONTRACT_ADDRESS.test(address)) {
       throw notACommitteeChange('one of the contracts is not named by a sixty-four character address');
     }
     if (typeof counter !== 'string' || !COUNTER.test(counter) || BigInt(counter) < 1n) {
@@ -887,8 +916,17 @@ function committeeChangeOf(body: Record<string, unknown>, asking: Asking): Commi
     const folded = address.toLowerCase();
     if (seen.has(folded)) throw notACommitteeChange('it names one contract twice');
     seen.add(folded);
+    /* The company's account is the one the ask names beside the label, and no
+     * other: the label is read off that account before anything is signed, so
+     * an account entry naming a different contract would be signed for a
+     * company nobody checked. */
+    if (contract === 'account' && folded !== account) {
+      throw notACommitteeChange('the account it changes is not the account it names as carrying the company\'s label');
+    }
     return Object.freeze({
-      contract, address: folded, counter: BigInt(counter).toString(),
+      contract,
+      address: (contract === 'account' ? readAccountAddress(folded) : readVaultAddress(folded)) as AccountAddress | VaultAddress,
+      counter: BigInt(counter).toString(),
       now: committeeOnTheWire(entry['now'], 'the committee a contract is held by now'),
     });
   });
@@ -898,7 +936,8 @@ function committeeChangeOf(body: Record<string, unknown>, asking: Asking): Commi
   return Object.freeze({
     ...asking,
     kind: 'committee' as const,
-    company: company.toLowerCase(),
+    company,
+    account,
     to,
     contracts: Object.freeze(parsed),
   });
@@ -942,10 +981,10 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
    * one and was answered with something else would be entitled to believe the
    * wallet had read it.
    */
-  if (kind !== 'keyring' && ('person' in body || 'signedInAs' in body)) {
+  if (kind !== 'keyring' && ('person' in body || 'signedInAs' in body || 'drawLabel' in body)) {
     throw new RequestError(
       'keyring-fields-on-another-kind',
-      `this is a '${kind}' and it names a person or the address a page signed in as. Those `
+      `this is a '${kind}' and it names a person, the address a page signed in as, or asks to start a company. Those `
       + 'belong only to an ask for the key your saved keys at a site are sealed under, so '
       + 'they are refused rather than ignored. Nothing has been shown to them.');
   }
@@ -995,17 +1034,12 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
         + 'answer to. A paid transaction is handed back to the page that asked, so the key is '
         + 'refused rather than ignored. Nothing has been shown to them and nothing has been paid.');
     }
-    const company = body['company'];
-    if (typeof company !== 'string' || !COMPANY_ADDRESS.test(company)) {
-      throw new RequestError(
-        'not-a-company-address',
-        'this asks your wallet to pay into a company and does not name one this wallet can make '
-        + 'sense of. A company is named by its own address on the chain - sixty-four '
-        + 'characters, exactly as the chain writes it. Nothing has been shown to them and '
-        + 'nothing has been paid.');
-    }
-    const vault = body['vault'];
-    if (typeof vault !== 'string' || !COMPANY_ADDRESS.test(vault)) {
+    const balanceAsks = 'this asks your wallet to pay into a company';
+    const balanceNothing = 'Nothing has been shown to them and nothing has been paid.';
+    const company = labelIn(body['company'], balanceAsks, balanceNothing);
+    const account = accountIn(body['account'], balanceAsks, balanceNothing);
+    const vault = readVaultAddress(body['vault']);
+    if (vault === null) {
       throw new RequestError(
         'not-a-vault-address',
         'this asks your wallet to pay into a vault and does not name one this wallet can make '
@@ -1025,8 +1059,9 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
     return Object.freeze({
       ...asking,
       kind,
-      company: company.toLowerCase(),
-      vault: vault.toLowerCase(),
+      company,
+      account,
+      vault,
       transaction,
     });
   }
@@ -1065,23 +1100,40 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
         'this names the wallet address the page signed in as, and what it names is not an '
         + 'address. Nothing has been shown to them and nothing has been given.');
     }
-    const company = body['company'];
-    if (company !== undefined && company !== null
-      && (typeof company !== 'string' || !COMPANY_ADDRESS.test(company))) {
+    const keyringAsks = 'this also asks for the key to a company';
+    const keyringNothing = 'Nothing has been shown to them and nothing has been given.';
+    const rawCompany = body['company'];
+    const company = rawCompany === undefined || rawCompany === null
+      ? null : labelIn(rawCompany, keyringAsks, keyringNothing);
+    const account = accountMaybeIn(body['account'], keyringAsks, keyringNothing);
+    const drawLabel = body['drawLabel'];
+    if (drawLabel !== undefined && typeof drawLabel !== 'boolean') {
       throw new RequestError(
-        'not-a-company-address',
-        'this also asks for the key to a company and does not name one this wallet can make '
-        + 'sense of. A company is named by its own address on the chain - sixty-four '
-        + 'characters, exactly as the chain writes it. Nothing has been shown to them and '
-        + 'nothing has been given.');
+        'malformed-field',
+        'this says whether your wallet should start a new company, and says it as something other than '
+        + `yes or no. ${keyringNothing}`);
+    }
+    /* A new company has no label yet and no account, so an ask to start one
+     * that also names either is two questions behind one press. */
+    if (drawLabel === true && (company !== null || account !== null)) {
+      throw new RequestError(
+        'malformed-field',
+        'this asks your wallet to start a new company and also names a company or an account. A new '
+        + `company has neither yet. ${keyringNothing}`);
+    }
+    if (company === null && account !== null) {
+      throw new RequestError(
+        'malformed-field',
+        `this names a company's account and no company. ${keyringNothing}`);
     }
     return Object.freeze({
       ...asking,
       kind,
       person,
       signedInAs: typeof signedInAs === 'string' ? signedInAs : null,
-      /* The canonical spelling, from here inward. */
-      company: typeof company === 'string' ? company.toLowerCase() : null,
+      company,
+      account,
+      drawLabel: drawLabel === true,
     });
   }
 
@@ -1095,7 +1147,7 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
     /* A SIGN-IN OPENS NOTHING, SO IT HAS NO COMPANY TO NAME. Refused by
      * presence, like `wants` beside it: a requester that named a company and
      * was answered anyway would be entitled to believe the wallet had read it. */
-    if ('company' in body) {
+    if ('company' in body || 'account' in body) {
       throw new RequestError(
         'company-on-a-sign-in',
         'this is a sign-in and it names a company whose records to open. Signing in opens '
@@ -1146,15 +1198,10 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
      * belongs to the company at this address; that is what the screen is for.
      * What this can tell is whether the request knows what it is asking for.
      */
-    const company = body['company'];
-    if (typeof company !== 'string' || !COMPANY_ADDRESS.test(company)) {
-      throw new RequestError(
-        'not-a-company-address',
-        'this asks for the key to a company and does not name one this wallet can make '
-        + 'sense of. A company is named by its own address on the chain — sixty-four '
-        + 'characters, exactly as the chain writes it. Nothing has been shown to them and '
-        + 'nothing has been given.');
-    }
+    const unlockAsks = 'this asks for the key to a company';
+    const unlockNothing = 'Nothing has been shown to them and nothing has been given.';
+    const company = labelIn(body['company'], unlockAsks, unlockNothing);
+    const account = accountMaybeIn(body['account'], unlockAsks, unlockNothing);
     /* AN UNLOCK RELEASES A KEY OVER THE CHANNEL AND SEALS NOTHING.
      * Refused by presence: a requester that named an inbox key and was answered
      * anyway would be entitled to believe the release had been sealed to it. */
@@ -1166,8 +1213,7 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
         + 'refused rather than ignored. Nothing has been shown to them and nothing has '
         + 'been released.');
     }
-    /* The canonical spelling, from here inward. */
-    return Object.freeze({ ...asking, kind, company: company.toLowerCase() });
+    return Object.freeze({ ...asking, kind, company, account });
   }
 
   if (kind === 'join') {
@@ -1178,7 +1224,7 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
      * the wrong kind in it would tell a requester something untrue about its
      * own message.
      */
-    if ('company' in body) {
+    if ('company' in body || 'account' in body) {
       throw new RequestError(
         'company-on-a-join',
         'this is an invitation and it also names a company whose records to open. Those '
@@ -1252,7 +1298,7 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
   }
 
   /* A DISCLOSURE OPENS NOTHING EITHER. Same refusal, its own code. */
-  if ('company' in body) {
+  if ('company' in body || 'account' in body) {
     throw new RequestError(
       'company-on-a-disclosure',
       'this asks for details about you and also names a company whose records to open. '

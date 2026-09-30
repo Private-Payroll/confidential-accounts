@@ -3,6 +3,7 @@ import { check } from './definition.js';
 import type { AttributeName } from './definition.js';
 import type { AskKind } from './request.js';
 import type { Registry } from './attributes.js';
+import type { AccountAddress, CompanyLabel } from './company-label.js';
 
 /**
  * A PERSON'S OWN FACTS, AND WHO SAYS SO.
@@ -365,8 +366,18 @@ export interface Release {
    * rebuilt from its seed alone, with no history at all, derives every one of
    * these keys identically. If it were an input, a recovery would stop opening
    * a company's records -- which is that defect arriving by a different door.
+   *
+   * It is the company's label. A row written while companies were named by
+   * their account's address holds that address here, and matches no label.
    */
   readonly company: string;
+  /**
+   * The account the ask named as carrying that label, or null when it named
+   * none. Absent from a row written before accounts were recorded, which reads
+   * as null. The pair is what `originsFor` compares, because the pair is what
+   * the person approved on.
+   */
+  readonly account?: string | null;
 }
 
 /**
@@ -392,10 +403,14 @@ export const releasesOf = (profile: Profile): readonly Release[] => profile.rele
  * host, which is the whole reason the key stopped depending on one. An empty
  * list means *nothing to compare against*, and the screen proceeds normally.
  */
-export const originsFor = (profile: Profile, company: string): readonly string[] => {
+export const originsFor = (
+  profile: Profile, company: CompanyLabel, account: AccountAddress | null,
+): readonly string[] => {
   const seen: string[] = [];
   for (const release of releasesOf(profile)) {
-    if (release.company !== company) continue;
+    /* The label and the account together, because a label on another account
+     * is another company to the person, and the warning is for the person. */
+    if (release.company !== company || (release.account ?? null) !== account) continue;
     if (!seen.includes(release.recipient.origin)) seen.push(release.recipient.origin);
   }
   return Object.freeze(seen);

@@ -29,6 +29,7 @@
  * assert live.
  */
 import { describe, it, expect } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -86,7 +87,7 @@ const services = () => {
  */
 async function aCompanyWithAPayroll(payees = 1) {
   const { accounts, payroll } = services();
-  const created = await accounts.create('Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1);
+  const created = await accounts.create('Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1, undefined, drawCompanyLabel());
   const viewingKey = created.viewingKey;
 
   for (let i = 0; i < payees; i++) {

@@ -194,7 +194,7 @@ describe('THE KEY AN ACCEPTANCE IS SEALED TO IS REFUSED BY NAME AND BY PRESENCE'
       kind: 'unlock',
       requester: { name: 'Payroll A', rdns: 'example.payroll-a' },
       purpose: 'To open your records.',
-      company: 'a'.repeat(64),
+      company: `co_${'a'.repeat(64)}`,
       inboxPublicKey: INBOX_KEY,
       nonce: 'n1',
       expiresAt: NOW + 60_000,

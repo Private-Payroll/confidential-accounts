@@ -1914,6 +1914,7 @@ describe('C334: MidnightLedger.open refuses an opening it cannot honour', () => 
   const VACANT_LEAF = toHex(pureCircuits.vacantSlot());
 
   const opening = (over: Partial<AccountOpening> = {}): AccountOpening => ({
+    companyLabel: 'co_' + 'c5'.repeat(32) as AccountOpening['companyLabel'],
     signerLeaves: ['aa'.repeat(32)],
     threshold: 2,
     assetBlinding: 'bb'.repeat(32),
@@ -1955,6 +1956,19 @@ describe('C334: MidnightLedger.open refuses an opening it cannot honour', () => 
     const h = harness({}, deployment);
     await expect(h.ledger.open('acct', opening({ signerLeaves: [] })))
       .rejects.toThrow(/names no founding signer/);
+  });
+
+  it('refuses an opening with no company label, or anything else where the label belongs, before anything is asked of a chain', async () => {
+    /*
+     * The account carries the label its founding signer's wallet made up, and
+     * every signer derives the company's keys from it. RED WHEN the refusal is
+     * taken out: an opening with no label goes on to the next guard.
+     */
+    for (const companyLabel of [undefined, null, 'c5'.repeat(32), 'co_' + 'c5'.repeat(32).toUpperCase(), 'co_' + '00'.repeat(32)]) {
+      const h = harness({}, deployment);
+      await expect(h.ledger.open('acct', opening({ companyLabel: companyLabel as never })), String(companyLabel))
+        .rejects.toThrow(/no company label was given, or what was given is not one/);
+    }
   });
 
   it('refuses an opening that names more than one, rather than seating the first and dropping the rest', async () => {
@@ -2382,6 +2396,7 @@ describe('T-324: a refused run leaves no salt behind, because nothing was staged
  */
 describe('T-345: a committee the SDK could never sign with is refused at the account door', () => {
   const opening = (over: Partial<AccountOpening> = {}): AccountOpening => ({
+    companyLabel: 'co_' + 'c5'.repeat(32) as AccountOpening['companyLabel'],
     signerLeaves: ['aa'.repeat(32)],
     threshold: 2,
     assetBlinding: 'bb'.repeat(32),

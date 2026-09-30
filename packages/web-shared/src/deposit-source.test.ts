@@ -6,6 +6,7 @@
  * The service and the vault worker are stood in; the step is the page's own.
  */
 import { describe, it, expect } from 'vitest';
+import type { AccountAddress, CompanyLabel, VaultAddress } from 'midnight-identity/profile/company-label';
 import { StaticAssetRegistry, type Asset } from '../../../src/core/assets.js';
 import type { WireRecord } from '../../../src/midnight/sealed-record-wire.js';
 import { MemorySealedPoolStore } from '../../../src/midnight/vault-pool.js';
@@ -20,8 +21,10 @@ import {
   depositFromSource, privateTokenFromTheWallet, type DepositAsk, type DepositSource, type PaidIn,
 } from './deposit-source.js';
 
-const VAULT = 'ab'.repeat(32) as Hex;
-const ACCOUNT = 'c0'.repeat(32) as Hex;
+const VAULT = 'ab'.repeat(32) as VaultAddress;
+/* The company's account, and the label it carries. */
+const ACCOUNT = 'c0'.repeat(32) as AccountAddress;
+const LABEL = `co_${'c1'.repeat(32)}` as CompanyLabel;
 const PRIVATE_TOKEN = '5e'.repeat(32);
 const OTHER_TOKEN = '7a'.repeat(32);
 const PARAMS = btoa('midnight:ledger-parameters[v8]:stand-in');
@@ -75,7 +78,7 @@ const setUp = async () => {
     me: { signerId: 'ada', wrappingSecret: wrapping.secret, companyKey: new Uint8Array(32).fill(9) },
     myRecordsKey: 'ff'.repeat(32) as Hex,
     signers: async () => [{ id: 'ada', wrappingPublicKey: wrapping.publicKey }],
-    company: ACCOUNT, builder,
+    company: LABEL, account: ACCOUNT, builder,
     inFlight: sealedOnThisDevice<DepositInFlight>(inFlightInMemory(inFlight), { signerId: 'ada', wrappingSecret: wrapping.secret }, 'deposit') as DepositsInFlight,
   };
   await openCompanyVaultPool(doors, VAULT);
@@ -93,16 +96,16 @@ describe('A DEPOSIT FROM A SOURCE', () => {
     expect(done.note.value).toBe(40n);
     /* RED WHEN: the wallet is not asked between the build and the send, or the service sends anything but what it answered. */
     expect(log).toEqual([`built ${PRIVATE_TOKEN.slice(0, 2)} 40`, 'wallet', 'sent PROVEN+coins']);
-    /* RED WHEN: the source hands the wallet anything beyond the company, the vault and the proven deposit. */
-    expect(asked).toEqual([{ company: ACCOUNT, vault: VAULT, transaction: 'PROVEN' }]);
+    /* RED WHEN: the source hands the wallet anything beyond the company, its account, the vault and the proven deposit. */
+    expect(asked).toEqual([{ company: LABEL, account: ACCOUNT, vault: VAULT, transaction: 'PROVEN' }]);
   });
 
   it('THE PAGE\'S SOURCE PASSES ON ONLY WHAT AN ASK IS, WHATEVER ELSE IT IS HANDED', async () => {
     const asked: unknown[] = [];
     const source = privateTokenFromTheWallet(async (ask) => { asked.push(ask); return { transaction: 'T', leaves: [] }; }, REGISTRY);
-    await source.payIn({ company: ACCOUNT, vault: VAULT, transaction: 'PROVEN', nonce: '11'.repeat(32) } as DepositAsk);
+    await source.payIn({ company: LABEL, account: ACCOUNT, vault: VAULT, transaction: 'PROVEN', nonce: '11'.repeat(32) } as DepositAsk);
     /* RED WHEN: payIn hands the wallet the object it was given, so anything added to an ask reaches the wallet. */
-    expect(asked).toEqual([{ company: ACCOUNT, vault: VAULT, transaction: 'PROVEN' }]);
+    expect(asked).toEqual([{ company: LABEL, account: ACCOUNT, vault: VAULT, transaction: 'PROVEN' }]);
   });
 
   it('AN ASSET THE SOURCE CANNOT BRING, OR AN AMOUNT OF NOTHING, IS REFUSED BEFORE ANYTHING IS CHOSEN, FILED, BUILT OR ASKED', async () => {
@@ -138,7 +141,7 @@ describe('A DEPOSIT FROM A SOURCE', () => {
     /* RED WHEN: the step takes its token or amount from anywhere but the source's `money`, or sends anything but what its `payIn` answered. */
     expect({ token: done.note.token, value: done.note.value }).toEqual({ token: OTHER_TOKEN, value: 42n });
     expect(log).toEqual([`built ${OTHER_TOKEN.slice(0, 2)} 42`, 'sent PROVEN+from-elsewhere']);
-    expect(asked).toEqual([{ company: ACCOUNT, vault: VAULT, transaction: 'PROVEN' }]);
+    expect(asked).toEqual([{ company: LABEL, account: ACCOUNT, vault: VAULT, transaction: 'PROVEN' }]);
     /* And the page's source, beside it, is as it was. */
     const again = await setUp();
     const page = privateTokenFromTheWallet(async (ask) => ({ transaction: `${ask.transaction}+coins`, leaves: [] }), REGISTRY);

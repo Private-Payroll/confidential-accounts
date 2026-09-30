@@ -1,7 +1,7 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
 import { utf8 } from './crypto.js';
-import type { SealedAccount, Proposal, SealedProposal, PayrollRun, SealedRun, Attestation, SealedEmployee, Invite, Installation, PluginEvent, User, CompanyVault, FilingKeyOfAMember } from './types.js';
+import type { SealedAccount, SealedProposal, SealedRun, Attestation, SealedEmployee, Invite, Installation, PluginEvent, User, CompanyVault, FilingKeyOfAMember } from './types.js';
 import type { CompanyVaultKeyIndex } from './vault-keys.js';
 import { provenanceOf, type Marked, type WiringName } from './provenance.js';
 
@@ -118,9 +118,9 @@ export const walletKeyOf = (address: string): string =>
  * **WHERE A PAYSLIP LOOKUP LOOKS, SO IT DOES NOT READ EVERY RECORD TO ANSWER.**
  *
  * A payee's page asks two things with no viewing key: which slips are sealed to
- * one public key, and which company addresses one company's slips name. Both
+ * one public key, and which company labels one company's slips name. Both
  * are answered from fields already outside the envelope - a slip's `sealedTo`
- * and `issuedBy`, a roster record's public key, an account's contract address -
+ * and `issuedBy`, a roster record's public key, an account's company label -
  * so this holds nothing the records do not already show. It exists so that the
  * answer costs the size of the answer rather than the size of the store.
  *
@@ -176,7 +176,8 @@ class PayslipIndex {
 
   account(a: SealedAccount) {
     const before = this.addressOf.get(a.id);
-    const now = typeof a.contractAddress === 'string' ? a.contractAddress.toLowerCase() : undefined;
+    /* A company is found by its label: what every payslip key of its payees is worked out from. */
+    const now = typeof a.companyLabel === 'string' ? a.companyLabel : undefined;
     if (before === now) return;
     if (before !== undefined) PayslipIndex.count(this.accountsAt, before, a.id, -1);
     if (now !== undefined) {

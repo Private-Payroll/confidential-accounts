@@ -13,6 +13,9 @@ import type { CommitteeSignatures, CommitteeSigningLedger } from 'midnight-ident
 import { watchedStore } from '../testing/settled-store.js';
 import { settled, watchedOpener } from '../testing/settled-channel.js';
 import { ApproveCommittee } from './approve-committee.js';
+import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
+import { companyFingerprint } from 'midnight-identity/profile/fingerprint';
+import type { LabelReader } from './company-on-chain.js';
 import { Approve } from './approve.js';
 
 /*
@@ -27,8 +30,13 @@ const NOW = 1_755_000_000_000;
 const identity = identityFromWords(TEST_MNEMONIC);
 const SECRET = secretFromWords(TEST_MNEMONIC);
 const ORIGIN = 'https://payroll-a.example';
-const CO = 'dbe119a304f8e7ea882353435c1d536cf2faf4298236a9aae77670e750af65c8';
+/* The company's label, the account that carries it, and one of its vaults. */
+const CO = 'co_1f2e3d4c5b6a79880a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f6071' as CompanyLabel;
+const ACCOUNT = 'dbe119a304f8e7ea882353435c1d536cf2faf4298236a9aae77670e750af65c8' as AccountAddress;
 const VAULT = '54ef954a25aefff8e1675af10a852ef29d5de5c63a51b64b978bf7bd0eaeca4e';
+/* The chain, as this wallet reads it: the account carries the company's label. */
+/* Answers for the request's own account only: RED WHEN the screen reads any other address, such as the vault's. */
+const carries: LabelReader = async (account) => (account === ACCOUNT ? { of: 'carries', label: CO } : { of: 'no-account' });
 const mine = committeeKeyFor(identity, CO);
 const leaving = committeeKeyFor(identityFromWords(newWords().join(' ')), CO);
 const joining = committeeKeyFor(identityFromWords(newWords().join(' ')), CO);
@@ -43,6 +51,7 @@ const wire = (over: Record<string, unknown> = {}) => ({
   nonce: 'c1',
   expiresAt: NOW + 600_000,
   company: CO,
+  account: ACCOUNT,
   to: { committee: sorted(mine, joining), threshold: 1 },
   contracts: [{ contract: 'vault', address: VAULT, counter: '3', now: { committee: sorted(mine, leaving), threshold: 2 } }],
   ...over,
@@ -55,10 +64,13 @@ const channelFor = (answers: unknown[]): Channel => ({
 } as Channel);
 const consented = { ok: true } as never;
 const ledger = async () => L as unknown as CommitteeSigningLedger;
-const renderWith = (request: CommitteeRequest, answers: unknown[], consent = consented, declined: string[] = []) => render(
+const renderWith = (
+  request: CommitteeRequest, answers: unknown[], consent = consented, declined: string[] = [], readLabel: LabelReader = carries,
+) => render(
   <ApproveCommittee
     request={request} identity={identity} channel={channelFor(answers)} consent={consent}
-    whoIsAsking={<p>asker</p>} onDecline={() => declined.push('declined')} ledger={ledger} now={() => NOW} />);
+    whoIsAsking={<p>asker</p>} onDecline={() => declined.push('declined')} ledger={ledger} now={() => NOW}
+    readLabel={readLabel} />);
 
 afterEach(() => { cleanup(); });
 
@@ -101,13 +113,13 @@ describe('THE SCREEN FOR SIGNING A CHANGE TO WHO HOLDS A COMPANY\'S RULES', () =
   it('SHOWS EVERY CONTRACT IT WILL SIGN FOR, THE COMPANY ACCOUNT INCLUDED, AND EVERY KEY OF THE NEW COMMITTEE', async () => {
     const answers: unknown[] = [];
     const contracts = [
-      { contract: 'account', address: CO, counter: '1', now: { committee: sorted(mine), threshold: 1 } },
+      { contract: 'account', address: ACCOUNT, counter: '1', now: { committee: sorted(mine), threshold: 1 } },
       { contract: 'vault', address: VAULT, counter: '3', now: { committee: sorted(mine, leaving), threshold: 2 } },
     ];
     const { container } = renderWith(ask({ contracts }), answers);
     await screen.findByText('Sign this change');
     /* RED WHEN: a contract the press signs for is left off the screen. */
-    expect(container.querySelector('[data-contract="account"]')!.textContent).toBe(CO);
+    expect(container.querySelector('[data-contract="account"]')!.textContent).toBe(ACCOUNT);
     expect(container.querySelector('[data-contract="vault"]')!.textContent).toBe(VAULT);
     expect([...container.querySelectorAll('[data-threshold-change]')].map((e) => e.textContent))
       .toEqual(['Threshold: 1 before, 1 after.', 'Threshold: 2 before, 1 after.']);
@@ -115,7 +127,40 @@ describe('THE SCREEN FOR SIGNING A CHANGE TO WHO HOLDS A COMPANY\'S RULES', () =
     const listed = container.querySelector('[data-new-committee]')!.textContent!;
     for (const k of [mine, joining]) expect(listed).toContain(short(k.value));
     fireEvent.click(screen.getByText('Sign this change'));
-    expect((answers[0] as CommitteeSignatures).signatures.map((x) => x.address)).toEqual([CO, VAULT]);
+    expect((answers[0] as CommitteeSignatures).signatures.map((x) => x.address)).toEqual([ACCOUNT, VAULT]);
+  });
+
+  it('SHOWS THE FINGERPRINT OF THE LABEL AND THE ACCOUNT TOGETHER, ONCE THE ACCOUNT HAS BEEN READ', async () => {
+    /* RED WHEN: the screen renders a fingerprint of anything but the pair. */
+    const { container } = renderWith(ask(), []);
+    await screen.findByText('Sign this change');
+    await settled(5);
+    expect(container.querySelector('[data-company-fingerprint]')!.textContent).toBe(companyFingerprint(CO, ACCOUNT));
+    expect(container.querySelector('[data-company-account]')!.textContent).toBe(ACCOUNT);
+    expect(container.querySelector('[data-company-label]')!.textContent).toBe(CO);
+  });
+
+  it('SIGNS NOTHING WHEN THE ACCOUNT CARRIES ANOTHER COMPANY\'S LABEL, OR NONE, OR CANNOT BE READ', async () => {
+    /* RED WHEN: the button opens, or a fingerprint is shown, before the account is found to carry the label. */
+    const other = 'co_2222222222222222222222222222222222222222222222222222222222222222' as CompanyLabel;
+    for (const [read, shown] of [
+      [async () => ({ of: 'carries', label: other }), 'another-company'],
+      [async () => ({ of: 'no-label' }), 'no-label'],
+      [async () => ({ of: 'no-account' }), 'no-account'],
+      [async () => ({ of: 'unreadable', why: 'offline.' }), 'unreadable'],
+      [() => new Promise<never>(() => {}), 'checking'],
+    ] as [LabelReader, string][]) {
+      const answers: unknown[] = [];
+      const { container } = renderWith(ask(), answers, consented, [], read);
+      await screen.findByText('Sign this change');
+      await settled(5);
+      expect(container.querySelector(`[data-company-check="${shown}"]`), shown).not.toBeNull();
+      expect(container.querySelector('[data-company-fingerprint]'), shown).toBeNull();
+      expect((screen.getByText('Sign this change') as HTMLButtonElement).disabled, shown).toBe(true);
+      fireEvent.click(screen.getByText('Sign this change'));
+      expect(answers, shown).toEqual([]);
+      cleanup();
+    }
   });
 
   it('SAYS SO WHEN THIS PERSON\'S OWN KEY LEAVES', async () => {
@@ -159,7 +204,7 @@ describe('THE APPROVAL SURFACE ROUTES A COMMITTEE CHANGE TO THIS SCREEN', () => 
       addEventListener: (_t, h) => { handlers.push(h); },
       removeEventListener: () => {},
     };
-    render(<Approve identity={identity} secret={SECRET} port={port} view={view} now={() => NOW} />);
+    render(<Approve identity={identity} secret={SECRET} port={port} view={view} now={() => NOW} readLabel={carries} />);
     for (const h of handlers) h({ source: opener, origin: ORIGIN, data: wire() } as unknown as MessageEvent);
     /* RED WHEN: a committee ask is routed anywhere but its own screen. */
     expect(await screen.findByText(`Change who holds a company's rules, for ${ORIGIN}`)).toBeTruthy();

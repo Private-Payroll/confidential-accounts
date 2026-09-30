@@ -7,6 +7,7 @@
  * account service over a store file, with the simulated ledger under it.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -37,7 +38,7 @@ beforeEach(async () => {
     /* Names with a space in them: no account id or key can contain one, so "not in the index" cannot pass by chance. */
     { name: 'Ada Lovelace', role: 'admin', userId: 'usr_ada' },
     { name: 'Bo Diddley', role: 'approver', userId: 'usr_bo' },
-  ], 2);
+  ], 2, undefined, drawCompanyLabel());
   company = created.account.id;
   viewingKey = created.viewingKey;
   ada = created.secrets[0]!;

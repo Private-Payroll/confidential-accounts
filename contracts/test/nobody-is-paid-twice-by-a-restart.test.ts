@@ -35,6 +35,7 @@
  * firing when they do not, so neither half is taken on trust.
  */
 import { describe, it, expect } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -114,7 +115,7 @@ const deviceCarrying = (
 /** A company of `people`, with one payroll run drawn from the roster for the period. */
 async function aCompanyWithADraftedRun(people: number) {
   const s = services();
-  const created = await s.accounts.create('Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1);
+  const created = await s.accounts.create('Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1, undefined, drawCompanyLabel());
   const viewingKey = created.viewingKey;
   for (let i = 0; i < people; i++) {
     s.payroll.hireDirect(created.account.id, {

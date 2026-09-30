@@ -5,6 +5,7 @@ import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
 import { READY_PING } from 'midnight-identity/profile/channel';
 import { NETWORK } from 'midnight-identity/network';
 import { HELD_ADDRESS_SLOTS } from 'midnight-identity/profile/unlock';
+import { readAccountAddress, readCompanyLabel } from 'midnight-identity/profile/company-label';
 /*
  * **THE WALLET'S SIDE IS THE WALLET'S OWN SOURCE, AND THE PAGE'S SIDE IS THE
  * LIBRARY AS THE PAGE LOADS IT**, as in `the-wallet-confirms-the-payslips-address.test.ts`:
@@ -62,7 +63,8 @@ const { ownedAddressFor } = await import(/* @vite-ignore */ `${WALLET_APP}owned-
 
 const US = 'https://payroll.example';
 const WALLET = 'https://wallet.example';
-const ACME = 'a1'.repeat(32);
+const ACME = readCompanyLabel('co_' + 'a1'.repeat(32))!;
+const ACME_ACCOUNT = readAccountAddress('a2'.repeat(32))!;
 const AT = 1_756_000_000_000;
 const INDEXER = { indexerUri: 'https://indexer.example/graphql', indexerWsUri: 'wss://indexer.example/graphql/ws' };
 
@@ -103,9 +105,9 @@ const pressed = (identity = mine) => (ask: UnlockRequest) => {
   return r;
 };
 
-const openWith = async (wallet: TheWallet, slips: OpenedPayslip[]) => openAddresses([ACME],
+const openWith = async (wallet: TheWallet, slips: OpenedPayslip[]) => openAddresses([{ label: ACME, account: ACME_ACCOUNT }],
   (company) => askWalletToUnlockAndWhereItReads(wallet, WALLET, {
-    company, atOrigin: US, name: 'Confidential Accounts', rdns: 'social.lemonade.confidential-accounts',
+    company: company.label, account: company.account, atOrigin: US, name: 'Confidential Accounts', rdns: 'social.lemonade.confidential-accounts',
     now: () => AT,
   }),
   async (): Promise<MyPayslips> => ({ opened: slips, sealed: [], unopened: 0, refused: 0 }));
@@ -121,7 +123,7 @@ const RECORDED = new Set(run.tree.leaves.map(paidMovementOfLeaf));
 const slip = (runId: string, paidTo: string, amount = PAID, asset = 'NIGHT'): OpenedPayslip => ({
   runId, period: runId, status: 'proposed', settledAt: null, wiring: 'chain', issuedBy: ACME,
   payslip: { employeeId: 'emp_1', name: 'Dana', asset, amount, period: runId, paidTo },
-  receipt: { runId, nonce: args.nonce, blinding: args.blinding, company: ACME, until: AT / 1000 + 3_600 },
+  receipt: { runId, nonce: args.nonce, blinding: args.blinding, company: ACME_ACCOUNT, label: ACME, until: AT / 1000 + 3_600 },
 });
 
 const reader = (asked: PayslipPayment[]) => ({ recorded: async (_i: unknown, _c: string, ps: PayslipPayment[]) => {
@@ -141,7 +143,7 @@ describe('a public payment on the payslips page', () => {
     const got = await openWith(new TheWallet(pressed()), slips);
     /* RED WHEN a public address reads as confirmed by a wallet that answered for none. */
     expect(got.confirmed(slips[0]!)).toBe(false);
-    const read = await readTheChain(slips, reader(asked), INDEXER, got.confirmed, AT / 1000);
+    const read = await readTheChain(slips, reader(asked), INDEXER, got.confirmed, AT / 1000, undefined, got.openedAt);
     expect(read.chain.get('paid')).toBe('cannot-tell');
     expect(asked).toEqual([]);
   });
@@ -154,7 +156,7 @@ describe('a public payment on the payslips page', () => {
       slip('theirs', publicOf(someoneElse, 0)),
     ];
     const confirmed = (s: OpenedPayslip) => s.payslip.paidTo === publicOf(mine, 0);
-    const read = await readTheChain(slips, reader(asked), INDEXER, confirmed, AT / 1000, undefined, [ACME]);
+    const read = await readTheChain(slips, reader(asked), INDEXER, confirmed, AT / 1000, undefined, [ACME_ACCOUNT]);
     /*
      * RED WHEN the page skips a public payment (it reads "cannot tell"), asks
      * with the private token, or the device builds the value with the private

@@ -653,6 +653,28 @@ under its own tag is an anchor for a company that deployed with this
 contract's constructor; it proves nothing about an account somebody built by
 other means.
 
+WHERE THE LABEL COMES FROM, AND WHAT IT IS FOR. The label is drawn once, by
+the wallet of the company's founding signer, before the account is deployed.
+The page carries it to the service, which refuses a label that a company it
+already holds has, and hands it to the constructor. Off the chain it is
+written `co_` and 64 lower-case hex characters. The key that opens the
+company and the committee key are derived in each signer's own wallet from
+the label, never from this account's address, and the committee key's secret
+half never leaves the wallet. The page derives the records key and each
+payee's payslip key, on the person's own device, from the company key the
+wallet gives it. So none of these keys depends on where the account is. A
+signer's roster seat keys are not among them: the service makes those when
+the seat is created. A committee key belongs to the label and not to one
+account, so it holds a seat on every contract whose committee includes it,
+whichever account carries the label. Before a wallet gives a key or signs
+anything for a company, it reads the label back off this account itself,
+under `companyLabelKey()`, and gives nothing when the account does not carry
+it. Nothing checks that the label the constructor was given is the one the
+founding signer's wallet drew: a wallet takes whatever label the account
+carries. The fingerprint a person compares is worked out from the label and
+this account's address together, so the same label on another account shows
+another fingerprint.
+
 WHAT `signerScope` IS, BY CONTRAST. The witness below carries what a signer
 may do as a private value inside their own leaf. Nothing about it is written
 here or anywhere else on chain.

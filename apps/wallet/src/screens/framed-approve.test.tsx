@@ -156,11 +156,14 @@ describe('§2b - THE WAIT IS TIMED FROM THE REQUEST, NOT FROM THE SCREEN', () =>
 
   it('the KEY RELEASE is held the same way as the sign-in', async () => {
     const { view, from } = framed();
-    render(<Approve identity={identity} secret={SECRET} port={watchedStore()} view={view} now={() => NOW} embedder={EMBEDDER} />);
+    /* The account is read off the chain and carries the label, so the frame's own guard is the only thing holding the press. */
+    const label = `co_${'c0'.repeat(32)}`;
+    const carries = async () => ({ of: 'carries' as const, label: label as never });
+    render(<Approve identity={identity} secret={SECRET} port={watchedStore()} view={view} now={() => NOW} embedder={EMBEDDER} readLabel={carries} />);
     from(EMBEDDER, {
       schema: 'midnight-identity/disclosure-request/v1', kind: 'unlock',
       requester: { name: 'Payroll A', rdns: 'example.payroll-a' }, purpose: 'So we can show you your payslips.',
-      company: 'c0'.repeat(32), nonce: 'n1', expiresAt: NOW + 600_000,
+      company: label, account: 'b1'.repeat(32), nonce: 'n1', expiresAt: NOW + 600_000,
     });
     await settled();
     const give = document.querySelector<HTMLButtonElement>('[data-unlock]');

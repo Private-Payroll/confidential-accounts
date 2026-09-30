@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { importTheServer, useOnlyTheseSettings } from '../testing/server-under-test.js';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -155,7 +156,7 @@ const signedInWithAWallet = async (slot: number): Promise<string> => {
 
 const aCompany = async (token: string, name: string): Promise<Res> =>
   call('POST', '/api/accounts', {
-    token, body: { name, signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 },
+    token, body: { companyLabel: drawCompanyLabel(), name, signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 },
   });
 
 describe('C155 — POST /api/accounts refuses nothing for being a SECOND company', () => {

@@ -216,7 +216,7 @@ describe('§5 — AND ALL THREE KINDS GO THROUGH IT', () => {
     ...(kind === 'disclosure'
       ? { wants: [{ attribute: 'legal-name', required: true }] }
       : {}),
-    ...(kind === 'unlock' ? { company: 'a1'.repeat(32) } : {}),
+    ...(kind === 'unlock' ? { company: `co_${'a1'.repeat(32)}` } : {}),
   });
 
   it('SIGN-IN, DISCLOSURE AND UNLOCK ALL REFUSE localhost.evil.com', () => {

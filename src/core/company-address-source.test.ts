@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { MemoryStore } from './store.js';
 import { SimulatedLedger, SimulatedCommitments } from './ledger.js';
 import { AccountService, openAccount, sealAccount } from './account.js';
-import { NoCompanyAddress, companyForSession } from './company-address.js';
+import { NoCompanyAddress, accountForChain, companyForSession } from './company-address.js';
 
 /**
  * **THE SYSTEM CAN TELL WHETHER AN ADDRESS CAME FROM A CHAIN.** `docs/NEXT.md`
@@ -57,7 +58,7 @@ afterEach(() => { vi.unstubAllEnvs(); });
 describe('§1 — THE LEDGER SAYS WHERE THE ADDRESS CAME FROM, IN THE SAME VALUE', () => {
   it('A SIMULATED ADDRESS SAYS IT IS SIMULATED, AND LOOKS EXACTLY LIKE A REAL ONE', async () => {
     const { ledger, accounts } = world();
-    const made = await accounts.create('Acme', ada, 1);
+    const made = await accounts.create('Acme', ada, 1, undefined, drawCompanyLabel());
     const assigned = await ledger.address(made.account.id);
 
     /*
@@ -71,7 +72,7 @@ describe('§1 — THE LEDGER SAYS WHERE THE ADDRESS CAME FROM, IN THE SAME VALUE
 
   it('THE SOURCE IS WRITTEN ON THE RECORD IN THE SAME BREATH AS THE ADDRESS', async () => {
     const { store, accounts } = world();
-    const made = await accounts.create('Acme', ada, 1);
+    const made = await accounts.create('Acme', ada, 1, undefined, drawCompanyLabel());
 
     expect(made.account.addressSource).toBe('simulated');
     /* On the stored record too, in the clear beside the address. A source that
@@ -93,7 +94,7 @@ describe('§1 — THE LEDGER SAYS WHERE THE ADDRESS CAME FROM, IN THE SAME VALUE
      * produced, and agrees just as happily when it writes nothing.
      */
     const { store, accounts } = world();
-    const made = await accounts.create('Acme', ada, 1);
+    const made = await accounts.create('Acme', ada, 1, undefined, drawCompanyLabel());
     store.putAccount({
       ...store.getAccount(made.account.id)!,
       contractAddress: DEPLOYED, addressSource: 'chain',
@@ -111,9 +112,15 @@ describe('§2 — A COMPANY WHOSE ADDRESS NO CHAIN ASSIGNED IS REFUSED BY NAME',
   it('A SIMULATED COMPANY IS REFUSED, AND THE REFUSAL SAYS WHICH KIND OF NOTHING IT IS',
     async () => {
       const { store, accounts } = world();
-      const made = await accounts.create('Acme', ada, 1);
+      const made = await accounts.create('Acme', ada, 1, undefined, drawCompanyLabel());
 
-      const refused = refusalOf(() => companyForSession(store, 'usr_1', made.account.id));
+      /* Its keys are still the label's, so it opens; it offers a wallet no account to read. */
+      const named = companyForSession(store, 'usr_1', made.account.id);
+      expect(named.label).toBe(store.getAccount(made.account.id)!.companyLabel);
+      /* RED WHEN an address no chain gave is named to a wallet as the account carrying the label. */
+      expect(named.account).toBeNull();
+      /* And every chain action is refused, by name. */
+      const refused = refusalOf(() => accountForChain(store, made.account.id));
       expect(refused.code).toBe('company-address-not-from-a-chain');
       /*
        * A DIFFERENT CODE FROM `company-not-on-a-chain`, and the difference is
@@ -128,7 +135,7 @@ describe('§2 — A COMPANY WHOSE ADDRESS NO CHAIN ASSIGNED IS REFUSED BY NAME',
 
   it('A COMPANY WHOSE ADDRESS A CHAIN ASSIGNED IS SERVED, canonically spelled', async () => {
     const { store, accounts } = world();
-    const made = await accounts.create('Acme', ada, 1);
+    const made = await accounts.create('Acme', ada, 1, undefined, drawCompanyLabel());
     /* What a deployment writes: the address the chain gave, marked as the
      * chain's. Upper-cased here because the answer folds case and two spellings
      * of one company must never become two keys. */
@@ -137,7 +144,10 @@ describe('§2 — A COMPANY WHOSE ADDRESS NO CHAIN ASSIGNED IS REFUSED BY NAME',
       contractAddress: DEPLOYED.toUpperCase(), addressSource: 'chain',
     });
 
-    expect(companyForSession(store, 'usr_1', made.account.id)).toBe(DEPLOYED);
+    expect(companyForSession(store, 'usr_1', made.account.id)).toEqual({
+      label: store.getAccount(made.account.id)!.companyLabel, account: DEPLOYED,
+    });
+    expect(accountForChain(store, made.account.id)).toBe(DEPLOYED);
   });
 
   it('AN ACCOUNT FROM BEFORE THIS FIELD EXISTED IS REFUSED, BECAUSE NOBODY CAN SAY WHAT IT WAS',
@@ -150,12 +160,13 @@ describe('§2 — A COMPANY WHOSE ADDRESS NO CHAIN ASSIGNED IS REFUSED BY NAME',
        * cannot see.
        */
       const { store, accounts } = world();
-      const made = await accounts.create('Acme', ada, 1);
+      const made = await accounts.create('Acme', ada, 1, undefined, drawCompanyLabel());
       const { addressSource: _dropped, ...before } = store.getAccount(made.account.id)!;
       store.putAccount({ ...before, contractAddress: DEPLOYED });
 
-      expect(refusalOf(() => companyForSession(store, 'usr_1', made.account.id)).code)
+      expect(refusalOf(() => accountForChain(store, made.account.id)).code)
         .toBe('company-address-not-from-a-chain');
+      expect(companyForSession(store, 'usr_1', made.account.id).account).toBeNull();
     });
 
   it('and a company that is not yours is still not found, before any of this is asked',
@@ -167,7 +178,7 @@ describe('§2 — A COMPANY WHOSE ADDRESS NO CHAIN ASSIGNED IS REFUSED BY NAME',
        * is the thing the shared 404 is for.
        */
       const { store, accounts } = world();
-      const made = await accounts.create('Acme', ada, 1);
+      const made = await accounts.create('Acme', ada, 1, undefined, drawCompanyLabel());
       expect(refusalOf(() => companyForSession(store, 'usr_2', made.account.id)).code)
         .toBe('company-not-yours');
     });
@@ -176,23 +187,25 @@ describe('§2 — A COMPANY WHOSE ADDRESS NO CHAIN ASSIGNED IS REFUSED BY NAME',
 describe('§3 — DEVELOPMENT KEEPS WORKING, DELIBERATELY AND NOT BY DEFAULT', () => {
   it('WITH THE SETTING ON, A SIMULATED COMPANY IS SERVED', async () => {
     const { store, accounts } = world();
-    const made = await accounts.create('Acme', ada, 1);
+    const made = await accounts.create('Acme', ada, 1, undefined, drawCompanyLabel());
 
     vi.stubEnv('ALLOW_SIMULATED_COMPANY_ADDRESS', '1');
-    expect(companyForSession(store, 'usr_1', made.account.id))
+    expect(companyForSession(store, 'usr_1', made.account.id).account)
       .toBe(made.account.contractAddress);
+    expect(accountForChain(store, made.account.id)).toBe(made.account.contractAddress);
   });
 
   it('WITH IT OFF THE SAME CALL REFUSES — the setting is the only difference', async () => {
     const { store, accounts } = world();
-    const made = await accounts.create('Acme', ada, 1);
+    const made = await accounts.create('Acme', ada, 1, undefined, drawCompanyLabel());
 
     vi.stubEnv('ALLOW_SIMULATED_COMPANY_ADDRESS', '1');
-    expect(companyForSession(store, 'usr_1', made.account.id)).toBeTruthy();
+    expect(accountForChain(store, made.account.id)).toBeTruthy();
 
     vi.stubEnv('ALLOW_SIMULATED_COMPANY_ADDRESS', '0');
-    expect(refusalOf(() => companyForSession(store, 'usr_1', made.account.id)).code)
+    expect(refusalOf(() => accountForChain(store, made.account.id)).code)
       .toBe('company-address-not-from-a-chain');
+    expect(companyForSession(store, 'usr_1', made.account.id).account).toBeNull();
   });
 
   it('IT IS NOT A PARAMETER, SO NO REQUEST CAN REACH IT', () => {
@@ -203,5 +216,6 @@ describe('§3 — DEVELOPMENT KEEPS WORKING, DELIBERATELY AND NOT BY DEFAULT', (
      * route forwarding a request field into it.
      */
     expect(companyForSession.length).toBe(3);
+    expect(accountForChain.length).toBe(2);
   });
 });

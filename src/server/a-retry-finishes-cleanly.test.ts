@@ -11,6 +11,7 @@
  * chain, with a window that has closed by the time any retry is asked for.
  */
 import { describe, it, expect, afterAll, vi } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -52,7 +53,7 @@ const accounts = new AccountService(store, ledger, MidnightCommitments, productA
 const payroll = new PayrollService(store, accounts, new SimulatedProofSystem(), productAssets);
 
 const aCompany = async (name: string) => {
-  const created = await accounts.create(name, [{ name: 'Ada', role: 'admin' }], 1);
+  const created = await accounts.create(name, [{ name: 'Ada', role: 'admin' }], 1, undefined, drawCompanyLabel());
   const { viewingKey } = created;
   const account = created.account.id;
   for (let i = 0; i < 3; i++) {

@@ -1,6 +1,8 @@
 import type { Identity } from '../keys/derivation.js';
 import { committeeKeyFor, committeeSigningKeyFor } from './committee-key.js';
 import { usableOrigin } from './origin.js';
+import { readAccountAddress, readCompanyLabel } from './company-label.js';
+import type { AccountAddress, CompanyLabel } from './company-label.js';
 import type { CommitteeKeyOnTheWire, CommitteeOnTheWire, CommitteeRequest } from './request.js';
 
 /**
@@ -43,7 +45,9 @@ export interface CommitteeSignatures {
   readonly schema: typeof COMMITTEE_SIGNATURES_SCHEMA;
   /** OBSERVED. A convenience for the requester, never an authority. */
   readonly origin: string;
-  readonly company: string;
+  /** The company's label, and the account the page named as carrying it. Echoed. */
+  readonly company: CompanyLabel;
+  readonly account: AccountAddress;
   readonly nonce: string;
   readonly at: number;
   /** This person's committee key for the company: the key every signature below verifies against. */
@@ -153,6 +157,7 @@ export function committeeSignaturesFor(
     schema: COMMITTEE_SIGNATURES_SCHEMA,
     origin: request.requester.origin,
     company: request.company,
+    account: request.account,
     nonce: request.nonce,
     at,
     signer: shown.mine,
@@ -183,7 +188,9 @@ export function readCommitteeSignatures(
   expecting: {
     readonly atOrigin: string;
     readonly expectingNonce: string;
-    readonly company: string;
+    /** The company's label, and the account the page named as carrying it. */
+    readonly company: CompanyLabel;
+    readonly account: AccountAddress;
     readonly to: CommitteeOnTheWire;
     readonly contracts: ReadonlyArray<{ readonly address: string; readonly counter: string }>;
   },
@@ -202,7 +209,8 @@ export function readCommitteeSignatures(
   const sameTo = typeof to === 'object' && to !== null && to.threshold === expecting.to.threshold
     && Array.isArray(to.committee) && to.committee.length === expecting.to.committee.length
     && to.committee.every((k, i) => same(k, expecting.to.committee[i]!));
-  if (String(body.company).toLowerCase() !== expecting.company.toLowerCase() || !sameTo) {
+  if (readCompanyLabel(body.company) !== expecting.company
+    || readAccountAddress(body.account) !== expecting.account || !sameTo) {
     return { ok: false, code: 'other-change', says: 'this signs a change to a different company or committee from the one asked about. It is refused.' };
   }
   const signer = body.signer;

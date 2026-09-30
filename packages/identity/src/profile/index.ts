@@ -18,6 +18,7 @@ export * from './request.js';
 export * from './disclosure.js';
 export * from './channel.js';
 export * from './unlock.js';
+export * from './company-label.js';
 export * from './inbox.js';
 export * from './inbox-poll.js';
 export * from './travel.js';

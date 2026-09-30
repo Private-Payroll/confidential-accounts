@@ -10,6 +10,7 @@
  * refusal before the send says nothing was sent.
  */
 import { describe, it, expect } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -48,7 +49,7 @@ async function aCompany(opts: { door?: 'none' } = {}) {
   const registry = registryWithTestPrivateForms();
   const accounts = new AccountService(store, ledger, MidnightCommitments, registry, aVaultHolding());
   const payroll = new PayrollService(store, accounts, new SimulatedProofSystem(), registry);
-  const created = await accounts.create('Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1);
+  const created = await accounts.create('Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1, undefined, drawCompanyLabel());
   const viewingKey = created.viewingKey;
   for (let i = 0; i < 3; i++) {
     payroll.hireDirect(created.account.id, {

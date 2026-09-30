@@ -317,7 +317,8 @@ describe('A SIGNER WHO LOST THEIR DEVICES AND KEPT THEIR RECOVERY PIECES', () =>
      * or the recovery returns something other than the secret. */
     const id = await import('midnight-identity');
     const { committeeKeyFor } = await import('midnight-identity/profile/committee-key');
-    const company = 'c0'.repeat(32);
+    const { readCompanyLabel } = await import('midnight-identity/profile/company-label');
+    const company = readCompanyLabel('co_' + 'c0'.repeat(32))!;
     const secret = id.newSecret();
     const before = committeeKeyFor(id.identityFromSecret(secret), company);
     const set = await id.splitSecret(secret, [

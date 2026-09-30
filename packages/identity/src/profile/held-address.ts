@@ -1,6 +1,7 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { checkShieldedAddress } from '../wallet/address-shape.js';
 import { NETWORKS } from '../wallet/network.js';
+import type { CompanyLabel } from './company-label.js';
 
 /**
  * **WHETHER A WALLET HOLDS AN ADDRESS, TOLD WITHOUT NAMING ONE.**
@@ -46,7 +47,9 @@ import { NETWORKS } from '../wallet/network.js';
  */
 export const HELD_ADDRESS_SLOTS = 16;
 
-const DOMAIN = new TextEncoder().encode('midnight-identity/held-address/v1');
+/* `v2` binds a company's label where `v1` bound its account's address, so no
+ * digest under one can equal a digest under the other. */
+const DOMAIN = new TextEncoder().encode('midnight-identity/held-address/v2');
 const KEY_BYTES = 32;
 const HEX64 = /^[0-9a-f]{64}$/u;
 
@@ -64,7 +67,8 @@ const fromHex = (text: string): Uint8Array =>
 export interface HeldScope {
   readonly nonce: string;
   readonly origin: string;
-  readonly company: string;
+  /** The company's label. */
+  readonly company: CompanyLabel;
 }
 
 /** A shielded address as bytes: its network, then who may spend, then who may read. `null` if it is not one. */
@@ -92,8 +96,8 @@ const lengthPrefixed = (bytes: Uint8Array): Uint8Array => {
 
 /**
  * THE DIGEST. Sixty-four lower-case hex characters, or `null` when the address
- * is not a shielded address on any network. The company is folded to lower
- * case, the one spelling a company address has.
+ * is not a shielded address on any network. The company's label goes in as
+ * written: it has one spelling.
  */
 export function heldAddressDigest(scope: HeldScope, address: string): string | null {
   const decoded = addressBytes(address);
@@ -103,7 +107,7 @@ export function heldAddressDigest(scope: HeldScope, address: string): string | n
     DOMAIN,
     text(scope.nonce),
     text(scope.origin),
-    text(scope.company.toLowerCase()),
+    text(scope.company),
     text(decoded.network),
     decoded.keys,
   ];

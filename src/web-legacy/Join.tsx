@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { NETWORK } from 'midnight-identity/network';
 import {
   AddressShapeError, checkShieldedAddress, checkUnshieldedAddress,
@@ -6,6 +6,7 @@ import {
 /* X12 §2 — the one place the code's spelling is decided, in the repository
  * that decides its width. */
 import { tidyFingerprint } from 'midnight-identity/profile/fingerprint';
+import { readAccountAddress, readCompanyLabel } from 'midnight-identity/profile/company-label';
 import { PUBLIC_RECEIVING_ADDRESS, RECEIVING_ADDRESS } from '../core/wallet-payee-ask.js';
 import { reviveBigints, toHex, type Hex } from '../core/crypto.js';
 import { payslipKeypairFrom } from '../core/payslip-key-derive.js';
@@ -67,8 +68,10 @@ import { acceptSeatOnThisDevice, newSeatKeys } from 'vaults-web-shared/accept-se
 /** What `offerFor` returns. `bigint` arrives as a tagged value; see below. */
 interface Offer {
   company: string;
-  /**  Null when no chain has given this company an address. */
-  companyAddress: string | null;
+  /**  The company's label: what the invitee's wallet derives their payslip key from. Null when it has none. */
+  companyLabel: string | null;
+  /**  The account that carries the label, which the wallet reads it back from. Null when no chain has given one. */
+  companyAccount: string | null;
   /**  What this browser seals the handover to. */
   inboxPublicKey: Hex;
   name: string;
@@ -377,20 +380,20 @@ function EmployeeJoinScreen({ token, onOpenPayslips }: {
       }
       const current = offer;
       if (!current) throw new Error('there is no offer on this screen to accept.');
-      if (!current.companyAddress) {
+      const label = readCompanyLabel(current.companyLabel);
+      const account = readAccountAddress(current.companyAccount);
+      if (label === null || account === null) {
         /*
-         * `C140`'s gate, arriving where somebody can act on it. The key that
-         * opens this person's payslips is derived from the company's own
-         * address on a chain, and a company that has never been deployed has
-         * none — so accepting now would seal every future payslip under a
-         * number our own server invented, and they would all stop opening on
-         * the day the company is real.
+         * The gate, arriving where somebody can act on it. The key that opens
+         * this person's payslips is derived from the company's label, and their
+         * wallet gives it only once it has read that label off the company's
+         * account on the chain - so a company with no label, or with no account
+         * yet, is one their wallet can give nothing for.
          */
         throw new Error(
-          'this company is not on a chain yet, so it has no address — and the key that opens '
-          + 'your payslips is worked out from that address. Accepting now would seal your '
-          + 'payslips to a number that changes the day the company is deployed, and none of '
-          + 'them would open again. Ask whoever invited you to deploy the company first.');
+          'this company has no account on the chain yet, so your wallet has nothing to check it '
+          + 'against and will not give the key that opens your payslips. Ask whoever invited you to '
+          + 'finish setting the company up first.');
       }
       /* The wallet is shown inside this page, and both asks below speak to it. */
       const host = walletInThisPage(window);
@@ -421,16 +424,17 @@ function EmployeeJoinScreen({ token, onOpenPayslips }: {
        * this person is ever issued would be sealed to a secret this tab forgets
        * on reload**, and nothing — not another device, not a recovery, not us —
        * could work it out again. So it is `payslipKeypairFrom(companyKey)`,
-       * exactly what a founder's own entry derives and exactly what a second
+       * exactly what a founding signer's own entry derives and exactly what a second
        * device rebuilds from twenty-four words.
        *
-       * The company is named by the address that came out of the SEALED OFFER,
-       * which only the holder of this link can open. `POST /api/accounts/:id/unlock`
+       * The company is named by the label and the account that came out of the
+       * SEALED OFFER, which only the holder of this link can open. `POST /api/accounts/:id/unlock`
        * is shut to an invitee by construction — they are not a member — and
        * `X11` §0 forbids inventing a second key path for them.
        */
       const companyKey = await askWalletToUnlock(host, WALLET_ORIGIN, {
-        company: current.companyAddress,
+        company: label,
+        account,
         atOrigin: window.location.origin,
         name: US_TO_A_WALLET.name,
         rdns: US_TO_A_WALLET.rdns,
@@ -506,7 +510,7 @@ function EmployeeJoinScreen({ token, onOpenPayslips }: {
        */
       setHeld({
         address: address.bech32, wrappingPublicKey: wrapping.publicKey,
-        keyFrom: current.companyAddress,
+        keyFrom: label,
       });
     } catch (e) {
       setErr(shownError(
@@ -590,12 +594,12 @@ function EmployeeJoinScreen({ token, onOpenPayslips }: {
             current.inboxPublicKey),
         }),
       });
-      /* Only an address, which is public; nothing that opens anything. Saved
+      /* Only a label, which is public; nothing that opens anything. Saved
        * with the person who accepted, so the company is on their list wherever
        * they sign in. The acceptance above has already been taken, so a list
        * that cannot be written does not undo it. */
-      if (current.companyAddress) {
-        await keyring.rememberCompanyThatPaysYou(current.companyAddress).catch(() => undefined);
+      if (current.companyLabel) {
+        await keyring.rememberCompanyThatPaysYou(current.companyLabel).catch(() => undefined);
       }
       setAccepted(true);
     } catch (e) {
@@ -620,7 +624,7 @@ function EmployeeJoinScreen({ token, onOpenPayslips }: {
   const asset = assets.require(offer.asset);
 
   if (accepted) {
-    return <Accepted company={offer.company} companyAddress={offer.companyAddress} onOpenPayslips={onOpenPayslips} />;
+    return <Accepted company={offer.company} companyLabel={offer.companyLabel} onOpenPayslips={onOpenPayslips} />;
   }
 
   return (
@@ -767,8 +771,8 @@ function EmployeeJoinScreen({ token, onOpenPayslips }: {
  * **WHAT A PERSON SEES ONCE THEIR ACCEPTANCE HAS BEEN TAKEN.** Its own
  * component so the link it carries can be followed in a test.
  */
-export function Accepted({ company, companyAddress, onOpenPayslips }: {
-  company: string; companyAddress: string | null; onOpenPayslips?: () => void;
+export function Accepted({ company, companyLabel, onOpenPayslips }: {
+  company: string; companyLabel: string | null; onOpenPayslips?: () => void;
 }) {
   return (
     <div className="authwrap">
@@ -796,8 +800,8 @@ export function Accepted({ company, companyAddress, onOpenPayslips }: {
               onOpenPayslips();
             })}
           >your payslips</a> as each one is
-          issued, once you are signed in. On another device, add this company's address there:
-          {' '}<code>{companyAddress}</code>
+          issued, once you are signed in. On another device, add this company&rsquo;s label there:
+          {' '}<code>{companyLabel}</code>
         </p>
       </div>
     </div>

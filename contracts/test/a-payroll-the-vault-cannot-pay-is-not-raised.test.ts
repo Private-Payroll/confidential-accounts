@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -89,7 +90,7 @@ const services = (opts: { registry?: AssetRegistry } = {}) => {
 
 async function aDraftedRun(people: number, asset = 'GBP', opts: { registry?: AssetRegistry } = {}) {
   const s = services(opts);
-  const created = await s.accounts.create('Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1);
+  const created = await s.accounts.create('Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1, undefined, drawCompanyLabel());
   const viewingKey = created.viewingKey;
   for (let i = 0; i < people; i++) {
     s.payroll.hireDirect(created.account.id, {
@@ -114,7 +115,7 @@ describe('the product\'s own registry', () => {
   it('REFUSES to build a payroll in an asset with no private form, before any material or fee', async () => {
     /* The product's registry, where only a test asset has a private form. */
     const s = services({ registry: productAssets });
-    const created = await s.accounts.create('Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1);
+    const created = await s.accounts.create('Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1, undefined, drawCompanyLabel());
     s.payroll.hireDirect(created.account.id, {
       name: 'Payee GBP', email: 'GBP@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
     }, created.viewingKey);

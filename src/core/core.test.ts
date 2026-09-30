@@ -1,20 +1,20 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FileStore } from './store-file.js';
 /* `signerRemovePayload` is a scheme method now, so it is not imported here. */
 import { SimulatedLedger, SimulatedProofSystem, SimulatedCommitments } from './ledger.js';
-import type { LedgerStatus, StateChange, StateView, PaymentsAmong } from './ledger.js';
+import type { PaymentsAmong } from './ledger.js';
 import { AccountService, openAccount, sealAccount, approvalMessage } from './account.js';
 import { payeeAddressFromKeys } from '../midnight/payee-address.js';
 import { runPayments } from '../midnight/run-status.js';
 import { PayrollService, RecordingInviteDelivery } from './payroll.js';
 import { PluginService } from './plugins.js';
 import { NO_ASSET } from './assets.js';
-import type { ShieldedState, StateBlinding } from './types.js';
 import { newWrappingKeypair, newSigningKeypair, newSymmetricKey, seal, unseal,
-  commit, newProposalSalt, canonical, parseCanonical } from './crypto.js';
+  commit, newProposalSalt } from './crypto.js';
 import {
   openRecord, sealRecord, sealToInbox, openFromInbox, inboxPublicKey,
 } from './sealed-records.js';
@@ -33,6 +33,12 @@ import type { DataStore } from './store.js';
 import type { Hex } from './crypto.js';
 import type { PayeeAddress } from '../midnight/payee-address.js';
 import { newSeatInvitation, proveSeatKeys } from './seat-invite-proof.js';
+
+/** The value, or a failure that says one was missing: an index that finds nothing is a broken test, not a value to carry on with. */
+function present<T>(value: T | undefined): T {
+  if (value === undefined) throw new Error('expected a value here, and there was none');
+  return value;
+}
 /** What the invited person's device sends beside its keys: the proof its link let it make. */
 const provenBy = (
   viewingKey: string, invite: { accountId: string; name?: string; role?: string },
@@ -204,7 +210,7 @@ describe('account layer', () => {
   beforeEach(() => { h = harness(); });
 
   it('creates a 2 of 3 account and every signer can recover the viewing key', async () => {
-    const { account, viewingKey, secrets } = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const { account, viewingKey, secrets } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     expect(account.signers).toHaveLength(3);
     expect(account.policy.threshold).toBe(2);
     for (const s of secrets) {
@@ -213,38 +219,38 @@ describe('account layer', () => {
   });
 
   it('refuses a threshold larger than the signer set', async () => {
-    await expect(h.accounts.create('Bad', THREE_SIGNERS, 4)).rejects.toThrow(/not valid/);
+    await expect(h.accounts.create('Bad', THREE_SIGNERS, 4, undefined, drawCompanyLabel())).rejects.toThrow(/not valid/);
   });
 
   it('will not open shielded state with a key that is not the viewing key', async () => {
-    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const { account } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const stranger = 'ff'.repeat(32);
     await expect(h.accounts.readState(account.id, stranger)).rejects.toThrow(/cannot open/);
   });
 
   it('a signer outside the account cannot unwrap the viewing key', async () => {
-    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const { account } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const outsider = newWrappingKeypair();
     expect(() =>
-      h.accounts.recoverViewingKey(account.id, account.signers[0].id, outsider.secret),
+      h.accounts.recoverViewingKey(account.id, present(account.signers[0]).id, outsider.secret),
     ).toThrow();
   });
 
   it('rejects an approval signed with the wrong key', async () => {
-    const { account, viewingKey, secrets } = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const { account, viewingKey, secrets } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const p = await h.accounts.propose({
       accountId: account.id, viewingKey, kind: 'transfer', summary: 'x',
       payload: { entries: [{ id: 'e1', kind: 'transfer', asset: 'GBP', amount: 10_00n, counterparty: 'y', memo: '', at: '' }] },
-      proposedBy: secrets[0].signerId,
+      proposedBy: present(secrets[0]).signerId,
     });
     // Blake's id, Cleo's key.
     await expect(
-      h.accounts.approve(p.id, secrets[1].signerId, sign(approvalMessage(p), secrets[2].signingSecret), viewingKey),
+      h.accounts.approve(p.id, present(secrets[1]).signerId, sign(approvalMessage(p), present(secrets[2]).signingSecret), viewingKey),
     ).rejects.toThrow(/does not match/);
   });
 
   it('blocks a proposal that breaches a role spending limit', async () => {
-    const { account, viewingKey, secrets } = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const { account, viewingKey, secrets } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     /*
      * A CEILING IS KEYED BY ASSET.
      *
@@ -262,7 +268,7 @@ describe('account layer', () => {
     const p = await h.accounts.propose({
       accountId: account.id, viewingKey, kind: 'transfer', summary: 'over limit',
       payload: { entries: [{ id: 'e1', kind: 'transfer', asset: 'GBP', amount: 5_000_00n, counterparty: 'y', memo: '', at: '' }] },
-      proposedBy: secrets[1].signerId, // Blake, an approver
+      proposedBy: present(secrets[1]).signerId, // Blake, an approver
     });
     expect(p.status).toBe('blocked');
     // The refusal names the asset, because a ceiling that does not is a number
@@ -276,7 +282,7 @@ describe('payroll and disclosure', () => {
   beforeEach(() => { h = harness(); });
 
   async function setup() {
-    const created = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const created = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     // Every figure is an integer in the asset's smallest unit, so £6,200.00 is
     // `6_200_00n`. There is no float anywhere in this system.
     const { run, secrets: emp } = await h.payroll.createRun(created.account.id, '2026-07', [
@@ -289,14 +295,14 @@ describe('payroll and disclosure', () => {
 
   it('lets an employee open their own payslip and nobody else\'s', async () => {
     const s = await setup();
-    const dana = h.payroll.employeeView(s.run.id, s.emp[0].employeeId, s.emp[0].wrappingSecret);
+    const dana = h.payroll.employeeView(s.run.id, present(s.emp[0]).employeeId, present(s.emp[0]).wrappingSecret);
     expect((dana.payslip as any).amount).toBe(6_200_00n);
     expect((dana.payslip as any).asset).toBe('GBP');
     expect((dana.payslip as any).name).toBe('Dana');
 
     // Eli's key against Dana's payslip.
     expect(() =>
-      h.payroll.employeeView(s.run.id, s.emp[0].employeeId, s.emp[1].wrappingSecret),
+      h.payroll.employeeView(s.run.id, present(s.emp[0]).employeeId, present(s.emp[1]).wrappingSecret),
     ).toThrow(/cannot open/);
   });
 
@@ -304,7 +310,7 @@ describe('payroll and disclosure', () => {
     const s = await setup();
     // The account viewing key is not a wrapping secret and must not work.
     expect(() =>
-      h.payroll.employeeView(s.run.id, s.emp[0].employeeId, s.viewingKey),
+      h.payroll.employeeView(s.run.id, present(s.emp[0]).employeeId, s.viewingKey),
     ).toThrow(/cannot open/);
   });
 
@@ -320,7 +326,7 @@ describe('payroll and disclosure', () => {
      * This serialises what the SERVER holds. It is the claim a customer
      * actually cares about: our payroll provider cannot see what we pay people.
      */
-    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     /*
      * `salary` and `currency` USED TO BE TWO FIELDS HERE, and were replaced by
      * one `asset` and one `baseAmount` in that asset's smallest unit. An
@@ -347,7 +353,7 @@ describe('payroll and disclosure', () => {
      * asset could be written in the clear, which is the property, and `asset`
      * is not among them.
      */
-    const sealedPerson = h.store.listEmployees(account.id)[0];
+    const sealedPerson = present(h.store.listEmployees(account.id)[0]);
     expect(Object.values(sealedPerson).some(v => v === 'GBP')).toBe(false);
 
     // And the same for invites, which used to carry a duplicate copy.
@@ -414,7 +420,7 @@ describe('roster', () => {
   beforeEach(() => { h = harness(); });
 
   it('keeps an employee key stable across runs so old payslips stay readable', async () => {
-    const { account, viewingKey, secrets } = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const { secret } = h.payroll.hireDirect(account.id, {
       name: 'Dana', email: 'dana@acme.co', title: 'Engineer', asset: 'GBP', baseAmount: 6_200_00n,
     }, viewingKey);
@@ -430,7 +436,7 @@ describe('roster', () => {
   });
 
   it('excludes leavers from a run', async () => {
-    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     h.payroll.hireDirect(account.id, { name: 'Stay', email: 's@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n }, viewingKey);
     const { employee } = h.payroll.hireDirect(account.id, { name: 'Go', email: 'g@a.co', title: 'Eng', asset: 'GBP', baseAmount: 200_00n }, viewingKey);
     h.payroll.setStatus(employee.id, 'leaver', viewingKey);
@@ -448,7 +454,7 @@ describe('roster', () => {
   });
 
   it('refuses a duplicate period', async () => {
-    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     h.payroll.hireDirect(account.id, { name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n }, viewingKey);
     const first = await h.payroll.createRunFromRoster(account.id, '2026-07', viewingKey);
     h.store.putRun({ ...h.store.getRun(first.run.id)!, status: 'proposed' });
@@ -461,7 +467,7 @@ describe('onboarding', () => {
   beforeEach(() => { h = harness(); });
 
   it('a pending signer can see nothing until access is granted', async () => {
-    const { account, viewingKey, secrets } = await h.accounts.create('Acme', [THREE_SIGNERS[0]], 1);
+    const { account, viewingKey, secrets } = await h.accounts.create('Acme', [present(THREE_SIGNERS[0])], 1, undefined, drawCompanyLabel());
     const invite = h.accounts.inviteSigner(account.id, 'Blake', 'b@acme.co', 'approver');
 
     // The invitee's device generates its own keys. Only public halves travel.
@@ -480,15 +486,15 @@ describe('onboarding', () => {
      * one existing signer adding another freely would make the threshold
      * decorative. Propose the signer, reach the threshold, then grant.
      */
-    const seat = await h.accounts.proposeSigner(account.id, viewingKey, pending.id, secrets[0].signerId);
-    await h.accounts.approve(seat.id, secrets[0].signerId, sign(approvalMessage(seat), secrets[0].signingSecret), viewingKey);
+    const seat = await h.accounts.proposeSigner(account.id, viewingKey, pending.id, present(secrets[0]).signerId);
+    await h.accounts.approve(seat.id, present(secrets[0]).signerId, sign(approvalMessage(seat), present(secrets[0]).signingSecret), viewingKey);
 
     await h.accounts.grantAccess(account.id, viewingKey, pending.id);
     expect(h.accounts.recoverViewingKey(account.id, pending.id, wk.secret)).toBe(viewingKey);
   });
 
   it('a pending signer cannot approve', async () => {
-    const { account, viewingKey, secrets } = await h.accounts.create('Acme', [THREE_SIGNERS[0]], 1);
+    const { account, viewingKey, secrets } = await h.accounts.create('Acme', [present(THREE_SIGNERS[0])], 1, undefined, drawCompanyLabel());
     const invite = h.accounts.inviteSigner(account.id, 'Blake', 'b@acme.co', 'approver');
     const sk = newSigningKeypair(); const wk = newWrappingKeypair();
     const pending = h.accounts.acceptSignerInvite(invite.token, null, sk.publicKey, wk.publicKey, LEAF);
@@ -496,7 +502,7 @@ describe('onboarding', () => {
     const p = await h.accounts.propose({
       accountId: account.id, viewingKey, kind: 'transfer', summary: 'x',
       payload: { entries: [{ id: 'e1', kind: 'transfer', asset: 'GBP', amount: 10_00n, counterparty: 'y', memo: '', at: '' }] },
-      proposedBy: secrets[0].signerId,
+      proposedBy: present(secrets[0]).signerId,
     });
     /*
      * **A REAL SIGNATURE, SO THE REFUSAL IS THE ONE THIS TEST NAMES.**
@@ -512,7 +518,7 @@ describe('onboarding', () => {
   });
 
   it('an invite cannot be used twice', async () => {
-    const { account, viewingKey } = await h.accounts.create('Acme', [THREE_SIGNERS[0]], 1);
+    const { account } = await h.accounts.create('Acme', [present(THREE_SIGNERS[0])], 1, undefined, drawCompanyLabel());
     const invite = h.accounts.inviteSigner(account.id, 'Blake', 'b@acme.co', 'approver');
     const a = newSigningKeypair(), b = newWrappingKeypair();
     h.accounts.acceptSignerInvite(invite.token, null, a.publicKey, b.publicKey, LEAF);
@@ -521,7 +527,7 @@ describe('onboarding', () => {
   });
 
   it('an invited employee holds no key until their own device sends one', async () => {
-    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const { employee, sentTo } = h.payroll.invite(account.id, {
       name: 'Dana', email: 'd@acme.co', title: 'Engineer', asset: 'GBP', baseAmount: 6_200_00n,
     }, viewingKey, 'usr_operator');
@@ -579,7 +585,7 @@ describe('onboarding', () => {
      * written by hand into the store below, because *cannot be expressed* is a
      * property of a type and this is about what `admit` does with bytes.
      */
-    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const { employee, sentTo } = h.payroll.invite(account.id, {
       name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
     }, viewingKey, 'usr_operator');
@@ -636,7 +642,7 @@ describe('onboarding', () => {
      *
      * The information survives as a recorded fact.
      */
-    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const founder = signIn(h, 'founder@acme.co', 'Founder');
     (h.store as any).putAccount({
       ...h.accounts.require(account.id), memberUserIds: [founder, 'usr_second'],
@@ -685,8 +691,8 @@ describe('onboarding', () => {
      * entry, so the roster, and every run with it, is permanently unreadable.
      * Nothing deletes an employee, so there is no way back.
      */
-    const a = await h.accounts.create('Acme', THREE_SIGNERS, 2);
-    const b = await h.accounts.create('Other', THREE_SIGNERS, 2);
+    const a = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
+    const b = await h.accounts.create('Other', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
 
     expect(() => h.payroll.invite(a.account.id, {
       name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
@@ -714,7 +720,7 @@ describe('onboarding', () => {
      * token is what opens it. The person best placed to notice that a hire is
      * wrong is the person it is about.
      */
-    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const { sentTo } = h.payroll.invite(account.id, {
       name: 'Dana Patel', email: 'dana@acme.co', title: 'Engineer',
       asset: 'GBP', baseAmount: 6_200_00n, startDate: '2026-09-01',
@@ -738,7 +744,7 @@ describe('onboarding', () => {
      * our database is not the value that decrypts. A database backup carries
      * neither a usable invite nor a readable salary.
      */
-    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const { sentTo } = h.payroll.invite(account.id, {
       name: 'Dana Patel', email: 'dana@acme.co', title: 'Engineer',
       asset: 'GBP', baseAmount: 6_200_00n,
@@ -781,7 +787,7 @@ describe('onboarding', () => {
      * is also a file somebody restores from a backup: a one-shot migration fixes
      * the deploy and not the restore.
      */
-    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const { employee, sentTo } = h.payroll.invite(account.id, {
       name: 'Dana', email: 'dana@acme.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
     }, viewingKey, 'usr_operator');
@@ -812,7 +818,7 @@ describe('onboarding', () => {
      * table and in every backup — open the row and decrypt the offer. Anything
      * shaped like a stored key is refused rather than looked up.
      */
-    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     h.payroll.invite(account.id, {
       name: 'Dana', email: 'dana@acme.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
     }, viewingKey, 'usr_operator');
@@ -832,7 +838,7 @@ describe('onboarding', () => {
      * not hold it. A put-back that restores half of what it took is a half-fix,
      * and this project has shipped one before. Found by audit 17 Aug.
      */
-    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const { employee, sentTo } = h.payroll.invite(account.id, {
       name: 'Dana', email: 'dana@acme.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
     }, viewingKey, 'usr_operator');
@@ -885,7 +891,7 @@ describe('onboarding', () => {
      * Forgetting on admit is a narrowing rather than a fix: an invite nobody
      * redeems is still held for ever.
      */
-    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const { employee, sentTo } = h.payroll.invite(account.id, {
       name: 'Dana', email: 'dana@acme.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
     }, viewingKey, 'usr_operator');
@@ -909,7 +915,7 @@ describe('onboarding', () => {
      * an operator is entitled to be told that when they hire somebody rather
      * than on payday.
      */
-    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const out = h.payroll.invite(account.id, {
       name: 'Dana', email: 'dana@acme.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
     }, viewingKey, 'usr_operator');
@@ -956,7 +962,7 @@ describe('onboarding', () => {
   });
 
   it('A MEMBER MAKING THEMSELVES PAYABLE NEEDS NO INVITE AT ALL', async () => {
-    const { account, viewingKey } = await h.accounts.create('Solo', [THREE_SIGNERS[0]], 1);
+    const { account, viewingKey } = await h.accounts.create('Solo', [present(THREE_SIGNERS[0])], 1, undefined, drawCompanyLabel());
     const solo = signIn(h, 'solo@acme.co', 'Solo Founder');
     (h.store as any).putAccount({
       ...h.accounts.require(account.id), memberUserIds: [solo],
@@ -970,7 +976,7 @@ describe('onboarding', () => {
     });
     /* Payable immediately, with no token having existed for anybody to intercept. */
     const { run } = await h.payroll.createRunFromRoster(account.id, '2026-07', viewingKey);
-    expect(h.payroll.paymentFactsFor(run.id, viewingKey)[0].payee.bech32).toBe(me.address!.bech32);
+    expect(present(h.payroll.paymentFactsFor(run.id, viewingKey)[0]).payee.bech32).toBe(me.address!.bech32);
   });
 
   it('A REFUSED HANDOVER PUTS THE INVITATION BACK', async () => {
@@ -988,7 +994,7 @@ describe('onboarding', () => {
      * unchanged: **every refusal at `admit` empties the box and puts the
      * invitation back**, so the honest retry simply works.
      */
-    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const op = signIn(h, 'op@acme.co', 'Operator');
     (h.store as any).putAccount({
       ...h.accounts.require(account.id), memberUserIds: [op, 'usr_second'],
@@ -1025,7 +1031,7 @@ describe('onboarding', () => {
      * put us one join from `users.email` to "this named person is paid by this
      * company", which is exactly what sealing the roster was meant to destroy.
      */
-    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     (h.store as any).putAccount({
       ...h.accounts.require(account.id), memberUserIds: ['usr_operator', 'usr_second'],
     });
@@ -1059,7 +1065,7 @@ describe('onboarding', () => {
      * The cap that stops it lived in `addSelfAsPayee` alone; `admit` never
      * consulted it, so the ordinary path skipped it entirely.
      */
-    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const op = signIn(h, 'op@acme.co', 'Operator');
     (h.store as any).putAccount({
       ...h.accounts.require(account.id), memberUserIds: [op, 'usr_second'],
@@ -1113,7 +1119,7 @@ describe('onboarding', () => {
      * open before this change and it is open after it, and nothing here should
      * be read as closing it.
      */
-    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const op = signIn(h, 'op@acme.co', 'Operator');
     (h.store as any).putAccount({
       ...h.accounts.require(account.id), memberUserIds: [op, 'usr_second'],
@@ -1147,7 +1153,7 @@ describe('onboarding', () => {
      *
      * Two flows, and the invite path now has no exception in it whatsoever.
      */
-    const { account, viewingKey } = await h.accounts.create('Solo', [THREE_SIGNERS[0]], 1);
+    const { account, viewingKey } = await h.accounts.create('Solo', [present(THREE_SIGNERS[0])], 1, undefined, drawCompanyLabel());
     const solo = signIn(h, 'solo@acme.co', 'Solo Founder');
     (h.store as any).putAccount({
       ...h.accounts.require(account.id), memberUserIds: [solo],
@@ -1176,7 +1182,7 @@ describe('onboarding', () => {
   });
 
   it('AND ONLY ONE PAYABLE ENTRY PER PERSON — two is two salaries', async () => {
-    const { account, viewingKey } = await h.accounts.create('Solo', [THREE_SIGNERS[0]], 1);
+    const { account, viewingKey } = await h.accounts.create('Solo', [present(THREE_SIGNERS[0])], 1, undefined, drawCompanyLabel());
     const solo = signIn(h, 'solo@acme.co', 'Solo Founder');
     (h.store as any).putAccount({
       ...h.accounts.require(account.id), memberUserIds: [solo],
@@ -1200,7 +1206,7 @@ describe('onboarding', () => {
      * account has since been closed — and like the others it used to leave the
      * box full and the invite spent, with no route to either.
      */
-    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const { employee, sentTo } = h.payroll.invite(account.id, {
       name: 'Dana', email: 'dana@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
     }, viewingKey, 'usr_admin');
@@ -1225,7 +1231,7 @@ describe('onboarding', () => {
      * handover works. That is worth nothing if refusing spends the invitation,
      * because no route re-opens one.
      */
-    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const first = h.payroll.invite(account.id, {
       name: 'Dana', email: 'dana@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
     }, viewingKey, 'usr_admin');
@@ -1259,7 +1265,7 @@ describe('onboarding', () => {
 
   it('AND A NON-MEMBER CANNOT USE THAT DOOR', async () => {
     /* Otherwise "adding yourself" is a way past the invite path for anybody. */
-    const { account, viewingKey } = await h.accounts.create('Solo', [THREE_SIGNERS[0]], 1);
+    const { account, viewingKey } = await h.accounts.create('Solo', [present(THREE_SIGNERS[0])], 1, undefined, drawCompanyLabel());
     (h.store as any).putAccount({
       ...h.accounts.require(account.id), memberUserIds: ['usr_solo'],
     });
@@ -1278,7 +1284,7 @@ describe('onboarding', () => {
      * Not knowing who set the address of record is exactly when to refuse: a
      * guard whose failure mode is to disable itself is not a guard.
      */
-    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const { employee, sentTo } = h.payroll.invite(account.id, {
       name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
     }, viewingKey);   // no creator recorded — an invite from before this existed
@@ -1305,7 +1311,7 @@ describe('onboarding', () => {
      * added after the version now deployed was cut, so EVERY invite it wrote is
      * missing it. Found by audit 17 Aug, reproduced end to end.
      */
-    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const { employee, sentTo } = h.payroll.invite(account.id, {
       name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
     }, viewingKey);   // the shape the deployed code writes: no `createdBy`
@@ -1356,7 +1362,7 @@ describe('onboarding', () => {
      * decision NOT to pay somebody. Deciding WHERE to pay them left no trace of
      * itself at all.
      */
-    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     (h.store as any).putAccount({
       ...h.accounts.require(account.id), memberUserIds: ['usr_admin', 'usr_second'],
     });
@@ -1388,7 +1394,7 @@ describe('onboarding', () => {
      * company holds for them is not the one they handed over is for it to come
      * back sealed to their OWN key — which is what a payslip already is.
      */
-    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const { employee, secret } = h.payroll.hireDirect(account.id, {
       name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
     }, viewingKey);
@@ -1415,7 +1421,7 @@ describe('onboarding', () => {
      * unadmittable — and since a run refuses to build while anybody is pending,
      * the whole company's payroll froze behind one new hire.
      */
-    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const { employee, sentTo } = h.payroll.invite(account.id, {
       name: 'Mid Onboarding', email: 'm@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
     }, viewingKey, 'usr_operator');
@@ -1445,7 +1451,7 @@ describe('onboarding', () => {
      * to somebody on a chain this deployment has never heard of. Refusing here
      * is free; refusing at payment time is not.
      */
-    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const { employee, sentTo } = h.payroll.invite(account.id, {
       name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
     }, viewingKey, 'usr_operator');
@@ -1468,7 +1474,7 @@ describe('onboarding', () => {
      * nothing. The alternative is a payee whose address is absent being paid
      * anyway, and that failure is irreversible the moment it lands.
      */
-    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const { employee } = h.payroll.hireDirect(account.id, {
       name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
     }, viewingKey);
@@ -1488,7 +1494,7 @@ describe('onboarding', () => {
      * somebody whose drop box is full is waiting on US, and an admin who cannot
      * tell the difference cannot act on either.
      */
-    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const theirs = h.payroll.invite(account.id, {
       name: 'Not Started', email: 'a@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
     }, viewingKey, 'usr_operator');
@@ -1507,7 +1513,7 @@ describe('onboarding', () => {
   });
 
   it('BUILDS THE CHAIN PAYMENTS FROM THE ROSTER, with nowhere to type an address', async () => {
-    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const a = h.payroll.hireDirect(account.id, {
       name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
     }, viewingKey);
@@ -1524,16 +1530,16 @@ describe('onboarding', () => {
     /* Each payee is the address on their OWN roster entry, and both halves of it. */
     const dana = privatePayee(h.payroll.person(a.employee.id, viewingKey)!.address);
     const sam = privatePayee(h.payroll.person(b.employee.id, viewingKey)!.address);
-    expect(facts[0].payee.bech32).toBe(dana.bech32);
-    expect(facts[1].payee.bech32).toBe(sam.bech32);
-    expect(facts[0].payee.coinPublicKey).toBe(dana.coinPublicKey);
-    expect(facts[0].payee.encryptionPublicKey).toBe(dana.encryptionPublicKey);
+    expect(present(facts[0]).payee.bech32).toBe(dana.bech32);
+    expect(present(facts[1]).payee.bech32).toBe(sam.bech32);
+    expect(present(facts[0]).payee.coinPublicKey).toBe(dana.coinPublicKey);
+    expect(present(facts[0]).payee.encryptionPublicKey).toBe(dana.encryptionPublicKey);
 
     /* Two people are two different payees, in both halves. */
-    expect(facts[0].payee.coinPublicKey).not.toBe(facts[1].payee.coinPublicKey);
-    expect(facts[0].payee.encryptionPublicKey).not.toBe(facts[1].payee.encryptionPublicKey);
+    expect(present(facts[0]).payee.coinPublicKey).not.toBe(present(facts[1]).payee.coinPublicKey);
+    expect(present(facts[0]).payee.encryptionPublicKey).not.toBe(present(facts[1]).payee.encryptionPublicKey);
     /* And a reading key is never a spending key. */
-    expect(facts[0].payee.encryptionPublicKey).not.toBe(facts[0].payee.coinPublicKey);
+    expect(present(facts[0]).payee.encryptionPublicKey).not.toBe(present(facts[0]).payee.coinPublicKey);
   });
 
   /**
@@ -1552,7 +1558,7 @@ describe('onboarding', () => {
    * written.
    */
   it('A ROSTER ADDRESS SEALED WITHOUT A KIND COMES BACK WITH ONE', async () => {
-    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const a = h.payroll.hireDirect(account.id, {
       name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
     }, viewingKey);
@@ -1584,11 +1590,11 @@ describe('onboarding', () => {
 
     /* And the run built from it carries a payee the chain layer can dispatch on. */
     const { run } = await h.payroll.createRunFromRoster(account.id, '2026-07', viewingKey);
-    expect(h.payroll.paymentFactsFor(run.id, viewingKey)[0].payee.kind).toBe('shielded');
+    expect(present(h.payroll.paymentFactsFor(run.id, viewingKey)[0]).payee.kind).toBe('shielded');
   });
 
   it('REFUSES TO PAY SOMEBODY WHO CANNOT REACH IT — and it names them', async () => {
-    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     h.payroll.hireDirect(account.id, {
       name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
     }, viewingKey);
@@ -1608,7 +1614,7 @@ describe('onboarding', () => {
   });
 
   it('blocks payroll while anyone is still pending, and names them', async () => {
-    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     h.payroll.hireDirect(account.id, { name: 'Ready', email: 'r@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n }, viewingKey);
     h.payroll.invite(account.id, { name: 'Not Ready', email: 'n@a.co', title: 'Eng', asset: 'GBP', baseAmount: 200_00n }, viewingKey);
 
@@ -1622,7 +1628,7 @@ describe('plug-ins', () => {
   beforeEach(() => { h = harness(); });
 
   async function acct() {
-    const c = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const c = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     return c;
   }
 
@@ -1630,7 +1636,7 @@ describe('plug-ins', () => {
     const c = await acct();
     expect(() => h.plugins.install({
       accountId: c.account.id, pluginId: 'xero-sync',
-      scopes: ['state:read'] as any, allowance: null, installedBy: c.secrets[0].signerId,
+      scopes: ['state:read'] as any, allowance: null, installedBy: present(c.secrets[0]).signerId,
     })).toThrow(/did not request/);
   });
 
@@ -1638,7 +1644,7 @@ describe('plug-ins', () => {
     const c = await acct();
     const ins = h.plugins.install({
       accountId: c.account.id, pluginId: 'treasury-yield',
-      scopes: ['state:read', 'proposal:create'], allowance: null, installedBy: c.secrets[0].signerId,
+      scopes: ['state:read', 'proposal:create'], allowance: null, installedBy: present(c.secrets[0]).signerId,
     });
     await expect(h.plugins.propose(ins.token, c.viewingKey, {
       summary: 'Deploy to lending', asset: 'GBP', amount: 10_00n, recipient: 'Pool',
@@ -1660,7 +1666,7 @@ describe('plug-ins', () => {
        * there is no pairing left to get wrong.
        */
       allowance: { limits: { GBP: { perProposal: 5_000_00n, perPeriod: 8_000_00n } }, periodDays: 30 },
-      installedBy: c.secrets[0].signerId,
+      installedBy: present(c.secrets[0]).signerId,
     });
     const go = (amount: bigint) => h.plugins.propose(ins.token, c.viewingKey, {
       summary: 'Deploy', asset: 'GBP', amount, recipient: 'Pool',
@@ -1687,7 +1693,7 @@ describe('plug-ins', () => {
       accountId: c.account.id, pluginId: 'treasury-yield',
       scopes: ['state:read', 'proposal:create'],
       allowance: { limits: { GBP: { perProposal: 5_000_00n, perPeriod: 8_000_00n } }, periodDays: 30 },
-      installedBy: c.secrets[0].signerId,
+      installedBy: present(c.secrets[0]).signerId,
     });
     await expect(h.plugins.propose(ins.token, c.viewingKey, {
       summary: 'Deploy', asset: 'USDC', amount: 1n, recipient: 'Pool',
@@ -1696,8 +1702,8 @@ describe('plug-ins', () => {
     // Refused, and recorded — a refusal is the more interesting audit line.
     const refused = h.plugins.events(c.account.id).filter(e => !e.allowed);
     expect(refused).toHaveLength(1);
-    expect(refused[0].asset).toBe('USDC');
-    expect(refused[0].amount).toBe(1n);
+    expect(present(refused[0]).asset).toBe('USDC');
+    expect(present(refused[0]).amount).toBe(1n);
   });
 
   it('an allowance naming an asset the registry does not know is refused at install', async () => {
@@ -1712,7 +1718,7 @@ describe('plug-ins', () => {
       accountId: c.account.id, pluginId: 'treasury-yield',
       scopes: ['state:read', 'proposal:create'],
       allowance: { limits: { XYZ: { perProposal: 1n, perPeriod: 1n } }, periodDays: 30 },
-      installedBy: c.secrets[0].signerId,
+      installedBy: present(c.secrets[0]).signerId,
     })).toThrow(/unknown asset "XYZ"/);
   });
 
@@ -1720,7 +1726,7 @@ describe('plug-ins', () => {
     const c = await acct();
     const ins = h.plugins.install({
       accountId: c.account.id, pluginId: 'xero-sync',
-      scopes: ['state:read:totals', 'runs:read'], allowance: null, installedBy: c.secrets[0].signerId,
+      scopes: ['state:read:totals', 'runs:read'], allowance: null, installedBy: present(c.secrets[0]).signerId,
     });
     h.plugins.readRuns(ins.token);
     h.plugins.setStatus(ins.id, 'suspended');
@@ -1731,13 +1737,13 @@ describe('plug-ins', () => {
     const c = await acct();
     const ins = h.plugins.install({
       accountId: c.account.id, pluginId: 'xero-sync',
-      scopes: ['runs:read'], allowance: null, installedBy: c.secrets[0].signerId,
+      scopes: ['runs:read'], allowance: null, installedBy: present(c.secrets[0]).signerId,
     });
     expect(() => h.plugins.readPeople(ins.token)).toThrow(/not granted/);
 
     const refused = h.plugins.events(c.account.id).filter(e => !e.allowed);
     expect(refused).toHaveLength(1);
-    expect(refused[0].detail).toMatch(/people:read was not granted/);
+    expect(present(refused[0]).detail).toMatch(/people:read was not granted/);
   });
 });
 
@@ -1977,7 +1983,7 @@ describe('identity', () => {
     const { user: mal, session: malSession } = await enrol('mal@evil.co');
     const adaSession = (await h.identity.listSessions(ada.id))[0];
 
-    expect(await h.identity.endSession(mal.id, adaSession.id)).toBe(false);
+    expect(await h.identity.endSession(mal.id, present(adaSession).id)).toBe(false);
     expect(await h.identity.listSessions(ada.id)).toHaveLength(1);
     expect(await h.identity.verify(malSession.token)).toBe(mal.id);
   });
@@ -2066,8 +2072,8 @@ describe('multi-tenancy', () => {
   const twoTenants = async () => {
     const ada = await enrol('ada@acme.co');
     const raj = await enrol('raj@globex.co');
-    const acme = await h.accounts.create('Acme', [{ ...THREE_SIGNERS[0], userId: ada.id }], 1);
-    const globex = await h.accounts.create('Globex', [{ ...THREE_SIGNERS[0], userId: raj.id }], 1);
+    const acme = await h.accounts.create('Acme', [{ ...present(THREE_SIGNERS[0]), userId: ada.id }], 1, undefined, drawCompanyLabel());
+    const globex = await h.accounts.create('Globex', [{ ...present(THREE_SIGNERS[0]), userId: raj.id }], 1, undefined, drawCompanyLabel());
     return { ada, raj, acme, globex };
   };
 
@@ -2104,9 +2110,9 @@ describe('multi-tenancy', () => {
     const ada = await enrol('ada@acme.co');
     const blake = await enrol('blake@acme.co');
     const c = await h.accounts.create('Acme', [
-      { ...THREE_SIGNERS[0], userId: ada.id },
-      { ...THREE_SIGNERS[1], userId: blake.id },
-    ], 2);
+      { ...present(THREE_SIGNERS[0]), userId: ada.id },
+      { ...present(THREE_SIGNERS[1]), userId: blake.id },
+    ], 2, undefined, drawCompanyLabel());
     expect(h.store.accountsForUser(ada.id)).toHaveLength(1);
     expect(h.store.accountsForUser(blake.id)).toHaveLength(1);
     expect(h.accounts.membership(c.account.id, blake.id)).toBe(true);
@@ -2118,7 +2124,7 @@ describe('multi-tenancy', () => {
   it('does not count a pending signer as a member', async () => {
     const ada = await enrol('ada@acme.co');
     const blake = await enrol('blake@acme.co');
-    const c = await h.accounts.create('Acme', [{ ...THREE_SIGNERS[0], userId: ada.id }], 1);
+    const c = await h.accounts.create('Acme', [{ ...present(THREE_SIGNERS[0]), userId: ada.id }], 1, undefined, drawCompanyLabel());
 
     const invite = h.accounts.inviteSigner(c.account.id, 'Blake', 'blake@acme.co', 'approver');
     const sk = newSigningKeypair(); const wk = newWrappingKeypair();
@@ -2129,8 +2135,8 @@ describe('multi-tenancy', () => {
     expect(pending.status).toBe('pending');
     expect(h.accounts.membership(c.account.id, blake.id)).toBe(false);
 
-    const seat = await h.accounts.proposeSigner(c.account.id, c.viewingKey, pending.id, c.secrets[0].signerId);
-    await h.accounts.approve(seat.id, c.secrets[0].signerId, sign(approvalMessage(seat), c.secrets[0].signingSecret), c.viewingKey);
+    const seat = await h.accounts.proposeSigner(c.account.id, c.viewingKey, pending.id, present(c.secrets[0]).signerId);
+    await h.accounts.approve(seat.id, present(c.secrets[0]).signerId, sign(approvalMessage(seat), present(c.secrets[0]).signingSecret), c.viewingKey);
 
     await h.accounts.grantAccess(c.account.id, c.viewingKey, pending.id);
     expect(h.accounts.membership(c.account.id, blake.id)).toBe(true);
@@ -2138,7 +2144,7 @@ describe('multi-tenancy', () => {
 
   it('refuses a second seat for the same user on one account', async () => {
     const ada = await enrol('ada@acme.co');
-    const c = await h.accounts.create('Acme', [{ ...THREE_SIGNERS[0], userId: ada.id }], 1);
+    const c = await h.accounts.create('Acme', [{ ...present(THREE_SIGNERS[0]), userId: ada.id }], 1, undefined, drawCompanyLabel());
     const invite = h.accounts.inviteSigner(c.account.id, 'Ada again', 'ada@acme.co', 'approver');
     const sk = newSigningKeypair(); const wk = newWrappingKeypair();
     // Two seats would be two votes towards the threshold from one person.
@@ -2175,14 +2181,14 @@ describe('the approval round, as the chain enforces it', () => {
   });
 
   async function funded(threshold = 2) {
-    const c = await h.accounts.create('Acme', THREE_SIGNERS, threshold);
+    const c = await h.accounts.create('Acme', THREE_SIGNERS, threshold, undefined, drawCompanyLabel());
     return c;
   }
 
   const propose = (c: Awaited<ReturnType<typeof funded>>, amount: bigint, summary = 'p') =>
     h.accounts.propose({
       accountId: c.account.id, viewingKey: c.viewingKey, kind: 'transfer',
-      summary, payload: transfer(amount), proposedBy: c.secrets[0].signerId,
+      summary, payload: transfer(amount), proposedBy: present(c.secrets[0]).signerId,
     });
 
   /** What the chain publishes about one proposal while it is still open. */
@@ -2344,7 +2350,7 @@ describe('the approval round, as the chain enforces it', () => {
       const c = await funded();
       const p = await propose(c, 12_000_00n, 'Payroll 2026-06, 8 recipients');
       await h.accounts.approve(
-        p.id, c.secrets[0].signerId, sign(approvalMessage(p), c.secrets[0].signingSecret), c.viewingKey);
+        p.id, present(c.secrets[0]).signerId, sign(approvalMessage(p), present(c.secrets[0]).signingSecret), c.viewingKey);
 
       const view = h.ledger.publicView();
 
@@ -2356,7 +2362,7 @@ describe('the approval round, as the chain enforces it', () => {
        */
       expect(view.commitments).toHaveLength(1);
       expect(view.proposals).toHaveLength(1);
-      expect(view.proposals[0].approvalCount).toBe(1);
+      expect(present(view.proposals[0]).approvalCount).toBe(1);
       expect(h.accounts.changeOf(
         h.accounts.requireProposal(p.id, c.viewingKey), c.viewingKey))
         .toEqual({ asset: 'GBP', amount: 12_000_00n });
@@ -2390,8 +2396,8 @@ describe('the approval round, as the chain enforces it', () => {
     const c = await funded();
     const stuck = await propose(c, 1_000_00n, 'never going to pass');
     const other = await propose(c, 2_000_00n, 'a good one');
-    await h.accounts.approve(stuck.id, c.secrets[0].signerId, sign(approvalMessage(stuck), c.secrets[0].signingSecret), c.viewingKey);
-    await h.accounts.approve(other.id, c.secrets[0].signerId, sign(approvalMessage(other), c.secrets[0].signingSecret), c.viewingKey);
+    await h.accounts.approve(stuck.id, present(c.secrets[0]).signerId, sign(approvalMessage(stuck), present(c.secrets[0]).signingSecret), c.viewingKey);
+    await h.accounts.approve(other.id, present(c.secrets[0]).signerId, sign(approvalMessage(other), present(c.secrets[0]).signingSecret), c.viewingKey);
 
     await h.accounts.cancel(stuck.id, c.viewingKey);
 
@@ -2413,12 +2419,12 @@ describe('the approval round, as the chain enforces it', () => {
     const c = await funded();
     const p = await propose(c, 1_000_00n);
     const account = h.accounts.open(c.account.id, c.viewingKey);
-    const by = { signerId: account.signers[0].id, leaf: account.signers[0].leafCommitment! };
+    const by = { signerId: present(account.signers[0]).id, leaf: present(account.signers[0]).leafCommitment! };
 
     await h.ledger.approve(c.account.id, p.chainId, by);
     await expect(h.ledger.approve(c.account.id, p.chainId, by))
       .rejects.toThrow(/already approved this proposal/i);
-    expect((await openOnChain(c.account.id))[0].approvals).toBe(1);
+    expect(present((await openOnChain(c.account.id))[0]).approvals).toBe(1);
   });
 
   it('refuses to act for someone who is not in the on-chain signer set', async () => {
@@ -2459,7 +2465,7 @@ describe('the approval round, as the chain enforces it', () => {
     const blocked = await h.accounts.propose({
       accountId: c.account.id, viewingKey: c.viewingKey, kind: 'transfer',
       summary: 'too big', payload: transfer(5_000_00n),
-      proposedBy: c.secrets[1].signerId, // Blake, an approver
+      proposedBy: present(c.secrets[1]).signerId, // Blake, an approver
     });
     expect(blocked.status).toBe('blocked');
     expect(await openOnChain(c.account.id)).toEqual([]);
@@ -2485,7 +2491,7 @@ describe('granting access puts the signer in the on-chain set', () => {
   beforeEach(() => { h = harness(); });
 
   it('a granted signer can approve, and their approval counts on chain', async () => {
-    const c = await h.accounts.create('Acme', [THREE_SIGNERS[0]], 1);
+    const c = await h.accounts.create('Acme', [present(THREE_SIGNERS[0])], 1, undefined, drawCompanyLabel());
 
     const invite = h.accounts.inviteSigner(c.account.id, 'Blake', 'b@acme.co', 'approver');
     const sk = newSigningKeypair(); const wk = newWrappingKeypair();
@@ -2494,9 +2500,9 @@ describe('granting access puts the signer in the on-chain set', () => {
       provenBy(c.viewingKey, invite, sk.publicKey, wk.publicKey, 'be'.repeat(32)));
 
     const seat = await h.accounts.proposeSigner(
-      c.account.id, c.viewingKey, blake.id, c.secrets[0].signerId,
+      c.account.id, c.viewingKey, blake.id, present(c.secrets[0]).signerId,
     );
-    await h.accounts.approve(seat.id, c.secrets[0].signerId, sign(approvalMessage(seat), c.secrets[0].signingSecret), c.viewingKey);
+    await h.accounts.approve(seat.id, present(c.secrets[0]).signerId, sign(approvalMessage(seat), present(c.secrets[0]).signingSecret), c.viewingKey);
     await h.accounts.grantAccess(c.account.id, c.viewingKey, blake.id);
 
     // The proposal that seated them is consumed, exactly as an execute consumes
@@ -2523,7 +2529,7 @@ describe('granting access puts the signer in the on-chain set', () => {
     // One existing signer adding signers freely makes the threshold
     // decorative: a single stolen key could manufacture as many approvers as it
     // liked, then approve anything M times alone.
-    const c = await h.accounts.create('Acme', [THREE_SIGNERS[0]], 1);
+    const c = await h.accounts.create('Acme', [present(THREE_SIGNERS[0])], 1, undefined, drawCompanyLabel());
     const invite = h.accounts.inviteSigner(c.account.id, 'Blake', 'b@acme.co', 'approver');
     const sk = newSigningKeypair(); const wk = newWrappingKeypair();
     const blake = h.accounts.acceptSignerInvite(
@@ -2551,9 +2557,9 @@ describe('granting access puts the signer in the on-chain set', () => {
      * somebody who calls the contract directly — which is the entire threat
      * model: one stolen key must not be able to manufacture approvers.
      */
-    const c = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const c = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const account = h.accounts.open(c.account.id, c.viewingKey);
-    const by = { signerId: account.signers[0].id, leaf: account.signers[0].leafCommitment! };
+    const by = { signerId: present(account.signers[0]).id, leaf: present(account.signers[0]).leafCommitment! };
     const wanted = 'be'.repeat(32);
     const other = 'ma'.repeat(32);
 
@@ -2569,9 +2575,9 @@ describe('granting access puts the signer in the on-chain set', () => {
     const blake = h.accounts.acceptSignerInvite(
       invite.token, null, sk.publicKey, wk.publicKey, wanted);
     const p = await h.accounts.proposeSigner(
-      c.account.id, c.viewingKey, blake.id, c.secrets[0].signerId);
-    await h.accounts.approve(p.id, c.secrets[0].signerId, sign(approvalMessage(p), c.secrets[0].signingSecret), c.viewingKey);
-    await h.accounts.approve(p.id, c.secrets[1].signerId, sign(approvalMessage(p), c.secrets[1].signingSecret), c.viewingKey);
+      c.account.id, c.viewingKey, blake.id, present(c.secrets[0]).signerId);
+    await h.accounts.approve(p.id, present(c.secrets[0]).signerId, sign(approvalMessage(p), present(c.secrets[0]).signingSecret), c.viewingKey);
+    await h.accounts.approve(p.id, present(c.secrets[1]).signerId, sign(approvalMessage(p), present(c.secrets[1]).signingSecret), c.viewingKey);
 
     await expect(h.ledger.addSigner(c.account.id, other, p.chainId, by))
       .rejects.toThrow(/not for this signer/i);
@@ -2589,7 +2595,7 @@ describe('granting access puts the signer in the on-chain set', () => {
      * Found by a mutation run — removing the guard broke nothing, because every
      * other test happened to approve before granting.
      */
-    const c = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const c = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const invite = h.accounts.inviteSigner(c.account.id, 'Dana', 'd@acme.co', 'approver');
     const sk = newSigningKeypair(); const wk = newWrappingKeypair();
     const dana = h.accounts.acceptSignerInvite(
@@ -2597,7 +2603,7 @@ describe('granting access puts the signer in the on-chain set', () => {
       provenBy(c.viewingKey, invite, sk.publicKey, wk.publicKey, 'da'.repeat(32)));
 
     const seat = await h.accounts.proposeSigner(
-      c.account.id, c.viewingKey, dana.id, c.secrets[0].signerId,
+      c.account.id, c.viewingKey, dana.id, present(c.secrets[0]).signerId,
     );
 
     // Zero approvals.
@@ -2605,12 +2611,12 @@ describe('granting access puts the signer in the on-chain set', () => {
       .rejects.toThrow(/not enough approvals/i);
 
     // One of two.
-    await h.accounts.approve(seat.id, c.secrets[0].signerId, sign(approvalMessage(seat), c.secrets[0].signingSecret), c.viewingKey);
+    await h.accounts.approve(seat.id, present(c.secrets[0]).signerId, sign(approvalMessage(seat), present(c.secrets[0]).signingSecret), c.viewingKey);
     await expect(h.accounts.grantAccess(c.account.id, c.viewingKey, dana.id))
       .rejects.toThrow(/not enough approvals/i);
 
     // Two of two.
-    await h.accounts.approve(seat.id, c.secrets[1].signerId, sign(approvalMessage(seat), c.secrets[1].signingSecret), c.viewingKey);
+    await h.accounts.approve(seat.id, present(c.secrets[1]).signerId, sign(approvalMessage(seat), present(c.secrets[1]).signingSecret), c.viewingKey);
     const account = await h.accounts.grantAccess(c.account.id, c.viewingKey, dana.id);
     expect(account.signers.find(s => s.id === dana.id)!.status).toBe('active');
     expect((await h.accounts.ledgerStatus(c.account.id))!.signerCount).toBe(4);
@@ -2619,7 +2625,7 @@ describe('granting access puts the signer in the on-chain set', () => {
   it('refuses to seat a signer against a round approved for someone else', async () => {
     // Without domain separation and a per-leaf commitment, any approved
     // proposal would authorise adding anyone — the same hole in a new place.
-    const c = await h.accounts.create('Acme', [THREE_SIGNERS[0]], 1);
+    const c = await h.accounts.create('Acme', [present(THREE_SIGNERS[0])], 1, undefined, drawCompanyLabel());
     const mk = (name: string, leaf: string) => {
       const invite = h.accounts.inviteSigner(c.account.id, name, `${name}@acme.co`, 'approver');
       const sk = newSigningKeypair(); const wk = newWrappingKeypair();
@@ -2630,9 +2636,9 @@ describe('granting access puts the signer in the on-chain set', () => {
     const other = mk('Mallory', 'ma'.repeat(32));
 
     const seat = await h.accounts.proposeSigner(
-      c.account.id, c.viewingKey, wanted.id, c.secrets[0].signerId,
+      c.account.id, c.viewingKey, wanted.id, present(c.secrets[0]).signerId,
     );
-    await h.accounts.approve(seat.id, c.secrets[0].signerId, sign(approvalMessage(seat), c.secrets[0].signingSecret), c.viewingKey);
+    await h.accounts.approve(seat.id, present(c.secrets[0]).signerId, sign(approvalMessage(seat), present(c.secrets[0]).signingSecret), c.viewingKey);
 
     /*
      * The refusal comes from `approvedFor` rather than from the ledger now: an
@@ -2661,9 +2667,9 @@ describe('granting access puts the signer in the on-chain set', () => {
      * whether a code path is reachable" is how a hole gets left open by
      * everyone believing the other side covers it.
      */
-    await expect(h.accounts.create('Acme', [THREE_SIGNERS[0]], 2)).rejects.toThrow(/not valid/);
+    await expect(h.accounts.create('Acme', [present(THREE_SIGNERS[0])], 2, undefined, drawCompanyLabel())).rejects.toThrow(/not valid/);
 
-    const c = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const c = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const invite = h.accounts.inviteSigner(c.account.id, 'Dana', 'd@acme.co', 'approver');
     const sk = newSigningKeypair(); const wk = newWrappingKeypair();
     const dana = h.accounts.acceptSignerInvite(
@@ -2686,7 +2692,7 @@ describe('what a RUN leaves in the store', () => {
      * this table is covered too.
      */
     const h2 = harness();
-    const { account, viewingKey } = await h2.accounts.create('Acme', THREE_SIGNERS, 2);
+    const { account, viewingKey } = await h2.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     h2.payroll.hireDirect(account.id, { name: 'Dana Whitfield', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 6_200_00n }, viewingKey);
     await h2.payroll.createRunFromRoster(account.id, '2026-07', viewingKey);
 
@@ -2704,9 +2710,9 @@ describe('what a RUN leaves in the store', () => {
      * characters and a nanoid is drawn from a 64-character alphabet, so
      * `not.toContain('GBP')` would fire at random on correct code.
      */
-    const stored = h2.store.listRuns(account.id)[0];
+    const stored = present(h2.store.listRuns(account.id)[0]);
     expect(Object.values(stored).some(v => v === 'GBP')).toBe(false);
-    expect(h2.payroll.requireRun(stored.id, viewingKey).totals).toEqual({ GBP: 6_200_00n });
+    expect(h2.payroll.requireRun(present(stored).id, viewingKey).totals).toEqual({ GBP: 6_200_00n });
   });
 });
 
@@ -2721,7 +2727,7 @@ describe('what the proposals table leaves in the store', () => {
      * summary that names people and amounts.
      */
     const h2 = harness();
-    const c = await h2.accounts.create('Acme', THREE_SIGNERS, 2);
+    const c = await h2.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const p = await h2.accounts.propose({
       accountId: c.account.id, viewingKey: c.viewingKey, kind: 'transfer',
       summary: 'Pay Wilkinson Legal 12000 for the Q3 retainer',
@@ -2729,16 +2735,16 @@ describe('what the proposals table leaves in the store', () => {
         to: 'Wilkinson Legal',
         entries: [{ id: 'e1', kind: 'transfer', asset: 'GBP', amount: 12_000_00n, counterparty: 'Wilkinson Legal', memo: '', at: '' }],
       },
-      proposedBy: c.secrets[0].signerId,
+      proposedBy: present(c.secrets[0]).signerId,
     });
-    await h2.accounts.approve(p.id, c.secrets[0].signerId, sign(approvalMessage(p), c.secrets[0].signingSecret), c.viewingKey);
+    await h2.accounts.approve(p.id, present(c.secrets[0]).signerId, sign(approvalMessage(p), present(c.secrets[0]).signingSecret), c.viewingKey);
 
     const stored = readableStore((h2.store as any).data.proposals);
     expect(stored).not.toContain('Wilkinson Legal');
     // '12000' from the summary, and '1200000' — the amount in minor units —
     // which contains it, so one check covers both.
     expect(stored).not.toContain('12000');
-    expect(stored).not.toContain(c.secrets[0].signerId);
+    expect(stored).not.toContain(present(c.secrets[0]).signerId);
     // Nor the asset: there is no readable field on the record that carries one.
     expect(Object.values(h2.store.getProposal(p.id)!).some(v => v === 'GBP')).toBe(false);
 
@@ -2778,7 +2784,7 @@ describe('what the ACCOUNTS table leaves in the store', () => {
     const c = await h.accounts.create('Northwind Ltd', [
       { name: 'Ada Okafor', role: 'admin', userId: ada.id },
       { name: 'Cleo Nakamura', role: 'approver' },
-    ], 2);
+    ], 2, undefined, drawCompanyLabel());
     editAccount(h, c.account.id, c.viewingKey, a => {
       // Both are keyed by asset: a ceiling is a number in one
       // currency and nothing else.
@@ -2950,15 +2956,15 @@ describe('what the ACCOUNTS table leaves in the store', () => {
     expect(invites).not.toContain('devi@acme.co');
     // Still linked to the seat it created, which is what the record is for.
     const invite = h.store.listInvites(c.account.id)[0];
-    expect(invite.subjectId).toBe(h.accounts.require(c.account.id).pendingSigners[0].id);
+    expect(present(invite).subjectId).toBe(present(h.accounts.require(c.account.id).pendingSigners[0]).id);
   });
 
   it('granting access moves the signer into the sealed roster and leaves no second copy', async () => {
     const { h, c, pending, blake } = await company();
 
-    const seat = await h.accounts.proposeSigner(c.account.id, c.viewingKey, pending.id, c.secrets[0].signerId);
-    await h.accounts.approve(seat.id, c.secrets[0].signerId, sign(approvalMessage(seat), c.secrets[0].signingSecret), c.viewingKey);
-    await h.accounts.approve(seat.id, c.secrets[1].signerId, sign(approvalMessage(seat), c.secrets[1].signingSecret), c.viewingKey);
+    const seat = await h.accounts.proposeSigner(c.account.id, c.viewingKey, pending.id, present(c.secrets[0]).signerId);
+    await h.accounts.approve(seat.id, present(c.secrets[0]).signerId, sign(approvalMessage(seat), present(c.secrets[0]).signingSecret), c.viewingKey);
+    await h.accounts.approve(seat.id, present(c.secrets[1]).signerId, sign(approvalMessage(seat), present(c.secrets[1]).signingSecret), c.viewingKey);
     await h.accounts.grantAccess(c.account.id, c.viewingKey, pending.id);
 
     const rec = h.accounts.require(c.account.id);
@@ -3004,7 +3010,7 @@ describe('what the ACCOUNTS table leaves in the store', () => {
     const p = await h.accounts.propose({
       accountId: c.account.id, viewingKey: c.viewingKey, kind: 'transfer',
       summary: 'Pay Wilkinson Legal', payload: {}, asset: 'GBP',
-      proposedBy: c.secrets[0].signerId,
+      proposedBy: present(c.secrets[0]).signerId,
     });
     const stored = h.store.getProposal(p.id)!;
     expect(() => openRecord('policy', stored.accountId, stored.sealed, c.viewingKey)).toThrow(/will not open/);
@@ -3013,7 +3019,7 @@ describe('what the ACCOUNTS table leaves in the store', () => {
 
   it('another account\'s viewing key opens nothing, and neither does the inbox public key', async () => {
     const { h, c } = await company();
-    const other = await h.accounts.create('Globex', THREE_SIGNERS, 2);
+    const other = await h.accounts.create('Globex', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const rec = h.accounts.require(c.account.id);
 
     expect(() => openAccount(rec, other.viewingKey)).toThrow(/will not open/);
@@ -3060,7 +3066,7 @@ describe('changing the locks', () => {
     /* A signer with a real user id, made the way a wallet sign-in
      * makes one. See `company()` above. */
     const blake = { id: signIn(h, 'blake@acme.co', 'Blake Ruiz') };
-    const c = await h.accounts.create('Northwind Ltd', THREE_SIGNERS, 2);
+    const c = await h.accounts.create('Northwind Ltd', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     h.payroll.hireDirect(c.account.id,
       { name: 'Dana Whitfield', email: 'dana@acme.co', title: 'Engineer', asset: 'GBP', baseAmount: 6_200_00n }, c.viewingKey);
     const { run } = await h.payroll.createRunFromRoster(c.account.id, '2026-07', c.viewingKey);
@@ -3068,7 +3074,7 @@ describe('changing the locks', () => {
       accountId: c.account.id, viewingKey: c.viewingKey, kind: 'transfer',
       summary: 'Pay Wilkinson Legal',
       payload: { entries: [{ id: 'e1', kind: 'transfer', asset: 'GBP', amount: 9_000_00n, counterparty: 'y', memo: '', at: '' }] },
-      proposedBy: c.secrets[0].signerId,
+      proposedBy: present(c.secrets[0]).signerId,
     });
 
     const invite = h.accounts.inviteSigner(c.account.id, 'Devi Raman', 'devi@acme.co', 'approver');
@@ -3129,14 +3135,14 @@ describe('changing the locks', () => {
   it('an excluded signer loses their wrapped copy and their seat', async () => {
     const { h, c } = await loaded();
     const gone = c.secrets[2];
-    const { viewingKey: next } = await h.accounts.rotate(c.account.id, c.viewingKey, [gone.signerId]);
+    const { viewingKey: next } = await h.accounts.rotate(c.account.id, c.viewingKey, [present(gone).signerId]);
 
     // No wrapped key, so there is no path from their secret to the new one.
-    expect(() => h.accounts.recoverViewingKey(c.account.id, gone.signerId, gone.wrappingSecret))
+    expect(() => h.accounts.recoverViewingKey(c.account.id, present(gone).signerId, present(gone).wrappingSecret))
       .toThrow(/no wrapped key/);
-    expect(h.accounts.open(c.account.id, next).signers.map(s => s.id)).not.toContain(gone.signerId);
+    expect(h.accounts.open(c.account.id, next).signers.map(s => s.id)).not.toContain(present(gone).signerId);
     // And the two who stayed are unaffected.
-    expect(h.accounts.recoverViewingKey(c.account.id, c.secrets[0].signerId, c.secrets[0].wrappingSecret))
+    expect(h.accounts.recoverViewingKey(c.account.id, present(c.secrets[0]).signerId, present(c.secrets[0]).wrappingSecret))
       .toBe(next);
   });
 
@@ -3148,7 +3154,7 @@ describe('changing the locks', () => {
      */
     const { h, c } = await loaded();
     await expect(
-      h.accounts.rotate(c.account.id, c.viewingKey, [c.secrets[1].signerId, c.secrets[2].signerId]),
+      h.accounts.rotate(c.account.id, c.viewingKey, [present(c.secrets[1]).signerId, present(c.secrets[2]).signerId]),
     ).rejects.toThrow(/could never approve anything again/);
     // And nothing moved: the old key still works.
     expect(h.accounts.open(c.account.id, c.viewingKey).name).toBe('Northwind Ltd');
@@ -3157,7 +3163,7 @@ describe('changing the locks', () => {
 
   it('refuses a rotation driven by someone who does not hold the current key', async () => {
     const { h, c } = await loaded();
-    const other = await h.accounts.create('Globex', THREE_SIGNERS, 2);
+    const other = await h.accounts.create('Globex', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     await expect(h.accounts.rotate(c.account.id, other.viewingKey)).rejects.toThrow(/will not open/);
     expect(h.accounts.require(c.account.id).keyEpoch).toBe(0);
   });
@@ -3219,7 +3225,7 @@ describe('removing a signer', () => {
 
   async function threeSigners() {
     const h = harness();
-    const c = await h.accounts.create('Northwind Ltd', THREE_SIGNERS, 2);
+    const c = await h.accounts.create('Northwind Ltd', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     return { h, c, ada: c.secrets[0], blake: c.secrets[1], cleo: c.secrets[2] };
   }
 
@@ -3247,7 +3253,7 @@ describe('removing a signer', () => {
     await expect(h.accounts.propose({
       accountId: c.account.id, viewingKey: out.viewingKey, kind: 'transfer',
       summary: 'after removal', payload: { entries: [] }, asset: 'GBP',
-      proposedBy: cleo.signerId,
+      proposedBy: present(cleo).signerId,
     })).rejects.toThrow(/not a signer/);
   });
 
@@ -3266,20 +3272,20 @@ describe('removing a signer', () => {
     expect(out.keyEpoch).toBe(1);
     expect(() => h.accounts.open(c.account.id, old)).toThrow(/will not open/);
     // No wrapped copy for them, so their own secret reaches nothing.
-    expect(() => h.accounts.recoverViewingKey(c.account.id, cleo.signerId, cleo.wrappingSecret))
+    expect(() => h.accounts.recoverViewingKey(c.account.id, present(cleo).signerId, present(cleo).wrappingSecret))
       .toThrow(/no wrapped key/);
     // And the people who stayed reach the new key from their own secrets.
-    expect(h.accounts.recoverViewingKey(c.account.id, ada.signerId, ada.wrappingSecret))
+    expect(h.accounts.recoverViewingKey(c.account.id, present(ada).signerId, present(ada).wrappingSecret))
       .toBe(out.viewingKey);
   });
 
   it('refuses a removal that has not reached the threshold', async () => {
     const { h, c } = await threeSigners();
     const p = await h.accounts.proposeRemoval(
-      c.account.id, c.viewingKey, c.secrets[2].signerId, c.secrets[0].signerId);
-    await h.accounts.approve(p.id, c.secrets[0].signerId, sign(approvalMessage(p), c.secrets[0].signingSecret), c.viewingKey);
+      c.account.id, c.viewingKey, present(c.secrets[2]).signerId, present(c.secrets[0]).signerId);
+    await h.accounts.approve(p.id, present(c.secrets[0]).signerId, sign(approvalMessage(p), present(c.secrets[0]).signingSecret), c.viewingKey);
 
-    await expect(h.accounts.removeSigner(c.account.id, c.viewingKey, c.secrets[2].signerId))
+    await expect(h.accounts.removeSigner(c.account.id, c.viewingKey, present(c.secrets[2]).signerId))
       .rejects.toThrow(/not enough approvals/);
     // Nothing moved: they are still a signer and the key has not rotated.
     expect(h.accounts.open(c.account.id, c.viewingKey).signers).toHaveLength(3);
@@ -3295,7 +3301,7 @@ describe('removing a signer', () => {
      * that approved round before it can call the chain, and finds nothing.
      * The ledger's own guard is pinned separately below.
      */
-    await expect(h.accounts.removeSigner(c.account.id, c.viewingKey, c.secrets[2].signerId))
+    await expect(h.accounts.removeSigner(c.account.id, c.viewingKey, present(c.secrets[2]).signerId))
       .rejects.toThrow(/no open proposal on this account for that change/);
   });
 
@@ -3307,9 +3313,9 @@ describe('removing a signer', () => {
      */
     const { h, c } = await threeSigners();
     const p = await h.accounts.proposeRemoval(
-      c.account.id, c.viewingKey, c.secrets[2].signerId, c.secrets[0].signerId);
-    await h.accounts.approve(p.id, c.secrets[0].signerId, sign(approvalMessage(p), c.secrets[0].signingSecret), c.viewingKey);
-    await h.accounts.approve(p.id, c.secrets[1].signerId, sign(approvalMessage(p), c.secrets[1].signingSecret), c.viewingKey);
+      c.account.id, c.viewingKey, present(c.secrets[2]).signerId, present(c.secrets[0]).signerId);
+    await h.accounts.approve(p.id, present(c.secrets[0]).signerId, sign(approvalMessage(p), present(c.secrets[0]).signingSecret), c.viewingKey);
+    await h.accounts.approve(p.id, present(c.secrets[1]).signerId, sign(approvalMessage(p), present(c.secrets[1]).signingSecret), c.viewingKey);
 
     /*
      * Approved to remove Cleo; try to remove Blake instead. The round is
@@ -3318,7 +3324,7 @@ describe('removing a signer', () => {
      * to hand the contract. The LEDGER's version of this check is the one that
      * counts against somebody calling the chain directly, and is pinned below.
      */
-    await expect(h.accounts.removeSigner(c.account.id, c.viewingKey, c.secrets[1].signerId))
+    await expect(h.accounts.removeSigner(c.account.id, c.viewingKey, present(c.secrets[1]).signerId))
       .rejects.toThrow(/no open proposal on this account for that change/);
   });
 
@@ -3334,10 +3340,10 @@ describe('removing a signer', () => {
      * somebody who calls the contract directly.
      */
     const h = harness();
-    const c = await h.accounts.create('Northwind Ltd', THREE_SIGNERS, 3);
+    const c = await h.accounts.create('Northwind Ltd', THREE_SIGNERS, 3, undefined, drawCompanyLabel());
 
     await expect(h.accounts.proposeRemoval(
-      c.account.id, c.viewingKey, c.secrets[2].signerId, c.secrets[0].signerId,
+      c.account.id, c.viewingKey, present(c.secrets[2]).signerId, present(c.secrets[0]).signerId,
     )).rejects.toThrow(/could never approve anything again/);
 
     // Nothing moved: no round was opened and everyone is still a signer.
@@ -3356,9 +3362,9 @@ describe('removing a signer', () => {
      */
     const { h, c } = await threeSigners();
     const p = await h.accounts.proposeRemoval(
-      c.account.id, c.viewingKey, c.secrets[2].signerId, c.secrets[0].signerId);
-    await h.accounts.approve(p.id, c.secrets[0].signerId, sign(approvalMessage(p), c.secrets[0].signingSecret), c.viewingKey);
-    await h.accounts.approve(p.id, c.secrets[1].signerId, sign(approvalMessage(p), c.secrets[1].signingSecret), c.viewingKey);
+      c.account.id, c.viewingKey, present(c.secrets[2]).signerId, present(c.secrets[0]).signerId);
+    await h.accounts.approve(p.id, present(c.secrets[0]).signerId, sign(approvalMessage(p), present(c.secrets[0]).signingSecret), c.viewingKey);
+    await h.accounts.approve(p.id, present(c.secrets[1]).signerId, sign(approvalMessage(p), present(c.secrets[1]).signingSecret), c.viewingKey);
 
     // Adding a signer between proposing and removing changes the survivor set,
     // so the approved digest no longer describes what would happen.
@@ -3368,8 +3374,8 @@ describe('removing a signer', () => {
       invite.token, null, sk.publicKey, wk.publicKey, LEAF);
     expect(pending.status).toBe('pending');
     // Pending signers are not seated, so the set is unchanged and it still works.
-    const out = await h.accounts.removeSigner(c.account.id, c.viewingKey, c.secrets[2].signerId);
-    expect(out.account.signers.map(s => s.id)).not.toContain(c.secrets[2].signerId);
+    const out = await h.accounts.removeSigner(c.account.id, c.viewingKey, present(c.secrets[2]).signerId);
+    expect(out.account.signers.map(s => s.id)).not.toContain(present(c.secrets[2]).signerId);
     expect((await h.accounts.ledgerStatus(c.account.id))!.signerCount).toBe(2);
   });
 
@@ -3388,7 +3394,7 @@ describe('removing a signer', () => {
      */
     const { h, c, cleo } = await threeSigners();
     const oldLeaf = h.accounts.open(c.account.id, c.viewingKey)
-      .signers.find(s => s.id === cleo.signerId)!.leafCommitment!;
+      .signers.find(s => s.id === present(cleo).signerId)!.leafCommitment!;
 
     /*
      * A governance change moves no money, so its asset is the reserved `NONE`.
@@ -3401,21 +3407,21 @@ describe('removing a signer', () => {
 
     // It works before the removal, so the test can fail for the right reason.
     await h.ledger.propose(
-      c.account.id, 'aa'.repeat(32), change, { signerId: cleo.signerId, leaf: oldLeaf },
+      c.account.id, 'aa'.repeat(32), change, { signerId: present(cleo).signerId, leaf: oldLeaf },
       SimulatedCommitments.noVault());
     // The id is read back from what the chain publishes rather than derived.
     const [opened] = (await h.ledger.status(c.account.id))!.openProposals;
-    await h.ledger.cancel(c.account.id, opened.id, { signerId: cleo.signerId, leaf: oldLeaf });
+    await h.ledger.cancel(c.account.id, present(opened).id, { signerId: present(cleo).signerId, leaf: oldLeaf });
 
     await removeCleo(h, c);
 
     await expect(h.ledger.propose(
-      c.account.id, 'aa'.repeat(32), change, { signerId: cleo.signerId, leaf: oldLeaf },
+      c.account.id, 'aa'.repeat(32), change, { signerId: present(cleo).signerId, leaf: oldLeaf },
       SimulatedCommitments.noVault(),
     )).rejects.toThrow(/not a signer/);
     // The signer check comes before the proposal lookup, so any id shows it.
     await expect(h.ledger.approve(
-      c.account.id, opened.id, { signerId: cleo.signerId, leaf: oldLeaf },
+      c.account.id, present(opened).id, { signerId: present(cleo).signerId, leaf: oldLeaf },
     )).rejects.toThrow(/not a signer/);
   });
 
@@ -3436,10 +3442,10 @@ describe('removing a signer', () => {
        */
       const { h, c, ada } = await threeSigners();
       const before = h.accounts.open(c.account.id, c.viewingKey)
-        .signers.find(s => s.id === ada.signerId)!;
+        .signers.find(s => s.id === present(ada).signerId)!;
       const out = await removeCleo(h, c);
       const after = h.accounts.open(c.account.id, out.viewingKey)
-        .signers.find(s => s.id === ada.signerId)!;
+        .signers.find(s => s.id === present(ada).signerId)!;
 
       expect(after.signingPublicKey).toBe(before.signingPublicKey);
       expect(after.leafCommitment).toBe(before.leafCommitment);
@@ -3448,7 +3454,7 @@ describe('removing a signer', () => {
       await h.ledger.propose(
         c.account.id, 'aa'.repeat(32),
         { asset: NO_ASSET, amount: 0n, batchDigest: 'bb'.repeat(32), salt: 'cc'.repeat(32) },
-        { signerId: ada.signerId, leaf: before.leafCommitment! },
+        { signerId: present(ada).signerId, leaf: before.leafCommitment! },
         SimulatedCommitments.noVault(),
       );
       expect((await h.ledger.status(c.account.id))!.openProposals).toHaveLength(1);
@@ -3506,21 +3512,21 @@ describe('removing a signer', () => {
     const raised = await h.accounts.propose({
       accountId: c.account.id, viewingKey: c.viewingKey, kind: 'transfer',
       summary: "Cleo's round", payload: { entries: [] }, asset: 'GBP',
-      proposedBy: cleo.signerId,
+      proposedBy: present(cleo).signerId,
     });
 
     /* The removal rotates the viewing key and re-seals every record, so the
      * round Cleo raised is read back under the NEW key from here on. */
     const out = await removeCleo(h, c);
     expect(h.accounts.open(c.account.id, out.viewingKey).signers
-      .some(sg => sg.id === cleo.signerId)).toBe(false);
+      .some(sg => sg.id === present(cleo).signerId)).toBe(false);
 
     await h.accounts.approve(
-      raised.id, blake.signerId,
-      sign(approvalMessage(raised), blake.signingSecret), out.viewingKey);
+      raised.id, present(blake).signerId,
+      sign(approvalMessage(raised), present(blake).signingSecret), out.viewingKey);
 
     const after = h.accounts.requireProposal(raised.id, out.viewingKey);
-    expect(after.approvals.map(a => a.signerId)).toEqual([blake.signerId]);
+    expect(after.approvals.map(a => a.signerId)).toEqual([present(blake).signerId]);
     /* The standing was computed, not skipped: `recordStanding` is the only
      * writer of this field and it needed the proposer's role to get here. */
     expect(after.approvalRound).toBeDefined();
@@ -3531,8 +3537,8 @@ describe('removing a signer', () => {
      * is told the true thing rather than handed a `TypeError` for ever.
      */
     await expect(h.accounts.approve(
-      raised.id, blake.signerId,
-      sign(approvalMessage(raised), blake.signingSecret), out.viewingKey))
+      raised.id, present(blake).signerId,
+      sign(approvalMessage(raised), present(blake).signingSecret), out.viewingKey))
       .rejects.toThrow(/already approved/);
   });
 
@@ -3552,18 +3558,18 @@ describe('removing a signer', () => {
     const VAULT = 'd1'.repeat(32);
 
     const raised = await h.accounts.proposeVaultThresholdChange(
-      c.account.id, c.viewingKey, VAULT, 2, cleo.signerId);
+      c.account.id, c.viewingKey, VAULT, 2, present(cleo).signerId);
 
     const out = await removeCleo(h, c);
     expect(h.accounts.open(c.account.id, out.viewingKey).signers
-      .some(sg => sg.id === cleo.signerId)).toBe(false);
+      .some(sg => sg.id === present(cleo).signerId)).toBe(false);
 
     await h.accounts.approve(
-      raised.id, blake.signerId,
-      sign(approvalMessage(raised), blake.signingSecret), out.viewingKey);
+      raised.id, present(blake).signerId,
+      sign(approvalMessage(raised), present(blake).signingSecret), out.viewingKey);
 
     const after = h.accounts.requireProposal(raised.id, out.viewingKey);
-    expect(after.approvals.map(a => a.signerId)).toEqual([blake.signerId]);
+    expect(after.approvals.map(a => a.signerId)).toEqual([present(blake).signerId]);
     expect(after.approvalRound).toBeDefined();
   });
 
@@ -3572,9 +3578,9 @@ describe('removing a signer', () => {
     expect((await h.accounts.ledgerStatus(c.account.id))!.threshold).toBe(2);
 
     const p = await h.accounts.proposeThresholdChange(
-      c.account.id, c.viewingKey, 3, ada.signerId);
-    await h.accounts.approve(p.id, ada.signerId, sign(approvalMessage(p), ada.signingSecret), c.viewingKey);
-    await h.accounts.approve(p.id, blake.signerId, sign(approvalMessage(p), blake.signingSecret), c.viewingKey);
+      c.account.id, c.viewingKey, 3, present(ada).signerId);
+    await h.accounts.approve(p.id, present(ada).signerId, sign(approvalMessage(p), present(ada).signingSecret), c.viewingKey);
+    await h.accounts.approve(p.id, present(blake).signerId, sign(approvalMessage(p), present(blake).signingSecret), c.viewingKey);
     await h.accounts.setThreshold(c.account.id, c.viewingKey, 3);
 
     // Both, and they are read from different places on purpose.
@@ -3594,8 +3600,8 @@ describe('removing a signer', () => {
      */
     const { h, c, ada } = await threeSigners();
     const p = await h.accounts.proposeThresholdChange(
-      c.account.id, c.viewingKey, 3, ada.signerId);
-    await h.accounts.approve(p.id, ada.signerId, sign(approvalMessage(p), ada.signingSecret), c.viewingKey);
+      c.account.id, c.viewingKey, 3, present(ada).signerId);
+    await h.accounts.approve(p.id, present(ada).signerId, sign(approvalMessage(p), present(ada).signingSecret), c.viewingKey);
 
     await expect(h.accounts.setThreshold(c.account.id, c.viewingKey, 3))
       .rejects.toThrow(/not enough approvals/);
@@ -3618,7 +3624,7 @@ describe('removing a signer', () => {
      */
     const { h, c, ada } = await threeSigners();
     await expect(h.accounts.proposeThresholdChange(
-      c.account.id, c.viewingKey, 4, ada.signerId,
+      c.account.id, c.viewingKey, 4, present(ada).signerId,
     )).rejects.toThrow(/cannot exceed the 3 signers/);
 
     expect((await h.accounts.ledgerStatus(c.account.id))!.openProposals).toEqual([]);
@@ -3628,7 +3634,7 @@ describe('removing a signer', () => {
   it('refuses zero, a fraction, and a change to what it already is', async () => {
     const { h, c, ada } = await threeSigners();
     const propose = (n: number) => h.accounts.proposeThresholdChange(
-      c.account.id, c.viewingKey, n, ada.signerId);
+      c.account.id, c.viewingKey, n, present(ada).signerId);
     await expect(propose(0)).rejects.toThrow(/at least one/);
     await expect(propose(2.5)).rejects.toThrow(/whole number/);
     await expect(propose(2)).rejects.toThrow(/already 2/);
@@ -3651,12 +3657,12 @@ describe('removing a signer', () => {
      * that is about the strand guard rather than about the threshold.
      */
     const h = harness();
-    const c = await h.accounts.create('Northwind Ltd', THREE_SIGNERS, 3);
+    const c = await h.accounts.create('Northwind Ltd', THREE_SIGNERS, 3, undefined, drawCompanyLabel());
     const ada = c.secrets[0];
     const cleo = c.secrets[2];
     const account = h.accounts.open(c.account.id, c.viewingKey);
-    const goneLeaf = account.signers.find(s => s.id === cleo.signerId)!.leafCommitment!;
-    const by = { signerId: ada.signerId, leaf: account.signers[0].leafCommitment! };
+    const goneLeaf = account.signers.find(s => s.id === present(cleo).signerId)!.leafCommitment!;
+    const by = { signerId: present(ada).signerId, leaf: present(account.signers[0]).leafCommitment! };
 
     /*
      * The round is opened ON THE LEDGER DIRECTLY, deliberately going around
@@ -3671,10 +3677,10 @@ describe('removing a signer', () => {
       SimulatedCommitments.noVault());
     const [round] = (await h.ledger.status(c.account.id))!.openProposals;
     for (const s of account.signers) {
-      await h.ledger.approve(c.account.id, round.id, { signerId: s.id, leaf: s.leafCommitment! });
+      await h.ledger.approve(c.account.id, present(round).id, { signerId: s.id, leaf: s.leafCommitment! });
     }
 
-    await expect(h.ledger.removeSigner(c.account.id, goneLeaf, round.id, by))
+    await expect(h.ledger.removeSigner(c.account.id, goneLeaf, present(round).id, by))
       .rejects.toThrow(/could never approve anything again/);
   });
 
@@ -3691,13 +3697,13 @@ describe('removing a signer', () => {
      */
     const { h, c, ada, blake, cleo } = await threeSigners();
     const account = h.accounts.open(c.account.id, c.viewingKey);
-    const by = { signerId: ada.signerId, leaf: account.signers[0].leafCommitment! };
-    const blakeLeaf = account.signers.find(s => s.id === blake.signerId)!.leafCommitment!;
+    const by = { signerId: present(ada).signerId, leaf: present(account.signers[0]).leafCommitment! };
+    const blakeLeaf = account.signers.find(s => s.id === present(blake).signerId)!.leafCommitment!;
 
     const p = await h.accounts.proposeRemoval(
-      c.account.id, c.viewingKey, cleo.signerId, ada.signerId);
-    await h.accounts.approve(p.id, ada.signerId, sign(approvalMessage(p), ada.signingSecret), c.viewingKey);
-    await h.accounts.approve(p.id, blake.signerId, sign(approvalMessage(p), blake.signingSecret), c.viewingKey);
+      c.account.id, c.viewingKey, present(cleo).signerId, present(ada).signerId);
+    await h.accounts.approve(p.id, present(ada).signerId, sign(approvalMessage(p), present(ada).signingSecret), c.viewingKey);
+    await h.accounts.approve(p.id, present(blake).signerId, sign(approvalMessage(p), present(blake).signingSecret), c.viewingKey);
 
     // Approved to remove Cleo; the ledger is asked to remove Blake, naming the
     // very proposal that approved Cleo's removal.
@@ -3708,7 +3714,7 @@ describe('removing a signer', () => {
   it('leaves nothing readable behind, and no leafCommitment anywhere', async () => {
     const { h, c, cleo } = await threeSigners();
     const goneLeaf = h.accounts.open(c.account.id, c.viewingKey)
-      .signers.find(s => s.id === cleo.signerId)!.leafCommitment!;
+      .signers.find(s => s.id === present(cleo).signerId)!.leafCommitment!;
     const out = await removeCleo(h, c);
 
     const raw = JSON.stringify((h.store as any).data);
@@ -3759,7 +3765,7 @@ describe('several assets in one account', () => {
 
   /** £100,000.00 and 50,000 USDC. Different decimals, deliberately. */
   async function twoAssets() {
-    const c = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const c = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     return c;
   }
 
@@ -3778,7 +3784,7 @@ describe('several assets in one account', () => {
         { id: 'e1', kind: 'transfer', asset: 'GBP', amount: 1_000_00n, counterparty: 'y', memo: '', at: '' },
         { id: 'e2', kind: 'transfer', asset: 'USDC', amount: 1_000000n, counterparty: 'z', memo: '', at: '' },
       ] },
-      proposedBy: c.secrets[0].signerId,
+      proposedBy: present(c.secrets[0]).signerId,
     })).rejects.toThrow(/moves 2 assets \(GBP, USDC\), and a round settles exactly one/);
     // Nothing was opened on chain, so nothing has to be cancelled.
     expect((await h.accounts.ledgerStatus(c.account.id))!.openProposals).toEqual([]);
@@ -3819,7 +3825,7 @@ describe('the payment set, on a ledger that keeps none', () => {
    */
   it('answers that it does not know, rather than that nobody was paid', async () => {
     const h = harness();
-    const { account } = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const { account } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const answer = await h.ledger.paidAmong(account.id, [leaf(1), leaf(2)]);
     expect(answer).not.toBeNull();
     expect(answer!.known).toBe(false);
@@ -3867,7 +3873,7 @@ describe('what a run can tell anybody about who has been paid', () => {
   beforeEach(() => { h = harness(); });
 
   const aRun = async () => {
-    const created = await h.accounts.create('Acme', THREE_SIGNERS, 2);
+    const created = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const { run } = await h.payroll.createRun(created.account.id, '2026-07', [
       { name: 'Dana', asset: 'GBP', amount: 6_200_00n },
     ], created.viewingKey);
@@ -3897,7 +3903,7 @@ describe('what a run can tell anybody about who has been paid', () => {
    */
   it('refuses a viewing key that cannot open the run, before it answers anything', async () => {
     const s = await aRun();
-    const other = await h.accounts.create('Beta', THREE_SIGNERS, 2);
+    const other = await h.accounts.create('Beta', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     expect(() => h.payroll.payoutMaterialOf(s.run.id, other.viewingKey))
       .toThrow(/will not open/);
   });

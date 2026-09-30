@@ -7,6 +7,7 @@ import type { Ask, KeyringRequest } from 'midnight-identity/profile/request';
 import { READY_PING } from 'midnight-identity/profile/channel';
 import { keyringKeyFor, keyringReleaseFor, unlockKeyFor } from 'midnight-identity/profile/unlock';
 import type { Openable } from 'vaults-web-shared/wallet-sign-in.js';
+import type { CompanyLabel } from 'midnight-identity/profile/company-label';
 import type { Sealed } from './crypto.js';
 import { fromHex, seal, toHex, unseal, unwrapKey, wrapKey } from './crypto.js';
 import { x25519 } from '@noble/curves/ed25519.js';
@@ -61,6 +62,13 @@ const WALLET = 'https://wallet.example';
 
 /** A company address, in the spelling the chain's own serialisation produces. */
 const DEPLOYED = 'a1'.repeat(32);
+/** Every label a wallet on this journey made up, in order, so a test can say which one the page used. */
+const drawn: CompanyLabel[] = [];
+const draw = (): CompanyLabel => {
+  const label = ('co_' + (drawn.length + 1).toString(16).padStart(64, '0')) as CompanyLabel;
+  drawn.push(label);
+  return label;
+};
 
 /** The site's identifier for the person who signs in, whichever device they use. */
 const PERSON = 'usr_founder';
@@ -195,7 +203,7 @@ class WalletAtTheOtherEnd implements Openable {
 const honestly = (words: readonly string[] | string, address: string) => (ask: Ask): unknown => {
   if (ask.kind === 'sign-in') return { schema: 'a-sign-in', address };
   if (ask.kind === 'keyring') {
-    return keyringReleaseFor(identityOf(words), ask, 0, held => held === address);
+    return keyringReleaseFor(identityOf(words), ask, 0, held => held === address, draw);
   }
   return { schema: 'not-something-this-journey-asks-a-wallet-for' };
 };
@@ -205,10 +213,10 @@ const theKeyringKey = (words: readonly string[] | string, ask: KeyringRequest): 
   toHex(keyringKeyFor(identityOf(words), { ...ask, person: PERSON, signedInAs: null, company: null }));
 
 /** The ordinary key of one company, as an unlock of that company would release it. */
-const theCompanyKey = (words: readonly string[] | string, ask: KeyringRequest, company: string): string =>
+const theCompanyKey = (words: readonly string[] | string, ask: KeyringRequest, company: CompanyLabel): string =>
   toHex(unlockKeyFor(identityOf(words), {
     schema: ask.schema, kind: 'unlock', requester: ask.requester, purpose: ask.purpose,
-    nonce: ask.nonce, expiresAt: ask.expiresAt, company,
+    nonce: ask.nonce, expiresAt: ask.expiresAt, company, account: DEPLOYED as never,
   }));
 
 type Opened = { accounts: Record<string, { signingSecret: string; blinding: string }> };
@@ -275,7 +283,7 @@ function aServer(opts: {
       if (opts.refuseCompany) {
         return { status: opts.refuseCompany.status, json: opts.refuseCompany };
       }
-      return { status: 200, json: { company: opts.companyAddress ?? DEPLOYED } };
+      return { status: 200, json: { company: drawn[drawn.length - 1] ?? null, account: opts.companyAddress ?? DEPLOYED } };
     }
     if (method === 'GET' && url === '/api/me/keys') {
       return { status: 200, json: { keyBundle: held.keyBundle, version: held.version } };
@@ -425,6 +433,13 @@ describe('§1 - OPEN YOUR KEYS, CREATE, SAVE - IN THAT ORDER', () => {
       expect(ask?.person).toBe(PERSON);
       expect(ask?.signedInAs).toBe(FOUNDER_ADDRESS);
       expect(ask?.company, 'no company is named when opening keys').toBeNull();
+      /*
+       * RED WHEN the page names the label itself, or posts one the wallet did
+       * not make up: the label is the wallet's to draw, asked for and taken as given.
+       */
+      expect(ask?.drawLabel).toBe(true);
+      const posted = server.seen.find(r => r.method === 'POST' && r.url === '/api/accounts')!;
+      expect(JSON.parse(posted.body).companyLabel).toBe(drawn[drawn.length - 1]);
 
       const opens = journey.indexOf('wallet keyring');
       const create = journey.indexOf('POST /api/accounts');
@@ -447,7 +462,7 @@ describe('§1 - OPEN YOUR KEYS, CREATE, SAVE - IN THAT ORDER', () => {
       const bundle = server.bundle().keyBundle;
       const ask = view.keyringAsks[0]!;
       /* A bundle sealed under one company's key could never take a second company's keys. */
-      expect(opened(bundle, theCompanyKey(FOUNDER_WORDS, ask, DEPLOYED)), 'not under the company\'s key')
+      expect(opened(bundle, theCompanyKey(FOUNDER_WORDS, ask, drawn[drawn.length - 1]!)), 'not under the company\'s key')
         .toBeNull();
       const inside = opened(bundle, theKeyringKey(FOUNDER_WORDS, ask));
       expect(inside, 'it opens with this person\'s keyring key').not.toBeNull();
@@ -457,7 +472,7 @@ describe('§1 - OPEN YOUR KEYS, CREATE, SAVE - IN THAT ORDER', () => {
 });
 
 describe('§2 - A SECOND COMPANY, SAVED BESIDE THE FIRST', () => {
-  it('THE SAME TAB STARTS A SECOND COMPANY WITHOUT ASKING THE WALLET, AND BOTH COMPANIES\' KEYS ARE SAVED TOGETHER',
+  it('THE SAME TAB ASKS THE WALLET ONLY FOR A SECOND COMPANY\'S LABEL, AND BOTH COMPANIES\' KEYS ARE SAVED TOGETHER',
     async () => {
       /*
        * **WHAT A PERSON WHO BELONGS TO TWO COMPANIES NEEDS.** The keys saved for
@@ -472,8 +487,12 @@ describe('§2 - A SECOND COMPANY, SAVED BESIDE THE FIRST', () => {
       const { accountId } = await keyring.createCompanyWithWallet(SOUTHWIND, WALLET, view, US);
 
       expect(accountId).toBe(SECOND_ID);
-      expect(view.asked.length, 'the tab already holds the key, so the wallet is not asked')
-        .toBe(asksAfterTheFirst);
+      /* RED WHEN a tab that holds the key makes up the second company's label itself. */
+      expect(view.asked.length, 'the wallet is asked once more, for the new label').toBe(asksAfterTheFirst + 1);
+      expect(view.keyringAsks[1]?.drawLabel).toBe(true);
+      const posts = server.seen.filter(r => r.method === 'POST' && r.url === '/api/accounts').map(r => JSON.parse(r.body).companyLabel);
+      expect(posts).toEqual(drawn.slice(-2));
+      expect(posts[0]).not.toBe(posts[1]);
       expect(server.createdCount()).toBe(2);
       expect(server.wrote()).toHaveLength(2);
 
@@ -842,7 +861,7 @@ describe('§5 - WHAT IS REFUSED, AND BEFORE WHAT', () => {
 
       const failure = await keyring.createCompanyWithWallet(SOUTHWIND, WALLET, view, US).catch((e: unknown) => e);
       expect(failure).toBeInstanceOf(keyring.SavedKeysDidNotOpen);
-      expect(view.asked.length, 'the wallet was not asked').toBe(asks);
+      expect(view.asked.length, 'the wallet is asked for the label, and nothing follows').toBe(asks + 1);
       expect(server.createdCount(), 'no second company was created').toBe(1);
       expect(server.wrote(), 'nothing was saved over them').toHaveLength(writes);
       expect(keyring.companyAwaitingSetup()).toBeNull();

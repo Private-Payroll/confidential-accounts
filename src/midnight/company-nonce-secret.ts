@@ -23,8 +23,9 @@
  * product's server; a copy wrapped to it opens only while that server does. So
  * each copy here is wrapped to a key the signer works out from the key their
  * wallet releases for this company (`recordsKeypairFrom`), which is a pure
- * function of their recovery words and the company's address: no device, no
- * saved keys and no server is needed to work it out again. Copies are found by
+ * function of their recovery words and the company's label, which the
+ * company's account carries on the chain: no device, no saved keys and no
+ * server is needed to work it out again. Copies are found by
  * that public key, never by an identifier this product mints.
  *
  * **A NEW EPOCH FOR A SIGNER LEAVING, AND EVERY EARLIER EPOCH KEPT.** A signer who
@@ -83,7 +84,7 @@ export const NONCE_SECRET_RECORD = 'nonce-secret' as const;
  * FOR THIS COMPANY AND FROM NOTHING ELSE.**
  *
  * The released key is thirty-two bytes, a pure function of the person's
- * recovery words and the company's address. This expands it under a domain of
+ * recovery words and the company's label. This expands it under a domain of
  * its own, so it is neither the released key nor the payslip key derived from
  * the same bytes: holding one is not holding another.
  */

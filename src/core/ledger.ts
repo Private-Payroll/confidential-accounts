@@ -63,6 +63,7 @@
  *     one of the two unresolved questions and is deliberately not faked here.
  */
 import { hmac } from '@noble/hashes/hmac.js';
+import type { CompanyLabel } from 'midnight-identity/profile/company-label';
 import type { WiringName } from './provenance.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import type { Sealed, Hex } from './crypto.js';
@@ -512,6 +513,13 @@ export interface AccountOpening {
    */
   signerLeaves: Hex[];
   threshold: number;
+  /**
+   * **THE COMPANY'S LABEL**, which the account's constructor writes into the
+   * account so it is on the chain for as long as the account is. Drawn by the
+   * founding signer's wallet and never by this service. A chain refuses to open
+   * an account without one; the simulated ledger records none.
+   */
+  companyLabel?: CompanyLabel | null;
   /**
    * NOTHING TO OPEN AT. An account holds no assets, ever, so there is no
    * balance to seed, and no entry-log digest either, not since the log became a

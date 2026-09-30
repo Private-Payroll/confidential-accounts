@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from 'vitest';
+import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
+import type { LabelReader } from './company-on-chain.js';
 import { cleanup, fireEvent, render, screen } from '../testing/render.js';
 import { Buffer as PolyfillBuffer } from 'buffer/';
 import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
@@ -25,7 +27,11 @@ import type { BalanceDoors, FacadeForBalancing, WalletPartForBalancing } from '.
 const NOW = 1_755_000_000_000;
 const identity = identityFromWords(TEST_MNEMONIC);
 const ORIGIN = 'https://payroll-a.example';
-const CO = 'dbe119a304f8e7ea882353435c1d536cf2faf4298236a9aae77670e750af65c8';
+/* The company's label, and the account that carries it on the chain. */
+const CO = 'co_1f2e3d4c5b6a79880a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f6071' as CompanyLabel;
+const ACCOUNT = 'dbe119a304f8e7ea882353435c1d536cf2faf4298236a9aae77670e750af65c8' as AccountAddress;
+/* The chain, as this wallet reads it: the account carries the company's label. */
+const carries: LabelReader = async () => ({ of: 'carries', label: CO });
 const VAULT = '54ef954a25aefff8e1675af10a852ef29d5de5c63a51b64b978bf7bd0eaeca4e';
 const NIGHT = '00'.repeat(32);
 const ME = '46'.repeat(32);
@@ -33,7 +39,7 @@ const ME = '46'.repeat(32);
 const ask = parseAsk({
   schema: 'midnight-identity/disclosure-request/v1', kind: 'balance',
   requester: { name: 'Payroll A', rdns: 'example.payroll-a' }, purpose: 'Put money into your company vault.',
-  nonce: 'b1', expiresAt: NOW + 600_000, company: CO, vault: VAULT, transaction: 'AAECAw==',
+  nonce: 'b1', expiresAt: NOW + 600_000, company: CO, account: ACCOUNT, vault: VAULT, transaction: 'AAECAw==',
 }, ORIGIN, NOW) as BalanceRequest;
 
 const effects = {
@@ -82,7 +88,7 @@ const doorsWith = (log: string[], facade: Partial<FacadeForBalancing> = {}) => (
 });
 const channelFor = (answers: unknown[]): Channel => recordingChannel(answers);
 const renderWith = (doors: () => BalanceDoors, answers: unknown[]) => render(
-  <ApproveBalance
+  <ApproveBalance readLabel={carries}
     request={ask} identity={identity} account={0} channel={channelFor(answers)} consent={{ ok: true } as never}
     whoIsAsking={<p>asker</p>} whichWallet={<p>picker</p>} onDecline={() => {}}
     doorsFor={doors} now={() => NOW} />);

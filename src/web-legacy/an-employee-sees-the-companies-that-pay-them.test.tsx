@@ -14,17 +14,22 @@
  * row. Each sentence this view can show in place of a payslip is held word for
  * word.
  */
-import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/react';
 import type { OpenedPayslip } from '../core/payslip-open.js';
 import type { ChainReader } from 'vaults-web-shared/payslip-worker-client.js';
 import { PageOutOfDate, type MyPayslips } from 'vaults-web-shared/my-payslips.js';
 import { AccountPicker } from './Auth.js';
-import { EmployerView, onThisPage, type EmployerViewDeps } from './YourPay.js';
+import { EmployerView, NO_ACCOUNT_FOR_THE_LABEL, onThisPage, type CompanyToOpen, type EmployerViewDeps } from './YourPay.js';
 import { PAYSLIP_PAGE_HEADER, PAYSLIP_PAGE_VERSION } from '../core/payslip-page.js';
 import { newWrappingKeypair, wrapKey, toHex, randomBytes } from '../core/crypto.js';
 import { HELD_ADDRESS_SLOTS, heldAddressDigest } from 'midnight-identity/profile/unlock';
+
+/** The value, or a failure that says one was missing: an index that finds nothing is a broken test, not a value to carry on with. */
+function present<T>(value: T | undefined): T {
+  if (value === undefined) throw new Error('expected a value here, and there was none');
+  return value;
+}
 
 /* The tab was prepared for this person, as a sign-in leaves it. */
 vi.mock('vaults-web-shared/keyring.js', async (original) => ({
@@ -35,8 +40,10 @@ vi.mock('vaults-web-shared/keyring.js', async (original) => ({
 const realFetch = globalThis.fetch;
 afterEach(() => { cleanup(); globalThis.fetch = realFetch; });
 
-const ACME = 'ab'.repeat(32);
-/** An address Acme's slips were sealed under before it moved. */
+/** Acme's label, and the account that carries it. */
+const ACME = 'co_' + 'ab'.repeat(32);
+const ACME_ACCOUNT = 'ab'.repeat(32);
+/** An account Acme had before it moved. */
 const ACME_BEFORE = 'a0'.repeat(32);
 const INDEXER = { indexerUri: 'https://indexer.example/graphql', indexerWsUri: 'wss://indexer.example/graphql/ws' };
 const PAID = '01'.repeat(32);
@@ -48,7 +55,7 @@ const UNPAID = '02'.repeat(32);
  * ask's nonce, among filler.
  */
 const DANA = 'mn_shield-addr_undeployed1p5xs6rgdp5xs6rgdp5xs6rgdp5xs6rgdp5xs6rgdp5xs6rgdp5x4w46h2at4w46h2at4w46h2at4w46h2at4w46h2at4w46h2at4w4ctsw9lr';
-const SCOPE = { nonce: 'the-page-nonce', origin: 'https://payroll.example', company: 'ab'.repeat(32) };
+const SCOPE = { nonce: 'the-page-nonce', origin: 'https://payroll.example', company: ACME as never };
 const HELD = {
   scope: SCOPE,
   digests: [heldAddressDigest(SCOPE, DANA)!,
@@ -60,7 +67,7 @@ const slip = (runId: string, nonce: string | null): OpenedPayslip => ({
   runId, period: runId, status: 'proposed', settledAt: null, wiring: 'chain', issuedBy: ACME,
   payslip: { employeeId: 'emp_1', name: 'Dana', asset: 'TESTUSD', amount: 1n, period: runId, paidTo: DANA },
   receipt: nonce === null ? null
-    : { runId, nonce, blinding: '09'.repeat(32), company: ACME, until: Math.floor(Date.now() / 1000) + 3_600 },
+    : { runId, nonce, blinding: '09'.repeat(32), company: ACME_ACCOUNT, label: ACME, until: Math.floor(Date.now() / 1000) + 3_600 },
 });
 
 /* ------------------------------------------------------------------ */
@@ -84,12 +91,12 @@ describe('one list: the companies you sign for and the companies that pay you, e
     const paying = container.querySelectorAll('[data-employer]');
     /* RED WHEN the companies that pay you are not listed. */
     expect(paying).toHaveLength(1);
-    expect(paying[0].textContent).toContain('A company that pays you');
-    expect(paying[0].textContent).toContain(ACME);
+    expect(present(paying[0]).textContent).toContain('A company that pays you');
+    expect(present(paying[0]).textContent).toContain(ACME);
     /* The one you sign for keeps its own mark. RED WHEN one row stands for both. */
     expect(container.textContent).toContain('A company you are a signer on');
-    expect(paying[0].textContent).not.toContain('signer');
-    fireEvent.click(paying[0]);
+    expect(present(paying[0]).textContent).not.toContain('signer');
+    fireEvent.click(present(paying[0]));
     /* RED WHEN opening it opens something other than that company. */
     expect(open).toHaveBeenCalledWith(ACME);
   });
@@ -107,13 +114,15 @@ describe('one list: the companies you sign for and the companies that pay you, e
 /* the view of one company that pays you                                */
 /* ------------------------------------------------------------------ */
 
-interface Asked { addressesOf: string[]; released: string[]; opened: string[]; read: string[]; done: number }
+interface Asked { addressesOf: string[]; released: Array<string | null>; opened: string[]; read: string[]; done: number }
 
 /** Everything outside the view, answering as a case says, and recording what it was asked. */
 function around(opts: {
   slips?: Record<string, OpenedPayslip[]>;
   refused?: number;
   indexer?: typeof INDEXER | null;
+  /** What the service says carries the label; left out, Acme's account. */
+  named?: CompanyToOpen[];
   /** What the chain read answers; held until `let go` when `held`. */
   recorded?: (movements: string[]) => boolean[] | null;
   held?: boolean;
@@ -121,6 +130,8 @@ function around(opts: {
 } = {}) {
   const asked: Asked = { addressesOf: [], released: [], opened: [], read: [], done: 0 };
   let letGo: () => void = () => {};
+  /* The account the wallet was last asked to open, whose slips the service then sends. */
+  let lastReleased: string | null = null;
   const gate = opts.held ? new Promise<void>(r => { letGo = r; }) : Promise.resolve();
   const reader: ChainReader = {
     recorded: async (_indexer, company, payments) => {
@@ -131,21 +142,25 @@ function around(opts: {
   };
   const deps: EmployerViewDeps = {
     askTheWallet: () => ({
-      release: async (address) => {
-        asked.released.push(address);
+      release: async (company) => {
+        asked.released.push(company.account);
+        lastReleased = company.account;
         return {
           key: new Uint8Array(32).fill(7), indexer: opts.indexer === undefined ? INDEXER : opts.indexer, held: HELD,
         };
       },
       done: () => { asked.done += 1; },
     }),
-    addressesOf: async (company) => { asked.addressesOf.push(company); return [company, ACME_BEFORE]; },
-    opened: async (_keys, address): Promise<MyPayslips> => {
-      asked.opened.push(address);
+    addressesOf: async (company) => {
+      asked.addressesOf.push(company);
+      return opts.named ?? [{ label: company, account: ACME_ACCOUNT }] as CompanyToOpen[];
+    },
+    opened: async (_keys, label): Promise<MyPayslips> => {
+      asked.opened.push(label);
       if (opts.failOpening) throw opts.failOpening;
       return {
-        opened: opts.slips?.[address] ?? [], sealed: [], unopened: 0,
-        refused: address === ACME ? (opts.refused ?? 0) : 0,
+        opened: (lastReleased && opts.slips?.[lastReleased]) || [], sealed: [], unopened: 0,
+        refused: lastReleased === ACME_ACCOUNT ? (opts.refused ?? 0) : 0,
       };
     },
     reader: () => reader,
@@ -158,14 +173,14 @@ const press = (container: HTMLElement) =>
 
 describe('opening a company that pays you shows your payslips from it and nothing a signer sees', () => {
   it('ONLY THAT COMPANY IS ASKED ABOUT, AND ONLY THE PAYSLIPS IT GAVE ARE SHOWN', async () => {
-    const w = around({ slips: { [ACME]: [slip('2026-08', PAID)], [ACME_BEFORE]: [slip('2026-07', null)] } });
+    const w = around({ slips: { [ACME_ACCOUNT]: [slip('2026-08', PAID), slip('2026-07', null)] } });
     const { container } = render(<EmployerView company={ACME} onBack={() => {}} deps={w.deps} />);
     press(container);
     await waitFor(() => expect(container.querySelectorAll('[data-payslip]')).toHaveLength(2));
-    /* RED WHEN the view asks about any company but the one opened, or skips an address it had. */
+    /* RED WHEN the view asks about any company but the one opened, or the wallet is not named its account. */
     expect(w.asked.addressesOf).toEqual([ACME]);
-    expect(w.asked.released).toEqual([ACME, ACME_BEFORE]);
-    expect(w.asked.opened).toEqual([ACME, ACME_BEFORE]);
+    expect(w.asked.released).toEqual([ACME_ACCOUNT]);
+    expect(w.asked.opened).toEqual([ACME]);
     /* The wallet is put away once. */
     await waitFor(() => expect(w.asked.done).toBe(1));
     /* Nothing a signer sees: no roster, no runs, no approvals, no other company. */
@@ -177,7 +192,7 @@ describe('opening a company that pays you shows your payslips from it and nothin
   });
 
   it('THE PAYSLIPS ARE SHOWN BEFORE THE CHAIN READ ENDS, WITH THE WORDS THAT SAY IT IS RUNNING', async () => {
-    const w = around({ slips: { [ACME]: [slip('2026-08', PAID)] }, held: true });
+    const w = around({ slips: { [ACME_ACCOUNT]: [slip('2026-08', PAID)] }, held: true });
     const { container } = render(<EmployerView company={ACME} onBack={() => {}} deps={w.deps} />);
     press(container);
     /* RED WHEN the rows wait for the chain read. */
@@ -193,7 +208,7 @@ describe('opening a company that pays you shows your payslips from it and nothin
   });
 
   it('A WALLET THAT NAMES NO INDEXER IS SAID, WORD FOR WORD', async () => {
-    const w = around({ slips: { [ACME]: [slip('2026-08', PAID)] }, indexer: null });
+    const w = around({ slips: { [ACME_ACCOUNT]: [slip('2026-08', PAID)] }, indexer: null });
     const { container } = render(<EmployerView company={ACME} onBack={() => {}} deps={w.deps} />);
     press(container);
     /* RED WHEN every row says "Cannot tell" with no reason. */
@@ -204,7 +219,7 @@ describe('opening a company that pays you shows your payslips from it and nothin
   });
 
   it('A CHAIN READ THAT FAILS IS SAID THE SAME WAY', async () => {
-    const w = around({ slips: { [ACME]: [slip('2026-08', UNPAID)] }, recorded: () => null });
+    const w = around({ slips: { [ACME_ACCOUNT]: [slip('2026-08', UNPAID)] }, recorded: () => null });
     const { container } = render(<EmployerView company={ACME} onBack={() => {}} deps={w.deps} />);
     press(container);
     await waitFor(() => expect(container.querySelector('[data-could-not-read]')).not.toBeNull());
@@ -215,27 +230,40 @@ describe('opening a company that pays you shows your payslips from it and nothin
     expect(container.querySelector('[data-payslip]')?.textContent).toContain('Cannot tell');
   });
 
-  it('SLIPS THAT NAMED ANOTHER COMPANY ADDRESS ARE WITHHELD, AND THAT IS SAID, WORD FOR WORD', async () => {
+  it('SLIPS THAT NAMED ANOTHER COMPANY ARE WITHHELD, AND THAT IS SAID, WORD FOR WORD', async () => {
     const w = around({ slips: {}, refused: 2 });
     const { container } = render(<EmployerView company={ACME} onBack={() => {}} deps={w.deps} />);
     press(container);
     await waitFor(() => expect(container.querySelector('[data-withheld]')).not.toBeNull());
     /* RED WHEN withheld slips are silent. */
     expect(container.querySelector('[data-withheld]')?.textContent).toBe(
-      '2 payslip(s) named a company address you did not open them for, so they are not shown. '
+      '2 payslips name a company you did not open them for, so they are not shown. '
       + 'Tell the company that pays you.');
     /* RED WHEN "no payslips were found" is said while slips were withheld. */
     expect(container.querySelector('[data-no-payslips]')).toBeNull();
   });
 
-  it('WHEN THE LIST OF EARLIER ADDRESSES CANNOT BE HAD, THE COMPANY ITSELF IS STILL OPENED', async () => {
-    const w = around({ slips: { [ACME]: [slip('2026-08', null)] } });
-    const deps = { ...w.deps, addressesOf: async () => { throw new Error('not answered'); } };
-    const { container } = render(<EmployerView company={ACME} onBack={() => {}} deps={deps} />);
-    press(container);
-    await waitFor(() => expect(container.querySelectorAll('[data-payslip]')).toHaveLength(1));
-    /* RED WHEN only the addresses the service named are opened. */
-    expect(w.asked.opened).toEqual([ACME]);
+  it('WHEN NO ACCOUNT CAN BE FOUND FOR THE LABEL, THE WALLET IS NOT ASKED, AND THAT IS SAID, WORD FOR WORD', async () => {
+    for (const addressesOf of [
+      async () => { throw new Error('not answered'); },
+      async () => [] as CompanyToOpen[],
+      async () => [{ label: ACME, account: null }] as CompanyToOpen[],
+    ]) {
+      const w = around({ slips: { [ACME_ACCOUNT]: [slip('2026-08', null)] } });
+      const { container } = render(<EmployerView company={ACME} onBack={() => {}} deps={{ ...w.deps, addressesOf }} />);
+      press(container);
+      await waitFor(() => expect(container.querySelector('[data-error]')).not.toBeNull());
+      /* RED WHEN the wallet is asked for a label no account was named for. */
+      expect(w.asked.released).toEqual([]);
+      expect(w.asked.opened).toEqual([]);
+      expect(container.querySelector('[data-error]')?.textContent).toBe(NO_ACCOUNT_FOR_THE_LABEL);
+      expect(NO_ACCOUNT_FOR_THE_LABEL).toBe('We could not find this company, so your wallet was not asked and no '
+        + 'payslips were opened. Check the company\'s label and try again. If it is right, tell the company that pays you.');
+      /* RED WHEN not having looked reads as having looked and found nothing. */
+      expect(container.querySelector('[data-no-payslips]')).toBeNull();
+      await waitFor(() => expect(w.asked.done).toBe(1));
+      cleanup();
+    }
   });
 
   it('WHEN AN ADDRESS COULD NOT BE OPENED, IT IS NOT SAID THAT NO PAYSLIPS WERE FOUND', async () => {
@@ -256,14 +284,14 @@ describe('opening a company that pays you shows your payslips from it and nothin
         return new Response(JSON.stringify({ sealed: wrapKey(toHex(randomBytes(32)), me.publicKey), expiresAt: '' }));
       }
       if (url === '/api/payslips') return new Response('[]');
-      return new Response(JSON.stringify({ addresses: [ACME] }));
+      return new Response(JSON.stringify({ companies: [{ label: ACME, account: ACME_ACCOUNT }] }));
     }) as typeof fetch;
-    expect(await onThisPage.addressesOf(ACME)).toEqual([ACME]);
+    expect(await onThisPage.addressesOf(ACME)).toEqual([{ label: ACME, account: ACME_ACCOUNT }]);
     await onThisPage.opened(me, ACME);
     expect(seen.map(r => r.url)).toEqual(
       [`/api/payslips/addresses?company=${ACME}`, '/api/payslips/proof', '/api/payslips']);
-    /* RED WHEN the list is asked for without the address it was opened for. */
-    expect(JSON.parse(String(seen[2].init?.body)).from).toBe(ACME);
+    /* RED WHEN the list is asked for without the label it was opened for. */
+    expect(JSON.parse(String(present(seen[2]).init?.body)).from).toBe(ACME);
     for (const r of seen) {
       const headers = r.init?.headers as Record<string, string>;
       expect(r.init?.credentials).toBe('same-origin');
@@ -287,7 +315,7 @@ describe('opening a company that pays you shows your payslips from it and nothin
     const ROGUE = 'ee'.repeat(32);
     const rogue = slip('2026-09', PAID);
     const naming = { ...rogue, receipt: { ...rogue.receipt!, company: ROGUE } };
-    const w = around({ slips: { [ACME]: [naming, slip('2026-08', PAID)] } });
+    const w = around({ slips: { [ACME_ACCOUNT]: [naming, slip('2026-08', PAID)] } });
     const { container } = render(<EmployerView company={ACME} onBack={() => {}} deps={w.deps} />);
     press(container);
     await waitFor(() => expect(
@@ -299,17 +327,18 @@ describe('opening a company that pays you shows your payslips from it and nothin
     expect(container.querySelector('[data-could-not-read]')).toBeNull();
   });
 
-  it('A COMPANY THAT MOVED STILL READS "RECORDED AS PAID" FOR A SLIP SEALED UNDER ITS EARLIER ADDRESS', async () => {
-    /* Sealed under the address the company had before; its leg was recorded at the address it has now. */
-    const before = slip('2026-07', PAID);
-    const sealedBefore = { ...before, issuedBy: ACME_BEFORE };
-    const w = around({ slips: { [ACME_BEFORE]: [sealedBefore] } });
+  it('A LEG RECORDED AT AN ACCOUNT THE COMPANY HAD BEFORE IT MOVED READS "CANNOT TELL", NEVER "NOT YET"', async () => {
+    /* Raised before the move: the receipt names the account the company had then. */
+    const before = slip('2026-07', UNPAID);
+    const recordedBefore = { ...before, receipt: { ...before.receipt!, company: ACME_BEFORE } };
+    const w = around({ slips: { [ACME_ACCOUNT]: [recordedBefore, slip('2026-08', PAID)] } });
     const { container } = render(<EmployerView company={ACME} onBack={() => {}} deps={w.deps} />);
     press(container);
-    /* RED WHEN the view reads only the addresses its slips were sealed under, not every address it opened. */
     await waitFor(() => expect(
-      container.querySelector('[data-payslip="2026-07"]')?.textContent).toContain('Recorded as paid'));
-    expect(w.asked.read).toEqual([ACME]);
+      container.querySelector('[data-payslip="2026-08"]')?.textContent).toContain('Recorded as paid'));
+    /* RED WHEN an account the wallet did not read the label off is read: a missing record would say "Not yet". */
+    expect(container.querySelector('[data-payslip="2026-07"]')?.textContent).toContain('Cannot tell');
+    expect(w.asked.read).toEqual([ACME_ACCOUNT]);
   });
 
   it('A PAGE OLDER THAN THE SERVICE SAYS SO, WORD FOR WORD, AND NOTHING ELSE', async () => {
@@ -320,7 +349,7 @@ describe('opening a company that pays you shows your payslips from it and nothin
     /* RED WHEN it is folded into a list of addresses that could not be opened. */
     expect(container.querySelector('[data-error]')?.textContent)
       .toBe('This page is out of date. Reload it and open your payslips again.');
-    /* It stops at the first address: every other would be told the same. */
+    /* It stops at the first company: every other would be told the same. */
     expect(w.asked.opened).toEqual([ACME]);
     expect(w.asked.done).toBe(1);
   });

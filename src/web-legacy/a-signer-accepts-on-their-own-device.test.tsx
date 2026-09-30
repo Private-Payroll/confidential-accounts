@@ -18,7 +18,6 @@
  * modules and not a second browser process, and that is said rather than
  * implied.
  */
-import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/react';
 import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
@@ -84,7 +83,7 @@ vi.mock('vaults-web-shared/keyring.js', async (original) => {
 /** The keyring key the wallet above gives the invited person. */
 const keyringHex = () => toHex(keyringKeyFor(identity, parseAsk(keyringAsk({
   name: 'n', rdns: 'r', purpose: KEYRING_PURPOSE, nonce: 'n', expiresAt: Date.now() + 60_000,
-  person: INVITEE, signedInAs: null, company: null,
+  person: INVITEE, signedInAs: null, company: null, account: null,
 }), US, Date.now()) as KeyringRequest));
 
 const realFetch = globalThis.fetch;

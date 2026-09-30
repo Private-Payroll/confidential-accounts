@@ -64,6 +64,7 @@
  * the real impure `propose` circuit against real ledger state.
  */
 import { describe, it, expect } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -116,7 +117,7 @@ const ACCOUNT_BLINDING: Hex = newBlinding();
 async function aRoundTheProductRaised() {
   const accounts = service();
   const created = await accounts.create(
-    'Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1);
+    'Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1, undefined, drawCompanyLabel());
   const viewingKey = created.viewingKey;
 
   const proposal = await accounts.propose({
@@ -530,7 +531,7 @@ describe('the service layer meets the chain', () => {
       const created = await accounts.create(
         'Northwind Ltd',
         [{ name: 'Ada', role: 'admin' }, { name: 'Blake', role: 'approver' }],
-        1,
+        1, undefined, drawCompanyLabel(),
       );
       const mine = created.secrets[0]!;
 

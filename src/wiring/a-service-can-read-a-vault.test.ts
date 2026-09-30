@@ -17,6 +17,7 @@
  * true; a check that imported the server would be neither.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { readFileSync } from 'node:fs';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -104,7 +105,7 @@ const serviceWith = (holds: Array<[string, bigint]>) => {
 };
 
 const raiseNight = async (h: ReturnType<typeof serviceWith>, amount: bigint) => {
-  const created = await h.accounts.create('Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1);
+  const created = await h.accounts.create('Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1, undefined, drawCompanyLabel());
   return h.accounts.proposeRun({
     accountId: created.account.id, viewingKey: created.viewingKey,
     summary: 'paying from the vault',

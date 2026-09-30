@@ -36,6 +36,7 @@
  * chain sees is read here off proof-erased, unbound bytes.
  */
 import { describe, it, expect, beforeAll } from 'vitest';
+import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { existsSync } from 'node:fs';
 import * as L from '@midnightntwrk/ledger-v9';
 import * as runtime from '@midnight-ntwrk/compact-runtime';
@@ -60,12 +61,20 @@ import * as ShieldedV1 from '@midnightntwrk/wallet-sdk-shielded/v1';
 import { chooseCoin } from '@midnightntwrk/wallet-sdk-capabilities';
 import { Either } from 'effect';
 
+/** The value, or a failure that says one was missing: an index that finds nothing is a broken test, not a value to carry on with. */
+function present<T>(value: T | undefined): T {
+  if (value === undefined) throw new Error('expected a value here, and there was none');
+  return value;
+}
+
 /** Deposits in flight, sealed as the page keeps them, over this test's own record of every write. */
 const inFlightOver = (records: InFlightRecords, wrappingSecret: string): DepositsInFlight =>
   sealedOnThisDevice<DepositInFlight>(records, { signerId: 'ada', wrappingSecret }, 'deposit');
 
 const NET = 'undeployed';
-const ACCOUNT = 'c0'.repeat(32);
+/* The company's account, and the label it carries. */
+const ACCOUNT = 'c0'.repeat(32) as AccountAddress;
+const LABEL = `co_${'c1'.repeat(32)}` as CompanyLabel;
 /* A token and an amount no other bytes in a transaction are likely to repeat, so finding either means it is there. */
 const TOKEN = Buffer.from(Array.from({ length: 32 }, (_, i) => (i * 29 + 7) & 0xff)).toString('hex');
 const OTHER_TOKEN = '5c'.repeat(32);
@@ -228,7 +237,7 @@ describe.skipIf(!KEYS_ON_DISK)('A DEPOSIT FROM THE PAGE, BUILT ON THE DEVICE [ne
   /* Parameters the chain could hold that are not the ledger's starting ones: one field of them changed. */
   const STARTING = L.LedgerParameters.initialParameters().serialize();
   const CHAIN_PARAMETERS = STARTING.slice();
-  CHAIN_PARAMETERS[CHAIN_PARAMETERS.length - 1] ^= 0x01;
+  CHAIN_PARAMETERS[CHAIN_PARAMETERS.length - 1] = present(CHAIN_PARAMETERS[CHAIN_PARAMETERS.length - 1]) ^ 0x01;
   let unproven: Uint8Array[];
   let erased: Uint8Array[];
   let builtWith: Uint8Array[];
@@ -353,7 +362,7 @@ describe.skipIf(!KEYS_ON_DISK)('A DEPOSIT FROM THE PAGE, BUILT ON THE DEVICE [ne
       ledger: { shielded: TOKEN, unshielded: null } as never,
     }]));
     const done = await depositFromSource({
-      ...doors, company: ACCOUNT as Hex, builder: watched, inFlight: inFlightOver(inFlightRecords, wrapping.secret),
+      ...doors, company: LABEL, account: ACCOUNT, builder: watched, inFlight: inFlightOver(inFlightRecords, wrapping.secret),
     }, vault, source, { code: 'DEP', value: VALUE });
 
     /* ---- the deposit happened, and what the service was sent is what the wallet finished ---- */

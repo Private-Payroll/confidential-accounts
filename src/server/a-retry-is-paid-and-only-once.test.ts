@@ -15,6 +15,7 @@
  * a run is in when its vault stopped paying part way.
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { importTheServer, useOnlyTheseSettings } from '../testing/server-under-test.js';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -109,7 +110,7 @@ const payroll = new PayrollService(store, accounts, new SimulatedProofSystem(), 
 
 /** A company with three people on one private leg, raised and held by the chain. */
 const aCompany = async (name: string, legWindowOpen = false) => {
-  const created = await accounts.create(name, [{ name: 'Ada', role: 'admin', userId: USER }], 1);
+  const created = await accounts.create(name, [{ name: 'Ada', role: 'admin', userId: USER }], 1, undefined, drawCompanyLabel());
   const { viewingKey } = created;
   const account = created.account.id;
   for (const s of accounts.open(account, viewingKey).signers) signerLeaves.set(`${account} ${s.id}`, s.leafCommitment as Hex);

@@ -22,6 +22,7 @@
  * run is in when its vault stops paying part way.
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { importTheServer, useOnlyTheseSettings } from '../testing/server-under-test.js';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -125,7 +126,7 @@ const accounts = new AccountService(store, ledger, MidnightCommitments, productA
 const payroll = new PayrollService(store, accounts, new SimulatedProofSystem(), productAssets);
 
 const aStoppedRun = async (name: string, retryWrittenDown = false, legOnChain = true) => {
-  const created = await accounts.create(name, [{ name: 'Ada', role: 'admin', userId: USER }], 1);
+  const created = await accounts.create(name, [{ name: 'Ada', role: 'admin', userId: USER }], 1, undefined, drawCompanyLabel());
   const { viewingKey } = created;
   const account = created.account.id;
   for (const s of accounts.open(account, viewingKey).signers) leaves.set(`${account} ${s.id}`, s.leafCommitment as Hex);

@@ -7,6 +7,7 @@
  * ledger, what it is handed, and whether the answer says anything was sent.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { importTheServer, useOnlyTheseSettings } from '../testing/server-under-test.js';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -112,7 +113,7 @@ const signedIn = async (slot: number): Promise<string> => {
 const aCompany = async (token: string): Promise<string> => {
   const made = await call('POST', '/api/accounts', {
     token,
-    body: { name: 'Northwind', signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 },
+    body: { companyLabel: drawCompanyLabel(), name: 'Northwind', signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 },
   });
   expect(made.status, JSON.stringify(made.body)).toBe(200);
   return made.body.account.id as string;

@@ -18,6 +18,7 @@
  * before the server starts, over the same store file and the same ledger.
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { importTheServer, useOnlyTheseSettings } from '../testing/server-under-test.js';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -109,7 +110,7 @@ const payroll = new PayrollService(store, accounts, new SimulatedProofSystem(), 
 
 /** A company whose one payee is paid publicly, in NIGHT, with a run drawn over them; its leg raised on chain when asked. */
 const aCompanyPayingPublicly = async (name: string, raised: boolean) => {
-  const created = await accounts.create(name, [{ name: 'Ada', role: 'admin', userId: USER }], 1);
+  const created = await accounts.create(name, [{ name: 'Ada', role: 'admin', userId: USER }], 1, undefined, drawCompanyLabel());
   const { viewingKey } = created;
   const account = created.account.id;
   for (const s of accounts.open(account, viewingKey).signers) leaves.set(`${account} ${s.id}`, s.leafCommitment as Hex);

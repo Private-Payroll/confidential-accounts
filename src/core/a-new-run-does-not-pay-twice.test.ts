@@ -17,6 +17,7 @@
  * and a leg raised again as itself.
  */
 import { describe, it, expect } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { copyFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -117,7 +118,7 @@ async function aCompany(people = 3) {
   const dir = mkdtempSync(join(tmpdir(), 'mn-s210-'));
   const file = join(dir, 'db.json');
   const s = servicesOver(chain, file);
-  const created = await s.accounts.create('Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1);
+  const created = await s.accounts.create('Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1, undefined, drawCompanyLabel());
   const viewingKey = created.viewingKey;
   const account = created.account.id;
   const hired: RosterEmployee[] = [];

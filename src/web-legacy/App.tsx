@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { reviveBigints, type Hex } from '../core/crypto.js';
 import { fromHex } from '../core/crypto.js';
 import { payslipKeypairFrom } from '../core/payslip-key-derive.js';
@@ -96,8 +96,15 @@ const isAmount = (text: string, asset: Asset): boolean => {
   try { parseAmount(text, asset); return true; } catch { return false; }
 };
 
+/** The registry's first asset. A registry with none is a build that cannot pay anybody, and says so. */
+const firstAsset = (): Asset => {
+  const first = assets.all()[0];
+  if (first === undefined) throw new Error('this build knows no asset at all, so nothing can be paid');
+  return first;
+};
+
 /** Where an asset picker starts. Registry order, not a favourite. */
-const defaultAsset = (): AssetId => (assets.enabled()[0] ?? assets.all()[0]).code;
+const defaultAsset = (): AssetId => (assets.enabled()[0] ?? firstAsset()).code;
 
 /** Where a hiring picker starts: the first asset somebody can be paid in, or nothing. */
 const defaultHiringAsset = (): AssetId => hiringAssets()[0]?.code ?? '';
@@ -584,7 +591,7 @@ function Screens({ commitments }: { commitments: CommitmentScheme }) {
 
   /*
    * **THERE IS NO SECOND WAY TO START A COMPANY FROM THIS SCREEN.** The one that
-   * was here posted a company and then saved its founder's keys with nothing
+   * was here posted a company and then saved its founding signer's keys with nothing
    * holding them in between, so a refused save lost them. Every company starts
    * through `createWithWallet` below, which holds them until they are saved.
    */
@@ -595,6 +602,7 @@ function Screens({ commitments }: { commitments: CommitmentScheme }) {
       const seeded = await api<CreatedAccount & { employees: EmployeeIdentity[] }>(
         '/api/demo/seed', { method: 'POST' });
       const mine = seeded.secrets[0];
+      if (mine === undefined) throw new Error('the demo company came back with no signer to open it as');
       await keyring.rememberAccount(seeded.account.id, {
         signerId: mine.signerId, signingSecret: mine.signingSecret,
         wrappingSecret: mine.wrappingSecret, blinding: mine.blinding, scope: mine.scope,
@@ -758,12 +766,14 @@ function Screens({ commitments }: { commitments: CommitmentScheme }) {
   };
 
   const me = s.secrets[Math.min(identity, s.secrets.length - 1)];
+  if (me === undefined) throw new Error('no signer is open here to act as');
   const meSigner = s.account.signers.find(x => x.id === me.signerId);
 
   /* ---------------- employee portal ---------------- */
-  if (asEmployee !== null) {
+  const portalEmployee = asEmployee === null ? undefined : s.employees[asEmployee];
+  if (portalEmployee !== undefined) {
     return <EmployeePortal
-      session={s} runs={runs} employee={s.employees[asEmployee]}
+      session={s} runs={runs} employee={portalEmployee}
       onExit={() => setAsEmployee(null)} />;
   }
 
@@ -1676,8 +1686,8 @@ export function People({ people, session, busy, act }: {
    */
   const canInvite = invitingAssets().length > 0;
   const canHire = hiringAssets().length > 0;
-  const asset = assets.find(form.asset) ?? assets.all()[0];
-  const selfAsset = assets.find(self.asset) ?? assets.all()[0];
+  const asset = assets.find(form.asset) ?? firstAsset();
+  const selfAsset = assets.find(self.asset) ?? firstAsset();
 
   /*
    * THE OPERATOR-SIDE "OPEN INVITE AS THEM" BUTTON IS GONE, AND IT COULD NOT
@@ -1945,7 +1955,7 @@ export function People({ people, session, busy, act }: {
               <strong>Nothing is sent from here.</strong> You get a link, once, and you send it to them
               yourself — so their email address never reaches this service at all. No key is generated
               here either: the key that opens their payslips is worked out on their own device from
-              their wallet and this company's address on the chain, and only the public half comes
+              their wallet and this company&rsquo;s label, and only the public half comes
               back. If we generated it, we could read their payslip.
             </div>
           </div>
@@ -3290,9 +3300,8 @@ function EmployeePortal({ session, runs, employee, onExit }: {
        * it is never part of a request.
        */
       const keys = { secret, publicKey: payslipPublicKeyOf(secret) };
-      /* The demonstration's keys are worked out from the company's own address. */
-      const from = typeof session.account.contractAddress === 'string'
-        ? session.account.contractAddress.toLowerCase() : null;
+      /* The demonstration's keys are worked out from the company's label. */
+      const from = typeof session.account.companyLabel === 'string' ? session.account.companyLabel : null;
       const fetched = await fetchMyPayslips(keys, from)
         .catch(() => ({ opened: [] as OpenedPayslip[], sealed: [] as SealedPayslip[], unopened: 0, refused: 0 }));
       setSealedOne(fetched.sealed[0] ?? null);

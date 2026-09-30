@@ -7,6 +7,7 @@ import { REQUEST_SCHEMA, RequestError, parseAsk, type CommitteeRequest } from '.
 import {
   COMMITTEE_SIGNATURES_SCHEMA, CommitteeSignError, committeeChangeShown, committeeSignaturesFor, readCommitteeSignatures,
 } from './committee-sign.js';
+import type { AccountAddress, CompanyLabel } from './company-label.js';
 
 /*
  * A committee change, as a page asks for it and as this wallet shows and signs
@@ -16,7 +17,9 @@ import {
  */
 const ORIGIN = 'https://payroll.example';
 const NOW = 1_800_000_000_000;
-const COMPANY = 'c0'.repeat(32);
+/* The company's label, the account that carries it, and one of its vaults. */
+const COMPANY = `co_${'c0'.repeat(32)}` as CompanyLabel;
+const ACCOUNT = 'b2'.repeat(32) as AccountAddress;
 const VAULT = 'a1'.repeat(32);
 const me = identityFromWords(TEST_MNEMONIC);
 const other = identityFromWords(newWords().join(' '));
@@ -34,9 +37,10 @@ const wire = (over: Record<string, unknown> = {}) => ({
   nonce: 'n-1',
   expiresAt: NOW + 60_000,
   company: COMPANY,
+  account: ACCOUNT,
   to: { committee: sorted(mine, newcomer), threshold: 2 },
   contracts: [
-    { contract: 'account', address: COMPANY, counter: '1', now: { committee: sorted(mine, theirs), threshold: 1 } },
+    { contract: 'account', address: ACCOUNT, counter: '1', now: { committee: sorted(mine, theirs), threshold: 1 } },
     { contract: 'vault', address: VAULT, counter: '4', now: { committee: sorted(mine, theirs), threshold: 2 } },
   ],
   ...over,
@@ -55,15 +59,35 @@ const updateFor = (address: string, committee: { tag: string; value: string }[],
   new L.MaintenanceUpdate(address, [new L.ReplaceAuthority(new L.ContractMaintenanceAuthority(committee as never, threshold, counter + 1n))], counter);
 
 describe('A COMMITTEE CHANGE, AS A PAGE ASKS FOR IT', () => {
-  it('parses whole, folded to one spelling, and carries nothing that could be signed as it stands', () => {
-    const upper = wire({ company: COMPANY.toUpperCase() });
+  it('parses whole, the addresses folded to one spelling, and carries nothing that could be signed as it stands', () => {
+    const upper = wire({ account: ACCOUNT.toUpperCase() });
     const parsed = parseAsk(upper, ORIGIN, NOW) as CommitteeRequest;
     expect(parsed.kind).toBe('committee');
     expect(parsed.company).toBe(COMPANY);
+    expect(parsed.account).toBe(ACCOUNT);
     expect(parsed.requester.origin).toBe(ORIGIN);
-    expect(parsed.contracts.map((c) => [c.contract, c.address, c.counter])).toEqual([['account', COMPANY, '1'], ['vault', VAULT, '4']]);
+    expect(parsed.contracts.map((c) => [c.contract, c.address, c.counter])).toEqual([['account', ACCOUNT, '1'], ['vault', VAULT, '4']]);
     /* RED WHEN: the ask type grows a field for bytes to sign - there is none to carry. */
-    expect(Object.keys(parsed).sort()).toEqual(['company', 'contracts', 'expiresAt', 'kind', 'nonce', 'purpose', 'requester', 'schema', 'to']);
+    expect(Object.keys(parsed).sort()).toEqual(['account', 'company', 'contracts', 'expiresAt', 'kind', 'nonce', 'purpose', 'requester', 'schema', 'to']);
+  });
+
+  it('A COMPANY IS ITS LABEL AND ITS ACCOUNT IS AN ADDRESS, EACH REFUSED IN THE OTHER\'S PLACE', () => {
+    /* RED WHEN: the committee kind reads its company as an address, or its account as a label. */
+    expect(refusal({ company: ACCOUNT }).code).toBe('not-a-company-label');
+    expect(refusal({ company: COMPANY.toUpperCase() }).code).toBe('not-a-company-label');
+    expect(refusal({ account: COMPANY }).code).toBe('not-an-account-address');
+    expect(refusal({ account: undefined }).code).toBe('not-an-account-address');
+  });
+
+  it('THE ACCOUNT IT CHANGES IS THE ACCOUNT IT NAMES AS CARRYING THE LABEL, AND NO OTHER', () => {
+    /* RED WHEN: an `account` contract naming some other address is signed for this company. */
+    const contracts = [
+      { contract: 'account', address: 'dd'.repeat(32), counter: '1', now: { committee: sorted(mine), threshold: 1 } },
+    ];
+    expect(refusal({ contracts }).code).toBe('not-a-committee-change');
+    /* A change to vaults alone names no account contract, and the account beside the label still stands. */
+    const vaultsOnly = [{ contract: 'vault', address: VAULT, counter: '2', now: { committee: sorted(mine), threshold: 1 } }];
+    expect(ask({ contracts: vaultsOnly }).account).toBe(ACCOUNT);
   });
 
   it('REFUSES A COMMITTEE THAT IS NOT ONE THE CHAIN SHOULD HOLD: no keys, a stranger\'s key, a threshold out of range, a key listed twice', () => {
@@ -85,7 +109,7 @@ describe('A COMMITTEE CHANGE, AS A PAGE ASKS FOR IT', () => {
     const c = (x: Record<string, unknown>) => ({ contract: 'vault', address: VAULT, counter: '2', now: { committee: sorted(mine), threshold: 1 }, ...x });
     for (const contracts of [
       [], [c({}), c({})], [c({ counter: '0' })], [c({ counter: 'x' })], [c({ contract: 'other' })], [c({ address: 'ab' })],
-      [c({ contract: 'account', address: COMPANY }), c({ contract: 'account', address: VAULT })],
+      [c({ contract: 'account', address: ACCOUNT }), c({ contract: 'account', address: VAULT })],
     ]) {
       expect(refusal({ contracts }).code).toBe('not-a-committee-change');
     }
@@ -94,7 +118,7 @@ describe('A COMMITTEE CHANGE, AS A PAGE ASKS FOR IT', () => {
   it('REFUSES DETAILS TO HAND OVER, AN INBOX KEY, AND ITS OWN FIELDS ON ANY OTHER KIND', () => {
     expect(refusal({ wants: [{ attribute: 'name', required: true }] }).code).toBe('attributes-on-a-committee-change');
     expect(refusal({ inboxPublicKey: 'ab'.repeat(32) }).code).toBe('inbox-key-on-a-committee-change');
-    expect(refusal({ company: 'nope' }).code).toBe('not-a-company-address');
+    expect(refusal({ company: 'nope' }).code).toBe('not-a-company-label');
     for (const kind of ['unlock', 'balance', 'keyring', 'disclosure', 'sign-in']) {
       let code = '';
       try { parseAsk({ ...wire(), kind }, ORIGIN, NOW); } catch (e) { code = (e as RequestError).code; }
@@ -147,7 +171,7 @@ describe('THE PRESS: WHAT THIS WALLET SIGNS', () => {
         updateFor(c.address, request.to.committee.map((k) => ({ ...k })), request.to.threshold, BigInt(c.counter) + 1n),
         updateFor(c.address, request.to.committee.map((k) => ({ ...k })), 1, BigInt(c.counter)),
         updateFor(c.address, sorted(mine, theirs), request.to.threshold, BigInt(c.counter)),
-        updateFor(c.address === VAULT ? COMPANY : VAULT, request.to.committee.map((k) => ({ ...k })), request.to.threshold, BigInt(c.counter)),
+        updateFor(c.address === VAULT ? ACCOUNT : VAULT, request.to.committee.map((k) => ({ ...k })), request.to.threshold, BigInt(c.counter)),
       ]) {
         expect(L.verifySignature(mine as never, wrong.dataToSign, s.signature as never)).toBe(false);
       }
@@ -157,7 +181,7 @@ describe('THE PRESS: WHAT THIS WALLET SIGNS', () => {
   it('IS SIGNED BY THIS PERSON\'S COMMITTEE KEY FOR THIS COMPANY, AND THE SIGNING KEY IS NOWHERE IN WHAT IS HANDED BACK', () => {
     const text = JSON.stringify(answer);
     expect(text).not.toContain(committeeSigningKeyFor(me, COMPANY).value);
-    const otherCompany = committeeKeyFor(me, 'dd'.repeat(32));
+    const otherCompany = committeeKeyFor(me, `co_${'dd'.repeat(32)}` as CompanyLabel);
     const exact = updateFor(VAULT, request.to.committee.map((k) => ({ ...k })), 2, 4n);
     expect(L.verifySignature(otherCompany as never, exact.dataToSign, answer.signatures[1]!.signature as never)).toBe(false);
   });
@@ -178,7 +202,7 @@ describe('THE PAGE READS THE ANSWER AGAINST WHAT IT ASKED', () => {
   const request = ask();
   const answer = JSON.parse(JSON.stringify(committeeSignaturesFor(L as never, me, request, NOW)));
   const expecting = {
-    atOrigin: ORIGIN, expectingNonce: 'n-1', company: COMPANY, to: request.to,
+    atOrigin: ORIGIN, expectingNonce: 'n-1', company: COMPANY, account: ACCOUNT, to: request.to,
     contracts: request.contracts.map((c) => ({ address: c.address, counter: c.counter })),
   };
 
@@ -191,14 +215,16 @@ describe('THE PAGE READS THE ANSWER AGAINST WHAT IT ASKED', () => {
     expect(readCommitteeSignatures(answer, { ...expecting, atOrigin: 'https://elsewhere.example' })).toMatchObject({ ok: false, code: 'origin-mismatch' });
     expect(readCommitteeSignatures(answer, { ...expecting, expectingNonce: 'n-2' })).toMatchObject({ ok: false, code: 'nonce-mismatch' });
     expect(readCommitteeSignatures(answer, { ...expecting, to: { ...request.to, threshold: 1 } })).toMatchObject({ ok: false, code: 'other-change' });
-    expect(readCommitteeSignatures(answer, { ...expecting, contracts: [{ address: COMPANY, counter: '1' }] })).toMatchObject({ ok: false, code: 'other-change' });
-    expect(readCommitteeSignatures(answer, { ...expecting, contracts: [{ address: COMPANY, counter: '1' }, { address: VAULT, counter: '5' }] }))
+    expect(readCommitteeSignatures(answer, { ...expecting, contracts: [{ address: ACCOUNT, counter: '1' }] })).toMatchObject({ ok: false, code: 'other-change' });
+    expect(readCommitteeSignatures(answer, { ...expecting, contracts: [{ address: ACCOUNT, counter: '1' }, { address: VAULT, counter: '5' }] }))
       .toMatchObject({ ok: false, code: 'other-change' });
     expect(readCommitteeSignatures({ ...answer, schema: 'x' }, expecting)).toMatchObject({ ok: false, code: 'not-an-answer' });
     /* RED WHEN: the keys of the committee are not compared, only its threshold. */
     const otherKeys = { ...request.to, committee: sorted(mine, theirs) as never };
     expect(readCommitteeSignatures(answer, { ...expecting, to: otherKeys })).toMatchObject({ ok: false, code: 'other-change' });
-    expect(readCommitteeSignatures(answer, { ...expecting, company: 'dd'.repeat(32) })).toMatchObject({ ok: false, code: 'other-change' });
+    expect(readCommitteeSignatures(answer, { ...expecting, company: `co_${'dd'.repeat(32)}` as CompanyLabel })).toMatchObject({ ok: false, code: 'other-change' });
+    /* RED WHEN: the reader does not compare the account the answer was signed about. */
+    expect(readCommitteeSignatures(answer, { ...expecting, account: 'dd'.repeat(32) as AccountAddress })).toMatchObject({ ok: false, code: 'other-change' });
     const badSeat = { ...answer, signatures: answer.signatures.map((x: { seat: number }) => ({ ...x, seat: 0.5 })) };
     expect(readCommitteeSignatures(badSeat, expecting)).toMatchObject({ ok: false, code: 'other-change' });
     /* RED WHEN: an answer that does not say which key signed is taken - the page then cannot check the signer. */
