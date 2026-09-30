@@ -174,13 +174,13 @@ export function accountHandoverWith(
   choice: MaintenanceAuthorityChoice | undefined,
   network: string,
   now: () => number = Date.now,
-): ((input: { read: AuthorityRead; to: Committee }) => Promise<Uint8Array>) | undefined {
+): ((input: { read: AuthorityRead; to: Committee; strictestBar: number }) => Promise<Uint8Array>) | undefined {
   if (choice === undefined || choice.kind !== 'single-key') return undefined;
   const temporaryKey = { tag: choice.signingKey.tag, value: choice.signingKey.value };
-  return async ({ read, to }) => {
+  return async ({ read, to, strictestBar }) => {
     const L = await import('@midnightntwrk/ledger-v9');
     const { unproven } = buildAccountHandover(L as unknown as AccountHandoverLedger, {
-      read, to, temporaryKey, network, ttl: new Date(now() + 30 * 60_000),
+      read, to, strictestBar, temporaryKey, network, ttl: new Date(now() + 30 * 60_000),
     });
     const proven = await (unproven as { prove(p: unknown, c: unknown): Promise<{ serialize(): Uint8Array }> })
       .prove(neverAsked, (L as unknown as { CostModel: { initialCostModel(): unknown } }).CostModel.initialCostModel());
@@ -207,11 +207,13 @@ export interface CommitteeChangeAssembled {
 export function committeeChangeWith(
   network: string,
   now: () => number = Date.now,
-): (input: { read: AuthorityRead; to: Committee; signatures: readonly SeatSignature[]; label: string }) => Promise<CommitteeChangeAssembled> {
-  return async ({ read, to, signatures, label }) => {
+): (input: {
+  read: AuthorityRead; to: Committee; strictestBar: number; signatures: readonly SeatSignature[]; label: string;
+}) => Promise<CommitteeChangeAssembled> {
+  return async ({ read, to, strictestBar, signatures, label }) => {
     const L = await import('@midnightntwrk/ledger-v9');
     const built = buildCommitteeChange(L as unknown as CommitteeChangeLedger, {
-      read, to, signatures, network, label, ttl: new Date(now() + 30 * 60_000),
+      read, to, strictestBar, signatures, network, label, ttl: new Date(now() + 30 * 60_000),
     });
     if (built.unproven === null) {
       return { have: built.have, required: built.required, seatsSigned: built.seatsSigned, proven: null };

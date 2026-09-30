@@ -107,18 +107,18 @@ describe('THE CHANGE PUT TOGETHER FROM SIGNATURES MADE ONE AT A TIME, AND APPLIE
     const to = { committee: sorted(1, 2), threshold: 2 };
     const now = chain.authority(address);
     const seatOf = (n: number) => (now.state === 'read' ? now.authority.committee.findIndex((k) => k.value === vk(n).value) : -1);
-    const unsigned = buildCommitteeChange(L as unknown as CommitteeChangeLedger, { read: now, to, signatures: [], network: NET, ttl: new Date(Date.now() + 600_000), label: 'x' });
+    const unsigned = buildCommitteeChange(L as unknown as CommitteeChangeLedger, { read: now, to, strictestBar: 1, signatures: [], network: NET, ttl: new Date(Date.now() + 600_000), label: 'x' });
     /* Each signer signs on their own, over bytes they could make themselves. */
     const bytes = new L.MaintenanceUpdate(address, [new L.ReplaceAuthority(new L.ContractMaintenanceAuthority(to.committee as never, 2, 2n))], 1n).dataToSign;
     const one = { seat: seatOf(1), signature: L.signData(sk(1), bytes) };
     const two = { seat: seatOf(2), signature: L.signData(sk(2), bytes) };
-    const half = buildCommitteeChange(L as unknown as CommitteeChangeLedger, { read: now, to, signatures: [one], network: NET, ttl: new Date(Date.now() + 600_000), label: 'x' });
+    const half = buildCommitteeChange(L as unknown as CommitteeChangeLedger, { read: now, to, strictestBar: 1, signatures: [one], network: NET, ttl: new Date(Date.now() + 600_000), label: 'x' });
     expect([unsigned.have, half.have, half.required, half.unproven]).toEqual([0, 1, 2, null]);
     /* RED WHEN: a signature is taken for a seat whose key did not make it. */
     expect(() => buildCommitteeChange(L as unknown as CommitteeChangeLedger, {
-      read: now, to, signatures: [{ seat: seatOf(2), signature: one.signature }], network: NET, ttl: new Date(Date.now() + 600_000), label: 'x',
+      read: now, to, strictestBar: 1, signatures: [{ seat: seatOf(2), signature: one.signature }], network: NET, ttl: new Date(Date.now() + 600_000), label: 'x',
     })).toThrow(/does not verify against the key in seat/);
-    const full = buildCommitteeChange(L as unknown as CommitteeChangeLedger, { read: now, to, signatures: [two, one], network: NET, ttl: new Date(Date.now() + 600_000), label: 'x' });
+    const full = buildCommitteeChange(L as unknown as CommitteeChangeLedger, { read: now, to, strictestBar: 1, signatures: [two, one], network: NET, ttl: new Date(Date.now() + 600_000), label: 'x' });
     expect(full.seatsSigned).toEqual([seatOf(1), seatOf(2)].sort());
     expect(refusalForCommitteeChange(full.unproven, {
       address, to, onChain: (now as Extract<AuthorityRead, { state: 'read' }>).authority, contract: 'vault',
@@ -131,10 +131,23 @@ describe('THE CHANGE PUT TOGETHER FROM SIGNATURES MADE ONE AT A TIME, AND APPLIE
     expect(chain.apply(L.Transaction.fromParts(NET, undefined, undefined, L.Intent.new(new Date(Date.now() + 600_000)).addMaintenanceUpdate(alone))).ok).toBe(false);
   });
 
+  it('SAYS WHEN A COMMITTEE IS LOOSER THAN THE STRICTEST BAR ITS CONTRACT ENFORCES', () => {
+    const P = L as unknown as CommitteeChangeLedger;
+    const to = { committee: sorted(1, 2), threshold: 2 };
+    const base = { to, signatures: [], network: NET, ttl: new Date(Date.now() + 600_000), label: 'the vault', read: read(A, sorted(1), 1, 2n) };
+    /* Reported, not refused, until committees can be built above the company's threshold.
+     * RED WHEN: `buildCommitteeChange` stops asking `committeeLooserThanItsContract`, or asks it with another bar. */
+    expect(buildCommitteeChange(P, { ...base, strictestBar: 3 }).looserThanItsContract)
+      .toMatch(/the vault needs 3 approvals for some payments/);
+    const meets = buildCommitteeChange(P, { ...base, strictestBar: 2 });
+    expect(meets.looserThanItsContract).toBeNull();
+    expect(meets.required).toBe(1);
+  });
+
   it('IS NOT BUILT FOR A CONTRACT STILL HELD BY ITS CREATOR\'S KEY, ONE ANYBODY CAN CHANGE, OR ONE ALREADY THE COMPANY\'S', () => {
     const P = L as unknown as CommitteeChangeLedger;
     const to = { committee: sorted(1, 2), threshold: 2 };
-    const base = { to, signatures: [], network: NET, ttl: new Date(Date.now() + 600_000), label: 'the vault' };
+    const base = { to, strictestBar: 1, signatures: [], network: NET, ttl: new Date(Date.now() + 600_000), label: 'the vault' };
     expect(() => buildCommitteeChange(P, { ...base, read: read(A, sorted(9), 1, 0n) })).toThrow(/handed to the committee first/);
     expect(() => buildCommitteeChange(P, { ...base, read: read(A, sorted(9), 0, 2n) })).toThrow(/need no signature at all/);
     expect(() => buildCommitteeChange(P, { ...base, read: read(A, sorted(8, 9), 3, 2n) })).toThrow(/can never be changed/);

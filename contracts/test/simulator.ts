@@ -65,6 +65,9 @@ import {
  */
 export const ZERO_32 = new Uint8Array(32);
 
+/** The label every simulated company is created with unless a test names another. */
+export const COMPANY_LABEL = Uint8Array.from({ length: 32 }, (_, i) => (i * 7 + 3) & 0xff);
+
 const bytes = (seed: number): Uint8Array => {
   // Deterministic, so a failing test fails the same way twice.
   const out = new Uint8Array(32);
@@ -242,12 +245,14 @@ export class AccountSimulator {
   static async create(
     founder: AccountPrivateState,
     foundingLeaf: Uint8Array = leafOfDevice(founder),
+    companyLabel: Uint8Array = COMPANY_LABEL,
   ): Promise<AccountSimulator> {
     const contract = new Contract<AccountPrivateState>(witnesses);
     const { currentPrivateState, currentContractState, currentZswapLocalState } =
       await contract.initialState(
         createConstructorContext(founder, '0'.repeat(64)),
         foundingLeaf,
+        companyLabel,
       );
     return new AccountSimulator(
       contract,
@@ -599,6 +604,27 @@ export class AccountSimulator {
     /* `amendSigner` with `removing` true; `intoVacatedSlot` is ignored there. */
     return this.run('amendSigner',
       (c) => this.contract.impureCircuits.amendSigner(c, removedLeaf, proposal, false, true));
+  }
+
+  /** Removes one signer and sets the threshold, under one approved proposal. */
+  removeSignerAndSetThreshold(removedLeaf: Uint8Array, newThreshold: bigint, proposal: Uint8Array) {
+    return this.run('removeSignerAndSetThreshold',
+      (c) => this.contract.impureCircuits.removeSignerAndSetThreshold(c, removedLeaf, newThreshold, proposal));
+  }
+
+  /** A proposal's hold as the chain holds it, or undefined when it has none. */
+  holdOf(proposal: Uint8Array): { needed: bigint; withdrawKey: Uint8Array; removals: bigint } | undefined {
+    return this.ledger.proposalHolds.member(proposal) ? this.ledger.proposalHolds.lookup(proposal) : undefined;
+  }
+
+  /** How many signers this account has removed, as the chain holds it. */
+  removals(): bigint {
+    return this.ledger.proposalHolds.lookup(pureCircuits.removalCountKey()).removals;
+  }
+
+  /** The company label the account was created with, as the chain holds it. */
+  companyLabel(): Uint8Array {
+    return this.ledger.signerRoles.lookup(pureCircuits.companyLabelKey());
   }
 
   /** Changes M in M of N, through an approved round. */

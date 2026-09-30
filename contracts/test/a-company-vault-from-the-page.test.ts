@@ -338,7 +338,7 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     app.use(companyVaultRoutes({
       signedIn, member, store,
       giveVaultKeys: (id, vk, person, given) => accounts.giveVaultKeys(id, vk as Hex, person, given),
-      company: async () => ({ address: company, threshold: companyThreshold }),
+      company: async () => ({ address: company, threshold: companyThreshold, vaultThresholds: [] }),
       ledger, chain: vaultChain,
       verifierKeys: async () => new Map(await Promise.all(
         ['deposit', 'depositUnshielded', 'forgetUnshielded', 'payout', 'payoutUnshielded', 'retire', 'splitNote']

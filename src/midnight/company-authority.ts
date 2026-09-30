@@ -176,6 +176,45 @@ export function everySignerNeeded(signerCount: number, threshold: number): strin
     + 'the number of signers means losing one person no longer does this.';
 }
 
+/* ------------------------------------------- a committee's own threshold */
+
+/**
+ * **A COMMITTEE IS NEVER LOOSER THAN THE CONTRACT IT HOLDS.** Whoever meets a
+ * contract's committee threshold can replace every proof the contract accepts,
+ * so a vault that needs three approvals to pay, held by a committee that two
+ * keys can change, in truth needs two. A committee's threshold is therefore at
+ * least the strictest approval bar its contract enforces - for a vault, that
+ * vault's own threshold; for the company account, the highest of the company's
+ * threshold and every vault's - and at most the keys it holds.
+ *
+ * `null` when the committee meets that rule; otherwise the sentence saying why
+ * not and what to change.
+ *
+ * **REPORTED, NOT YET REFUSED.** Today every committee this product builds sits
+ * at the company's threshold, so refusing here would stop every committee
+ * change for a company with one stricter vault: a signer who left would keep
+ * their seats and a signer who joined could never be paid. The builders below
+ * return this verdict beside what they build; the refusal is switched on when
+ * committees can be built above the company's threshold. Until then no screen
+ * may say a vault needs more approvals than the company's threshold.
+ */
+export function committeeLooserThanItsContract(to: Committee, strictestBar: number, label: string): string | null {
+  if (!Number.isInteger(strictestBar) || strictestBar < 1) {
+    return `the approvals ${label} needs could not be read, so no committee was built for it. Nothing was built.`;
+  }
+  if (strictestBar > to.committee.length) {
+    return `${label} needs ${strictestBar} approvals for some payments and its committee would hold ${to.committee.length} `
+      + `key(s), so no committee can be as strict as it is. Lower that bar to at most ${to.committee.length} first. `
+      + 'Nothing was built.';
+  }
+  if (to.threshold < strictestBar) {
+    return `${label} needs ${strictestBar} approvals for some payments, and this committee could change its rules with `
+      + `${to.threshold} of its keys. Its committee needs at least ${strictestBar}, or that bar is lowered to `
+      + `${to.threshold} first. Nothing was built.`;
+  }
+  return null;
+}
+
 /* ----------------------------------------------- whether money may go in */
 
 /* ------------------------------------------------ the account's handover */
@@ -205,11 +244,13 @@ export function buildAccountHandover(
   input: {
     readonly read: AuthorityRead;
     readonly to: Committee;
+    /** The highest approval bar the account enforces: the company's threshold and every vault's. */
+    readonly strictestBar: number;
     readonly temporaryKey: CommitteeKey;
     readonly network: string;
     readonly ttl: Date;
   },
-): { unproven: unknown; endState: MaintenanceEndStateRecord } {
+): { unproven: unknown; endState: MaintenanceEndStateRecord; looserThanItsContract: string | null } {
   const { read } = input;
   if (read.state !== 'read') {
     throw new Error(`the chain could not be asked who holds this company's account (${read.why}), so nothing was built.`);
@@ -237,7 +278,11 @@ export function buildAccountHandover(
   }
   const unproven = L.Transaction.fromParts(
     input.network, undefined, undefined, L.Intent.new(input.ttl).addMaintenanceUpdate(built.update));
-  return { unproven, endState: built.endState };
+  return {
+    unproven,
+    endState: built.endState,
+    looserThanItsContract: committeeLooserThanItsContract(input.to, input.strictestBar, 'this company\'s account'),
+  };
 }
 
 /* ----------------------------------------------- a committee changed after */
@@ -272,13 +317,16 @@ export interface CommitteeChangeLedger extends MaintenancePrimitives {
  * was created with and never changed (that is its handover, a different act),
  * a contract whose rules need no signature or can never be changed, a contract
  * already held by the company's committee, and anything the product's one
- * authority builder refuses about the new committee.
+ * authority builder refuses about the new committee. A committee looser than
+ * the strictest approval bar the contract enforces is reported, not refused.
  */
 export function buildCommitteeChange(
   L: CommitteeChangeLedger,
   input: {
     readonly read: AuthorityRead;
     readonly to: Committee;
+    /** The highest approval bar this contract enforces: a vault's own, or the account's highest. */
+    readonly strictestBar: number;
     readonly signatures: readonly SeatSignature[];
     readonly network: string;
     readonly ttl: Date;
@@ -290,6 +338,8 @@ export function buildCommitteeChange(
   readonly seatsSigned: number[];
   readonly unproven: unknown | null;
   readonly endState: MaintenanceEndStateRecord;
+  /** Whether this committee is looser than the contract it holds; see `committeeLooserThanItsContract`. */
+  readonly looserThanItsContract: string | null;
 } {
   const { read } = input;
   if (read.state !== 'read') {
@@ -319,5 +369,6 @@ export function buildCommitteeChange(
       ? L.Transaction.fromParts(input.network, undefined, undefined, L.Intent.new(input.ttl).addMaintenanceUpdate(built.update))
       : null,
     endState: built.endState,
+    looserThanItsContract: committeeLooserThanItsContract(input.to, input.strictestBar, input.label),
   };
 }

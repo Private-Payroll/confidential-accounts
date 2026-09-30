@@ -760,8 +760,13 @@ export class MidnightLedger implements Ledger {
          * threshold and sets `threshold = 1`. `opening.threshold` no longer
          * reaches the chain from anywhere; what it still does is above, at the
          * refusal that reads it.
+         *
+         * THE SECOND ARGUMENT IS THE COMPANY'S LABEL, which the account keeps
+         * in `signerRoles` from the moment it exists. It is 32 fresh random
+         * bytes here until the label is drawn, spelled and carried to the
+         * company's signers by the step that owns it.
          */
-        args: [fromHex(foundingLeaf)],
+        args: [fromHex(foundingLeaf), randomBytes(32)],
         maintenanceAuthority: this.deployment!.maintenanceAuthority,
       }),
       this.deployment.retry,

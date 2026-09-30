@@ -174,19 +174,20 @@ describe('the deferral list: S25\'s decision, stated where a diff will show it',
     }
   });
 
-  it('the two lists name ten circuits between them, none twice', () => {
+  it('the two lists name eleven circuits between them, none twice', () => {
     // Fifteen before the S11 merges (addSigner+removeSigner → amendSigner,
     // propose+proposeRun → propose), thirteen after them, eleven once S23 shed
-    // credit and attestSolvency, TEN since `C292`/`S26` removed `execute` with
-    // the account's balance ledger.
+    // credit and attestSolvency, ten since `C292`/`S26` removed `execute` with
+    // the account's balance ledger, and ELEVEN since removing a signer and
+    // setting the threshold became one circuit.
     
     // "No overlap" is what this used to claim, and while DEFERRED_CIRCUITS is
     // empty that claim cannot fail, so it is not made. What IS checked is that
     // the concatenation has no duplicate — which can fail — and that
     // assertKnownCircuitSet accepts the set it was built from.
     const all = [...DEPLOYED_CIRCUITS, ...DEFERRED_CIRCUITS];
-    expect(all).toHaveLength(10);
-    expect(new Set(all).size).toBe(10);
+    expect(all).toHaveLength(11);
+    expect(new Set(all).size).toBe(11);
     expect(() => assertKnownCircuitSet(all)).not.toThrow();
   });
 
@@ -223,7 +224,7 @@ describe('the deferral list: S25\'s decision, stated where a diff will show it',
         .map((f) => f.replace(/\.verifier$/, '')),
     )].sort();
 
-    expect(keyed).toHaveLength(10);
+    expect(keyed).toHaveLength(11);
     expect([...DEPLOYED_CIRCUITS]).toEqual(keyed);
     expect(() => assertKnownCircuitSet(keyed)).not.toThrow();
   });
@@ -345,7 +346,7 @@ describe('findDeployedPartialContract: the kept circuits must match byte-for-byt
   it('refuses a deployment whose kept key differs by one byte', async () => {
     const [first] = DEPLOYED_CIRCUITS;
     const tampered = keyFor(first).slice();
-    tampered[0] ^= 0xff;
+    tampered[0] = (tampered[0] ?? 0) ^ 0xff;
     const { call } = await find(stateWith([...DEPLOYED_CIRCUITS], { [first]: tampered }));
     await expect(call).rejects.toThrow(/undefined or have mismatched verifier keys/);
   });

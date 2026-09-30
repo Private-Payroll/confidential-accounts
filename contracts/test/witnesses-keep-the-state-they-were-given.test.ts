@@ -116,7 +116,7 @@ describe('the private half hands back the state it was given', () => {
       'a witness has been added or removed and the check was not told how to call it, so it '
       + 'has been walking past it',
     ).toEqual(declared);
-    expect(declared).toHaveLength(9);
+    expect(declared).toHaveLength(11);
   });
 
   /**

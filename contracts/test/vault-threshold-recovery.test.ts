@@ -11,7 +11,9 @@
  *   1. raise a vault's threshold ABOVE the seats the account holds
  *   2. prove a payment out of that vault is refused, AND assert the reason
  *   3. lower it by a governed round at the ACCOUNT's threshold
- *   4. pay — the same payment, the same run, the same call
+ *   4. the run raised under the higher bar is STILL refused, because a run
+ *      needs the higher of its bar when raised and the bar now; the same
+ *      payment raised again after the lowering pays
  *
  * WHY IT IS REACHABLE AT ALL, which is the whole mechanism in one line:
  * `setVaultThreshold` (`ConfidentialAccount.compact:2699`) is judged by
@@ -160,7 +162,7 @@ describe('a vault whose threshold nobody can meet is recovered, and pays', () =>
     return { tree, id };
   };
 
-  it('THE FOUR STEPS: raised above the seats, refused with its reason, lowered by a governed round, paid',
+  it('THE FOUR STEPS: raised above the seats, refused with its reason, lowered by a governed round, raised again and paid',
     async () => {
     /* --- 1. RAISE IT ABOVE THE SEATS ---------------------------------------
      *
@@ -225,13 +227,25 @@ describe('a vault whose threshold nobody can meet is recovered, and pays', () =>
     await setVaultThresholdTo(2n, lowering);
     expect(sim.ledger.thresholds.lookup(vaultAddrBytes())).toBe(2n);
 
-    /* --- 4. PAY ------------------------------------------------------------
+    /* --- 4. RAISE IT AGAIN, AND PAY ----------------------------------------
      *
-     * The same run, the same proposal id, the same two approvals given before
-     * the threshold moved, the same call. Nothing was re-approved and nothing
-     * was re-proposed: the money was stuck and is now spendable.
+     * A fall never releases approvals already given: the run raised when the
+     * vault needed three still needs three.
+     *
+     * RED WHEN: the bar a run was raised with is dropped from the check, and
+     * only the vault's threshold now is compared (`higher(hold.needed, ...)`
+     * replaced by the threshold alone).
      */
-    const r = await pay();
+    await expect(pay()).rejects.toThrow(/not enough approvals yet/i);
+
+    /* The same payee raised again, under a fresh salt, at the bar now: it pays. */
+    const again = govChange(74);
+    const rerun = await approvedRun(ALICE, 250n, 0xc1, again);
+    expect(rerun.tree.leaves[0]).toBe(run.tree.leaves[0]);
+    const r = await vault.impureCircuits.payout(
+      payoutContext(),
+      rerun.id, fromHex(rerun.tree.root), rerun.tree.payees, WIN_FROM, WIN_UNTIL, again.salt,
+      ALICE, GBP, 250n, bytes(0x40), bytes(0xc1), rerun.tree.pathFor(0) as never);
     vaultState = r.context.callContext.currentQueryContext.state;
 
     expect(vaultLedger(vaultState as never).payments).toBe(1n);

@@ -70,6 +70,8 @@ export const EXTRA_ARGUMENTS: Record<WitnessName, readonly unknown[]> = {
   proposalSalt: [],
   changeAmount: [],
   changeBatchDigest: [],
+  withdrawKey: [new Uint8Array(32).fill(0x2a)],
+  withdrawSecret: [new Uint8Array(32).fill(0x2a)],
 };
 
 /**
@@ -92,7 +94,8 @@ export const witnessesThatDidNotHandBackWhatTheyWereGiven = (
   const context = {
     ledger,
     privateState: state,
-    contractAddress: 'read by no witness here',
+    /* The withdraw witnesses read it: 32 bytes of hex, as an account's address is. */
+    contractAddress: 'c0'.repeat(32),
   } as unknown as WitnessContext<unknown, AccountPrivateState>;
 
   const wrong: string[] = [];
