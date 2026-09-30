@@ -14,10 +14,9 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
-  AccountSimulator, privateStateFor, change, type Change,
+  AccountSimulator, privateStateFor, change, type Change, payoutTreeOf, sumArgsOf,
 } from './simulator.js';
 import { pureCircuits } from '../managed/contract/index.js';
-import { buildPayoutTree } from '../../src/midnight/payout-tree.js';
 import { toHex, fromHex } from '../../src/core/crypto.js';
 import { readFileSync } from 'node:fs';
 
@@ -64,9 +63,9 @@ const approvedFor = async (
 ) => {
   await sim.adoptVault(vault, [A, B]);
   const payee = { details: toHex(p), nonce: toHex(payload(0x5a)) };
-  const tree = buildPayoutTree([payee]);
+  const tree = payoutTreeOf([payee]);
   const runPayload = pureCircuits.runPayload(
-    fromHex(tree.root), tree.payees, RUN_OPENS, RUN_CLOSES);
+    fromHex(tree.root), tree.payees, RUN_OPENS, RUN_CLOSES, 0n);
   await sim.as(carrying(sim, A, c)).proposeRun({
     root: fromHex(tree.root), payees: tree.payees,
     from: RUN_OPENS, until: RUN_CLOSES, vault,
@@ -79,7 +78,7 @@ const approvedFor = async (
     claim: {
       proposal: id, vault, root: fromHex(tree.root), payees: tree.payees,
       from: RUN_OPENS, until: RUN_CLOSES, salt: c.salt,
-      details: fromHex(payee.details), nonce: fromHex(payee.nonce), path: tree.pathFor(0),
+      details: fromHex(payee.details), nonce: fromHex(payee.nonce), ...sumArgsOf(tree, 0),
     },
   };
 };

@@ -123,7 +123,7 @@ export const newSymmetricKey = (): Hex => toHex(randomBytes(32));
  *
  * **WHAT READS IT, AND WHY THIRTY-TWO.** It is `StateChange.salt`
  * (`src/core/ledger.ts:197-209`): `proposalIdOf(payloadHash, vault, salt)` is
- * what every governance circuit and `recordPayment` recompute to prove they
+ * what every governance circuit and `recordPaymentFromVault` recompute to prove they
  * were handed the proposal the signers approved, so this value is the round's
  * name and not a decoration on it. Both bindings that take it declare
  * `Bytes<32>` and refuse anything else by length, loudly, naming the argument:
@@ -326,7 +326,7 @@ const BIGINT_TAG = '$n';
 const bigintToJson = (v: bigint): string =>
   '{' + JSON.stringify(BIGINT_TAG) + ':' + JSON.stringify(v.toString()) + '}';
 
-const isTagged = (v: unknown): v is Record<string, string> =>
+const isTagged = (v: unknown): v is Record<typeof BIGINT_TAG, string> =>
   typeof v === 'object' && v !== null && !Array.isArray(v)
     && Object.keys(v).length === 1
     && typeof (v as any)[BIGINT_TAG] === 'string'

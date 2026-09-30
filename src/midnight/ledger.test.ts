@@ -379,6 +379,12 @@ function harness(chain: {
   movementValues?: Hex[];
   /** The address the account is found at. `addr_1` by default. */
   address?: string;
+  /**
+   * Refuse at once when anything asks this chain for its providers, for a test
+   * whose subject must stop before a call ever needs them. Without it a call
+   * that went too far waits out the deploy path's pause and retries.
+   */
+  providersRefused?: boolean;
 },
 /**
  * **THE DEPLOYMENT BAG, AND IT IS A SEPARATE ARGUMENT BECAUSE IT IS A SEPARATE
@@ -420,7 +426,7 @@ deployment?: ConstructorParameters<typeof MidnightLedger>[6]) {
     if (circuit === 'propose' && (chain.proposeLands ?? true)) {
       /*
        * The id the MERGED contract keys it under: one circuit, two
-       * derivations, and `args[5]` — `isRun` — picks between them exactly as
+       * derivations, and `args[6]` — `isRun` — picks between them exactly as
        * the contract's own branch does. THE CONTRACT IS THE AUTHORITY for
        * this shape; a fake chain still modelling the pre-merge siblings is
        * how twelve tests failed while the wiring under test was right.
@@ -435,15 +441,15 @@ deployment?: ConstructorParameters<typeof MidnightLedger>[6]) {
        * fact about the wire, not a coincidence of shared constants.
        */
       proposals.set(
-        (args[5] as boolean)
+        (args[6] as boolean)
           ? MidnightCommitments.proposalId(
               MidnightCommitments.runPayload(
                 toHex(args[1] as Uint8Array),
-                args[2] as bigint, args[3] as bigint, args[4] as bigint),
+                args[2] as bigint, args[3] as bigint, args[4] as bigint, args[5] as bigint),
               CHANGE.salt,
-              toHex(args[6] as Uint8Array))
+              toHex(args[7] as Uint8Array))
           : MidnightCommitments.proposalId(
-              toHex(args[0] as Uint8Array), CHANGE.salt, toHex(args[6] as Uint8Array)),
+              toHex(args[0] as Uint8Array), CHANGE.salt, toHex(args[7] as Uint8Array)),
         chain.changeOnPropose ?? CHANGE_COMMITMENT,
       );
     }
@@ -536,7 +542,9 @@ deployment?: ConstructorParameters<typeof MidnightLedger>[6]) {
       }
     : chain.privateState;
 
-  const providers = async () => ({
+  const providers = async () => (chain.providersRefused ? (() => {
+    throw new Error('the providers were asked for: the call went past the gate this test stops it at');
+  })() : {
     /*
      * **WHICH HARNESS THIS BUNDLE BELONGS TO.**
      *
@@ -800,7 +808,7 @@ describe('MidnightLedger: the rest of the round', () => {
     await ledger.propose('acct', PAYLOAD_HASH, CHANGE, BY, MidnightCommitments.noVault());
     expect(calls).toHaveLength(1);
     expect(calls[0]!.circuit).toBe('propose');
-    expect(calls[0]!.args).toHaveLength(7);
+    expect(calls[0]!.args).toHaveLength(8);
     expect(argHex(calls[0]!.args[0])).toBe(PAYLOAD_HASH);
     /*
      * S11: one merged circuit, so the run's four slots and the discriminator
@@ -813,8 +821,9 @@ describe('MidnightLedger: the rest of the round', () => {
     expect(calls[0]!.args[2]).toBe(0n);
     expect(calls[0]!.args[3]).toBe(0n);
     expect(calls[0]!.args[4]).toBe(0n);
-    expect(calls[0]!.args[5]).toBe(false);
-    expect(argHex(calls[0]!.args[6])).toBe(toHex(pureCircuits.noVault()));
+    expect(calls[0]!.args[5]).toBe(0n);
+    expect(calls[0]!.args[6]).toBe(false);
+    expect(argHex(calls[0]!.args[7])).toBe(toHex(pureCircuits.noVault()));
   });
 
   /*
@@ -1086,20 +1095,20 @@ describe('M-38: buildCall arity, against the real wrapper shape', () => {
      */
     const { ledger } = harness({});
     /*
-     * S11 merged `proposeRun` into `propose`: SEVEN declared arguments, and
-     * the real `contract-info.json` is what says so. Yesterday's correct
-     * five-argument call must be refused by the guard with the arity named —
+     * S11 merged `proposeRun` into `propose`, and a run's required approvals
+     * joined it: EIGHT declared arguments, and the real `contract-info.json`
+     * is what says so. An old five-argument call must be refused by the guard with the arity named —
      * not discovered by the runtime as an undefined halfway into
      * `runPayload`, which is exactly how this test failed when it still
      * believed in the sibling.
      */
     await expect((ledger as any).buildCall('addr_1', 'propose', [
       fromHex('00'.repeat(32)), fromHex('aa'.repeat(32)), 50n, 1_800_000_000n, 1_800_604_800n,
-      true, fromHex('bb'.repeat(32)),
+      0n, true, fromHex('bb'.repeat(32)),
     ], 'a-key:acct')).resolves.toBeDefined();
     await expect((ledger as any).buildCall('addr_1', 'propose', [
       fromHex('aa'.repeat(32)), 50n, 1_800_000_000n, 1_800_604_800n, fromHex('bb'.repeat(32)),
-    ], 'a-key:acct')).rejects.toThrow(/takes 7 argument/);
+    ], 'a-key:acct')).rejects.toThrow(/takes 8 argument/);
     // The sibling entry point is GONE from the contract, and a call to it
     // must fail BY NAME, not by a guess about its arguments.
     await expect((ledger as any).buildCall('addr_1', 'proposeRun', [
@@ -1211,16 +1220,18 @@ describe('V-73: a payroll run, raised and swept through the client', () => {
     expect(calls).toHaveLength(1);
     /* S11: the run travels through the MERGED `propose`, `isRun` true. */
     expect(calls[0]!.circuit).toBe('propose');
-    expect(calls[0]!.args).toHaveLength(7);
+    expect(calls[0]!.args).toHaveLength(8);
     /* The opaque payload slot is a filler the run branch never reads. */
     expect(argHex(calls[0]!.args[0])).toBe('00'.repeat(32));
     expect(argHex(calls[0]!.args[1])).toBe(RUN.root);
     expect(calls[0]!.args[2]).toBe(50n);
     expect(calls[0]!.args[3]).toBe(RUN.opensAt);
     expect(calls[0]!.args[4]).toBe(RUN.closesAt);
-    expect(calls[0]!.args[5]).toBe(true);
-    expect(argHex(calls[0]!.args[6])).toBe(RUN.vault);
-    expect(argHex(calls[0]!.args[6])).not.toBe(toHex(pureCircuits.noVault()));
+    /* The approvals the run's total needs: none named, so zero. */
+    expect(calls[0]!.args[5]).toBe(0n);
+    expect(calls[0]!.args[6]).toBe(true);
+    expect(argHex(calls[0]!.args[7])).toBe(RUN.vault);
+    expect(argHex(calls[0]!.args[7])).not.toBe(toHex(pureCircuits.noVault()));
   });
 
   /*
@@ -1312,7 +1323,7 @@ describe('V-73: a payroll run, raised and swept through the client', () => {
         if (i < 0) throw new Error(`the compiled contract declares no argument "${name}" on propose`);
         return i;
       };
-      expect(declared).toHaveLength(7);
+      expect(declared).toHaveLength(8);
 
       const { ledger, calls } = harness({ openProposals: [] });
       await ledger.proposeRun('acct', RUN, CHANGE, BY);
@@ -1323,6 +1334,7 @@ describe('V-73: a payroll run, raised and swept through the client', () => {
       expect(args[slot('opensAt')]).toBe(RUN.opensAt);
       expect(args[slot('closesAt')]).toBe(RUN.closesAt);
       expect(args[slot('isRun')]).toBe(true);
+      expect(args[slot('required')]).toBe(0n);
       expect(argHex(args[slot('vault')])).toBe(RUN.vault);
       /* The opaque slot the run branch never reads (`compact:2107`). */
       expect(argHex(args[slot('payloadHash')])).toBe('00'.repeat(32));
@@ -1526,8 +1538,8 @@ describe('prepare: the same round, stopped before the chain', () => {
     const { ledger } = harness({ openProposals: [] });
     const call = await ledger.prepare('acct', step);
     expect(call.circuit).toBe('propose');
-    // Seven since the S11 merge, and the guard reads that off the compiled ABI.
-    expect(call.args).toHaveLength(7);
+    // Eight since the run's required approvals joined it, and the guard reads that off the compiled ABI.
+    expect(call.args).toHaveLength(8);
     expect(argHex(call.args[0])).toBe(PAYLOAD_HASH);
     expect(call.address).toBe('addr_1');
   });
@@ -2100,16 +2112,16 @@ describe('C334: MidnightLedger.open refuses an opening it cannot honour', () => 
      * signed by the authority the deploy installed. An unmaintainable account, or
      * one held by a committee whose keys this process does not hold, could be
      * deployed and never finished: it could govern itself and pay nobody. RED WHEN
-     * the gate is dropped, or moved after the deploy - MEASURED: the call then goes
-     * on into the deploy path, which this harness has no chain for, and the test
-     * fails by its 30-second timeout rather than by the assertions below.
+     * the gate is dropped, or moved after the deploy: the call then asks this
+     * chain for its providers, which refuses at once, and the refusal read is not
+     * the gate's.
      */
     for (const [authority, refusal] of [
       [{ kind: 'unmaintainable' }, /can never take the second\. Nothing was deployed/],
       [{ kind: 'committee', committee: [{ tag: 'schnorr', value: 'cd'.repeat(32) }], threshold: 1 },
         /holds\s+none of their signing keys/],
     ] as const) {
-      const h = harness({}, { register: async () => {}, maintenanceAuthority: authority as never });
+      const h = harness({ providersRefused: true }, { register: async () => {}, maintenanceAuthority: authority as never });
       const why = await h.ledger.open('acct', opening()).then(() => '', (e: Error) => e.message);
       expect(why).toMatch(refusal);
       expect(why).not.toMatch(/submitPartialDeployTx was reached/);
@@ -3724,5 +3736,98 @@ describe('the pay-record key on chain, and what the approving device can read', 
     expect(ada!.paid).toEqual([0]);
     expect(ada!.refused).toBe(true);
     expect(bo!.paid).toEqual([]);
+  });
+});
+
+/*
+ * ────────────────────────────────────────────────────────────────────────────
+ * A VAULT'S SPENDING POLICY: SETTING ONE, AND CHARGING A RUN TO ITS PERIOD.
+ * Both calls stopped before the chain, with every argument put in the slot the
+ * compiled artifact names for it, and what the circuit reads from private state
+ * staged on this device.
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+describe('a spending policy, set and charged through the client', () => {
+  const POLICY = {
+    terms: {
+      bands: [1n, 2n, 3n, 4n].map((n) => ({ ceiling: n * 1_000n, approvals: n })),
+      periodLimit: 50_000n, periodStart: 1_799_000_000n, periodLength: 2_592_000n,
+    },
+    blinding: new Uint8Array(32).fill(0x6c),
+  };
+  const VAULT = 'a7'.repeat(32) as Hex;
+  const RUN = {
+    root: 'b1'.repeat(32) as Hex, payees: 3n, opensAt: 1_800_000_000n, closesAt: 1_800_003_600n,
+    vault: VAULT, required: 2n,
+  };
+  const slotsOf = async (circuit: string) => {
+    const { readFileSync } = await import('node:fs');
+    const info = JSON.parse(readFileSync(`${CFG.zkConfigPath}/compiler/contract-info.json`, 'utf8'));
+    return (info.circuits.find((c: { name: string }) => c.name === circuit).arguments as Array<{ name: string }>)
+      .map((a) => a.name);
+  };
+
+  it('setPolicy: the vault, the commitment and the proposal, in the slots the contract names, with the token staged', async () => {
+    const { ledger, staged } = harness({});
+    const commitment = 'c3'.repeat(32) as Hex;
+    const call = await ledger.prepare('acct', { kind: 'setPolicy', vault: VAULT, asset: 'GBP', commitment, proposalId: PROPOSAL_ID });
+    expect(call.circuit).toBe('setPolicy');
+    const slots = await slotsOf('setPolicy');
+    /* RED WHEN two arguments are swapped, or one is missing. */
+    expect(slots).toEqual(['vault', 'commitment', 'proposal']);
+    expect([argHex(call.args[0]), argHex(call.args[1]), argHex(call.args[2])]).toEqual([VAULT, commitment, PROPOSAL_ID]);
+    /* RED WHEN the token the policy is for is not staged: the circuit derives the policy's key from it. */
+    expect(staged.at(-1)?.value.assetId).toEqual(assetIdBytes('GBP'));
+  });
+
+  it('setPolicy: refused before the fee when the proposal is not yet approved', async () => {
+    const { ledger } = harness({ approvals: 1n, threshold: 2n });
+    /* RED WHEN the client stops asking whether the proposal is approved. */
+    await expect(ledger.prepare('acct', {
+      kind: 'setPolicy', vault: VAULT, asset: 'GBP', commitment: 'c3'.repeat(32) as Hex, proposalId: PROPOSAL_ID,
+    })).rejects.toThrow(/that proposal has 1 of 2 approvals/);
+  });
+
+  it("clearRun: the run's parts, its tree and its period in the slots the contract names, and the policy staged", async () => {
+    const { ledger, staged } = harness({});
+    const step = {
+      kind: 'clearRun' as const, proposalId: PROPOSAL_ID, run: RUN, salt: CHANGE.salt, asset: 'GBP',
+      top: 77n, total: 4_321n, period: 0n, policy: POLICY, spent: 1_234n,
+    };
+    const call = await ledger.prepare('acct', step);
+    expect(call.circuit).toBe('clearRun');
+    const slots = await slotsOf('clearRun');
+    const at = (name: string) => call.args[slots.indexOf(name)];
+    /* RED WHEN any argument lands in another's slot: the compiler cannot see a swap among these. */
+    expect(argHex(at('proposal'))).toBe(PROPOSAL_ID);
+    expect(argHex(at('vault'))).toBe(VAULT);
+    expect(argHex(at('root'))).toBe(RUN.root);
+    expect([at('payees'), at('opensAt'), at('closesAt'), at('required')]).toEqual([3n, RUN.opensAt, RUN.closesAt, 2n]);
+    expect(argHex(at('salt'))).toBe(CHANGE.salt);
+    expect([at('top'), at('total'), at('period')]).toEqual([77n, 4_321n, 0n]);
+    expect(call.args).toHaveLength(slots.length);
+    /* RED WHEN the policy's opening, what the period has been charged, or the token is not staged. */
+    expect(staged.at(-1)?.value).toMatchObject({ policy: POLICY, periodSpent: 1_234n, assetId: assetIdBytes('GBP') });
+  });
+
+  it("clearRun: refused before anything is staged when the run's window leaves the period named", async () => {
+    const { ledger, staged } = harness({});
+    const before = staged.length;
+    /* RED WHEN the client stops comparing the window with the period before a fee. */
+    await expect(ledger.prepare('acct', {
+      kind: 'clearRun', proposalId: PROPOSAL_ID, run: { ...RUN, closesAt: 1_801_592_001n }, salt: CHANGE.salt,
+      asset: 'GBP', top: 1n, total: 1n, period: 0n, policy: POLICY, spent: 0n,
+    })).rejects.toThrow(/does not lie inside the period 2027-01-03 to 2027-02-02/);
+    /* RED WHEN the client stops comparing the window's start with the period's. */
+    await expect(ledger.prepare('acct', {
+      kind: 'clearRun', proposalId: PROPOSAL_ID, run: { ...RUN, opensAt: 1_798_999_999n }, salt: CHANGE.salt,
+      asset: 'GBP', top: 1n, total: 1n, period: 0n, policy: POLICY, spent: 0n,
+    })).rejects.toThrow(/does not lie inside the period/);
+    /* RED WHEN the client reads a later period's start as the first period's: this window lies in period 0. */
+    await expect(ledger.prepare('acct', {
+      kind: 'clearRun', proposalId: PROPOSAL_ID, run: RUN, salt: CHANGE.salt,
+      asset: 'GBP', top: 1n, total: 1n, period: 1n, policy: POLICY, spent: 0n,
+    })).rejects.toThrow(/does not lie inside the period 2027-02-02 to 2027-03-04/);
+    expect(staged.length).toBe(before);
   });
 });

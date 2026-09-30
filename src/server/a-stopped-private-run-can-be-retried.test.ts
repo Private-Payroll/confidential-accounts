@@ -140,7 +140,7 @@ const aStoppedRun = async (name: string, retryWrittenDown = false, legOnChain = 
     Object.entries(f.payee).filter(([k, v]) => k !== 'kind' && typeof v === 'string').map(([, v]) => String(v)));
   const inputs = await payroll.runMaterialInputs(run.id, viewingKey);
   const material = await runMaterialFor({
-    accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds, facts: inputs.facts, pay: inputs.pay,
+    accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds, facts: inputs.facts, pay: inputs.pay, asset: inputs.asset,
     opensAt: BigInt(LEG_WINDOW.opensAt), closesAt: BigInt(LEG_WINDOW.closesAt), vault: VAULT, detailsOf: vaultDetails,
   });
   const signer = created.secrets[0]!.signerId;

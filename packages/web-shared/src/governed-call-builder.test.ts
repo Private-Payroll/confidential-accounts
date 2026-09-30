@@ -158,7 +158,9 @@ describe('THE RECORD FOR ONE CALL', () => {
 describe('THE CIRCUIT\'S ARGUMENTS', () => {
   it('a raise is the merged circuit on its run branch, in the contract\'s order', () => {
     /* RED WHEN: the branch flag, the order or any value changes - the chain then holds another proposal, or none. */
-    expect(argumentsFor(raise)).toEqual([new Uint8Array(32), bytes(run.root), 3n, 100n, 200n, true, bytes(run.vault)]);
+    expect(argumentsFor(raise)).toEqual([new Uint8Array(32), bytes(run.root), 3n, 100n, 200n, 0n, true, bytes(run.vault)]);
+    /* RED WHEN: the approvals the run's total needs are not carried into the call - the chain then holds another proposal. */
+    expect(argumentsFor({ ...raise, run: { ...run, required: '3' } })[5]).toBe(3n);
   });
   it('an approval is the proposal\'s identity and nothing else', () => {
     expect(argumentsFor(approve)).toEqual([bytes(approve.proposal)]);
@@ -178,7 +180,7 @@ describe('ONE GOVERNED CALL', () => {
     expect(out.proven).toEqual(new Uint8Array([9, 9]));
     /* RED WHEN: any other entry point of the package is reached - one that reads or writes a private-state store among them. */
     expect(log).toEqual(['reached createUnprovenCallTxFromInitialStates', 'proved UNPROVEN for propose']);
-    const [{ options, zk }] = handed;
+    const { options, zk } = handed[0]!;
     expect(zk).toBe('ZK');
     expect(options.compiledContract).toBe('COMPILED');
     expect(options.circuitId).toBe('propose');
@@ -326,7 +328,7 @@ describe('A SEAT AND A THRESHOLD, BUILT ON THE DEVICE', () => {
     await build(depsWith([], handed), { account: ACCOUNT, order: seatRaise, material, chain });
     /* RED WHEN: the branch flag, the payload or the vault is not the governance round the leaf makes. */
     expect(handed[0]!.options.args).toEqual([
-      accountPure.signerAddPayload(bytes(LEAF)), new Uint8Array(32), 0n, 0n, 0n, false, accountPure.noVault(),
+      accountPure.signerAddPayload(bytes(LEAF)), new Uint8Array(32), 0n, 0n, 0n, 0n, false, accountPure.noVault(),
     ]);
     expect(handed[0]!.options.circuitId).toBe('propose');
   });

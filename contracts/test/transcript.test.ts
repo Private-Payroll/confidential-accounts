@@ -28,8 +28,8 @@ import {
 } from '@midnight-ntwrk/compact-runtime';
 import { Contract as Vault, pureCircuits as vaultCircuits } from '../managed-vault/contract/index.js';
 import { pureCircuits } from '../managed/contract/index.js';
-import { AccountSimulator, privateStateFor, change, type Change } from './simulator.js';
-import { buildPayoutTree, type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
+import { AccountSimulator, privateStateFor, change, type Change, payoutTreeOf, sumArgsOf } from './simulator.js';
+import { type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
 import { toHex, fromHex, newWrappingKeypair } from '../../src/core/crypto.js';
 import { payKeyCommitmentOf, payKeyPayloadOf, sealPayKeyTo } from '../../src/midnight/run-keys.js';
 import { Transcript, encodeUint, asHex } from './transcript.js';
@@ -111,7 +111,7 @@ describe('§2 — the positive control: the instrument can find what IS publishe
     sim.at(NOW);
     const tape = Transcript.watch(sim.contract).clear();
     const c = govChange(41);
-    const tree = buildPayoutTree([{ details: toHex(bytes(1)), nonce: toHex(bytes(101)) }]);
+    const tree = payoutTreeOf([{ details: toHex(bytes(1)), nonce: toHex(bytes(101)) }]);
 
     await sim.as(sim.applying(A, c)).proposeRun({
       root: fromHex(tree.root), payees: tree.payees,
@@ -199,9 +199,9 @@ describe('§3 — the three privacy priorities, over a real cross-contract payou
       details: toHex(vaultCircuits.payoutDetails(p.to, GBP, p.amount, bytes(0x40 + i))),
       nonce: toHex(bytes(p.nonce)),
     }));
-    const tree = buildPayoutTree(leaves);
+    const tree = payoutTreeOf(leaves);
     const payload = pureCircuits.runPayload(
-      fromHex(tree.root), tree.payees, WIN_FROM, WIN_UNTIL);
+      fromHex(tree.root), tree.payees, WIN_FROM, WIN_UNTIL, 0n);
     const vaultBytes = Uint8Array.from(Buffer.from(vaultAddr, 'hex'));
     await sim.as(sim.applying(A, c)).proposeRun({
       root: fromHex(tree.root), payees: tree.payees,
@@ -409,8 +409,8 @@ describe('§4 — the worked example: what a LEDGER READ does to the transcript'
     await sim.adoptVault(VAULT, [A, B]);
     const c = govChange(61);
     const payments = [{ details: toHex(bytes(1)), nonce: toHex(bytes(101)) }];
-    const tree = buildPayoutTree(payments);
-    const payload = pureCircuits.runPayload(fromHex(tree.root), tree.payees, WIN_FROM, WIN_UNTIL);
+    const tree = payoutTreeOf(payments);
+    const payload = pureCircuits.runPayload(fromHex(tree.root), tree.payees, WIN_FROM, WIN_UNTIL, 0n);
     await sim.as(sim.applying(A, c)).proposeRun({
       root: fromHex(tree.root), payees: tree.payees,
       from: WIN_FROM, until: WIN_UNTIL, vault: VAULT,
@@ -428,7 +428,7 @@ describe('§4 — the worked example: what a LEDGER READ does to the transcript'
       proposal: id, vault: VAULT, root: fromHex(tree.root), payees: tree.payees,
       from: WIN_FROM, until: WIN_UNTIL, salt: c.salt,
       details: fromHex(payments[0]!.details), nonce: fromHex(payments[0]!.nonce),
-      path: tree.pathFor(0),
+      ...sumArgsOf(tree, 0),
     });
 
     const t = tape.last;
@@ -471,7 +471,7 @@ describe('§4 — the worked example: what a LEDGER READ does to the transcript'
     const VAULT = bytes(0xa1);
     const tape = Transcript.watch(sim.contract).clear();
     const c = govChange(62);
-    const tree = buildPayoutTree([{ details: toHex(bytes(1)), nonce: toHex(bytes(101)) }]);
+    const tree = payoutTreeOf([{ details: toHex(bytes(1)), nonce: toHex(bytes(101)) }]);
     await sim.as(sim.applying(A, c)).proposeRun({
       root: fromHex(tree.root), payees: tree.payees,
       from: WIN_FROM, until: WIN_UNTIL, vault: VAULT,
@@ -520,8 +520,8 @@ describe('§5 — THE SENSITIVITY CONTROL: the instrument goes red, and what tha
     await sim.adoptVault(LEAKED, [A, B]);
     const c = govChange(71);
     const payments = [{ details: toHex(bytes(1)), nonce: toHex(bytes(101)) }];
-    const tree = buildPayoutTree(payments);
-    const payload = pureCircuits.runPayload(fromHex(tree.root), tree.payees, WIN_FROM, WIN_UNTIL);
+    const tree = payoutTreeOf(payments);
+    const payload = pureCircuits.runPayload(fromHex(tree.root), tree.payees, WIN_FROM, WIN_UNTIL, 0n);
     await sim.as(sim.applying(A, c)).proposeRun({
       root: fromHex(tree.root), payees: tree.payees,
       from: WIN_FROM, until: WIN_UNTIL, vault: LEAKED,
@@ -541,7 +541,7 @@ describe('§5 — THE SENSITIVITY CONTROL: the instrument goes red, and what tha
       proposal: id, vault: LEAKED, root: fromHex(tree.root), payees: tree.payees,
       from: WIN_FROM, until: WIN_UNTIL, salt: c.salt,
       details: fromHex(payments[0]!.details), nonce: fromHex(payments[0]!.nonce),
-      path: tree.pathFor(0),
+      ...sumArgsOf(tree, 0),
     });
     const t = tape.last;
     tape.stop();
@@ -670,8 +670,8 @@ describe('§6 — THE DEFECT FOUND IN THIS INSTRUMENT, PINNED', () => {
     await sim.adoptVault(TRAILING_ZERO, [A, B]);
     const c = govChange(91);
     const payments = [{ details: toHex(bytes(1)), nonce: toHex(bytes(101)) }];
-    const tree = buildPayoutTree(payments);
-    const payload = pureCircuits.runPayload(fromHex(tree.root), tree.payees, WIN_FROM, WIN_UNTIL);
+    const tree = payoutTreeOf(payments);
+    const payload = pureCircuits.runPayload(fromHex(tree.root), tree.payees, WIN_FROM, WIN_UNTIL, 0n);
     await sim.as(sim.applying(A, c)).proposeRun({
       root: fromHex(tree.root), payees: tree.payees,
       from: WIN_FROM, until: WIN_UNTIL, vault: TRAILING_ZERO,
@@ -685,7 +685,7 @@ describe('§6 — THE DEFECT FOUND IN THIS INSTRUMENT, PINNED', () => {
       proposal: id, vault: TRAILING_ZERO, root: fromHex(tree.root), payees: tree.payees,
       from: WIN_FROM, until: WIN_UNTIL, salt: c.salt,
       details: fromHex(payments[0]!.details), nonce: fromHex(payments[0]!.nonce),
-      path: tree.pathFor(0),
+      ...sumArgsOf(tree, 0),
     });
     const t = tape.last;
     tape.stop();
@@ -737,9 +737,9 @@ describe('§7 — the tape keeps the whole call tree, not the entry circuit', ()
       details: toHex(vaultCircuits.payoutDetails(ALICE, GBP, TO_ALICE, bytes(0x40))),
       nonce: toHex(bytes(0xc1)),
     }];
-    const tree = buildPayoutTree(leaves);
+    const tree = payoutTreeOf(leaves);
     const payload = pureCircuits.runPayload(
-      fromHex(tree.root), tree.payees, WIN_FROM, WIN_UNTIL);
+      fromHex(tree.root), tree.payees, WIN_FROM, WIN_UNTIL, 0n);
     const vaultBytes = Uint8Array.from(Buffer.from(vaultAddr, 'hex'));
     await sim.as(sim.applying(A, c)).proposeRun({
       root: fromHex(tree.root), payees: tree.payees,

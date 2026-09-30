@@ -121,7 +121,7 @@ const aCompanyPayingPublicly = async (name: string, raised: boolean) => {
   if (raised) {
     const inputs = await payroll.runMaterialInputs(run.id, viewingKey);
     const material = await runMaterialFor({
-      accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds, facts: inputs.facts, pay: inputs.pay,
+      accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds, facts: inputs.facts, pay: inputs.pay, asset: inputs.asset,
       opensAt: BigInt(LEG_WINDOW.opensAt), closesAt: BigInt(LEG_WINDOW.closesAt), vault: VAULT, detailsOf: vaultDetails,
     });
     atTheLegsRaise();

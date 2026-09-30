@@ -22,10 +22,9 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-  AccountSimulator, privateStateFor, change, COMPANY_LABEL, type Change,
+  AccountSimulator, privateStateFor, change, COMPANY_LABEL, type Change, payoutTreeOf, sumArgsOf,
 } from './simulator.js';
 import { pureCircuits } from '../managed/contract/index.js';
-import { buildPayoutTree } from '../../src/midnight/payout-tree.js';
 import { toHex, fromHex } from '../../src/core/crypto.js';
 
 const A = privateStateFor(1);
@@ -58,16 +57,16 @@ const raise = async (sim: AccountSimulator, by: Device, c: Change, payload: Uint
 
 /** Raises a one-payee run on `VAULT` from `by`, and returns its id and a way to pay it. */
 const raiseRun = async (sim: AccountSimulator, by: Device, c: Change, nonce: number) => {
-  const tree = buildPayoutTree([{ details: toHex(bytes(0x10)), nonce: toHex(bytes(nonce)) }]);
+  const tree = payoutTreeOf([{ details: toHex(bytes(0x10)), nonce: toHex(bytes(nonce)) }]);
   await sim.as(carrying(sim, by, c)).proposeRun({
     root: fromHex(tree.root), payees: tree.payees, from: OPENS, until: CLOSES, vault: VAULT,
   });
   const id = sim.proposalId(
-    pureCircuits.runPayload(fromHex(tree.root), tree.payees, OPENS, CLOSES), c.salt, VAULT);
+    pureCircuits.runPayload(fromHex(tree.root), tree.payees, OPENS, CLOSES, 0n), c.salt, VAULT);
   const pay = () => sim.recordPaymentFromVault({
     proposal: id, vault: VAULT, root: fromHex(tree.root), payees: tree.payees,
     from: OPENS, until: CLOSES, salt: c.salt,
-    details: bytes(0x10), nonce: bytes(nonce), path: tree.pathFor(0),
+    details: bytes(0x10), nonce: bytes(nonce), ...sumArgsOf(tree, 0),
   });
   return { id, pay };
 };
@@ -203,12 +202,12 @@ describe('a governance proposal is withdrawn only by the signer who raised it', 
     const sim = await live([A, B], 2n);
     const later = BigInt(NOW + 7_200);
     const c = govChange(32);
-    const tree = buildPayoutTree([{ details: toHex(bytes(0x11)), nonce: toHex(bytes(0x54)) }]);
+    const tree = payoutTreeOf([{ details: toHex(bytes(0x11)), nonce: toHex(bytes(0x54)) }]);
     await sim.as(carrying(sim, A, c)).proposeRun({
       root: fromHex(tree.root), payees: tree.payees, from: later, until: later + 3_600n, vault: VAULT,
     });
     const id = sim.proposalId(
-      pureCircuits.runPayload(fromHex(tree.root), tree.payees, later, later + 3_600n), c.salt, VAULT);
+      pureCircuits.runPayload(fromHex(tree.root), tree.payees, later, later + 3_600n, 0n), c.salt, VAULT);
     /* RED WHEN: cancel applies the proposer-only rule to runs as well. */
     await sim.as(B).cancel(id);
     expect(sim.isOpen(id)).toBe(false);

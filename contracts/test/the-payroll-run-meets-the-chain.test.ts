@@ -6,7 +6,7 @@
  * `AccountService.propose({kind: 'payroll'})`, whose payload hash is an
  * APPLICATION digest — `commit(canonical({accountId, kind, sealedPayload,
  * proposedBy}), '')` — while `recordPayment` recomputes
- * `proposalIdOf(runPayload(root, payees, opensAt, closesAt), forVault, salt)`
+ * `proposalIdOf(runPayload(root, payees, opensAt, closesAt, 0n), forVault, salt)`
  * and matches only a `runPayload`. **The two can never be equal.** So a run was
  * raised, approved by real signers, paid for, and unpayable by any vault for
  * ever; and because the governance branch writes no `runWindow` row, nothing
@@ -124,7 +124,7 @@ async function aRunTheProductRaised(payees = 1) {
     accountId: inputs.accountId,
     runId: inputs.runId,
     seeds: inputs.seeds,
-    facts: inputs.facts, pay: inputs.pay,
+    facts: inputs.facts, pay: inputs.pay, asset: inputs.asset,
     opensAt: OPENS,
     closesAt: CLOSES,
     vault: toHex(PAYROLL_VAULT),
@@ -157,7 +157,7 @@ async function rebuiltFromTheRecord(
 ) {
   const rebuild = await payroll.payoutRebuildOf(runId, viewingKey, asset);
   if (!rebuild) throw new Error('this leg has no payout material on record');
-  return buildRun(rebuild.seeds, rebuild.identity, rebuild.facts, vaultDetails, rebuild.pay);
+  return buildRun(rebuild.seeds, rebuild.identity, rebuild.facts, vaultDetails, rebuild.pay, rebuild.asset);
 }
 
 /**
@@ -190,7 +190,7 @@ describe('a payroll run the PRODUCT raised is one a VAULT can pay', () => {
        * and could not equal it for any input.
        */
       const payload = pureCircuits.runPayload(
-        fromHex(r.material.run.root), r.material.run.payees, OPENS, CLOSES);
+        fromHex(r.material.run.root), r.material.run.payees, OPENS, CLOSES, 0n);
       expect(r.proposal.digest).toBe(toHex(payload));
       expect(r.proposal.chainId)
         .toBe(toHex(pureCircuits.proposalIdOf(payload, PAYROLL_VAULT, fromHex(r.change.salt))));
@@ -263,7 +263,7 @@ describe('a payroll run the PRODUCT raised is one a VAULT can pay', () => {
         salt: fromHex(r.change.salt),
         details: fromHex(args.details),
         nonce: fromHex(args.nonce),
-        path: args.path,
+        amount: args.amount, asset: fromHex(args.asset), path: args.path,
       });
 
       /* The chain MOVED, so the payment settled rather than merely not throwing. */
@@ -298,11 +298,11 @@ describe('a payroll run the PRODUCT raised is one a VAULT can pay', () => {
     const inputs = await payroll.runMaterialInputs(run.id, created.viewingKey);
     const material = await runMaterialFor({
       accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds,
-      facts: inputs.facts, pay: inputs.pay, opensAt: OPENS, closesAt: CLOSES, vault: toHex(PAYROLL_VAULT),
+      facts: inputs.facts, pay: inputs.pay, asset: inputs.asset, opensAt: OPENS, closesAt: CLOSES, vault: toHex(PAYROLL_VAULT),
     });
     const asARun = toHex(pureCircuits.proposalIdOf(
       pureCircuits.runPayload(
-        fromHex(material.run.root), material.run.payees, OPENS, CLOSES),
+        fromHex(material.run.root), material.run.payees, OPENS, CLOSES, 0n),
       PAYROLL_VAULT, fromHex(change.salt)));
 
     /* The two ids are computed over the same salt and cannot be made to meet. */
@@ -359,7 +359,7 @@ describe('a payroll run the PRODUCT raised is one a VAULT can pay', () => {
     const three = [inputs.facts[0]!, inputs.facts[0]!, inputs.facts[0]!];
     const material = await runMaterialFor({
       accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds,
-      facts: three, pay: payFor(three),
+      facts: three, pay: payFor(three), asset: inputs.asset,
       opensAt: OPENS, closesAt: CLOSES, vault: toHex(PAYROLL_VAULT),
     });
 
@@ -379,7 +379,7 @@ describe('a payroll run the PRODUCT raised is one a VAULT can pay', () => {
     const inputs = await payroll.runMaterialInputs(run.id, created.viewingKey);
     const material = await runMaterialFor({
       accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds,
-      facts: inputs.facts, pay: inputs.pay, opensAt: OPENS, closesAt: CLOSES,
+      facts: inputs.facts, pay: inputs.pay, asset: inputs.asset, opensAt: OPENS, closesAt: CLOSES,
       vault: MidnightCommitments.noVault(),
     });
 

@@ -160,6 +160,8 @@ describe('the circuits that read no witness', () => {
         setVaultThreshold: 'setVaultThreshold',
         closeExpiredRun: 'closeExpiredRun',
         sealPayKey: 'sealPayKey',
+        setPolicy: 'setPolicy',
+        clearRun: 'clearRun',
       });
   });
 

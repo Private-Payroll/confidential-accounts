@@ -38,7 +38,7 @@ import {
   Contract as Vault, ledger as vaultLedger, pureCircuits as vaultCircuits,
 } from '../managed-vault/contract/index.js';
 import { pureCircuits } from '../managed/contract/index.js';
-import { AccountSimulator, privateStateFor, change, type Change } from './simulator.js';
+import { AccountSimulator, privateStateFor, change, type Change, payoutTreeOf } from './simulator.js';
 import { buildPayoutTree, type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
 import { changeCoinOf, paidCoinTo } from '../../src/midnight/vault-coins.js';
 import {
@@ -229,9 +229,9 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
       details: toHex(vaultCircuits.payoutDetails(p.to, GBP, p.amount, bytes(0x40 + i))),
       nonce: toHex(bytes(p.nonce)),
     }));
-    const tree = buildPayoutTree(leaves);
+    const tree = payoutTreeOf(leaves);
     const payload = pureCircuits.runPayload(
-      fromHex(tree.root), tree.payees, WIN_FROM, WIN_UNTIL);
+      fromHex(tree.root), tree.payees, WIN_FROM, WIN_UNTIL, 0n);
     const vaultBytes = Uint8Array.from(Buffer.from(vaultAddr, 'hex'));
     await sim.as(carrying(sim, A, c)).proposeRun({
       root: fromHex(tree.root), payees: tree.payees,

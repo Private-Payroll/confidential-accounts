@@ -300,7 +300,7 @@ export function approvalsOnChain(
    *
    * **THE VAULT COMES FROM THE CALLER AND CANNOT COME FROM `status`.** The
    * chain's `openProposals` is id → change and holds no vault beside a round:
-   * the vault is committed INSIDE the id, and `recordPayment` is handed one and
+   * the vault is committed INSIDE the id, and `recordPaymentFromVault` is handed one and
    * recomputes the id to prove it (`:2706-2708`). A `vault` field on
    * `LedgerStatus.openProposals` would be this layer inventing a fact the chain
    * does not publish. The caller has it because the caller is the party that
@@ -1773,7 +1773,7 @@ export class AccountService {
    * here, and caught.**
    *
    * **THE ROW WOULD BE READ.** `thresholdFor` (`:1358-1360`) consults the map,
-   * `requireApprovedForVault` (`:1396`) calls it, and `recordPayment` reaches
+   * `requireApprovedForVault` (`:1396`) calls it, and `recordPaymentFromVault` reaches
    * that with a caller-chosen vault — so a seated `thresholds[noVault()]`
    * lowers the bar on the only write of `movements`. Governance is untouched:
    * `requireApproved` (`:1407-1411`) reads `threshold` and never goes through
@@ -2552,7 +2552,7 @@ export class AccountService {
      * never true**: `contracts/src/ConfidentialAccount.compact:2319` asserts
      * `vault == noVault()` on the branch this door raises, all six governance
      * consumers recompute with `noVault()`, and the only circuit that reads a
-     * vault's own threshold is `recordPayment`, which needs a run payload — so
+     * vault's own threshold is `recordPaymentFromVault`, which needs a run payload — so
      * such a round is raised, collects real approvals, and can be consumed by
      * nothing. Its tests were green because they ran on `SimulatedLedger`,
      * which had no such assert until one was added.
@@ -2574,7 +2574,7 @@ export class AccountService {
      * recompute that commitment at execute time, which is why the salt had to
      * be the proposer's; that reader is gone, and the salt is still the
      * proposer's because the PROPOSAL'S OWN ID is derived from it and every
-     * governance circuit and `recordPayment` recompute the id to prove they
+     * governance circuit and `recordPaymentFromVault` recompute the id to prove they
      * were handed the round the signers approved. Sealed rather than stored in
      * the clear because the amount is exactly what this product exists to hide.
      *
@@ -2700,10 +2700,10 @@ export class AccountService {
    *
    * **WHY `propose` ABOVE COULD NOT BE MADE TO DO THIS.** Its payload hash is
    * an APPLICATION digest — `commit(canonical({accountId, kind, sealedPayload,
-   * proposedBy}), '')`, thirty lines up — and `recordPayment` recomputes
-   * `proposalIdOf(runPayload(root, payees, opensAt, closesAt), forVault, salt)`
+   * proposedBy}), '')`, thirty lines up — and `recordPaymentFromVault` recomputes
+   * `proposalIdOf(runPayload(root, payees, opensAt, closesAt, required), forRun, salt)`
    * and matches only a `runPayload`
-   * (`contracts/src/ConfidentialAccount.compact:2606-2609`). The two can never
+   * (`contracts/src/ConfidentialAccount.compact`). The two can never
    * be equal, whatever `kind` says. **So a run raised through that door is
    * approved, paid for, and unpayable by any vault for ever**, and carries no
    * `runWindow` row so nothing can close it either. The fix is a door, not a
@@ -2759,6 +2759,13 @@ export class AccountService {
      * raised.
      */
     payments: ReadonlyArray<PaymentAsked>;
+    /**
+     * How many of the tree's payees this run is raised to pay, when that is
+     * fewer than the tree holds: a retry is raised over its leg's own tree and
+     * pays only the people it names. `payments` is those people's. Absent is
+     * every payee of the tree.
+     */
+    paying?: bigint;
     proposedBy: string;
     /** A round already written down for this run that may be on chain: raised again AS ITSELF. See `raiseRunAgain`. */
     again?: string;
@@ -2788,13 +2795,17 @@ export class AccountService {
     };
 
     const sealedPayload = seal(
-      canonical({ ...args.payload, __change: change }),
+      canonical({
+        ...args.payload, __change: change,
+        /* The approvals the run's total needs are inside its id; kept with it so the id can be rebuilt. */
+        ...(args.run.required ? { __required: args.run.required } : {}),
+      }),
       args.viewingKey,
     );
     /*
      * **THE PAYLOAD THE CHAIN COMMITS TO IS THE RUN'S, AND THE SEALED PAYLOAD
-     * IS NOT IN IT.** The four parts below are all the chain is given, and none
-     * of them names a payee: `root` is a merkle root over blinded leaves,
+     * IS NOT IN IT.** The parts below are all the chain is given, and none
+     * of them names a payee: `root` is a sum tree's root over blinded leaves,
      * `payees` is a count. What the company can read stays in `sealedPayload`,
      * which the chain never sees and which no longer contributes to the id.
      */
@@ -2809,11 +2820,11 @@ export class AccountService {
      * the hex string and accepts any width at all, which is what the product
      * actually runs. Either way the run is well-formed, approved, and carries a
      * root no payout tree produced, so every merkle path a vault presents fails
-     * at `recordPayment` after the signatures are in. The same species as a
+     * at `recordPaymentFromVault` after the signatures are in. The same species as a
      * malformed root, at a door no malformed-root check covers.
      *
-     * Sixty-four lower-case hex characters, which is what `toHex` emits and
-     * what `rootBytesOf` produces at the other end.
+     * Sixty-four lower-case hex characters, which is what `toHex` emits for
+     * the payout tree's root.
      */
     if (!/^[0-9a-f]{64}$/.test(args.run.root)) {
       throw new Error(
@@ -2908,7 +2919,7 @@ export class AccountService {
      * known. The id check runs INSIDE `raise`. */
     if (!verdict.blocked) {
       await this.raise(proposal, args.viewingKey, {
-        vault: args.run.vault, asset, total: change.amount, payees: args.run.payees,
+        vault: args.run.vault, asset, total: change.amount, payees: args.paying ?? args.run.payees,
         payments: args.payments,
       }, args.onDevice ? THE_DEVICE_SENDS : async () => {
         const raised = await this.ledger.proposeRun(
@@ -3858,7 +3869,7 @@ export class AccountService {
    *
    * WHAT REPLACES IT DOES NOT EXIST YET, and inventing it is not this file's
    * job. An approved run will be presented at a VAULT, which pays and calls
-   * `recordPayment` on this account; `PayrollService.settle` refuses in those
+   * `recordPaymentFromVault` on this account; `PayrollService.settle` refuses in those
    * words until that path is built. A proposal therefore reaches `approved` and
    * stops there.
    */
@@ -4020,7 +4031,7 @@ export class AccountService {
    * the two cannot drift into disagreeing about what a run IS.
    */
   private runPayloadOf(run: Omit<RunProposal, 'vault'>): Hex {
-    return this.commitments.runPayload(run.root, run.payees, run.opensAt, run.closesAt);
+    return this.commitments.runPayload(run.root, run.payees, run.opensAt, run.closesAt, run.required ?? 0n);
   }
 
   /** The run's identity on chain: its payload, its salt and its vault, folded. */
@@ -4061,9 +4072,10 @@ export class AccountService {
     /* `parseCanonical` and not `JSON.parse`, matching the `canonical` this
      * payload was written with: a plain parse hands back an object where the
      * change's amount belongs. */
-    const { __change: change } = parseCanonical<{ __change: StateChange }>(
-      unseal(proposal.sealedPayload, viewingKey));
-    return this.runChainIdOf({ ...material, vault: proposal.vault }, change.salt);
+    const { __change: change, __required: required } = parseCanonical<{
+      __change: StateChange; __required?: bigint;
+    }>(unseal(proposal.sealedPayload, viewingKey));
+    return this.runChainIdOf({ ...material, vault: proposal.vault, required: required ?? 0n }, change.salt);
   }
 
   /**
@@ -4794,7 +4806,7 @@ export class AccountService {
   private async raiseRunAgain(
     args: {
       accountId: string; viewingKey: Hex; run: RunProposal; asset?: AssetId; proposedBy: string;
-      payments: ReadonlyArray<PaymentAsked>;
+      payments: ReadonlyArray<PaymentAsked>; paying?: bigint;
       onDevice?: true;
     },
     earlierId: string,
@@ -4826,7 +4838,7 @@ export class AccountService {
     }
     const fresh = this.requireProposal(earlierId, args.viewingKey);
     await this.raise(fresh, args.viewingKey, {
-      vault: args.run.vault, asset: kept.asset, total: kept.amount, payees: args.run.payees,
+      vault: args.run.vault, asset: kept.asset, total: kept.amount, payees: args.paying ?? args.run.payees,
       payments: args.payments,
     }, args.onDevice ? THE_DEVICE_SENDS : async () => {
       const raised = await this.ledger.proposeRun(
@@ -4905,7 +4917,7 @@ export class ProposerRoleGone extends Error {
  * **`chainId` IS WHERE BOTH MISSING FACTS ALREADY LIVE, AND THEY WERE ALREADY
  * ON THIS RECORD.** It is `proposalIdOf(payloadHash, vault, salt)` — the
  * contract's own derivation (`contracts/src/ConfidentialAccount.compact:874-881`),
- * recomputed by `recordPayment` at `:2671-2675` and by every governance
+ * recomputed by `recordPaymentFromVault` at `:2671-2675` and by every governance
  * circuit. The salt is 32 fresh random bytes per propose call
  * (`newProposalSalt`, `src/core/crypto.ts:160-171`), so a re-raise is a
  * different id; the vault is folded in beside it, so another vault is a

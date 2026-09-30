@@ -389,7 +389,7 @@ async function main(): Promise<number> {
   const built = runOf(record, facts, await vaultDetailsOf(), ACCOUNT_ID);
   const vaultBytes = fromHex(vaultAddress as Hex);
   const proposalId = accountCircuits.proposalIdOf(
-    accountCircuits.runPayload(fromHex(built.run.tree.root), built.run.tree.payees, built.opensAt, built.closesAt),
+    accountCircuits.runPayload(fromHex(built.run.tree.root), built.run.tree.payees, built.opensAt, built.closesAt, 0n),
     vaultBytes, fromHex(record.salt));
   const movement = accountCircuits.paidMovementOf(fromHex(built.args.leaf));
   note(`the window: ${new Date(Number(built.opensAt) * 1000).toISOString()} to ${new Date(Number(built.closesAt) * 1000).toISOString()}`);

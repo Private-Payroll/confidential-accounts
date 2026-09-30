@@ -133,7 +133,7 @@ const seeded = await (async () => {
     const inputs = await payroll.runMaterialInputs(run.id, viewingKey);
     const now = Math.floor(Date.now() / 1000);
     const material = await runMaterialFor({
-      accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds, facts: inputs.facts, pay: inputs.pay,
+      accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds, facts: inputs.facts, pay: inputs.pay, asset: inputs.asset,
       opensAt: BigInt(now - 60), closesAt: BigInt(now + 3_600), vault: VAULT, detailsOf: vaultDetails,
     });
     const proposal = await payroll.proposeRun(run.id, viewingKey, created.secrets[0]!.signerId, material, undefined,

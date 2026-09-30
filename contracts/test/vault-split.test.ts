@@ -27,8 +27,8 @@ import {
   Contract as Vault, ledger as vaultLedger, pureCircuits as vaultCircuits,
 } from '../managed-vault/contract/index.js';
 import { pureCircuits } from '../managed/contract/index.js';
-import { AccountSimulator, privateStateFor, change, type Change } from './simulator.js';
-import { buildPayoutTree, type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
+import { AccountSimulator, privateStateFor, change, type Change, payoutTreeOf } from './simulator.js';
+import { type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
 import { toHex, fromHex } from '../../src/core/crypto.js';
 import { itPaysOutOfTodaysVault } from './until-the-vault-pays-with-a-receipt.js';
 
@@ -181,9 +181,9 @@ describe('a vault splits one of its own notes', () => {
       details: toHex(vaultCircuits.payoutDetails(ALICE, GBP, 250n, bytes(0x40))),
       nonce: toHex(bytes(0xc1)),
     }];
-    const tree = buildPayoutTree(leaves);
+    const tree = payoutTreeOf(leaves);
     const payload = pureCircuits.runPayload(
-      fromHex(tree.root), tree.payees, WIN_FROM, WIN_UNTIL);
+      fromHex(tree.root), tree.payees, WIN_FROM, WIN_UNTIL, 0n);
     await sim.as(carrying(sim, A, c)).proposeRun({
       root: fromHex(tree.root), payees: tree.payees,
       from: WIN_FROM, until: WIN_UNTIL, vault: vaultBytes() });

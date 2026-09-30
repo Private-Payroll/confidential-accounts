@@ -5,9 +5,8 @@ import { describe, it, expect } from 'vitest';
 import {
   isApproved, stillNeeded, describeApprovals, proposerReminder,
 } from '../../src/midnight/approvals.js';
-import { AccountSimulator, privateStateFor, change, type Change } from './simulator.js';
+import { AccountSimulator, privateStateFor, change, type Change, payoutTreeOf } from './simulator.js';
 import { pureCircuits } from '../managed/contract/index.js';
-import { buildPayoutTree } from '../../src/midnight/payout-tree.js';
 import { toHex, fromHex } from '../../src/core/crypto.js';
 
 const A = privateStateFor(1);
@@ -25,7 +24,7 @@ describe('a proposal is raised unapproved', () => {
      */
     const sim = await AccountSimulator.liveAccount([A, B], 2n);
     const c: Change = change(0n, 91);
-    const tree = buildPayoutTree([{ details: toHex(new Uint8Array(32).fill(3)), nonce: toHex(new Uint8Array(32).fill(4)) }]);
+    const tree = payoutTreeOf([{ details: toHex(new Uint8Array(32).fill(3)), nonce: toHex(new Uint8Array(32).fill(4)) }]);
     const from = 1_799_996_400n;
     const until = 1_800_003_600n;
 
@@ -33,7 +32,7 @@ describe('a proposal is raised unapproved', () => {
       root: fromHex(tree.root), payees: tree.payees, from, until, vault: PAYROLL,
     });
     const id = sim.proposalId(
-      pureCircuits.runPayload(fromHex(tree.root), tree.payees, from, until), c.salt, PAYROLL);
+      pureCircuits.runPayload(fromHex(tree.root), tree.payees, from, until, 0n), c.salt, PAYROLL);
 
     expect(sim.approvalsFor(id)).toBe(0n);
     await sim.as(carrying(sim, A, c)).approve(id);

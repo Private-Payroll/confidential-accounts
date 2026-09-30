@@ -3,9 +3,9 @@
  * AND AS THE DEVICE'S BUILDER READS THEM BACK.**
  *
  * Every value is a string: the chain's own 64-bit and 128-bit integers do not
- * survive JSON as numbers, and a payee's merkle path is the runtime's own aligned
- * value, byte string by byte string, so nothing on either side re-describes the
- * path's shape.
+ * survive JSON as numbers, and a payee's path in the run's sum tree travels as
+ * byte strings of fixed widths, three per level, read back into exactly the
+ * shape the account's circuit takes.
  *
  * **WHAT THIS CARRIES IS WHAT THE COMPANY ALREADY READS WITH ITS VIEWING KEY**:
  * who is paid, in what and how much, and the blinding, nonce and path each
@@ -15,9 +15,8 @@
  * approved payee and to nobody else. They are handed only to a signed-in member
  * of the company who presents its viewing key.
  */
-import { CompactTypeBytes, CompactTypeMerkleTreePath } from '@midnight-ntwrk/compact-runtime';
 import { fromHex, toHex, type Hex } from '../core/crypto.js';
-import { PAYOUT_TREE_DEPTH, type PaymentFacts, type PayrollRun } from './payout-tree.js';
+import { PAYOUT_TREE_DEPTH, type PaymentFacts, type PayrollRun, type SumStep } from './payout-tree.js';
 import type { RunWindow } from './run-status.js';
 
 /** One person's payment in an approved leg. */
@@ -38,7 +37,7 @@ export interface PrivatePaymentOnTheWire {
   readonly blinding: Hex;
   readonly nonce: Hex;
   readonly leaf: Hex;
-  /** Their merkle path, as the runtime's aligned value. */
+  /** Their path in the run's sum tree: per level, the sibling node, its sum and the side. */
   readonly path: readonly Hex[];
   /** Whether the account already records them paid; `null` when this deployment cannot say. */
   readonly paid: boolean | null;
@@ -59,21 +58,52 @@ export interface PrivatePaymentOrderOnTheWire {
   readonly payments: readonly PrivatePaymentOnTheWire[];
 }
 
-const pathType = new CompactTypeMerkleTreePath(PAYOUT_TREE_DEPTH, new CompactTypeBytes(32));
+/** The widths, in bytes, of one level's three values: the sibling node, its sum, and the side. */
+const WIDTHS = [32, 16, 1] as const;
 
-/** A payee's merkle path, as the payout tree hands it out, onto the wire. */
-export const pathToWire = (path: unknown): Hex[] =>
-  (pathType.toValue(path as never) as Uint8Array[]).map((b) => toHex(b));
+/** A non-negative integer as `width` little-endian bytes. */
+const intToHex = (n: bigint, width: number): Hex => {
+  const out = new Uint8Array(width);
+  let v = n;
+  for (let i = 0; i < width; i++) { out[i] = Number(v & 0xffn); v >>= 8n; }
+  if (v !== 0n || n < 0n) throw new Error(`a value on a payment's path does not fit ${width} bytes`);
+  return toHex(out);
+};
 
-/** A payee's merkle path back off the wire, in the shape the vault's circuit takes. Refuses anything but that shape. */
-export const pathFromWire = (hex: readonly string[]): unknown => {
+/** Little-endian bytes back to an integer. */
+const intOf = (bytes: Uint8Array): bigint => bytes.reduceRight((acc, b) => (acc << 8n) | BigInt(b), 0n);
+
+/** A payee's path, as the payout tree hands it out, onto the wire. */
+export const pathToWire = (path: readonly SumStep[]): Hex[] =>
+  path.flatMap((step) => [
+    intToHex(step.sibling, WIDTHS[0]), intToHex(step.siblingSum, WIDTHS[1]), step.goesLeft ? '01' : '00',
+  ]);
+
+/** A payee's path back off the wire, in the shape the account's circuit takes. Refuses anything but that shape. */
+export const pathFromWire = (hex: readonly string[]): SumStep[] => {
   if (!Array.isArray(hex) || hex.some((h) => typeof h !== 'string' || !/^(?:[0-9a-f]{2})*$/u.test(h))) {
-    throw new Error('this payment\'s merkle path is not a list of byte strings, so nothing was built.');
+    throw new Error('this payment\'s path is not a list of byte strings, so nothing was built.');
   }
-  const value = hex.map((h) => fromHex(h as Hex));
-  const path = pathType.fromValue(value);
-  if (value.length !== 0) {
-    throw new Error('this payment\'s merkle path carries more than one path, so nothing was built.');
+  const expected = PAYOUT_TREE_DEPTH * WIDTHS.length;
+  if (hex.length > expected) {
+    throw new Error('this payment\'s path carries more than one path, so nothing was built.');
+  }
+  if (hex.length < expected) {
+    throw new Error(`this payment's path has ${hex.length} values where a path has ${expected}, so nothing was built.`);
+  }
+  const path: SumStep[] = [];
+  for (let level = 0; level < PAYOUT_TREE_DEPTH; level++) {
+    const [node, sum, side] = WIDTHS.map((width, k) => {
+      const bytes = fromHex(hex[level * WIDTHS.length + k] as Hex);
+      if (bytes.length !== width) {
+        throw new Error(`level ${level} of this payment's path has a value of the wrong width, so nothing was built.`);
+      }
+      return bytes;
+    }) as [Uint8Array, Uint8Array, Uint8Array];
+    if (side[0] !== 0 && side[0] !== 1) {
+      throw new Error(`level ${level} of this payment's path names no side, so nothing was built.`);
+    }
+    path.push({ sibling: intOf(node), siblingSum: intOf(sum), goesLeft: side[0] === 1 });
   }
   return path;
 };
@@ -96,7 +126,7 @@ export function assemblePrivatePayments(input: {
     readonly asset: string; readonly vault: Hex; readonly proposal: Hex; readonly salt: Hex;
     readonly root: Hex; readonly payees: bigint; readonly opensAt: bigint; readonly closesAt: bigint;
   };
-  /** The leaves recorded when the leg was raised, in tree order. */
+  /** The leaves recorded when the leg was raised, in tree order. A retry is raised over the same tree. */
   readonly leaves: readonly Hex[];
   readonly window: RunWindow;
   /** The contract's own identity of a round over these leaves in this window. */
@@ -107,9 +137,9 @@ export function assemblePrivatePayments(input: {
   readonly paid: ReadonlySet<string> | null;
   /**
    * **FOR A RETRY: EACH PAYMENT'S POSITION IN THE LEG IT RETRIES**, in the
-   * retry's tree order, so every payment is reported against the person the
-   * leg numbers it as. Absent for a leg's own round, whose tree order is the
-   * leg's.
+   * order the retry named them, so every payment is reported against the person
+   * the leg numbers it as. A retry is raised over the leg's own tree and pays
+   * only these. Absent for a leg's own round, which pays every leaf.
    */
   readonly indices?: readonly number[];
 }): { readonly order: PrivatePaymentOrderOnTheWire } | { readonly refusal: string } {
@@ -119,10 +149,10 @@ export function assemblePrivatePayments(input: {
     && leaves.every((leaf, i) => leaf === input.leaves[i])
     && built.tree.root === order.root
     && built.tree.payees === order.payees
-    && input.facts.length === leaves.length
+    && input.facts.length === (input.indices?.length ?? leaves.length)
     && input.idFrom([...leaves], input.window) === order.proposal;
   const positions = input.indices;
-  if (!same || (positions !== undefined && positions.length !== leaves.length)) {
+  if (!same || (positions !== undefined && positions.length !== input.facts.length)) {
     return {
       refusal: 'the payments this run would make now are not the ones its signers approved, so nothing is '
         + 'offered to pay. Nothing was sent.',

@@ -203,7 +203,7 @@ export interface StateChange {
    * contract recomputed the change commitment at execute time and the two had
    * to agree; that reader is gone. It is still carried because it is the
    * PROPOSAL'S salt: `proposalIdOf(payloadHash, vault, salt)` is what every
-   * governance circuit and `recordPayment` recompute to prove they were handed
+   * governance circuit and `recordPaymentFromVault` recompute to prove they were handed
    * the proposal the signers approved, so a device without it cannot name the
    * round at all. It travels in the sealed payload, which is how every shared
    * secret moves here.
@@ -430,10 +430,10 @@ export interface LedgerStatus {
  * ANYTHING*.**
  *
  * The chain side is a straight line with no branches: `thresholds` is read in
- * exactly one place, `thresholdFor` (`compact:1358`); its one caller is
- * `requireApprovedForVault` (`:1384`); its one caller is `recordPayment`
- * (`:2697`) — **and `recordPayment` has no method on the `Ledger` interface at
- * all, WHICH IS DELIBERATE** (see below). Meanwhile `propose` asserts `vault ==
+ * exactly one place, `thresholdFor`; its callers are `requireApprovedForVault`,
+ * whose two callers are `recordPaymentFromVault` and `clearRun`, `propose`, which
+ * writes a run's hold, and `setPolicy`, which reads the bar for policy changes — **and `recordPaymentFromVault` has no method on the `Ledger`
+ * interface at all, WHICH IS DELIBERATE** (see below). Meanwhile `propose` asserts `vault ==
  * noVault()` (`:2319`): no governance round names one. **So the value is
  * durable, governed, publicly visible and inert.**
  *
@@ -447,11 +447,11 @@ export interface LedgerStatus {
  * into `status = 'approved'`.
  *
  * **THE SENTENCE THAT STOOD HERE WAS WRONG, AND THIS PARAGRAPH IS WHAT SETTLED
- * IT.** It said the question stays open and closes when `recordPayment` gains a
- * boundary method. It closed the other way. **`recordPayment` MUST NOT GAIN A
- * METHOD HERE:** its only callers are the VAULT on chain (`Vault.compact:597`,
- * `:770`), the client's door is `VaultLedger.payout`, and a method nothing
- * calls is a liability.
+ * IT.** It said the question stays open and closes when `recordPaymentFromVault` gains a
+ * boundary method. It closed the other way. **`recordPaymentFromVault` MUST NOT GAIN A
+ * METHOD HERE:** its only caller is to be the VAULT on chain (the vault contract
+ * still calls the step's older form until it is rebuilt), the client's door is
+ * `VaultLedger.payout`, and a method nothing calls is a liability.
  */
 export const thresholdFor = (status: LedgerStatus, vault: Hex): number => {
   const own = status.vaultThresholds.find(v => v.vault === vault);
@@ -600,7 +600,7 @@ export interface LedgerAddress {
  *
  * **`vault` IS REQUIRED AND IS NOT `noVault()`.** A run is FOR a vault: the
  * vault is folded inside the proposal's identity (`proposalIdOf`, `:874`) and
- * `recordPayment` is handed it and recomputes the id from it (`:2606-2609`).
+ * `recordPaymentFromVault` is handed it and recomputes the id from it.
  * An approval raised for one vault is not a rejected id at another, it is a
  * different id entirely, matching nothing.
  */
@@ -612,6 +612,13 @@ export interface RunProposal {
   opensAt: bigint;
   closesAt: bigint;
   vault: Hex;
+  /**
+   * The approvals the run's total needs under its vault's spending policy, bound
+   * into the payload so it cannot change after approval. Absent is zero: the
+   * vault's own bar and nothing more. A vault under a policy refuses to charge a
+   * run raised with fewer than its band needs.
+   */
+  required?: bigint;
 }
 
 /**
@@ -767,9 +774,9 @@ export interface Ledger {
    * APPLICATION digest (`commit(canonical({accountId, kind, sealedPayload,
    * proposedBy}), '')`, `src/core/account.ts:2252-2254`) and whose emitted
    * `isRun` is pinned `false` (`src/midnight/ledger.ts:1113-1117`).
-   * **`recordPayment` recomputes `proposalIdOf(runPayload(root, payees,
-   * opensAt, closesAt), forVault, salt)` and matches only a `runPayload`**
-   * (`compact:2606-2609`), so every payroll round the product raised was
+   * **`recordPaymentFromVault` recomputes `proposalIdOf(runPayload(root, payees,
+   * opensAt, closesAt, required), forRun, salt)` and matches only a `runPayload`**
+   * (in the contract), so every payroll round the product raised was
    * approved, paid for, and unpayable by any vault, for ever — and the
    * governance branch writes no `runWindow` row (`compact:2140-2156`), so
    * `closeExpiredRun` could not close it either.
@@ -1183,7 +1190,7 @@ interface SimAccount {
      *
      * On chain the vault is committed inside the proposal's id and is NOT a
      * field beside it — `openProposals` there is `Map<Bytes<32>, Bytes<32>>`,
-     * id to change, and `recordPayment` is HANDED the vault and recomputes the
+     * id to change, and `recordPaymentFromVault` is HANDED the vault and recomputes the
      * id from it (`:2706-2708`). So a caller proves which vault a round is for
      * by producing an id that matches; it cannot ask the chain.
      *
@@ -1235,7 +1242,7 @@ interface SimAccount {
    *
    * **NOTHING WRITES IT IN THIS SIMULATION.** `settleRound` was its only writer
    * and went with the balance ledger; on chain the writer is
-   * `recordPayment`, which this layer has no counterpart for. It is initialised
+   * `recordPaymentFromVault`, which this layer has no counterpart for. It is initialised
    * empty at `open` and stays empty, so nothing reading it is reading anything.
    */
   movements: Set<Hex>;
@@ -1526,7 +1533,7 @@ export class SimulatedLedger implements Ledger {
      * it stops: `payloadHash = runPayload(...)` plus a real vault through the
      * OPAQUE branch mints a BIT-IDENTICAL id to a run's — an `openProposals`
      * row, an `approvalCounts` row and **no `runWindow` row** — after which
-     * `recordPayment` pays it and `cancel` fails open, a missing window reading
+     * `recordPaymentFromVault` pays it and `cancel` fails open, a missing window reading
      * as no restriction. **On `SIMULATED` wiring this class IS the product's
      * enforcement (`src/wiring/selection.ts:144`), so until this line the
      * product had none.**
@@ -1583,13 +1590,13 @@ export class SimulatedLedger implements Ledger {
    *
    * **THE THREE THINGS THAT MAKE IT A RUN AND NOT A GOVERNANCE ROUND WITH A
    * DIFFERENT NAME**, each mirroring a line of that branch:
-   *   1. the payload is `runPayload(root, payees, opensAt, closesAt)` and not an
-   *      application digest, so the id is one `recordPayment` can recompute;
+   *   1. the payload is `runPayload(root, payees, opensAt, closesAt, required)` and not an
+   *      application digest, so the id is one `recordPaymentFromVault` can recompute;
    *   2. it writes `runWindows`, which `propose` above writes never;
    *   3. It REQUIRES a real vault; `propose` above refuses one.
    *
    * **WHAT THIS LAYER STILL CANNOT DO, WRITTEN DOWN RATHER THAN LEFT TO BE
-   * DISCOVERED:** there is no `recordPayment` here and no block time, so
+   * DISCOVERED:** there is no `recordPaymentFromVault` here and no block time, so
    * nothing consumes the window and nothing pays against the id. **A green run
    * through this class is evidence that the client builds the right id, and is
    * not evidence that a vault could spend it** — that is what `contracts/test/`
@@ -1632,7 +1639,7 @@ export class SimulatedLedger implements Ledger {
     /*
      * A RUN NAMES A VAULT, and `noVault()` is not one. The contract does not
      * assert this — its run branch takes the vault opaque — but a run raised at
-     * the no-vault sentinel is one `recordPayment` can never be handed, because
+     * the no-vault sentinel is one `recordPaymentFromVault` can never be handed, because
      * a vault presents ITSELF and recomputes the id from its own address
      * (`compact:2586-2609`). Refused here rather than approved and then
      * unpayable, which is the same failure shape one layer along.
@@ -1646,7 +1653,7 @@ export class SimulatedLedger implements Ledger {
     }
 
     const payloadHash = this.commitments.runPayload(
-      run.root, run.payees, run.opensAt, run.closesAt);
+      run.root, run.payees, run.opensAt, run.closesAt, run.required ?? 0n);
     const id = this.commitments.proposalId(payloadHash, change.salt, run.vault);
     if (a.openProposals.has(id)) throw new Error('that proposal is already open');
 
@@ -1995,11 +2002,11 @@ export class SimulatedLedger implements Ledger {
      * counterpart of the contract's `requireApproved`
      * (`contracts/src/ConfidentialAccount.compact:1407`), which reads
      * `threshold` directly with NO map lookup — and every governance circuit on
-     * chain lands there. Measured at source: `requireApproved` has six callers,
-     * `amendSigner` (`:1756`, `:1921`), `setThreshold` (`:2014`),
-     * `setVaultThreshold` (`:2775`), `adopt` (`:2810`) and `retireVault`
-     * (`:2869`); `requireApprovedForVault` (`:1384`) has exactly ONE,
-     * `recordPayment` (`:2697`).
+     * chain lands there. Read at source: every governance circuit calls
+     * `requireApproved`, among them `amendSigner`, `setThreshold`,
+     * `setVaultThreshold`, `adopt`, `retireVault` and `setPolicy`;
+     * `requireApprovedForVault` has two callers, `recordPaymentFromVault` and
+     * `clearRun`.
      *
      * **THIS READ A VAULT'S THRESHOLD UNTIL 4 Sep, AND THAT WAS THE WRONG ONE
      * OF THE CONTRACT'S TWO ENTRY POINTS.** The four callers below are all
@@ -2294,8 +2301,8 @@ export interface CommitmentScheme {
    *
    * **THE TWO SPELLINGS STAY APART AND MUST.** `MidnightCommitments.runPayload`
    * is one line calling `pureCircuits.runPayload`, so the client never derives
-   * the payload a second way — `recordPayment` recomputes it on every payment
-   * (`contracts/src/ConfidentialAccount.compact:2606-2609`) and a second
+   * the payload a second way — `recordPaymentFromVault` recomputes it on every payment
+   * (`contracts/src/ConfidentialAccount.compact`) and a second
    * derivation is a proposal id no payment can match, discovered after the
    * approvals were collected and the fees paid. `SimulatedCommitments` keeps
    * its own `sha256`, deliberately unequal, like `signerPublicKey` and the two
@@ -2303,7 +2310,7 @@ export interface CommitmentScheme {
    *
    * **SECONDS, NOT MILLISECONDS**, for the reason on `RunProposal`.
    */
-  runPayload(root: Hex, payees: bigint, opensAt: bigint, closesAt: bigint): Hex;
+  runPayload(root: Hex, payees: bigint, opensAt: bigint, closesAt: bigint, required?: bigint): Hex;
   proposalId(payloadHash: Hex, salt: Hex, vault?: Hex): Hex;
   /**
    * The two reserved sentinels.
@@ -2328,7 +2335,7 @@ export interface CommitmentScheme {
    * recorded as having happened are the same fact. THAT IS NO LONGER THE SHAPE.
    * The circuit that settled is deleted, and what the contract records as a
    * movement is `paidMovementOf(leaf)` (that circuit in
-   * `contracts/src/ConfidentialAccount.compact`, inserted by `recordPayment`,
+   * `contracts/src/ConfidentialAccount.compact`, inserted by `recordPaymentFromVault`,
    * its only writer), derived from the payee's leaf and not from this. Decision
    * 0004 still binds each of them separately: one derivation per fact, in one
    * place.
@@ -2480,9 +2487,9 @@ export const SimulatedCommitments: CommitmentScheme = {
    * would collapse two windows a second apart past 2^53 into one value, and two
    * runs with one id is the failure this whole derivation exists to prevent.
    */
-  runPayload(root, payees, opensAt, closesAt) {
+  runPayload(root, payees, opensAt, closesAt, required = 0n) {
     return toHex(sha256(utf8(
-      `midnight-accounts:run:${root}:${payees}:${opensAt}:${closesAt}`)));
+      `midnight-accounts:run:${root}:${payees}:${opensAt}:${closesAt}:${required}`)));
   },
   proposalId(payloadHash, salt, vault) {
     const v = vault ?? this.noVault(); // `this`, not the name.

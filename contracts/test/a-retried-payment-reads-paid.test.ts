@@ -81,7 +81,7 @@ describe('a payment made by a retry reads as paid on its payee\'s page', () => {
     const { run } = await payroll.createRunFromRoster(created.account.id, '2026-08', viewingKey);
     const inputs = await payroll.runMaterialInputs(run.id, viewingKey);
     const material = await runMaterialFor({
-      accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds, facts: inputs.facts, pay: inputs.pay,
+      accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds, facts: inputs.facts, pay: inputs.pay, asset: inputs.asset,
       opensAt: OPENS, closesAt: CLOSES, vault: toHex(PAYROLL_VAULT), detailsOf: vaultDetails,
     });
     const by = created.secrets[0]!.signerId;
@@ -101,13 +101,13 @@ describe('a payment made by a retry reads as paid on its payee\'s page', () => {
     const legId = fromHex(proposal.chainId);
     await sim.as(legDevice).approve(legId);
     const rebuild = (await payroll.payoutRebuildOf(run.id, viewingKey))!;
-    const whole = buildRun(rebuild.seeds, rebuild.identity, rebuild.facts, vaultDetails, rebuild.pay);
+    const whole = buildRun(rebuild.seeds, rebuild.identity, rebuild.facts, vaultDetails, rebuild.pay, rebuild.asset);
     const first = whole.payeeArgs(0);
     await sim.as(legDevice).recordPaymentFromVault({
       proposal: legId, vault: PAYROLL_VAULT, root: fromHex(material.run.root),
       payees: material.run.payees, from: OPENS, until: CLOSES,
       salt: fromHex(legChange.salt), details: fromHex(first.details),
-      nonce: fromHex(first.nonce), path: first.path,
+      nonce: fromHex(first.nonce), amount: first.amount, asset: fromHex(first.asset), path: first.path,
     });
 
     /* The leg's window closes with persons 1 and 2 unpaid; a retry over person 1 pays them. */
@@ -132,7 +132,7 @@ describe('a payment made by a retry reads as paid on its payee\'s page', () => {
       proposal: retryId, vault: PAYROLL_VAULT, root: fromHex(retry.run.root),
       payees: retry.run.payees, from: RETRY_OPENS, until: RETRY_CLOSES,
       salt: fromHex(retryChange.salt), details: fromHex(onlyOne.details),
-      nonce: fromHex(onlyOne.nonce), path: onlyOne.path,
+      nonce: fromHex(onlyOne.nonce), amount: onlyOne.amount, asset: fromHex(onlyOne.asset), path: onlyOne.path,
     });
 
     /* The account's completed payments, read off the contract's own state, relayed whole. */

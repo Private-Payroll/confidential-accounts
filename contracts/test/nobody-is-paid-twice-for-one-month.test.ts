@@ -16,10 +16,9 @@
  * refused".
  */
 import { describe, it, expect, beforeEach } from 'vitest';
-import { StateBoundedMerkleTree, CompactTypeBytes, CompactTypeMerkleTreePath } from '@midnight-ntwrk/compact-runtime';
-import { AccountSimulator, privateStateFor, change, type Change } from './simulator.js';
+import { AccountSimulator, privateStateFor, change, type Change, payoutTreeOf, rootOfTestLeaves, TEST_AMOUNT, GBP } from './simulator.js';
 import { pureCircuits } from '../managed/contract/index.js';
-import { rootOfLeaves, payoutLeafOf, buildPayoutTree, type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
+import { payoutLeafOf, sumTreeOfLeaves, type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
 import {
   payRecordNonceOf, sealPayKeyTo, openSealedPayKey, payKeyCommitmentOf, payKeyPayloadOf,
   type PayRecord,
@@ -61,8 +60,8 @@ const approvedRun = async (sim: AccountSimulator, vault: Uint8Array, payments: P
   await sim.adoptVault(vault, [A, B]);
   const c = change(0n, seed);
   const leaves = payments.map(payoutLeafOf);
-  const root = rootOfLeaves(leaves);
-  const payload = pureCircuits.runPayload(fromHex(root), BigInt(leaves.length), OPENS, CLOSES);
+  const root = rootOfTestLeaves(leaves);
+  const payload = pureCircuits.runPayload(fromHex(root), BigInt(leaves.length), OPENS, CLOSES, 0n);
   await sim.as(carrying(sim, A, c)).proposeRun({ root: fromHex(root), payees: BigInt(leaves.length), from: OPENS, until: CLOSES, vault });
   const id = sim.proposalId(payload, c.salt, vault);
   await sim.as(carrying(sim, A, c)).approve(id);
@@ -78,19 +77,14 @@ const pay = (sim: AccountSimulator, vault: Uint8Array, run: Awaited<ReturnType<t
   return sim.as(carrying(sim, A, run.c)).recordPaymentFromVault({
     proposal: run.id, vault, root: fromHex(run.root), payees: BigInt(run.leaves.length),
     from: OPENS, until: CLOSES, salt: run.c.salt,
-    details: fromHex(payments[i]!.details), nonce: fromHex(payments[i]!.nonce), path,
+    details: fromHex(payments[i]!.details), nonce: fromHex(payments[i]!.nonce),
+    amount: TEST_AMOUNT, asset: GBP, path,
   });
 };
 
-/* A membership path over raw leaves, from the runtime's own tree, for runs `buildPayoutTree` refuses. */
-const B32 = new CompactTypeBytes(32);
-const pathFor = (leaves: Hex[], i: number): unknown => {
-  let t = new StateBoundedMerkleTree(16);
-  leaves.forEach((l, j) => { t = t.update(BigInt(j), { value: B32.toValue(fromHex(l)), alignment: B32.alignment() }); });
-  const h = t.rehash();
-  const raw = h.pathForLeaf(BigInt(i), { value: B32.toValue(fromHex(leaves[i]!)), alignment: B32.alignment() });
-  return new CompactTypeMerkleTreePath(16, B32).fromValue(raw!.value);
-};
+/* A path over raw leaves, from the product's own sum tree, for runs `buildPayoutTree` refuses. */
+const pathFor = (leaves: Hex[], i: number) =>
+  sumTreeOfLeaves(leaves, leaves.map(() => TEST_AMOUNT), toHex(GBP)).pathFor(i);
 
 const paidOnce = (sim: AccountSimulator, r: PayRecord) =>
   sim.ledger.movements.member(pureCircuits.paidOnceOf(fromHex(nonceOf(r))));
@@ -304,9 +298,9 @@ describe('what the client refuses before anybody signs, and what the approving d
     const twice = [payment(SEPTEMBER, { amount: 5_000n }), payment(SEPTEMBER, { amount: 5_001n, blinding: 0x35 })];
     expect(payoutLeafOf(twice[0]!)).not.toBe(payoutLeafOf(twice[1]!));
     /* RED WHEN the tree builder compares only leaves: the run is approved and the second payee is refused on chain. */
-    expect(() => buildPayoutTree(twice)).toThrow(/payees 1 and 2 on this run are the same person, paid for the same month/);
+    expect(() => payoutTreeOf(twice)).toThrow(/payees 1 and 2 on this run are the same person, paid for the same month/);
     /* Its control: the same two at different occurrences build. */
-    expect(() => buildPayoutTree([twice[0]!, payment({ ...SEPTEMBER, occurrence: 1 }, { blinding: 0x35 })])).not.toThrow();
+    expect(() => payoutTreeOf([twice[0]!, payment({ ...SEPTEMBER, occurrence: 1 }, { blinding: 0x35 })])).not.toThrow();
   });
 
   it('THE DEVICE\'S CHECK: from one read of the account and the key, who is already recorded as paid for the month', async () => {

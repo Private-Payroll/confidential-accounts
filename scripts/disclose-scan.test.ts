@@ -307,7 +307,28 @@ describe('the real sources', () => {
     //     account receives. On a run that names a vault it must equal that vault,
     //     which the run's reads already publish; on a company-wide run it names
     //     the vault paying, which that vault's own call publishes anyway.
-    expect(sites(account)).toBe(96);
+    // AND 96 -> 129: SPENDING POLICIES, CHECKED ONCE PER RUN. Measured in the
+    // compiled contract's transcript by `a-vault-pays-within-its-spending-policy`,
+    // not argued from these sites:
+    //   `propose` `required`, x2: the approvals a run's total needs. Into the
+    //     run's payload, which is hashed under the salt, and into the hold, whose
+    //     bar is public: a run raised needing more than its vault's threshold
+    //     shows that number. Its approval count was public already.
+    //   `recordPaymentFromVault` `required`, x2, and the marker's key: the first
+    //     two only reach the id comparison and the approval comparison; the key
+    //     is a hash of the paying vault, which the call names anyway.
+    //   `setPolicy`, 6: the proposal it closes, the policy's key (a hash of the
+    //     vault and the token's BLINDED key, so it does not name the token), the
+    //     policy's commitment (hiding), and the marker's key (a hash of the vault).
+    //     The vault itself, the token and the terms are absent.
+    //   `clearRun`, 22: the run, its vault, its window (block-time checks, as the
+    //     payment step's), the policy's key, the period's key, the period's new
+    //     total as a commitment, the record that the run's tree was charged, and
+    //     the cleared mark. The period's key repeats within a period, so runs
+    //     of one vault and token in one period can be grouped; which vault is
+    //     already public, which token is not. The total, the root, the salt, the
+    //     token and the policy's terms are absent.
+    expect(sites(account)).toBe(129);
     expect(sites(vault)).toBe(48);
   });
 
@@ -320,14 +341,14 @@ describe('the real sources', () => {
     }
   });
 
-  it('`requireSigner` discloses the signer root, and NINE circuits inherit it', () => {
-    // A DISCLOSES column for any of those nine that omits it says the circuit
+  it('`requireSigner` discloses the signer root, and TEN circuits inherit it', () => {
+    // A DISCLOSES column for any of those ten that omits it says the circuit
     // reveals nothing when it reveals the root of the signer tree.
     const account = scanSourceFile(ROOT, 'contracts/src/ConfidentialAccount.compact');
     expect(own(account, 'requireSigner')).toHaveLength(1);
     const inheritors = account.filter((c) => c.exported && c.discloses.some((d) => d.via.includes('requireSigner')));
     expect(inheritors.map((c) => c.name).sort()).toEqual(
-      ['adopt', 'amendSigner', 'approve', 'cancel', 'propose', 'removeSignerAndSetThreshold', 'sealPayKey', 'setThreshold', 'setVaultThreshold'],
+      ['adopt', 'amendSigner', 'approve', 'cancel', 'propose', 'removeSignerAndSetThreshold', 'sealPayKey', 'setPolicy', 'setThreshold', 'setVaultThreshold'],
     );
   });
 

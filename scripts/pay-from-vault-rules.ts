@@ -443,9 +443,15 @@ export function runOf(
    * the same payment, and the account refuses it a second time.
    */
   const month = new Date(Number(record.opensAt) * 1000).toISOString().slice(0, 7);
+  if (record.asset === undefined) {
+    throw new Error(
+      'this payment record was written before records kept their currency, so it cannot be finished. ' +
+        'Nothing was proposed or paid. Once its payment window has closed, move it aside and run the door again.');
+  }
   const run = buildRun(
     [{ epoch: 0, seed: record.seed }], { accountId, runId: record.runId, epoch: 0 }, [facts], detailsOf,
-    { key: record.seed, records: [{ person: record.runId, month, kind: 'transfer', occurrence: 0 }] });
+    { key: record.seed, records: [{ person: record.runId, month, kind: 'transfer', occurrence: 0 }] },
+    record.asset);
   return { run, args: run.payeeArgs(0), opensAt: BigInt(record.opensAt), closesAt: BigInt(record.closesAt) };
 }
 

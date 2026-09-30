@@ -1,9 +1,10 @@
 /**
  * WHAT A PAYROLL RUN IS RAISED AGAINST, BUILT FROM THE COMPANY'S OWN RECORDS.
  *
- * A run reaches the chain as five values — a merkle root over blinded payee
- * leaves, how many leaves there are, the two ends of the window it may be paid
- * in, and the vault that will pay it. Until this file the product held none of
+ * A run reaches the chain as six values — the root of a sum tree over blinded
+ * payee leaves and their amounts, how many leaves there are, the two ends of the
+ * window it may be paid in, the approvals its total needs, and the vault that
+ * will pay it. Until this file the product held none of
  * them: the tree builder had no caller anywhere outside tests, so every propose
  * door refused, and it was right to.
  *
@@ -47,7 +48,7 @@
  * downstream is handed the number and looks it up by name.
  */
 import {
-  buildRun, buildRetryRun, rootOfLeaves, paidMovementOfLeaf, payoutLeafOf,
+  buildRun, buildRetryRun, rootOfPayments, paidMovementOfLeaf, payoutLeafOf,
   type PaymentFacts, type DetailsOfKind, type PayoutLeafInput,
 } from './payout-tree.js';
 import {
@@ -56,6 +57,7 @@ import {
 import { vaultDetailsOf } from './vault-details.js';
 import type { RunProposal } from '../core/ledger.js';
 import type { Hex } from '../core/crypto.js';
+import type { AssetId } from '../core/assets.js';
 
 declare const material: unique symbol;
 
@@ -128,9 +130,11 @@ export interface RunMaterial {
   /**
    * The payout tree's own root function, travelling with the material so that a
    * layer which cannot import it can still check that these leaves are the ones
-   * this root commits to. Never a second implementation of it.
+   * this root commits to. Never a second implementation of it. The payments'
+   * facts give each leaf's amount, and the leg's asset is the one the root
+   * commits to beside the tree.
    */
-  readonly rootOf: (leaves: Hex[]) => Hex;
+  readonly rootOf: (leaves: Hex[], facts: readonly PaymentFacts[], asset: AssetId) => Hex;
   /**
    * The contract's own `paidMovementOf`, travelling with the material for the
    * reason `rootOf` does: the layer that seals each payee's receipt may not
@@ -167,6 +171,8 @@ export const runMaterialFor = async (args: {
   seeds: PayoutSeed[];
   facts: PaymentFacts[];
   pay: PayRecords;
+  /** The leg's asset, which the run's root commits to and a spending policy is looked up by. */
+  asset: AssetId;
   opensAt: bigint;
   closesAt: bigint;
   vault: Hex;
@@ -207,7 +213,7 @@ export const runMaterialFor = async (args: {
   };
 
   const built = buildRun(
-    args.seeds, identity, args.facts, args.detailsOf ?? await vaultDetailsOf(), args.pay);
+    args.seeds, identity, args.facts, args.detailsOf ?? await vaultDetailsOf(), args.pay, args.asset);
 
   /*
    * **ALL THREE OFF THE SAME TREE, IN ONE EXPRESSION.** This is what the brand
@@ -227,7 +233,7 @@ export const runMaterialFor = async (args: {
     payments: built.payments,
     leafOf: payoutLeafOf,
     identity,
-    rootOf: rootOfLeaves,
+    rootOf: (leaves: Hex[], facts: readonly PaymentFacts[], asset: AssetId) => rootOfPayments(leaves, facts, asset),
     movementOf: paidMovementOfLeaf,
   } as RunMaterial;
 };
@@ -245,9 +251,13 @@ declare const retryMaterial: unique symbol;
  */
 export interface RetryMaterial {
   readonly [retryMaterial]: true;
-  /** The five values the chain is asked to open this attempt with. */
+  /**
+   * What the chain is asked to open this attempt with: the leg's own root and
+   * payee count, because an attempt is raised over the leg's own tree, and this
+   * attempt's window.
+   */
   readonly run: RunProposal;
-  /** This attempt's leaves, in its own tree order. Each is the leg's own leaf for that person. */
+  /** The leaves of the people this attempt pays, in the order they were named. Each is the leg's own leaf. */
   readonly leaves: Hex[];
   /** Which of the leg's people each position is, as positions in the leg's recorded leaves. */
   readonly originalIndices: number[];
@@ -256,7 +266,7 @@ export interface RetryMaterial {
    * in; the door that raises a retry refuses any but the leg's own.
    */
   readonly identity: RunIdentity;
-  readonly rootOf: (leaves: Hex[]) => Hex;
+  readonly rootOf: (leaves: Hex[], facts: readonly PaymentFacts[], asset: AssetId) => Hex;
   /** The contract's own `paidMovementOf`; `RunMaterial.movementOf` says why it is carried. */
   readonly movementOf: (leaf: Hex) => Hex;
 }
@@ -290,6 +300,8 @@ export const retryMaterialFor = async (args: {
     facts: PaymentFacts[];
     seeds: PayoutSeed[];
     pay: PayRecords;
+    /** The leg's asset, which its root commits to. */
+    asset: AssetId;
   };
   indices: number[];
   opensAt: bigint;
@@ -299,7 +311,7 @@ export const retryMaterialFor = async (args: {
 }): Promise<RetryMaterial> => {
   const whole = buildRun(
     args.rebuild.seeds, args.rebuild.identity, args.rebuild.facts,
-    args.detailsOf ?? await vaultDetailsOf(), args.rebuild.pay);
+    args.detailsOf ?? await vaultDetailsOf(), args.rebuild.pay, args.rebuild.asset);
   const retry = buildRetryRun(whole, args.indices);
   return {
     run: {
@@ -309,10 +321,10 @@ export const retryMaterialFor = async (args: {
       closesAt: args.closesAt,
       vault: args.vault,
     },
-    leaves: retry.tree.leaves,
+    leaves: retry.originalIndices.map((i) => retry.tree.leaves[i]!),
     originalIndices: retry.originalIndices,
     identity: retry.identity,
-    rootOf: rootOfLeaves,
+    rootOf: (leaves: Hex[], facts: readonly PaymentFacts[], asset: AssetId) => rootOfPayments(leaves, facts, asset),
     movementOf: paidMovementOfLeaf,
   } as RetryMaterial;
 };

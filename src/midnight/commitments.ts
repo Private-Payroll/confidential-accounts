@@ -214,8 +214,8 @@ export const MidnightCommitments: CommitmentScheme = {
    * the contract asserts with. Milliseconds here would build a run whose window
    * opens in the year 56000.
    */
-  runPayload(root: Hex, payees: bigint, opensAt: bigint, closesAt: bigint): Hex {
-    return toHex(pureCircuits.runPayload(fromHex(root), payees, opensAt, closesAt));
+  runPayload(root: Hex, payees: bigint, opensAt: bigint, closesAt: bigint, required = 0n): Hex {
+    return toHex(pureCircuits.runPayload(fromHex(root), payees, opensAt, closesAt, required));
   },
 
   proposalId(payloadHash: Hex, salt: Hex, vault?: Hex): Hex {

@@ -10,24 +10,28 @@
  * This file builds that tree on the client, because the chain never holds it:
  * only the root travels, inside a commitment.
  *
- * WHY IT USES THE RUNTIME'S OWN TREE AND NOT A HASH FUNCTION OF OURS. The
- * contract checks membership with `merkleTreePathRoot`, which hashes the way
- * the on-chain runtime hashes. A tree built here with sha256, or with the same
- * algorithm written twice, would produce roots the contract rejects — and it
- * would do so at payment time, after the approvals were collected and the fees
- * paid. So the tree is `StateBoundedMerkleTree`, the runtime's own, driven
- * exactly as the generated contract code drives the account's signer tree.
+ * A SUM TREE, SO THE ROOT BINDS WHAT THE RUN PAYS IN TOTAL. Every leaf node
+ * hashes a payee's leaf with the amount it pays; every inner node hashes both
+ * children AND both children's sums; the root hashes the top node, the run's
+ * total and the one asset it pays in. Because each sum is inside the node
+ * above it, the amounts any set of payments can prove against a root add up to
+ * at most the total that root names. A tree that hashed only each node's
+ * combined sum would bind nothing: a payment's sibling sum would be whatever
+ * the payer said it was.
  *
- * DEPTH 16 — 65,536 payees in one run. Measured rather than picked: depth 10
- * costs 4,682 bytes of zkir and depth 20 costs 6,883, so a thousand-fold higher
- * ceiling is 47% of a small circuit and the tree is never stored on chain. See
- * V-42.
+ * WHY IT CALLS THE CONTRACT'S OWN NODE CIRCUITS AND NOT A HASH FUNCTION OF
+ * OURS. The account walks a payment's path with `sumPathRoot`, and a tree
+ * built here any other way would produce roots the contract rejects - at
+ * payment time, after the approvals were collected and the fees paid. So every
+ * node is `sumLeafNode`, `sumInnerNode` or `sumRootOf`, called through
+ * `pureCircuits`.
+ *
+ * DEPTH 16 - 65,536 payees in one run. A subtree with no payees in it is the
+ * node 0 with the sum 0, which no payment can open.
  */
-import {
-  StateBoundedMerkleTree, CompactTypeBytes, CompactTypeMerkleTreePath,
-} from '@midnight-ntwrk/compact-runtime';
 import { pureCircuits } from '../../contracts/managed/contract/index.js';
 import { toHex, fromHex, type Hex } from '../core/crypto.js';
+import { assetIdHex, type AssetId } from '../core/assets.js';
 import {
   recipientOf, type Payee, type PayeeAddress, type PayeeKind,
 } from './payee-address.js';
@@ -38,68 +42,14 @@ import {
 /** The depth the contract is compiled for. Changing one without the other is a payroll that cannot settle. */
 export const PAYOUT_TREE_DEPTH = 16;
 
-const BYTES32 = new CompactTypeBytes(32);
-const aligned = (b: Uint8Array) => ({ value: BYTES32.toValue(b), alignment: BYTES32.alignment() });
-
-/** What the contract takes, and what the chain stores. `Bytes<32>`, always. */
-const ROOT_WIDTH = 32;
+/** The largest amount a sum in the tree may reach: the contract casts every sum to 128 bits. */
+const MAX_SUM = (1n << 128n) - 1n;
 
 /** The element at `i`, or a refusal naming what was missing. Every index here was checked before it is read. */
 const at = <T>(xs: readonly T[], i: number, what: string): T => {
   const x = xs[i];
   if (x === undefined) throw new Error(`there is no ${what} at position ${i}`);
   return x;
-};
-
-/**
- * THE ROOT AS THIRTY-TWO BYTES, AND IT IS NOT ALWAYS THIRTY-TWO WITHOUT THIS.
- *
- *
- * `rehash().root()` hands back a FIELD ELEMENT, and the runtime encodes one
- * MINIMALLY: a root whose top byte is zero arrives thirty-one bytes long, about
- * one run in 256. `toHex` then gives sixty-two characters and `fromHex` gives
- * the circuit thirty-one bytes where it declared thirty-two.
- *
- * **A SHORT ROOT FAILS LOUDLY AT EVERY DOOR, AND `C369`'S ROW SAID OTHERWISE.**
- * The row and this round's brief both describe a QUIET half in which a
- * thirty-one-byte root reaches `recordPayment`'s
- * `merkleTreePathRoot(path) == root` and is read as *"that payee is not in the
- * approved run"*. **It cannot.** Every generated binding checks the length
- * before the circuit runs — `recordPayment`'s at
- * `contracts/managed/contract/index.js:610`, `runPayload`'s beside it — so the
- * run cannot be raised, and could not be claimed if it somehow were. Nobody has
- * signed anything and no money is at risk.
- *
- * **THE SILENT FAILURE IS THE OBVIOUS-LOOKING FIX, AND THAT IS WHY THE END IS
- * WRITTEN DOWN HERE.** A root padded at the FRONT is thirty-two bytes: every
- * binding accepts it, `proposeRun` writes it, the signers approve it — and then
- * **every `recordPayment` is refused as "that payee is not in the approved
- * run", after the approvals were collected and the fees paid.** The encoding is
- * little-endian, so the byte a minimal encoding drops is the LAST one.
- * **Measured rather than reasoned: `S41` padded the same root at each end and
- * watched the contract accept the back-padded one and refuse the front-padded
- * one.** `payout-runs.test.ts` pins that against the contract rather than
- * against this comment.
- *
- * **ONE HELPER AND NOT TWO FIXES**, for the reason that outlives the defect:
- * `rootOfLeaves` and `buildPayoutTree` must agree about a root byte for byte or
- * `V-72`'s status view proves nothing. Two independent fixes are `M-104`, in a
- * file that had just demonstrated it.
- *
- * It pads to width rather than by one, because two top zero bytes is the same
- * defect at one run in 65,536, and it REFUSES anything wider instead of
- * truncating: a root the runtime made longer than the circuit takes is not
- * something to quietly cut down to size.
- */
-const rootBytesOf = (root: { value: readonly Uint8Array[] }): Uint8Array => {
-  const encoded = new Uint8Array(at(root.value, 0, 'root value'));
-  if (encoded.length > ROOT_WIDTH) {
-    throw new Error(
-      `the payout tree hashed to ${encoded.length} bytes; a run's root is ${ROOT_WIDTH}`);
-  }
-  const padded = new Uint8Array(ROOT_WIDTH);
-  padded.set(encoded);
-  return padded;
 };
 
 /** One payment, as the run commits to it. */
@@ -125,7 +75,7 @@ export interface PayoutLeafInput {
    * payment hashes.
    *
    * Recording a payment takes the leaf's preimage - these details and this
-   * nonce - beside the run's salt and the payee's merkle path. `recordPayment`
+   * nonce - beside the run's salt and the payee's path. `recordPaymentFromVault`
    * cannot see who calls it, so whoever knows all four can record that payment
    * as made without making it. None of those four is published by a payment: the
    * vault hands them to the account inside a call whose arguments travel under
@@ -146,21 +96,30 @@ export interface PayoutLeafInput {
   nonce: Hex;
 }
 
+/** One level of a payee's path, in the shape the contract's `SumStep` takes. */
+export interface SumStep {
+  sibling: bigint;
+  siblingSum: bigint;
+  goesLeft: boolean;
+}
+
 export interface PayoutTree {
-  /** What the signers approve, and what the contract checks membership against. */
+  /** What the signers approve: it commits the tree, the total and the asset. */
   root: Hex;
   /** How many payees. Bound into the proposal's payload beside the root. */
   payees: bigint;
   /** Leaf hashes, in tree order. */
   leaves: Hex[];
-  /**
-   * The membership proof for one payee, in the shape the circuit takes.
-   *
-   * `unknown` rather than a named type on purpose: the shape is the generated
-   * contract's `MerkleTreePath<16, Bytes<32>>`, and naming it here would be a
-   * second declaration of a type the compiler already owns.
-   */
-  pathFor(index: number): unknown;
+  /** What each leaf pays, in tree order. */
+  amounts: bigint[];
+  /** The asset the run pays in, as the account names it: what its root commits to. */
+  asset: Hex;
+  /** The sum of `amounts`: what the root binds the run to pay at most. */
+  total: bigint;
+  /** The top node, which the root hashes beside the total and the token. */
+  top: bigint;
+  /** One payee's path, from their leaf node up to the top. */
+  pathFor(index: number): SumStep[];
   /** Where a payee sits, by leaf. */
   indexOf(leaf: Hex): number;
 }
@@ -193,41 +152,117 @@ export const paidOnceOfNonce = (nonce: Hex): Hex =>
 export const paidMovementOfLeaf = (leaf: Hex): Hex =>
   toHex(pureCircuits.paidMovementOf(fromHex(leaf)));
 
+/** A node of the sum tree and the sum of the amounts under it. */
+interface SumNode { node: bigint; sum: bigint }
+
+/** The node standing for a subtree with no payees in it. */
+const EMPTY: SumNode = { node: 0n, sum: 0n };
+
 /**
- * Builds the run's tree.
- *
- * Order matters and is the caller's): a payee's index is where their leaf sits,
- * and the path proves membership at that position. Two runs with the same
- * people in a different order are different roots, which is correct — they are
- * different runs.
+ * Every level of a sum tree over these leaves and amounts, leaves first and the
+ * top last. Only nodes with a payee under them are held; the rest are `EMPTY`.
  */
+const levelsOf = (leaves: Hex[], amounts: bigint[]): SumNode[][] => {
+  if (leaves.length === 0) throw new Error('a payroll run needs at least one payee');
+  if (leaves.length > 2 ** PAYOUT_TREE_DEPTH) {
+    throw new Error(
+      `a run holds at most ${2 ** PAYOUT_TREE_DEPTH} payees; this one has ${leaves.length}`);
+  }
+  if (amounts.length !== leaves.length) {
+    throw new Error(
+      `this run has ${leaves.length} payees and ${amounts.length} amounts; every payee is paid one amount`);
+  }
+  amounts.forEach((a, i) => {
+    if (a < 0n || a > MAX_SUM) throw new Error(`payee ${i + 1}'s amount is outside what a run can carry`);
+  });
+  const levels: SumNode[][] = [leaves.map((leaf, i) => ({
+    node: pureCircuits.sumLeafNode(fromHex(leaf), at(amounts, i, 'amount')),
+    sum: at(amounts, i, 'amount'),
+  }))];
+  for (let d = 0; d < PAYOUT_TREE_DEPTH; d++) {
+    const below = at(levels, d, 'level');
+    const above: SumNode[] = [];
+    for (let j = 0; j < below.length; j += 2) {
+      const left = at(below, j, 'node');
+      const right = below[j + 1] ?? EMPTY;
+      const sum = left.sum + right.sum;
+      /* Refused here as the contract refuses it: a sum past 128 bits cannot be cast back. */
+      if (sum > MAX_SUM) throw new Error('this run pays more in total than a run can carry');
+      above.push({ node: pureCircuits.sumInnerNode(left.node, left.sum, right.node, right.sum), sum });
+    }
+    levels.push(above);
+  }
+  return levels;
+};
+
 /**
- * The root of a set of LEAF VALUES. V-72.
+ * The root of a set of LEAF VALUES at their amounts, in one token.
  *
  * `buildPayoutTree` starts from the payments; this starts from the hashes,
- * because that is all a reporting view ever holds — the leaves are not secret
+ * because that is all a reporting view ever holds - the leaves are not secret
  * and travel with the run, while the details and nonces behind them do not.
  *
  * What it is for: rebuilding a run's proposal id from the leaves in hand, so a
  * status view can prove it is describing the run it thinks it is rather than a
  * stale payroll with the same number of people in it.
  */
-export const rootOfLeaves = (leaves: Hex[]): Hex => {
-  if (leaves.length === 0) throw new Error('a payroll run needs at least one payee');
-  if (leaves.length > 2 ** PAYOUT_TREE_DEPTH) {
-    throw new Error(`a run holds at most ${2 ** PAYOUT_TREE_DEPTH} payees`);
-  }
-  let tree = new StateBoundedMerkleTree(PAYOUT_TREE_DEPTH);
-  leaves.forEach((leaf, i) => { tree = tree.update(BigInt(i), aligned(fromHex(leaf))); });
-  const root = tree.rehash().root();
-  if (!root) throw new Error('the payout tree did not hash');
-  return toHex(rootBytesOf(root));
+export const rootOfLeaves = (leaves: Hex[], amounts: bigint[], asset: Hex): Hex =>
+  sumTreeOfLeaves(leaves, amounts, asset).root;
+
+/**
+ * The sum tree over these leaf values at these amounts in one asset: its root,
+ * total and top node, and each position's path. It refuses nothing about the
+ * leaves themselves; `buildPayoutTree` is the door that does.
+ */
+export const sumTreeOfLeaves = (
+  leaves: Hex[], amounts: bigint[], asset: Hex,
+): Pick<PayoutTree, 'root' | 'total' | 'top' | 'pathFor'> => {
+  const levels = levelsOf(leaves, amounts);
+  const top = at(at(levels, PAYOUT_TREE_DEPTH, 'level'), 0, 'top');
+  return {
+    root: toHex(pureCircuits.sumRootOf(top.node, top.sum, fromHex(asset))),
+    total: top.sum,
+    top: top.node,
+    pathFor: (index) => {
+      at(leaves, index, 'payee');
+      const path: SumStep[] = [];
+      for (let d = 0; d < PAYOUT_TREE_DEPTH; d++) {
+        const here = index >> d;
+        const sibling = at(levels, d, 'level')[here ^ 1] ?? EMPTY;
+        path.push({ sibling: sibling.node, siblingSum: sibling.sum, goesLeft: (here & 1) === 0 });
+      }
+      return path;
+    },
+  };
 };
 
-export const buildPayoutTree = (payments: PayoutLeafInput[]): PayoutTree => {
+/**
+ * THE ASSET A RUN'S ROOT COMMITS TO, AS THE ACCOUNT NAMES IT: the asset's code,
+ * padded, which is what the account's asset key and a proposal's change are
+ * made from, and so what a spending policy is looked up by. Not a ledger token:
+ * one asset can be paid in two forms, each its own token, in one run.
+ */
+export const runAssetOf = (asset: AssetId): Hex => assetIdHex(asset) as Hex;
+
+/**
+ * The root of a run's leaves at the amounts its payments name, in the run's
+ * asset: `rootOfLeaves` over what a run's records already hold.
+ */
+export const rootOfPayments = (leaves: Hex[], facts: readonly { amount: bigint }[], asset: AssetId): Hex =>
+  rootOfLeaves(leaves, facts.map((f) => f.amount), runAssetOf(asset));
+
+/**
+ * Builds the run's tree.
+ *
+ * Order matters and is the caller's: a payee's index is where their leaf sits,
+ * and the path proves membership at that position. Two runs with the same
+ * people in a different order are different roots, which is correct - they are
+ * different runs.
+ */
+export const buildPayoutTree = (payments: PayoutLeafInput[], amounts: bigint[], asset: Hex): PayoutTree => {
   if (payments.length === 0) {
     /*
-     * Refused here AND on chain — `proposeRun` asserts the same thing. A run
+     * Refused here AND on chain - `propose` asserts the same thing. A run
      * with no payees would collect approvals, cost a fee and settle nothing.
      * Two guards rather than one because this one gives a person a sentence and
      * that one gives an attacker nothing.
@@ -242,10 +277,10 @@ export const buildPayoutTree = (payments: PayoutLeafInput[]): PayoutTree => {
   const leaves = payments.map(payoutLeafOf);
 
   /*
-   * TWO PAYEES WITH THE SAME LEAF IS ONE PAYEE WHO NEVER GETS PAID. B10.
+   * TWO PAYEES WITH THE SAME LEAF IS ONE PAYEE WHO NEVER GETS PAID.
    *
    * A leaf is the payment's details hashed with that payee's nonce, so two
-   * identical leaves mean somebody reused a nonce — or, more likely, generated
+   * identical leaves mean somebody reused a nonce - or, more likely, generated
    * one from something that is not unique. The account refuses the second claim
    * as a replay, because from where it stands the two ARE the same payment.
    *
@@ -285,32 +320,14 @@ export const buildPayoutTree = (payments: PayoutLeafInput[]): PayoutTree => {
     nonces.set(key, i);
   });
 
-  let tree = new StateBoundedMerkleTree(PAYOUT_TREE_DEPTH);
-  leaves.forEach((leaf, i) => { tree = tree.update(BigInt(i), aligned(fromHex(leaf))); });
-  const hashed = tree.rehash();
-
-  const rootValue = hashed.root();
-  if (!rootValue) throw new Error('the payout tree did not hash');
-
-  /*
-   * The root arrives as a field element wrapped in a digest, which is why the
-   * contract casts it before comparing — and why it needs padding to the width
-   * the circuit declares. One helper, used here and by `rootOfLeaves`.
-   */
-  const rootBytes = rootBytesOf(rootValue);
-
-  const pathType = new CompactTypeMerkleTreePath(PAYOUT_TREE_DEPTH, BYTES32);
-
+  const tree = sumTreeOfLeaves(leaves, amounts, asset);
   return {
-    root: toHex(rootBytes),
+    ...tree,
     payees: BigInt(payments.length),
     leaves,
+    amounts: [...amounts],
+    asset,
     indexOf: (leaf) => leaves.indexOf(leaf),
-    pathFor: (index) => {
-      const raw = hashed.pathForLeaf(BigInt(index), aligned(fromHex(at(leaves, index, 'payee'))));
-      if (!raw) throw new Error(`no path for payee ${index}`);
-      return pathType.fromValue(raw.value);
-    },
   };
 };
 
@@ -375,7 +392,9 @@ export interface PayeeArgs extends PaymentFacts {
   nonce: Hex;
   details: Hex;
   leaf: Hex;
-  path: unknown;
+  path: SumStep[];
+  /** The run's asset as the account names it, which its root commits to. Not the ledger token. */
+  asset: Hex;
 }
 
 export interface PayrollRun {
@@ -454,8 +473,10 @@ const assemble = (
       blinding: at(secrets, index, 'payee').blinding,
       nonce: at(secrets, index, 'payee').nonce,
       details: at(payments, index, 'payee').details,
-      leaf: at(tree.leaves, index, 'payee'),
-      path: tree.pathFor(index),
+      /* The tree's own position for this payee: a retry pays over the run's own tree. */
+      leaf: at(tree.leaves, at(originalIndices, index, 'payee'), 'payee'),
+      path: tree.pathFor(at(originalIndices, index, 'payee')),
+      asset: tree.asset,
     };
   },
 });
@@ -499,6 +520,8 @@ export const buildRun = (
    * in the same order.
    */
   pay: PayRecords,
+  /** The asset the run pays in, as the account names it. Every payment is a form of it. */
+  asset: AssetId,
 ): PayrollRun => {
   if (pay.records.length !== facts.length) {
     throw new Error(
@@ -522,8 +545,8 @@ export const buildRun = (
   }));
 
   return assemble(
-    buildPayoutTree(payments), identity, facts, pay.records, secrets, payments,
-    facts.map((_, i) => i));
+    buildPayoutTree(payments, facts.map((f) => f.amount), runAssetOf(asset)),
+    identity, facts, pay.records, secrets, payments, facts.map((_, i) => i));
 };
 
 /**
@@ -541,6 +564,13 @@ export const buildRun = (
  *
  * It also means a retry can be approved and submitted while the original run is
  * still open, which is what lets a run's window be days rather than minutes.
+ *
+ * **AND IT IS RAISED OVER THE ORIGINAL RUN'S OWN TREE**, the same root, total
+ * and payee count, paying only the people named here. A spending policy charges
+ * a run's total to its period once per tree, so a retry over the same tree in
+ * the same period is not charged a second time; a retry over a smaller tree of
+ * its own would be. The people the original run already paid cannot be paid
+ * again through it: the account refuses a leaf it has recorded.
  *
  * The indices are the ORIGINAL run's — `stillToPay(runStatus(...))` returns
  * exactly this list, read from the chain rather than from anyone's memory, so a
@@ -560,7 +590,7 @@ export const buildRetryRun = (original: PayrollRun, indices: number[]): PayrollR
 
   const payments = indices.map((i) => at(original.payments, i, 'payee'));
   return assemble(
-    buildPayoutTree(payments),
+    original.tree,
     original.identity,
     indices.map((i) => at(original.facts, i, 'payee')),
     indices.map((i) => at(original.records, i, 'payee')),

@@ -73,8 +73,11 @@
 import type {
   Ledger, LedgerAddress, LedgerRecord, TxRef, ProofSystem, Circuit,
   StateChange, LedgerStatus, SignerRef, AccountOpening,
-  SealedStateAt, PaymentsAmong,
+  SealedStateAt, PaymentsAmong, RunProposal,
 } from '../core/ledger.js';
+import type { AssetId } from '../core/assets.js';
+import type { AccountPrivateState } from '../../contracts/src/witnesses.js';
+import { periodWindowOf, type PolicyOpening } from './spending-policy.js';
 import { viewDigestOf } from '../core/ledger.js';
 import { assetIdBytes, NO_ASSET } from '../core/assets.js';
 import { MidnightCommitments } from './commitments.js';
@@ -134,7 +137,10 @@ export type PreparedStep =
    * the proposal's identity, so a wrong value does not fail loudly — it
    * produces an id no payment can ever match.
    */
-  | { kind: 'proposeRun'; root: Hex; payees: bigint; opensAt: bigint; closesAt: bigint; vault: Hex; change: StateChange }
+  | {
+    kind: 'proposeRun'; root: Hex; payees: bigint; opensAt: bigint; closesAt: bigint; vault: Hex;
+    required?: bigint; change: StateChange;
+  }
   /**
    * Sweeping a run whose window has closed. V-67.
    *
@@ -152,7 +158,24 @@ export type PreparedStep =
    * approved. Every later copy names the commitment already there, and the
    * proposal is not read.
    */
-  | { kind: 'sealPayKey'; wrap: Hex[]; commitment: Hex; proposalId: Hex | null };
+  | { kind: 'sealPayKey'; wrap: Hex[]; commitment: Hex; proposalId: Hex | null }
+  /**
+   * **ONE VAULT'S SPENDING POLICY FOR ONE TOKEN, SET UNDER AN APPROVED ROUND.**
+   * The chain derives where the policy sits from the vault and the token's
+   * blinded key, so `asset` is staged as the token the policy is for, beside the
+   * salt the proposal was raised with.
+   */
+  | { kind: 'setPolicy'; vault: Hex; asset: AssetId; commitment: Hex; proposalId: Hex }
+  /**
+   * **AN APPROVED RUN CHARGED TO ITS VAULT'S PERIOD, ONCE, INSIDE ITS WINDOW.**
+   * Everything that identifies the run is an argument; the policy's opening,
+   * the token and what the period has already been charged are staged on the
+   * device and never leave it.
+   */
+  | {
+    kind: 'clearRun'; proposalId: Hex; run: RunProposal; salt: Hex; asset: AssetId;
+    top: bigint; total: bigint; period: bigint; policy: PolicyOpening; spent: bigint;
+  };
 
 /**
  * A circuit call, checked and staged, not yet built.
@@ -447,6 +470,8 @@ export const CIRCUIT_FOR_STEP: Record<PreparedStep['kind'], string> = {
   setVaultThreshold: 'setVaultThreshold',
   closeExpiredRun: 'closeExpiredRun',
   sealPayKey: 'sealPayKey',
+  setPolicy: 'setPolicy',
+  clearRun: 'clearRun',
 };
 
 export class MidnightLedger implements Ledger {
@@ -1140,7 +1165,7 @@ export class MidnightLedger implements Ledger {
    */
   async proposeRun(
     accountId: string,
-    run: { root: Hex; payees: bigint; opensAt: bigint; closesAt: bigint; vault: Hex },
+    run: { root: Hex; payees: bigint; opensAt: bigint; closesAt: bigint; vault: Hex; required?: bigint },
     change: StateChange,
     by: SignerRef,
   ): Promise<TxRef & { proposalId: Hex }> {
@@ -1172,7 +1197,7 @@ export class MidnightLedger implements Ledger {
     const result = await this.buildCall(call.address, call.circuit, call.args, call.privateStateId);
 
     const payloadHash = MidnightCommitments.runPayload(
-      run.root, run.payees, run.opensAt, run.closesAt);
+      run.root, run.payees, run.opensAt, run.closesAt, run.required ?? 0n);
     const id = MidnightCommitments.proposalId(payloadHash, change.salt, run.vault);
 
     const after = await this.readContractState(call.address);
@@ -1220,7 +1245,7 @@ export class MidnightLedger implements Ledger {
    */
   async raiseAndApproveRun(
     accountId: string,
-    run: { root: Hex; payees: bigint; opensAt: bigint; closesAt: bigint; vault: Hex },
+    run: { root: Hex; payees: bigint; opensAt: bigint; closesAt: bigint; vault: Hex; required?: bigint },
     change: StateChange,
     by: SignerRef,
   ): Promise<{ proposalId: Hex; raised: TxRef; approved: TxRef | null; approvalError?: string }> {
@@ -1355,6 +1380,41 @@ export class MidnightLedger implements Ledger {
     const call = await this.prepare(accountId, { kind: 'sealPayKey', wrap, commitment, proposalId });
     return this.txRef(await this.buildCall(call.address, call.circuit, call.args, call.privateStateId), by);
   }
+  /**
+   * **SETS ONE VAULT'S SPENDING POLICY FOR ONE TOKEN**, under a governance round
+   * over `setPolicyPayloadOf(vault, asset key, commitment)` that is approved at
+   * the higher of the account's bar and the bar the company set for policy
+   * changes. From then on the vault pays only runs charged to its periods, and
+   * refuses a token it has no policy for.
+   */
+  async setPolicy(
+    accountId: string, vault: Hex, asset: AssetId, commitment: Hex, proposalId: Hex, by: SignerRef,
+  ): Promise<TxRef> {
+    const call = await this.prepare(accountId, { kind: 'setPolicy', vault, asset, commitment, proposalId });
+    return this.txRef(await this.buildCall(call.address, call.circuit, call.args, call.privateStateId), by);
+  }
+
+  /**
+   * **CHARGES AN APPROVED RUN TO ITS VAULT'S PERIOD**, once, inside its window.
+   * `tree` is the run's own payout tree, whose total and top node the root
+   * commits to; `spent` is what the period has been charged already, which the
+   * account's stored total must open to.
+   */
+  async clearRun(
+    accountId: string,
+    args: {
+      proposalId: Hex; run: RunProposal; salt: Hex; asset: AssetId;
+      tree: { top: bigint; total: bigint }; period: bigint; policy: PolicyOpening; spent: bigint;
+    },
+    by: SignerRef,
+  ): Promise<TxRef> {
+    const call = await this.prepare(accountId, {
+      kind: 'clearRun', proposalId: args.proposalId, run: args.run, salt: args.salt, asset: args.asset,
+      top: args.tree.top, total: args.tree.total, period: args.period, policy: args.policy, spent: args.spent,
+    });
+    return this.txRef(await this.buildCall(call.address, call.circuit, call.args, call.privateStateId), by);
+  }
+
 
   /**
    * **THE ACCOUNT'S COMMITMENT TO ITS PAY-RECORD KEY**, or null when none has
@@ -1523,7 +1583,7 @@ export class MidnightLedger implements Ledger {
         return {
           address, privateStateId, circuit,
           args: [
-            fromHex(step.payloadHash), fromHex(ZERO_32), 0n, 0n, 0n, false, fromHex(step.vault),
+            fromHex(step.payloadHash), fromHex(ZERO_32), 0n, 0n, 0n, 0n, false, fromHex(step.vault),
           ],
         };
       }
@@ -1567,8 +1627,8 @@ export class MidnightLedger implements Ledger {
         return {
           address, privateStateId, circuit,
           args: [
-            fromHex(ZERO_32), fromHex(step.root), step.payees, step.opensAt, step.closesAt, true,
-            fromHex(step.vault),
+            fromHex(ZERO_32), fromHex(step.root), step.payees, step.opensAt, step.closesAt,
+            step.required ?? 0n, true, fromHex(step.vault),
           ],
         };
       }
@@ -1749,6 +1809,39 @@ export class MidnightLedger implements Ledger {
           address, privateStateId, circuit,
           args: [
             fromHex(step.vault), BigInt(step.newThreshold), fromHex(step.proposalId),
+          ],
+        };
+      }
+
+      case 'setPolicy': {
+        await this.requireApproved(address, step.proposalId, "set this vault's spending policy");
+        if (step.vault === MidnightCommitments.noVault()) throw new Error('a spending policy is set on a vault');
+        await this.stageFor(accountId, { assetId: assetIdBytes(step.asset) });
+        return {
+          address, privateStateId, circuit,
+          args: [fromHex(step.vault), fromHex(step.commitment), fromHex(step.proposalId)],
+        };
+      }
+
+      case 'clearRun': {
+        const window = periodWindowOf(step.policy, step.period);
+        if (step.run.opensAt < window.from || step.run.closesAt > window.until) {
+          const day = (t: bigint) => new Date(Number(t) * 1000).toISOString().slice(0, 10);
+          throw new Error(
+            `this run's window, ${day(step.run.opensAt)} to ${day(step.run.closesAt)}, does not lie inside ` +
+              `the period ${day(window.from)} to ${day(window.until)} of its vault's policy, so it cannot be ` +
+              'charged to it. Charge it to the period its window lies in; if its window crosses two periods, ' +
+              'raise the run again inside one.');
+        }
+        await this.stageFor(accountId, {
+          assetId: assetIdBytes(step.asset), policy: step.policy, periodSpent: step.spent,
+        });
+        return {
+          address, privateStateId, circuit,
+          args: [
+            fromHex(step.proposalId), fromHex(step.run.vault), fromHex(step.run.root), step.run.payees,
+            step.run.opensAt, step.run.closesAt, step.run.required ?? 0n, fromHex(step.salt),
+            step.top, step.total, step.period,
           ],
         };
       }
@@ -2148,6 +2241,20 @@ export class MidnightLedger implements Ledger {
       changeBatchDigest: fromHex(change.batchDigest),
       proposalSalt: fromHex(change.salt),
     });
+  }
+
+  /**
+   * Writes the named values into this account's private state on this device,
+   * beside what is already there, for a call whose witnesses read them.
+   */
+  private async stageFor(accountId: string, values: Partial<AccountPrivateState>): Promise<void> {
+    const providers = await this.providers();
+    const address = await this.requireDeployed(accountId);
+    providers.privateStateProvider.setContractAddress(address);
+    const key = privateStateKey(this.cfg.privateStateId, accountId);
+    const existing = await providers.privateStateProvider.get(key);
+    if (!existing) throw new Error(missingPrivateState(accountId, address));
+    await providers.privateStateProvider.set(key, { ...existing, ...values });
   }
 
   /**

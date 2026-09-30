@@ -437,6 +437,15 @@ export function assetIdBytes(code: AssetId): Uint8Array {
   return out;
 }
 
+/**
+ * The account's name for an asset, as hex: what a payroll run's root commits to
+ * beside its total, and so what a vault's spending policy is looked up by. The
+ * same bytes as `assetIdBytes`, never a ledger token.
+ */
+export function assetIdHex(code: AssetId): string {
+  return Array.from(assetIdBytes(code), (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 /* ------------------------------------------------------------------ *
  * the token a payment moves on the ledger
  * ------------------------------------------------------------------ */

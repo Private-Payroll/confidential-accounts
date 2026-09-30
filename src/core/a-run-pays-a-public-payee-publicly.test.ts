@@ -86,7 +86,7 @@ const aCompany = async (opts: { held?: Record<LedgerForm, bigint>; nightBothWays
   const materialFor = async (p: PayrollService, runId: string, asset?: string, detailsOf: DetailsOfKind = vaultDetails) => {
     const i = await p.runMaterialInputs(runId, viewingKey, asset as never);
     return runMaterialFor({
-      accountId: i.accountId, runId: i.runId, seeds: i.seeds, facts: i.facts, pay: i.pay,
+      accountId: i.accountId, runId: i.runId, seeds: i.seeds, facts: i.facts, pay: i.pay, asset: i.asset,
       opensAt: OPENS, closesAt: CLOSES, vault: VAULT, detailsOf,
       ...(i.epoch !== undefined ? { epoch: i.epoch } : {}),
     });

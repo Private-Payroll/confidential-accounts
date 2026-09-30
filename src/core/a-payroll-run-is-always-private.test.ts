@@ -675,7 +675,7 @@ describe('the door, the refusal, and the record', () => {
     const seeds: PayoutSeed[] = [{ epoch: 0, seed: '77'.repeat(32) }];
     const identity: RunIdentity = { accountId: 'acct_1', runId: 'run_s12', epoch: 0 };
 
-    const run = buildRun(seeds, identity, facts, vaultDetails, payFor(facts));
+    const run = buildRun(seeds, identity, facts, vaultDetails, payFor(facts), 'GBP');
     const args = run.payeeArgs(0);
 
     expect(recipientOf(args.payee)).toBe(bytes);
@@ -720,7 +720,7 @@ describe('the door, the refusal, and the record', () => {
     const run = buildRun(
       [{ epoch: 0, seed: '77'.repeat(32) }],
       { accountId: t.accountId, runId: t.id, epoch: 0 },
-      [facts], vaultDetails, payFor([facts]));
+      [facts], vaultDetails, payFor([facts]), 'GBP');
     expect(run.facts).toHaveLength(1);
     expect(run.payeeArgs(0).payee.kind).toBe('unshielded');
   });

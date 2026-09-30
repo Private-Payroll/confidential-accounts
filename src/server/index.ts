@@ -51,7 +51,7 @@ import {
   SEND_IS_NOT_WHAT_WAS_CHECKED, paymentChecked, paymentsCheckedDigest, paymentsOnTheWire, reloadThePage,
 } from '../core/device-raise.js';
 import { runPayments } from '../midnight/run-status.js';
-import { buildRun, buildRetryRun, rootOfLeaves } from '../midnight/payout-tree.js';
+import { buildRun, buildRetryRun, rootOfPayments } from '../midnight/payout-tree.js';
 import { vaultDetailsOf } from '../midnight/vault-details.js';
 import { assemblePrivatePayments } from '../midnight/private-payment-wire.js';
 import { runMaterialFor, retryMaterialFor } from '../midnight/run-material.js';
@@ -1554,6 +1554,7 @@ app.post('/api/runs/:id/propose', authed, ownsRun, wrap(async (req, res) => {
     seeds: inputs.seeds,
     facts: inputs.facts,
     pay: inputs.pay,
+    asset: inputs.asset,
     opensAt: BigInt(b.opensAt),
     closesAt: BigInt(b.closesAt),
     vault: b.vault,
@@ -1597,6 +1598,7 @@ const raiseOrderOnTheWire = (o: Awaited<ReturnType<typeof payroll.raiseOrderOf>>
     run: {
       root: o.run.root, payees: o.run.payees.toString(), opensAt: o.run.opensAt.toString(),
       closesAt: o.run.closesAt.toString(), vault: o.run.vault,
+      ...(o.run.required ? { required: o.run.required.toString() } : {}),
     },
     half: o.half,
     proposal: o.chainId,
@@ -1899,7 +1901,7 @@ app.post('/api/runs/:id/payments', authed, ownsRun, wrap(async (req, res) => {
   }).parse(req.body ?? {});
   const run = payroll.requireRun(String(req.params.id), b.viewingKey);
   /*
-   * **`rootOfLeaves` IS PASSED IN, WHICH IS WHAT MAKES THE ANSWER VERIFIED.**
+   * **`rootOfPayments` IS PASSED IN, WHICH IS WHAT MAKES THE ANSWER VERIFIED.**
    * The view rebuilds this leg's proposal id from the leaves in hand and
    * refuses to report on them if it does not match the payroll run they are filed
    * under. Without it every answer this route can produce carries a disclaimer
@@ -1907,7 +1909,7 @@ app.post('/api/runs/:id/payments', authed, ownsRun, wrap(async (req, res) => {
    * which is how the one genuine case is missed later.
    */
   const material = payroll.payoutMaterialOf(
-    run.id, b.viewingKey, { asset: b.asset, rootOf: rootOfLeaves });
+    run.id, b.viewingKey, { asset: b.asset, rootOf: rootOfPayments });
   const among = material ? await ledger.paidAmong(run.accountId, material.leaves) : null;
   res.json(runPayments(material, among));
 }));
@@ -1939,7 +1941,7 @@ app.post('/api/runs/:id/private-payments', authed, ownsRun, wrap(async (req, res
   }).parse(req.body ?? {});
   const run = payroll.requireRun(String(req.params.id), b.viewingKey);
   if (b.proposalId !== undefined) {
-    const retry = payroll.retryPaymentOrderOf(run.id, b.viewingKey as Hex, b.proposalId, b.asset, rootOfLeaves);
+    const retry = payroll.retryPaymentOrderOf(run.id, b.viewingKey as Hex, b.proposalId, b.asset, rootOfPayments);
     const rebuilt = await payroll.payoutRebuildOf(run.id, b.viewingKey, b.asset);
     if (retry === null || rebuilt === null) {
       res.status(409).json({
@@ -1949,7 +1951,7 @@ app.post('/api/runs/:id/private-payments', authed, ownsRun, wrap(async (req, res
       });
       return;
     }
-    const whole = buildRun(rebuilt.seeds, rebuilt.identity, rebuilt.facts, await vaultDetailsOf(), rebuilt.pay);
+    const whole = buildRun(rebuilt.seeds, rebuilt.identity, rebuilt.facts, await vaultDetailsOf(), rebuilt.pay, rebuilt.asset);
     const paidAmongThem = await ledger.paidAmong(run.accountId, retry.leaves);
     const assembledRetry = assemblePrivatePayments({
       order: retry.order, leaves: retry.leaves, window: retry.window, idFrom: retry.idFrom,
@@ -1964,7 +1966,7 @@ app.post('/api/runs/:id/private-payments', authed, ownsRun, wrap(async (req, res
     return;
   }
   const order = payroll.privatePaymentOrderOf(run.id, b.viewingKey, b.asset);
-  const material = payroll.payoutMaterialOf(run.id, b.viewingKey, { asset: b.asset, rootOf: rootOfLeaves });
+  const material = payroll.payoutMaterialOf(run.id, b.viewingKey, { asset: b.asset, rootOf: rootOfPayments });
   const rebuild = await payroll.payoutRebuildOf(run.id, b.viewingKey, b.asset);
   if (order === null || material === null || rebuild === null || material.proposal === undefined) {
     res.status(409).json({
@@ -1973,7 +1975,7 @@ app.post('/api/runs/:id/private-payments', authed, ownsRun, wrap(async (req, res
     });
     return;
   }
-  const built = buildRun(rebuild.seeds, rebuild.identity, rebuild.facts, await vaultDetailsOf(), rebuild.pay);
+  const built = buildRun(rebuild.seeds, rebuild.identity, rebuild.facts, await vaultDetailsOf(), rebuild.pay, rebuild.asset);
   const among = await ledger.paidAmong(run.accountId, material.leaves);
   const assembled = assemblePrivatePayments({
     order, leaves: material.leaves, window: material.window, idFrom: material.proposal.idFrom,

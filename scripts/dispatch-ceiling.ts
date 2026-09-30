@@ -39,8 +39,9 @@
  *     the runtime does not override it.
  *  5. `midnight-node` `pallets/midnight/src/lib.rs:618` prices a transaction
  *     by scaling the largest of the ledger's five normalised dimensions
- *     (`midnight-node@d9729c13`, `ledger/src/versions/common/mod.rs:1165`, a
- *     `max`; that file is the node's own ledger bridge, not `midnight-ledger`) by
+ *     (`ledger/src/versions/common/mod.rs:1361-1374`, `scale_normalized_cost`,
+ *     a `max`, called at `:922`; `ledger/src/ledger_9/mod.rs:1489` in the newer
+ *     node; that file is the node's own ledger bridge, not `midnight-ledger`) by
  *     `BlockWeights::get().max_block.ref_time()` — the WHOLE block. So a
  *     transaction's weight fraction IS its worst dimension's fraction of that
  *     dimension's ledger limit, and the per-extrinsic weight budget maps back
@@ -198,7 +199,7 @@ export const printDerivation = (line: (s?: string) => void, bytesWrittenLimit: n
   line('                                              pallets/midnight/src/lib.rs:633-638, :108');
   line(`    room for the ledger cost = 0.75 − 0.10 − 0.0000540785 − 0.01 = ${extrinsicFraction().toFixed(10)} of the block`);
   line('    one transaction is priced by its WORST dimension scaled to the whole');
-  line('    block — pallets/midnight/src/lib.rs:618, ledger common/mod.rs:1165 —');
+  line('    block — pallets/midnight/src/lib.rs:618, ledger common/mod.rs:1361-1374 —');
   line('    so the same fraction applies to each ledger dimension.');
   line(`    bytesWritten ${lim.toLocaleString()}: the CLASS may write ${classCeiling(lim).toLocaleString()} a block (75%);`);
   line(`    ONE EXTRINSIC may write ${extrinsicCeiling(lim).toLocaleString()} (~64%). The second decides a deploy.`);

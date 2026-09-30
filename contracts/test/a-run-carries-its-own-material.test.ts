@@ -24,7 +24,7 @@ import { AccountService } from '../../src/core/account.js';
 import { PayrollService } from '../../src/core/payroll.js';
 import { SimulatedLedger, SimulatedProofSystem } from '../../src/core/ledger.js';
 import { MidnightCommitments } from '../../src/midnight/commitments.js';
-import { buildRun, rootOfLeaves } from '../../src/midnight/payout-tree.js';
+import { buildRun, rootOfPayments } from '../../src/midnight/payout-tree.js';
 import { runMaterialFor } from '../../src/midnight/run-material.js';
 import { currentPayoutSeed } from '../../src/midnight/run-keys.js';
 import { runPayments } from '../../src/midnight/run-status.js';
@@ -78,7 +78,7 @@ async function raise(
     accountId: inputs.accountId,
     runId: inputs.runId,
     seeds: inputs.seeds,
-    facts: inputs.facts, pay: inputs.pay,
+    facts: inputs.facts, pay: inputs.pay, asset: inputs.asset,
     opensAt: opts.opensAt ?? OPENS,
     closesAt: opts.closesAt ?? CLOSES,
     vault: opts.vault ?? PAYROLL_VAULT,
@@ -119,7 +119,7 @@ describe('a run carries what it takes to rebuild it', () => {
       const stored = rebuild.identity;
 
       /* THE RIGHT WAY: the generation the run recorded. */
-      const rebuilt = buildRun(rebuild.seeds, stored, rebuild.facts, vaultDetails, rebuild.pay);
+      const rebuilt = buildRun(rebuild.seeds, stored, rebuild.facts, vaultDetails, rebuild.pay, rebuild.asset);
       expect(rebuilt.tree.root).toBe(material.run.root);
       expect(rebuilt.tree.leaves).toEqual(material.leaves);
 
@@ -129,7 +129,7 @@ describe('a run carries what it takes to rebuild it', () => {
         rebuild.seeds,
         { ...stored, epoch: currentPayoutSeed(rebuild.seeds).epoch },
         rebuild.facts,
-        vaultDetails, rebuild.pay,
+        vaultDetails, rebuild.pay, 'GBP',
       );
       expect(currentPayoutSeed(rebuild.seeds).epoch).not.toBe(stored.epoch);
       expect(fromCurrent.tree.root).not.toBe(material.run.root);
@@ -172,9 +172,9 @@ describe('a run carries what it takes to rebuild it', () => {
      * nonce is PUBLISHED by the payment that spends it.
      */
     const gbpSecrets = buildRun(
-      gbpRebuild.seeds, gbpRebuild.identity, gbpRebuild.facts, vaultDetails, gbpRebuild.pay).payeeArgs(0);
+      gbpRebuild.seeds, gbpRebuild.identity, gbpRebuild.facts, vaultDetails, gbpRebuild.pay, 'GBP').payeeArgs(0);
     const usdcSecrets = buildRun(
-      usdcRebuild.seeds, usdcRebuild.identity, usdcRebuild.facts, vaultDetails, usdcRebuild.pay).payeeArgs(0);
+      usdcRebuild.seeds, usdcRebuild.identity, usdcRebuild.facts, vaultDetails, usdcRebuild.pay, 'GBP').payeeArgs(0);
     expect(gbpSecrets.nonce).not.toBe(usdcSecrets.nonce);
     expect(gbpSecrets.blinding).not.toBe(usdcSecrets.blinding);
 
@@ -283,7 +283,7 @@ describe('a run carries what it takes to rebuild it', () => {
     const a = await aPayroll([{ asset: 'GBP', amount: 100_00n }]);
     await raise(a.payroll, a.run.id, a.created.viewingKey, a.created.secrets[0]!.signerId);
     const mine = a.payroll.payoutMaterialOf(
-      a.run.id, a.created.viewingKey, { rootOf: rootOfLeaves })!;
+      a.run.id, a.created.viewingKey, { rootOf: rootOfPayments })!;
 
     /* Answered, and PROVED against the payroll run it is filed under. */
     const answer = runPayments(mine, { known: true, paid: [] });
@@ -294,7 +294,7 @@ describe('a run carries what it takes to rebuild it', () => {
     const b = await aPayroll([{ asset: 'GBP', amount: 100_00n }]);
     await raise(b.payroll, b.run.id, b.created.viewingKey, b.created.secrets[0]!.signerId);
     const theirs = b.payroll.payoutMaterialOf(
-      b.run.id, b.created.viewingKey, { rootOf: rootOfLeaves })!;
+      b.run.id, b.created.viewingKey, { rootOf: rootOfPayments })!;
 
     expect(theirs.leaves).not.toEqual(mine.leaves);
     /* **AT `runPayments`, THE DOOR THE PRODUCT ACTUALLY CALLS**, and not only at
@@ -331,7 +331,7 @@ describe('a run carries what it takes to rebuild it', () => {
 
     /* ...and the approved leg rebuilds to the same root regardless. */
     const rebuild = (await payroll.payoutRebuildOf(run.id, vk))!;
-    const rebuilt = buildRun(rebuild.seeds, rebuild.identity, rebuild.facts, vaultDetails, rebuild.pay);
+    const rebuilt = buildRun(rebuild.seeds, rebuild.identity, rebuild.facts, vaultDetails, rebuild.pay, rebuild.asset);
     expect(rebuilt.tree.root).toBe(material.run.root);
     expect(rebuilt.tree.leaves).toEqual(material.leaves);
   });
@@ -391,7 +391,7 @@ describe('a run carries what it takes to rebuild it', () => {
     const inputs = await payroll.runMaterialInputs(run.id, created.viewingKey);
     const honest = await runMaterialFor({
       accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds,
-      facts: inputs.facts, pay: inputs.pay, opensAt: OPENS, closesAt: CLOSES, vault: PAYROLL_VAULT,
+      facts: inputs.facts, pay: inputs.pay, asset: inputs.asset, opensAt: OPENS, closesAt: CLOSES, vault: PAYROLL_VAULT,
     });
 
     const withNoLeaves = { ...honest, leaves: [] } as unknown as typeof honest;
@@ -464,12 +464,12 @@ describe('a run carries what it takes to rebuild it', () => {
     /* The salt is the one the run's identity was folded with: the id rebuilds from it and nothing else. */
     expect(order.salt).toBe(accounts.runSaltOf(proposal.id, vk));
     expect(MidnightCommitments.proposalId(
-      MidnightCommitments.runPayload(order.root, order.payees, order.opensAt, order.closesAt), order.salt, order.vault))
+      MidnightCommitments.runPayload(order.root, order.payees, order.opensAt, order.closesAt, 0n), order.salt, order.vault))
       .toBe(proposal.chainId);
 
-    const inputs = payroll.payoutMaterialOf(run.id, vk, { rootOf: rootOfLeaves })!;
+    const inputs = payroll.payoutMaterialOf(run.id, vk, { rootOf: rootOfPayments })!;
     const rebuild = (await payroll.payoutRebuildOf(run.id, vk))!;
-    const built = buildRun(rebuild.seeds, rebuild.identity, rebuild.facts, vaultDetails, rebuild.pay);
+    const built = buildRun(rebuild.seeds, rebuild.identity, rebuild.facts, vaultDetails, rebuild.pay, rebuild.asset);
     const assembled = assemblePrivatePayments({
       order, leaves: inputs.leaves, window: inputs.window, idFrom: inputs.proposal!.idFrom,
       built, facts: rebuild.facts, paid: new Set(),
@@ -482,7 +482,7 @@ describe('a run carries what it takes to rebuild it', () => {
 
     /* A rebuild from another generation of the seed is not the approved round, and is refused. */
     const other = buildRun([{ epoch: rebuild.identity.epoch, seed: toHex(new Uint8Array(32).fill(7)) }],
-      rebuild.identity, rebuild.facts, vaultDetails, rebuild.pay);
+      rebuild.identity, rebuild.facts, vaultDetails, rebuild.pay, rebuild.asset);
     expect(assemblePrivatePayments({
       order, leaves: inputs.leaves, window: inputs.window, idFrom: inputs.proposal!.idFrom,
       built: other, facts: rebuild.facts, paid: new Set(),

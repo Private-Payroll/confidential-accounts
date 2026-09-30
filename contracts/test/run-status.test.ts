@@ -11,11 +11,9 @@
  * what happened before the crash.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
-import { AccountSimulator, privateStateFor, change, type Change } from './simulator.js';
+import { AccountSimulator, privateStateFor, change, type Change, payoutTreeOf, rootOfTestLeaves, sumArgsOf } from './simulator.js';
 import { pureCircuits } from '../managed/contract/index.js';
-import {
-  buildPayoutTree, rootOfLeaves, type PayoutLeafInput,
-} from '../../src/midnight/payout-tree.js';
+import { buildPayoutTree, type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
 import {
   runStatus, stillToPay, describeRun, runPayments,
   type PayeeAttempts, type RunPayments,
@@ -63,7 +61,7 @@ describe('a run reports its progress from the chain', () => {
   const idFrom = (leaves: string[], window: { from: bigint; until: bigint }) => {
     return toHex(sim.proposalId(
       pureCircuits.runPayload(
-        fromHex(rootOfLeaves(leaves)), BigInt(leaves.length), window.from, window.until),
+        fromHex(rootOfTestLeaves(leaves)), BigInt(leaves.length), window.from, window.until, 0n),
       c.salt, PAYROLL));
   };
 
@@ -107,7 +105,7 @@ describe('a run reports its progress from the chain', () => {
     proposal: id, vault: PAYROLL, root: fromHex(tree.root), payees: tree.payees,
     from: OPENS, until: CLOSES,
     salt: c.salt, details: fromHex(payments[i].details),
-    nonce: fromHex(payments[i].nonce), path: tree.pathFor(i),
+    nonce: fromHex(payments[i].nonce), ...sumArgsOf(tree, i),
   });
 
   beforeEach(async () => {
@@ -116,8 +114,8 @@ describe('a run reports its progress from the chain', () => {
     await sim.adoptVault(PAYROLL, [A, B]);
     c = govChange(51);
     payments = runOf(5);
-    tree = buildPayoutTree(payments);
-    const payload = pureCircuits.runPayload(fromHex(tree.root), tree.payees, OPENS, CLOSES);
+    tree = payoutTreeOf(payments);
+    const payload = pureCircuits.runPayload(fromHex(tree.root), tree.payees, OPENS, CLOSES, 0n);
     await sim.as(carrying(sim, A, c)).proposeRun({
       root: fromHex(tree.root), payees: tree.payees,
       from: OPENS, until: CLOSES, vault: PAYROLL });
@@ -158,7 +156,7 @@ describe('a run reports its progress from the chain', () => {
      */
     await payOne(0);
 
-    const wrong = buildPayoutTree(runOf(5, 900));
+    const wrong = payoutTreeOf(runOf(5, 900));
     expect(() => runStatus(
       {
         leaves: wrong.leaves,
@@ -189,7 +187,7 @@ describe('a run reports its progress from the chain', () => {
     await payOne(0);
     await payOne(1);
 
-    const wrong = buildPayoutTree(runOf(5, 900));
+    const wrong = payoutTreeOf(runOf(5, 900));
     const s = runStatus(
       { leaves: wrong.leaves, window: { from: OPENS, until: CLOSES } },
       sim.ledger as never, pureCircuits.paidMovementOf, NOW);
@@ -499,7 +497,7 @@ describe('a run reports its progress from the chain', () => {
  * the module.
  */
 describe('a run\'s payments, read from a ledger\'s answer rather than a set somebody assembled', () => {
-  const tree = buildPayoutTree(runOf(5, 400));
+  const tree = payoutTreeOf(runOf(5, 400));
   const window = { from: OPENS, until: CLOSES };
   const inputs = () => ({ leaves: tree.leaves, window });
   const holding = (paid: string[]): PaymentsAmong => ({ known: true, paid });
@@ -607,7 +605,7 @@ describe('a run\'s payments, read from a ledger\'s answer rather than a set some
    * had ever been paid — every count present and every one of them zero.
    */
   it('refuses an answer naming somebody who is not in this run', () => {
-    const stranger = buildPayoutTree(runOf(5, 900));
+    const stranger = payoutTreeOf(runOf(5, 900));
     expect(() => runPayments(inputs(), holding([stranger.leaves[0]]), NOW))
       .toThrow(/not one of this run's payees/);
   });
