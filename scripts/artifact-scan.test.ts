@@ -249,10 +249,11 @@ describe('the real artifacts, read end to end', () => {
     expect(vault.circuits.filter((c) => c.writes.some((w) => w.field === 'account'))).toEqual([]);
     // Its signature is read off its own type checks, not invented.
     const account = await readContract(ROOT, ARTIFACTS[0]);
-    // ONE ARGUMENT SINCE `S35d` — `C340` + `C343` deleted the threshold and the
-    // constructor sets `threshold = 1` from a literal. This reads the COMPILED
-    // artifact, so it goes red until `COMPILE-CONTRACT.command` has run.
-    expect(account.ctor?.signature).toBe('constructor(foundingLeaf: Bytes<32>)');
+    // TWO ARGUMENTS: the founding leaf, and the company's label, which the
+    // constructor writes into `signerRoles`. The threshold stays a literal one.
+    // This reads the COMPILED artifact, so it goes red until
+    // `COMPILE-CONTRACT.command` has run.
+    expect(account.ctor?.signature).toBe('constructor(foundingLeaf: Bytes<32>, companyLabel: Bytes<32>)');
     expect(account.ctor?.writes).toHaveLength(account.fields.length);
   });
 

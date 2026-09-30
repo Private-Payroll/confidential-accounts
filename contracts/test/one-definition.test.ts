@@ -450,6 +450,43 @@ const SCHEMES: Entry[] = [
       'a second derivation here produces rounds that can never be run — mirror it instead, ' +
       'and the ratchet will refuse until you do.',
   },
+  {
+    circuit: 'removeAndSetThresholdPayload',
+    contractOnly:
+      'NO METHOD ON EITHER SCHEME DERIVES THIS YET: no product caller raises a combined removal ' +
+      'and threshold round. The day the removal flow raises one, mirror it the way ' +
+      'removeSignerPayload is mirrored, and the ratchet will refuse until you do.',
+  },
+  {
+    circuit: 'companyWide',
+    contractOnly:
+      'a fixed marker naming a company-wide decision, which setVaultThreshold refuses. No ' +
+      'client derives it; the day one does, it reads it off pureCircuits as it does noVault.',
+  },
+  {
+    circuit: 'withdrawSecretOf',
+    contractOnly:
+      'the device works it out in contracts/src/witnesses.ts by calling this circuit off ' +
+      'pureCircuits, so there is no second derivation in TypeScript to drift from it.',
+  },
+  {
+    circuit: 'withdrawKeyOf',
+    contractOnly:
+      'the same as withdrawSecretOf: witnesses.ts calls this circuit off pureCircuits, and ' +
+      'cancel recomputes it inside the proof. No TypeScript copy exists.',
+  },
+  {
+    circuit: 'companyLabelKey',
+    contractOnly:
+      'the key the constructor writes the company label under, derived inside the contract ' +
+      'and never taken from a caller. Nothing in the product reads the label yet.',
+  },
+  {
+    circuit: 'removalCountKey',
+    contractOnly:
+      'the fixed key the account keeps its removal count under in proposalHolds. Read only ' +
+      'inside the contract; the client has no reason to compute it.',
+  },
 ];
 
 describe('one definition: the contract and the client agree', () => {
@@ -694,7 +731,9 @@ describe('one definition: the contract and the client agree', () => {
       + 'governance payloads are — do not write a second derivation. If it is a passthrough '
       + 'that reads the circuit, declare it as one in SCHEME_MEMBERS and say so.',
     ).toEqual([
-      'adoptVaultPayload', 'paidMovementOf', 'retireVaultPayload', 'slotOf', 'vacantSlot',
+      'adoptVaultPayload', 'companyLabelKey', 'companyWide', 'paidMovementOf',
+      'removalCountKey', 'removeAndSetThresholdPayload', 'retireVaultPayload', 'slotOf',
+      'vacantSlot', 'withdrawKeyOf', 'withdrawSecretOf',
     ]);
   });
 

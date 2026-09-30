@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as L from '@midnightntwrk/ledger-v9';
 import {
-  authorityView, buildAccountHandover, everySignerNeeded,
+  authorityView, buildAccountHandover, committeeLooserThanItsContract, everySignerNeeded,
   type AccountHandoverLedger,
 } from './company-authority.js';
 import { readContractAuthority, replaceAuthorityOf, type AuthorityRead } from './ledger.js';
@@ -242,7 +242,7 @@ describe('A COMPANY ACCOUNT HANDED FROM THE TEMPORARY KEY TO ITS COMMITTEE, ON T
     expect(moneyIn(before, committee, null, [L.signatureVerifyingKey(temporary)]))
       .toMatch(/still held by the temporary key/);
 
-    const built = buildAccountHandover(Lh, { read: before, to: committee, temporaryKey: temporary, network: NET, ttl: ttl() });
+    const built = buildAccountHandover(Lh, { read: before, to: committee, strictestBar: 1, temporaryKey: temporary, network: NET, ttl: ttl() });
     expect(built.endState).toMatchObject({ address, threshold: 2, builtAgainstCounter: 0n, expectedCounter: 1n });
     const proven = await (built.unproven as L.UnprovenTransaction).prove(neverAsked as never, L.CostModel.initialCostModel());
     const asTheServiceReadsIt = await readProvenTransaction(proven.serialize());
@@ -267,7 +267,7 @@ describe('A COMPANY ACCOUNT HANDED FROM THE TEMPORARY KEY TO ITS COMMITTEE, ON T
     });
 
     /* And once is all: the same key cannot hand it over again, whoever asks. */
-    expect(() => buildAccountHandover(Lh, { read: now, to: committee, temporaryKey: temporary, network: NET, ttl: ttl() }))
+    expect(() => buildAccountHandover(Lh, { read: now, to: committee, strictestBar: 1, temporaryKey: temporary, network: NET, ttl: ttl() }))
       .toThrow(/no longer held by one key/);
   });
 
@@ -277,11 +277,23 @@ describe('A COMPANY ACCOUNT HANDED FROM THE TEMPORARY KEY TO ITS COMMITTEE, ON T
     const read = await readFrom(ls, address);
     let signed = false;
     const spy = { ...Lh, signData: (k: never, d: Uint8Array) => { signed = true; return Lh.signData(k, d); } } as AccountHandoverLedger;
-    expect(() => buildAccountHandover(spy, { read, to: { committee: committee.committee, threshold: 0 }, temporaryKey: temporary, network: NET, ttl: ttl() }))
+    expect(() => buildAccountHandover(spy, { read, to: { committee: committee.committee, threshold: 0 }, strictestBar: 1, temporaryKey: temporary, network: NET, ttl: ttl() }))
       .toThrow(/threshold-below-one/);
-    expect(() => buildAccountHandover(spy, { read, to: { committee: [], threshold: 1 }, temporaryKey: temporary, network: NET, ttl: ttl() }))
+    expect(() => buildAccountHandover(spy, { read, to: { committee: [], threshold: 1 }, strictestBar: 1, temporaryKey: temporary, network: NET, ttl: ttl() }))
       .toThrow(/committee-emptied/);
     expect(signed).toBe(false);
+  });
+
+  it('A HANDOVER TO A COMMITTEE LOOSER THAN THE ACCOUNT\'S STRICTEST BAR IS BUILT, AND SAYS SO', async () => {
+    const { ls, address } = deployedUnder([L.signatureVerifyingKey(temporary)], 1);
+    const read = await readFrom(ls, address);
+    /* Reported, not refused, until committees can be built above the company's threshold.
+     * RED WHEN: `buildAccountHandover` stops asking `committeeLooserThanItsContract`, or asks it with another bar. */
+    const looser = buildAccountHandover(Lh, { read, to: committee, strictestBar: 3, temporaryKey: temporary, network: NET, ttl: ttl() });
+    expect(looser.looserThanItsContract).toMatch(/needs 3 approvals for some payments/);
+    expect(looser.unproven).toBeTruthy();
+    const meets = buildAccountHandover(Lh, { read, to: committee, strictestBar: 2, temporaryKey: temporary, network: NET, ttl: ttl() });
+    expect(meets.looserThanItsContract).toBeNull();
   });
 
   it('IS REFUSED FOR AN ACCOUNT THE TEMPORARY KEY HAS ALREADY CHANGED, OR ONE ANOTHER KEY HOLDS', async () => {
@@ -290,11 +302,11 @@ describe('A COMPANY ACCOUNT HANDED FROM THE TEMPORARY KEY TO ITS COMMITTEE, ON T
     const read = await readFrom(ls, address);
     if (read.state !== 'read') throw new Error('unreachable');
     const changed: AuthorityRead = { ...read, authority: { ...read.authority, counter: 1n } };
-    expect(() => buildAccountHandover(Lh, { read: changed, to: committee, temporaryKey: temporary, network: NET, ttl: ttl() }))
+    expect(() => buildAccountHandover(Lh, { read: changed, to: committee, strictestBar: 1, temporaryKey: temporary, network: NET, ttl: ttl() }))
       .toThrow(/already had its rules changed/);
-    expect(() => buildAccountHandover(Lh, { read, to: committee, temporaryKey: sk(8), network: NET, ttl: ttl() }))
+    expect(() => buildAccountHandover(Lh, { read, to: committee, strictestBar: 1, temporaryKey: sk(8), network: NET, ttl: ttl() }))
       .toThrow(/a key this service does not keep/);
-    expect(() => buildAccountHandover(Lh, { read: { state: 'unreachable', address, why: 'down' }, to: committee, temporaryKey: temporary, network: NET, ttl: ttl() }))
+    expect(() => buildAccountHandover(Lh, { read: { state: 'unreachable', address, why: 'down' }, to: committee, strictestBar: 1, temporaryKey: temporary, network: NET, ttl: ttl() }))
       .toThrow(/could not be asked/);
   });
 });
@@ -351,5 +363,34 @@ describe('WHAT A COMPANY IS TOLD', () => {
     expect(down).toMatchObject({ heldByTheCompany: false, seats: [], read: 'unreachable' });
     expect(moneyIn({ state: 'unreachable', address: 'a', why: 'down' }, { committee: [vk(1)], threshold: 1 }, null))
       .toMatch(/could not be asked/);
+  });
+});
+
+describe('A COMMITTEE IS NEVER LOOSER THAN THE CONTRACT IT HOLDS', () => {
+  const keys = (n: number) => Array.from({ length: n }, (_, i) => ({ tag: 'schnorr', value: String(i).padStart(2, '0') }));
+
+  it('accepts a committee at or above the strictest bar, and no stricter than the keys it holds', () => {
+    expect(committeeLooserThanItsContract({ committee: keys(3), threshold: 2 }, 2, 'the vault')).toBeNull();
+    expect(committeeLooserThanItsContract({ committee: keys(3), threshold: 3 }, 2, 'the vault')).toBeNull();
+  });
+
+  it('refuses a committee below the bar, and says the two ways out', () => {
+    /* RED WHEN: the `to.threshold < strictestBar` refusal is removed. */
+    expect(committeeLooserThanItsContract({ committee: keys(3), threshold: 2 }, 3, 'the vault'))
+      .toMatch(/the vault needs 3 approvals for some payments, and this committee could change its rules with 2 of its keys\. Its committee needs at least 3, or that bar is lowered to 2 first/);
+  });
+
+  it('refuses a bar no committee of these keys can reach, and names the most it may be', () => {
+    /* RED WHEN: the `strictestBar > to.committee.length` refusal is removed - the check then asks for a committee
+     * threshold above the keys, which the authority builder refuses with no word about the bar. */
+    expect(committeeLooserThanItsContract({ committee: keys(2), threshold: 2 }, 3, 'the account'))
+      .toMatch(/the account needs 3 approvals for some payments and its committee would hold 2 key\(s\).*Lower that bar to at most 2 first/);
+  });
+
+  it('refuses when the bar could not be read, rather than treating it as no bar', () => {
+    /* RED WHEN: a bar of zero or a fraction is taken as satisfied. */
+    for (const bar of [0, 1.5, Number.NaN]) {
+      expect(committeeLooserThanItsContract({ committee: keys(2), threshold: 1 }, bar, 'the vault')).toMatch(/could not be read/);
+    }
   });
 });

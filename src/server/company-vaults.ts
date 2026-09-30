@@ -161,8 +161,10 @@ export interface CompanyVaultDeps {
    * entry's own signing key.
    */
   readonly giveVaultKeys: (accountId: string, viewingKey: string, userId: string, given: SignedVaultKeys) => 'given' | 'already-given';
-  /** The company's account contract address, and its approval threshold, as the chain holds them. */
-  readonly company: (accountId: string) => Promise<{ address: Hex; threshold: number } | null>;
+  /** The company's account contract address, its approval threshold and every vault's own, as the chain holds them. */
+  readonly company: (accountId: string) => Promise<{
+    address: Hex; threshold: number; vaultThresholds: ReadonlyArray<{ vault: Hex; threshold: number }>;
+  } | null>;
   readonly ledger: Pick<Ledger, 'sendVault'>;
   readonly chain: VaultChain;
   /** Every vault circuit's verifying key, as this build compiled it. */
@@ -176,7 +178,7 @@ export interface CompanyVaultDeps {
      * temporary key. Absent when this deployment keeps no such key, and then
      * the handover is refused by name.
      */
-    readonly handover?: (input: { read: AuthorityRead; to: Committee }) => Promise<Uint8Array>;
+    readonly handover?: (input: { read: AuthorityRead; to: Committee; strictestBar: number }) => Promise<Uint8Array>;
     /** The public half of that temporary key, so a seat it holds is named as this service's. */
     readonly temporaryKey?: { tag: string; value: string };
   };
@@ -188,7 +190,7 @@ export interface CompanyVaultDeps {
    * then a committee change is refused by name.
    */
   readonly committeeChange?: (input: {
-    read: AuthorityRead; to: Committee; signatures: readonly SeatSignature[]; label: string;
+    read: AuthorityRead; to: Committee; strictestBar: number; signatures: readonly SeatSignature[]; label: string;
   }) => Promise<{ have: number; required: number; seatsSigned: number[]; proven: Uint8Array | null }>;
   readonly now?: () => Date;
 }
@@ -257,6 +259,17 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
     if (!a) throw new Error('account not found');
     return a;
   };
+
+  /*
+   * The strictest approval bar a contract enforces, which its committee may not sit below: a vault's own
+   * threshold, or the company's; for the account, the highest of the company's and every vault's.
+   */
+  const strictestBarOf = (
+    company: { threshold: number; vaultThresholds: ReadonlyArray<{ vault: Hex; threshold: number }> },
+    vault: string | null,
+  ): number => vault === null
+    ? Math.max(company.threshold, ...company.vaultThresholds.map((v) => v.threshold))
+    : company.vaultThresholds.find((v) => fold(v.vault) === fold(vault))?.threshold ?? company.threshold;
 
   const committeeNow = async (account: SealedAccount) => {
     const company = await deps.company(account.id);
@@ -1077,7 +1090,7 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
     }
     let bytes: Uint8Array;
     try {
-      bytes = await build({ read, to: committee });
+      bytes = await build({ read, to: committee, strictestBar: strictestBarOf(company, null) });
     } catch (e) {
       release();
       res.status(409).json({ nothingWasSent: true, error: (e as Error)?.message ?? String(e) });
@@ -1243,7 +1256,9 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
         const merged = [...kept.filter((k) => !given.some((g) => g.seat === k.seat)), ...given.map((g) => ({ seat: g.seat, signature: g.signature }))];
         let assembled: Awaited<ReturnType<NonNullable<CompanyVaultDeps['committeeChange']>>>;
         try {
-          assembled = await assemble({ read, to: committee, signatures: merged, label });
+          assembled = await assemble({
+            read, to: committee, strictestBar: strictestBarOf(company, isAccount ? null : address), signatures: merged, label,
+          });
         } catch (e) {
           results.push({ address, state: 'refused', nothingWasSent: true, error: `${(e as Error)?.message ?? String(e)} Nothing was sent.` });
           return;

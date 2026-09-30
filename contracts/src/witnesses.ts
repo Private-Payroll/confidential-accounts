@@ -175,6 +175,21 @@ const sameBytes = (a: Uint8Array, b: Uint8Array): boolean =>
 
 const same = <PS>(ps: PS) => ps;
 
+/** The account's address as the 32 bytes the contract hashes. Refuses anything else. */
+const accountBytes = (address: string): Uint8Array => {
+  const hex = address.startsWith('0x') ? address.slice(2) : address;
+  if (!/^[0-9a-fA-F]{64}$/.test(hex)) {
+    throw new Error(`this account's address is not 32 bytes of hex, so no withdraw secret can be worked out for it: ${address}`);
+  }
+  return Uint8Array.from(hex.match(/../g)!.map((b) => parseInt(b, 16)));
+};
+
+/** A signer's withdraw secret for one proposal on this account, from the contract's own definition. */
+const withdrawSecretFor = (
+  { privateState, contractAddress }: WitnessContext<Ledger, AccountPrivateState>,
+  proposal: Uint8Array,
+): Uint8Array => pureCircuits.withdrawSecretOf(privateState.secretKey, accountBytes(contractAddress), proposal);
+
 export const witnesses = {
   localSecretKey: ({ privateState }: WitnessContext<Ledger, AccountPrivateState>):
     [AccountPrivateState, Uint8Array] => [same(privateState), privateState.secretKey],
@@ -245,4 +260,25 @@ export const witnesses = {
     [AccountPrivateState, bigint] => [same(privateState), privateState.changeAmount],
   changeBatchDigest: ({ privateState }: WitnessContext<Ledger, AccountPrivateState>):
     [AccountPrivateState, Uint8Array] => [same(privateState), privateState.changeBatchDigest],
+
+  /* ---------------- withdrawing a proposal ---------------- */
+
+  /**
+   * The key a new proposal is stored with: the hash of this signer's withdraw
+   * secret for it. Only the signer who raised a governance proposal can later
+   * produce the secret, so only they can withdraw it.
+   *
+   * Nothing new is kept on the device. The secret is worked out again from the
+   * signer's secret key, the account and the proposal's id, so a restored device
+   * can still withdraw what it raised. The id is fresh for every raise because
+   * its salt is, so no two proposals share a key and the stored keys do not link
+   * one proposer's proposals together.
+   */
+  withdrawKey: (context: WitnessContext<Ledger, AccountPrivateState>, proposal: Uint8Array):
+    [AccountPrivateState, Uint8Array] =>
+    [same(context.privateState), pureCircuits.withdrawKeyOf(withdrawSecretFor(context, proposal))],
+
+  /** This signer's withdraw secret for one proposal. Never leaves the proof. */
+  withdrawSecret: (context: WitnessContext<Ledger, AccountPrivateState>, proposal: Uint8Array):
+    [AccountPrivateState, Uint8Array] => [same(context.privateState), withdrawSecretFor(context, proposal)],
 };

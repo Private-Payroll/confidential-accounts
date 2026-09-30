@@ -450,13 +450,18 @@ describe('§4 — the worked example: what a LEDGER READ does to the transcript'
     expect(occurrences(after, hex(VAULT))).toBe(occurrences(before, hex(VAULT)));
   });
 
-  it('and `propose` does NOT read the vault today, which is the other half of the measurement', async () => {
+  it('and `propose` READS the vault: a run records its vault\'s bar when it is raised', async () => {
     /*
-     * The other half of the measurement, and the one that makes it a decision
-     * rather than a warning: `propose`'s transcript carries no vault id, so
-     * the membership check would ADD one. A value, not a verdict — what the
-     * change costs in publicity is measured here; whether to make it is
-     * somebody else's call.
+     * The other half of the measurement. A run now records the approvals it
+     * needs at the moment it is raised, and for a run that is its vault's
+     * threshold, read from the public `thresholds` map by the vault's id. So
+     * the vault a run will be paid from is public from the moment it is
+     * raised, not only from its first payment - including for a run that is
+     * cancelled and never paid.
+     *
+     * RED WHEN: `propose` stops reading the vault's threshold (the hold's bar
+     * taken from the account's threshold alone), which would let a stricter
+     * vault's run be recorded at the looser bar.
      */
     const sim = await AccountSimulator.liveAccount([A], 1n);
     sim.at(NOW);
@@ -472,7 +477,7 @@ describe('§4 — the worked example: what a LEDGER READ does to the transcript'
     tape.stop();
 
     expect(t.calls[0]!.circuitId).toBe('propose');
-    expect(t.occurrences(VAULT)).toHaveLength(0);
+    expect(t.occurrences(VAULT).length).toBeGreaterThan(0);
   });
 });
 

@@ -43,7 +43,6 @@ import {
   cookieScopeFor, credentialOf, crossSiteWriteRefusal, sessionCookie,
 } from './session-cookie.js';
 import type { Hex } from '../core/crypto.js';
-import { payeeAddress } from '../midnight/payee-address.js';
 import { theNetwork } from '../midnight/network.js';
 import { NothingWasSent, saysNothingWasSent } from '../core/jobs.js';
 import { roundForADevice } from './governance-wire.js';
@@ -555,7 +554,11 @@ app.use(cors());
     company: async (accountId) => {
       const [address, status] = await Promise.all([ledger.address(accountId), ledger.status(accountId)]);
       if (!address || !status) return null;
-      return { address: address.value as Hex, threshold: status.threshold };
+      return {
+        address: address.value as Hex,
+        threshold: status.threshold,
+        vaultThresholds: status.vaultThresholds.map((v) => ({ vault: v.vault as Hex, threshold: v.threshold })),
+      };
     },
     ledger,
     chain: startup.started

@@ -32,7 +32,7 @@ import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config
 import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 import * as accountModule from '../managed/contract/index.js';
 import { witnesses, type AccountPrivateState } from '../src/witnesses.js';
-import { privateStateFor, leafOfDevice, change } from './simulator.js';
+import { privateStateFor, leafOfDevice, change, COMPANY_LABEL } from './simulator.js';
 import { DEPLOYED_CIRCUITS } from '../../src/midnight/deferral.js';
 import { answerVaultAsk } from 'vaults-web-shared/vault-worker-entry.js';
 import { vaultBuilderOver, type AccountCallChainOnTheWire, type VaultAnswer } from 'vaults-web-shared/vault-worker-client.js';
@@ -199,7 +199,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PAYROLL RUN RAISED AND APPROVED FROM THE SIGNE
     handed = [];
     founder = privateStateFor(1);
     const init = await new (accountModule as any).Contract(witnesses).initialState(
-      runtime.createConstructorContext(founder, '0'.repeat(64)), leafOfDevice(founder));
+      runtime.createConstructorContext(founder, '0'.repeat(64)), leafOfDevice(founder), COMPANY_LABEL);
     const accountState = L.ContractState.deserialize(init.currentContractState.serialize());
     for (const c of DEPLOYED_CIRCUITS) {
       const op = new L.ContractOperation();

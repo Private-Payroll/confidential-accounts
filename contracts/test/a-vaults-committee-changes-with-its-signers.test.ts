@@ -42,7 +42,7 @@ import * as vaultModule from '../managed-vault/contract/index.js';
 import * as accountModule from '../managed/contract/index.js';
 import { witnesses, type AccountPrivateState } from '../src/witnesses.js';
 import { aWalletThatPaysPrivately, type AWalletThatPaysPrivately } from './a-wallet-that-pays-privately.js';
-import { privateStateFor, leafOfDevice, change, ZERO_32 } from './simulator.js';
+import { privateStateFor, leafOfDevice, change, ZERO_32, COMPANY_LABEL } from './simulator.js';
 import { MemoryStore } from '../../src/core/store.js';
 import { AccountService, sealAccount } from '../../src/core/account.js';
 import { MidnightCommitments } from '../../src/midnight/commitments.js';
@@ -268,7 +268,7 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
     founder = privateStateFor(1);
     /* The company account, with the state its own constructor writes for its founder, this build's circuits and the service's temporary key. */
     const init = await new (accountModule as any).Contract(witnesses).initialState(
-      runtime.createConstructorContext(founder, '0'.repeat(64)), leafOfDevice(founder));
+      runtime.createConstructorContext(founder, '0'.repeat(64)), leafOfDevice(founder), COMPANY_LABEL);
     const accountState = L.ContractState.deserialize(init.currentContractState.serialize());
     accountState.maintenanceAuthority = new L.ContractMaintenanceAuthority([L.signatureVerifyingKey(TEMPORARY_ACCOUNT_KEY)], 1, 0n);
     for (const c of DEPLOYED_CIRCUITS) {
@@ -387,7 +387,7 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
     app.use(companyVaultRoutes({
       signedIn, member, store,
       giveVaultKeys: (id, vk, person, given) => accounts.giveVaultKeys(id, vk as Hex, person, given),
-      company: async () => ({ address: company, threshold: companyThreshold }),
+      company: async () => ({ address: company, threshold: companyThreshold, vaultThresholds: [] }),
       ledger: watched, chain: vaultChain,
       verifierKeys: async () => new Map(await Promise.all(
         ['deposit', 'depositUnshielded', 'forgetUnshielded', 'payout', 'payoutUnshielded', 'retire', 'splitNote']

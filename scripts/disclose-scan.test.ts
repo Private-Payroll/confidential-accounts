@@ -244,10 +244,43 @@ describe('the real sources', () => {
     // OF WHAT IS PUBLIC, AND MUST NOT BE READ AS ONE* — and the enumeration
     // that WOULD be that list has not been written.
     // ======================================================================
+
+    // AND IT MOVED ON 30 Sep, 68 -> 82: A SIGNER BEING REMOVED CAN DO NOTHING
+    // AGAINST THE COMPANY. Seventeen sites in, three out, read off
+    // `scanSourceFile` on the account before and after. What each publishes,
+    // measured against the rule above (a site feeding a ledger READ publishes
+    // its value; a site feeding a comparison or a condition publishes nothing
+    // the transaction did not already carry):
+    //   OUT, 3: `propose` computed its change commitment and its id once per
+    //     branch; it now computes each once. The same values reach the same
+    //     writes.
+    //   `propose` `isRun` x2: the branch taken, disclosed already by
+    //     `if (disclose(isRun))`. Nothing new.
+    //   `propose` `withdrawKey(id)`: NEW. Written into the proposal's hold. A
+    //     hash of a hash of the proposer's secret key, the account and the id;
+    //     one per proposal, so it links no two proposals and names nobody.
+    //   `cancel` `withdrawKeyOf(withdrawSecret(id))`: compared with the stored
+    //     key, which the hold's lookup already publishes. The secret stays in
+    //     the proof. Nothing new.
+    //   constructor `companyLabel`: NEW, and ruled: the label is anchored on the
+    //     chain, a random 32-byte value beside a public address.
+    //   `amendSigner` `removedLeaf`: a `signerLeaves.member` READ of the leaf the
+    //     same transaction already publishes through `signerLeaves.remove`.
+    //   `setVaultThreshold` `vault`: compared with `companyWide()`; the same
+    //     transaction writes `vault` into `thresholds` in the clear.
+    //   `removeSignerAndSetThreshold`, 9: the removed leaf, its slot, its path's
+    //     root, the proposal and the new threshold, which is what `amendSigner`'s
+    //     removal and `setThreshold` publish today, in one transaction.
+    // AND ONE PUBLICATION THAT IS NOT A NEW SITE, SO THIS NUMBER CANNOT SHOW IT:
+    // `propose` now reads `thresholds` by the run's vault to record the bar the
+    // run was raised at, and that read pushes the vault into the transcript. A
+    // run's vault is public from the moment it is raised, not from its first
+    // payment, including for a run that is cancelled and never paid.
+    // `contracts/test/transcript.test.ts` pins it.
     const account = scanSourceFile(ROOT, 'contracts/src/ConfidentialAccount.compact');
     const vault = scanSourceFile(ROOT, 'contracts/src/Vault.compact');
     const sites = (cs: typeof account) => cs.reduce((n, c) => n + c.discloses.filter((d) => d.via.length === 0).length, 0);
-    expect(sites(account)).toBe(68);
+    expect(sites(account)).toBe(82);
     expect(sites(vault)).toBe(48);
   });
 
@@ -260,14 +293,14 @@ describe('the real sources', () => {
     }
   });
 
-  it('`requireSigner` discloses the signer root, and SEVEN circuits inherit it', () => {
-    // A DISCLOSES column for any of those seven that omits it says the circuit
+  it('`requireSigner` discloses the signer root, and EIGHT circuits inherit it', () => {
+    // A DISCLOSES column for any of those eight that omits it says the circuit
     // reveals nothing when it reveals the root of the signer tree.
     const account = scanSourceFile(ROOT, 'contracts/src/ConfidentialAccount.compact');
     expect(own(account, 'requireSigner')).toHaveLength(1);
     const inheritors = account.filter((c) => c.exported && c.discloses.some((d) => d.via.includes('requireSigner')));
     expect(inheritors.map((c) => c.name).sort()).toEqual(
-      ['adopt', 'amendSigner', 'approve', 'cancel', 'propose', 'setThreshold', 'setVaultThreshold'],
+      ['adopt', 'amendSigner', 'approve', 'cancel', 'propose', 'removeSignerAndSetThreshold', 'setThreshold', 'setVaultThreshold'],
     );
   });
 

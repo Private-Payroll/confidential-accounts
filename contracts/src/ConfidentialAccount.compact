@@ -20,6 +20,14 @@ import CompactStandardLibrary;
  * window or not in its run, a payee leaf already paid, and any change that
  * leaves fewer signers than the account threshold.
  *
+ * A signer being removed can do nothing against the company. A proposal needs
+ * the higher of the threshold when it was raised and the threshold now, so a
+ * fall never releases approvals already given. A governance proposal is
+ * withdrawn only by the signer who raised it. A removal voids every governance
+ * proposal raised before it, and a run raised before it needs one approval
+ * more for every removal since. Removing a signer and setting the threshold is
+ * one proposal.
+ *
  * Why each piece is shaped this way: docs/design/the-account-contract.md
  */
 
@@ -59,18 +67,35 @@ export ledger runWindow: Map<Bytes<32>, Window>;
 // Every leaf currently seated. Its size is the number of signers.
 export ledger signerLeaves: Set<Bytes<32>>;
 
-// The four fields below were reserved before deploy; only `retiredAt` is ever written.
 // Every vault this account has ever retired. The value is a marker, not a date.
 export ledger retiredAt: Map<Bytes<32>, Uint<64>>;
 
-// Reserved for holding a proposal. Declared only: no circuit reads or writes it.
-export ledger proposalHolds: Map<Bytes<32>, Uint<64>>;
+// A hold placed on a run, and what releases it. Written empty; no circuit reads it yet.
+struct RunHold {
+  placedBy: Bytes<32>;
+  releaseNeeded: Uint<64>;
+  releaseApprovals: Uint<64>;
+}
+
+// What a proposal carries from the moment it is raised until it closes.
+struct Hold {
+  // The approvals it needed when it was raised.
+  needed: Uint<64>;
+  // A hash of the proposer's withdraw secret: only the proposer can withdraw it.
+  withdrawKey: Bytes<32>;
+  // How many signers the account had removed when it was raised.
+  removals: Uint<64>;
+  runHold: RunHold;
+}
+
+// Each open proposal's hold, by id, and the account's removal count under its own key.
+export ledger proposalHolds: Map<Bytes<32>, Hold>;
 
 // Reserved for a replacement account's address. No circuit writes it.
 export ledger successor: Bytes<32>;
 
-// Reserved for per-signer permissions. Declared only: no circuit reads or writes it.
-export ledger signerRoles: Map<Bytes<32>, Uint<64>>;
+// One shared map of 32-byte entries. Every key is derived inside a circuit under its own tag.
+export ledger signerRoles: Map<Bytes<32>, Bytes<32>>;
 
 // The signer's secret key, from their own device. Never disclosed.
 witness localSecretKey(): Bytes<32>;
@@ -98,6 +123,12 @@ witness changeAmount(): Uint<128>;
 
 // A digest over the entries a proposal's change appends.
 witness changeBatchDigest(): Bytes<32>;
+
+// The key a new proposal is withdrawn with: the hash of the proposer's withdraw secret for it.
+witness withdrawKey(proposal: Bytes<32>): Bytes<32>;
+
+// The proposer's withdraw secret for one proposal. Held on their device only.
+witness withdrawSecret(proposal: Bytes<32>): Bytes<32>;
 
 // A signer's public identity: a domain-tagged hash of their secret key.
 export circuit signerPublicKey(sk: Bytes<32>): Bytes<32> {
@@ -235,6 +266,44 @@ export circuit retireVaultPayload(vault: Bytes<32>): Bytes<32> {
   ]);
 }
 
+// What signers approve to remove a signer and set the threshold, in one proposal.
+export circuit removeAndSetThresholdPayload(removedLeaf: Bytes<32>, newThreshold: Uint<64>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>([
+    pad(32, "midnight-accounts:remove-thresh:"),
+    removedLeaf,
+    newThreshold as Field as Bytes<32>,
+  ]);
+}
+
+// The vault a company-wide decision names: a hash no vault address can equal.
+export circuit companyWide(): Bytes<32> {
+  return persistentHash<Bytes<32>>(pad(32, "midnight-accounts:vault:company"));
+}
+
+// A proposer's withdraw secret: their secret key, the account and the proposal, domain-tagged.
+export circuit withdrawSecretOf(sk: Bytes<32>, account: Bytes<32>, proposal: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<4, Bytes<32>>>([
+    pad(32, "midnight-accounts:withdraw-sec:"), sk, account, proposal
+  ]);
+}
+
+// The key stored for a proposal: its withdraw secret, hashed again under its own tag.
+export circuit withdrawKeyOf(secret: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([
+    pad(32, "midnight-accounts:withdraw:"), secret
+  ]);
+}
+
+// Where the company's label sits in `signerRoles`.
+export circuit companyLabelKey(): Bytes<32> {
+  return persistentHash<Bytes<32>>(pad(32, "midnight-accounts:roles:label"));
+}
+
+// Where the account's removal count sits in `proposalHolds`. No proposal id can equal it.
+export circuit removalCountKey(): Bytes<32> {
+  return pad(32, "midnight-accounts:removal-count");
+}
+
 // The slot a path leads to, read from its left-right flags.
 export circuit slotOf(path: MerkleTreePath<10, Bytes<32>>): Uint<64> {
   return (
@@ -265,11 +334,39 @@ circuit requireSigner(): Bytes<32> {
   return sk;
 }
 
-// Closes one proposal: its entry, its count and its window, if it has one.
+// Closes one proposal: its entry, its count, its hold and its window, if it has one.
 circuit closeProposal(proposal: Bytes<32>): [] {
   openProposals.remove(proposal);
   approvalCounts.remove(proposal);
+  proposalHolds.remove(proposal);
   runWindow.remove(proposal);
+}
+
+// How many signers this account has removed. Written by the constructor, so always present.
+circuit removalsSoFar(): Uint<64> {
+  return proposalHolds.lookup(removalCountKey()).removals;
+}
+
+// Adds one to the removal count. Every circuit that unseats a leaf calls it.
+circuit countRemoval(): [] {
+  proposalHolds.insert(removalCountKey(), Hold {
+    needed: 0,
+    withdrawKey: default<Bytes<32>>,
+    removals: (removalsSoFar() + 1) as Uint<64>,
+    runHold: default<RunHold>,
+  });
+}
+
+// The larger of two bars.
+circuit higher(a: Uint<64>, b: Uint<64>): Uint<64> {
+  return a < b ? b : a;
+}
+
+// A proposal's hold. Refuses one raised without a hold: it can never be carried out.
+circuit holdOf(proposal: Bytes<32>): Hold {
+  assert(proposalHolds.member(proposal),
+    "that proposal has no record of the approvals it needs, so it can never be carried out");
+  return proposalHolds.lookup(proposal);
 }
 
 // A vault's own threshold if it has one, otherwise the account's.
@@ -277,17 +374,25 @@ circuit thresholdFor(vault: Bytes<32>): Uint<64> {
   return thresholds.member(vault) ? thresholds.lookup(vault) : threshold;
 }
 
-// Refuses unless the proposal is open and has the vault's threshold. Returns its change.
+// Refuses a run short of the higher of its bar when raised and the vault's today, plus one
+// for every signer removed since it was raised. Returns its change.
 circuit requireApprovedForVault(proposal: Bytes<32>, vault: Bytes<32>): Bytes<32> {
   assert(openProposals.member(proposal), "there is no open proposal with that id");
-  assert(!(approvalCounts.lookup(proposal) < thresholdFor(vault)), "not enough approvals yet");
+  const hold = holdOf(proposal);
+  const bar = higher(hold.needed, thresholdFor(vault));
+  // Each removed signer's approval may be among those given, so one more is needed for each.
+  const needed = (bar + (removalsSoFar() - hold.removals)) as Uint<64>;
+  assert(!(approvalCounts.lookup(proposal) < needed), "not enough approvals yet");
   return openProposals.lookup(proposal);
 }
 
-// Refuses unless the proposal is open and has the account's threshold. Returns its change.
+// Refuses a governance proposal raised before the latest removal, or short of the higher of
+// its bar when raised and the account's today. Returns its change.
 circuit requireApproved(proposal: Bytes<32>): Bytes<32> {
   assert(openProposals.member(proposal), "there is no open proposal with that id");
-  assert(!(approvalCounts.lookup(proposal) < threshold), "not enough approvals yet");
+  const hold = holdOf(proposal);
+  assert(hold.removals == removalsSoFar(), "a signer has been removed since this was raised; raise it again");
+  assert(!(approvalCounts.lookup(proposal) < higher(hold.needed, threshold)), "not enough approvals yet");
   return openProposals.lookup(proposal);
 }
 
@@ -300,15 +405,25 @@ circuit takeVacatedSlot(): Uint<64> {
   return slotOf(path);
 }
 
-// Seats one founding signer, whose leaf is passed in, at a threshold of one.
-constructor(foundingLeaf: Bytes<32>) {
+// Seats one founding signer at a threshold of one, and writes the company's label.
+constructor(foundingLeaf: Bytes<32>, companyLabel: Bytes<32>) {
   // Neither zero nor the vacancy marker may be seated.
   assert(foundingLeaf != default<Bytes<32>>, "that is not a usable signer leaf");
   assert(foundingLeaf != vacantSlot(), "that is not a usable signer leaf");
+  assert(companyLabel != default<Bytes<32>>, "a company needs a label");
   const seatedLeaf = disclose(foundingLeaf);
   signers.insert(seatedLeaf);
   signerLeaves.insert(seatedLeaf);
   threshold = 1;
+  // The label, under a key derived here and never taken from a caller.
+  signerRoles.insert(companyLabelKey(), disclose(companyLabel));
+  // No signer removed yet.
+  proposalHolds.insert(removalCountKey(), Hold {
+    needed: 0,
+    withdrawKey: default<Bytes<32>>,
+    removals: 0,
+    runHold: default<RunHold>,
+  });
 }
 
 // Seats a signer, or unseats one when `removing` is true. Needs a signer as caller.
@@ -330,6 +445,9 @@ export circuit amendSigner(
     "that proposal is not for this removal"
   );
 
+  // Only a seated leaf can be removed: never the vacancy marker, never a stranger.
+  assert(signerLeaves.member(disclose(removedLeaf)), "that signer is not seated on this account");
+
   // The departing leaf must be in the tree; its path gives its slot.
   const path = signerPath(removedLeaf);
   assert(path.leaf == removedLeaf, "that path is not for the leaf being removed");
@@ -344,6 +462,7 @@ export circuit amendSigner(
   assert(!(signerLeaves.size() < threshold),
     "that would leave fewer signers than the threshold, and the account could never approve again");
 
+  countRemoval();
   closeProposal(id);
   } else {
   const newSignerLeaf = leaf;
@@ -398,6 +517,44 @@ export circuit setThreshold(newThreshold: Uint<64>, proposal: Bytes<32>): [] {
   closeProposal(disclose(proposal));
 }
 
+// Removes one signer and sets the threshold under one approved proposal.
+export circuit removeSignerAndSetThreshold(
+  removedLeaf: Bytes<32>,
+  newThreshold: Uint<64>,
+  proposal: Bytes<32>,
+): [] {
+  requireSigner();
+
+  const id = disclose(proposal);
+  requireApproved(id);
+  assert(
+    disclose(proposalIdOf(
+      removeAndSetThresholdPayload(removedLeaf, newThreshold), noVault(), proposalSalt()) == proposal),
+    "that proposal is not for this removal and threshold"
+  );
+
+  // Only a seated leaf can be removed: never the vacancy marker, never a stranger.
+  assert(signerLeaves.member(disclose(removedLeaf)), "that signer is not seated on this account");
+
+  // The departing leaf must be in the tree; its path gives its slot.
+  const path = signerPath(removedLeaf);
+  assert(path.leaf == removedLeaf, "that path is not for the leaf being removed");
+  assert(signers.checkRoot(disclose(merkleTreePathRoot<10, Bytes<32>>(path))),
+    "that signer is not on this account");
+
+  // Stamped vacant rather than cleared, so the slot can be reused.
+  signers.insertIndex(vacantSlot(), disclose(slotOf(path)));
+  signerLeaves.remove(disclose(removedLeaf));
+
+  assert(disclose(newThreshold) > 0, "the threshold must be at least one");
+  assert(!(signerLeaves.size() < disclose(newThreshold)),
+    "that would leave fewer signers than the threshold, and the account could never approve again");
+  threshold = disclose(newThreshold);
+
+  countRemoval();
+  closeProposal(id);
+}
+
 // Opens a proposal at zero approvals: a run built from its parts, or a governance payload.
 export circuit propose(
   payloadHash: Bytes<32>,
@@ -410,41 +567,37 @@ export circuit propose(
 ): [] {
   requireSigner();
 
+  // The change and the id are computed once, for a run and a governance proposal alike.
+  const salt = proposalSalt();
+  const change = disclose(changeCommitmentOf(
+    assetKeyOf(assetId(), assetBlinding()), changeAmount(), changeBatchDigest(), salt));
+  const payload = disclose(isRun)
+    ? runPayload(disclose(root), disclose(payees), disclose(opensAt), disclose(closesAt))
+    : payloadHash;
+  const id = disclose(proposalIdOf(payload, disclose(vault), salt));
+  assert(!openProposals.member(id), "that proposal is already open");
+
   if (disclose(isRun)) {
   // A run needs payees, a window that opens before it closes, and a vault other than `noVault()`.
   assert(disclose(payees) > 0, "a run with no payees");
   assert(disclose(opensAt) < disclose(closesAt), "a run window ends before it opens");
-
   assert(disclose(vault) != noVault(), "a run must name the vault that will pay it");
-
-  const salt = proposalSalt();
-  const change = disclose(changeCommitmentOf(
-    assetKeyOf(assetId(), assetBlinding()), changeAmount(), changeBatchDigest(), salt));
-
-  const id = disclose(proposalIdOf(
-    runPayload(disclose(root), disclose(payees), disclose(opensAt), disclose(closesAt)),
-    disclose(vault), salt));
-  assert(!openProposals.member(id), "that proposal is already open");
-
-  openProposals.insert(id, change);
-  approvalCounts.insert(id, 0);
   // The only place a window is written.
   runWindow.insert(id, Window { opensAt: disclose(opensAt), closesAt: disclose(closesAt) });
   } else {
   // A governance proposal names no vault, so no vault can ever be paid against it.
   assert(disclose(vault) == noVault(), "a governance proposal cannot name a vault");
-
-  const salt = proposalSalt();
-
-  const change = disclose(changeCommitmentOf(
-    assetKeyOf(assetId(), assetBlinding()), changeAmount(), changeBatchDigest(), salt));
-
-  const id = disclose(proposalIdOf(payloadHash, disclose(vault), salt));
-  assert(!openProposals.member(id), "that proposal is already open");
+  }
 
   openProposals.insert(id, change);
   approvalCounts.insert(id, 0);
-  }
+  // The bar it was raised at, who may withdraw it, and the removals so far.
+  proposalHolds.insert(id, Hold {
+    needed: disclose(isRun) ? thresholdFor(disclose(vault)) : threshold,
+    withdrawKey: disclose(withdrawKey(id)),
+    removals: removalsSoFar(),
+    runHold: default<RunHold>,
+  });
 }
 
 // Adds the caller's approval to one open proposal. Refuses a second from the same signer.
@@ -460,14 +613,20 @@ export circuit approve(proposal: Bytes<32>): [] {
   approvalCounts.insert(id, (approvalCounts.lookup(id) + 1) as Uint<64>);
 }
 
-// Withdraws an open proposal. Needs a signer; refuses a run once its window has opened.
+// Withdraws an open proposal: a run before its window by any signer, a governance
+// proposal only by the signer who raised it.
 export circuit cancel(proposal: Bytes<32>): [] {
   requireSigner();
   const id = disclose(proposal);
   assert(openProposals.member(id), "there is no open proposal with that id");
 
-  assert(runWindow.member(id) ? blockTimeLt(runWindow.lookup(id).opensAt) : true,
-         "that run has already started; it can no longer be cancelled");
+  if (runWindow.member(id)) {
+    assert(blockTimeLt(runWindow.lookup(id).opensAt),
+           "that run has already started; it can no longer be cancelled");
+  } else {
+    assert(disclose(withdrawKeyOf(withdrawSecret(id))) == holdOf(id).withdrawKey,
+           "only the signer who raised this proposal can withdraw it");
+  }
 
   closeProposal(id);
 }
@@ -540,6 +699,7 @@ export circuit setVaultThreshold(
   requireApproved(id);
 
   assert(!(newThreshold == 0), "a vault threshold of zero would authorise anything");
+  assert(disclose(vault) != companyWide(), "the company-wide decision always takes the account's threshold");
   thresholds.insert(disclose(vault), disclose(newThreshold));
   closeProposal(id);
 }

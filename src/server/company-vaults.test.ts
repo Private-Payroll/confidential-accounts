@@ -41,6 +41,7 @@ let vaultReadFails: (n: number) => boolean = () => false;
 let handoverDep: CompanyVaultDeps['account']['handover'];
 let serviceKey: { tag: string; value: string } | undefined;
 let acc1Threshold = 2;
+let acc1VaultThresholds: Array<{ vault: string; threshold: number }> = [];
 let handoverShape: unknown;
 let payoutShape: unknown;
 let payoutState: CompanyVaultDeps['chain']['payoutState'];
@@ -111,6 +112,7 @@ beforeEach(async () => {
   handoverDep = undefined;
   serviceKey = undefined;
   acc1Threshold = 2;
+  acc1VaultThresholds = [];
   handoverShape = {};
   payoutShape = {};
   asked = [];
@@ -149,7 +151,9 @@ beforeEach(async () => {
     },
     store,
     giveVaultKeys,
-    company: async (id) => (id === 'acc_1' ? { address: hex(0xc0), threshold: acc1Threshold } : { address: hex(0xc1), threshold: 1 }),
+    company: async (id) => (id === 'acc_1'
+      ? { address: hex(0xc0), threshold: acc1Threshold, vaultThresholds: acc1VaultThresholds }
+      : { address: hex(0xc1), threshold: 1, vaultThresholds: [] }),
     ledger: { get sendVault() { return sendVault; } },
     chain: {
       contractState: async (address) => {
@@ -621,6 +625,18 @@ describe('THE COMPANY ACCOUNT STANDS BEHIND EVERY VAULT', () => {
     expect(sent).toHaveLength(1);
   });
 
+  it('THE ACCOUNT\'S HANDOVER CARRIES THE HIGHEST BAR THE ACCOUNT ENFORCES, ITS VAULTS\' INCLUDED', async () => {
+    await give('ada', 1); await give('bo', 2);
+    accountAuthority = { committee: [key(9)], threshold: 1, counter: 0n };
+    acc1VaultThresholds = [{ vault: hex(0xdd), threshold: 3 }];
+    let bar: number | null = null;
+    handoverDep = async ({ strictestBar }) => { bar = strictestBar; throw new Error('stopped before anything was built'); };
+    const r = await call('/api/accounts/acc_1/authority/handover', 'ada', 'POST', { committee: { committee: [key(1), key(2)], threshold: 2 } });
+    expect(r.body).toMatchObject({ nothingWasSent: true });
+    /* RED WHEN: the handover is built with the company's threshold alone as its bar. */
+    expect(bar).toBe(3);
+  });
+
   it('TWO PRESSES AT ONCE ARE ONE HANDOVER, AND ONE THAT MAY HAVE LANDED IS NOT SENT AGAIN', async () => {
     /* RED WHEN: the pending mark is set after the first wait instead of before it - both presses are then paid for;
      * or when a send that may have landed does not keep the mark - the second press is then paid for. */
@@ -974,6 +990,24 @@ describe('A COMMITTEE CHANGED AFTER A SIGNER JOINS OR LEAVES', () => {
     const again = await post('ada', { to, signatures: [sig(VAULT)] });
     expect(again.body.results[0].state).toBe('sent');
     expect(sent).toHaveLength(2);
+  });
+
+  it('EACH CHANGE CARRIES THE STRICTEST BAR ITS CONTRACT ENFORCES: A VAULT ITS OWN, THE ACCOUNT THE HIGHEST OF ALL', async () => {
+    await behind();
+    const bars: Array<[string, number]> = [];
+    assembleDep = async ({ read, strictestBar }) => {
+      bars.push([read.address, strictestBar]);
+      return { have: 0, required: 1, seatsSigned: [], proven: null };
+    };
+    acc1VaultThresholds = [{ vault: VAULT, threshold: 3 }, { vault: hex(0xdd), threshold: 4 }];
+    await post('ada', { to, signatures: [sig(hex(0xc0)), sig(VAULT)] });
+    /* RED WHEN: the account's bar ignores the vaults' own thresholds, or a vault's ignores its own row. */
+    expect(bars).toEqual([[hex(0xc0), 4], [VAULT, 3]]);
+    /* A vault with no row of its own needs the company's threshold, and so does the account. */
+    acc1VaultThresholds = [];
+    bars.length = 0;
+    await post('ada', { to, signatures: [sig(hex(0xc0)), sig(VAULT)] });
+    expect(bars).toEqual([[hex(0xc0), 2], [VAULT, 2]]);
   });
 
   it('WAITS FOR MORE SIGNERS, KEEPING EACH SEAT ONCE, AND SAYS HOW MANY HAVE SIGNED', async () => {

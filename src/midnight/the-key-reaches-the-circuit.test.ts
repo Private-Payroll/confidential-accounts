@@ -285,7 +285,7 @@ async function aSignersDevice(opts: { fileTheDeviceRecord?: boolean } = {}) {
     { zkConfigProvider, privateStateProvider: signerStore, walletProvider } as any,
     {
       compiledContract: compiled,
-      args: [fromHex(foundingLeaf)],
+      args: [fromHex(foundingLeaf), new Uint8Array(32).fill(0x4c)],
       privateStateId: key,
       initialPrivateState: deviceRecord,
     } as any,

@@ -187,7 +187,7 @@ async function aDeviceWithAKeyring(opts: { stageTheAccountHalf?: boolean } = {})
   };
   const unprovenDeploy: any = await createUnprovenDeployTx(
     { zkConfigProvider, privateStateProvider: forTheDeployOnly, walletProvider } as any,
-    { compiledContract: compiled, args: [fromHex(foundingLeaf)] } as any,
+    { compiledContract: compiled, args: [fromHex(foundingLeaf), new Uint8Array(32).fill(0x4c)] } as any,
   );
   const deployedState = unprovenDeploy.public.initialContractState;
   const address = String(ledgerApi.sampleContractAddress());

@@ -60,7 +60,9 @@
  */
 
 /**
- * The ten circuits the deployment carries — every circuit the contract has.
+ * The eleven circuits the deployment carries — every circuit the contract has.
+ * Eleven fit one deploy: 29,618 bytes written of the 32,497 ceiling, measured
+ * unproven and unbalanced with the ledger's own cost function.
  *
  * `retireVault` IS IN THIS LIST, and `S25` put it there. It was deferred by
  * `S9` on the reasoning that "a vault cannot be retired on this deployment,
@@ -79,6 +81,7 @@ export const DEPLOYED_CIRCUITS = [
   'closeExpiredRun',
   'propose',
   'recordPayment',
+  'removeSignerAndSetThreshold',
   'retireVault',
   'setThreshold',
   'setVaultThreshold',
@@ -111,7 +114,7 @@ export const isDeferredCircuit = (name: string): boolean => DEFERRED.has(name);
 export const isDeployedCircuit = (name: string): boolean => DEPLOYED.has(name);
 
 /**
- * Refuses a contract whose circuit list is not exactly these ten.
+ * Refuses a contract whose circuit list is not exactly these eleven.
  *
  * Called by the deploy path with the names the COMPILED contract actually
  * exports, before anything is pruned. If the contract ever gains a twelfth
